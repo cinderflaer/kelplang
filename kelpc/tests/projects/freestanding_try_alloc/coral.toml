@@ -1,0 +1,26 @@
+name = "freestandingtryalloc"
+
+# Kernel stage 13's fallible-allocation acceptance: a bare-metal riscv64 image
+# whose `[target] alloc`/`dealloc` pair is the project's own bump allocator, so
+# `Ptr.try_alloc` lowers to *those* functions rather than libc's `malloc`. The
+# boot proves a normal request comes back non-null and writable and an absurd
+# one comes back null, and the `llvm-nm -u` check proves no libc symbol is left.
+# `main` is on the audit list for the `static mut` heap and the writes through
+# the returned pointers; `uart` for its volatile `Ptr` access.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+
+[unsafe]
+modules = ["main", "uart"]
+
+# Kernel stage 16's mmio grant: the NS16550's register window, held by the
+# entry module and delegated to `uart`, the one module that builds a pointer
+# from the device's address (`plan/device-caps.md`).
+[caps]
+mmio = ["0x10000000+0x100"]

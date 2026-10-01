@@ -1,0 +1,184 @@
+impl "trap" caps(mmio = ["*"])
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+impl "vm" caps(mmio = ["*"])
+
+// Kernel stage 14 (MK9-S7-M2), the stack half: the same Sv39 setup as
+// `kernel0-vm`, but the kernel stack sits directly above an unmapped guard page
+// and the two ways a stack can overflow are taken on purpose.
+//
+// Phase a recurses with a small frame until `sp` crosses into the guard page;
+// phase b calls a function whose single frame is larger than the whole kernel
+// stack. Both faults print the `scause` and `stval` the handler saw, and both
+// must be inside the guard page: phase b is what the `probe-stack` attribute is
+// for, because without a probe the frame's `sub sp` would step over the hole
+// and its own memset would write into the trap stack below.
+//
+// The two recursion functions keep a volatile store after the recursive call.
+// That store is not bookkeeping: a tail call would let LLVM rewrite the
+// recursion as a loop on one frame, and the store is what keeps the call in the
+// return path.
+const IMAGE_START: usize = 0x80000000
+const IMAGE_SPAN: usize = 4 * 1024 * 1024
+
+const UART_BASE: usize = 0x10000000
+
+// A stack that never returns to its base: the guard faults long before depth
+// reaches this. It is read through a volatile pointer so the base case stays a
+// runtime branch LLVM cannot fold away, which is what keeps the recursion from
+// being proved non-terminating and collapsed.
+static mut LIMIT: u64 = 0xFFFFFFFFFFFFFFFF
+
+// The volatile effect the recursion functions write through. It is never read.
+static mut SINK: u64 = 0
+
+static mut ROOT: usize = 0
+
+fun root_table().R: usize {
+    unsafe { ROOT }
+}
+
+fun current_limit().R: u64 {
+    unsafe {
+        val p: Ptr<u64> = Ptr.from_mut(LIMIT)
+        p.read_volatile()
+    }
+}
+
+fun sink(next: u64) {
+    unsafe {
+        val p: Ptr<u64> = Ptr.from_mut(SINK)
+        p.write_volatile(next)
+    }
+}
+
+// Leave machine mode. Three things are a machine-mode promise about the next
+// level and nothing the compiler can check: the PMP entry that makes any
+// S-mode access possible at all, the exception delegation that routes page
+// faults to S-mode, and `mstatus.MPP = S`.
+fun enter_supervisor(entry: usize) {
+    unsafe {
+        val pmpaddr: usize = 0x3FFFFFFFFFFFFF
+        val pmpcfg: usize = 0x1F
+        val delegated: usize = (1 << 12) | (1 << 13) | (1 << 15)
+        val none: usize = 0
+        asm("csrw pmpaddr0, {0}", in("r") pmpaddr)
+        asm("csrw pmpcfg0, {0}", in("r") pmpcfg)
+        asm("csrw medeleg, {0}", in("r") delegated)
+        asm("csrw mideleg, {0}", in("r") none)
+        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") (mstatus & 0xFFFFFFFFFFFFE7FF) | 0x800)
+        asm("csrw mepc, {0}", in("r") entry)
+        asm("mret")
+    }
+}
+
+// Deep recursion with a small frame: about two hundred and fifty calls fill the
+// 8 KiB kernel stack, and the frame that crosses `__stack_bottom` stores its
+// saved `ra` into the guard page.
+fun recurse_small(depth: u64, limit: u64).R: u64 {
+    var pad: u64 = depth
+    if depth >= limit {
+        return pad
+    }
+    val next: u64 = recurse_small(depth + 1, limit)
+    sink(next)
+    return next + pad
+}
+
+// One frame larger than the kernel stack. The array is filled with a runtime
+// byte and read at a runtime index, so the frame cannot be shrunk away; the
+// probe the `probe-stack` attribute emits is what walks the frame down one page
+// at a time and faults at the guard.
+fun recurse_big(depth: u64, limit: u64).R: u64 {
+    var buf: [u8; 16384] = [(depth % 256).to_u8(); 16384]
+    var pad: u64 = buf.get((depth % 16384).to_usize()).to_u64()
+    if depth >= limit {
+        return pad
+    }
+    val next: u64 = recurse_big(depth + 1, limit)
+    sink(next)
+    return next + pad
+}
+
+// The second phase: reached by the trap handler, which restored `sp` to the top
+// of the kernel stack and set `sepc` here. Its one call overflows that stack on
+// its own, so the line after it is the failure signal.
+fun phase_b() {
+    uart.puts("stack: phase b")
+    uart.putc(10)
+    val survived: u64 = recurse_big(1, current_limit())
+    uart.puts("stack: phase b survived")
+    uart.putc(10)
+    uart.halt()
+}
+
+fun smain() {
+    // Installed before the MMU is on, so a fault anywhere in the turn-on path
+    // is reported rather than silent.
+    trap.install()
+    vm.enable_paging(root_table())
+    uart.puts("stack: paging on")
+    uart.putc(10)
+
+    uart.puts("stack: guard ")
+    trap.put_hex(trap.guard_bottom())
+    uart.putc(32)
+    trap.put_hex(trap.guard_top())
+    uart.putc(10)
+
+    trap.set_resume(Ptr.from_fn(phase_b).addr())
+    trap.arm(0)
+    uart.puts("stack: phase a")
+    uart.putc(10)
+    val survived: u64 = recurse_small(1, current_limit())
+
+    // The guard faults before either recursion returns, so this is the failure
+    // signal for phase a.
+    uart.puts("stack: phase a survived")
+    uart.putc(10)
+    uart.halt()
+}
+
+section(".text.boot") fun kmain() {
+    uart.puts("stack: m-mode")
+    uart.putc(10)
+
+    val root: usize = vm.alloc_frame()
+    unsafe {
+        ROOT = root
+    }
+    if root == 0 {
+        uart.puts("stack: no root")
+        uart.putc(10)
+        uart.halt()
+    }
+
+    // The image, its trap stack and the page frames, but not the guard page:
+    // the first span stops at `__guard_bottom`, the second starts at
+    // `__guard_top`, and the 4 KiB between them is left with no leaf.
+    if vm.map_range(root, IMAGE_START, IMAGE_START, trap.guard_bottom() - IMAGE_START, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+        uart.puts("stack: image map failed")
+        uart.putc(10)
+        uart.halt()
+    }
+    if vm.map_range(root, trap.guard_top(), trap.guard_top(), vm.frames_end() - trap.guard_top(), vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+        uart.puts("stack: stack map failed")
+        uart.putc(10)
+        uart.halt()
+    }
+    if vm.map_page(root, UART_BASE, UART_BASE, vm.PTE_R | vm.PTE_W) == false {
+        uart.puts("stack: uart map failed")
+        uart.putc(10)
+        uart.halt()
+    }
+
+    enter_supervisor(Ptr.from_fn(smain).addr())
+}
+
+// The handler `[target] panic` names: a check that fired has no meaningful
+// continuation, so it prints one line and halts.
+fun kp_panic(_msg: str) {
+    uart.puts("panic")
+    uart.putc(10)
+    uart.halt()
+}

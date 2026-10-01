@@ -1,0 +1,20 @@
+// `Ptr.try_alloc<i32>(4)` is four `i32`s from `malloc`, non-null and writable;
+// `Ptr.try_alloc<u64>(MAX / 2)` is a byte count no allocator can honour, and the
+// method answers the null pointer instead of calling the panic handler.
+fun main() {
+    val max: usize = ~0
+    unsafe {
+        val p: Ptr<i32> = Ptr.try_alloc<i32>(4)
+        print(p.is_null())
+        p.write(42)
+        print(p.read())
+        p.free()
+
+        val huge: Ptr<u64> = Ptr.try_alloc<u64>(max / 2)
+        print(huge.is_null())
+
+        val small: Ptr<u8> = Ptr.try_alloc<u8>(8)
+        print(small.is_null())
+        small.free()
+    }
+}

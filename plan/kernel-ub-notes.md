@@ -468,10 +468,11 @@ together or neither, and that `realloc`, when named, needs them; that each name
 is a bare identifier and a non-`extern` `fun` in the entry module; that their
 signatures are exactly `(usize, usize).R: Ptr<u8>`, `(Ptr<u8>, usize, usize)`
 and `(Ptr<u8>, usize, usize, usize).R: Ptr<u8>`; that with no pair `Box`, `List`
-and `Map` are refused with a message naming the two keys, while `String`,
-`Bytes`, `View` and `Thread` stay refused even with one; and that a freestanding
-image built this way references no libc symbol (`kelp_memcpy`/`kelp_memset` are
-module-private definitions, and the boot graph was checked with `llvm-nm -u`).
+and `Map` are refused with a message naming the two keys, while `View` and
+`Thread` stay refused even with one (`String` and `Bytes` join the allowed set
+in stage 13); and that a freestanding image built this way references no libc
+symbol (`kelp_memcpy`/`kelp_memset` are module-private definitions, and the
+boot graph was checked with `llvm-nm -u`).
 
 **What it does not check.** Any property of the memory the allocator returns:
 alignment, capacity, provenance, liveness, distinctness or thread-safety. It
@@ -834,3 +835,224 @@ register offsets the dispatcher uses, what a validated user pointer is
 *for*, what the physical address it names contains, or whether a copied program
 is still the program that was assembled. The catalogue for the unchecked tools
 is stages 1, 5, 7, 8 and 11.
+
+## Stage 13 (row 7): freestanding `String` and `Bytes` (MK9-S5-M2)
+
+**New ways to reach UB.** With an allocator configured, `String` and `Bytes`
+become legal, and every buffer the two types grow is memory the project's own
+allocator returned through the same promise stage 9 already took on trust. The
+buffer layer adds four shapes stage 9's containers did not have:
+
+- `kelp_buf_reserve` computes the new capacity as `want = cap == 0 ? 8 : cap`
+doubled until it holds `len + extra`, and the **capacity is the only record of
+how large the block is**: `dealloc` is handed `cap + 1` bytes. A project whose
+`alloc` returned a smaller block than the `size` it was given, or whose
+`realloc` returns a block that is not `want + 1` bytes, turns the next append or
+the free into an out-of-bounds access the compiler never checks. The reverse is
+a leak, not UB.
+- The `realloc` fast path passes the project `(ptr, cap + 1, want + 1, align)`.
+An `alloc`-and-copy replacement is expected; a `realloc` that moves the block
+**without** telling the compiler is fine only because the buffer reloads the
+pointer it stores, but one that copies fewer than `cap + 1` bytes, or that
+returns a block overlapping the old one, is silent corruption. With no
+`realloc` named, the fallback is the compiler's alloc + copy + dealloc, and the
+copy overlap rule is stage 9's.
+- `String.from_str` and `Bytes.from_str` derive the length with the compiler's
+own NUL scan and then copy `n + 1` bytes. A `str` without a terminator in its
+allocation makes the scan read past the literal, before any allocation happens.
+The bodies carry `optnone` so the scan cannot become a `strlen` call, which is a
+*promise the compiler keeps*, not something the program can break.
+- `Bytes.get`/`set` and `str.byte`'s bounds checks call the project's panic
+handler; a handler that returns instead of looping lets execution continue past
+the check into the code the check was guarding, which is UB if the index was out
+of bounds. Nothing requires the handler to diverge.
+
+**What the compiler does check.** That `String`/`Bytes` are refused without an
+allocator, with the message naming the two keys; that every method not on the
+libc-free list (and every `std/str` function outside the listed subset,
+including `str.from_f64`) is refused at the call with "needs the hosted
+runtime", before either backend runs; that every allocation and free the two
+types make reaches the project's `alloc`/`dealloc`/`realloc` with `align = 1`
+and size `cap + 1`, and that a null return reaches the panic handler with
+`"out of memory"`; and that the image references no libc symbol (`llvm-nm -u`
+stays clean, and the IR carries no `malloc`/`realloc`/`free`/`strlen` call).
+
+**What it does not check.** Any property of the memory the allocator returns,
+exactly as stage 9 does not; whether `realloc` grew the block, copied all
+`cap + 1` bytes or kept the new block disjoint from the old; whether the `NUL`
+terminator a `str` was promised is inside its allocation; and whether the
+project's panic handler diverges. The buffer's byte loops are ordinary code
+once the module is verified: the compiler supplies them and trusts the
+allocator, and nothing more.
+
+## Stage 13 (row 7): arenas and a fallible allocation surface (MK9-S5-M3)
+
+**New ways to reach UB.** This is the other half of row 7. `Ptr.try_alloc` hands
+back uninitialised memory through the same promise `Ptr.alloc` already took on
+trust, with one difference: failure is the null `Ptr<T>` rather than a panic, so
+the null check the compiler used to make for the program (the `check_alloc`
+branch) is now the program's own. The arena adds two more shapes:
+
+- `Ptr.try_alloc<T>(count)` returns memory the allocator claims is `count * size`
+  bytes. Reading a slot before writing it is the stage 1 indeterminate-value
+  rule, and the byte count is checked for *wrap* on both backends (a count whose
+  product would overflow `usize` is the null pointer, so a huge request cannot
+  silently become a small block). What is unchecked is the rest: that the memory
+  is large enough, that the returned address is not null before it is
+  dereferenced, and that `count` items are ever written.
+- The alignment promise is the allocator's. Hosted, `Ptr.try_alloc<T>` is
+  `malloc`, which is aligned for `max_align_t` and not necessarily for an
+  over-aligned `T` (`repr(align(64))`); treating an under-aligned address as
+  that `T` is the stage 2 UB. Freestanding, the manifest's `alloc` is handed the
+  type's own alignment and its answer is taken as the promise.
+- `std/arena` never checks or records anything about `base`: the region has to be
+  live, writable and at least `cap` bytes for as long as the arena hands out
+  pointers, and `Ptr.byte_offset` is unchecked arithmetic, so nothing ties a
+  returned pointer's provenance to the region. `reset` frees nothing and clears
+  nothing, so every pointer handed out before it is a use-after-reset the
+  compiler cannot see (the bytes are still there; reading or writing them is the
+  stage 1 rule, not an error). `alloc_zeroed` writes zeros *through* the returned
+  pointer, so a wrong or null `base` is a write to an arbitrary address, the
+  worst shape in this catalogue.
+- A `datac` field of `Ptr<T>` (which `Arena` has) is now laid out by the LLVM
+  backend, so a `Ptr` can be a struct member. Nothing about the field is checked
+  either: copying the `datac` copies the address, and the address carries no
+  lifetime, no provenance and no tie to the region it was derived from.
+
+**What the compiler does check.** That `Ptr.try_alloc` is an unsafe operation
+(inside `unsafe { ... }` or an `unsafe fun`, and in a module the manifest lists
+or the compiler ships on its own list); that its element is a type with a
+machine-level layout; that `count * size` is refused for wrap on both backends;
+that `std/arena`'s `align` is a power of two (a zero or non-power value panics
+with the module's own message) and that the padded end is computed with `%` and
+`/` and refused at each step that could wrap, so `alloc` answers the null pointer
+rather than a short block; that the freestanding lowering reaches the manifest's
+own `alloc` (so `llvm-nm -u` stays clean) and that the call is refused by name
+without one; and that the `unsafe` block in `std/arena` is admitted only through
+the compiler's short `stdlib::UNSAFE_MODULES` list. It checks nothing about the
+memory any of it returns.
+
+**What it does not check.** The allocator's honesty, the region's size, liveness
+or alignment, the null check before a dereference, the provenance of any address
+`Ptr` arithmetic builds, whether a pointer is used after `reset`, or whether
+`alloc_zeroed`'s write lands inside the region. D-1/D-2/D-3 stay open; this stage
+adds the two allocator shapes they will have to describe.
+
+## Stage 14: stack guards and probing (MK9-S7-M2, the stack half)
+
+**New ways to reach UB.** The compiler now emits a page probe on every
+freestanding function, and the kernel supplies the hole the probe is for:
+
+- **The guard page is the kernel's, not the compiler's.** `probe-stack` only
+  turns a large frame into a sequence of stores one page apart; whether those
+  stores land on an unmapped page is the linker script's business. A script that
+  puts the guard above the stack, sizes it to zero, or maps it anyway means the
+  probe touches ordinary RAM and the overflow is silent. `examples/kernel0-stack`
+  splits its identity map around `[__guard_bottom, __guard_top)` to leave the
+  hole, and the two bounds are linker-script promises the compiler cannot read.
+- **The probe is not a check.** It does not compare `sp` against a bound, does
+  not know a stack exists, and does not run on a `naked` function (no prologue)
+  or on a function whose frame is one page or less (nothing to probe). A frame
+  smaller than a page can still cross the guard with its ordinary stores, which
+  is why the small-frame recursion faults too; a frame that is exactly the stack
+  size plus a little may put its first probe store past the hole and its body
+  into mapped memory below it.
+- **The fault stack has to be separate and mapped.** A trap handler that runs on
+  the stack it just overflowed faults on its own frame, and the S-mode handler
+  here runs on a 16 KiB region below the guard with `sscratch` naming its top.
+  A `sscratch` that is not set, not switched, or points into the hole is the
+  same class of failure the stage documents for `kernel0-user`; a guard page
+  below the trap stack would make the handler's own overflow equally quiet.
+- **The resume path is a jump, not a return.** After the first fault the handler
+  points `sepc` at the second phase, resets `sp` to `__stack_top`, restores
+  `sscratch` and `sret`s. Nothing checks that the phase function is a function,
+  that `__stack_top` is the top of the stack the kernel meant, or that the
+  interrupted frame's registers are the ones the resumed code expects; the
+  abandoned phase's frames are leaked in place.
+- **The recursion shape is the demo's promise.** LLVM may tail-call-eliminate or
+  accumulator-rewrite a recursion into a loop on one frame, and may collapse a
+  recursion it can prove non-terminating into an infinite loop; either makes the
+  stack growth vanish with no diagnostic. The example's volatile store after the
+  recursive call and its volatile `limit` are what keep the recursion real, and
+  they are the program's own defence, not a guarantee the compiler makes.
+
+**What the compiler does check.** That every non-declaration function of a
+freestanding LLVM build gets the `probe-stack="inline-asm"` string attribute and
+that a hosted build gets none; that the attribute's value is the one LLVM
+lowering understands; that the example's `asm`, `static mut` reads and writes and
+`Ptr` accesses are inside `unsafe` in listed modules; and the whole freestanding
+allowed set. Nothing about the frame size at which the probe fires, the pages it
+lands on, the linker script's bounds, or the fault stack's address.
+
+**What it does not check.** Whether the guard page exists, is unmapped or is
+below the stack; whether the trap stack is separate, mapped and large enough;
+whether `sscratch` holds its top; whether the resumed `sepc`/`sp` are the ones
+the kernel meant; whether a recursion was rewritten into a loop; and whether the
+platform delivers the fault to the handler at all. D-1/D-2/D-3 stay open; the
+guard page and the fault stack join the catalogue of promises a kernel makes
+with `Ptr`, `static mut`, `asm` and a linker script.
+
+## The typed `std/tls` handle (release goal 1 follow-up, `plan/tls-handle.md`)
+
+Not a kernel stage, recorded here because it changes what an opaque handle can hide.
+
+**New way to reach undefined behaviour.** `TlsHandle` is an `extern type`: C lowers it to `void*` behind
+`kelp_tls_TlsHandle` and LLVM to `ptr`, and every OpenSSL body trusts it (`(SSL*)kelp_handle`). A handle
+that is null, already freed by a `try_shutdown` that ran twice, or produced by a different library is
+undefined behaviour inside OpenSSL, exactly as the old `usize` `0` or a stale integer was. What the type
+buys is that a handle cannot be manufactured from an integer, compared with one, or confused with a
+different handle type, so the *accidental* integer-to-pointer path is gone. It does not track liveness:
+`TlsHandle` is `Copy`, owns nothing and has no drop, so nothing stops a handle outliving the `SSL_free`
+that released it.
+
+**What the compiler does check.** That `extern type` is declared in a module with an `[extern.*]` section
+or a module `stdlib.rs` ships; that a handle is used only as itself (`==`/`!=` with a handle of the same
+or an ancestor type, an argument, a binding, a return, `null()`/`is_null()`/`cast()` only in an extern
+module); and, in `std/http`/`std/ws`, that the plain/TLS choice is an `Option`, so no integer sentinel can
+stand in for a handle.
+
+**What it does not check.** Whether a handle points at a live `SSL` object, whether it was freed once,
+whether the module that produced it is the one that consumes it, or whether the C body's cast is the right
+type. Those are the promises `std/tls`'s header documents and the AddressSanitizer gate exercises.
+
+## Stage 16: MMIO as a capability (MK10-S1, roadmap C-3, `plan/device-caps.md`)
+
+**New way to reach undefined behaviour.** None from the check itself: it only
+adds a compile-time rule about which addresses `Ptr.from_addr` may name, and a
+call it admits is as unchecked at every later step as it was before. What the
+domain *moves* is the honesty of a grant: an `mmio` range is the compiler's
+record of "this module was allowed to name this address", and a program that
+takes a granted address, offsets past the range (`p.byte_offset(n)`,
+`p.offset(n)`, `p.cast<U>()`) and reads or writes it is doing exactly what
+`Ptr` always allowed, now with a paper trail that stops at the pointer's birth.
+The `["*"]` grant is the escape hatch: it admits a computed address, so a module
+that holds it can reach any address the integer arithmetic yields, and it is the
+line to grep for when auditing a kernel's device surface.
+
+**What the compiler does check.** That `mmio` is a capability domain and a
+grant in it is a list of half-open ranges (`"0xBASE+0xLEN"`, hex or decimal,
+non-zero length, pairwise disjoint) or the wildcard alone; that a freestanding
+module's `Ptr.from_addr` holds a grant at all; that a constant address falls
+inside a granted range; and that a computed address is only accepted under
+`["*"]`. The check runs in the front end before either backend is named, so
+`kelpc check` and `kelpc build` agree; it is a no-op for a hosted project and
+for the C oracle, because freestanding mode is LLVM-only by design.
+
+**What it does not check.** Whether the granted range is really memory-mapped,
+really a device, or really this project's; anything about an address derived
+from a granted one by arithmetic, a cast or a read of the tick counter; whether
+two modules' ranges overlap or whether a module's range is correct for the
+machine it will boot on; and, in the other direction, whether a module with a
+correct-looking grant actually needed it. There is still no runtime check, no
+provenance model (roadmap D-1) and no ownership: a granted range says nothing
+about who may write it, when, or through how many pointers at once.
+
+**Grants the examples carry.** The UART drivers name a compile-time constant
+and hold exactly their device's window: `0x10000000+0x100` for the riscv64
+NS16550 (`kernel0`, `-trap`, `-heap`, `-panic`, `-percpu`, `-statics`, `-string`
+and the two freestanding arena/`try_alloc` projects) and `0x09000000+0x1000`
+for the aarch64 PL011. `kernel0-bss` (the BSS marker's address comes back from
+`asm`), `kernel0-stack`, `kernel0-user`, `kernel0-vm` and `kernel0-vm-fault`
+grant `["*"]` to the modules that build pointers from computed addresses (a
+page-table frame, a trap-frame slot, a user page, the faulting `sepc`), because
+a non-constant address is refused under a range grant by design.

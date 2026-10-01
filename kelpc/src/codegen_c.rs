@@ -5008,6 +5008,22 @@ impl<'a> Gen<'a> {
                     self.expr_value(&args[0])
                 )
             }
+            // The fallible twin (kernel stage 13): `malloc` may return the
+            // null pointer, and that null is the result rather than a panic. A
+            // byte count that would wrap `count * sizeof(elem)` is refused
+            // before the call, so the allocator is never asked for a block
+            // smaller than the caller's element count; the null is the same
+            // answer a failed `malloc` gives. `codegen_llvm.rs::emit_ptr_call`
+            // branches to the same two outcomes.
+            "try_alloc" => {
+                let elem = result_elem();
+                let n = fresh_temp();
+                let p = fresh_temp();
+                format!(
+                    "({{ size_t {n} = (size_t)({}); {elem}* {p} = NULL; if ({n} != 0 && {n} > (size_t)-1 / sizeof({elem})) {{ {p} = NULL; }} else {{ {p} = ({elem}*)malloc({n} * sizeof({elem})); }} {p}; }})",
+                    self.expr_value(&args[0])
+                )
+            }
             "addr" => format!("((size_t)(uintptr_t)({}))", self.expr_value(&args[0])),
             "is_null" => format!("(({}) == NULL)", self.expr_value(&args[0])),
             "offset" => format!(

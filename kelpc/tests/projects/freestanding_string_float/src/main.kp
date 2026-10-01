@@ -1,0 +1,17 @@
+// `str.from_f64` formats through `snprintf`, which a bare-metal image has not,
+// so the call is refused by name even though the allocator makes `String`
+// itself legal.
+impl "std/str"
+
+fun alloc(_size: usize, _align: usize).R: Ptr<u8> {
+    return Ptr.null()
+}
+
+fun dealloc(_p: Ptr<u8>, _size: usize, _align: usize) {
+}
+
+fun kmain() {
+    val text = str.from_f64(1.5, 2)
+    if text.is_empty() {
+    }
+}

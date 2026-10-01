@@ -619,9 +619,15 @@ pub fn load(
         // contain an `unsafe` block or an `unsafe fun` only if `coral.toml`
         // lists it, the same shape `[extern.*]` takes. A project with no
         // `[unsafe]` section lists nothing, so it cannot contain `unsafe` at
-        // all and behaves exactly as before this stage.
+        // all and behaves exactly as before this stage. A module *shipped with
+        // the compiler* is admitted by the compiler's own short list instead
+        // (`stdlib::UNSAFE_MODULES`, kernel stage 13): no project should have to
+        // write `"std/arena"` to import it, and only the compiler's source can
+        // add that entry, so a dependency still cannot grant itself the power.
         if let Some((span, _)) = ast::first_unsafe(parsed) {
-            if !loader.unsafe_modules.contains(&m.id) {
+            if !loader.unsafe_modules.contains(&m.id)
+                && !crate::stdlib::may_use_unsafe(&m.id)
+            {
                 return Err(Diagnostic::new(
                     format!(
                         "module '{}' is not listed in coral.toml [unsafe] modules",
@@ -667,11 +673,15 @@ pub fn load(
             program.enums.push(e);
         }
         // An opaque handle is a module's own type, prefixed and exported like
-        // a `datac`. It is legal only where the manifest has an `[extern.*]`
-        // section to reach a native symbol with, so the refusal is here, next
-        // to the name resolution that would otherwise let it cross modules.
+        // a `datac`. It is legal only where a native surface exists to reach a
+        // symbol with: a project's own `[extern.*]` section, or a module the
+        // compiler ships (`stdlib::source`), whose extern bodies come from
+        // `externs.rs` and need no manifest. The refusal is here, next to the
+        // name resolution that would otherwise let it cross modules.
         for e in &parsed.extern_types {
-            if !loader.extern_modules.contains_key(&m.id) {
+            if !loader.extern_modules.contains_key(&m.id)
+                && crate::stdlib::source(&m.id).is_none()
+            {
                 return Err(Diagnostic::new(
                     format!(
                         "'extern type {}' is only legal in a module with a coral.toml '[extern.\"{}\"]' section",
@@ -761,6 +771,15 @@ pub fn load(
     let entry_caps = manifest_caps.unwrap_or_else(|| {
         let mut whole = HashMap::new();
         for domain in crate::stdlib::DOMAINS {
+            // `mmio` is the one domain the entry module does not hold by
+            // default: its patterns are a machine's address ranges rather
+            // than a resource the root of trust owns, so a freestanding
+            // project has to write `[caps] mmio = [...]` down before any
+            // module may build a pointer from an address
+            // (`plan/device-caps.md`).
+            if *domain == "mmio" {
+                continue;
+            }
             whole.insert(
                 domain.to_string(),
                 vec![crate::stdlib::whole_resource(domain).to_string()],
@@ -788,6 +807,12 @@ pub fn load(
     for g in &loader.all_grants {
         let slot = caps.entry(g.target.clone()).or_default();
         for domain in crate::stdlib::DOMAINS {
+            // `caps(*)` is the whole resource of every domain *except* mmio:
+            // the whole address space is the escape hatch a reviewer greps
+            // for, so it is never handed over implicitly (`plan/device-caps.md`).
+            if *domain == "mmio" {
+                continue;
+            }
             let wildcard = crate::stdlib::whole_resource(domain).to_string();
             let patterns = slot.entry(domain.to_string()).or_default();
             if !patterns.contains(&wildcard) {
@@ -814,6 +839,11 @@ pub fn load(
         }
         let held = caps.get(&g.importer).cloned().unwrap_or_default();
         for domain in crate::stdlib::DOMAINS {
+            // The wildcard is not handed over for `mmio`, so it is not required
+            // of the importer either; see the granting loop above.
+            if *domain == "mmio" {
+                continue;
+            }
             let wildcard = crate::stdlib::whole_resource(domain);
             let holds_it = held
                 .get(*domain)
@@ -869,14 +899,22 @@ pub fn load(
                 // When the importer holds nothing, the message so far names
                 // *it* and leaves the reader looking at the wrong module: the
                 // line to change is the `impl` in whoever imported this
-                // module, which wrote no grant at all.
-                let missing = if held.is_empty() {
+                // module, which wrote no grant at all. The entry module is the
+                // one importer with no such line, and its grant is the
+                // manifest's `[caps]` section — the common case for `mmio`,
+                // the one domain the entry module does not hold by default.
+                let missing = if !held.is_empty() {
+                    String::new()
+                } else if g.importer == entry {
+                    format!(
+                        "; the entry module is granted by coral.toml's '[caps]' section, and this project's does not name '{}' (write `[caps] {} = [...]`)",
+                        g.domain, g.domain
+                    )
+                } else {
                     format!(
                         "; '{}' holds nothing here because the module that imports it wrote no 'caps({} = [...])' grant on that `impl` line",
                         g.importer, g.domain
                     )
-                } else {
-                    String::new()
                 };
                 return Err(Diagnostic::new(
                     format!(
@@ -889,7 +927,7 @@ pub fn load(
                         } else {
                             held.join(", ")
                         },
-                        missing
+                        missing,
                     ),
                     g.span,
                     g.importer.clone(),
@@ -2474,8 +2512,49 @@ fn validate_cap_grant(
             module,
         ));
     }
+    if domain == "mmio" {
+        return validate_mmio_grant(patterns, span, module);
+    }
     for pattern in patterns {
         validate_cap_pattern(domain, pattern, span, module)?;
+    }
+    Ok(())
+}
+
+/// `mmio`'s grant vocabulary: a list of half-open ranges `"0xBASE+0xLEN"`, or
+/// the whole address space as `["*"]` alone. A grant is validated here so
+/// that a module's resource set is a set of ranges the `freestanding` checker
+/// can test an address against without parsing again, and so a malformed or
+/// overlapping grant is a compile error at the `impl` line or the manifest
+/// line that wrote it rather than a surprise at the one call that reaches
+/// outside it (`plan/device-caps.md`).
+fn validate_mmio_grant(
+    patterns: &[String],
+    span: Span,
+    module: &str,
+) -> Result<(), Diagnostic> {
+    let err = |message: String| Err(Diagnostic::new(message, span, module));
+    if patterns.iter().any(|p| p == crate::stdlib::MMIO_ANY) {
+        if patterns.len() != 1 {
+            return err(
+                "`mmio = [\"*\"]` grants the whole address space and cannot be written beside a range; keep the wildcard alone, or name the ranges it needs"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
+    let mut parsed: Vec<((u128, u128), &str)> = Vec::new();
+    for pattern in patterns {
+        let range = crate::stdlib::parse_mmio_range(pattern)
+            .map_err(|message| Diagnostic::new(message, span, module))?;
+        for (earlier, earlier_pattern) in &parsed {
+            if crate::stdlib::mmio_ranges_overlap(*earlier, range) {
+                return err(format!(
+                    "the mmio ranges '{earlier_pattern}' and '{pattern}' overlap - a grant names each range once, and the ranges in it must be disjoint"
+                ));
+            }
+        }
+        parsed.push((range, pattern.as_str()));
     }
     Ok(())
 }

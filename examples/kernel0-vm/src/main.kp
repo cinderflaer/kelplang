@@ -1,5 +1,5 @@
-impl "uart"
-impl "vm"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+impl "vm" caps(mmio = ["*"])
 
 // Kernel stage 10, the address-space half: build Sv39 tables in machine mode,
 // identity-map what the kernel runs on and talks to, map one page at a high

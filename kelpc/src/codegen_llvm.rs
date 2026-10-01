@@ -433,6 +433,13 @@ pub fn compile(
         lowering.emit_runtime_bodies()?;
     } else {
         lowering.emit_freestanding_str_bodies()?;
+        // The `String`/`Bytes` bodies a project with its own allocator needs
+        // (kernel stage 12, MK9-S5-M2). Without an allocator the front end has
+        // already refused the two types, and emitting a body that reaches
+        // libc's `malloc` would be the reference this mode exists to exclude.
+        if lowering.alloc_fns.is_some() {
+            lowering.emit_freestanding_buffer_bodies()?;
+        }
         // The `mem*` routines LLVM's own aggregate copies call, defined weak
         // and as loops (kernel gap 4).
         lowering.emit_freestanding_mem_bodies()?;
@@ -454,6 +461,22 @@ pub fn compile(
     // the drops and container sets above.
     lowering.emit_pd_globals()?;
     lowering.emit_all()?;
+
+    // Every function a freestanding image emits carries `probe-stack="inline-asm"`
+    // (kernel stage 14): a frame larger than one page then touches each page in
+    // order, so a guard page below the stack catches the overflow instead of a
+    // single `sub sp` stepping over it. A hosted build is unchanged. Declarations
+    // are skipped because there is no prologue to probe; the compiler-generated
+    // bodies (the `mem*` fallbacks, the drops and the container sets) are swept
+    // here too, because a large frame among them would otherwise be the one
+    // frame that skips the guard.
+    if freestanding.is_some() {
+        for func in module.functions() {
+            if !func.is_declaration() {
+                func.mark_probe_stack();
+            }
+        }
+    }
 
     // The bare-metal entry stub, after every function is declared so the call
     // to the entry symbol resolves. It is module-level assembly because setting
@@ -2892,6 +2915,29 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         match stmt {
             Stmt::Let { name, ty, init } => {
+                // A `[v; N]` local is filled in place (kernel stage 14): building
+                // it as an aggregate value and storing it makes LLVM's
+                // instcombine constant-fold one `insertvalue` per element, which
+                // is enough to exhaust memory on a frame-sized array. The slot is
+                // a fresh alloca, so the fill writes it directly.
+                if let (Ty::Array(elem, len), ExprKind::ArrayRepeat { value }) = (ty, &init.kind) {
+                    let v = self.value_of(value)?;
+                    // An initializer that diverged leaves the binding dead.
+                    if self.terminated {
+                        return Ok(());
+                    }
+                    let slot = self.alloca(ty, name)?;
+                    self.scopes
+                        .last_mut()
+                        .expect("a scope is always open")
+                        .insert(name.clone(), slot);
+                    self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
+                    let symbol =
+                        format!("{}__fill_into", crate::types::array_c_type(elem, *len));
+                    let (func, fty) = self.g.cfn(&symbol)?;
+                    self.g.call(func, fty, &[slot, v], "");
+                    return Ok(());
+                }
                 let value = self.emit_expr(init)?;
                 // An initializer that diverged leaves the binding dead: emitting
                 // its store would put an instruction after the block's terminator.
@@ -5143,6 +5189,52 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let heap = self.g.builder.build_call(func, fty, &[bytes], "ptr.heap");
                 self.cur = self.g.check_alloc(heap, self.cur_fn)?;
                 Ok(Some(heap))
+            }
+            // The fallible twin (kernel stage 13): the allocator's own null is
+            // the result rather than a panic. The byte count is checked for
+            // wrap first, on the same rule `codegen_c.rs::ptr_call` writes as
+            // C, so a huge count never reaches the allocator as a small block;
+            // both outcomes land in one slot so the expression has one value
+            // and the allocator is only called on the non-wrapping path.
+            "try_alloc" => {
+                let elem = result_elem()?;
+                let lty = self.lty(&elem)?;
+                let size = self.g.layout.abi_size_of(lty);
+                let align = self.g.layout.abi_alignment_of(lty) as u64;
+                let count = self.value_of(&args[0])?;
+                let limit = if size == 0 { u64::MAX } else { u64::MAX / size };
+                let over = self.g.builder.build_icmp(
+                    IntCmp::Ugt,
+                    count,
+                    self.g.v_i64(limit),
+                    "try.over",
+                );
+                let bytes = self.g.builder.build_int_binop(
+                    IntBinOp::Mul,
+                    count,
+                    self.g.v_i64(size),
+                    "try.bytes",
+                );
+                let over_bb = self.cur_fn.append_block("try.over");
+                let ok_bb = self.cur_fn.append_block("try.ok");
+                let join_bb = self.cur_fn.append_block("try.join");
+                let slot = self.temp_alloca(self.g.pty(), "try.slot");
+                self.g.builder.build_cond_br(over, over_bb, ok_bb);
+                self.g.builder.position_at_end(over_bb);
+                self.cur = over_bb;
+                self.terminated = false;
+                self.g.builder.build_store(self.g.ctx.const_null(self.g.pty()), slot);
+                self.g.builder.build_br(join_bb);
+                self.g.builder.position_at_end(ok_bb);
+                self.cur = ok_bb;
+                self.terminated = false;
+                let heap = self.g.heap_alloc(bytes, align)?;
+                self.g.builder.build_store(heap, slot);
+                self.g.builder.build_br(join_bb);
+                self.g.builder.position_at_end(join_bb);
+                self.cur = join_bb;
+                self.terminated = false;
+                Ok(Some(self.g.builder.build_load(self.g.pty(), slot, "try.ptr")))
             }
             "addr" => {
                 let v = self.value_of(&args[0])?;
@@ -8099,6 +8191,10 @@ impl<'a> Gen<'a> {
         }
         out.push(spec(&format!("{base}__set"), void, &[ptr, i64t, elem_ty]));
         out.push(spec(&format!("{base}__fill"), array, &[elem_ty]));
+        // Kernel stage 14: the in-place fill a `[v; N]` local uses, so a large
+        // repeat never becomes an aggregate value that LLVM's instcombine then
+        // folds element by element.
+        out.push(spec(&format!("{base}__fill_into"), void, &[ptr, elem_ty]));
         out.push(spec(
             &drop_fn_name(&Ty::Array(Box::new(elem.clone()), len)),
             void,
@@ -10342,6 +10438,378 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// Emit the libc-free `String`/`Bytes` bodies a freestanding build with an
+    /// allocator needs (kernel stage 12, MK9-S5-M2). Each is a byte loop over
+    /// the buffer the project's own allocator returned, and every allocation and
+    /// free goes through the `[target]` hook with alignment 1; the hosted
+    /// runtime object defines the same symbols, and these definitions replace
+    /// it in a freestanding image. Everything is internal and `optnone`, so the
+    /// module's own pipeline cannot rewrite a NUL scan into `strlen`.
+    ///
+    /// `kelp_buf_reserve` is the growth routine both buffers share: double the
+    /// capacity from 8 until it holds `len + extra`, grow through the project's
+    /// `realloc` when the manifest names one and through alloc + copy + dealloc
+    /// otherwise, and keep the block NUL-terminated. Only called when an
+    /// allocator is configured: with none, the front end has already refused
+    /// every `String`/`Bytes`, and a body reaching libc's `malloc` would be the
+    /// very reference this mode excludes.
+    fn emit_freestanding_buffer_bodies(&self) -> Result<(), String> {
+        let i8t = self.ctx.i8();
+        let i64t = self.ctx.i64();
+        let ptr = self.pty();
+        let bytes = *self
+            .structs
+            .get("Bytes")
+            .ok_or_else(|| no_value("the builtin 'Bytes' layout"))?;
+        let string = *self
+            .structs
+            .get("String")
+            .ok_or_else(|| no_value("the builtin 'String' layout"))?;
+        let view = *self
+            .structs
+            .get("View")
+            .ok_or_else(|| no_value("the builtin 'View' layout"))?;
+
+        let body = |symbol: &str| -> Result<LlvmFunction<'a>, String> {
+            let rt = self.rt(symbol)?;
+            rt.func.as_value().set_internal_linkage();
+            rt.func.mark_optnone();
+            let bb = rt.func.append_block("entry");
+            self.builder.position_at_end(bb);
+            Ok(rt.func)
+        };
+        let len_of = |agg: Type<'a>, self_p: Value<'a>| -> Value<'a> {
+            self.ld(i64t, self.fld(agg, self_p, L_LEN, "len"), "len")
+        };
+        let cap_of = |agg: Type<'a>, self_p: Value<'a>| -> Value<'a> {
+            self.ld(i64t, self.fld(agg, self_p, L_CAP, "cap"), "cap")
+        };
+        let data_of = |agg: Type<'a>, self_p: Value<'a>| -> Value<'a> {
+            self.ld(ptr, self.fld(agg, self_p, L_DATA, "data"), "data")
+        };
+
+        // --- kelp_buf_reserve(data_p, len, cap_p, extra) ---
+        {
+            let f = body("kelp_buf_reserve")?;
+            let data_p = f.get_param(0);
+            let len = f.get_param(1);
+            let cap_p = f.get_param(2);
+            let extra = f.get_param(3);
+            let cap = self.ld(i64t, cap_p, "cap");
+            let need = self
+                .builder
+                .build_int_binop(IntBinOp::Add, len, extra, "need");
+            let fits = self.builder.build_icmp(IntCmp::Ule, need, cap, "fits");
+            let grow = self.block(f, "grow");
+            let done = self.block(f, "reserve.done");
+            self.builder.build_cond_br(fits, done, grow);
+            self.builder.position_at_end(grow);
+
+            let want_slot = self.builder.build_alloca(i64t, "want");
+            let no_cap = self.builder.build_icmp(IntCmp::Eq, cap, self.v_i64(0), "cap0");
+            let want0 = self
+                .builder
+                .build_select(no_cap, self.v_i64(8), cap, "want0");
+            self.st(want0, want_slot);
+            let doubling = self.loop_header(f, "want.cond");
+            let w = self.ld(i64t, want_slot, "want");
+            let more = self.builder.build_icmp(IntCmp::Ult, w, need, "more");
+            let next_want = self.block(f, "want.double");
+            let ready = self.block(f, "want.ready");
+            self.builder.build_cond_br(more, next_want, ready);
+            self.builder.position_at_end(next_want);
+            let doubled = self
+                .builder
+                .build_int_binop(IntBinOp::Mul, w, self.v_i64(2), "want2");
+            self.st(doubled, want_slot);
+            self.builder.build_br(doubling);
+            self.builder.position_at_end(ready);
+            let want = self.ld(i64t, want_slot, "want");
+            let new_bytes = self
+                .builder
+                .build_int_binop(IntBinOp::Add, want, self.v_i64(1), "new.bytes");
+
+            let old = self.ld(ptr, data_p, "old");
+            let no_old = self
+                .builder
+                .build_icmp(IntCmp::Eq, old, self.ctx.const_null(ptr), "old.null");
+            let p_slot = self.builder.build_alloca(ptr, "buf");
+            let fresh = self.block(f, "reserve.fresh");
+            let reuse = self.block(f, "reserve.reuse");
+            let store = self.block(f, "reserve.store");
+            self.builder.build_cond_br(no_old, fresh, reuse);
+
+            self.builder.position_at_end(fresh);
+            let p = self.heap_alloc(new_bytes, 1)?;
+            self.check_alloc(p, f)?;
+            self.st(p, p_slot);
+            self.builder.build_br(store);
+
+            self.builder.position_at_end(reuse);
+            let old_bytes = self
+                .builder
+                .build_int_binop(IntBinOp::Add, cap, self.v_i64(1), "old.bytes");
+            let grown = self.heap_realloc(old, old_bytes, new_bytes, 1, f)?;
+            self.st(grown, p_slot);
+            self.builder.build_br(store);
+
+            self.builder.position_at_end(store);
+            let buf = self.ld(ptr, p_slot, "buf");
+            self.st(buf, data_p);
+            self.st(want, cap_p);
+            let term = self.gep(i8t, buf, len, "term");
+            self.st(self.v_i8(0), term);
+            self.builder.build_br(done);
+
+            self.builder.position_at_end(done);
+            self.builder.build_ret_void();
+        }
+
+        // --- String.empty / Bytes.empty ---
+        for (symbol, agg) in [
+            ("kelp_String__empty", string),
+            ("kelp_Bytes__empty", bytes),
+        ] {
+            let f = body(symbol)?;
+            let dst = f.get_param(0);
+            let p = self.heap_alloc(self.v_i64(1), 1)?;
+            self.check_alloc(p, f)?;
+            self.st(self.v_i8(0), p);
+            self.st(p, self.fld(agg, dst, L_DATA, "data"));
+            self.st(self.v_i64(0), self.fld(agg, dst, L_LEN, "len"));
+            self.st(self.v_i64(0), self.fld(agg, dst, L_CAP, "cap"));
+            self.builder.build_ret_void();
+        }
+
+        // --- String.from_str / Bytes.from_str ---
+        for (symbol, agg) in [
+            ("kelp_String__from_str", string),
+            ("kelp_Bytes__from_str", bytes),
+        ] {
+            let f = body(symbol)?;
+            let dst = f.get_param(0);
+            let s = f.get_param(1);
+            let n = self.emit_cstr_len(f, s)?;
+            let n1 = self
+                .builder
+                .build_int_binop(IntBinOp::Add, n, self.v_i64(1), "n1");
+            let p = self.heap_alloc(n1, 1)?;
+            self.check_alloc(p, f)?;
+            let (memcpy, mty) = self.mem_fn("memcpy")?;
+            self.call(memcpy, mty, &[p, s, n1], "");
+            self.st(p, self.fld(agg, dst, L_DATA, "data"));
+            self.st(n, self.fld(agg, dst, L_LEN, "len"));
+            self.st(n, self.fld(agg, dst, L_CAP, "cap"));
+            self.builder.build_ret_void();
+        }
+
+        // --- String.clone / Bytes.clone ---
+        for (symbol, agg) in [
+            ("kelp_String__clone", string),
+            ("kelp_Bytes__clone", bytes),
+        ] {
+            let f = body(symbol)?;
+            let dst = f.get_param(0);
+            let self_p = f.get_param(1);
+            let n = len_of(agg, self_p);
+            let src = data_of(agg, self_p);
+            let n1 = self
+                .builder
+                .build_int_binop(IntBinOp::Add, n, self.v_i64(1), "n1");
+            let p = self.heap_alloc(n1, 1)?;
+            self.check_alloc(p, f)?;
+            let (memcpy, mty) = self.mem_fn("memcpy")?;
+            self.call(memcpy, mty, &[p, src, n], "");
+            let term = self.gep(i8t, p, n, "term");
+            self.st(self.v_i8(0), term);
+            self.st(p, self.fld(agg, dst, L_DATA, "data"));
+            self.st(n, self.fld(agg, dst, L_LEN, "len"));
+            self.st(n, self.fld(agg, dst, L_CAP, "cap"));
+            self.builder.build_ret_void();
+        }
+
+        // --- String.with_capacity(n) ---
+        {
+            let f = body("kelp_String__with_capacity")?;
+            let dst = f.get_param(0);
+            let n = f.get_param(1);
+            let n1 = self
+                .builder
+                .build_int_binop(IntBinOp::Add, n, self.v_i64(1), "n1");
+            let p = self.heap_alloc(n1, 1)?;
+            self.check_alloc(p, f)?;
+            self.st(self.v_i8(0), p);
+            self.st(p, self.fld(string, dst, L_DATA, "data"));
+            self.st(self.v_i64(0), self.fld(string, dst, L_LEN, "len"));
+            self.st(n, self.fld(string, dst, L_CAP, "cap"));
+            self.builder.build_ret_void();
+        }
+
+        // --- len / is_empty, for both buffers ---
+        for (len_symbol, empty_symbol, agg) in [
+            ("kelp_String__len", "kelp_String__is_empty", string),
+            ("kelp_Bytes__len", "kelp_Bytes__is_empty", bytes),
+        ] {
+            {
+                let f = body(len_symbol)?;
+                let n = len_of(agg, f.get_param(0));
+                self.builder.build_ret(n);
+            }
+            {
+                let f = body(empty_symbol)?;
+                let n = len_of(agg, f.get_param(0));
+                let empty = self.builder.build_icmp(IntCmp::Eq, n, self.v_i64(0), "empty");
+                self.builder.build_ret(empty);
+            }
+        }
+
+        // --- String.as_str / String.view ---
+        {
+            let f = body("kelp_String__as_str")?;
+            let d = data_of(string, f.get_param(0));
+            self.builder.build_ret(d);
+        }
+        {
+            let f = body("kelp_String__view")?;
+            let self_p = f.get_param(0);
+            let d = data_of(string, self_p);
+            let n = len_of(string, self_p);
+            let slot = self.builder.build_alloca(view, "view");
+            self.st(d, self.fld(view, slot, 0, "ptr"));
+            self.st(n, self.fld(view, slot, 1, "len"));
+            let v = self.ld(view, slot, "view");
+            self.builder.build_ret(v);
+        }
+
+        // --- push, for both buffers ---
+        for (symbol, agg) in [
+            ("kelp_String__push", string),
+            ("kelp_Bytes__push", bytes),
+        ] {
+            let f = body(symbol)?;
+            let self_p = f.get_param(0);
+            let byte = f.get_param(1);
+            self.emit_grow_call(f, agg, self_p, self.v_i64(1))?;
+            let n = len_of(agg, self_p);
+            let at = self.gep(i8t, data_of(agg, self_p), n, "at");
+            self.st(byte, at);
+            let next = self
+                .builder
+                .build_int_binop(IntBinOp::Add, n, self.v_i64(1), "len1");
+            self.st(next, self.fld(agg, self_p, L_LEN, "len"));
+            let term = self.gep(i8t, data_of(agg, self_p), next, "term");
+            self.st(self.v_i8(0), term);
+            self.builder.build_ret_void();
+        }
+
+        // --- String.push_str ---
+        {
+            let f = body("kelp_String__push_str")?;
+            let self_p = f.get_param(0);
+            let text = f.get_param(1);
+            let n = self.emit_cstr_len(f, text)?;
+            let none = self.builder.build_icmp(IntCmp::Eq, n, self.v_i64(0), "len0");
+            let ret = self.block(f, "push_str.ret");
+            let copy = self.block(f, "push_str.copy");
+            self.builder.build_cond_br(none, ret, copy);
+            self.builder.position_at_end(copy);
+            let len = len_of(string, self_p);
+            self.emit_grow_call(f, string, self_p, n)?;
+            let dst = self.gep(i8t, data_of(string, self_p), len, "dst");
+            let (memcpy, mty) = self.mem_fn("memcpy")?;
+            self.call(memcpy, mty, &[dst, text, n], "");
+            let next = self
+                .builder
+                .build_int_binop(IntBinOp::Add, len, n, "len1");
+            self.st(next, self.fld(string, self_p, L_LEN, "len"));
+            let term = self.gep(i8t, data_of(string, self_p), next, "term");
+            self.st(self.v_i8(0), term);
+            self.builder.build_br(ret);
+            self.builder.position_at_end(ret);
+            self.builder.build_ret_void();
+        }
+
+        // --- String.reserve ---
+        {
+            let f = body("kelp_String__reserve")?;
+            let self_p = f.get_param(0);
+            let extra = f.get_param(1);
+            self.emit_grow_call(f, string, self_p, extra)?;
+            self.builder.build_ret_void();
+        }
+
+        // --- clear, for both buffers ---
+        for (symbol, agg) in [
+            ("kelp_String__clear", string),
+            ("kelp_Bytes__clear", bytes),
+        ] {
+            let f = body(symbol)?;
+            let self_p = f.get_param(0);
+            self.st(self.v_i64(0), self.fld(agg, self_p, L_LEN, "len"));
+            let d = data_of(agg, self_p);
+            let no_data = self
+                .builder
+                .build_icmp(IntCmp::Eq, d, self.ctx.const_null(ptr), "no.data");
+            let set = self.block(f, "clear.set");
+            let done = self.block(f, "clear.done");
+            self.builder.build_cond_br(no_data, done, set);
+            self.builder.position_at_end(set);
+            self.st(self.v_i8(0), d);
+            self.builder.build_br(done);
+            self.builder.position_at_end(done);
+            self.builder.build_ret_void();
+        }
+
+        // --- Bytes.get / Bytes.set ---
+        {
+            let f = body("kelp_Bytes__get")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let n = len_of(bytes, self_p);
+            self.emit_bounds_check(f, n, i, "Bytes.get: index out of bounds")?;
+            let at = self.gep(i8t, data_of(bytes, self_p), i, "at");
+            let byte = self.ld(i8t, at, "byte");
+            self.builder.build_ret(byte);
+        }
+        {
+            let f = body("kelp_Bytes__set")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let value = f.get_param(2);
+            let n = len_of(bytes, self_p);
+            self.emit_bounds_check(f, n, i, "Bytes.set: index out of bounds")?;
+            let at = self.gep(i8t, data_of(bytes, self_p), i, "at");
+            self.st(value, at);
+            self.builder.build_ret_void();
+        }
+
+        // --- kelp_string_drop / kelp_bytes_drop ---
+        for (symbol, agg) in [
+            ("kelp_string_drop", string),
+            ("kelp_bytes_drop", bytes),
+        ] {
+            let f = body(symbol)?;
+            let self_p = f.get_param(0);
+            let d = data_of(agg, self_p);
+            let cap = cap_of(agg, self_p);
+            let size = self
+                .builder
+                .build_int_binop(IntBinOp::Add, cap, self.v_i64(1), "size");
+            let no_data = self
+                .builder
+                .build_icmp(IntCmp::Eq, d, self.ctx.const_null(ptr), "no.data");
+            let release = self.block(f, "drop.free");
+            let done = self.block(f, "drop.done");
+            self.builder.build_cond_br(no_data, done, release);
+            self.builder.position_at_end(release);
+            self.heap_dealloc(d, size, 1)?;
+            self.builder.build_br(done);
+            self.builder.position_at_end(done);
+            self.builder.build_ret_void();
+        }
+        Ok(())
+    }
+
     /// Emit the five libc memory routines a freestanding image needs and that
     /// LLVM's own lowering of a large aggregate copy assumes: `memcpy`,
     /// `memmove`, `memset`, `memcmp` and `bcmp`, as byte loops with no libc
@@ -10812,6 +11280,30 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(exit);
             let out_v = self.ld(array_ty, out, "fill");
             self.builder.build_ret(out_v);
+        }
+
+        // --- fill_into(dst, v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__fill_into"), "entry")?;
+            let dst = f.get_param(0);
+            let v = f.get_param(1);
+            let v0 = self.fld(array_ty, dst, 0, "v");
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "fill.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, n, "more");
+            let body = self.block(f, "fill.body");
+            let exit = self.block(f, "fill.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let addr = self.gep(elem_ty, v0, i, "at");
+            self.st(v, addr);
+            let next = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            self.st(next, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            self.builder.build_ret_void();
         }
 
         // --- drop(self) ---
@@ -12695,8 +13187,10 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // element, and the pointer is what both backends lay out.
         Ty::Thread(_) => Ok(()),
         // An opaque handle field (gap 1) is one pointer; the frontend allows
-        // it as a field, a local, a parameter and a return.
-        Ty::Handle(_) => Ok(()),
+        // it as a field, a local, a parameter and a return. A `Ptr<T>` field
+        // (kernel stage 13) is the same one-pointer layout: the arena's own
+        // `datac` stores its base this way.
+        Ty::Handle(_) | Ty::Ptr(_) => Ok(()),
         // A borrowed field never reaches codegen at all: the frontend refuses
         // one first (`types::is_borrowed_field_ty`, which names `&str`, `View`
         // and a reference). These three rows are therefore unreachable, and are

@@ -162,27 +162,39 @@ datac Pool(
 // lease by value, so the value is gone afterwards: releasing twice, or using a
 // lease after release, does not compile. That check is the reason to have the
 // pool in Kelp rather than in C — it is the borrow checker's, and it is free.
-datac Lease(val fd: i32, val tls_handle: usize, val reused: bool)
+datac Lease(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, val reused: bool)
 
 // One open connection, plain or TLS. `tls_handle` is the OpenSSL `SSL*` from
-// `tls.handshake`, carried the same way `std/tls` carries it (`usize`,
-// because v1 has no pointer type); `0` is never a handshake's real result
-// (every failure path there panics before one is returned), so it doubles as
-// "this is not TLS" with no separate flag needed.
+// `tls.handshake`, carried as the opaque `tls.TlsHandle`; a plain connection
+// is `None` and a TLS one is `Some`, so there is no integer sentinel and no
+// handle has to be invented for "not TLS".
 //
 // Everywhere this module used to hold a `net.Socket` it holds a `Conn`
 // instead: the dial, the pool, redirect-following and the framing reader
 // (`Cursor`) do not need to know which kind of connection they were handed,
 // because `conn_send_all`/`conn_recv`/`conn_recv_into`/`conn_close` below are
 // the one place that dispatches on it.
-datac Conn(val fd: i32, val tls_handle: usize)
+datac Conn(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>)
 
-fun Conn.is_tls().R: bool = tls_handle != 0
+fun Conn.is_tls().R: bool = when tls_handle {
+    Some(_) -> true
+    None -> false
+}
+
+// The TLS stream over this connection. Only legal after `is_tls()`, which is
+// what every caller below checks first; the `panic` is unreachable and exists
+// only because a handle has no null value to unwrap here.
+fun Conn.tls().R: tls.TlsStream {
+    if let Some(h) = tls_handle {
+        return tls.TlsStream(fd = fd, handle = h)
+    }
+    panic("http: this connection is not TLS")
+}
 
 // Panics: as `tls.write_all`/`net.send_all`.
 fun conn_send_all(c: Conn, data: Bytes).R: usize {
     if c.is_tls() {
-        return tls.write_all(tls.TlsStream(fd = c.fd, handle = c.tls_handle), data)
+        return tls.write_all(c.tls(), data)
     }
     return net.send_all(net.Socket(fd = c.fd), data)
 }
@@ -190,7 +202,7 @@ fun conn_send_all(c: Conn, data: Bytes).R: usize {
 // Panics: as `tls.read`/`net.recv`.
 fun conn_recv(c: Conn, max: usize).R: Bytes {
     if c.is_tls() {
-        return tls.read(tls.TlsStream(fd = c.fd, handle = c.tls_handle), max)
+        return tls.read(c.tls(), max)
     }
     return net.recv(net.Socket(fd = c.fd), max)
 }
@@ -198,7 +210,7 @@ fun conn_recv(c: Conn, max: usize).R: Bytes {
 // Panics: as `tls.read_into`/`net.recv_into`.
 fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize).R: usize {
     if c.is_tls() {
-        return tls.read_into(tls.TlsStream(fd = c.fd, handle = c.tls_handle), buf, at)
+        return tls.read_into(c.tls(), buf, at)
     }
     return net.recv_into(net.Socket(fd = c.fd), buf, at)
 }
@@ -207,7 +219,7 @@ fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize).R: usize {
 // connection was open, so the request may have reached the server.
 fun conn_send_all_try(c: Conn, data: Bytes).R: result.Result<usize, HttpErr> {
     if c.is_tls() {
-        return when tls.try_write_all(tls.TlsStream(fd = c.fd, handle = c.tls_handle), data) {
+        return when tls.try_write_all(c.tls(), data) {
             Ok(n) -> result.Result.Ok(value = n)
             Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = tls.error_text(e)))
         }
@@ -220,7 +232,7 @@ fun conn_send_all_try(c: Conn, data: Bytes).R: result.Result<usize, HttpErr> {
 
 fun conn_recv_try(c: Conn, max: usize).R: result.Result<Bytes, HttpErr> {
     if c.is_tls() {
-        return when tls.try_read(tls.TlsStream(fd = c.fd, handle = c.tls_handle), max) {
+        return when tls.try_read(c.tls(), max) {
             Ok(b) -> result.Result.Ok(value = b)
             Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = tls.error_text(e)))
         }
@@ -233,7 +245,7 @@ fun conn_recv_try(c: Conn, max: usize).R: result.Result<Bytes, HttpErr> {
 
 fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: usize).R: result.Result<usize, HttpErr> {
     if c.is_tls() {
-        return when tls.try_read_into(tls.TlsStream(fd = c.fd, handle = c.tls_handle), buf, at) {
+        return when tls.try_read_into(c.tls(), buf, at) {
             Ok(n) -> result.Result.Ok(value = n)
             Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = tls.error_text(e)))
         }
@@ -252,7 +264,7 @@ fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: usize).R: result.Result<usiz
 // `net.close`.
 fun conn_close(c: Conn) {
     if c.is_tls() {
-        val _ended = tls.try_shutdown(tls.TlsStream(fd = c.fd, handle = c.tls_handle))
+        val _ended = tls.try_shutdown(c.tls())
     }
     net.close(net.Socket(fd = c.fd))
 }
@@ -292,14 +304,14 @@ fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool).R:
     }
     if use_tls {
         return when tls.try_handshake(s, host) {
-            Ok(t) -> result.Result.Ok(value = Conn(fd = t.fd, tls_handle = t.handle))
+            Ok(t) -> result.Result.Ok(value = Conn(fd = t.fd, tls_handle = option.Option.Some(value = t.handle)))
             Err(e) -> {
                 net.close(s)
                 result.Result.Err(error = HttpErr.Dial(reason = tls.error_text(e)))
             }
         }
     }
-    return result.Result.Ok(value = Conn(fd = s.fd, tls_handle = 0))
+    return result.Result.Ok(value = Conn(fd = s.fd, tls_handle = option.Option.None))
 }
 
 // The read cursor for one response: bytes already received, and how far into
@@ -308,11 +320,12 @@ fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool).R:
 // reason `net.Socket` used to be unpacked to `fd: i32` here — because no
 // `datac` is `Copy`, and a parameter is always a borrow: `Cursor(conn = c,
 // ...)` would need to move `c`'s referent out of that borrow to store it,
-// which does not compile. `fd`/`tls_handle` are `i32`/`usize`, both `Copy`,
-// so reading them off the borrow and rebuilding a `Conn` locally in each
-// method below (`Conn(fd = fd, tls_handle = tls_handle)`) costs nothing and
-// needs no move.
-datac Cursor(val fd: i32, val tls_handle: usize, var buf: Bytes, var start: usize)
+// which does not compile. `fd` is `i32` and `tls_handle` is a handle the type
+// system tracks (an `Option`, so its `None` is a real "not TLS" value rather
+// than a sentinel), so reading the two off the borrow and rebuilding a `Conn`
+// locally in each method below (`Conn(fd = fd, tls_handle = tls_handle)`)
+// costs nothing and needs no move.
+datac Cursor(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, var buf: Bytes, var start: usize)
 
 fun Cursor.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 

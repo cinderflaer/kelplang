@@ -1,0 +1,8 @@
+name = "ptrstryalloc"
+
+# Kernel stage 13's fallible allocation: `Ptr.try_alloc<i32>(4)` is an ordinary
+# small allocation, and a count whose byte request cannot be honoured is the
+# null pointer rather than a panic. `main` is on the audit list because the
+# allocation and the writes through its result are unsafe.
+[unsafe]
+modules = ["main"]

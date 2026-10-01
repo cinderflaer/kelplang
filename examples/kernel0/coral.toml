@@ -17,3 +17,11 @@ panic = "kp_panic"
 # `unsafe`, and that is the one module that talks to the device register.
 [unsafe]
 modules = ["uart"]
+
+# Kernel stage 16's mmio grant: a pointer may only be built from an address the
+# module was granted, and the address is the NS16550's register window on
+# QEMU's riscv64 `virt` machine. The entry module holds it and delegates
+# exactly it to `uart`, the one module that names the device
+# (`plan/device-caps.md`).
+[caps]
+mmio = ["0x10000000+0x100"]

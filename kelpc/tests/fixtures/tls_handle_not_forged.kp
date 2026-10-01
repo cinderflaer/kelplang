@@ -1,0 +1,11 @@
+// Release goal 1: the opaque `tls.TlsHandle` has no conversion from an
+// integer, so a handle cannot be forged from one; this is the write half of
+// what makes the `Option<tls.TlsHandle>` in `std/http`/`std/ws` the only way
+// to say "no TLS". Nothing here runs; the rejection is the point.
+impl "std/tls"
+
+fun forge().R: tls.TlsHandle = 0
+
+fun main() {
+    print("unreachable")
+}

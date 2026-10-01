@@ -147,6 +147,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/thread" => include_str!("../std/thread.kp"),
         "std/option" => include_str!("../std/option.kp"),
         "std/result" => include_str!("../std/result.kp"),
+        "std/arena" => include_str!("../std/arena.kp"),
         _ => return None,
     })
 }
@@ -164,7 +165,23 @@ pub fn shipped() -> &'static [&'static str] {
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/http", "std/ws",
         "std/encoding", "std/list", "std/option", "std/result", "std/atomic", "std/thread",
+        "std/arena",
     ]
+}
+
+/// The shipped modules the compiler's own audit list admits to `unsafe`
+/// (kernel stage 13), the stdlib's `[unsafe] modules`. A project's manifest is
+/// the list for its own modules; a module that ships *with* the compiler cannot
+/// ask every project that imports it to write its id, so the compiler keeps the
+/// list itself, and `resolve.rs` admits a module that is on either list. Only
+/// the compiler's source can add an entry here, so a dependency still cannot
+/// grant itself the power (kernel-path rule 1); the list stays short and is
+/// read beside the module it names.
+pub const UNSAFE_MODULES: &[&str] = &["std/arena"];
+
+/// Whether `id` is a shipped module the compiler lists for `unsafe`.
+pub fn may_use_unsafe(id: &str) -> bool {
+    UNSAFE_MODULES.contains(&id)
 }
 
 /// The capability domains of v1 (the plan's "Capability domains"). Each has
@@ -176,10 +193,91 @@ pub fn shipped() -> &'static [&'static str] {
 /// the only grant that means anything is the whole-resource `*`, and
 /// `resolve.rs` refuses every other list. `plan/ffi-display-domain.md` owns
 /// that decision and the per-display vocabulary it waits on.
-pub const DOMAINS: &[&str] = &["fs", "net", "process", "env", "time", "rand", "ui"];
+///
+/// `mmio` is the one domain whose patterns are address *ranges* rather than
+/// names or paths (`"0xBASE+0xLEN"`), and the one the entry module does not
+/// hold by default: a device's address is a fact about the machine, not a
+/// resource the root of trust can be assumed to own, so a grant has to be
+/// written down (`plan/device-caps.md`). `caps(*)` hands over every other
+/// domain's whole resource and deliberately leaves `mmio` out, because the
+/// whole-address-space grant is the escape hatch a reviewer greps for.
+pub const DOMAINS: &[&str] =
+    &["fs", "net", "process", "env", "time", "rand", "ui", "mmio"];
 
 pub fn is_domain(name: &str) -> bool {
     DOMAINS.contains(&name)
+}
+
+/// The `mmio` domain's wildcard: the whole address space. It is the one grant
+/// that admits a `Ptr.from_addr` whose address the compiler cannot fold, and
+/// the line a reviewer greps for to find every module that can reach any
+/// address at all.
+pub const MMIO_ANY: &str = "*";
+
+/// Parses one `mmio` grant pattern, `"0xBASE+0xLEN"`: `BASE` and `LEN` in hex
+/// (`0x`) or decimal, `+` the separator, `LEN` in bytes. Returns `(base, len)`
+/// at `u128` so `base + len` can never wrap: a range that reaches the top of
+/// the address space has to answer for its last byte, not for zero.
+///
+/// A pattern is either the wildcard (checked by the caller, which needs the
+/// whole list to tell the two forms apart) or a range; a bare address, a
+/// missing or empty length, a non-numeric part and a zero length are all
+/// errors, each naming the pattern it read.
+pub fn parse_mmio_range(pattern: &str) -> Result<(u128, u128), String> {
+    let (base, len) = pattern.split_once('+').ok_or_else(|| {
+        format!(
+            "'{pattern}' is not an mmio range - write 'BASE+LEN' ('0x10000000+0x100'), both in hex or decimal"
+        )
+    })?;
+    let base = parse_mmio_number(base)
+        .ok_or_else(|| format!("the base in the mmio range '{pattern}' is not a number"))?;
+    let len = parse_mmio_number(len)
+        .ok_or_else(|| format!("the length in the mmio range '{pattern}' is not a number"))?;
+    if len == 0 {
+        return Err(format!(
+            "the mmio range '{pattern}' has zero length - LEN counts bytes and must be at least 1"
+        ));
+    }
+    Ok((base, len))
+}
+
+/// One side of an `mmio` range: `0x`/`0X` for hex, otherwise decimal digits.
+/// No sign, no whitespace, no underscores: the grammar is small on purpose so
+/// a range cannot mean one thing to a reviewer and another to the compiler.
+fn parse_mmio_number(text: &str) -> Option<u128> {
+    if text.is_empty() {
+        return None;
+    }
+    let (digits, radix) = match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => (hex, 16),
+        None => (text, 10),
+    };
+    if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+        return None;
+    }
+    u128::from_str_radix(digits, radix).ok()
+}
+
+/// Whether two parsed ranges share any byte. `len` is non-zero by
+/// construction, so an empty intersection means disjoint.
+pub fn mmio_ranges_overlap(a: (u128, u128), b: (u128, u128)) -> bool {
+    a.0 < b.0 + b.1 && b.0 < a.0 + a.1
+}
+
+/// Whether a module's `mmio` patterns admit `addr`. A `*` admits every
+/// address; otherwise `addr` has to fall inside one half-open range,
+/// `[base, base + len)`, so `base + len - 1` is inside and `base + len` is
+/// not. Order does not matter and ranges are disjoint (the grant is validated
+/// before it is stored), so the first match wins.
+pub fn mmio_covers(patterns: &[String], addr: u128) -> bool {
+    patterns.iter().any(|pattern| {
+        if pattern == MMIO_ANY {
+            return true;
+        }
+        parse_mmio_range(pattern)
+            .map(|(base, len)| addr >= base && addr < base + len)
+            .unwrap_or(false)
+    })
 }
 
 /// The domain a stdlib module's items are gated on, if it is a gated module.
@@ -392,7 +490,10 @@ mod tests {
 
     #[test]
     fn the_domain_list_names_every_domain_once() {
-        assert_eq!(DOMAINS, &["fs", "net", "process", "env", "time", "rand", "ui"]);
+        assert_eq!(
+            DOMAINS,
+            &["fs", "net", "process", "env", "time", "rand", "ui", "mmio"]
+        );
         let mut sorted = DOMAINS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -407,10 +508,78 @@ mod tests {
     }
 
     #[test]
+    fn mmio_is_a_name_domain_with_the_whole_resource_wildcard() {
+        assert!(is_domain("mmio"));
+        assert!(!patterns_are_paths("mmio"));
+        assert_eq!(whole_resource("mmio"), "*");
+    }
+
+    #[test]
+    fn an_mmio_range_reads_hex_or_decimal() {
+        assert_eq!(parse_mmio_range("0x10000000+0x100"), Ok((0x10000000, 0x100)));
+        assert_eq!(parse_mmio_range("0X10000000+0X100"), Ok((0x10000000, 0x100)));
+        assert_eq!(parse_mmio_range("4096+16"), Ok((4096, 16)));
+        assert_eq!(
+            parse_mmio_range("0x3FFFFFF000+0x1000"),
+            Ok((0x3FFFFFF000, 0x1000))
+        );
+    }
+
+    #[test]
+    fn an_mmio_range_refuses_a_bare_address_or_a_zero_length() {
+        assert!(parse_mmio_range("0x10000000").is_err());
+        assert!(parse_mmio_range("0x10000000+0x0").is_err());
+        assert!(parse_mmio_range("+0x100").is_err());
+        assert!(parse_mmio_range("0x10000000+").is_err());
+        assert!(parse_mmio_range("0x10000000+zz").is_err());
+        assert!(parse_mmio_range("0x+0x1").is_err());
+        assert!(parse_mmio_range("1_000+16").is_err());
+        assert!(parse_mmio_range("0x10000000+0x100+0x10").is_err());
+    }
+
+    #[test]
+    fn mmio_ranges_overlap_only_when_they_share_a_byte() {
+        assert!(!mmio_ranges_overlap((0x1000, 0x100), (0x1100, 0x100)));
+        assert!(mmio_ranges_overlap((0x1000, 0x101), (0x1100, 0x100)));
+        assert!(mmio_ranges_overlap((0x1000, 0x100), (0x1080, 0x100)));
+        assert!(mmio_ranges_overlap((0x1000, 0x100), (0x1000, 0x100)));
+    }
+
+    #[test]
+    fn mmio_covers_the_half_open_range_and_the_wildcard() {
+        let granted = vec!["0x10000000+0x100".to_string()];
+        assert!(mmio_covers(&granted, 0x10000000));
+        assert!(mmio_covers(&granted, 0x100000FF));
+        assert!(!mmio_covers(&granted, 0x10000100));
+        assert!(!mmio_covers(&granted, 0x0FFFFFFF));
+        assert!(mmio_covers(&[MMIO_ANY.to_string()], 0xDEADBEEF));
+    }
+
+    #[test]
     fn a_ui_call_names_no_resource_to_match() {
         // No argument at a display call names the display server, which is
         // why `ui` is granted as the wildcard only (plan/ffi-display-domain.md).
         assert!(checked_args("ui", "gtk_window_new", &[false, false]).is_empty());
         assert!(checked_args("ui", "gtk_window_set_title", &[false, true]).is_empty());
+    }
+
+    #[test]
+    fn the_tls_handle_of_a_connection_is_an_option_not_a_usize() {
+        // Release goal 1: `std/http` and `std/ws` used a `tls_handle: usize`
+        // whose `0` meant "not TLS"; an opaque `extern type` has no integer
+        // value, so both carry `Option<tls.TlsHandle>` and `None` is that
+        // value. `Conn` is internal to the two modules, so the field's type
+        // is checked where it is written rather than through a program.
+        for module in ["std/http", "std/ws"] {
+            let text = source(module).expect("a shipped module has source");
+            assert!(
+                text.contains("tls_handle: option.Option<tls.TlsHandle>"),
+                "{module} no longer carries an Option<tls.TlsHandle>"
+            );
+            assert!(
+                !text.contains("tls_handle: usize"),
+                "{module} still carries the raw usize handle"
+            );
+        }
     }
 }

@@ -1,0 +1,7 @@
+name = "ptrtryallocoutsideunsafe"
+
+# The module is on the audit list, so it may contain `unsafe`, but the
+# `Ptr.try_alloc` call below is written outside any block: the call site is what
+# the checker refuses.
+[unsafe]
+modules = ["main"]

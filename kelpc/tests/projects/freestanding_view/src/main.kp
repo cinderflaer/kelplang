@@ -1,0 +1,7 @@
+// `View` is a borrowed slice the hosted runtime carries; a freestanding build
+// refuses it by name.
+fun kmain() {
+    val v = "kelp".view()
+    if v.len() == 4 {
+    }
+}

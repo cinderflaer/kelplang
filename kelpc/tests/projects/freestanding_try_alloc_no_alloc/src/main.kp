@@ -1,0 +1,11 @@
+// Without an allocator configured, the fallible allocation has nothing to call:
+// the freestanding check refuses `Ptr.try_alloc` by name with the keys whose
+// absence is why.
+section(".text.boot") fun kmain() {
+    unsafe {
+        val p: Ptr<u8> = Ptr.try_alloc<u8>(16)
+        if p.is_null() {
+            return
+        }
+    }
+}

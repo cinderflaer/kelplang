@@ -1,0 +1,31 @@
+// Two allocations out of a local 256-byte region, each written and read back
+// through its own `Ptr<u8>`, then a `reset` and an `alloc_zeroed` at the first
+// block's address: the two zeros prove the fresh block was cleared over the 170
+// the first user wrote.
+impl "std/arena"
+
+fun main() {
+    var buf: [u8; 256] = [0; 256]
+    val bp: Ptr<[u8; 256]> = Ptr.from_ref(&buf)
+    val base: Ptr<u8> = bp.cast<u8>()
+    var a: arena.Arena = arena.new(base = base, cap = 256)
+
+    val p: Ptr<u8> = a.alloc(size = 4, align = 4)
+    val q: Ptr<u8> = a.alloc(size = 4, align = 4)
+    unsafe {
+        p.write(170)
+        q.write(187)
+        print(p.read())
+        print(q.read())
+    }
+    print(q.addr() % 4 == 0)
+    print(p.addr() != q.addr())
+
+    a.reset()
+    val z: Ptr<u8> = a.alloc_zeroed(size = 4, align = 4)
+    unsafe {
+        print(z.read())
+        print(z.offset(1).read())
+    }
+    print(z.addr() == p.addr())
+}

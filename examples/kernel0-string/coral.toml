@@ -1,0 +1,24 @@
+name = "kernel0-string"
+
+# Kernel stage 12: `String` and `Bytes` on the project allocator. The manifest
+# is kernel 0's with the same allocator hook as `kernel0-heap`, plus a naming
+# `realloc` so buffer growth takes the fast path. `main` is on the audit list
+# because the allocator writes a `static mut` arena and reads a `Ptr<u8>`.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+realloc = "realloc"
+
+[unsafe]
+modules = ["main", "uart"]
+
+# Kernel stage 16's mmio grant: the NS16550's register window, held by the
+# entry module and delegated to `uart`, the one module that builds a pointer
+# from the device's address (`plan/device-caps.md`).
+[caps]
+mmio = ["0x10000000+0x100"]

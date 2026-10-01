@@ -6397,6 +6397,28 @@ fn tls_fixture_stdout(name: &str, args: &[String], env: &[(&str, &str)]) -> Stri
 }
 
 #[test]
+fn a_tls_handle_cannot_be_read_as_an_integer() {
+    // Release goal 1: `TlsStream.handle` is the opaque `tls.TlsHandle`, so the
+    // `usize` the module used to carry is gone and any integer use is a type
+    // error. `std/tls` is compiler-shipped, so the fixture names the handle
+    // with no `[extern.*]` section of its own.
+    assert_rejected_with(
+        "tests/fixtures/tls_handle_not_an_integer.kp",
+        "cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'usize'",
+    );
+}
+
+#[test]
+fn a_tls_handle_cannot_be_forged_from_an_integer() {
+    // The other direction: no conversion from an integer to a handle exists,
+    // so "no TLS" cannot be spelled `0` at a handle's type.
+    assert_rejected_with(
+        "tests/fixtures/tls_handle_not_forged.kp",
+        "declared to return 'std.tls.TlsHandle' but body evaluates to 'i32'",
+    );
+}
+
+#[test]
 fn every_try_tls_operation_succeeds_against_a_local_server() {
     // The Ok path of `try_handshake`, `try_write`, `try_write_all`,
     // `try_read`, `try_read_into` and `try_shutdown`. `SSL_CERT_FILE` is the
@@ -11842,6 +11864,95 @@ fn kernel0_heap_boots_and_balances_its_allocations() {
     );
 }
 
+/// Kernel stage 12's acceptance build: `examples/kernel0-string` builds a
+/// `String` from a literal and through `str.concat`/`str.from_u64`, clones and
+/// grows it, and grows a `Bytes` past several doublings, all on the project's
+/// allocator. The `llvm-nm` line is the claim: no `strlen`, no `memcpy`, no
+/// `malloc`/`realloc`/`free` may appear as undefined, and the IR must call the
+/// project's own allocator and no libc allocation.
+///
+/// It needs `ld.lld` and `llvm-nm` from `dev-kernel.nix`.
+#[test]
+fn kernel0_string_builds_on_the_project_allocator_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the kernel0-string build test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("kernel0_string");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("../examples/kernel0-string"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the kernel0-string build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the kernel0-string image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+
+    let ir = std::fs::read_to_string(bin.with_extension("ll"))
+        .expect("the LLVM backend writes textual IR beside the object");
+    for symbol in ["@kelp_alloc(", "@kelp_realloc(", "@kelp_dealloc("] {
+        assert!(
+            ir.contains(symbol),
+            "the buffer bodies should call the project allocator through '{symbol}'"
+        );
+    }
+    for symbol in [
+        "call ptr @malloc",
+        "call ptr @realloc",
+        "call void @free",
+        "call i64 @strlen",
+    ] {
+        assert!(
+            !ir.contains(symbol),
+            "a freestanding build must not call libc's '{symbol}'"
+        );
+    }
+}
+
+/// Kernel stage 12's acceptance boot: `examples/kernel0-string` concatenates,
+/// formats an integer and grows a `Bytes`, prints four lines through the NS16550
+/// UART, and prints `balanced` only when every allocation reached a matching
+/// free. The lines are QEMU's own stdout, not the source's.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_string_boots_and_prints_its_text_over_the_uart() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-string boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "kernel0_string",
+        &fixture("../examples/kernel0-string"),
+        &["s: hello kelp!", "n: 12345", "b: 300", "balanced"],
+    );
+}
+
 /// `List` with no `[target] alloc`/`dealloc` is refused exactly as before, with
 /// a message that names the two keys whose absence is why.
 #[test]
@@ -11852,11 +11963,40 @@ fn a_freestanding_list_without_an_allocator_is_refused() {
     );
 }
 
-/// An allocator does not make `String` available: its storage still reaches the
-/// hosted runtime, and the refusal names it through `List<String>`.
+/// Without an allocator `String` stays refused, with the message that names the
+/// two manifest keys whose absence is why (kernel stage 12).
 #[test]
-fn a_freestanding_string_is_refused_even_with_an_allocator() {
-    assert_rejected_with("tests/projects/freestanding_alloc_string", "'String'");
+fn a_freestanding_string_without_an_allocator_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_string_no_alloc",
+        "'String', which is unavailable in a freestanding build",
+    );
+}
+
+/// An allocator makes `String` legal, but a method with no libc-free lowering
+/// is still refused by name at the call rather than left to the linker.
+#[test]
+fn a_freestanding_string_method_outside_the_libc_free_set_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_alloc_string",
+        "needs the hosted runtime",
+    );
+}
+
+/// `str.from_f64`'s formatting is `snprintf`, so a float is refused by name
+/// even when the allocator makes `String` legal.
+#[test]
+fn a_freestanding_float_format_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/projects/freestanding_string_float",
+        "needs the hosted runtime",
+    );
+}
+
+/// `View` stays refused in a freestanding build, with or without an allocator.
+#[test]
+fn a_freestanding_view_is_refused() {
+    assert_rejected_with("tests/projects/freestanding_view", "'View'");
 }
 
 /// `alloc` and `dealloc` are required together: naming one alone is a manifest
@@ -12496,5 +12636,396 @@ fn only_a_tls_program_links_openssl() {
     assert!(
         tls.iter().any(|l| l.contains("-lssl") && l.contains("-lcrypto")),
         "a program that reaches std/tls did not link OpenSSL: {tls:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Kernel stage 13 (MK9-S5-M3): the fallible `Ptr.try_alloc` and the shipped
+// `std/arena`. The hosted halves run on both backends (each run of the suite is
+// pointed at one); the freestanding halves are LLVM-only by design and need
+// `ld.lld`, `llvm-nm` and `qemu-system-riscv64` from `dev-kernel.nix`.
+// ---------------------------------------------------------------------------
+
+/// The arena's hosted behaviour: the returned addresses are aligned (`base` is a
+/// plain array with no alignment of its own, so the arena has to account for
+/// where it starts), a request that does not fit and a size whose aligned end
+/// would wrap both answer the null pointer, and `reset` makes the region
+/// reusable. No `unsafe` is written in the fixture, so both backends build it.
+#[test]
+fn an_arena_bumps_with_alignment_and_reuses_after_reset() {
+    assert_compiles_and_runs(
+        "tests/fixtures/arena_bump.kp",
+        "false\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n0\ntrue\nfalse\n",
+    );
+}
+
+/// A non-power-of-two `align` is refused at the call with the arena's own
+/// message rather than handing back a misaligned pointer.
+#[test]
+fn an_arena_rejects_a_non_power_of_two_alignment() {
+    assert_fixture_panics("arena_bad_align", "arena align must be a power of two");
+}
+
+/// The arena over real memory: both pointers are written and read back, and
+/// `alloc_zeroed` clears a block the previous user wrote. `main` is on the
+/// audit list because the writes go through a raw `Ptr<u8>`.
+#[test]
+fn an_arena_hands_out_writable_aligned_memory_and_zeroes_on_request() {
+    assert_project_runs(
+        "arena_memory",
+        &project("arena_memory"),
+        "170\n187\ntrue\ntrue\n0\n0\ntrue\n",
+    );
+}
+
+/// `Ptr.try_alloc` is the non-panicking twin: a small request is non-null and
+/// writable, and a count whose byte request no allocator can honour is the null
+/// pointer instead of a call to the panic handler.
+#[test]
+fn try_alloc_is_fallible_where_alloc_would_panic() {
+    assert_project_runs(
+        "ptrs_try_alloc",
+        &project("ptrs_try_alloc"),
+        "false\n42\ntrue\nfalse\n",
+    );
+}
+
+/// `Ptr.try_alloc` carries the same `unsafe` requirement as `Ptr.alloc`, so a
+/// call outside any block is refused by name even in a module the manifest
+/// lists.
+#[test]
+fn try_alloc_outside_unsafe_is_refused() {
+    assert_project_rejected(
+        "ptr_try_alloc_outside_unsafe",
+        &project("ptr_try_alloc_outside_unsafe"),
+        "'Ptr.try_alloc' is an unsafe operation",
+    );
+}
+
+/// In a freestanding build the hook behind `Ptr.try_alloc` is the project's own
+/// allocator, so without a `[target] alloc`/`dealloc` pair the call is refused
+/// with the two keys that would make it available.
+#[test]
+fn try_alloc_without_a_freestanding_allocator_is_refused() {
+    assert_project_rejected(
+        "freestanding_try_alloc_no_alloc",
+        &project("freestanding_try_alloc_no_alloc"),
+        "'[target] alloc' and '[target] dealloc'",
+    );
+}
+
+/// The freestanding arena's build claim: `std/arena` and its `unsafe` block
+/// compile into a riscv64 image that references no undefined symbol, and the
+/// project configures no allocator at all, which is what proves the module is
+/// pure pointer arithmetic. Needs `ld.lld` and `llvm-nm`.
+#[test]
+fn freestanding_arena_builds_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding arena build test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_arena");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_arena"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding arena build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding arena image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
+/// The freestanding arena's boot: a `static mut [u8; 4096]` region carved into
+/// aligned allocations, written and read through the returned pointers, with
+/// the exhaustion and overflow answers, all read from QEMU's own serial output.
+#[test]
+fn freestanding_arena_boots_and_prints_its_lines() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding arena boot test: 'ld.lld' or 'qemu-system-riscv64' is \
+             not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_arena",
+        &project("freestanding_arena"),
+        &[
+            "p0 aligned 1",
+            "p1 aligned 1",
+            "ordered 1",
+            "used seen 1",
+            "remain seen 1",
+            "read 170",
+            "exhaust 1",
+            "wrap 1",
+            "reset 0",
+            "zero 0",
+        ],
+    );
+}
+
+/// The freestanding `try_alloc`'s build claim: with `[target] alloc`/`dealloc`
+/// naming the project's own bump allocator, no libc `malloc` is left behind.
+#[test]
+fn freestanding_try_alloc_builds_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding try_alloc build test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_try_alloc");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_try_alloc"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding try_alloc build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding try_alloc image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
+/// The freestanding `try_alloc`'s boot: a normal request comes back non-null,
+/// aligned and writable through the project allocator, and an absurd count comes
+/// back null. QEMU's serial output is the assertion, so this proves the hook was
+/// actually called.
+#[test]
+fn freestanding_try_alloc_boots_and_prints_its_lines() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding try_alloc boot test: 'ld.lld' or 'qemu-system-riscv64' \
+             is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_try_alloc",
+        &project("freestanding_try_alloc"),
+        &["ptr 0", "align 0", "val 1234", "huge 1"],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Kernel stage 14 (MK9-S7-M2), the stack half: the freestanding `probe-stack`
+// attribute and the guard page. The first test is the object-only claim that a
+// frame larger than a page carries the inline probe; the second is the boot
+// that overflows a small frame and a big one into the same unmapped page.
+// ---------------------------------------------------------------------------
+
+/// Parses a `0x`-prefixed hex word.
+fn parse_hex_word(text: &str) -> Option<usize> {
+    usize::from_str_radix(text.strip_prefix("0x")?, 16).ok()
+}
+
+/// Kernel stage 14's object-only test: `examples/kernel0-stack`'s
+/// `recurse_big` holds a `[u8; 16384]` local, and the freestanding build's
+/// `"probe-stack"="inline-asm"` attribute has to lower its prologue to a page
+/// probe rather than one `sub sp, sp, 16400`. The assertion is on
+/// `llvm-objdump`: at least three probe stores, each preceded by a
+/// page-sized subtraction, which is what lets the guard page catch the frame
+/// instead of the frame stepping over it.
+///
+/// It needs `ld.lld` and `llvm-objdump` from `dev-kernel.nix`.
+#[test]
+fn freestanding_big_frames_probe_every_page() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding probe test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("kernel0_stack_probe");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("../examples/kernel0-stack"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the kernel0-stack build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+
+    // The lowering carries the attribute, so the check has two halves: the IR
+    // says the function was marked, and the object shows the probe it lowers to.
+    let ir = std::fs::read_to_string(bin.with_extension("ll")).expect("the .ll artifact");
+    assert!(
+        ir.contains("\"probe-stack\"=\"inline-asm\""),
+        "the freestanding IR carries no probe-stack attribute"
+    );
+
+    let disassembly = tool(
+        "llvm-objdump",
+        &["-d", "--disassemble-symbols=kelp_recurse_big", path],
+    );
+    // `llvm-objdump` prints the displacement as `0(sp)` or `0x0(sp)` depending
+    // on the build, so the probe is matched by its operands rather than one
+    // exact spelling.
+    let is_probe = |line: &str| {
+        line.contains("\tsd\t") && line.contains("zero, 0") && line.contains("sp)")
+    };
+    let probes = disassembly.lines().filter(|line| is_probe(line)).count();
+    assert!(
+        probes >= 3,
+        "kelp_recurse_big's probe is missing: its disassembly has {probes} probe stores:\n{disassembly}"
+    );
+    // A single `sub sp, sp, 16400` with no probe store would mean the 16 KiB
+    // frame stepped over the guard in one instruction.
+    assert!(
+        disassembly.lines().filter(|line| line.contains("sub\tsp, sp,")).count() >= 3,
+        "kelp_recurse_big builds its frame in fewer than three page steps:\n{disassembly}"
+    );
+}
+
+/// Kernel stage 14's acceptance boot: `examples/kernel0-stack` runs two phases
+/// over one trap vector. Phase a recurses with a 16-byte frame until the frame
+/// that crosses `__stack_bottom` stores into the guard page; phase b is entered
+/// by the handler, which restored `sp` to the top of the kernel stack, and its
+/// one 16 KiB frame probes down into the same page. The handler prints the
+/// `scause` and `stval` of each fault and says so, so the test can assert both
+/// addresses are inside the guard page the boot printed.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_stack_overflows_into_the_guard_page() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-stack boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let captured = boot_and_capture(
+        &RISCV64_QEMU,
+        "kernel0_stack",
+        &fixture("../examples/kernel0-stack"),
+        &|got| got.contains("stack: halted"),
+    );
+    for line in [
+        "stack: m-mode",
+        "stack: paging on",
+        "stack: phase a",
+        "stack: stval in guard",
+        "stack: phase b",
+        "stack: stval in guard",
+        "stack: halted",
+    ] {
+        assert!(
+            captured.lines().any(|got| got == line),
+            "the serial output of kernel0-stack has no line '{line}':\n{captured}"
+        );
+    }
+
+    // The kernel's own `in guard` line is one check; this is the independent
+    // one: parse the guard bounds the boot printed and the two `stval`s, and
+    // require each fault address to lie in the hole.
+    let bounds: Vec<usize> = captured
+        .lines()
+        .find(|line| line.starts_with("stack: guard "))
+        .and_then(|line| {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            Some(vec![parse_hex_word(words.get(2)?)?, parse_hex_word(words.get(3)?)?])
+        })
+        .expect("the boot printed no `stack: guard <lo> <hi>` line");
+    let (lo, hi) = (bounds[0], bounds[1]);
+    let faults: Vec<usize> = captured
+        .lines()
+        .filter(|line| line.starts_with("stack overflow: scause "))
+        .filter_map(|line| {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let at = words.iter().position(|w| *w == "stval")?;
+            parse_hex_word(words.get(at + 1)?)
+        })
+        .collect();
+    assert_eq!(
+        faults.len(),
+        2,
+        "expected one fault per phase, got {}:\n{captured}",
+        faults.len()
+    );
+    for fault in &faults {
+        assert!(
+            *fault >= lo && *fault < hi,
+            "a fault at {fault:#x} is outside the guard page [{lo:#x}, {hi:#x}):\n{captured}"
+        );
+    }
+}
+
+/// Kernel stage 14's other half of "hosted builds are unchanged": a hosted
+/// function carries no `probe-stack` attribute, so the probe is a freestanding
+/// lowering and not a change to every build. The IR is the LLVM backend's
+/// artifact, so this check is LLVM-only.
+#[test]
+fn hosted_functions_carry_no_stack_probe() {
+    if backend() == "c" {
+        println!("skipping the hosted probe check: the C backend writes no IR artifact");
+        return;
+    }
+    let bin = out_path("hosted_no_probe");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("tests/fixtures/array_basic.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the hosted build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let ir = std::fs::read_to_string(bin.with_extension("ll")).expect("the .ll artifact");
+    assert!(
+        !ir.contains("probe-stack"),
+        "a hosted build carries the freestanding probe-stack attribute"
     );
 }

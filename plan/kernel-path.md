@@ -38,7 +38,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
 | 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation (done: `plan/syscall-abi.md`) | Userspace |
 | 10 | **MK9-S7-M2, MK9-S6-M2** (B-14, B-15) | stack guards and probing; panic semantics with no OS | A kernel that fails loudly instead of silently |
-| 11 | **MK10-S1** (C-3) | MMIO regions, IRQ lines, frames as *capabilities* | The safety story: a driver can only touch what it was granted |
+| 11 | **MK10-S1** (C-3) | MMIO regions (done), IRQ lines and frames (next) as *capabilities* | The safety story: a driver can only touch what it was granted |
 
 Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one thing.
 
@@ -150,12 +150,47 @@ manifest may name `alloc`, `dealloc` and an optional `realloc` in `[target]`, an
 `Box<T>`, `List<T>` and `Map<V>` of allowed element types then allocate and free
 through them instead of libc, on the LLVM backend that freestanding mode is.
 Without the pair the three containers are refused exactly as before, with a
-message that names the keys; `String`/`Bytes`/`View`/`Thread` stay refused
-either way. A failed allocation reaches the project's panic handler with "out of
-memory". `examples/kernel0-heap` is the idiom: a bump allocator over a
-`static mut` arena, a `List<i32>` of 1..=10, and a counting wrapper that prints
-`balanced` when every allocation reached a matching free. Arenas as a language
-feature and a fallible allocation surface are not in this stage.
+message that names the keys; `View`/`Thread` stay refused either way. A failed
+allocation reaches the project's panic handler with "out of memory".
+`examples/kernel0-heap` is the idiom: a bump allocator over a `static mut`
+arena, a `List<i32>` of 1..=10, and a counting wrapper that prints `balanced`
+when every allocation reached a matching free. Arenas as a language feature and
+a fallible allocation surface are not in this stage.
+
+**Row 7's `String`/`Bytes` half is done too** (MK9-S5-M2,
+`plan/freestanding-string.md`): with an allocator configured, `String` and
+`Bytes` become legal and the operations a kernel needs - the constructors, the
+length and byte accessors, `push`/`push_str`, `clone`, `reserve`, `clear`,
+`str.concat` and the integer-to-text builders, and drop - are emitted as
+libc-free byte loops into the object, growing by doubling through the project's
+`realloc` when one is named and alloc + copy + dealloc otherwise. Every other
+`String`/`Bytes`/`std/str` operation is refused at the call with "needs the
+hosted runtime" (including `str.from_f64`), so nothing is left for the linker to
+report. `examples/kernel0-string` is the acceptance: it concatenates, formats
+an integer, grows a `Bytes` past several doublings, prints four lines through
+the UART under QEMU and proves `ALLOCS == DEALLOCS`; `llvm-nm -u` stays clean.
+Without an allocator `String`/`Bytes` stay refused, and `View`/`Thread` stay
+refused either way.
+
+**Row 7's arena and fallible-allocation halves are done too** (MK9-S5-M3,
+`plan/arena.md`): `Ptr.try_alloc<T>(count)` is `Ptr.alloc`'s non-panicking twin,
+`unsafe` and aligned for `T`, libc's `malloc` on both hosted backends and the
+manifest's own `[target] alloc` in a freestanding image, with a byte count that
+would wrap `usize` answered by the null pointer rather than a short block. The
+shipped `std/arena` is a bump arena over a caller-owned byte region, written in
+Kelp with no libc call, so it is legal in a hosted program and in a freestanding
+image with no allocator at all: `alloc(size, align)` aligns the returned
+*address*, returns the null `Ptr<u8>` when the padded end would exceed `cap` or
+wrap, and panics on a non-power-of-two `align`; `reset`, `used` and `remaining`
+are the rest. `alloc_zeroed` writes through the returned pointer, which is why
+`std/arena` is the first shipped module on the compiler's own `[unsafe]` list
+(`stdlib::UNSAFE_MODULES`, consulted by `resolve.rs` beside the manifest's). The
+acceptance is a hosted pair of fixtures/projects on both backends plus two
+riscv64 freestanding projects under QEMU - one carving a `static mut [u8; 4096]`
+arena with no allocator, one proving `Ptr.try_alloc` reaches the project's own
+allocator - both with `llvm-nm -u` clean. Layouting a `Ptr<T>` `datac` field was
+the one compiler-side change the arena needed; it is the same one-pointer reply
+the opaque handle already had.
 
 **Row 8's per-CPU half is done** (MK9-S3-M3, `plan/percpu.md`): a freestanding
 project may write `percpu static mut NAME: T = INIT`, and a manifest's
@@ -172,11 +207,30 @@ reads the other copy by setting `tp = 1` by hand, and asserts the four lines
 from QEMU's stdout. A per-CPU allocator or run queue is still a kernel design,
 not this stage.
 
-**What the next stages need.** `defer`/`Drop` (row 6), the allocator hook (row 7), per-CPU
-storage (row 8) and mapping plus the syscall ABI (row 9) are all done. What remains is arenas and
-a fallible allocation surface (row 7), stack guards and panic semantics with no OS (row 10), the
-panic semantics being what turn a check that fires into a diagnostic instead of a bare `panic`
-byte, and MMIO regions and IRQ lines as capabilities (row 11).
+**Row 11's MMIO half is done** (MK10-S1, roadmap C-3, `plan/device-caps.md`):
+the capability model now reaches devices. A new `mmio` domain takes a list of
+half-open address ranges (`caps(mmio = ["0x10000000+0x100"])`) or the whole
+address space as `["*"]`, and a freestanding `Ptr.from_addr` is a compile error
+unless the module holds a grant that covers the address a constant expression
+names, or holds `["*"]` for an address the compiler cannot fold. The grant lives
+where every other domain's does, except that the entry module does **not** hold
+`mmio` by default: the address of a device is a fact about the machine, so it
+has to be written down in the manifest's `[caps]` section and delegated to a
+driver with `impl "uart" caps(mmio = [...])`. `caps(*)` deliberately skips
+`mmio`, so the whole-address-space escape hatch is always visible. Every
+`examples/kernel0*` manifest grew a `[caps]` section and every driver its grant,
+and all thirteen still boot under QEMU; `kelpc/tests/mmio.rs` covers the
+accepting and refusing shapes with `kelpc check` (front end only, no `ld.lld`).
+The check is on the address a pointer is *born* at, so an offset applied later
+is not revisited; IRQ lines and physical frames are the rest of the row and are
+not in this stage.
+
+**What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
+arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall
+ABI (row 9) and the stack half of row 10 (guards and probing) are all done, and so is row 11's
+MMIO half. What remains is the panic semantics with no OS (the other half of row 10), which turn
+a check that fires into a diagnostic instead of a bare `panic` byte, and the IRQ-line and
+physical-frame halves of row 11.
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps
@@ -216,6 +270,18 @@ load page fault while the kernel prints the cause and keeps running. No compiler
 needed, and what the stage leaves out is the process model: no scheduler, one process at a time,
 no preemption or timer interrupt, no `fork`, no TLB shootdown, no ASIDs, no huge-page *creation*,
 no Sv48 and no per-section (W^X) identity map.
+
+**Row 10's stack half is done** (MK9-S7-M2, `plan/stack-guard.md`): every function a freestanding
+LLVM build emits carries `probe-stack="inline-asm"`, so a frame larger than a page touches each
+page in order and a guard page catches the overflow instead of the frame stepping over it;
+hosted builds carry no attribute. `examples/kernel0-stack` is the acceptance: an Sv39 riscv64
+kernel whose kernel stack sits above an unmapped guard page, with a 16 KiB trap stack below the
+hole. One boot recurses with a small frame into the guard, the S-mode handler reports `scause`
+and `stval` on that stack and resumes a second phase at the top of the kernel stack, and that
+phase overflows the same guard with one `[u8; 16384]` frame. What the example forced is a
+lowering fix: `[v; N]` now fills the local's own slot in place (`{array}__fill_into`) rather than
+returning the array by value, because LLVM's instcombine exhausted memory folding the by-value
+store of a frame-sized array at `-O2`. The panic-semantics half of the row is still open.
 
 ## Two rules that keep the language honest
 

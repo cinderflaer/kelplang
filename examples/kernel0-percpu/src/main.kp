@@ -10,7 +10,7 @@
 // the register the kernel set. The second hart is parked by the compiler's
 // `_start` stub before it touches memory, so this stage does not bring a
 // second hart up.
-impl "uart"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 percpu static mut SLOT: usize = 7
 

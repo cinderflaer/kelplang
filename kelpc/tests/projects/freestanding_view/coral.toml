@@ -1,0 +1,11 @@
+name = "freestandingview"
+
+# Kernel stage 12's rejection fixture: `View` stays refused in a freestanding
+# build, with or without an allocator, because its accessors are only the
+# compiler's lowering for the five `str` operations and not a surface a program
+# holds.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

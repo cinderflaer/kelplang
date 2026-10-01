@@ -26,6 +26,11 @@
 //!   alloc`/`dealloc` name the project's own allocator (kernel stage 7,
 //!   MK9-S5-M1), because then every allocation and free those containers make
 //!   calls the project's functions instead of libc's;
+//! - `String` and `Bytes` with the same allocator (kernel stage 12,
+//!   MK9-S5-M2), narrowed to the operations the LLVM backend lowers as libc-free
+//!   byte loops (`ALLOWED_STRING_METHODS`/`ALLOWED_BYTES_METHODS`, plus
+//!   `str.concat` and the integer builders); every other method is refused at
+//!   the call with "needs the hosted runtime";
 //! - `extern fun` declared in a module with its own `[extern."<id>"]` section,
 //!   so a project can bind a native symbol it will place itself;
 //! - arithmetic, including the overflow and bounds checks: in this mode they
@@ -35,12 +40,12 @@
 //! And what is refused, each naming the construct:
 //!
 //! - `print`/`print!` (a `Template`), which is `printf`;
-//! - `String`, `Bytes`, `View` and `Thread`, whose storage is the hosted C
-//!   runtime's (and `String`/`Bytes` reach `strlen`/`memcpy`/`realloc`), so
-//!   they stay refused even with an allocator configured; and `List`, `Map` and
-//!   `Box` when no `[target] alloc`/`dealloc` pair is configured, since their
-//!   storage is the runtime allocator's; and therefore any `std/*` module not
-//!   on the list above, and every `std/str` function other than the five;
+//! - `View` and `Thread`, whose storage is the hosted C runtime's, so they stay
+//!   refused whatever the manifest says; `String`/`Bytes` without an allocator,
+//!   and `List`, `Map` and `Box` when no `[target] alloc`/`dealloc` pair is
+//!   configured, since their storage is the runtime allocator's; and therefore
+//!   any `std/*` module not on the list above, and every `std/str` function
+//!   other than the listed subset;
 //! - passdowns (`pd`), whose initializers run through the generated
 //!   `kelp_init_pds` that only the hosted entry point calls.
 //!
@@ -63,8 +68,10 @@ use crate::types::Ty;
 /// The `std/*` modules a freestanding program may reach: the ones that are pure
 /// Kelp or a compiler builtin, with no libc call and no allocation behind them.
 /// Every other shipped module is refused, by name, when it is part of the
-/// program.
-pub const ALLOWED_STD_MODULES: &[&str] = &["std/atomic", "std/option", "std/result"];
+/// program. `std/arena` (kernel stage 13) is pure pointer arithmetic and needs
+/// no allocator, so it joins the three pure modules.
+pub const ALLOWED_STD_MODULES: &[&str] =
+    &["std/atomic", "std/option", "std/result", "std/arena"];
 
 /// The one module that is allowed to be *part* of a freestanding program while
 /// only some of its functions are callable, and the ones that are. A `str` is a
@@ -74,13 +81,66 @@ pub const ALLOWED_STD_MODULES: &[&str] = &["std/atomic", "std/option", "std/resu
 /// exposes (`concat`, `split`, `join`, `parse_i64`, `from_f64`, `trim`, ...)
 /// allocates, formats or parses, so the call-site check refuses each by name.
 pub const STD_STR: &str = "std/str";
-pub const ALLOWED_STD_STR_FUNCTIONS: &[&str] = &["len", "byte", "eq", "starts_with", "ptr"];
+pub const ALLOWED_STD_STR_FUNCTIONS: &[&str] =
+    &["len", "byte", "eq", "starts_with", "ptr", "concat", "from_u64", "from_i64"];
 
-/// The `std/str` functions `prune` keeps by name: the public five plus the
-/// private helper `starts_with` reaches. Every `extern fun` in the module is
-/// kept as well, because the five lower to them.
-const EMITTED_STD_STR_FUNCTIONS: &[&str] =
-    &["len", "byte", "eq", "starts_with", "starts_with_at", "ptr"];
+/// The `String` methods a freestanding build lowers itself, through the project
+/// allocator (kernel stage 12, MK9-S5-M2). Every other method on the type needs
+/// the hosted runtime, because its body is a `strlen`/`memcpy`/`realloc` call
+/// or a formatting primitive; the call-site check refuses each by name.
+/// `with_capacity`, `reserve` and `clear` are the buffer primitives `concat`
+/// and the integer builders are written on top of, so they are here too.
+pub const ALLOWED_STRING_METHODS: &[&str] = &[
+    "empty",
+    "from_str",
+    "len",
+    "is_empty",
+    "as_str",
+    "clone",
+    "push",
+    "push_str",
+    "reserve",
+    "with_capacity",
+    "clear",
+];
+
+/// The `Bytes` methods a freestanding build lowers itself. Same rule as the
+/// `String` list: anything that has no libc-free body (the endian accessors are
+/// compiled, but `as_str`'s UTF-8 validation and `append`'s growth are not on
+/// this stage's list) is refused by name at the call.
+pub const ALLOWED_BYTES_METHODS: &[&str] = &[
+    "empty",
+    "from_str",
+    "len",
+    "is_empty",
+    "get",
+    "set",
+    "push",
+    "clone",
+    "reserve",
+    "clear",
+];
+
+/// The `std/str` functions `prune` keeps by name: the five operations, the
+/// private helper `starts_with` reaches, and the three bodies that build an
+/// owned `String`. Every `extern fun` in the module is kept as well, because
+/// the five lower to them.
+const EMITTED_STD_STR_FUNCTIONS: &[&str] = &[
+    "len",
+    "byte",
+    "eq",
+    "starts_with",
+    "starts_with_at",
+    "ptr",
+    "concat",
+    "from_u64",
+    "from_i64",
+];
+
+/// The three `std/str` bodies that build an owned `String`, so they are kept
+/// only when the manifest configured an allocator: without one, a kept body
+/// would reference `kelp_String__*` symbols the project cannot define.
+const STRING_BUILDER_STD_STR_FUNCTIONS: &[&str] = &["concat", "from_u64", "from_i64"];
 
 /// The `std/*` modules that may be *part* of a freestanding program without
 /// being callable. `std/str` is narrowed to its five operations at each call
@@ -252,7 +312,11 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
     for f in &program.functions {
         module_of.entry(f.name.as_str()).or_insert(f.module.as_str());
     }
-    let checker = Checker { module_of, heap_ok };
+    let checker = Checker {
+        module_of,
+        heap_ok,
+        caps: project.caps(),
+    };
 
     // The program's own declarations first, so a construct in the program is
     // reported by its own name rather than behind the std module it reaches
@@ -364,9 +428,10 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
 /// Every function the program itself declares is kept, as is every function of
 /// an allowed module, so the only thing that disappears is dead code in the two
 /// present modules. The five operations, the helper they use and the three
-/// `extern` primitives they call are kept by name; a kept `std/str` body can
-/// reach nothing else.
-pub fn prune(program: &mut ast::Program) {
+/// `extern` primitives they call are kept by name, plus `concat`/`from_u64`/
+/// `from_i64` when an allocator is configured; a kept `std/str` body can reach
+/// nothing else.
+pub fn prune(program: &mut ast::Program, allocator: bool) {
     program.functions.retain(|f| {
         if !f.module.starts_with("std/") {
             return true;
@@ -379,7 +444,12 @@ pub fn prune(program: &mut ast::Program) {
         }
         // An `extern fun` is a declaration the module's own bodies may call; a
         // pruned body leaves it unused, and an unused declaration is no symbol.
-        f.extern_ || EMITTED_STD_STR_FUNCTIONS.contains(&bare_name(&f.name))
+        if f.extern_ {
+            return true;
+        }
+        let name = bare_name(&f.name);
+        EMITTED_STD_STR_FUNCTIONS.contains(&name)
+            && (allocator || !STRING_BUILDER_STD_STR_FUNCTIONS.contains(&name))
     });
 }
 
@@ -394,7 +464,7 @@ fn bare_name(name: &str) -> &str {
 /// `None`. Each of these is a direct call into the hosted runtime that no
 /// module lookup would catch, because the name is a builtin rather than a
 /// declaration in a shipped module.
-fn unavailable_builtin(name: &str) -> Option<&'static str> {
+fn unavailable_builtin(name: &str, heap_ok: bool) -> Option<&'static str> {
     match name {
         "print" | "print!" => Some("it writes through the hosted runtime's 'printf'"),
         // The builtin `panic` is *not* here: codegen lowers it to a call to the
@@ -402,10 +472,15 @@ fn unavailable_builtin(name: &str) -> Option<&'static str> {
         // routed (see `Codegen::panic_fn`).
         "assert" => Some("it calls the hosted runtime's 'kelp_assert'"),
         // `Ptr<T>` is allowed; the allocator behind `Ptr.alloc`/`Ptr.free` is
-        // not, because it is the hosted `malloc`/`free`. A kernel's own frame
-        // allocator arrives in a later stage (MK9-S5).
+        // not, because it is the hosted `malloc`/`free`.
         "Ptr#alloc" => Some("it allocates through the hosted runtime's 'malloc'"),
         "Ptr#free" => Some("it frees through the hosted runtime's 'free'"),
+        // `Ptr.try_alloc` (kernel stage 13) lowers to the project's own
+        // allocator, so it is exactly as available as `Box`/`List`/`Map` are:
+        // only with the manifest's `[target] alloc`/`dealloc` pair.
+        "Ptr#try_alloc" if !heap_ok => Some(
+            "it needs an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions",
+        ),
         _ => None,
     }
 }
@@ -422,13 +497,25 @@ fn unavailable(message: String, span: Span, module: impl Into<String>) -> Diagno
 /// here.
 ///
 /// `heap_ok` is whether the manifest configured an `alloc`/`dealloc` pair: with
-/// one, `Box`, `List` and `Map` are allowed and the walk descends into their
-/// element types, because a `List<String>` still reaches the hosted runtime.
-/// `String`, `Bytes`, `View` and `Thread` are refused whatever `heap_ok` is.
+/// one, `Box`, `List`, `Map`, `String` and `Bytes` are allowed and the walk
+/// descends into their element types, because a `List<String>` still reaches the
+/// hosted runtime. `View` and `Thread` are refused whatever `heap_ok` is.
 fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
     match ty {
-        Ty::String => Some("String"),
-        Ty::Bytes => Some("Bytes"),
+        Ty::String => {
+            if heap_ok {
+                None
+            } else {
+                Some("String")
+            }
+        }
+        Ty::Bytes => {
+            if heap_ok {
+                None
+            } else {
+                Some("Bytes")
+            }
+        }
         Ty::View => Some("View"),
         Ty::Thread(_) => Some("Thread"),
         Ty::List(inner) => {
@@ -462,13 +549,17 @@ fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
     }
 }
 
-/// The tail of every heap-type refusal message: a container without an
-/// allocator names the two manifest keys that would let it through, and every
-/// other type stays a plain "unavailable".
+/// The tail of every heap-type refusal message: a type without an allocator
+/// names the two manifest keys that would let it through, and every other type
+/// stays a plain "unavailable".
 fn heap_message(kind: &'static str, heap_ok: bool) -> String {
     if !heap_ok && matches!(kind, "Box" | "List" | "Map") {
         format!(
             "'{kind}', which needs an allocator in a freestanding build: set '[target] alloc' and '[target] dealloc' to the project's own functions"
+        )
+    } else if !heap_ok && matches!(kind, "String" | "Bytes") {
+        format!(
+            "'{kind}', which is unavailable in a freestanding build without an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions"
         )
     } else {
         format!("'{kind}', which is unavailable in a freestanding build")
@@ -525,6 +616,10 @@ struct Checker<'a> {
     /// Whether the manifest configured an `alloc`/`dealloc` pair, which is what
     /// lets `Box`, `List` and `Map` through.
     heap_ok: bool,
+    /// The whole capability table (module -> domain -> patterns), so the
+    /// `mmio` gate can answer what addresses a module was granted at the call
+    /// that builds a pointer (`project.caps()`).
+    caps: &'a HashMap<String, HashMap<String, Vec<String>>>,
 }
 
 impl Checker<'_> {
@@ -586,12 +681,36 @@ impl Checker<'_> {
                 module,
             )),
             ExprKind::Call { callee, args } => {
-                if let Some(reason) = unavailable_builtin(callee) {
+                if callee == "Ptr#from_addr" {
+                    self.check_mmio(args, module, expr.span)?;
+                }
+                if let Some(reason) = unavailable_builtin(callee, self.heap_ok) {
                     return Err(unavailable(
                         format!("'{callee}' is unavailable in a freestanding build: {reason}"),
                         expr.span,
                         module,
                     ));
+                }
+                // A `String`/`Bytes` method not on the libc-free list needs the
+                // hosted runtime's storage (kernel stage 12). The type itself
+                // is legal with an allocator, so without this check an
+                // unsupported method would reach the linker as an undefined
+                // `kelp_rt` symbol; naming it here is the whole point.
+                if let Some((owner, method)) = callee.split_once('#') {
+                    let allowed = match owner {
+                        "String" => ALLOWED_STRING_METHODS.contains(&method),
+                        "Bytes" => ALLOWED_BYTES_METHODS.contains(&method),
+                        _ => true,
+                    };
+                    if !allowed {
+                        return Err(unavailable(
+                            format!(
+                                "the call to '{callee}' is unavailable in a freestanding build: it needs the hosted runtime"
+                            ),
+                            expr.span,
+                            module,
+                        ));
+                    }
                 }
                 if let Some(callee_module) = self.module_of.get(callee.as_str()) {
                     if callee_module.starts_with("std/") {
@@ -599,7 +718,7 @@ impl Checker<'_> {
                             if !ALLOWED_STD_STR_FUNCTIONS.contains(&bare_name(callee)) {
                                 return Err(unavailable(
                                     format!(
-                                        "the call to '{callee}' is unavailable in a freestanding build: 'std/str' has a libc-free lowering only for {}",
+                                        "the call to '{callee}' is unavailable in a freestanding build: it needs the hosted runtime, which 'std/str' reaches for everything but {}",
                                         ALLOWED_STD_STR_FUNCTIONS.join(", ")
                                     ),
                                     expr.span,
@@ -609,7 +728,7 @@ impl Checker<'_> {
                         } else if !ALLOWED_STD_MODULES.contains(callee_module) {
                             return Err(unavailable(
                                 format!(
-                                    "the call to '{callee}' is unavailable in a freestanding build: the module '{callee_module}' reaches the hosted runtime"
+                                    "the call to '{callee}' is unavailable in a freestanding build: the module '{callee_module}' needs the hosted runtime"
                                 ),
                                 expr.span,
                                 module,
@@ -723,5 +842,104 @@ impl Checker<'_> {
                 Ok(())
             }
         }
+    }
+
+    /// The `mmio` gate (kernel stage 16, MK10-S1): in a freestanding build, a
+    /// `Ptr.from_addr` may only name an address the module was granted. The
+    /// address is folded when it is a compile-time constant (`const_addr`)
+    /// and matched against the module's half-open ranges; a non-constant address
+    /// needs the whole-address-space grant `["*"]`, and a module with no grant
+    /// at all is refused before either question is asked.
+    ///
+    /// This is a check on the address a pointer is *born* at. An offset applied
+    /// later (`p.byte_offset(n)`, `p.offset(n)`) is not revisited, and nothing
+    /// here says the address is memory-mapped or that it is not RAM
+    /// (`plan/device-caps.md`).
+    fn check_mmio(&self, args: &[Expr], module: &str, span: Span) -> Result<(), Diagnostic> {
+        let patterns = self
+            .caps
+            .get(module)
+            .and_then(|domains| domains.get("mmio"))
+            .cloned()
+            .unwrap_or_default();
+        if patterns.is_empty() {
+            return Err(unavailable(
+                format!(
+                    "'Ptr.from_addr' needs an 'mmio' grant, and module '{module}' holds none: the manifest's '[caps]' section or the importing `impl` line grants one (`caps(mmio = [\"0x10000000+0x100\"])`)"
+                ),
+                span,
+                module,
+            ));
+        }
+        if patterns.iter().any(|p| p == crate::stdlib::MMIO_ANY) {
+            return Ok(());
+        }
+        let Some(addr) = args.first().and_then(const_addr) else {
+            return Err(unavailable(
+                format!(
+                    "'Ptr.from_addr' takes an address the compiler cannot fold, and module '{module}' holds only the range(s) {}; a computed address needs the whole-address-space grant `caps(mmio = [\"*\"])`",
+                    patterns.join(", ")
+                ),
+                span,
+                module,
+            ));
+        };
+        if crate::stdlib::mmio_covers(&patterns, addr) {
+            return Ok(());
+        }
+        Err(unavailable(
+            format!(
+                "'Ptr.from_addr' would take the address 0x{addr:X}, which no 'mmio' grant of module '{module}' covers (granted: {})",
+                patterns.join(", ")
+            ),
+            span,
+            module,
+        ))
+    }
+}
+
+/// The compile-time value of a `Ptr.from_addr` argument, when the compiler can
+/// fold it: an integer or `char` literal, a `const` (already folded to a
+/// literal by `infer.rs`), and the arithmetic and bitwise operators over
+/// those. Anything else - a local, a parameter, a `static`, a call, an `asm`
+/// result - is not a constant address, and `Checker::check_mmio` says so.
+///
+/// A value is cut to 64 bits after every step, which is what `usize`
+/// arithmetic does on the target, so a folded expression means what the
+/// emitted code would compute rather than what unbounded `i128` arithmetic
+/// would.
+fn const_addr(expr: &Expr) -> Option<u128> {
+    const MASK: u128 = u64::MAX as u128;
+    match &expr.kind {
+        ExprKind::IntLit(v) if *v >= 0 => Some(*v as u128),
+        ExprKind::CharLit(c) => Some(*c as u128),
+        ExprKind::Unary { op, expr } => {
+            let value = const_addr(expr)?;
+            let folded = match op {
+                ast::UnOp::Neg => 0u128.wrapping_sub(value),
+                ast::UnOp::BitNot => !value,
+                ast::UnOp::Not => return None,
+            };
+            Some(folded & MASK)
+        }
+        ExprKind::Binary { op, lhs, rhs } => {
+            let a = const_addr(lhs)?;
+            let b = const_addr(rhs)?;
+            let folded = match op {
+                ast::BinOp::Add => a.wrapping_add(b),
+                ast::BinOp::Sub => a.wrapping_sub(b),
+                ast::BinOp::Mul => a.wrapping_mul(b),
+                ast::BinOp::Div if b != 0 => a / b,
+                ast::BinOp::Mod if b != 0 => a % b,
+                ast::BinOp::BitAnd => a & b,
+                ast::BinOp::BitOr => a | b,
+                ast::BinOp::BitXor => a ^ b,
+                ast::BinOp::Shl if b < 128 => a << b,
+                ast::BinOp::Shr if b < 128 => a >> b,
+                _ => return None,
+            };
+            Some(folded & MASK)
+        }
+        _ => None,
     }
 }

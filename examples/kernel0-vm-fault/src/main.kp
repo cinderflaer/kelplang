@@ -1,6 +1,6 @@
-impl "trap"
-impl "uart"
-impl "vm"
+impl "trap" caps(mmio = ["*"])
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+impl "vm" caps(mmio = ["*"])
 
 // Kernel stage 10, the fault half: the same Sv39 setup as `kernel0-vm`, but
 // the two ways a page can be wrong are taken on purpose and the S-mode trap

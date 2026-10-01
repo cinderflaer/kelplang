@@ -1,8 +1,8 @@
-impl "syscall"
-impl "trap"
-impl "uart"
+impl "syscall" caps(mmio = ["*"])
+impl "trap" caps(mmio = ["*"])
+impl "uart" caps(mmio = ["0x10000000+0x100"])
 impl "user"
-impl "vm"
+impl "vm" caps(mmio = ["*"])
 
 // Kernel stage 11: run a program in user mode and take its `ecall`s.
 //

@@ -3,7 +3,7 @@
 // inline asm in an unsafe block; the handler restores every register it touches,
 // so the compiler may keep values live across it with no clobber list.
 impl "trap"
-impl "uart"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 const DONE: [u8; 5] = [100, 111, 110, 101, 10]
 const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]

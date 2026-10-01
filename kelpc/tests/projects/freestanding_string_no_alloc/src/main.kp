@@ -1,0 +1,5 @@
+// No allocator is configured, so `String` is refused by name.
+fun kmain() {
+    var s: String = String.empty()
+    s.push_str("x")
+}

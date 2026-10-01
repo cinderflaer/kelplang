@@ -1,0 +1,37 @@
+// The NS16550 UART QEMU's riscv64 `virt` machine puts at 0x10000000, the same
+// driver `examples/kernel0` uses: THR (offset 0) is the byte to send, LSR
+// (offset 5) bit 5 is set while the transmit holding register is empty, and
+// every access is a volatile `Ptr<u8>` access. `puts` walks a `str` with the
+// compiler's own `str.len`/`str.byte` byte loops, so no libc is behind it.
+impl "std/str"
+
+const UART_BASE: usize = 0x10000000
+const LSR_OFFSET: usize = 5
+
+pub fun putc(c: u8) {
+    unsafe {
+        val lsr: Ptr<u8> = Ptr.from_addr(UART_BASE + LSR_OFFSET)
+        while (lsr.read_volatile() / 32) % 2 == 0 {}
+        val thr: Ptr<u8> = Ptr.from_addr(UART_BASE)
+        thr.write_volatile(c)
+    }
+}
+
+pub fun puts(s: str) {
+    val n = str.len(s)
+    var i: usize = 0
+    while i < n {
+        putc(str.byte(s, i))
+        i = i + 1
+    }
+}
+
+// `wfi` has no Kelp spelling, and the generated `_start` stub loops on it if
+// the entry returns; this is the same halt written in the language.
+pub fun halt() {
+    while true {
+        unsafe {
+            asm("wfi")
+        }
+    }
+}

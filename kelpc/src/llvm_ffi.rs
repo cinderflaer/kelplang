@@ -71,11 +71,14 @@ use llvm_sys::core::{
     LLVMConstNamedStruct,
     LLVMAppendModuleInlineAsm,
     LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute,
+    LLVMCreateStringAttribute,
     LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
-    LLVMFunctionType, LLVMGetEnumAttributeKindForName, LLVMGetFirstInstruction,
-    LLVMGetIntTypeWidth, LLVMGetMDKindIDInContext, LLVMGetNamedFunction, LLVMGetNextInstruction,
-    LLVMGetParam,
+    LLVMFunctionType, LLVMGetEnumAttributeKindForName, LLVMGetFirstFunction,
+    LLVMGetFirstInstruction,
+    LLVMGetIntTypeWidth, LLVMGetMDKindIDInContext, LLVMGetNamedFunction, LLVMGetNextFunction,
+    LLVMGetNextInstruction,
+    LLVMGetParam, LLVMIsDeclaration,
     LLVMGetInlineAsm,
     LLVMStructTypeInContext,
     LLVMGetTarget, LLVMGetTypeKind,
@@ -1053,6 +1056,49 @@ impl<'ctx> Function<'ctx> {
         self.add_enum_attribute(LLVMAttributeFunctionIndex, "nobuiltin");
     }
 
+    /// Attach LLVM's `probe-stack="inline-asm"` to this function (kernel stage
+    /// 14): a frame larger than one page is built by touching each page in
+    /// order from the top, so a guard page below the stack catches the overflow
+    /// instead of a single `sub sp` stepping over it. The value is a string
+    /// attribute, not an enum kind, so it goes through the string half of the
+    /// attribute API; `inline-asm` is the value that makes the probe a sequence
+    /// of the target's own stores rather than a call to `__probestack`.
+    pub fn mark_probe_stack(&self) {
+        self.add_string_attribute(LLVMAttributeFunctionIndex, "probe-stack", "inline-asm");
+    }
+
+    /// Whether this function is a declaration with no body
+    /// (`LLVMIsDeclaration`): a freestanding probe-stack sweep leaves an
+    /// `extern fun`'s declaration alone because there is no prologue to probe.
+    pub fn is_declaration(&self) -> bool {
+        // SAFETY: the function handle is live and LLVM reads only its own
+        // global-value kind.
+        unsafe { LLVMIsDeclaration(self.raw) != 0 }
+    }
+
+    /// Attach a string attribute named `key` with value `value` at `index`
+    /// (`LLVMCreateStringAttribute`), the string half of the attribute API.
+    /// Unlike an enum attribute the value is part of the attribute, and LLVM
+    /// copies both strings, so the `CString`s only have to outlive the call.
+    fn add_string_attribute(&self, index: LLVMAttributeIndex, key: &str, value: &str) {
+        let key = cstring(key);
+        let value = cstring(value);
+        // SAFETY: both strings are live for this call and LLVM copies them into
+        // the attribute it creates; `index` is a valid function attribute index.
+        let attr = unsafe {
+            LLVMCreateStringAttribute(
+                self.context,
+                key.as_ptr(),
+                key.as_bytes().len() as c_uint,
+                value.as_ptr(),
+                value.as_bytes().len() as c_uint,
+            )
+        };
+        // SAFETY: the function is live and the attribute is owned by the
+        // context both sides share.
+        unsafe { LLVMAddAttributeAtIndex(self.raw, index, attr) };
+    }
+
     /// Attach one enum attribute named `name` at `index`, looking the kind up
     /// by name because `llvm-sys` exports no constant for it (the C API's kind
     /// ids are deliberately unstable).
@@ -1240,6 +1286,27 @@ impl<'ctx> Module<'ctx> {
             raw: unsafe { LLVMAddGlobal(self.raw, ty.as_raw(), name.as_ptr()) },
             context: PhantomData,
         }
+    }
+
+    /// Every function in the module in declaration order
+    /// (`LLVMGetFirstFunction`/`LLVMGetNextFunction`), declarations included.
+    /// The freestanding probe-stack sweep uses this to reach the functions the
+    /// lowering declared through its own helpers, not only the ones the
+    /// front-end loop names.
+    pub fn functions(&self) -> Vec<Function<'ctx>> {
+        let mut functions = Vec::new();
+        // SAFETY: each handle is owned by this module and stays live while the
+        // module does, which the returned lifetimes promise.
+        let mut raw = unsafe { LLVMGetFirstFunction(self.raw) };
+        while !raw.is_null() {
+            functions.push(Function {
+                raw,
+                context: self.context,
+                context_marker: PhantomData,
+            });
+            raw = unsafe { LLVMGetNextFunction(raw) };
+        }
+        functions
     }
 
     /// The function named `name` if the module has one (`LLVMGetNamedFunction`).

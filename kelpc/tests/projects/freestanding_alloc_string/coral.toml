@@ -1,9 +1,9 @@
 name = "freestandingallocstring"
 
-# Kernel stage 7's rejection fixture: an allocator is configured, but `String`
-# still reaches the hosted runtime's `strlen`/`memcpy`/`realloc`, so it stays
-# refused. `List<String>` puts the refusal one level inside a container that the
-# allocator would otherwise allow.
+# Kernel stage 12's rejection fixture: an allocator is configured, so `String`
+# is legal, but only the operations with a libc-free lowering are callable.
+# `char_count` is not one of them, so the call is refused by name rather than
+# left to fail at link.
 [target]
 mode = "freestanding"
 triple = "riscv64-unknown-none-elf"

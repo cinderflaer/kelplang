@@ -1,0 +1,134 @@
+// Kernel stage 12: `String` and `Bytes` in freestanding mode. The allocator is
+// the bump one kernel stage 7 built for `kernel0-heap`, with the optional
+// `realloc` named so buffer growth takes the fast path. Nothing here reaches
+// libc: `str.concat`, the integer builders, `String.push`/`push_str` and
+// `Bytes.push` all lower to byte loops in the object, and every block comes
+// from `alloc`/`realloc` and reaches `dealloc`.
+impl "std/str"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+
+static mut ARENA: [u8; 65536] = [0; 65536]
+static mut USED: usize = 0
+static mut ALLOCS: usize = 0
+static mut DEALLOCS: usize = 0
+
+const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]
+
+// `align` is always a power of two, so the round-up is a divide and multiply:
+// v1 has no bitwise operators.
+fun align_up(value: usize, align: usize).R: usize {
+    return ((value + align - 1) / align) * align
+}
+
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    val out: Ptr<u8> = unsafe {
+        val start: usize = align_up(USED, align)
+        if start + size > 65536 {
+            Ptr.null()
+        } else {
+            USED = start + size
+            ALLOCS = ALLOCS + 1
+            val arena: Ptr<[u8; 65536]> = Ptr.from_mut(ARENA)
+            val base: Ptr<u8> = arena.cast<u8>()
+            base.byte_offset(start.to_isize())
+        }
+    }
+    return out
+}
+
+// The bump allocator frees nothing, so `dealloc` counts only. A null is not an
+// allocation, the same rule `free(NULL)` follows, so it is not counted.
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            DEALLOCS = DEALLOCS + 1
+        }
+    }
+}
+
+// The growth fast path the manifest names: a fresh block, the old bytes copied
+// by hand (no `memcpy`), the old block released.
+fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).R: Ptr<u8> {
+    val fresh: Ptr<u8> = alloc(new, align)
+    if fresh.is_null() {
+        return Ptr.null()
+    }
+    if p.is_null() == false {
+        var i: usize = 0
+        while i < old {
+            unsafe {
+                val src: Ptr<u8> = p.byte_offset(i.to_isize())
+                val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
+                dst.write(src.read())
+            }
+            i = i + 1
+        }
+        dealloc(p, old, align)
+    }
+    return fresh
+}
+
+fun put_str(text: &str) {
+    uart.puts(str.ptr(text), str.len(text))
+}
+
+// The integer "interpolation": `str.from_u64` is the decimal builder written in
+// Kelp, so no `snprintf` is in the image.
+fun put_u64(value: u64) {
+    val text = str.from_u64(value)
+    put_str(text.as_str())
+}
+
+fun newline() {
+    uart.putc(10)
+}
+
+fun build_and_print() {
+    val greeting = str.concat("hello ", "kelp")
+    var shout: String = greeting.clone()
+    shout.push_str("!")
+    put_str("s: ")
+    put_str(shout.as_str())
+    newline()
+
+    put_str("n: ")
+    put_u64(12345)
+    newline()
+
+    // Grow a `Bytes` through several doublings (8 to 512 for 300 pushes) and
+    // touch it through `get`/`set`, so the grow path and the accessors are both
+    // in the image.
+    var bytes: Bytes = Bytes.empty()
+    var i: usize = 0
+    while i < 300 {
+        bytes.push((i % 26 + 65).to_u8())
+        i = i + 1
+    }
+    if bytes.is_empty() == false && bytes.get(0) == 65 {
+        bytes.set(0, 90)
+    }
+    put_str("b: ")
+    put_u64(bytes.len().to_u64())
+    newline()
+}
+
+section(".text.boot") fun kmain() {
+    build_and_print()
+    unsafe {
+        if ALLOCS == DEALLOCS {
+            put_str("balanced")
+            newline()
+        }
+    }
+    uart.halt()
+}
+
+// The handler `[target] panic` names: every bounds check and the allocator's
+// null return call this with the compiler's own message. It prints `panic` and
+// loops, because a check that fired has no meaningful continuation.
+fun kp_panic(_msg: str) {
+    val msg: [u8; 6] = PANIC_MSG
+    val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
+    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.halt()
+}

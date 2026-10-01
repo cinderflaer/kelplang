@@ -3,7 +3,7 @@
 // increments the counter in `unsafe` (a `static mut` is the audited shared
 // state, so its module is on the manifest's `[unsafe] modules` list), and
 // `kmain` prints `counter 3` through the UART and halts.
-impl "uart"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 static mut COUNTER: usize = 0
 static LABEL: [u8; 8] = [99, 111, 117, 110, 116, 101, 114, 32]

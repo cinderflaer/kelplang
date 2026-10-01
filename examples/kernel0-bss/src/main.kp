@@ -11,7 +11,7 @@
 // 64 bytes in the image's loaded `.bss`. The address is then read with inline
 // asm, because the language still has no address-of-const form.
 impl "std/str"
-impl "uart"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 section(".text.boot") fun kmain() {
     unsafe {

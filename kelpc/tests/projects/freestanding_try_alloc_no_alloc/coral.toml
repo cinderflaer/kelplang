@@ -1,0 +1,13 @@
+name = "freestandingtryallocnoalloc"
+
+# A freestanding project with no `[target] alloc`/`dealloc` pair: there is no
+# allocator for `Ptr.try_alloc` to call, so the front end refuses the call and
+# names the two manifest keys that would make it available.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+
+[unsafe]
+modules = ["main"]

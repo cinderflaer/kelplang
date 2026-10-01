@@ -124,7 +124,12 @@ and those changes are described with the gaps.
   `Ptr.from_fn` and the `align(N)` clause. The `interrupt`/calling-convention
   attributes stage 5 deferred stay open, so a trap handler is still a naked
   body the compiler does not understand as a handler.
-- A global allocator hook and arenas (plan stage 7) before anything that allocates at boot.
+- A global allocator hook and arenas (plan stage 7): closed. The manifest's
+  `[target] alloc`/`dealloc`/`realloc` hook (MK9-S5-M1) is what `Box`/`List`/
+  `Map` and `String`/`Bytes` allocate through, `Ptr.try_alloc` (MK9-S5-M3) is the
+  fallible request that answers null instead of panicking, and the shipped
+  `std/arena` (MK9-S5-M3) is a libc-free bump arena over a caller-owned region,
+  usable with no allocator at all (`plan/arena.md`).
 - Per-CPU storage (stage 8) and the MMU/syscall work (stage 9) before userspace.
 - Stack guards, probing and the panic semantics of stage 10, which is what turns gap 3 into a
   real diagnostic.
