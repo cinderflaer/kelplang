@@ -1,0 +1,109 @@
+/* std/arena — a bump arena over a caller-owned byte region (kernel stage 13,
+   MK9-S5-M3).
+
+   An arena is the allocation tool a kernel reaches for first: the caller hands
+   in one region (a `static mut [u8; N]`, a frame, a device buffer) and takes
+   allocations out of it until it is full. `alloc` bumps `used` up to the
+   request's alignment and returns a `Ptr<u8>` into the region, or the null
+   pointer when the request no longer fits. Nothing here allocates, frees or
+   touches libc, so the module is usable in a hosted program and in a
+   freestanding image alike, and it needs no `[target] alloc` pair.
+
+       datac Arena(var base: Ptr<u8>, val cap: usize, var used: usize)
+
+       fun new(base: Ptr<u8>, cap: usize).R: Arena
+       fun mut Arena.alloc(size: usize, align: usize).R: Ptr<u8>
+       fun mut Arena.alloc_zeroed(size: usize, align: usize).R: Ptr<u8>
+       fun mut Arena.reset()
+       fun Arena.used().R: usize
+       fun Arena.remaining().R: usize
+
+   `new` is a module-level function rather than an associated `Arena.new`: the
+   language has no `Type.name(...)` call (a dotted receiver is always a value,
+   and a `fun T.name` declaration is a method with an implicit `self`), so a
+   constructor is reached through the `impl` alias like every other shipped
+   function (`arena.new(base = b, cap = c)`), and the datac's own literal
+   constructor still works.
+
+   `align` must be a power of two; a zero or non-power value panics with "arena
+   align must be a power of two", because every alignment the compiler and a
+   page table ask for is a power of two and a silently wrong one would hand back
+   a misaligned pointer. Alignment is of the *returned address*, not of the
+   offset, so `base` need not be aligned: the padding is computed from
+   `base.addr() % align` as well. The aligned end is computed with `%` and `/`
+   and is refused at each step that could wrap, so a huge `size` is the null
+   pointer rather than a small allocation.
+
+   `alloc_zeroed` is the module's one `unsafe` operation: it writes zeros
+   through the returned raw pointer, which is what a frame allocator wants. That
+   is why `std/arena` is the first shipped module on the compiler's own
+   `[unsafe]` list (`stdlib::UNSAFE_MODULES`); a program that imports it does not
+   have to list it in `coral.toml`. */
+
+datac Arena(var base: Ptr<u8>, val cap: usize, var used: usize)
+
+// An arena over `cap` bytes starting at `base`, with nothing used yet. The
+// caller owns the region; the arena neither validates nor frees it.
+fun new(base: Ptr<u8>, cap: usize).R: Arena {
+    return Arena(base = base, cap = cap, used = 0)
+}
+
+// Bytes handed out so far.
+fun Arena.used().R: usize = used
+
+// Bytes still available at the current bump position, before alignment.
+fun Arena.remaining().R: usize = cap - used
+
+// Make the whole region available again. The bytes are not cleared: a `base`
+// the caller still reads through sees what the previous user wrote, so a caller
+// that cares zeroes with `alloc_zeroed` or writes over it.
+fun mut Arena.reset() {
+    used = 0
+}
+
+// The next `size` bytes, whose address is aligned up to `align`, or the null
+// `Ptr<u8>` when the request would run past `cap` or the aligned end would wrap
+// `usize`. The padding is measured from the *address* the bump position sits
+// at, so a `base` that is not itself `align`-aligned still hands back an
+// aligned pointer; the two remainders are folded with `%` so nothing is added
+// to a raw address.
+fun mut Arena.alloc(size: usize, align: usize).R: Ptr<u8> {
+    if align == 0 || (align & (align - 1)) != 0 {
+        panic("arena align must be a power of two")
+    }
+    val misalign: usize = (base.addr() % align + used % align) % align
+    val padding: usize = (align - misalign) % align
+    if padding > (~0) - used {
+        return Ptr.null()
+    }
+    val start: usize = used + padding
+    if size > (~0) - start {
+        return Ptr.null()
+    }
+    val end: usize = start + size
+    if end > cap {
+        return Ptr.null()
+    }
+    used = end
+    return base.byte_offset(start.to_isize())
+}
+
+// `alloc` for a caller that wants a clean block: the same bump, then the
+// returned bytes written to zero. The write is the module's one `unsafe`
+// operation, and the reason `std/arena` is on the compiler's `[unsafe]` list.
+fun mut Arena.alloc_zeroed(size: usize, align: usize).R: Ptr<u8> {
+    val p: Ptr<u8> = self.alloc(size = size, align = align)
+    if p.is_null() {
+        return p
+    }
+    var q: Ptr<u8> = p
+    var i: usize = 0
+    unsafe {
+        while i < size {
+            q.write(0)
+            q = q.offset(1)
+            i = i + 1
+        }
+    }
+    return p
+}

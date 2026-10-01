@@ -68,8 +68,10 @@ use crate::types::Ty;
 /// The `std/*` modules a freestanding program may reach: the ones that are pure
 /// Kelp or a compiler builtin, with no libc call and no allocation behind them.
 /// Every other shipped module is refused, by name, when it is part of the
-/// program.
-pub const ALLOWED_STD_MODULES: &[&str] = &["std/atomic", "std/option", "std/result"];
+/// program. `std/arena` (kernel stage 13) is pure pointer arithmetic and needs
+/// no allocator, so it joins the three pure modules.
+pub const ALLOWED_STD_MODULES: &[&str] =
+    &["std/atomic", "std/option", "std/result", "std/arena"];
 
 /// The one module that is allowed to be *part* of a freestanding program while
 /// only some of its functions are callable, and the ones that are. A `str` is a
@@ -458,7 +460,7 @@ fn bare_name(name: &str) -> &str {
 /// `None`. Each of these is a direct call into the hosted runtime that no
 /// module lookup would catch, because the name is a builtin rather than a
 /// declaration in a shipped module.
-fn unavailable_builtin(name: &str) -> Option<&'static str> {
+fn unavailable_builtin(name: &str, heap_ok: bool) -> Option<&'static str> {
     match name {
         "print" | "print!" => Some("it writes through the hosted runtime's 'printf'"),
         // The builtin `panic` is *not* here: codegen lowers it to a call to the
@@ -466,10 +468,15 @@ fn unavailable_builtin(name: &str) -> Option<&'static str> {
         // routed (see `Codegen::panic_fn`).
         "assert" => Some("it calls the hosted runtime's 'kelp_assert'"),
         // `Ptr<T>` is allowed; the allocator behind `Ptr.alloc`/`Ptr.free` is
-        // not, because it is the hosted `malloc`/`free`. A kernel's own frame
-        // allocator arrives in a later stage (MK9-S5).
+        // not, because it is the hosted `malloc`/`free`.
         "Ptr#alloc" => Some("it allocates through the hosted runtime's 'malloc'"),
         "Ptr#free" => Some("it frees through the hosted runtime's 'free'"),
+        // `Ptr.try_alloc` (kernel stage 13) lowers to the project's own
+        // allocator, so it is exactly as available as `Box`/`List`/`Map` are:
+        // only with the manifest's `[target] alloc`/`dealloc` pair.
+        "Ptr#try_alloc" if !heap_ok => Some(
+            "it needs an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions",
+        ),
         _ => None,
     }
 }
@@ -666,7 +673,7 @@ impl Checker<'_> {
                 module,
             )),
             ExprKind::Call { callee, args } => {
-                if let Some(reason) = unavailable_builtin(callee) {
+                if let Some(reason) = unavailable_builtin(callee, self.heap_ok) {
                     return Err(unavailable(
                         format!("'{callee}' is unavailable in a freestanding build: {reason}"),
                         expr.span,

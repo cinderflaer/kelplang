@@ -619,9 +619,15 @@ pub fn load(
         // contain an `unsafe` block or an `unsafe fun` only if `coral.toml`
         // lists it, the same shape `[extern.*]` takes. A project with no
         // `[unsafe]` section lists nothing, so it cannot contain `unsafe` at
-        // all and behaves exactly as before this stage.
+        // all and behaves exactly as before this stage. A module *shipped with
+        // the compiler* is admitted by the compiler's own short list instead
+        // (`stdlib::UNSAFE_MODULES`, kernel stage 13): no project should have to
+        // write `"std/arena"` to import it, and only the compiler's source can
+        // add that entry, so a dependency still cannot grant itself the power.
         if let Some((span, _)) = ast::first_unsafe(parsed) {
-            if !loader.unsafe_modules.contains(&m.id) {
+            if !loader.unsafe_modules.contains(&m.id)
+                && !crate::stdlib::may_use_unsafe(&m.id)
+            {
                 return Err(Diagnostic::new(
                     format!(
                         "module '{}' is not listed in coral.toml [unsafe] modules",

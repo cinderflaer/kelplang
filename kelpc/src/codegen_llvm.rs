@@ -5151,6 +5151,52 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.cur = self.g.check_alloc(heap, self.cur_fn)?;
                 Ok(Some(heap))
             }
+            // The fallible twin (kernel stage 13): the allocator's own null is
+            // the result rather than a panic. The byte count is checked for
+            // wrap first, on the same rule `codegen_c.rs::ptr_call` writes as
+            // C, so a huge count never reaches the allocator as a small block;
+            // both outcomes land in one slot so the expression has one value
+            // and the allocator is only called on the non-wrapping path.
+            "try_alloc" => {
+                let elem = result_elem()?;
+                let lty = self.lty(&elem)?;
+                let size = self.g.layout.abi_size_of(lty);
+                let align = self.g.layout.abi_alignment_of(lty) as u64;
+                let count = self.value_of(&args[0])?;
+                let limit = if size == 0 { u64::MAX } else { u64::MAX / size };
+                let over = self.g.builder.build_icmp(
+                    IntCmp::Ugt,
+                    count,
+                    self.g.v_i64(limit),
+                    "try.over",
+                );
+                let bytes = self.g.builder.build_int_binop(
+                    IntBinOp::Mul,
+                    count,
+                    self.g.v_i64(size),
+                    "try.bytes",
+                );
+                let over_bb = self.cur_fn.append_block("try.over");
+                let ok_bb = self.cur_fn.append_block("try.ok");
+                let join_bb = self.cur_fn.append_block("try.join");
+                let slot = self.temp_alloca(self.g.pty(), "try.slot");
+                self.g.builder.build_cond_br(over, over_bb, ok_bb);
+                self.g.builder.position_at_end(over_bb);
+                self.cur = over_bb;
+                self.terminated = false;
+                self.g.builder.build_store(self.g.ctx.const_null(self.g.pty()), slot);
+                self.g.builder.build_br(join_bb);
+                self.g.builder.position_at_end(ok_bb);
+                self.cur = ok_bb;
+                self.terminated = false;
+                let heap = self.g.heap_alloc(bytes, align)?;
+                self.g.builder.build_store(heap, slot);
+                self.g.builder.build_br(join_bb);
+                self.g.builder.position_at_end(join_bb);
+                self.cur = join_bb;
+                self.terminated = false;
+                Ok(Some(self.g.builder.build_load(self.g.pty(), slot, "try.ptr")))
+            }
             "addr" => {
                 let v = self.value_of(&args[0])?;
                 let i64t = self.g.ctx.i64();
@@ -13074,8 +13120,10 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // element, and the pointer is what both backends lay out.
         Ty::Thread(_) => Ok(()),
         // An opaque handle field (gap 1) is one pointer; the frontend allows
-        // it as a field, a local, a parameter and a return.
-        Ty::Handle(_) => Ok(()),
+        // it as a field, a local, a parameter and a return. A `Ptr<T>` field
+        // (kernel stage 13) is the same one-pointer layout: the arena's own
+        // `datac` stores its base this way.
+        Ty::Handle(_) | Ty::Ptr(_) => Ok(()),
         // A borrowed field never reaches codegen at all: the frontend refuses
         // one first (`types::is_borrowed_field_ty`, which names `&str`, `View`
         // and a reference). These three rows are therefore unreachable, and are

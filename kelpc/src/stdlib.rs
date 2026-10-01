@@ -147,6 +147,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/thread" => include_str!("../std/thread.kp"),
         "std/option" => include_str!("../std/option.kp"),
         "std/result" => include_str!("../std/result.kp"),
+        "std/arena" => include_str!("../std/arena.kp"),
         _ => return None,
     })
 }
@@ -164,7 +165,23 @@ pub fn shipped() -> &'static [&'static str] {
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/http", "std/ws",
         "std/encoding", "std/list", "std/option", "std/result", "std/atomic", "std/thread",
+        "std/arena",
     ]
+}
+
+/// The shipped modules the compiler's own audit list admits to `unsafe`
+/// (kernel stage 13), the stdlib's `[unsafe] modules`. A project's manifest is
+/// the list for its own modules; a module that ships *with* the compiler cannot
+/// ask every project that imports it to write its id, so the compiler keeps the
+/// list itself, and `resolve.rs` admits a module that is on either list. Only
+/// the compiler's source can add an entry here, so a dependency still cannot
+/// grant itself the power (kernel-path rule 1); the list stays short and is
+/// read beside the module it names.
+pub const UNSAFE_MODULES: &[&str] = &["std/arena"];
+
+/// Whether `id` is a shipped module the compiler lists for `unsafe`.
+pub fn may_use_unsafe(id: &str) -> bool {
+    UNSAFE_MODULES.contains(&id)
 }
 
 /// The capability domains of v1 (the plan's "Capability domains"). Each has
