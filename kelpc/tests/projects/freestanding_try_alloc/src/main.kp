@@ -4,7 +4,7 @@
 // program prints, and no libc `malloc` is behind it. The heap is a
 // `static mut [u8; 256]` and `dealloc` only counts, because a bump allocator
 // frees nothing.
-impl "uart"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 static mut HEAP: [u8; 256] = [0; 256]
 static mut USED: usize = 0

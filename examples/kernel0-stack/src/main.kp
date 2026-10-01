@@ -1,6 +1,6 @@
-impl "trap"
-impl "uart"
-impl "vm"
+impl "trap" caps(mmio = ["*"])
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+impl "vm" caps(mmio = ["*"])
 
 // Kernel stage 14 (MK9-S7-M2), the stack half: the same Sv39 setup as
 // `kernel0-vm`, but the kernel stack sits directly above an unmapped guard page

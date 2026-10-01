@@ -14,3 +14,11 @@ panic = "kp_panic"
 
 [unsafe]
 modules = ["main", "uart", "vm"]
+
+# Kernel stage 16's mmio grant. `uart` names the NS16550 at a compile-time
+# constant, so it gets exactly that window. `main` and `vm` turn computed
+# addresses (a mapped page, a page-table frame) into pointers, which the
+# compiler cannot fold, so they need the whole-address-space wildcard - the
+# escape hatch a reviewer greps for (`plan/device-caps.md`).
+[caps]
+mmio = ["*"]

@@ -18,3 +18,11 @@ panic = "kp_panic"
 # takes the marker's address.
 [unsafe]
 modules = ["main", "uart"]
+
+# Kernel stage 16's mmio grant. `uart` names the NS16550 at a compile-time
+# constant, so it gets exactly that window. `main` takes the BSS marker's
+# address from inline asm, which the compiler cannot fold, so it needs the
+# whole-address-space wildcard - the escape hatch a reviewer greps for
+# (`plan/device-caps.md`).
+[caps]
+mmio = ["*"]

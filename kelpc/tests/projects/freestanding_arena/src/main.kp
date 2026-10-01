@@ -4,7 +4,7 @@
 // the null answers exhaustion and an overflowing size give, and prints every
 // result over the UART. The manifest configures no allocator: the arena is
 // pure pointer arithmetic, so `std/arena` has to build here without one.
-impl "uart"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
 impl "std/arena"
 
 static mut ARENA: [u8; 4096] = [0; 4096]

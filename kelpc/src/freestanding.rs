@@ -312,7 +312,11 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
     for f in &program.functions {
         module_of.entry(f.name.as_str()).or_insert(f.module.as_str());
     }
-    let checker = Checker { module_of, heap_ok };
+    let checker = Checker {
+        module_of,
+        heap_ok,
+        caps: project.caps(),
+    };
 
     // The program's own declarations first, so a construct in the program is
     // reported by its own name rather than behind the std module it reaches
@@ -612,6 +616,10 @@ struct Checker<'a> {
     /// Whether the manifest configured an `alloc`/`dealloc` pair, which is what
     /// lets `Box`, `List` and `Map` through.
     heap_ok: bool,
+    /// The whole capability table (module -> domain -> patterns), so the
+    /// `mmio` gate can answer what addresses a module was granted at the call
+    /// that builds a pointer (`project.caps()`).
+    caps: &'a HashMap<String, HashMap<String, Vec<String>>>,
 }
 
 impl Checker<'_> {
@@ -673,6 +681,9 @@ impl Checker<'_> {
                 module,
             )),
             ExprKind::Call { callee, args } => {
+                if callee == "Ptr#from_addr" {
+                    self.check_mmio(args, module, expr.span)?;
+                }
                 if let Some(reason) = unavailable_builtin(callee, self.heap_ok) {
                     return Err(unavailable(
                         format!("'{callee}' is unavailable in a freestanding build: {reason}"),
@@ -831,5 +842,104 @@ impl Checker<'_> {
                 Ok(())
             }
         }
+    }
+
+    /// The `mmio` gate (kernel stage 16, MK10-S1): in a freestanding build, a
+    /// `Ptr.from_addr` may only name an address the module was granted. The
+    /// address is folded when it is a compile-time constant (`const_addr`)
+    /// and matched against the module's half-open ranges; a non-constant address
+    /// needs the whole-address-space grant `["*"]`, and a module with no grant
+    /// at all is refused before either question is asked.
+    ///
+    /// This is a check on the address a pointer is *born* at. An offset applied
+    /// later (`p.byte_offset(n)`, `p.offset(n)`) is not revisited, and nothing
+    /// here says the address is memory-mapped or that it is not RAM
+    /// (`plan/device-caps.md`).
+    fn check_mmio(&self, args: &[Expr], module: &str, span: Span) -> Result<(), Diagnostic> {
+        let patterns = self
+            .caps
+            .get(module)
+            .and_then(|domains| domains.get("mmio"))
+            .cloned()
+            .unwrap_or_default();
+        if patterns.is_empty() {
+            return Err(unavailable(
+                format!(
+                    "'Ptr.from_addr' needs an 'mmio' grant, and module '{module}' holds none: the manifest's '[caps]' section or the importing `impl` line grants one (`caps(mmio = [\"0x10000000+0x100\"])`)"
+                ),
+                span,
+                module,
+            ));
+        }
+        if patterns.iter().any(|p| p == crate::stdlib::MMIO_ANY) {
+            return Ok(());
+        }
+        let Some(addr) = args.first().and_then(const_addr) else {
+            return Err(unavailable(
+                format!(
+                    "'Ptr.from_addr' takes an address the compiler cannot fold, and module '{module}' holds only the range(s) {}; a computed address needs the whole-address-space grant `caps(mmio = [\"*\"])`",
+                    patterns.join(", ")
+                ),
+                span,
+                module,
+            ));
+        };
+        if crate::stdlib::mmio_covers(&patterns, addr) {
+            return Ok(());
+        }
+        Err(unavailable(
+            format!(
+                "'Ptr.from_addr' would take the address 0x{addr:X}, which no 'mmio' grant of module '{module}' covers (granted: {})",
+                patterns.join(", ")
+            ),
+            span,
+            module,
+        ))
+    }
+}
+
+/// The compile-time value of a `Ptr.from_addr` argument, when the compiler can
+/// fold it: an integer or `char` literal, a `const` (already folded to a
+/// literal by `infer.rs`), and the arithmetic and bitwise operators over
+/// those. Anything else - a local, a parameter, a `static`, a call, an `asm`
+/// result - is not a constant address, and `Checker::check_mmio` says so.
+///
+/// A value is cut to 64 bits after every step, which is what `usize`
+/// arithmetic does on the target, so a folded expression means what the
+/// emitted code would compute rather than what unbounded `i128` arithmetic
+/// would.
+fn const_addr(expr: &Expr) -> Option<u128> {
+    const MASK: u128 = u64::MAX as u128;
+    match &expr.kind {
+        ExprKind::IntLit(v) if *v >= 0 => Some(*v as u128),
+        ExprKind::CharLit(c) => Some(*c as u128),
+        ExprKind::Unary { op, expr } => {
+            let value = const_addr(expr)?;
+            let folded = match op {
+                ast::UnOp::Neg => 0u128.wrapping_sub(value),
+                ast::UnOp::BitNot => !value,
+                ast::UnOp::Not => return None,
+            };
+            Some(folded & MASK)
+        }
+        ExprKind::Binary { op, lhs, rhs } => {
+            let a = const_addr(lhs)?;
+            let b = const_addr(rhs)?;
+            let folded = match op {
+                ast::BinOp::Add => a.wrapping_add(b),
+                ast::BinOp::Sub => a.wrapping_sub(b),
+                ast::BinOp::Mul => a.wrapping_mul(b),
+                ast::BinOp::Div if b != 0 => a / b,
+                ast::BinOp::Mod if b != 0 => a % b,
+                ast::BinOp::BitAnd => a & b,
+                ast::BinOp::BitOr => a | b,
+                ast::BinOp::BitXor => a ^ b,
+                ast::BinOp::Shl if b < 128 => a << b,
+                ast::BinOp::Shr if b < 128 => a >> b,
+                _ => return None,
+            };
+            Some(folded & MASK)
+        }
+        _ => None,
     }
 }

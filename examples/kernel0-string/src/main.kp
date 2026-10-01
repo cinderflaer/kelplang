@@ -5,7 +5,7 @@
 // `Bytes.push` all lower to byte loops in the object, and every block comes
 // from `alloc`/`realloc` and reaches `dealloc`.
 impl "std/str"
-impl "uart"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 static mut ARENA: [u8; 65536] = [0; 65536]
 static mut USED: usize = 0
