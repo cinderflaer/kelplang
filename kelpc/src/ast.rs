@@ -7,6 +7,10 @@ pub struct Program {
     pub impls: Vec<ImplDecl>,
     /// `const NAME: T = expr` lines, in source order.
     pub consts: Vec<ConstDecl>,
+    /// `static NAME: T = expr` / `static mut NAME: T = expr` lines, in source
+    /// order (kernel stage 7). A static is one object with a stable address,
+    /// unlike a folded `const`.
+    pub statics: Vec<StaticDecl>,
     /// `pd val`/`pd var` lines, in source order (canonical position: after
     /// `impl`, before `datac`/`fun`).
     pub pds: Vec<PdDecl>,
@@ -64,6 +68,27 @@ pub struct ConstDecl {
     /// the object section a top-level integer-array `const` is emitted in, so a
     /// linker script can place it. `None` is the compilers's default section,
     /// which is every const written before this clause existed.
+    pub section: Option<String>,
+    pub span: Span,
+}
+
+/// One `static NAME: T = expr` — a top-level global object (kernel stage 7).
+/// Unlike a `const`, which folds to a literal, a static is one object with a
+/// stable address, so its read is a load and `&NAME` is meaningful.
+#[derive(Debug, Clone)]
+pub struct StaticDecl {
+    pub name: String,
+    /// `pub static ...` (A-13). See `ConstDecl::is_pub`.
+    pub is_pub: bool,
+    /// `static mut NAME` — every access to it is `unsafe`.
+    pub mutable: bool,
+    pub ty: TypeExpr,
+    /// The constant initializer, checked to fold at compile time.
+    pub init: Expr,
+    /// See `DatacDecl::module`.
+    pub module: String,
+    /// The `section("...")` clause, when one was written. See
+    /// `ConstDecl::section`.
     pub section: Option<String>,
     pub span: Span,
 }
@@ -1001,6 +1026,11 @@ pub fn first_unsafe(program: &Program) -> Option<(Span, &'static str)> {
     }
     for c in &program.consts {
         if let Some(span) = first_unsafe_in_expr(&c.init) {
+            return Some((span, "block"));
+        }
+    }
+    for s in &program.statics {
+        if let Some(span) = first_unsafe_in_expr(&s.init) {
             return Some((span, "block"));
         }
     }

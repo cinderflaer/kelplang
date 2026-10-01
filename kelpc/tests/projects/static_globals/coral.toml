@@ -1,0 +1,7 @@
+name = "staticglobals"
+
+# Kernel stage 7: a `static mut` is the audited shared mutable state, so the
+# module that touches one is on the manifest's `[unsafe] modules` list. The
+# immutable statics in the same file need no listing.
+[unsafe]
+modules = ["main"]

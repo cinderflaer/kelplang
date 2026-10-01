@@ -1,0 +1,7 @@
+name = "staticmodule"
+
+# Kernel stage 7: `pub` exports a static across modules exactly as it exports a
+# `const`, and a cross-module `static mut` is unsafe, so both modules that name
+# one are on the audit list.
+[unsafe]
+modules = ["main", "state"]

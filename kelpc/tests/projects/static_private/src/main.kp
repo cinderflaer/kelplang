@@ -1,0 +1,5 @@
+impl "state"
+
+fun main() {
+    print(state.HIDDEN)
+}

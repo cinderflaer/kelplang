@@ -215,6 +215,7 @@ impl Parser {
         self.skip_newlines();
         let mut impls = Vec::new();
         let mut consts = Vec::new();
+        let mut statics = Vec::new();
         let mut pds = Vec::new();
         let mut datacs = Vec::new();
         let mut enums = Vec::new();
@@ -267,17 +268,17 @@ impl Parser {
                     span: self.peek().span,
                 });
             }
-            if section.is_some() && !self.check(&TokenKind::Const) && !self.at_function_decl() {
+            if section.is_some() && !self.check(&TokenKind::Const) && !self.check(&TokenKind::Static) && !self.at_function_decl() {
                 return Err(ParseError {
                     message: format!(
-                        "'section(\"...\")' applies to a top-level 'const' or 'fun', found {:?}",
+                        "'section(\"...\")' applies to a top-level 'const', 'static' or 'fun', found {:?}",
                         self.peek_kind()
                     ),
                     span: self.peek().span,
                 });
             }
             if self.check(&TokenKind::Impl) {
-                if !consts.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
+                if !consts.is_empty() || !statics.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
                         message: "'impl' lines must come first (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
                         span: self.peek().span,
@@ -292,6 +293,14 @@ impl Parser {
                     });
                 }
                 consts.push(self.parse_const_decl(is_pub, section)?);
+            } else if self.check(&TokenKind::Static) {
+                if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
+                    return Err(ParseError {
+                        message: "'static' lines must come before any 'pd', 'datac', 'enum' or 'fun' (canonical order: impl, const/static/pd, datac/enum/fun)".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                statics.push(self.parse_static_decl(is_pub, section)?);
             } else if self.check(&TokenKind::Pd) {
                 if !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
@@ -327,6 +336,7 @@ impl Parser {
         Ok(Program {
             impls,
             consts,
+            statics,
             pds,
             datacs,
             enums,
@@ -374,7 +384,8 @@ impl Parser {
             | TokenKind::Extern
             | TokenKind::Datac
             | TokenKind::Enum
-            | TokenKind::Const => Ok(()),
+            | TokenKind::Const
+            | TokenKind::Static => Ok(()),
             // `pub unsafe fun ...` / `pub naked fun ...`, in either order: both
             // are contextual words, so each is only a marker when `fun` follows
             // the run of them.
@@ -406,7 +417,7 @@ impl Parser {
             }),
             _ => Err(ParseError {
                 message: format!(
-                    "'pub' applies to a top-level 'fun', 'extern fun', 'extern type', 'datac', 'enum' or 'const', found {:?}",
+                    "'pub' applies to a top-level 'fun', 'extern fun', 'extern type', 'datac', 'enum', 'const' or 'static', found {:?}",
                     self.peek_kind()
                 ),
                 span: pub_span.to(self.peek().span),
@@ -427,6 +438,35 @@ impl Parser {
         Ok(ConstDecl {
             name,
             is_pub,
+            ty,
+            init,
+            module: String::new(),
+            section,
+            span,
+        })
+    }
+
+    /// `static NAME: T = expr` / `static mut NAME: T = expr` — a top-level
+    /// global object (kernel stage 7). The type is mandatory, as it is on a
+    /// `const`, and the initializer must fold at compile time.
+    fn parse_static_decl(&mut self, is_pub: bool, section: Option<String>) -> PResult<StaticDecl> {
+        let start = self.expect(TokenKind::Static, "'static'")?.span;
+        let mutable = if self.check(&TokenKind::Mut) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        let (name, _) = self.expect_ident()?;
+        self.expect(TokenKind::Colon, "':' (a 'static' must declare its type)")?;
+        let ty = self.parse_type()?;
+        self.expect(TokenKind::Eq, "'='")?;
+        let init = self.parse_expr()?;
+        let span = start.to(init.span());
+        Ok(StaticDecl {
+            name,
+            is_pub,
+            mutable,
             ty,
             init,
             module: String::new(),
@@ -1499,7 +1539,7 @@ impl Parser {
             // so the message names the forms it can lead (A-13) rather than
             // reading the keyword as a start-of-expression.
             TokenKind::Pub => Err(ParseError {
-                message: "'pub' applies to a top-level 'fun', 'extern fun', 'datac', 'enum' or 'const', and only at the top level of a file".to_string(),
+                message: "'pub' applies to a top-level 'fun', 'extern fun', 'datac', 'enum', 'const' or 'static', and only at the top level of a file".to_string(),
                 span: self.peek().span,
             }),
             _ => {
@@ -2866,10 +2906,27 @@ mod tests {
     fn a_section_clause_on_a_non_const_or_fun_does_not_parse() {
         let err = parse_err("section(\".x\") datac A(val x: i32)");
         assert!(
-            err.message.contains("'const' or 'fun'"),
+            err.message.contains("'const', 'static' or 'fun'"),
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn parses_static_declarations() {
+        let p = parse(
+            "static A: i32 = 1\n\
+             static mut B: [u8; 2] = [1, 2]\n\
+             pub section(\".data.boot\") static mut C: u32 = 0\n",
+        );
+        assert_eq!(p.statics.len(), 3);
+        assert_eq!(p.statics[0].name, "A");
+        assert!(!p.statics[0].mutable);
+        assert_eq!(p.statics[1].name, "B");
+        assert!(p.statics[1].mutable);
+        assert!(p.statics[2].is_pub);
+        assert!(p.statics[2].mutable);
+        assert_eq!(p.statics[2].section.as_deref(), Some(".data.boot"));
     }
 
     #[test]

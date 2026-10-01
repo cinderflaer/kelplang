@@ -539,6 +539,7 @@ impl Checker<'_> {
             | ExprKind::StringLit(_)
             | ExprKind::BoolLit(_)
             | ExprKind::Ident(_)
+            | ExprKind::StaticRef(_)
             | ExprKind::FnRef(_)
             | ExprKind::Capture { .. } => Ok(()),
             ExprKind::ArrayLit(values) => {

@@ -10440,3 +10440,186 @@ fn freestanding_str_builds_the_five_operations_with_no_undefined_symbols() {
         "the NUL scan was rewritten into a libc strlen call:\n{symbols}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Kernel stage 7: global `static` data. A `static` is one object with a stable
+// address, `static mut` is the audited mutable form, and an `Atomic<T>` static
+// is the safe shared mutable. Every run test here passes on the default LLVM
+// backend and on the C oracle, because the suite is run twice; the freestanding
+// and kernel tests are LLVM-only by design and skip in a shell without the
+// tools.
+// ---------------------------------------------------------------------------
+
+/// A `static mut` counter bumped in `unsafe` from more than one function, read
+/// back, addressed with `Ptr.from_mut` and written through, beside an immutable
+/// lookup table and a `datac` static read by field.
+#[test]
+fn static_mut_counter_and_a_lookup_table_run() {
+    assert_project_runs(
+        "static_globals",
+        &project("static_globals"),
+        "5\n50\n100\n1\n2\n100\n4\n8\n",
+    );
+}
+
+/// An `Atomic<i64>` static incremented from two `thread.spawn`ed workers and
+/// read back after both joins: exactly 1000, with no `unsafe`, because an
+/// atomic mutates through a shared borrow.
+#[test]
+fn a_static_atomic_counter_sums_across_two_threads() {
+    assert_project_runs("static_atomic_threads", &project("static_atomic_threads"), "1000\n");
+}
+
+/// A `static mut` read outside `unsafe` is refused, the same way a `Ptr.read`
+/// is: the gate names the object and says what would make it legal.
+#[test]
+fn a_static_mut_read_outside_unsafe_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/static_mut_outside_unsafe.kp",
+        "'static mut C' is an unsafe operation",
+    );
+}
+
+/// A static's initializer must be a constant expression.
+#[test]
+fn a_non_constant_static_initializer_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/static_not_constant.kp",
+        "the initializer is not constant",
+    );
+}
+
+/// A heap type cannot be a static's type.
+#[test]
+fn a_heap_type_static_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/static_heap_type.kp",
+        "'String' cannot be a static's type",
+    );
+}
+
+/// Assigning to an immutable static is refused.
+#[test]
+fn assigning_to_an_immutable_static_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/static_assign_immutable.kp",
+        "cannot assign to 'static X': it is not declared 'static mut'",
+    );
+}
+
+/// The freestanding placement test: a nonzero immutable table lands in
+/// `.rodata`, a nonzero `static mut` in `.data`, and the zero cursor and the
+/// 4096-byte zero buffer in `.bss`. The `NOBITS` `.bss` is what proves the big
+/// zero array does not grow the image, which is the whole reason a static goes
+/// there and a folded `const` cannot.
+///
+/// It needs `ld.lld`, `llvm-readelf` and `llvm-size` from `dev-kernel.nix`.
+#[test]
+fn freestanding_statics_land_in_data_rodata_and_bss() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding statics test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_statics");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_statics"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding statics build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let sections = tool("llvm-readelf", &["-S", path]);
+    let bss = sections
+        .lines()
+        .find(|line| line.contains("] .bss"))
+        .unwrap_or_else(|| panic!("no .bss section:\n{sections}"));
+    assert!(
+        bss.contains("NOBITS"),
+        "the zero statics should be in a NOBITS .bss:\n{bss}"
+    );
+    assert!(
+        sections.lines().any(|line| line.contains("] .data") && line.contains("PROGBITS")),
+        "the nonzero static mut should be in a PROGBITS .data:\n{sections}"
+    );
+    assert!(
+        sections.lines().any(|line| line.contains("] .rodata") && line.contains("PROGBITS")),
+        "the immutable table should be in a PROGBITS .rodata:\n{sections}"
+    );
+
+    let sizes = tool("llvm-size", &[path]);
+    let total = sizes
+        .lines()
+        .find(|line| line.contains("fs.elf") || line.contains("freestanding_statics"))
+        .or_else(|| sizes.lines().last())
+        .unwrap_or_default();
+    let numbers: Vec<u64> = total
+        .split_whitespace()
+        .take(4)
+        .filter_map(|field| field.parse().ok())
+        .collect();
+    assert!(
+        numbers.len() >= 3,
+        "could not read llvm-size's text/data/bss columns:\n{sizes}"
+    );
+    assert_eq!(
+        numbers[1], 8,
+        "the nonzero static mut should be 8 bytes of .data:\n{sizes}"
+    );
+    assert!(
+        numbers[2] >= 4096,
+        "the zero statics should be at least 4096 bytes of .bss:\n{sizes}"
+    );
+}
+
+/// Kernel stage 7's acceptance test: `examples/kernel0-statics` bumps a
+/// `static mut` counter three times in `unsafe` and prints `counter 3` through
+/// the NS16550 UART, then halts. The counter starts in `.bss`, which QEMU's ELF
+/// loader zeroes, so a nonzero line proves the static round trip.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_statics_boots_and_prints_its_counter() {
+    if !have_ld_lld() || !have_qemu() {
+        println!(
+            "skipping the kernel0-statics boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        "kernel0_statics",
+        &fixture("../examples/kernel0-statics"),
+        &["counter 3"],
+    );
+}
+
+/// A `pub static`/`pub static mut` is reached across modules exactly as a
+/// `pub const` is (`state.COUNT`, `state.LIMIT`), and the mutable one is still
+/// `unsafe` on the importing side.
+#[test]
+fn a_public_static_crosses_a_module_boundary() {
+    assert_project_runs("static_module", &project("static_module"), "2\n3\n");
+}
+
+/// A static without `pub` is private to its module, which is the same
+/// visibility gate a `const` goes through.
+#[test]
+fn a_private_static_is_not_reachable_from_another_module() {
+    assert_project_rejected(
+        "static_private",
+        &project("static_private"),
+        "'state.HIDDEN' is private",
+    );
+}

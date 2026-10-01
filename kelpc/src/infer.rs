@@ -292,6 +292,10 @@ struct Ctx {
     /// already folded to a literal — so a use site is a substitution, not a
     /// load from anywhere.
     consts: HashMap<String, ConstInfo>,
+    /// Top-level `static`s (kernel stage 7), keyed by their module-qualified
+    /// name. A static is a real object, so a use site is a `StaticRef` place
+    /// rather than a substitution, and the type and mutability travel with it.
+    statics: HashMap<String, StaticInfo>,
     /// The functions a compile-time fold may call (A-19). Shared rather than
     /// cloned, because a `Ctx` is cloned once per body checked and this table
     /// is the whole program's functions.
@@ -450,6 +454,18 @@ struct Ctx {
     /// The functions declared `unsafe fun`, by canonical key. Calling one
     /// requires `unsafe_depth > 0`.
     unsafe_fns: std::collections::HashSet<String>,
+}
+
+/// One checked `static` (kernel stage 7).
+#[derive(Debug, Clone)]
+struct StaticInfo {
+    /// The module-prefixed name, which is the emitted symbol.
+    qualified: String,
+    /// The bare name a function in the declaring module writes.
+    name: String,
+    ty: Ty,
+    /// `static mut NAME` — every access is `unsafe`.
+    mutable: bool,
 }
 
 /// One checked passdown (M5.2).
@@ -2304,6 +2320,9 @@ fn collect_exports(program: &ast::Program) -> std::collections::HashSet<String> 
     for c in &program.consts {
         export(&c.module, &c.name, c.is_pub);
     }
+    for s in &program.statics {
+        export(&s.module, &s.name, s.is_pub);
+    }
     for f in &program.functions {
         // A method's reachability follows its declaring type, and the parser
         // refuses `pub` on one, so only a free function contributes a key: a
@@ -2341,6 +2360,7 @@ fn declares(key: &str, ctx: &Ctx) -> bool {
         || ctx.enums.contains_key(key)
         || ctx.env.handles.contains(key)
         || ctx.consts.contains_key(key)
+        || ctx.statics.contains_key(key)
         || ctx.sigs.contains_key(key)
         || ctx.env.generics.contains_key(key)
         || ctx.fns.templates.contains_key(key)
@@ -2545,6 +2565,14 @@ fn check_pub_signatures(
         SignatureScope::new(project, &c.module, &c.name, &c.name, &[], &exported, &declared)
             .check_type(&c.ty)
             .map_err(|e| e.in_module(&c.module))?;
+    }
+    for s in &program.statics {
+        if !exported.contains(&s.name) {
+            continue;
+        }
+        SignatureScope::new(project, &s.module, &s.name, &s.name, &[], &exported, &declared)
+            .check_type(&s.ty)
+            .map_err(|e| e.in_module(&s.module))?;
     }
     for f in &program.functions {
         // A method is reached through a value of its declaring type, never
@@ -3649,6 +3677,24 @@ fn require_ptr_unsafe(key: &str, span: Span, ctx: &Ctx) -> Result<()> {
     })
 }
 
+/// Refuses a name that reaches a `static mut` outside an `unsafe` context
+/// (kernel stage 7). The gate fires where the name is resolved, so every way
+/// of touching the object — a read, a write, a field access, a method
+/// receiver or an address — goes through it, exactly as `Ptr`'s unsafe
+/// operations do.
+fn require_static_unsafe(s: &StaticInfo, span: Span, ctx: &Ctx) -> Result<()> {
+    if !s.mutable || ctx.unsafe_depth > 0 {
+        return Ok(());
+    }
+    Err(TypeError {
+        message: format!(
+            "'static mut {}' is an unsafe operation: reading, writing or taking its address can only be done inside 'unsafe {{ ... }}' or in a function declared 'unsafe fun'",
+            s.name
+        ),
+        span,
+    })
+}
+
 /// Whether a method call receiver is a `Ptr`: the bare type name (`Ptr.null()`,
 /// which is an *associated* call) or a value whose type is `Ptr<T>` (which is
 /// what lets `p.cast<u8>()` carry a type argument at all).
@@ -4460,6 +4506,246 @@ fn collect_consts(
 /// The name a module's own source writes for a prefixed top-level item.
 fn bare_name<'a>(qualified: &'a str, prefix: &str) -> &'a str {
     qualified.strip_prefix(prefix).unwrap_or(qualified)
+}
+
+/// Resolves and constant-folds every top-level `static` (kernel stage 7). Runs
+/// before any body is checked, because a body may name a static declared
+/// anywhere in its module and a `pd` initializer may read one. The returned
+/// table is keyed by the module-qualified name, exactly as `consts` is; the
+/// value carries the type and mutability the use site needs, and the folded
+/// initializer is what the backends emit as a global constant.
+fn collect_statics(
+    program: &ast::Program,
+    project: &Project,
+    sigs: &HashMap<String, FnSig>,
+    structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
+    consts: &HashMap<String, ConstInfo>,
+    const_fns: &std::rc::Rc<ConstFns>,
+    owned_structs: &std::collections::HashSet<String>,
+    overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
+    env: &TypeEnv,
+    fns: &FuncEnv,
+) -> std::result::Result<(HashMap<String, StaticInfo>, Vec<tir::Static>), Diagnostic> {
+    let mut table: HashMap<String, StaticInfo> = HashMap::new();
+    let mut out: Vec<tir::Static> = Vec::new();
+    for decl in &program.statics {
+        let prefix = project.prefix_of(&decl.module);
+        let bare = bare_name(&decl.name, prefix).to_string();
+        if table.contains_key(&decl.name)
+            || consts.contains_key(&decl.name)
+            || structs.contains_key(&decl.name)
+            || sigs.keys().any(|k| k == &decl.name)
+        {
+            return Err(Diagnostic::new(
+                format!("'{bare}' is used for both a static and another top-level item"),
+                decl.span,
+                decl.module.clone(),
+            ));
+        }
+        let aliases = project.alias_prefixes_of(&decl.module);
+        let ty = TypeScope {
+            structs,
+            enums,
+            env: env.clone(),
+            params: &EMPTY_PARAMS,
+            prefix,
+            aliases: &aliases,
+            later_datacs: None,
+            in_progress: None,
+            consts: Some(consts),
+            const_fns: Some(const_fns),
+            handles: &env.handles,
+        }
+        .resolve(&decl.ty, false)
+        .map_err(|e| e.in_module(&decl.module))?;
+        check_static_type(&ty, structs)
+            .map_err(|msg| Diagnostic::new(msg, decl.span, decl.module.clone()))?;
+        // A static's initializer is checked as an ordinary expression against
+        // the declared type, so a type error reads the same here as anywhere
+        // else; it is then folded to a constant, and anything that is not one
+        // is refused with its own message rather than silently reaching a
+        // backend that cannot run code at startup. The table holds only the
+        // statics declared *before* this one, so a forward reference is an
+        // undefined name and a backward one is the "not constant" refusal.
+        let mut ctx = base_ctx(
+            &decl.module,
+            sigs,
+            structs,
+            enums,
+            consts,
+            const_fns,
+            owned_structs,
+            overloads,
+            project,
+            &[],
+            None,
+            &HashMap::new(),
+            env,
+            fns,
+            &table,
+        );
+        let value = check_expr(&decl.init, &mut ctx, Some(&ty))
+            .map_err(|e| e.in_module(&decl.module))?;
+        let init = static_init_of(&value, &ty, structs)
+            .map_err(|msg| Diagnostic::new(msg, decl.span, decl.module.clone()))?;
+        let info = StaticInfo {
+            qualified: decl.name.clone(),
+            name: bare,
+            ty: ty.clone(),
+            mutable: decl.mutable,
+        };
+        table.insert(decl.name.clone(), info);
+        out.push(tir::Static {
+            name: decl.name.clone(),
+            ty,
+            mutable: decl.mutable,
+            section: decl.section.clone(),
+            init,
+        });
+    }
+    Ok((table, out))
+}
+
+/// Whether `ty` may be a static's type (kernel stage 7): a `Copy` scalar, an
+/// integer/`bool`/`char` array, a `datac` of those (recursively), or an
+/// `Atomic<T>`. Everything else owns memory, is a borrow or a function value,
+/// or is a shape the linker cannot place as one object.
+fn check_static_type(ty: &Ty, structs: &HashMap<String, StructDef>) -> std::result::Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    check_static_type_inner(ty, structs, &mut seen)
+}
+
+fn check_static_type_inner(
+    ty: &Ty,
+    structs: &HashMap<String, StructDef>,
+    seen: &mut std::collections::HashSet<String>,
+) -> std::result::Result<(), String> {
+    match ty {
+        Ty::Bool | Ty::Char => Ok(()),
+        t if t.is_integer() || t.is_float() => Ok(()),
+        Ty::Atomic(elem) => {
+            if crate::types::is_atomic_element(elem) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "a static cannot hold '{}': an 'Atomic' element is a 'bool' or an integer type",
+                    ty.display()
+                ))
+            }
+        }
+        Ty::Array(elem, _) => {
+            if matches!(**elem, Ty::Bool | Ty::Char) || elem.is_integer() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "an array static's element must be an integer, 'bool' or 'char', not '{}'",
+                    elem.display()
+                ))
+            }
+        }
+        Ty::Struct(name) => {
+            // A `datac` cannot contain itself by value, so `seen` never fires
+            // for a well-formed program; it is a guard against a malformed
+            // table rather than a rule a program can break.
+            if !seen.insert(name.clone()) {
+                return Ok(());
+            }
+            let Some(sd) = structs.get(name) else {
+                return Err(format!("'{}' cannot be a static's type", ty.display()));
+            };
+            for field in &sd.fields {
+                check_static_type_inner(&field.ty, structs, seen)?;
+            }
+            Ok(())
+        }
+        other => Err(format!(
+            "'{}' cannot be a static's type: a static holds a Copy scalar, an integer/'bool'/'char' array, a 'datac' of those, or an 'Atomic<T>' — a heap type, a borrow, a 'View', a function value, a 'Ptr<T>' and an 'extern type' handle are all refused",
+            other.display()
+        )),
+    }
+}
+
+/// Folds one checked initializer into the constant tree the backends emit
+/// (kernel stage 7). The type is already checked against the initializer, so
+/// the only job here is to refuse a shape that would need code to run: a call,
+/// a name, an arithmetic expression, or a static read.
+fn static_init_of(
+    expr: &tir::Expr,
+    ty: &Ty,
+    structs: &HashMap<String, StructDef>,
+) -> std::result::Result<tir::StaticInit, String> {
+    use tir::StaticInit as SI;
+    match ty {
+        Ty::Bool => match &expr.kind {
+            tir::ExprKind::BoolLit(b) => Ok(SI::Bool(*b)),
+            tir::ExprKind::IntLit(v) => Ok(SI::Bool(*v != 0)),
+            _ => Err(not_constant(ty)),
+        },
+        Ty::Char => match &expr.kind {
+            tir::ExprKind::CharLit(c) => Ok(SI::Char(*c)),
+            tir::ExprKind::IntLit(v) => Ok(SI::Char(*v as u32)),
+            _ => Err(not_constant(ty)),
+        },
+        t if t.is_integer() => match &expr.kind {
+            tir::ExprKind::IntLit(v) => Ok(SI::Int(*v)),
+            tir::ExprKind::CharLit(c) => Ok(SI::Int(*c as i128)),
+            _ => Err(not_constant(ty)),
+        },
+        t if t.is_float() => match &expr.kind {
+            tir::ExprKind::FloatLit(v) => Ok(SI::Float(*v)),
+            tir::ExprKind::IntLit(v) => Ok(SI::Float(*v as f64)),
+            _ => Err(not_constant(ty)),
+        },
+        Ty::Array(elem, len) => match &expr.kind {
+            tir::ExprKind::ArrayLit(elems) => {
+                if elems.len() as u64 != *len {
+                    return Err(format!(
+                        "the initializer has {} element(s), but the static's type is an array of {len}",
+                        elems.len()
+                    ));
+                }
+                let mut out = Vec::with_capacity(elems.len());
+                for e in elems {
+                    out.push(static_init_of(e, elem, structs)?);
+                }
+                Ok(SI::Array(out))
+            }
+            tir::ExprKind::ArrayRepeat { value } => Ok(SI::Repeat {
+                value: Box::new(static_init_of(value, elem, structs)?),
+                len: *len,
+            }),
+            _ => Err(not_constant(ty)),
+        },
+        Ty::Struct(name) => match &expr.kind {
+            tir::ExprKind::StructLit { fields, .. } => {
+                let sd = structs
+                    .get(name)
+                    .ok_or_else(|| format!("'{}' cannot be a static's type", ty.display()))?;
+                let mut out = Vec::with_capacity(fields.len());
+                for (i, (_, value)) in fields.iter().enumerate() {
+                    let field_ty = &sd.fields[i].ty;
+                    out.push(static_init_of(value, field_ty, structs)?);
+                }
+                Ok(SI::Struct(out))
+            }
+            _ => Err(not_constant(ty)),
+        },
+        Ty::Atomic(elem) => match &expr.kind {
+            tir::ExprKind::Call { callee, args } if callee == "Atomic#new" && args.len() == 1 => {
+                Ok(SI::Atomic(Box::new(static_init_of(&args[0], elem, structs)?)))
+            }
+            _ => Err(not_constant(ty)),
+        },
+        other => Err(format!("'{}' cannot be a static's type", other.display())),
+    }
+}
+
+fn not_constant(ty: &Ty) -> String {
+    format!(
+        "the initializer is not constant: a '{}' static is initialized with a literal, an array literal or repeat, a datac constructor with constant arguments, 'Atomic.new(<const>)', or another const",
+        ty.display()
+    )
 }
 
 /// The elements of a top-level `const` whose declared type is a fixed-size
@@ -6558,6 +6844,23 @@ fn check_program_pass(
         &enums.values().cloned().collect::<Vec<_>>(),
     );
 
+    // Kernel stage 7: every `static` is resolved and folded before any body or
+    // passdown is checked, because both may name one and the backends need the
+    // folded initializer.
+    let (statics, static_decls) = collect_statics(
+        program,
+        project,
+        &sigs,
+        &structs,
+        &enums,
+        &consts,
+        &const_fns,
+        &owned_structs,
+        &overloads,
+        &env,
+        &fns,
+    )?;
+
     let all_pds = collect_pds(
         program,
         project,
@@ -6570,6 +6873,7 @@ fn check_program_pass(
         &overloads,
         &env,
         &fns,
+        &statics,
     )?;
     let wired = scan_all(program, &all_pds, &structs, &decl_keys);
 
@@ -6617,6 +6921,7 @@ fn check_program_pass(
             &initialized,
             &env,
             &fns,
+            &statics,
         )
         .map_err(|e| e.in_module(&pd.module))?;
         initialized.insert(pd.hidden.clone());
@@ -6657,6 +6962,7 @@ fn check_program_pass(
             wiring,
             &env,
             &fns,
+            &statics,
         )
         .map_err(|e| e.in_module(&f.module))?;
         functions.push(checked);
@@ -6707,6 +7013,7 @@ fn check_program_pass(
             wiring,
             &env,
             &fns,
+            &statics,
         )
         .map_err(|e| e.in_module(&f.module))?;
         functions.push(checked);
@@ -6839,6 +7146,7 @@ fn check_program_pass(
             names
         },
         const_data,
+        statics: static_decls,
     })
 }
 
@@ -6955,6 +7263,7 @@ fn collect_pds(
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     env: &TypeEnv,
     fns: &FuncEnv,
+    statics: &HashMap<String, StaticInfo>,
 ) -> std::result::Result<Vec<PdInfo>, Diagnostic> {
     let mut out: Vec<PdInfo> = Vec::new();
     for (index, decl) in program.pds.iter().enumerate() {
@@ -6977,6 +7286,7 @@ fn collect_pds(
             ));
         }
         if structs.contains_key(&decl.name)
+            || statics.contains_key(&decl.name)
             || sigs.keys().any(|k| k == &decl.name)
         {
             return Err(Diagnostic::new(
@@ -7023,6 +7333,7 @@ fn collect_pds(
                     &HashMap::new(),
                     env,
                     fns,
+                    statics,
                 );
                 ctx.init_state = Some(out.iter().map(|p| p.hidden.clone()).collect());
                 check_expr(&decl.init, &mut ctx, None)
@@ -7065,6 +7376,7 @@ fn check_pd_initializer(
     initialized: &std::collections::HashSet<String>,
     env: &TypeEnv,
     fns: &FuncEnv,
+    statics: &HashMap<String, StaticInfo>,
 ) -> Result<tir::Expr> {
     let mut ctx = base_ctx(
         &pd.module,
@@ -7081,6 +7393,7 @@ fn check_pd_initializer(
         wired,
         env,
         fns,
+        statics,
     );
     // An initializer has no hidden parameters of its own: it reads the
     // globals that earlier initializers already assigned.
@@ -7107,6 +7420,7 @@ fn base_ctx(
     wired: &HashMap<String, Vec<PdInfo>>,
     env: &TypeEnv,
     fns: &FuncEnv,
+    statics: &HashMap<String, StaticInfo>,
 ) -> Ctx {
     let module_pds: Vec<&PdInfo> = all_pds.iter().filter(|p| p.module == module).collect();
     let pds = module_pds
@@ -7124,6 +7438,7 @@ fn base_ctx(
         structs: structs.clone(),
         enums: enums.clone(),
         consts: consts.clone(),
+        statics: statics.clone(),
         const_fns: const_fns.clone(),
         owned_structs: owned_structs.clone(),
         overloads: overloads.clone(),
@@ -7514,6 +7829,7 @@ fn is_tir_place(expr: &tir::Expr) -> bool {
     matches!(
         expr.kind,
         tir::ExprKind::Ident(_)
+            | tir::ExprKind::StaticRef(_)
             | tir::ExprKind::FieldAccess { .. }
             | tir::ExprKind::EnumField { .. }
             // A capture is a place too: the environment holds the value (A-4
@@ -7561,6 +7877,19 @@ fn is_ast_place(expr: &ast::Expr) -> bool {
 /// writable).
 fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
     match &target.kind {
+        // A static's own mutability decides whether it can be assigned, once
+        // the `unsafe` gate has already let the name through (kernel stage 7).
+        tir::ExprKind::StaticRef(name) => match ctx.statics.get(name) {
+            Some(s) if s.mutable => Ok(()),
+            Some(s) => Err(TypeError {
+                message: format!(
+                    "cannot assign to 'static {}': it is not declared 'static mut'",
+                    s.name
+                ),
+                span: target.span,
+            }),
+            None => Ok(()),
+        },
         tir::ExprKind::Ident(name) => {
             let Some(info) = ctx.lookup(name) else {
                 return Err(TypeError {
@@ -7761,6 +8090,7 @@ fn check_function(
     wiring: &PdWiring,
     env: &TypeEnv,
     fns: &FuncEnv,
+    statics: &HashMap<String, StaticInfo>,
 ) -> Result<tir::Function> {
     // The `...` variadic marker (gap 7) is legal in exactly one place: a
     // *user* `extern fun`, meaning one whose module a `coral.toml`
@@ -7890,6 +8220,7 @@ fn check_function(
         wired,
         env,
         fns,
+        statics,
     );
     ctx.type_args = type_args.clone();
     ctx.ret_ty = sig.ret.clone();
@@ -9081,6 +9412,20 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 value.span = *span;
                 return Ok(value);
             }
+            // Not a local, receiver field, passdown, function value or
+            // constant — a top-level `static` (kernel stage 7). A static is a
+            // real object, so a use is a `StaticRef` place; a `static mut`
+            // may only be named inside `unsafe`, and the gate is here so a
+            // read, a write, a field access and an address are all covered
+            // by the one check.
+            if let Some(s) = ctx.statics.get(&ctx.qualify_own(name)).cloned() {
+                require_static_unsafe(&s, *span, ctx)?;
+                return Ok(tir::Expr {
+                    kind: tir::ExprKind::StaticRef(s.qualified),
+                    ty: s.ty,
+                    span: *span,
+                });
+            }
             // Inside a `fun` literal, a name that is none of the above and
             // *is* an enclosing binding is a capture (A-4 phase E): the
             // literal becomes a closure, the value is moved (or, for a `Copy`
@@ -9228,6 +9573,16 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                             let mut value = c.value;
                             value.span = *span;
                             return Ok(value);
+                        }
+                        // `other.NAME` — a module's `pub static`, written
+                        // without call parentheses, exactly as its `const` is.
+                        if let Some(s) = ctx.statics.get(&qualified).cloned() {
+                            require_static_unsafe(&s, *span, ctx)?;
+                            return Ok(tir::Expr {
+                                kind: tir::ExprKind::StaticRef(s.qualified),
+                                ty: s.ty,
+                                span: *span,
+                            });
                         }
                         // `val f = math.sqrt` — a module's item named as a
                         // function value (A-4), the qualified spelling of the
@@ -14280,6 +14635,22 @@ fn check_module_item(
         let mut value = c.value;
         value.span = span;
         return Ok(value);
+    }
+    // A module's `static` is reached like its `const`, but it is an object
+    // rather than a folded literal, so it takes no arguments and is a place.
+    if let Some(s) = ctx.statics.get(&qualified).cloned() {
+        if !args.is_empty() {
+            return Err(TypeError {
+                message: format!("'{alias}.{item}' is a static object, not a function"),
+                span,
+            });
+        }
+        require_static_unsafe(&s, span, ctx)?;
+        return Ok(tir::Expr {
+            kind: tir::ExprKind::StaticRef(s.qualified),
+            ty: s.ty,
+            span,
+        });
     }
     // A receiver method lives under a `Type#name` key, which a module path
     // can't spell — say so rather than "no such item".

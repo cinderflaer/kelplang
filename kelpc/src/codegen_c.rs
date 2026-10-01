@@ -687,6 +687,8 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
 
     write_const_data(&mut out, &program.const_data);
 
+    write_statics(&mut out, &program.statics, &program.structs);
+
     for f in &program.functions {
         if f.extern_ {
             write_extern(&mut out, f, &program.extern_ffi_symbols, false);
@@ -735,6 +737,132 @@ fn write_const_data(out: &mut String, data: &[crate::tir::ConstData]) {
     }
     if !data.is_empty() {
         out.push('\n');
+    }
+}
+
+/// Emits one file-scope definition per `static` (kernel stage 7). A `static`
+/// is one object for the whole program, so this is the storage the name loads
+/// from and the address `Ptr.from_ref`/`Ptr.from_mut` takes. An immutable one
+/// that holds no `Atomic` is `static const` (read-only); a mutable one, or one
+/// holding an `Atomic` (whose operations write through a shared borrow), is
+/// plain `static`. An all-zero static with no `section(...)` gets no
+/// initializer at all, which is what puts it in `.bss` rather than `.data`.
+fn write_statics(out: &mut String, statics: &[crate::tir::Static], structs: &[StructDef]) {
+    if statics.is_empty() {
+        return;
+    }
+    out.push_str("// statics: one object each, with a stable address\n");
+    for s in statics {
+        let name = c_name(&s.name);
+        let cty = s.ty.c_type();
+        let readonly = !s.mutable && !static_contains_atomic(&s.ty, structs);
+        let mut attrs: Vec<String> = Vec::new();
+        if let Some(section) = &s.section {
+            attrs.push(format!("section({})", c_string_literal(section)));
+        }
+        // `used` keeps the object in the image even when its only reach is a
+        // linker script's section placement, exactly as `write_const_data`
+        // does for a sectioned const.
+        attrs.push("used".to_string());
+        let attr = format!(" __attribute__(({}))", attrs.join(", "));
+        let storage = if readonly { "static const" } else { "static" };
+        if static_init_is_zero(&s.init) && s.section.is_none() {
+            writeln!(out, "{storage} {cty} {name}{attr};").unwrap();
+        } else {
+            writeln!(
+                out,
+                "{storage} {cty} {name}{attr} = {};",
+                static_init_c(&s.init, &s.ty, structs)
+            )
+            .unwrap();
+        }
+    }
+    out.push('\n');
+}
+
+/// Whether a static's type contains an `Atomic<T>` anywhere. Such a static is
+/// emitted mutable even when the declaration is not `static mut`, because an
+/// atomic's operations write through a shared borrow and C forbids that
+/// through a `const` object.
+fn static_contains_atomic(ty: &Ty, structs: &[StructDef]) -> bool {
+    match ty {
+        Ty::Atomic(_) => true,
+        Ty::Array(elem, _) => static_contains_atomic(elem, structs),
+        Ty::Struct(name) => structs
+            .iter()
+            .find(|s| &s.name == name)
+            .map(|s| s.fields.iter().any(|f| static_contains_atomic(&f.ty, structs)))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Whether a folded static initializer is all zero, which is what decides
+/// between `.bss` and `.data` (or a zero `zeroinitializer` on LLVM).
+fn static_init_is_zero(init: &crate::tir::StaticInit) -> bool {
+    use crate::tir::StaticInit as SI;
+    match init {
+        SI::Int(v) => *v == 0,
+        SI::Float(v) => *v == 0.0,
+        SI::Bool(b) => !*b,
+        SI::Char(c) => *c == 0,
+        SI::Array(elems) => elems.iter().all(static_init_is_zero),
+        SI::Repeat { value, .. } => static_init_is_zero(value),
+        SI::Struct(fields) => fields.iter().all(static_init_is_zero),
+        SI::Atomic(inner) => static_init_is_zero(inner),
+    }
+}
+
+/// One folded static initializer as a C constant expression.
+fn static_init_c(init: &crate::tir::StaticInit, ty: &Ty, structs: &[StructDef]) -> String {
+    use crate::tir::StaticInit as SI;
+    match (init, ty) {
+        (SI::Int(v), t) if t.is_float() => c_float_literal(*v as f64),
+        (SI::Int(v), t) => format!("(({})({v}))", t.c_type()),
+        (SI::Float(v), _) => c_float_literal(*v),
+        (SI::Bool(b), _) => b.to_string(),
+        (SI::Char(c), t) => format!("(({})({c}))", t.c_type()),
+        (SI::Array(elems), Ty::Array(elem, _)) => {
+            let values: Vec<String> = elems
+                .iter()
+                .map(|e| static_init_c(e, elem, structs))
+                .collect();
+            format!("{{ .v = {{ {} }} }}", values.join(", "))
+        }
+        (SI::Repeat { value, len }, Ty::Array(elem, _)) => {
+            if static_init_is_zero(value) {
+                "{0}".to_string()
+            } else {
+                // C's designated range designator fills the whole array with
+                // one value, so `[1; 4096]` is one expression, not 4096.
+                format!(
+                    "{{ .v = {{ [0 ... {}] = {} }} }}",
+                    len.saturating_sub(1),
+                    static_init_c(value, elem, structs)
+                )
+            }
+        }
+        (SI::Struct(fields), Ty::Struct(name)) => match structs.iter().find(|s| &s.name == name) {
+            Some(sd) => {
+                let parts: Vec<String> = fields
+                    .iter()
+                    .zip(&sd.fields)
+                    .map(|(value, field)| {
+                        format!(
+                            ".{} = {}",
+                            field_name(&field.name),
+                            static_init_c(value, &field.ty, structs)
+                        )
+                    })
+                    .collect();
+                format!("{{ {} }}", parts.join(", "))
+            }
+            None => "{0}".to_string(),
+        },
+        (SI::Atomic(inner), Ty::Atomic(elem)) => {
+            format!("{{ .v = {} }}", static_init_c(inner, elem, structs))
+        }
+        _ => "{0}".to_string(),
     }
 }
 
@@ -3773,6 +3901,10 @@ impl<'a> Gen<'a> {
                     self.local_c_name(name)
                 }
             }
+            // A `static` read is a load from its file-scope object, which C
+            // writes as the object's own name. Its address is taken through
+            // the same place (`is_place`).
+            ExprKind::StaticRef(name) => c_name(name),
             ExprKind::Unary { op, expr: sub } => {
                 let sym = match op {
                     UnOp::Neg => "-",
@@ -5669,6 +5801,9 @@ impl<'a> Gen<'a> {
     fn lvalue(&self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::Ident(name) => self.local_c_name(name),
+            // A `static` is a file-scope object: its place is its own symbol,
+            // and reading it is the load C writes for a global's name.
+            ExprKind::StaticRef(name) => c_name(name),
             ExprKind::FieldAccess { base, field } => self.field_access(base, field),
             ExprKind::Deref { expr: sub } => {
                 let inner = self.expr_value(sub);
@@ -5781,6 +5916,7 @@ fn is_place(expr: &Expr) -> bool {
     matches!(
         expr.kind,
         ExprKind::Ident(_)
+            | ExprKind::StaticRef(_)
             | ExprKind::FieldAccess { .. }
             | ExprKind::EnumField { .. }
             | ExprKind::Deref { .. }

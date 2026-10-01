@@ -1,0 +1,7 @@
+// Kernel stage 7: only a `static mut` can be assigned. A plain `static` is
+// read-only, and the refusal names the missing `mut`.
+static X: i32 = 1
+
+fun main() {
+    X = 2
+}

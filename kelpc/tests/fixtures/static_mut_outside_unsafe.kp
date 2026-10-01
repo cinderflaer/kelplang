@@ -1,0 +1,7 @@
+// Kernel stage 7: a `static mut` is unsafe to touch. Reading it outside an
+// `unsafe` block has to be a compile error, exactly as a `Ptr.read` is.
+static mut C: i32 = 0
+
+fun main() {
+    print(C)
+}

@@ -1,0 +1,7 @@
+// Kernel stage 7: a static's initializer has to fold at compile time. `1 + 2`
+// is a runtime expression, so it is refused rather than run at startup.
+static X: i32 = 1 + 2
+
+fun main() {
+    print(X)
+}

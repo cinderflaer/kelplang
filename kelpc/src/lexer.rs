@@ -121,6 +121,9 @@ pub enum TokenKind {
     As,
     /// `const NAME: T = expr` — a top-level compile-time constant (M6.3).
     Const,
+    /// `static NAME: T = expr` — a top-level global object (kernel stage 7).
+    /// Unlike a `const`, one with a stable address.
+    Static,
     /// `extern fun name(...).R: T` — a declaration whose body the compiler
     /// supplies (M6.2). Only compiler-shipped stdlib modules may use it: the
     /// whole point is to confine the unportable primitive (a syscall, a
@@ -838,6 +841,7 @@ impl<'a> Lexer<'a> {
                         "impl" => TokenKind::Impl,
                         "as" => TokenKind::As,
                         "const" => TokenKind::Const,
+                        "static" => TokenKind::Static,
                         "extern" => TokenKind::Extern,
                         "pub" => TokenKind::Pub,
                         _ => TokenKind::Ident(text.to_string()),

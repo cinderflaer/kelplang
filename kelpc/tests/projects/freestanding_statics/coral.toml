@@ -1,0 +1,16 @@
+name = "freestandingstatics"
+
+# Kernel stage 7: the same bare-metal target as `freestanding_min`, with the
+# globals a kernel needs. `main` is on the audit list because it writes a
+# `static mut`; the immutable statics need no listing. The build places a
+# nonzero immutable table in `.rodata`, a nonzero `static mut` in `.data`, and
+# the zero cursor and the 4096-byte zero buffer in `.bss`, which is what the
+# test reads back out of the ELF.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+
+[unsafe]
+modules = ["main"]

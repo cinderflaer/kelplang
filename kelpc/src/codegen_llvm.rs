@@ -343,7 +343,7 @@ use crate::tir::{Block, Expr, ExprKind, Function, Pd, Program, Stmt, TemplatePie
 use crate::types::{
     box_c_type, capture_field, clone_fn_name, closure_c_type, closure_mangle, cmp_fn_name,
     drop_fn_name, eq_fn_name, hash_fn_name, list_c_type, map_c_type,
-    needs_drop, owned_types, struct_tag, ty_mangle, Ty,
+    needs_drop, owned_types, struct_tag, ty_mangle, StructDef, Ty,
 };
 
 /// Build the whole program, verify it, write the textual IR beside the binary,
@@ -419,6 +419,7 @@ pub fn compile(
     )?;
     lowering.declare()?;
     lowering.emit_const_data()?;
+    lowering.declare_statics()?;
     // The small builtin accessors get their bodies here, as IR rather than a
     // declaration into the runtime object, so the module's own `-O2` inlines
     // them at the call site. `emit_container_bodies` below is the same idea for
@@ -835,6 +836,12 @@ struct Gen<'a> {
     /// drop point an owned passdown has (`codegen_c.rs::write_pd_globals`).
     init_pds_fn: Option<LlvmFunction<'a>>,
     drop_pds_fn: Option<LlvmFunction<'a>>,
+    /// One module-scope global per `static` (kernel stage 7), keyed by the
+    /// module-prefixed name `tir` gives it, plus its type. Each holds its
+    /// folded constant, so no code runs at startup and a freestanding image
+    /// needs no init hook; a `StaticRef` loads from it, stores through it and
+    /// takes its address.
+    static_globals: HashMap<String, (Value<'a>, Ty)>,
     /// The runtime's two saved `argv` globals (`runtime/kelp_rt.c`), which
     /// `main` writes and `process.args()` reads. They are `extern` here: the
     /// runtime object defines them, exactly as it does for the C backend's
@@ -989,6 +996,7 @@ impl<'a> Gen<'a> {
             sortable: crate::types::sortable_types(&type_decls),
             keyable: crate::types::keyable_types(&type_decls, &program.declared_keys),
             pd_globals: HashMap::new(),
+            static_globals: HashMap::new(),
             init_pds_fn: None,
             drop_pds_fn: None,
             argc_global: module.add_external_global("kelp_argc", ctx.i32()),
@@ -1224,6 +1232,118 @@ impl<'a> Gen<'a> {
             global.set_section(&data.section);
         }
         Ok(())
+    }
+
+    /// Declare one module-scope global per `static` (kernel stage 7), with its
+    /// folded constant as the initializer. An all-zero static with no
+    /// `section(...)` gets `zeroinitializer` and, being non-constant, lands in
+    /// `.bss`; anything else carries its constant and an immutable one is
+    /// marked `constant` for `.rodata`. A static holding an `Atomic<T>` is
+    /// emitted non-constant even when the declaration is immutable, because
+    /// an atomic writes through a shared borrow.
+    fn declare_statics(&mut self) -> Result<(), String> {
+        for s in &self.program.statics {
+            let lty = llvm_type(self.ctx, &self.structs, &self.containers, &s.ty)?;
+            let global = self.module.add_global(&symbol_name(&s.name), lty);
+            let zero = static_init_is_zero_llvm(&s.init);
+            let atomic = ty_contains_atomic(&s.ty, &self.program.structs);
+            let bare_zero = zero && s.section.is_none();
+            if bare_zero {
+                global.set_initializer(self.ctx.const_null(lty));
+            } else {
+                global.set_initializer(self.llvm_static_init(&s.init, &s.ty)?);
+            }
+            global.set_constant(!s.mutable && !atomic && !bare_zero);
+            if let Some(section) = &s.section {
+                global.set_section(section);
+            }
+            global.set_internal_linkage();
+            self.static_globals
+                .insert(s.name.clone(), (global, s.ty.clone()));
+        }
+        // `@llvm.used` keeps every static in the object even when LLVM can
+        // constant-fold every read of it (an immutable table, a `static mut`
+        // nothing writes). The C backend's `__attribute__((used))` is the same
+        // fact, and a freestanding image's section placement has to match on
+        // both.
+        if !self.program.statics.is_empty() {
+            let ptr = self.ctx.opaque_ptr();
+            let values: Vec<Value<'a>> = self
+                .program
+                .statics
+                .iter()
+                .filter_map(|s| self.static_globals.get(&s.name).map(|(g, _)| *g))
+                .collect();
+            let arr_ty = self.ctx.array_type(ptr, values.len() as u64);
+            let arr = self.ctx.const_array(ptr, &values);
+            let used = self.module.add_global("llvm.used", arr_ty);
+            used.set_initializer(arr);
+            used.set_appending_linkage();
+            used.set_section("llvm.metadata");
+        }
+        Ok(())
+    }
+
+    /// One folded static initializer as an LLVM constant.
+    fn llvm_static_init(
+        &self,
+        init: &crate::tir::StaticInit,
+        ty: &Ty,
+    ) -> Result<Value<'a>, String> {
+        use crate::tir::StaticInit as SI;
+        match (init, ty) {
+            (SI::Int(v), t) => Ok(self.ctx.const_int(self.lty2(t)?, *v as u64, *v < 0)),
+            (SI::Float(v), t) => Ok(self.ctx.const_real(self.lty2(t)?, *v)),
+            (SI::Bool(b), _) => Ok(self.ctx.const_bool(*b)),
+            (SI::Char(c), t) => Ok(self.ctx.const_int(self.lty2(t)?, *c as u64, false)),
+            // An array is `{ [N x elem] v }`, so the element array is built
+            // and wrapped in the named struct exactly as `emit_array_lit`
+            // does at runtime.
+            (SI::Array(elems), Ty::Array(elem, _len)) => {
+                let elem_ty = self.lty2(elem)?;
+                let values: Vec<Value<'a>> = elems
+                    .iter()
+                    .map(|e| self.llvm_static_init(e, elem))
+                    .collect::<Result<_, _>>()?;
+                let arr = self.ctx.const_array(elem_ty, &values);
+                Ok(self.ctx.const_named_struct(self.cty(ty)?, &[arr]))
+            }
+            (SI::Repeat { value, len: _ }, Ty::Array(elem, len)) => {
+                let elem_ty = self.lty2(elem)?;
+                let v = self.llvm_static_init(value, elem)?;
+                let values = vec![v; *len as usize];
+                let arr = self.ctx.const_array(elem_ty, &values);
+                Ok(self.ctx.const_named_struct(self.cty(ty)?, &[arr]))
+            }
+            (SI::Struct(fields), Ty::Struct(name)) => {
+                let sd = self
+                    .program
+                    .structs
+                    .iter()
+                    .find(|s| &s.name == name)
+                    .ok_or_else(|| no_value(&format!("the struct '{name}'")))?;
+                let values: Vec<Value<'a>> = fields
+                    .iter()
+                    .zip(&sd.fields)
+                    .map(|(value, field)| self.llvm_static_init(value, &field.ty))
+                    .collect::<Result<_, _>>()?;
+                let struct_ty = *self
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| no_value(&format!("the struct '{name}'")))?;
+                Ok(self.ctx.const_named_struct(struct_ty, &values))
+            }
+            (SI::Atomic(inner), Ty::Atomic(elem)) => {
+                let atom_ty = self.cty(ty)?;
+                let member = self.atomic_mem_lty(elem)?;
+                let value = match (inner.as_ref(), &**elem) {
+                    (SI::Bool(b), _) => self.ctx.const_int(member, u64::from(*b), false),
+                    _ => self.llvm_static_init(inner, elem)?,
+                };
+                Ok(self.ctx.const_named_struct(atom_ty, &[value]))
+            }
+            _ => Ok(self.ctx.const_null(self.lty2(ty)?)),
+        }
     }
 
     /// Build the DWARF skeleton (MK7 S4, §4.4): one compile unit for the
@@ -2687,6 +2807,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // is nothing to load (`Stmt::Let` allocates none).
             ExprKind::Ident(_) if e.ty == Ty::Unit => Ok(None),
             ExprKind::Ident(name) => Ok(Some(self.load_ident(e, name)?)),
+            // A `static` is one module-scope object (kernel stage 7), so a read
+            // is a load from its global and its place is the global itself.
+            ExprKind::StaticRef(name) => {
+                let (global, ty) = self
+                    .g
+                    .static_place(name)
+                    .ok_or_else(|| no_value(&format!("the static '{name}'")))?;
+                let lty = self.lty(&ty)?;
+                Ok(Some(self.g.builder.build_load(lty, global, name)))
+            }
             ExprKind::Unary { op, expr } => Ok(Some(self.emit_unary(*op, expr, &e.ty)?)),
             ExprKind::Binary { op, lhs, rhs } => {
                 Ok(Some(self.emit_binary(*op, lhs, rhs)?))
@@ -3604,6 +3734,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     Ok(slot)
                 }
             }
+            // A `static`'s place is its own module-scope global.
+            ExprKind::StaticRef(name) => self
+                .g
+                .static_place(name)
+                .map(|(global, _)| global)
+                .ok_or_else(|| no_value(&format!("the static '{name}'"))),
             ExprKind::FieldAccess { base, field } => {
                 let (ptr, struct_ty, index) = self.field_place(base, field)?;
                 Ok(self
@@ -3988,6 +4124,18 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     self.g.call_drop(ptr, &d.ty)?;
                 }
                 self.g.builder.build_store(v, ptr);
+                Ok(())
+            }
+            // A store into a `static` (kernel stage 7): the global is the
+            // place, and a static never owns memory, so no old value is
+            // dropped.
+            ExprKind::StaticRef(name) => {
+                let slot = self
+                    .g
+                    .static_place(name)
+                    .map(|(global, _)| global)
+                    .ok_or_else(|| no_value(&format!("the static '{name}'")))?;
+                self.g.builder.build_store(v, slot);
                 Ok(())
             }
             // The only other place a Kelp assignment can name is a chain this
@@ -7129,6 +7277,13 @@ impl<'a> Gen<'a> {
             .get(ty)
             .copied()
             .ok_or_else(|| no_value(&format!("the container '{}'", ty.display())))
+    }
+
+    /// The LLVM global and type of one `static` (kernel stage 7).
+    fn static_place(&self, name: &str) -> Option<(Value<'a>, Ty)> {
+        self.static_globals
+            .get(name)
+            .map(|(global, ty)| (*global, ty.clone()))
     }
 
     /// Position the builder at a fresh block of the named container function.
@@ -11363,6 +11518,37 @@ fn alignment_anchor<'a>(ctx: &'a Context, n: u64) -> Type<'a> {
     }
 }
 
+/// Whether a folded static initializer is all zero, which is what decides
+/// between `.bss` and `.data` on the LLVM backend.
+fn static_init_is_zero_llvm(init: &crate::tir::StaticInit) -> bool {
+    use crate::tir::StaticInit as SI;
+    match init {
+        SI::Int(v) => *v == 0,
+        SI::Float(v) => *v == 0.0,
+        SI::Bool(b) => !*b,
+        SI::Char(c) => *c == 0,
+        SI::Array(elems) => elems.iter().all(static_init_is_zero_llvm),
+        SI::Repeat { value, .. } => static_init_is_zero_llvm(value),
+        SI::Struct(fields) => fields.iter().all(static_init_is_zero_llvm),
+        SI::Atomic(inner) => static_init_is_zero_llvm(inner),
+    }
+}
+
+/// Whether a static's type contains an `Atomic<T>` anywhere, so the global is
+/// emitted non-constant even when the declaration is not `static mut`.
+fn ty_contains_atomic(ty: &Ty, structs: &[StructDef]) -> bool {
+    match ty {
+        Ty::Atomic(_) => true,
+        Ty::Array(elem, _) => ty_contains_atomic(elem, structs),
+        Ty::Struct(name) => structs
+            .iter()
+            .find(|s| &s.name == name)
+            .map(|s| s.fields.iter().any(|f| ty_contains_atomic(&f.ty, structs)))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 fn llvm_type<'a>(
     ctx: &'a Context,
     structs: &HashMap<String, Type<'a>>,
@@ -11542,6 +11728,7 @@ fn is_place_expr(e: &Expr) -> bool {
     matches!(
         e.kind,
         ExprKind::Ident(_)
+            | ExprKind::StaticRef(_)
             | ExprKind::FieldAccess { .. }
             | ExprKind::EnumField { .. }
             | ExprKind::Deref { .. }
@@ -11872,6 +12059,7 @@ mod layout_tests {
             extern_headers: Vec::new(),
             handles: Vec::new(),
             const_data: Vec::new(),
+            statics: Vec::new(),
             functions: vec![Function {
                 name: "std.mem.alloc_raw".to_string(),
                 params: vec![("n".to_string(), Ty::Usize)],
@@ -12314,6 +12502,7 @@ mod layout_tests {
             extern_headers: Vec::new(),
             handles: Vec::new(),
             const_data: Vec::new(),
+            statics: Vec::new(),
             functions: vec![
                 // The bug's own shape: an `enum` in the parameter list.
                 extern_fn(
@@ -12459,6 +12648,7 @@ mod layout_tests {
             extern_headers: Vec::new(),
             handles: Vec::new(),
             const_data: Vec::new(),
+            statics: Vec::new(),
             functions: vec![Function {
                 name: "std.time.now_mono_ns_raw".to_string(),
                 params: Vec::new(),
