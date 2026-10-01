@@ -1,7 +1,7 @@
 # Polyp: a native UI framework for Kelp
 
 *Proposal, not commitment and not a Mark. `roadmap.md` owns the plan and the schedule; nothing here is
-scheduled, no work has started, and no lane is open. This file exists because the idea is concrete enough
+scheduled, a prototype is all that exists, and no lane is open. This file exists because the idea is concrete enough
 to write down and far enough away to be worth keeping out of the live plan. What follows is what Polyp
 is, what a program would look like in it, what it would owe a reader that Tkinter and Compose do not, and
 the one thing it cannot start without.*
@@ -82,7 +82,8 @@ one is a consequence of a language property Kelp already has, not a feature Poly
 
 ## Status
 
-**Far later in Kelp's development, after the current critical path (threads, FFI).** It blocks nothing
-and nothing blocks it except trailing-closure syntax existing first, which now does (in the
-call-site-literal, borrow-capturing `scoped fun(...)` form). It is not a Mark, it has no stages, and
-promoting it is a decision to take when a real UI program is wanted rather than a plan to run now.
+**A prototype exists; the plan is still not a Mark.** `examples/polyp/` (v1, the builder syntax) and
+the frozen `examples/polyp-v0/` are a GTK4 library and a counter, built and run on both backends
+under Xvfb, on the user FFI of B-1 and the scoped trailing blocks of open item 75. It blocks nothing
+and nothing blocks it except a real UI program being wanted rather than a plan to run; what is left is
+depth (drawing, layout control, more than Linux) rather than substrate. It has no stages.
