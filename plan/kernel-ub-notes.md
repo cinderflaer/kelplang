@@ -157,3 +157,61 @@ address `__stack_top` names, the alignment or reachability of a section, or
 whether the panic handler diverges. The generated `_start` and the script are
 one contract split across two files, and only a boot (the next stages) tests it
 end to end.
+
+## Stage 5: MK9-S7-M1/M3 inline asm and naked functions
+
+**New ways to reach UB.** This stage hands the assembler to the program, and
+the compiler stops seeing inside it:
+
+- `asm(...)` executes text the compiler does not read. Every promise about
+  what the instruction does is the author's: a template that writes a register
+  no `clobber("...")` names, that reads memory under `nomem`, or that jumps
+  somewhere leaves the compiler's own register and memory assumptions wrong,
+  and the wrongness is silent at build time. `nomem` is exactly a promise that
+  the asm touches no memory; a false one lets LLVM reorder loads and stores
+  across the instruction.
+- The constraint names are passed through. `"r"` and `"rax"` are never checked
+  against the operand's type, so a `f64` operand under an integer-register
+  constraint, or a register the target does not have, reach the assembler and
+  fail there (GCC) or produce code LLVM then emits (LLVM). The compiler's
+  refusal set is the operand *shape*, not the ABI.
+- `out("...") place` and `inout("...") place` write a place without the
+  compiler knowing what value arrives. `inout` reads the place first, so the
+  value the asm sees is whatever was there, which for an uninitialised `var` is
+  indeterminate.
+- A `naked fun` has no prologue, no epilogue and no compiler-generated `ret`.
+  A body whose asm does not return falls through into whatever the bytes after
+  it are, and the compiler emits nothing to prevent that. The declared return
+  type is a caller-side promise only: the caller reads the return register
+  (System V `rax`, riscv `a0`) whatever the asm left there.
+- `nostack` is accepted and changes nothing: neither LLVM's inline-asm IR nor
+  GCC's extended asm has a stack-clobber spelling, so the compiler cannot act
+  on the promise even when it is true.
+- The dialect is chosen by target: Intel syntax on x86, the target's own
+  syntax elsewhere. A template written for one target's syntax assembled for
+  another is an assembler error, not a language error.
+
+**What the compiler does check.** That `asm` is inside `unsafe { ... }` or an
+`unsafe fun` and in a module `coral.toml` lists under `[unsafe] modules`; that
+the operand kinds are `in`/`out`/`inout` and the options are `volatile`,
+`nomem`/`nostack`; that an operand is one machine word (integer, `bool`,
+`char`, `f32`/`f64`, `Ptr<T>` or an `extern type` handle); that `out`/`inout`
+name a place and that the place is writable (`var`, an exclusive borrow, a
+`var` field); that a template's `{n}` names an operand that exists; and that a
+`naked fun` takes no parameters, is not a method, and has exactly one `asm`
+statement as its body. Both backends emit the same constraint string, the same
+clobber list and the same operand order, so an asm that builds on one builds
+on the other.
+
+**What it does not check.** Anything about the template: what it does, what
+registers or memory it touches, whether a clobber is complete, whether the
+constraints fit the target, or whether the asm returns. There is no asm
+verification and no `unsafe` proof (roadmap D-1/D-2/D-3 stay open); this stage
+is the point where the language hands over the machine and says so.
+
+**What the borrow checker sees.** An `in` operand is a read; an `out`/`inout`
+place is taken as a transient exclusive borrow, so a conflicting live borrow is
+refused. The operand types are `Copy` machine words, so no move or drop
+bookkeeping is owed, and the borrow checker does not model the asm's own
+memory effects (the clobber list is the only thing that tells the compiler
+about them, and it is not checked).

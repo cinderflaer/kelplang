@@ -111,3 +111,14 @@ or the build puts beside the object. `library`, `header`, `include_dirs`,
 link line to put them on. Gap 4's callback machinery is likewise hosted-only
 for now. A kernel binding should therefore be a bare `extern fun` whose symbol
 is defined by code linked into the image, not by a system library.
+
+## What kernel stage 5 (MK9-S7-M1/M3) changed for this list
+
+Nothing is closed. Inline `asm` and `naked fun` are not a binding mechanism: an
+`asm` is only legal in a module the manifest lists under `[unsafe] modules`, it
+names registers rather than semantics, and it is per-target, so it is the wrong
+tool for calling a library and the right one for an instruction no language has
+a spelling for. The one thing it changes for a binding is that a native
+instruction a library's header wraps in a macro (a fence, a `pause`, a system
+call register setup) is now expressible without a C helper, in the same module
+that already had to be on the audit list to use `Ptr<T>`.
