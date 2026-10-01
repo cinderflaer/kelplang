@@ -3,7 +3,8 @@
 *The integration stage of `plan/kernel-path.md`'s "kernel 0": the pieces stages 1 to 5 added,
 wired into an image QEMU's riscv64 `virt` machine actually starts. This file says what was
 built, what could not be, and in what order the gaps matter. Stage 7 closed gaps 1 and 3
-(a libc-free `str` surface and a panic handler that can print its message).*
+(a libc-free `str` surface and a panic handler that can print its message), and kernel
+gap 2 (the function-address form) is closed by `Ptr.from_fn` and the `align(N)` clause.*
 
 ## What was built
 
@@ -13,11 +14,13 @@ built, what could not be, and in what order the gaps matter. Stage 7 closed gaps
   `kernel.ld`, `src/main.kp` (the entry and the panic handler) and `src/uart.kp` (the NS16550
   driver: poll LSR at offset 5 for bit 5, then write THR at offset 0 through `Ptr<u8>` volatile
   stores, plus a `wfi` halt written as `asm`). `kmain` prints `hello from kelp` and halts.
-- **`examples/kernel0-trap/`**, the trap half: `src/trap.kp` installs `mtvec` with
-  `csrw` from inline asm, `src/main.kp` takes a machine-mode `ecall`, and the naked handler
-  saves the caller-saved registers, calls `report` to print `trap: ecall`, restores and
-  `mret`s; `kmain` then prints `done`. `kernel.ld` aligns the handler's own section to 4,
-  because `mtvec`'s low two bits are the vector mode.
+- **`examples/kernel0-trap/`**, the trap half: `src/trap.kp` installs `mtvec` from
+  `Ptr.from_fn(trap_handler).addr()` and stashes the helper's address in `mscratch`,
+  `src/main.kp` takes a machine-mode `ecall`, and the naked handler saves the
+  caller-saved registers, calls `report` to print `trap: ecall`, restores and
+  `mret`s; `kmain` then prints `done`. `trap_handler` carries `align(4)` (kernel
+  gap 2) and its own `section(".text.trap")`, because `mtvec`'s low two bits are
+  the vector mode.
 - **`examples/kernel0/run.sh`** and **`examples/kernel0-trap/run.sh`**: build with `kelpc`,
   boot under `timeout 20 qemu-system-riscv64 -machine virt -bios none -nographic -no-reboot
   -serial mon:stdio -kernel <elf>`, read QEMU's stdout until the last expected line appears,
@@ -57,13 +60,19 @@ and those changes are described with the gaps.
    `std/mem`, which it imports) from the AST before inference, so their bodies
    and the type instances they would instantiate never exist. Both messages
    here are now `str` literals; nothing copies a `[u8; N]` any more.
-2. **There is no function-address expression.** `trap.install` writes `la {0},
-   kelp_trap__trap_handler` inside an asm template: the vector is spelled with the module's
-   mangled symbol, a name neither the type checker nor the linker checks. `Ptr<T>` cannot be
-   made from a `fun` value and a `fun` name is not a machine-word operand, so the only route
-   today is the assembler's own symbol lookup. Stage 5 deliberately left out `interrupt` and
-   calling-convention attributes; a `Ptr.from_fun`/`&fun` form is the other half of the same
-   hole, and it is what a kernel needs before a trap vector is a checked thing.
+2. **~~There is no function-address expression.~~ Closed (kernel gap 2).**
+   `Ptr.from_fn(f)` is the address of a declared `fun` or a `fun` literal that
+   captured nothing, as a checked `Ptr<u8>`, legal outside `unsafe` on both
+   backends. A closure (one that captured something) is refused with a message
+   that says why: it carries an environment its code address cannot describe.
+   A top-level `fun` may also carry `align(N)` (a power of two up to 4096),
+   lowered as the function's alignment on both backends, so a naked handler's
+   first byte can be made `mtvec`-aligned. `examples/kernel0-trap` installs its
+   vector with `Ptr.from_fn(trap_handler).addr()` and names no mangled symbol.
+   `plan/kernel-ub-notes.md` stage 8 is the design's UB catalogue. Stage 5
+   deliberately left out `interrupt` and calling-convention attributes; those
+   remain open, and they are what a trap handler would use instead of a naked
+   body plus `align(N)`.
 3. **~~The panic handler's message is unusable.~~ Closed (stage 7).** The
    compiler's checks already passed the real message (`[target] panic` receives
    `fun(msg: str)` and the text is the check's own, byte-identical to the C
@@ -94,8 +103,10 @@ and those changes are described with the gaps.
 
 - A libc-free `str` length/byte surface (gap 1): closed in stage 7, with the
   five operations and an example that proves the message prints.
-- An address-of-function form (gap 2) and, after it, the `interrupt`/calling-convention
-  attributes stage 5 deferred, so a trap handler is a declaration the compiler understands.
+- An address-of-function form (gap 2): closed in kernel gap 2, with
+  `Ptr.from_fn` and the `align(N)` clause. The `interrupt`/calling-convention
+  attributes stage 5 deferred stay open, so a trap handler is still a naked
+  body the compiler does not understand as a handler.
 - A global allocator hook and arenas (plan stage 7) before anything that allocates at boot.
 - Per-CPU storage (stage 8) and the MMU/syscall work (stage 9) before userspace.
 - Stack guards, probing and the panic semantics of stage 10, which is what turns gap 3 into a

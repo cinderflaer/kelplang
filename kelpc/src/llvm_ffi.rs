@@ -873,6 +873,16 @@ impl<'ctx> Value<'ctx> {
         // SAFETY: as above; LLVM copies the string.
         unsafe { LLVMSetSection(self.raw, section.as_ptr()) };
     }
+
+    /// Set this function's alignment in bytes (`LLVMSetAlignment`), which is
+    /// what the `align(N)` clause lowers to (kernel gap 2): the object writer
+    /// emits the `.p2align` that puts the first byte at an `N`-aligned address,
+    /// which is what a trap vector needs.
+    pub fn set_function_alignment(&self, align: u32) {
+        // SAFETY: `raw` is a function value, which is the one kind
+        // `LLVMSetAlignment` accepts besides a global variable.
+        unsafe { LLVMSetAlignment(self.raw, align) };
+    }
 }
 
 /// The sign of a sub-word integer that crosses to a C body, as LLVM's

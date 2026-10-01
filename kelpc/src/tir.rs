@@ -175,6 +175,10 @@ pub struct Function {
     /// body is exactly one `asm(...)` statement, so no prologue or epilogue is
     /// emitted around it.
     pub naked: bool,
+    /// The `align(N)` clause a declaration carried (kernel gap 2), or `None`
+    /// for the target's default function alignment. Each backend sets the
+    /// function's alignment to this value.
+    pub align: Option<u32>,
     /// The `section("...")` clause a declaration carried (kernel stage 4), or
     /// `None` for the target's default `.text`. Each backend places the
     /// function's code in this section.

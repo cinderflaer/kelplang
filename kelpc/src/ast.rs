@@ -275,6 +275,10 @@ pub struct FunctionDecl {
     /// body must be exactly one `asm(...)` statement, so no prologue or
     /// epilogue is emitted around it.
     pub naked: bool,
+    /// The `align(N)` clause, when one was written (kernel gap 2): the
+    /// function's alignment in bytes, so a trap vector (`mtvec`/`VBAR`) can
+    /// point at it. `None` is the target's default function alignment.
+    pub align: Option<u32>,
     /// The `section("<name>")` clause, when one was written (kernel stage 4):
     /// the object section this function's code is emitted in, so a linker
     /// script can place it. `None` is the target's default `.text`.

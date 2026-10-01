@@ -111,7 +111,18 @@ the module by the LLVM backend (no `strlen`, no C object), with every other
 `examples/kernel0` prints its greeting through `puts(s: str)` and its panic
 handler prints `panic: ` plus the compiler's own message, and the new
 `examples/kernel0-panic` proves it by reading one element past an array on
-purpose. The address-of-function form (gap 2) is still open.
+purpose.
+
+**Kernel gap 2 (the address of a function) is closed.** `Ptr.from_fn(f)` is the
+address of a declared `fun` or a `fun` literal that captured nothing, as a
+checked `Ptr<u8>`, legal outside `unsafe` on both backends; a closure is refused
+by name, because it carries an environment its code address cannot describe. A
+top-level `fun` may carry `align(N)` (a power of two up to 4096), lowered as the
+function's alignment on both backends. `examples/kernel0-trap` installs its
+trap vector with `Ptr.from_fn(trap_handler).addr()` and names no mangled symbol,
+and `plan/kernel-ub-notes.md` stage 8 is the UB catalogue for the new surface.
+The `interrupt`/calling-convention attributes stage 5 deferred are the remaining
+half of that hole.
 
 **What the next stages need.** The table's stages 6 to 11 are the remaining work:
 `defer`/`Drop` (row 6), a global allocator hook and arenas (row 7), per-CPU storage (row 8),

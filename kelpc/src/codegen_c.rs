@@ -3620,6 +3620,12 @@ impl<'a> Gen<'a> {
             // it as an attribute in front of the definition.
             write!(self.out, "__attribute__((section({}))) ", c_string_literal(section)).unwrap();
         }
+        if let Some(align) = f.align {
+            // The `align(N)` clause on a `fun` (kernel gap 2): a trap vector
+            // needs the handler's first byte at a power-of-two address, and
+            // the C attribute is the same fact the LLVM alignment is.
+            write!(self.out, "__attribute__((aligned({align}))) ").unwrap();
+        }
         if f.naked {
             // A `naked fun` (kernel stage 5): no prologue and no epilogue, and
             // never inlined, because its body's asm is the whole ABI.
@@ -4931,6 +4937,11 @@ impl<'a> Gen<'a> {
             "from_ref" | "from_mut" => {
                 format!("(({}*)({}))", result_elem(), self.expr_value(&args[0]))
             }
+            // `Ptr.from_fn(f)` (kernel gap 2): the function's real address, as
+            // the object file spells it. The cast goes through `void*` because
+            // that is the one conversion GCC and Clang accept from a function
+            // pointer without a warning.
+            "from_fn" => format!("((uint8_t*)(void*)({}))", self.expr_value(&args[0])),
             "alloc" => {
                 let elem = result_elem();
                 let tmp = fresh_temp();

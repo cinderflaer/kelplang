@@ -343,3 +343,50 @@ one holds, or anything about the linker script's placement of `.data`/`.bss`. Th
 `Atomic<T>` operations remain the only safe shared mutable, and this stage does
 not extend the (still unpublished) memory model to a `static` and a `Ptr` over
 the same bytes.
+
+## Stage 8: the address of a function (`plan/kernel0-status.md` gap 2)
+
+**New ways to reach UB.** This stage turns a function into a machine address, so
+the program can carry code as data and jump to it without the compiler seeing a
+call:
+
+- `Ptr.from_fn(f)` is the real symbol address after linking, and its element is
+  always `u8`: the type says "some byte address", not "the function `f`".
+  Calling through it is out of scope, so the language offers no checked call and
+  a program that jumps to the result is on its own for the ABI, the stack and
+  the calling convention. A `Ptr<u8>` may be stamped into `mtvec`/`VBAR` or
+  otherwise handed to hardware, and nothing checks that the address is code,
+  that the target is entered with the right privilege and register state, or
+  that the code it names is still there.
+- The pointer is taken safely, outside `unsafe`, because the compiler already
+  checked the *name*: it is a declared `fun`, or a `fun` literal whose body
+  captured nothing. A closure carries an environment the code address cannot
+  describe, so it is refused, as is a scoped function value. A generic function
+  or one that reads a passdown is refused for the reasons stage A-4 already
+  gives, and a gated function is refused because a pointer is not a call site.
+- `align(N)` on a `fun` is a **promise** that the first byte sits at an
+  `N`-aligned address. The backend emits the alignment, but a pointer to a
+  function reached through a link, a cast or a script that overrides placement
+  carries no such guarantee; writing it into a vector register is UB for the
+  same reason a misaligned `Ptr<T>` read is.
+- The example's handler reaches its helper through `mscratch` (`csrr` then
+  `jalr`), a jump the compiler never sees: nothing ties the register's contents
+  to `report`, and a trap taken before `install` runs jumps through whatever the
+  register held.
+
+**What the compiler does check.** That `Ptr.from_fn`'s one argument is of type
+`fun(...)`, naming the reason for a closure, a scoped value, or any other type;
+that it takes no type argument, because its result is always `Ptr<u8>`; and
+that `align(N)`'s `N` is a power of two up to 4096, on a top-level `fun` and
+not on an `extern fun` or a `const`. Both backends emit the same address: the C
+oracle casts the function to `uint8_t*`, LLVM uses the function value itself as
+a `ptr`, and both lower `align(N)` as the function's alignment
+(`__attribute__((aligned(N)))`, `LLVMSetAlignment`).
+
+**What it does not check.** That a caller treats the address as a function at
+all, the signature or convention it is entered with, whether the bytes it names
+are still mapped, and anything about the linker script that ultimately places
+the function. `align(N)` is emitted but its result is not re-checked by the
+compiler at runtime, and `Ptr.from_fn` does not make the resulting pointer
+non-null, non-wrapping or unique.
+
