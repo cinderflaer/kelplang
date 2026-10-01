@@ -25,9 +25,17 @@ fun bump(n: i64) {
     }
 }
 
+fun bump_once() {
+    unsafe {
+        COUNTER = COUNTER + 1
+        TOTAL = TOTAL + TABLE.get(i = 0).to_i64()
+    }
+}
+
 fun main() {
     bump(3)
-    bump(2)
+    bump_once()
+    bump(1)
     unsafe {
         print(COUNTER)
         print(TOTAL)
