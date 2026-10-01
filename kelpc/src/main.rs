@@ -333,7 +333,9 @@ fn build(
     // otherwise instantiate never exist.
     if loaded.project.target().is_freestanding() {
         let mut pruned = loaded.program.clone();
-        freestanding::prune(&mut pruned);
+        let allocator = loaded.project.target().alloc().is_some()
+            && loaded.project.target().dealloc().is_some();
+        freestanding::prune(&mut pruned, allocator);
         typed = match infer::check_program(&pruned, &loaded.project) {
             Ok(p) => p,
             Err(d) => {

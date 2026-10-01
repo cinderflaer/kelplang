@@ -26,6 +26,11 @@
 //!   alloc`/`dealloc` name the project's own allocator (kernel stage 7,
 //!   MK9-S5-M1), because then every allocation and free those containers make
 //!   calls the project's functions instead of libc's;
+//! - `String` and `Bytes` with the same allocator (kernel stage 12,
+//!   MK9-S5-M2), narrowed to the operations the LLVM backend lowers as libc-free
+//!   byte loops (`ALLOWED_STRING_METHODS`/`ALLOWED_BYTES_METHODS`, plus
+//!   `str.concat` and the integer builders); every other method is refused at
+//!   the call with "needs the hosted runtime";
 //! - `extern fun` declared in a module with its own `[extern."<id>"]` section,
 //!   so a project can bind a native symbol it will place itself;
 //! - arithmetic, including the overflow and bounds checks: in this mode they
@@ -35,12 +40,12 @@
 //! And what is refused, each naming the construct:
 //!
 //! - `print`/`print!` (a `Template`), which is `printf`;
-//! - `String`, `Bytes`, `View` and `Thread`, whose storage is the hosted C
-//!   runtime's (and `String`/`Bytes` reach `strlen`/`memcpy`/`realloc`), so
-//!   they stay refused even with an allocator configured; and `List`, `Map` and
-//!   `Box` when no `[target] alloc`/`dealloc` pair is configured, since their
-//!   storage is the runtime allocator's; and therefore any `std/*` module not
-//!   on the list above, and every `std/str` function other than the five;
+//! - `View` and `Thread`, whose storage is the hosted C runtime's, so they stay
+//!   refused whatever the manifest says; `String`/`Bytes` without an allocator,
+//!   and `List`, `Map` and `Box` when no `[target] alloc`/`dealloc` pair is
+//!   configured, since their storage is the runtime allocator's; and therefore
+//!   any `std/*` module not on the list above, and every `std/str` function
+//!   other than the listed subset;
 //! - passdowns (`pd`), whose initializers run through the generated
 //!   `kelp_init_pds` that only the hosted entry point calls.
 //!
@@ -74,13 +79,66 @@ pub const ALLOWED_STD_MODULES: &[&str] = &["std/atomic", "std/option", "std/resu
 /// exposes (`concat`, `split`, `join`, `parse_i64`, `from_f64`, `trim`, ...)
 /// allocates, formats or parses, so the call-site check refuses each by name.
 pub const STD_STR: &str = "std/str";
-pub const ALLOWED_STD_STR_FUNCTIONS: &[&str] = &["len", "byte", "eq", "starts_with", "ptr"];
+pub const ALLOWED_STD_STR_FUNCTIONS: &[&str] =
+    &["len", "byte", "eq", "starts_with", "ptr", "concat", "from_u64", "from_i64"];
 
-/// The `std/str` functions `prune` keeps by name: the public five plus the
-/// private helper `starts_with` reaches. Every `extern fun` in the module is
-/// kept as well, because the five lower to them.
-const EMITTED_STD_STR_FUNCTIONS: &[&str] =
-    &["len", "byte", "eq", "starts_with", "starts_with_at", "ptr"];
+/// The `String` methods a freestanding build lowers itself, through the project
+/// allocator (kernel stage 12, MK9-S5-M2). Every other method on the type needs
+/// the hosted runtime, because its body is a `strlen`/`memcpy`/`realloc` call
+/// or a formatting primitive; the call-site check refuses each by name.
+/// `with_capacity`, `reserve` and `clear` are the buffer primitives `concat`
+/// and the integer builders are written on top of, so they are here too.
+pub const ALLOWED_STRING_METHODS: &[&str] = &[
+    "empty",
+    "from_str",
+    "len",
+    "is_empty",
+    "as_str",
+    "clone",
+    "push",
+    "push_str",
+    "reserve",
+    "with_capacity",
+    "clear",
+];
+
+/// The `Bytes` methods a freestanding build lowers itself. Same rule as the
+/// `String` list: anything that has no libc-free body (the endian accessors are
+/// compiled, but `as_str`'s UTF-8 validation and `append`'s growth are not on
+/// this stage's list) is refused by name at the call.
+pub const ALLOWED_BYTES_METHODS: &[&str] = &[
+    "empty",
+    "from_str",
+    "len",
+    "is_empty",
+    "get",
+    "set",
+    "push",
+    "clone",
+    "reserve",
+    "clear",
+];
+
+/// The `std/str` functions `prune` keeps by name: the five operations, the
+/// private helper `starts_with` reaches, and the three bodies that build an
+/// owned `String`. Every `extern fun` in the module is kept as well, because
+/// the five lower to them.
+const EMITTED_STD_STR_FUNCTIONS: &[&str] = &[
+    "len",
+    "byte",
+    "eq",
+    "starts_with",
+    "starts_with_at",
+    "ptr",
+    "concat",
+    "from_u64",
+    "from_i64",
+];
+
+/// The three `std/str` bodies that build an owned `String`, so they are kept
+/// only when the manifest configured an allocator: without one, a kept body
+/// would reference `kelp_String__*` symbols the project cannot define.
+const STRING_BUILDER_STD_STR_FUNCTIONS: &[&str] = &["concat", "from_u64", "from_i64"];
 
 /// The `std/*` modules that may be *part* of a freestanding program without
 /// being callable. `std/str` is narrowed to its five operations at each call
@@ -364,9 +422,10 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
 /// Every function the program itself declares is kept, as is every function of
 /// an allowed module, so the only thing that disappears is dead code in the two
 /// present modules. The five operations, the helper they use and the three
-/// `extern` primitives they call are kept by name; a kept `std/str` body can
-/// reach nothing else.
-pub fn prune(program: &mut ast::Program) {
+/// `extern` primitives they call are kept by name, plus `concat`/`from_u64`/
+/// `from_i64` when an allocator is configured; a kept `std/str` body can reach
+/// nothing else.
+pub fn prune(program: &mut ast::Program, allocator: bool) {
     program.functions.retain(|f| {
         if !f.module.starts_with("std/") {
             return true;
@@ -379,7 +438,12 @@ pub fn prune(program: &mut ast::Program) {
         }
         // An `extern fun` is a declaration the module's own bodies may call; a
         // pruned body leaves it unused, and an unused declaration is no symbol.
-        f.extern_ || EMITTED_STD_STR_FUNCTIONS.contains(&bare_name(&f.name))
+        if f.extern_ {
+            return true;
+        }
+        let name = bare_name(&f.name);
+        EMITTED_STD_STR_FUNCTIONS.contains(&name)
+            && (allocator || !STRING_BUILDER_STD_STR_FUNCTIONS.contains(&name))
     });
 }
 
@@ -422,13 +486,25 @@ fn unavailable(message: String, span: Span, module: impl Into<String>) -> Diagno
 /// here.
 ///
 /// `heap_ok` is whether the manifest configured an `alloc`/`dealloc` pair: with
-/// one, `Box`, `List` and `Map` are allowed and the walk descends into their
-/// element types, because a `List<String>` still reaches the hosted runtime.
-/// `String`, `Bytes`, `View` and `Thread` are refused whatever `heap_ok` is.
+/// one, `Box`, `List`, `Map`, `String` and `Bytes` are allowed and the walk
+/// descends into their element types, because a `List<String>` still reaches the
+/// hosted runtime. `View` and `Thread` are refused whatever `heap_ok` is.
 fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
     match ty {
-        Ty::String => Some("String"),
-        Ty::Bytes => Some("Bytes"),
+        Ty::String => {
+            if heap_ok {
+                None
+            } else {
+                Some("String")
+            }
+        }
+        Ty::Bytes => {
+            if heap_ok {
+                None
+            } else {
+                Some("Bytes")
+            }
+        }
         Ty::View => Some("View"),
         Ty::Thread(_) => Some("Thread"),
         Ty::List(inner) => {
@@ -462,13 +538,17 @@ fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
     }
 }
 
-/// The tail of every heap-type refusal message: a container without an
-/// allocator names the two manifest keys that would let it through, and every
-/// other type stays a plain "unavailable".
+/// The tail of every heap-type refusal message: a type without an allocator
+/// names the two manifest keys that would let it through, and every other type
+/// stays a plain "unavailable".
 fn heap_message(kind: &'static str, heap_ok: bool) -> String {
     if !heap_ok && matches!(kind, "Box" | "List" | "Map") {
         format!(
             "'{kind}', which needs an allocator in a freestanding build: set '[target] alloc' and '[target] dealloc' to the project's own functions"
+        )
+    } else if !heap_ok && matches!(kind, "String" | "Bytes") {
+        format!(
+            "'{kind}', which is unavailable in a freestanding build without an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions"
         )
     } else {
         format!("'{kind}', which is unavailable in a freestanding build")
@@ -593,13 +673,34 @@ impl Checker<'_> {
                         module,
                     ));
                 }
+                // A `String`/`Bytes` method not on the libc-free list needs the
+                // hosted runtime's storage (kernel stage 12). The type itself
+                // is legal with an allocator, so without this check an
+                // unsupported method would reach the linker as an undefined
+                // `kelp_rt` symbol; naming it here is the whole point.
+                if let Some((owner, method)) = callee.split_once('#') {
+                    let allowed = match owner {
+                        "String" => ALLOWED_STRING_METHODS.contains(&method),
+                        "Bytes" => ALLOWED_BYTES_METHODS.contains(&method),
+                        _ => true,
+                    };
+                    if !allowed {
+                        return Err(unavailable(
+                            format!(
+                                "the call to '{callee}' is unavailable in a freestanding build: it needs the hosted runtime"
+                            ),
+                            expr.span,
+                            module,
+                        ));
+                    }
+                }
                 if let Some(callee_module) = self.module_of.get(callee.as_str()) {
                     if callee_module.starts_with("std/") {
                         if *callee_module == STD_STR {
                             if !ALLOWED_STD_STR_FUNCTIONS.contains(&bare_name(callee)) {
                                 return Err(unavailable(
                                     format!(
-                                        "the call to '{callee}' is unavailable in a freestanding build: 'std/str' has a libc-free lowering only for {}",
+                                        "the call to '{callee}' is unavailable in a freestanding build: it needs the hosted runtime, which 'std/str' reaches for everything but {}",
                                         ALLOWED_STD_STR_FUNCTIONS.join(", ")
                                     ),
                                     expr.span,
@@ -609,7 +710,7 @@ impl Checker<'_> {
                         } else if !ALLOWED_STD_MODULES.contains(callee_module) {
                             return Err(unavailable(
                                 format!(
-                                    "the call to '{callee}' is unavailable in a freestanding build: the module '{callee_module}' reaches the hosted runtime"
+                                    "the call to '{callee}' is unavailable in a freestanding build: the module '{callee_module}' needs the hosted runtime"
                                 ),
                                 expr.span,
                                 module,
