@@ -1,0 +1,16 @@
+name = "kernel0_vm"
+
+# Kernel stage 10, the address-space half: the same bare-metal riscv64 image as
+# kernel 0, with Sv39 page tables and a drop from machine mode to supervisor
+# mode. `main`, `uart` and `vm` are all on the audit list: `main` writes the
+# `satp`/`mstatus`/`pmp*` CSRs and the `ROOT` static, `uart` is the device
+# register, and `vm` is the page-table walker and the frame allocator.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["main", "uart", "vm"]

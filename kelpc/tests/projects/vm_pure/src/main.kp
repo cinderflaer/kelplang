@@ -1,0 +1,90 @@
+// Kernel stage 10, the hosted half: the parts of `examples/kernel0-vm/src/vm.kp`
+// that are pure arithmetic and need no QEMU, copied here so both backends run
+// them and one literal pins the answers. A freestanding project is LLVM-only by
+// design, so this is where the C oracle covers the Sv39 encoders.
+
+const PAGE_SIZE: usize = 4096
+const ENTRIES: usize = 512
+
+const PTE_V: u64 = 1
+const PTE_R: u64 = 2
+const PTE_W: u64 = 4
+const PTE_X: u64 = 8
+const PTE_A: u64 = 64
+const PTE_D: u64 = 128
+const PTE_LEAF: u64 = 14
+
+const SATP_MODE_SV39: usize = 8
+
+fun vpn(va: usize, level: usize).R: usize {
+    (va >> (12 + 9 * level)) & (ENTRIES - 1)
+}
+
+fun page_offset(va: usize).R: usize {
+    va & (PAGE_SIZE - 1)
+}
+
+fun pte_ppn(entry: u64).R: usize {
+    ((entry >> 10) << 12).to_usize()
+}
+
+fun pte_flags(entry: u64).R: u64 {
+    entry & 1023
+}
+
+fun pte_valid(entry: u64).R: bool {
+    entry & PTE_V != 0
+}
+
+fun pte_is_leaf(entry: u64).R: bool {
+    entry & PTE_LEAF != 0
+}
+
+fun pte_encode(pa: usize, flags: u64).R: u64 {
+    ((pa >> 12).to_u64() << 10) | flags
+}
+
+fun satp_encode(root: usize).R: usize {
+    (SATP_MODE_SV39 << 60) | (root >> 12)
+}
+
+fun satp_mode(satp: usize).R: usize {
+    satp >> 60
+}
+
+fun satp_asid(satp: usize).R: usize {
+    (satp >> 44) & 0xFFFF
+}
+
+fun satp_ppn(satp: usize).R: usize {
+    satp & 0xFFFFFFFFFFF
+}
+
+fun main() {
+    // The high address the kernel's alias test uses: one page below 2^38.
+    val high: usize = 0x4000000000 - 4096
+    print(vpn(high, 2).to_i64())
+    print(vpn(high, 1).to_i64())
+    print(vpn(high, 0).to_i64())
+    print(page_offset(high).to_i64())
+    print(page_offset(high + 4095).to_i64())
+
+    // A leaf for the kernel image's first page, RWX plus V/A/D.
+    val leaf: u64 = pte_encode(0x80000000, PTE_R | PTE_W | PTE_X | PTE_V | PTE_A | PTE_D)
+    print(leaf.to_i64())
+    print(pte_flags(leaf).to_i64())
+    print(pte_ppn(leaf).to_i64())
+    print(pte_valid(leaf))
+    print(pte_is_leaf(leaf))
+
+    // A pointer entry has V and no R/W/X, so it is not a leaf.
+    val pointer: u64 = pte_encode(0x80005000, PTE_V)
+    print(pte_is_leaf(pointer))
+    print(pte_valid(pointer))
+
+    // satp for that root: mode 8, ASID 0, PPN 0x80005.
+    val satp: usize = satp_encode(0x80005000)
+    print(satp_mode(satp).to_i64())
+    print(satp_asid(satp).to_i64())
+    print(satp_ppn(satp).to_i64())
+}

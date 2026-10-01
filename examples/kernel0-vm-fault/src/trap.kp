@@ -1,0 +1,135 @@
+impl "uart"
+
+// The S-mode trap vector. `stvec` names a naked function (kernel stage 5), so
+// it is entered with the interrupted code's registers untouched and no
+// compiler prologue; the handler saves every caller-saved register itself and
+// returns with `sret`. It is `align(4)` because `stvec`'s low two bits select
+// the vectored mode and this one is direct.
+//
+// `report` is reached through `sscratch`, so no mangled symbol is spelled here.
+// It answers with the number of bytes to advance `sepc`, which is 0 for the
+// fault the run ends on: the handler then halts rather than returning to code
+// that would fault again.
+//
+// The instruction length comes from the faulting instruction's low bits rather
+// than being assumed to be 4, because the target enables the compressed
+// extension and a `ld` may be two bytes.
+static mut PHASE: usize = 0
+
+pub fun arm(phase: usize) {
+    unsafe {
+        PHASE = phase
+    }
+}
+
+fun current_phase().R: usize {
+    unsafe { PHASE }
+}
+
+// `0x` then the significant hex digits, so a printed address is one line the
+// run script can pin.
+pub fun put_hex(value: usize) {
+    uart.puts("0x")
+    var started: bool = false
+    var i: usize = 0
+    while i < 16 {
+        val nib: usize = (value >> ((15 - i) * 4)) & 15
+        if nib != 0 {
+            started = true
+        }
+        if started {
+            if nib < 10 {
+                uart.putc((48 + nib).to_u8())
+            } else {
+                uart.putc((87 + nib).to_u8())
+            }
+        }
+        i = i + 1
+    }
+    if started == false {
+        uart.putc(48)
+    }
+}
+
+pub fun install() {
+    unsafe {
+        asm("csrw stvec, {0}", in("r") Ptr.from_fn(trap_handler).addr())
+        asm("csrw sscratch, {0}", in("r") Ptr.from_fn(report).addr())
+    }
+}
+
+// The body the naked handler calls: read the three CSRs the fault left, print
+// them, and answer with the resume increment.
+pub fun report().R: usize {
+    val cause: usize = unsafe { asm("csrr {0}, scause", out("r") _) }
+    val tval: usize = unsafe { asm("csrr {0}, stval", out("r") _) }
+    val pc: usize = unsafe { asm("csrr {0}, sepc", out("r") _) }
+
+    uart.puts("fault: scause ")
+    put_hex(cause)
+    uart.puts(" stval ")
+    put_hex(tval)
+    uart.putc(10)
+
+    // Phase 0 probes an unmapped address; resuming past the load is what lets
+    // the run reach the second cause. Phase 1's store has nowhere to go, so it
+    // halts.
+    if current_phase() == 0 {
+        val insn_ptr: Ptr<u16> = Ptr.from_addr(pc)
+        val insn: u16 = unsafe { insn_ptr.read_volatile() }
+        if (insn.to_usize() & 3) == 3 {
+            return 4
+        }
+        return 2
+    }
+    return 0
+}
+
+section(".text.trap") align(4) naked fun trap_handler() {
+    asm("
+            addi sp, sp, -128
+            sd ra, 0(sp)
+            sd t0, 8(sp)
+            sd t1, 16(sp)
+            sd t2, 24(sp)
+            sd t3, 32(sp)
+            sd t4, 40(sp)
+            sd t5, 48(sp)
+            sd t6, 56(sp)
+            sd a0, 64(sp)
+            sd a1, 72(sp)
+            sd a2, 80(sp)
+            sd a3, 88(sp)
+            sd a4, 96(sp)
+            sd a5, 104(sp)
+            sd a6, 112(sp)
+            sd a7, 120(sp)
+            csrr t0, sscratch
+            jalr ra, t0, 0
+            beqz a0, .Lkelp_fault_halt
+            csrr t1, sepc
+            add t1, t1, a0
+            csrw sepc, t1
+            ld ra, 0(sp)
+            ld t0, 8(sp)
+            ld t1, 16(sp)
+            ld t2, 24(sp)
+            ld t3, 32(sp)
+            ld t4, 40(sp)
+            ld t5, 48(sp)
+            ld t6, 56(sp)
+            ld a0, 64(sp)
+            ld a1, 72(sp)
+            ld a2, 80(sp)
+            ld a3, 88(sp)
+            ld a4, 96(sp)
+            ld a5, 104(sp)
+            ld a6, 112(sp)
+            ld a7, 120(sp)
+            addi sp, sp, 128
+            sret
+        .Lkelp_fault_halt:
+            wfi
+            j .Lkelp_fault_halt
+        ")
+}

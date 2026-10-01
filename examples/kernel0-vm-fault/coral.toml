@@ -1,0 +1,15 @@
+name = "kernel0_vm_fault"
+
+# Kernel stage 10, the fault half: the Sv39 kernel takes a load page fault and
+# a store page fault on purpose and prints both from an S-mode trap handler.
+# `main` writes the CSRs and the `ROOT` static, `trap` owns `stvec` and the
+# naked handler, `uart` is the device register, and `vm` is the walker.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["main", "trap", "uart", "vm"]
