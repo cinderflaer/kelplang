@@ -1,0 +1,11 @@
+// Kernel stage 5: `csrr` and `wfi` are the two instructions a bare-metal
+// riscv64 program reaches for first, and neither has a Kelp spelling. The
+// anonymous `out` reads `mstatus`; the value is not used here, so the point of
+// the fixture is that the two templates assemble into the object at all (the
+// test reads them back out of the ELF with `llvm-objdump`).
+fun kmain() {
+    unsafe {
+        asm("csrr {0}, mstatus", out("r") _)
+        asm("wfi")
+    }
+}

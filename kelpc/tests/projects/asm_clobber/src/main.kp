@@ -1,0 +1,9 @@
+// Kernel stage 5: `clobber("...")` names a register the asm writes, so the
+// compiler keeps nothing live in it across the instruction.
+fun main() {
+    unsafe {
+        var c: i64 = 3
+        asm("add {0}, 1", inout("r") c, clobber("rax"))
+        print(c)
+    }
+}

@@ -1,0 +1,7 @@
+// Kernel stage 5: `asm` is legal only inside `unsafe { ... }` or an `unsafe
+// fun`, even when the module is in the audit list. This project lists the
+// module and still writes the asm outside an `unsafe` block.
+fun main() {
+    var x: i64 = 1
+    asm("mov {0}, 2", out("r") x)
+}

@@ -1,0 +1,9 @@
+// Kernel stage 5 (MK9-S7-M1/M3): `asm` is an unsafe operation, so the module
+// that writes one has to be in coral.toml's `[unsafe] modules` list. This
+// project has no such list, so the build is refused at the `asm`.
+fun main() {
+    unsafe {
+        var x: i64 = 0
+        asm("mov {0}, 1", out("r") x)
+    }
+}

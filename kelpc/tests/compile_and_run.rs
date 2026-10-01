@@ -8552,3 +8552,131 @@ fn freestanding_min_builds_a_riscv_elf_with_no_undefined_symbols() {
         undefined.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Kernel stage 5 (MK9-S7-M1/M3, roadmap B-9/B-16): inline `asm` and `naked
+// fun`. The templates in these fixtures are x86-64 assembly in Intel syntax,
+// which is the dialect the compiler selects for an x86 target on both backends
+// (`plan/inline-asm.md`), so the fixtures run on both the default LLVM backend
+// and the C oracle.
+// ---------------------------------------------------------------------------
+
+/// `inout` is read then written, and `in` is read: `add {0}, {1}` accumulates
+/// the input into the inout place and the result is printed.
+#[test]
+fn inline_asm_inout_and_in_operands_compute_a_sum() {
+    assert_project_runs("asm_inout", &project("asm_inout"), "42\n");
+}
+
+/// An `out` operand writes its place, and the anonymous form `out("r") _` is
+/// the asm expression's own value.
+#[test]
+fn inline_asm_out_operand_writes_its_place_and_the_anonymous_form_is_a_value() {
+    assert_project_runs("asm_out", &project("asm_out"), "1234\n7\n");
+}
+
+/// `clobber(...)` adds a register to the constraint string, which is what tells
+/// the compiler not to keep a value live in one. The program's own result is
+/// unchanged, so the value of the fixture is that the clobber builds and runs.
+#[test]
+fn inline_asm_clobber_builds_and_runs() {
+    assert_project_runs("asm_clobber", &project("asm_clobber"), "4\n");
+}
+
+/// A `naked fun` is called like any other function: the caller follows the
+/// System V return-register convention and the asm is what puts 42 in `rax`.
+#[test]
+fn a_naked_function_returns_a_constant_in_rax_and_is_called_normally() {
+    assert_project_runs("asm_naked", &project("asm_naked"), "42\n");
+}
+
+/// `asm` is an unsafe operation, so it needs an `unsafe` context on top of the
+/// module's `[unsafe]` listing.
+#[test]
+fn an_asm_outside_unsafe_is_rejected() {
+    assert_project_rejected(
+        "asm_outside_unsafe",
+        &project("asm_outside_unsafe"),
+        "'asm' is an unsafe operation",
+    );
+}
+
+/// The operand kinds are `in`, `out`, `inout` and `clobber`; anything else is
+/// named in the refusal. A parser-level rejection, so it is a single negative
+/// fixture rather than a project.
+#[test]
+fn an_unknown_asm_operand_kind_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/asm_unknown_operand.kp",
+        "unknown asm operand kind 'sideways'",
+    );
+}
+
+/// A `naked fun` body is exactly one `asm`: nothing else can be emitted around
+/// it.
+#[test]
+fn a_naked_function_with_a_second_statement_is_rejected() {
+    assert_project_rejected(
+        "asm_naked_two_stmts",
+        &project("asm_naked_two_stmts"),
+        "a 'naked fun' body must be exactly one 'asm(...)' statement",
+    );
+}
+
+/// `asm` is what puts a module in the audit list, exactly as an `unsafe` block
+/// does: a module that writes one without the listing is refused at the `asm`.
+#[test]
+fn an_asm_in_a_module_without_the_manifest_listing_is_rejected() {
+    assert_project_rejected(
+        "asm_unlisted",
+        &project("asm_unlisted"),
+        "module 'main' is not listed in coral.toml [unsafe] modules",
+    );
+}
+
+/// The riscv64 half of the stage: `csrr` and `wfi` have no Kelp spelling, so
+/// the only way to write them is `asm`, and this is the object-only check that
+/// the templates assemble. It needs `ld.lld` and `llvm-objdump` from
+/// `dev-kernel.nix`; a shell without them prints a skip.
+///
+/// `csrr` is the decisive disassembly line: the generated `_start` stub already
+/// contains a `wfi`, so only `csrr` could not have come from anywhere but this
+/// fixture's asm.
+#[test]
+fn inline_asm_assembles_csrr_and_wfi_for_riscv64() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the riscv64 asm test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("asm_riscv");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("asm_riscv"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the riscv64 asm build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+    let disassembly = tool("llvm-objdump", &["-d", path]);
+    assert!(
+        disassembly.contains("csrr"),
+        "the asm's csrr is not in the image:\n{disassembly}"
+    );
+    assert!(
+        disassembly.contains("wfi"),
+        "the asm's wfi is not in the image:\n{disassembly}"
+    );
+}
