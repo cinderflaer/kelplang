@@ -1,0 +1,9 @@
+// `return f()` where `f` returns `unit`: there is no value to carry, so the
+// call runs for its side effect and the return is the bare `return` a written
+// one is. Both backends emit that the same way.
+fun say(text: str) {
+    print(text)
+}
+fun main() {
+    return say("said")
+}

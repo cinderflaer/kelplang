@@ -2672,13 +2672,26 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let drops = self.drops_at_return(*span);
                 match value {
                     Some(e) => {
-                        let v = if drops.is_empty() {
-                            self.value_of(e)?
+                        // A `unit`-typed value has nothing to build a `ret`
+                        // from: the expression's side effects are the whole
+                        // statement, and the return is the bare return a
+                        // written `return` is (which is what makes
+                        // `return f()` legal when `f` returns `unit`).
+                        if e.ty == Ty::Unit {
+                            self.emit_expr(e)?;
+                            if !self.terminated {
+                                self.emit_drops(&drops)?;
+                                self.emit_fallthrough_return()?;
+                            }
                         } else {
-                            self.value_of_then_drops(e, &drops)?
-                        };
-                        if !self.terminated {
-                            self.g.builder.build_ret(v);
+                            let v = if drops.is_empty() {
+                                self.value_of(e)?
+                            } else {
+                                self.value_of_then_drops(e, &drops)?
+                            };
+                            if !self.terminated {
+                                self.g.builder.build_ret(v);
+                            }
                         }
                     }
                     None => {
