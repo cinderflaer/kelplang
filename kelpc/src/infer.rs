@@ -1963,7 +1963,6 @@ fn declared_drop_names(program: &ast::Program) -> std::collections::HashSet<Stri
 /// rather than a call the generated drop cannot make.
 fn check_drop_method(
     f: &ast::FunctionDecl,
-    params: &[(String, Ty)],
     ret: &Ty,
 ) -> std::result::Result<(), Diagnostic> {
     let receiver = f
@@ -1987,7 +1986,6 @@ fn check_drop_method(
             "'{owner}.drop' must not return a value: a drop runs where the value dies and has nowhere to hand a result, so write 'fun mut {owner}.drop()'"
         )));
     }
-    let _ = params;
     Ok(())
 }
 
@@ -6931,11 +6929,8 @@ fn check_program_pass(
         // receiver, the parameters and the return type are resolved. The
         // duplicate-key check below is what refuses a second one, since both
         // spellings share the `T#drop` key.
-        if let Some(r) = &f.receiver {
-            if f.name == crate::types::DROP_METHOD {
-                check_drop_method(f, &params, &ret)?;
-                let _ = r;
-            }
+        if f.receiver.is_some() && f.name == crate::types::DROP_METHOD {
+            check_drop_method(f, &ret)?;
         }
         // A returned borrow has to have something to borrow from, which the
         // borrow checker enforces per return site (M6.3): either the first
