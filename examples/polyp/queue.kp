@@ -8,3 +8,11 @@
 pub extern fun polyp_post(id: i32)
 
 pub extern fun polyp_poll().R: i32
+
+// The edit channel: a program with no user asks the loop to set an entry's
+// text, which fires the entry's real `changed` signal. `polyp_poll_edit`
+// answers the entry index, or -1 when none is pending, and
+// `polyp_poll_edit_text` is the text of the edit just polled.
+pub extern fun polyp_post_edit(index: i32, text: str)
+pub extern fun polyp_poll_edit().R: i32
+pub extern fun polyp_poll_edit_text().R: str

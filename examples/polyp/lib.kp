@@ -1,4 +1,4 @@
-// Polyp v0: a declarative native UI library over GTK4, in the Elm shape.
+// Polyp: a declarative native UI library over GTK4, in the Elm shape.
 //
 // The application supplies four things and Polyp owns the loop:
 //
@@ -14,18 +14,34 @@
 // the queue, and the loop — which does own the state — turns the integer back
 // into the `Msg` stored in the tree it built and calls `update`.
 //
-// v0 rebuilds the whole widget tree on every state change: there is no
-// reconciliation, no text input, and no focus retention, and a widget that
-// survives a rebuild does not keep its focus. Those are the honest limits of a
-// first slice; see README.md.
+// v1 adds the builder syntax. `polyp.column { k -> k.text(s.title) }` is a
+// `scoped fun(mut Children<M>)` parameter (plan/scoped-blocks.md), so the block
+// is written at this call site and may read the borrowed `s` the view already
+// holds; the `Children` value it is handed collects the children. The plain
+// constructor functions (`plain_column`, `text`, `button`, ...) are still here
+// and still compile, so both styles are available in one library.
+//
+// Reconciliation is deliberately tiny and is described at `build` below: a
+// rebuilt tree reuses the *i*-th `Entry` widget of the previous tree, so focus
+// survives a rebuild. Nothing else is diffed.
 impl "deps/polyp/gtk"
 impl "deps/polyp/queue"
+impl "std/str"
+impl "std/fmt"
 
 // What the loop tests a polled id against. `polyp_poll` answers -1 for an
 // empty queue, so the quit id has to be some *other* negative number: button
-// ids are tree positions and are never negative, and the collision between the
-// empty marker and a real id is what a 0-based id scheme otherwise causes.
+// ids are tree positions and are never negative, and entry ids start below
+// both (`ENTRY_BASE` below). The collision between the empty marker and a real
+// id is what a 0-based id scheme otherwise causes.
 pub const QUIT_ID: i32 = -2
+
+// The id of the first entry, `ENTRY_BASE - index`. Entry ids count down from
+// here so they can never collide with a button id (0 and up) or with the two
+// negative markers. The index is the *ordinal* of the entry in the tree, which
+// is the number reconciliation keys on, so a reused entry's handler keeps
+// posting the same id.
+const ENTRY_BASE: i32 = -3
 
 // `GTK_ORIENTATION_HORIZONTAL` and `..._VERTICAL`, spelled as the numbers they
 // are for the same reason every other GTK value here is: a C `enum` crossing
@@ -35,6 +51,13 @@ pub const VERTICAL: i32 = 1
 
 // `G_PRIORITY_DEFAULT`.
 const PRIORITY_DEFAULT: i32 = 0
+
+// How many `Entry` widgets this process has built. A rebuild that reuses an
+// entry does not increment it, so a smoke run can tell reconciliation happened
+// (one entry, many renders) from a rebuild that replaced it (one per render).
+pd var entry_builds = 0
+
+pub fun entries_built().R: i32 = entry_builds
 
 // The tree `view` returns. `M` is the application's `Msg`; the loop never
 // inspects one, it only stores them and hands them back to `update`.
@@ -47,16 +70,85 @@ const PRIORITY_DEFAULT: i32 = 0
 pub enum Node<M> {
     Column(val children: List<Node<M>>)
     Row(val children: List<Node<M>>)
-    Text(val text: String)
+    Text(val text: String, val size: i32, val bold: bool)
+    Spacer(val height: i32)
+    Entry(val text: String, val on_change: fun (String).R: M)
     Button(val label: String, val on_click: M)
 }
 
-// Constructors, so app code reads `polyp.column(kids)` rather than naming the
-// enum. Each takes `M` only from the expected type, which is the tree it is
-// being pushed into.
-pub fun column<M>(children: move List<Node<M>>).R: Node<M> = Node.Column(children = children)
-pub fun row<M>(children: move List<Node<M>>).R: Node<M> = Node.Row(children = children)
-pub fun text<M>(text: move String).R: Node<M> = Node.Text(text = text)
+// The builder a block writes children into. A trailing block is passed to
+// `column`/`row` as a `scoped fun(mut Children<M>)`, so the block mutates this
+// value through the exclusive borrow a `mut` parameter of a scoped function
+// type already is (plan/scoped-blocks.md).
+pub datac Children<M>(var items: List<Node<M>>)
+
+// The entry constructor `List` cannot hold a bare `fun` value yet (a function
+// pointer's name goes inside its declarator, so a container's generated C type
+// has no name for the element), so the loop stores the wrapper instead.
+pub datac EntryCtor<M>(val call: fun (String).R: M)
+
+// The leaf methods of the builder. `text` and `text_styled` take a `str` view
+// so a borrowed `String` field (`s.title.as_str()`) can be passed without a
+// copy the caller has to write.
+fun mut Children<M>.text(t: str) {
+    items.push(Node.Text(text = String.from_str(t), size = 0, bold = false))
+}
+
+fun mut Children<M>.text_styled(t: str, size: i32, bold: bool) {
+    items.push(Node.Text(text = String.from_str(t), size = size, bold = bold))
+}
+
+fun mut Children<M>.spacer(height: i32) {
+    items.push(Node.Spacer(height = height))
+}
+
+fun mut Children<M>.button(label: str, on_click: move M) {
+    items.push(Node.Button(label = String.from_str(label), on_click = on_click))
+}
+
+// `on_change` is a plain `fun` value, not a closure capturing state: the loop
+// calls it with the entry's new text, and the app writes the constructor that
+// turns that text into its own `Msg`.
+fun mut Children<M>.entry(value: str, on_change: fun (String).R: M) {
+    items.push(Node.Entry(text = String.from_str(value), on_change = on_change))
+}
+
+fun mut Children<M>.column(block: scoped fun(mut Children<M>)) {
+    var inner = Children<M>(items = List.empty())
+    block(inner)
+    items.push(Node.Column(children = inner.items))
+}
+
+fun mut Children<M>.row(block: scoped fun(mut Children<M>)) {
+    var inner = Children<M>(items = List.empty())
+    block(inner)
+    items.push(Node.Row(children = inner.items))
+}
+
+// Block-taking constructors, so app code reads
+// `polyp.column { k -> k.text(s.title) k.button("+1", Msg.Inc) }`. The block's
+// captures are shared borrows released with this call, which is what lets it
+// read the view's borrowed state.
+pub fun column<M>(block: scoped fun(mut Children<M>)).R: Node<M> {
+    var c = Children<M>(items = List.empty())
+    block(c)
+    return Node.Column(children = c.items)
+}
+
+pub fun row<M>(block: scoped fun(mut Children<M>)).R: Node<M> {
+    var c = Children<M>(items = List.empty())
+    block(c)
+    return Node.Row(children = c.items)
+}
+
+// The v0 plain constructors. `text` and `button` keep their names because the
+// builder's same-named items are methods, a separate namespace; `column` and
+// `row` cannot keep them because the block-taking constructors above are free
+// functions of the same name and Kelp has no overloading, so the plain spelling
+// carries a `plain_` prefix. Both spellings compile.
+pub fun plain_column<M>(children: move List<Node<M>>).R: Node<M> = Node.Column(children = children)
+pub fun plain_row<M>(children: move List<Node<M>>).R: Node<M> = Node.Row(children = children)
+pub fun text<M>(text: move String).R: Node<M> = Node.Text(text = text, size = 0, bold = false)
 pub fun button<M>(label: move String, on_click: move M).R: Node<M> = Node.Button(label = label, on_click = on_click)
 
 // The click handler a button gets: a closure whose whole environment is the
@@ -68,11 +160,30 @@ fun click_handler(id: i32).R: closure(gtk.Widget) {
     }
 }
 
+// An entry's `changed` handler. The id is the entry's ordinal, so a reused
+// widget keeps posting a valid id and the loop reads the live text itself.
+fun entry_handler(index: i32).R: closure(gtk.Widget) {
+    return fun (w: gtk.Widget) {
+        queue.polyp_post(ENTRY_BASE - index)
+    }
+}
+
 // The handler a `g_timeout_add_full` source gets. It posts once and returns
 // `G_SOURCE_REMOVE`, so the source is destroyed after it fires.
 fun timeout_handler(id: i32).R: closure().R: i32 {
     return fun ().R: i32 {
         queue.polyp_post(id)
+        return 0
+    }
+}
+
+// A timeout that asks the loop to set entry `index` to `text`. The text is
+// owned by the closure, so it survives the frame that scheduled it; setting it
+// fires the widget's real `changed` signal. This is how a program with no user
+// (the smoke test) drives an entry.
+fun set_entry_handler(index: i32, new_text: move String).R: closure().R: i32 {
+    return fun ().R: i32 {
+        queue.polyp_post_edit(index, new_text.as_str())
         return 0
     }
 }
@@ -97,6 +208,32 @@ pub fun schedule_quit(delay_ms: u32) {
     schedule_post(delay_ms = delay_ms, id = QUIT_ID)
 }
 
+pub fun schedule_set_entry(delay_ms: u32, index: i32, new_text: str) {
+    gtk.g_timeout_add_full(PRIORITY_DEFAULT, delay_ms, set_entry_handler(index, String.from_str(new_text)))
+}
+
+// Pango markup for a label. Text is escaped first, so a `&` or `<` in the
+// app's string is shown, not parsed; the optional tags wrap the escaped text.
+fun label_markup(text: &str, size: i32, bold: bool).R: String {
+    val amp = str.replace(text, "&", "&amp;")
+    val lt = str.replace(amp.as_str(), "<", "&lt;")
+    var out = str.replace(lt.as_str(), ">", "&gt;")
+    if size > 0 {
+        val pts = fmt.int(size.to_i64())
+        val head = str.concat("<span size=\"", pts.as_str())
+        val open = str.concat(head.as_str(), "\">")
+        val opened = str.concat(open.as_str(), out.as_str())
+        val closed = str.concat(opened.as_str(), "</span>")
+        out = closed
+    }
+    if bold {
+        val opened = str.concat("<b>", out.as_str())
+        val closed = str.concat(opened.as_str(), "</b>")
+        out = closed
+    }
+    return out
+}
+
 // One button: the message is pushed at the id the counter is about to hand out,
 // so `msgs[i]` is the `Msg` of the `i`-th button in the tree, in tree order.
 fun button_widget<M>(label: String, msg: move M, msgs: mut List<M>, next: mut i32).R: gtk.Widget {
@@ -108,35 +245,100 @@ fun button_widget<M>(label: String, msg: move M, msgs: mut List<M>, next: mut i3
     return w
 }
 
-// Builds one widget per node, moving each node apart as it goes: an owned
-// scrutinee binds its payloads by value, so the `Msg` in a `Button` is moved
-// into `msgs` and the `String` in a `Text` into the label. The tree is moved
-// into the widgets and dropped; nothing keeps it.
-fun build<M>(node: move Node<M>, msgs: mut List<M>, next: mut i32).R: gtk.Widget = when node {
-    Column(children) -> box_widget(children, VERTICAL, msgs, next)
-    Row(children) -> box_widget(children, HORIZONTAL, msgs, next)
-    Text(text) -> gtk.gtk_label_new(text.as_str())
+// One entry. `value` seeds the text the first time the widget is built; a
+// reused widget keeps whatever the user typed, which is what focus retention
+// means here. The widget holds one reference of its own (`g_object_ref_sink`)
+// so it survives the old box being replaced; `render` releases it when a tree
+// no longer has an entry at this ordinal.
+fun entry_widget<M>(value: String, on_change: fun (String).R: M, ctors: mut List<EntryCtor<M>>, old_entries: List<gtk.Widget>, new_entries: mut List<gtk.Widget>).R: gtk.Widget {
+    val idx = ctors.len()
+    ctors.push(EntryCtor(call = on_change))
+    if idx < old_entries.len() {
+        val w = old_entries.get(idx)
+        new_entries.push(w)
+        return w
+    }
+    val w = gtk.gtk_entry_new()
+    gtk.g_object_ref_sink(w)
+    gtk.gtk_editable_set_text(w, value.as_str())
+    gtk.connect(w, "changed", entry_handler(idx.to_i32()), 0)
+    new_entries.push(w)
+    entry_builds += 1
+    return w
+}
+
+fun text_widget(text: String, size: i32, bold: bool).R: gtk.Widget {
+    val w = gtk.gtk_label_new("")
+    val markup = label_markup(text.as_str(), size, bold)
+    gtk.gtk_label_set_markup(w, markup.as_str())
+    return w
+}
+
+fun spacer_widget(height: i32).R: gtk.Widget {
+    val w = gtk.gtk_box_new(VERTICAL, 0)
+    gtk.gtk_widget_set_size_request(w, -1, height)
+    return w
+}
+
+// Builds one widget per node. The reconciliation is exactly one rule: the
+// `idx`-th `Entry` in this walk reuses the `idx`-th entry widget of the
+// previous walk (`entry_widget`). Nothing else is compared, so a box, label,
+// button or spacer is always built fresh, and an entry that moves ordinal
+// position is rebuilt (its focus is lost). The previous tree's entries were
+// unparented by `render` before this walk, and an entry the new walk does not
+// use is released by `render` afterwards.
+fun build<M>(node: move Node<M>, msgs: mut List<M>, next: mut i32, ctors: mut List<EntryCtor<M>>, old_entries: List<gtk.Widget>, new_entries: mut List<gtk.Widget>).R: gtk.Widget = when node {
+    Column(children) -> box_widget(children, VERTICAL, msgs, next, ctors, old_entries, new_entries)
+    Row(children) -> box_widget(children, HORIZONTAL, msgs, next, ctors, old_entries, new_entries)
+    Text(text, size, bold) -> text_widget(text, size, bold)
+    Spacer(height) -> spacer_widget(height)
+    Entry(text, on_change) -> entry_widget(text, on_change, ctors, old_entries, new_entries)
     Button(label, on_click) -> button_widget(label, on_click, msgs, next)
 }
 
-fun box_widget<M>(children: move List<Node<M>>, orientation: i32, msgs: mut List<M>, next: mut i32).R: gtk.Widget {
+fun box_widget<M>(children: move List<Node<M>>, orientation: i32, msgs: mut List<M>, next: mut i32, ctors: mut List<EntryCtor<M>>, old_entries: List<gtk.Widget>, new_entries: mut List<gtk.Widget>).R: gtk.Widget {
     // A `move` parameter is an owned `val`, so the walk needs a `var` binding
     // of its own: `remove` takes an exclusive borrow.
     var rest = children
     val box = gtk.gtk_box_new(orientation, 6)
     while !rest.is_empty() {
-        gtk.gtk_box_append(box, build(rest.remove(0), msgs, next))
+        gtk.gtk_box_append(box, build(rest.remove(0), msgs, next, ctors, old_entries, new_entries))
     }
     return box
 }
 
-// One state, one tree, one child of the window. Replacing the whole child is
-// the v0 strategy: GTK drops the widget that was there and shows the new one.
-fun render<S, M>(win: gtk.Window, state: S, msgs: mut List<M>, next: mut i32, view: fun (S).R: Node<M>) {
+// One state, one tree, one child of the window. The previous entry widgets are
+// released from the old box first (each keeps its own reference), so they can
+// be moved into the new tree; the box itself is replaced by
+// `gtk_window_set_child`, which frees every widget that was not reused.
+fun render<S, M>(win: gtk.Window, state: S, msgs: mut List<M>, ctors: mut List<EntryCtor<M>>, entry_widgets: mut List<gtk.Widget>, view: fun (S).R: Node<M>) {
     msgs.clear()
-    * next = 0
+    ctors.clear()
+    var r: usize = 0
+    while r < entry_widgets.len() {
+        gtk.gtk_widget_unparent(entry_widgets.get(r))
+        r += 1
+    }
+
     val node = view(state)
-    gtk.gtk_window_set_child(win, build(node, msgs, next))
+    var next: i32 = 0
+    var new_entries: List<gtk.Widget> = List.empty()
+    val built = build(node, msgs, next, ctors, entry_widgets, new_entries)
+    gtk.gtk_window_set_child(win, built)
+
+    // Entries the new tree did not reuse are dropped here; the rest were moved
+    // into `new_entries` by `build`.
+    var d: usize = new_entries.len()
+    while d < entry_widgets.len() {
+        gtk.g_object_unref(entry_widgets.get(d))
+        d += 1
+    }
+    entry_widgets.clear()
+    var c: usize = 0
+    while c < new_entries.len() {
+        entry_widgets.push(new_entries.get(c))
+        c += 1
+    }
 }
 
 // The loop. `init` is moved in and the final state is returned, so a caller can
@@ -156,8 +358,9 @@ pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (
 
     var state = init
     var msgs: List<M> = List.empty()
-    var next: i32 = 0
-    render(win, state, msgs, next, view)
+    var ctors: List<EntryCtor<M>> = List.empty()
+    var entry_widgets: List<gtk.Widget> = List.empty()
+    render(win, state, msgs, ctors, entry_widgets, view)
 
     var quitting = false
     while !quitting {
@@ -167,22 +370,41 @@ pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (
         // state owned by exactly one frame.
         gtk.g_main_context_iteration(gtk.null_main_context(), 1)
 
+        // Pending text edits are applied first: each fires the entry's own
+        // `changed` signal, which posts that entry's id for the drain below.
+        var editing = true
+        while editing {
+            val e = queue.polyp_poll_edit()
+            if e < 0 {
+                editing = false
+            } else {
+                gtk.gtk_editable_set_text(entry_widgets.get(e.to_usize()), queue.polyp_poll_edit_text())
+            }
+        }
+
         var draining = true
         while draining {
             val id = queue.polyp_poll()
-            if id < 0 {
-                // Either the empty marker (-1) or a posted quit (QUIT_ID); the
-                // drain ends either way.
-                if id == QUIT_ID {
-                    quitting = true
-                }
-                draining = false
-            } else if id < next {
+            if id >= 0 {
                 // The id names a button of the tree that is current *now*, so
                 // the message is taken from that tree and the tree is rebuilt
                 // before the next id is read.
                 update(state, msgs.remove(id.to_usize()))
-                render(win, state, msgs, next, view)
+                render(win, state, msgs, ctors, entry_widgets, view)
+            } else if id == QUIT_ID {
+                quitting = true
+                draining = false
+            } else if id <= ENTRY_BASE {
+                // An entry's text is read from the live widget, not from the
+                // tree, and the app's constructor turns it into its own `Msg`.
+                val e = (ENTRY_BASE - id).to_usize()
+                val text = String.from_str(gtk.gtk_editable_get_text(entry_widgets.get(e)))
+                val call = ctors.get(e).call
+                update(state, call(text))
+                render(win, state, msgs, ctors, entry_widgets, view)
+            } else {
+                // -1: `polyp_poll`'s empty marker.
+                draining = false
             }
         }
     }
