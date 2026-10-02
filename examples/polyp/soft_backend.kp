@@ -1,0 +1,2127 @@
+// Polyp's software backend: a retained widget tree, integer layout, damage-only painting and
+// input (Polyp v3 stage 3).
+//
+// This is stage 1's `core.Backend` implemented against the stage-2 raster instead of a toolkit.
+// It holds the same retained tree `headless_backend.kp` holds, applies the same `core.Patch`
+// lists, and hands out interactive ids by the same rule, so a program's counters, focus and
+// entry text are what the GTK and headless runs see. What is new is that the tree also carries
+// geometry and interaction state, and that every change ends as a list of dirty rectangles the
+// platform is asked to show.
+//
+// Nothing on the per-frame path allocates: `make` is the only operation that grows the tree (one
+// `SNode` and one `List` push per created widget), damage is the stage-2 fixed `Damage`, clips
+// are values, and the glyph mask `font.kp` builds is a stack array. The module dereferences no
+// pixel itself, so it is not on a consumer's `[unsafe]` list; the primitives and the two
+// platform modules are.
+//
+// `core.frame_step` runs one turn of the Elm loop, so a platform that owns a frame clock calls
+// `frame` and a program that lets the backend block calls `core.run`. Both take the same path
+// through `update`/`view`/`diff`/`apply`, which is why the counters cannot drift.
+impl "deps/polyp/core"
+impl "deps/polyp/soft/damage"
+impl "deps/polyp/soft/draw"
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/font"
+impl "deps/polyp/soft/platform"
+impl "std/option"
+impl "std/str"
+
+// Entry-edit operations, passed to the one editor below.
+const OP_INSERT: i32 = 0
+const OP_BACKSPACE: i32 = 1
+const OP_DELETE: i32 = 2
+const OP_LEFT: i32 = 3
+const OP_RIGHT: i32 = 4
+const OP_HOME: i32 = 5
+const OP_END: i32 = 6
+
+// The bytes one patch is charged in `frame_bytes`. The allocator's own size is not observable from
+// Kelp, so the number is a documented estimate (`PATCH_BYTES` covers a `Patch`, its path and its
+// props strings at the sizes this UI uses); `frame_allocs` is the exact count of allocation sites
+// the backend executed, and that is the number a budget test pins.
+const PATCH_BYTES: i64 = 64
+
+// The hard cap on one frame's patch list. The reusable buffer grows with `List.push` up to this
+// many patches and then panics rather than growing without bound, so a view that suddenly emits a
+// pathological number of patches is a named failure and not silent heap growth.
+const MAX_FRAME_PATCHES: i32 = 4096
+
+// The default palette and metrics, one value so a platform can replace every number here.
+// Colours are `0xAARRGGBB`; the metrics are described at the point that uses them.
+pub datac Theme(
+    var bg: u32,
+    var panel: u32,
+    var panel_alt: u32,
+    var fg: u32,
+    var muted: u32,
+    var border: u32,
+    var accent: u32,
+    var caret: u32,
+    var pad: i32,
+    var radius: i32,
+    var gap: i32,
+    var row_h: i32,
+    var box: i32,
+    var entry_min_w: i32,
+    var scrollbar_w: i32,
+    var progress_h: i32,
+    var sep: i32,
+    var text_scale: i32,
+)
+
+pub fun default_theme().R: Theme = Theme(
+    bg = 0xFF1E1E24,
+    panel = 0xFF2A2A33,
+    panel_alt = 0xFF34343F,
+    fg = 0xFFE6E6EA,
+    muted = 0xFF9AA0A6,
+    border = 0xFF3A3A44,
+    accent = 0xFF4C8DFF,
+    caret = 0xFFFFFFFF,
+    pad = 5,
+    radius = 3,
+    gap = 6,
+    row_h = 20,
+    box = 12,
+    entry_min_w = 90,
+    scrollbar_w = 6,
+    progress_h = 8,
+    sep = 1,
+    text_scale = 1,
+)
+
+// A resolved style: what a widget's own painting reads. `has_*` says whether a field was set by
+// the widget's kind or by a class; an unset foreground falls back to the inherited one, which is
+// how a class on a container reaches the text inside it.
+pub datac Style(
+    var bg: u32,
+    var fg: u32,
+    var border: u32,
+    var radius: i32,
+    var pad: i32,
+    var has_bg: bool,
+    var has_fg: bool,
+    var has_border: bool,
+    var has_radius: bool,
+    var has_pad: bool,
+)
+
+fun style_none().R: Style = Style(
+    bg = 0,
+    fg = 0,
+    border = 0,
+    radius = 0,
+    pad = 0,
+    has_bg = false,
+    has_fg = false,
+    has_border = false,
+    has_radius = false,
+    has_pad = false,
+)
+
+fun mut Style.merge(o: &Style) {
+    if o.has_bg {
+        bg = o.bg
+        has_bg = true
+    }
+    if o.has_fg {
+        fg = o.fg
+        has_fg = true
+    }
+    if o.has_border {
+        border = o.border
+        has_border = true
+    }
+    if o.has_radius {
+        radius = o.radius
+        has_radius = true
+    }
+    if o.has_pad {
+        pad = o.pad
+        has_pad = true
+    }
+}
+
+// The class hook: a class name to the small set of fields it overrides. This is the table the
+// stage asked for, spelled as comparisons because Kelp has no `static String`. A program adds a
+// class by adding a branch here. The three shipped names are the ones `examples/polyp-todo` uses;
+// `todo-done` is the muted colour its GTK stylesheet gives a completed row.
+fun class_style(name: &str).R: Style {
+    var s = style_none()
+    if str.eq(name, "todo-app") {
+        s.has_pad = true
+        s.pad = 2
+    }
+    if str.eq(name, "todo-done") {
+        s.has_fg = true
+        s.fg = 0xFF9AA0A6
+    }
+    if str.eq(name, "todo-pending") {
+        s.has_fg = true
+        s.fg = 0xFFE6E6EA
+    }
+    return s
+}
+
+// The base style of one kind, before classes. Containers set nothing, so their children inherit
+// whatever foreground an ancestor set.
+fun base_style(n: &SNode, th: &Theme).R: Style {
+    var s = style_none()
+    val k = n.kind
+    if k == core.KIND_BUTTON {
+        s.has_bg = true
+        if n.pressed {
+            s.bg = th.accent
+        } else if n.hover {
+            s.bg = th.panel_alt
+        } else {
+            s.bg = th.panel
+        }
+        s.has_fg = true
+        if n.pressed {
+            s.fg = th.bg
+        } else {
+            s.fg = th.fg
+        }
+        s.has_border = true
+        s.border = th.border
+        s.has_radius = true
+        s.radius = th.radius
+        s.has_pad = true
+        s.pad = th.pad
+    } else if k == core.KIND_ENTRY {
+        s.has_bg = true
+        s.bg = th.panel_alt
+        s.has_fg = true
+        s.fg = th.fg
+        s.has_border = true
+        s.border = th.border
+        s.has_radius = true
+        s.radius = th.radius
+        s.has_pad = true
+        s.pad = th.pad
+    } else if k == core.KIND_CHECKBOX {
+        s.has_fg = true
+        s.fg = th.fg
+    } else if k == core.KIND_SCROLLED {
+        s.has_bg = true
+        s.bg = th.panel
+        s.has_border = true
+        s.border = th.border
+        s.has_pad = true
+        s.pad = th.pad
+    }
+    return s
+}
+
+fun style_for(n: &SNode, inherited_fg: u32, th: &Theme).R: Style {
+    var s = base_style(n, th)
+    var i: usize = 0
+    while i < n.props.classes.len() {
+        val o = class_style(n.props.classes.get(i).as_str())
+        s.merge(o)
+        i += 1
+    }
+    if !s.has_fg {
+        s.has_fg = true
+        s.fg = inherited_fg
+    }
+    return s
+}
+
+// One retained widget. `slot` is the interactive id the core knows (-1 when the widget cannot
+// post); `uid` is a grow-only number for diagnostics and tests. `rect` is the last arranged
+// rectangle; `measured_w`/`measured_h` the intrinsic size; `dirty` says the intrinsic size may
+// have changed; `scroll` and `content_h` belong to a `Scrolled`. `hover`/`pressed`/`caret` are
+// the interaction state a frame repaints.
+pub datac SNode(
+    var kind: i32,
+    var slot: i32,
+    var uid: i32,
+    var props: core.Props,
+    var key: core.Key,
+    var kids: List<SNode>,
+    var rect: fb.Rect,
+    var measured_w: i32,
+    var measured_h: i32,
+    var dirty: bool,
+    var scroll: i32,
+    var content_h: i32,
+    var hover: bool,
+    var pressed: bool,
+    var caret: i32,
+)
+
+// Layout counters, so a test can assert what a change did and did not touch.
+pub datac LayoutCount(var measures: i32, var arranges: i32)
+
+datac Gone(var count: i32, var had_focus: bool, var rect: fb.Rect)
+
+datac Hit(var found: bool, var rect: fb.Rect)
+
+datac Moved(var found: bool, var rect: fb.Rect)
+
+// A pixel-count accumulator. The stage-2 primitives return the pixels they wrote; `paint` sums
+// them through this so a work-budget test can assert what a frame actually touched
+// (`plan/polyp-v3.md`, stage 5). A datac passed as a `mut` parameter is a reference, so the
+// recursive paint walk shares the one counter.
+datac Px(var n: i64)
+
+pub datac SoftBackend(
+    var root: List<SNode>,
+    var theme: Theme,
+    var damage: damage.Damage,
+    var focus_id: i32,
+    var hover_id: i32,
+    var press_id: i32,
+    var win_w: i32,
+    var win_h: i32,
+    var dirty: bool,
+    var forced: bool,
+    var laid_out: bool,
+    var next_uid: i32,
+    var next_slot: i32,
+    var created: i32,
+    var updated: i32,
+    var removed: i32,
+    var entry_builds: i32,
+    var measures: i32,
+    var arranges: i32,
+    var painted: i32,
+    // The reusable patch list `apply_diff` drains the core's diff into. A `Box` because a method's
+    // `self` is a borrow and a caller has to take the list out to hand it to the engine, exactly the
+    // shape `core.Children` uses for its pending key and options.
+    var patch_buf: Box<List<core.Patch>>,
+    // Per-frame allocation accounting (`plan/polyp-v3.md`, stage 5): every site the backend allocates
+    // at calls `note_alloc`, so a frame that only patches a widget, moves hover/focus/caret or
+    // scrolls reads 0. `arena_high` is the patch buffer's high-water length, the documented capacity.
+    var frame_allocs: i32,
+    var frame_bytes: i64,
+    var arena_high: i32,
+    // Pixels the last paint wrote, and the running total, from the primitives' own return values.
+    var pixels_last: i64,
+    var pixels_total: i64,
+    var input: List<event.Event>,
+    var pending: List<core.Event>,
+    var script: List<core.Event>,
+    var cursor: i32,
+    var pointer_x: i32,
+    var pointer_y: i32,
+)
+
+pub fun new().R: SoftBackend = SoftBackend(
+    root = List.empty(),
+    theme = default_theme(),
+    damage = damage.new(),
+    focus_id = -1,
+    hover_id = -1,
+    press_id = -1,
+    win_w = 0,
+    win_h = 0,
+    dirty = true,
+    forced = true,
+    laid_out = false,
+    next_uid = 0,
+    next_slot = 0,
+    created = 0,
+    updated = 0,
+    removed = 0,
+    entry_builds = 0,
+    measures = 0,
+    arranges = 0,
+    painted = 0,
+    patch_buf = Box.of(List.empty()),
+    frame_allocs = 0,
+    frame_bytes = 0,
+    arena_high = 0,
+    pixels_last = 0,
+    pixels_total = 0,
+    input = List.empty(),
+    pending = List.empty(),
+    script = List.empty(),
+    cursor = 0,
+    pointer_x = 0,
+    pointer_y = 0,
+)
+
+// Every allocation site in the backend calls this with the bytes it built, so `frame_allocs` is a
+// count of sites executed and `frame_bytes` a lower bound on what they asked the allocator for.
+// A frame that only patches a widget, moves hover/focus/caret or scrolls calls it nowhere.
+fun mut SoftBackend.note_alloc(bytes: i64) {
+    frame_allocs += 1
+    frame_bytes += bytes
+}
+
+// Zero the per-frame counters before a frame. A caller reads them after the frame; `frame` and
+// `frame_budgeted` call it themselves, and a test that drives `apply_diff`/`layout`/`paint`
+// directly calls it the way it already calls `reset_counts`.
+fun mut SoftBackend.begin_frame() {
+    frame_allocs = 0
+    frame_bytes = 0
+    pixels_last = 0
+}
+
+// Apply the diff between two trees through the backend's own reusable patch list: `patch_buf` is
+// cleared and refilled, never freed, so a frame whose patch count stays within `arena_high` does
+// not allocate the patch list (`plan/polyp-v3.md`, stage 5). This is the shape a per-frame driver
+// wants; `core.run` still uses its own list because it is not backend-specific.
+pub fun apply_diff<M>(backend: mut SoftBackend, old: &core.Node<M>, new: &core.Node<M>) {
+    var buf = backend.patch_buf.take()
+    core.diff_into(old, new, buf)
+    val n = buf.len().to_i32()
+    if n > MAX_FRAME_PATCHES {
+        panic("polyp: frame patch list exceeds MAX_FRAME_PATCHES")
+    }
+    if n > backend.arena_high {
+        backend.arena_high = n
+        backend.note_alloc(n.to_i64() * PATCH_BYTES)
+    }
+    core.apply_patches(backend = backend, patches = &buf)
+    backend.patch_buf.set(buf)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Small copy helpers. `fb.Rect` is a `datac` and therefore not `Copy`, so every second value is
+// built explicitly; a field read through a borrow is read one scalar at a time.
+
+fun rect4(x: i32, y: i32, w: i32, h: i32).R: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+
+fun rect_of(n: &SNode).R: fb.Rect = fb.Rect(x = n.rect.x, y = n.rect.y, w = n.rect.w, h = n.rect.h)
+
+fun margin_of(p: &core.Props).R: i32 = if p.margin < 0 {
+    0
+} else {
+    p.margin
+}
+
+fun copy_props(p: &core.Props).R: core.Props {
+    var out = core.props_default()
+    out.text = String.from_str(p.text.as_str())
+    out.size = p.size
+    out.bold = p.bold
+    out.label = String.from_str(p.label.as_str())
+    out.checked = p.checked
+    out.permille = p.permille
+    out.spacing = p.spacing
+    out.height = p.height
+    out.margin = p.margin
+    out.expand = p.expand
+    out.align = p.align
+    var i: usize = 0
+    while i < p.classes.len() {
+        out.classes.push(String.from_str(p.classes.get(i).as_str()))
+        i += 1
+    }
+    return out
+}
+
+fun empty_path().R: core.Path = core.Path(segs = List.empty())
+
+fun key_of_path(path: &core.Path).R: core.Key {
+    if path.segs.len() == 0 {
+        return core.Key.None
+    }
+    return when path.segs.get(path.segs.len() - 1) {
+        Index(_) -> core.Key.None
+        Keyed(_, key) -> core.clone_key(key)
+    }
+}
+
+fun kid_index(kids: &List<SNode>, seg: &core.Seg).R: i32 {
+    var i: usize = 0
+    while i < kids.len() {
+        if core.child_at(seg, kids.get(i).key, i) {
+            return i.to_i32()
+        }
+        i += 1
+    }
+    return -1
+}
+
+fun contains_slot(node: &SNode, slot: i32).R: bool {
+    if slot >= 0 && node.slot == slot {
+        return true
+    }
+    var i: usize = 0
+    while i < node.kids.len() {
+        if contains_slot(node.kids.get(i), slot) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+fun count_nodes(node: &SNode).R: i32 {
+    var n: i32 = 1
+    var i: usize = 0
+    while i < node.kids.len() {
+        n += count_nodes(node.kids.get(i))
+        i += 1
+    }
+    return n
+}
+
+// Find a node's rectangle by slot, or empty when there is none. Slots are unique, so the first
+// match is the node.
+fun find_rect_in(kids: &List<SNode>, id: i32).R: fb.Rect {
+    if id < 0 {
+        return fb.empty_rect()
+    }
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.slot == id {
+            return rect_of(n)
+        }
+        val deeper = find_rect_in(n.kids, id)
+        if !deeper.is_empty() {
+            return deeper
+        }
+        i += 1
+    }
+    return fb.empty_rect()
+}
+
+fun find_caret_in(kids: &List<SNode>, id: i32).R: i32 {
+    if id < 0 {
+        return -1
+    }
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.slot == id {
+            return n.caret
+        }
+        val c = find_caret_in(n.kids, id)
+        if c >= 0 {
+            return c
+        }
+        i += 1
+    }
+    return -1
+}
+
+fun kind_of_in(kids: &List<SNode>, id: i32).R: i32 {
+    if id < 0 {
+        return -1
+    }
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.slot == id {
+            return n.kind
+        }
+        val k = kind_of_in(n.kids, id)
+        if k >= 0 {
+            return k
+        }
+        i += 1
+    }
+    return -1
+}
+
+// Add every interactive widget's slot, in tree order, which is Tab order.
+fun collect_interactive(kids: &List<SNode>, out: mut List<i32>) {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if core.interactive(n.kind) && n.slot >= 0 {
+            out.push(n.slot)
+        }
+        collect_interactive(n.kids, out)
+        i += 1
+    }
+}
+
+fun collect_entries(kids: &List<SNode>, out: mut List<i32>) {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.kind == core.KIND_ENTRY && n.slot >= 0 {
+            out.push(n.slot)
+        }
+        collect_entries(n.kids, out)
+        i += 1
+    }
+}
+
+// Find the entry widget at `id` and copy its text into `out`. A `bool` and a caller-owned buffer
+// rather than an `Option<String>`: a keyable `Option<String>` makes the compiler emit a derived
+// equality that compares the string through `kelp_map_key_eq`, a hosted runtime symbol a bare-metal
+// image has no body for (`plan/polyp-v3.md`, stage 4).
+fun find_text(kids: &List<SNode>, id: i32, out: mut String).R: bool {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.slot == id {
+            out.clear()
+            out.push_str(n.props.text.as_str())
+            return true
+        }
+        if find_text(n.kids, id, out) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+fun find_path(kids: &List<SNode>, base: &core.Path, id: i32).R: option.Option<core.Path> {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        val here = core.with_seg(base, core.seg_for(n.key, i.to_i32()))
+        if n.slot == id {
+            return option.Option.Some(value = here)
+        }
+        when find_path(n.kids, here, id) {
+            Some(found) -> {
+                return option.Option.Some(value = found)
+            }
+            None -> {}
+        }
+        i += 1
+    }
+    return option.Option.None
+}
+
+fun merge_damage(dst: mut damage.Damage, src: &damage.Damage) {
+    var i: usize = 0
+    while i < src.count() {
+        dst.add(src.at(i))
+        i += 1
+    }
+}
+
+fun damage_slot_in(kids: &List<SNode>, id: i32, d: mut damage.Damage) {
+    if id < 0 {
+        return
+    }
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.slot == id {
+            d.add(rect_of(n))
+            return
+        }
+        damage_slot_in(n.kids, id, d)
+        i += 1
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tree writes, the same remove/recurse/insert shape `headless_backend.kp` uses so a write through
+// a `mut` borrow never has to move a field out of what it writes through.
+
+fun insert_into(kids: mut List<SNode>, path: &core.Path, depth: usize, at: i32, node: move SNode) {
+    if depth + 1 == path.segs.len() {
+        var i = at
+        if i < 0 {
+            i = 0
+        }
+        if i > kids.len().to_i32() {
+            i = kids.len().to_i32()
+        }
+        kids.insert(i.to_usize(), node)
+        return
+    }
+    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    var child = kids.remove(idx)
+    insert_into(child.kids, path, depth + 1, at, node)
+    kids.insert(idx, child)
+}
+
+fun same_classes(a: &List<String>, b: &List<String>).R: bool {
+    if a.len() != b.len() {
+        return false
+    }
+    var i: usize = 0
+    while i < a.len() {
+        if !str.eq(a.get(i).as_str(), b.get(i).as_str()) {
+            return false
+        }
+        i += 1
+    }
+    return true
+}
+
+// Patch one retained node's properties in place. The strings are cleared and refilled rather than
+// replaced with fresh `copy_props` values, so a steady-state text or checkbox update reuses the
+// node's own buffers and the backend allocates nothing (stage 5). A focused entry keeps its text:
+// the display owns it while the user types, and the patch must not write back over it.
+fun set_props_on(n: mut SNode, props: &core.Props, focus: i32) {
+    if !(n.kind == core.KIND_ENTRY && n.slot == focus) {
+        n.props.text.clear()
+        n.props.text.push_str(props.text.as_str())
+    }
+    n.props.label.clear()
+    n.props.label.push_str(props.label.as_str())
+    n.props.size = props.size
+    n.props.bold = props.bold
+    n.props.checked = props.checked
+    n.props.permille = props.permille
+    n.props.spacing = props.spacing
+    n.props.height = props.height
+    n.props.margin = props.margin
+    n.props.expand = props.expand
+    n.props.align = props.align
+    if !same_classes(n.props.classes, props.classes) {
+        n.props.classes.clear()
+        var i: usize = 0
+        while i < props.classes.len() {
+            n.props.classes.push(String.from_str(props.classes.get(i).as_str()))
+            i += 1
+        }
+    }
+}
+
+fun patch_into(kids: mut List<SNode>, path: &core.Path, depth: usize, props: &core.Props, focus: i32, n: mut i32, hit: mut Hit) {
+    val idx = kid_index(kids, path.segs.get(depth))
+    if idx < 0 {
+        return
+    }
+    var child = kids.remove(idx.to_usize())
+    if depth + 1 == path.segs.len() {
+        *n += 1
+        hit.found = true
+        hit.rect = rect_of(child)
+        set_props_on(child, props, focus)
+        child.dirty = true
+        kids.insert(idx.to_usize(), child)
+        return
+    }
+    patch_into(child.kids, path, depth + 1, props, focus, n, hit)
+    kids.insert(idx.to_usize(), child)
+}
+
+fun drop_into(kids: mut List<SNode>, path: &core.Path, depth: usize, focus: i32, gone: mut Gone) {
+    val idx = kid_index(kids, path.segs.get(depth))
+    if idx < 0 {
+        return
+    }
+    var child = kids.remove(idx.to_usize())
+    if depth + 1 == path.segs.len() {
+        gone.count += count_nodes(child)
+        gone.rect = rect_of(child)
+        if contains_slot(child, focus) {
+            gone.had_focus = true
+        }
+        return
+    }
+    drop_into(child.kids, path, depth + 1, focus, gone)
+    kids.insert(idx.to_usize(), child)
+}
+
+fun move_into(kids: mut List<SNode>, path: &core.Path, depth: usize, to_index: i32, moved: mut Moved) {
+    val idx = kid_index(kids, path.segs.get(depth))
+    if idx < 0 {
+        return
+    }
+    var child = kids.remove(idx.to_usize())
+    if depth + 1 == path.segs.len() {
+        moved.found = true
+        moved.rect = rect_of(child)
+        var at = to_index
+        if at < 0 {
+            at = 0
+        }
+        if at > kids.len().to_i32() {
+            at = kids.len().to_i32()
+        }
+        kids.insert(at.to_usize(), child)
+        return
+    }
+    move_into(child.kids, path, depth + 1, to_index, moved)
+    kids.insert(idx.to_usize(), child)
+}
+
+fun set_text(kids: mut List<SNode>, id: i32, text: &str, d: mut damage.Damage) {
+    var i: usize = 0
+    while i < kids.len() {
+        var n = kids.remove(i)
+        if n.slot == id && n.kind == core.KIND_ENTRY {
+            n.props.text.clear()
+            n.props.text.push_str(text)
+            n.dirty = true
+            d.add(rect_of(n))
+            kids.insert(i, n)
+            return
+        }
+        set_text(n.kids, id, text, d)
+        kids.insert(i, n)
+        i += 1
+    }
+}
+
+fun set_pressed_in(kids: mut List<SNode>, id: i32, v: bool, d: mut damage.Damage) {
+    if id < 0 {
+        return
+    }
+    var i: usize = 0
+    while i < kids.len() {
+        var n = kids.remove(i)
+        if n.slot == id {
+            if n.pressed != v {
+                n.pressed = v
+                d.add(rect_of(n))
+            }
+            kids.insert(i, n)
+            return
+        }
+        set_pressed_in(n.kids, id, v, d)
+        kids.insert(i, n)
+        i += 1
+    }
+}
+
+fun set_hover_in(kids: mut List<SNode>, id: i32, v: bool, d: mut damage.Damage) {
+    if id < 0 {
+        return
+    }
+    var i: usize = 0
+    while i < kids.len() {
+        var n = kids.remove(i)
+        if n.slot == id {
+            if n.hover != v {
+                n.hover = v
+                d.add(rect_of(n))
+            }
+            kids.insert(i, n)
+            return
+        }
+        set_hover_in(n.kids, id, v, d)
+        kids.insert(i, n)
+        i += 1
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Entry text editing. A caret is a byte offset, and the font is byte-oriented, so a non-ASCII
+// codepoint occupies one byte per UTF-8 unit and each of those units is one replacement box.
+
+fun utf8_len(cp: i32).R: i32 {
+    if cp < 0x80 {
+        return 1
+    }
+    if cp < 0x800 {
+        return 2
+    }
+    if cp < 0x10000 {
+        return 3
+    }
+    return 4
+}
+
+fun utf8_byte(cp: i32, i: i32).R: u8 {
+    val c: u32 = cp.to_u32()
+    if cp < 0x80 {
+        return c.to_u8()
+    }
+    if cp < 0x800 {
+        if i == 0 {
+            return (0xC0 | (c >> 6)).to_u8()
+        }
+        return (0x80 | (c & 0x3F)).to_u8()
+    }
+    if cp < 0x10000 {
+        if i == 0 {
+            return (0xE0 | (c >> 12)).to_u8()
+        }
+        if i == 1 {
+            return (0x80 | ((c >> 6) & 0x3F)).to_u8()
+        }
+        return (0x80 | (c & 0x3F)).to_u8()
+    }
+    if i == 0 {
+        return (0xF0 | (c >> 18)).to_u8()
+    }
+    if i == 1 {
+        return (0x80 | ((c >> 12) & 0x3F)).to_u8()
+    }
+    if i == 2 {
+        return (0x80 | ((c >> 6) & 0x3F)).to_u8()
+    }
+    return (0x80 | (c & 0x3F)).to_u8()
+}
+
+fun insert_char(s: &str, at: usize, cp: i32).R: String {
+    var out = String.from_str("")
+    val n = str.len(s)
+    var i: usize = 0
+    while i < at && i < n {
+        out.push(str.byte(s, i))
+        i += 1
+    }
+    val un = utf8_len(cp)
+    var u: i32 = 0
+    while u < un {
+        out.push(utf8_byte(cp, u))
+        u += 1
+    }
+    while i < n {
+        out.push(str.byte(s, i))
+        i += 1
+    }
+    return out
+}
+
+fun remove_range(s: &str, from: usize, to: usize).R: String {
+    var out = String.from_str("")
+    val n = str.len(s)
+    var i: usize = 0
+    while i < n {
+        if i < from || i >= to {
+            out.push(str.byte(s, i))
+        }
+        i += 1
+    }
+    return out
+}
+
+// Edit one entry. Returns whether the text changed (so the caller posts the entry's id); a caret
+// move changes pixels but not the text.
+fun edit_entry_in(kids: mut List<SNode>, id: i32, op: i32, cp: i32, d: mut damage.Damage).R: bool {
+    if id < 0 {
+        return false
+    }
+    var i: usize = 0
+    while i < kids.len() {
+        var n = kids.remove(i)
+        if n.slot == id && n.kind == core.KIND_ENTRY {
+            val cur = String.from_str(n.props.text.as_str())
+            val n_bytes = cur.len().to_i32()
+            var care = n.caret
+            if care > n_bytes {
+                care = n_bytes
+            }
+            if care < 0 {
+                care = 0
+            }
+            var text_changed = false
+            var caret_changed = false
+            if op == OP_INSERT {
+                n.props.text = insert_char(cur.as_str(), care.to_usize(), cp)
+                care += utf8_len(cp)
+                text_changed = true
+            } else if op == OP_BACKSPACE {
+                if care > 0 {
+                    n.props.text = remove_range(cur.as_str(), (care - 1).to_usize(), care.to_usize())
+                    care -= 1
+                    text_changed = true
+                }
+            } else if op == OP_DELETE {
+                if care < n_bytes {
+                    n.props.text = remove_range(cur.as_str(), care.to_usize(), (care + 1).to_usize())
+                    text_changed = true
+                }
+            } else if op == OP_LEFT {
+                if care > 0 {
+                    care -= 1
+                    caret_changed = true
+                }
+            } else if op == OP_RIGHT {
+                if care < n_bytes {
+                    care += 1
+                    caret_changed = true
+                }
+            } else if op == OP_HOME {
+                if care != 0 {
+                    care = 0
+                    caret_changed = true
+                }
+            } else if op == OP_END {
+                if care != n_bytes {
+                    care = n_bytes
+                    caret_changed = true
+                }
+            }
+            n.caret = care
+            if text_changed {
+                n.dirty = true
+            }
+            if text_changed || caret_changed {
+                d.add(rect_of(n))
+            }
+            kids.insert(i, n)
+            return text_changed
+        }
+        val changed = edit_entry_in(n.kids, id, op, cp, d)
+        kids.insert(i, n)
+        if changed {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+// ---------------------------------------------------------------------------------------------
+// Layout. `remeasure` recomputes a dirty subtree bottom-up and reports whether any size changed;
+// `arrange` assigns rectangles top-down. The backend runs `arrange` only when a size changed, the
+// window was resized, a move reordered children, or the tree was never laid out, which is the
+// skip rule the stage asked for: a same-width text change re-measures one node and arranges none.
+
+fun mut SNode.compute_measure(th: &Theme) {
+    val k = kind
+    if k == core.KIND_TEXT {
+        var sc = props.size
+        if sc < 1 || sc > font.MAX_SCALE {
+            sc = th.text_scale
+        }
+        measured_w = font.text_width(props.text.as_str(), sc)
+        measured_h = font.text_height(sc)
+        return
+    }
+    if k == core.KIND_SPACER {
+        measured_w = 0
+        measured_h = props.height
+        if measured_h < 0 {
+            measured_h = 0
+        }
+        return
+    }
+    if k == core.KIND_BUTTON || k == core.KIND_ENTRY {
+        var sc = th.text_scale
+        val tw = font.text_width(props.label.as_str(), sc)
+        val ew = font.text_width(props.text.as_str(), sc)
+        var w = tw
+        if ew > w {
+            w = ew
+        }
+        if w > 0 {
+            w += 2 * th.pad
+        } else {
+            w = 2 * th.pad
+        }
+        if k == core.KIND_ENTRY && w < th.entry_min_w {
+            w = th.entry_min_w
+        }
+        var h = font.text_height(sc) + 2 * th.pad
+        if h < th.row_h {
+            h = th.row_h
+        }
+        measured_w = w
+        measured_h = h
+        return
+    }
+    if k == core.KIND_CHECKBOX {
+        measured_w = th.box + th.gap + font.text_width(props.label.as_str(), th.text_scale)
+        measured_h = th.box
+        val th_text = font.text_height(th.text_scale)
+        if th_text > measured_h {
+            measured_h = th_text
+        }
+        return
+    }
+    if k == core.KIND_PROGRESS {
+        measured_w = th.entry_min_w
+        measured_h = th.progress_h
+        return
+    }
+    if k == core.KIND_SEPARATOR {
+        measured_w = 0
+        measured_h = th.sep
+        return
+    }
+    // A container: the sum along one axis and the maximum across the other.
+    val vertical = k == core.KIND_COLUMN || k == core.KIND_SCROLLED
+    val spacing = props.spacing
+    var main: i32 = 0
+    var cross: i32 = 0
+    var i: usize = 0
+    while i < kids.len() {
+        val c = kids.get(i)
+        val m = margin_of(c.props)
+        val cw = c.measured_w + 2 * m
+        val ch = c.measured_h + 2 * m
+        if vertical {
+            main += ch
+            if cw > cross {
+                cross = cw
+            }
+        } else {
+            main += cw
+            if ch > cross {
+                cross = ch
+            }
+        }
+        i += 1
+    }
+    if kids.len() > 1 {
+        main += spacing * (kids.len().to_i32() - 1)
+    }
+    if vertical {
+        measured_w = cross
+        measured_h = main
+    } else {
+        measured_w = main
+        measured_h = cross
+    }
+    if k == core.KIND_SCROLLED {
+        measured_w += 2 * th.pad + th.scrollbar_w
+        // A scroll area is flexible: its content does not push its own height, and an expand
+        // child grows to the leftover, so a long list stays inside the window instead of
+        // overflowing it. The cap is the most a scroll area asks for when it is not expanded.
+        content_h = main
+        var h = main + 2 * th.pad
+        val cap = th.row_h * 6 + 2 * th.pad
+        if h > cap {
+            h = cap
+        }
+        measured_h = h
+    }
+}
+
+fun mut SNode.remeasure(c: mut LayoutCount, th: &Theme).R: bool {
+    var child_changed = false
+    var i: usize = 0
+    while i < kids.len() {
+        var child = kids.remove(i)
+        if child.remeasure(c, th) {
+            child_changed = true
+        }
+        kids.insert(i, child)
+        i += 1
+    }
+    if !dirty && !child_changed {
+        return false
+    }
+    c.measures += 1
+    val ow = measured_w
+    val oh = measured_h
+    self.compute_measure(th)
+    dirty = false
+    return ow != measured_w || oh != measured_h
+}
+
+// Place the children of a linear container. `grow` is true for a `Column`/`Row`, where an expand
+// child shares the leftover, and false for the content of a `Scrolled`, which keeps its size.
+fun mut SNode.arrange_linear(r: fb.Rect, vertical: bool, grow: bool, th: &Theme, d: mut damage.Damage, c: mut LayoutCount) {
+    val spacing = props.spacing
+    var fixed: i32 = 0
+    var expand_n: i32 = 0
+    var i: usize = 0
+    while i < kids.len() {
+        val k = kids.get(i)
+        val m = margin_of(k.props)
+        if vertical {
+            fixed += k.measured_h + 2 * m
+        } else {
+            fixed += k.measured_w + 2 * m
+        }
+        if grow && k.props.expand {
+            expand_n += 1
+        }
+        i += 1
+    }
+    if kids.len() > 1 {
+        fixed += spacing * (kids.len().to_i32() - 1)
+    }
+    val avail = if vertical {
+        r.h
+    } else {
+        r.w
+    }
+    var leftover = avail - fixed
+    if leftover < 0 {
+        leftover = 0
+    }
+    var share = 0
+    if expand_n > 0 {
+        share = leftover / expand_n
+    }
+    var pos = if vertical {
+        r.y
+    } else {
+        r.x
+    }
+    i = 0
+    while i < kids.len() {
+        var k = kids.remove(i)
+        val m = margin_of(k.props)
+        var size = if vertical {
+            k.measured_h
+        } else {
+            k.measured_w
+        }
+        if grow && k.props.expand {
+            size += share
+        }
+        val cross_avail = if vertical {
+            r.w - 2 * m
+        } else {
+            r.h - 2 * m
+        }
+        var cross = if vertical {
+            k.measured_w
+        } else {
+            k.measured_h
+        }
+        val a = k.props.align
+        val fill = a < 0 || a == core.ALIGN_FILL
+        if fill {
+            cross = cross_avail
+        }
+        if cross > cross_avail {
+            cross = cross_avail
+        }
+        if cross < 0 {
+            cross = 0
+        }
+        var off = 0
+        if a == core.ALIGN_CENTER {
+            off = (cross_avail - cross) / 2
+        } else if a == core.ALIGN_END {
+            off = cross_avail - cross
+        }
+        if off < 0 {
+            off = 0
+        }
+        var cr = rect4(0, 0, 0, 0)
+        if vertical {
+            cr = rect4(r.x + m + off, pos + m, cross, size)
+        } else {
+            cr = rect4(pos + m, r.y + m + off, size, cross)
+        }
+        k.arrange(cr, th, d, c)
+        kids.insert(i, k)
+        pos += m + size + m + spacing
+        i += 1
+    }
+}
+
+fun mut SNode.arrange(r: fb.Rect, th: &Theme, d: mut damage.Damage, c: mut LayoutCount) {
+    c.arranges += 1
+    val old = rect_of(self)
+    rect = rect4(r.x, r.y, r.w, r.h)
+    if old.x != r.x || old.y != r.y || old.w != r.w || old.h != r.h {
+        d.add(old)
+        d.add(rect_of(self))
+    }
+    if kind == core.KIND_COLUMN {
+        self.arrange_linear(rect_of(self), true, true, th, d, c)
+    } else if kind == core.KIND_ROW {
+        self.arrange_linear(rect_of(self), false, true, th, d, c)
+    } else if kind == core.KIND_SCROLLED {
+        self.arrange_scrolled(th, d, c)
+    }
+}
+
+fun mut SNode.arrange_scrolled(th: &Theme, d: mut damage.Damage, c: mut LayoutCount) {
+    val r = rect_of(self)
+    val inner_w = r.w - 2 * th.pad - th.scrollbar_w
+    val inner_h = r.h - 2 * th.pad
+    var iw = inner_w
+    if iw < 0 {
+        iw = 0
+    }
+    var ih = inner_h
+    if ih < 0 {
+        ih = 0
+    }
+    var max_scroll = content_h - ih
+    if max_scroll < 0 {
+        max_scroll = 0
+    }
+    if scroll > max_scroll {
+        scroll = max_scroll
+    }
+    if scroll < 0 {
+        scroll = 0
+    }
+    val content = rect4(r.x + th.pad, r.y + th.pad - scroll, iw, content_h)
+    self.arrange_linear(content, true, false, th, d, c)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Painting. Every rectangle in the damage list is painted once, clipped to itself, by walking the
+// tree and drawing only nodes that intersect the clip. An unchanged frame never reaches here.
+
+fun text_scale_of(n: &SNode, th: &Theme).R: i32 {
+    val sc = n.props.size
+    if sc >= 1 && sc <= font.MAX_SCALE {
+        return sc
+    }
+    return th.text_scale
+}
+
+// Add one primitive's pixel count. Every stage-2 primitive returns the pixels it wrote, so the
+// paint walk's total is exact and a budget test can compare it with a rectangle's area.
+fun mut Px.add(n: usize) {
+    self.n += n.to_i64()
+}
+
+fun paint_nodes(kids: &List<SNode>, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u32, px: mut Px) {
+    var i: usize = 0
+    while i < kids.len() {
+        paint_one(kids.get(i), clip, th, f, focus, fg, px)
+        i += 1
+    }
+}
+
+fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u32, px: mut Px) {
+    val r = rect_of(n)
+    if fb.intersect(r, clip).is_empty() {
+        return
+    }
+    val st = style_for(n, fg, th)
+    val cs = draw.clip(clip)
+    val k = n.kind
+    if k == core.KIND_TEXT {
+        val sc = text_scale_of(n, th)
+        val ty = r.y + (r.h - font.text_height(sc)) / 2
+        px.add(font.draw_text(f, cs, r.x, ty, n.props.text.as_str(), sc, st.fg))
+    } else if k == core.KIND_BUTTON {
+        if st.has_bg {
+            px.add(draw.fill_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, st.bg))
+        }
+        if st.has_border {
+            px.add(draw.stroke_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, 1, st.border))
+        }
+        val sc = text_scale_of(n, th)
+        val tw = font.text_width(n.props.label.as_str(), sc)
+        val thh = font.text_height(sc)
+        px.add(font.draw_text(f, cs, r.x + (r.w - tw) / 2, r.y + (r.h - thh) / 2, n.props.label.as_str(), sc, st.fg))
+    } else if k == core.KIND_ENTRY {
+        if st.has_bg {
+            px.add(draw.fill_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, st.bg))
+        }
+        val focused = n.slot >= 0 && n.slot == focus
+        var border = st.border
+        if focused {
+            border = th.accent
+        }
+        if st.has_border {
+            px.add(draw.stroke_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, 1, border))
+        }
+        val sc = text_scale_of(n, th)
+        val thh = font.text_height(sc)
+        px.add(font.draw_text(f, cs, r.x + st.pad, r.y + (r.h - thh) / 2, n.props.text.as_str(), sc, st.fg))
+        if focused {
+            var care = n.caret
+            val n_bytes = n.props.text.len().to_i32()
+            if care > n_bytes {
+                care = n_bytes
+            }
+            if care < 0 {
+                care = 0
+            }
+            val cx = r.x + st.pad + care * font.ADVANCE * sc
+            px.add(draw.vline(f, cs, cx, r.y + 2, r.h - 4, th.caret))
+        }
+    } else if k == core.KIND_CHECKBOX {
+        val by = r.y + (r.h - th.box) / 2
+        px.add(draw.stroke_rect(f, cs, r.x, by, th.box, th.box, 1, st.border))
+        if n.props.checked {
+            px.add(draw.fill_rect(f, cs, r.x + 2, by + 2, th.box - 4, th.box - 4, th.accent))
+        }
+        val sc = text_scale_of(n, th)
+        val thh = font.text_height(sc)
+        px.add(font.draw_text(f, cs, r.x + th.box + th.gap, r.y + (r.h - thh) / 2, n.props.label.as_str(), sc, st.fg))
+    } else if k == core.KIND_PROGRESS {
+        px.add(draw.fill_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, th.panel))
+        val permille = n.props.permille
+        var fw = (r.w - 2) * permille / 1000
+        if fw < 0 {
+            fw = 0
+        }
+        if fw > r.w - 2 {
+            fw = r.w - 2
+        }
+        if fw > 0 {
+            px.add(draw.fill_round_rect(f, cs, r.x + 1, r.y + 1, fw, r.h - 2, st.radius, th.accent))
+        }
+        px.add(draw.stroke_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, 1, th.border))
+    } else if k == core.KIND_SEPARATOR {
+        px.add(draw.fill_rect(f, cs, r.x, r.y, r.w, th.sep, th.border))
+    } else if k == core.KIND_SCROLLED {
+        px.add(draw.fill_rect(f, cs, r.x, r.y, r.w, r.h, th.panel))
+        px.add(draw.stroke_rect(f, cs, r.x, r.y, r.w, r.h, 1, th.border))
+        val view = r.h - 2
+        if n.content_h > view && view > 0 {
+            var thumb = view * view / n.content_h
+            if thumb < 8 {
+                thumb = 8
+            }
+            if thumb > view {
+                thumb = view
+            }
+            val max_scroll = n.content_h - view
+            var ty = r.y + 1
+            if max_scroll > 0 {
+                ty += (view - thumb) * n.scroll / max_scroll
+            }
+            px.add(draw.fill_rect(f, cs, r.x + r.w - th.scrollbar_w, ty, th.scrollbar_w - 2, thumb, th.muted))
+        }
+    }
+
+    // Children, then the focus ring on top of them.
+    if k == core.KIND_COLUMN || k == core.KIND_ROW {
+        paint_nodes(n.kids, clip, th, f, focus, st.fg, px)
+    } else if k == core.KIND_SCROLLED {
+        val inner = fb.intersect(clip, rect4(r.x + th.pad, r.y + th.pad, r.w - 2 * th.pad - th.scrollbar_w, r.h - 2 * th.pad))
+        paint_nodes(n.kids, inner, th, f, focus, st.fg, px)
+    }
+    if n.slot >= 0 && n.slot == focus && core.interactive(k) {
+        px.add(draw.stroke_rect(f, cs, r.x, r.y, r.w, r.h, 1, th.accent))
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Hit testing. The innermost interactive widget under a point wins; a `Scrolled` clips its
+// children, and a later sibling is on top of an earlier one.
+
+fun inner_rect(r: fb.Rect, pad: i32, sbw: i32).R: fb.Rect {
+    var w = r.w - 2 * pad - sbw
+    if w < 0 {
+        w = 0
+    }
+    var h = r.h - 2 * pad
+    if h < 0 {
+        h = 0
+    }
+    return rect4(r.x + pad, r.y + pad, w, h)
+}
+
+fun hit_one(n: &SNode, clip: fb.Rect, x: i32, y: i32, th: &Theme).R: i32 {
+    if !fb.contains_point(clip, x, y) {
+        return -1
+    }
+    if !fb.contains_point(rect_of(n), x, y) {
+        return -1
+    }
+    if n.kind == core.KIND_SCROLLED {
+        val inner = fb.intersect(clip, inner_rect(rect_of(n), th.pad, th.scrollbar_w))
+        val id = hit_nodes(n.kids, inner, x, y, th)
+        if id >= 0 {
+            return id
+        }
+    } else if n.kind == core.KIND_COLUMN || n.kind == core.KIND_ROW {
+        val id = hit_nodes(n.kids, clip, x, y, th)
+        if id >= 0 {
+            return id
+        }
+    }
+    if core.interactive(n.kind) && n.slot >= 0 {
+        return n.slot
+    }
+    return -1
+}
+
+fun hit_nodes(kids: &List<SNode>, clip: fb.Rect, x: i32, y: i32, th: &Theme).R: i32 {
+    var i: usize = kids.len()
+    while i > 0 {
+        i -= 1
+        val id = hit_one(kids.get(i), clip, x, y, th)
+        if id >= 0 {
+            return id
+        }
+    }
+    return -1
+}
+
+// ---------------------------------------------------------------------------------------------
+// Input. Every change adds the rectangles it changed to the caller's damage; a no-op adds none.
+
+fun mut SoftBackend.push(ev: move event.Event) {
+    self.note_alloc(24)
+    input.push(ev)
+}
+
+fun mut SoftBackend.schedule(e: core.Event) {
+    script.push(core.clone_event(e))
+}
+
+fun mut SoftBackend.resize(w: i32, h: i32) {
+    if w != win_w || h != win_h {
+        win_w = w
+        win_h = h
+        dirty = true
+        forced = true
+    }
+}
+
+fun SoftBackend.hit(x: i32, y: i32).R: i32 {
+    if root.is_empty() {
+        return -1
+    }
+    return hit_nodes(root.get(0).kids, rect4(0, 0, win_w, win_h), x, y, theme)
+}
+
+fun mut SoftBackend.focus_to(id: i32, d: mut damage.Damage) {
+    if id == focus_id {
+        return
+    }
+    damage_slot_in(root, focus_id, d)
+    focus_id = id
+    damage_slot_in(root, id, d)
+}
+
+fun mut SoftBackend.post_id(id: i32) {
+    self.note_alloc(16)
+    pending.push(core.Event.Post(id = id))
+}
+
+// The innermost `Scrolled` under a point, whose offset the wheel moves.
+fun scroll_in(kids: mut List<SNode>, clip: fb.Rect, x: i32, y: i32, dy: i32, pad: i32, sbw: i32, d: mut damage.Damage).R: bool {
+    if !fb.contains_point(clip, x, y) {
+        return false
+    }
+    var i: usize = 0
+    while i < kids.len() {
+        var n = kids.remove(i)
+        var found = false
+        if fb.contains_point(rect_of(n), x, y) {
+            if n.kind == core.KIND_SCROLLED {
+                val inner = inner_rect(rect_of(n), pad, sbw)
+                var max_scroll = n.content_h - inner.h
+                if max_scroll < 0 {
+                    max_scroll = 0
+                }
+                var ns = n.scroll + dy
+                if ns < 0 {
+                    ns = 0
+                }
+                if ns > max_scroll {
+                    ns = max_scroll
+                }
+                if ns != n.scroll {
+                    n.scroll = ns
+                    d.add(rect_of(n))
+                }
+                found = true
+            } else {
+                val inner2 = fb.intersect(clip, inner_rect(rect_of(n), pad, sbw))
+                found = scroll_in(n.kids, inner2, x, y, dy, pad, sbw, d)
+            }
+        }
+        kids.insert(i, n)
+        if found {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+fun mut SoftBackend.move_focus(back: bool) {
+    var ids: List<i32> = List.empty()
+    if !root.is_empty() {
+        collect_interactive(root.get(0).kids, ids)
+    }
+    if ids.is_empty() {
+        return
+    }
+    var idx: i32 = 0
+    var found = false
+    var i: usize = 0
+    while i < ids.len() {
+        if ids.get(i) == focus_id {
+            idx = i.to_i32()
+            found = true
+        }
+        i += 1
+    }
+    var next: usize = 0
+    if found {
+        if back {
+            if idx == 0 {
+                next = ids.len() - 1
+            } else {
+                next = (idx - 1).to_usize()
+            }
+        } else {
+            next = ((idx + 1) % ids.len().to_i32()).to_usize()
+        }
+    } else if back {
+        next = ids.len() - 1
+    }
+    var d = damage.new()
+    self.focus_to(ids.get(next), d)
+    merge_damage(self.damage, d)
+}
+
+fun mut SoftBackend.handle(ev: event.Event) {
+    var d = damage.new()
+    when ev {
+        PointerMove(x, y) -> {
+            pointer_x = x
+            pointer_y = y
+            val id = self.hit(x, y)
+            if id != hover_id {
+                set_hover_in(root, hover_id, false, d)
+                hover_id = id
+                set_hover_in(root, id, true, d)
+            }
+        }
+        PointerDown(x, y, button) -> {
+            pointer_x = x
+            pointer_y = y
+            if button == event.BUTTON_LEFT {
+                val id = self.hit(x, y)
+                if id >= 0 {
+                    self.focus_to(id, d)
+                    if id != press_id {
+                        set_pressed_in(root, press_id, false, d)
+                        press_id = id
+                        set_pressed_in(root, id, true, d)
+                    }
+                }
+            }
+        }
+        PointerUp(x, y, button) -> {
+            pointer_x = x
+            pointer_y = y
+            if button == event.BUTTON_LEFT && press_id >= 0 {
+                val id = self.hit(x, y)
+                val was = press_id
+                set_pressed_in(root, was, false, d)
+                press_id = -1
+                val k = kind_of_in(root, was)
+                if id == was && (k == core.KIND_BUTTON || k == core.KIND_CHECKBOX) {
+                    self.post_id(was)
+                }
+            }
+        }
+        Scroll(dx, dy) -> {
+            var dy2 = dy
+            if dy2 == 0 {
+                dy2 = 1
+            }
+            val pad = theme.pad
+            val sbw = theme.scrollbar_w
+            val wx = win_w
+            val wy = win_h
+            val px = pointer_x
+            val py = pointer_y
+            val moved = scroll_in(root, rect4(0, 0, wx, wy), px, py, dy2, pad, sbw, d)
+            if moved {
+                dirty = true
+                forced = true
+            }
+        }
+        Key(code, mods) -> {
+            self.handle_key(code, mods, d)
+        }
+        Char(codepoint) -> {
+            if self.edit(OP_INSERT, codepoint, d) {
+                self.post_id(focus_id)
+            }
+        }
+    }
+    merge_damage(self.damage, d)
+}
+
+// The wheel scrolls the `Scrolled` under the last pointer position, which is where a mouse wheel
+// event lands; a platform that reports the position with the wheel should send a `PointerMove`
+// first, and the backend keeps the last one it saw.
+fun mut SoftBackend.edit(op: i32, cp: i32, d: mut damage.Damage).R: bool {
+    if focus_id < 0 {
+        return false
+    }
+    if kind_of_in(root, focus_id) != core.KIND_ENTRY {
+        return false
+    }
+    return edit_entry_in(root, focus_id, op, cp, d)
+}
+
+fun mut SoftBackend.handle_key(code: i32, mods: i32, d: mut damage.Damage) {
+    if code == event.KEY_TAB {
+        self.move_focus((mods & event.MOD_SHIFT) != 0)
+        return
+    }
+    val k = kind_of_in(root, focus_id)
+    if k == core.KIND_ENTRY {
+        var op = -1
+        if code == event.KEY_BACKSPACE {
+            op = OP_BACKSPACE
+        } else if code == event.KEY_DELETE {
+            op = OP_DELETE
+        } else if code == event.KEY_LEFT {
+            op = OP_LEFT
+        } else if code == event.KEY_RIGHT {
+            op = OP_RIGHT
+        } else if code == event.KEY_HOME {
+            op = OP_HOME
+        } else if code == event.KEY_END {
+            op = OP_END
+        }
+        if op >= 0 {
+            if self.edit(op, 0, d) {
+                self.post_id(focus_id)
+            }
+        }
+    } else if k == core.KIND_BUTTON || k == core.KIND_CHECKBOX {
+        if code == event.KEY_SPACE || code == event.KEY_RETURN {
+            self.post_id(focus_id)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The frame an OS calls. Poll every pending input event, run one loop turn, lay out again and
+// paint; `present` is handed only the rectangles that changed, and an idle frame calls neither.
+//
+// `frame_budgeted` is the same frame with a deadline: it stops between damage rectangles when the
+// platform's microsecond clock has passed `budget_us` and returns `Deferred` with the remaining
+// rectangles still in the damage list, so a slow frame degrades into two whole-rectangle frames
+// instead of a stall. A rectangle is always painted whole or not at all.
+
+pub enum Frame<M> {
+    Done(val tick: core.Tick<M>)
+    Deferred(val tick: core.Tick<M>)
+}
+
+pub fun frame<P: platform.Platform, S, M>(
+    backend: mut SoftBackend,
+    platform: mut P,
+    tree: move core.Node<M>,
+    state: mut S,
+    view: fun (S).R: core.Node<M>,
+    update: fun (mut S, M),
+).R: core.Tick<M> {
+    return when frame_budgeted(backend = backend, platform = platform, tree = tree, state = state, view = view, update = update, budget_us = 0) {
+        Done(tick) -> tick
+        Deferred(tick) -> tick
+    }
+}
+
+pub fun frame_budgeted<P: platform.Platform, S, M>(
+    backend: mut SoftBackend,
+    platform: mut P,
+    tree: move core.Node<M>,
+    state: mut S,
+    view: fun (S).R: core.Node<M>,
+    update: fun (mut S, M),
+    budget_us: u64,
+).R: Frame<M> {
+    // Zero is "no deadline", which is what `frame` passes so every existing caller keeps its
+    // exact behaviour.
+    val unlimited = budget_us == 0
+    backend.begin_frame()
+    val start = platform.now_us()
+    val deadline = start + budget_us
+    val f = platform.framebuffer()
+    backend.resize(f.width, f.height)
+    backend.layout()
+    var more = true
+    while more {
+        when platform.poll_event() {
+            // Handled directly rather than queued: a hover, focus, caret or wheel frame then
+            // allocates nothing at all, which is the steady-state claim stage 5 makes.
+            Some(ev) -> backend.handle(ev)
+            None -> more = false
+        }
+    }
+    var scratch = backend.patch_buf.take()
+    val tick = core.frame_step_into(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch)
+    backend.patch_buf.set(scratch)
+    backend.layout()
+    val painted = paint_until(backend = backend, f = f, platform = platform, deadline = deadline, unlimited = unlimited)
+    backend.note_painted(painted.count())
+    if painted.count() > 0 {
+        platform.present(f, painted)
+    }
+    if !unlimited && backend.damage_count() > 0 {
+        return Frame.Deferred(tick = tick)
+    }
+    return Frame.Done(tick = tick)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Layout and painting entry points, and the diagnostics a test reads.
+
+fun mut SoftBackend.layout() {
+    if !dirty {
+        return
+    }
+    if root.is_empty() {
+        dirty = false
+        return
+    }
+    var top = root.remove(0)
+    var lc = LayoutCount(measures = 0, arranges = 0)
+    var d = damage.new()
+    val changed = top.remeasure(lc, theme)
+    if changed || forced || !laid_out {
+        val r = rect4(0, 0, win_w, win_h)
+        top.arrange(r, theme, d, lc)
+        laid_out = true
+    }
+    root.insert(0, top)
+    measures += lc.measures
+    arranges += lc.arranges
+    merge_damage(self.damage, d)
+    dirty = false
+    forced = false
+}
+
+// Paint one damage rectangle and return the pixels written. The clip is the rectangle intersected
+// with the surface, so a rectangle that is partly off-screen still writes only what is visible and
+// the count is the pixels actually touched.
+fun mut SoftBackend.paint_rect(f: fb.Fb, r: fb.Rect).R: i64 {
+    if r.is_empty() {
+        return 0
+    }
+    val clip = fb.intersect(r, f.bounds())
+    if clip.is_empty() {
+        return 0
+    }
+    var px = Px(n = 0)
+    px.add(draw.fill_rect(f, draw.clip(clip), clip.x, clip.y, clip.w, clip.h, theme.bg))
+    paint_nodes(self.root, clip, theme, f, focus_id, theme.fg, px)
+    return px.n
+}
+
+fun mut SoftBackend.paint(f: fb.Fb).R: damage.Damage {
+    var out = damage.new()
+    var px: i64 = 0
+    var i: usize = 0
+    while i < self.damage.count() {
+        val r = self.damage.at(i)
+        if !r.is_empty() {
+            px += self.paint_rect(f, r)
+            out.add(r)
+        }
+        i += 1
+    }
+    self.damage.clear()
+    self.pixels_last = px
+    self.pixels_total += px
+    return out
+}
+
+// Drop the first `n` damage rectangles, which `paint_until` has already painted. The list is at
+// most 16 entries, so rebuilding it is cheaper than a shift and keeps the code obvious.
+fun mut SoftBackend.consume_damage(n: usize) {
+    var kept = damage.new()
+    var i: usize = n
+    while i < self.damage.count() {
+        kept.add(self.damage.at(i))
+        i += 1
+    }
+    self.damage = kept
+}
+
+// Paint as much of the damage as the deadline allows, checking the platform's clock after each
+// rectangle (a check before the first would defer a frame that has painted nothing). Each rectangle
+// is painted whole; whatever is left stays in `self.damage` for the next frame.
+fun paint_until<P: platform.Platform>(backend: mut SoftBackend, f: fb.Fb, platform: mut P, deadline: u64, unlimited: bool).R: damage.Damage {
+    var out = damage.new()
+    var px: i64 = 0
+    var stop = false
+    var i: usize = 0
+    while i < backend.damage.count() && !stop {
+        val r = backend.damage.at(i)
+        if !r.is_empty() {
+            px += backend.paint_rect(f, r)
+            out.add(r)
+        }
+        i += 1
+        if !unlimited && platform.now_us() >= deadline {
+            stop = true
+        }
+    }
+    backend.consume_damage(i)
+    backend.pixels_last = px
+    backend.pixels_total += px
+    return out
+}
+
+fun SoftBackend.rect_of_slot(id: i32).R: option.Option<fb.Rect> {
+    if root.is_empty() {
+        return option.Option.None
+    }
+    if root.get(0).slot == id && id >= 0 {
+        return option.Option.Some(value = rect_of(root.get(0)))
+    }
+    val r = find_rect_in(root.get(0).kids, id)
+    if r.is_empty() {
+        return option.Option.None
+    }
+    return option.Option.Some(value = r)
+}
+
+fun SoftBackend.interactive_ids().R: List<i32> {
+    var out: List<i32> = List.empty()
+    if !root.is_empty() {
+        collect_interactive(root.get(0).kids, out)
+    }
+    return out
+}
+
+fun SoftBackend.caret_of(id: i32).R: i32 {
+    if root.is_empty() {
+        return -1
+    }
+    if root.get(0).slot == id && id >= 0 {
+        return root.get(0).caret
+    }
+    return find_caret_in(root.get(0).kids, id)
+}
+
+fun mut SoftBackend.reset_counts() {
+    measures = 0
+    arranges = 0
+    self.begin_frame()
+}
+
+fun SoftBackend.measure_count().R: i32 = measures
+
+fun SoftBackend.arrange_count().R: i32 = arranges
+
+// The number of allocation sites the backend executed during the last frame, and a lower bound on
+// the bytes they built. A steady-state patch, hover, focus, caret or wheel frame reads 0.
+fun SoftBackend.frame_alloc_count().R: i32 = frame_allocs
+
+fun SoftBackend.frame_alloc_bytes().R: i64 = frame_bytes
+
+// The largest patch list `apply_diff` has produced, the documented capacity its reusable buffer
+// reaches. The loop's `frame_step_into` shares that same `Box`-held buffer (section 5's
+// caller-provided patch buffer), but it is core code and does not update this counter; a driver
+// that only calls `frame` still reuses the buffer, it just does not read a high-water from here.
+fun SoftBackend.arena_high_water().R: i32 = arena_high
+
+// Pixels the last paint wrote, from the primitives' own return values, and the running total.
+fun SoftBackend.pixels_written().R: i64 = pixels_last
+
+fun SoftBackend.pixels_written_total().R: i64 = pixels_total
+
+// The number of rectangles the last `paint` returned, which is what `present` was handed. A frame
+// driver reports it per step, and an idle frame reads 0 because `paint` returned nothing.
+fun SoftBackend.last_painted().R: i32 = painted
+
+fun mut SoftBackend.note_painted(n: usize) {
+    painted = n.to_i32()
+}
+
+fun SoftBackend.damage_count().R: usize = self.damage.count()
+
+fun SoftBackend.damage_rect(i: usize).R: fb.Rect = self.damage.at(i)
+
+fun mut SoftBackend.clear_damage() {
+    self.damage.clear()
+}
+
+fun mut SoftBackend.set_theme(t: move Theme) {
+    theme = t
+    dirty = true
+    forced = true
+}
+
+// ---------------------------------------------------------------------------------------------
+// The `core.Backend` implementation. `apply` is the one-line delegation stage 1 fixed; the
+// widget writes are the retained-tree operations above.
+
+impl core.Backend for SoftBackend {
+    fun mut Self.apply(patches: &List<core.Patch>) {
+        core.apply_patches(backend = self, patches = patches)
+    }
+
+    fun mut Self.make(path: &core.Path, at: i32, kind: i32, props: &core.Props) {
+        var slot: i32 = -1
+        if core.interactive(kind) {
+            slot = next_slot
+            next_slot += 1
+        }
+        if kind == core.KIND_ENTRY {
+            entry_builds += 1
+        }
+        val uid_now = next_uid
+        next_uid += 1
+        val node = SNode(
+            kind = kind,
+            slot = slot,
+            uid = uid_now,
+            props = copy_props(props),
+            key = key_of_path(path),
+            kids = List.empty(),
+            rect = fb.empty_rect(),
+            measured_w = 0,
+            measured_h = 0,
+            dirty = true,
+            scroll = 0,
+            content_h = 0,
+            hover = false,
+            pressed = false,
+            caret = 0,
+        )
+        if path.segs.len() == 0 {
+            root.clear()
+            root.push(node)
+        } else {
+            var top = root.remove(0)
+            insert_into(top.kids, path, 0, at, node)
+            root.insert(0, top)
+        }
+        created += 1
+        self.note_alloc((props.text.len() + props.label.len()).to_i64() + PATCH_BYTES)
+        dirty = true
+        forced = true
+    }
+
+    fun mut Self.patch_widget(path: &core.Path, props: &core.Props) {
+        var n: i32 = 0
+        var hit = Hit(found = false, rect = fb.empty_rect())
+        val focused = focus_id
+        if path.segs.len() == 0 {
+            if root.len() > 0 {
+                var top = root.remove(0)
+                hit.found = true
+                hit.rect = rect_of(top)
+                set_props_on(top, props, focused)
+                top.dirty = true
+                root.insert(0, top)
+                n = 1
+            }
+        } else {
+            var top = root.remove(0)
+            patch_into(top.kids, path, 0, props, focused, n, hit)
+            root.insert(0, top)
+        }
+        updated += n
+        if hit.found {
+            self.damage.add(hit.rect)
+            dirty = true
+        }
+    }
+
+    fun mut Self.drop_widget(path: &core.Path) {
+        if path.segs.len() == 0 {
+            var i: usize = 0
+            while i < root.len() {
+                removed += count_nodes(root.get(i))
+                val rr = rect_of(root.get(i))
+                self.damage.add(rr)
+                val had = contains_slot(root.get(i), focus_id)
+                if had {
+                    focus_id = -1
+                }
+                i += 1
+            }
+            root.clear()
+            dirty = true
+            forced = true
+            return
+        }
+        var gone = Gone(count = 0, had_focus = false, rect = fb.empty_rect())
+        val focused = focus_id
+        var top = root.remove(0)
+        drop_into(top.kids, path, 0, focused, gone)
+        root.insert(0, top)
+        removed += gone.count
+        if gone.count > 0 {
+            self.damage.add(gone.rect)
+        }
+        if gone.had_focus {
+            focus_id = -1
+        }
+        dirty = true
+        forced = true
+    }
+
+    fun mut Self.place_widget(path: &core.Path, to_index: i32) {
+        if path.segs.len() == 0 {
+            return
+        }
+        var moved = Moved(found = false, rect = fb.empty_rect())
+        var top = root.remove(0)
+        move_into(top.kids, path, 0, to_index, moved)
+        root.insert(0, top)
+        if moved.found {
+            self.damage.add(moved.rect)
+        }
+        dirty = true
+        forced = true
+    }
+
+    fun mut Self.pump() {
+        while !input.is_empty() {
+            val ev = input.remove(0)
+            self.handle(ev)
+        }
+        if cursor < script.len().to_i32() {
+            val e = core.clone_event(script.get(cursor.to_usize()))
+            pending.push(e)
+            cursor += 1
+        }
+    }
+
+    fun mut Self.poll().R: core.Event {
+        if !pending.is_empty() {
+            return pending.remove(0)
+        }
+        return core.Event.Idle
+    }
+
+    fun Self.path_of(id: i32).R: option.Option<core.Path> {
+        if root.is_empty() {
+            return option.Option.None
+        }
+        if root.get(0).slot == id {
+            return option.Option.Some(value = empty_path())
+        }
+        val base = empty_path()
+        return find_path(root.get(0).kids, base, id)
+    }
+
+    fun Self.focus().R: option.Option<i32> {
+        if focus_id < 0 {
+            return option.Option.None
+        }
+        return option.Option.Some(value = focus_id)
+    }
+
+    fun mut Self.set_focus(id: i32) {
+        var d = damage.new()
+        self.focus_to(id, d)
+        merge_damage(self.damage, d)
+    }
+
+    fun mut Self.set_entry_text(id: i32, text: &str) {
+        var d = damage.new()
+        if !root.is_empty() {
+            var top = root.remove(0)
+            if top.slot == id && top.kind == core.KIND_ENTRY {
+                self.note_alloc(str.len(text).to_i64())
+                top.props.text.clear()
+                top.props.text.push_str(text)
+                top.dirty = true
+                d.add(rect_of(top))
+            } else {
+                self.note_alloc(str.len(text).to_i64())
+                set_text(top.kids, id, text, d)
+            }
+            root.insert(0, top)
+        }
+        dirty = true
+        merge_damage(self.damage, d)
+        // The write above is what the display would have done; the display then emits `changed`,
+        // which is the id posted here.
+        pending.push(core.Event.Post(id = id))
+    }
+
+    fun Self.entry_text(id: i32).R: String {
+        if !root.is_empty() && root.get(0).slot == id {
+            return String.from_str(root.get(0).props.text.as_str())
+        }
+        var out: String = String.from_str("")
+        if root.is_empty() {
+            return out
+        }
+        val _ = find_text(root.get(0).kids, id, out)
+        return out
+    }
+
+    fun Self.entry_ids().R: List<i32> {
+        var out: List<i32> = List.empty()
+        collect_entries(root, out)
+        return out
+    }
+
+    fun Self.entries_built().R: i32 = entry_builds
+
+    fun Self.stats().R: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed)
+}

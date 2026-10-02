@@ -253,3 +253,96 @@ binding that has to normalise a length or clamp an index in a kernel can now wri
 rather than in an `asm` block. The rest of the list is unchanged: a freestanding `extern fun`
 still has no trampoline, `library`/`header`/`pkg_config` still have no effect in that mode, and
 `std/mem` (whose `alloc_raw` is libc `malloc`) is still refused by name.
+
+## Status update (2026-10-03, Polyp v3 stage 1)
+
+- **No gap here is closed, and none is newly blocked.** Polyp v3 split its library into a
+  backend-neutral `core.kp`, a `gtk_backend.kp` and a `headless_backend.kp`, which is a library
+  answer to "no platform but GTK" rather than a compiler one: the core holds no `extern` call at
+  all, and the GTK binding is unchanged from v2 (the same `[extern."deps/polyp/gtk"]` and
+  `[extern."deps/polyp/queue"]` sections, the same symbols). `plan/polyp-v3.md` is the design and
+  `examples/polyp-todo/smoke.sh` still runs both backends.
+- One consequence worth recording for a *future* backend: a backend interface that passes plain
+  data (`Props`, `Patch`) and integers is expressible with what gap 1 (the opaque handle), gap 4
+  (the C-ABI callback) and gap 6 (the `ui` domain) already provide, which is why the split needed
+  no language change. A raster or soft backend that needs a `datac` to cross an `extern fun`
+  boundary would still hit gap 9.
+
+## Status update (2026-10-02, Polyp v3 stage 2)
+
+- **No FFI gap is closed and none is newly blocked.** The software rasterizer
+  (`examples/polyp/soft/`) is pure Kelp with no `extern` call at all: the only external facts a
+  drawing primitive has are a `Ptr<u32>` and a stride, which is the shape gap 1 already admits,
+  and a caller with a `static mut [u32; N]` reaches the pixels through `Ptr.from_mut` and
+  `cast<u32>()`. `debug.dump_ppm` uses `std/fs`, which is the ordinary gated namespace, not an
+  FFI gap. `plan/polyp-v3.md` is the design.
+- One Kelp *language* shape the stage hit and worked around, worth recording for any I/O-heavy
+  binding: a method call with explicit type arguments cannot be written directly on a call
+  expression. `Ptr.from_ref(&buf).cast<u32>()` is refused ("'cast' does not take type arguments:
+  a method's type parameters come from its receiver"), while
+  `val b: Ptr<[u32; N]> = Ptr.from_ref(&buf)` followed by `b.cast<u32>()` is accepted. Bind the
+  receiver first. Nothing about FFI depends on this, but it will bite a generated binding.
+- The per-program C object's trampoline is untouched, so an application still pastes the same
+  `[extern.*]` sections as v2/v3 stage 1.
+
+## Status update (2026-10-03, Polyp v3 stage 3)
+
+- **No FFI gap is closed and none is newly blocked.** The soft backend, its layout, its input
+  and both platform implementations (`examples/polyp/soft_backend.kp`,
+  `examples/polyp/soft/`) contain no `extern` call at all: the only external facts are a
+  `Ptr<u32>` framebuffer and a stride, which is gap 1's shape, and a platform is an ordinary
+  trait implemented in Kelp. `soft/ppm_platform.kp` uses `std/fs`, which is the ordinary gated
+  namespace. `plan/polyp-v3.md` stage 3 is the design and `examples/polyp/PLATFORM.md` the
+  contract a custom OS implements.
+- Four Kelp shapes the stage worked around, worth recording for a binding or any generic
+  driver, none of them FFI:
+  - A `mut` parameter of an enum type cannot be reassigned in place (`t = value` is refused);
+    the loop passes the tree in by value and returns it in a `Tick` variant instead.
+  - A borrow taken in an `if`/`while` condition is live for the whole statement, and a method
+    receiver is borrowed before its arguments are evaluated, so `self.damage.add(rect_of(self.root...))`
+    is refused. A local binding between the two reads keeps both sound without weakening a check.
+  - A `mut S` parameter passed to `view(s: S)` binds `S` to `mut S` when the state is a `Copy`
+    scalar, so a generic frame driver wants an owned `datac` state, which is what every Polyp
+    program's `Model` already is.
+  - A discarded non-`unit` return value in statement position is an error (`if` without an
+    `else` must be `unit`); `val _ = call()` is the discard the paint code uses.
+
+## Status update (2026-10-04, Polyp v3 stage 4)
+
+- **No FFI gap is closed and none is newly blocked.** The two freestanding framebuffer projects
+  (`examples/polyp-fb-riscv64`, `examples/polyp-fb-x86_64`) declare no `extern fun` at all: a UART
+  is a `Ptr<u8>` under an `mmio` grant on riscv64 and an `in`/`out` pair on x86-64, and
+  `plan/kernel-ub-notes.md`'s stage-4 note carries what that costs. The one new gap is a
+  *freestanding* one, not an FFI one, and it is recorded there: a keyable user type with a `String`
+  field pulls in the hosted `kelp_map_key_eq`.
+- Three Kelp shapes the stage worked around, none of them FFI:
+  - A function type's parameters are unnamed: `emit: fun (line: str)` is a parse error, `emit:
+    fun (str)` is the spelling, so a trait is the only place a callback parameter gets a name.
+  - A trait method's implementation has to spell its parameters exactly as the trait does, unused
+    name included (`present(fb: ...)` cannot be written `present(_surface: ...)`).
+  - An argument that borrows a temporary cannot be a call argument (`emit(step_line(...).as_str())`
+    is refused); bind it to a local first. The same shape the stage-2 note records for
+    `Ptr.from_ref(&buf).cast<u32>()`.
+
+## Status update (2026-10-04, Polyp v3 stage 5)
+
+- **No FFI gap is closed and none is newly blocked.** Stage 5 adds no `extern fun`: the deadline is
+  an ordinary trait method (`Platform.now_us`) implemented in Kelp, and the benchmark's clock is
+  `std/time`, the ordinary gated namespace. The work-budget and benchmark programs live in
+  `examples/polyp-budget-test` and `examples/polyp-bench`.
+- Four Kelp shapes the stage worked around, none of them FFI:
+  - A method cannot declare its own type parameters: `fun mut SoftBackend.apply_diff<M>(...)` is a
+    parse error at the `<`, because a method's type parameters come from its receiver. The
+    reusable-patch entry points are free generic functions (`soft_backend.apply_diff(backend, old,
+    new)`) that take the backend as a `mut` parameter, which is the same shape the raster's tests
+    already use.
+  - A free function cannot be `mut` (`fun mut name(...)` is refused outside a receiver), which is
+    correct but easy to reach for: `apply_diff` is `fun apply_diff(...)` with a `mut SoftBackend`
+    parameter.
+  - Consuming an enum by value in a `when` needs a `move` parameter. `fun tick_tree<M>(t:
+    core.Tick<M>)` matched on `t` yields a `&Node`, because a non-`move` parameter is borrowed;
+    `t: move core.Tick<M>` is the spelling that binds the payload by value. The `frame` loop avoids
+    it by matching on the call's temporary directly.
+  - A `mut` parameter of a `Copy` array (`[i64; N]`) is passed by value, not borrowed, so a helper
+    that sorts a caller's samples cannot write back. The benchmark sorts a local copy inside the
+    reporting function, the same workaround the stage-2 note records for mutable scratch images.

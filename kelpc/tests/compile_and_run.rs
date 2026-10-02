@@ -16490,3 +16490,889 @@ fn http_server_low_level_api_and_accessors_work_in_one_process() {
         "8192\n16384\n100\n1048576\n10000\n30000\n5000\n100\n3\nb c\nd\n1\nA b\n\n\n%zz\n<none>\n1\ntrue\nfalse\nGET\n/p\nq=1\nPOST\n2\n0\nfalse\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 3\r\n\r\noneHTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Seen: yes\r\nContent-Length: 2\r\n\r\n{}\n400\nHTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 35\r\nConnection: close\r\n\r\nconflicting Content-Length headers\n\n",
     );
 }
+
+/// Polyp v3 stage 1: the pure diff and the whole todo program on the headless backend.
+///
+/// `examples/polyp-core-test` has no `[extern.*]` section at all, so this runs in the plain
+/// development shell with no X server and no GTK, on the backend under test. The first half is the
+/// diff: identical trees produce nothing, a text change one Update, a keyed reorder two Moves and
+/// no Create or Remove, an insert two Creates (the keyed row and its Text child), a remove one
+/// patch for the whole subtree, a kind change a replace, and a duplicate key a panic naming it.
+///
+/// The second half runs the todo example's own program (`examples/polyp-todo/src/app.kp`, linked in
+/// as `deps/todo`) on the headless backend with the same scripted input `examples/polyp-todo/smoke.sh`
+/// arms the GTK backend with, and prints the same summary. The counters here must be the ones that
+/// smoke asserts: created 22, updated 10, removed 5, live 17, focus present and surviving, one
+/// entry built, and the entry still showing `gamma` while the model's draft is empty.
+#[test]
+fn polyp_core_diffs_and_runs_the_todo_program_with_no_display() {
+    let bin = out_path("polyp_core_test");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-core-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp core test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&bin).output().expect("failed to run the core test binary");
+    assert!(
+        run.status.success(),
+        "expected the core test to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        EXPECTED,
+        "unexpected output from the polyp core test"
+    );
+}
+
+const EXPECTED: &str = "identical\n0\n0\n0\n0\ntext\n0\n1\n0\n0\nreorder\n0\n0\n0\n2\ninsert\n2\n0\n0\n0\nremove\n0\n0\n1\n0\nkind\n1\n0\n1\n0\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n-- tree --\ncolumn\n  row\n    entry id=0 \"gamma\"\n    button id=1 \"add\"\n  separator\n  scrolled\n    row #1\n      checkbox id=2 unchecked\n      text \"alpha\"\n      button id=3 \"^\"\n      button id=4 \"x\"\n    row #2\n      checkbox id=5 checked\n      text \"beta\"\n      button id=6 \"^\"\n      button id=7 \"x\"\n  progress 0.500\n\n";
+
+/// The duplicate-key half, in its own run because a `panic` ends the process.
+#[test]
+fn polyp_core_panics_on_a_duplicate_key_and_names_it() {
+    let bin = out_path("polyp_core_dupkey");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-core-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp core test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&bin)
+        .env("POLYP_TEST", "dupkey")
+        .output()
+        .expect("failed to run the core test binary");
+    assert!(
+        !run.status.success(),
+        "expected a duplicate key to panic, but the program exited successfully"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("duplicate key 'dup' among the children of one container"),
+        "expected the panic to name the key, got:\n{stderr}"
+    );
+}
+
+
+/// Polyp v3 stage 2: the software rasterizer's primitives, font, damage list and checksums.
+///
+/// `examples/polyp-soft-test` carries the tests in Kelp: each primitive runs against an
+/// independent per-pixel reference written in the project (full-precision integers, its own
+/// geometry), on fixed-seed LCG inputs with negative and zero sizes and clips on every edge.
+/// The project also prints golden FNV checksums for three scenes. Three panic contracts
+/// (`POLYP_SOFT_TEST=scale`, `clip_depth`, `clip_empty`) and the hosted PPM dump
+/// (`POLYP_SOFT_TEST=dump`) are exercised here, because a panic ends the process and the dump
+/// writes a file.
+///
+/// Every run goes through `run_bounded`: `ulimit -v 1048576` (1 GiB), `ulimit -t 10` and
+/// `timeout 10`, so a bug cannot take the host down the way an earlier unbounded 6.7 GB run did.
+#[test]
+fn polyp_soft_raster_matches_its_references_and_golden_checksums() {
+    let bin = out_path("polyp_soft_test");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-soft-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp soft test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = run_bounded(&bin, &[]);
+    assert!(
+        run.status.success(),
+        "expected the soft test to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_SOFT_EXPECTED,
+        "unexpected output from the soft test"
+    );
+
+    for (mode, needle) in [
+        ("scale", "text scale must be in 1..=4"),
+        ("clip_depth", "clip stack depth 8 exceeded"),
+        ("clip_empty", "clip stack is empty"),
+    ] {
+        let run = run_bounded(&bin, &[("POLYP_SOFT_TEST", mode)]);
+        assert!(
+            !run.status.success(),
+            "expected POLYP_SOFT_TEST={mode} to panic, but the program exited successfully"
+        );
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            stderr.contains(needle),
+            "expected the {mode} panic to mention '{needle}', got:\n{stderr}"
+        );
+    }
+
+    let ppm = out_path("polyp_soft_frame").with_extension("ppm");
+    let run = run_bounded(
+        &bin,
+        &[
+            ("POLYP_SOFT_TEST", "dump"),
+            ("POLYP_SOFT_PPM", ppm.to_str().unwrap()),
+        ],
+    );
+    assert!(run.status.success(), "the dump run failed:\n{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "dumped\n");
+    let bytes = std::fs::read(&ppm).expect("the PPM the dump run wrote");
+    assert_eq!(&bytes[..13], b"P6\n40 28\n255\n", "the PPM header");
+    assert_eq!(bytes.len(), 13 + 40 * 28 * 3, "the PPM body length");
+    // Pixel (0, 0) of the dumped blend scene: `0x80FF0000` source-over the `0xFF000000`
+    // background is `(128 * 255 + 127) / 255 == 128` red, zero green, zero blue.
+    assert_eq!(&bytes[13..16], &[128u8, 0, 0], "the dumped pixel at (0, 0)");
+    let _ = std::fs::remove_file(&ppm);
+}
+
+/// Runs `bin` with `envs` under a 1 GiB address-space limit, a 10 s CPU limit and a 10 s wall
+/// timeout, and returns its output. Every compiled program this file runs on behalf of the
+/// raster tests goes through here.
+fn run_bounded(bin: &Path, envs: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
+        .arg("( ulimit -v 1048576; ulimit -t 10; timeout 10 \"$1\" )")
+        .arg("sh")
+        .arg(bin);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.output().expect("failed to run the soft test binary")
+}
+
+const POLYP_SOFT_EXPECTED: &str = "fill_rect
+60
+0
+stroke_rect
+60
+0
+fill_round_rect
+60
+0
+stroke_round_rect
+60
+0
+line
+60
+0
+blend
+40
+0
+blit_mask8
+30
+0
+draw_text
+40
+0
+clip_stack
+40
+0
+edges
+13
+0
+damage
+200
+8
+0
+cap
+16
+true
+static_fb
+5870808570317741093
+scene shapes
+14814842095218757869
+scene text
+15225207939037777876
+scene blend
+3376705936528111333
+failures
+0
+";
+
+/// Polyp v3 stage 3: the software backend's hit testing, focus order, entry editing, damage and
+/// layout skip.
+///
+/// `examples/polyp-ui-test` runs on `HeadlessPlatform` in the plain development shell. The five
+/// sections are deterministic: the hit section clicks each interactive widget by its own centre;
+/// the order section Tabs through the tree and wraps; the edit section types, moves the caret,
+/// deletes and backspaces; the damage section changes one label's text and asserts the exact
+/// rectangle and that a FNV digest of every pixel outside it is unchanged, then hovers and
+/// asserts an idle frame presents nothing; the layout section counts re-measures and re-arranges
+/// for a same-width text change (one measure, no arrange) and a wider one (both).
+#[test]
+fn polyp_soft_ui_hits_focuses_edits_and_damages() {
+    let bin = out_path("polyp_ui_test");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-ui-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp ui test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[]);
+    assert!(
+        run.status.success(),
+        "expected the ui test to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_UI_EXPECTED,
+        "unexpected output from the polyp ui test"
+    );
+}
+
+const POLYP_UI_EXPECTED: &str = "hit\n0\n1\n2\n3\n-1\norder\n0\n1\n2\n3\n0\n1\n2\n3\n0\n3\nedit\nabcd\n0\nXabcd\n1\nXaYbcd\n3\n2\naYbcd\n0\n5\naYbc\n4\ndamage\n1\n0\n0\n24\n7\noutside-same\n1\n0\n0\nhover\n1\n22\n7\n22\n20\n1\n22\n22\ncheckbox\ntrue\n1\nscroll\nscrolled\n1\n0\nlayout\n1\n0\n2\n3\n";
+
+/// Polyp v3 stage 3: the todo program on the soft backend, at both golden sizes.
+///
+/// `examples/polyp-todo-soft` links `examples/polyp-todo/src/app.kp` (the program) and
+/// `examples/polyp-todo/src/scenario.kp` (the driver the framebuffer kernels share with it), so its
+/// final model and the library's counters are the ones `examples/polyp-todo/smoke.sh` and
+/// `examples/polyp-core-test` produce. It prints one `step <n> checksum <hex> dirty <count>` line
+/// per frame and then the report, and every line here is the golden value; `POLYP_SOFT_SIZE=big`
+/// reruns the same binary at 800x600 for the second golden set, and `POLYP_SOFT_SIZE=kernel` at the
+/// 320x200 the framebuffer kernels use, which is the expected output the two kernels below compare
+/// against.
+#[test]
+fn polyp_todo_runs_on_the_soft_backend_with_the_same_counters() {
+    let bin = out_path("polyp_todo_soft");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-todo-soft"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp todo soft project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[]);
+    assert!(
+        run.status.success(),
+        "expected the 400x300 run to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_TODO_SOFT_400,
+        "unexpected output from the 400x300 todo-soft run"
+    );
+    let run = run_bounded(&bin, &[("POLYP_SOFT_SIZE", "big")]);
+    assert!(
+        run.status.success(),
+        "expected the 800x600 run to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_TODO_SOFT_800,
+        "unexpected output from the 800x600 todo-soft run"
+    );
+}
+
+const POLYP_TODO_SOFT_400: &str = "step 0 checksum 0x3fe9bf4f4c216435 dirty 1
+step 1 checksum 0x0b75e67efe727df5 dirty 1
+step 2 checksum 0x30a73f0b7686ae98 dirty 1
+step 3 checksum 0x5ea79458670ced5c dirty 2
+step 4 checksum 0xd765bd454cf40665 dirty 1
+step 5 checksum 0x6e014703e561504c dirty 2
+step 6 checksum 0x133d1ca6e8e276a5 dirty 1
+step 7 checksum 0x8e17675a724b10fd dirty 2
+step 8 checksum 0xfa3d5e46fb8b2113 dirty 2
+step 9 checksum 0x89b8f7d6bd68e19b dirty 2
+step 10 checksum 0x12d8cf35c1606b27 dirty 3
+step 11 checksum 0x12d8cf35c1606b27 dirty 0
+display 0xc33211c98befabd7
+-- todo --
+2
+alpha
+false
+beta
+true
+7
+12
+17
+22
+22
+22
+22
+10
+5
+17
+true
+true
+1
+gamma
+
+end
+";
+
+const POLYP_TODO_SOFT_800: &str = "step 0 checksum 0xf0430e4ebe066935 dirty 1
+step 1 checksum 0xf4497c1d3a354775 dirty 1
+step 2 checksum 0xf93c79c54dcb06f8 dirty 1
+step 3 checksum 0x3f9118f05cc2f7fc dirty 2
+step 4 checksum 0xd539e0e8a372d425 dirty 1
+step 5 checksum 0x8f9684b6e753a46c dirty 2
+step 6 checksum 0xebde2f6e1f6fe7e5 dirty 1
+step 7 checksum 0x5d3fbf9923562efd dirty 2
+step 8 checksum 0xe451f4fb536873bf dirty 2
+step 9 checksum 0xe4bf0c25d129d687 dirty 2
+step 10 checksum 0xf4b409b661bcc047 dirty 3
+step 11 checksum 0xf4b409b661bcc047 dirty 0
+display 0x33651316579eafb7
+-- todo --
+2
+alpha
+false
+beta
+true
+7
+12
+17
+22
+22
+22
+22
+10
+5
+17
+true
+true
+1
+gamma
+
+end
+";
+
+/// Polyp v3 stage 4: the hosted run at the framebuffer kernels' resolution, which is the expected
+/// output for both kernels.
+///
+/// It builds `examples/polyp-todo-soft` and runs it with `POLYP_SOFT_SIZE=kernel` (320x200, the
+/// kernels' `static mut` surface size), through the bounded runner every compiled program in this
+/// file goes through.
+fn hosted_fb_run() -> Vec<String> {
+    let bin = out_path("polyp_fb_hosted");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-todo-soft"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the hosted soft project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[("POLYP_SOFT_SIZE", "kernel")]);
+    assert!(
+        run.status.success(),
+        "expected the hosted 320x200 run to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    run_slice(&String::from_utf8_lossy(&run.stdout))
+}
+
+/// The lines that make up one run of the shared scenario: from the first `step ` line to the first
+/// `end` line, which is the report's last line. The hosted entry prints a `-- todo --` separator
+/// before the report and the kernels do not, so it is dropped; everything else has to be equal.
+/// The same function reads a kernel's serial output, so the two sides are sliced identically and
+/// only the run itself can differ.
+fn run_slice(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with("step "))
+        .unwrap_or_else(|| panic!("no step line in the run's output:\n{text}"));
+    let end = lines
+        .iter()
+        .position(|line| *line == "end")
+        .unwrap_or_else(|| panic!("no `end` line in the run's output:\n{text}"));
+    let out: Vec<String> = lines[start..=end]
+        .iter()
+        .filter(|line| **line != "-- todo --")
+        .map(|line| line.to_string())
+        .collect();
+    // Twelve `step` lines, one per frame, the `display` line the run ends with, and the report's
+    // twenty-one. A run whose shape changed would otherwise compare equal only by accident.
+    assert_eq!(out.len(), 12 + 1 + 21, "the run's shape changed:\n{out:?}");
+    out
+}
+
+/// `llvm-nm -u`'s output for one linked image, which is the proof that nothing in the Polyp run
+/// needed libc or a soft-float helper: a freestanding image must name no undefined symbol at all.
+fn undefined_symbols(image: &Path) -> String {
+    tool("llvm-nm", &["-u", image.to_str().expect("a utf-8 image path")])
+}
+
+/// Polyp v3 stage 4: the riscv64 framebuffer kernel draws the hosted run's own pixels.
+///
+/// `examples/polyp-fb-riscv64` links the Polyp core, the stage-2 raster, the soft backend and the
+/// shared todo scenario into a bare-metal riscv64 image with no libc: its own
+/// `static mut [u32; 320 * 200]` surface, a bump arena behind `[target] alloc`/`dealloc`, the
+/// scripted platform and the NS16550 driver. The expected output is the hosted soft backend's: this
+/// test runs `examples/polyp-todo-soft` at `POLYP_SOFT_SIZE=kernel` and requires the kernel's
+/// serial lines, both the `step <n> checksum ... dirty ...` lines and the report, to be identical.
+/// One pixel difference anywhere fails it. `llvm-nm -u` on the image is the other half: the image
+/// names no undefined symbol, so nothing reached libc or a soft-float helper. Both tests skip where
+/// `ld.lld` or the emulator is absent (`dev.nix`), which is why they run in `dev-kernel.nix`.
+#[test]
+fn polyp_fb_riscv64_draws_the_hosted_runs_pixels() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        eprintln!(
+            "skipping the riscv64 framebuffer kernel: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run this test in dev-kernel.nix)"
+        );
+        return;
+    }
+    let expected = hosted_fb_run();
+    let name = "polyp_fb_riscv64";
+    let captured = boot_and_capture(&RISCV64_QEMU, name, &fixture("../examples/polyp-fb-riscv64"), &|got| {
+        got.lines().any(|line| line == "end")
+    });
+    let undefined = undefined_symbols(&out_path(name));
+    assert!(
+        undefined.trim().is_empty(),
+        "the riscv64 Polyp image names undefined symbols, so something reached libc or soft float:\n{undefined}"
+    );
+    assert_eq!(
+        run_slice(&captured),
+        expected,
+        "the riscv64 kernel's serial output differs from the hosted 320x200 run; captured:\n{captured}"
+    );
+}
+
+/// Polyp v3 stage 4: the x86-64 framebuffer kernel draws the same pixels as the hosted run and as
+/// the riscv64 kernel.
+///
+/// `examples/polyp-fb-x86_64` is the same program with the COM1 driver in place of the NS16550 and
+/// the same `fb_platform.kp` source file (the two projects share it through a symlink). Born from
+/// SeaBIOS' Xen PVH loader, it goes through the compiler's 32-bit stub into long mode before any
+/// Kelp runs, so this test also covers the whole renderer on the second ISA family.
+#[test]
+fn polyp_fb_x86_64_draws_the_hosted_runs_pixels() {
+    if !have_ld_lld() || !have_qemu(&X86_64_QEMU) {
+        eprintln!(
+            "skipping the x86-64 framebuffer kernel: 'ld.lld' or 'qemu-system-x86_64' is not on \
+             PATH (run this test in dev-kernel.nix)"
+        );
+        return;
+    }
+    let expected = hosted_fb_run();
+    let name = "polyp_fb_x86_64";
+    let captured = boot_and_capture(&X86_64_QEMU, name, &fixture("../examples/polyp-fb-x86_64"), &|got| {
+        got.lines().any(|line| line == "end")
+    });
+    let undefined = undefined_symbols(&out_path(name));
+    assert!(
+        undefined.trim().is_empty(),
+        "the x86-64 Polyp image names undefined symbols, so something reached libc or soft float:\n{undefined}"
+    );
+    assert_eq!(
+        run_slice(&captured),
+        expected,
+        "the x86-64 kernel's serial output differs from the hosted 320x200 run; captured:\n{captured}"
+    );
+}
+
+/// Polyp v3 stage 4's stretch: QEMU's `ramfb` device shows the kernel's framebuffer.
+///
+/// The riscv64 project registers its `static mut` surface with the `ramfb` device through fw_cfg (a
+/// DMA write of `etc/ramfb`: address, `XR24`, flags, width, height, stride, all big-endian, which is
+/// what `src/ramfb.kp` implements). This test boots the image with `-device ramfb` and a monitor on
+/// a pipe, waits for the run's last line, asks the monitor for a `screendump`, and checks the PPM it
+/// wrote against the kernel's own `display` line: FNV-1a 64 over each pixel's blue, green and red
+/// bytes and a constant alpha, because a display shows only the colour (the framebuffer's alpha byte
+/// carries glyph coverage, so `checksum` would not match a screen). The same function is what the
+/// raster's `checksum_rgb` computes, so a single differing pixel fails it. Skips where `ld.lld` or
+/// the emulator is absent.
+#[test]
+fn polyp_fb_riscv64_shows_its_framebuffer_on_a_real_display() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        eprintln!(
+            "skipping the riscv64 ramfb boot: 'ld.lld' or 'qemu-system-riscv64' is not on PATH \
+             (run this test in dev-kernel.nix)"
+        );
+        return;
+    }
+    let name = "polyp_fb_ramfb";
+    let bin = out_path(name);
+    let build = kelpc()
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("../examples/polyp-fb-riscv64"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding ramfb build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let serial = out_path("polyp_fb_ramfb_serial").with_extension("txt");
+    let shot = out_path("polyp_fb_ramfb_shot").with_extension("ppm");
+    let _ = std::fs::remove_file(&serial);
+    let _ = std::fs::remove_file(&shot);
+
+    // `-display none` still creates the console `ramfb` attaches to, which is what makes a
+    // `screendump` of the device possible in a headless test.
+    let mut child = Command::new("qemu-system-riscv64")
+        .args([
+            "-machine",
+            "virt",
+            "-bios",
+            "none",
+            "-no-reboot",
+            "-display",
+            "none",
+            "-device",
+            "ramfb",
+        ])
+        .arg("-serial")
+        .arg(format!("file:{}", serial.display()))
+        .args(["-monitor", "stdio"])
+        .arg("-kernel")
+        .arg(&bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn qemu-system-riscv64");
+
+    // Wait for the run to finish, then ask the monitor for the screen. Both waits are bounded by
+    // the same 20 s the other boot tests use.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let serial_text = wait_for_file_text(&serial, &deadline, |text| text.contains("\nend\n"));
+    let mut stdin = child.stdin.take().expect("qemu's monitor pipe");
+    writeln!(stdin, "screendump {}", shot.display()).expect("failed to ask for a screendump");
+    stdin.flush().expect("failed to flush the monitor pipe");
+    let _ = wait_for_file_text(&shot, &deadline, |_| true);
+    writeln!(stdin, "quit").expect("failed to ask qemu to quit");
+    let _ = stdin.flush();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let ppm = std::fs::read(&shot).expect("the PPM the monitor wrote");
+    let (width, height, body) = parse_ppm(&ppm);
+    assert_eq!((width, height), (320, 200), "the screen the ramfb device reported");
+    assert_eq!(body.len(), 320 * 200 * 3, "the PPM body length");
+    let shown = ppm_rgb_checksum(width, height, body);
+
+    // The kernel's own line, from its serial output: `display 0x<16 hex digits>`.
+    let line = serial_text
+        .lines()
+        .find(|line| line.starts_with("display "))
+        .unwrap_or_else(|| panic!("no `display` line in the kernel's serial output:\n{serial_text}"));
+    let expected = u64::from_str_radix(line.trim_start_matches("display 0x"), 16)
+        .unwrap_or_else(|_| panic!("unreadable display line '{line}'"));
+    assert_eq!(
+        shown, expected,
+        "the display device's pixels differ from the kernel's framebuffer ({line})"
+    );
+}
+
+/// Reads `path` until `done` accepts its text, or the deadline passes, and answers the text it last
+/// saw (empty when the file never appeared). The bounded wait is what keeps a kernel that never
+/// prints, or a monitor that never writes, from hanging the suite.
+fn wait_for_file_text(path: &Path, deadline: &Instant, done: impl Fn(&str) -> bool) -> String {
+    let mut last = String::new();
+    while Instant::now() < *deadline {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if done(&text) {
+                return text;
+            }
+            last = text;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    last
+}
+
+/// A binary P6 PPM as `(width, height, body)`. The three header lines are `P6`, the size and the
+/// maximum value, each terminated by a newline, which is what QEMU's `screendump` and
+/// `soft/debug.dump_ppm` both write.
+fn parse_ppm(bytes: &[u8]) -> (usize, usize, &[u8]) {
+    let mut parts = bytes.splitn(4, |b| *b == b'\n');
+    assert_eq!(parts.next(), Some(b"P6".as_slice()), "the PPM magic");
+    let size = parts.next().expect("the PPM size line");
+    let mut numbers = size
+        .split(|b| *b == b' ')
+        .map(|n| String::from_utf8_lossy(n).parse::<usize>().expect("a PPM dimension"));
+    let width = numbers.next().expect("the PPM width");
+    let height = numbers.next().expect("the PPM height");
+    assert_eq!(parts.next(), Some(b"255".as_slice()), "the PPM maximum value");
+    (width, height, parts.next().expect("the PPM body"))
+}
+
+/// The raster's `checksum_rgb` over a P6 body: FNV-1a 64 with each pixel's blue, green and red bytes
+/// and a constant `0xFF` for the fourth. The kernel prints the same number on its `display` line, so
+/// a display device that shows the framebuffer produces the same value.
+fn ppm_rgb_checksum(width: usize, height: usize, body: &[u8]) -> u64 {
+    let mut h: u64 = 14695981039346656037;
+    for i in 0..width * height {
+        let (r, g, b) = (body[3 * i], body[3 * i + 1], body[3 * i + 2]);
+        for byte in [b, g, r, 255u8] {
+            h ^= u64::from(byte);
+            h = h.wrapping_mul(1099511628211);
+        }
+    }
+    h
+}
+
+/// Polyp v3 stage 3: `PpmPlatform` writes each presented frame when `POLYP_DUMP_DIR` is set.
+#[test]
+fn polyp_soft_ppm_platform_writes_a_frame() {
+    let bin = out_path("polyp_ui_test_ppm");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-ui-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp ui test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let dir = out_path("polyp_ui_ppm");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("the ppm dump directory");
+    let run = run_bounded(
+        &bin,
+        &[
+            ("POLYP_UI_TEST", "ppm"),
+            ("POLYP_DUMP_DIR", dir.to_str().unwrap()),
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "expected the ppm run to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "ppm\n1\n1\n");
+    let ppm = dir.join("frame_0.ppm");
+    let bytes = std::fs::read(&ppm).expect("the PPM the platform wrote");
+    assert_eq!(&bytes[..13], b"P6\n64 48\n255\n", "the PPM header");
+    assert_eq!(bytes.len(), 13 + 64 * 48 * 3, "the PPM body length");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Polyp v3 stage 5: the soft backend's work budgets, pinned as exact machine-independent counts.
+///
+/// `examples/polyp-budget-test` drives the backend directly and prints one number per line:
+///
+/// - `idle`: an idle frame writes 0 pixels, presents 0 rectangles and allocates nothing.
+/// - `text`: a same-width label change damages one rectangle (area 168, the 24x7 label) and, after
+///   the patch buffer has seen that shape, accounts for 0 allocations.
+/// - `hover`/`focus`: a hover or focus change damages exactly the affected widget(s), and allocates
+///   nothing. The primitive pixel count is higher than the rectangle area because a repaint fills
+///   the rectangle with the background and then draws the widget over it (the overdraw `repaint`
+///   measures).
+/// - `type`: typing one character damages at most the entry's rectangle (area 1800) and accounts
+///   for the one allocation the new text needs.
+/// - `checkbox`, `progress`, `caret`, `scroll`: a checkbox flip, a progress change, a caret move
+///   and a wheel step each damage exactly one rectangle (areas 504, 720, 1800 and 600000) and
+///   account for 0 allocations. The caret move leaves the text alone and the caret at byte 4.
+/// - `remove`: dropping one row of 200 re-measures one node, re-arranges the tree, and damages only
+///   rectangles at or below the removed row (`70` is the smallest damage `y`); nothing above it is
+///   touched.
+/// - `append`: adding a row at the end damages the new (off-screen) row and nothing else.
+/// - `repaint`: a full 800x600 repaint overdraws 1.969x, under the factor 2 the budget allows.
+/// - `deadline`: a 2500 us budget and a clock that charges 1000 us per read stop the first frame
+///   after three rectangles (`presented 3`, `damage 2`) and leave the last two for the next frame
+///   (`presented 2`, `damage 0`); the second frame is never deferred.
+/// - `allocs`: an idle frame and a steady-state patch frame both account for 0 allocations; the
+///   patch buffer's high-water is 1 patch.
+#[test]
+fn polyp_soft_work_budgets_hold() {
+    let bin = out_path("polyp_budget_test");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-budget-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp budget test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[]);
+    assert!(
+        run.status.success(),
+        "expected the budget test to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_BUDGET_EXPECTED,
+        "unexpected output from the budget test"
+    );
+}
+
+const POLYP_BUDGET_EXPECTED: &str = r"idle
+0
+0
+0
+0
+text
+1
+168
+212
+0
+1
+0
+hover
+1
+440
+988
+0
+focus
+1
+440
+1064
+0
+type
+1
+1800
+4114
+1
+Xabcd
+remove
+16
+3712864
+832351
+1
+1002
+70
+row
+append
+1
+15680
+0
+6
+1012
+checkbox
+1
+504
+591
+0
+progress
+1
+720
+1764
+0
+caret
+1
+1800
+4101
+0
+4
+scroll
+1
+600000
+967616
+0
+repaint
+1
+945223
+480000
+1969
+deadline
+deferred
+3
+2
+done
+2
+0
+allocs
+0
+0
+1
+";
+
+/// Polyp v3 stage 5: the benchmark builds and prints a table.
+///
+/// `examples/polyp-bench` runs the five scenarios in `plan/polyp-v3.md`'s table. The test sets
+/// `POLYP_BENCH_QUICK`, which shortens every scenario to one frame per run, so the whole run fits
+/// in the bounded runner on the slower C oracle; the counts it pins are the same numbers the full
+/// run's table carries. The wall-clock columns are the host's and are only checked to be numbers.
+#[test]
+fn polyp_bench_prints_a_bounded_table() {
+    let bin = out_path("polyp_bench");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-bench"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp bench project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[("POLYP_BENCH_QUICK", "1")]);
+    assert!(
+        run.status.success(),
+        "expected the benchmark to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let text = String::from_utf8_lossy(&run.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    // Five scenarios, seven lines each: name, frames, pixels, rects, allocs, median, worst.
+    assert_eq!(lines.len(), 35, "the benchmark's table shape changed:\n{text}");
+    let expected = [
+        ("scroll-200", 5, 4393660, 5, 0),
+        ("type-100", 5, 163730, 5, 5),
+        ("toggle-50", 5, 231965, 10, 0),
+        ("resize", 5, 7775980, 80, 0),
+        ("repaint", 5, 4726115, 5, 0),
+    ];
+    for (i, (name, frames, pixels, rects, allocs)) in expected.iter().enumerate() {
+        let base = i * 7;
+        assert_eq!(lines[base], *name, "scenario {i}'s name");
+        assert_eq!(lines[base + 1], frames.to_string(), "{name} frames");
+        assert_eq!(lines[base + 2], pixels.to_string(), "{name} pixels");
+        assert_eq!(lines[base + 3], rects.to_string(), "{name} rects");
+        assert_eq!(lines[base + 4], allocs.to_string(), "{name} allocations");
+        for k in 5..7 {
+            let us: i64 = lines[base + k].parse().unwrap_or_else(|_| {
+                panic!("{name}'s time column is not a number: {}", lines[base + k])
+            });
+            assert!(us >= 0, "{name}'s time column is negative");
+        }
+    }
+}

@@ -1,0 +1,187 @@
+// Register the framebuffer with QEMU's `ramfb` device through fw_cfg (Polyp v3 stage 4's stretch).
+//
+// QEMU's riscv64 `virt` machine puts the fw_cfg device at 0x10100000: an 8-byte data register at
+// +0, a 2-byte selector at +8 and the 8-byte DMA address register at +16, all three big-endian
+// (`hw/nvram/fw_cfg.c`'s memory ops carry `DEVICE_BIG_ENDIAN`). This module uses only the DMA
+// interface: it reads a whole file directory into a static and then writes `etc/ramfb`, whose
+// 28-byte contents are this project's framebuffer. Once that write lands QEMU scans out the memory
+// it names, so a monitor `screendump` shows what the renderer drew.
+//
+// Three facts the register protocol depends on, all read out of QEMU's `fw_cfg_dma_transfer`: the
+// 16-byte DMA descriptor in guest memory is big-endian (`be32_to_cpu`/`be64_to_cpu` on read,
+// `stl_be_dma` on the control write-back), the control word's low bits are `qemu_fw_cfg.h`'s
+// ERROR 0x01, READ 0x02, SKIP 0x04, SELECT 0x08 and WRITE 0x10, and the selector is the control's
+// high 16 bits. A read past the end of a file is zero-filled rather than failed, which is what
+// lets one fixed-size read fetch the whole directory. Every descriptor access is volatile: the
+// device writes the control word back into the descriptor, so the compiler must not fold the poll.
+//
+// `plan/polyp-ramfb-status.md` records how far this got.
+impl "std/str"
+
+const FW_CFG_BASE: usize = 0x10100000
+const FW_CFG_DMA: usize = 0x10
+
+const FW_CFG_FILE_DIR: u16 = 0x0019
+const FW_CFG_CTL_ERROR: u32 = 0x01
+const FW_CFG_CTL_READ: u32 = 0x02
+const FW_CFG_CTL_SELECT: u32 = 0x08
+const FW_CFG_CTL_WRITE: u32 = 0x10
+
+// The error bit is the lowest bit of the big-endian control word, so it lands in the word's
+// highest byte when the descriptor is read natively.
+const CTL_ERROR_NATIVE: u32 = 0x01000000
+
+// `XR24`, QEMU's `DRM_FORMAT_XRGB8888`, which is exactly the `0xAARRGGBB` pixel the raster writes
+// with the alpha byte ignored.
+const FOURCC_XR24: u32 = 0x34325258
+
+// The descriptor, the config and the file directory. All three are statics because the DMA engine
+// reads them out of guest memory, so each needs a stable physical address; `.bss` is zeroed by
+// `_start`.
+const DIR_BYTES: usize = 4 + 64 * 16
+const RAMFB_BYTES: u32 = 28
+const DIR_ENTRIES: u32 = 16
+const MAX_SPINS: i32 = 1000000
+
+static mut DMA: Dma = Dma(control = 0, length = 0, address = 0)
+static mut CFG: Config = Config(addr = 0, fourcc = 0, flags = 0, width = 0, height = 0, stride = 0)
+static mut DIR: [u8; DIR_BYTES] = [0; DIR_BYTES]
+
+datac Dma(var control: u32, var length: u32, var address: u64)
+
+datac Config(var addr: u64, var fourcc: u32, var flags: u32, var width: u32, var height: u32, var stride: u32)
+
+// A pointer to one field of a static, at a byte offset: `Ptr.from_mut(T).cast<U>()` cannot be
+// written as one chained expression, so the pointer is bound first (`plan/user-ffi-gap-analysis.md`).
+fun dma_u32(at: usize).R: Ptr<u32> {
+    val whole: Ptr<Dma> = unsafe { Ptr.from_mut(DMA) }
+    val bytes: Ptr<u8> = whole.cast<u8>()
+    val here: Ptr<u8> = bytes.byte_offset(at.to_isize())
+    return here.cast<u32>()
+}
+
+fun dma_u64(at: usize).R: Ptr<u64> {
+    val whole: Ptr<Dma> = unsafe { Ptr.from_mut(DMA) }
+    val bytes: Ptr<u8> = whole.cast<u8>()
+    val here: Ptr<u8> = bytes.byte_offset(at.to_isize())
+    return here.cast<u64>()
+}
+
+fun dma_address().R: u64 {
+    val whole: Ptr<Dma> = unsafe { Ptr.from_mut(DMA) }
+    val bytes: Ptr<u8> = whole.cast<u8>()
+    return bytes.addr().to_u64()
+}
+
+// Start one transfer: write the descriptor, then its own address to the DMA register, then wait for
+// the device to clear the control word.
+fun run(control: u32, length: u32, address: u64).R: u32 {
+    unsafe {
+        dma_u32(0).write_volatile(control.to_be())
+        dma_u32(4).write_volatile(length.to_be())
+        dma_u64(8).write_volatile(address.to_be())
+        val trigger: Ptr<u64> = Ptr.from_addr(FW_CFG_BASE + FW_CFG_DMA)
+        trigger.write_volatile(dma_address().to_be())
+    }
+    var spins: i32 = 0
+    while spins < MAX_SPINS {
+        val now: u32 = unsafe { dma_u32(0).read_volatile() }
+        if now == 0 {
+            return 0
+        }
+        if (now & CTL_ERROR_NATIVE) != 0 {
+            return FW_CFG_CTL_ERROR
+        }
+        spins += 1
+    }
+    return FW_CFG_CTL_ERROR
+}
+
+// Read the whole file directory into `DIR`, which makes the entry scan a memory walk.
+fun load_directory().R: u32 {
+    val base: Ptr<[u8; DIR_BYTES]> = unsafe { Ptr.from_mut(DIR) }
+    val bytes: Ptr<u8> = base.cast<u8>()
+    return run(
+        control = FW_CFG_CTL_SELECT | FW_CFG_CTL_READ | (FW_CFG_FILE_DIR.to_u32() * 65536),
+        length = DIR_BYTES.to_u32(),
+        address = bytes.addr().to_u64(),
+    )
+}
+
+fun dir_byte(at: usize).R: u8 = unsafe { DIR.get(i = at) }
+
+
+// The directory's own fields are big-endian, and the buffer holds a packed record rather than an
+// aligned array of integers, so they are assembled a byte at a time.
+fun dir_u16(at: usize).R: u16 {
+    return (dir_byte(at).to_u16() * 256) + dir_byte(at + 1).to_u16()
+}
+
+fun dir_u32(at: usize).R: u32 {
+    return ((dir_byte(at).to_u32() * 256 + dir_byte(at + 1).to_u32()) * 256 + dir_byte(at + 2).to_u32()) * 256 + dir_byte(at + 3).to_u32()
+}
+
+// Whether the entry at `entry` names `want`: the name starts eight bytes in and is NUL-padded, so a
+// match needs every byte of `want` and a NUL after them.
+fun dir_names(at: usize, want: str).R: bool {
+    val n = str.len(want)
+    if n > 55 {
+        return false
+    }
+    var i: usize = 0
+    while i < n {
+        if dir_byte(at + 8 + i) != str.byte(want, i) {
+            return false
+        }
+        i += 1
+    }
+    return dir_byte(at + 8 + n) == 0
+}
+
+// The selector of the file `want`, or 0 when the directory does not have it.
+fun find_file(want: str).R: u16 {
+    var count: u32 = dir_u32(0)
+    if count > DIR_ENTRIES {
+        count = DIR_ENTRIES
+    }
+    var i: u32 = 0
+    while i < count {
+        val at: usize = (4 + i * 64).to_usize()
+        if dir_names(at, want) {
+            return dir_u16(at + 4)
+        }
+        i += 1
+    }
+    return 0
+}
+
+// Register `pixels` as the display surface. `stride_px` is in pixels, the device's `stride` in
+// bytes. The return value is 0 on success, 1 when the directory read failed, 2 when `etc/ramfb` is
+// not there, and 3 when the device refused the write; `main.kp` prints the one digit.
+pub fun setup(pixels: usize, width: i32, height: i32, stride_px: i32).R: u32 {
+    val failed: u32 = load_directory()
+    if (failed & FW_CFG_CTL_ERROR) != 0 {
+        return 1
+    }
+    val sel: u16 = find_file("etc/ramfb")
+    if sel == 0 {
+        return 2
+    }
+    // The fields are big-endian: `ramfb.c` reads every one of them with `be32_to_cpu`/`be64_to_cpu`.
+    unsafe {
+        CFG.addr = pixels.to_u64().to_be()
+        CFG.fourcc = FOURCC_XR24.to_be()
+        CFG.flags = 0
+        CFG.width = width.to_u32().to_be()
+        CFG.height = height.to_u32().to_be()
+        CFG.stride = (stride_px * 4).to_u32().to_be()
+    }
+    val cfg_ptr: Ptr<Config> = unsafe { Ptr.from_mut(CFG) }
+    val cfg_bytes: Ptr<u8> = cfg_ptr.cast<u8>()
+    val control: u32 = FW_CFG_CTL_SELECT | FW_CFG_CTL_WRITE | (sel.to_u32() * 65536)
+    val write_failed: u32 = run(control = control, length = RAMFB_BYTES, address = cfg_bytes.addr().to_u64())
+    if (write_failed & FW_CFG_CTL_ERROR) != 0 {
+        return 3
+    }
+    return 0
+}

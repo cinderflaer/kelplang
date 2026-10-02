@@ -1606,3 +1606,195 @@ the memory a cursor points into beyond the owner's lifetime: a cursor stored in
 a `datac` field, a container element or a returned temporary is still refused by
 the same "no lifetime syntax" rules as before, and a root reached through a raw
 `Ptr<T>` is not tracked at all (that is `unsafe`'s contract, unchanged).
+
+## Library note: Polyp v3's core and backends (2026-10-03, not a kernel stage)
+
+This stage is a library change (`examples/polyp/`), not a compiler one, so it adds no new way to
+reach undefined behaviour and nothing in the compiler changed. What it does need recorded is the
+one shape it leans on: a `core.Backend` bound monomorphizes per implementing type, so
+`GtkBackend` is checked against the trait's `make`/`patch_widget`/`drop_widget`/`place_widget`
+signatures once, with `core.apply_patches` inlined into each backend's `apply` by the front end.
+An implementation whose signature drifted would be a compile error naming the method, not a
+runtime hazard, and the trait's methods carry no raw pointer or lifetime an implementation could
+lie about. The GTK backend still calls `extern` symbols whose prototypes come from `gtk/gtk.h`,
+which is `plan/user-ffi-gap-analysis.md` gap 3 and is unchanged: a wrong prototype is still
+outside what the compiler checks.
+
+## Library note: Polyp v3's software rasterizer (2026-10-02, not a kernel stage)
+
+A library stage (`examples/polyp/soft/`), not a compiler one: nothing in the compiler changed, so
+the only new ways to reach undefined behaviour are the pointer operations a drawing library has
+by nature, and they are the same `Ptr<T>` operations stage 1 catalogued.
+
+**The new shapes.** `fb.get`/`fb.put` read and write one `u32` through `self.pixels.offset(index)`
+with no bounds check; `checksum` reads every live pixel; `draw`'s primitives call `put`/`get`
+after clipping to `clip.top() ∩ fb.bounds()`, and `blit_mask8` reads `w * h` coverage bytes
+through a `Ptr<u8>`. `debug.dump_ppm` reads the whole framebuffer and writes it to a path
+through `std/fs`. All of that goes through `unsafe fun` or an `unsafe` block, and the modules
+that contain it (`deps/polyp/soft/fb`, `.../draw`, `.../debug`) are the only ones a consumer
+lists under `[unsafe] modules`; `font` and `damage` do all their work in integers over `Rect`
+values and are deliberately off the list.
+
+**What the compiler checks, and does not.** It checks that a module containing `unsafe` is on the
+manifest's list, and nothing else about these operations: not that a pointer is inside the
+buffer it was derived from, not that `stride_px >= width` or that the pixels are mapped or
+writable, not that `index`'s `i64` result fits an `isize`, not that a clip rectangle is inside
+the framebuffer (a `ClipStack` is a plain rectangle the caller supplies), and not that the
+`blit_mask8` mask really has `w * h` bytes (a shorter one is read past its end). A frame drawn
+with a stale `Fb` is stage 1's dangling-pointer case: the pointer carries no provenance, so
+nothing detects it.
+
+**What is defined.** The stage is written so that its observables do not depend on
+implementation-defined behaviour: the blend and the circle test are `u64`/`i64` integer
+arithmetic with the overflow order chosen so no intermediate can wrap silently past what the
+formula intends, the checksum takes each pixel's bytes by masking the `u32` value rather than
+reading memory (so it is the same on a little- or big-endian host), and no `f32`/`f64` appears
+anywhere, which is what keeps a freestanding riscv64 build from needing a soft-float libcall.
+Kelp's integer arithmetic wraps rather than trapping (a `u64` FNV multiply is the checksum's
+whole point), so an over-large coordinate is a wrapped index and an out-of-bounds access, not a
+checked panic; the tests keep their inputs small and rely on the clip for the rest.
+
+**What the tests pin.** The references in `examples/polyp-soft-test` are per-pixel loops with
+full-precision integers, so a primitive that disagrees in one pixel or one count fails rather
+than passing on a checksum. The three golden FNV checksums cover the scenes end to end, and the
+damage list's "union covers every added rectangle" property is checked per pixel, not by
+rectangle containment.
+
+## Library note: Polyp v3's soft backend, layout, input and platform (2026-10-03, not a kernel stage)
+
+A library stage (`examples/polyp/soft_backend.kp`, `soft/event.kp`, `soft/platform.kp`,
+`soft/headless_platform.kp`, `soft/ppm_platform.kp`, `soft/frac.kp`), not a compiler one: nothing
+in the compiler changed. `plan/polyp-v3.md` stage 3 is the design and
+`examples/polyp/PLATFORM.md` the platform contract.
+
+**The new pointer shapes.** Three, all in modules a consumer lists on `[unsafe] modules`:
+
+- `soft/frac.kp` reads an `f64`'s eight bytes through a `Ptr<u64>` derived with
+  `Ptr.from_ref(x)` and `cast<u64>()`, and decodes sign, exponent and mantissa with integer
+  shifts. It is a read-only type-punning load: nothing writes through the pointer, and the value
+  is the platform's own bit pattern for the `f64` (both a `u64` and an `f64` use the target's byte
+  order, so the integer's bits are the IEEE fields on a little- or big-endian target). It is the
+  only way to turn the core's `f64` fraction into a pixel width without a float operation, which
+  is what stage 2's integer-only rule needs for the progress bar.
+- `soft/headless_platform.kp` allocates its framebuffer with `Ptr.alloc<u32>(width * height)`,
+  writes the pixels directly with `f.put`/`f.get`, and never frees it. `Ptr.alloc` is stage 1's
+  `malloc`/`free` pair; a count that overflows `usize` is stage 1's catalogue, and the size here
+  is a caller's window size.
+- `soft/ppm_platform.kp` adds `soft/debug.dump_ppm`, which is the stage-2 catalogue unchanged
+  (it reads the whole framebuffer and writes a file through `std/fs`).
+
+`soft_backend.kp` itself dereferences no pixel: it calls the stage-2 primitives, which carry their
+own entries, and its damage, layout and input code is integer arithmetic over `Rect`/`Fb` values.
+It is off a consumer's `[unsafe]` list.
+
+**What the compiler checks, and does not.** It checks that each module containing `unsafe` is on
+the manifest's list, and nothing else: not that the `f64` reference really points at a readable
+`f64`, not that the framebuffer pointer is inside an allocation the platform still owns, not that
+`stride_px >= width`, not that a `Scrolled`'s content height is non-negative, and not that a
+`frame`'s `tree` and `state` belong together. A platform that hands the backend a freed buffer is
+stage 1's dangling-pointer case: the `Fb` carries no provenance, so nothing detects it.
+
+**What is defined.** The layout and painting arithmetic is `i32`/`i64` and can wrap like every
+Kelp integer, but the tests keep rectangles small and every primitive clips before it writes, so
+an over-large coordinate is clipped, not an out-of-bounds store. The damage list is the stage-2
+fixed array with the same invariants. No `f32`/`f64` operation appears in the paint or input
+path, which keeps a freestanding riscv64 image from needing a soft-float libcall for the
+progress bar. The checksum printed after every frame is stage 2's FNV-1a, taken by masking the
+`u32` value rather than reading memory, so it is the same on either endianness.
+
+**What the tests pin.** `examples/polyp-ui-test` drives hit testing, focus order, entry editing,
+damage (a same-width text change damages exactly one rectangle and a FNV digest of every pixel
+outside it is unchanged; a hover damages one widget; an idle frame presents nothing) and the
+layout skip (one measure, no arrange), and `examples/polyp-todo-soft` pins the todo UI's
+checksums at 400x300 and 800x600. Both run on the LLVM and C backends under `run_bounded`.
+
+## Library note: Polyp v3's freestanding framebuffer proof (2026-10-04, not a kernel stage)
+
+*Polyp stage 4 (`plan/polyp-v3.md`) runs the v3 core, the stage-2 raster and the soft backend on
+two bare-metal targets. It adds no compiler surface, so this is a library note: the same shape as
+the stage-3 note above, for the code the kernels add.*
+
+**What is new, and where the pointer comes from.** Three things, in modules the project lists on
+`[unsafe] modules`:
+
+- `fb_platform.kp` takes `Ptr.from_mut(FRAME)` for the project's `static mut [u32; 64000]` and
+  casts it to `Ptr<u32>` for `fb.new`. It is the stage-1 `static mut` case: the language checks
+  nothing about the pointer afterwards, and the platform's promise is that the pixel writes stay
+  inside `width * height` of that array (the backend's own clipping is what keeps it).
+- The surface is `.bss`, which the compiler's `_start` stub zeroes before the entry runs. A
+  project whose linker script leaves `__bss_start`/`__bss_end` unset (both are weak) boots with
+  whatever the loader left there; the examples' scripts set them, so the first frame starts black
+  the way `HeadlessPlatform`'s zeroed buffer does. Nothing checks this.
+- `main.kp`'s bump arena is the stage-7 allocator promise unchanged: `alloc` returns memory
+  aligned for the caller and zeroed-or-not is the caller's business, `dealloc` is a no-op that
+  never reclaims, and a request past the arena's end returns null, which the compiler turns into
+  `kp_panic("out of memory")`. A name, a size and an alignment are all the compiler passes.
+
+**What the compiler checks, and does not.** It checks the freestanding allowed set (no `print`,
+no libc, no `pd`, `std/*` admitted by `freestanding::std_admission`), the manifest's allocator
+signatures and the `[unsafe]` audit list. It does not check that a framebuffer pointer names
+memory the platform owns, that a `stride_px` covers the width, that the fake clock advances, or
+that a scheduled `core.Event` names a widget that still exists. The pixels are the evidence: the
+`step` lines and the report have to equal the hosted run's.
+
+**The one gap this exposed, and the Polyp-side fix.** The derived `kelp_hash_<T>`/`kelp_eq_<T>`
+pair is emitted for every keyable user type in the program, whether or not a `Map` keys it, and
+the derived equality compares a `String` field through `kelp_map_key_eq`, which is only defined in
+the hosted C runtime. `ld.lld` therefore reported `undefined symbol: kelp_map_key_eq` for
+`core.Event`, `core.Key`, `core.Seg`, `app.Msg`, `app.Todo` and `Option<String>`. The fix is in
+the Polyp source and uses the documented escape hatch: `Event`, `Key`, `Todo` and `Msg` declare
+their own `hash`/`eq` pair (written with `str.len`/`str.byte`, so the bodies lower freestanding),
+and `soft_backend.find_text` writes into a caller's `String` instead of returning an
+`Option<String>`. A compiler-side fix (emit a body for `kelp_map_key_eq`, or emit the derived pair
+only for types a `Map` actually keys) would be the general answer and is not this stage's.
+
+**What the type-pun removal closes.** `soft/frac.kp`'s `f64`-bits read, this file's stage-3 entry,
+is gone with the module: `Props.fraction` is an integer permille, so the core has no float
+comparison and no decoder, and neither the hosted nor the bare-metal build reads an `f64` through
+a pointer any more.
+
+**What the tests pin.** `kelpc/tests/compile_and_run.rs`'s `polyp_fb_riscv64_*` and
+`polyp_fb_x86_64_*` boot each image under `timeout 20 qemu-system-<arch>`, require its serial
+output to equal the hosted 320x200 run's line for line, and require `llvm-nm -u` to name no
+undefined symbol.
+
+**Stage 4's `ramfb` stretch adds one more pointer path.** `examples/polyp-fb-riscv64/src/ramfb.kp`
+builds pointers from three fw_cfg addresses in the granted `0x10100000+0x20` window (the data,
+selector and DMA registers), writes a 16-byte DMA descriptor into a `static mut` for the device to
+read, and hands QEMU's `ramfb` device the physical address of the project's framebuffer in a
+28-byte config. Every byte order is the device's own convention (the descriptor and the config are
+big-endian, the MMIO registers are big-endian) and the driver polls the descriptor's control word
+through a volatile read until the device clears it, so the compiler cannot fold the wait: none of
+that is checked, and a wrong selector, length or address is a transfer the device refuses or a
+surface QEMU never scans out. The test compares a `screendump` of the screen with the kernel's own
+`display` line, so a display that shows anything other than the framebuffer fails rather than being
+ignored (`plan/polyp-ramfb-status.md`).
+
+## Library note: Polyp v3's latency model, work budgets and deadline (2026-10-04, not a kernel stage)
+
+*Stage 5 of Polyp v3. `plan/polyp-v3.md`'s "Stage 5" section is the design; this note is the UB
+half, and it is short because the stage adds no new pointer path.*
+
+**New ways to reach UB: none in Polyp.** Stage 5 adds no `unsafe` operation, no raw pointer, no
+`extern` and no type pun. The `soft_backend` changes are integer counters, a `Box`-held
+`List<Patch>`, an in-place `String` refill and a deadline check; the `soft/platform.kp` change is
+one more method (`now_us`). The pixels, the damage list and the patch list all stay inside the
+module families the earlier notes cover, so a consumer's `[unsafe]` list is unchanged by this
+stage.
+
+**What is implementation-defined, and unchecked.** `Platform.now_us` is whatever the platform's
+clock returns: the backend compares two readings and nothing guarantees the clock is monotonic, or
+that it advances at all. A platform whose clock jumps backwards makes a budget frame run to the
+end, and a platform whose clock never moves makes `budget_us` a no-op; neither is a memory-safety
+issue, and neither is checked. `HeadlessPlatform`'s test clock advances on every read, which is a
+test model, not a promise a real clock makes. `frame_budgeted` is arithmetic on `u64` readings
+(`start + budget_us` can wrap for a near-`u64::MAX` budget, which only turns "over budget" into
+"not over budget") and the `Damage`/`ClipStack` caps are the stage-2 and stage-3 contracts
+unchanged.
+
+**What the compiler checks, and does not.** It checks the same things as every other hosted Polyp
+build: the `[unsafe]` audit list, the allowed set for a freestanding project, and the manifest. It
+does not check that a platform's clock is monotonic or that its `now_us` agrees with its `now_ms`,
+that a budget is smaller than a tick, or that the benchmark's wall-clock columns mean anything
+about a display. The budget tests are the evidence that the accounting is what the text says, and
+they are counts, not timings, so they are the same on both compiler backends.

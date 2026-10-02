@@ -1,0 +1,693 @@
+// Polyp's GTK4 backend: the core's patch list applied to a live GTK widget tree.
+//
+// This is v2's widget code moved behind the `core.Backend` interface. It holds the widgets, the
+// real signal handlers and the counters; it never sees a `Node`, only the `Props` a patch carries,
+// so the loop above it has no idea a display is involved at all. `gtk.kp` is the binding and
+// `queue.kp` the message ring the signal handlers post into.
+impl "deps/polyp/core"
+impl "deps/polyp/gtk"
+impl "deps/polyp/queue"
+impl "std/fmt"
+impl "std/option"
+impl "std/str"
+
+// `GTK_ORIENTATION_HORIZONTAL` and `..._VERTICAL`, spelled as the numbers they are for the same
+// reason every other GTK value here is: a C `enum` crossing as an `i32` is the ABI, and a Kelp
+// `enum` would be a different layout.
+pub const HORIZONTAL: i32 = 0
+pub const VERTICAL: i32 = 1
+
+// `GtkAlign`, which is what `props.align` has to become on the way into a GTK call. The core's
+// codes are its own order, so this is the one place the two numberings meet.
+const GTK_ALIGN_FILL: i32 = 0
+const GTK_ALIGN_START: i32 = 1
+const GTK_ALIGN_END: i32 = 2
+const GTK_ALIGN_CENTER: i32 = 3
+
+// `G_PRIORITY_DEFAULT` and `GTK_STYLE_PROVIDER_PRIORITY_APPLICATION`.
+const PRIORITY_DEFAULT: i32 = 0
+const PRIORITY_APP: u32 = 600
+
+// What the loop tests a polled id against. `polyp_poll` answers -1 for an empty queue, so the quit
+// id has to be some *other* negative number: slot ids start at 0 and only grow.
+pub const QUIT_ID: i32 = -2
+
+// One live widget and what a patch needs to reach it: what it is, its handler id so a
+// programmatic write can be signal-blocked, its interactive id (-1 when it cannot post), its key,
+// the box inside a scrolled area, the CSS classes currently on it, and its children.
+pub datac Mount(
+    var kind: i32,
+    var widget: gtk.Widget,
+    var inner: gtk.Widget,
+    var handler: u64,
+    var slot: i32,
+    var key: core.Key,
+    var kids: List<Mount>,
+    var classes: List<String>,
+)
+
+// The interactive widget ids in creation order, which is how a posted id reaches its widget. An id
+// is never reused, and a removed widget stays in the list: `path_of` resolves against the live tree
+// instead, so a stale id resolves to nothing rather than to a different widget.
+pub datac WidgetSlot(val id: i32, val widget: gtk.Widget)
+
+pub datac GtkBackend(
+    var win: gtk.Window,
+    var root: List<Mount>,
+    var slots: List<WidgetSlot>,
+    var next_slot: i32,
+    var created: i32,
+    var updated: i32,
+    var removed: i32,
+    var entry_builds: i32,
+    // The widget the window had focused when this frame's patch list started. A focused entry is
+    // the one being edited, so a patch leaves its text alone.
+    var focus_before: gtk.Widget,
+)
+
+pub fun open(title: str, width: i32, height: i32).R: GtkBackend {
+    gtk.gtk_init()
+    val win = gtk.gtk_window_new()
+    gtk.gtk_window_set_title(win, title)
+    gtk.gtk_window_set_default_size(win, width, height)
+    gtk.connect_ret(win, "close-request", close_handler(), 0)
+    gtk.gtk_window_present(win)
+    return GtkBackend(
+        win = win,
+        root = List.empty(),
+        slots = List.empty(),
+        next_slot = 0,
+        created = 0,
+        updated = 0,
+        removed = 0,
+        entry_builds = 0,
+        focus_before = gtk.null_widget(),
+    )
+}
+
+// The loop's unref on the way out, after `core.run` has returned.
+pub fun close(be: mut GtkBackend) {
+    gtk.g_object_unref(be.win)
+}
+
+// Pango markup for a label. Text is escaped first, so a `&` or `<` in the app's string is shown,
+// not parsed; the optional tags wrap the escaped text.
+fun label_markup(text: &str, size: i32, bold: bool).R: String {
+    val amp = str.replace(text, "&", "&amp;")
+    val lt = str.replace(amp.as_str(), "<", "&lt;")
+    var out = str.replace(lt.as_str(), ">", "&gt;")
+    if size > 0 {
+        val pts = fmt.int(size.to_i64())
+        val head = str.concat("<span size=\"", pts.as_str())
+        val open = str.concat(head.as_str(), "\">")
+        val opened = str.concat(open.as_str(), out.as_str())
+        out = str.concat(opened.as_str(), "</span>")
+    }
+    if bold {
+        val opened = str.concat("<b>", out.as_str())
+        out = str.concat(opened.as_str(), "</b>")
+    }
+    return out
+}
+
+fun bool_i32(b: bool).R: i32 = if b { 1 } else { 0 }
+
+fun no_classes().R: List<String> = List.empty()
+
+fun gtk_align(align: i32).R: i32 {
+    if align == core.ALIGN_START {
+        return GTK_ALIGN_START
+    }
+    if align == core.ALIGN_CENTER {
+        return GTK_ALIGN_CENTER
+    }
+    if align == core.ALIGN_END {
+        return GTK_ALIGN_END
+    }
+    return GTK_ALIGN_FILL
+}
+
+// The handler a button, checkbox or entry gets: a closure whose whole environment is the slot id.
+// The native side runs it on the loop's own thread, so `polyp_post` is an ordinary store.
+fun post_handler(id: i32).R: closure(gtk.Widget) {
+    return fun (w: gtk.Widget) {
+        queue.polyp_post(id)
+    }
+}
+
+// The handler a `g_timeout_add_full` source gets. It posts once and returns `G_SOURCE_REMOVE`, so
+// the source is destroyed after it fires.
+fun timeout_handler(id: i32).R: closure().R: i32 {
+    return fun ().R: i32 {
+        queue.polyp_post(id)
+        return 0
+    }
+}
+
+fun set_entry_handler(index: i32, new_text: move String).R: closure().R: i32 {
+    return fun ().R: i32 {
+        queue.polyp_post_edit(index, new_text.as_str())
+        return 0
+    }
+}
+
+fun focus_entry_handler(index: i32).R: closure().R: i32 {
+    return fun ().R: i32 {
+        queue.polyp_post_focus(index)
+        return 0
+    }
+}
+
+// TRUE: the default handler would destroy the window, and the loop still owns the unref it does on
+// the way out.
+fun close_handler().R: closure(gtk.Window).R: i32 {
+    return fun (w: gtk.Window).R: i32 {
+        queue.polyp_post(QUIT_ID)
+        return 1
+    }
+}
+
+// Drives a program with no user: the event `core.run` will see, armed for `delay_ms` from now.
+pub fun schedule(delay_ms: u32, event: core.Event) {
+    when event {
+        Post(id) -> {
+            val source = gtk.g_timeout_add_full(PRIORITY_DEFAULT, delay_ms, timeout_handler(id))
+        }
+        Edit(index, text) -> {
+            val source = gtk.g_timeout_add_full(PRIORITY_DEFAULT, delay_ms, set_entry_handler(index, String.from_str(text.as_str())))
+        }
+        Focus(index) -> {
+            val source = gtk.g_timeout_add_full(PRIORITY_DEFAULT, delay_ms, focus_entry_handler(index))
+        }
+        Quit -> {
+            val source = gtk.g_timeout_add_full(PRIORITY_DEFAULT, delay_ms, timeout_handler(QUIT_ID))
+        }
+        Idle -> {}
+    }
+}
+
+// An application stylesheet. `gtk_init` is idempotent, so calling this before `run` is fine; the
+// provider stays alive for the process and styles every widget that carries a matching class.
+pub fun css(text: str) {
+    gtk.gtk_init()
+    val provider = gtk.gtk_css_provider_new()
+    gtk.gtk_css_provider_load_from_string(provider, text)
+    gtk.gtk_style_context_add_provider_for_display(gtk.gdk_display_get_default(), provider, PRIORITY_APP)
+}
+
+fun key_of_path(path: &core.Path).R: core.Key {
+    if path.segs.len() == 0 {
+        return core.Key.None
+    }
+    return when path.segs.get(path.segs.len() - 1) {
+        Index(_) -> core.Key.None
+        Keyed(_, key) -> core.clone_key(key)
+    }
+}
+
+// The box a node's children live in: a scrolled area's implicit box, or the widget itself.
+fun box_of(rec: &Mount).R: gtk.BoxWidget {
+    if !gtk.is_null_widget(rec.inner) {
+        return gtk.as_box(rec.inner)
+    }
+    return gtk.as_box(rec.widget)
+}
+
+fun kid_index(kids: &List<Mount>, seg: &core.Seg).R: i32 {
+    var i: usize = 0
+    while i < kids.len() {
+        if core.child_at(seg, kids.get(i).key, i) {
+            return i.to_i32()
+        }
+        i += 1
+    }
+    return -1
+}
+
+fun count_nodes(node: &Mount).R: i32 {
+    var n: i32 = 1
+    var i: usize = 0
+    while i < node.kids.len() {
+        n += count_nodes(node.kids.get(i))
+        i += 1
+    }
+    return n
+}
+
+// The widget to insert after so that the new node lands at index `at`: the sibling before it, or
+// the null handle, which GTK reads as "at the front".
+fun sibling_before(kids: &List<Mount>, at: i32).R: gtk.Widget {
+    if at <= 0 {
+        return gtk.null_widget()
+    }
+    if at.to_usize() >= kids.len() {
+        return gtk.null_widget()
+    }
+    return kids.get((at - 1).to_usize()).widget
+}
+
+fun copy_strings(xs: &List<String>).R: List<String> {
+    var out: List<String> = List.empty()
+    var i: usize = 0
+    while i < xs.len() {
+        out.push(String.from_str(xs.get(i).as_str()))
+        i += 1
+    }
+    return out
+}
+
+fun text_widget(props: &core.Props).R: gtk.Widget {
+    val w = gtk.gtk_label_new("")
+    val markup = label_markup(props.text.as_str(), props.size, props.bold)
+    gtk.gtk_label_set_markup(w, markup.as_str())
+    return w
+}
+
+fun spacer_widget(height: i32).R: gtk.Widget {
+    val w = gtk.gtk_box_new(VERTICAL, 0)
+    gtk.gtk_widget_set_size_request(w, -1, height)
+    return w
+}
+
+fun checkbox_widget(props: &core.Props).R: gtk.Widget {
+    val w = gtk.gtk_check_button_new_with_label(props.label.as_str())
+    gtk.gtk_check_button_set_active(w, bool_i32(props.checked))
+    return w
+}
+
+// The core carries a progress fraction as an integer permille, so the one display that wants an
+// `f64` converts it here. Hosted float arithmetic: no bare-metal build emits this module.
+fun fraction_of(permille: i32).R: f64 = permille.to_f64() / 1000.0
+
+fun progress_widget(props: &core.Props).R: gtk.Widget {
+    val w = gtk.gtk_progress_bar_new()
+    gtk.gtk_progress_bar_set_fraction(w, fraction_of(props.permille))
+    return w
+}
+
+// The layout and style options of a widget, applied by both create and patch, so a fresh widget and
+// a matched one are told the same things.
+fun apply_opts(w: gtk.Widget, props: &core.Props) {
+    if props.margin >= 0 {
+        gtk.gtk_widget_set_margin_start(w, props.margin)
+        gtk.gtk_widget_set_margin_end(w, props.margin)
+        gtk.gtk_widget_set_margin_top(w, props.margin)
+        gtk.gtk_widget_set_margin_bottom(w, props.margin)
+    }
+    gtk.gtk_widget_set_hexpand(w, bool_i32(props.expand))
+    gtk.gtk_widget_set_vexpand(w, bool_i32(props.expand))
+    if props.align >= 0 {
+        gtk.gtk_widget_set_halign(w, gtk_align(props.align))
+        gtk.gtk_widget_set_valign(w, gtk_align(props.align))
+    }
+}
+
+// The classes currently on the widget off, the wanted ones on. GTK dedups an add, so a class in
+// both lists is only a remove-then-add.
+fun apply_classes(w: gtk.Widget, old: &List<String>, new: &List<String>) {
+    var i: usize = 0
+    while i < old.len() {
+        gtk.gtk_widget_remove_css_class(w, old.get(i).as_str())
+        i += 1
+    }
+    var j: usize = 0
+    while j < new.len() {
+        gtk.gtk_widget_add_css_class(w, new.get(j).as_str())
+        j += 1
+    }
+}
+
+// The freshly built widget for a node, with its slot taken and its handler connected. A container's
+// children arrive as their own patches, so this builds one widget and nothing below it.
+fun make_widget(be: mut GtkBackend, kind: i32, props: &core.Props).R: Mount {
+    var slot: i32 = -1
+    var handler: u64 = 0
+    var inner: gtk.Widget = gtk.null_widget()
+    var w: gtk.Widget = gtk.null_widget()
+    if kind == core.KIND_COLUMN {
+        w = gtk.gtk_box_new(VERTICAL, props.spacing)
+    } else if kind == core.KIND_ROW {
+        w = gtk.gtk_box_new(HORIZONTAL, props.spacing)
+    } else if kind == core.KIND_TEXT {
+        w = text_widget(props)
+    } else if kind == core.KIND_SPACER {
+        w = spacer_widget(props.height)
+    } else if kind == core.KIND_ENTRY {
+        w = gtk.gtk_entry_new()
+        slot = be.next_slot
+        be.next_slot += 1
+        handler = gtk.connect(w, "changed", post_handler(slot), 0)
+        gtk.gtk_editable_set_text(w, props.text.as_str())
+        be.entry_builds += 1
+        be.slots.push(WidgetSlot(id = slot, widget = w))
+    } else if kind == core.KIND_BUTTON {
+        w = gtk.gtk_button_new_with_label(props.label.as_str())
+        slot = be.next_slot
+        be.next_slot += 1
+        handler = gtk.connect(w, "clicked", post_handler(slot), 0)
+        be.slots.push(WidgetSlot(id = slot, widget = w))
+    } else if kind == core.KIND_CHECKBOX {
+        w = checkbox_widget(props)
+        slot = be.next_slot
+        be.next_slot += 1
+        handler = gtk.connect(w, "toggled", post_handler(slot), 0)
+        be.slots.push(WidgetSlot(id = slot, widget = w))
+    } else if kind == core.KIND_PROGRESS {
+        w = progress_widget(props)
+    } else if kind == core.KIND_SEPARATOR {
+        w = gtk.gtk_separator_new(HORIZONTAL)
+    } else if kind == core.KIND_SCROLLED {
+        // A scrolled area. Its child is the implicit box the loop patches, so the scroll offset
+        // survives: the area itself is only replaced when the model stops asking for one.
+        val sw = gtk.gtk_scrolled_window_new()
+        val b = gtk.gtk_box_new(VERTICAL, props.spacing)
+        gtk.gtk_scrolled_window_set_child(sw, b)
+        w = sw
+        inner = b
+    }
+    apply_opts(w, props)
+    val none = no_classes()
+    apply_classes(w, none, props.classes)
+    return Mount(
+        kind = kind,
+        widget = w,
+        inner = inner,
+        handler = handler,
+        slot = slot,
+        key = core.Key.None,
+        kids = List.empty(),
+        classes = copy_strings(props.classes),
+    )
+}
+
+// A matched widget, told the new properties in place. `kind` is known to agree, so only the
+// properties that can change are written.
+fun apply_props_to(rec: mut Mount, props: &core.Props, focus: gtk.Widget) {
+    val w = rec.widget
+    if rec.kind == core.KIND_COLUMN {
+        gtk.gtk_box_set_spacing(gtk.as_box(w), props.spacing)
+    } else if rec.kind == core.KIND_ROW {
+        gtk.gtk_box_set_spacing(gtk.as_box(w), props.spacing)
+    } else if rec.kind == core.KIND_TEXT {
+        val markup = label_markup(props.text.as_str(), props.size, props.bold)
+        gtk.gtk_label_set_markup(w, markup.as_str())
+    } else if rec.kind == core.KIND_SPACER {
+        gtk.gtk_widget_set_size_request(w, -1, props.height)
+    } else if rec.kind == core.KIND_ENTRY {
+        val current = gtk.gtk_editable_get_text(w)
+        // The focused entry is the one being edited: writing the model's text back into it would
+        // fight the user's cursor, so a patch leaves it alone until it is not the focus widget. The
+        // write is signal-blocked so it is not fed back as a `changed` message.
+        if !str.eq(current, props.text.as_str()) && gtk.gtk_widget_is_ancestor(focus, w) == 0 {
+            gtk.g_signal_handler_block(w, rec.handler)
+            gtk.gtk_editable_set_text(w, props.text.as_str())
+            gtk.g_signal_handler_unblock(w, rec.handler)
+        }
+    } else if rec.kind == core.KIND_BUTTON {
+        gtk.gtk_button_set_label(w, props.label.as_str())
+    } else if rec.kind == core.KIND_CHECKBOX {
+        gtk.gtk_check_button_set_label(w, props.label.as_str())
+        gtk.g_signal_handler_block(w, rec.handler)
+        gtk.gtk_check_button_set_active(w, bool_i32(props.checked))
+        gtk.g_signal_handler_unblock(w, rec.handler)
+    } else if rec.kind == core.KIND_PROGRESS {
+        gtk.gtk_progress_bar_set_fraction(w, fraction_of(props.permille))
+    } else if rec.kind == core.KIND_SCROLLED {
+        gtk.gtk_box_set_spacing(gtk.as_box(rec.inner), props.spacing)
+    }
+    apply_opts(w, props)
+    apply_classes(w, rec.classes, props.classes)
+    rec.classes = copy_strings(props.classes)
+}
+
+// The writes are remove, recurse, insert back, so a write through a `mut` borrow never has to move
+// a field out of the value it is written through. `depth` is how far into `path` the sibling list
+// passed in sits.
+fun insert_into(kids: mut List<Mount>, path: &core.Path, depth: usize, at: i32, node: move Mount, box: gtk.BoxWidget) {
+    if depth + 1 == path.segs.len() {
+        var i = at
+        if i < 0 {
+            i = 0
+        }
+        if i > kids.len().to_i32() {
+            i = kids.len().to_i32()
+        }
+        gtk.gtk_box_insert_child_after(box, node.widget, sibling_before(kids, i))
+        kids.insert(i.to_usize(), node)
+        return
+    }
+    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    var child = kids.remove(idx)
+    val inner_box = box_of(child)
+    insert_into(child.kids, path, depth + 1, at, node, inner_box)
+    kids.insert(idx, child)
+}
+
+fun patch_into(kids: mut List<Mount>, path: &core.Path, depth: usize, props: &core.Props, focus: gtk.Widget, n: mut i32) {
+    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    var child = kids.remove(idx)
+    if depth + 1 == path.segs.len() {
+        *n += 1
+        apply_props_to(child, props, focus)
+        kids.insert(idx, child)
+        return
+    }
+    patch_into(child.kids, path, depth + 1, props, focus, n)
+    kids.insert(idx, child)
+}
+
+datac Gone(var count: i32)
+
+// The list passed in is the children of the node one level up, so the box to detach from is the one
+// the caller descended with.
+fun drop_into(kids: mut List<Mount>, path: &core.Path, depth: usize, box: gtk.BoxWidget, gone: mut Gone) {
+    val idx = kid_index(kids, path.segs.get(depth))
+    if idx < 0 {
+        return
+    }
+    var child = kids.remove(idx.to_usize())
+    if depth + 1 == path.segs.len() {
+        gone.count += count_nodes(child)
+        gtk.gtk_box_remove(box, child.widget)
+        return
+    }
+    val inner_box = box_of(child)
+    drop_into(child.kids, path, depth + 1, inner_box, gone)
+    kids.insert(idx.to_usize(), child)
+}
+
+fun move_into(kids: mut List<Mount>, path: &core.Path, depth: usize, to_index: i32, box: gtk.BoxWidget) {
+    val idx = kid_index(kids, path.segs.get(depth))
+    if idx < 0 {
+        return
+    }
+    var child = kids.remove(idx.to_usize())
+    if depth + 1 == path.segs.len() {
+        var at = to_index
+        if at < 0 {
+            at = 0
+        }
+        if at > kids.len().to_i32() {
+            at = kids.len().to_i32()
+        }
+        gtk.gtk_box_reorder_child_after(box, child.widget, sibling_before(kids, at))
+        kids.insert(at.to_usize(), child)
+        return
+    }
+    val inner_box = box_of(child)
+    move_into(child.kids, path, depth + 1, to_index, inner_box)
+    kids.insert(idx.to_usize(), child)
+}
+
+fun collect_entries(kids: &List<Mount>, out: mut List<i32>) {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.kind == core.KIND_ENTRY && n.slot >= 0 {
+            out.push(n.slot)
+        }
+        collect_entries(n.kids, out)
+        i += 1
+    }
+}
+
+fun find_path(kids: &List<Mount>, base: &core.Path, id: i32).R: option.Option<core.Path> {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        val here = core.with_seg(base, core.seg_for(n.key, i.to_i32()))
+        if n.slot == id {
+            return option.Option.Some(value = here)
+        }
+        when find_path(n.kids, here, id) {
+            Some(found) -> {
+                return option.Option.Some(value = found)
+            }
+            None -> {}
+        }
+        i += 1
+    }
+    return option.Option.None
+}
+
+fun widget_of(be: &GtkBackend, id: i32).R: gtk.Widget {
+    var i: usize = 0
+    while i < be.slots.len() {
+        if be.slots.get(i).id == id {
+            return be.slots.get(i).widget
+        }
+        i += 1
+    }
+    return gtk.null_widget()
+}
+
+impl core.Backend for GtkBackend {
+    fun mut Self.apply(patches: &List<core.Patch>) {
+        // The focus a patch must not fight is the one the window had before the patch list.
+        focus_before = gtk.gtk_window_get_focus(win)
+        core.apply_patches(backend = self, patches = patches)
+    }
+
+    fun mut Self.make(path: &core.Path, at: i32, kind: i32, props: &core.Props) {
+        var rec = make_widget(self, kind, props)
+        rec.key = key_of_path(path)
+        if path.segs.len() == 0 {
+            gtk.gtk_window_set_child(win, rec.widget)
+            root.clear()
+            root.push(rec)
+        } else {
+            var top = root.remove(0)
+            val top_box = box_of(top)
+            insert_into(top.kids, path, 0, at, rec, top_box)
+            root.insert(0, top)
+        }
+        created += 1
+    }
+
+    fun mut Self.patch_widget(path: &core.Path, props: &core.Props) {
+        var n: i32 = 0
+        val focused = focus_before
+        if path.segs.len() == 0 {
+            if root.len() > 0 {
+                var top = root.remove(0)
+                apply_props_to(top, props, focused)
+                root.insert(0, top)
+                n = 1
+            }
+        } else {
+            var top = root.remove(0)
+            patch_into(top.kids, path, 0, props, focused, n)
+            root.insert(0, top)
+        }
+        updated += n
+    }
+
+    fun mut Self.drop_widget(path: &core.Path) {
+        if path.segs.len() == 0 {
+            var i: usize = 0
+            while i < root.len() {
+                removed += count_nodes(root.get(i))
+                i += 1
+            }
+            root.clear()
+            return
+        }
+        var gone = Gone(count = 0)
+        var top = root.remove(0)
+        val top_box = box_of(top)
+        drop_into(top.kids, path, 0, top_box, gone)
+        root.insert(0, top)
+        removed += gone.count
+    }
+
+    fun mut Self.place_widget(path: &core.Path, to_index: i32) {
+        if path.segs.len() == 0 {
+            return
+        }
+        var top = root.remove(0)
+        val top_box = box_of(top)
+        move_into(top.kids, path, 0, to_index, top_box)
+        root.insert(0, top)
+    }
+
+    fun mut Self.pump() {
+        // A blocking iteration: it returns when a source fired, and the loop's drain turns whatever
+        // that posted into updates.
+        gtk.g_main_context_iteration(gtk.null_main_context(), 1)
+    }
+
+    fun mut Self.poll().R: core.Event {
+        val edit = queue.polyp_poll_edit()
+        if edit >= 0 {
+            return core.Event.Edit(index = edit, text = String.from_str(queue.polyp_poll_edit_text()))
+        }
+        val focus = queue.polyp_poll_focus()
+        if focus >= 0 {
+            return core.Event.Focus(index = focus)
+        }
+        val id = queue.polyp_poll()
+        if id == QUIT_ID {
+            return core.Event.Quit
+        }
+        if id >= 0 {
+            return core.Event.Post(id = id)
+        }
+        return core.Event.Idle
+    }
+
+    fun Self.path_of(id: i32).R: option.Option<core.Path> {
+        if root.len() == 0 {
+            return option.Option.None
+        }
+        if root.get(0).slot == id {
+            val none = core.Path(segs = List.empty())
+            return option.Option.Some(value = none)
+        }
+        val base = core.Path(segs = List.empty())
+        return find_path(root.get(0).kids, base, id)
+    }
+
+    fun Self.focus().R: option.Option<i32> {
+        val focused = gtk.gtk_window_get_focus(win)
+        if gtk.is_null_widget(focused) {
+            return option.Option.None
+        }
+        var i: usize = 0
+        while i < slots.len() {
+            // GTK points the toplevel at an entry's inner text widget rather than at the entry, so
+            // the test is ancestry, not identity.
+            if gtk.gtk_widget_is_ancestor(focused, slots.get(i).widget) != 0 {
+                return option.Option.Some(value = slots.get(i).id)
+            }
+            i += 1
+        }
+        return option.Option.None
+    }
+
+    fun mut Self.set_focus(id: i32) {
+        gtk.gtk_window_set_focus(win, widget_of(self, id))
+    }
+
+    fun mut Self.set_entry_text(id: i32, text: &str) {
+        // Writing the entry fires its real `changed` signal, which is the message the loop reads.
+        gtk.gtk_editable_set_text(widget_of(self, id), text)
+    }
+
+    fun Self.entry_text(id: i32).R: String {
+        val w = widget_of(self, id)
+        if gtk.is_null_widget(w) {
+            return String.from_str("")
+        }
+        return String.from_str(gtk.gtk_editable_get_text(w))
+    }
+
+    fun Self.entry_ids().R: List<i32> {
+        var out: List<i32> = List.empty()
+        collect_entries(root, out)
+        return out
+    }
+
+    fun Self.entries_built().R: i32 = entry_builds
+
+    fun Self.stats().R: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed)
+}

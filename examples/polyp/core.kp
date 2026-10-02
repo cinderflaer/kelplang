@@ -1,0 +1,1151 @@
+// Polyp's backend-neutral core: the tree, the diff and the loop, with no display.
+//
+// Nothing here names GTK, calls an `extern fun` or uses `unsafe`. What changes between two
+// renders is a `List<Patch>` of plain data, and what draws it is a `Backend`. A backend holds
+// widgets and knows nothing about the application's `Msg`: it sees `Props`, never `Node`, and the
+// events it produces carry an integer id and, for a programmatic edit, a string.
+//
+// The split is plan/polyp-v3.md. v2's matching rules, keys, builder and counters are unchanged;
+// the GTK calls moved to `gtk_backend.kp` and `lib.kp` is the facade the examples import.
+impl "std/atomic"
+impl "std/option"
+impl "std/str"
+
+// The widget kinds, as the integers a patch carries. A new child is matched to an old one at the
+// same position only when these agree, which is what keeps a Button from being patched into a Text.
+pub const KIND_COLUMN: i32 = 0
+pub const KIND_ROW: i32 = 1
+pub const KIND_TEXT: i32 = 2
+pub const KIND_SPACER: i32 = 3
+pub const KIND_ENTRY: i32 = 4
+pub const KIND_BUTTON: i32 = 5
+pub const KIND_CHECKBOX: i32 = 6
+pub const KIND_PROGRESS: i32 = 7
+pub const KIND_SEPARATOR: i32 = 8
+pub const KIND_SCROLLED: i32 = 9
+
+// The alignment codes `props.align` carries, in the core's own order: a backend maps them to its
+// display's constants.
+pub const ALIGN_FILL: i32 = 0
+pub const ALIGN_START: i32 = 1
+pub const ALIGN_CENTER: i32 = 2
+pub const ALIGN_END: i32 = 3
+
+// The counters a smoke run reads. They are atomics because v2's were and the shape cost nothing:
+// a nested function cannot hold a passdown the frame also holds (plan/syntax.md 12.5). They are
+// `static`s rather than passdowns so a freestanding image carries them too: a `pd`'s initializer
+// runs through `kelp_init_pds`, which only the hosted entry point calls, while an `Atomic` static
+// is data the linker places and its methods write through a shared borrow, which needs no
+// `unsafe`. The entry-text snapshot that is a `List<String>` cannot be a static, so it lives in
+// `diag.kp`, which a freestanding project does not import (`plan/polyp-v3.md`, stage 4).
+static stat_created: AtomicI32 = AtomicI32.new(0)
+static stat_updated: AtomicI32 = AtomicI32.new(0)
+static stat_removed: AtomicI32 = AtomicI32.new(0)
+static stat_live: AtomicI32 = AtomicI32.new(0)
+static stat_entries: AtomicI32 = AtomicI32.new(0)
+static focus_seen_flag: AtomicBool = AtomicBool.new(false)
+static focus_lost_flag: AtomicBool = AtomicBool.new(false)
+
+// The kinds a user can activate, so the kinds a backend gives a widget id and a signal handler.
+pub fun interactive(kind: i32).R: bool = kind == KIND_ENTRY || kind == KIND_BUTTON || kind == KIND_CHECKBOX
+
+// The alignment names an application writes. `props.align` carries one of the `ALIGN_*` codes (or
+// -1 for unset); which number a display's own alignment constant has is the backend's business.
+pub enum Align {
+    Fill
+    Start
+    Center
+    End
+}
+
+fun align_code(a: Align).R: i32 = when a {
+    Fill -> ALIGN_FILL
+    Start -> ALIGN_START
+    Center -> ALIGN_CENTER
+    End -> ALIGN_END
+}
+
+// A child's key. One type per list: an application uses only `Str` keys or only `Int` keys, and
+// the two compare unequal. Keys have no derived equality, so `key_eq` below is the comparison and
+// it is the one place the rule lives.
+pub enum Key {
+    None
+    Str(val s: String)
+    Int(val n: i64)
+}
+
+// The layout and style options a child carries. `margin < 0` and `align < 0` mean "unset": the
+// widget keeps whatever its platform's default is, and a patch does not touch that property.
+pub datac Opts(
+    var margin: i32,
+    var expand: bool,
+    var align: i32,
+    var classes: List<String>,
+)
+
+// The tree `view` returns. `M` is the application's `Msg`; the core never inspects one until a
+// matched widget's handler posts its id.
+//
+// The recursion goes through `List`, which is what keeps the type a finite size: a `List` element
+// lives in the list's own heap buffer, so `Node<M>` can hold children of its own type. A bare
+// `Node<M>` field would be an infinite size.
+pub enum Node<M> {
+    Column(val children: List<Child<M>>, val spacing: i32)
+    Row(val children: List<Child<M>>, val spacing: i32)
+    Text(val text: String, val size: i32, val bold: bool)
+    Spacer(val height: i32)
+    Entry(val text: String, val on_change: fun (String).R: M)
+    Button(val label: String, val on_click: M)
+    Checkbox(val label: String, val checked: bool, val on_toggle: M)
+    Progress(val permille: i32)
+    Separator
+    Scrolled(val children: List<Child<M>>, val spacing: i32)
+}
+
+// One child of a container: its key, its node, and the options that apply to its widget. A key
+// must be unique among the children of one container; a duplicate panics when the container is
+// reconciled.
+pub datac Child<M>(val key: Key, val node: Node<M>, val opts: Opts)
+
+// The builder a block writes children into. A trailing block is passed to `column`/`row` as a
+// `scoped fun(mut Children<M>)`, so the block mutates this value through the exclusive borrow a
+// `mut` parameter of a scoped function type already is (plan/scoped-blocks.md).
+//
+// The pending key and options are one-shot: every push consumes them and resets them. They live in
+// `Box`es because a method's `self` is a borrow, and reading an owned field by value out of a
+// borrow is refused; `take()` is the move that is allowed.
+pub datac Children<M>(
+    var items: List<Child<M>>,
+    var spacing: i32,
+    var pending_key: Box<Key>,
+    var pending_opts: Box<Opts>,
+)
+
+fun default_opts().R: Opts = Opts(margin = -1, expand = false, align = -1, classes = List.empty())
+fun new_children<M>().R: Children<M> = Children<M>(
+    items = List.empty(),
+    spacing = 6,
+    pending_key = Box.of(Key.None),
+    pending_opts = Box.of(default_opts()),
+)
+
+// Key equality: a declared `eq` would give `==`, but a lone comparison is all this needs, and it is
+// the one place the "one key type per list" rule is enforced (a Str key never equals an Int key).
+pub fun key_eq(a: &Key, b: &Key).R: bool = when a {
+    None -> when b {
+        None -> true
+        else -> false
+    }
+    Str(x) -> when b {
+        Str(y) -> str.eq(x.as_str(), y.as_str())
+        else -> false
+    }
+    Int(m) -> when b {
+        Int(n) -> m == n
+        else -> false
+    }
+}
+
+pub fun key_is_none(k: &Key).R: bool = when k {
+    None -> true
+    else -> false
+}
+
+// `Key` and `Event` declare their own `Map` key pair, which is what stops the compiler emitting the
+// derived `kelp_hash_<T>`/`kelp_eq_<T>` pair for them. The derived equality compares a `String`
+// field through `kelp_map_key_eq`, a hosted runtime symbol a bare-metal image has no body for, and
+// the derived pair is emitted for every keyable type in the program whether or not anything uses it
+// as a key (Polyp v3 stage 4; `plan/polyp-v3.md` records the finding). A declared pair is used
+// instead of the derived one, so the two below are a real hash and a real field-by-field
+// comparison, and a `Map` keyed by either type still works on both backends.
+
+// FNV-1a over a string's bytes, built from the two `str` operations a freestanding image lowers
+// itself. Equal strings hash equal, which is the whole contract a key's hash owes.
+pub fun hash_str(s: str).R: u64 {
+    var h: u64 = 14695981039346656037
+    val n = str.len(s)
+    var i: usize = 0
+    while i < n {
+        h = (h ^ str.byte(s, i).to_u64()) * 1099511628211
+        i += 1
+    }
+    return h
+}
+
+fun Key.hash().R: u64 = when self {
+    None -> 3
+    Str(s) -> hash_str(s.as_str())
+    Int(n) -> hash_str("int") ^ n.to_u64()
+}
+
+fun Key.eq(other: &Key).R: bool = key_eq(self, other)
+
+pub fun clone_key(k: &Key).R: Key = when k {
+    None -> Key.None
+    Str(s) -> Key.Str(s = String.from_str(s.as_str()))
+    Int(n) -> Key.Int(n = n)
+}
+
+fun duplicate_message(k: &Key).R: String = when k {
+    None -> String.from_str("polyp: duplicate key among the children of one container")
+    Str(s) -> {
+        val head = str.concat("polyp: duplicate key '", s.as_str())
+        str.concat(head.as_str(), "' among the children of one container")
+    }
+    Int(n) -> {
+        val shown = str.from_i64(n)
+        val head = str.concat("polyp: duplicate key ", shown.as_str())
+        str.concat(head.as_str(), " among the children of one container")
+    }
+}
+
+// Panics, naming the key, when two children of one container carry it. Run before any widget is
+// touched, so a refused tree builds nothing.
+fun check_duplicate_keys<M>(children: &List<Child<M>>) {
+    var i: usize = 0
+    while i < children.len() {
+        if !key_is_none(children.get(i).key) {
+            var j: usize = i + 1
+            while j < children.len() {
+                if key_eq(children.get(i).key, children.get(j).key) {
+                    panic(duplicate_message(children.get(i).key))
+                }
+                j += 1
+            }
+        }
+        i += 1
+    }
+}
+
+pub fun kind_of_node<M>(node: &Node<M>).R: i32 = when node {
+    Column(_, _) -> KIND_COLUMN
+    Row(_, _) -> KIND_ROW
+    Text(_, _, _) -> KIND_TEXT
+    Spacer(_) -> KIND_SPACER
+    Entry(_, _) -> KIND_ENTRY
+    Button(_, _) -> KIND_BUTTON
+    Checkbox(_, _, _) -> KIND_CHECKBOX
+    Progress(_) -> KIND_PROGRESS
+    Separator -> KIND_SEPARATOR
+    Scrolled(_, _) -> KIND_SCROLLED
+}
+
+// The leaf methods of the builder. `text` and `text_styled` take a `str` view so a borrowed
+// `String` field (`s.title.as_str()`) can be passed without a copy the caller has to write. Every
+// one of them consumes the pending key and options, then resets them.
+fun mut Children<M>.push_node(node: move Node<M>) {
+    val k = pending_key.take()
+    pending_key.set(Key.None)
+    val o = pending_opts.take()
+    pending_opts.set(default_opts())
+    items.push(Child(key = k, node = node, opts = o))
+}
+
+fun mut Children<M>.push_keyed(key: move Key, node: move Node<M>) {
+    pending_key.set(Key.None)
+    val o = pending_opts.take()
+    pending_opts.set(default_opts())
+    items.push(Child(key = key, node = node, opts = o))
+}
+
+fun mut Children<M>.text(t: str) {
+    self.push_node(Node.Text(text = String.from_str(t), size = 0, bold = false))
+}
+
+fun mut Children<M>.text_styled(t: str, size: i32, bold: bool) {
+    self.push_node(Node.Text(text = String.from_str(t), size = size, bold = bold))
+}
+
+fun mut Children<M>.spacer(height: i32) {
+    self.push_node(Node.Spacer(height = height))
+}
+
+fun mut Children<M>.button(label: str, on_click: move M) {
+    self.push_node(Node.Button(label = String.from_str(label), on_click = on_click))
+}
+
+// `on_change` is a plain `fun` value, not a closure capturing state: the loop calls it with the
+// entry's new text, and the app writes the constructor that turns that text into its own `Msg`.
+fun mut Children<M>.entry(value: str, on_change: fun (String).R: M) {
+    self.push_node(Node.Entry(text = String.from_str(value), on_change = on_change))
+}
+
+fun mut Children<M>.checkbox(label: str, checked: bool, on_toggle: move M) {
+    self.push_node(Node.Checkbox(label = String.from_str(label), checked = checked, on_toggle = on_toggle))
+}
+
+// The fraction is an integer permille (`0..=1000`), not an `f64`: a f64 comparison on a
+// bare-metal riscv64 target is a `__eqdf2` soft-float call, and a view that computed the ratio
+// with floats would need a division helper too (`plan/polyp-v3.md`, stage 4).
+fun mut Children<M>.progress(permille: i32) {
+    self.push_node(Node.Progress(permille = permille))
+}
+
+fun mut Children<M>.separator() {
+    self.push_node(Node.Separator)
+}
+
+fun mut Children<M>.column(block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_node(Node.Column(children = inner.items, spacing = inner.spacing))
+}
+
+fun mut Children<M>.row(block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_node(Node.Row(children = inner.items, spacing = inner.spacing))
+}
+
+// A scroll area. The block's children are laid out in an implicit box inside the scroll area; the
+// area itself is the widget a patch updates, and the box inside it is reconciled like any other
+// container, so the scroll offset survives.
+fun mut Children<M>.scrolled(block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_node(Node.Scrolled(children = inner.items, spacing = inner.spacing))
+}
+
+// A keyed row: the block's children become one `Row` child whose key is the one given, which is
+// the shape a list of rows wants (`k.keyed("task-7") { r -> ... }`). `keyed_col` is the same for a
+// column, and `with_key` puts a key on the next pushed node of any kind.
+fun mut Children<M>.keyed(key: str, block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_keyed(Key.Str(s = String.from_str(key)), Node.Row(children = inner.items, spacing = inner.spacing))
+}
+
+fun mut Children<M>.keyed_col(key: str, block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_keyed(Key.Str(s = String.from_str(key)), Node.Column(children = inner.items, spacing = inner.spacing))
+}
+
+fun mut Children<M>.with_key(key: str) {
+    pending_key.set(Key.Str(s = String.from_str(key)))
+}
+
+// The integer-keyed twins. One list uses one key type, so an application picks the pair that
+// matches the identity it has (a name, or an id).
+fun mut Children<M>.keyed_int(key: i64, block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_keyed(Key.Int(n = key), Node.Row(children = inner.items, spacing = inner.spacing))
+}
+
+fun mut Children<M>.keyed_int_col(key: i64, block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_keyed(Key.Int(n = key), Node.Column(children = inner.items, spacing = inner.spacing))
+}
+
+fun mut Children<M>.with_key_int(key: i64) {
+    pending_key.set(Key.Int(n = key))
+}
+
+// Options. `spacing` is the box being built; the rest apply to the next child pushed, whatever
+// kind it is, so `k.expand() k.column { ... }` expands the column.
+fun mut Children<M>.spacing(n: i32) {
+    spacing = n
+}
+
+fun mut Children<M>.margin(n: i32) {
+    var o = pending_opts.take()
+    o.margin = n
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.expand() {
+    var o = pending_opts.take()
+    o.expand = true
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.align(a: Align) {
+    var o = pending_opts.take()
+    o.align = align_code(a)
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.class(name: str) {
+    var o = pending_opts.take()
+    o.classes.push(String.from_str(name))
+    pending_opts.set(o)
+}
+
+// Block-taking constructors, so app code reads
+// `polyp.column { k -> k.text(s.title) k.button("+1", Msg.Inc) }`. The block's captures are shared
+// borrows released with this call, which is what lets it read the view's borrowed state.
+pub fun column<M>(block: scoped fun(mut Children<M>)).R: Node<M> {
+    var c: Children<M> = new_children()
+    block(c)
+    return Node.Column(children = c.items, spacing = c.spacing)
+}
+
+pub fun row<M>(block: scoped fun(mut Children<M>)).R: Node<M> {
+    var c: Children<M> = new_children()
+    block(c)
+    return Node.Row(children = c.items, spacing = c.spacing)
+}
+
+// The plain constructors. `text` and `button` keep their names because the builder's same-named
+// items are methods, a separate namespace; `column` and `row` cannot keep them because the
+// block-taking constructors above are free functions of the same name and Kelp has no overloading,
+// so the plain spelling carries a `plain_` prefix. Both spellings compile.
+fun plain_children<M>(nodes: move List<Node<M>>).R: List<Child<M>> {
+    var out: List<Child<M>> = List.empty()
+    var rest = nodes
+    while !rest.is_empty() {
+        out.push(Child(key = Key.None, node = rest.remove(0), opts = default_opts()))
+    }
+    return out
+}
+
+pub fun plain_column<M>(children: move List<Node<M>>).R: Node<M> = Node.Column(children = plain_children(children), spacing = 6)
+pub fun plain_row<M>(children: move List<Node<M>>).R: Node<M> = Node.Row(children = plain_children(children), spacing = 6)
+pub fun text<M>(text: move String).R: Node<M> = Node.Text(text = text, size = 0, bold = false)
+pub fun button<M>(label: move String, on_click: move M).R: Node<M> = Node.Button(label = label, on_click = on_click)
+
+// A node's address in the tree. The root is the empty path; a segment names a child by its key
+// when it has one (`Keyed`) and by its position otherwise (`Index`). Identity is the key for a
+// keyed node and the position for an unkeyed one, so a keyed node's path survives a reorder while
+// an unkeyed one keeps the index positional matching gave it.
+pub enum Seg {
+    Index(val i: i32)
+    Keyed(val i: i32, val key: Key)
+}
+
+pub datac Path(val segs: List<Seg>)
+
+// The properties of one widget, as plain data: what a backend needs to make or update it and
+// nothing else. `margin < 0` and `align < 0` mean unset, exactly as `Opts` does.
+pub datac Props(
+    var text: String,
+    var size: i32,
+    var bold: bool,
+    var label: String,
+    var checked: bool,
+    var permille: i32,
+    var spacing: i32,
+    var height: i32,
+    var margin: i32,
+    var expand: bool,
+    var align: i32,
+    var classes: List<String>,
+)
+
+// What one render decided. `diff` emits only these four, and only when something actually changed:
+// a matched node whose properties are identical produces nothing.
+pub enum Patch {
+    Create(val path: Path, val kind: i32, val props: Props)
+    Update(val path: Path, val props: Props)
+    Remove(val path: Path)
+    Move(val path: Path, val to_index: i32)
+}
+
+// A widget counter set, reported by a backend after it applies a patch list.
+pub datac Stats(val created: i32, val updated: i32, val removed: i32, val live: i32)
+
+// One thing a display produced, or one thing a program asked the loop to do to it.
+pub enum Event {
+    Idle
+    Post(val id: i32)
+    Edit(val index: i32, val text: String)
+    Focus(val index: i32)
+    Quit
+}
+
+// A copy of an event, for a caller that holds a list of them and has to hand one out by value.
+pub fun clone_event(e: &Event).R: Event = when e {
+    Idle -> Event.Idle
+    Post(id) -> Event.Post(id = id)
+    Edit(index, text) -> Event.Edit(index = index, text = String.from_str(text.as_str()))
+    Focus(index) -> Event.Focus(index = index)
+    Quit -> Event.Quit
+}
+
+// The other half of the declared key pair the note above the `Key` one explains.
+fun Event.hash().R: u64 = when self {
+    Idle -> 1
+    Post(id) -> hash_str("post") ^ id.to_u64()
+    Edit(index, text) -> ((hash_str("edit") ^ index.to_u64()) * 31) ^ hash_str(text.as_str())
+    Focus(index) -> hash_str("focus") ^ index.to_u64()
+    Quit -> 2
+}
+
+fun Event.eq(other: &Event).R: bool = when self {
+    Idle -> when other {
+        Idle -> true
+        else -> false
+    }
+    Post(id) -> when other {
+        Post(other_id) -> id == other_id
+        else -> false
+    }
+    Edit(index, text) -> when other {
+        Edit(other_index, other_text) -> index == other_index && str.eq(text.as_str(), other_text.as_str())
+        else -> false
+    }
+    Focus(index) -> when other {
+        Focus(other_index) -> index == other_index
+        else -> false
+    }
+    Quit -> when other {
+        Quit -> true
+        else -> false
+    }
+}
+
+// What a backend is. `apply` is one line in each backend: the walk that turns a path into a widget
+// call is `apply_patches` below, so it lives in one place and cannot drift between backends.
+pub trait Backend {
+    fun mut Self.apply(patches: &List<Patch>)
+    // `make` and `patch` are the two widget writes; `at` is the place in the parent. A backend
+    // gives an interactive widget an id by counting interactive `make` calls from zero, the same
+    // rule the loop uses to turn a posted id back into a path.
+    fun mut Self.make(path: &Path, at: i32, kind: i32, props: &Props)
+    fun mut Self.patch_widget(path: &Path, props: &Props)
+    fun mut Self.drop_widget(path: &Path)
+    fun mut Self.place_widget(path: &Path, to_index: i32)
+    fun mut Self.pump()
+    fun mut Self.poll().R: Event
+    fun Self.path_of(id: i32).R: option.Option<Path>
+    fun Self.focus().R: option.Option<i32>
+    fun mut Self.set_focus(id: i32)
+    fun mut Self.set_entry_text(id: i32, text: &str)
+    fun Self.entry_text(id: i32).R: String
+    fun Self.entry_ids().R: List<i32>
+    fun Self.entries_built().R: i32
+    fun Self.stats().R: Stats
+}
+
+fun empty_path().R: Path = Path(segs = List.empty())
+
+pub fun copy_path(p: &Path).R: Path {
+    var segs: List<Seg> = List.empty()
+    var i: usize = 0
+    while i < p.segs.len() {
+        segs.push(clone_seg(p.segs.get(i)))
+        i += 1
+    }
+    return Path(segs = segs)
+}
+
+pub fun clone_seg(s: &Seg).R: Seg = when s {
+    Index(i) -> Seg.Index(i = i)
+    Keyed(i, key) -> Seg.Keyed(i = i, key = clone_key(key))
+}
+
+pub fun seg_for(key: &Key, i: i32).R: Seg = if key_is_none(key) {
+    Seg.Index(i = i)
+} else {
+    Seg.Keyed(i = i, key = clone_key(key))
+}
+
+pub fun seg_index(s: &Seg).R: i32 = when s {
+    Index(i) -> i
+    Keyed(i, _) -> i
+}
+
+pub fun with_seg(parent: &Path, s: move Seg).R: Path {
+    var segs: List<Seg> = List.empty()
+    var i: usize = 0
+    while i < parent.segs.len() {
+        segs.push(clone_seg(parent.segs.get(i)))
+        i += 1
+    }
+    segs.push(s)
+    return Path(segs = segs)
+}
+
+pub fun props_default().R: Props = Props(
+    text = String.from_str(""),
+    size = 0,
+    bold = false,
+    label = String.from_str(""),
+    checked = false,
+    permille = 0,
+    spacing = 0,
+    height = 0,
+    margin = -1,
+    expand = false,
+    align = -1,
+    classes = List.empty(),
+)
+
+pub fun props_of<M>(node: &Node<M>).R: Props {
+    var p = props_default()
+    when node {
+        Column(_, spacing) -> {
+            p.spacing = spacing
+        }
+        Row(_, spacing) -> {
+            p.spacing = spacing
+        }
+        Text(text, size, bold) -> {
+            p.text = String.from_str(text.as_str())
+            p.size = size
+            p.bold = bold
+        }
+        Spacer(height) -> {
+            p.height = height
+        }
+        Entry(text, _) -> {
+            p.text = String.from_str(text.as_str())
+        }
+        Button(label, _) -> {
+            p.label = String.from_str(label.as_str())
+        }
+        Checkbox(label, checked, _) -> {
+            p.label = String.from_str(label.as_str())
+            p.checked = checked
+        }
+        Progress(permille) -> {
+            p.permille = permille
+        }
+        Separator -> {}
+        Scrolled(_, spacing) -> {
+            p.spacing = spacing
+        }
+    }
+    return p
+}
+
+fun apply_opts(p: mut Props, o: &Opts) {
+    p.margin = o.margin
+    p.expand = o.expand
+    p.align = o.align
+    var i: usize = 0
+    while i < o.classes.len() {
+        p.classes.push(String.from_str(o.classes.get(i).as_str()))
+        i += 1
+    }
+}
+
+pub fun child_props<M>(c: &Child<M>).R: Props {
+    var p = props_of(c.node)
+    apply_opts(p, &c.opts)
+    return p
+}
+
+fun opts_eq(a: &Opts, b: &Opts).R: bool {
+    if a.margin != b.margin || a.expand != b.expand || a.align != b.align {
+        return false
+    }
+    if a.classes.len() != b.classes.len() {
+        return false
+    }
+    var i: usize = 0
+    while i < a.classes.len() {
+        if !str.eq(a.classes.get(i).as_str(), b.classes.get(i).as_str()) {
+            return false
+        }
+        i += 1
+    }
+    return true
+}
+
+// Whether two nodes of the same kind carry the same properties. The kind is checked first, so a
+// call with two different kinds is `false` without reading a field that is not there.
+fun node_props_eq<M>(a: &Node<M>, b: &Node<M>).R: bool = when a {
+    Column(_, sa) -> when b {
+        Column(_, sb) -> sa == sb
+        else -> false
+    }
+    Row(_, sa) -> when b {
+        Row(_, sb) -> sa == sb
+        else -> false
+    }
+    Text(ta, za, ba) -> when b {
+        Text(tb, zb, bb) -> str.eq(ta.as_str(), tb.as_str()) && za == zb && ba == bb
+        else -> false
+    }
+    Spacer(ha) -> when b {
+        Spacer(hb) -> ha == hb
+        else -> false
+    }
+    Entry(ta, _) -> when b {
+        Entry(tb, _) -> str.eq(ta.as_str(), tb.as_str())
+        else -> false
+    }
+    Button(la, _) -> when b {
+        Button(lb, _) -> str.eq(la.as_str(), lb.as_str())
+        else -> false
+    }
+    Checkbox(la, ca, _) -> when b {
+        Checkbox(lb, cb, _) -> str.eq(la.as_str(), lb.as_str()) && ca == cb
+        else -> false
+    }
+    Progress(pa) -> when b {
+        Progress(pb) -> pa == pb
+        else -> false
+    }
+    Separator -> when b {
+        Separator -> true
+        else -> false
+    }
+    Scrolled(_, sa) -> when b {
+        Scrolled(_, sb) -> sa == sb
+        else -> false
+    }
+}
+
+// The first unused old index with this key, or -1.
+fun find_key<M>(old: &List<Child<M>>, used: &List<bool>, key: &Key).R: i32 {
+    var j: usize = 0
+    while j < old.len() {
+        if !used.get(j) && key_eq(old.get(j).key, key) {
+            return j.to_i32()
+        }
+        j += 1
+    }
+    return -1
+}
+
+// The pure matching engine. `old` is the tree the display holds now, `new` the tree `view`
+// returned; the result is the minimal patch list that turns one into the other. Matching is key
+// first, else position and kind; a duplicate key among one container's children panics, naming the
+// key, before any patch is produced.
+//
+// `diff_into` is the shape a per-frame driver wants: the caller owns one `List<Patch>` and the
+// engine clears and refills it, so after the largest frame the list's capacity stays put and no
+// frame allocates the patch list again (`plan/polyp-v3.md`, stage 5). `diff` is the one-shot
+// convenience the pure tests use; both go through the same engine, so they cannot disagree.
+pub fun diff<M>(old: &Node<M>, new: &Node<M>).R: List<Patch> {
+    var out: List<Patch> = List.empty()
+    diff_into(old, new, out)
+    return out
+}
+
+pub fun diff_into<M>(old: &Node<M>, new: &Node<M>, out: mut List<Patch>) {
+    out.clear()
+    val root_path = empty_path()
+    diff_node(root_path, old, new, out)
+}
+
+fun diff_node<M>(path: &Path, old: &Node<M>, new: &Node<M>, out: mut List<Patch>) {
+    val ko = kind_of_node(old)
+    val kn = kind_of_node(new)
+    if ko != kn {
+        out.push(Patch.Remove(path = copy_path(path)))
+        out.push(Patch.Create(path = copy_path(path), kind = kn, props = props_of(new)))
+        return
+    }
+    if !node_props_eq(old, new) {
+        out.push(Patch.Update(path = copy_path(path), props = props_of(new)))
+    }
+    when old {
+        Column(oc, _) -> when new {
+            Column(nc, _) -> diff_children(path, oc, nc, out)
+            else -> {}
+        }
+        Row(oc, _) -> when new {
+            Row(nc, _) -> diff_children(path, oc, nc, out)
+            else -> {}
+        }
+        Scrolled(oc, _) -> when new {
+            Scrolled(nc, _) -> diff_children(path, oc, nc, out)
+            else -> {}
+        }
+        else -> {}
+    }
+}
+
+// A matched child: its own property update, then its subtree.
+fun diff_matched<M>(path: &Path, old: &Child<M>, new: &Child<M>, out: mut List<Patch>) {
+    if !node_props_eq(old.node, new.node) || !opts_eq(old.opts, new.opts) {
+        out.push(Patch.Update(path = copy_path(path), props = child_props(new)))
+    }
+    when old.node {
+        Column(oc, _) -> when new.node {
+            Column(nc, _) -> diff_children(path, oc, nc, out)
+            else -> {}
+        }
+        Row(oc, _) -> when new.node {
+            Row(nc, _) -> diff_children(path, oc, nc, out)
+            else -> {}
+        }
+        Scrolled(oc, _) -> when new.node {
+            Scrolled(nc, _) -> diff_children(path, oc, nc, out)
+            else -> {}
+        }
+        else -> {}
+    }
+}
+
+// One container's children, in the four phases plan/polyp-v3.md fixes: updates and their subtrees,
+// then removals from the highest old index down, then creations, then moves. The order is what
+// makes every path valid at the moment its patch is applied.
+fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, out: mut List<Patch>) {
+    check_duplicate_keys(new)
+    var used: List<bool> = List.empty()
+    var u: usize = 0
+    while u < old.len() {
+        used.push(false)
+        u += 1
+    }
+    var matches: List<i32> = List.empty()
+    var i: usize = 0
+    while i < new.len() {
+        var m: i32 = -1
+        if !key_is_none(new.get(i).key) {
+            m = find_key(old, used, new.get(i).key)
+        } else if i < old.len() && !used.get(i) && key_is_none(old.get(i).key) && kind_of_node(new.get(i).node) == kind_of_node(old.get(i).node) {
+            m = i.to_i32()
+        }
+        if m >= 0 {
+            used.set(m.to_usize(), true)
+        }
+        matches.push(m)
+        i += 1
+    }
+
+    // Updates, in new order, each followed by its subtree.
+    var i2: usize = 0
+    while i2 < new.len() {
+        val m = matches.get(i2)
+        if m >= 0 {
+            val p = with_seg(parent, seg_for(new.get(i2).key, i2.to_i32()))
+            diff_matched(p, old.get(m.to_usize()), new.get(i2), out)
+        }
+        i2 += 1
+    }
+
+    // Removals, highest old index first, so a lower index is still the index it was.
+    var j: i32 = old.len().to_i32() - 1
+    while j >= 0 {
+        if !used.get(j.to_usize()) {
+            out.push(Patch.Remove(path = with_seg(parent, seg_for(old.get(j.to_usize()).key, j))))
+        }
+        j -= 1
+    }
+
+    // Creations, in new order.
+    var k: usize = 0
+    while k < new.len() {
+        if matches.get(k) < 0 {
+            val p = with_seg(parent, seg_for(new.get(k).key, k.to_i32()))
+            out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(new.get(k).node), props = child_props(new.get(k))))
+            create_subtree(p, new.get(k).node, out)
+        }
+        k += 1
+    }
+
+    // Moves, in new order, and only when the matched sequence is not increasing: a monotonic match
+    // already keeps its relative order, so nothing has to be reordered.
+    var monotonic = true
+    var last: i32 = -1
+    var q: usize = 0
+    while q < matches.len() {
+        val mm = matches.get(q)
+        if mm >= 0 {
+            if mm < last {
+                monotonic = false
+            }
+            last = mm
+        }
+        q += 1
+    }
+    if !monotonic {
+        var t: usize = 0
+        while t < new.len() {
+            val mm = matches.get(t)
+            if mm >= 0 && mm != t.to_i32() {
+                out.push(Patch.Move(path = with_seg(parent, seg_for(new.get(t).key, t.to_i32())), to_index = t.to_i32()))
+            }
+            t += 1
+        }
+    }
+}
+
+// Every child of a node the old tree did not have, depth first.
+fun create_subtree<M>(path: &Path, node: &Node<M>, out: mut List<Patch>) {
+    when node {
+        Column(children, _) -> create_children(path, children, out)
+        Row(children, _) -> create_children(path, children, out)
+        Scrolled(children, _) -> create_children(path, children, out)
+        else -> {}
+    }
+}
+
+fun create_children<M>(parent: &Path, children: &List<Child<M>>, out: mut List<Patch>) {
+    check_duplicate_keys(children)
+    var i: usize = 0
+    while i < children.len() {
+        val p = with_seg(parent, seg_for(children.get(i).key, i.to_i32()))
+        out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(children.get(i).node), props = child_props(children.get(i))))
+        create_subtree(p, children.get(i).node, out)
+        i += 1
+    }
+}
+
+// The whole tree as one create list, for the first render and for a test that wants a fresh tree.
+pub fun create_all<M>(node: &Node<M>).R: List<Patch> {
+    var out: List<Patch> = List.empty()
+    val p = empty_path()
+    out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(node), props = props_of(node)))
+    create_subtree(p, node, out)
+    return out
+}
+
+// The walk every backend's `apply` delegates to. It is the only place a path becomes a widget
+// call, so the four phases and the id rule cannot drift between backends.
+pub fun apply_patches<B: Backend>(backend: mut B, patches: &List<Patch>) {
+    var i: usize = 0
+    while i < patches.len() {
+        when patches.get(i) {
+            Create(path, kind, props) -> {
+                // The root's path is empty, so it has no place inside a parent: `at` is 0 there and
+                // a backend that owns the top level (a window, a canvas) puts it there.
+                var at: i32 = 0
+                if path.segs.len() > 0 {
+                    at = seg_index(path.segs.get(path.segs.len() - 1))
+                }
+                backend.make(path = path, at = at, kind = kind, props = props)
+            }
+            Update(path, props) -> {
+                backend.patch_widget(path = path, props = props)
+            }
+            Remove(path) -> {
+                backend.drop_widget(path = path)
+            }
+            Move(path, to_index) -> {
+                backend.place_widget(path = path, to_index = to_index)
+            }
+        }
+        i += 1
+    }
+}
+
+// The message a widget at `path` would post, taken out of a tree the caller owns. `view` is pure,
+// so the loop rebuilds it and moves the message out of that copy: the tree the loop is diffing
+// against has to stay whole, and a message cannot be moved out of a borrow.
+pub fun take_message<B: Backend, M>(root: move Node<M>, path: &Path, backend: &B, id: i32).R: option.Option<M> {
+    return take_at(root, path, 0, backend, id)
+}
+
+fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: usize, backend: &B, id: i32).R: option.Option<M> {
+    if depth >= path.segs.len() {
+        return when node {
+            Button(_, msg) -> option.Option.Some(value = msg)
+            Checkbox(_, _, msg) -> option.Option.Some(value = msg)
+            Entry(_, ctor) -> option.Option.Some(value = ctor(backend.entry_text(id)))
+            else -> option.Option.None
+        }
+    }
+    when node {
+        Column(children, _) -> take_child(children, path, depth, backend, id)
+        Row(children, _) -> take_child(children, path, depth, backend, id)
+        Scrolled(children, _) -> take_child(children, path, depth, backend, id)
+        else -> option.Option.None
+    }
+}
+
+fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32).R: option.Option<M> {
+    val want = path.segs.get(depth)
+    var rest = children
+    var i: usize = 0
+    while !rest.is_empty() {
+        val c = rest.remove(0)
+        if child_at(want, c.key, i) {
+            return take_at(c.node, path, depth + 1, backend, id)
+        }
+        i += 1
+    }
+    return option.Option.None
+}
+
+pub fun child_at(seg: &Seg, key: &Key, index: usize).R: bool = when seg {
+    Index(i) -> key_is_none(key) && index.to_i32() == i
+    Keyed(_, k) -> key_eq(k, key)
+}
+
+fun seq().R: atomic.Ordering = atomic.Ordering.SeqCst
+
+// Zero the loop's counters before a run. A platform that drives its own frame clock resets them
+// itself; `run` does it here so both entries agree.
+pub fun reset_stats() {
+    stat_created.store(value = 0, order = seq())
+    stat_updated.store(value = 0, order = seq())
+    stat_removed.store(value = 0, order = seq())
+    stat_live.store(value = 0, order = seq())
+    stat_entries.store(value = 0, order = seq())
+    focus_seen_flag.store(value = false, order = seq())
+    focus_lost_flag.store(value = false, order = seq())
+}
+
+// What one turn of the loop decided, and the tree it leaves behind. A backend that blocks in
+// `pump` (GTK) loops on `run`; one whose platform delivers a frame clock calls `frame_step`
+// itself and reads the variant. The tree travels by value because a `mut` parameter of an enum
+// type cannot be reassigned in place.
+pub enum Tick<M> {
+    Idle(val tree: Node<M>)
+    Changed(val tree: Node<M>)
+    Quit(val tree: Node<M>)
+}
+
+// One turn: pump the display once, then drain its queue, running `update`/`view`/`diff`/`apply`
+// for every message. `Quit` ends the program; `Changed` means at least one patch was applied.
+pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M)).R: Tick<M> {
+    var scratch: List<Patch> = List.empty()
+    return frame_step_into(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch)
+}
+
+// `frame_step` with a caller-owned patch list: the loop clears and refills `scratch` for every
+// message instead of building a fresh `List<Patch>`, so a driver that keeps one list across frames
+// stops allocating the patch list once it has seen its largest frame (`plan/polyp-v3.md`, stage 5).
+pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>).R: Tick<M> {
+    var current = tree
+    var changed = false
+    var quitting = false
+    // GTK: one blocking main-context iteration, so whatever a source posted is in the queue.
+    // Headless: nothing to pump.
+    backend.pump()
+    var draining = true
+    while draining {
+        val ev = backend.poll()
+        when ev {
+            Idle -> draining = false
+            Quit -> {
+                quitting = true
+                draining = false
+            }
+            Edit(index, text) -> {
+                when entry_at(backend, index) {
+                    Some(id) -> backend.set_entry_text(id = id, text = text.as_str())
+                    None -> {}
+                }
+            }
+            Focus(index) -> {
+                when entry_at(backend, index) {
+                    Some(id) -> backend.set_focus(id = id)
+                    None -> {}
+                }
+            }
+            Post(id) -> {
+                when backend.path_of(id) {
+                    Some(path) -> {
+                        // The message comes from the tree the display is showing now, which
+                        // is the state's own view, so it is that view rebuilt and consumed.
+                        val probe = view(state)
+                        when take_message(probe, path, backend, id) {
+                            Some(msg) -> {
+                                update(state, msg)
+                                val focused = backend.focus()
+                                val next = view(state)
+                                diff_into(current, next, scratch)
+                                backend.apply(scratch)
+                                current = next
+                                snapshot(backend, focused)
+                                changed = true
+                            }
+                            None -> {}
+                        }
+                    }
+                    None -> {}
+                }
+            }
+        }
+    }
+    if quitting {
+        return Tick.Quit(tree = current)
+    }
+    if changed {
+        return Tick.Changed(tree = current)
+    }
+    return Tick.Idle(tree = current)
+}
+
+// The counters and the entry count after a run, so a program that drove its own frames reads the
+// same values `run` leaves behind. The entry texts are `diag.capture`'s, because the snapshot is a
+// `List<String>` and cannot live in this module (plan/polyp-v3.md, stage 4).
+pub fun publish<B: Backend>(backend: &B) {
+    snapshot(backend, backend.focus())
+    val st = backend.stats()
+    stat_created.store(value = st.created, order = seq())
+    stat_updated.store(value = st.updated, order = seq())
+    stat_removed.store(value = st.removed, order = seq())
+    stat_live.store(value = st.live, order = seq())
+    stat_entries.store(value = backend.entries_built(), order = seq())
+}
+
+// What the loop runs on: the state, the tree it last showed, the patches between them, and the
+// check that a patch kept the focused widget.
+pub fun run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Node<M>, update: fun (mut S, M)).R: S {
+    reset_stats()
+
+    var state = init
+    var tree = view(state)
+    val first = create_all(&tree)
+    val f0 = backend.focus()
+    backend.apply(&first)
+    snapshot(backend, f0)
+
+    var running = true
+    while running {
+        when frame_step(backend, tree, state, view, update) {
+            Idle(next) -> tree = next
+            Changed(next) -> tree = next
+            Quit(next) -> {
+                tree = next
+                running = false
+            }
+        }
+    }
+
+    publish(backend)
+    return state
+}
+
+// The counters after one apply, and the focus check v2 did: a widget focused before a patch must
+// still be the focused widget after it.
+fun snapshot<B: Backend>(backend: &B, before: option.Option<i32>) {
+    val st = backend.stats()
+    stat_created.store(value = st.created, order = seq())
+    stat_updated.store(value = st.updated, order = seq())
+    stat_removed.store(value = st.removed, order = seq())
+    stat_live.store(value = st.live, order = seq())
+    when before {
+        Some(id) -> {
+            focus_seen_flag.store(value = true, order = seq())
+            when backend.focus() {
+                Some(now) -> {
+                    if now != id {
+                        focus_lost_flag.store(value = true, order = seq())
+                    }
+                }
+                None -> focus_lost_flag.store(value = true, order = seq())
+            }
+        }
+        None -> {}
+    }
+}
+
+// The id of the index-th entry widget, in tree order, for the programmatic edit and focus
+// channels. The `-1` the GTK queue answers with means "none pending", which is the `None` here.
+fun entry_at<B: Backend>(backend: &B, index: i32).R: option.Option<i32> {
+    if index < 0 {
+        return option.Option.None
+    }
+    val ids = backend.entry_ids()
+    if index.to_usize() >= ids.len() {
+        return option.Option.None
+    }
+    return option.Option.Some(value = ids.get(index.to_usize()))
+}
+
+pub fun stats().R: Stats = Stats(
+    created = stat_created.load(order = seq()),
+    updated = stat_updated.load(order = seq()),
+    removed = stat_removed.load(order = seq()),
+    live = stat_live.load(order = seq()),
+)
+
+// Whether every patch kept the focus widget it found.
+pub fun focus_survived().R: bool = !focus_lost_flag.load(order = seq())
+
+// Whether a patch ever found a focus widget, so a run can tell "the focus stayed" from "there was
+// no focus to keep".
+pub fun focus_present().R: bool = focus_seen_flag.load(order = seq())
+
+pub fun entries_built().R: i32 = stat_entries.load(order = seq())

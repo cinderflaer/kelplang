@@ -1,0 +1,54 @@
+// The input vocabulary a platform feeds the soft backend (Polyp v3 stage 3).
+//
+// A platform decodes its own windowing system into exactly these six events; everything above
+// this file is display-neutral. No pointer is dereferenced and nothing allocates, so the module
+// is off a consumer's `[unsafe]` list.
+//
+// Key codes are the backend's own small table, not a platform's: a platform maps its keys onto
+// these and passes the modifiers it can see. A byte with no printable form is a `Char` whose
+// codepoint is still passed through, so an application can decide; the backend's entry inserts
+// its UTF-8 bytes.
+
+// Mouse buttons. Only the left button activates a widget; the others are delivered so a program
+// can react, and the backend ignores them.
+pub const BUTTON_LEFT: i32 = 0
+pub const BUTTON_MIDDLE: i32 = 1
+pub const BUTTON_RIGHT: i32 = 2
+
+// Modifier bits.
+pub const MOD_SHIFT: i32 = 1
+pub const MOD_CTRL: i32 = 2
+pub const MOD_ALT: i32 = 4
+
+// Key codes, chosen so a platform's decoder has one small table to write.
+pub const KEY_BACKSPACE: i32 = 8
+pub const KEY_TAB: i32 = 9
+pub const KEY_RETURN: i32 = 13
+pub const KEY_ESCAPE: i32 = 27
+pub const KEY_SPACE: i32 = 32
+pub const KEY_DELETE: i32 = 127
+pub const KEY_HOME: i32 = 0x100
+pub const KEY_END: i32 = 0x101
+pub const KEY_LEFT: i32 = 0x102
+pub const KEY_RIGHT: i32 = 0x103
+pub const KEY_UP: i32 = 0x104
+pub const KEY_DOWN: i32 = 0x105
+
+pub enum Event {
+    PointerMove(val x: i32, val y: i32)
+    PointerDown(val x: i32, val y: i32, val button: i32)
+    PointerUp(val x: i32, val y: i32, val button: i32)
+    Scroll(val dx: i32, val dy: i32)
+    Key(val code: i32, val mods: i32)
+    Char(val codepoint: i32)
+}
+
+// A copy, for a caller that holds a list of events and hands one out by value.
+pub fun clone(e: &Event).R: Event = when e {
+    PointerMove(x, y) -> Event.PointerMove(x = x, y = y)
+    PointerDown(x, y, button) -> Event.PointerDown(x = x, y = y, button = button)
+    PointerUp(x, y, button) -> Event.PointerUp(x = x, y = y, button = button)
+    Scroll(dx, dy) -> Event.Scroll(dx = dx, dy = dy)
+    Key(code, mods) -> Event.Key(code = code, mods = mods)
+    Char(codepoint) -> Event.Char(codepoint = codepoint)
+}

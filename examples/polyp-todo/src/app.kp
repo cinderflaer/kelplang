@@ -1,0 +1,289 @@
+// The todo list program itself, with no display: the model, the view, the update, the scripted
+// input sequence and the report. `examples/polyp-todo/src/main.kp` runs it on the GTK backend,
+// `examples/polyp-core-test` runs the same script on the headless one and
+// `examples/polyp-fb-riscv64`/`examples/polyp-fb-x86_64` run it on bare metal, so the counters and
+// the pixels the four runs compare are the same program's. The report writes through a `fun (str)`
+// the caller supplies rather than through `print`, because a freestanding build refuses `print`
+// wherever it appears in a module it compiles and this module is the program both sides run
+// (`plan/polyp-v3.md`, stage 4).
+impl "deps/polyp/core"
+impl "std/str"
+
+pub datac Todo(val id: i32, val title: String, var done: bool)
+
+// `marks` records `core.stats().created` after each action, which is the smoke test's evidence
+// that adding, ticking, moving and removing reuse widgets rather than rebuild the list. It is a
+// diagnostic field, not application state.
+pub datac Model(
+    var draft: String,
+    var items: List<Todo>,
+    var next_id: i32,
+    var marks: List<i32>,
+)
+
+// The other half of the declared key pair the note above `hash_str` explains: `Todo` and `Msg` both
+// hold a `String`, so the derived pair would compare it through the hosted `kelp_map_key_eq`.
+fun Todo.hash().R: u64 = core.hash_str(title.as_str()) ^ id.to_u64()
+
+fun Todo.eq(other: &Todo).R: bool = id == other.id && done == other.done && str.eq(title.as_str(), other.title.as_str())
+
+// Every action names an item by id, not by position, for the same reason the view keys by id.
+pub enum Msg {
+    Changed(val text: String)
+    Add
+    Toggle(val id: i32)
+    MoveUp(val id: i32)
+    Remove(val id: i32)
+}
+
+fun Msg.hash().R: u64 = when self {
+    Changed(text) -> core.hash_str("changed") ^ core.hash_str(text.as_str())
+    Add -> 4
+    Toggle(id) -> core.hash_str("toggle") ^ id.to_u64()
+    MoveUp(id) -> core.hash_str("moveup") ^ id.to_u64()
+    Remove(id) -> core.hash_str("remove") ^ id.to_u64()
+}
+
+fun Msg.eq(other: &Msg).R: bool = when self {
+    Changed(text) -> when other {
+        Changed(other_text) -> str.eq(text.as_str(), other_text.as_str())
+        else -> false
+    }
+    Add -> when other {
+        Add -> true
+        else -> false
+    }
+    Toggle(id) -> when other {
+        Toggle(other_id) -> id == other_id
+        else -> false
+    }
+    MoveUp(id) -> when other {
+        MoveUp(other_id) -> id == other_id
+        else -> false
+    }
+    Remove(id) -> when other {
+        Remove(other_id) -> id == other_id
+        else -> false
+    }
+}
+
+pub fun initial().R: Model = Model(
+    draft = String.from_str(""),
+    items = List.empty(),
+    next_id = 1,
+    marks = List.empty(),
+)
+
+// The constructor the entry's `on_change` is: a top-level `fun`, so nothing is captured and the
+// type is exactly `fun(String).R: Msg`.
+fun changed(text: String).R: Msg = Msg.Changed(text = String.from_str(text.as_str()))
+
+fun find_index(s: Model, id: i32).R: i32 {
+    var i: usize = 0
+    while i < s.items.len() {
+        if s.items.get(i).id == id {
+            return i.to_i32()
+        }
+        i += 1
+    }
+    return -1
+}
+
+fun done_count(s: Model).R: i32 {
+    var n: i32 = 0
+    var i: usize = 0
+    while i < s.items.len() {
+        if s.items.get(i).done {
+            n += 1
+        }
+        i += 1
+    }
+    return n
+}
+
+// The progress fraction as an integer permille, the way the core carries it: a float division here
+// would be a soft-float call on a bare-metal riscv64 image, which has no FPU (`plan/polyp-v3.md`,
+// stage 4). `frac.of` and `frac.from_permille` used to convert; the core is integer now.
+fun permille(s: Model).R: i32 {
+    val total = s.items.len()
+    if total == 0 {
+        return 0
+    }
+    return done_count(s) * 1000 / total.to_i32()
+}
+
+// One keyed row per item: the checkbox, the title and the two buttons are the row's children, and
+// the key is the item's id. The class depends on the item's state, which is the one thing the
+// stylesheet is used for.
+pub fun view(s: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(8)
+        k.margin(12)
+        k.class("todo-app")
+        k.row { r ->
+            r.spacing(6)
+            r.expand()
+            r.entry(s.draft.as_str(), changed)
+            r.button("add", Msg.Add)
+        }
+        k.separator()
+        k.expand()
+        k.scrolled { sc ->
+            sc.spacing(4)
+            sc.margin(4)
+            var i: usize = 0
+            while i < s.items.len() {
+                val item = s.items.get(i)
+                val key = str.from_i64(item.id.to_i64())
+                if item.done {
+                    sc.class("todo-done")
+                } else {
+                    sc.class("todo-pending")
+                }
+                sc.keyed(key.as_str()) { r ->
+                    r.spacing(6)
+                    r.checkbox("", item.done, Msg.Toggle(id = item.id))
+                    r.expand()
+                    r.text(item.title.as_str())
+                    r.button("^", Msg.MoveUp(id = item.id))
+                    r.button("x", Msg.Remove(id = item.id))
+                }
+                i += 1
+            }
+        }
+        k.progress(permille(s))
+    }
+}
+
+fun mark(state: mut Model) {
+    state.marks.push(core.stats().created)
+}
+
+pub fun update(state: mut Model, msg: Msg) {
+    when msg {
+        Changed(text) -> {
+            state.draft = String.from_str(text.as_str())
+        }
+        Add -> {
+            val draft_now = String.from_str(state.draft.as_str())
+            val has_draft = !draft_now.is_empty()
+            if has_draft {
+                val id = state.next_id
+                state.next_id = id + 1
+                state.items.push(Todo(id = id, title = draft_now, done = false))
+                state.draft = String.from_str("")
+            }
+            mark(state)
+        }
+        Toggle(id) -> {
+            val at = find_index(state, id)
+            if at >= 0 {
+                val u = at.to_usize()
+                val was = state.items.get(u).done
+                val title = String.from_str(state.items.get(u).title.as_str())
+                state.items.set(u, Todo(id = id, title = title, done = !was))
+            }
+            mark(state)
+        }
+        MoveUp(id) -> {
+            val at = find_index(state, id)
+            if at > 0 {
+                val item = state.items.remove(at.to_usize())
+                state.items.insert((at - 1).to_usize(), item)
+            }
+            mark(state)
+        }
+        Remove(id) -> {
+            val at = find_index(state, id)
+            if at >= 0 {
+                val gone = state.items.remove(at.to_usize())
+            }
+            mark(state)
+        }
+    }
+}
+
+// One scheduled input, as data: the delay the GTK backend arms a timeout with, and the event the
+// headless backend hands the loop. Both backends then run the same sequence.
+pub datac Step(val delay_ms: u32, val event: core.Event)
+
+// The sequence the smoke runs drive themselves with: focus the entry, type three titles through
+// the entry's own `changed` signal, add each one, tick the second row's checkbox, move the third
+// row up, remove the row that is now the middle one, and quit. The ids are the interactive widget
+// ids: the entry and the add button are 0 and 1, and each row takes three more in creation order
+// (checkbox, move, remove), so the first row is 2/3/4, the second 5/6/7 and the third 8/9/10.
+pub fun script().R: List<Step> {
+    var steps: List<Step> = List.empty()
+    steps.push(Step(delay_ms = 100, event = core.Event.Focus(index = 0)))
+    steps.push(Step(delay_ms = 150, event = core.Event.Edit(index = 0, text = String.from_str("alpha"))))
+    steps.push(Step(delay_ms = 200, event = core.Event.Post(id = 1)))
+    steps.push(Step(delay_ms = 250, event = core.Event.Edit(index = 0, text = String.from_str("beta"))))
+    steps.push(Step(delay_ms = 300, event = core.Event.Post(id = 1)))
+    steps.push(Step(delay_ms = 350, event = core.Event.Edit(index = 0, text = String.from_str("gamma"))))
+    steps.push(Step(delay_ms = 400, event = core.Event.Post(id = 1)))
+    steps.push(Step(delay_ms = 450, event = core.Event.Post(id = 5)))
+    steps.push(Step(delay_ms = 500, event = core.Event.Post(id = 9)))
+    steps.push(Step(delay_ms = 550, event = core.Event.Post(id = 10)))
+    steps.push(Step(delay_ms = 650, event = core.Event.Quit))
+    return steps
+}
+
+// Just the events, which is what the headless backend takes.
+pub fun events().R: List<core.Event> {
+    var out: List<core.Event> = List.empty()
+    var steps = script()
+    var i: usize = 0
+    while i < steps.len() {
+        out.push(core.clone_event(steps.get(i).event))
+        i += 1
+    }
+    return out
+}
+
+// One integer line, through whatever sink the run supplied. `str.from_i64` is the compiler's own
+// libc-free builder, so this is the same text a hosted `print` writes.
+fun say_int(out: fun (str), n: i64) {
+    val shown = str.from_i64(n)
+    out(shown.as_str())
+}
+
+fun say_bool(out: fun (str), b: bool) {
+    if b {
+        out("true")
+    } else {
+        out("false")
+    }
+}
+
+// The final state, then the library's counters, one line each. `entry` is the live text of the
+// first entry widget as the display showed it: the core cannot hold that snapshot (a
+// `List<String>` is not a static and a `pd` is refused bare-metal), so `diag.entry_text` or the
+// backend itself supplies it. Every line is deterministic, which is what
+// examples/polyp-todo/smoke.sh, the core test and the framebuffer equivalence test read.
+pub fun report(final: Model, entry: str, out: fun (str)) {
+    say_int(out, final.items.len().to_i64())
+    var i: usize = 0
+    while i < final.items.len() {
+        out(final.items.get(i).title.as_str())
+        say_bool(out, final.items.get(i).done)
+        i += 1
+    }
+    var m: usize = 0
+    while m < final.marks.len() {
+        say_int(out, final.marks.get(m).to_i64())
+        m += 1
+    }
+    val st = core.stats()
+    say_int(out, st.created.to_i64())
+    say_int(out, st.updated.to_i64())
+    say_int(out, st.removed.to_i64())
+    say_int(out, st.live.to_i64())
+    say_bool(out, core.focus_present())
+    say_bool(out, core.focus_survived())
+    say_int(out, core.entries_built().to_i64())
+    out(entry)
+    out(final.draft.as_str())
+    // A final marker, so the empty draft line above is not the last line: a shell strips trailing
+    // newlines, and this keeps it.
+    out("end")
+}

@@ -1,0 +1,182 @@
+// The damage list (Polyp v3 stage 2).
+//
+// A frame's dirty rectangles, at most 16 of them, in a fixed inline array. `add` never grows
+// the array and never allocates, so a caller can hand the same list back every frame and rely
+// on its cost. The policy is:
+//
+//   1. an empty rectangle is dropped;
+//   2. if the list is not full and the rectangle overlaps or *touches* an entry, that entry
+//      becomes the union, and a coalesce pass merges any entries the union made touch;
+//   3. otherwise, if the list is not full, the rectangle is appended;
+//   4. otherwise (full, and nothing touches) the pair whose union wastes the least area
+//      (`union(i, j).area() - area(i) - area(j)`) is merged, which drops the count to 15, the
+//      new rectangle is appended, and a coalesce pass runs. Ties break on the lowest `(i, j)`,
+//      so the result is deterministic.
+//
+// Coalescing is what keeps the list small: after every change, touching pairs merge until no
+// pair touches, and each merge strictly reduces the count, so it terminates in at most 15
+// merges. The stage allowed "collapse everything to one bounding rectangle" as the full-list
+// answer; the least-waste pair is used instead because it preserves more detail for the same
+// cap, and `bounds()` is there for a caller that wants the one-rectangle answer. The order of
+// the entries is *not* stable across an `add` (a merge uses one slot and removes another); a
+// caller iterates, it does not index.
+//
+// The bodies below copy an element out with `dup()` and keep every list read in a statement of
+// its own rather than in an `if`/`while` condition. A borrow taken in a condition is live for
+// the whole statement in this compiler, so `if fb.touches(rects.get(i = i), r) { rects.set(...) }`
+// is refused; the copy is what keeps each mutation sound without weakening the check.
+//
+// Nothing here dereferences a pixel, so the module needs no `[unsafe]` entry, and it imports
+// only the pure-integer half of the raster.
+impl "deps/polyp/soft/fb"
+
+pub const MAX_DAMAGE: usize = 16
+
+pub datac Damage(var rects: [fb.Rect; MAX_DAMAGE], var len: usize)
+
+pub fun new().R: Damage = Damage(rects = [fb.Rect(x = 0, y = 0, w = 0, h = 0); MAX_DAMAGE], len = 0)
+
+fun Damage.count().R: usize = len
+
+// A copy, so a caller cannot hold a borrow of the list across a later `add`.
+fun Damage.at(i: usize).R: fb.Rect = rects.get(i = i).dup()
+
+fun mut Damage.clear() {
+    len = 0
+}
+
+// The one rectangle covering every entry, empty when the list is.
+fun Damage.bounds().R: fb.Rect {
+    val n: usize = len
+    if n == 0 {
+        return fb.empty_rect()
+    }
+    var out: fb.Rect = rects.get(i = 0).dup()
+    var i: usize = 1
+    while i < n {
+        val next: fb.Rect = rects.get(i = i).dup()
+        out = fb.union(out, next)
+        i += 1
+    }
+    return out
+}
+
+// Steps 1 to 4 above.
+fun mut Damage.add(rect: fb.Rect) {
+    if rect.is_empty() {
+        return
+    }
+    val n: usize = len
+    val has_room: bool = n < MAX_DAMAGE
+    if has_room {
+        if self.merge_into_touching(rect) {
+            self.coalesce()
+            return
+        }
+        rects.set(i = n, v = rect.dup())
+        len = n + 1
+        return
+    }
+    if self.merge_into_touching(rect) {
+        self.coalesce()
+        return
+    }
+    self.merge_least_waste()
+    val m: usize = len
+    rects.set(i = m, v = rect.dup())
+    len = m + 1
+    self.coalesce()
+}
+
+// Replace the first entry that touches `r` with the union, if any does.
+fun mut Damage.merge_into_touching(r: fb.Rect).R: bool {
+    val n: usize = len
+    var i: usize = 0
+    while i < n {
+        val probe: fb.Rect = rects.get(i = i).dup()
+        val hit: bool = fb.touches(probe, r)
+        if hit {
+            val merged: fb.Rect = fb.union(probe, r)
+            rects.set(i = i, v = merged)
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+// Merge the pair whose union wastes the least area and remove the second entry. The caller
+// guarantees `n >= 2`.
+fun mut Damage.merge_least_waste() {
+    val n: usize = len
+    var best_i: usize = 0
+    var best_j: usize = 1
+    var best_waste: i64 = 0
+    var first: bool = true
+    var i: usize = 0
+    while i < n {
+        var j: usize = i + 1
+        while j < n {
+            val a: fb.Rect = rects.get(i = i).dup()
+            val b: fb.Rect = rects.get(i = j).dup()
+            val u: fb.Rect = fb.union(a, b)
+            val waste: i64 = u.area() - a.area() - b.area()
+            if first {
+                best_waste = waste
+                first = false
+            } else if waste < best_waste {
+                best_waste = waste
+                best_i = i
+                best_j = j
+            }
+            j += 1
+        }
+        i += 1
+    }
+    val bi: usize = best_i
+    val bj: usize = best_j
+    val cur: fb.Rect = rects.get(i = bi).dup()
+    val other: fb.Rect = rects.get(i = bj).dup()
+    val merged: fb.Rect = fb.union(cur, other)
+    rects.set(i = bi, v = merged)
+    var k: usize = bj
+    while k + 1 < n {
+        val nxt: fb.Rect = rects.get(i = k + 1).dup()
+        rects.set(i = k, v = nxt)
+        k += 1
+    }
+    len = n - 1
+}
+
+// Merge touching pairs one at a time until none remain. One merge per pass is deliberate: the
+// pass's `n` is stale the moment a pair is removed, so the pass restarts from the new list.
+fun mut Damage.coalesce() {
+    var changed: bool = true
+    while changed {
+        changed = false
+        val n: usize = len
+        var i: usize = 0
+        while i < n && !changed {
+            var j: usize = i + 1
+            while j < n && !changed {
+                val a: fb.Rect = rects.get(i = i).dup()
+                val b: fb.Rect = rects.get(i = j).dup()
+                val hit: bool = fb.touches(a, b)
+                if hit {
+                    val merged: fb.Rect = fb.union(a, b)
+                    rects.set(i = i, v = merged)
+                    var k: usize = j
+                    while k + 1 < n {
+                        val nxt: fb.Rect = rects.get(i = k + 1).dup()
+                        rects.set(i = k, v = nxt)
+                        k += 1
+                    }
+                    len = n - 1
+                    changed = true
+                }
+                j += 1
+            }
+            i += 1
+        }
+    }
+}

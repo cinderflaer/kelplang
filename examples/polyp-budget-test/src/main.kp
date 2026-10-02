@@ -1,0 +1,647 @@
+// Work-budget tests for the soft backend (Polyp v3 stage 5), hosted and deterministic.
+//
+// Every number printed here is a count, not a time: the pixels come from the stage-2 primitives'
+// own return values, the rectangles from `paint`, and the layout counts from the measure/arrange
+// counters. The Rust test `polyp_soft_work_budgets_hold` pins the whole output, so the budgets are
+// the same on the LLVM backend and on the C oracle.
+//
+// The sections are:
+//   idle      an idle frame writes 0 pixels and presents 0 rectangles
+//   text      a same-width label change damages exactly the label box (one rectangle)
+//   hover     a hover change damages exactly the hovered widget
+//   focus     a focus change damages exactly the old and the new widget
+//   type      typing one character damages at most the entry's rectangle
+//   remove    removing one row of 200 re-lays-out and repaints only what moved
+//   append    appending a row touches only the new row and the scrollbar
+//   repaint   a full 800x600 repaint's overdraw factor
+//   deadline  frame_budgeted splits a frame at whole rectangles and keeps the rest
+//   allocs    the steady-state frames allocate nothing the backend can account for
+impl "deps/polyp/core"
+impl "deps/polyp/soft/damage"
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft_backend"
+impl "deps/todo/app"
+impl "std/option"
+impl "std/str"
+
+const W: i32 = 800
+const H: i32 = 600
+const ROWS: i32 = 200
+
+datac St(var n: i32)
+
+fun nop(s: mut St, m: i32) {}
+
+fun rect4(x: i32, y: i32, w: i32, h: i32).R: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+
+// Two texts whose rectangles are their own measured size: "aaaa" is 4 bytes * 6 = 24 px wide.
+fun two_texts(a: str, c: str).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.text(a)
+        k.align(core.Align.Start)
+        k.text(c)
+    }
+}
+
+// Five separate texts, so a frame has five non-touching damage rectangles to defer between.
+fun five_texts(a: str, b: str, c: str, d: str, e: str).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(10)
+        k.align(core.Align.Start)
+        k.text(a)
+        k.align(core.Align.Start)
+        k.text(b)
+        k.align(core.Align.Start)
+        k.text(c)
+        k.align(core.Align.Start)
+        k.text(d)
+        k.align(core.Align.Start)
+        k.text(e)
+    }
+}
+
+fun two_view(s: St).R: core.Node<i32> = two_texts("aaaa", "zzzz")
+
+fun make_model(n: i32).R: app.Model {
+    var items: List<app.Todo> = List.empty()
+    var i: i32 = 0
+    while i < n {
+        items.push(app.Todo(id = i, title = String.from_str("row"), done = false))
+        i += 1
+    }
+    return app.Model(draft = String.from_str(""), items = items, next_id = n, marks = List.empty())
+}
+
+// The sum of a presented rectangle list's areas, the pixels a repaint can actually change.
+fun presented_area(d: &damage.Damage).R: i64 {
+    var a: i64 = 0
+    var i: usize = 0
+    while i < d.count() {
+        a += d.at(i).area()
+        i += 1
+    }
+    return a
+}
+
+fun smallest_y(b: &soft_backend.SoftBackend).R: i32 {
+    if b.damage_count() == 0 {
+        return -1
+    }
+    var y: i32 = b.damage_rect(0).y
+    var i: usize = 1
+    while i < b.damage_count() {
+        val r = b.damage_rect(i)
+        if r.y < y {
+            y = r.y
+        }
+        i += 1
+    }
+    return y
+}
+
+// Warm the backend: apply the tree, lay it out and paint one full frame, so the next measured
+// frame is a steady-state one (the patch buffer has seen its largest list, the retained tree
+// exists).
+fun warm(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: &core.Node<i32>) {
+    b.apply(core.create_all(tree))
+    b.layout()
+    val f = p.framebuffer()
+    val d = b.paint(f)
+    if d.count() > 0 {
+        p.present(f, d)
+    }
+}
+
+fun run_idle() {
+    print("idle")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    var st = St(n = 0)
+    var tree = two_texts("aaaa", "zzzz")
+    warm(b, p, &tree)
+    b.reset_counts()
+    val before = p.frame_count()
+    val tick = soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = two_view, update = nop)
+    print(p.frame_count() - before)
+    print(b.last_painted())
+    print(b.pixels_written())
+    print(b.frame_alloc_count())
+    when tick {
+        Idle(t) -> {}
+        Changed(t) -> {}
+        Quit(t) -> {}
+    }
+}
+
+fun run_text() {
+    print("text")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    val t1 = two_texts("aaaa", "zzzz")
+    warm(b, p, &t1)
+    // Warm the patch buffer with the one-patch shape the measured frame will use.
+    val t2 = two_texts("bbbb", "zzzz")
+    soft_backend.apply_diff(backend = b, old = &t1, new = &t2)
+    b.layout()
+    val f = p.framebuffer()
+    val dw = b.paint(f)
+    if dw.count() > 0 {
+        p.present(f, dw)
+    }
+    b.reset_counts()
+    val t3 = two_texts("cccc", "zzzz")
+    soft_backend.apply_diff(backend = b, old = &t2, new = &t3)
+    b.layout()
+    val d1 = b.paint(f)
+    print(d1.count())
+    print(presented_area(d1))
+    print(b.pixels_written())
+    print(b.frame_alloc_count())
+    print(b.measure_count())
+    print(b.arrange_count())
+}
+
+fun run_hover() {
+    print("hover")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    var tree: core.Node<i32> = core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.button("aa", 1)
+        k.align(core.Align.Start)
+        k.button("bb", 2)
+    }
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    b.reset_counts()
+    val r = b.rect_of_slot(1)
+    when r {
+        Some(rr) -> {
+            p.push(event.Event.PointerMove(x = rr.x + 2, y = rr.y + 2))
+            var st = St(n = 0)
+            val t1 = soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = two_view, update = nop)
+            tree = when t1 {
+                Idle(t) -> t
+                Changed(t) -> t
+                Quit(t) -> t
+            }
+            print(p.presented_count())
+            val pr = p.presented_at(0)
+            print(pr.w * pr.h)
+            print(b.pixels_written())
+            print(b.frame_alloc_count())
+        }
+        None -> {
+            print(-1)
+            print(-1)
+            print(-1)
+            print(-1)
+        }
+    }
+}
+
+fun run_focus() {
+    print("focus")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    var tree: core.Node<i32> = core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.button("aa", 1)
+        k.align(core.Align.Start)
+        k.button("bb", 2)
+    }
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    b.reset_counts()
+    p.push(event.Event.Key(code = event.KEY_TAB, mods = 0))
+    var st = St(n = 0)
+    val t1 = soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = two_view, update = nop)
+    tree = when t1 {
+        Idle(t) -> t
+        Changed(t) -> t
+        Quit(t) -> t
+    }
+    print(p.presented_count())
+    var area: i64 = 0
+    var i: usize = 0
+    while i < p.presented_count() {
+        area += p.presented_at(i).area()
+        i += 1
+    }
+    print(area)
+    print(b.pixels_written())
+    print(b.frame_alloc_count())
+}
+
+fun run_type() {
+    print("type")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    var st = St(n = 0)
+    val t1 = one_entry_view(st)
+    warm(b, p, &t1)
+    val ids = b.entry_ids()
+    val eid = ids.get(0)
+    b.set_focus(eid)
+    // Clear the focus change's damage, then type one character.
+    val f = p.framebuffer()
+    val dw = b.paint(f)
+    if dw.count() > 0 {
+        p.present(f, dw)
+    }
+    b.reset_counts()
+    p.push(event.Event.Char(codepoint = 88))
+    val tick = soft_backend.frame(backend = b, platform = p, tree = t1, state = st, view = one_entry_view, update = nop)
+    print(p.presented_count())
+    val pr = p.presented_at(0)
+    print(pr.w * pr.h)
+    print(b.pixels_written())
+    print(b.frame_alloc_count())
+    print(b.entry_text(eid))
+    when tick {
+        Idle(t) -> {}
+        Changed(t) -> {}
+        Quit(t) -> {}
+    }
+}
+
+fun entry_changed(text: String).R: i32 = 0
+
+fun one_entry_view(s: St).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.entry("abcd", entry_changed)
+    }
+}
+
+fun run_remove() {
+    print("remove")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    val m1 = make_model(ROWS)
+    val t1 = app.view(m1)
+    b.apply(core.create_all(&t1))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    b.reset_counts()
+    var m2 = make_model(ROWS)
+    val dropped = m2.items.remove(0)
+    val t2 = app.view(m2)
+    soft_backend.apply_diff(backend = b, old = &t1, new = &t2)
+    b.layout()
+    val top = smallest_y(b)
+    val d1 = b.paint(f)
+    print(d1.count())
+    print(presented_area(d1))
+    print(b.pixels_written())
+    print(b.measure_count())
+    print(b.arrange_count())
+    print(top)
+    print(dropped.title.as_str())
+}
+
+fun run_append() {
+    print("append")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    val m1 = make_model(ROWS)
+    val t1 = app.view(m1)
+    b.apply(core.create_all(&t1))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    b.reset_counts()
+    var items2: List<app.Todo> = List.empty()
+    var i: usize = 0
+    while i < m1.items.len() {
+        items2.push(app.Todo(id = m1.items.get(i).id, title = String.from_str(m1.items.get(i).title.as_str()), done = m1.items.get(i).done))
+        i += 1
+    }
+    items2.push(app.Todo(id = ROWS, title = String.from_str("last"), done = false))
+    val m2 = app.Model(draft = String.from_str(""), items = items2, next_id = ROWS + 1, marks = List.empty())
+    val t2 = app.view(m2)
+    soft_backend.apply_diff(backend = b, old = &t1, new = &t2)
+    b.layout()
+    val d1 = b.paint(f)
+    print(d1.count())
+    print(presented_area(d1))
+    print(b.pixels_written())
+    print(b.measure_count())
+    print(b.arrange_count())
+}
+
+fun run_repaint() {
+    print("repaint")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    val m = make_model(ROWS)
+    val t = app.view(m)
+    b.apply(core.create_all(&t))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    // Damage the whole window and paint it: the overdraw factor is primitive writes over W*H.
+    b.damage.add(rect4(0, 0, W, H))
+    b.reset_counts()
+    val d1 = b.paint(f)
+    val px = b.pixels_written()
+    val whole = (W * H).to_i64()
+    print(d1.count())
+    print(px)
+    print(whole)
+    print(px * 1000 / whole)
+}
+
+fun run_deadline() {
+    print("deadline")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    val t1 = five_texts("aaaa", "bbbb", "cccc", "dddd", "eeee")
+    b.apply(core.create_all(&t1))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    val t2 = five_texts("1111", "2222", "3333", "4444", "5555")
+    soft_backend.apply_diff(backend = b, old = &t1, new = &t2)
+    b.layout()
+    // A clock that charges 1000 us per read, and a 2500 us budget: the frame stops after the third
+    // rectangle and the next one paints the rest.
+    p.set_clock_step_us(1000)
+    b.reset_counts()
+    var st = St(n = 0)
+    var tr = t2
+    val first = soft_backend.frame_budgeted(backend = b, platform = p, tree = tr, state = st, view = two_view, update = nop, budget_us = 2500)
+    when first {
+        Done(tick) -> {
+            print("done")
+            tr = when tick {
+                Idle(t) -> t
+                Changed(t) -> t
+                Quit(t) -> t
+            }
+        }
+        Deferred(tick) -> {
+            print("deferred")
+            tr = when tick {
+                Idle(t) -> t
+                Changed(t) -> t
+                Quit(t) -> t
+            }
+        }
+    }
+    print(p.presented_count())
+    print(b.damage_count())
+    val second = soft_backend.frame_budgeted(backend = b, platform = p, tree = tr, state = st, view = two_view, update = nop, budget_us = 2500)
+    when second {
+        Done(t) -> print("done")
+        Deferred(t) -> print("deferred")
+    }
+    print(p.presented_count())
+    print(b.damage_count())
+}
+
+fun checkbox_node(checked: bool).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.checkbox("tick", checked, 1)
+    }
+}
+
+fun progress_node(permille: i32).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.progress(permille)
+    }
+}
+
+fun scroll_view(s: St).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.expand()
+        k.scrolled { sc ->
+            sc.spacing(0)
+            var i = 0
+            while i < 100 {
+                sc.text("row")
+                i += 1
+            }
+        }
+    }
+}
+
+// The four patches and inputs stage 5 names alongside text, hover and focus: a checkbox state, a
+// progress fraction, a caret move and a wheel step. Each must damage only its own widget and account
+// for 0 backend allocations after the patch buffer has been warmed.
+fun run_steady() {
+    print("checkbox")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    val a1 = checkbox_node(false)
+    b.apply(core.create_all(&a1))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    val a2 = checkbox_node(true)
+    soft_backend.apply_diff(backend = b, old = &a1, new = &a2)
+    b.layout()
+    val dw = b.paint(f)
+    if dw.count() > 0 {
+        p.present(f, dw)
+    }
+    b.reset_counts()
+    val a3 = checkbox_node(false)
+    soft_backend.apply_diff(backend = b, old = &a2, new = &a3)
+    b.layout()
+    val d1 = b.paint(f)
+    print(d1.count())
+    print(presented_area(d1))
+    print(b.pixels_written())
+    print(b.frame_alloc_count())
+
+    print("progress")
+    var p2 = headless_platform.new(width = W, height = H)
+    var b2 = soft_backend.new()
+    b2.resize(W, H)
+    val g1 = progress_node(250)
+    b2.apply(core.create_all(&g1))
+    b2.layout()
+    val f2 = p2.framebuffer()
+    val e0 = b2.paint(f2)
+    if e0.count() > 0 {
+        p2.present(f2, e0)
+    }
+    val g2 = progress_node(750)
+    soft_backend.apply_diff(backend = b2, old = &g1, new = &g2)
+    b2.layout()
+    val ew = b2.paint(f2)
+    if ew.count() > 0 {
+        p2.present(f2, ew)
+    }
+    b2.reset_counts()
+    val g3 = progress_node(250)
+    soft_backend.apply_diff(backend = b2, old = &g2, new = &g3)
+    b2.layout()
+    val e1 = b2.paint(f2)
+    print(e1.count())
+    print(presented_area(e1))
+    print(b2.pixels_written())
+    print(b2.frame_alloc_count())
+
+    print("caret")
+    var p3 = headless_platform.new(width = W, height = H)
+    var b3 = soft_backend.new()
+    b3.resize(W, H)
+    var st3 = St(n = 0)
+    val c1 = one_entry_view(st3)
+    warm(b3, p3, &c1)
+    val eid = b3.entry_ids().get(0)
+    b3.set_focus(eid)
+    val f3 = p3.framebuffer()
+    val cf = b3.paint(f3)
+    if cf.count() > 0 {
+        p3.present(f3, cf)
+    }
+    b3.reset_counts()
+    p3.push(event.Event.Key(code = event.KEY_END, mods = 0))
+    val ctick = soft_backend.frame(backend = b3, platform = p3, tree = c1, state = st3, view = one_entry_view, update = nop)
+    print(p3.presented_count())
+    val cr = p3.presented_at(0)
+    print(cr.w * cr.h)
+    print(b3.pixels_written())
+    print(b3.frame_alloc_count())
+    print(b3.caret_of(eid))
+    when ctick {
+        Idle(t) -> {}
+        Changed(t) -> {}
+        Quit(t) -> {}
+    }
+
+    print("scroll")
+    var p4 = headless_platform.new(width = W, height = H)
+    var b4 = soft_backend.new()
+    b4.resize(W, H)
+    var st4 = St(n = 0)
+    var svtree: core.Node<i32> = scroll_view(st4)
+    b4.apply(core.create_all(&svtree))
+    b4.layout()
+    val f4 = p4.framebuffer()
+    val s0 = b4.paint(f4)
+    if s0.count() > 0 {
+        p4.present(f4, s0)
+    }
+    b4.reset_counts()
+    p4.push(event.Event.PointerMove(x = 200, y = 150))
+    p4.push(event.Event.Scroll(dx = 0, dy = 50))
+    val stick = soft_backend.frame(backend = b4, platform = p4, tree = svtree, state = st4, view = scroll_view, update = nop)
+    print(p4.presented_count())
+    val sr = p4.presented_at(0)
+    print(sr.w * sr.h)
+    print(b4.pixels_written())
+    print(b4.frame_alloc_count())
+    when stick {
+        Idle(t) -> {}
+        Changed(t) -> {}
+        Quit(t) -> {}
+    }
+}
+
+fun run_allocs() {
+    print("allocs")
+    var p = headless_platform.new(width = W, height = H)
+    var b = soft_backend.new()
+    b.resize(W, H)
+    val t1 = two_texts("aaaa", "zzzz")
+    b.apply(core.create_all(&t1))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    // Idle.
+    b.reset_counts()
+    var st = St(n = 0)
+    val frame_tree = two_texts("aaaa", "zzzz")
+    val tick = soft_backend.frame(backend = b, platform = p, tree = frame_tree, state = st, view = two_view, update = nop)
+    print(b.frame_alloc_count())
+    // A patch frame after warm-up.
+    val t2 = two_texts("bbbb", "zzzz")
+    soft_backend.apply_diff(backend = b, old = &t1, new = &t2)
+    b.layout()
+    val dw = b.paint(f)
+    if dw.count() > 0 {
+        p.present(f, dw)
+    }
+    b.reset_counts()
+    val t3 = two_texts("cccc", "zzzz")
+    soft_backend.apply_diff(backend = b, old = &t2, new = &t3)
+    b.layout()
+    val d1 = b.paint(f)
+    print(b.frame_alloc_count())
+    print(b.arena_high_water())
+    when tick {
+        Idle(t) -> {}
+        Changed(t) -> {}
+        Quit(t) -> {}
+    }
+}
+
+fun main() {
+    run_idle()
+    run_text()
+    run_hover()
+    run_focus()
+    run_type()
+    run_remove()
+    run_append()
+    run_steady()
+    run_repaint()
+    run_deadline()
+    run_allocs()
+}

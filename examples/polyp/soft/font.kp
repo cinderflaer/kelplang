@@ -1,0 +1,129 @@
+// The embedded bitmap font (Polyp v3 stage 2).
+//
+// A 5x7 face for printable ASCII 32..126, drawn by hand for this stage from the same lattice a
+// public-domain 5x7 face would use: five columns and seven rows per glyph, one byte per column
+// in `FONT`, with bit `r` of a column byte the pixel at row `r` and row 0 at the top. Nothing
+// here is copied from a licensed font. A few glyphs leave their rightmost column blank
+// (`.` `,` `:` `;` `!`) but the pen step is still six columns, so the spacing is uniform.
+//
+// A glyph cell is 5x7 and the pen advances 6 columns, so `text_width` counts bytes. A byte
+// outside 32..126 and a byte of a multi-byte UTF-8 sequence both render the fixed replacement
+// box: the limit is byte-oriented, and a three-byte scalar is three boxes. Text is drawn at
+// integer scales 1 to 4; a scale outside that panics rather than silently resampling, and the
+// scaled coverage is built in a fixed stack mask (5 * 4 by 7 * 4 bytes, the 4x maximum), so
+// nothing allocates and nothing is ever overdrawn.
+//
+// This module touches no pixel directly: it builds a coverage mask and hands it to
+// `draw.blit_mask8`, which is the module that carries the `unsafe`. So `font.kp` needs no
+// `[unsafe]` entry of its own, and the only thing it imports is the freestanding-clean
+// `std/str` pair `len`/`byte` the compiler lowers itself.
+impl "deps/polyp/soft/draw"
+impl "deps/polyp/soft/fb"
+impl "std/str"
+
+pub const GLYPH_W: i32 = 5
+pub const GLYPH_H: i32 = 7
+pub const ADVANCE: i32 = 6
+pub const MAX_SCALE: i32 = 4
+static FONT: [u8; 475] = [   0,   0,   0,   0,   0,   0,   0,  95,   0,   0,   0,   7,   0,   7,   0,  20, 127,  20, 127,  20,  36,  42, 127,  42,  18,  35,  19,   8, 100,  98,  54,  73,  85,  34,  80,   0,   0,   7,   0,   0,   0,  28,  34,  65,   0,   0,  65,  34,  28,   0,  20,   8,  62,   8,  20,   8,   8,  62,   8,   8,   0,  64,  32,   0,   0,   8,   8,   8,   8,   8,   0,   0,  96,  96,   0,  64,  48,   8,   6,   1,  62,  81,  73,  69,  62,   0,  66, 127,  64,   0,  66,  97,  81,  73,  70,  33,  65,  69,  75,  49,  24,  20,  18, 127,  16,  39,  69,  69,  69,  57,  60,  74,  73,  73,  48,   1, 113,   9,   5,   3,  54,  73,  73,  73,  54,   6,  73,  73,  41,  30,   0,   0,  54,  54,   0,   0,  64,  54,  22,   0,   8,  20,  34,  65,   0,  20,  20,  20,  20,  20,   0,  65,  34,  20,   8,   2,   1,  81,   9,   6,  62,  65,  93,  85,  30, 126,   9,   9,   9, 126, 127,  73,  73,  73,  54,  62,  65,  65,  65,  34, 127,  65,  65,  34,  28, 127,  73,  73,  73,  65, 127,   9,   9,   9,   1,  62,  65,  73,  73, 122, 127,   8,   8,   8, 127,   0,  65, 127,  65,   0,  32,  64,  65,  63,   1, 127,   8,  20,  34,  65, 127,  64,  64,  64,  64, 127,   2,  12,   2, 127, 127,   4,   8,  16, 127,  62,  65,  65,  65,  62, 127,   9,   9,   9,   6,  62,  65,  81,  33,  94, 127,   9,  25,  41,  70,  70,  73,  73,  73,  49,   1,   1, 127,   1,   1,  63,  64,  64,  64,  63,  31,  32,  64,  32,  31, 127,  32,  24,  32, 127,  99,  20,   8,  20,  99,   3,   4, 120,   4,   3,  97,  81,  73,  69,  67,   0, 127,  65,  65,   0,   1,   6,   8,  48,  64,   0,  65,  65, 127,   0,   4,   2,   1,   2,   4,  64,  64,  64,  64,  64,   0,   1,   2,   4,   0,  32,  84,  84,  84, 120, 127,  68,  68,  68,  56,  56,  68,  68,  68,  68,  56,  68,  68,  68, 127,  56,  84,  84,  84,  24,   8, 126,   9,   1,   2,   8,  84,  84,  84,  60, 127,   4,   4,   4, 120,   0,  68, 125,  64,   0,  32,  64,  68,  61,   0, 127,  16,  40,  68,   0,   0,  65, 127,  64,   0, 124,   4, 120,   4, 120, 124,   4,   4,   4, 120,  56,  68,  68,  68,  56, 124,  20,  20,  20,   8,   8,  20,  20,  20, 124, 124,   8,   4,   4,   8,  72,  84,  84,  84,  36,   4,  63,  68,  64,  32,  60,  64,  64,  64, 124,  28,  32,  64,  32,  28,  60,  64,  48,  64,  60,  68,  40,  16,  40,  68,  12,  80,  80,  80,  60,  68, 100,  84,  76,  68,   0,   8,  54,  65,   0,   0,   0, 127,   0,   0,   0,  65,  54,   8,   0,   8,   4,   8,   8,   4,]
+
+// The replacement box for everything outside printable ASCII.
+const REPLACEMENT: [u8; 5] = [127, 65, 65, 65, 127]
+
+// One bit per row, so the glyph builder never has to shift a `u8` by a runtime amount.
+const ROW_BIT: [u8; 8] = [1, 2, 4, 8, 16, 32, 64, 128]
+
+// The glyph index of a byte, or -1 when it has none.
+pub fun glyph_index(b: u8).R: i32 {
+    if b < 32 || b > 126 {
+        return -1
+    }
+    return (b - 32).to_i32()
+}
+
+// Column `ci` of the glyph for `b`, with the replacement box for anything else. The low bit is
+// the top row.
+pub fun glyph_column(b: u8, ci: i32).R: u8 {
+    val g: i32 = glyph_index(b)
+    if g < 0 {
+        return REPLACEMENT.get(i = ci.to_usize())
+    }
+    return FONT.get(i = (g * 5 + ci).to_usize())
+}
+
+// Pixels written by one glyph at `scale`, through `draw.blit_mask8`. `mask` holds at most
+// 5 * 4 by 7 * 4 coverage bytes, which is every scale the public entry point allows.
+fun draw_glyph(
+    f: fb.Fb,
+    c: &draw.ClipStack,
+    x: i32,
+    y: i32,
+    b: u8,
+    scale: i32,
+    color: u32,
+).R: usize {
+    val gw: i32 = GLYPH_W * scale
+    var mask: [u8; 560] = [0; 560]
+    var ci: i32 = 0
+    while ci < GLYPH_W {
+        val col: u8 = glyph_column(b, ci)
+        var rj: i32 = 0
+        while rj < GLYPH_H {
+            val on: u8 = col & ROW_BIT.get(i = rj.to_usize())
+            if on != 0 {
+                var sy: i32 = 0
+                while sy < scale {
+                    var sx: i32 = 0
+                    while sx < scale {
+                        val idx: i32 = (rj * scale + sy) * gw + (ci * scale + sx)
+                        mask.set(i = idx.to_usize(), v = 255)
+                        sx += 1
+                    }
+                    sy += 1
+                }
+            }
+            rj += 1
+        }
+        ci += 1
+    }
+    val mp: Ptr<[u8; 560]> = Ptr.from_ref(&mask)
+    val mbytes: Ptr<u8> = mp.cast<u8>()
+    return draw.blit_mask8(f, c, x, y, gw, GLYPH_H * scale, mbytes, color)
+}
+
+// The width of one line, saturating rather than wrapping: `bytes * 6 * scale` in `i64`, then
+// narrowed with `fb.clamp_i32`.
+pub fun text_width(s: &str, scale: i32).R: i32 {
+    val n: i64 = str.len(s).to_i64()
+    val w: i64 = n * (ADVANCE * scale).to_i64()
+    return fb.clamp_i32(w)
+}
+
+pub fun text_height(scale: i32).R: i32 = GLYPH_H * scale
+
+// Draw a line left to right at `(x, y)`, one pen step of `6 * scale` per byte. The scale is a
+// contract: outside 1..=4 the call panics instead of reading a mask the glyph builder did not
+// size for.
+pub fun draw_text(
+    f: fb.Fb,
+    c: &draw.ClipStack,
+    x: i32,
+    y: i32,
+    s: &str,
+    scale: i32,
+    color: u32,
+).R: usize {
+    if scale < 1 || scale > MAX_SCALE {
+        panic("text scale must be in 1..=4")
+    }
+    val n: usize = str.len(s)
+    var pen: i32 = x
+    var count: usize = 0
+    var i: usize = 0
+    while i < n {
+        count += draw_glyph(f, c, pen, y, str.byte(s, i), scale, color)
+        pen += ADVANCE * scale
+        i += 1
+    }
+    return count
+}

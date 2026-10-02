@@ -1,0 +1,235 @@
+// The software raster's framebuffer and rectangle types (Polyp v3 stage 2).
+//
+// `Fb` is a pixel pointer, a size and a stride: the only facts a platform hands a software
+// renderer. Pixels are 32-bit `0xAARRGGBB`, and the stride is in *pixels*, because that is the
+// unit a platform thinks in and the byte offset is `pixels.offset(y * stride_px + x)`. Nothing
+// here allocates, calls libc or names an OS: the module is usable from a freestanding image,
+// which is why it has no `impl` line at all.
+//
+// This module dereferences raw pixels (`get`, `put`, `checksum`), so a project that imports it
+// lists it under `[unsafe] modules`. Its geometry half (`Rect`) is pure integers and would not
+// need the entry on its own; the two live together because every drawing function wants both.
+//
+// `Rect` is total. A rectangle with `w <= 0` or `h <= 0` is empty, and every operation answers
+// something defined for one; `right`/`bottom`/`area` and `intersect`/`union`/`contains` widen to
+// `i64` before adding, so two rectangles at `i32::MAX` cannot wrap, and the single narrowing
+// step (`clamp_i32`) saturates rather than panicking.
+//
+// A caller with a `static mut [u32; N]` views it as
+//
+//     val base: Ptr<[u32; N]> = unsafe { Ptr.from_mut(FRAME) }
+//     val screen = fb.new(pixels = base.cast<u32>(), width = N.to_i32(), height = 1, stride_px = N.to_i32())
+//
+// The cast is a separate binding because Kelp refuses a method with explicit type arguments on
+// a call expression (`Ptr.from_mut(FRAME).cast<u32>()`), and there is no N-generic helper
+// because Kelp has no const generics.
+
+const I32_MAX_I64: i64 = 2147483647
+const I32_MIN_I64: i64 = -2147483648
+
+pub datac Rect(val x: i32, val y: i32, val w: i32, val h: i32)
+
+pub datac Fb(val pixels: Ptr<u32>, val width: i32, val height: i32, val stride_px: i32)
+
+// The one narrowing step in the module: a value that does not fit saturates instead of
+// panicking, because every caller is computing a clipped bound.
+pub fun clamp_i32(v: i64).R: i32 {
+    if v > I32_MAX_I64 {
+        return 2147483647
+    }
+    if v < I32_MIN_I64 {
+        return (0 - 2147483647) - 1
+    }
+    return v.to_i32()
+}
+
+pub fun empty_rect().R: Rect = Rect(x = 0, y = 0, w = 0, h = 0)
+
+// A datac is not `Copy` even when every field is a scalar, so a caller that wants a second
+// value uses this rather than a plain assignment.
+fun Rect.dup().R: Rect = Rect(x = x, y = y, w = w, h = h)
+
+fun Rect.right().R: i64 = x.to_i64() + w.to_i64()
+
+fun Rect.bottom().R: i64 = y.to_i64() + h.to_i64()
+
+fun Rect.is_empty().R: bool = w <= 0 || h <= 0
+
+fun Rect.area().R: i64 {
+    if w <= 0 || h <= 0 {
+        return 0
+    }
+    return w.to_i64() * h.to_i64()
+}
+
+// The clipped intersection, empty if either side is. `x0`/`y0` are maxima of two `i32`s and
+// `w`/`h` never exceed an input width, so the narrowing below cannot lose a real bound.
+pub fun intersect(a: Rect, b: Rect).R: Rect {
+    if a.is_empty() || b.is_empty() {
+        return empty_rect()
+    }
+    var x0: i64 = a.x.to_i64()
+    if b.x.to_i64() > x0 {
+        x0 = b.x.to_i64()
+    }
+    var y0: i64 = a.y.to_i64()
+    if b.y.to_i64() > y0 {
+        y0 = b.y.to_i64()
+    }
+    var x1: i64 = a.right()
+    if b.right() < x1 {
+        x1 = b.right()
+    }
+    var y1: i64 = a.bottom()
+    if b.bottom() < y1 {
+        y1 = b.bottom()
+    }
+    if x1 - x0 <= 0 || y1 - y0 <= 0 {
+        return empty_rect()
+    }
+    return Rect(
+        x = clamp_i32(x0),
+        y = clamp_i32(y0),
+        w = clamp_i32(x1 - x0),
+        h = clamp_i32(y1 - y0),
+    )
+}
+
+// The smallest rectangle covering both. An empty operand is the identity, so a caller building
+// a bound is never dragged to the origin by a not-yet-set entry.
+pub fun union(a: Rect, b: Rect).R: Rect {
+    if a.is_empty() {
+        return b.dup()
+    }
+    if b.is_empty() {
+        return a.dup()
+    }
+    var x0: i64 = a.x.to_i64()
+    if b.x.to_i64() < x0 {
+        x0 = b.x.to_i64()
+    }
+    var y0: i64 = a.y.to_i64()
+    if b.y.to_i64() < y0 {
+        y0 = b.y.to_i64()
+    }
+    var x1: i64 = a.right()
+    if b.right() > x1 {
+        x1 = b.right()
+    }
+    var y1: i64 = a.bottom()
+    if b.bottom() > y1 {
+        y1 = b.bottom()
+    }
+    return Rect(
+        x = clamp_i32(x0),
+        y = clamp_i32(y0),
+        w = clamp_i32(x1 - x0),
+        h = clamp_i32(y1 - y0),
+    )
+}
+
+// Overlap or share an edge. A zero-width gap still merges, which is the predicate the damage
+// list coalesces on: two dirty strips that touch are one dirty rectangle.
+pub fun touches(a: Rect, b: Rect).R: bool {
+    if a.is_empty() || b.is_empty() {
+        return false
+    }
+    val x_ok: bool = a.x.to_i64() <= b.right() && b.x.to_i64() <= a.right()
+    val y_ok: bool = a.y.to_i64() <= b.bottom() && b.y.to_i64() <= a.bottom()
+    return x_ok && y_ok
+}
+
+// `b` wholly inside `a` (the empty rectangle is inside everything).
+pub fun contains(a: Rect, b: Rect).R: bool {
+    if b.is_empty() {
+        return true
+    }
+    if a.is_empty() {
+        return false
+    }
+    val x_ok: bool = a.x.to_i64() <= b.x.to_i64() && b.right() <= a.right()
+    val y_ok: bool = a.y.to_i64() <= b.y.to_i64() && b.bottom() <= a.bottom()
+    return x_ok && y_ok
+}
+
+// Half-open: `right`/`bottom` are exclusive, which is what a pixel-span loop wants.
+pub fun contains_point(a: Rect, x: i32, y: i32).R: bool {
+    if a.is_empty() {
+        return false
+    }
+    val x_ok: bool = x.to_i64() >= a.x.to_i64() && x.to_i64() < a.right()
+    val y_ok: bool = y.to_i64() >= a.y.to_i64() && y.to_i64() < a.bottom()
+    return x_ok && y_ok
+}
+
+pub fun new(pixels: Ptr<u32>, width: i32, height: i32, stride_px: i32).R: Fb {
+    return Fb(pixels = pixels, width = width, height = height, stride_px = stride_px)
+}
+
+fun Fb.bounds().R: Rect = Rect(x = 0, y = 0, w = width, h = height)
+
+// The element offset of one pixel. `i64` in the middle so a large `y * stride_px` cannot wrap
+// before it is narrowed to `isize`.
+fun Fb.index(x: i32, y: i32).R: isize {
+    val i: i64 = y.to_i64() * stride_px.to_i64() + x.to_i64()
+    return i.to_isize()
+}
+
+// Read and write one pixel with no bounds check: the caller has already clipped, and the two
+// are `unsafe fun` so only a listed module can call them.
+unsafe fun Fb.get(x: i32, y: i32).R: u32 = self.pixels.offset(self.index(x, y)).read()
+
+unsafe fun Fb.put(x: i32, y: i32, color: u32) {
+    self.pixels.offset(self.index(x, y)).write(color)
+}
+
+// FNV-1a 64 over the live pixels row by row, ignoring `stride_px` padding. Each pixel's four
+// bytes go in little-endian order and are taken by masking the `u32` value, not by reading
+// memory, so the checksum is the same on a little- or big-endian host. Stage 5 pins a rendered
+// frame with this rather than with a pixel-by-pixel golden dump.
+pub fun checksum(f: Fb).R: u64 {
+    var h: u64 = 14695981039346656037
+    var y: i32 = 0
+    while y < f.height {
+        var x: i32 = 0
+        while x < f.width {
+            val p: u32 = unsafe { f.get(x, y) }
+            h = fnv_byte(h, (p & 0xFF).to_u8())
+            h = fnv_byte(h, ((p >> 8) & 0xFF).to_u8())
+            h = fnv_byte(h, ((p >> 16) & 0xFF).to_u8())
+            h = fnv_byte(h, ((p >> 24) & 0xFF).to_u8())
+            x += 1
+        }
+        y += 1
+    }
+    return h
+}
+
+// FNV-1a 64 over what a display that ignores the alpha channel shows: each pixel's blue, green and
+// red bytes and a constant `0xFF` where `checksum` hashes the alpha. The renderer writes glyph
+// coverage into the alpha byte (a text pixel's alpha is its mask byte), so `checksum` and this
+// value differ wherever text is drawn, and a display device has no alpha to show. Stage 4's
+// `ramfb` case compares this number with the pixels QEMU captured from the display.
+pub fun checksum_rgb(f: Fb).R: u64 {
+    var h: u64 = 14695981039346656037
+    var y: i32 = 0
+    while y < f.height {
+        var x: i32 = 0
+        while x < f.width {
+            val p: u32 = unsafe { f.get(x, y) }
+            h = fnv_byte(h, (p & 0xFF).to_u8())
+            h = fnv_byte(h, ((p >> 8) & 0xFF).to_u8())
+            h = fnv_byte(h, ((p >> 16) & 0xFF).to_u8())
+            h = fnv_byte(h, 255)
+            x += 1
+        }
+        y += 1
+    }
+    return h
+}
+
+// The multiply wraps, which is exactly FNV: `u64` arithmetic in Kelp wraps instead of panicking.
+fun fnv_byte(h: u64, b: u8).R: u64 {
+    val x: u64 = h ^ b.to_u64()
+    return x * 1099511628211
+}

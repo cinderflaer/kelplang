@@ -1,0 +1,540 @@
+// Polyp's headless backend: the core's loop with no display at all.
+//
+// It applies a patch list to an in-memory retained tree, delivers a scripted event list, and keeps
+// the same widget counters the GTK backend keeps, so the Elm loop and a whole program can be
+// tested in the plain development shell, on either compiler backend, with no X server and no GTK.
+// `dump` renders the retained tree as text for an assertion.
+//
+// Focus and the entry text are modelled rather than delegated: a programmatic edit writes the
+// entry's text and then posts that entry's id, which is the signal a real entry would have
+// emitted, and a patch leaves a focused entry's text alone exactly as GTK's backend does.
+impl "deps/polyp/core"
+impl "std/fmt"
+impl "std/option"
+impl "std/str"
+
+// One retained widget: what it is, its interactive id (-1 when it cannot post), the properties the
+// last patch wrote, its key, and its children in display order. The list at the top level holds
+// the root widget, and its path is the empty one.
+pub datac HNode(
+    var kind: i32,
+    var slot: i32,
+    var props: core.Props,
+    var key: core.Key,
+    var kids: List<HNode>,
+)
+
+pub datac Headless(
+    var root: List<HNode>,
+    var script: List<core.Event>,
+    var cursor: i32,
+    var pending: List<core.Event>,
+    var focus_id: i32,
+    var created: i32,
+    var updated: i32,
+    var removed: i32,
+    var entry_builds: i32,
+    var next_slot: i32,
+)
+
+pub fun new(script: move List<core.Event>).R: Headless = Headless(
+    root = List.empty(),
+    script = script,
+    cursor = 0,
+    pending = List.empty(),
+    focus_id = -1,
+    created = 0,
+    updated = 0,
+    removed = 0,
+    entry_builds = 0,
+    next_slot = 0,
+)
+
+pub fun empty_path().R: core.Path = core.Path(segs = List.empty())
+
+// The `f64` a text dump shows, from the core's integer permille. Hosted float arithmetic: the
+// permille is the core's, and only a display that wants a fraction converts it.
+fun fraction_of(permille: i32).R: f64 = permille.to_f64() / 1000.0
+
+pub fun copy_props(p: &core.Props).R: core.Props {
+    var out = core.props_default()
+    out.text = String.from_str(p.text.as_str())
+    out.size = p.size
+    out.bold = p.bold
+    out.label = String.from_str(p.label.as_str())
+    out.checked = p.checked
+    out.permille = p.permille
+    out.spacing = p.spacing
+    out.height = p.height
+    out.margin = p.margin
+    out.expand = p.expand
+    out.align = p.align
+    var i: usize = 0
+    while i < p.classes.len() {
+        out.classes.push(String.from_str(p.classes.get(i).as_str()))
+        i += 1
+    }
+    return out
+}
+
+fun key_of_path(path: &core.Path).R: core.Key {
+    if path.segs.len() == 0 {
+        return core.Key.None
+    }
+    return when path.segs.get(path.segs.len() - 1) {
+        Index(_) -> core.Key.None
+        Keyed(_, key) -> core.clone_key(key)
+    }
+}
+
+// The index of the child `seg` names in this sibling list, or -1.
+fun kid_index(kids: &List<HNode>, seg: &core.Seg).R: i32 {
+    var i: usize = 0
+    while i < kids.len() {
+        if core.child_at(seg, kids.get(i).key, i) {
+            return i.to_i32()
+        }
+        i += 1
+    }
+    return -1
+}
+
+fun contains_slot(node: &HNode, slot: i32).R: bool {
+    if node.slot == slot {
+        return true
+    }
+    var i: usize = 0
+    while i < node.kids.len() {
+        if contains_slot(node.kids.get(i), slot) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+fun count_nodes(node: &HNode).R: i32 {
+    var n: i32 = 1
+    var i: usize = 0
+    while i < node.kids.len() {
+        n += count_nodes(node.kids.get(i))
+        i += 1
+    }
+    return n
+}
+
+// The writes are remove, recurse, insert back, so a write through a `mut` borrow never has to move
+// a field out of the value it is written through. `depth` is how far into `path` the sibling list
+// passed in sits: the list holds the children of the node `path[0..depth]` names, and the child to
+// touch is the one `path[depth]` names.
+fun insert_into(kids: mut List<HNode>, path: &core.Path, depth: usize, at: i32, node: move HNode) {
+    if depth + 1 == path.segs.len() {
+        var i = at
+        if i < 0 {
+            i = 0
+        }
+        if i > kids.len().to_i32() {
+            i = kids.len().to_i32()
+        }
+        kids.insert(i.to_usize(), node)
+        return
+    }
+    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    var child = kids.remove(idx)
+    insert_into(child.kids, path, depth + 1, at, node)
+    kids.insert(idx, child)
+}
+
+// A focused entry keeps its text: it is the one being edited, so the model's text would fight the
+// cursor, exactly as GTK's backend leaves the write out.
+fun set_props_on(n: mut HNode, props: &core.Props, focus: i32) {
+    var p = copy_props(props)
+    if n.kind == core.KIND_ENTRY && n.slot == focus {
+        p.text = String.from_str(n.props.text.as_str())
+    }
+    n.props = p
+}
+
+fun patch_into(kids: mut List<HNode>, path: &core.Path, depth: usize, props: &core.Props, focus: i32, n: mut i32) {
+    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    var child = kids.remove(idx)
+    if depth + 1 == path.segs.len() {
+        *n += 1
+        set_props_on(child, props, focus)
+        kids.insert(idx, child)
+        return
+    }
+    patch_into(child.kids, path, depth + 1, props, focus, n)
+    kids.insert(idx, child)
+}
+
+// What a removal needs to know before the node is gone: how many widgets went with it and whether
+// the focused widget was one of them.
+datac Gone(var count: i32, var had_focus: bool)
+
+fun drop_into(kids: mut List<HNode>, path: &core.Path, depth: usize, focus: i32, gone: mut Gone) {
+    val idx = kid_index(kids, path.segs.get(depth))
+    if idx < 0 {
+        return
+    }
+    var child = kids.remove(idx.to_usize())
+    if depth + 1 == path.segs.len() {
+        gone.count += count_nodes(child)
+        if contains_slot(child, focus) {
+            gone.had_focus = true
+        }
+        return
+    }
+    drop_into(child.kids, path, depth + 1, focus, gone)
+    kids.insert(idx.to_usize(), child)
+}
+
+fun move_into(kids: mut List<HNode>, path: &core.Path, depth: usize, to_index: i32) {
+    val idx = kid_index(kids, path.segs.get(depth))
+    if idx < 0 {
+        return
+    }
+    var child = kids.remove(idx.to_usize())
+    if depth + 1 == path.segs.len() {
+        var at = to_index
+        if at < 0 {
+            at = 0
+        }
+        if at > kids.len().to_i32() {
+            at = kids.len().to_i32()
+        }
+        kids.insert(at.to_usize(), child)
+        return
+    }
+    move_into(child.kids, path, depth + 1, to_index)
+    kids.insert(idx.to_usize(), child)
+}
+
+fun collect_entries(kids: &List<HNode>, out: mut List<i32>) {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.kind == core.KIND_ENTRY && n.slot >= 0 {
+            out.push(n.slot)
+        }
+        collect_entries(n.kids, out)
+        i += 1
+    }
+}
+
+// `base` is the path of the node whose children are in this list.
+fun find_path(kids: &List<HNode>, base: &core.Path, id: i32).R: option.Option<core.Path> {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        val here = core.with_seg(base, core.seg_for(n.key, i.to_i32()))
+        if n.slot == id {
+            return option.Option.Some(value = here)
+        }
+        when find_path(n.kids, here, id) {
+            Some(found) -> {
+                return option.Option.Some(value = found)
+            }
+            None -> {}
+        }
+        i += 1
+    }
+    return option.Option.None
+}
+
+fun find_text(kids: &List<HNode>, id: i32).R: option.Option<String> {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.slot == id {
+            return option.Option.Some(value = String.from_str(n.props.text.as_str()))
+        }
+        when find_text(n.kids, id) {
+            Some(found) -> {
+                return option.Option.Some(value = found)
+            }
+            None -> {}
+        }
+        i += 1
+    }
+    return option.Option.None
+}
+
+fun set_text(kids: mut List<HNode>, id: i32, text: &str) {
+    var i: usize = 0
+    while i < kids.len() {
+        var n = kids.remove(i)
+        if n.slot == id {
+            var p = copy_props(n.props)
+            p.text = String.from_str(text)
+            n.props = p
+            kids.insert(i, n)
+            return
+        }
+        set_text(n.kids, id, text)
+        kids.insert(i, n)
+        i += 1
+    }
+}
+
+// A scripted event is handed out by copying it: the script belongs to the backend, so an event
+// cannot be moved out of it.
+fun kind_name(kind: i32).R: str {
+    if kind == core.KIND_COLUMN {
+        return "column"
+    }
+    if kind == core.KIND_ROW {
+        return "row"
+    }
+    if kind == core.KIND_TEXT {
+        return "text"
+    }
+    if kind == core.KIND_SPACER {
+        return "spacer"
+    }
+    if kind == core.KIND_ENTRY {
+        return "entry"
+    }
+    if kind == core.KIND_BUTTON {
+        return "button"
+    }
+    if kind == core.KIND_CHECKBOX {
+        return "checkbox"
+    }
+    if kind == core.KIND_PROGRESS {
+        return "progress"
+    }
+    if kind == core.KIND_SEPARATOR {
+        return "separator"
+    }
+    if kind == core.KIND_SCROLLED {
+        return "scrolled"
+    }
+    return "?"
+}
+
+// `x = str.concat(x.as_str(), t)` would borrow `x` while assigning to it, so an append is its own
+// call and the assignment happens after it returns.
+fun append(s: &String, t: str).R: String = str.concat(s.as_str(), t)
+
+fun indent(level: i32).R: String {
+    var out = String.from_str("")
+    var i: i32 = 0
+    while i < level {
+        out = append(out, "  ")
+        i += 1
+    }
+    return out
+}
+
+fun render(kids: &List<HNode>, level: i32, out: mut List<String>) {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        var line = indent(level)
+        line = append(line, kind_name(n.kind))
+        when n.key {
+            Str(s) -> {
+                line = append(line, " #")
+                line = append(line, s.as_str())
+            }
+            Int(v) -> {
+                val shown = fmt.int(v)
+                line = append(line, " #")
+                line = append(line, shown.as_str())
+            }
+            None -> {}
+        }
+        if n.slot >= 0 {
+            val shown_id = fmt.int(n.slot.to_i64())
+            line = append(line, " id=")
+            line = append(line, shown_id.as_str())
+        }
+        if n.kind == core.KIND_TEXT || n.kind == core.KIND_BUTTON || n.kind == core.KIND_ENTRY {
+            line = append(line, " \"")
+            line = append(line, n.props.text.as_str())
+            line = append(line, n.props.label.as_str())
+            line = append(line, "\"")
+        }
+        if n.kind == core.KIND_CHECKBOX {
+            line = append(line, if n.props.checked { " checked" } else { " unchecked" })
+        }
+        if n.kind == core.KIND_PROGRESS {
+            val shown_fraction = fmt.float(fraction_of(n.props.permille), 3)
+            line = append(line, " ")
+            line = append(line, shown_fraction.as_str())
+        }
+        out.push(line)
+        render(n.kids, level + 1, out)
+        i += 1
+    }
+}
+
+// The retained tree as text, one line per widget, children indented under their parent. This is
+// what an assertion reads.
+pub fun dump(be: &Headless).R: String {
+    var lines: List<String> = List.empty()
+    render(be.root, 0, lines)
+    var out = String.from_str("")
+    var i: usize = 0
+    while i < lines.len() {
+        out = append(out, lines.get(i).as_str())
+        out = append(out, "\n")
+        i += 1
+    }
+    return out
+}
+
+impl core.Backend for Headless {
+    fun mut Self.apply(patches: &List<core.Patch>) {
+        core.apply_patches(backend = self, patches = patches)
+    }
+
+    fun mut Self.make(path: &core.Path, at: i32, kind: i32, props: &core.Props) {
+        var slot: i32 = -1
+        if core.interactive(kind) {
+            slot = next_slot
+            next_slot += 1
+        }
+        if kind == core.KIND_ENTRY {
+            entry_builds += 1
+        }
+        val node = HNode(kind = kind, slot = slot, props = copy_props(props), key = key_of_path(path), kids = List.empty())
+        if path.segs.len() == 0 {
+            root.clear()
+            root.push(node)
+        } else {
+            var top = root.remove(0)
+            insert_into(top.kids, path, 0, at, node)
+            root.insert(0, top)
+        }
+        created += 1
+    }
+
+    fun mut Self.patch_widget(path: &core.Path, props: &core.Props) {
+        var n: i32 = 0
+        val focused = focus_id
+        if path.segs.len() == 0 {
+            if root.len() > 0 {
+                var top = root.remove(0)
+                set_props_on(top, props, focused)
+                root.insert(0, top)
+                n = 1
+            }
+        } else {
+            var top = root.remove(0)
+            patch_into(top.kids, path, 0, props, focused, n)
+            root.insert(0, top)
+        }
+        updated += n
+    }
+
+    fun mut Self.drop_widget(path: &core.Path) {
+        if path.segs.len() == 0 {
+            var i: usize = 0
+            while i < root.len() {
+                removed += count_nodes(root.get(i))
+                if contains_slot(root.get(i), focus_id) {
+                    focus_id = -1
+                }
+                i += 1
+            }
+            root.clear()
+            return
+        }
+        var gone = Gone(count = 0, had_focus = false)
+        val focused = focus_id
+        var top = root.remove(0)
+        drop_into(top.kids, path, 0, focused, gone)
+        root.insert(0, top)
+        removed += gone.count
+        if gone.had_focus {
+            focus_id = -1
+        }
+    }
+
+    fun mut Self.place_widget(path: &core.Path, to_index: i32) {
+        if path.segs.len() == 0 {
+            return
+        }
+        var top = root.remove(0)
+        move_into(top.kids, path, 0, to_index)
+        root.insert(0, top)
+    }
+
+    fun mut Self.pump() {}
+
+    fun mut Self.poll().R: core.Event {
+        if !pending.is_empty() {
+            return pending.remove(0)
+        }
+        if cursor >= script.len().to_i32() {
+            return core.Event.Quit
+        }
+        val ev = script.get(cursor.to_usize())
+        cursor += 1
+        return core.clone_event(ev)
+    }
+
+    fun Self.path_of(id: i32).R: option.Option<core.Path> {
+        if root.len() == 0 {
+            return option.Option.None
+        }
+        if root.get(0).slot == id {
+            return option.Option.Some(value = empty_path())
+        }
+        val base = empty_path()
+        return find_path(root.get(0).kids, base, id)
+    }
+
+    fun Self.focus().R: option.Option<i32> {
+        if focus_id < 0 {
+            return option.Option.None
+        }
+        return option.Option.Some(value = focus_id)
+    }
+
+    fun mut Self.set_focus(id: i32) {
+        focus_id = id
+    }
+
+    fun mut Self.set_entry_text(id: i32, text: &str) {
+        if root.len() > 0 {
+            var top = root.remove(0)
+            if top.slot == id {
+                var p = copy_props(top.props)
+                p.text = String.from_str(text)
+                top.props = p
+            } else {
+                set_text(top.kids, id, text)
+            }
+            root.insert(0, top)
+        }
+        // The write above is what the display would have done; the display then emits `changed`,
+        // which is the id posted here.
+        pending.push(core.Event.Post(id = id))
+    }
+
+    fun Self.entry_text(id: i32).R: String {
+        if root.len() > 0 && root.get(0).slot == id {
+            return String.from_str(root.get(0).props.text.as_str())
+        }
+        if root.len() == 0 {
+            return String.from_str("")
+        }
+        return when find_text(root.get(0).kids, id) {
+            Some(t) -> t
+            None -> String.from_str("")
+        }
+    }
+
+    fun Self.entry_ids().R: List<i32> {
+        var out: List<i32> = List.empty()
+        collect_entries(root, out)
+        return out
+    }
+
+    fun Self.entries_built().R: i32 = entry_builds
+
+    fun Self.stats().R: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed)
+}

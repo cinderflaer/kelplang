@@ -1,0 +1,171 @@
+// A platform with no window: an in-memory framebuffer, scripted input and recorded presents
+// (Polyp v3 stage 3).
+//
+// This is the platform the tests and the todo-soft run use. It owns a heap framebuffer, plays a
+// list of `(time_ms, Event)` through `poll_event` as `now_ms` reaches them, and records how many
+// rectangles every `present` was handed and the checksum of the frame it showed. A run with no
+// window is therefore completely deterministic: the same events and the same pixels every time.
+//
+// The framebuffer is allocated once, at construction, through `Ptr.alloc<u32>` and never freed:
+// the module is on a consumer's `[unsafe]` list for that one allocation and the fill.
+impl "deps/polyp/soft/damage"
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/platform"
+impl "std/option"
+
+const MAX_PRESENTED: usize = 32
+
+pub datac Timed(val at: u64, val ev: event.Event)
+
+pub datac HeadlessPlatform(
+    var f: fb.Fb,
+    var pixels: Ptr<u32>,
+    var script: List<Timed>,
+    var cursor: i32,
+    var time_ms: u64,
+    var time_us: u64,
+    var clock_step_us: u64,
+    var frames: i32,
+    var presented: [fb.Rect; MAX_PRESENTED],
+    var presented_len: usize,
+    var last_checksum: u64,
+)
+
+pub fun new(width: i32, height: i32).R: HeadlessPlatform {
+    var w = width
+    if w < 1 {
+        w = 1
+    }
+    var h = height
+    if h < 1 {
+        h = 1
+    }
+    val count = (w * h).to_usize()
+    val p: Ptr<u32> = unsafe { Ptr.alloc<u32>(count) }
+    var i: usize = 0
+    while i < count {
+        unsafe { p.offset(i.to_isize()).write(0) }
+        i += 1
+    }
+    return HeadlessPlatform(
+        f = fb.new(pixels = p, width = w, height = h, stride_px = w),
+        pixels = p,
+        script = List.empty(),
+        cursor = 0,
+        time_ms = 0,
+        time_us = 0,
+        clock_step_us = 0,
+        frames = 0,
+        presented = [fb.Rect(x = 0, y = 0, w = 0, h = 0); MAX_PRESENTED],
+        presented_len = 0,
+        last_checksum = 0,
+    )
+}
+
+// Queue an event at the current clock, which is what a test that wants "this frame" writes.
+fun mut HeadlessPlatform.push(ev: move event.Event) {
+    script.push(Timed(at = time_ms, ev = ev))
+}
+
+// Queue an event for a later clock, for a test that advances time.
+fun mut HeadlessPlatform.push_at(at: u64, ev: move event.Event) {
+    script.push(Timed(at = at, ev = ev))
+}
+
+fun mut HeadlessPlatform.advance(ms: u64) {
+    time_ms += ms
+    time_us += ms * 1000
+}
+
+// Advance the microsecond clock the frame deadline reads by `us`. A test that wants a budget
+// smaller than a millisecond uses this; a real platform reads its own clock.
+fun mut HeadlessPlatform.advance_us(us: u64) {
+    time_us += us
+}
+
+// A test clock that models a device charging `us` for every damaged rectangle: `now_us` advances
+// by this much on every call, so a frame that reads the clock once per painted rectangle sees the
+// budget run out partway and defers the rest (`soft_backend.frame_budgeted`). Zero (the default)
+// is a clock that never moves on its own, which is what every existing test sees.
+fun mut HeadlessPlatform.set_clock_step_us(us: u64) {
+    clock_step_us = us
+}
+
+// The frame the last present showed, and the rectangles it was handed.
+fun HeadlessPlatform.checksum().R: u64 = fb.checksum(f)
+
+fun HeadlessPlatform.frame_count().R: i32 = frames
+
+fun HeadlessPlatform.presented_count().R: usize = presented_len
+
+fun HeadlessPlatform.presented_at(i: usize).R: fb.Rect {
+    val r = presented.get(i = i)
+    return fb.Rect(x = r.x, y = r.y, w = r.w, h = r.h)
+}
+
+fun HeadlessPlatform.width().R: i32 = f.width
+
+fun HeadlessPlatform.height().R: i32 = f.height
+
+// Fill the whole surface, for a test that wants a known background.
+fun mut HeadlessPlatform.clear(color: u32) {
+    var y: i32 = 0
+    while y < f.height {
+        var x: i32 = 0
+        while x < f.width {
+            unsafe { f.put(x, y, color) }
+            x += 1
+        }
+        y += 1
+    }
+}
+
+// A one-pixel probe for a damage test: the colour at a point, or 0 outside the surface.
+fun HeadlessPlatform.pixel(x: i32, y: i32).R: u32 {
+    if x < 0 || y < 0 || x >= f.width || y >= f.height {
+        return 0
+    }
+    return unsafe { f.get(x, y) }
+}
+
+fun checksum_of(f: fb.Fb).R: u64 = fb.checksum(f)
+
+impl platform.Platform for HeadlessPlatform {
+    fun mut Self.present(fb: fb.Fb, dirty: &damage.Damage) {
+        var i: usize = 0
+        while i < dirty.count() && i < MAX_PRESENTED {
+            presented.set(i = i, v = dirty.at(i))
+            i += 1
+        }
+        presented_len = dirty.count()
+        frames += 1
+        last_checksum = checksum_of(fb)
+    }
+
+    fun Self.now_ms().R: u64 = time_ms
+
+    fun mut Self.now_us().R: u64 {
+        time_us += clock_step_us
+        return time_us
+    }
+
+    fun mut Self.poll_event().R: option.Option<event.Event> {
+        if cursor >= script.len().to_i32() {
+            return option.Option.None
+        }
+        val t = script.get(cursor.to_usize())
+        if t.at > time_ms {
+            return option.Option.None
+        }
+        cursor += 1
+        return option.Option.Some(value = event.clone(t.ev))
+    }
+
+    fun Self.framebuffer().R: fb.Fb {
+        return fb.new(pixels = pixels, width = f.width, height = f.height, stride_px = f.stride_px)
+    }
+}
+
+// `Rect` has no public copy outside `fb.kp`; an unset slot reads as the empty rectangle rather
+// than an out-of-bounds one, so a test that never presented sees a defined value.

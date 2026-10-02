@@ -1,0 +1,26 @@
+// The `static mut [u32; N]` framebuffer shape, which is what a kernel hands its console.
+//
+// `fb.new` is the constructor; viewing a static is `Ptr.from_mut(FRAME)` (unsafe, because it is
+// a `static mut`), a `.cast<u32>()` binding, and the size and stride the caller knows. This
+// module is the audit entry for that path in the test project, and `main` only calls `run`.
+impl "deps/polyp/soft/fb"
+
+static mut FRAME: [u32; 64] = [0; 64]
+
+pub fun run().R: u64 {
+    val base: Ptr<[u32; 64]> = unsafe { Ptr.from_mut(FRAME) }
+    val px: Ptr<u32> = base.cast<u32>()
+    val f: fb.Fb = fb.new(pixels = px, width = 8, height = 8, stride_px = 8)
+    unsafe {
+        var y: i32 = 0
+        while y < 8 {
+            var x: i32 = 0
+            while x < 8 {
+                f.put(x, y, 0xFF000000 | (y * 8 + x).to_u32())
+                x += 1
+            }
+            y += 1
+        }
+    }
+    return fb.checksum(f)
+}

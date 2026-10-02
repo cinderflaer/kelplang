@@ -1,0 +1,194 @@
+// The Polyp benchmark (Polyp v3 stage 5), hosted and headless.
+//
+// Five scripted scenarios run on the soft backend at 800x600 with a 200-row todo list, each five
+// times. Per scenario it prints: the number of frames, the pixels the primitives wrote across those
+// frames, the rectangles presented, the allocation sites the backend accounted for, and the median
+// and worst microseconds per frame. The counters are exact and machine-independent; the times are
+// the host's and are the numbers `plan/polyp-v3.md` quotes.
+//
+// The frame counts are `scenario_frames`: 100 for the typing scenario and 50 for the checkbox one
+// (the counts their names claim), 40 for the scroll and 30 for the resize and repaint, so the whole
+// run fits inside the bounded runner the test suite uses.
+impl "deps/polyp/core"
+impl "deps/polyp/soft/damage"
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft_backend"
+impl "deps/todo/app"
+impl "std/env"
+impl "std/option"
+impl "std/str"
+impl "std/time"
+
+const W: i32 = 800
+const H: i32 = 600
+const BIG_W: i32 = 1024
+const BIG_H: i32 = 768
+const ROWS: i32 = 200
+const RUNS: i32 = 5
+
+fun rect4(x: i32, y: i32, w: i32, h: i32).R: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+
+fun make_model(n: i32).R: app.Model {
+    var items: List<app.Todo> = List.empty()
+    var i: i32 = 0
+    while i < n {
+        items.push(app.Todo(id = i, title = String.from_str("row"), done = false))
+        i += 1
+    }
+    return app.Model(draft = String.from_str(""), items = items, next_id = n, marks = List.empty())
+}
+
+// The tree a tick carries, so a driver reads one value out of `Tick` whatever the variant.
+fun tick_tree<M>(t: move core.Tick<M>).R: core.Node<M> = when t {
+    Idle(tree) -> tree
+    Changed(tree) -> tree
+    Quit(tree) -> tree
+}
+
+// One scenario's numbers, sorted samples included. `median` and `worst` are microseconds per frame.
+fun report(name: str, frames: i32, pixels: i64, rects: i32, allocs: i32, samples: [i64; RUNS]) {
+    var a = samples
+    var i: i32 = 1
+    while i < RUNS {
+        val key = a.get(i.to_usize())
+        var j = i - 1
+        while j >= 0 && a.get(j.to_usize()) > key {
+            a.set((j + 1).to_usize(), a.get(j.to_usize()))
+            j -= 1
+        }
+        a.set((j + 1).to_usize(), key)
+        i += 1
+    }
+    print(name)
+    print(frames)
+    print(pixels)
+    print(rects)
+    print(allocs)
+    print(a.get((RUNS / 2).to_usize()))
+    print(a.get((RUNS - 1).to_usize()))
+}
+
+fun scenario_name(id: i32).R: str {
+    if id == 0 {
+        return "scroll-200"
+    }
+    if id == 1 {
+        return "type-100"
+    }
+    if id == 2 {
+        return "toggle-50"
+    }
+    if id == 3 {
+        return "resize"
+    }
+    return "repaint"
+}
+
+// The count the test suite uses: `POLYP_BENCH_QUICK` shortens every scenario to a single frame so
+// the whole run fits in the bounded runner on the slower C oracle too. The doc's table is a full
+// run with the variable unset.
+fun quick().R: bool {
+    val v = env.get("POLYP_BENCH_QUICK")
+    return !str.is_empty(v.as_str())
+}
+
+// Frames per run for each scenario: the count the name claims, and a round number for the two that
+// have none. `type-100` is 100 characters and `toggle-50` toggles 50 checkboxes.
+fun scenario_frames(id: i32).R: i32 {
+    if quick() {
+        return 1
+    }
+    if id == 1 {
+        return 100
+    }
+    if id == 2 {
+        return 50
+    }
+    if id == 0 {
+        return 40
+    }
+    return 30
+}
+
+// Scenario `id`: 0 scroll the 200-row list, 1 type 60 characters, 2 toggle 50 checkboxes, 3 resize
+// between the two surfaces each frame, 4 repaint the whole window each frame. Each run builds a
+// fresh backend and platform, warms the tree, then times `FRAMES` frames.
+fun run_scenario(id: i32) {
+    var samples: [i64; RUNS] = [0; RUNS]
+    var frames_total: i32 = 0
+    var pixels_total: i64 = 0
+    var rects_total: i32 = 0
+    var allocs_total: i32 = 0
+    var r: i32 = 0
+    while r < RUNS {
+        var p = headless_platform.new(width = W, height = H)
+        var pbig = headless_platform.new(width = BIG_W, height = BIG_H)
+        var b = soft_backend.new()
+        b.resize(W, H)
+        var st = make_model(ROWS)
+        var tree = app.view(st)
+        b.apply(core.create_all(&tree))
+        b.layout()
+        val f = p.framebuffer()
+        val d0 = b.paint(f)
+        if d0.count() > 0 {
+            p.present(f, d0)
+        }
+        if id == 1 {
+            val ids = b.entry_ids()
+            b.set_focus(ids.get(0))
+        }
+        val px0 = b.pixels_written_total()
+        val start = time.now_mono_ns()
+        val frames = scenario_frames(id)
+        var n: i32 = 0
+        var toggle: i32 = 0
+        while n < frames {
+            if id == 0 {
+                p.push(event.Event.PointerMove(x = 400, y = 300))
+                p.push(event.Event.Scroll(dx = 0, dy = 8))
+            } else if id == 1 {
+                p.push(event.Event.Char(codepoint = 97))
+            } else if id == 2 {
+                b.schedule(core.Event.Post(id = 2 + toggle * 3))
+                toggle += 1
+            } else if id == 4 {
+                b.damage.add(rect4(0, 0, W, H))
+            }
+            if id == 3 {
+                if n % 2 == 0 {
+                    tree = tick_tree(soft_backend.frame(backend = b, platform = pbig, tree = tree, state = st, view = app.view, update = app.update))
+                } else {
+                    tree = tick_tree(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = app.view, update = app.update))
+                }
+            } else {
+                tree = tick_tree(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = app.view, update = app.update))
+            }
+            frames_total = frames_total + 1
+            rects_total = rects_total + b.last_painted()
+            allocs_total = allocs_total + b.frame_alloc_count()
+            n += 1
+        }
+        val end = time.now_mono_ns()
+        val px1 = b.pixels_written_total()
+        pixels_total = pixels_total + (px1 - px0)
+        // The samples are microseconds per frame; a run under a microsecond reads 0, which is what a
+        // hand-written counter can honestly show.
+        val elapsed_us = (end - start) / 1000
+        samples.set(r.to_usize(), elapsed_us / frames.to_i64())
+        r += 1
+    }
+    val name = scenario_name(id)
+    report(name = name, frames = frames_total, pixels = pixels_total, rects = rects_total, allocs = allocs_total, samples = samples)
+}
+
+fun main() {
+    var id: i32 = 0
+    while id < 5 {
+        run_scenario(id)
+        id += 1
+    }
+}

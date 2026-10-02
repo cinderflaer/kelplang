@@ -1,8 +1,9 @@
 # Polyp v2: keyed children and a real patch
 
 *Implementation note for `examples/polyp/` v2. Not a Mark; `roadmap.md` owns the schedule. The API
-surface is v1 plus what is listed here; `examples/polyp-counter`, `examples/polyp-v0/` and
-`examples/polyp-counter-v0/` keep working unchanged.*
+surface is v1 plus what is listed here; `plan/polyp-v3.md` is the later split of the library into a
+backend-neutral core and one module per backend, which keeps this design and the counters it
+describes.*
 
 ## What changed
 

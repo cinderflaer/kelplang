@@ -1,0 +1,62 @@
+// The todo program on the software backend, with no display (Polyp v3 stage 3, extended by stage 4).
+//
+// `src/deps/todo/app.kp` is the same program `examples/polyp-todo` runs on GTK,
+// `examples/polyp-core-test` runs on the headless backend and the two `examples/polyp-fb-*` kernels
+// run on bare metal: the same `view`, the same `update`, the same scripted input.
+// `src/deps/todo/scenario.kp` is the driver all of them share, so this file is only the platform
+// and the printing: a headless platform at one of three sizes, a soft backend, and `emit_line` as
+// the one thing the driver is not allowed to decide for itself.
+//
+// The step lines it prints are the expected output for the two kernels: the framebuffer
+// equivalence test runs this binary at `POLYP_SOFT_SIZE=kernel` (the kernels' 320x200) and compares
+// its `step ` lines, byte for byte, with each kernel's serial output.
+impl "deps/polyp/core"
+impl "deps/polyp/diag"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft_backend"
+impl "deps/todo/app"
+impl "deps/todo/scenario"
+impl "std/env"
+impl "std/str"
+
+// The stage's golden checksums are taken at three window sizes, so a test can run the same binary
+// instead of building it three times. Unset means 400x300, `big` is 800x600, and `kernel` is the
+// 320x200 the bare-metal framebuffer projects use.
+fun width().R: i32 {
+    val v = env.get("POLYP_SOFT_SIZE")
+    if str.eq(v.as_str(), "big") {
+        return 800
+    }
+    if str.eq(v.as_str(), "kernel") {
+        return 320
+    }
+    return 400
+}
+
+fun height().R: i32 {
+    val v = env.get("POLYP_SOFT_SIZE")
+    if str.eq(v.as_str(), "big") {
+        return 600
+    }
+    if str.eq(v.as_str(), "kernel") {
+        return 200
+    }
+    return 300
+}
+
+// The one thing the driver hands to the run: a step line, printed as it is. The report's sink is
+// the same function, so the two halves of the output cannot disagree about how a line is written.
+fun emit_line(line: str) {
+    print(line)
+}
+
+fun main() {
+    var platform = headless_platform.new(width = width(), height = height())
+    var backend = soft_backend.new()
+    val final = scenario.drive(backend = backend, platform = platform, emit = emit_line)
+    core.publish(backend)
+    diag.capture(backend)
+    val entry = diag.entry_text(0)
+    print("-- todo --")
+    app.report(final, entry.as_str(), emit_line)
+}

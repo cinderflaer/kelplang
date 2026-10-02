@@ -1,0 +1,5 @@
+name = "polypsofttest"
+entry = "src/main.kp"
+
+[unsafe]
+modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/debug", "static_fb"]
