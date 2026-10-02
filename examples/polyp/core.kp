@@ -112,8 +112,6 @@ pub datac Children<M>(
 )
 
 fun default_opts().R: Opts = Opts(margin = -1, expand = false, align = -1, classes = List.empty())
-fun no_classes().R: List<String> = List.empty()
-
 fun new_children<M>().R: Children<M> = Children<M>(
     items = List.empty(),
     spacing = 6,
@@ -473,57 +471,6 @@ pub fun seg_for(key: &Key, i: i32).R: Seg = if key_is_none(key) {
 pub fun seg_index(s: &Seg).R: i32 = when s {
     Index(i) -> i
     Keyed(i, _) -> i
-}
-
-pub fun seg_eq(a: &Seg, b: &Seg).R: bool = when a {
-    Index(i) -> when b {
-        Index(j) -> i == j
-        else -> false
-    }
-    Keyed(_, k) -> when b {
-        Keyed(_, k2) -> key_eq(k, k2)
-        else -> false
-    }
-}
-
-pub fun path_eq(a: &Path, b: &Path).R: bool {
-    if a.segs.len() != b.segs.len() {
-        return false
-    }
-    var i: usize = 0
-    while i < a.segs.len() {
-        if !seg_eq(a.segs.get(i), b.segs.get(i)) {
-            return false
-        }
-        i += 1
-    }
-    return true
-}
-
-// Whether `path` names `prefix` itself or a node inside it, which is how a removed subtree's
-// slots are retired.
-pub fun path_under(path: &Path, prefix: &Path).R: bool {
-    if path.segs.len() < prefix.segs.len() {
-        return false
-    }
-    var i: usize = 0
-    while i < prefix.segs.len() {
-        if !seg_eq(path.segs.get(i), prefix.segs.get(i)) {
-            return false
-        }
-        i += 1
-    }
-    return true
-}
-
-fun path_parent(p: &Path).R: Path {
-    var segs: List<Seg> = List.empty()
-    var i: usize = 0
-    while i + 1 < p.segs.len() {
-        segs.push(clone_seg(p.segs.get(i)))
-        i += 1
-    }
-    return Path(segs = segs)
 }
 
 pub fun with_seg(parent: &Path, s: move Seg).R: Path {

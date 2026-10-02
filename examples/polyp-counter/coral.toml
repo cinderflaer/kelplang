@@ -7,7 +7,9 @@ entry = "src/main.kp"
 # is the directory Coral-style dependencies reach it by (`src/deps/polyp/`).
 #
 # `ui` is the display domain (plan/ffi-display-domain.md): a GTK call names no
-# display argument, so the only grant the domain takes is the wildcard.
+# display argument, so the only grant the domain takes is the wildcard. The
+# library's `core.kp` and `headless_backend.kp` are pure Kelp and need no
+# section; `gtk_backend.kp` is the one module that calls the binding.
 
 [extern."deps/polyp/gtk"]
 domain = "ui"
