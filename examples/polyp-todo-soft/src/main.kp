@@ -1,0 +1,82 @@
+// The todo program on the software backend, with no display (Polyp v3 stage 3).
+//
+// `src/deps/todo/app.kp` is the same program `examples/polyp-todo` runs on GTK and
+// `examples/polyp-core-test` runs on the headless backend: the same `view`, the same `update`,
+// the same scripted input. This file is only the soft side: it creates a headless platform and a
+// soft backend, schedules `app.script` on the backend, and drives `soft_backend.frame` one frame
+// per scripted event. Because `frame` runs `core.frame_step`, the counters and the final model
+// are the ones the other two runs produce, and the checksum printed after every frame is the
+// pixels this backend actually painted.
+//
+// The scenario is the GTK smoke's: focus the entry, type three titles, add each, tick the second
+// row, move the third up, remove the middle one, quit. The checksums are the golden values the
+// Rust test pins.
+impl "deps/polyp/core"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft_backend"
+impl "deps/todo/app"
+impl "std/env"
+impl "std/str"
+
+// The stage's golden checksums are taken at two window sizes, so a test can run the same binary
+// twice instead of building it twice. Unset means 400x300.
+fun width().R: i32 {
+    val v = env.get("POLYP_SOFT_SIZE")
+    if str.eq(v.as_str(), "big") {
+        return 800
+    }
+    return 400
+}
+
+fun height().R: i32 {
+    val v = env.get("POLYP_SOFT_SIZE")
+    if str.eq(v.as_str(), "big") {
+        return 600
+    }
+    return 300
+}
+
+fun main() {
+    val w = width()
+    val h = height()
+    var platform = headless_platform.new(width = w, height = h)
+    var backend = soft_backend.new()
+    var state = app.initial()
+    var tree: core.Node<app.Msg> = app.view(state)
+    backend.resize(w, h)
+    val first = core.create_all(&tree)
+    backend.apply(first)
+    backend.layout()
+
+    // The first frame before any input, so the checksums start with a clean render.
+    val f0 = platform.framebuffer()
+    val d0 = backend.paint(f0)
+    if d0.count() > 0 {
+        platform.present(f0, d0)
+    }
+    print(platform.checksum())
+
+    var steps = app.script()
+    var i: usize = 0
+    while i < steps.len() {
+        backend.schedule(core.clone_event(steps.get(i).event))
+        i += 1
+    }
+
+    var running = true
+    while running {
+        when soft_backend.frame(backend = backend, platform = platform, tree = tree, state = state, view = app.view, update = app.update) {
+            Idle(next) -> tree = next
+            Changed(next) -> tree = next
+            Quit(next) -> {
+                tree = next
+                running = false
+            }
+        }
+        print(platform.checksum())
+    }
+
+    core.publish(backend)
+    print("-- todo --")
+    app.report(state)
+}

@@ -14492,3 +14492,132 @@ scene blend
 failures
 0
 ";
+
+/// Polyp v3 stage 3: the software backend's hit testing, focus order, entry editing, damage and
+/// layout skip.
+///
+/// `examples/polyp-ui-test` runs on `HeadlessPlatform` in the plain development shell. The five
+/// sections are deterministic: the hit section clicks each interactive widget by its own centre;
+/// the order section Tabs through the tree and wraps; the edit section types, moves the caret,
+/// deletes and backspaces; the damage section changes one label's text and asserts the exact
+/// rectangle and that a FNV digest of every pixel outside it is unchanged, then hovers and
+/// asserts an idle frame presents nothing; the layout section counts re-measures and re-arranges
+/// for a same-width text change (one measure, no arrange) and a wider one (both).
+#[test]
+fn polyp_soft_ui_hits_focuses_edits_and_damages() {
+    let bin = out_path("polyp_ui_test");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-ui-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp ui test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[]);
+    assert!(
+        run.status.success(),
+        "expected the ui test to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_UI_EXPECTED,
+        "unexpected output from the polyp ui test"
+    );
+}
+
+const POLYP_UI_EXPECTED: &str = "hit\n0\n1\n2\n3\n-1\norder\n0\n1\n2\n3\n0\n1\n2\n3\n0\n3\nedit\nabcd\n0\nXabcd\n1\nXaYbcd\n3\naYbcd\n0\n5\naYbc\n4\ndamage\n1\n0\n0\n24\n7\noutside-same\n1\n0\n0\nhover\n1\n22\n7\n22\n20\n1\n22\n22\nlayout\n1\n0\n2\n3\n";
+
+/// Polyp v3 stage 3: the todo program on the soft backend, at both golden sizes.
+///
+/// `examples/polyp-todo-soft` links `examples/polyp-todo/src/app.kp` unchanged and drives
+/// `soft_backend.frame` once per scripted event, so its final model and the library's counters
+/// are the ones `examples/polyp-todo/smoke.sh` and `examples/polyp-core-test` produce. The
+/// framebuffer checksum after every frame is the golden value, and `POLYP_SOFT_SIZE=big` reruns
+/// the same binary at 800x600 for the second golden set.
+#[test]
+fn polyp_todo_runs_on_the_soft_backend_with_the_same_counters() {
+    let bin = out_path("polyp_todo_soft");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-todo-soft"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp todo soft project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[]);
+    assert!(
+        run.status.success(),
+        "expected the 400x300 run to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_TODO_SOFT_400,
+        "unexpected output from the 400x300 todo-soft run"
+    );
+    let run = run_bounded(&bin, &[("POLYP_SOFT_SIZE", "big")]);
+    assert!(
+        run.status.success(),
+        "expected the 800x600 run to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_TODO_SOFT_800,
+        "unexpected output from the 800x600 todo-soft run"
+    );
+}
+
+const POLYP_TODO_SOFT_400: &str = "4605422441263621173\n825819539801538037\n3505840153396948632\n6820583268082838876\n15521019796143736421\n7926694901207617612\n1386295763497285285\n10238765916012351741\n18031672142022254867\n9923954280583717275\n1358063117436742439\n1358063117436742439\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n";
+
+const POLYP_TODO_SOFT_800: &str = "17312697123900647733\n17602737083526760309\n17959363302367364856\n4580469716640004092\n15364558893530403877\n10346603115030226028\n16996074193763166181\n6719299833503821565\n16452200274034455487\n16482906517761808007\n17632729119990792263\n17632729119990792263\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n";
+
+/// Polyp v3 stage 3: `PpmPlatform` writes each presented frame when `POLYP_DUMP_DIR` is set.
+#[test]
+fn polyp_soft_ppm_platform_writes_a_frame() {
+    let bin = out_path("polyp_ui_test_ppm");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-ui-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp ui test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let dir = out_path("polyp_ui_ppm");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("the ppm dump directory");
+    let run = run_bounded(
+        &bin,
+        &[
+            ("POLYP_UI_TEST", "ppm"),
+            ("POLYP_DUMP_DIR", dir.to_str().unwrap()),
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "expected the ppm run to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "ppm\n1\n1\n");
+    let ppm = dir.join("frame_0.ppm");
+    let bytes = std::fs::read(&ppm).expect("the PPM the platform wrote");
+    assert_eq!(&bytes[..13], b"P6\n64 48\n255\n", "the PPM header");
+    assert_eq!(bytes.len(), 13 + 64 * 48 * 3, "the PPM body length");
+    let _ = std::fs::remove_dir_all(&dir);
+}

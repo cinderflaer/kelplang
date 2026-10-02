@@ -1,0 +1,8 @@
+name = "polyp_todo_soft"
+entry = "src/main.kp"
+
+# The soft backend draws through the stage-2 raster and the headless platform allocates its
+# framebuffer and decodes the progress fraction's bits, so those four modules are audited here.
+# `soft_backend` itself, `font`, `damage`, `event` and `platform` touch no pointer.
+[unsafe]
+modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/frac", "deps/polyp/soft/headless_platform"]

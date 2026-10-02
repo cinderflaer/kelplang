@@ -1,0 +1,339 @@
+// Polyp v3 stage 3's tests, in plain Kelp with no display.
+//
+// Five sections, all deterministic and all printed for the Rust test to pin:
+//
+//   hit     hit-testing every interactive widget of a small tree by its own centre
+//   order   the Tab order (interactive widgets depth first) and Tab / Shift-Tab wrapping
+//   edit    entry editing: insert, left, right, home, delete, end, backspace, with the caret
+//   damage  a same-width text change damages its own rectangle and leaves every pixel outside
+//           it identical, a hover change damages only the hovered widget, and an idle frame
+//           presents nothing
+//   layout  a same-width text change re-measures one node and arranges none; a wider one does
+//
+// `POLYP_UI_TEST=ppm` runs the PpmPlatform acceptance instead, which the Rust test points at a
+// temporary directory and then checks the file it wrote.
+impl "deps/polyp/core"
+impl "deps/polyp/soft/damage"
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft/ppm_platform" caps(fs = ["/**"], env = ["POLYP_DUMP_DIR"])
+impl "deps/polyp/soft_backend"
+impl "std/env"
+impl "std/option"
+impl "std/str"
+
+const WINDOW_W: i32 = 400
+const WINDOW_H: i32 = 300
+
+fun changed(text: String).R: i32 = 0
+
+// The state is an owned `datac`, as every Polyp program's `Model` is, because `frame` reads the
+// state through a `mut` parameter.
+datac St(var n: i32)
+
+fun rect4(x: i32, y: i32, w: i32, h: i32).R: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+
+fun nop(s: mut St, m: i32) {}
+
+// A tree with one of every interactive widget, so hit-testing and focus order have something to
+// walk: a text, a row of two buttons, an entry and a checkbox.
+fun ui(s: St).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.text("title")
+        k.row { r ->
+            r.spacing(0)
+            r.button("aa", 1)
+            r.button("bb", 2)
+        }
+        k.entry("abcd", changed)
+        k.checkbox("tick", false, 3)
+    }
+}
+
+// Two texts whose rectangles are their own measured size, for the damage and layout sections.
+fun two_texts(a: str, c: str).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.text(a)
+        k.align(core.Align.Start)
+        k.text(c)
+    }
+}
+
+fun fnv_byte(h: u64, b: u8).R: u64 = (h ^ b.to_u64()) * 1099511628211
+
+// FNV-1a over every pixel outside `r`, which is the "outside is bit-identical" check.
+fun digest_outside(p: &headless_platform.HeadlessPlatform, r: fb.Rect).R: u64 {
+    var h: u64 = 14695981039346656037
+    var y: i32 = 0
+    while y < p.height() {
+        var x: i32 = 0
+        while x < p.width() {
+            if !fb.contains_point(r, x, y) {
+                val px = p.pixel(x, y)
+                h = fnv_byte(h, (px & 0xFF).to_u8())
+                h = fnv_byte(h, ((px >> 8) & 0xFF).to_u8())
+                h = fnv_byte(h, ((px >> 16) & 0xFF).to_u8())
+                h = fnv_byte(h, ((px >> 24) & 0xFF).to_u8())
+            }
+            x += 1
+        }
+        y += 1
+    }
+    return h
+}
+
+// Push one event and run one frame, returning the tree the loop keeps. The state is a local,
+// because `frame` reads it through a `mut` parameter and a `mut` parameter of a `Copy` scalar
+// state hits a language limit the design note records.
+fun step(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: move core.Node<i32>, ev: move event.Event).R: core.Node<i32> {
+    var st = St(n = 0)
+    p.push(ev)
+    return when soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = ui, update = nop) {
+        Idle(t) -> t
+        Changed(t) -> t
+        Quit(t) -> t
+    }
+}
+
+fun run_hit() {
+    print("hit")
+    var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
+    var b = soft_backend.new()
+    b.resize(WINDOW_W, WINDOW_H)
+    val t = ui(St(n = 0))
+    b.apply(core.create_all(&t))
+    b.layout()
+    var ids = b.interactive_ids()
+    var i: usize = 0
+    while i < ids.len() {
+        val id = ids.get(i)
+        when b.rect_of_slot(id) {
+            Some(r) -> {
+                val cx = r.x + r.w / 2
+                val cy = r.y + r.h / 2
+                print(b.hit(cx, cy))
+            }
+            None -> print(-1)
+        }
+        i += 1
+    }
+    // A point in the text, which is not interactive, names nothing.
+    print(b.hit(3, 3))
+}
+
+fun run_order() {
+    print("order")
+    var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
+    var b = soft_backend.new()
+    b.resize(WINDOW_W, WINDOW_H)
+    var tree = ui(St(n = 0))
+    b.apply(core.create_all(&tree))
+    b.layout()
+    var ids = b.interactive_ids()
+    var i: usize = 0
+    while i < ids.len() {
+        print(ids.get(i))
+        i += 1
+    }
+    // Tab from nothing focuses the first, then each in turn, then wraps.
+    var k: i32 = 0
+    while k < 5 {
+        tree = step(b, p, tree, event.Event.Key(code = event.KEY_TAB, mods = 0))
+        print(b.focus_id)
+        k += 1
+    }
+    // Shift-Tab steps back one, and from the first wraps to the last.
+    tree = step(b, p, tree, event.Event.Key(code = event.KEY_TAB, mods = event.MOD_SHIFT))
+    print(b.focus_id)
+}
+
+fun run_edit() {
+    print("edit")
+    var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
+    var b = soft_backend.new()
+    b.resize(WINDOW_W, WINDOW_H)
+    var tree = ui(St(n = 0))
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    val eids = b.entry_ids()
+    val eid = eids.get(0)
+    b.set_focus(eid)
+    print(b.entry_text(eid))
+    print(b.caret_of(eid))
+    tree = step(b, p, tree, event.Event.Char(codepoint = 88))
+    print(b.entry_text(eid))
+    print(b.caret_of(eid))
+    tree = step(b, p, tree, event.Event.Key(code = event.KEY_RIGHT, mods = 0))
+    tree = step(b, p, tree, event.Event.Char(codepoint = 89))
+    print(b.entry_text(eid))
+    print(b.caret_of(eid))
+    tree = step(b, p, tree, event.Event.Key(code = event.KEY_HOME, mods = 0))
+    tree = step(b, p, tree, event.Event.Key(code = event.KEY_DELETE, mods = 0))
+    print(b.entry_text(eid))
+    print(b.caret_of(eid))
+    tree = step(b, p, tree, event.Event.Key(code = event.KEY_END, mods = 0))
+    print(b.caret_of(eid))
+    tree = step(b, p, tree, event.Event.Key(code = event.KEY_BACKSPACE, mods = 0))
+    print(b.entry_text(eid))
+    print(b.caret_of(eid))
+}
+
+fun run_damage() {
+    print("damage")
+    var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
+    var b = soft_backend.new()
+    b.resize(WINDOW_W, WINDOW_H)
+    val t1 = two_texts("aaaa", "zzzz")
+    b.apply(core.create_all(&t1))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    // The first text is 4 bytes wide (24px) and 7px tall, at the origin.
+    val label = rect4(0, 0, 24, 7)
+    val before = digest_outside(p, label)
+    b.reset_counts()
+    val t2 = two_texts("bbbb", "zzzz")
+    val patches = core.diff(t1, t2)
+    b.apply(patches)
+    b.layout()
+    print(b.damage_count())
+    val dmg = b.damage_rect(0)
+    print(dmg.x)
+    print(dmg.y)
+    print(dmg.w)
+    print(dmg.h)
+    val f2 = p.framebuffer()
+    val d1 = b.paint(f2)
+    if d1.count() > 0 {
+        p.present(f2, d1)
+    }
+    val after = digest_outside(p, label)
+    if before == after {
+        print("outside-same")
+    } else {
+        print("outside-changed")
+    }
+    print(b.measure_count())
+    print(b.arrange_count())
+
+    // An idle frame presents nothing.
+    val frames_before = p.frame_count()
+    var st = St(n = 0)
+    val tick = soft_backend.frame(backend = b, platform = p, tree = t2, state = st, view = ui, update = nop)
+    val frames_after = p.frame_count()
+    print(frames_after - frames_before)
+    when tick {
+        Idle(t) -> {}
+        Changed(t) -> {}
+        Quit(t) -> {}
+    }
+}
+
+fun run_hover() {
+    print("hover")
+    var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
+    var b = soft_backend.new()
+    b.resize(WINDOW_W, WINDOW_H)
+    var tree = ui(St(n = 0))
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    // A hover over the first button damages one rectangle, which is that button.
+    val r0 = b.rect_of_slot(1)
+    when r0 {
+        Some(r) -> {
+            tree = step(b, p, tree, event.Event.PointerMove(x = r.x + 2, y = r.y + 2))
+            print(p.presented_count())
+            val pr = p.presented_at(0)
+            print(pr.x)
+            print(pr.y)
+            print(pr.w)
+            print(pr.h)
+        }
+        None -> print(-1)
+    }
+    // Moving onto nothing un-hovers it, and damages the same widget again.
+    tree = step(b, p, tree, event.Event.PointerMove(x = 399, y = 299))
+    print(p.presented_count())
+    val back = p.presented_at(0)
+    print(back.x)
+    print(back.w)
+}
+
+fun run_layout() {
+    print("layout")
+    var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
+    var b = soft_backend.new()
+    b.resize(WINDOW_W, WINDOW_H)
+    val t1 = two_texts("aaaa", "zzzz")
+    b.apply(core.create_all(&t1))
+    b.layout()
+    // Same width: one re-measure (the changed label), no re-arrange.
+    b.reset_counts()
+    val t2 = two_texts("bbbb", "zzzz")
+    b.apply(core.diff(t1, t2))
+    b.layout()
+    print(b.measure_count())
+    print(b.arrange_count())
+    // Wider: the change reaches the column, so a re-arrange follows.
+    b.reset_counts()
+    val t3 = two_texts("bbbbbbbb", "zzzz")
+    b.apply(core.diff(t2, t3))
+    b.layout()
+    print(b.measure_count())
+    print(b.arrange_count())
+}
+
+// The PpmPlatform acceptance: one frame, one file.
+fun run_ppm() {
+    print("ppm")
+    var p = ppm_platform.new(width = 64, height = 48)
+    val dir = env.get("POLYP_DUMP_DIR")
+    if str.is_empty(dir.as_str()) {
+        print("no-dir")
+        return
+    }
+    var b = soft_backend.new()
+    b.resize(64, 48)
+    var tree = ui(St(n = 0))
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    print(p.frame_count())
+    print(p.presented_count())
+}
+
+fun main() {
+    val mode = env.get("POLYP_UI_TEST")
+    if str.eq(mode.as_str(), "ppm") {
+        run_ppm()
+        return
+    }
+    run_hit()
+    run_order()
+    run_edit()
+    run_damage()
+    run_hover()
+    run_layout()
+}
