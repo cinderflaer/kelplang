@@ -1,0 +1,121 @@
+// st2: the server's request accessors and its low-level API, in one process over
+// loopback (the server and the client are both this program, so nothing waits on
+// a peer that is not there: every byte is written before it is read).
+impl "std/http" caps(net = ["127.0.0.1:*"])
+impl "std/net"
+impl "std/option"
+impl "std/str"
+
+fun show_opt(o: move option.Option<String>).R: String {
+    return when o {
+        Some(s) -> s
+        None -> String.from_str("<none>")
+    }
+}
+
+fun show(o: move option.Option<String>) {
+    val s = show_opt(o)
+    print(s.as_str())
+}
+
+fun main() {
+    // The defaults every server starts from.
+    val lim = http.default_limits()
+    print(lim.max_request_line)
+    print(lim.max_header_bytes)
+    print(lim.max_headers)
+    print(lim.max_body)
+    print(lim.head_timeout_ms)
+    print(lim.body_timeout_ms)
+    print(lim.idle_timeout_ms)
+    print(lim.max_requests_per_conn)
+
+    // The accessors on a request built by hand.
+    var hs: List<http.Header> = List.empty()
+    hs.push(http.Header(name = String.from_str("X-One"), value = String.from_str("1")))
+    hs.push(http.Header(name = String.from_str("x-one"), value = String.from_str("2")))
+    val req = http.ServerRequest(
+        method = String.from_str("GET"),
+        target = String.from_str("/a/b%20c//d/?x=1&y=%41+b&flag&e=&x=2&bad=%zz"),
+        path = String.from_str("/a/b%20c//d/"),
+        query = String.from_str("x=1&y=%41+b&flag&e=&x=2&bad=%zz"),
+        headers = hs,
+        body = Bytes.empty(),
+    )
+    val segs = req.path_segments()
+    print(segs.len())
+    print(segs.get(1).as_str())
+    print(segs.get(2).as_str())
+    show(req.query_param("x"))
+    show(req.query_param("y"))
+    show(req.query_param("flag"))
+    show(req.query_param("e"))
+    show(req.query_param("bad"))
+    show(req.query_param("missing"))
+    val one = req.header("X-ONE")
+    print(one.as_str())
+    print(req.has_header("X-one"))
+    print(req.has_header("x-two"))
+
+    // The low-level loop: accept, read a request, answer, read the next.
+    val server = http.listen(0)
+    val client = net.connect("127.0.0.1", server.port())
+    net.send_text(client, "GET /p?q=1 HTTP/1.1\r\nHost: h\r\n\r\nPOST /e HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\nhi")
+    net.shutdown_write(client)
+    var conn = server.accept()
+    val first = conn.read_request(&lim)
+    when first {
+        Ok(r) -> {
+            print(r.method.as_str())
+            print(r.path.as_str())
+            print(r.query.as_str())
+            val resp = http.ok_text("one")
+            val w = conn.write_response(&resp)
+        }
+        Err(_) -> print("unexpected error")
+    }
+    val second = conn.read_request(&lim)
+    when second {
+        Ok(r) -> {
+            print(r.method.as_str())
+            print(r.body.len())
+            val base = http.json("{}")
+            val resp = base.with_header("X-Seen", "yes")
+            val w = conn.write_response(&resp)
+        }
+        Err(_) -> print("unexpected error")
+    }
+    // The client has shut its side down: a clean end between requests is an
+    // error with no status, which `write_error` answers with nothing.
+    val third = conn.read_request(&lim)
+    when third {
+        Ok(_) -> print("unexpected request")
+        Err(e) -> {
+            print(http.http_error_status(&e))
+            val w = conn.write_error(&e)
+        }
+    }
+    print(conn.wants_close())
+    conn.close()
+    val got = net.recv(client, 4096)
+    print(got.as_str())
+    net.close(client)
+
+    // A refused request is answered by `write_error` with its status.
+    val bad = net.connect("127.0.0.1", server.port())
+    net.send_text(bad, "GET / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\n")
+    var conn2 = server.accept()
+    val r2 = conn2.read_request(&lim)
+    when r2 {
+        Ok(_) -> print("unexpected request")
+        Err(e) -> {
+            print(http.http_error_status(&e))
+            val w = conn2.write_error(&e)
+        }
+    }
+    conn2.close()
+    val got2 = net.recv(bad, 4096)
+    print(got2.as_str())
+    net.close(bad)
+    server.close()
+}

@@ -1,0 +1,13 @@
+// A grant that covers the port lets `http.listen` bind. Listening is gated on
+// the port alone, exactly as `net.listen` is: `127.0.0.1:*` names every port.
+// Port 0 asks the kernel for a free one, so the program prints nothing that
+// varies.
+impl "std/http" caps(net = ["127.0.0.1:*"])
+
+fun main() {
+    val s = http.listen(0)
+    val up = s.port() > 0
+    s.close()
+    print("listening")
+    print(up)
+}

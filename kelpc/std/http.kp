@@ -5,6 +5,8 @@ impl "std/str"
 impl "std/fmt"
 impl "std/option"
 impl "std/result"
+impl "std/encoding"
+impl "std/thread"
 
 /* std/http — an HTTP/1.1 client (S4). Ungated itself, and it *holds* `net`:
    the grant that governs its connections is the one its importer wrote
@@ -45,8 +47,14 @@ impl "std/result"
    `https://` URL too — `https` is network access under the same grant, not
    a second capability to ask for.
 
-   Not here, deliberately: gzip, HTTP/2, cookies, proxies,
-   `Expect: 100-continue`, idle reaping, and serving TLS (client only). */
+   **The server (st2)** is at the end of this file: `listen`/`serve`, `Limits`,
+   `ServerRequest`/`ServerResponse`. It shares the client's `Header` and
+   framing helpers and is held on `net` the same way. `plan/http-server.md`
+   is its design note.
+
+   Not here, deliberately: gzip, HTTP/2, cookies, proxies, `Expect:
+   100-continue` on the client, idle reaping, and serving TLS (the server speaks
+   plain HTTP; the client speaks both). */
 
 const DEFAULT_PORT: u16 = 80
 const DEFAULT_HTTPS_PORT: u16 = 443
@@ -1540,4 +1548,1257 @@ fun post_text(url: &str, body: &str, content_type: &str).R: Response {
     )
     val c = default_client()
     return c.send(req)
+}
+
+// ===== the server (st2) =====
+//
+// An HTTP/1.1 server over `std/net`, in this module because it shares the
+// client's `Header` and header helpers. It is held on `net` exactly as the
+// client is: `listen` is checked against the *port* of the importer's grant
+// (`net = ["*:8080"]`), `accept` and the connection calls are not checked at
+// all, and the module carries no policy of its own. `plan/http-server.md` is
+// the design note: the limits, the status for each violation, what is not here.
+//
+// Nothing closes on drop (the rule `std/net` states): `ServerConn.close` and
+// `Server.close` are the explicit ends, and `serve*` call them for you.
+
+// ----- limits -----
+
+// What one server will accept from one client. Every field is a ceiling and
+// every violation is answered with its own status and a closed connection
+// (`plan/http-server.md`). The timeouts are *deadlines*, not per-read waits: a
+// client that trickles its request one byte at a time is cut off when the head
+// deadline passes, which a per-`recv` timeout would never do.
+datac Limits(
+    val max_request_line: usize,
+    val max_header_bytes: usize,
+    val max_headers: usize,
+    val max_body: usize,
+    val head_timeout_ms: u64,
+    val body_timeout_ms: u64,
+    val idle_timeout_ms: u64,
+    val max_requests_per_conn: usize,
+)
+
+// 8 KiB request line, 16 KiB of headers, 100 headers, 1 MiB body, 10 s for the
+// head, 30 s for the body, 5 s idle between requests, 100 requests per
+// connection.
+fun default_limits().R: Limits = Limits(
+    max_request_line = 8192,
+    max_header_bytes = 16384,
+    max_headers = 100,
+    max_body = 1048576,
+    head_timeout_ms = 10000,
+    body_timeout_ms = 30000,
+    idle_timeout_ms = 5000,
+    max_requests_per_conn = 100,
+)
+
+// A copy with other timeouts: `Limits` is a `datac`, so a worker that needs its
+// own value rebuilds one.
+fun Limits.with_timeouts(head_ms: u64, body_ms: u64, idle_ms: u64).R: Limits = Limits(
+    max_request_line = max_request_line,
+    max_header_bytes = max_header_bytes,
+    max_headers = max_headers,
+    max_body = max_body,
+    head_timeout_ms = head_ms,
+    body_timeout_ms = body_ms,
+    idle_timeout_ms = idle_ms,
+    max_requests_per_conn = max_requests_per_conn,
+)
+
+fun Limits.dup().R: Limits = self.with_timeouts(head_timeout_ms, body_timeout_ms, idle_timeout_ms)
+
+// ----- requests and responses -----
+
+// One parsed request. `path` and `query` are the two halves of `target` around
+// the first `?`, both still percent-encoded; `query_param` and `path_segments`
+// decode. A header name keeps the case the client wrote; lookups ignore case.
+datac ServerRequest(
+    val method: String,
+    val target: String,
+    val path: String,
+    val query: String,
+    val headers: List<Header>,
+    val body: Bytes,
+)
+
+// What a handler returns. `Content-Length` and `Connection` are the server's:
+// a header of either name set here is dropped when the response is written.
+datac ServerResponse(val status: i32, val headers: List<Header>, val body: Bytes)
+
+fun headers_have(hs: List<Header>, name: &str).R: bool {
+    var i: usize = 0
+    while i < hs.len() {
+        if name_eq(hs.get(i).name.as_str(), name) {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fun ServerRequest.header(name: &str).R: String = header_value(headers, name)
+
+fun ServerRequest.has_header(name: &str).R: bool = headers_have(headers, name)
+
+// The body as owned text. Panics: if the bytes are not valid utf-8.
+fun ServerRequest.text().R: String = String.from_bytes(body.clone())
+
+// A decoded query value: `+` is a space, `%XX` is a byte. The text is kept as
+// written when it is not valid percent-encoding, since a handler would rather
+// see the raw parameter than lose it.
+fun srv_decode_form(raw: &str).R: String {
+    return when encoding.form_decode(raw) {
+        Ok(s) -> s
+        Err(_) -> String.from_str(raw)
+    }
+}
+
+fun srv_decode_path(raw: &str).R: String {
+    return when encoding.percent_decode(raw) {
+        Ok(s) -> s
+        Err(_) -> String.from_str(raw)
+    }
+}
+
+// The value of the first query parameter called `name`, percent-decoded, or
+// `None`. `?a` is `Some("")` for `a`; names are compared after decoding.
+fun ServerRequest.query_param(name: &str).R: option.Option<String> {
+    val pairs = str.split(query.as_str(), "&")
+    var i: usize = 0
+    while i < pairs.len() {
+        val pair = pairs.get(i).as_str()
+        if !str.is_empty(pair) {
+            var key = String.empty()
+            var val_text = String.empty()
+            val eq = str.index_of(pair, "=")
+            if let Some(at) = eq {
+                key = str.prefix(pair, at)
+                val_text = String.from_str(str.substring(pair, at + 1))
+            } else {
+                key = String.from_str(pair)
+            }
+            val decoded = srv_decode_form(key.as_str())
+            if str.eq(decoded.as_str(), name) {
+                return option.Option.Some(value = srv_decode_form(val_text.as_str()))
+            }
+        }
+        i = i + 1
+    }
+    return option.Option.None
+}
+
+// The non-empty `/`-separated pieces of the path, each percent-decoded, so
+// `/users/42/` is `["users", "42"]` and `/a%2Fb` is one segment `a/b`.
+fun ServerRequest.path_segments().R: List<String> {
+    val raw = str.split(path.as_str(), "/")
+    var out: List<String> = List.empty()
+    var i: usize = 0
+    while i < raw.len() {
+        val piece = raw.get(i).as_str()
+        if !str.is_empty(piece) {
+            out.push(srv_decode_path(piece))
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fun srv_reason(code: i32).R: String {
+    if code == 100 {
+        return String.from_str("Continue")
+    }
+    if code == 200 {
+        return String.from_str("OK")
+    }
+    if code == 201 {
+        return String.from_str("Created")
+    }
+    if code == 202 {
+        return String.from_str("Accepted")
+    }
+    if code == 204 {
+        return String.from_str("No Content")
+    }
+    if code == 206 {
+        return String.from_str("Partial Content")
+    }
+    if code == 301 {
+        return String.from_str("Moved Permanently")
+    }
+    if code == 302 {
+        return String.from_str("Found")
+    }
+    if code == 303 {
+        return String.from_str("See Other")
+    }
+    if code == 304 {
+        return String.from_str("Not Modified")
+    }
+    if code == 307 {
+        return String.from_str("Temporary Redirect")
+    }
+    if code == 308 {
+        return String.from_str("Permanent Redirect")
+    }
+    if code == 400 {
+        return String.from_str("Bad Request")
+    }
+    if code == 401 {
+        return String.from_str("Unauthorized")
+    }
+    if code == 403 {
+        return String.from_str("Forbidden")
+    }
+    if code == 404 {
+        return String.from_str("Not Found")
+    }
+    if code == 405 {
+        return String.from_str("Method Not Allowed")
+    }
+    if code == 408 {
+        return String.from_str("Request Timeout")
+    }
+    if code == 409 {
+        return String.from_str("Conflict")
+    }
+    if code == 410 {
+        return String.from_str("Gone")
+    }
+    if code == 411 {
+        return String.from_str("Length Required")
+    }
+    if code == 413 {
+        return String.from_str("Content Too Large")
+    }
+    if code == 414 {
+        return String.from_str("URI Too Long")
+    }
+    if code == 415 {
+        return String.from_str("Unsupported Media Type")
+    }
+    if code == 417 {
+        return String.from_str("Expectation Failed")
+    }
+    if code == 422 {
+        return String.from_str("Unprocessable Content")
+    }
+    if code == 429 {
+        return String.from_str("Too Many Requests")
+    }
+    if code == 431 {
+        return String.from_str("Request Header Fields Too Large")
+    }
+    if code == 500 {
+        return String.from_str("Internal Server Error")
+    }
+    if code == 501 {
+        return String.from_str("Not Implemented")
+    }
+    if code == 502 {
+        return String.from_str("Bad Gateway")
+    }
+    if code == 503 {
+        return String.from_str("Service Unavailable")
+    }
+    if code == 504 {
+        return String.from_str("Gateway Timeout")
+    }
+    if code == 505 {
+        return String.from_str("HTTP Version Not Supported")
+    }
+    return String.from_str("Unknown")
+}
+
+fun srv_response(code: i32, content_type: &str, body: move Bytes).R: ServerResponse {
+    var hs: List<Header> = List.empty()
+    if !str.is_empty(content_type) {
+        hs.push(Header(name = String.from_str("Content-Type"), value = String.from_str(content_type)))
+    }
+    return ServerResponse(status = code, headers = hs, body = body)
+}
+
+// `200` with a `text/plain; charset=utf-8` body.
+fun ok_text(text: &str).R: ServerResponse = srv_response(200, "text/plain; charset=utf-8", Bytes.from_str(text))
+
+// `200` with an `application/json` body; the text is sent as written.
+fun json(text: &str).R: ServerResponse = srv_response(200, "application/json", Bytes.from_str(text))
+
+// `200` with a `text/html; charset=utf-8` body.
+fun html(text: &str).R: ServerResponse = srv_response(200, "text/html; charset=utf-8", Bytes.from_str(text))
+
+// An empty response with this status.
+fun status(code: i32).R: ServerResponse = srv_response(code, "", Bytes.empty())
+
+fun not_found().R: ServerResponse = srv_response(404, "text/plain; charset=utf-8", Bytes.from_str("not found\n"))
+
+// `400` whose body is `message`.
+fun bad_request(message: &str).R: ServerResponse = srv_response(400, "text/plain; charset=utf-8", Bytes.from_str(message))
+
+// A copy of the response with one more header. The original is borrowed, so
+// this copies its headers and body; use `add_header` to grow one in place.
+fun ServerResponse.with_header(name: &str, value: &str).R: ServerResponse {
+    var hs: List<Header> = List.empty()
+    var i: usize = 0
+    while i < headers.len() {
+        val h = headers.get(i)
+        hs.push(Header(name = String.from_str(h.name.as_str()), value = String.from_str(h.value.as_str())))
+        i = i + 1
+    }
+    hs.push(Header(name = String.from_str(name), value = String.from_str(value)))
+    return ServerResponse(status = status, headers = hs, body = body.clone())
+}
+
+fun mut ServerResponse.add_header(name: &str, value: &str) {
+    headers.push(Header(name = String.from_str(name), value = String.from_str(value)))
+}
+
+// ----- the listener and the connection -----
+
+// A bound, listening socket. Nothing closes on drop: `close` is the end.
+datac Server(val fd: i32)
+
+// Binds `port` on every interface (0 asks for a free one, `Server.port` says
+// which). Gated exactly as `net.listen`: the importer's grant must cover the
+// port. Panics: as `net.listen`.
+fun listen(port: u16).R: Server {
+    val l = net.listen(port)
+    return Server(fd = l.fd)
+}
+
+fun Server.port().R: u16 {
+    val l = net.Listener(fd = fd)
+    return l.port()
+}
+
+// Makes `accept`/`try_accept` give up after `ms` without a peer (0 = never).
+// The timeout belongs to the listening socket, so every thread accepting on it
+// sees it.
+fun Server.set_accept_timeout(ms: u64) {
+    var l = net.Listener(fd = fd)
+    l.set_timeout(ms)
+}
+
+fun Server.close() {
+    val l = net.Listener(fd = fd)
+    l.close()
+}
+
+// One accepted connection: the descriptor, the bytes read ahead of the request
+// being parsed (pipelined requests wait here), and what the last request asked
+// of the response.
+datac ServerConn(
+    val fd: i32,
+    var buf: Bytes,
+    var start: usize,
+    var served: usize,
+    var close_after: bool,
+    var head_only: bool,
+    var keep_alive_header: bool,
+)
+
+fun new_conn(fd: i32).R: ServerConn = ServerConn(
+    fd = fd,
+    buf = Bytes.empty(),
+    start = 0,
+    served = 0,
+    close_after = false,
+    head_only = false,
+    keep_alive_header = false,
+)
+
+// Blocks for the next client. Panics: if `accept` fails.
+fun Server.accept().R: ServerConn {
+    val l = net.Listener(fd = fd)
+    val s = net.accept(l)
+    return new_conn(s.fd)
+}
+
+// `accept` with a failure as a value: a listener with an accept timeout
+// returns `Err` (reason `net.accept: timed out`) when nobody came.
+fun Server.try_accept().R: result.Result<ServerConn, HttpErr> {
+    val l = net.Listener(fd = fd)
+    return when net.try_accept(l) {
+        Ok(s) -> result.Result.Ok(value = new_conn(s.fd))
+        Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
+    }
+}
+
+// An error is `HttpErr.Exchange` whose reason starts with the status code the
+// server answers with (`408 request timed out`); a reason that does not start
+// with one (the peer reset, or closed between requests) is answered with
+// nothing. `http_error_status` reads it back, `ServerConn.write_error` answers.
+fun srv_err<T>(code: i32, text: &str).R: result.Result<T, HttpErr> {
+    var r = String.with_capacity(64)
+    val c = fmt.int(code.to_i64())
+    r.push_str(c.as_str())
+    r.push_str(" ")
+    r.push_str(text)
+    return result.Result.Err(error = HttpErr.Exchange(reason = r))
+}
+
+fun srv_silent<T>(text: &str).R: result.Result<T, HttpErr> {
+    return result.Result.Err(error = HttpErr.Exchange(reason = String.from_str(text)))
+}
+
+fun srv_reason_status(reason: &str).R: i32 {
+    if str.len(reason) < 4 {
+        return 0
+    }
+    if str.byte(reason, 3) != 32 {
+        return 0
+    }
+    var code: i32 = 0
+    var i: usize = 0
+    while i < 3 {
+        val c = str.byte(reason, i)
+        if !str.is_digit(c) {
+            return 0
+        }
+        code = code * 10 + (c - 48).to_i32()
+        i = i + 1
+    }
+    return code
+}
+
+// The status a failed `read_request` is answered with, or 0 when it is not
+// answered at all (the peer is gone or merely idle).
+fun http_error_status(e: &HttpErr).R: i32 {
+    return when e {
+        Dial(reason) -> srv_reason_status(reason.as_str())
+        Exchange(reason) -> srv_reason_status(reason.as_str())
+        Redirects(reason) -> srv_reason_status(reason.as_str())
+    }
+}
+
+fun http_error_text(e: &HttpErr).R: String {
+    return when e {
+        Dial(reason) -> String.from_str(reason.as_str())
+        Exchange(reason) -> String.from_str(reason.as_str())
+        Redirects(reason) -> String.from_str(reason.as_str())
+    }
+}
+
+// Reads at most 4096 more bytes into the buffer, waiting no later than
+// `deadline` (a `net.mono_ms` reading). `Ok(0)` is the peer's end of stream;
+// a deadline that passes is `408`.
+fun mut ServerConn.fill(deadline: i64).R: result.Result<usize, HttpErr> {
+    val now = net.mono_ms()
+    if now >= deadline {
+        return srv_err(408, "the request did not arrive in time")
+    }
+    val sock = net.Socket(fd = fd)
+    if !sock.wait_readable((deadline - now).to_u64()) {
+        return srv_err(408, "the request did not arrive in time")
+    }
+    return when net.try_recv(sock, 4096) {
+        Ok(b) -> {
+            val n = b.len()
+            buf.append(b)
+            result.Result.Ok(value = n)
+        }
+        Err(e) -> srv_silent(e.reason.as_str())
+    }
+}
+
+// Drops the bytes the previous request used, keeping the read-ahead.
+fun mut ServerConn.compact() {
+    if start == 0 {
+        return
+    }
+    var rest = Bytes.empty()
+    var i = start
+    while i < buf.len() {
+        rest.push(buf.get(i))
+        i = i + 1
+    }
+    buf = rest
+    start = 0
+}
+
+fun srv_bytes_range(b: Bytes, from: usize, to: usize).R: Bytes {
+    var out = Bytes.empty()
+    var i = from
+    while i < to {
+        out.push(b.get(i))
+        i = i + 1
+    }
+    return out
+}
+
+// The end of the head: the offset just past the blank line, 0 while it has not
+// arrived, -1 when what has arrived can never be a head (a bare `LF`, a `CR`
+// with no `LF`, a control byte, a byte above 127, an empty line before the
+// request line). Everything a head holds is therefore plain ASCII, which is
+// what lets it become a `String` without a validation that could panic.
+fun srv_scan_head(b: Bytes).R: i64 {
+    val n = b.len()
+    var line_start: usize = 0
+    var i: usize = 0
+    while i < n {
+        val c = b.get(i)
+        if c == 13 {
+            if i + 1 >= n {
+                return 0
+            }
+            if b.get(i + 1) != 10 {
+                return -1
+            }
+            if i == line_start {
+                if i == 0 {
+                    return -1
+                }
+                return (i + 2).to_i64()
+            }
+            line_start = i + 2
+            i = i + 2
+        } else {
+            if c == 10 || c == 127 || c >= 128 {
+                return -1
+            }
+            if c < 32 && c != 9 {
+                return -1
+            }
+            i = i + 1
+        }
+    }
+    return 0
+}
+
+// The offset of the first `LF`, or the buffer length when there is none.
+fun srv_first_lf(b: Bytes).R: usize {
+    var i: usize = 0
+    while i < b.len() {
+        if b.get(i) == 10 {
+            return i
+        }
+        i = i + 1
+    }
+    return b.len()
+}
+
+// An RFC 9110 token character: what a method or a header name is made of.
+fun srv_tchar(c: u8).R: bool {
+    if str.is_digit(c) {
+        return true
+    }
+    if c >= 65 && c <= 90 {
+        return true
+    }
+    if c >= 97 && c <= 122 {
+        return true
+    }
+    return c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 46 || c == 94 || c == 95 || c == 96 || c == 124 || c == 126
+}
+
+fun srv_is_token(s: &str).R: bool {
+    val n = str.len(s)
+    if n == 0 {
+        return false
+    }
+    var i: usize = 0
+    while i < n {
+        if !srv_tchar(str.byte(s, i)) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fun srv_count_headers(hs: List<Header>, name: &str).R: usize {
+    var n: usize = 0
+    var i: usize = 0
+    while i < hs.len() {
+        if name_eq(hs.get(i).name.as_str(), name) {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+
+// Whether any `Connection` header lists `token` (compared lower-case).
+fun srv_connection_has(hs: List<Header>, token: &str).R: bool {
+    var i: usize = 0
+    while i < hs.len() {
+        if name_eq(hs.get(i).name.as_str(), "connection") {
+            val low = str.to_lower(hs.get(i).value.as_str())
+            val parts = str.split(low.as_str(), ",")
+            var j: usize = 0
+            while j < parts.len() {
+                val part = str.trim(parts.get(j).as_str())
+                if str.eq(part.as_str(), token) {
+                    return true
+                }
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// The one `Content-Length` of a request: -1 when absent, otherwise the number.
+// Every value must be digits only, and repeated headers must agree
+// (a disagreement is how request smuggling starts); a value too long to be a
+// real size is answered as too large.
+fun srv_content_length(hs: List<Header>) .R: result.Result<i64, HttpErr> {
+    var found = false
+    var value: i64 = -1
+    var i: usize = 0
+    while i < hs.len() {
+        if name_eq(hs.get(i).name.as_str(), "content-length") {
+            val text = hs.get(i).value.as_str()
+            val n = str.len(text)
+            if n == 0 {
+                return srv_err(400, "empty Content-Length")
+            }
+            var v: i64 = 0
+            var k: usize = 0
+            while k < n {
+                val c = str.byte(text, k)
+                if !str.is_digit(c) {
+                    return srv_err(400, "Content-Length is not a number")
+                }
+                if v < 1000000000000000 {
+                    v = v * 10 + (c - 48).to_i64()
+                }
+                k = k + 1
+            }
+            if found && v != value {
+                return srv_err(400, "conflicting Content-Length headers")
+            }
+            found = true
+            value = v
+        }
+        i = i + 1
+    }
+    return result.Result.Ok(value = value)
+}
+
+// The first value of a header, trimmed and lower-cased.
+fun srv_header_token(hs: List<Header>, name: &str).R: String {
+    val raw = header_value(hs, name)
+    val trimmed = str.trim(raw.as_str())
+    return str.to_lower(trimmed.as_str())
+}
+
+fun srv_method_needs_length(m: &str).R: bool {
+    return str.eq(m, "POST") || str.eq(m, "PUT") || str.eq(m, "PATCH")
+}
+
+// One line of the chunked framing (a size line or a trailer), without its
+// `CRLF`. Waits for more bytes until `deadline`; a line longer than `max_len`
+// is `too_long`.
+fun mut ServerConn.take_line(deadline: i64, max_len: usize, too_long: i32).R: result.Result<String, HttpErr> {
+    var from = start
+    while true {
+        var i = from
+        var at: usize = 0
+        var found = false
+        while i < buf.len() && !found {
+            if buf.get(i) == 10 {
+                at = i
+                found = true
+            }
+            i = i + 1
+        }
+        if found {
+            if at == start || buf.get(at - 1) != 13 {
+                return srv_err(400, "malformed line in the body framing")
+            }
+            var out = String.empty()
+            var k = start
+            while k < at - 1 {
+                val c = buf.get(k)
+                if c < 32 || c >= 127 {
+                    return srv_err(400, "malformed line in the body framing")
+                }
+                out.push(c)
+                k = k + 1
+            }
+            start = at + 1
+            return result.Result.Ok(value = out)
+        }
+        if buf.len() - start > max_len {
+            return srv_err(too_long, "a line in the body framing is too long")
+        }
+        from = buf.len()
+        val got = self.fill(deadline)?
+        if got == 0 {
+            return srv_silent("the connection closed inside the request body")
+        }
+    }
+    return srv_silent("unreachable")
+}
+
+// Makes `n` bytes available from `start`.
+fun mut ServerConn.need(n: usize, deadline: i64).R: result.Result<usize, HttpErr> {
+    while buf.len() - start < n {
+        val got = self.fill(deadline)?
+        if got == 0 {
+            return srv_silent("the connection closed inside the request body")
+        }
+    }
+    return result.Result.Ok(value = 0)
+}
+
+fun srv_hex_size(text: &str, max_body: usize).R: result.Result<usize, HttpErr> {
+    val n = str.len(text)
+    var value: usize = 0
+    var digits: usize = 0
+    var i: usize = 0
+    var going = true
+    while i < n && going {
+        val c = str.byte(text, i)
+        if c == 59 {
+            going = false
+        } else {
+            val d = hex_value(c)
+            if d < 0 {
+                return srv_err(400, "chunk size is not hexadecimal")
+            }
+            digits = digits + 1
+            if digits > 12 {
+                return srv_err(413, "chunk too large")
+            }
+            value = value * 16 + d.to_usize()
+            i = i + 1
+        }
+    }
+    if digits == 0 {
+        return srv_err(400, "chunk size has no digits")
+    }
+    return result.Result.Ok(value = value)
+}
+
+// A chunked body: size line, data, `CRLF`, repeated to the zero chunk, then
+// trailers (read and discarded, bounded by the header limit).
+fun mut ServerConn.read_chunked(limits: &Limits, deadline: i64).R: result.Result<Bytes, HttpErr> {
+    var out = Bytes.empty()
+    var going = true
+    while going {
+        val size_line = self.take_line(deadline, 1024, 400)?
+        val size = srv_hex_size(size_line.as_str(), limits.max_body)?
+        if size == 0 {
+            going = false
+        } else {
+            if out.len() + size > limits.max_body {
+                return srv_err(413, "the request body is too large")
+            }
+            self.need(size + 2, deadline)?
+            out.append(srv_bytes_range(buf, start, start + size))
+            if buf.get(start + size) != 13 || buf.get(start + size + 1) != 10 {
+                return srv_err(400, "a chunk is not followed by CRLF")
+            }
+            start = start + size + 2
+        }
+    }
+    var trailer_bytes: usize = 0
+    var trailing = true
+    while trailing {
+        val line = self.take_line(deadline, limits.max_header_bytes, 431)?
+        if str.is_empty(line.as_str()) {
+            trailing = false
+        } else {
+            trailer_bytes = trailer_bytes + str.len(line.as_str()) + 2
+            if trailer_bytes > limits.max_header_bytes {
+                return srv_err(431, "the trailers are too large")
+            }
+        }
+    }
+    return result.Result.Ok(value = out)
+}
+
+// The next request on this connection, parsed and framed, or why not. See
+// `plan/http-server.md` for the status of every failure.
+fun mut ServerConn.read_request(limits: &Limits).R: result.Result<ServerRequest, HttpErr> {
+    self.compact()
+    close_after = false
+    head_only = false
+    keep_alive_header = false
+    // Waiting for the first byte of a request is the idle wait; the head
+    // deadline starts when that byte arrives, so a client that connects and
+    // trickles is cut off at the head deadline, not never.
+    if buf.is_empty() {
+        var idle = limits.head_timeout_ms
+        if served > 0 {
+            idle = limits.idle_timeout_ms
+        }
+        val first = self.fill(net.mono_ms() + idle.to_i64())
+        when first {
+            Ok(n) -> {
+                if n == 0 {
+                    return srv_silent("the peer closed the connection")
+                }
+            }
+            Err(e) -> {
+                if served > 0 {
+                    return srv_silent("idle timeout")
+                }
+                return result.Result.Err(error = e)
+            }
+        }
+    }
+    val head_deadline = net.mono_ms() + limits.head_timeout_ms.to_i64()
+    var end: usize = 0
+    var scanning = true
+    while scanning {
+        val r = srv_scan_head(buf)
+        if r < 0 {
+            return srv_err(400, "malformed request head")
+        }
+        val eol = srv_first_lf(buf)
+        if eol >= buf.len() {
+            if buf.len() > limits.max_request_line {
+                return srv_err(414, "the request line is too long")
+            }
+        } else {
+            if eol > limits.max_request_line {
+                return srv_err(414, "the request line is too long")
+            }
+            var seen = buf.len()
+            if r > 0 {
+                seen = r.to_usize()
+            }
+            if seen - (eol + 1) > limits.max_header_bytes {
+                return srv_err(431, "the request headers are too large")
+            }
+        }
+        if r > 0 {
+            end = r.to_usize()
+            scanning = false
+        } else {
+            val got = self.fill(head_deadline)?
+            if got == 0 {
+                return srv_silent("the connection closed inside the request head")
+            }
+        }
+    }
+    val text = head_text(buf, end)
+    start = end
+    val lines = str.split(text.as_str(), "\r\n")
+    // The request line: METHOD SP target SP HTTP/1.x, single spaces.
+    val parts = str.split(lines.get(0).as_str(), " ")
+    if parts.len() != 3 {
+        return srv_err(400, "malformed request line")
+    }
+    val method = String.from_str(parts.get(0).as_str())
+    val target = String.from_str(parts.get(1).as_str())
+    val version = parts.get(2).as_str()
+    if !srv_is_token(method.as_str()) {
+        return srv_err(400, "malformed request method")
+    }
+    if str.is_empty(target.as_str()) {
+        return srv_err(400, "empty request target")
+    }
+    var http11 = false
+    if str.eq(version, "HTTP/1.1") {
+        http11 = true
+    } elif str.eq(version, "HTTP/1.0") {
+        http11 = false
+    } else {
+        // `HTTP/d.d` is a version this server does not speak; anything else
+        // is not a version at all.
+        if str.len(version) == 8 && str.starts_with(version, "HTTP/") && str.is_digit(str.byte(version, 5)) && str.byte(version, 6) == 46 && str.is_digit(str.byte(version, 7)) {
+            return srv_err(505, "HTTP version not supported")
+        }
+        return srv_err(400, "malformed HTTP version")
+    }
+    if str.byte(target.as_str(), 0) != 47 {
+        if !(str.eq(target.as_str(), "*") && str.eq(method.as_str(), "OPTIONS")) {
+            return srv_err(400, "the request target must start with /")
+        }
+    }
+    // The headers.
+    var hs: List<Header> = List.empty()
+    var i: usize = 1
+    while i < lines.len() {
+        val line = lines.get(i).as_str()
+        if str.byte(line, 0) == 32 || str.byte(line, 0) == 9 {
+            return srv_err(400, "folded header lines are not accepted")
+        }
+        val colon = str.index_of(line, ":")
+        if let Some(at) = colon {
+            val name = str.prefix(line, at)
+            if !srv_is_token(name.as_str()) {
+                return srv_err(400, "malformed header name")
+            }
+            val value = str.trim(str.substring(line, at + 1))
+            hs.push(Header(name = name, value = value))
+        } else {
+            return srv_err(400, "a header line has no colon")
+        }
+        if hs.len() > limits.max_headers {
+            return srv_err(431, "too many request headers")
+        }
+        i = i + 1
+    }
+    // Framing.
+    val te_count = srv_count_headers(hs, "transfer-encoding")
+    val cl_count = srv_count_headers(hs, "content-length")
+    if te_count > 0 && cl_count > 0 {
+        return srv_err(400, "Content-Length together with Transfer-Encoding")
+    }
+    if te_count > 1 {
+        return srv_err(400, "more than one Transfer-Encoding header")
+    }
+    var chunked = false
+    if te_count == 1 {
+        val te = srv_header_token(hs, "transfer-encoding")
+        if !str.eq(te.as_str(), "chunked") {
+            return srv_err(501, "unknown transfer coding")
+        }
+        if !http11 {
+            return srv_err(400, "Transfer-Encoding in an HTTP/1.0 request")
+        }
+        chunked = true
+    }
+    val cl = srv_content_length(hs)?
+    if !chunked && cl < 0 && srv_method_needs_length(method.as_str()) {
+        return srv_err(411, "a body needs Content-Length or chunked framing")
+    }
+    if !chunked && cl > limits.max_body.to_i64() {
+        return srv_err(413, "the request body is too large")
+    }
+    var has_body = chunked
+    if cl > 0 {
+        has_body = true
+    }
+    // `Expect`.
+    if headers_have(hs, "expect") {
+        val ex = srv_header_token(hs, "expect")
+        if !str.eq(ex.as_str(), "100-continue") {
+            return srv_err(417, "unsupported Expect")
+        }
+        if http11 && has_body && buf.len() == start {
+            val sent = net.try_send_all(net.Socket(fd = fd), Bytes.from_str("HTTP/1.1 100 Continue\r\n\r\n"))
+            if let Err(e) = sent {
+                return srv_silent(e.reason.as_str())
+            }
+        }
+    }
+    // The body.
+    var body = Bytes.empty()
+    if has_body {
+        val body_deadline = net.mono_ms() + limits.body_timeout_ms.to_i64()
+        if chunked {
+            body = self.read_chunked(limits, body_deadline)?
+        } else {
+            val n = cl.to_usize()
+            self.need(n, body_deadline)?
+            body = srv_bytes_range(buf, start, start + n)
+            start = start + n
+        }
+    }
+    // What the client asked of the connection.
+    served = served + 1
+    if srv_connection_has(hs, "close") {
+        close_after = true
+    }
+    if !http11 {
+        if srv_connection_has(hs, "keep-alive") {
+            keep_alive_header = true
+        } else {
+            close_after = true
+        }
+    }
+    if served >= limits.max_requests_per_conn {
+        close_after = true
+    }
+    if str.eq(method.as_str(), "HEAD") {
+        head_only = true
+    }
+    var path = String.empty()
+    var query = String.empty()
+    val q = str.index_of(target.as_str(), "?")
+    if let Some(at) = q {
+        path = str.prefix(target.as_str(), at)
+        query = String.from_str(str.substring(target.as_str(), at + 1))
+    } else {
+        path = String.from_str(target.as_str())
+    }
+    return result.Result.Ok(value = ServerRequest(
+        method = method,
+        target = target,
+        path = path,
+        query = query,
+        headers = hs,
+        body = body,
+    ))
+}
+
+// Asks for the connection to close after the response being written.
+fun mut ServerConn.mark_close() {
+    close_after = true
+}
+
+fun ServerConn.wants_close().R: bool = close_after
+
+fun srv_clean_header(h: Header).R: bool {
+    val n = str.len(h.name.as_str())
+    val v = str.len(h.value.as_str())
+    var i: usize = 0
+    while i < n {
+        if !srv_tchar(str.byte(h.name.as_str(), i)) {
+            return false
+        }
+        i = i + 1
+    }
+    var k: usize = 0
+    while k < v {
+        val c = str.byte(h.value.as_str(), k)
+        if c == 13 || c == 10 || c == 0 {
+            return false
+        }
+        k = k + 1
+    }
+    return n > 0
+}
+
+// Writes one response: the status line, the headers (minus any header of
+// ours: `Content-Length`, `Transfer-Encoding`, `Connection`; and any whose
+// name or value could split the response), the framing the server owns, and
+// the body unless the request was `HEAD` or the status has none. A write that
+// fails because the peer is gone is an `Err`, never a panic.
+fun mut ServerConn.write_response(resp: &ServerResponse).R: result.Result<usize, HttpErr> {
+    val code = resp.status
+    var out = String.with_capacity(256)
+    out.push_str("HTTP/1.1 ")
+    val code_text = fmt.int(code.to_i64())
+    out.push_str(code_text.as_str())
+    out.push_str(" ")
+    val reason = srv_reason(code)
+    out.push_str(reason.as_str())
+    out.push_str("\r\n")
+    var i: usize = 0
+    while i < resp.headers.len() {
+        val h = resp.headers.get(i)
+        if name_eq(h.name.as_str(), "connection") {
+            val low = str.to_lower(h.value.as_str())
+            if str.contains(low.as_str(), "close") {
+                close_after = true
+            }
+        } elif !name_eq(h.name.as_str(), "content-length") && !name_eq(h.name.as_str(), "transfer-encoding") {
+            if srv_clean_header(Header(name = String.from_str(h.name.as_str()), value = String.from_str(h.value.as_str()))) {
+                out.push_str(h.name.as_str())
+                out.push_str(": ")
+                out.push_str(h.value.as_str())
+                out.push_str("\r\n")
+            }
+        }
+        i = i + 1
+    }
+    val bodyless = code < 200 || code == 204 || code == 304
+    if !bodyless {
+        out.push_str("Content-Length: ")
+        val len_text = fmt.uint(resp.body.len().to_u64())
+        out.push_str(len_text.as_str())
+        out.push_str("\r\n")
+    }
+    if close_after {
+        out.push_str("Connection: close\r\n")
+    } elif keep_alive_header {
+        out.push_str("Connection: keep-alive\r\n")
+    }
+    out.push_str("\r\n")
+    var wire = out.into_bytes()
+    if !bodyless && !head_only {
+        wire.append(resp.body.clone())
+    }
+    return when net.try_send_all(net.Socket(fd = fd), wire) {
+        Ok(n) -> result.Result.Ok(value = n)
+        Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
+    }
+}
+
+// Answers a failed `read_request` with its status and the reason as text, and
+// marks the connection to close; does nothing when the failure has no status
+// (the peer is gone, or the connection was only idle).
+fun mut ServerConn.write_error(e: &HttpErr).R: result.Result<usize, HttpErr> {
+    val code = http_error_status(e)
+    if code == 0 {
+        return result.Result.Ok(value = 0)
+    }
+    val text = http_error_text(e)
+    var message = String.with_capacity(64)
+    message.push_str(str.substring(text.as_str(), 4))
+    message.push_str("\n")
+    close_after = true
+    head_only = false
+    val resp = srv_response(code, "text/plain; charset=utf-8", message.into_bytes())
+    return self.write_response(&resp)
+}
+
+// Ends the connection: half-closes so the peer reads the response and then end
+// of stream, reads and discards what the peer is still sending for a short,
+// bounded while (closing with unread data makes the kernel reset the
+// connection, which can destroy a response the client has not read yet), then
+// closes the descriptor.
+fun ServerConn.close() {
+    val sock = net.Socket(fd = fd)
+    if net.try_shutdown_write(sock) {
+        val until = net.mono_ms() + 250
+        var drained: usize = 0
+        var going = true
+        while going {
+            val now = net.mono_ms()
+            if now >= until || drained > 1048576 {
+                going = false
+            } elif !sock.wait_readable((until - now).to_u64()) {
+                going = false
+            } else {
+                when net.try_recv(sock, 4096) {
+                    Ok(b) -> {
+                        if b.is_empty() {
+                            going = false
+                        } else {
+                            drained = drained + b.len()
+                        }
+                    }
+                    Err(_) -> {
+                        going = false
+                    }
+                }
+            }
+        }
+    }
+    net.close(sock)
+}
+
+// ----- serving -----
+
+// Serves one connection to its end and closes it. `budget` is the most
+// requests to answer (0 = no limit); the count returned is how many requests
+// got a response, an error response included. A request whose handler ran
+// counts even if the response could not be written.
+fun mut ServerConn.serve(handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits, budget: u64).R: u64 {
+    var count: u64 = 0
+    var going = true
+    while going {
+        val r = self.read_request(limits)
+        when r {
+            Ok(req) -> {
+                val resp = handler(&req)
+                count = count + 1
+                if budget > 0 && count >= budget {
+                    self.mark_close()
+                }
+                val w = self.write_response(&resp)
+                if result.is_err(r = &w) {
+                    going = false
+                } elif self.wants_close() {
+                    going = false
+                }
+            }
+            Err(e) -> {
+                if http_error_status(&e) > 0 {
+                    count = count + 1
+                    val w = self.write_error(&e)
+                }
+                going = false
+            }
+        }
+    }
+    self.close()
+    return count
+}
+
+// The accept loop on a listener you already hold: one connection at a time,
+// each served to its end, until `max_requests` requests have been answered
+// (0 = never stop) or, if the listener has an accept timeout, nobody came for
+// that long. Returns the count. A failed accept (a connection that died in the
+// queue) is skipped.
+fun serve_on(server: &Server, handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits, max_requests: u64).R: u64 {
+    var total: u64 = 0
+    var going = true
+    while going {
+        if max_requests > 0 && total >= max_requests {
+            going = false
+        } else {
+            val acc = server.try_accept()
+            when acc {
+                Ok(c) -> {
+                    var conn = c
+                    var budget: u64 = 0
+                    if max_requests > 0 {
+                        budget = max_requests - total
+                    }
+                    total = total + conn.serve(handler, limits, budget)
+                }
+                Err(e) -> {
+                    val text = http_error_text(&e)
+                    if str.contains(text.as_str(), "timed out") {
+                        going = false
+                    } else {
+                        thread.sleep_ms(5)
+                    }
+                }
+            }
+        }
+    }
+    return total
+}
+
+// Listens on `port` and serves forever, one connection at a time, with the
+// default limits.
+fun serve(port: u16, handler: fun(&ServerRequest).R: ServerResponse) {
+    val s = listen(port)
+    val limits = default_limits()
+    val n = serve_on(&s, handler, &limits, 0)
+}
+
+// As `serve`, returning once `max_requests` requests have been answered, with
+// the listener closed. This is what makes a server testable.
+fun serve_n(port: u16, handler: fun(&ServerRequest).R: ServerResponse, max_requests: u64).R: u64 {
+    val s = listen(port)
+    val limits = default_limits()
+    val n = serve_on(&s, handler, &limits, max_requests)
+    s.close()
+    return n
+}
+
+// What a worker thread is handed: the shared listener's descriptor and its own
+// copy of the limits. The handler is a plain function value, so nothing
+// borrowed crosses the thread boundary.
+datac Worker(val fd: i32, val handler: fun(&ServerRequest).R: ServerResponse, val limits: Limits)
+
+fun worker_main(w: move Worker).R: u64 {
+    val s = Server(fd = w.fd)
+    return serve_on(&s, w.handler, &w.limits, 0)
+}
+
+// One thread per worker, spawned one inside the next so that the handles never
+// need a container (a `Thread` cannot be a list element): each level spawns its
+// worker, runs the rest, then joins its own.
+fun run_workers(n: usize, fd: i32, handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits).R: u64 {
+    if n == 0 {
+        return 0
+    }
+    val h = thread.spawn(worker_main, Worker(fd = fd, handler = handler, limits = limits.dup()))
+    val rest = run_workers(n - 1, fd, handler, limits)
+    val mine = when thread.join(h) {
+        Ok(v) -> v
+        Err(_) -> 0
+    }
+    return rest + mine
+}
+
+// `workers` threads, each accepting on the listener you hold and serving one
+// connection at a time. With `idle_ms` above 0 a worker stops when no client
+// has connected for that long and the call returns the total requests
+// answered; with 0 it never returns. The listener is not closed.
+fun serve_threaded_on(server: &Server, handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits, workers: usize, idle_ms: u64).R: u64 {
+    server.set_accept_timeout(idle_ms)
+    return run_workers(workers, server.fd, handler, limits)
+}
+
+// Listens on `port` and serves forever on `workers` threads, with the default
+// limits. A panic in a handler ends its worker thread, not the process.
+fun serve_threaded(port: u16, handler: fun(&ServerRequest).R: ServerResponse, workers: usize) {
+    val s = listen(port)
+    val limits = default_limits()
+    val n = serve_threaded_on(&s, handler, &limits, workers, 0)
 }

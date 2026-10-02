@@ -500,6 +500,16 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/net",
+        "accept_try_raw",
+        "    int c;\n    do {\n        c = accept(kelp_fd, NULL, NULL);\n    } while (c < 0 && errno == EINTR);\n    if (c < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.accept: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.accept: accept failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    return c;\n",
+    ),
+    (
+        "std/net",
+        "mono_ms_raw",
+        "    struct timespec ts;\n    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {\n        kelp_panic_errno(\"net.mono_ms: clock_gettime failed\");\n    }\n    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);\n",
+    ),
+    (
+        "std/net",
         "close_raw",
         "    if (close(kelp_fd) != 0) {\n        kelp_panic_errno(\"net.close: close failed\");\n    }\n",
     ),
@@ -507,6 +517,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "std/net",
         "shutdown_write_raw",
         "    if (shutdown(kelp_fd, SHUT_WR) != 0) {\n        kelp_panic_errno(\"net.shutdown_write: shutdown failed\");\n    }\n",
+    ),
+    (
+        "std/net",
+        "shutdown_write_try_raw",
+        "    return shutdown(kelp_fd, SHUT_WR) == 0;\n",
     ),
     (
         "std/net",
