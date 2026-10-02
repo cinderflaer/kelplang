@@ -1897,6 +1897,48 @@ fn a_function_whose_body_ends_in_an_endless_loop_returns_an_owned_value() {
     );
 }
 
+// `std/tz`: time zones over the system TZif database. The synthetic fixture
+// builds its own TZif byte arrays, so it pins the parser, the footer rule and
+// the corrupt-data refusals on a machine with no database at all; the zone
+// fixture needs one and prints a single skip line when there is none, which the
+// test expects instead of the table (the same probe, `zoneinfo_has_the_test_zones`).
+#[test]
+fn the_tz_conformance_table_passes() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_tz_synthetic.kp",
+        "gap: gap\nambiguous: ambiguous 1730611800 1730615400\none: one 1710052200\ncases: 116, failed: 0\n",
+    );
+}
+
+#[test]
+fn the_tz_module_reads_the_system_zoneinfo_database() {
+    let expected = if zoneinfo_has_the_test_zones() {
+        "cases: 57, failed: 0\n"
+    } else {
+        "tz: no zoneinfo database\n"
+    };
+    assert_compiles_and_runs("tests/fixtures/stdlib_tz_zones.kp", expected);
+}
+
+/// Whether the host carries every zone `stdlib_tz_zones.kp` reads, in `$TZDIR`
+/// or in `/usr/share/zoneinfo` — the same probe the fixture makes, so the two
+/// agree about whether the database is there.
+fn zoneinfo_has_the_test_zones() -> bool {
+    let tzdir = std::env::var("TZDIR").unwrap_or_default();
+    let dirs = [tzdir, "/usr/share/zoneinfo".to_string()];
+    [
+        "America/New_York",
+        "Europe/Berlin",
+        "Asia/Kolkata",
+        "Australia/Lord_Howe",
+    ]
+    .iter()
+    .all(|zone| {
+        dirs.iter()
+            .any(|dir| !dir.is_empty() && Path::new(dir).join(zone).is_file())
+    })
+}
+
 #[test]
 fn an_extern_without_a_compiler_supplied_body_is_rejected() {
     assert_rejected("tests/fixtures/extern_no_body.kp");
@@ -4304,8 +4346,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "mutex_lock_value",
         "mutex_lock_return",
         "mutex_into_inner",
-        // The shape `std/tz`'s abbreviation reader has: a `String` per call,
-        // freed on every path out of the loop.
+        // `std/tz`: a parsed zone owns five `List`s and a `String` table per
+        // time type, the formatter builds a `String` per call, and the
+        // synthetic fixture builds and drops a dozen `Bytes`. Under
+        // AddressSanitizer a double free or a leak in any of them fails here.
+        "stdlib_tz_synthetic",
+        "stdlib_tz_zones",
         "owned_return_endless_loop",
     ];
     for name in fixtures {
