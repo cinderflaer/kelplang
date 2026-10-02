@@ -140,7 +140,8 @@ fun mut Style.merge(o: &Style) {
 fun class_style(name: &str).R: Style {
     var s = style_none()
     if str.eq(name, "todo-app") {
-        s.has_bg = false
+        s.has_pad = true
+        s.pad = 2
     }
     if str.eq(name, "todo-done") {
         s.has_fg = true
@@ -186,9 +187,6 @@ fun base_style(n: &SNode, th: &Theme).R: Style {
         s.fg = th.fg
         s.has_border = true
         s.border = th.border
-        if n.slot >= 0 {
-            s.border = th.border
-        }
         s.has_radius = true
         s.radius = th.radius
         s.has_pad = true
