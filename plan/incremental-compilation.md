@@ -87,12 +87,19 @@ it owns. Ownership is total: one symbol, one defining object.
 - A symbol another unit references is external in its owner and a `declare` (or
   an `external global`) in the users; a symbol only its own unit uses is
   `internal`.
-- The reference set is computed from the typed IR before any module is built:
-  every callee, `FnRef`, closure literal, `StaticRef`, `pd` name, dyn-vtable
-  slot target, and the user `drop`/`hash`/`eq` methods the generated helpers
-  call. `main` is always external (the C runtime is what calls it). Everything
-  `_support` defines is external, because a generated helper can be reached from
-  any unit.
+- The reference set is computed from the typed IR **before any module is
+  built**: every callee, `FnRef`, closure literal, `StaticRef`, `pd` name, the
+  dyn-vtable slot targets and the user `drop`/`hash`/`eq` methods the generated
+  helpers call, plus two sources that are not in a unit's own bodies. The first
+  is the widening of a *known* function value: its shim lives in `_support` and
+  calls the function directly, so a function named as a value is referenced from
+  outside its unit even when the reference was written inside it. The second is
+  the per-program C object (`externs.c`): an `extern fun` body, the capability
+  glue or a `std/rt` prototype can call a Kelp function across the object
+  boundary in C, which no typed node shows, so the C text is scanned for the
+  emitted symbol names. `main` is always external (the C runtime is what calls
+  it). Everything `_support` defines is external, because a generated helper can
+  be reached from any unit.
 - An over-approximation is harmless (the symbol is merely visible); a missed
   reference is a link error, never a silent miscompile, which is why every
   equivalence test links the real binary.
