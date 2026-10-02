@@ -1118,9 +1118,6 @@ struct Gen<'a> {
     /// One read-only `[N x ptr]` global per `(trait, type)` vtable, keyed by
     /// the pair.
     dyn_tables: HashMap<(String, String), Value<'a>>,
-    /// The `[N x ptr]` type of each trait's vtable, keyed by the trait's
-    /// canonical name.
-    dyn_vtable_tys: HashMap<String, Type<'a>>,
     /// The LLVM environment struct of each capturing literal, keyed by the
     /// literal's `tir` key: one field per capture, in capture order, the same
     /// fields `write_env` gives the C struct.
@@ -1339,7 +1336,6 @@ impl<'a> Gen<'a> {
             closure_fns: HashMap::new(),
             dyn_fns: HashMap::new(),
             dyn_tables: HashMap::new(),
-            dyn_vtable_tys: HashMap::new(),
             env_types: HashMap::new(),
             coerce_env_ty,
             libc: declare_libc(ctx, module),
@@ -3617,27 +3613,19 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // A method through a vtable (A-12 slice 4):
             // `receiver.vtable[slot](receiver.data, args...)`.
             ExprKind::DynCall { receiver, slot, args, .. } => {
-                let trait_name = match &receiver.ty {
-                    Ty::Dyn { trait_name, .. } => trait_name.clone(),
-                    other => {
-                        return Err(format!(
-                            "a dyn call on a receiver of type '{}'",
-                            other.display()
-                        ))
-                    }
-                };
                 let recv = self.value_of(receiver)?;
                 let data = self.g.builder.build_extract_value(recv, 0, "data");
                 let table = self.g.builder.build_extract_value(recv, 1, "vtable");
-                let table_ty = *self
+                // The table is `[N x ptr]`, and the slot index is a constant:
+                // one GEP of the element type at that index.
+                let slot_index = self
                     .g
-                    .dyn_vtable_tys
-                    .get(&trait_name)
-                    .ok_or_else(|| no_value(&format!("the vtable type of '{trait_name}'")))?;
+                    .ctx
+                    .const_int(self.g.ctx.i64(), *slot as u64, false);
                 let slot_ptr = self
                     .g
                     .builder
-                    .build_struct_gep(table_ty, table, *slot as u32, "m");
+                    .build_gep(self.g.pty(), table, slot_index, "m");
                 let fp = self.g.builder.build_load(self.g.pty(), slot_ptr, "fp");
                 // The first parameter is the erased data pointer the thunk
                 // takes in place of the receiver.
@@ -8187,18 +8175,6 @@ impl<'a> Gen<'a> {
         let ptr = self.ctx.opaque_ptr();
         let vtables = self.program.dyn_vtables.clone();
         for vtable in &vtables {
-            // The table's type is one identified struct of pointers per trait,
-            // so every table of the trait shares it and a call site names a
-            // field index (`build_struct_gep`).
-            if !self.dyn_vtable_tys.contains_key(&vtable.trait_name) {
-                let ty = self.ctx.struct_type(&format!(
-                    "{}_vtable",
-                    crate::types::dyn_c_type(&vtable.trait_name)
-                ));
-                self.ctx
-                    .struct_set_body(ty, &vec![ptr; vtable.slots.len()]);
-                self.dyn_vtable_tys.insert(vtable.trait_name.clone(), ty);
-            }
             let mut elements: Vec<Value<'a>> = Vec::with_capacity(vtable.slots.len());
             for slot in &vtable.slots {
                 let symbol = crate::types::dyn_thunk_symbol(
