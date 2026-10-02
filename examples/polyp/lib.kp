@@ -419,9 +419,9 @@ fun mut Children<M>.scrolled(block: scoped fun(mut Children<M>)) {
 }
 
 // A keyed row: the block's children become one `Row` child whose key is the
-// one given. This is the shape a list of rows wants, and it is what the task's
-// `k.keyed("task-7") { r -> ... }` spells. `keyed_col` is the same for a
-// column, and `with_key` gives the next pushed node a key of any kind.
+// one given, which is the shape a list of rows wants
+// (`k.keyed("task-7") { r -> ... }`). `keyed_col` is the same for a column, and
+// `with_key` puts a key on the next pushed node of any kind.
 fun mut Children<M>.keyed(key: str, block: scoped fun(mut Children<M>)) {
     var inner: Children<M> = new_children()
     block(inner)
