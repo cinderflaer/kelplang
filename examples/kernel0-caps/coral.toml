@@ -1,0 +1,30 @@
+name = "kernel0-caps"
+
+# Kernel stage 18 (MK10-S1's second half): IRQ lines and physical frames as
+# capabilities. The entry module holds exactly one line and one frame, claims
+# them with the gated `irq.claim`/`frame.claim`, and hands the two receipts to
+# `drv`, which holds the same grants and so may read them
+# (`plan/irq-frame-caps.md`).
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+# The audit list (stage 1): `uart` is the module that talks to the device
+# register. `drv` builds no pointer, but printing is `str`/`asm` free of
+# `unsafe`, so it stays off the list; `main` names the two claims, which are
+# safe calls.
+[unsafe]
+modules = ["uart"]
+
+# Three device capabilities, each exactly the machine facts this example uses:
+# the NS16550 window, one interrupt line, and one 4 KiB-aligned frame. `mmio`
+# is never held by default, so the entry has to write it down; `irq` and
+# `frames` are narrowed here from the wildcard the entry holds by default, so
+# the manifest and the code say the same thing.
+[caps]
+mmio = ["0x10000000+0x100"]
+irq = ["10"]
+frames = ["0x80100000+0x100000"]

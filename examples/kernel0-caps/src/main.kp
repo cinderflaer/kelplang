@@ -1,0 +1,32 @@
+// Kernel stage 18 (MK10-S1's second half): IRQ lines and physical frames as
+// capabilities. `main` holds exactly one line and one frame (the `[caps]`
+// section), claims them with the gated constructors, and hands the receipts to
+// `drv`, which holds the same two grants and so may read them.
+//
+// The claims are constants, which is what a range grant admits: `irq.claim(10)`
+// and `frame.claim(0x80100000)` are checked against the manifest at compile
+// time. A computed line or address would need the whole-resource `["*"]` grant,
+// because the compiler cannot prove a runtime value lands in a range. The
+// ungranted module that this image does not import is
+// `src/ungranted.kp`, the compile-error fixture the test suite builds.
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+impl "drv" caps(irq = ["10"], frames = ["0x80100000+0x100000"])
+impl "std/irq"
+impl "std/frame"
+
+section(".text.boot") fun kmain() {
+    val line: irq.Line = irq.claim(10)
+    val frm: frame.Frame = frame.claim(0x80100000)
+    drv.report(line = line, frame = frm)
+    uart.halt()
+}
+
+// The handler `[target] panic` names, as in the other kernel examples: every
+// bounds and overflow check the compiler emits calls this with the static
+// message the check was written with.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}

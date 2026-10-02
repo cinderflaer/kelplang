@@ -1,0 +1,92 @@
+// The NS16550 UART QEMU's riscv64 `virt` machine puts at 0x10000000. THR
+// (offset 0) is the byte to send; LSR (offset 5) bit 5 is set while the
+// transmit holding register is empty, so a byte is written only after that bit
+// reads back set. Every access goes through `Ptr<u8>` and is volatile so the
+// compiler can neither merge, reorder nor elide it, and nothing else about the
+// device is checked: the base, the offsets and the bit are the driver's own
+// claim about the hardware (kernel stage 1, `plan/unsafe-and-pointers.md`).
+//
+// Text arrives as a `str`, the same type a hosted program writes, and
+// `str.len`/`str.byte` are the compiler's own byte loops (kernel stage 7,
+// `plan/kernel0-status.md` gap 1), so no `strlen` and no `[u8; N]` copy sits
+// between the caller and the device. `put_dec` and `put_hex` exist only for
+// kernel stage 18's driver, which prints a line number and two addresses; they
+// are ordinary Kelp arithmetic over `putc`.
+impl "std/str"
+
+const UART_BASE: usize = 0x10000000
+const LSR_OFFSET: usize = 5
+
+pub fun putc(c: u8) {
+    unsafe {
+        val lsr: Ptr<u8> = Ptr.from_addr(UART_BASE + LSR_OFFSET)
+        // Bit 5 of LSR is the transmit-holding-register-empty flag.
+        while (lsr.read_volatile() & 32) == 0 {}
+        val thr: Ptr<u8> = Ptr.from_addr(UART_BASE)
+        thr.write_volatile(c)
+    }
+}
+
+pub fun puts(s: str) {
+    val n = str.len(s)
+    var i: usize = 0
+    while i < n {
+        putc(str.byte(s, i))
+        i = i + 1
+    }
+}
+
+// `v` in decimal, no padding: the digits are collected least-significant first
+// and then emitted in reverse.
+pub fun put_dec(v: usize) {
+    if v == 0 {
+        putc(48)
+        return
+    }
+    var buf: [u8; 20] = [0; 20]
+    var n: usize = v
+    var i: usize = 0
+    while n > 0 {
+        buf.set(i = i, v = 48 + (n % 10).to_u8())
+        n = n / 10
+        i = i + 1
+    }
+    while i > 0 {
+        i = i - 1
+        putc(buf.get(i = i))
+    }
+}
+
+// `v` in hex, `0x`-prefixed with leading zeros dropped: sixteen nibbles from
+// the top down, and the last one is always printed so `put_hex(0)` is `0x0`.
+pub fun put_hex(v: usize) {
+    putc(48)
+    putc(120)
+    var i: usize = 16
+    var started: bool = false
+    while i > 0 {
+        i = i - 1
+        val nib: u8 = ((v >> (i * 4)) & 15).to_u8()
+        if nib != 0 {
+            started = true
+        }
+        if started || i == 0 {
+            if nib < 10 {
+                putc(48 + nib)
+            } else {
+                putc(87 + nib)
+            }
+        }
+    }
+}
+
+// `wfi` has no Kelp spelling (kernel stage 5, `plan/inline-asm.md`), and the
+// compiler's `_start` stub already loops on it if the entry returns; this is
+// the same halt written in the language, so the kernel names its own stop.
+pub fun halt() {
+    while true {
+        unsafe {
+            asm("wfi")
+        }
+    }
+}
