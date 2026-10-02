@@ -1,0 +1,231 @@
+// The machine-mode trap frame and the naked entry that saves into it
+// (`plan/scheduler.md`).
+//
+// This is kernel stage 11's frame (`examples/kernel0-user/src/trap.kp`) with
+// two differences. The frame is not built on a stack: `mscratch` holds the
+// address of the *current task's* frame while that task runs, so the entry
+// writes the whole register file into the task table itself and the scheduler
+// switches tasks by handing back a different frame. And the frame is one word
+// longer than the register file: the word at `DISPATCH_OFF`, just past
+// `mstatus`, is the address of the scheduler the entry calls, which is how a
+// naked function reaches a Kelp function without spelling its mangled symbol
+// (the same reason kernel stage 11 keeps its dispatch address in a slot).
+//
+// The offset constants below are a contract with the asm template and nothing
+// in the compiler checks them; `layout_ok` is the check the boot runs before it
+// relies on them.
+
+// The register file's offsets: `xN` is at `(N - 1) * 8`, so `x1`/`ra` is first
+// and `x31`/`t6` is last. `sepc` and `mstatus` follow it.
+pub const OFF_X10: usize = 72
+pub const OFF_SP: usize = 8
+pub const OFF_MEPC: usize = 248
+pub const OFF_MSTATUS: usize = 256
+
+// The register file is 33 words; the dispatch address is the word after it.
+const FRAME_BYTES: usize = 264
+pub const DISPATCH_OFF: usize = FRAME_BYTES
+
+// `mcause` 11 is the environment call from M-mode, which is both a task's
+// `yield` and the boot's own way of entering the scheduler. Bit 63 set and code
+// 7 is the machine timer interrupt.
+pub const CAUSE_ECALL_M: usize = 11
+pub const CAUSE_TIMER: usize = 0x8000000000000007
+
+// The `mstatus` a task is started with: `MPIE` (bit 7) is what `mret` copies
+// into `MIE`, so the first instruction of a task runs with interrupts enabled,
+// and `MPP` (bits 12:11) is machine mode, which is the mode these tasks run in.
+pub const MSTATUS_TASK: usize = 0x1880
+
+// The frame is a `repr(c)` datac of 33 words: x1..x31 in register order, then
+// `sepc` and `mstatus`. `x2` is the one field the handler reads out of the
+// register file directly rather than through `mscratch`, which is what makes a
+// task's stack pointer part of what a switch saves.
+pub repr(c) datac TrapFrame(
+    val x1: u64,
+    val x2: u64,
+    val x3: u64,
+    val x4: u64,
+    val x5: u64,
+    val x6: u64,
+    val x7: u64,
+    val x8: u64,
+    val x9: u64,
+    val x10: u64,
+    val x11: u64,
+    val x12: u64,
+    val x13: u64,
+    val x14: u64,
+    val x15: u64,
+    val x16: u64,
+    val x17: u64,
+    val x18: u64,
+    val x19: u64,
+    val x20: u64,
+    val x21: u64,
+    val x22: u64,
+    val x23: u64,
+    val x24: u64,
+    val x25: u64,
+    val x26: u64,
+    val x27: u64,
+    val x28: u64,
+    val x29: u64,
+    val x30: u64,
+    val x31: u64,
+    val sepc: u64,
+    val mstatus: u64,
+)
+
+// One machine word of the frame at a byte offset, through the raw pointer the
+// scheduler was handed. Everything in the frame is a word, so an aligned
+// volatile load or store is the whole access.
+pub fun get(frame: Ptr<TrapFrame>, offset: usize).R: u64 {
+    unsafe {
+        frame.cast<u8>().byte_offset(offset.to_isize()).cast<u64>().read_volatile()
+    }
+}
+
+pub fun set(frame: Ptr<TrapFrame>, offset: usize, value: u64) {
+    unsafe {
+        frame.cast<u8>().byte_offset(offset.to_isize()).cast<u64>().write_volatile(value)
+    }
+}
+
+// Install `mtvec` at the naked entry. Its low two bits are the vector mode, so
+// the entry carries `align(4)` and its section is 4-byte aligned by the linker
+// script.
+pub fun install() {
+    unsafe {
+        asm("csrw mtvec, {0}", in("r") Ptr.from_fn(trap_entry).addr())
+    }
+}
+
+// What the boot checks before anything relies on the asm: the offsets the
+// template hardcodes, the size the register file has, and where the dispatch
+// word starts. A `datac` that grows would move every number after it.
+pub fun layout_ok().R: bool {
+    if size_of<TrapFrame>() != FRAME_BYTES {
+        return false
+    }
+    if offset_of<TrapFrame>("x1") != 0 {
+        return false
+    }
+    if offset_of<TrapFrame>("x2") != OFF_SP {
+        return false
+    }
+    if offset_of<TrapFrame>("x10") != OFF_X10 {
+        return false
+    }
+    if offset_of<TrapFrame>("x31") != 240 {
+        return false
+    }
+    if offset_of<TrapFrame>("sepc") != OFF_MEPC {
+        return false
+    }
+    if offset_of<TrapFrame>("mstatus") != OFF_MSTATUS {
+        return false
+    }
+    if offset_of<TrapFrame>("mstatus") + 8 != DISPATCH_OFF {
+        return false
+    }
+    return true
+}
+
+// The machine-mode trap vector.
+//
+// `mscratch` holds the current task's frame address while it runs, so the first
+// instruction swaps `t0` for it and leaves the interrupted `t0` in `mscratch`
+// to be saved with the rest of the register file. Every `xN` is saved at its
+// own offset, `sepc` and `mstatus` are read out of their CSRs, and the dispatch
+// address is loaded from the word past the register file. The dispatcher is
+// called with the frame in `a0` and hands back the frame to resume in `a0`,
+// which may be another task's; the entry makes that the new `mscratch`, puts
+// the CSRs back and restores every register, ending in `mret`.
+//
+// No instruction between the save and the restore touches `sp`, because the
+// frame is not on a stack: a switch changes `sp` only when the restored frame's
+// `x2` is loaded. The restore order matters in one place: `x5` is the base
+// register the rest of the restore loads through, so it is restored last.
+section(".text.trap") align(4) naked fun trap_entry() {
+    asm("
+            csrrw t0, mscratch, t0
+            sd x1, 0(t0)
+            sd x2, 8(t0)
+            sd x3, 16(t0)
+            sd x4, 24(t0)
+            sd x6, 40(t0)
+            sd x7, 48(t0)
+            sd x8, 56(t0)
+            sd x9, 64(t0)
+            sd x10, 72(t0)
+            sd x11, 80(t0)
+            sd x12, 88(t0)
+            sd x13, 96(t0)
+            sd x14, 104(t0)
+            sd x15, 112(t0)
+            sd x16, 120(t0)
+            sd x17, 128(t0)
+            sd x18, 136(t0)
+            sd x19, 144(t0)
+            sd x20, 152(t0)
+            sd x21, 160(t0)
+            sd x22, 168(t0)
+            sd x23, 176(t0)
+            sd x24, 184(t0)
+            sd x25, 192(t0)
+            sd x26, 200(t0)
+            sd x27, 208(t0)
+            sd x28, 216(t0)
+            sd x29, 224(t0)
+            sd x30, 232(t0)
+            sd x31, 240(t0)
+            csrr t1, mscratch
+            sd t1, 32(t0)
+            csrr t1, mepc
+            sd t1, 248(t0)
+            csrr t1, mstatus
+            sd t1, 256(t0)
+            ld t1, 264(t0)
+            mv a0, t0
+            jalr ra, t1, 0
+            csrw mscratch, a0
+            mv t0, a0
+            ld t1, 248(t0)
+            csrw mepc, t1
+            ld t1, 256(t0)
+            csrw mstatus, t1
+            ld x2, 8(t0)
+            ld x1, 0(t0)
+            ld x3, 16(t0)
+            ld x4, 24(t0)
+            ld x6, 40(t0)
+            ld x7, 48(t0)
+            ld x8, 56(t0)
+            ld x9, 64(t0)
+            ld x10, 72(t0)
+            ld x11, 80(t0)
+            ld x12, 88(t0)
+            ld x13, 96(t0)
+            ld x14, 104(t0)
+            ld x15, 112(t0)
+            ld x16, 120(t0)
+            ld x17, 128(t0)
+            ld x18, 136(t0)
+            ld x19, 144(t0)
+            ld x20, 152(t0)
+            ld x21, 160(t0)
+            ld x22, 168(t0)
+            ld x23, 176(t0)
+            ld x24, 184(t0)
+            ld x25, 192(t0)
+            ld x26, 200(t0)
+            ld x27, 208(t0)
+            ld x28, 216(t0)
+            ld x29, 224(t0)
+            ld x30, 232(t0)
+            ld x31, 240(t0)
+            ld x5, 32(t0)
+            mret
+        ")
+}

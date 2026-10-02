@@ -1,10 +1,29 @@
-// Trait inheritance is a later slice: list every trait at the bound.
+// `trait Named: Shape` (A-12 slice 3): implementing `Named` requires
+// implementing `Shape`, a `<T: Named>` may call `Shape`'s methods, and a
+// `T: Named` satisfies a `T: Shape` bound transitively.
+
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().R: i32
 }
 
 trait Named: Shape {
-    fun Self.name().R: str
+    fun Self.name().R: i32 { return 3 }
 }
 
-fun main() { }
+datac Circle(val r: i32)
+
+impl Shape for Circle {
+    fun Self.area().R: i32 = r * r
+}
+
+impl Named for Circle {}
+
+fun area_of<T: Shape>(x: &T).R: i32 = x.area()
+fun describe<T: Named>(x: &T).R: i32 = x.area() + x.name()
+fun chained<T: Named>(x: &T).R: i32 = area_of(x) + describe(x)
+
+fun main() {
+    val c = Circle(r = 3)
+    print(describe(c))
+    print(chained(c))
+}

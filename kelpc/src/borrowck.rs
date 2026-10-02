@@ -1274,6 +1274,20 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
         // descend through that `Ref` for the borrow to be tracked at all
         // (M6.4).
         tir::ExprKind::Ref { expr: inner, .. } => tir_root_ident(inner),
+        // A `&dyn` coercion wraps the `&x` it was written from (A-12 slice 4),
+        // so the same chain continues through it.
+        tir::ExprKind::DynCoerce { expr: inner, .. } => tir_root_ident(inner),
+        _ => None,
+    }
+}
+
+/// The `&expr`/`&mut expr` a node is a borrow of, looking through the `&dyn`
+/// coercion (A-12 slice 4) that wraps one: a `&dyn` value *is* the borrow it
+/// was written from, so every borrow rule applies to the node inside it.
+fn borrowed_node(expr: &tir::Expr) -> Option<(&bool, &tir::Expr)> {
+    match &expr.kind {
+        tir::ExprKind::Ref { mutable, expr: inner } => Some((mutable, inner)),
+        tir::ExprKind::DynCoerce { expr: inner, .. } => borrowed_node(inner),
         _ => None,
     }
 }
@@ -1308,6 +1322,7 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
         tir::ExprKind::FieldAccess { base, .. }
         | tir::ExprKind::EnumField { base, .. }
         | tir::ExprKind::Ref { expr: base, .. }
+        | tir::ExprKind::DynCoerce { expr: base, .. }
         | tir::ExprKind::Deref { expr: base } => borrow_root(base, ctx),
         tir::ExprKind::Call { callee, args }
         | tir::ExprKind::VariadicCall { callee, args, .. } => {
@@ -1550,7 +1565,7 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
             // for borrows (see `set_origin` for why an owned binding must not
             // be traced).
             let binds_a_borrow =
-                crate::infer::is_borrowed_value(ty) || matches!(ty, Ty::Str);
+                crate::infer::is_borrowed_value(ty) || matches!(ty, Ty::Str | Ty::Dyn { .. });
             if binds_a_borrow {
                 let origin = borrow_root(init, ctx);
                 ctx.set_origin(name, origin);
@@ -1610,7 +1625,7 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
 /// directly `&expr`/`&mut expr` (see the module doc); anything else is a
 /// plain value read.
 fn check_let_init(init: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
-    if let tir::ExprKind::Ref { mutable, expr: inner } = &init.kind {
+    if let Some((mutable, inner)) = borrowed_node(init) {
         if *mutable {
             ctx.check_iterated_mutation(inner)?;
         }
@@ -1823,6 +1838,15 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // rule a named call's do.
         tir::ExprKind::IndirectCall { callee, args } => {
             check_place(callee, ctx)?;
+            let taken = take_call_arguments(args, ctx, None)?;
+            release_call_borrows(&taken, ctx);
+            Ok(())
+        }
+        // A method call through a `&dyn` (A-12 slice 4): the receiver is a
+        // borrow (`Copy`), so reading it moves nothing; the arguments follow
+        // exactly the rule a named call's do.
+        tir::ExprKind::DynCall { receiver, args, .. } => {
+            check_place(receiver, ctx)?;
             let taken = take_call_arguments(args, ctx, None)?;
             release_call_borrows(&taken, ctx);
             Ok(())
@@ -2053,6 +2077,10 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
+        // A `&dyn` coercion (A-12 slice 4) is transparent to borrowck: the
+        // node inside is the `&x` it was written from, and reading the fat pair
+        // is a read of the borrow.
+        tir::ExprKind::DynCoerce { expr: inner, .. } => check_value(inner, ctx),
         // `asm(...)` (kernel stage 5): an `in` operand reads its value exactly
         // as any other read, and an `out`/`inout` operand writes its place, so
         // that place is taken as a transient exclusive borrow. The operand
@@ -2210,7 +2238,7 @@ fn take_call_arguments(
 ) -> Result<Vec<String>> {
     let mut taken = Vec::new();
     for (i, a) in args.iter().enumerate() {
-        if let tir::ExprKind::Ref { mutable, expr: inner } = &a.kind {
+        if let Some((mutable, inner)) = borrowed_node(a) {
             if *mutable && receiver != Some(i) {
                 ctx.check_iterated_mutation(inner)?;
             }

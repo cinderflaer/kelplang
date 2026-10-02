@@ -1186,15 +1186,20 @@ print(identity<i32>(x = 5))
 
 ### 9.5 Traits and static dispatch
 
-A `trait` is a named set of method signatures, and `impl` makes a type provide them. A generic
-function may then require that its type parameter implements one, which is what a function like
+A `trait` is a named set of methods, and `impl` makes a type provide them. A generic function may
+then require that its type parameter implements one, which is what a function like
 `fun area_of<T: Shape>(s: &T)` needs. Dispatch is **static**: the method a `T` calls is the one the
 concrete type declares, resolved once per instantiation, exactly as 9.3 resolves a type parameter.
 
 ```kelp
 pub trait Shape {
     fun Self.area().R: f64
+    fun Self.describe().R: String { return "a shape" }
     fun mut Self.scale(f: f64)
+}
+
+trait Named: Shape {
+    fun Self.name().R: str
 }
 
 datac Circle(val r: f64)
@@ -1202,6 +1207,7 @@ datac Circle(val r: f64)
 impl Shape for Circle {
     fun Self.area().R: f64 = r * r * 3.14159
     fun mut Self.scale(f: f64) { r = r * f }
+    // `describe` is left out: the trait's default is used.
 }
 
 fun area_of<T: Shape>(s: &T).R: f64 = s.area()
@@ -1211,29 +1217,40 @@ val c = Circle(r = 2.0)
 print(area_of(c))
 ```
 
-- A trait body is one or more **signatures**, each in the receiver form of 8 with `Self` where the
+- A trait body is one or more **methods**, each in the receiver form of 8 with `Self` where the
   method's type would be. `Self` names the implementing type, and it is also legal in the
-  signature's other types (`fun Self.smaller_than(other: &Self).R: bool`). A signature has no body:
-  no `= expr` and no `{ ... }`.
+  signature's other types (`fun Self.smaller_than(other: &Self).R: bool`). A method with **no**
+  body (no `= expr` and no `{ ... }`) is a signature; a method **with** a body is a **default
+  method**, written exactly like an ordinary method. A default body may call the trait's other
+  methods through `self` and is checked once per implementing type.
 - A trait method may take `mut` on its receiver, and the impl has to match it. A trait declaration
   takes no type parameters and neither does one of its methods.
+- A trait may name **supertraits** after a `:`, separated by `+`: `trait B: A + C { ... }`. An
+  `impl B for X` requires an `impl A for X` and an `impl C for X`; a `<T: B>` may call `A`'s
+  methods on a `T`; a `T: B` satisfies a `T: A` bound; and a cycle is an error.
 - `impl Trait for Type { ... }` is told from an import (`impl "..."`, 13.1) by what follows
   `impl`: a string literal imports a module, an identifier starts this form. The block declares
-  one method per declared signature, each with a `Self` receiver, and the body is an ordinary
-  method body (the type's fields are read and written by their bare names). The impl may live in
-  the trait's module or in the type's module, and nowhere else.
-- A type has **at most one** impl of a trait, and the type has to be a `datac` or an `enum`
-  declared in the program: a builtin (`i32`, `String`, `List<T>`, ...) and a generic instantiation
-  are refused. An explicit method of the type (`fun Circle.area()`, 8) and a trait method of the
-  same name cannot both exist, so the impl is refused at the name it collides on.
-- Every declared signature must be implemented with exactly the declared signature: the same
-  receiver (with or without `mut`), the same parameter names and types in the same order, and the
-  same return type. A missing method, an extra method and a mismatched one are three errors, each
-  naming the trait and the method.
+  methods each with a `Self` receiver, and the body is an ordinary method body (the type's fields
+  are read and written by their bare names). A **defaulted** method may be omitted (the impl gets
+  the default) or overridden with exactly the declared signature; a trait whose methods are all
+  defaulted may be implemented by an empty block (`impl T for X {}`). For a `datac`/`enum`, the
+  impl may live in the trait's module or in the type's module; for a builtin it lives in the
+  trait's module.
+- A type has **at most one** impl of a trait. The type is a `datac`, an `enum`, or a builtin that
+  already carries methods: an integer scalar, `String`, `str`, `Bytes`, `View` or an `Atomic<T>`
+  alias. `bool`, `char`, `f32`, `f64`, a container, a tuple, an array, a borrow, a handle and a
+  generic instantiation are each refused by name. An explicit method of the type
+  (`fun Circle.area()`, 8) and a trait method of the same name cannot both exist, so the impl is
+  refused at the name it collides on.
+- Every non-defaulted declared signature must be implemented with exactly the declared signature:
+  the same receiver (with or without `mut`), the same parameter names and types in the same order,
+  and the same return type. A missing method, an extra method and a mismatched one are three
+  errors, each naming the trait and the method.
 - A bound is written after the parameter's name: `fun f<T: Shape>(...)`, and several bounds are
   separated by `+` (`<T: Shape + Named>`). At every call, each type argument has to implement
-  every bound, so a call that does not is an error naming the callee, the type and the trait. A
-  generic function that is never called is never checked, exactly as in 9.3.
+  every bound (a supertrait satisfies it transitively), so a call that does not is an error naming
+  the callee, the type and the trait. A generic function that is never called is never checked,
+  exactly as in 9.3.
 - Inside the body, a method call on a `T` resolves the way a method call on the concrete type
   does, because the body is checked once per instantiation. The call is then the same direct call
   the concrete type's method already was: there is no vtable and no witness, so a trait costs
@@ -1241,11 +1258,62 @@ print(area_of(c))
 - `trait Drop` cannot be declared: `fun mut T.drop()` is a type's destructor (8) and is not spelled
   through a trait.
 
-Not in this slice, each refused where it is written: `dyn` and trait objects; a default method
-(a signature with a body); a trait item other than a method (an associated type or const);
-`impl Trait` in argument position; a trait implemented for a builtin type; a `where` clause;
-trait inheritance (`trait A: B`); and any operator overloading through a trait (`==`/`!=` still
-come from a declared `eq`, 5). `plan/traits.md` 4 is the list with the reason and the workaround.
+### 9.5.1 Trait objects and `&dyn`
+
+An **object-safe** trait (9.5.2) may be used behind a borrow as a trait object, written
+`&dyn Name` (shared) or `&mut dyn Name` (exclusive):
+
+```kelp
+fun area_of<T: Shape>(s: &T).R: f64 = s.area()
+fun describe(s: &dyn Shape).R: String = s.describe()
+fun grow(s: &mut dyn Shape) { s.scale(2.0) }
+
+val c = Circle(r = 2.0)
+print(describe(&c))          // `&c` coerces to `&dyn Shape`
+val d: &dyn Shape = &c       // or at a typed binding
+print(describe(d))           // and a `&dyn` forwards on to another function
+```
+
+- A trait object is legal **as a parameter type and as a local binding type** only. `Box<dyn
+  Name>`, a bare `dyn Name`, a `.R: &dyn Name` return, a `datac`/`enum` field or payload, a
+  container element or argument, a tuple element and a `static`'s type are each refused by name.
+- `Name` must be a declared trait. `&mut dyn Name` allows a `mut Self` method and `&dyn Name`
+  does not; a `mut Self` method called through `&dyn` is refused by name.
+- **Coercion.** A `&T` where `T` implements `Name` coerces to `&dyn Name` at a call argument or a
+  typed `val`/`var` binding, written as the ordinary borrow (`describe(&c)`); a `&mut T` coerces
+  to both `&dyn Name` and `&mut dyn Name`; a `&dyn Name` passes where the same type is expected. A
+  plain place with no `&` is not coerced. Everything else is an error, naming what was written.
+- **Object safety (9.5.2).** `dyn` of a trait with a method that returns `Self` or takes another
+  `Self` is refused by name, naming the method. So is a trait whose flattened method list repeats
+  a name. A generic method is already impossible.
+- **Representation.** The value is a fat pair (the borrowed value's address and a pointer to a
+  static vtable); it is `Copy`, owns nothing and drops nothing. A method call goes through the
+  vtable (`s.vtable.area(s.data)`), with one slot per trait method and supertrait method,
+  supertraits first. The calls are bounds-free and allocation-free, so a freestanding build can
+  use `&dyn`; `plan/traits.md` 9 is the design.
+- **Borrowing.** The coercion is the borrow it was written from, so a `&dyn` local keeps its
+  referent borrowed to the end of the scope and a `&mut dyn` is exclusive. A `&dyn` can never be
+  stored or returned, so it cannot outlive what it borrows.
+
+### 9.5.2 Object safety
+
+A trait is object safe when every method in its flattened list (supertraits first) satisfies all
+of these. A violation is refused where the `dyn` type is written, naming the trait and the method:
+
+- the method's return type does not mention `Self`;
+- no parameter other than the receiver mentions `Self` (the receiver is what the erased pointer
+  stands for);
+- the flattened list has no two methods of the same name (the vtable holds one slot per name).
+
+A method with its own type parameters is already impossible (9.5), so there is nothing else to
+erase.
+
+Not in this slice, each refused where it is written: `Box<dyn Name>` and a bare `dyn Name`; an
+upcast from `&dyn B` to `&dyn A` when `B: A`; a trait object over an object-unsafe trait; a trait
+item other than a method (an associated type or const); `impl Trait` in argument position; a
+`where` clause; a generic trait (`trait Name<T>`); an impl for a generic instantiation; and any
+operator overloading through a trait (`==`/`!=` still come from a declared `eq`, 5).
+`plan/traits.md` 5 and 9.6 are the lists with the reasons and the workarounds.
 
 ## 10. Ownership, moves and borrowing
 
@@ -2482,7 +2550,7 @@ These are deliberate, and each one has a workaround in this document:
 - No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
 - `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
-- A trait (9.5) is a set of method signatures and a bound on a type parameter, not a type: there is no `dyn`, no default method, no associated type, and no way to implement one for a builtin (`i32`, `String`, `List<T>`) or for a generic instantiation. A trait's methods are still reached through a value and dispatched statically, so a call on a `T` is the call the concrete type declares.
+- A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1), which is a fat pair and a vtable; there is no `Box<dyn Name>`, no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
 - A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, variant payload or position is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
@@ -2665,12 +2733,13 @@ impl         := "impl" string [ "caps" "(" ( grant ( "," grant )* | "*" ) ")" ]
 grant        := ident "=" "[" string ("," string)* "]"
 // A leading "pub" (13.4) is accepted on trait, const, datac, enum and fun, and
 // nowhere else: a `pd` is module-scoped and an import is not an item.
-// `trait`/`traitimpl` (9.5): a trait is a set of signatures, an impl gives them
-// to a `datac`/`enum`. "Self" is an ordinary identifier used as a type name in
-// both, and stands for the implementing type.
-trait        := [ "pub" ] "trait" ident "{" ( traitmethod )* "}"
+// `trait`/`traitimpl` (9.5): a trait is a set of methods, an impl gives them
+// to a `datac`/`enum` or to a builtin. "Self" is an ordinary identifier used
+// as a type name in both, and stands for the implementing type. A method with
+// no body is a signature; one with a body is a default the impl may omit.
+trait        := [ "pub" ] "trait" ident [ ":" bound ("+" bound)* ] "{" ( traitmethod )* "}"
 traitmethod  := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
-                [ ".R" ":" type ]                     // a signature: no body
+                [ ".R" ":" type ] ( body | )        // no body: a signature
 traitimpl    := "impl" traitname "for" typename "{" ( method )* "}"
 traitname    := ident [ "." ident ]                    // `Shape` or `shape.Shape`
 typename     := ident [ "." ident ]
@@ -2693,7 +2762,8 @@ fun          := [ "pub" ] [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] ".
 param        := ident ":" [ "mut" | "move" ] type
 body         := "=" expr | block | <nothing for extern>
 
-type         := [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
+type         := [ "&" [ "mut" ] "dyn" ident ]  // a borrowed trait object: `&dyn T`, `&mut dyn T`
+              | [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
                        | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ]
                        | "[" type ";" expr "]"        // a fixed-size array: [T; N]
                        | "(" type "," type ("," type)* ")" )  // a tuple: (A, B)
@@ -2704,8 +2774,9 @@ fparam       := [ "mut" | "move" ] type
 `String`, not a keyword. `(T)` is the parenthesized type `T`, not a
 one-element tuple, and `()` is not a type at all: `unit` is. `Self` is likewise
 an ordinary `ident` that is only meaningful inside a trait or an impl (9.5), and
-`dyn` is not a keyword: `dyn Name` is refused by name as the trait-object form
-this language does not have.)
+`dyn` is not a keyword: it is recognized only after a leading `&` (or `&mut`) as
+the trait-object form, `&dyn Name`, which is legal only as a parameter type or
+a local binding type (9.5.1). A bare `dyn Name` is refused by name.)
 
 ```
 stmt         := "val" | "var" | "while" | "for" | "return" | expr

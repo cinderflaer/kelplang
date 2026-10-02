@@ -1,0 +1,13 @@
+pub datac Helper(val n: i32)
+
+// A default body may use the trait module's own types, even when the impl that
+// inherits it lives in the implementing type's module (A-12 slice 3).
+pub trait Shape {
+    fun Self.area().R: i32
+    fun Self.summary().R: i32 {
+        val h = Helper(n = 1)
+        return self.area() + h.n
+    }
+}
+
+pub fun area_of<T: Shape>(x: &T).R: i32 = x.summary()

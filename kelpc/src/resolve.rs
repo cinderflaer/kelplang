@@ -740,7 +740,14 @@ pub fn load(
         for i in &parsed.trait_impls {
             let mut i = i.clone();
             i.trait_name = canon(&i.trait_name, i.trait_span)?;
-            i.type_name = canon(&i.type_name, i.type_span)?;
+            // A builtin `for` type has no module to be prefixed with, and
+            // `Ty::from_name` is exactly the set of builtin names (A-12 slice
+            // 3); a declared `datac`/`enum` is qualified the usual way.
+            i.type_name = if crate::types::Ty::from_name(&i.type_name).is_some() {
+                i.type_name.clone()
+            } else {
+                canon(&i.type_name, i.type_span)?
+            };
             i.module = m.id.clone();
             program.trait_impls.push(i);
         }
@@ -765,6 +772,56 @@ pub fn load(
                 substitute_self(&mut f, &self_type);
             }
             f.module = m.id.clone();
+            program.functions.push(f);
+        }
+    }
+
+    // A-12 slice 3: a trait default method. Every `impl Trait for Type` that
+    // omits a method the trait gives a body gets a concrete copy of it, with
+    // `Self` substituted and tagged with the impl site, so the ordinary
+    // signature loop checks and emits it exactly as if the impl had written
+    // it. The signature resolves in the impl's module (the impl wrote the
+    // `for` type, so it can name it); the body resolves in the trait's module,
+    // where it was written, through `body_module`. A builtin's impl is in the
+    // trait's module, so the two coincide there.
+    let default_sources: Vec<(String, String, String, String, Vec<String>, Vec<ast::FunctionDecl>)> = program
+        .trait_impls
+        .iter()
+        .map(|i| {
+            let trait_decl = program.traits.iter().find(|t| t.name == i.trait_name);
+            let trait_module = trait_decl.map(|t| t.module.clone()).unwrap_or_default();
+            let defaults: Vec<ast::FunctionDecl> = trait_decl
+                .map(|t| {
+                    t.methods
+                        .iter()
+                        .filter(|m| !matches!(m.body, ast::FunctionBody::Signature))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            (
+                i.trait_name.clone(),
+                i.type_name.clone(),
+                trait_module,
+                i.module.clone(),
+                i.methods.clone(),
+                defaults,
+            )
+        })
+        .collect();
+    for (trait_name, type_name, trait_module, impl_module, written, defaults) in default_sources {
+        for m in defaults {
+            if written.contains(&m.name) {
+                continue;
+            }
+            let mut f = m;
+            f.trait_impl = Some(ast::TraitImplSite {
+                trait_name: trait_name.clone(),
+                self_type: type_name.clone(),
+            });
+            substitute_self(&mut f, &type_name);
+            f.module = impl_module.clone();
+            f.body_module = Some(trait_module.clone());
             program.functions.push(f);
         }
     }

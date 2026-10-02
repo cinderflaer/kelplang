@@ -1,0 +1,16 @@
+// A-12 slice 4: only a type that implements the trait coerces to `&dyn` of it.
+trait Shape {
+    fun Self.area().R: f64
+}
+
+datac Circle(val r: f64)
+impl Shape for Circle { fun Self.area().R: f64 = r * r }
+
+datac Other(val x: i64)
+
+fun take(s: &dyn Shape) { }
+
+fun main() {
+    val o = Other(x = 1)
+    take(&o)
+}

@@ -91,6 +91,19 @@ pub enum Ty {
     /// Copy regardless of `inner` — copying a pointer doesn't move what it
     /// points at.
     Ref { mutable: bool, inner: Box<Ty> },
+    /// A borrowed trait object (A-12 slice 4): `&dyn Name` / `&mut dyn Name`,
+    /// where `trait_name` is the trait's canonical key. The value is a *fat
+    /// pair*: the address of the borrowed value (the erased data pointer) and
+    /// the address of a static, read-only vtable (see `tir::DynVtable`).
+    ///
+    /// Like `Ty::Ref` it is `Copy`, owns nothing and drops nothing: it is a
+    /// borrow, so the value it points at is still owned by whoever it was
+    /// borrowed from, and `borrowck.rs` tracks it as the `&x` it was written
+    /// from. `mutable` is the `mut` of `&mut dyn Name`, which decides whether a
+    /// `mut Self` method may be called through it. It is legal only as a
+    /// parameter or a local: a field, a container element, a return and a
+    /// `static` each refuse it, exactly as they refuse a `Ty::Ref`.
+    Dyn { mutable: bool, trait_name: String },
     /// A function value (A-4): a plain C function pointer, with no captured
     /// environment — so it is `Copy`, it owns nothing, and it needs no drop.
     /// `params` are the *declared* parameter types, already through the
@@ -257,6 +270,25 @@ pub fn atomic_alias_elem(name: &str) -> Option<Ty> {
     })
 }
 
+/// The `Atomic*` name that stands for one element type, the inverse of
+/// `atomic_alias_elem`. `infer.rs`'s trait-impl table keys a builtin `for` type
+/// by the name the `impl` wrote (`impl Name for AtomicI64`), so a vtable target
+/// recovered from a `Ty::Atomic` has to spell the same name back.
+pub fn atomic_alias_name(elem: &Ty) -> Option<&'static str> {
+    Some(match elem {
+        Ty::Bool => "AtomicBool",
+        Ty::U8 => "AtomicU8",
+        Ty::U16 => "AtomicU16",
+        Ty::U32 => "AtomicU32",
+        Ty::U64 => "AtomicU64",
+        Ty::Usize => "AtomicUsize",
+        Ty::I32 => "AtomicI32",
+        Ty::I64 => "AtomicI64",
+        Ty::Isize => "AtomicIsize",
+        _ => return None,
+    })
+}
+
 impl Ty {
     pub fn from_name(name: &str) -> Option<Ty> {
         Some(match name {
@@ -294,6 +326,9 @@ impl Ty {
             // An array copies exactly when its element does: `[i32; 4]` is a
             // value, `[String; 4]` owns four strings and moves.
             Ty::Array(elem, _) => elem.is_copy(),
+            // A borrowed trait object is two pointers, exactly like a borrow:
+            // copying it moves nothing.
+            Ty::Dyn { .. } => true,
             _ => !matches!(
                 self,
                 Ty::Struct(_)
@@ -441,6 +476,11 @@ impl Ty {
                 closure_c_type(params, ret)
             }
             Ty::Struct(name) => format!("struct_{}", c_ident(name)),
+            // A borrowed trait object is the fat pair: the erased data pointer
+            // and a pointer to the trait's vtable, one C struct per trait (the
+            // shared and exclusive spellings are the same C value; the borrow
+            // checker is what distinguishes them).
+            Ty::Dyn { trait_name, .. } => dyn_c_type(trait_name),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
                     format!("{}*", inner.c_type())
@@ -488,6 +528,8 @@ impl Ty {
             Ty::Ptr(elem) => format!("Ptr<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
+            Ty::Dyn { mutable: true, trait_name } => format!("&mut dyn {trait_name}"),
+            Ty::Dyn { mutable: false, trait_name } => format!("&dyn {trait_name}"),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
             Ty::Fn { params, ret } => {
@@ -1124,6 +1166,9 @@ pub fn ty_mangle(ty: &Ty) -> String {
         // through the same mangling every other generated symbol uses rather
         // than straight into a C identifier.
         Ty::Handle(name) => format!("Handle__{}", c_ident(name)),
+        // A borrowed trait object is a struct per trait, so its mangled name is
+        // the trait's, under its own prefix.
+        Ty::Dyn { trait_name, .. } => format!("Dyn__{}", c_ident(trait_name)),
         // A `Ptr<T>` type argument names the same C type `c_type` does, under
         // the mangling every other generated symbol uses.
         Ty::Ptr(elem) => format!("Ptr__{}", ty_mangle(elem)),
@@ -1665,6 +1710,8 @@ pub fn type_layout(
         Ty::Str | Ty::Handle(_) | Ty::Ptr(_) | Ty::Fn { .. } | Ty::Ref { .. } | Ty::Thread(_) => {
             Layout { size: 8, align: 8 }
         }
+        // A borrowed trait object is the fat pair: two pointers.
+        Ty::Dyn { .. } => Layout { size: 16, align: 8 },
         Ty::Mutex(_) => Layout { size: 8, align: 8 },
         Ty::View => Layout { size: 16, align: 8 },
         Ty::Bytes | Ty::String | Ty::List(_) | Ty::Closure { .. } | Ty::ScopedFn { .. } => {
@@ -1838,7 +1885,40 @@ fn is_ident_byte(b: u8) -> bool {
 /// instantiation path each check datac fields and enum payloads separately.
 /// `View` (A-8) was missed at two of the four on the first attempt.
 pub fn is_borrowed_field_ty(ty: &Ty) -> bool {
-    matches!(ty, Ty::Str | Ty::View | Ty::Ref { .. })
+    matches!(ty, Ty::Str | Ty::View | Ty::Ref { .. } | Ty::Dyn { .. })
+}
+
+/// The C typedef name of the fat pair a borrowed trait object is: one struct per
+/// trait, shared by `&dyn Name` and `&mut dyn Name` (the two are the same C
+/// value; the borrow checker, not a C qualifier, tells them apart).
+pub fn dyn_c_type(trait_name: &str) -> String {
+    format!("kelp_Dyn__{}", c_ident(trait_name))
+}
+
+/// The C typedef name of one trait's vtable struct: one field per method, the
+/// supertraits' methods first (`plan/traits.md` 9.4).
+pub fn dyn_vtable_c_type(trait_name: &str) -> String {
+    format!("kelp_VTable__{}", c_ident(trait_name))
+}
+
+/// The emitted symbol of one `(trait, type)` vtable, the same name in both
+/// backends so a diagnostic or a `nm` line reads the same either way.
+pub fn dyn_vtable_symbol(trait_name: &str, type_name: &str) -> String {
+    format!(
+        "kelp_vtable__{}__{}",
+        c_ident(trait_name),
+        c_ident(type_name)
+    )
+}
+
+/// The emitted symbol of the thunk one vtable slot points at.
+pub fn dyn_thunk_symbol(trait_name: &str, type_name: &str, method: &str) -> String {
+    format!(
+        "kelp_dyn_thunk__{}__{}__{}",
+        c_ident(trait_name),
+        c_ident(type_name),
+        c_ident(method)
+    )
 }
 
 /// A function's checked signature. Parameter names are kept (not just

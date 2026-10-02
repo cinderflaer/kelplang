@@ -1,0 +1,18 @@
+name = "freestandingdyn"
+
+# A-12 slice 4: `&dyn` in a freestanding image. The vtables are `.rodata` and
+# the thunks are ordinary code, so a bare-metal build owns no vtable helper and
+# reaches no libc symbol. `panic` routes the compiler's own checks to
+# `kp_panic`, exactly as `examples/kernel0` does.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["uart"]
+
+[caps]
+mmio = ["0x10000000+0x100"]

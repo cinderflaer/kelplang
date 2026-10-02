@@ -40,9 +40,14 @@ pub struct TraitDecl {
     pub name: String,
     /// `pub trait ...` (A-13). See `ConstDecl::is_pub`.
     pub is_pub: bool,
-    /// The method signatures, in source order. Each is an ordinary
-    /// `FunctionDecl` with a `Self` receiver and no body, so the receiver and
-    /// every other type are resolved exactly as a method's are.
+    /// `trait B: A + C` (A-12 slice 3): the supertraits, in source order. Each
+    /// is stored as the bound parser wrote it (`A`, `alias.A`); `infer.rs`
+    /// qualifies and resolves them, exactly as it does a bound on a function's
+    /// type parameter.
+    pub supertraits: Vec<TypeExpr>,
+    /// The methods, in source order. Each is an ordinary `FunctionDecl` with a
+    /// `Self` receiver; a `FunctionBody::Signature` is a required signature and
+    /// any other body is a default method an impl may omit.
     pub methods: Vec<FunctionDecl>,
     /// See `DatacDecl::module`.
     pub module: String,
@@ -342,6 +347,12 @@ pub struct FunctionDecl {
     pub body: FunctionBody,
     /// See `DatacDecl::module`.
     pub module: String,
+    /// A synthesized trait default (A-12 slice 3) resolves its *body* here when
+    /// that differs from `module`: the default was written in the trait's
+    /// module, but its signature (`Self` and the types that name it) was
+    /// substituted with the implementing type and so resolves in the impl's
+    /// module. `None` for every declaration written by a user.
+    pub body_module: Option<String>,
     /// `naked fun ...` (kernel stage 5): LLVM's `naked` and `noinline`, whose
     /// body must be exactly one `asm(...)` statement, so no prologue or
     /// epilogue is emitted around it.
@@ -475,6 +486,15 @@ pub struct TypeExpr {
     /// under the elision rule, whereas a parameter's `&str` is what `str`
     /// already is (a borrowed view passed by value).
     pub amp: bool,
+    /// `&mut` was written before `dyn` (A-12 slice 4): the exclusive form of a
+    /// borrowed trait object, `&mut dyn Name`. A `&mut` before an ordinary type
+    /// name is still refused (a parameter writes `mut T` instead).
+    pub amp_mut: bool,
+    /// `&dyn Name` / `&mut dyn Name` (A-12 slice 4): the trait of a borrowed
+    /// trait object, as written (`Shape`, or `shape.Shape` through an alias).
+    /// `None` for every ordinary type; the parser only sets it after a leading
+    /// `&` (with or without `mut`).
+    pub dyn_trait: Option<String>,
     /// `scoped fun(T).R: U` — a *contextual* modifier (`scoped` is not a
     /// keyword, and is only a modifier when the next token is `fun`). A
     /// scoped function value may only be written at a call site and may not
@@ -506,6 +526,8 @@ impl TypeExpr {
             array_elem: None,
             array_len: None,
             amp: false,
+            amp_mut: false,
+            dyn_trait: None,
             scoped: false,
             fn_params: None,
             fn_ret: None,
@@ -526,6 +548,13 @@ impl TypeExpr {
 
     /// The type as it was written, for diagnostics and the pretty-printer.
     pub fn display(&self) -> String {
+        if let Some(name) = &self.dyn_trait {
+            return if self.amp_mut {
+                format!("&mut dyn {name}")
+            } else {
+                format!("&dyn {name}")
+            };
+        }
         let mut s = if let Some(elems) = &self.tuple {
             let parts: Vec<String> = elems.iter().map(|e| e.display()).collect();
             format!("({})", parts.join(", "))

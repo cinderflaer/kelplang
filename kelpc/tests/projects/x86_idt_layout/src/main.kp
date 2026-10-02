@@ -1,0 +1,67 @@
+// Kernel stage 22 (`plan/x86-idt.md`): the layouts a naked gate and `lidt`
+// hardcode. The declarations are copies of `examples/kernel0-x86_64-idt`'s
+// `idt.kp`, which is why the numbers can drift: the copy is this fixture's job.
+//
+// The gate is 16 bytes with the offset split low/mid/high at 0, 6 and 8; the
+// `lidt` descriptor is ten bytes with the limit at 0 and the base at 2; the
+// frame is 160 bytes, with the vector at 0, the general registers from 8 to
+// 120, the error code at 128 and `RIP`/`CS`/`RFLAGS` at 136, 144 and 152.
+repr(c) datac IdtEntry(
+    val offset_low: u16,
+    val selector: u16,
+    val ist: u8,
+    val type_attr: u8,
+    val offset_mid: u16,
+    val offset_high: u32,
+    val reserved: u32,
+)
+
+repr(packed) datac IdtDescriptor(
+    val limit: u16,
+    val base: u64,
+)
+
+repr(c) datac TrapFrame(
+    val vector: u64,
+    val r15: u64,
+    val r14: u64,
+    val r13: u64,
+    val r12: u64,
+    val r11: u64,
+    val r10: u64,
+    val r9: u64,
+    val r8: u64,
+    val rdi: u64,
+    val rsi: u64,
+    val rbp: u64,
+    val rbx: u64,
+    val rdx: u64,
+    val rcx: u64,
+    val rax: u64,
+    val error: u64,
+    val rip: u64,
+    val cs: u64,
+    val rflags: u64,
+)
+
+fun main() {
+    print(size_of<IdtEntry>())
+    print(offset_of<IdtEntry>("offset_low"))
+    print(offset_of<IdtEntry>("selector"))
+    print(offset_of<IdtEntry>("ist"))
+    print(offset_of<IdtEntry>("type_attr"))
+    print(offset_of<IdtEntry>("offset_mid"))
+    print(offset_of<IdtEntry>("offset_high"))
+    print(offset_of<IdtEntry>("reserved"))
+    print(size_of<IdtDescriptor>())
+    print(offset_of<IdtDescriptor>("limit"))
+    print(offset_of<IdtDescriptor>("base"))
+    print(size_of<TrapFrame>())
+    print(offset_of<TrapFrame>("vector"))
+    print(offset_of<TrapFrame>("r15"))
+    print(offset_of<TrapFrame>("rax"))
+    print(offset_of<TrapFrame>("error"))
+    print(offset_of<TrapFrame>("rip"))
+    print(offset_of<TrapFrame>("cs"))
+    print(offset_of<TrapFrame>("rflags"))
+}

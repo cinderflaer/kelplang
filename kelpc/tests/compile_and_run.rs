@@ -5260,11 +5260,7 @@ fn an_impl_naming_no_declared_trait_is_rejected() {
 fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
     assert_rejected_with(
         "tests/fixtures/traits_dyn.kp",
-        "'dyn' trait objects are not in this slice",
-    );
-    assert_rejected_with(
-        "tests/fixtures/traits_default_body.kp",
-        "default body is not in this slice",
+        "has to be borrowed",
     );
     assert_rejected_with(
         "tests/fixtures/traits_associated_type.kp",
@@ -5279,16 +5275,80 @@ fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
         "'where' clause is not in this slice",
     );
     assert_rejected_with(
-        "tests/fixtures/traits_supertrait.kp",
-        "a trait cannot inherit in this slice",
-    );
-    assert_rejected_with(
         "tests/fixtures/traits_drop_declared.kp",
         "the trait 'Drop' is built in",
     );
-    assert_rejected_with(
+}
+
+/// A-12 slice 3: a trait method may carry a default body. An impl may take it
+/// as written, override it, or omit every method of an all-default trait, and a
+/// default may call the trait's other methods through `self`.
+#[test]
+fn a_default_method_is_inherited_overridden_and_may_call_the_traits_others() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_default_body.kp",
+        "9\n9\n18\n5\n",
+    );
+}
+
+/// A-12 slice 3: `trait B: A` requires an `impl A for` the type, lets a
+/// `<T: B>` call `A`'s methods, and lets a `T: B` satisfy a `T: A` bound.
+#[test]
+fn a_supertrait_is_required_and_its_methods_are_callable_through_the_subtrait() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_supertrait.kp",
+        "12\n21\n",
+    );
+}
+
+/// A-12 slice 3: a trait implemented for a builtin type that already carries
+/// methods (`i32`, `String`) is reached through a generic exactly as a
+/// `datac`'s impl is.
+#[test]
+fn a_trait_implemented_for_a_builtin_is_called_through_a_generic() {
+    assert_compiles_and_runs(
         "tests/fixtures/traits_impl_for_builtin.kp",
-        "'i32' is a builtin type",
+        "20\n36\na string\n",
+    );
+}
+
+/// A-12 slice 3: a default body is resolved in the trait's module even when
+/// the impl that inherits it lives in the implementing type's module, so it can
+/// name the trait module's own types.
+#[test]
+fn a_default_body_resolves_in_the_traits_own_module() {
+    assert_project_runs(
+        "traits_default_cross",
+        &project("traits_default_cross"),
+        "10\n10\n",
+    );
+}
+
+/// A-12 slice 3 rejections: a missing supertrait impl, a supertrait cycle, an
+/// override that does not match the defaulted signature, a default body that
+/// calls an undeclared method, and a builtin impl outside the trait's module.
+#[test]
+fn the_new_trait_shapes_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_missing_supertrait.kp",
+        "is missing its supertrait",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_supertrait_cycle.kp",
+        "supertrait relation is cyclic",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_default_wrong_override.kp",
+        "does not match trait 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_default_undeclared_method.kp",
+        "has no method 'nope'",
+    );
+    assert_project_rejected(
+        "traits_builtin_orphan",
+        &project("traits_builtin_orphan"),
+        "is a builtin type, which has no module",
     );
 }
 
@@ -5300,6 +5360,130 @@ fn self_stands_for_the_implementing_type_everywhere_in_a_signature() {
     assert_compiles_and_runs(
         "tests/fixtures/traits_self_in_signature.kp",
         "1\n2\n",
+    );
+}
+
+/// A-12 slice 4: two types implementing one trait, called through a `&dyn` in
+/// a loop over borrowed bindings.
+#[test]
+fn two_types_are_dispatched_through_a_dyn_in_a_loop() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_dyn_dispatch.kp",
+        "circle\nsquare\n21.000000\n",
+    );
+}
+
+/// A-12 slice 4: a default method and a supertrait method are both callable
+/// through a `&dyn` of the subtrait.
+#[test]
+fn a_default_and_a_supertrait_method_are_callable_through_a_dyn() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_dyn_default_super.kp",
+        "circle\na shape\n16.000000\n",
+    );
+}
+
+/// A-12 slice 4: `&mut dyn` mutates its target through the vtable.
+#[test]
+fn a_mut_dyn_mutates_its_target() {
+    assert_compiles_and_runs("tests/fixtures/traits_dyn_mut.kp", "11\n18\n");
+}
+
+/// A-12 slice 4: a `&dyn` binding forwards on to another function.
+#[test]
+fn a_dyn_borrow_forwards_to_another_function() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_dyn_forward.kp",
+        "36.000000\n18.000000\n",
+    );
+}
+
+/// A-12 slice 4: a trait implemented for a `Copy` builtin is reached through a
+/// `&dyn`, so the thunk reads the scalar out of the erased pointer.
+#[test]
+fn a_builtin_impl_is_reached_through_a_dyn() {
+    assert_compiles_and_runs("tests/fixtures/traits_dyn_builtin.kp", "84\n");
+}
+
+/// A-12 slice 4 rejections: an object-unsafe trait that returns `Self` or takes
+/// another `Self`, an owned trait object, a trait object in a field, a returned
+/// `&dyn`, a type that does not implement the trait, and an unknown trait.
+#[test]
+fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_unsafe_self.kp",
+        "returns 'Self'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_unsafe_param.kp",
+        "takes a 'Self' parameter",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_boxed.kp",
+        "has to be borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_field.kp",
+        "is a borrowed type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_return.kp",
+        "cannot be a return type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_not_impl.kp",
+        "does not implement 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_unknown.kp",
+        "names no declared trait",
+    );
+}
+
+/// A-12 slice 4: a freestanding riscv64 image dispatches through a `&dyn` and a
+/// `&mut dyn` over the UART, and the linked ELF references no undefined symbol,
+/// which is to say the vtable is `.rodata`, the thunks are ordinary code, and
+/// no `kelp_rt` or libc helper is reached.
+#[test]
+fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding dyn boot: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_dyn");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_dyn"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding dyn build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding dyn image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_dyn",
+        &project("freestanding_dyn"),
+        &["hello from dyn", "1", "bye from dyn", "2"],
     );
 }
 
@@ -10585,6 +10769,25 @@ fn boot_under_qemu_containing(
     );
 }
 
+/// The same boot, for a run whose interesting output is a sequence rather than
+/// a set of whole lines. Kernel stage 22's exception reports carry a `rip` the
+/// linker chose, so each `expected` entry is a substring that has to appear
+/// after the one before it; SeaBIOS' "Booting from ROM.." is glued to the
+/// first kernel line, which is the other reason the match is not anchored.
+fn boot_under_qemu_in_order(emu: &Emulator, name: &str, target: &Path, expected: &[&str]) {
+    let marker = expected.last().expect("at least one expected line");
+    let captured = boot_and_capture(emu, name, target, &|got| got.contains(marker));
+    let mut from = 0usize;
+    for want in expected {
+        match captured[from..].find(want) {
+            Some(at) => from += at + want.len(),
+            None => panic!(
+                "the serial output of '{name}' has no '{want}' after the earlier lines:\n{captured}"
+            ),
+        }
+    }
+}
+
 /// Builds a freestanding project, boots it under `emu`, and reads the serial
 /// output until `done` says the interesting part has arrived (or the deadline
 /// fires), then kills the emulator and returns everything captured.
@@ -11451,6 +11654,19 @@ fn static_mut_counter_and_a_lookup_table_run() {
     );
 }
 
+/// Kernel stage 21: an array static's element may be a `datac`, and a nested
+/// array is the same rule one level down. This is the shape a scheduler's table
+/// of tasks needs (a saved frame and a stack per task), and it runs on both
+/// backends because the project is an ordinary hosted program.
+#[test]
+fn a_static_can_hold_an_array_of_datac_values() {
+    assert_project_runs(
+        "static_datac_array",
+        &project("static_datac_array"),
+        "45\n2\n3\n9\n1\n",
+    );
+}
+
 /// An `Atomic<i64>` static incremented from two `thread.spawn`ed workers and
 /// read back after both joins: exactly 1000, with no `unsafe`, because an
 /// atomic mutates through a shared borrow.
@@ -11932,6 +12148,20 @@ fn the_trap_frame_offsets_are_what_the_trap_entry_hardcodes() {
     );
 }
 
+/// Kernel stage 21: the scheduler's task table is the second hardcoded layout.
+/// The naked trap entry saves `x1..x31` at 0..240, `sepc` at 248 and `mstatus`
+/// at 256, reads the scheduler's address from the word at 264, and the
+/// scheduler reaches `state` at 272, `id` at 280 and the 4096-byte stack at 288
+/// from the table's base. `sched.layout_ok` checks the same numbers at boot.
+#[test]
+fn the_scheduler_task_offsets_are_what_the_trap_entry_hardcodes() {
+    assert_project_runs(
+        "sched_task_layout",
+        &project("sched_task_layout"),
+        "264\n8\n248\n256\n4384\n0\n264\n272\n280\n288\n",
+    );
+}
+
 /// Kernel stage 11's acceptance test: `examples/kernel0-user` drops to U-mode
 /// and takes `ecall`s. The first program writes `hello from user`, earns
 /// `-14` from a write whose pointer names a mapped kernel page, turns the errno
@@ -11983,6 +12213,62 @@ fn kernel0_user_image_links_with_no_undefined_symbols() {
         return;
     }
     assert_no_undefined_symbols("kernel0_user", &fixture("../examples/kernel0-user"));
+}
+
+/// Kernel stage 21's acceptance boot: `examples/kernel0-sched` programs the
+/// CLINT's `mtimecmp`, enables the machine timer interrupt and round-robins
+/// three tasks that never yield, so the letters in the serial log can only come
+/// from preemption. The example's `run.sh` boots it and asserts that all three
+/// letters appear, that the letter changes at least three times and that no
+/// line is torn; this runs that script, which is where the serial assertions
+/// live.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_sched_preempts_three_tasks_on_the_machine_timer() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-sched boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let script = fixture("../examples/kernel0-sched/run.sh");
+    let run = Command::new("sh")
+        .arg(&script)
+        .env("KELPC", kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .output()
+        .expect("failed to spawn the kernel0-sched run script");
+    assert!(
+        run.status.success(),
+        "examples/kernel0-sched/run.sh failed:\n{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("no torn lines"),
+        "the run script did not reach its final line:\n{stdout}"
+    );
+}
+
+/// The scheduler image links with no undefined symbol: the trap entry, the
+/// scheduler and the CLINT driver reach only the image's own code, the linker
+/// script's stack symbols and the two device windows it was granted.
+///
+/// It needs `ld.lld` and the llvm tools from `dev-kernel.nix`.
+#[test]
+fn kernel0_sched_image_links_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the kernel0-sched symbol test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    assert_no_undefined_symbols("kernel0_sched", &fixture("../examples/kernel0-sched"));
 }
 
 /// A `pub static`/`pub static mut` is reached across modules exactly as a
@@ -13402,6 +13688,112 @@ fn kernel0_x86_64_lmode_proves_long_mode_then_triple_faults() {
         "kernel0_x86_64_lmode_boot",
         &fixture("../examples/kernel0-x86_64-lmode"),
         &["hello from kelp (x86_64)", "long mode on"],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Kernel stage 22: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer.
+// `examples/kernel0-x86_64-idt` is the third x86-64 boot: it loads an IDT whose
+// gates are naked functions, resumes from a `ud2` and a divide by zero, takes
+// five timer interrupts, and ends in a store through an unmapped page whose
+// `#PF` handler prints and halts. Freestanding is LLVM-only by design, so these
+// build through the default backend; the boot needs `qemu-system-x86_64` and
+// `ld.lld` from `dev-kernel.nix`.
+// ---------------------------------------------------------------------------
+
+/// The ELF half of the stage: the five gates are functions, each of them
+/// 16-byte aligned (the `align(16)` clause, so an IDT entry never points into
+/// the middle of another gate), and the image references no undefined symbol,
+/// which is the whole claim that no libc helper sits behind the report or the
+/// dispatcher.
+#[test]
+fn kernel0_x86_64_idt_builds_five_aligned_gates_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the x86-64 idt elf test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = build_freestanding(
+        "kernel0_x86_64_idt",
+        &fixture("../examples/kernel0-x86_64-idt"),
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+
+    let symbols = tool("llvm-nm", &[path]);
+    for gate in [
+        "kelp_idt__gate_de",
+        "kelp_idt__gate_ud",
+        "kelp_idt__gate_gp",
+        "kelp_idt__gate_pf",
+        "kelp_idt__gate_timer",
+    ] {
+        let address = nm_address(&symbols, gate);
+        assert_eq!(
+            address % 16,
+            0,
+            "'{gate}' is at {address:#x}, which is not 16-byte aligned:\n{symbols}"
+        );
+    }
+
+    let undefined = tool("llvm-nm", &["-u", path]);
+    assert!(
+        undefined.trim().is_empty(),
+        "the x86-64 idt image has undefined symbols:\n{undefined}"
+    );
+}
+
+/// The boot half: the serial lines have to carry, in this order, the `#UD` and
+/// the divide by zero (both reported and both resumed, which the ticks after
+/// them prove), the five timer ticks, the boot's own `x86: done`, and the
+/// `#PF` on the unmapped store with no repair behind it, so it is the last
+/// line. The `rip` in a report is the address the linker chose, so a report is
+/// matched by shape; the error code and the `cr2` are pinned, because a
+/// supervisor write to a not-present page is error code 2 and the address is
+/// the one `main.kp` names.
+#[test]
+fn kernel0_x86_64_idt_takes_its_faults_and_ticks_the_timer_in_order() {
+    if !have_ld_lld() || !have_qemu(&X86_64_QEMU) {
+        println!(
+            "skipping the x86-64 idt boot test: 'ld.lld' or 'qemu-system-x86_64' \
+             is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu_in_order(
+        &X86_64_QEMU,
+        "kernel0_x86_64_idt_boot",
+        &fixture("../examples/kernel0-x86_64-idt"),
+        &[
+            "exception 6 err 0 rip 0x",
+            "exception 0 err 0 rip 0x",
+            "tick 1",
+            "tick 2",
+            "tick 3",
+            "tick 4",
+            "tick 5",
+            "x86: done",
+            "exception 14 err 2 rip 0x",
+            "cr2 0x0000000200000000",
+        ],
+    );
+}
+
+/// Kernel stage 22's layout contract: the gates hardcode the `TrapFrame`
+/// offsets and the offset split an IDT entry wants, and the compiler checks
+/// neither end against the other. `tests/projects/x86_idt_layout` copies the
+/// example's declarations and prints the numbers: the gate is 16 bytes with
+/// its offset at 0/6/8, the `lidt` descriptor is ten bytes with the limit at 0
+/// and the base at 2, and the frame is 160 bytes with the vector at 0, the
+/// registers from 8 to 120, the error code at 128 and `RIP`/`CS`/`RFLAGS` at
+/// 136/144/152.
+#[test]
+fn the_x86_idt_gate_and_frame_offsets_are_what_the_gates_hardcode() {
+    assert_project_runs(
+        "x86_idt_layout",
+        &project("x86_idt_layout"),
+        "16\n0\n2\n4\n5\n6\n8\n12\n10\n0\n2\n160\n0\n8\n120\n128\n136\n144\n152\n",
     );
 }
 

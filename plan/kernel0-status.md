@@ -105,7 +105,12 @@ and those changes are described with the gaps.
    this gap is the interrupt half: `kernel0-trap` installs `mtvec` itself, and
    nothing enables `mstatus.MIE` or models the privilege transition. The plan's
    stage 10 (panic semantics with no OS) and stage 11 (MMIO capabilities) are
-   where that becomes a checked story rather than a comment.
+   where that becomes a checked story rather than a comment. Kernel stage 21
+   (`plan/scheduler.md`) closes the machine-mode *timer* half with
+   `examples/kernel0-sched`, which enables `mie.MTIE` and `mstatus.MIE` and takes
+   the interrupt in a naked `trap_entry`; the checked `interrupt` attribute the
+   plan's stage 5 deferred is still open, and user-mode preemption is not part
+   of stage 21.
 5. **No C-oracle coverage.** Freestanding is LLVM-only by design (stage 4), so the C backend
    refuses these projects and the usual "both backends, same behaviour" rule does not apply
    to them. The rule still holds everywhere else.

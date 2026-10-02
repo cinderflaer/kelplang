@@ -77,7 +77,14 @@ struct TraitInfo {
     /// implemented.
     prefix: String,
     aliases: HashMap<String, String>,
+    /// The trait's own methods, in source order: a `FunctionBody::Signature`
+    /// is required, any other body is a default an impl may omit (A-12 slice
+    /// 3).
     methods: Vec<ast::FunctionDecl>,
+    /// The supertraits, canonical and in source order (A-12 slice 3).
+    /// Implementing this trait requires an impl of each, and a bound on this
+    /// trait satisfies a bound on any of them.
+    supertraits: Vec<String>,
     module: String,
 }
 
@@ -166,6 +173,10 @@ struct TypeEnv {
     /// whole program because an impl may live in the trait's module while the
     /// call site is elsewhere.
     impls: std::rc::Rc<HashMap<String, std::collections::HashSet<String>>>,
+    /// The `(trait, type)` pairs a `&dyn` coercion used (A-12 slice 4),
+    /// collected while bodies are checked. Each one gets a vtable in
+    /// `tir::Program`, and a pair no coercion names gets none.
+    dyn_pairs: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<(String, String)>>>,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -1150,6 +1161,34 @@ impl TypeScope<'_> {
                 span: ty.span,
             });
         }
+        // A borrowed trait object (A-12 slice 4): `&dyn Name` / `&mut dyn
+        // Name`. The trait must be declared and object safe; the legal
+        // positions (a parameter or a local) are enforced by the callers that
+        // would otherwise store the value, exactly as they are for `Ty::Ref`
+        // (`is_borrowed_field_ty` and `resolve_element`).
+        if let Some(written) = &ty.dyn_trait {
+            let qualified = self.qualify(written, ty.span)?;
+            if !self.env.traits.contains_key(&qualified) {
+                return Err(TypeError {
+                    message: format!(
+                        "'&dyn {written}' names no declared trait: declare 'trait {written} {{ ... }}' first (or import the module that does)"
+                    ),
+                    span: ty.span,
+                });
+            }
+            // A trait named through another module's alias has to be exported
+            // by that module, exactly as a bound on the same trait does.
+            if let Some((alias, item)) = written.split_once('.') {
+                if !exported(&qualified, &self.env) {
+                    return Err(private_item_error(alias, item, ty.span));
+                }
+            }
+            check_dyn_object_safety(&qualified, ty.span, &self.env.traits)?;
+            return Ok(Ty::Dyn {
+                mutable: ty.amp_mut,
+                trait_name: qualified,
+            });
+        }
         // A tuple type (`plan/syntax.md` 3): `(A, B)`. Every element is stored
         // by value, exactly as a `datac` field is, so the element rules are the
         // field rules: an element may not be a borrow, and `unit` cannot be
@@ -1955,6 +1994,18 @@ impl TypeScope<'_> {
     /// under the elision rule, meaning "a borrow of the first reference
     /// parameter" (see `borrowck.rs`, which enforces exactly that).
     fn resolve_return(&self, ty: &ast::TypeExpr) -> Result<Ty> {
+        // A borrowed trait object may not be returned (A-12 slice 4): a return
+        // would have to name the lifetime of what it borrows, and v1 has no
+        // lifetime syntax, exactly as for a `Ty::Ref` return.
+        if ty.dyn_trait.is_some() {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' cannot be a return type: a borrowed trait object points at a value the caller owns, and a return would have to name how long that borrow lives; take it as a parameter, or return an owned value",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
         let base = self.resolve(ty, false)?;
         if ty.amp {
             Ok(Ty::Ref {
@@ -2137,11 +2188,229 @@ fn collect_traits(
                 prefix: project.prefix_of(&t.module).to_string(),
                 aliases: project.alias_prefixes_of(&t.module),
                 methods: t.methods.clone(),
+                supertraits: Vec::new(),
                 module: t.module.clone(),
             },
         );
     }
+    // A-12 slice 3: a supertrait is resolved in the trait's own module, once
+    // every trait is known, so `trait B: A` may name an `A` declared later in
+    // load order. It has to name a declared trait, and the relation has to be
+    // acyclic.
+    for t in &program.traits {
+        let mut canonical = Vec::new();
+        for s in &t.supertraits {
+            let key = match qualify_written_name(
+                &s.name,
+                project.prefix_of(&t.module),
+                &project.alias_prefixes_of(&t.module),
+            ) {
+                Some(key) => key,
+                None => {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'{}' names no module alias, so the supertrait of '{}' cannot be resolved",
+                            s.name, t.name
+                        ),
+                        s.span,
+                        t.module.clone(),
+                    ))
+                }
+            };
+            if !out.contains_key(&key) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}' is not a trait, so it cannot be a supertrait of '{}': a supertrait names a declared trait ('trait {} {{ ... }}')",
+                        s.name, t.name, s.name
+                    ),
+                    s.span,
+                    t.module.clone(),
+                ));
+            }
+            if !canonical.contains(&key) {
+                canonical.push(key);
+            }
+        }
+        if let Some(info) = out.get_mut(&t.name) {
+            info.supertraits = canonical;
+        }
+    }
+    if let Some(cycle) = supertrait_cycle(&out) {
+        let name = &cycle[0];
+        let span = program
+            .traits
+            .iter()
+            .find(|t| &t.name == name)
+            .map(|t| t.span)
+            .unwrap_or_else(|| program.traits[0].span);
+        let module = program
+            .traits
+            .iter()
+            .find(|t| &t.name == name)
+            .map(|t| t.module.clone())
+            .unwrap_or_default();
+        return Err(Diagnostic::new(
+            format!(
+                "the supertrait relation is cyclic: {}: a trait cannot inherit from itself",
+                cycle.join(" inherits from ")
+            ),
+            span,
+            module,
+        ));
+    }
     Ok(out)
+}
+
+/// Whether the supertrait relation has a cycle, returning one cycle (its names,
+/// first repeated once) so the error can name every participant. The relation
+/// has to be acyclic or the transitive bound check would not terminate.
+fn supertrait_cycle(traits: &HashMap<String, TraitInfo>) -> Option<Vec<String>> {
+    fn dfs(
+        name: &str,
+        traits: &HashMap<String, TraitInfo>,
+        state: &mut HashMap<String, u8>,
+        path: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        state.insert(name.to_string(), 1);
+        path.push(name.to_string());
+        for sup in &traits[name].supertraits {
+            match state.get(sup).copied().unwrap_or(0) {
+                1 => {
+                    let start = path.iter().position(|p| p == sup).unwrap_or(0);
+                    let mut cycle: Vec<String> = path[start..].to_vec();
+                    cycle.push(sup.clone());
+                    return Some(cycle);
+                }
+                0 => {
+                    if let Some(c) = dfs(sup, traits, state, path) {
+                        return Some(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+        path.pop();
+        state.insert(name.to_string(), 2);
+        None
+    }
+    let mut state: HashMap<String, u8> = HashMap::new();
+    for name in traits.keys() {
+        if state.get(name).copied().unwrap_or(0) == 0 {
+            let mut path = Vec::new();
+            if let Some(c) = dfs(name, traits, &mut state, &mut path) {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// The methods of `name` and its supertraits, supertraits first, recursively in
+/// declaration order, then the trait's own methods in source order (A-12 slice 4).
+/// This is the vtable's slot order and the order a method call through a `&dyn`
+/// resolves in, computed the same way at both sites so the two cannot drift.
+fn flattened_trait_methods<'a>(
+    traits: &'a HashMap<String, TraitInfo>,
+    name: &str,
+    out: &mut Vec<&'a ast::FunctionDecl>,
+) {
+    let Some(info) = traits.get(name) else {
+        return;
+    };
+    for sup in &info.supertraits {
+        flattened_trait_methods(traits, sup, out);
+    }
+    for m in &info.methods {
+        out.push(m);
+    }
+}
+
+/// Whether a written type mentions `Self` anywhere. The object-safety check
+/// uses this: a method that returns `Self`, or takes another `Self`, cannot be
+/// dispatched through a trait object because the concrete type is not known at
+/// the call.
+fn type_mentions_self(ty: &ast::TypeExpr) -> bool {
+    if ty.name == "Self" {
+        return true;
+    }
+    if ty
+        .tuple
+        .as_ref()
+        .is_some_and(|elems| elems.iter().any(type_mentions_self))
+    {
+        return true;
+    }
+    if ty.args.iter().any(type_mentions_self) {
+        return true;
+    }
+    if ty
+        .array_elem
+        .as_ref()
+        .is_some_and(|elem| type_mentions_self(elem))
+    {
+        return true;
+    }
+    if let Some(params) = &ty.fn_params {
+        if params.iter().any(|p| type_mentions_self(&p.ty)) {
+            return true;
+        }
+    }
+    if ty
+        .fn_ret
+        .as_ref()
+        .is_some_and(|ret| type_mentions_self(ret))
+    {
+        return true;
+    }
+    false
+}
+
+/// Object safety for `&dyn Name` (A-12 slice 4, `plan/traits.md` 9.2): no method
+/// may return `Self`, no parameter other than the receiver may mention `Self`,
+/// and no two methods of the flattened list may share a name (the vtable holds
+/// one slot per name). A violation names the trait and the method.
+fn check_dyn_object_safety(
+    name: &str,
+    span: Span,
+    traits: &HashMap<String, TraitInfo>,
+) -> Result<()> {
+    let mut flat = Vec::new();
+    flattened_trait_methods(traits, name, &mut flat);
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for m in &flat {
+        if let Some(ret) = &m.return_type {
+            if type_mentions_self(ret) {
+                return Err(TypeError {
+                    message: format!(
+                        "'&dyn {}' is not allowed: method '{}' returns 'Self', and a trait object does not know the concrete type it would build",
+                        name, m.name
+                    ),
+                    span,
+                });
+            }
+        }
+        for p in &m.params {
+            if type_mentions_self(&p.ty) {
+                return Err(TypeError {
+                    message: format!(
+                        "'&dyn {}' is not allowed: method '{}' takes a 'Self' parameter, which a trait object cannot pass (the vtable erases the concrete type); make the parameter a borrow of a concrete type, or use a generic function instead",
+                        name, m.name
+                    ),
+                    span,
+                });
+            }
+        }
+        if !seen.insert(m.name.as_str()) {
+            return Err(TypeError {
+                message: format!(
+                    "'&dyn {}' is not allowed: two methods are named '{}', and a vtable holds one slot per name",
+                    name, m.name
+                ),
+                span,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Every `impl Name for Type { ... }` in the program (A-12 slice 2), with both
@@ -2276,6 +2545,13 @@ fn check_trait_impl_names(
     for e in &program.enums {
         type_modules.insert(&e.name, &e.module);
     }
+    // The (trait, type) pairs declared anywhere in the program, so a
+    // supertrait requirement (A-12 slice 3) is answered once every impl has
+    // been seen rather than in source order.
+    let declared: std::collections::HashSet<(&str, &str)> = impls
+        .iter()
+        .map(|i| (i.trait_name.as_str(), i.type_name.as_str()))
+        .collect();
     let mut seen: HashMap<(&str, &str), &TraitImplInfo> = HashMap::new();
     for imp in impls {
         let Some(info) = traits.get(&imp.trait_name) else {
@@ -2288,7 +2564,33 @@ fn check_trait_impl_names(
                 imp.module.clone(),
             ));
         };
-        let Some(type_module) = type_modules.get(imp.type_name.as_str()).copied() else {
+        // A builtin `for` type (A-12 slice 3) has no module of its own, so the
+        // impl must sit in the trait's module (the orphan rule); a declared
+        // `datac`/`enum` may be implemented in either owner's module.
+        let type_module: &str = if let Some(_builtin) = builtin_for_type_name(&imp.type_name) {
+            if imp.module != info.module {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'impl {} for {}' is written in module '{}', but '{}' is a builtin type, which has no module: implement a trait for a builtin in the trait's own module ('{}')",
+                        imp.trait_name, imp.type_name, imp.module, imp.type_name, info.module
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+            info.module.as_str()
+        } else if let Some(module) = type_modules.get(imp.type_name.as_str()).copied() {
+            module
+        } else if crate::types::Ty::from_name(&imp.type_name).is_some() {
+            return Err(Diagnostic::new(
+                format!(
+                    "'{}' is a builtin type that carries no methods, so 'impl {} for {}' has nothing to add: implement the trait for a 'datac'/'enum', or for a builtin whose methods the compiler already provides ('i32', 'String', ...)",
+                    imp.type_name, imp.trait_name, imp.type_name
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        } else {
             return Err(Diagnostic::new(
                 format!(
                     "'{}' is not a declared 'datac' or 'enum', so 'impl {} for {}' has nothing to implement",
@@ -2326,6 +2628,22 @@ fn check_trait_impl_names(
                 ));
             }
         }
+        // A-12 slice 3: implementing a trait means implementing its
+        // supertraits too, because a bound on the supertrait is what the
+        // callers of the subtrait's methods rely on.
+        for sup in &info.supertraits {
+            if !declared.contains(&(sup.as_str(), imp.type_name.as_str())) {
+                let display = traits.get(sup).map(|t| t.name.as_str()).unwrap_or(sup);
+                return Err(Diagnostic::new(
+                    format!(
+                        "'impl {} for {}' is missing its supertrait: '{}' needs 'impl {} for {}' as well, because trait '{}' inherits from '{}'",
+                        imp.trait_name, imp.type_name, imp.trait_name, display, imp.type_name, info.name, display
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+        }
         if let Some(first) = seen.insert((&imp.trait_name, &imp.type_name), imp) {
             return Err(Diagnostic::new(
                 format!(
@@ -2338,6 +2656,15 @@ fn check_trait_impl_names(
         }
     }
     Ok(())
+}
+
+/// A builtin type a trait may be implemented for (A-12 slice 3): one the
+/// compiler already gives methods to, which is exactly the set `builtin_type_name`
+/// names. `None` for a `datac`/`enum` name, a name that resolves to nothing, or
+/// a builtin with no method surface (`bool`, `char`, `f32`, `f64`, `unit`).
+fn builtin_for_type_name(name: &str) -> Option<Ty> {
+    let ty = crate::types::Ty::from_name(name)?;
+    builtin_type_name(&ty).map(|_| ty)
 }
 
 /// Checks that every `impl Name for Type { ... }` block implements exactly the
@@ -2365,7 +2692,8 @@ fn check_trait_impl_signatures(
         .collect();
     for imp in impls {
         let info = &traits[&imp.trait_name];
-        let self_ty = Ty::Struct(imp.type_name.clone());
+        let self_ty = builtin_for_type_name(&imp.type_name)
+            .unwrap_or_else(|| Ty::Struct(imp.type_name.clone()));
         for m in &info.methods {
             let key = format!("{}#{}", imp.type_name, m.name);
             let Some(impl_sig) = sigs.get(&key) else {
@@ -5300,9 +5628,17 @@ fn check_static_type_inner(
         Ty::Array(elem, _) => {
             if matches!(**elem, Ty::Bool | Ty::Char) || elem.is_integer() {
                 Ok(())
+            } else if matches!(**elem, Ty::Struct(_) | Ty::Array(..)) {
+                // Kernel stage 21: an array of `datac` is what a scheduler's
+                // table of tasks is, and a nested array is the same rule one
+                // level down. The element has to obey its own type's rule, so
+                // an array of a heap type or a `Ptr` is refused by the
+                // recursion rather than by a second list.
+                check_static_type_inner(elem.as_ref(), structs, seen)
             } else {
                 Err(format!(
-                    "an array static's element must be an integer, 'bool' or 'char', not '{}'",
+                    "an array static's element must be an integer, 'bool', 'char' or a \
+                     'datac' of those, not '{}'",
                     elem.display()
                 ))
             }
@@ -6986,6 +7322,7 @@ fn check_program_pass(
         ),
         traits: traits.clone(),
         impls: std::rc::Rc::new(impls),
+        dyn_pairs: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -7432,7 +7769,14 @@ fn check_program_pass(
         let mut params = Vec::new();
         if let Some(r) = &f.receiver {
             let ty = scope.resolve_receiver(r).map_err(|e| e.in_module(&f.module))?;
-            if struct_name_of(&ty).is_none() {
+            // A-12 slice 3: an impl method on a builtin type is legal exactly
+            // when the builtin already carries methods (`builtin_type_name`
+            // names it); the `for` type is what `check_trait_impl_names`
+            // vetted, so this is the same set. Every other method is still on
+            // a declared `datac`/`enum`.
+            if struct_name_of(&ty).is_none()
+                && !(f.trait_impl.is_some() && builtin_type_name(&ty).is_some())
+            {
                 return Err(Diagnostic::new(
                     format!(
                         "'{}' is a builtin type — its methods are provided by the compiler and cannot be declared",
@@ -7914,6 +8258,61 @@ fn check_program_pass(
     }
     const_data.sort_by(|a, b| a.name.cmp(&b.name));
 
+    // A-12 slice 4: one vtable per `(trait, type)` pair a coercion used, in a
+    // stable order so both backends emit the same tables. Each slot names the
+    // concrete method's own key and carries its signature, so the thunk a
+    // backend generates needs no lookup of its own.
+    let mut dyn_pairs: Vec<(String, String)> = env.dyn_pairs.borrow().iter().cloned().collect();
+    dyn_pairs.sort();
+    let mut dyn_vtables: Vec<tir::DynVtable> = Vec::new();
+    for (trait_name, type_name) in dyn_pairs {
+        let mut flat = Vec::new();
+        flattened_trait_methods(&traits, &trait_name, &mut flat);
+        let trait_prefix = traits
+            .get(&trait_name)
+            .map(|info| info.prefix.clone())
+            .unwrap_or_default();
+        let mut slots = Vec::new();
+        for m in &flat {
+            // A builtin `for` type keeps its written name in the impl record
+            // (`impl Name for i32` stores `i32`), while `resolve.rs` qualifies
+            // the method's receiver with the declaring module's prefix. So the
+            // concrete key is the direct one for a `datac`/`enum` and, for a
+            // builtin in a module that has a prefix, the prefixed spelling.
+            let direct = format!("{type_name}#{}", m.name);
+            let prefixed = format!("{trait_prefix}{type_name}#{}", m.name);
+            let Some((target, sig)) = sigs
+                .get(&direct)
+                .map(|s| (direct.clone(), s))
+                .or_else(|| sigs.get(&prefixed).map(|s| (prefixed.clone(), s)))
+            else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "internal: '&dyn {trait_name}' names method '{}', and no concrete method '{direct}' exists for '{type_name}'",
+                        m.name
+                    ),
+                    m.span,
+                    m.module.clone(),
+                ));
+            };
+            slots.push(tir::DynVtableSlot {
+                method: m.name.clone(),
+                target,
+                params: sig
+                    .params
+                    .iter()
+                    .map(|(_, t)| t.clone())
+                    .collect(),
+                ret: sig.ret.clone(),
+            });
+        }
+        dyn_vtables.push(tir::DynVtable {
+            trait_name,
+            type_name,
+            slots,
+        });
+    }
+
     Ok(tir::Program {
         structs: records,
         enums: sums,
@@ -7932,6 +8331,7 @@ fn check_program_pass(
         },
         const_data,
         statics: static_decls,
+        dyn_vtables,
     })
 }
 
@@ -9022,6 +9422,14 @@ fn check_function(
         fns,
         statics,
     );
+    // A synthesized trait default resolves its body in the trait's module (see
+    // `FunctionDecl::body_module`): its signature was substituted with the
+    // implementing type, but its body's types and free names were written in
+    // the trait's module.
+    if let Some(m) = &f.body_module {
+        ctx.prefix = project.prefix_of(m).to_string();
+        ctx.aliases = project.alias_prefixes_of(m);
+    }
     ctx.type_args = type_args.clone();
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
@@ -10077,6 +10485,17 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         let expected = expected.expect("matched above");
         let value = check_expr(expr, ctx, None)?;
         return Ok(coerce_fn_to_closure(expected.clone(), value));
+    }
+    // A borrow written where a `&dyn Trait` is expected (A-12 slice 4): the one
+    // coercion this slice adds, and the reason it is here is that every site
+    // that knows an expected type (a call argument, a typed `val`/`var`, a
+    // `return`, a field) reaches the operand through this function. The operand
+    // is checked with no expectation, so what is coerced is the plain `&x` it
+    // already is.
+    if let Some(Ty::Dyn { .. }) = expected {
+        let want = expected.expect("matched above").clone();
+        let value = check_expr(expr, ctx, None)?;
+        return coerce_to_dyn(want, value, expr.span(), ctx);
     }
     match expr {
         // Handled above, before the closure widening.
@@ -12975,6 +13394,146 @@ fn coerce_fn_to_scoped(expected: Ty, value: tir::Expr) -> tir::Expr {
     }
 }
 
+/// The name a `Ty` answers to in the trait-impl table (A-12 slice 4): a
+/// `datac`/`enum`'s canonical key, or the written name of a builtin
+/// (`i32`, `String`, `AtomicI64`). `None` for a type no trait can be
+/// implemented for, which is what makes a coercion from one an error rather
+/// than a vtable that names nothing.
+fn dyn_target_name(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Struct(name) => Some(name.clone()),
+        Ty::Atomic(elem) => crate::types::atomic_alias_name(elem).map(str::to_string),
+        other => builtin_type_name(other).map(str::to_string),
+    }
+}
+
+/// The one coercion this slice adds (A-12 slice 4, `plan/traits.md` 9.3): a
+/// `&T` where `T` implements `Trait` becomes a `&dyn Trait`, and a `&mut T`
+/// becomes either spelling. The value is a fat pair, and the coercion records
+/// the `(trait, type)` pair so the vtable list knows to emit one.
+fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<tir::Expr> {
+    let Ty::Dyn { mutable: want_mut, trait_name } = &want else {
+        return Ok(value);
+    };
+    if value.ty == want {
+        return Ok(value);
+    }
+    // A `&dyn Name` value retypes to another spelling of the same trait (so a
+    // `&mut dyn` forwards to a `&dyn` parameter), but never to a different
+    // trait: there is no upcast in this slice.
+    if let Ty::Dyn { mutable: src_mut, trait_name: src_trait } = &value.ty {
+        if src_trait != trait_name {
+            return Err(TypeError {
+                message: format!(
+                    "expected '{}', found '{}': a trait object does not convert to another trait's ('{}' to '{}'); take a bound on a type parameter, or coerce from the concrete value",
+                    want.display(),
+                    value.ty.display(),
+                    src_trait,
+                    trait_name
+                ),
+                span,
+            });
+        }
+        if *want_mut && !*src_mut {
+            return Err(TypeError {
+                message: format!(
+                    "expected '{}', found '{}': a shared borrow cannot become an exclusive trait object",
+                    want.display(),
+                    value.ty.display()
+                ),
+                span,
+            });
+        }
+        let mut retyped = value;
+        retyped.ty = want;
+        return Ok(retyped);
+    }
+    let Ty::Ref { mutable: src_mut, inner } = &value.ty else {
+        return Err(TypeError {
+            message: format!(
+                "expected '{}', found '{}': a trait object is built from a borrow, so write '&value' (or '&mut value' for '{want}')",
+                want.display(),
+                value.ty.display(),
+                want = want.display()
+            ),
+            span,
+        });
+    };
+    if *want_mut && !*src_mut {
+        return Err(TypeError {
+            message: format!(
+                "expected '{}', found '{}': a shared borrow cannot become an exclusive trait object",
+                want.display(),
+                value.ty.display()
+            ),
+            span,
+        });
+    }
+    // An `&mut` operand needs a place to write into, exactly as an `&mut`
+    // argument of a declared parameter does: a temporary staged for the call
+    // would swallow the write, and a field of one would take the write down
+    // with it. A value that is already a borrow (a `mut T` parameter read, or
+    // a call's result) is a pointer in hand and needs no such place.
+    if *src_mut {
+        if let tir::ExprKind::Ref { expr: place, .. } = &value.kind {
+            if !is_durable_place(place) {
+                return Err(TypeError {
+                    message: format!(
+                        "expected '{}', found '{}': an exclusive borrow needs a variable or field to write through, not a temporary value",
+                        want.display(),
+                        value.ty.display()
+                    ),
+                    span,
+                });
+            }
+            check_target_writable(place, ctx)?;
+        }
+    }
+    let Some(type_name) = dyn_target_name(inner) else {
+        return Err(TypeError {
+            message: format!(
+                "expected '{}', found '{}': '{}' cannot be the value behind a trait object",
+                want.display(),
+                value.ty.display(),
+                inner.display()
+            ),
+            span,
+        });
+    };
+    let implements = ctx
+        .env
+        .impls
+        .get(trait_name)
+        .is_some_and(|set| set.contains(&type_name));
+    if !implements {
+        return Err(TypeError {
+            message: format!(
+                "expected '{}', found '{}': '{}' does not implement '{}', so write 'impl {} for {}' first",
+                want.display(),
+                value.ty.display(),
+                inner.display(),
+                trait_name,
+                trait_name,
+                inner.display()
+            ),
+            span,
+        });
+    }
+    ctx.env
+        .dyn_pairs
+        .borrow_mut()
+        .insert((trait_name.clone(), type_name.clone()));
+    Ok(tir::Expr {
+        kind: tir::ExprKind::DynCoerce {
+            trait_name: trait_name.clone(),
+            type_name,
+            expr: Box::new(value),
+        },
+        ty: want,
+        span,
+    })
+}
+
 /// The one sentence that explains why a plain function value and a closure are
 /// different types, when one is passed where the other is expected (A-4 phase
 /// E). The two are the same shape of value and are called identically, so a
@@ -14051,6 +14610,43 @@ fn func_template_named(ctx: &Ctx, name: &str, owned: &str) -> Option<String> {
     (name.contains('.') && ctx.fns.templates.contains_key(name)).then(|| name.to_string())
 }
 
+/// Whether `ty_name` implements `trait_key`, directly or through a supertrait
+/// (A-12 slice 3): a type with `impl B for` satisfies a bound on `A` whenever
+/// `B: A`, because implementing `B` required an `impl A for` the type.
+fn implements_trait(env: &TypeEnv, trait_key: &str, ty_name: &str) -> bool {
+    if env
+        .impls
+        .get(trait_key)
+        .map(|types| types.contains(ty_name))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    env.impls.iter().any(|(other, types)| {
+        other != trait_key && types.contains(ty_name) && trait_requires(env, other, trait_key)
+    })
+}
+
+/// Whether trait `sub` inherits, directly or transitively, from `sup`.
+fn trait_requires(env: &TypeEnv, sub: &str, sup: &str) -> bool {
+    let mut stack = vec![sub.to_string()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t.clone()) {
+            continue;
+        }
+        if t == sup {
+            return true;
+        }
+        if let Some(info) = env.traits.get(&t) {
+            for s in &info.supertraits {
+                stack.push(s.clone());
+            }
+        }
+    }
+    false
+}
+
 /// Checks the trait bounds one instantiation's type arguments must satisfy
 /// (A-12 slice 2). `tmpl` is the declaration and `type_args` the concrete
 /// arguments, so this answers about the type a call actually binds; `span` is
@@ -14110,14 +14706,11 @@ fn check_trait_bounds(
                     return Err(private_item_error(alias, item, span));
                 }
             }
-            let implements = struct_name_of(arg)
-                .map(|t| {
-                    ctx.env
-                        .impls
-                        .get(&key)
-                        .map(|types| types.contains(t))
-                        .unwrap_or(false)
-                })
+            let name = struct_name_of(arg)
+                .map(|s| s.to_string())
+                .or_else(|| builtin_type_name(arg).map(|s| s.to_string()));
+            let implements = name
+                .map(|n| implements_trait(&ctx.env, &key, &n))
                 .unwrap_or(false);
             if !implements {
                 return Err(TypeError {
@@ -14811,6 +15404,14 @@ fn check_method_call(
     // below. `check_expr` has no persistent side effects beyond reading
     // `ctx`, so checking the same expression twice here is safe.
     let probe = check_expr(receiver, ctx, None)?;
+    // A method call on a borrowed trait object (A-12 slice 4) goes through the
+    // vtable: the trait's flattened method list gives the slot, the receiver's
+    // type gives the mutability, and the trait's own signature gives the
+    // argument types.
+    if let Ty::Dyn { mutable, trait_name } = &probe.ty {
+        let (mutable, trait_name) = (*mutable, trait_name.clone());
+        return check_dyn_method_call(probe, &trait_name, mutable, method, args, span, ctx);
+    }
     // `w.is_null()` (gap 1): the one method an opaque handle has, comparing
     // the pointer against the type's null value. Any other name is a method
     // the handle does not have, which is a better diagnostic than the
@@ -15125,6 +15726,83 @@ fn check_method_call(
     Ok(tir::Expr {
         kind: tir::ExprKind::Call { callee: key, args: checked_args },
         ty: sig.ret,
+        span,
+    })
+}
+
+/// A method call through a borrowed trait object (A-12 slice 4,
+/// `plan/traits.md` 9.4): resolve the method in the trait's flattened list, check
+/// the receiver's mutability against the method's, check the arguments against
+/// the trait's own signature, and lower to a `tir::ExprKind::DynCall`.
+fn check_dyn_method_call(
+    receiver: tir::Expr,
+    trait_name: &str,
+    mutable: bool,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let mut flat = Vec::new();
+    flattened_trait_methods(&ctx.env.traits, trait_name, &mut flat);
+    let Some((slot, decl)) = flat.iter().enumerate().find(|(_, m)| m.name == method) else {
+        let names: Vec<&str> = flat.iter().map(|m| m.name.as_str()).collect();
+        return Err(TypeError {
+            message: format!(
+                "'&dyn {trait_name}' has no method '{method}' — its methods are {}",
+                names.join(", ")
+            ),
+            span,
+        });
+    };
+    let receiver_mut = decl
+        .receiver
+        .as_ref()
+        .is_some_and(|r| r.mutable);
+    if receiver_mut && !mutable {
+        return Err(TypeError {
+            message: format!(
+                "'{trait_name}.{method}' takes an exclusive receiver, and a shared '&dyn {trait_name}' cannot call it; make the receiver '&mut dyn {trait_name}'"
+            ),
+            span,
+        });
+    }
+    // The argument types come from the trait declaration, resolved in the
+    // trait's own module. `Self` has no concrete meaning here, but object
+    // safety already refused every method that mentions it outside the
+    // receiver, so a placeholder is never observed; `self_ty` only reaches
+    // the receiver's own type, which this drops.
+    let info = ctx
+        .env
+        .traits
+        .get(trait_name)
+        .expect("the receiver's own trait is in the table");
+    let sig = resolve_trait_method_sig(
+        info,
+        decl,
+        &Ty::Unit,
+        &ctx.structs,
+        &ctx.enums,
+        &ctx.env,
+        &ctx.consts,
+        &ctx.const_fns,
+    )?;
+    let params: Vec<(String, Ty)> = sig.params[1..].to_vec();
+    let checked = match_args(
+        &format!("method '{trait_name}.{method}'"),
+        &params,
+        args,
+        span,
+        ctx,
+    )?;
+    let ret = sig.ret;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::DynCall {
+            receiver: Box::new(receiver),
+            slot,
+            args: checked,
+        },
+        ty: ret,
         span,
     })
 }

@@ -723,8 +723,8 @@ impl Parser {
     }
 
     /// `trait Name { fun Self.m(...).R: T ... }` (A-12 slice 2). The body is
-    /// method signatures only: a body, an associated item and an inheritance
-    /// clause are each refused here, where the reason can name the follow-up.
+    /// methods only: an associated item is refused here, where the reason can
+    /// name the follow-up. A method with a body is a default (A-12 slice 3).
     fn parse_trait_decl(&mut self, is_pub: bool) -> PResult<TraitDecl> {
         let start = self.expect(TokenKind::Trait, "'trait'")?.span;
         let (name, name_span) = self.expect_ident()?;
@@ -757,13 +757,16 @@ impl Parser {
                 span: self.peek().span,
             });
         }
-        if self.check(&TokenKind::Colon) {
-            return Err(ParseError {
-                message: "a trait cannot inherit in this slice: there are no supertraits, so list every trait a function needs at the bound ('fun f<T: A + B>')"
-                    .to_string(),
-                span: self.peek().span,
-            });
-        }
+        // `trait B: A + C` (A-12 slice 3): the supertraits, resolved in the
+        // trait's own module exactly as a bound on a function's type parameter
+        // is. A cycle is refused by `infer.rs`, where the whole trait table is
+        // in hand.
+        let supertraits = if self.check(&TokenKind::Colon) {
+            self.advance();
+            self.parse_bounds()?
+        } else {
+            Vec::new()
+        };
         self.expect(TokenKind::LBrace, "'{' to open the trait's body")?;
         let mut methods = Vec::new();
         self.skip_newlines();
@@ -773,14 +776,14 @@ impl Parser {
                 // signatures only.
                 let what = match self.peek_kind() {
                     TokenKind::Ident(n) if n == "type" => {
-                        "associated types and consts are not in this slice: a trait declares method signatures only"
+                        "associated types and consts are not in this slice: a trait declares methods only"
                             .to_string()
                     }
                     TokenKind::Ident(n) => format!(
-                        "'{n}' is not part of a trait: a trait body declares method signatures only ('fun Self.m(...)')"
+                        "'{n}' is not part of a trait: a trait body declares methods only ('fun Self.m(...)')"
                     ),
                     other => format!(
-                        "a trait body declares method signatures only, so a 'fun' is expected here, found {other:?}"
+                        "a trait body declares methods only, so a 'fun' is expected here, found {other:?}"
                     ),
                 };
                 return Err(ParseError {
@@ -795,6 +798,7 @@ impl Parser {
         Ok(TraitDecl {
             name,
             is_pub,
+            supertraits,
             methods,
             module: String::new(),
             span: start.to(end),
@@ -827,19 +831,9 @@ impl Parser {
         }
         if self.check(&TokenKind::Lt) {
             return Err(ParseError {
-                message: "implementing a trait for a generic instantiation is not in this slice: a trait is implemented for a declared 'datac' or 'enum' name"
+                message: "implementing a trait for a generic instantiation is not in this slice: a trait is implemented for a declared 'datac' or 'enum' name, or for a builtin type that already carries methods"
                     .to_string(),
                 span: self.peek().span,
-            });
-        }
-        if let Some(builtin) = crate::types::Ty::from_name(&type_name) {
-            return Err(ParseError {
-                message: format!(
-                    "'{}' is a builtin type ('{}'), so a trait cannot be implemented for it in this slice: a builtin's operations come from the compiler",
-                    type_name,
-                    builtin.display()
-                ),
-                span: type_span,
             });
         }
         self.expect(TokenKind::LBrace, "'{' to open the impl's body")?;
@@ -1378,10 +1372,10 @@ impl Parser {
     }
 
     /// One function declaration. `signature` is set only for a method written
-    /// inside a `trait` body (A-12 slice 2): its body must be absent, and its
-    /// receiver must be `Self`. Every other spelling of the declaration is
-    /// shared, so a trait signature and an `impl` method are parsed by the same
-    /// code and cannot drift apart.
+    /// inside a `trait` body (A-12 slices 2 and 3): its receiver must be
+    /// `Self`, and a body is a default method. Every other spelling of the
+    /// declaration is shared, so a trait method, a default and an `impl`
+    /// method are parsed by the same code and cannot drift apart.
     fn parse_function(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>, align: Option<u32>, signature: bool) -> PResult<FunctionDecl> {
         // `extern fun ...` — a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
@@ -1459,6 +1453,12 @@ impl Parser {
         // slice 2). Both are refused here, where the receiver and the
         // parameter list are already in hand.
         if signature {
+            if extern_ {
+                return Err(ParseError {
+                    message: "a trait method cannot be 'extern': a trait declares the method an impl or the default body provides".to_string(),
+                    span: start,
+                });
+            }
             match &receiver {
                 Some(r) if r.type_name == "Self" => {
                     if !type_params.is_empty() {
@@ -1480,7 +1480,7 @@ impl Parser {
                 None => {
                     return Err(ParseError {
                         message: format!(
-                            "a trait declares method signatures, so '{name}' needs a 'Self' receiver: write 'fun Self.{name}(...)'"
+                            "a trait declares methods, so '{name}' needs a 'Self' receiver: write 'fun Self.{name}(...)'"
                         ),
                         span: first_span,
                     })
@@ -1548,16 +1548,23 @@ impl Parser {
         }
 
         let body = if signature {
-            // A signature has no body at all: no `=` and no `{ ... }`. A body
-            // here would be a default method, which is not in this slice.
-            if self.check(&TokenKind::Eq) || self.check(&TokenKind::LBrace) {
-                return Err(ParseError {
-                    message: "a trait declares method signatures only, so a default body is not in this slice: write the body in the 'impl' block ('impl Name for Type { fun Self.m(...) { ... } })'"
-                        .to_string(),
-                    span: self.peek().span,
-                });
+            // A trait method with no body is a signature; one written with `=`
+            // or `{ ... }` is a default method (A-12 slice 3).
+            if self.check(&TokenKind::Eq) {
+                let eq_span = self.advance().span;
+                if return_type.is_none() {
+                    return Err(ParseError {
+                        message: "expression-bodied function requires a '.R: T' return type"
+                            .to_string(),
+                        span: eq_span,
+                    });
+                }
+                FunctionBody::Expr(self.parse_expr()?)
+            } else if self.check(&TokenKind::LBrace) {
+                FunctionBody::Block(self.parse_block()?)
+            } else {
+                FunctionBody::Signature
             }
-            FunctionBody::Signature
         } else if extern_ {
             // No body and no `=`: the C is supplied by the compiler. A
             // written body would be dead code, so say so rather than ignore
@@ -1616,6 +1623,7 @@ impl Parser {
             return_type,
             body,
             module: String::new(),
+            body_module: None,
             section,
             align,
             span: start.to(end),
@@ -1623,16 +1631,17 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> PResult<TypeExpr> {
-        // `dyn Name` is the trait-object form, and this language has none
-        // (A-12 slice 2): a trait is a bound on a type parameter, not a type.
-        // `dyn` is not a keyword, so it is recognized where two names in a row
-        // can only mean this. `impl Name` in a type position is the other
-        // spelling of the bound, refused for the same reason.
+        // A borrowed trait object (A-12 slice 4) is `&dyn Name` (or
+        // `&mut dyn Name`). A bare `dyn Name` is refused: an owned trait object
+        // is `Box<dyn Name>`, which this slice does not have. `dyn` is not a
+        // keyword, so it is recognized where two names in a row can only mean
+        // this. `impl Name` in a type position is the other spelling of the
+        // bound, refused for the same reason.
         if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "dyn")
             && matches!(self.peek2_kind(), TokenKind::Ident(_))
         {
             return Err(ParseError {
-                message: "'dyn' trait objects are not in this slice: dispatch is static, so a trait is a bound on a type parameter ('fun f<T: Name>(x: &T)'), and a value that is one of several shapes is an 'enum'"
+                message: "a trait object has to be borrowed: write '&dyn Name' (or '&mut dyn Name'), not a bare 'dyn Name' — an owned trait object would be 'Box<dyn Name>', which this language does not have"
                     .to_string(),
                 span: self.peek().span,
             });
@@ -1654,6 +1663,50 @@ impl Parser {
         } else {
             None
         };
+        // `&dyn Name` / `&mut dyn Name`: the one place `&mut` may be written in
+        // a type position (A-12 slice 4). Everywhere else an exclusive borrow
+        // is `mut T` on a parameter, and `&mut T` keeps its refusal.
+        if let Some(amp) = amp_start {
+            let amp_mut = if self.check(&TokenKind::Mut) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+            if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "dyn") {
+                self.advance();
+                let (first, first_span) = self.expect_ident()?;
+                let mut name = first;
+                let mut span = amp.to(first_span);
+                while self.check(&TokenKind::Dot) {
+                    self.advance();
+                    let (part, part_span) = self.expect_ident()?;
+                    name.push('.');
+                    name.push_str(&part);
+                    span = span.to(part_span);
+                }
+                return Ok(TypeExpr {
+                    name: String::new(),
+                    tuple: None,
+                    args: Vec::new(),
+                    array_elem: None,
+                    array_len: None,
+                    amp: true,
+                    amp_mut,
+                    dyn_trait: Some(name),
+                    scoped: false,
+                    fn_params: None,
+                    fn_ret: None,
+                    span,
+                });
+            }
+            if amp_mut {
+                return Err(ParseError {
+                    message: "'&mut' is only written before 'dyn' in a type: a parameter writes 'mut T' for an exclusive borrow".to_string(),
+                    span: self.peek().span,
+                });
+            }
+        }
         // A function type (A-4): `fun(i32, String).R: bool`. `fun` is a
         // keyword, so this can never be an ordinary type name. A closure type
         // (A-4 phase E) is the same shape under the `closure` keyword:
@@ -1676,6 +1729,8 @@ impl Parser {
                 array_elem: Some(Box::new(elem)),
                 array_len: Some(Box::new(len)),
                 amp: amp_start.is_some(),
+                amp_mut: false,
+                dyn_trait: None,
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
@@ -1721,6 +1776,8 @@ impl Parser {
                 array_elem: None,
                 array_len: None,
                 amp: amp_start.is_some(),
+                amp_mut: false,
+                dyn_trait: None,
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
@@ -1773,6 +1830,8 @@ impl Parser {
                 array_elem: None,
                 array_len: None,
                 amp: amp_start.is_some(),
+                amp_mut: false,
+                dyn_trait: None,
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
@@ -1786,6 +1845,8 @@ impl Parser {
             array_elem: None,
             array_len: None,
             amp: amp_start.is_some(),
+            amp_mut: false,
+            dyn_trait: None,
             scoped: false,
             fn_params: None,
             fn_ret: None,
@@ -1964,6 +2025,8 @@ impl Parser {
             array_elem: None,
             array_len: None,
             amp: amp_start.is_some(),
+            amp_mut: false,
+            dyn_trait: None,
             scoped,
             fn_params: Some(params),
             fn_ret: ret,
@@ -3484,9 +3547,20 @@ mod tests {
     }
 
     #[test]
-    fn a_trait_signature_with_a_body_does_not_parse() {
-        let err = parse_err("trait Shape { fun Self.area().R: f64 = 0.0 }\nfun main() {}");
-        assert!(err.message.contains("default body"), "{}", err.message);
+    fn parses_default_methods_supertraits_and_builtin_impls() {
+        let p = parse(
+            "trait Shape {\n    fun Self.area().R: f64\n}\ntrait Named: Shape + Other {\n    fun Self.name().R: str\n    fun Self.loud().R: str { return self.name() }\n}\nimpl Named for i32 {\n    fun Self.name().R: str = \"n\"\n}\nfun main() {}",
+        );
+        assert_eq!(p.traits.len(), 2);
+        let named = &p.traits[1];
+        assert_eq!(named.supertraits.len(), 2);
+        assert_eq!(named.supertraits[0].name, "Shape");
+        assert_eq!(named.supertraits[1].name, "Other");
+        // `name` is a signature, `loud` is a default with a body.
+        assert!(matches!(named.methods[0].body, FunctionBody::Signature));
+        assert!(matches!(named.methods[1].body, FunctionBody::Block(_)));
+        assert_eq!(p.trait_impls[0].trait_name, "Named");
+        assert_eq!(p.trait_impls[0].type_name, "i32");
     }
 
     #[test]
@@ -3494,17 +3568,18 @@ mod tests {
         let err = parse_err("trait Shape { type Item = i32 }\nfun main() {}");
         assert!(err.message.contains("associated types"), "{}", err.message);
         let err = parse_err("trait Shape { const N: i32 = 1 }\nfun main() {}");
-        assert!(err.message.contains("method signatures only"), "{}", err.message);
+        assert!(err.message.contains("methods only"), "{}", err.message);
     }
 
     #[test]
-    fn a_trait_that_inherits_or_takes_parameters_does_not_parse() {
-        let err = parse_err("trait A: B { fun Self.m() }\nfun main() {}");
-        assert!(err.message.contains("cannot inherit"), "{}", err.message);
+    fn a_trait_that_takes_parameters_or_is_named_drop_does_not_parse() {
         let err = parse_err("trait A<T> { fun Self.m() }\nfun main() {}");
         assert!(err.message.contains("cannot have type parameters"), "{}", err.message);
         let err = parse_err("trait Drop { fun Self.m() }\nfun main() {}");
         assert!(err.message.contains("'Drop' is built in"), "{}", err.message);
+        // `trait A: B` no longer parses as an error: it is a supertrait.
+        let p = parse("trait B { fun Self.m() }\ntrait A: B { fun Self.m() }\nfun main() {}");
+        assert_eq!(p.traits[1].supertraits[0].name, "B");
     }
 
     #[test]
@@ -3536,9 +3611,7 @@ mod tests {
     }
 
     #[test]
-    fn an_impl_for_a_builtin_or_a_bare_generic_does_not_parse() {
-        let err = parse_err("trait Shape { fun Self.area().R: f64 }\nimpl Shape for i32 { fun Self.area().R: f64 = 0.0 }\nfun main() {}");
-        assert!(err.message.contains("builtin type"), "{}", err.message);
+    fn an_impl_for_a_bare_generic_does_not_parse() {
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\nimpl Shape for List<i32> { fun Self.area().R: f64 = 0.0 }\nfun main() {}");
         assert!(err.message.contains("generic instantiation"), "{}", err.message);
     }
@@ -3546,7 +3619,7 @@ mod tests {
     #[test]
     fn dyn_and_impl_in_a_type_position_do_not_parse() {
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: dyn Shape) {}\nfun main() {}");
-        assert!(err.message.contains("trait objects"), "{}", err.message);
+        assert!(err.message.contains("has to be borrowed"), "{}", err.message);
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: impl Shape) {}\nfun main() {}");
         assert!(err.message.contains("cannot be a parameter's type"), "{}", err.message);
     }

@@ -1,0 +1,11 @@
+// A-12 slice 4: a trait method returning `Self` cannot be dispatched through a
+// trait object, because the concrete type is not known at the call.
+trait Cloneable {
+    fun Self.dup().R: Self
+}
+
+datac Circle(val r: f64)
+
+fun take(s: &dyn Cloneable) { }
+
+fun main() { }

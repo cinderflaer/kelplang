@@ -1,0 +1,91 @@
+// The 8259 PIC pair and the 8254 PIT, through `port` (kernel stage 22,
+// `plan/x86-idt.md`). The BIOS leaves the PICs mapped over vectors 8..15, which
+// collide with the CPU's own exceptions, so `remap` sends ICW1..4 and moves the
+// master to 32..39 and the slave to 40..47. Only IRQ0 is unmasked afterwards;
+// every other line stays masked for a device this kernel does not have.
+impl "port"
+impl "std/atomic"
+impl "uart"
+
+// The master PIC's first vector. IRQ0 arrives as `VECTOR_TIMER`, and that is
+// the only vector this example installs a device gate for.
+pub const VECTOR_TIMER: usize = 32
+
+const PIC1_CMD: u16 = 0x20
+const PIC1_DATA: u16 = 0x21
+const PIC2_CMD: u16 = 0xA0
+const PIC2_DATA: u16 = 0xA1
+const PIT_CHANNEL0: u16 = 0x40
+const PIT_COMMAND: u16 = 0x43
+
+// ICW1: begin initialization and expect ICW4. ICW4: 8086 mode. The two IMR
+// bytes are read after ICW4, so the mask is written by whichever call wants it.
+const ICW1_INIT: u8 = 0x11
+const ICW4_8086: u8 = 0x01
+const IRQ0_ONLY: u8 = 0xFE
+const ALL_MASKED: u8 = 0xFF
+
+// Port 0x43's control byte: channel 0, access lo then hi, mode 3 (square wave),
+// binary. The PIT's 1.193182 MHz input over this divisor is one tick about
+// every 10 ms.
+const PIT_MODE_SQUARE: u8 = 0x36
+const PIT_DIVISOR: u16 = 11932
+
+const EOI: u8 = 0x20
+
+// How many ticks the boot waits for. The handler masks the line on the last
+// one, so the count never exceeds this.
+pub const TICKS_MAX: usize = 5
+
+// The tick count is the shared mutable the timer handler writes and the boot
+// reads, so it is an `Atomic<usize>` rather than a `static mut`: a plain load
+// in the boot's spin loop is a value LLVM may hoist out of the loop, because
+// nothing in the loop tells it an interrupt can change it.
+static TICKS: Atomic<usize> = Atomic.new(0)
+
+// ICW1 starts the initialization and asks for ICW4; ICW2 is each PIC's first
+// vector (0x20 master, 0x28 slave); ICW3 is the cascade wiring (the slave sits
+// on IRQ2, and it identifies itself as 2); ICW4 selects 8086 mode; the last two
+// writes are the interrupt masks, with IRQ0 the only line let through.
+pub fun remap() {
+    port.outb(PIC1_CMD, ICW1_INIT)
+    port.outb(PIC2_CMD, ICW1_INIT)
+    port.outb(PIC1_DATA, 0x20)
+    port.outb(PIC2_DATA, 0x28)
+    port.outb(PIC1_DATA, 0x04)
+    port.outb(PIC2_DATA, 0x02)
+    port.outb(PIC1_DATA, ICW4_8086)
+    port.outb(PIC2_DATA, ICW4_8086)
+    port.outb(PIC1_DATA, IRQ0_ONLY)
+    port.outb(PIC2_DATA, ALL_MASKED)
+}
+
+pub fun start_pit() {
+    port.outb(PIT_COMMAND, PIT_MODE_SQUARE)
+    port.outb(PIT_CHANNEL0, (PIT_DIVISOR & 0xFF).to_u8())
+    port.outb(PIT_CHANNEL0, (PIT_DIVISOR >> 8).to_u8())
+}
+
+pub fun mask_timer() {
+    port.outb(PIC1_DATA, ALL_MASKED)
+}
+
+pub fun ticks().R: usize {
+    TICKS.load(order = atomic.Ordering.SeqCst)
+}
+
+// The vector-32 body, called by `idt.trap_dispatch` with the frame already
+// saved. The last tick masks the line after its EOI, so no sixth tick can
+// arrive between the handler's return and the boot's own mask; the count is
+// published by the `fetch_add` above, which the interrupted boot cannot observe
+// until this handler has returned.
+pub fun on_tick() {
+    val n: usize = TICKS.fetch_add(1, order = atomic.Ordering.SeqCst) + 1
+    uart.puts("tick ")
+    uart.put_dec(n)
+    uart.putc(10)
+    port.outb(PIC1_CMD, EOI)
+    if n >= TICKS_MAX {
+        mask_timer()
+    }
+}

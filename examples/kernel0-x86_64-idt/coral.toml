@@ -1,0 +1,27 @@
+name = "kernel0_x86_64_idt"
+
+# Kernel stage 22, "x86-64 interrupts": a bare-metal x86-64 image whose IDT
+# carries four CPU exception gates and the 8259/8254 timer, built with the same
+# `[target]` keys kernel stage 20's two x86-64 images are. `panic` routes the
+# compiler's own checks to `kp_panic` in the entry module, so a check that fires
+# prints something before it wedges.
+[target]
+mode = "freestanding"
+triple = "x86_64-unknown-none"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+# The audit list (stage 1, `plan/unsafe-and-pointers.md`): `port` is the only
+# module that issues `in`/`out`, `uart` is the COM1 driver built on it, `pic` is
+# the interrupt controller and timer, `trap` is the IDT and the naked gates, and
+# `main` raises the two repaired faults and the unmapped store itself.
+[unsafe]
+modules = ["idt", "main", "pic", "port", "uart"]
+
+# Kernel stage 16's mmio grant: the one page the boot's last act writes through,
+# 8 GiB, outside the 1 GiB the `_start` stub identity-maps. The entry module
+# holds it and delegates it to nothing, because `main` is where the pointer is
+# born; the address is in `plan/x86-idt.md`.
+[caps]
+mmio = ["0x200000000+0x1000"]

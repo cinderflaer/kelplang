@@ -8,13 +8,15 @@
 // in `.rodata.boot`, so the script's placement is what the test reads back out
 // of the ELF.
 //
-// A trait is exercised here on purpose (A-12 slice 2): dispatch is static, so
-// the step below is an ordinary direct call and a bare-metal image grows no
-// vtable, no witness and no undefined symbol for it.
+// A trait with a default method is exercised here on purpose (A-12 slices 2 and
+// 3): dispatch is static, so the calls below are ordinary direct calls into the
+// synthesized per-type default and a bare-metal image grows no vtable, no
+// witness and no undefined symbol for them.
 section(".rodata.boot") const BOOT_MAGIC: [u8; 4] = [75, 69, 76, 80]
 
 trait Step {
     fun Self.step(v: u64).R: u64
+    fun Self.bump(v: u64).R: u64 { return self.step(v) + 1 }
 }
 
 datac Thrice(val factor: u64)
@@ -27,6 +29,6 @@ section(".text.boot") fun kmain() {
     val thrice = Thrice(factor = 3)
     var i: u64 = 1
     while true {
-        i = thrice.step(i) + BOOT_MAGIC.get(i = 0).to_u64()
+        i = thrice.bump(i) + BOOT_MAGIC.get(i = 0).to_u64()
     }
 }

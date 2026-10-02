@@ -1,10 +1,31 @@
-// A trait cannot be implemented for a builtin type.
-trait Shape {
-    fun Self.area().R: f64
+// A trait implemented for builtin types that already carry methods (A-12 slice
+// 3): the integer scalars and `String`. The impl has to be in the trait's own
+// module, and a default may call a method of the same trait.
+
+trait Doubler {
+    fun Self.double().R: i32
+    fun Self.triple().R: i32 { return self.double() + self.double() + self.double() }
 }
 
-impl Shape for i32 {
-    fun Self.area().R: f64 = 0.0
+trait Named {
+    fun Self.label().R: String
 }
 
-fun main() { }
+impl Doubler for i32 {
+    fun Self.double().R: i32 = self + self
+}
+
+impl Named for String {
+    fun Self.label().R: String = String.from_str("a string")
+}
+
+fun twice<T: Doubler>(x: T).R: i32 = x.double() + x.double()
+fun label_of<T: Named>(s: &T).R: String = s.label()
+
+fun main() {
+    val n = 6
+    print(twice(5))
+    print(n.triple())
+    val s = String.from_str("hi")
+    print(label_of(s))
+}

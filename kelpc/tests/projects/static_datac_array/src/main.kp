@@ -1,0 +1,34 @@
+// Kernel stage 21: a static whose type is an array of `datac`, which is what a
+// scheduler's task table is, plus the nested-array form of the same rule and
+// the mutable form.
+//
+// Before this stage an array static could only hold integers, `bool` or `char`,
+// so a task table with a saved frame and a stack per task had no spelling. The
+// element now obeys the same closed rule a `datac`-typed static's fields obey,
+// and the initializer is still a constant (`plan/scheduler.md`).
+static TABLE: [Slot; 3] = [Slot(id = 0, weight = [1, 2, 3, 4]), Slot(id = 1, weight = [5, 6, 7, 8]), Slot(id = 2, weight = [9, 10, 11, 12])]
+
+// A nested array is the same shape one level down.
+static GRID: [[u8; 2]; 2] = [[1, 2], [3, 4]]
+
+static mut COUNTERS: [Slot; 2] = [Slot(id = 0, weight = [0, 0, 0, 0]), Slot(id = 0, weight = [0, 0, 0, 0])]
+
+datac Slot(val id: usize, val weight: [u8; 4])
+
+fun main() {
+    var sum: usize = 0
+    var i: usize = 0
+    while i < 3 {
+        val s = TABLE.get(i = i)
+        sum = sum + s.id * 10 + s.weight.get(i = 0).to_usize()
+        i = i + 1
+    }
+    print(sum)
+    print(GRID.get(i = 0).get(i = 1))
+    print(GRID.get(i = 1).get(i = 0))
+    unsafe {
+        COUNTERS.set(i = 1, v = Slot(id = 9, weight = [1, 1, 1, 1]))
+        print(COUNTERS.get(i = 1).id)
+        print(COUNTERS.get(i = 1).weight.get(i = 3))
+    }
+}

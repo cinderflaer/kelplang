@@ -1,0 +1,110 @@
+// The NS16550 UART QEMU's riscv64 `virt` machine puts at 0x10000000, and the
+// console lock the three tasks share (`plan/scheduler.md`).
+//
+// THR (offset 0) is the byte to send; LSR (offset 5) bit 5 is set while the
+// transmit holding register is empty, so a byte is written only after that bit
+// reads back set. Every access goes through `Ptr<u8>` and is volatile so the
+// compiler can neither merge, reorder nor elide it.
+//
+// The lock is an `Atomic<bool>` (the safe shared mutable) plus the one thing an
+// atomic cannot express: a task holds it with `mstatus.MIE` cleared, so a timer
+// interrupt cannot arrive in the middle of a line and the scheduler can never
+// run with the lock held. On a single hart that makes the critical section
+// non-preemptible without any per-task bookkeeping, and it is what makes the
+// scheduler's own output and a task's line unable to interleave. `defer`
+// releases it on every exit from `line`.
+impl "std/str"
+impl "std/atomic"
+
+const UART_BASE: usize = 0x10000000
+const LSR_OFFSET: usize = 5
+const MIE_BIT: usize = 8
+
+static LOCK: Atomic<bool> = Atomic.new(false)
+
+// Save the interrupt-enable bit, clear it, and take the lock. The store is a
+// plain atomic store: on one hart the bit is already cleared, so no other
+// context can be between the test and the set.
+pub fun lock_acquire() {
+    unsafe {
+        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") mstatus & (~MIE_BIT))
+    }
+    while LOCK.load(order = atomic.Ordering.SeqCst) == true {}
+    LOCK.store(value = true, order = atomic.Ordering.SeqCst)
+}
+
+pub fun lock_release() {
+    LOCK.store(value = false, order = atomic.Ordering.SeqCst)
+    unsafe {
+        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") mstatus | MIE_BIT)
+    }
+}
+
+pub fun putc(c: u8) {
+    unsafe {
+        val lsr: Ptr<u8> = Ptr.from_addr(UART_BASE + LSR_OFFSET)
+        // v1 has no bitwise operators on this driver's older sibling, but the
+        // language now has them: bit 5 of LSR is `(value / 32) % 2` there and
+        // `value & 32` here.
+        while lsr.read_volatile() & 32 == 0 {}
+        val thr: Ptr<u8> = Ptr.from_addr(UART_BASE)
+        thr.write_volatile(c)
+    }
+}
+
+pub fun puts(s: str) {
+    val n = str.len(s)
+    var i: usize = 0
+    while i < n {
+        putc(str.byte(s, i))
+        i = i + 1
+    }
+}
+
+// `scause`, `mcause`, an exit code and a count are printed in decimal, so the
+// kernel has one decimal printer rather than a hex one per site. Zero is a
+// single digit and not an empty string, which is why it is handled first.
+pub fun put_dec(value: usize) {
+    if value == 0 {
+        putc(48)
+        return
+    }
+    var digits: [u8; 20] = [0; 20]
+    val bytes: Ptr<[u8; 20]> = Ptr.from_ref(&digits)
+    val p: Ptr<u8> = bytes.cast<u8>()
+    var n: usize = value
+    var i: usize = 0
+    while n > 0 {
+        unsafe {
+            p.offset(i.to_isize()).write_volatile((48 + n % 10).to_u8())
+        }
+        n = n / 10
+        i = i + 1
+    }
+    while i > 0 {
+        i = i - 1
+        putc(unsafe { p.offset(i.to_isize()).read_volatile() })
+    }
+}
+
+// One whole line: a task's letter, a space, its counter and a newline, under
+// the lock. The deferred release runs when the block is left, so every exit
+// from this function re-enables interrupts.
+pub fun line(c: u8, n: usize) {
+    lock_acquire()
+    defer lock_release()
+    putc(c)
+    putc(32)
+    put_dec(n)
+    putc(10)
+}
+
+pub fun halt() {
+    while true {
+        unsafe {
+            asm("wfi")
+        }
+    }
+}

@@ -344,6 +344,43 @@ phase per check (array bounds, narrowing, `str.byte`, the `panic` builtin, `opti
 double panic) and asserts each exact line; `plan/panic-semantics.md` has the check table and
 records that overflow wraps and division by zero stays an unchecked UB, so neither has a message.
 
+**Kernel stage 21 is done: a timer interrupt and a preemptive round-robin scheduler**
+(`plan/scheduler.md`). `examples/kernel0-sched` is a bare-metal riscv64 image, still in machine
+mode with no paging, that programs the CLINT's machine timer (`mtimecmp` at `0x02004000 + 8 *
+hart`, `mtime` at `0x0200BFF8`, granted as exactly those two windows), enables `mie.MTIE` and
+`mstatus.MIE`, and handles the interrupt in a naked `trap_entry` that saves all 31 general
+registers, `mepc` and `mstatus` into the current task's frame in a `static mut [Task; 3]` table,
+calls `schedule(frame)` and restores whichever frame it returns, ending in `mret`. Three tasks
+that never yield each loop forever over their own counter and print `A`/`B`/`C` every 50000
+iterations through an `Atomic<bool>` spin lock released by `defer`, so the letters can only
+interleave because the timer preempted them; the kernel stops itself after 40 ticks with
+`sched: done ticks=40`. `examples/kernel0-sched/run.sh` boot-asserts all three letters, at least
+three letter transitions and no torn line from QEMU's own stdout, and a test in
+`compile_and_run.rs` runs it. The one compiler change is the table's type: an array static's
+element may now be a `datac` or another array (recursively), which `tests/projects/static_datac_array`
+pins on both backends, and `tests/projects/sched_task_layout` pins the layout the naked entry
+hardcodes. In this stage: the timer interrupt and preemptive round-robin in M-mode. Not in it:
+priorities, blocking, task exit, SMP, and preemption of user mode, which is why the U-mode process
+of `plan/syscall-abi.md` is still one program at a time.
+
+**Kernel stage 22 is done: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer**
+(`plan/x86-idt.md`). `examples/kernel0-x86_64-idt` is a freestanding x86-64 image whose
+`static mut IDT: [IdtEntry; 256]` gets five gates from `Ptr.from_fn(gate).addr()` - `#DE` 0,
+`#UD` 6, `#GP` 13, `#PF` 14 and the timer's 32 - each a `repr(c)` 16-byte descriptor with
+the offset split in three, selector `0x08` (the boot GDT's code segment), IST 0 and type
+`0x8E`, loaded with `lidt [descriptor]` through `asm`. A gate is a naked function: it pushes
+a dummy error code where the CPU pushed none, pushes its vector number and the fifteen
+general registers into a `repr(c) TrapFrame`, calls a Kelp `trap_dispatch(frame)`, restores
+and `iretq`s. The dispatcher prints `exception <vector> err <code> rip <hex>` (plus
+`cr2 <hex>` for `#PF`) over COM1, resumes `#UD` and `#DE` by adding the faulting
+instruction's length to the saved `rip`, and halts on `#GP`/`#PF`. The boot also remaps the
+8259 pair (ICW1-4, master 32..39, slave 40..47), unmasks IRQ0 only, programs PIT channel 0
+for about 100 Hz, and counts five ticks with an `outb(0x20, 0x20)` EOI each; the last act
+is a store through an unmapped page, whose `#PF` report is the last line the serial port
+sees. The gates read the dispatcher's address through the GS base rather than an `asm`
+operand, because an operand is materialised into a register before the gate has saved
+anything. Not in this stage: the APIC, SMP, ACPI, a TSS/IST stack and x86 user mode.
+
 ## Two rules that keep the language honest
 
 1. **`unsafe` is auditable, not ambient.** A module may contain `unsafe` only if `coral.toml` lists it
@@ -355,10 +392,12 @@ records that overflow wraps and division by zero stays an unchecked UB, so neith
 
 ## What is deliberately not here
 
-- A specific kernel design (scheduler, filesystem, drivers). The language work above is what they would sit on.
-- x86-64 interrupts and an IDT, the APIC, SMP and ACPI: the architecture boots and runs Kelp
-  (kernel stage 20, `plan/x86-64.md`), and what a kernel needs to take an interrupt there is
-  open work, as it is for riscv64; `plan/kernel0-status.md`'s trap gap and stage 5's deferred
-  `interrupt` attribute are the same hole.
+- A specific kernel design beyond the round-robin scheduler of kernel stage 21: priorities, blocking,
+  a filesystem and drivers are still not here. The language work above is what they would sit on.
+- x86-64 interrupts beyond the IDT and the PIC+PIT timer, the APIC, SMP and ACPI: the
+  architecture boots, runs Kelp and takes its own exceptions and timer ticks (kernel stages
+  20 and 22, `plan/x86-64.md` and `plan/x86-idt.md`), and what a kernel still needs there is
+  a local APIC, an I/O APIC, ACPI enumeration and x86 user mode. `plan/kernel0-status.md`'s
+  trap gap and stage 5's deferred `interrupt` attribute are the same hole on riscv64.
 - Memory-safety proofs about `unsafe` code. D-1/D-2/D-3 stay open; the UB catalogue has to grow a section per
   stage, and each stage's design note says what it adds to it.

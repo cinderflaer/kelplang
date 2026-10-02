@@ -1,0 +1,25 @@
+name = "kernel0_sched"
+
+# Kernel stage 21: the machine timer interrupt and a preemptive round-robin
+# scheduler, still in M-mode with no paging. `timer` programs the CLINT and
+# keeps the compare register in it; `trap` is the naked vector that saves every
+# register into the current task's frame and calls the scheduler; `sched` owns
+# the task table; `uart` is the device register and the console lock; `main`
+# writes the CSRs and starts the first task.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["sched", "timer", "trap", "uart"]
+
+# Kernel stage 16's mmio grant, and kernel stage 21's timer windows: the
+# NS16550's register block and exactly the two CLINT words a hart's `mtimecmp`
+# and the shared `mtime` occupy, at hart 0's compare register. The entry module
+# holds all three and delegates each to the one module that builds a pointer
+# from the address (`plan/device-caps.md`).
+[caps]
+mmio = ["0x10000000+0x100", "0x2004000+0x8", "0x200BFF8+0x8"]

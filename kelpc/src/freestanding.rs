@@ -1028,6 +1028,18 @@ impl Checker<'_> {
                 }
                 Ok(())
             }
+            // Borrowed trait objects (A-12 slice 4) are legal in a freestanding
+            // build: the vtable is `.rodata`, the thunk is ordinary code and no
+            // runtime helper is reached. The borrow inside a coercion and a
+            // vtable call's receiver and arguments are checked as usual.
+            ExprKind::DynCoerce { expr: inner, .. } => self.expr(inner, module),
+            ExprKind::DynCall { receiver, args, .. } => {
+                self.expr(receiver, module)?;
+                for arg in args {
+                    self.expr(arg, module)?;
+                }
+                Ok(())
+            }
             ExprKind::IntLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::FloatLit(_)

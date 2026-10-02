@@ -1143,6 +1143,30 @@ everywhere the bound holds; the bound guarantees the trait's methods exist, it d
 the body to them. There is no `dyn`, no default method, no associated type and no operator
 overloading through a trait, each refused where it is written.
 
+## Language feature: default methods, supertraits and builtin impls (A-12 slice 3, 2026-10-03, not a kernel stage)
+
+**New way to reach undefined behaviour.** None. Like slice 2, this is a front-end declaration: no
+new type, no vtable, no witness argument, no new `tir` node and no new C type, so there is nothing
+for a backend to lower. A default method is a concrete copy of the body synthesized per implementing
+type and then emitted as an ordinary method; a supertrait is a relation between declarations checked
+before codegen; and an impl for a builtin is a method on that builtin's existing `Type#name` key,
+reached by the same direct call the compiler's own methods on it already were.
+
+**What the compiler does check.** That a default method's body is a body an impl may omit; that an
+impl which overrides a defaulted method still matches the declared signature; that a trait whose
+methods are all defaulted accepts an empty impl; that an impl of a trait with supertraits comes with
+an impl of each supertrait (naming both), that the supertrait relation is acyclic, and that a bound
+is satisfied through a supertrait; that a builtin `for` type is one that already carries methods and
+that the trait is declared in the same module as the impl; and that a default body is checked per
+implementing type, so an undeclared method it calls is an error.
+
+**What it does not check.** A default body is only checked for the impls that use it, so a default
+no impl omits is never type-checked, exactly as a generic function that is never called is never
+checked. A trait method whose name matches a compiler-provided method of the builtin it is
+implemented for shadows that compiler method at a call site, because a declaration is looked up
+before the builtin table; nothing refuses the shadowing. Nothing constrains the meaning of a
+default body or an impl body beyond ordinary type checking.
+
 ## Language feature: `Mutex<T>` in `std/sync` (B-5's remainder, 2026-10-02, not a kernel stage)
 
 **New way to reach undefined behaviour.** The mutex itself adds none at the language level: `lock`
@@ -1302,3 +1326,165 @@ the `unsafe` listing are the stage 5 checks, unchanged.
 runs when a project replaces the stub; the real existence of a port or a device; the
 template against the constraints; and anything about the machine past the first 1 GiB the
 stub maps.
+
+## Stage 21: the machine timer interrupt and a preemptive scheduler (`plan/scheduler.md`)
+
+**New ways to reach undefined behaviour.** The stage moves the machine between contexts the
+compiler never models, so most of its promises are unchecked in the same way `plan/inline-asm.md`
+and `plan/syscall-abi.md` said their handlers were. The ones worth naming:
+
+- **The trap entry's offsets and the `datac` layout are two independent facts.** The asm saves
+  `x1..x31` at 0..240, `sepc` at 248 and `mstatus` at 256, and reads the scheduler address from
+  the word at 264; `TrapFrame` and `Task` are ordinary `repr(c)` declarations the compiler lays
+  out, and it checks neither end against the other. A field inserted before `sepc`, or a
+  `Task` whose `dispatch` is not the word after the frame, makes the entry save registers over
+  the wrong words or call through a stale value. `trap.layout_ok` and `sched.layout_ok` check
+  the numbers at boot (and `tests/projects/sched_task_layout` pins them), which is a runtime
+  guard, not a compile-time one.
+- **`mstatus`/`mie` are written by hand.** Every lock acquisition clears `mstatus.MIE` by
+  reading and rewriting the whole register, and the trap entry restores the whole saved
+  `mstatus` before `mret`. A wrong mask loses a machine-mode cause other than the timer, or
+  leaves interrupts enabled inside a handler; a saved `mstatus` with `MIE` already clear
+  silently disables preemption forever. The compiler checks neither the masks nor the
+  ordering.
+- **The frame is both the saved register file and the scheduler's argument.** `schedule`
+  receives a `Ptr<TrapFrame>` into the task table and may write `mepc`; the same memory is the
+  task's saved state. A scheduler that returns a frame whose `x2` is not a valid stack top, or
+  a state machine that resumes a frame it already overwrote, is a wild jump the language
+  cannot see. The entry trusts the returned pointer completely.
+- **A task's stack is a `[u8; 4096]` inside the table with no guard page.** The language's
+  stack guard (`plan/stack-guard.md`) probes the frames the compiler emits, but the value
+  loaded into `sp` before a task's first instruction is arithmetic on the table's address, and
+  nothing checks that the stack the scheduler hands out exists, is large enough, or does not
+  overlap the frame above it.
+- **The CLINT's register is a device claim, like every other MMIO address.** That `mtimecmp` is
+  at `0x02004000 + 8 * hart`, that a 64-bit store is atomic against the counter, and that hart
+  0 is the one running are the driver's claims; `[caps] mmio` checks only that the constant
+  address a `Ptr.from_addr` is born at falls inside a granted window. A wrong address, a wrong
+  interval or a compare register in the past is a device-level bug with no diagnostic beyond
+  the trap the kernel fabricates.
+- **The single-hart argument behind the lock is not in the type system.** "A task holding the
+  lock has `MIE` clear, so it cannot be preempted, so the scheduler never spins" is true on one
+  hart and false the moment a second hart runs tasks; the same table, frame and lock would
+  then be concurrently mutated with no synchronization the compiler sees.
+
+**What the compiler does check.** That an array static's element is a scalar, a `datac` or
+another array of those, recursively, and that its initializer folds to a constant (kernel stage
+7's rules, widened by kernel stage 21); that the `mmio` grant covers each constant address a
+`Ptr.from_addr` names; that `asm` is inside `unsafe` and its module is on the manifest's
+`[unsafe] modules` list; that a `naked` body is exactly one `asm`; and that the project links
+with no undefined symbol. The alignment and size queries the two `layout_ok` functions use are
+folded in the front end, so the checks themselves are ordinary comparisons.
+
+**What it does not check.** The entry's offsets against the declarations (above); the masks and
+the restore used for `mstatus`/`mie`; the validity of the frame pointer the scheduler returns;
+the size, existence or overlap of a task's stack; the timer's address, interval or that it is a
+counter; that a task's `unsafe` block sequences its own `static mut` accesses; and any property
+of the machine a trap is the first thing to observe. Priorities, blocking, SMP and user-mode
+preemption are not built, so nothing here is a plan's promise either.
+
+## Stage 22: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer (`plan/x86-idt.md`)
+
+**New ways to reach undefined behaviour.** The stage moves the machine through a gate the
+compiler never models, and every fact the gate shares with the language is a number neither
+end checks against the other. The ones worth naming:
+
+- **The gate's offsets and the `TrapFrame` layout are two independent facts.** The asm pushes
+  the registers in an order that lands them at 8..120, the error code at 128 and `RIP`, `CS`
+  and `RFLAGS` at 136, 144 and 152; `TrapFrame` is an ordinary `repr(c)` declaration. A field
+  inserted before `rax`, or a gate that pushes one register fewer, makes the dispatcher read
+  the wrong word. `idt.layout_ok` checks the numbers at boot (and
+  `tests/projects/x86_idt_layout` pins them on both backends), which is a runtime guard, not
+  a compile-time one.
+- **`lidt` reads ten bytes of a value the compiler laid out.** The descriptor is a
+  `repr(packed)` `u16` followed by a `u64`, so its bytes are the limit and then the base;
+  `lidt` would read a padded layout as a different base. The packed declaration is what makes
+  that true, and the layout test pins size 10 and the base at offset 2.
+- **The gate's error-code split is a claim about each vector.** Vectors 8, 10..14 and 17 push
+  an error code and the rest do not; a gate for a vector in the wrong group shifts every word
+  of the frame by eight and the dispatcher reads a register as `RIP`. The compiler cannot see
+  the vector, and nothing checks the group but the boot's own two faults.
+- **The length table is a claim about the faulting instruction.** Resuming `#UD` and `#DE`
+  means adding 2 and 3 to the saved `rip`; the `3` is right for `REX.W F7 /6` with no
+  displacement, which is the one `div` this kernel writes. Any other `div` shape (a 32-bit
+  operand, a memory operand with a displacement) would resume in the middle of an instruction.
+- **The saved `rsp` is not in the frame, and the gate changes `rsp`.** The gate aligns `rsp`
+  down with `and rsp, -16` so the SysV callee sees a 16-byte-aligned stack, and restores it
+  from `rbx` after the call. The same-level `iretq` pops only `RIP`, `CS` and `RFLAGS`, so the
+  interrupted code resumes with the `rsp` the CPU left, which is what makes this correct; a
+  gate that ends with `rsp` anywhere else resumes the interrupted function with a wrong stack
+  and no diagnostic.
+- **A naked gate can only read a shared address after it has saved what it clobbers.** An
+  `asm` operand is materialised into a register *before* the gate's own instructions run, so
+  an operand holding the dispatcher's address destroys one of the interrupted program's
+  registers. This stage reads it from the GS base (`mov rax, gs:[0]`) with the address
+  installed by `wrmsr` at boot; a program that never set the base reads address zero, which is
+  the gate's own `#PF` because the base is a linear address.
+- **The PIC and PIT ports are device claims, like every MMIO address.** That ICW1..4 remap the
+  master to 32..39 and the slave to 40..47, that IRQ2 is the cascade, that IMR bit 0 is IRQ0,
+  that port 0x43's control byte means mode 3 lo/hi on channel 0, and that a divisor of 11932
+  is about 100 Hz are all the driver's claims. Port I/O names no address, so the `mmio` gate
+  never sees them; the only thing the compiler checks there is the port's width against the
+  `in`/`out` spelling.
+- **`CR2` means nothing outside a `#PF` handler.** The report reads it after the frame is
+  saved; any other fault in between has already overwritten it.
+
+**What the compiler does check.** That `asm` is inside `unsafe` and its module is on the
+manifest's `[unsafe] modules` list; that a `naked` body is exactly one `asm`; that the `mmio`
+grant covers the constant address the boot's last store is born at (`0x200000000`, the one
+page the kernel faults on); that the layout queries `size_of`/`offset_of` fold in the front
+end, so `layout_ok` is an ordinary comparison; that an `Atomic<T>` static is reachable without
+`unsafe`; and that the image links with no undefined symbol.
+
+**What it does not check.** The gate's push order against the `TrapFrame` declaration; the
+vector's error-code group; the instruction length the `#DE` resume adds; the 16-byte
+alignment of the stack the gate hands the dispatcher; that the GS base holds an address at
+all; the existence, meaning or rate of a port or a device; whether the IDT is reachable
+through the current page tables; and any property of the machine a gate is the first thing to
+observe. The APIC, SMP, ACPI, a TSS/IST stack and x86 user mode are deliberately not built, so
+nothing here is a plan's promise either.
+
+## A-12 slice 4: borrowed trait objects (`&dyn`, `plan/traits.md` 9)
+
+**New ways to reach undefined behaviour.** The slice puts a function pointer in a
+`.rodata` table and calls it with a pointer the compiler erased to `void*`. The
+facts a program can break:
+
+- **The erased data pointer and the thunk that reads it are two independent
+  claims.** A thunk casts the `void*` back to the concrete receiver (a `datac`
+  pointer, a `String` pointer, or a `Copy` scalar load). If a vtable were built
+  for the wrong `(Trait, Type)` pair the call would hand a `Circle*` where a
+  `Square*` is read; the compiler pairs them from the one coercion site, so this
+  is a compiler bug rather than a program's mistake, but nothing at run time
+  checks the pairing.
+- **A `&dyn` keeps a borrow alive with no lifetime in the value.** The value is
+  two raw pointers; the borrow checker is the only thing that stops the
+  referent from being moved or dropped while a `&dyn` to it lives. The slice
+  routes the coercion through the same `&x` node the language already had, so
+  the existing rules apply: a `&dyn` cannot be stored, returned or put in a
+  container, which is why no lifetime syntax was needed.
+- **A `mut Self` method called through a `&mut dyn` writes through an erased
+  pointer.** The exclusivity is the borrow checker's; the C `void*` and the
+  LLVM `ptr` carry no constness, so a shared `&dyn` whose thunk happens to be a
+  `mut Self` one would write through a shared borrow. The type checker refuses
+  that call by name, and nothing else does.
+- **The vtable's slot order is a compiler invariant.** A call names a slot
+  index computed from the trait's flattened method list; a vtable whose slots
+  were built in another order would call another method with the same erased
+  pointer. Both are derived from the same list at one place, and no diagnostic
+  would catch a drift.
+
+**What the compiler does check.** That a `dyn` names a declared trait; that the
+trait is object safe (no method returns `Self`, no parameter other than the
+receiver mentions `Self`, no two methods share a name); that the operand of a
+coercion is a borrow of a type that implements the trait; that a `mut Self`
+method is called only through a `&mut dyn`; and that the coercion is a borrow the
+borrow checker already tracks (so the referent stays borrowed to the end of the
+scope, exclusively for `&mut`).
+
+**What it does not check.** That a vtable exists for a pair the program never
+coerces; that a thunk's erased pointer really addresses the concrete type (a
+compiler bug would be a miscompile with no diagnostic); that a program does not
+call a `mut Self` method through a shared `&dyn` (the call is refused at the
+type level, but the representation carries no mutability); and anything about
+the concrete type behind a `&dyn`, since the value carries no type tag.

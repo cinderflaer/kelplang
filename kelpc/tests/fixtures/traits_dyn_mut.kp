@@ -1,0 +1,28 @@
+// A-12 slice 4: `&mut dyn` mutates its target through the vtable.
+trait Counter {
+    fun Self.value().R: i64
+    fun mut Self.bump(n: i64)
+}
+
+datac Cell(var v: i64)
+
+impl Counter for Cell {
+    fun Self.value().R: i64 = v
+    fun mut Self.bump(n: i64) { v = v + n }
+}
+
+fun bump_all(c: &mut dyn Counter) {
+    c.bump(3)
+    c.bump(4)
+}
+
+fun main() {
+    var cell = Cell(v = 10)
+    {
+        val c: &mut dyn Counter = &mut cell
+        c.bump(1)
+    }
+    print(cell.value())
+    bump_all(&mut cell)
+    print(cell.value())
+}
