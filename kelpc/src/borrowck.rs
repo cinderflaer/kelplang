@@ -2487,13 +2487,40 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             release_call_borrows(&taken, ctx);
             Ok(())
         }
-        // A method call through a `&dyn` (A-12 slice 4): the receiver is a
-        // borrow (`Copy`), so reading it moves nothing; the arguments follow
-        // exactly the rule a named call's do.
-        tir::ExprKind::DynCall { receiver, args, .. } => {
-            check_place(receiver, ctx)?;
+        // A method call through a trait object (A-12 slices 4 and 7). Through a
+        // `&dyn` the receiver is a borrow (`Copy`), so reading it moves nothing.
+        // Through an *owned* trait object a `mut Self` method writes through the
+        // box's data pointer, so the call holds an exclusive borrow of the
+        // receiver's own place for its duration, exactly as a `mut T` argument
+        // does: that is what refuses `b.scale(f)` while `b.get()`'s `&dyn` is
+        // still live.
+        tir::ExprKind::DynCall {
+            receiver,
+            args,
+            exclusive,
+            ..
+        } => {
+            let roots = if *exclusive {
+                ctx.check_iterated_mutation(receiver)?;
+                check_place(receiver, ctx)?;
+                let roots = place_roots(receiver, ctx);
+                for root in &roots {
+                    if root != STATIC_ROOT {
+                        ctx.start_borrow(root, true, expr.span)?;
+                    }
+                }
+                roots
+            } else {
+                check_place(receiver, ctx)?;
+                Vec::new()
+            };
             let taken = take_call_arguments(args, ctx, None)?;
             release_call_borrows(&taken, ctx);
+            for root in &roots {
+                if root != STATIC_ROOT {
+                    ctx.end_borrow(root);
+                }
+            }
             Ok(())
         }
         // `expr?` reads its operand as a whole value: the failure payload is

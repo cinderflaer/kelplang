@@ -559,6 +559,13 @@ pub enum ExprKind {
         receiver: Box<Expr>,
         slot: usize,
         args: Vec<Expr>,
+        /// The receiver is an *owned* trait object and the method it calls is
+        /// `mut Self` (A-12 slice 7): the call writes through the box's data
+        /// pointer, so `borrowck.rs` holds an exclusive borrow of the
+        /// receiver's own place for the duration of the call. A call through
+        /// `&dyn`/`&mut dyn` is `false`: the borrow is already the fat pair the
+        /// value is, so the receiver is a `Copy` read.
+        exclusive: bool,
     },
     Deref {
         expr: Box<Expr>,

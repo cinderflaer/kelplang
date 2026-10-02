@@ -17294,7 +17294,7 @@ fn check_dyn_method_call(
             span,
         });
     }
-    lower_dyn_call(receiver, trait_name, &decl, slot, args, span, ctx)
+    lower_dyn_call(receiver, trait_name, &decl, slot, args, span, false, ctx)
 }
 
 /// A method call on an owned trait object (A-12 slice 7). The two names the box
@@ -17387,7 +17387,7 @@ fn check_box_dyn_method_call(
             None => check_target_writable(&recv, ctx)?,
         }
     }
-    lower_dyn_call(recv, trait_name, &decl, slot, args, span, ctx)
+    lower_dyn_call(recv, trait_name, &decl, slot, args, span, receiver_mut, ctx)
 }
 
 /// The vtable slot and declaration of one trait method, or the refusal that
@@ -17415,6 +17415,7 @@ fn dyn_method_slot<'a>(
 
 /// The shared tail of both trait-object method calls: check the arguments
 /// against the trait method's own signature and lower to a `DynCall`.
+#[allow(clippy::too_many_arguments)]
 fn lower_dyn_call(
     receiver: tir::Expr,
     trait_name: &str,
@@ -17422,6 +17423,7 @@ fn lower_dyn_call(
     slot: usize,
     args: &[ast::CallArg],
     span: Span,
+    exclusive: bool,
     ctx: &mut Ctx,
 ) -> Result<tir::Expr> {
     // The argument types come from the trait declaration, resolved in the
@@ -17459,6 +17461,7 @@ fn lower_dyn_call(
             receiver: Box::new(receiver),
             slot,
             args: checked,
+            exclusive,
         },
         ty: ret,
         span,

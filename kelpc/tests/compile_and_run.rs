@@ -5900,6 +5900,10 @@ fn the_owned_trait_object_shapes_this_slice_refuses_are_refused_by_name() {
         "tests/fixtures/traits_boxdyn_generic_trait.kp",
         "takes type parameters",
     );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_mut_while_borrowed.kp",
+        "already borrowed as shared",
+    );
 }
 
 /// A-12 slice 7 in a bare-metal image: two owned trait objects built through the
