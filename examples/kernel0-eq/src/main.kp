@@ -90,6 +90,25 @@ fun Pair.eq(other: &Pair).R: bool {
     return str.eq(self.name.as_str(), other.name.as_str()) && self.id == other.id
 }
 
+// A `Bytes` field, whose equality has to be written by hand: `Bytes` is not a
+// `Map` key type, so nothing derives one for it, and the declared `eq` walks
+// the two byte slices through the bounds-checked accessor.
+datac Blob(val data: Bytes, val tag: i32)
+
+fun Blob.eq(other: &Blob).R: bool {
+    if self.tag != other.tag || self.data.len() != other.data.len() {
+        return false
+    }
+    var i: usize = 0
+    while i < self.data.len() {
+        if self.data.get(i) != other.data.get(i) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
 fun put_str(text: &str) {
     uart.puts(str.ptr(text), str.len(text))
 }
@@ -128,6 +147,12 @@ fun equality_lines() {
     }
     if m.has(b) {
         line(label = "map hit: ", text = "yes")
+    }
+
+    val x = Blob(data = Bytes.from_str("kelp"), tag = 1)
+    val y = Blob(data = Bytes.from_str("kelp"), tag = 1)
+    if x == y {
+        line(label = "bytes eq: ", text = "yes")
     }
 }
 

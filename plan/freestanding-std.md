@@ -108,9 +108,10 @@ and never converts implicitly is unchanged.
 - `freestanding_std_kernel` boots under QEMU and prints `std/option`,
   `std/result` and `std/arena` results over the real UART.
 - `examples/kernel0-eq` and `examples/kernel0-eq-x86_64` boot under QEMU and
-  print a `String`-field equality, a `Map` lookup through the derived key pair,
-  a `View.slice`/`View.to_string` and a `std/regex` match on riscv64 and
-  x86-64: `kernel0_eq_builds_with_no_undefined_symbols`,
+  print a `String`-field equality, a `Bytes`-field equality, a `Map` lookup
+  through the derived key pair, a `View.slice`/`View.to_string` and a
+  `std/regex` match on riscv64 and x86-64:
+  `kernel0_eq_builds_with_no_undefined_symbols`,
   `kernel0_eq_boots_and_prints_the_equality_and_regex_lines` and
   `kernel0_eq_x86_64_builds_and_boots_the_same_lines`.
 - Rejection fixtures: `freestanding_std_refused_time`,

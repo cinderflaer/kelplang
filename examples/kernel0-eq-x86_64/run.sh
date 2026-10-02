@@ -22,7 +22,7 @@ if [ "$#" -gt 0 ]; then
     shift
 fi
 if [ "$#" -eq 0 ]; then
-    set -- "eq same: yes" "eq differ: yes" "map keys: 2" "map hit: yes" \
+    set -- "eq same: yes" "eq differ: yes" "map keys: 2" "map hit: yes" "bytes eq: yes" \
         "view slice: kelp" "view eq: yes" "regex match: hello42" \
         "regex group: 42" "balanced"
 fi

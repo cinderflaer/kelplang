@@ -286,8 +286,9 @@ borrowed two-word value with no storage, so `len`/`is_empty`/`get`/`slice`/`eq`
 are admitted (with `View.to_string` in the allocator-only set) and the two
 missing bodies are emitted. With both in place `std/regex` moved from the
 hosted-only list to the allocator row of the table: `examples/kernel0-eq` and
-`examples/kernel0-eq-x86_64` compare a `String`-field `datac`, look it up in a
-`Map`, slice a view, and match `[a-z]+(\d+)` under QEMU on riscv64 and x86-64.
+`examples/kernel0-eq-x86_64` compare a `String`-field and a `Bytes`-field
+`datac`, look the first up in a `Map`, slice a view, and match `[a-z]+(\d+)`
+under QEMU on riscv64 and x86-64.
 `plan/freestanding-std.md` and `plan/regex.md` carry the detail.
 
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
