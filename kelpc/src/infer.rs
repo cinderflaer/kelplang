@@ -1176,6 +1176,13 @@ impl TypeScope<'_> {
                     span: ty.span,
                 });
             }
+            // A trait named through another module's alias has to be exported
+            // by that module, exactly as a bound on the same trait does.
+            if let Some((alias, item)) = written.split_once('.') {
+                if !exported(&qualified, &self.env) {
+                    return Err(private_item_error(alias, item, ty.span));
+                }
+            }
             check_dyn_object_safety(&qualified, ty.span, &self.env.traits)?;
             return Ok(Ty::Dyn {
                 mutable: ty.amp_mut,
