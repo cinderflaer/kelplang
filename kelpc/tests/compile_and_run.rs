@@ -11742,6 +11742,7 @@ fn a_hosted_std_module_is_refused_by_name_with_the_allowed_list() {
         ("freestanding_std_refused_thread", "std/thread"),
         ("freestanding_std_refused_env", "std/env"),
         ("freestanding_std_refused_regex", "std/regex"),
+        ("freestanding_std_refused_tz", "std/tz"),
     ] {
         let bin = out_path(dir);
         let build = Command::new(kelpc_bin())

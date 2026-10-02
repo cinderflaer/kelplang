@@ -68,6 +68,7 @@ does not ship.
 | `std/thread` | refused: pthreads and the hosted runtime | Refused by name. |
 | `std/sync` | refused: `Mutex<T>`'s runtime half is a pthread mutex | Refused by name, separately from the `Mutex` type refusal. |
 | `std/regex` | refused: a hosted-only module, decided when it shipped (`plan/regex.md`) | Built into a riscv64 image with the allocator pair, it links with undefined `kelp_map_key_eq` (the derived equality of `Match`/`RegexErr`/`Option<String>`, which every `datac` or `enum` with a `String` field gets) and `kelp_View__slice`/`kelp_View__to_string` (runtime calls the freestanding `View` does not have). The engine itself (parser, program, Pike VM) is plain `List` and integer code. Admitting it needs a `String`-free surface or the two runtime pieces; neither is part of this table. Refused by name. |
+| `std/tz` | refused: a hosted-only module, decided when it shipped (`plan/tz.md`) | Its whole surface is `tz.load`, which reads a TZif file through the `fs` gate and asks `std/env` for `$TZDIR`, and both of its result payloads carry `String` (`TzErr.Corrupt`'s message and every `Offset`'s abbreviation), which is the derived-equality-and-runtime-call pair that keeps `std/regex` out. None of that is a subset separable by name: there is no zone without a file. Refused by name. |
 | `std/rt` | present, not callable | The resolver injects it for a module that holds a capability domain; the `irq`/`frames` checks are front-end and emit no matcher call, and `prune` drops the module's bodies. |
 
 ## The allowed list a refusal names

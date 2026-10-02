@@ -1606,3 +1606,34 @@ the memory a cursor points into beyond the owner's lifetime: a cursor stored in
 a `datac` field, a container element or a returned temporary is still refused by
 the same "no lifetime syntax" rules as before, and a root reached through a raw
 `Ptr<T>` is not tracked at all (that is `unsafe`'s contract, unchanged).
+
+## st5: `std/tz`, the TZif reader (`plan/tz.md`)
+
+**New ways to reach undefined behaviour.** None from the language or the module:
+`std/tz` is Kelp that reads a file through the `fs` gate, and every byte it takes
+out of one goes through a bounds-checked `Bytes` accessor behind an explicit
+length test, so a truncated or hostile file is a `Corrupt` message rather than a
+read past the end. Its integer arithmetic is checked by the language, and every
+instant entry point refuses a value outside the years 1 to 9999 before the
+civil-date conversion could overflow, so the one way to make it panic is a
+caller's own out-of-range instant or impossible calendar date, which the
+language's checks report.
+
+The compiler change this task made is in the LLVM backend, and it *is* a new
+`unreachable`: a function body whose last statement is `while true { ... }` has
+no exit edge, so `codegen_llvm` now closes that block with `LLVMBuildUnreachable`
+instead of a fallthrough `ret` of a zero value (which a `String`, a `Bytes` or a
+container has no zero for, so the shape used to be refused as a compiler defect
+while the C backend compiled it). Executing that terminator is undefined
+behaviour; nothing can reach it, because LLVM reaches `unreachable` only through
+an edge, and the point of the change is that there is none.
+
+**What the compiler does and does not check.** The check is syntactic and
+narrow: it looks at the last statement of the function body only, and only when
+its condition is the literal `true`. A body whose endless loop sits inside an
+`if` or a nested block, or whose condition is anything but a literal `true`
+(a `const` folded to `true`, say), keeps the old behaviour: a fallthrough `ret`
+in an unreachable block, which for an owned return type is still the refusal
+above. Nothing verifies that the loop's body cannot leave (it cannot: Kelp has
+no `break`), and nothing checks the drops emitted before the terminator, which
+are unreachable in the same way.

@@ -1,0 +1,5 @@
+impl "std/tz" caps(fs = ["/**"], env = ["TZDIR"])
+
+section(".text.boot") fun kmain() {
+    while true { }
+}

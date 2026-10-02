@@ -174,6 +174,10 @@ pub fn std_admission(module: &str) -> StdAdmission {
         // `std/mem`'s one extern is libc `malloc`, and `std/rt` is injected for a
         // capability domain; both may be present and neither is callable.
         "std/mem" | crate::stdlib::RT_MODULE => StdAdmission::Present,
+        // `std/tz` reads TZif files and `$TZDIR`: a bare-metal image has no
+        // filesystem and no environment for it to read, and its `Result`
+        // payloads carry `String` (plan/tz.md, Freestanding).
+        "std/tz" => StdAdmission::Hosted,
         _ => StdAdmission::Hosted,
     }
 }
