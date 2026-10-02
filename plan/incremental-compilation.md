@@ -376,11 +376,12 @@ path and `<cache>` a cache directory:
 ### What the numbers say
 
 - **Incremental does not pay for a tiny program.** `hello`'s whole-program build
-  is 133 to 136 ms and every incremental variant is the same or slower (141 to
-  156 ms cold, 128 to 131 ms warm). A build that small is the `cc` link plus a
-  fixed per-unit overhead; there is almost no backend work to save, and splitting
-  one module into unit plus `_support` adds two pieces of work where there was
-  one. The mode is off by default for exactly this shape.
+  is 133 to 136 ms; a cold incremental build is 141 to 156 ms, and the warm and
+  one-line-edit builds are within about 10 ms of whole-program (128 to 142 ms,
+  which is this host's noise plus or minus a few ms). A build that small is the
+  `cc` link plus a fixed per-unit overhead; there is almost no backend work to
+  save, and splitting one module into a unit plus `_support` adds two pieces of
+  work where there was one. The mode is off by default for exactly this shape.
 - **It starts to pay once a program pulls in heavy `std` modules.** A ~100-line
   program that uses `std/http` (`http_rate_limit`) goes from 4992 to 3130 ms
   (debug) and 3487 to 2418 ms (release) for a cold incremental build at two
@@ -401,6 +402,7 @@ path and `<cache>` a cache directory:
   (3130 ms debug, 2418 ms release at two workers). The saving is the other
   units' pass pipeline and codegen, not their lowering.
 
-The numbers are not a claim that every project is faster: `hello` is slower, and
-the threshold is a program whose own backend work is larger than the link, which
-on this host is a program that reaches the heavy `std` modules.
+The numbers are not a claim that every project is faster: `hello` does not
+benefit (its cold build is slower and its warm build is within noise), and the
+threshold is a program whose own backend work is larger than the link, which on
+this host is a program that reaches the heavy `std` modules.
