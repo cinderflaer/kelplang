@@ -1684,7 +1684,8 @@ Both are recovered from the vtable the box carries: the drop entry runs the conc
 `kelp_drop_<T>` before the box frees the allocation, and the coercion that built the pair is the
 only place a `(trait, type)` vtable is recorded, so a pair whose vtable was never emitted is a
 compile-time error rather than a wrong slot. The size and align entries are emitted beside the drop
-entry but nothing reads them yet. A call through the box passes the erased data pointer as the
+entry and are read only by the box's free when the project supplies its own allocator (whose
+dealloc takes a size and an alignment); libc's `free` ignores them. A call through the box passes the erased data pointer as the
 thunk's first parameter, exactly as a `&dyn` call does, so the receiver conversion the thunk
 performs (the pointer itself for a borrowed receiver, a load for a `Copy` scalar) is the same one
 that was already audited for `&dyn`.

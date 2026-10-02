@@ -868,9 +868,11 @@ coercion is **implicit at every position that knows an expected type**, which is
 - The drop entry is emitted per `(trait, type)` pair, so it names the concrete method's own drop
   function. A type that needs no drop (a `Copy` scalar) gets a thunk that does nothing, and the
   box still frees its allocation.
-- The size and align entries are emitted as data beside the drop entry. Nothing in this slice reads
-  them; they exist so the table describes the concrete type completely, which is what a later slice
-  that needs the layout of an erased value would reach for.
+- The size and align entries are emitted as data beside the drop entry. The box's own free reads
+  them when the project supplies an allocator whose free takes a size and an alignment (the
+  freestanding hook), because the size of an erased value is not known at the free site; libc's
+  `free` does not need them. They exist so the table describes the concrete type completely, which
+  is what a later slice that needs the layout of an erased value would reach for.
 
 ### 12.5 Moves, borrows and threads
 
