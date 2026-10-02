@@ -622,7 +622,10 @@ float-to-integer conversion. A pixel fill width is an integer, so `soft/frac.kp`
 integer shifts into a permille in `0..=1000`. It is ~20 lines, allocates nothing, and never
 performs a float operation, which is what keeps a freestanding riscv64 image from needing a
 soft-float libcall for the progress bar. The read is a type-punning load, legal only in the
-module a manifest lists; `plan/kernel-ub-notes.md` records it.
+module a manifest lists; `plan/kernel-ub-notes.md` records it. *Stage 4 removed this module:
+`Props.fraction` is an integer permille and `Node.Progress`/`Children.progress` carry it, so the
+core performs no `f64` comparison and nothing has to decode a float. See stage 4's "What this
+stage found".*
 
 ### Programs and tests
 
@@ -671,3 +674,148 @@ Four, all recorded in `plan/user-ffi-gap-analysis.md`; none is a compiler change
   reason.
 - A non-`unit` value in statement position is an error when the enclosing `if` has no `else`;
   the paint code discards the primitives' pixel counts with `val _ = ...`.
+
+## Stage 4: the freestanding proof
+
+*Stage 4 of 5. `examples/polyp-fb-riscv64` and `examples/polyp-fb-x86_64` are the two projects
+this section designs; the equivalence test they feed is in `kelpc/tests/compile_and_run.rs`.
+This stage is LLVM-only, as every freestanding build is.*
+
+The claim to prove is narrow and total: the same `core.kp`, the same `soft/` raster, the same
+`soft_backend.kp` and the same application program, built with no libc for two bare-metal
+targets, draw the same pixels as the hosted run. "Same pixels" is the FNV-1a checksum
+`soft/fb.kp` already computes, printed after every step by all three runs.
+
+### The two kernels
+
+`examples/polyp-fb-riscv64` boots on QEMU's riscv64 `virt` machine (`-bios none`, UART at
+`0x10000000`) and `examples/polyp-fb-x86_64` on `-M q35` through the PVH stub, with COM1
+(`0x3F8`) for output and a `hlt` halt. Each is the `kernel0` shape (`plan/freestanding.md`,
+`plan/x86-64.md`) plus four things:
+
+- a `static mut FB: [u32; FB_W * FB_H]` at 320x200 (256 KiB of `.bss`, zeroed by the `_start`
+  stub like every other static) that the project's platform hands to the backend as an `fb.Fb`
+  with `stride_px = FB_W`;
+- a bump arena in a second `static mut [u8; N]` named by `[target] alloc`/`dealloc`, so
+  `List`, `String` and `Box` allocate through the project and the image links no libc;
+- a platform (`FbPlatform`) that implements `soft/platform.Platform`: `framebuffer` returns the
+  static surface, `present` counts the rectangles it was handed and advances a fake clock by
+  100 ms, `now_ms` returns that clock and `poll_event` answers from a timed script that is
+  empty here, because the scenario drives the programmatic `core.Event` channel exactly as the
+  hosted run does;
+- a UART writer for the step lines, and a `[target] panic` handler that prints
+  `panic: <msg>` and halts.
+
+The manifest grants `mmio` for the UART window only (`0x10000000+0x100`, `0x3F8+0x8`), lists
+the modules that carry a pointer (`uart`, `fb_platform`, `deps/polyp/soft/fb`,
+`deps/polyp/soft/draw`) and claims nothing else.
+
+### The shared scenario
+
+`examples/polyp-todo/src/scenario.kp` is the driver all three runs use:
+`drive(backend, platform, emit)` builds `app.initial()`, applies `core.create_all`, paints and
+presents the first frame, schedules every `app.script()` event on the backend, then calls
+`soft_backend.frame` until the program quits, emitting one line per step:
+
+```text
+step <n> checksum 0x<16 hex digits> dirty <rectangles painted>
+```
+
+`n` is 0 for the first frame and 1.. for one scripted event each, because `SoftBackend.pump`
+releases exactly one queued `core.Event` per frame. `dirty` is a new `SoftBackend` diagnostic
+(`last_painted`), the count `paint` returned for the frame the driver just ran, so an idle
+frame reports 0. `emit` is a plain `fun(str)`: the hosted entry prints, the kernels write the
+bytes to their UART. The line is built in the scenario module, not by the platform, so the two
+sides cannot format the same checksum differently.
+
+`examples/polyp-todo/src/report.kp` is the same program's human-readable summary, moved out of
+`app.kp` because its body calls `print`, which a freestanding build refuses wherever it
+appears. `app.kp` is the model, the view, the update and the script, and is the module both
+hosted and bare-metal runs link.
+
+### What the core had to change
+
+Four Polyp source fixes, all forced by the freestanding allowed set, none in the compiler:
+
+1. **The progress fraction is an integer permille, not an `f64`.** `Node.Progress`,
+   `Props.fraction` and `Children.progress` carry an `i32` in `0..=1000`. Two f64 operations
+   were in the freestanding path: `node_props_eq`'s `fa == fb` (a `__eqdf2` soft-float call on
+   a riscv64 target with no FPU) and `app.fraction`'s `done.to_f64() / total.to_f64()`. The
+   view now computes `done * 1000 / total` with integers. `soft/frac.kp`, which decoded an
+   `f64`'s bits into a permille for the paint path, is deleted: nothing decodes a float any
+   more. `gtk_backend.kp` and `headless_backend.kp` convert the permille to the `f64` GTK and
+   the text dump want (`permille.to_f64() / 1000.0`), hosted float arithmetic that no
+   bare-metal image ever emits.
+2. **`core.kp`'s passdowns are statics.** A `pd` is refused in a freestanding build because
+   its initializer runs through `kelp_init_pds`, which only the hosted entry point calls. The
+   counters become `static ... : AtomicI32 = AtomicI32.new(0)` (an `Atomic` static is the safe
+   shared mutable, so the core still contains no `unsafe`).
+3. **The entry-text snapshot moved to `examples/polyp/diag.kp`.** It is the one counter that
+   is a `List<String>`, and a heap type cannot be a static. `diag.capture(backend)` is called
+   by the hosted entries after the run and `diag.entry_text(0)` is what `report.kp` and
+   `lib.kp`'s `entry_text` read; the freestanding projects do not import the module, so the
+   `pd` it carries never reaches them.
+4. **`core.kp` no longer imports `std/fmt`**, only for `fmt.int` in a duplicate-key panic
+   message; `str.from_i64` is the same text and is part of the freestanding `std/str` subset.
+
+### The equivalence test
+
+`polyp_todo_soft` prints the same `step` lines (its entry prints them through `emit` and then
+the summary), so the hosted run at the kernel's resolution is the expected output for both
+kernels. The test runs the hosted binary with `POLYP_SOFT_SIZE=kernel` (320x200), builds each
+kernel, boots it under `timeout 20 qemu-system-<arch>`, and compares the two runs line by line
+from the first `step ` line to the report's `end`, dropping the hosted entry's `-- todo --`
+separator; a single pixel difference anywhere fails it. The report is compared too, on purpose:
+the same comparison that proves the pixels also proves the whole state machine (both `update`s,
+the keyed diff, the counters and the entry text) ran identically with no libc. It also asserts
+`llvm-nm -u` reports no undefined symbol for each image, which is the proof that nothing reached
+libc or a soft-float helper. Both tests skip where `ld.lld` and the emulator are absent.
+
+The two example `run.sh` scripts are the manual version, and `examples/polyp/PLATFORM.md` now
+lists what a bare-metal project has to write down, with `main.kp` as the worked example.
+
+### What this stage found
+
+- **A keyable user type with a `String` field could not link freestanding.** The compiler emits
+  the derived `kelp_hash_<T>`/`kelp_eq_<T>` pair for every keyable type in the program, whether
+  or not anything uses it as a `Map` key, and the generated equality compares a `String` field by
+  calling `kelp_map_key_eq`, a hosted runtime symbol with no freestanding body. The project's own
+  types exposed it first (`core.Event`, `core.Key`, `core.Seg`, `app.Msg`, `app.Todo`,
+  `Option<String>`), and every keyable `String`-holding datac in any future bare-metal program
+  would hit it. Fixed in the Polyp source, with the language's own escape hatch: `core.Event` and
+  `core.Key` declare a real `hash`/`eq` pair (`app.Todo` and `app.Msg` too), which is what makes
+  the compiler skip the derived pair for them, and `soft_backend.find_text` writes into a caller's
+  `String` instead of returning an `Option<String>`, so no keyable `Option<String>` is
+  instantiated. The pairs are hand-written with `str.len`/`str.byte` (the freestanding lowering),
+  so `Map` still works on both backends. Recorded as a gap in `plan/kernel-ub-notes.md`'s stage-4
+  note; the freestanding compiler half (emit a body for `kelp_map_key_eq`, or emit the derived
+  pair only for types a `Map` really keys) is not this stage's to make.
+- **The float in the core.** `Props.fraction` was an `f64`, which cost two soft-float calls in
+  the renderer: `node_props_eq`'s `fa == fb` and the view's `done.to_f64() / total.to_f64()`. The
+  core carries an integer permille now and `soft/frac.kp`, which decoded an `f64`'s bits, is
+  deleted. The pixels did not move: the hosted 400x300 and 800x600 checksums are byte-identical
+  before and after the change to a permille, because `frac.of` already truncated `1000 * v`.
+- **`pd` in the core.** A passdown is refused bare-metal, and `core.kp` used five of them for its
+  counters plus one for the entry-text snapshot. The counters are `Atomic` statics now (no
+  `unsafe`, because an `Atomic`'s methods take a shared borrow), and the snapshot is
+  `examples/polyp/diag.kp`, a hosted-only module no freestanding project imports.
+- **Two shapes the language made us write around**, both already in the gap list: a borrow of a
+  temporary cannot be an argument (`emit(step_line(...).as_str())` is refused; bind it first), and
+  a trait method's implementation must spell its parameters exactly as the trait does, unused name
+  included.
+- **`fn` types have unnamed parameters.** `fun (line: str)` is a parse error; a function type is
+  `fun (str)`, and a parameter name would have to come from a trait declaration.
+
+### The stretch: a real display
+
+On riscv64 QEMU's `virt` supports `-device ramfb`, configured through the fw_cfg device at
+`0x10100000`: a DMA write of the `etc/ramfb` file (address, `XR24`, flags, width, height,
+stride) registers the surface QEMU scans out. With that working, `screendump` over QMP would
+capture a PPM whose pixels equal the framebuffer, compared through the same checksum function.
+`plan/polyp-ramfb-status.md` records what was reached.
+
+On riscv64 QEMU's `virt` supports `-device ramfb`, configured through the fw_cfg device at
+`0x10100000`: a DMA write of the `etc/ramfb` file (address, `XR24`, flags, width, height,
+stride) registers the surface QEMU scans out. With that working, `screendump` over QMP would
+capture a PPM whose pixels equal the framebuffer, compared through the same checksum function.
+`plan/polyp-ramfb-status.md` records what was reached.

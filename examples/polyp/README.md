@@ -39,6 +39,12 @@ note. Examples `polyp-counter` and `polyp-counter-v0` keep working;
 `examples/polyp-todo` is the keyed-list program and `examples/polyp-core-test` is
 the display-free test project.
 
+**v3 stages 2 to 4** add a display-free path: `examples/polyp/soft/` is a self-contained integer
+rasterizer, `soft_backend.kp` applies the same patches to a retained tree and paints through it,
+and `examples/polyp-fb-riscv64`/`examples/polyp-fb-x86_64` prove the whole stack boots and draws
+the hosted run's exact pixels with no libc (`plan/polyp-v3.md` stages 2, 3 and 4, and the
+`## The freestanding proof` section below).
+
 There is no published version number; "v3" is the backend split plus what is
 listed here. `examples/polyp-v0/` and `examples/polyp-counter-v0/` are a frozen
 copy of v0 (see [Versions](#versions)).
@@ -163,7 +169,7 @@ pub enum Node<M> {
     Entry(val text: String, val on_change: fun (String).R: M)
     Button(val label: String, val on_click: M)
     Checkbox(val label: String, val checked: bool, val on_toggle: M)
-    Progress(val fraction: f64)
+    Progress(val permille: i32)
     Separator
     Scrolled(val children: List<Child<M>>, val spacing: i32)
 }
@@ -178,7 +184,7 @@ fun mut Children<M>.spacer(height: i32)
 fun mut Children<M>.button(label: str, on_click: move M)
 fun mut Children<M>.entry(value: str, on_change: fun (String).R: M)
 fun mut Children<M>.checkbox(label: str, checked: bool, on_toggle: move M)
-fun mut Children<M>.progress(fraction: f64)
+fun mut Children<M>.progress(permille: i32)
 fun mut Children<M>.separator()
 fun mut Children<M>.column(block: scoped fun(mut Children<M>))
 fun mut Children<M>.row(block: scoped fun(mut Children<M>))
@@ -239,7 +245,7 @@ pub fun schedule_focus_entry(delay_ms: u32, index: i32)
   selection are not fought. `on_change` is a plain `fun(String).R: M` (called
   with a borrowed `String`) that turns the live text into the app's `Msg`.
 - `checkbox(label, checked, msg)` posts `msg` on `toggled`; the application reads
-  the new state from its own model, exactly as a button does. `progress(fraction)`
+  the new state from its own model, exactly as a button does. `progress(permille)`
   is a `GtkProgressBar`. `separator()` is a horizontal rule.
 - `scrolled(block)` puts the block's children in a `GtkScrolledWindow`, laid out
   in a vertical box inside it. The window is patched in place, so the scroll
@@ -274,7 +280,7 @@ pub fun schedule_focus_entry(delay_ms: u32, index: i32)
   alive (`created - removed`). `focus_present()` says whether any patch found a
   focus widget, `focus_survived()` whether every patch kept the one it found,
   `entries_built()` how many `Entry` widgets the process built, and
-  `entry_text(index)` reads the index-th entry's text as it was when `run`
+  `entry_text(index)` reads the index-th entry's text as `diag.capture` took it when `run`
   returned. A run that patches keeps `created` flat across state changes; a
   rebuild-everything implementation does not.
 
@@ -297,7 +303,7 @@ and nothing else. For each container (and for the window's single child):
   `Button` is never patched into a `Text`.
 - A matched widget is **updated in place**: label markup, button label, checkbox
   label and active state, entry text (only when it differs and the entry does not
-  hold the focus), progress fraction, spacer height, box spacing, margins,
+  hold the focus), progress permille, spacer height, box spacing, margins,
   expand, alignment and CSS classes. It is the same GTK object, so its focus,
   text selection and scroll offset survive by construction.
 - A child the new tree does not match is created and inserted at its index
@@ -409,7 +415,7 @@ while running {
 | `soft/platform.kp` | `trait Platform`: `present`, `now_ms`, `poll_event`, `framebuffer` | no |
 | `soft/headless_platform.kp` | an in-memory framebuffer, scripted input, recorded presents | yes |
 | `soft/ppm_platform.kp` | the headless platform plus a PPM dump when `POLYP_DUMP_DIR` is set | yes |
-| `soft/frac.kp` | an `f64`'s bit pattern as an integer permille, for the progress bar | yes |
+| `diag.kp` | the entry-text snapshot a hosted program reads after a run, in its own module because its one global is a `pd` | no |
 
 Layout is two passes, measure and arrange, over the same `Rect` arithmetic; a patch marks only
 the node it wrote dirty, and `arrange` runs only when a size changed, the window was resized, a
@@ -435,6 +441,34 @@ tests. Both run in the plain development shell on both compiler backends.
 ```sh
 nix-shell /path/to/dev.nix --run 'cd kelpc && cargo test --test compile_and_run polyp'
 nix-shell /path/to/dev.nix --run 'cd kelpc && KELPC_ORACLE=c cargo test --test compile_and_run polyp'
+```
+
+## The freestanding proof (v3 stage 4)
+
+`examples/polyp-fb-riscv64/` and `examples/polyp-fb-x86_64/` are bare-metal `[target]` projects
+(`plan/freestanding.md`, `plan/x86-64.md`) that link the core, the raster, the soft backend and the
+todo program into an image with no libc and draw into a `static mut [u32; 320 * 200]`. They run the
+same script as `examples/polyp-todo-soft`, through the shared driver
+`examples/polyp-todo/src/scenario.kp`, and print one line per step:
+
+```text
+step 0 checksum 0xf0b341c4a10c78b5 dirty 1
+...
+step 11 checksum 0x0e6a6aa56d77ac07 dirty 0
+```
+
+Everything an OS has to provide on top of the platform contract is in
+`examples/polyp-fb-riscv64/src/main.kp`: a framebuffer (a static, or MMIO), a `[target]
+alloc`/`dealloc` pair for the tree's allocations, a `[target] panic` handler, and a way to write a
+line out. `examples/polyp/PLATFORM.md` has the list. The equivalence test is the point:
+`kelpc/tests/compile_and_run.rs` runs `examples/polyp-todo-soft` at `POLYP_SOFT_SIZE=kernel`
+(320x200) and requires each kernel's serial output to be byte-identical to it, step lines and
+report, so one pixel of difference fails; `llvm-nm -u` on each image shows no undefined symbol,
+which is what proves nothing reached libc or a soft-float helper.
+
+```sh
+nix-shell /path/to/dev-kernel.nix --run 'cd kelpc && cargo test --test compile_and_run polyp_fb'
+nix-shell /path/to/dev-kernel.nix --run 'examples/polyp-fb-riscv64/run.sh'
 ```
 
 ## Using the library

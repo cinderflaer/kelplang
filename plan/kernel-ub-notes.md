@@ -1589,3 +1589,53 @@ damage (a same-width text change damages exactly one rectangle and a FNV digest 
 outside it is unchanged; a hover damages one widget; an idle frame presents nothing) and the
 layout skip (one measure, no arrange), and `examples/polyp-todo-soft` pins the todo UI's
 checksums at 400x300 and 800x600. Both run on the LLVM and C backends under `run_bounded`.
+
+## Library note: Polyp v3's freestanding framebuffer proof (2026-10-04, not a kernel stage)
+
+*Polyp stage 4 (`plan/polyp-v3.md`) runs the v3 core, the stage-2 raster and the soft backend on
+two bare-metal targets. It adds no compiler surface, so this is a library note: the same shape as
+the stage-3 note above, for the code the kernels add.*
+
+**What is new, and where the pointer comes from.** Three things, in modules the project lists on
+`[unsafe] modules`:
+
+- `fb_platform.kp` takes `Ptr.from_mut(FRAME)` for the project's `static mut [u32; 64000]` and
+  casts it to `Ptr<u32>` for `fb.new`. It is the stage-1 `static mut` case: the language checks
+  nothing about the pointer afterwards, and the platform's promise is that the pixel writes stay
+  inside `width * height` of that array (the backend's own clipping is what keeps it).
+- The surface is `.bss`, which the compiler's `_start` stub zeroes before the entry runs. A
+  project whose linker script leaves `__bss_start`/`__bss_end` unset (both are weak) boots with
+  whatever the loader left there; the examples' scripts set them, so the first frame starts black
+  the way `HeadlessPlatform`'s zeroed buffer does. Nothing checks this.
+- `main.kp`'s bump arena is the stage-7 allocator promise unchanged: `alloc` returns memory
+  aligned for the caller and zeroed-or-not is the caller's business, `dealloc` is a no-op that
+  never reclaims, and a request past the arena's end returns null, which the compiler turns into
+  `kp_panic("out of memory")`. A name, a size and an alignment are all the compiler passes.
+
+**What the compiler checks, and does not.** It checks the freestanding allowed set (no `print`,
+no libc, no `pd`, `std/*` admitted by `freestanding::std_admission`), the manifest's allocator
+signatures and the `[unsafe]` audit list. It does not check that a framebuffer pointer names
+memory the platform owns, that a `stride_px` covers the width, that the fake clock advances, or
+that a scheduled `core.Event` names a widget that still exists. The pixels are the evidence: the
+`step` lines and the report have to equal the hosted run's.
+
+**The one gap this exposed, and the Polyp-side fix.** The derived `kelp_hash_<T>`/`kelp_eq_<T>`
+pair is emitted for every keyable user type in the program, whether or not a `Map` keys it, and
+the derived equality compares a `String` field through `kelp_map_key_eq`, which is only defined in
+the hosted C runtime. `ld.lld` therefore reported `undefined symbol: kelp_map_key_eq` for
+`core.Event`, `core.Key`, `core.Seg`, `app.Msg`, `app.Todo` and `Option<String>`. The fix is in
+the Polyp source and uses the documented escape hatch: `Event`, `Key`, `Todo` and `Msg` declare
+their own `hash`/`eq` pair (written with `str.len`/`str.byte`, so the bodies lower freestanding),
+and `soft_backend.find_text` writes into a caller's `String` instead of returning an
+`Option<String>`. A compiler-side fix (emit a body for `kelp_map_key_eq`, or emit the derived pair
+only for types a `Map` actually keys) would be the general answer and is not this stage's.
+
+**What the type-pun removal closes.** `soft/frac.kp`'s `f64`-bits read, this file's stage-3 entry,
+is gone with the module: `Props.fraction` is an integer permille, so the core has no float
+comparison and no decoder, and neither the hosted nor the bare-metal build reads an `f64` through
+a pointer any more.
+
+**What the tests pin.** `kelpc/tests/compile_and_run.rs`'s `polyp_fb_riscv64_*` and
+`polyp_fb_x86_64_*` boot each image under `timeout 20 qemu-system-<arch>`, require its serial
+output to equal the hosted 320x200 run's line for line, and require `llvm-nm -u` to name no
+undefined symbol.

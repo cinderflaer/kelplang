@@ -306,3 +306,20 @@ still has no trampoline, `library`/`header`/`pkg_config` still have no effect in
     program's `Model` already is.
   - A discarded non-`unit` return value in statement position is an error (`if` without an
     `else` must be `unit`); `val _ = call()` is the discard the paint code uses.
+
+## Status update (2026-10-04, Polyp v3 stage 4)
+
+- **No FFI gap is closed and none is newly blocked.** The two freestanding framebuffer projects
+  (`examples/polyp-fb-riscv64`, `examples/polyp-fb-x86_64`) declare no `extern fun` at all: a UART
+  is a `Ptr<u8>` under an `mmio` grant on riscv64 and an `in`/`out` pair on x86-64, and
+  `plan/kernel-ub-notes.md`'s stage-4 note carries what that costs. The one new gap is a
+  *freestanding* one, not an FFI one, and it is recorded there: a keyable user type with a `String`
+  field pulls in the hosted `kelp_map_key_eq`.
+- Three Kelp shapes the stage worked around, none of them FFI:
+  - A function type's parameters are unnamed: `emit: fun (line: str)` is a parse error, `emit:
+    fun (str)` is the spelling, so a trait is the only place a callback parameter gets a name.
+  - A trait method's implementation has to spell its parameters exactly as the trait does, unused
+    name included (`present(fb: ...)` cannot be written `present(_surface: ...)`).
+  - An argument that borrows a temporary cannot be a call argument (`emit(step_line(...).as_str())`
+    is refused); bind it to a local first. The same shape the stage-2 note records for
+    `Ptr.from_ref(&buf).cast<u32>()`.

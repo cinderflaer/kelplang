@@ -381,6 +381,11 @@ sees. The gates read the dispatcher's address through the GS base rather than an
 operand, because an operand is materialised into a register before the gate has saved
 anything. Not in this stage: the APIC, SMP, ACPI, a TSS/IST stack and x86 user mode.
 
+**Polyp's renderer is proved freestanding** (Polyp v3 stage 4, `plan/polyp-v3.md`): `examples/polyp-fb-riscv64`
+and `examples/polyp-fb-x86_64` boot the v3 core, the software raster and the soft backend on both targets and
+draw the hosted run's exact pixels with no libc, which is the "custom operating system with a framebuffer"
+case the kernel path wanted and `examples/polyp/PLATFORM.md` is the contract it hands an OS.
+
 ## Two rules that keep the language honest
 
 1. **`unsafe` is auditable, not ambient.** A module may contain `unsafe` only if `coral.toml` lists it

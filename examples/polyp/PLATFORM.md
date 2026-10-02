@@ -1,7 +1,9 @@
 # Polyp's platform contract
 
 *The plain-terms description of what an operating system has to provide to run a Polyp program on
-`examples/polyp/soft_backend.kp`. The design is `plan/polyp-v3.md`, stage 3.*
+`examples/polyp/soft_backend.kp`: the four functions and the buffer the soft backend draws into
+(stage 3), and the extra facts a **bare-metal** project has to write down (stage 4, proved by
+`examples/polyp-fb-riscv64/` and `examples/polyp-fb-x86_64/`). The design is `plan/polyp-v3.md`.*
 
 Polyp's soft backend owns no display. It owns a retained widget tree, lays it out with integers,
 and paints into a framebuffer the platform hands it. Everything the platform has to do is four
@@ -129,9 +131,54 @@ A frame with no input and no change paints nothing, presents nothing, and return
 - No clipping arithmetic: the backend clips every primitive to the framebuffer and to each damage
   rectangle.
 
-## A minimal implementation
+## What a minimal implementation looks like
 
 `examples/polyp/soft/headless_platform.kp` is a complete platform in about a hundred lines: it
 allocates the buffer with `Ptr.alloc<u32>`, records the presented rectangles and the frame
 checksum, and plays a scripted event list. `examples/polyp/soft/ppm_platform.kp` adds a PPM dump.
 `examples/polyp-todo-soft/` drives the todo program through `frame` and pins the checksums.
+
+## What a freestanding OS must provide
+
+There is no libc and no runtime behind a bare-metal Polyp image, so a project writes a few more
+facts down in its `coral.toml`. `examples/polyp-fb-riscv64/` is the worked example; everything
+below is there in about two hundred lines of project code, and `examples/polyp-fb-x86_64/` is the
+same program on the second ISA family (its `fb_platform.kp` is literally the same file).
+
+1. **A framebuffer.** The platform owns it. A `static mut [u32; W * H] = [0; W * H]` in `.bss`
+is enough, and the compiler's `_start` stub zeroes `.bss` before the entry function runs, so the
+surface starts black the way `HeadlessPlatform` zeroes its own buffer. A device framebuffer
+works too; that path needs the `mmio` grant below, and this stage compared pixels only through a
+static surface.
+2. **The platform itself**, in a module of the project: `framebuffer` returns the `Fb` over the
+static (bind the pointer with `Ptr.from_mut(FRAME)`, then `cast<u32>()`), `present` counts the
+rectangles it was handed, `now_ms` returns the platform's own clock or a fake one, and
+`poll_event` returns `None` or the next queued event. `examples/polyp-fb-riscv64/src/fb_platform.kp`
+is the whole of it.
+3. **`[target] alloc` and `dealloc`.** The retained tree, the scenario's patches and every
+`String` the view builds allocate through these, so a freestanding image needs a pair of
+functions with the fixed signatures (`fun alloc(size: usize, align: usize).R: Ptr<u8>`, `fun
+dealloc(p: Ptr<u8>, size: usize, align: usize)`). `main.kp`'s bump arena over a second
+`static mut [u8; N]` is the smallest one that works; a project that wants a real allocator
+implements a better bump or a free list against the same two names.
+4. **`[target] panic`.** A handler that never returns, so a bounds or overflow check (and a
+failed allocation: the compiler calls it with `"out of memory"`) prints something instead of
+wedging. The examples print `panic: <message>` over the UART and halt.
+5. **A way to write bytes out.** The examples' `emit_line(line: str)` walks the line with
+`str.len`/`str.byte` and writes the UART one byte at a time. Nothing in Polyp needs a formatted
+write: the scenario builds its own lines with `str.from_i64` and a hex table, so a byte writer is
+the whole requirement.
+6. **`[unsafe] modules`.** The modules that take a pointer to the surface or write a pixel
+(`fb_platform`, `soft/fb`, `soft/draw`) and the device driver. `core.kp`, `soft_backend.kp`,
+`font.kp`, `damage.kp`, `event.kp`, `platform.kp` and the scenario contain no `unsafe`.
+7. **`[caps] mmio`, only for a memory-mapped device.** A UART at a fixed address needs the grant
+and an `impl "uart" caps(mmio = [...])` on the line that imports the driver. A port-mapped device
+(a COM1 byte through `out`) needs no grant at all, which is why the x86-64 manifest has no
+`[caps]` section.
+
+What a freestanding project **cannot** do is the same list `plan/freestanding.md` gives: no
+`print`, no libc, no `std/*` outside the admitted subset, no passdowns, no `String`/`Bytes`
+without an allocator. The whole Polyp program the examples run needed four source changes to fit
+(the progress fraction is an integer, the core's counters are `static`s, the entry-text snapshot
+moved to a hosted-only module, and two types declare their own `Map` key pair); they are recorded
+in `plan/polyp-v3.md`, stage 4.
