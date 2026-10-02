@@ -1626,3 +1626,25 @@ bind the same type, that an associated type's name has any meaning, or that a
 generic function which is never instantiated would satisfy anything: an
 uninstantiated body is never checked, exactly as it is not for a bound on a type
 parameter.
+
+## Language-completeness 2: the iterator protocol (`plan/iterators.md`)
+
+**New ways to reach undefined behaviour.** None by itself. The `for` desugar
+builds ordinary statements (`while`, `when`, `let`, `break`) and calls an
+ordinary method, so a bug in it is a wrong program, not an unsafe one. The two
+new statements are the only new control flow: `break` leaves the innermost loop
+and `continue` re-tests its condition, and each frees exactly the owned locals
+declared inside that loop before branching (`DropPlan::at_break`/
+`at_continue`, filled from the loop mark in `borrowck.rs`). A jump that freed
+one local too few would leak; one too many would double-free; the plan is the
+same shape as the `return` plan and is keyed the same way, and the compiler
+emits it on both backends and in a freestanding image.
+
+**What the compiler does and does not check.** It checks that a `for` iterable
+is a `List`/array or implements `std.iter.Iterator`; that a `break`/`continue`
+has an enclosing loop; and that a `List` body does not mutate the place it
+walks. It does not check that a type's `next` is the trait's (only that the impl
+matches the trait signature, which the trait machinery already did); it does not
+check that the iterator terminates, so an infinite iterator without a `break` is
+a non-terminating program, exactly as `while true` is; and it does not track the
+cursor through a raw `Ptr<T>` any more than it did before.

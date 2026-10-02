@@ -715,31 +715,66 @@ if let Circle(r) = shape {
 
 ### 6.2 `for` and `while`
 
-`for` walks a `List` front to back:
+`for` walks a `List` front to back, or any type that implements the iterator
+protocol (`std/iter`, 16.18):
 
 ```kelp
 for x in xs {
     print!(x)
     print!(" ")
 }
+
+for i in iter.range(0, 5) {
+    print(i)
+}
 ```
 
-- The iterable must be a `List<T>` or a `[T; N]` (12.4). `for` is **desugared by the parser** into the index-and-`while` walk below, so anything with `.len()` and `.get(i)` walks the same way, and there is no protocol to implement (`iter`/`next` is a post-v1 question). A `Map` is not one of them: it has `.len()`, but its `.get` takes a key rather than an index, so `for k in map` is a type error (write `for k in map.keys()`).
-- The element binding gives exactly what `List.get` gives (12.1): a copy of a `Copy` element, and a shared borrow of an owned one. So `for n in numbers` reads `n: i32` directly, while `for name in names` reads `name: &String` and a `str.*` call wants `name.as_str()` (the same wart as 12.1).
-- The iterable is *borrowed*, not moved, when it is a place (`xs`, `self.items`): `for x in xs` inside a function that takes `xs: List<i32>` is the ordinary case. Anything else — a call, a literal — is bound to a temporary that the loop owns and frees, so it is evaluated **once**.
+- The iterable must be a `List<T>`, a `[T; N]` (12.4), or a type that implements
+  `std.iter.Iterator` (`plan/iterators.md`). A `Map` is none of them: it has
+  `.len()`, but its `.get` takes a key rather than an index, so `for k in map`
+  is a type error (write `for k in map.keys()`). Anything else is refused with a
+  message naming `Iterator`.
+- **Which desugar applies is decided where the type is known, not in the
+  parser.** A `List`/array is still the index-and-`while` walk below, byte for
+  byte: same `.len()`/`.get(i)`, same speed, same element binding. A type that
+  implements `Iterator` becomes `var it = <iterable>` plus a `while true` over
+  `it.next()`: the `Some` item runs the body, the `None` arm leaves the loop.
+  `x` is the **owned** item, so `for x in it` binds a value the body may move.
+- The element binding of a `List` gives exactly what `List.get` gives (12.1): a
+  copy of a `Copy` element, and a shared borrow of an owned one. So `for n in
+  numbers` reads `n: i32` directly, while `for name in names` reads `name:
+  &String` and a `str.*` call wants `name.as_str()` (the same wart as 12.1).
+- A `List` iterable is *borrowed*, not moved, when it is a place (`xs`,
+  `self.items`): `for x in xs` inside a function that takes `xs: List<i32>` is
+  the ordinary case. Anything else — a call, a literal — is bound to a temporary
+  that the loop owns and frees, so it is evaluated **once**. An **iterator**
+  place (`var f = Fib(...)`; `for x in f`) is borrowed **exclusively** for the
+  loop, so naming `f` in the body is the ordinary already-borrowed error; a
+  temporary iterator is owned by the loop.
 - The loop variable is a `val`. Copy it into a `var` to mutate it.
-- The body may **read** the place it walks (`xs.get(i)`, `xs.len()`, `&xs`) and may walk or change a
-  **different** list, but it may not mutate the one it walks. A `mut` receiver method on it (`push`,
-  `pop`, `remove`, `insert`, `set`, `clear`, `sort`, `reverse`), an assignment to it, a move of it,
-  taking `&mut xs`, and passing it to a `mut` parameter are all one compile error, `cannot mutate
-  'xs' while iterating over it`, reported on the `for` line. A `fun` literal written in the body
-  cannot capture it either: a capture moves or copies, and the move is refused the same way. The
-  rule names the place, so `for x in self.items { self.other.push(x) }` is legal.
-- When the loop has to change what it walks, walk it by index with `while` (below) instead: that is
-  the supported pattern, and no such rule applies to it.
-- There is no `break` and no `continue`; the body runs from the first element to the last.
+- `break` leaves the innermost loop and `continue` re-tests its condition. Both
+  are ordinary names everywhere else (2.3), so `break + 1` is still an
+  expression; a bare one outside every loop is refused.
+- A `defer` in the body runs on the way out of `break`/`continue` as it does on
+  the way out of any block, and a deferred action may not itself contain
+  `break`/`continue` (`plan/defer.md`).
+- The body of a **`List`** `for` may **read** the place it walks (`xs.get(i)`,
+  `xs.len()`, `&xs`) and may walk or change a **different** list, but it may not
+  mutate the one it walks. A `mut` receiver method on it (`push`, `pop`,
+  `remove`, `insert`, `set`, `clear`, `sort`, `reverse`), an assignment to it, a
+  move of it, taking `&mut xs`, and passing it to a `mut` parameter are all one
+  compile error, `cannot mutate 'xs' while iterating over it`, reported on the
+  `for` line. A `fun` literal written in the body cannot capture it either: a
+  capture moves or copies, and the move is refused the same way. The rule names
+  the place, so `for x in self.items { self.other.push(x) }` is legal. It does
+  not apply to a user iterator, which is protected by the ordinary borrow rule
+  instead.
+- When the loop has to change what it walks, walk it by index with `while`
+  (below) instead: that is the supported pattern, and no such rule applies to
+  it.
 
-Walking a `List` by index is still available, and is what `for` becomes:
+Walking a `List` by index is still available, and is what a `List` `for`
+becomes:
 
 ```kelp
 var i: usize = 0
@@ -749,7 +784,10 @@ while i < xs.len() {
 }
 ```
 
-`while` is the only loop besides `for`, and it is the general one — a condition, re-evaluated before each pass. `str.split`, `Map.keys()` and `Map.values()` hand back `List`s so iteration over text and over maps reads the same way as over a list.
+`while` is the other loop, and it is the general one — a condition,
+re-evaluated before each pass. `break` and `continue` work in it exactly as in
+an iterator `for`. `str.split`, `Map.keys()` and `Map.values()` hand back
+`List`s so iteration over text and over maps reads the same way as over a list.
 
 ### 6.3 `when`
 
@@ -2559,12 +2597,57 @@ print(m.into_inner())
 The surface is hosted only: a freestanding manifest refuses `Mutex<T>` and names
 the spin lock over an `Atomic<T>` a kernel would use instead.
 
+### 16.20 `std/iter`
+
+The iterator protocol (`plan/iterators.md`): what a `for` walks when it is not a
+`List`/array, plus the range and the drain helpers that ship with it. The trait
+is the whole contract; the compiler knows only its canonical key.
+
+```kelp
+pub trait Iterator {
+    type Item
+    fun mut Self.next().R: option.Option<Self::Item>
+}
+
+pub datac Range(var lo: i64, val hi: i64, val step: i64)
+fun range(a: i64, b: i64).R: Range                       // [a, b), step 1
+fun range_step(a: i64, b: i64, step: i64).R: Range       // a negative step walks down
+
+fun count<I: Iterator>(it: move I).R: usize
+fun sum_i64<I: Iterator>(it: move I).R: i64              // the item must be an i64
+fun collect_list<I: Iterator>(it: move I).R: List<I::Item>
+```
+
+A type opts in by implementing the trait, as a `datac` implementing `Shape`
+does; a type with a method that merely happens to be called `next` is not
+iterable. The item is **owned**, so `for x in it` binds a value the body may
+move, and the loop borrows the iterator exclusively, so naming a place iterator
+in its own body is the ordinary already-borrowed error.
+
+```kelp
+impl "std/iter"
+
+for i in iter.range(0, 5) {
+    print(i)
+}
+```
+
+`List.into_iter()`, `take`/`skip`/`enumerate`/`zip`/`chain`, and the
+closure-taking `map`/`filter` are **not** in this slice: each is a generic type
+implementing `Iterator` (`impl<I: Iterator> Iterator for Take<I>`), and generic
+trait impls are the follow-up slice. Section 5 of `plan/iterators.md` says
+exactly which feature blocks each one.
+
+The module is pure Kelp and builds freestanding when `std/option` does;
+`collect_list` waits for an allocator, and a freestanding manifest admits the
+rest.
+
 ## 17. Limits in v1
 
 These are deliberate, and each one has a workaround in this document:
 
 - A tuple is a record with positional fields, so it is read by destructuring and nothing else: there is no positional access on a value (`t.0`), no tuple pattern in `when` (6.3), no destructuring `for` binding (6.2), and no tuple value in a `const` initializer (3.1, 14.1). Bind the whole tuple to a `val` when the positions need to be visible separately, and print its positions rather than the tuple (`print` takes a scalar, a `str` or a `String`).
-- No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
+- Iteration is a `for` over a `List` (6.2), a `[T; N]`, or an `Iterator` (16.18), or a `while` plus an index when the loop is not a front-to-back walk. `break`/`continue` control either loop.
 - `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
 - A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1), which is a fat pair and a vtable; there is no `Box<dyn Name>`, no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
@@ -3012,7 +3095,7 @@ Facts that make this pattern work, and the traps in it:
 - **`text.get(i)` is a `u8`, and a character literal takes that type**, so the comparisons read as characters: `c == '"'`, `c == '\\'`, `c >= '0' && c <= '9'`.
 - **`View.slice` never allocates.** Slicing is what a scanner does most; the owned `String` is made once, at the point the token becomes data (`text.slice(a, b)` into a `String` parameter or return, which copies by length).
 - **The text is borrowed, not copied.** `fun parse(text: &str)` takes the caller's view and calls `text.view()` once inside. Nothing is copied before the scan starts.
-- **No `break` and no `continue`.** Write the loop condition so it covers every exit: `while pos < text.len() { ... if pos < text.len() { ... } }` is the shape a "skip blanks, then maybe stop" loop needs.
+- **`break` and `continue` are available** (6.2): a scan that stops at a delimiter can `break` and one that skips blanks can `continue`. The condition-first shape still reads better when the loop has one exit.
 - **`List.get(i)` gives a copy for a `Copy` element and a shared borrow otherwise**, which is why `xs.get(i).as_str()` has the `.as_str()` — `xs.get(0)` is a `&String`, not a `String`.
 - **Byte-indexed, not character-indexed.** `View.get`, `str.byte` and `str.len` are bytes; `str.char_count`/`str.char_at` are the codepoint pair. A UTF-8 continuation byte is a byte like any other, so scan to a delimiter or to the end rather than counting characters.
 
@@ -3082,7 +3165,7 @@ if counts.has("a") { print(counts.get("a")) }
 - `List.empty()` and `Map.new()` need the element type from somewhere. Write it on the binding, or let the first `push`/`insert`/`set` decide it: `var xs = List.empty()` followed by `xs.push(1)` is a `List<i32>`.
 - `Map` keys are `String`, an integer, `bool`, a `char`, or a `datac`/`enum` whose every field (or every variant payload) is itself keyable. The compiler derives the hash and the equality, so a float, a `Bytes`, a container, a view, a borrow, and a `datac`/`enum` with a field outside that set are all refused.
 - Both keep insertion order; `Map` has no `Map<String, Map<i32>>` (a container value is refused), while a `List<List<i32>>` and a `List<Box<i32>>` are fine since A-10 slice 1.
-- `for x in xs { }` walks a `List` front to back. There is no `break`; to stop early, put the condition in a `while` with an index. The body cannot mutate the list it walks (`xs.push`, `xs.set`, `&mut xs`, a move of it): that is `cannot mutate 'xs' while iterating over it`, and the shape when the loop has to change the list is the index `while` (6.2).
+- `for x in xs { }` walks a `List`, a `[T; N]`, or an `Iterator` (6.2). `break` stops it early and `continue` moves to the next element. The body of a `List` loop cannot mutate the list it walks (`xs.push`, `xs.set`, `&mut xs`, a move of it): that is `cannot mutate 'xs' while iterating over it`, and the shape when the loop has to change the list is the index `while` (6.2).
 
 ### 22.7 Capabilities are declared where you import
 
