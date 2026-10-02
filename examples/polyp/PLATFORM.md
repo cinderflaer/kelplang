@@ -175,6 +175,12 @@ the whole requirement.
 and an `impl "uart" caps(mmio = [...])` on the line that imports the driver. A port-mapped device
 (a COM1 byte through `out`) needs no grant at all, which is why the x86-64 manifest has no
 `[caps]` section.
+8. **Optional: a display device.** The surface starts in memory, and putting it on a real screen is
+one more device: the riscv64 example registers its static with QEMU's `ramfb` through fw_cfg, and
+QEMU scans out that same memory, so what the renderer drew is what a screen shows. That is
+`src/ramfb.kp`, its own `mmio` window and one more `[unsafe]` entry, and
+`plan/polyp-ramfb-status.md` records it; a platform with a real framebuffer device does the
+underlying job directly instead of through firmware.
 
 What a freestanding project **cannot** do is the same list `plan/freestanding.md` gives: no
 `print`, no libc, no `std/*` outside the admitted subset, no passdowns, no `String`/`Bytes`

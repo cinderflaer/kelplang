@@ -1639,3 +1639,15 @@ a pointer any more.
 `polyp_fb_x86_64_*` boot each image under `timeout 20 qemu-system-<arch>`, require its serial
 output to equal the hosted 320x200 run's line for line, and require `llvm-nm -u` to name no
 undefined symbol.
+
+**Stage 4's `ramfb` stretch adds one more pointer path.** `examples/polyp-fb-riscv64/src/ramfb.kp`
+builds pointers from three fw_cfg addresses in the granted `0x10100000+0x20` window (the data,
+selector and DMA registers), writes a 16-byte DMA descriptor into a `static mut` for the device to
+read, and hands QEMU's `ramfb` device the physical address of the project's framebuffer in a
+28-byte config. Every byte order is the device's own convention (the descriptor and the config are
+big-endian, the MMIO registers are big-endian) and the driver polls the descriptor's control word
+through a volatile read until the device clears it, so the compiler cannot fold the wait: none of
+that is checked, and a wrong selector, length or address is a transfer the device refuses or a
+surface QEMU never scans out. The test compares a `screendump` of the screen with the kernel's own
+`display` line, so a display that shows anything other than the framebuffer fails rather than being
+ignored (`plan/polyp-ramfb-status.md`).

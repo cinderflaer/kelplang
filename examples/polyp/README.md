@@ -471,6 +471,13 @@ nix-shell /path/to/dev-kernel.nix --run 'cd kelpc && cargo test --test compile_a
 nix-shell /path/to/dev-kernel.nix --run 'examples/polyp-fb-riscv64/run.sh'
 ```
 
+The last line of a run is `display 0x<16 hex digits>`: the same FNV-1a over the colour bytes only,
+because the framebuffer's alpha byte carries glyph coverage and a screen has no alpha. On riscv64
+the project also registers its surface with QEMU's `ramfb` device through fw_cfg
+(`src/ramfb.kp`), so `-device ramfb` puts those exact pixels on a real screen;
+`polyp_fb_riscv64_shows_its_framebuffer_on_a_real_display` captures it with a `screendump` and
+compares it with that line (`plan/polyp-ramfb-status.md`).
+
 ## Using the library
 
 Kelp has **no manifest for a library**, and a project's modules resolve only

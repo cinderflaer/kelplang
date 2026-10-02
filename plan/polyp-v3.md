@@ -806,16 +806,19 @@ lists what a bare-metal project has to write down, with `main.kp` as the worked 
 - **`fn` types have unnamed parameters.** `fun (line: str)` is a parse error; a function type is
   `fun (str)`, and a parameter name would have to come from a trait declaration.
 
-### The stretch: a real display
+### The stretch: a real display (done)
 
-On riscv64 QEMU's `virt` supports `-device ramfb`, configured through the fw_cfg device at
-`0x10100000`: a DMA write of the `etc/ramfb` file (address, `XR24`, flags, width, height,
-stride) registers the surface QEMU scans out. With that working, `screendump` over QMP would
-capture a PPM whose pixels equal the framebuffer, compared through the same checksum function.
-`plan/polyp-ramfb-status.md` records what was reached.
+On riscv64 QEMU's `virt`, `-device ramfb` puts the framebuffer on a real screen, and the project
+registers it through fw_cfg: `src/ramfb.kp` reads the file directory (selector `0x0019`) with one
+DMA transfer, finds `etc/ramfb`, and writes its 28-byte config (address, `XR24`, flags, width,
+height, stride) with the DMA write direction. Every field of the descriptor and of the config is
+big-endian, which is what QEMU's `fw_cfg_dma_transfer` and `ramfb.c` read. The test then boots the
+image with `-device ramfb -display none` and a monitor on a pipe, asks for a `screendump`, and
+compares the PPM with the kernel's own numbers.
 
-On riscv64 QEMU's `virt` supports `-device ramfb`, configured through the fw_cfg device at
-`0x10100000`: a DMA write of the `etc/ramfb` file (address, `XR24`, flags, width, height,
-stride) registers the surface QEMU scans out. With that working, `screendump` over QMP would
-capture a PPM whose pixels equal the framebuffer, compared through the same checksum function.
-`plan/polyp-ramfb-status.md` records what was reached.
+One thing that had to change for it: the framebuffer's alpha byte carries glyph coverage, and a
+display has no alpha, so the stage's `checksum` can never match a screen. `soft/fb.kp` gained
+`checksum_rgb` (the same FNV-1a over blue, green, red and a constant `0xFF`), the shared scenario
+emits it once as `display 0x<16 hex digits>` after the last step, and both kernels and the hosted
+run print that line, so the display comparison is a checksum comparison and not a golden image.
+`plan/polyp-ramfb-status.md` is the record, including what is deliberately not there.

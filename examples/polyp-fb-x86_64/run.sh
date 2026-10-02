@@ -7,10 +7,10 @@
 # waits for before it kills QEMU: the kernel halts in a `hlt` loop, so waiting
 # for the `timeout 20` to expire would waste the whole window.
 #
-# The kernel prints one `step <n> checksum <hex> dirty <count>` line per frame and
-# then the todo program's report. `cargo test --test compile_and_run
-# polyp_fb_x86_64` is the test that also compares those lines with the hosted
-# soft backend's; this script is the manual boot.
+# The kernel prints one `step <n> checksum <hex> dirty <count>` line per frame, then a
+# `display` line (the colour-only checksum of the last frame) and the todo program's
+# report. `cargo test --test compile_and_run polyp_fb` is the test that compares those
+# lines with the hosted soft backend's; this script is the manual boot.
 #
 # It has to run where `kelpc` was built and where `qemu-system-x86_64` and
 # `ld.lld` are on PATH, that is the repo's `dev-kernel.nix` shell. Set KELPC to

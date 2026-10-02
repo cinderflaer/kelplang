@@ -7,10 +7,14 @@
 # waits for before it kills QEMU: the kernel halts in a `wfi` loop, so waiting
 # for the `timeout 20` to expire would waste the whole window.
 #
-# The kernel prints one `step <n> checksum <hex> dirty <count>` line per frame and
-# then the todo program's report. `cargo test --test compile_and_run
-# polyp_fb_riscv64` is the test that also compares those lines with the hosted
-# soft backend's; this script is the manual boot.
+# The kernel prints one `step <n> checksum <hex> dirty <count>` line per frame, then a
+# `display` line (the colour-only checksum of the last frame) and the todo program's
+# report. It also registers its framebuffer with QEMU's `ramfb` device, so adding
+# `-device ramfb` to the command below puts those pixels on a screen; the boot test
+# that captures that screen is
+# `polyp_fb_riscv64_shows_its_framebuffer_on_a_real_display`, and
+# `cargo test --test compile_and_run polyp_fb` is the test that compares the step lines
+# with the hosted soft backend's. This script is the manual boot.
 #
 # It has to run where `kelpc` was built and where `qemu-system-riscv64` and
 # `ld.lld` are on PATH, that is the repo's `dev-kernel.nix` shell. Set KELPC to
