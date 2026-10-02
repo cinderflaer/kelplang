@@ -1165,3 +1165,37 @@ mutex through the runtime's `pthread_cleanup_push` handler, but the panicking fr
 are still abandoned (`plan/mk9-memory-model.md` section 2). The runtime's cleanup is only reached
 on the `pthread_exit` path a worker takes; a panic on the main thread still ends the process with
 `exit(1)`, so a mutex it held is never unlocked and never observed.
+
+## Stage 15: panic semantics with no OS (MK9-S6-M2, row 10's other half, `plan/panic-semantics.md`)
+
+**New way to reach undefined behaviour.** A check that fires now calls a compiler-emitted entry
+(`kelp_panic_entry`) instead of the project's handler directly, and the entry reads two module
+globals (`kelp_panic_file`, `kelp_panic_line`) that the *statement before it* wrote. Three new
+promises follow from that:
+
+- The location is a single pair of globals, not an argument to the check. Two harts that panic
+  concurrently can overwrite each other's site between the store and the read, so a double panic on
+  one hart may name the other's line. The flag itself is an atomic exchange, so the *re-entry*
+  decision is sound; only the reported line is not.
+- A panic inside the handler is detected by that flag and handed to `kelp_double_panic`. The
+  compiler emits a weak definition (a `wfi`/`wfe` loop), so an image that does not override it
+  wedges rather than printing; a project that overrides it takes over every double panic, including
+  a handler that recurses for a reason other than a check (a bad pointer, a second `panic`).
+- `kelp_double_panic` is reached with whatever stack the second panic left, and the compiler
+  generates no second stack or recovery point. A handler that loops forever in a double panic is
+  the same failure as before, one level down.
+
+**What the compiler does check.** That the handler is one of the two accepted shapes
+(`fun(msg: str)` or `fun(msg: str, file: str, line: u32)`) with no environment and no return, and
+refuses any other by name. That every check's message is the compiler's own text and every location
+is a real `SourceMap` line, on both `kelpc check` and `kelpc build` (the check is in the front end).
+The `.bss` flag and the two location globals are cleared by the `_start` clear loop like any other
+`.bss` byte.
+
+**What it does not check.** Whether the handler returns, prints, or reads the location: a handler
+that returns still comes back to a check that has no continuation. Nothing ties a location to the
+address the check actually read, and the generated accessor bodies that read the globals
+(`Array.get`'s `__bounds`, the container sets) are shared by every call site, so their line is
+whichever statement last ran, not a property of the body. `plan/panic-semantics.md` has the check
+by check table and names the two constructs the task lists that are *not* checks here: integer
+overflow wraps and division by zero is unchecked UB, on this backend and the C oracle alike.

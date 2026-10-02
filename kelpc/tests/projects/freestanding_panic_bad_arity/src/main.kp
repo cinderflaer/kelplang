@@ -1,0 +1,11 @@
+section(".text.boot") fun kmain() {
+    uart_halt()
+}
+
+fun uart_halt() {
+    while true {}
+}
+
+fun kp_panic(msg: str, file: str) {
+    kp_panic(msg, file)
+}

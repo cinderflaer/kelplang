@@ -187,8 +187,8 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
     }
 
     // `panic = "<name>"` names the handler the compiler's own checks call. Its
-    // shape is fixed (`fun(msg: str)`) because the call site passes exactly the
-    // static message the check was written with.
+    // shape is one of two: `fun(msg: str)` or the location-carrying
+    // `fun(msg: str, file: str, line: u32)` (kernel stage 15).
     if let Some(panic_name) = target.panic() {
         let Some(handler) = program
             .functions
@@ -203,14 +203,18 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
                 project.entry.clone(),
             ));
         };
-        let shape_ok = handler.env.is_none()
-            && handler.params.len() == 1
+        // Two shapes are accepted: the original `fun(msg: str)` and the
+        // three-argument form that also gets the location. The call site the
+        // entry emits passes exactly these.
+        let one_arg = handler.params.len() == 1 && handler.params[0].1 == Ty::Str;
+        let three_arg = handler.params.len() == 3
             && handler.params[0].1 == Ty::Str
-            && handler.ret == Ty::Unit;
-        if !shape_ok {
+            && handler.params[1].1 == Ty::Str
+            && handler.params[2].1 == Ty::U32;
+        if handler.env.is_some() || !(one_arg || three_arg) || handler.ret != Ty::Unit {
             return Err(Diagnostic::new(
                 format!(
-                    "the freestanding panic handler '{panic_name}' must be a 'fun(msg: str)' with no return, which is the shape the compiler's checks call"
+                    "the freestanding panic handler '{panic_name}' must be a 'fun(msg: str)' or a 'fun(msg: str, file: str, line: u32)', with no return, which are the shapes the compiler's checks call"
                 ),
                 handler.span,
                 handler.module.clone(),

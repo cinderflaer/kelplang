@@ -1,0 +1,10 @@
+name = "freestanding_panic_bad_type"
+
+# Kernel stage 15: the first parameter of either accepted shape is `str`; this
+# one is `i32`, so the front end refuses it and names both accepted forms.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"

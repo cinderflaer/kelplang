@@ -1,0 +1,11 @@
+name = "freestanding_panic_bad_arity"
+
+# Kernel stage 15: the panic handler's shape is one of two. This project names
+# a two-argument one, which is neither, so the front end refuses it and names
+# both accepted forms.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"

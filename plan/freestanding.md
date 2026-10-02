@@ -28,9 +28,11 @@ panic = "kp_panic"          # optional
 - `entry` is a bare `fun` name in the entry module, with no parameters and no
   return.
 - `linker_script` is a path relative to the directory holding `coral.toml`.
-- `panic` is optional: the bare name of a `fun(msg: str)` that never returns
-  normally. Without it, the compiler generates a handler whose body loops
-  forever.
+- `panic` is optional: the bare name of a handler that never returns
+  normally. Two shapes are accepted: `fun(msg: str)` and the
+  location-carrying `fun(msg: str, file: str, line: u32)`. Any other shape is a
+  compile error that names both. Without the key, the compiler generates a
+  handler whose body loops forever.
 
 ## The allowed set
 
@@ -278,6 +280,37 @@ a panic and never a null dereference.
 `plan/kernel-ub-notes.md` carries the stage's undefined behaviour: everything
 the allocator does with the memory it returns is a promise the compiler does not
 check (alignment, size, aliasing, double free).
+
+## Panic semantics with no OS (kernel stage 15, MK9-S6-M2)
+
+Every compiler-inserted check calls one compiler-emitted entry,
+`kelp_panic_entry(msg, file, line)`, never the project's handler directly.
+`plan/panic-semantics.md` is the design; this is what it means for the mode.
+
+- The handler may be `fun(msg: str)` or `fun(msg: str, file: str, line: u32)`.
+  The `file` is the source file name (`main.kp`) and the `line` is the 1-based
+  line of the statement the check was inserted into, from the same
+  `SourceMap` the hosted line tables use.
+- The entry exchanges a `.bss` flag and calls `kelp_double_panic` on re-entry.
+  That symbol is always defined, **weakly**, as a `wfi`/`wfe` loop, so an image
+  links with no undefined symbol and a project's own strong definition (an
+  object linked beside the compiler's, the way `freestanding_memcpy_user`
+  supplies `memcpy`) wins. `examples/kernel0-panic2` proves exactly that: its
+  handler indexes out of bounds and the boot prints `double panic` from the
+  project's assembly definition rather than wedging.
+- The location reaches checks inside *generated* bodies (`Array.get`'s bounds
+  check, the container sets) through the two globals `kelp_panic_file` and
+  `kelp_panic_line`, which each `.kp` statement stores before the check runs.
+  A `naked fun` gets no store: its body is one `asm` and an instruction before
+  it would break the ABI (this is why `examples/kernel0-trap` still boots).
+- With no `[target] panic`, the entry still exists and its first-panic branch
+  calls the generated infinite-loop handler; the image prints nothing and
+  stops, exactly as before.
+
+The acceptance is `examples/kernel0-panic2`, booted by its own `run.sh` and by
+`kernel0_panic2_names_each_checks_message_and_location`: six phases, each
+asserting the exact `panic: <message> at <file>:<line>` line, with the last one
+asserting `double panic`.
 
 ## The target machine and the link
 

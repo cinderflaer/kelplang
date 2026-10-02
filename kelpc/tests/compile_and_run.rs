@@ -11039,6 +11039,150 @@ fn kernel0_panic_prints_the_checks_own_message_over_the_uart() {
     );
 }
 
+/// Kernel stage 15: both accepted panic-handler shapes pass the front end, and
+/// the three-argument one is the example's. `kelpc check` is the front end
+/// alone, so this needs no `ld.lld` and runs in the ordinary suite.
+#[test]
+fn a_freestanding_panic_handler_may_take_a_location() {
+    for name in ["kernel0-panic", "kernel0-panic2"] {
+        let target = fixture(&format!("../examples/{name}"));
+        let check = Command::new(kelpc_bin())
+            .env_remove("KELPC_BACKEND")
+            .env_remove("KELPC_ORACLE")
+            .arg("check")
+            .arg(&target)
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            check.status.success(),
+            "'kelpc check' refused examples/{name}, whose panic handler is an accepted shape:\n{}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+    }
+}
+
+/// Kernel stage 15: a handler whose shape is neither `fun(msg: str)` nor
+/// `fun(msg: str, file: str, line: u32)` is a compile error naming both. Two
+/// projects cover the wrong arity and the wrong parameter type.
+#[test]
+fn a_freestanding_panic_handler_with_another_shape_is_rejected() {
+    let needle = "must be a 'fun(msg: str)' or a 'fun(msg: str, file: str, line: u32)'";
+    assert_project_rejected(
+        "freestanding_panic_bad_arity",
+        &project("freestanding_panic_bad_arity"),
+        needle,
+    );
+    assert_project_rejected(
+        "freestanding_panic_bad_type",
+        &project("freestanding_panic_bad_type"),
+        needle,
+    );
+}
+
+/// Kernel stage 15's acceptance boot: `examples/kernel0-panic2` prints the
+/// message, file and 1-based line of every check it exercises, and answers a
+/// panic raised inside its own handler with the project's `kelp_double_panic`
+/// rather than the compiler's weak wait-for-interrupt fallback. The example's
+/// `run.sh` boots one phase per check and asserts the exact `panic: <message>
+/// at <file>:<line>` line; this runs that script, which is where the serial
+/// assertions live.
+#[test]
+fn kernel0_panic2_names_each_checks_message_and_location() {
+    if !have_ld_lld() || !have_llvm_mc() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-panic2 boot test: 'ld.lld', 'llvm-mc' or \
+             'qemu-system-riscv64' is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let script = fixture("../examples/kernel0-panic2/run.sh");
+    let run = Command::new("sh")
+        .arg(&script)
+        .env("KELPC", kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .output()
+        .expect("failed to spawn the kernel0-panic2 run script");
+    assert!(
+        run.status.success(),
+        "examples/kernel0-panic2/run.sh failed:\n{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("all six phases printed the lines the compiler named"),
+        "the run script did not reach its final line:\n{stdout}"
+    );
+}
+
+/// Kernel stage 15: the compiler always defines `kelp_double_panic`, and
+/// defines it **weak**, so an image links with no undefined symbol and a
+/// project's own strong definition wins. `kelp_panic_entry` is the internal
+/// entry every check calls.
+#[test]
+fn a_freestanding_double_panic_is_a_weak_defined_symbol() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the double-panic symbol test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = build_freestanding(
+        "kernel0_panic2_symbols",
+        &fixture("../examples/kernel0-panic2"),
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let double = symbols
+        .lines()
+        .find(|line| line.split_whitespace().last() == Some("kelp_double_panic"))
+        .unwrap_or_else(|| panic!("the image has no kelp_double_panic:\n{symbols}"));
+    assert_eq!(
+        double.split_whitespace().nth(1),
+        Some("W"),
+        "kelp_double_panic is not weak, so a project cannot override it: {double}"
+    );
+    assert!(
+        symbols
+            .lines()
+            .any(|line| line.split_whitespace().last() == Some("kelp_panic_entry")),
+        "the image has no kelp_panic_entry:\n{symbols}"
+    );
+    assert!(
+        tool("llvm-nm", &["-u", path]).trim().is_empty(),
+        "the double-panic image has undefined symbols"
+    );
+}
+
+/// Kernel stage 15's hosted half: the entry that carries a location is a
+/// freestanding emission and changes nothing about a hosted panic. The runtime
+/// still writes exactly `panic: <msg>` and exits non-zero, on both backends.
+#[test]
+fn a_hosted_panic_is_still_exactly_its_message() {
+    let bin = out_path("hosted_panic_unchanged");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/panic_msg.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the hosted panic fixture did not build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert_eq!(run.status.code(), Some(1), "a hosted panic exits 1");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        "panic: deliberate failure\n",
+        "the hosted panic format changed"
+    );
+}
+
 /// Kernel stage 7's hosted half: the `str` operations a freestanding build
 /// lowers itself (`len`, `byte`, `eq`, `starts_with` and `ptr`) behave exactly
 /// as they did before the stage, on both backends. The suite runs this under
@@ -12811,10 +12955,19 @@ fn kernel0_bss_clears_an_image_loaded_marker_before_the_entry_runs() {
     let bss_start = nm_address(&symbols, "__bss_start");
     let bss_end = nm_address(&symbols, "__bss_end");
     let marker = nm_address(&symbols, "kelp_bss_marker");
+    // The marker is the first thing in `.bss`, which the project's script
+    // orders `.bss.dirty` first. It is no longer the *whole* cleared range:
+    // kernel stage 15 put the panic entry's `.bss` state (`kelp_panic_active`,
+    // `kelp_panic_file`, `kelp_panic_line`) after it, so the assertion is that
+    // the range starts at the marker and covers all 64 bytes of it.
     assert_eq!(
-        (bss_start, marker + 64),
-        (marker, bss_end),
-        "the marker is not exactly the cleared range: \
+        bss_start, marker,
+        "the marker is not the first byte of the cleared range: \
+         {bss_start:#x}..{marker:#x}..{bss_end:#x}"
+    );
+    assert!(
+        bss_end >= marker + 64,
+        "the cleared range does not cover the whole marker: \
          {bss_start:#x}..{marker:#x}..{bss_end:#x}"
     );
 

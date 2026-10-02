@@ -637,6 +637,22 @@ fn freestanding_entry_asm(triple: &str, entry_symbol: &str) -> Result<String, St
     }
 }
 
+/// The target's wait-for-interrupt instruction, for the double-panic halt and
+/// the default panic loop's tail. The same architecture split as the entry
+/// stub: riscv64 halts on `wfi`, aarch64 on `wfe`, and a triple this compiler
+/// has neither for is refused by name here exactly as the stub refuses it.
+fn halt_asm_template(triple: &str) -> Result<&'static str, String> {
+    if triple.starts_with("riscv64") || triple.starts_with("riscv32") {
+        Ok("wfi")
+    } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
+        Ok("wfe")
+    } else {
+        Err(format!(
+            "kelpc has no freestanding wait-for-interrupt instruction for the triple '{triple}': it has 'wfi' for riscv64 and 'wfe' for aarch64"
+        ))
+    }
+}
+
 /// The riscv64 stub: park every hart but hart 0, then `la sp, __stack_top`,
 /// the word-at-a-time clear, the entry call, and a `wfi` halt.
 ///
@@ -882,6 +898,13 @@ struct Gen<'a> {
     printf_ty: FnType<'a>,
     panic_fn: LlvmFunction<'a>,
     panic_ty: FnType<'a>,
+    /// The location the freestanding panic entry reads: the file name the
+    /// current statement stored, and its line. Both `None` in a hosted build.
+    panic_file_global: Option<Value<'a>>,
+    panic_line_global: Option<Value<'a>>,
+    /// One string global per module's source file name, so a statement's
+    /// location is a pointer store rather than a fresh global per check.
+    panic_files: HashMap<String, Value<'a>>,
     /// The target's data layout, read for the tagged union's size and alignment.
     /// An LLVM struct has no field-alignment annotation, so the type is built
     /// from the numbers the target reports rather than from an assumption about
@@ -1138,6 +1161,9 @@ impl<'a> Gen<'a> {
             printf_ty,
             panic_fn: panic.func,
             panic_ty: panic.ty,
+            panic_file_global: None,
+            panic_line_global: None,
+            panic_files: HashMap::new(),
             layout,
             little_endian: layout.is_little_endian(),
             structs,
@@ -1348,29 +1374,86 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// Points the panic path at this project's own handler (kernel stage 4):
-    /// the `fun(msg: str)` the manifest's `[target] panic` names, or a generated
-    /// function that loops forever when it names none. It runs after every
-    /// function is declared so the user's handler is in `funcs`, and before any
-    /// body, because a bounds or overflow check emitted in a body calls
+    /// Points the panic path at this project's own handler (kernel stage 4),
+    /// wrapped in the compiler-emitted entry that detects a double panic and
+    /// carries the location (kernel stage 15). It runs after every function is
+    /// declared so the user's handler is in `funcs`, and before any body,
+    /// because a bounds or overflow check emitted in a body calls
     /// `self.panic_fn` directly.
+    ///
+    /// `panic_fn` becomes the entry (`kelp_panic_entry`), which always takes
+    /// `(msg, file, line)`; the project's handler and how many arguments it
+    /// takes are local to this function. When the manifest names no handler,
+    /// the first-panic branch calls a generated infinite loop.
     fn resolve_freestanding_panic(&mut self) -> Result<(), String> {
         let Some(fs) = self.freestanding.clone() else {
             return Ok(());
         };
-        match fs.panic {
+        let ptr = self.ctx.opaque_ptr();
+        let i32t = self.ctx.i32();
+        let void = self.ctx.void();
+
+        // The state the entry reads and writes, all zero-initialised in `.bss`
+        // so the linker script's own clear covers it.
+        let active = self.module.add_global("kelp_panic_active", i32t);
+        active.set_initializer(self.ctx.const_int(i32t, 0, false));
+        active.set_section(".bss");
+        let file_g = self.module.add_global("kelp_panic_file", ptr);
+        file_g.set_initializer(self.ctx.const_null(ptr));
+        file_g.set_section(".bss");
+        let line_g = self.module.add_global("kelp_panic_line", i32t);
+        line_g.set_initializer(self.ctx.const_int(i32t, 0, false));
+        line_g.set_section(".bss");
+        self.panic_file_global = Some(file_g);
+        self.panic_line_global = Some(line_g);
+
+        // One string global per module's source file name. A statement's
+        // location is then a pointer store, not a fresh global per check.
+        for f in &self.program.functions {
+            if self.panic_files.contains_key(&f.module) {
+                continue;
+            }
+            let Some((path, _, _)) = self.sources.path_line_col(&f.module, f.span) else {
+                continue;
+            };
+            let name = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let mut bytes: Vec<Value<'a>> = name
+                .bytes()
+                .map(|b| self.ctx.const_int(self.ctx.i8(), b as u64, false))
+                .collect();
+            bytes.push(self.ctx.const_int(self.ctx.i8(), 0, false));
+            let arr_ty = self.ctx.array_type(self.ctx.i8(), bytes.len() as u64);
+            let arr = self.ctx.const_array(self.ctx.i8(), &bytes);
+            let index = self.panic_files.len();
+            let g = self.module.add_global(&format!("panic.file.{index}"), arr_ty);
+            g.set_initializer(arr);
+            g.set_constant(true);
+            self.panic_files.insert(f.module.clone(), g);
+        }
+
+        // The project's handler, or a generated loop that ignores all three
+        // arguments when the manifest names none.
+        let (handler, handler_ty, arity) = match fs.panic.clone() {
             Some(name) => {
-                let info = self.funcs.get(&name).ok_or_else(|| {
+                let info = self.funcs.get(&name).cloned().ok_or_else(|| {
                     format!(
                         "the manifest's '[target] panic' names '{name}', which the program does not declare"
                     )
                 })?;
-                self.panic_fn = info.func;
-                self.panic_ty = info.ty;
+                let arity = self
+                    .program
+                    .functions
+                    .iter()
+                    .find(|f| f.name == name && !f.extern_)
+                    .map(|f| f.params.len())
+                    .unwrap_or(1);
+                (info.func, info.ty, arity)
             }
             None => {
-                let ptr = self.ctx.opaque_ptr();
-                let ty = self.ctx.fn_type(self.ctx.void(), &[ptr], false);
+                let ty = self.ctx.fn_type(void, &[ptr, ptr, i32t], false);
                 let func = self.module.add_function("kelp_freestanding_panic", ty);
                 func.as_value().set_internal_linkage();
                 // Two blocks: the entry must have no predecessors, so it jumps
@@ -1381,10 +1464,63 @@ impl<'a> Gen<'a> {
                 self.builder.build_br(loop_bb);
                 self.builder.position_at_end(loop_bb);
                 self.builder.build_br(loop_bb);
-                self.panic_fn = func;
-                self.panic_ty = ty;
+                (func, ty, 3)
             }
-        }
+        };
+
+        // The weak double-panic fallback: loop on the target's wait
+        // instruction. A project's own strong `kelp_double_panic`, in an object
+        // linked beside this one, overrides it the way its own `memcpy` does.
+        let halt_ty = self.ctx.fn_type(void, &[], false);
+        let dp = self.module.add_function("kelp_double_panic", halt_ty);
+        dp.as_value().set_weak_linkage();
+        let dp_entry = dp.append_block("entry");
+        let dp_loop = dp.append_block("loop");
+        self.builder.position_at_end(dp_entry);
+        self.builder.build_br(dp_loop);
+        self.builder.position_at_end(dp_loop);
+        let template = halt_asm_template(&fs.triple)?;
+        let halt = self.ctx.inline_asm(halt_ty, template, "", true, false);
+        self.builder.build_indirect_call(halt, halt_ty, &[], "");
+        self.builder.build_br(dp_loop);
+
+        // The entry every check calls. The exchange makes the re-entry test
+        // atomic, so two harts that panic at once cannot both be first.
+        let entry_ty = self.ctx.fn_type(void, &[ptr, ptr, i32t], false);
+        let entry = self.module.add_function("kelp_panic_entry", entry_ty);
+        entry.as_value().set_internal_linkage();
+        let entry_bb = entry.append_block("entry");
+        let call_bb = entry.append_block("call");
+        let double_bb = entry.append_block("double");
+        self.builder.position_at_end(entry_bb);
+        let one = self.ctx.const_int(i32t, 1, false);
+        let old = self
+            .builder
+            .build_atomicrmw(AtomicRmw::Xchg, active, one);
+        let already = self.builder.build_icmp(
+            IntCmp::Ne,
+            old,
+            self.ctx.const_int(i32t, 0, false),
+            "already",
+        );
+        self.builder.build_cond_br(already, double_bb, call_bb);
+        self.builder.position_at_end(double_bb);
+        self.builder.build_call(dp, halt_ty, &[], "");
+        self.builder.build_unreachable();
+        self.builder.position_at_end(call_bb);
+        let msg = entry.get_param(0);
+        let file = entry.get_param(1);
+        let line = entry.get_param(2);
+        let args: Vec<Value<'a>> = if arity == 3 {
+            vec![msg, file, line]
+        } else {
+            vec![msg]
+        };
+        self.builder.build_call(handler, handler_ty, &args, "");
+        self.builder.build_unreachable();
+
+        self.panic_fn = entry;
+        self.panic_ty = entry_ty;
         Ok(())
     }
 
@@ -2691,6 +2827,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// from is not.
     fn locate(&self, span: Span) {
         self.g.locate(self.debug_scope, &self.module, span);
+        // Kernel stage 15: the statement's own file and line, left where a
+        // check inside a generated body can read them. A `naked fun` gets
+        // nothing: its body is one `asm` and any instruction before it would
+        // break the ABI the asm is the whole of (kernel stage 5).
+        if self.g.freestanding.is_some() && !self.naked {
+            self.g.store_panic_site(&self.module, span);
+        }
     }
 
     /// Start the function under its own declaration line, which is what makes
@@ -5329,10 +5472,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.cur = panic_bb;
         self.terminated = false;
         let msg_ptr = self.string_global(msg)?;
-        self.g
-            .builder
-            .build_call(self.g.panic_fn, self.g.panic_ty, &[msg_ptr], "");
-        self.g.builder.build_unreachable();
+        self.g.emit_panic_ptr(msg_ptr);
 
         self.g.builder.position_at_end(ok_bb);
         self.cur = ok_bb;
@@ -5976,10 +6116,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 .first()
                 .ok_or_else(|| no_value("the argument of panic"))?;
             let msg = self.heap_data_ptr(arg)?;
-            self.g
-                .builder
-                .build_call(self.g.panic_fn, self.g.panic_ty, &[msg], "");
-            self.g.builder.build_unreachable();
+            self.g.emit_panic_ptr(msg);
             self.terminated = true;
             return Ok(None);
         }
@@ -6316,10 +6453,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.terminated = false;
         let msg = format!("{}: value out of range", callee.replace('#', "."));
         let msg_ptr = self.string_global(&msg)?;
-        self.g
-            .builder
-            .build_call(self.g.panic_fn, self.g.panic_ty, &[msg_ptr], "");
-        self.g.builder.build_unreachable();
+        self.g.emit_panic_ptr(msg_ptr);
 
         self.g.builder.position_at_end(ok_bb);
         self.cur = ok_bb;
@@ -7182,10 +7316,56 @@ impl<'a> Gen<'a> {
 
     fn emit_panic(&self, msg: &str) -> Result<(), String> {
         let ptr = self.builder.global_string(msg, "panic.msg");
-        self.builder
-            .build_call(self.panic_fn, self.panic_ty, &[ptr], "");
-        self.builder.build_unreachable();
+        self.emit_panic_ptr(ptr);
         Ok(())
+    }
+
+    /// Store a statement's file and line into the two location globals, which
+    /// every check in a generated body reads (kernel stage 15).
+    fn store_panic_site(&self, module: &str, span: Span) {
+        let (file, line) = match self.sources.path_line_col(module, span) {
+            Some((_, line, _)) => (self.panic_files.get(module).copied(), line),
+            None => (None, 0),
+        };
+        let file = file.unwrap_or_else(|| self.ctx.const_null(self.ctx.opaque_ptr()));
+        let line = self.ctx.const_int(self.ctx.i32(), line as u64, false);
+        let file_g = self
+            .panic_file_global
+            .expect("a freestanding panic file global");
+        let line_g = self
+            .panic_line_global
+            .expect("a freestanding panic line global");
+        self.builder.build_store(file, file_g);
+        self.builder.build_store(line, line_g);
+    }
+
+    /// Emit a call to the panic path with a message pointer the caller already
+    /// built, then `unreachable`. In a freestanding build the callee is the
+    /// compiler's entry, which takes the message plus the file and line the
+    /// current statement stored (kernel stage 15); a hosted build still calls
+    /// the runtime's one-argument `kelp_panic`.
+    fn emit_panic_ptr(&self, msg: Value<'a>) {
+        if self.freestanding.is_some() {
+            let file = self.load_panic_file();
+            let line = self.load_panic_line();
+            self.builder
+                .build_call(self.panic_fn, self.panic_ty, &[msg, file, line], "");
+        } else {
+            self.builder
+                .build_call(self.panic_fn, self.panic_ty, &[msg], "");
+        }
+        self.builder.build_unreachable();
+    }
+
+    /// The two location globals a freestanding build declares before any body.
+    fn load_panic_file(&self) -> Value<'a> {
+        let global = self.panic_file_global.expect("a freestanding panic file global");
+        self.builder.build_load(self.ctx.opaque_ptr(), global, "panic.file")
+    }
+
+    fn load_panic_line(&self) -> Value<'a> {
+        let global = self.panic_line_global.expect("a freestanding panic line global");
+        self.builder.build_load(self.ctx.i32(), global, "panic.line")
     }
 
     /// `if (i >= len) panic(msg);`, the bounds check every indexed builtin
@@ -10454,10 +10634,11 @@ impl<'a> Gen<'a> {
     /// does for the hosted accessors.
     ///
     /// `str.byte_at_raw`'s bounds check is the one new panic site: it calls the
-    /// project's `[target] panic` handler through `self.panic_fn` with the same
+    /// compiler's panic entry (`self.panic_fn`) with the same
     /// `"str.byte: index out of bounds"` text the C body passes, so the message
     /// a kernel prints for an over-long index is the one the hosted build
-    /// prints.
+    /// prints. The line is the current statement's, since the accessor body is
+    /// shared by every call site.
     ///
     /// A program with no `std/str` in it has none of the three raw externs
     /// declared, and this emits nothing; the `View` accessors are always
