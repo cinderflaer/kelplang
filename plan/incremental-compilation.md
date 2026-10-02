@@ -318,3 +318,89 @@ The guard (`src/guard.rs`) is unchanged and keeps working:
   diagnostic.
 - The unit artifacts are written to `<out>.units/<unit>.ll` and
   `<out>.units/<unit>.o`, next to the binary the build produces.
+
+## Measured numbers (slice 3)
+
+Host: the small dev machine this work runs on (7.8 GiB RAM, limited free
+memory), through `dev.nix`. Every cell is the **median of three runs**, in
+milliseconds, of a real `kelpc` binary: the debug build
+(`target/debug/kelpc`) and the release build (`target/release/kelpc`,
+`cargo build --release --bin kelpc`). Both are available, so both are reported.
+"Warm" is a build of unchanged sources whose cache the preceding build filled;
+"edit" is one literal changed in one module of a program whose cache was filled
+by the unedited build, so exactly that module misses.
+
+The three programs:
+
+- `hello`: `examples/hello.kp`, the 3-line example.
+- `http_rate_limit`: `kelpc/tests/projects/http_rate_limit`, the largest hosted
+  project under `kelpc/tests/projects/` that binds `std/http` (about 100 lines of
+  Kelp plus the shipped `std` modules it reaches: `std/http`, `std/str`,
+  `std/result`, `std/option`, `std/process`, and everything they pull in).
+- `download_pool`: `examples/download_pool.kp`, 203 lines, `std/http` plus
+  `std/thread` and `std/process`.
+
+| program | build | debug median (ms) | release median (ms) |
+| --- | --- | ---: | ---: |
+| hello | whole-program | 136 | 133 |
+| hello | incremental, cold cache, jobs 1 | 145 | 150 |
+| hello | incremental, cold cache, jobs 2 | 141 | 156 |
+| hello | incremental, warm cache | 131 | 128 |
+| hello | incremental, one-line edit in one module | 136 | 142 |
+| http_rate_limit | whole-program | 4992 | 3487 |
+| http_rate_limit | incremental, cold cache, jobs 1 | 4472 | 3187 |
+| http_rate_limit | incremental, cold cache, jobs 2 | 3130 | 2418 |
+| http_rate_limit | incremental, warm cache | 2372 | 1299 |
+| http_rate_limit | incremental, one-line edit in one module | 2418 | 1323 |
+| download_pool | whole-program | 5072 | 3669 |
+| download_pool | incremental, cold cache, jobs 1 | 4590 | 3265 |
+| download_pool | incremental, cold cache, jobs 2 | 3228 | 2504 |
+| download_pool | incremental, warm cache | 2336 | 1356 |
+| download_pool | incremental, one-line edit in one module | 2355 | 1397 |
+
+The command lines, with `<target>` the program above, `<out>` a scratch output
+path and `<cache>` a cache directory:
+
+- whole-program: `kelpc build <target> -o <out>`
+- incremental cold, one worker:
+  `rm -rf <cache>; KELPC_JOBS=1 KELPC_CACHE_DIR=<cache> kelpc build <target> -o <out> --incremental`
+- incremental cold, two workers: the same with `KELPC_JOBS=2`
+- warm: run the jobs-2 command once, then run it again and time the second run
+- edit: run the jobs-2 command once on the unedited source, change one literal in
+  one module (`hello`: the greeting; `http_rate_limit`: the `http://` prefix in
+  `src/main.kp`; `download_pool`: the `http://` prefix), then run the same command
+  again and time it; each of the three edit runs restores the original source,
+  which is a cache hit, and applies a fresh literal (`e1`, `e2`, `e3`), so each
+  timed build is one miss and nothing else.
+
+### What the numbers say
+
+- **Incremental does not pay for a tiny program.** `hello`'s whole-program build
+  is 133 to 136 ms and every incremental variant is the same or slower (141 to
+  156 ms cold, 128 to 131 ms warm). A build that small is the `cc` link plus a
+  fixed per-unit overhead; there is almost no backend work to save, and splitting
+  one module into unit plus `_support` adds two pieces of work where there was
+  one. The mode is off by default for exactly this shape.
+- **It starts to pay once a program pulls in heavy `std` modules.** A ~100-line
+  program that uses `std/http` (`http_rate_limit`) goes from 4992 to 3130 ms
+  (debug) and 3487 to 2418 ms (release) for a cold incremental build at two
+  workers: about 1.4 to 1.6 times faster. The warm and one-line-edit builds are
+  about 2.1 to 2.7 times faster than whole-program (2372/2418 vs 4992 debug,
+  1299/1323 vs 3487 release). That is the size at which the backend work the
+  split saves is larger than the link and the per-unit overhead.
+- **Parallelism is what makes the cold build fast.** Two workers against one:
+  4472 to 3130 ms (debug) and 3187 to 2418 ms (release) for `http_rate_limit`,
+  4590 to 3228 ms and 3265 to 2504 ms for `download_pool`; 1.3 to 1.4 times. It
+  does not change the warm build much, because a cache hit still lowers every
+  unit's IR to compute its key (the IR is the key's largest field), and the link
+  at the end is serial.
+- **A one-line edit costs about a warm build, not a cold one.** The changed unit
+  is one small module; the other units still lower and the link still runs, so
+  the edit build is within noise of the warm build (2372 vs 2418 ms debug for
+  `http_rate_limit`, 1299 vs 1323 ms release) and well under the cold build
+  (3130 ms debug, 2418 ms release at two workers). The saving is the other
+  units' pass pipeline and codegen, not their lowering.
+
+The numbers are not a claim that every project is faster: `hello` is slower, and
+the threshold is a program whose own backend work is larger than the link, which
+on this host is a program that reaches the heavy `std` modules.
