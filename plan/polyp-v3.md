@@ -425,3 +425,244 @@ The three panic contracts are the only rejection/panic fixtures, as above.
 - Deliberately absent: a general `Blend` operator beyond source-over (no multiply/screen), any
   gradient or pattern fill, sub-pixel positioning, and a colour type beyond `u32`. Stage 3
   consumes exactly the surface above and nothing more.
+
+## Stage 3: the soft backend, layout, input and a platform
+
+*Stage 3 of 5. `examples/polyp/soft_backend.kp` is the retained widget tree stage 1's interface
+asked for, `examples/polyp/soft/event.kp` and `soft/platform.kp` are the input and display
+boundaries, and the two platform implementations are `soft/headless_platform.kp` and
+`soft/ppm_platform.kp`. Stage 4 boots exactly this pair on bare metal.*
+
+The stage adds no display dependency and no libc: a program that imports it links no GTK, opens
+no window, and draws through the stage-2 primitives only. The stage-2 constraints bind: integer
+geometry, no allocation on the per-frame path, and `unsafe` only in modules a manifest lists.
+
+### Modules
+
+```
+examples/polyp/
+  soft_backend.kp          SoftBackend: the retained tree, layout, painting, input
+  soft/event.kp            Event: what a platform feeds in (pointer, scroll, key, char)
+  soft/platform.kp         trait Platform: present / now_ms / poll_event / framebuffer
+  soft/headless_platform.kp  an in-memory framebuffer, scripted input, recorded presents
+  soft/ppm_platform.kp     HeadlessPlatform plus a PPM dump when POLYP_DUMP_DIR is set
+  soft/frac.kp             an f64's bit pattern as an integer permille (see below)
+```
+
+`soft/event.kp` and `soft/platform.kp` do no pointer work and are off a consumer's `[unsafe]`
+list. `soft/headless_platform.kp` allocates the framebuffer through `Ptr.alloc<u32>` and
+`soft/ppm_platform.kp` adds `soft/debug`'s PPM writer, so both are listed; `soft/frac.kp` reads
+an `f64`'s bits through a `Ptr<u64>` and is listed on its own so the audit entry is one short
+file. `soft_backend.kp` itself dereferences no pixel and is off the list: it calls the stage-2
+primitives, which carry their own entries.
+
+### The retained tree, and what grows
+
+```text
+datac SNode(
+    var kind: i32, var slot: i32, var props: core.Props, var key: core.Key,
+    var kids: List<SNode>,
+    var uid: i32, var rect: fb.Rect, var measured_w: i32, var measured_h: i32,
+    var dirty: bool, var laid: bool, var scroll: i32, var content_h: i32,
+    var hover: bool, var pressed: bool, var caret: i32,
+)
+```
+
+The tree is the same shape `headless_backend.kp` keeps, so the two backends cannot drift about
+widget identity: an interactive widget's `slot` is handed out by counting interactive `make`
+calls from zero, and a path is resolved with the same `core.child_at` / sibling-index rule. Only
+`make` grows anything (one `SNode` and one `List` per created widget, in the widget's parent),
+and only `List.push` inside `make`/`insert_into` allocates. `patch_widget`, `drop_widget`,
+`place_widget`, `layout`, `paint` and every input handler allocate nothing: damage is the stage-2
+fixed `Damage`, the clip is a fixed `ClipStack`, and the only per-frame scratch is the glyph
+mask `font.kp` already builds on the stack. A hosted run may therefore use `List` freely, and a
+per-frame profile has no allocator call to find.
+
+`uid` is a grow-only node number used only for tests and diagnostics; `slot` is the interactive
+id the core knows.
+
+### Layout: measure and arrange, integer only
+
+Two passes over the tree. `measure` computes a node's intrinsic size bottom-up and caches it in
+`measured_w`/`measured_h`; `arrange` assigns a rectangle top-down and places children. All
+arithmetic is `i32`/`i64`; no float appears (see `soft/frac.kp` below for the one place the core
+hands over an `f64`).
+
+Metrics, one `Theme` value a platform can replace:
+
+```text
+pad 5, radius 3, border 1, gap 6, row_h 20, box 12, entry_min_w 90,
+scrollbar_w 6, progress_h 8, sep 1, text scale 1 (1..=4)
+```
+
+Intrinsic sizes: `Text` is `font.text_width(text, scale)` by `font.text_height(scale)`; `Spacer`
+is `0` by `props.height`; `Button` is `label + 2*pad` by `max(text_height + 2*pad, row_h)`;
+`Entry` is `max(entry_min_w, text + 2*pad)` by the same height; `Checkbox` is `box + gap +
+label` by `max(box, text_height)`; `Progress` is `entry_min_w` by `progress_h`; `Separator` is
+`0` by `sep`; a `Column`/`Row` sums its children's sizes plus `spacing * (n - 1)` and takes the
+maximum across the other axis; `Scrolled` measures its children as an implicit `Column` and adds
+`2*pad + scrollbar_w` to the width and `2*pad` to the height. A child's `margin` (when non
+negative) is added on all four of its sides; `align` is `Fill` unless set; `expand` divides the
+main axis' leftover among the expand children.
+
+**The skip rule.** A patch marks only the node it wrote `dirty`. `measure` recomputes a node
+only when its own `dirty` is set or a child reported a changed size, and it returns whether the
+node's cached size changed. `arrange` runs on the whole tree only when the root's size changed,
+the window was resized, a `Move` patch reordered children, or the tree was never laid out;
+otherwise it is skipped entirely. A text change whose new string has the same pixel width
+therefore re-measures one node and re-arranges none, which is what the layout-skip test counts.
+When `arrange` does run and a node's rectangle differs from the one it had, both rectangles are
+added to the damage list, so a real size change repaints the vacated and the occupied area and
+nothing else.
+
+### Painting, the theme and the class hook
+
+Every widget paints through the stage-2 primitives with a default `Theme` (background
+`0xFF1E1E24`, panel `0xFF2A2A33`, foreground `0xFFE6E6EA`, muted `0xFF9AA0A6`, border
+`0xFF3A3A44`, accent `0xFF4C8DFF`, caret `0xFFFFFFFF`). A `Text` draws with
+`font.draw_text`; a `Button` and an `Entry` are a rounded fill, a rounded stroke and centered
+text; a `Checkbox` is a stroked box with an accent inner fill when checked plus its label; a
+`Progress` is a panel track, an accent fill and a stroke; a `Separator` is a one-pixel rule; a
+`Scrolled` is a panel fill with a border and a right-hand scrollbar thumb; a focused interactive
+widget gets a one-pixel accent stroke.
+
+`class("name")` resolves through a small override table: each entry names a class and the fields
+it sets (`bg`, `fg`, `border`, `radius`, `pad`), and the classes on a node are applied in order
+over the node's per-kind base style. A field a class does not set stays inherited, so
+`todo-done`'s muted foreground reaches the `Text` children of the row it names. The table is code
+comparisons, not data, because Kelp has no static `String`; the three shipped names are
+`todo-app`, `todo-done` and `todo-pending`, and a program adds one by editing that function.
+
+Painting is clipped to the damage list. `paint(fb)` takes the backend's accumulated `Damage`,
+and for each rectangle builds a `ClipStack` at the intersection of that rectangle and
+`fb.bounds()` and walks the tree, drawing only nodes whose rectangle intersects. It returns the
+list it painted, which is the list the platform is handed. No damage means no walk and no
+`present`: an idle frame presents nothing.
+
+### Input
+
+`soft/event.kp` is the only vocabulary a platform needs:
+
+```text
+enum Event {
+    PointerMove(x, y)  PointerDown(x, y, button)  PointerUp(x, y, button)
+    Scroll(dx, dy)     Key(code, mods)            Char(codepoint)
+}
+```
+
+The backend hit-tests by walking the tree front to back with the scroll clip applied, and returns
+the `slot` of the deepest interactive widget under the point. `PointerMove` changes the hover
+slot and damages the old and the new widget's rectangle; `PointerDown` sets `pressed` and damages
+it; `PointerUp` clears `pressed`, damages it, and posts the widget's id when the press and the
+release named the same widget. A click focuses the widget it names. `Tab` and `Shift-Tab` walk
+the interactive widgets in tree order and wrap; `set_focus` damages the old and the new focus
+rect. `Scroll` adjusts the `Scrolled` under the pointer, clamps it to `[0, content_h - view_h]`,
+and damages that area; `dx` is ignored (no horizontal scrolling).
+
+A focused `Entry` keeps a byte caret. `Char` inserts the UTF-8 encoding of the codepoint at the
+caret, `Key(BACKSPACE)` deletes the byte before it, `DELETE` the byte at it, `LEFT`/`RIGHT` move
+by one, `HOME`/`END` go to the ends; each edit damages the entry's rectangle and posts the
+entry's id, so the loop runs the program's `update` through the same path a GTK `changed` signal
+uses. `Space` on a focused checkbox or button activates it, and on a focused entry types a space.
+Every handler that changes a pixel adds damage and every handler that does not adds none.
+
+The backend also keeps the programmatic channel the other two backends have: `schedule(event)`
+queues one `core.Event` and `pump` releases at most one per frame, which is how the smoke
+scenario drives the same `Focus`/`Edit`/`Post` sequence the GTK and headless runs use.
+
+### The platform, and `frame`
+
+```text
+trait Platform {
+    fun mut Self.present(fb: fb.Fb, dirty: &damage.Damage)
+    fun Self.now_ms().R: u64
+    fun mut Self.poll_event().R: option.Option<Event>
+    fun Self.framebuffer().R: fb.Fb
+}
+```
+
+`present` is handed the framebuffer and the exact rectangles that changed; the platform may
+composite just those, or ignore the list. `now_ms` is the platform's monotonic clock in
+milliseconds, used only for scripted input in the headless platform. `poll_event` drains input
+oldest first and answers `None` when the queue is empty. `framebuffer` returns the `Fb` the
+platform owns: pixels are `0xAARRGGBB` `u32`, `stride_px` is in pixels and may exceed the width,
+and the backend writes only inside `width x height`.
+
+```text
+pub fun frame<P: Platform, S, M>(
+    backend: mut SoftBackend, platform: mut P,
+    tree: move core.Node<M>, state: mut S,
+    view: fun (S).R: core.Node<M>, update: fun (mut S, M),
+).R: core.Tick<M>
+```
+
+`frame` is the one function an OS calls per tick. It takes the platform's framebuffer, resizes
+the backend's layout to it, lays out, drains every pending platform `Event` into the backend,
+runs one `core.frame_step` (which drains the queued `core.Event`s and runs
+`update`/`view`/`diff`/`apply`), lays out again for the patches, paints the accumulated damage
+and hands it to `present`. It returns `core.Tick` (`Idle`/`Changed`/`Quit`, each carrying the
+new tree) so the caller knows whether anything changed and when the program asked to quit.
+
+`HeadlessPlatform` owns a `Ptr.alloc<u32>` buffer, records the presented rectangles and a
+checksum after each `present`, and plays a scripted `(time_ms, Event)` list through `poll_event`
+as `now_ms` advances; it is what the input and damage tests and the todo-soft run use.
+`PpmPlatform` is the same plus `soft/debug.dump_ppm` to `<POLYP_DUMP_DIR>/frame_<n>.ppm` on every
+present; with the variable unset it is a headless platform. `examples/polyp/PLATFORM.md` is the
+plain-terms contract for a custom OS.
+
+### The integer permille
+
+`Props.fraction` is an `f64` because v2's `progress` takes one, and Kelp deliberately has no
+float-to-integer conversion. A pixel fill width is an integer, so `soft/frac.kp` reads the
+`f64`'s eight bytes through a `Ptr<u64>` and decodes the IEEE sign, exponent and mantissa with
+integer shifts into a permille in `0..=1000`. It is ~20 lines, allocates nothing, and never
+performs a float operation, which is what keeps a freestanding riscv64 image from needing a
+soft-float libcall for the progress bar. The read is a type-punning load, legal only in the
+module a manifest lists; `plan/kernel-ub-notes.md` records it.
+
+### Programs and tests
+
+`examples/polyp-todo-soft/` links `examples/polyp-todo/src/app.kp` unchanged (the same `view` and
+`update` as the GTK and headless runs), imports `soft_backend`, schedules `app.script()` on the
+backend, and drives `frame` in a loop, printing `app.report`'s summary plus the framebuffer
+checksum after every frame. It must end with the same model and the same created/updated/removed/
+live counters as the GTK and headless runs, because it runs the same `core.frame_step` body.
+
+`examples/polyp-ui-test/` is the input and layout test program: hit-test and focus-order checks,
+the entry editing sequence, the damage assertions ("changing one label's text damages its own
+rectangle and no other, and the pixels outside it are identical before and after"; "a hover
+change damages only the hovered widget"; "an idle frame presents nothing"), the layout skip
+counted with a measure/arrange counter, and the golden todo checksums at 400x300 and 800x600.
+The Rust test builds it once and runs it on the backend under test, like stage 1's, with the
+bounded runner stage 2 added.
+
+### What this stage did not do
+
+- No horizontal scrolling, no scrollbar dragging, no smooth scrolling: the wheel moves by a
+  fixed step and clamps.
+- No text selection, no clipboard, no IME, no multi-line entry: the caret is a byte offset and
+  the font is byte-oriented, so a non-ASCII codepoint is one replacement box per UTF-8 byte.
+- No bold face: `Text`'s `bold` flag is carried and ignored, because the embedded font has one
+  weight.
+- No incremental damage from a `Move` patch finer than the moved node's old and new rectangles,
+  and no partial repaint of a widget whose own pixels changed without a size change beyond that
+  widget's rectangle (a `Text` change damages exactly its own box).
+- No `f32`/`f64` anywhere in the paint path, per stage 2; the one `f64` the core hands over is
+  decoded as bits.
+
+### Language shapes this stage worked around
+
+Four, all recorded in `plan/user-ffi-gap-analysis.md`; none is a compiler change:
+
+- A `mut` parameter of an enum type cannot be reassigned in place, so `core.frame_step` takes the
+  tree by value and returns it inside a `Tick` variant rather than writing through `mut
+  Node<M>`.
+- A borrow taken in an `if`/`while` condition is live for the whole statement, and a method
+  receiver is borrowed before its arguments are evaluated, so `self.damage.add(rect_of(self...))`
+  is refused; the code binds the rectangle to a local first.
+- A `mut S` parameter passed to `view(s: S)` binds the view's parameter to `&S` when `S` is a
+  `Copy` scalar, so a generic frame driver needs an owned state type. Every Polyp program's
+  `Model` is one; `examples/polyp-ui-test/src/main.kp` wraps its counter in a `datac` for this
+  reason.
+- A non-`unit` value in statement position is an error when the enclosing `if` has no `else`;
+  the paint code discards the primitives' pixel counts with `val _ = ...`.

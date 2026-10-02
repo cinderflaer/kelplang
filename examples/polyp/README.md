@@ -375,6 +375,68 @@ fixed scenes print golden FNV checksums; the damage list is checked to stay with
 to cover every point ever added. Three API contracts panic (`text scale must be in 1..=4`, `clip
 stack depth 8 exceeded`, `clip stack is empty`). `plan/polyp-v3.md` stage 2 is the design.
 
+## The soft backend, layout, input and a platform (v3 stage 3)
+
+`examples/polyp/soft_backend.kp` is stage 1's `core.Backend` over the raster instead of a toolkit:
+zero display dependency, zero libc, and a per-frame path that allocates nothing. It keeps the
+same retained tree `headless_backend.kp` keeps (so interactive ids, counters, focus and entry
+text cannot drift between them) and adds integer layout, damage-only painting and input.
+
+```kelp
+impl "deps/polyp/core"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft_backend"
+
+var platform = headless_platform.new(width = 400, height = 300)
+var backend = soft_backend.new()
+var state = app.initial()
+var tree: core.Node<app.Msg> = app.view(state)
+backend.resize(400, 300)
+backend.apply(core.create_all(&tree))
+while running {
+    when soft_backend.frame(backend, platform, tree, state, app.view, app.update) {
+        Idle(next) -> tree = next
+        Changed(next) -> tree = next
+        Quit(next) -> { tree = next; running = false }
+    }
+}
+```
+
+| Module | What it holds | `unsafe` |
+| --- | --- | --- |
+| `soft_backend.kp` | `SoftBackend`: the retained tree, `Theme`, the class override table, measure/arrange, damage-only painting, hit testing, hover/press/focus, entry editing | no |
+| `soft/event.kp` | `Event`: pointer, scroll, key and char | no |
+| `soft/platform.kp` | `trait Platform`: `present`, `now_ms`, `poll_event`, `framebuffer` | no |
+| `soft/headless_platform.kp` | an in-memory framebuffer, scripted input, recorded presents | yes |
+| `soft/ppm_platform.kp` | the headless platform plus a PPM dump when `POLYP_DUMP_DIR` is set | yes |
+| `soft/frac.kp` | an `f64`'s bit pattern as an integer permille, for the progress bar | yes |
+
+Layout is two passes, measure and arrange, over the same `Rect` arithmetic; a patch marks only
+the node it wrote dirty, and `arrange` runs only when a size changed, the window was resized, a
+`Move` reordered children, or the tree was never laid out. So a text change whose new string has
+the same pixel width re-measures one node and re-arranges none. `class("name")` resolves through
+a small override table (`bg`, `fg`, `border`, `radius`, `pad`), and a class on a container's
+foreground reaches the text inside it. Painting walks the tree once per damaged rectangle, clipped
+to it, and after each frame the backend hands the platform the exact rectangles it painted.
+
+Input is the six-variant `Event` a platform decodes its windowing system into. The backend
+hit-tests, tracks hover and pressed state, moves focus with Tab and Shift-Tab, activates buttons
+on a press and release on the same widget, edits a focused entry with a visible caret, toggles a
+checkbox with Space, and scrolls the `Scrolled` under the wheel. Every change produces damage;
+a no-op produces none, and an idle frame presents nothing.
+
+A platform is four functions and the framebuffer it owns; `examples/polyp/PLATFORM.md` is the
+plain-terms contract (the pixel format, the stride rule, the allocation contract, the timing
+contract). `soft_backend.frame` is the one function an OS calls per tick. `examples/polyp-todo-soft/`
+runs the same todo program as the GTK and headless runs and prints the framebuffer checksum after
+every frame; `examples/polyp-ui-test/` holds the hit, focus, editing, damage and layout-skip
+tests. Both run in the plain development shell on both compiler backends.
+
+```sh
+nix-shell /path/to/dev.nix --run 'cd kelpc && cargo test --test compile_and_run polyp'
+nix-shell /path/to/dev.nix --run 'cd kelpc && KELPC_ORACLE=c cargo test --test compile_and_run polyp'
+```
+
 ## Using the library
 
 Kelp has **no manifest for a library**, and a project's modules resolve only

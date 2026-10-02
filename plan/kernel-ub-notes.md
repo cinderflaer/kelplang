@@ -1541,3 +1541,51 @@ full-precision integers, so a primitive that disagrees in one pixel or one count
 than passing on a checksum. The three golden FNV checksums cover the scenes end to end, and the
 damage list's "union covers every added rectangle" property is checked per pixel, not by
 rectangle containment.
+
+## Library note: Polyp v3's soft backend, layout, input and platform (2026-10-03, not a kernel stage)
+
+A library stage (`examples/polyp/soft_backend.kp`, `soft/event.kp`, `soft/platform.kp`,
+`soft/headless_platform.kp`, `soft/ppm_platform.kp`, `soft/frac.kp`), not a compiler one: nothing
+in the compiler changed. `plan/polyp-v3.md` stage 3 is the design and
+`examples/polyp/PLATFORM.md` the platform contract.
+
+**The new pointer shapes.** Three, all in modules a consumer lists on `[unsafe] modules`:
+
+- `soft/frac.kp` reads an `f64`'s eight bytes through a `Ptr<u64>` derived with
+  `Ptr.from_ref(x)` and `cast<u64>()`, and decodes sign, exponent and mantissa with integer
+  shifts. It is a read-only type-punning load: nothing writes through the pointer, and the value
+  is the platform's own bit pattern for the `f64` (both a `u64` and an `f64` use the target's byte
+  order, so the integer's bits are the IEEE fields on a little- or big-endian target). It is the
+  only way to turn the core's `f64` fraction into a pixel width without a float operation, which
+  is what stage 2's integer-only rule needs for the progress bar.
+- `soft/headless_platform.kp` allocates its framebuffer with `Ptr.alloc<u32>(width * height)`,
+  writes the pixels directly with `f.put`/`f.get`, and never frees it. `Ptr.alloc` is stage 1's
+  `malloc`/`free` pair; a count that overflows `usize` is stage 1's catalogue, and the size here
+  is a caller's window size.
+- `soft/ppm_platform.kp` adds `soft/debug.dump_ppm`, which is the stage-2 catalogue unchanged
+  (it reads the whole framebuffer and writes a file through `std/fs`).
+
+`soft_backend.kp` itself dereferences no pixel: it calls the stage-2 primitives, which carry their
+own entries, and its damage, layout and input code is integer arithmetic over `Rect`/`Fb` values.
+It is off a consumer's `[unsafe]` list.
+
+**What the compiler checks, and does not.** It checks that each module containing `unsafe` is on
+the manifest's list, and nothing else: not that the `f64` reference really points at a readable
+`f64`, not that the framebuffer pointer is inside an allocation the platform still owns, not that
+`stride_px >= width`, not that a `Scrolled`'s content height is non-negative, and not that a
+`frame`'s `tree` and `state` belong together. A platform that hands the backend a freed buffer is
+stage 1's dangling-pointer case: the `Fb` carries no provenance, so nothing detects it.
+
+**What is defined.** The layout and painting arithmetic is `i32`/`i64` and can wrap like every
+Kelp integer, but the tests keep rectangles small and every primitive clips before it writes, so
+an over-large coordinate is clipped, not an out-of-bounds store. The damage list is the stage-2
+fixed array with the same invariants. No `f32`/`f64` operation appears in the paint or input
+path, which keeps a freestanding riscv64 image from needing a soft-float libcall for the
+progress bar. The checksum printed after every frame is stage 2's FNV-1a, taken by masking the
+`u32` value rather than reading memory, so it is the same on either endianness.
+
+**What the tests pin.** `examples/polyp-ui-test` drives hit testing, focus order, entry editing,
+damage (a same-width text change damages exactly one rectangle and a FNV digest of every pixel
+outside it is unchanged; a hover damages one widget; an idle frame presents nothing) and the
+layout skip (one measure, no arrange), and `examples/polyp-todo-soft` pins the todo UI's
+checksums at 400x300 and 800x600. Both run on the LLVM and C backends under `run_bounded`.

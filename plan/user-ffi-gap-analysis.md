@@ -284,3 +284,25 @@ still has no trampoline, `library`/`header`/`pkg_config` still have no effect in
   receiver first. Nothing about FFI depends on this, but it will bite a generated binding.
 - The per-program C object's trampoline is untouched, so an application still pastes the same
   `[extern.*]` sections as v2/v3 stage 1.
+
+## Status update (2026-10-03, Polyp v3 stage 3)
+
+- **No FFI gap is closed and none is newly blocked.** The soft backend, its layout, its input
+  and both platform implementations (`examples/polyp/soft_backend.kp`,
+  `examples/polyp/soft/`) contain no `extern` call at all: the only external facts are a
+  `Ptr<u32>` framebuffer and a stride, which is gap 1's shape, and a platform is an ordinary
+  trait implemented in Kelp. `soft/ppm_platform.kp` uses `std/fs`, which is the ordinary gated
+  namespace. `plan/polyp-v3.md` stage 3 is the design and `examples/polyp/PLATFORM.md` the
+  contract a custom OS implements.
+- Four Kelp shapes the stage worked around, worth recording for a binding or any generic
+  driver, none of them FFI:
+  - A `mut` parameter of an enum type cannot be reassigned in place (`t = value` is refused);
+    the loop passes the tree in by value and returns it in a `Tick` variant instead.
+  - A borrow taken in an `if`/`while` condition is live for the whole statement, and a method
+    receiver is borrowed before its arguments are evaluated, so `self.damage.add(rect_of(self.root...))`
+    is refused. A local binding between the two reads keeps both sound without weakening a check.
+  - A `mut S` parameter passed to `view(s: S)` binds `S` to `mut S` when the state is a `Copy`
+    scalar, so a generic frame driver wants an owned `datac` state, which is what every Polyp
+    program's `Model` already is.
+  - A discarded non-`unit` return value in statement position is an error (`if` without an
+    `else` must be `unit`); `val _ = call()` is the discard the paint code uses.
