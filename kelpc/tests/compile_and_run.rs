@@ -15670,10 +15670,21 @@ struct HttpServer {
 impl HttpServer {
     /// Starts hazard `name` with `args`, bounded in memory, CPU and wall time.
     fn start(name: &str, args: &[&str]) -> HttpServer {
-        let bin = http_hazard_bin(name);
+        HttpServer::start_bin(&http_hazard_bin(name), args, true)
+    }
+
+    /// As `start` for an already-built program. `cap_memory` is false only for
+    /// an AddressSanitizer build, which reserves far more address space than
+    /// `ulimit -v` allows.
+    fn start_bin(bin: &Path, args: &[&str], cap_memory: bool) -> HttpServer {
+        let script = if cap_memory {
+            "ulimit -v 1048576; ulimit -t 30; exec timeout 40 \"$0\" \"$@\""
+        } else {
+            "ulimit -t 30; exec timeout 40 \"$0\" \"$@\""
+        };
         let mut child = Command::new("sh")
             .arg("-c")
-            .arg("ulimit -v 1048576; ulimit -t 30; exec timeout 40 \"$0\" \"$@\"")
+            .arg(script)
             .arg(&bin)
             .args(args)
             .stdin(Stdio::null())
@@ -15728,6 +15739,10 @@ impl HttpServer {
         if let Some(mut e) = self.child.stderr.take() {
             let _ = e.read_to_string(&mut err);
         }
+        assert!(
+            !err.contains("AddressSanitizer") && !err.contains("LeakSanitizer"),
+            "AddressSanitizer flagged the server:\n{err}"
+        );
         assert!(status.success(), "the server exited with {status:?}\nstdout: {rest}\nstderr: {err}");
         let last = rest.lines().last().unwrap_or_default().to_string();
         let words: Vec<&str> = last.split_whitespace().collect();
@@ -16326,5 +16341,109 @@ fn http_listen_follows_the_net_grant_port() {
         "caps_http_listen",
         &project("caps_http_listen").join("main.kp"),
         "listening\ntrue\n",
+    );
+}
+
+/// The hazard program `name` built through the C backend and rebuilt from its
+/// generated `.c` with AddressSanitizer (as `asan_tls_fixture` does for a
+/// fixture).
+fn http_hazard_asan_bin(name: &str) -> PathBuf {
+    let bin = out_path(&format!("hazard_{name}_asan_src"));
+    let build = kelpc_c()
+        .arg("build")
+        .arg(fixture(&format!("tests/hazards/{name}.kp")))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected hazard '{name}' to compile through the C backend:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let asan_bin = out_path(&format!("hazard_{name}_asan"));
+    let cc = Command::new("cc")
+        .arg("-fsanitize=address")
+        .arg("-O1")
+        .arg("-o")
+        .arg(&asan_bin)
+        .arg(bin.with_extension("c"))
+        .args(["-fwrapv", "-pthread", "-lm", "-lssl", "-lcrypto"])
+        .output()
+        .expect("failed to spawn cc");
+    assert!(
+        cc.status.success(),
+        "the AddressSanitizer build of '{name}' failed:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    asan_bin
+}
+
+#[test]
+fn http_server_frees_everything_under_address_sanitizer() {
+    // The leak and double-close gate for the server: every kind of connection
+    // end (a keep-alive run, a refused request, a chunked body, `HEAD`, a client
+    // that vanishes mid-body, one that resets mid-response, an idle timeout)
+    // runs under AddressSanitizer's leak checker, and the server's own
+    // descriptor count before and after is compared as well.
+    let bin = http_hazard_asan_bin("http_server");
+    let args = ["7", "1000", "10000", "10000", "300", "100"];
+    let server = HttpServer::start_bin(&bin, &args, false);
+    let mut c = server.client();
+    c.send(b"GET / HTTP/1.1\r\nHost: t\r\n\r\n");
+    assert_eq!(c.read_response(false).text(), "hello");
+    c.send(b"POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 3\r\n\r\nabc");
+    assert_eq!(c.read_response(false).text(), "abc");
+    c.send(b"HEAD /seg/x HTTP/1.1\r\nHost: t\r\n\r\n");
+    assert_eq!(c.read_response(true).status, 200);
+    c.send(b"POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\nT: 1\r\n\r\n");
+    assert_eq!(c.read_response(false).text(), "hi");
+    // Idle: the server closes this connection by itself (no answer, no count).
+    assert!(c.at_eof());
+    {
+        let mut c = server.client();
+        c.send(b"POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 50\r\n\r\nshort");
+    }
+    let mut c = server.client();
+    c.send(b"POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 5000\r\n\r\n");
+    assert_eq!(c.read_response(false).status, 413);
+    assert!(c.at_eof());
+    {
+        let mut c = server.client();
+        c.send(b"GET /big HTTP/1.1\r\nHost: t\r\n\r\n");
+        assert!(c.fill());
+    }
+    let mut c = server.client();
+    c.send(b"GET /nope HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+    assert_eq!(c.read_response(false).status, 404);
+    assert_eq!(server.finish().0, 7);
+    // The worker threads too: each one's connections and the shared listener.
+    let bin = http_hazard_asan_bin("http_server_threaded");
+    let server = HttpServer::start_bin(&bin, &["3", "1000"], false);
+    let port = server.port;
+    let clients: Vec<_> = (0..5)
+        .map(|_| {
+            thread::spawn(move || {
+                let mut c = HttpClient::connect(port);
+                c.send(b"GET /id HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+                c.read_response(false).status
+            })
+        })
+        .collect();
+    for h in clients {
+        assert_eq!(h.join().unwrap(), 200);
+    }
+    assert_eq!(server.finish().0, 5);
+}
+
+#[test]
+fn http_server_low_level_api_and_accessors_work_in_one_process() {
+    // The defaults, the request accessors (`path_segments`, `query_param` with
+    // its percent- and plus-decoding, case-insensitive headers) and the
+    // low-level accept / read_request / write_response / write_error / close
+    // loop, with the client and the server in one process over loopback.
+    assert_compiles_and_runs(
+        "tests/fixtures/http_server_lowlevel.kp",
+        "8192\n16384\n100\n1048576\n10000\n30000\n5000\n100\n3\nb c\nd\n1\nA b\n\n\n%zz\n<none>\n1\ntrue\nfalse\nGET\n/p\nq=1\nPOST\n2\n0\nfalse\nHTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 3\r\n\r\noneHTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Seen: yes\r\nContent-Length: 2\r\n\r\n{}\n400\nHTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 35\r\nConnection: close\r\n\r\nconflicting Content-Length headers\n\n",
     );
 }
