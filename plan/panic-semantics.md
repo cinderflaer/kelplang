@@ -84,7 +84,7 @@ Every compiler-inserted check in a freestanding build calls
 | Check | Message | Where emitted |
 | --- | --- | --- |
 | `Array.get`/`get_const`/`set` index | `Array.get: index out of bounds` | generated body |
-| `List.get`/`get_const`/`set` index | `List.get: index out of bounds` | generated body |
+| `List.get`/`get_const` index | `List.get: index out of bounds` | generated body |
 | `List.pop` on an empty list | `List.pop: the list is empty` | generated body |
 | `List.insert` index | `List.insert: index out of bounds` | generated body |
 | `List.remove` index | `List.remove: index out of bounds` | generated body |
@@ -94,7 +94,7 @@ Every compiler-inserted check in a freestanding build calls
 | `Map.get` missing key | `Map.get: key not found` | generated body |
 | `Map.remove` missing key | `Map.remove: key not found` | generated body |
 | `Bytes.get`/`set` index | `Bytes.get: index out of bounds` | generated body |
-| `Bytes.read_*`/`write_*` offset | `Bytes.read_u32: offset out of bounds` (per accessor) | inline |
+| `Bytes.read_*`/`write_*` offset | `Bytes.read_u32_le: offset out of bounds` (per accessor) | inline |
 | `View.get` index | `View.get: index out of bounds` | generated body |
 | `str.byte` index | `str.byte: index out of bounds` | generated body |
 | narrow conversion | `i32.to_u8: value out of range` (per call) | inline |
