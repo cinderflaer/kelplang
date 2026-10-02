@@ -166,7 +166,10 @@ fun mut Children<M>.row(block: scoped fun(mut Children<M>))
 fun mut Children<M>.scrolled(block: scoped fun(mut Children<M>))
 fun mut Children<M>.keyed(key: str, block: scoped fun(mut Children<M>))
 fun mut Children<M>.keyed_col(key: str, block: scoped fun(mut Children<M>))
+fun mut Children<M>.keyed_int(key: i64, block: scoped fun(mut Children<M>))
+fun mut Children<M>.keyed_int_col(key: i64, block: scoped fun(mut Children<M>))
 fun mut Children<M>.with_key(key: str)
+fun mut Children<M>.with_key_int(key: i64)
 fun mut Children<M>.spacing(n: i32)
 fun mut Children<M>.margin(n: i32)
 fun mut Children<M>.expand()
@@ -224,9 +227,10 @@ pub fun schedule_focus_entry(delay_ms: u32, index: i32)
   offset survives.
 - `keyed(key, block)` is a keyed **row**: the block's children become one `Row`
   child with the given key, which is the shape a list of rows wants.
-  `keyed_col` is the same for a column, and `with_key(key)` gives the next pushed
-  node a key of any kind. Keys must be unique among the children of one
-  container; a duplicate panics naming it.
+  `keyed_col` is the same for a column, `keyed_int`/`keyed_int_col` are the
+  integer-keyed twins, and `with_key`/`with_key_int` give the next pushed node a
+  key of any kind. Keys must be unique among the children of one container; a
+  duplicate panics naming it.
 - `spacing(n)` is the spacing of the box being built. `margin(n)`, `expand()`,
   `align(a)` and `class(name)` are options of the **next pushed child**, whatever
   its kind: `k.expand() k.column { ... }` expands the column, and

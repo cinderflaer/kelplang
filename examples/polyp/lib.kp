@@ -438,6 +438,24 @@ fun mut Children<M>.with_key(key: str) {
     pending_key.set(Key.Str(s = String.from_str(key)))
 }
 
+// The integer-keyed twins. One list uses one key type, so an application picks
+// the pair that matches the identity it has (a name, or an id).
+fun mut Children<M>.keyed_int(key: i64, block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_keyed(Key.Int(n = key), Node.Row(children = inner.items, spacing = inner.spacing))
+}
+
+fun mut Children<M>.keyed_int_col(key: i64, block: scoped fun(mut Children<M>)) {
+    var inner: Children<M> = new_children()
+    block(inner)
+    self.push_keyed(Key.Int(n = key), Node.Column(children = inner.items, spacing = inner.spacing))
+}
+
+fun mut Children<M>.with_key_int(key: i64) {
+    pending_key.set(Key.Int(n = key))
+}
+
 // Options. `spacing` is the box being built; the rest apply to the next child
 // pushed, whatever kind it is, so `k.expand() k.column { ... }` expands the
 // column.
