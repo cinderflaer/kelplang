@@ -5145,6 +5145,10 @@ fn the_equality_operator_is_refused_without_a_declared_eq() {
         "cannot compare 'P' values with '<'",
     );
     assert_rejected_with(
+        "tests/fixtures/eq_operator_order_gt.kp",
+        "cannot compare 'P' values with '>'",
+    );
+    assert_rejected_with(
         "tests/fixtures/eq_operator_bad_signature.kp",
         "'P.eq' takes exactly one parameter",
     );
