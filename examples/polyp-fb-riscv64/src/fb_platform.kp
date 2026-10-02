@@ -94,6 +94,10 @@ impl platform.Platform for FbPlatform {
 
     fun Self.now_ms().R: u64 = time_ms
 
+    // No timer device and no requirement for a deadline here: the millisecond clock is the whole of
+    // it, and this stage's deadline is a hosted feature (`plan/polyp-v3.md`, stage 5).
+    fun mut Self.now_us().R: u64 = time_ms * 1000
+
     fun mut Self.poll_event().R: option.Option<event.Event> {
         if cursor >= script_len {
             return option.Option.None

@@ -19,6 +19,13 @@ pub trait Platform {
     // scripted input a `HeadlessPlatform` plays; a real platform returns its own clock.
     fun Self.now_ms().R: u64
 
+    // The platform's monotonic clock in microseconds, the one a frame deadline reads
+    // (`soft_backend.frame_budgeted`, Polyp v3 stage 5). A platform with only a millisecond
+    // clock returns `now_ms() * 1000` and gets millisecond-granular deadlines; a platform with a
+    // microsecond clock reads it here. The method is `mut` because a test platform may model a
+    // clock that advances as paint work is done; a real one only reads.
+    fun mut Self.now_us().R: u64
+
     // The next input event, oldest first, or `None` when the queue is empty. A frame drains the
     // queue completely, so returning one event per call is the whole contract.
     fun mut Self.poll_event().R: option.Option<event.Event>

@@ -14972,3 +14972,168 @@ fn polyp_soft_ppm_platform_writes_a_frame() {
     assert_eq!(bytes.len(), 13 + 64 * 48 * 3, "the PPM body length");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Polyp v3 stage 5: the soft backend's work budgets, pinned as exact machine-independent counts.
+///
+/// `examples/polyp-budget-test` drives the backend directly and prints one number per line:
+///
+/// - `idle`: an idle frame writes 0 pixels, presents 0 rectangles and allocates nothing.
+/// - `text`: a same-width label change damages one rectangle (area 168, the 24x7 label) and, after
+///   the patch buffer has seen that shape, accounts for 0 allocations.
+/// - `hover`/`focus`: a hover or focus change damages exactly the affected widget(s), and allocates
+///   nothing. The primitive pixel count is higher than the rectangle area because a repaint fills
+///   the rectangle with the background and then draws the widget over it (the overdraw `repaint`
+///   measures).
+/// - `type`: typing one character damages at most the entry's rectangle (area 1800) and accounts
+///   for the one allocation the new text needs.
+/// - `remove`: dropping one row of 200 re-measures one node, re-arranges the tree, and damages only
+///   rectangles at or below the removed row (`70` is the smallest damage `y`); nothing above it is
+///   touched.
+/// - `append`: adding a row at the end damages the new (off-screen) row and nothing else.
+/// - `repaint`: a full 800x600 repaint overdraws 1.969x, under the factor 2 the budget allows.
+/// - `deadline`: a 2500 us budget and a clock that charges 1000 us per read stop the first frame
+///   after three rectangles (`presented 3`, `damage 2`) and leave the last two for the next frame
+///   (`presented 2`, `damage 0`); the second frame is never deferred.
+/// - `allocs`: an idle frame and a steady-state patch frame both account for 0 allocations; the
+///   patch buffer's high-water is 1 patch.
+#[test]
+fn polyp_soft_work_budgets_hold() {
+    let bin = out_path("polyp_budget_test");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-budget-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp budget test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[]);
+    assert!(
+        run.status.success(),
+        "expected the budget test to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_BUDGET_EXPECTED,
+        "unexpected output from the budget test"
+    );
+}
+
+const POLYP_BUDGET_EXPECTED: &str = r"idle
+0
+0
+0
+0
+text
+1
+168
+212
+0
+1
+0
+hover
+1
+440
+988
+0
+focus
+1
+440
+1064
+0
+type
+1
+1800
+4114
+1
+Xabcd
+remove
+16
+3712864
+832351
+1
+1002
+70
+row
+append
+1
+15680
+0
+6
+1012
+repaint
+1
+945223
+480000
+1969
+deadline
+deferred
+3
+2
+done
+2
+0
+allocs
+0
+0
+1
+";
+
+/// Polyp v3 stage 5: the benchmark builds and prints a table.
+///
+/// `examples/polyp-bench` runs the five scenarios in `plan/polyp-v3.md`'s table. The test sets
+/// `POLYP_BENCH_QUICK`, which shortens every scenario to one frame per run, so the whole run fits
+/// in the bounded runner on the slower C oracle; the counts it pins are the same numbers the full
+/// run's table carries. The wall-clock columns are the host's and are only checked to be numbers.
+#[test]
+fn polyp_bench_prints_a_bounded_table() {
+    let bin = out_path("polyp_bench");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-bench"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp bench project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, &[("POLYP_BENCH_QUICK", "1")]);
+    assert!(
+        run.status.success(),
+        "expected the benchmark to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let text = String::from_utf8_lossy(&run.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    // Five scenarios, seven lines each: name, frames, pixels, rects, allocs, median, worst.
+    assert_eq!(lines.len(), 35, "the benchmark's table shape changed:\n{text}");
+    let expected = [
+        ("scroll-200", 5, 4393660, 5, 0),
+        ("type-100", 5, 163730, 5, 5),
+        ("toggle-50", 5, 231965, 10, 0),
+        ("resize", 5, 7775980, 80, 0),
+        ("repaint", 5, 4726115, 5, 0),
+    ];
+    for (i, (name, frames, pixels, rects, allocs)) in expected.iter().enumerate() {
+        let base = i * 7;
+        assert_eq!(lines[base], *name, "scenario {i}'s name");
+        assert_eq!(lines[base + 1], frames.to_string(), "{name} frames");
+        assert_eq!(lines[base + 2], pixels.to_string(), "{name} pixels");
+        assert_eq!(lines[base + 3], rects.to_string(), "{name} rects");
+        assert_eq!(lines[base + 4], allocs.to_string(), "{name} allocations");
+        for k in 5..7 {
+            let us: i64 = lines[base + k].parse().unwrap_or_else(|_| {
+                panic!("{name}'s time column is not a number: {}", lines[base + k])
+            });
+            assert!(us >= 0, "{name}'s time column is negative");
+        }
+    }
+}

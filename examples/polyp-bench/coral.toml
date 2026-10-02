@@ -1,0 +1,8 @@
+name = "polyp_bench"
+entry = "src/main.kp"
+
+# The benchmark owns its framebuffer through the headless platform and draws through the raster, so
+# those three modules are the audited ones. `std/time` needs the `time` domain, which the entry
+# `main` holds implicitly.
+[unsafe]
+modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/headless_platform"]

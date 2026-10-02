@@ -63,6 +63,8 @@ impl platform.Platform for PpmPlatform {
 
     fun Self.now_ms().R: u64 = inner.now_ms()
 
+    fun mut Self.now_us().R: u64 = inner.now_us()
+
     fun mut Self.poll_event().R: option.Option<event.Event> = inner.poll_event()
 
     fun Self.framebuffer().R: fb.Fb = inner.framebuffer()

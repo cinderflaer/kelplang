@@ -1,0 +1,8 @@
+name = "polyp_budget_test"
+entry = "src/main.kp"
+
+# The headless platform owns and clears the framebuffer and the raster writes pixels through it, so
+# those three modules are the audited ones. `soft_backend` itself, `font`, `damage`, `event` and
+# `platform` dereference no pointer and are off the list (`examples/polyp-todo-soft/coral.toml`).
+[unsafe]
+modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/headless_platform"]

@@ -24,6 +24,8 @@ pub datac HeadlessPlatform(
     var script: List<Timed>,
     var cursor: i32,
     var time_ms: u64,
+    var time_us: u64,
+    var clock_step_us: u64,
     var frames: i32,
     var presented: [fb.Rect; MAX_PRESENTED],
     var presented_len: usize,
@@ -52,6 +54,8 @@ pub fun new(width: i32, height: i32).R: HeadlessPlatform {
         script = List.empty(),
         cursor = 0,
         time_ms = 0,
+        time_us = 0,
+        clock_step_us = 0,
         frames = 0,
         presented = [fb.Rect(x = 0, y = 0, w = 0, h = 0); MAX_PRESENTED],
         presented_len = 0,
@@ -71,6 +75,21 @@ fun mut HeadlessPlatform.push_at(at: u64, ev: move event.Event) {
 
 fun mut HeadlessPlatform.advance(ms: u64) {
     time_ms += ms
+    time_us += ms * 1000
+}
+
+// Advance the microsecond clock the frame deadline reads by `us`. A test that wants a budget
+// smaller than a millisecond uses this; a real platform reads its own clock.
+fun mut HeadlessPlatform.advance_us(us: u64) {
+    time_us += us
+}
+
+// A test clock that models a device charging `us` for every damaged rectangle: `now_us` advances
+// by this much on every call, so a frame that reads the clock once per painted rectangle sees the
+// budget run out partway and defers the rest (`soft_backend.frame_budgeted`). Zero (the default)
+// is a clock that never moves on its own, which is what every existing test sees.
+fun mut HeadlessPlatform.set_clock_step_us(us: u64) {
+    clock_step_us = us
 }
 
 // The frame the last present showed, and the rectangles it was handed.
@@ -125,6 +144,11 @@ impl platform.Platform for HeadlessPlatform {
     }
 
     fun Self.now_ms().R: u64 = time_ms
+
+    fun mut Self.now_us().R: u64 {
+        time_us += clock_step_us
+        return time_us
+    }
 
     fun mut Self.poll_event().R: option.Option<event.Event> {
         if cursor >= script.len().to_i32() {

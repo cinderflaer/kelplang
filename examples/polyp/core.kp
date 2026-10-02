@@ -706,11 +706,21 @@ fun find_key<M>(old: &List<Child<M>>, used: &List<bool>, key: &Key).R: i32 {
 // returned; the result is the minimal patch list that turns one into the other. Matching is key
 // first, else position and kind; a duplicate key among one container's children panics, naming the
 // key, before any patch is produced.
+//
+// `diff_into` is the shape a per-frame driver wants: the caller owns one `List<Patch>` and the
+// engine clears and refills it, so after the largest frame the list's capacity stays put and no
+// frame allocates the patch list again (`plan/polyp-v3.md`, stage 5). `diff` is the one-shot
+// convenience the pure tests use; both go through the same engine, so they cannot disagree.
 pub fun diff<M>(old: &Node<M>, new: &Node<M>).R: List<Patch> {
     var out: List<Patch> = List.empty()
+    diff_into(old, new, out)
+    return out
+}
+
+pub fun diff_into<M>(old: &Node<M>, new: &Node<M>, out: mut List<Patch>) {
+    out.clear()
     val root_path = empty_path()
     diff_node(root_path, old, new, out)
-    return out
 }
 
 fun diff_node<M>(path: &Path, old: &Node<M>, new: &Node<M>, out: mut List<Patch>) {
@@ -977,6 +987,14 @@ pub enum Tick<M> {
 // One turn: pump the display once, then drain its queue, running `update`/`view`/`diff`/`apply`
 // for every message. `Quit` ends the program; `Changed` means at least one patch was applied.
 pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M)).R: Tick<M> {
+    var scratch: List<Patch> = List.empty()
+    return frame_step_into(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch)
+}
+
+// `frame_step` with a caller-owned patch list: the loop clears and refills `scratch` for every
+// message instead of building a fresh `List<Patch>`, so a driver that keeps one list across frames
+// stops allocating the patch list once it has seen its largest frame (`plan/polyp-v3.md`, stage 5).
+pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>).R: Tick<M> {
     var current = tree
     var changed = false
     var quitting = false
@@ -1015,8 +1033,8 @@ pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: 
                                 update(state, msg)
                                 val focused = backend.focus()
                                 val next = view(state)
-                                val patches = diff(current, next)
-                                backend.apply(&patches)
+                                diff_into(current, next, scratch)
+                                backend.apply(scratch)
                                 current = next
                                 snapshot(backend, focused)
                                 changed = true
