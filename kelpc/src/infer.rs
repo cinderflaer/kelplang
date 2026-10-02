@@ -510,6 +510,12 @@ struct Ctx {
     /// The manifest's `[target] cpus` (kernel stage 8), which is the value
     /// `cpu_count()` folds to and the number of copies a `percpu` static has.
     cpus: u64,
+    /// Set only while checking the block argument of `Mutex.lock` (B-5): a
+    /// scoped block's return type is the block's own tail type, so
+    /// `check_fn_literal` infers it instead of taking it from the expected
+    /// `scoped fun(...).R: R`. Cleared for the body of the literal itself, so
+    /// a nested scoped block is typed by its own callee again.
+    infer_scoped_ret: bool,
 }
 
 /// One checked `static` (kernel stage 7).
@@ -1233,6 +1239,7 @@ impl TypeScope<'_> {
             || ty.name == "Map"
             || ty.name == "Atomic"
             || ty.name == "Thread"
+            || ty.name == "Mutex"
             || ty.name == "Ptr"
         {
             // `Map<K, V>` names its key type, and `Map<V>` is the shorthand
@@ -1282,6 +1289,8 @@ impl TypeScope<'_> {
                 (crate::types::is_atomic_element(&elem), atomic_element_error(&elem))
             } else if ty.name == "Thread" {
                 (crate::types::is_thread_element(&elem), thread_element_error(&elem))
+            } else if ty.name == "Mutex" {
+                (crate::types::is_mutex_element(&elem), mutex_element_error(&elem))
             } else if ty.name == "Ptr" {
                 (crate::types::is_ptr_element(&elem), crate::types::ptr_element_error(&elem))
             } else {
@@ -1301,6 +1310,8 @@ impl TypeScope<'_> {
                 Ty::Atomic(Box::new(elem))
             } else if ty.name == "Thread" {
                 Ty::Thread(Box::new(elem))
+            } else if ty.name == "Mutex" {
+                Ty::Mutex(Box::new(elem))
             } else if ty.name == "Ptr" {
                 Ty::Ptr(Box::new(elem))
             } else {
@@ -1340,7 +1351,7 @@ impl TypeScope<'_> {
             }
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>', 'Thread<T>' and 'Ptr<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
+                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>', 'Thread<T>', 'Mutex<T>' and 'Ptr<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
                     ty.name,
                     name = ty.name
                 ),
@@ -3221,7 +3232,7 @@ impl<'a> SignatureScope<'a> {
             return Ok(());
         }
         if Ty::from_name(&ty.name).is_some()
-            || matches!(ty.name.as_str(), "List" | "Box" | "Map" | "Atomic")
+            || matches!(ty.name.as_str(), "List" | "Box" | "Map" | "Atomic" | "Thread" | "Mutex")
         {
             return Ok(());
         }
@@ -3649,6 +3660,9 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         // `c.load(...)` keys on `Atomic#load` and the element type comes from
         // the receiver (`atomic_sig`).
         Ty::Atomic(_) => Some("Atomic"),
+        // A `Mutex<T>` answers to one name whatever its element, exactly as an
+        // `Atomic<T>` does (B-5, `std/sync`).
+        Ty::Mutex(_) => Some("Mutex"),
         // The integer types answer to their written names so that the
         // conversion methods below (`n.to_u8()`) have a receiver to sit on.
         Ty::I32 => Some("i32"),
@@ -3750,6 +3764,20 @@ fn thread_element_reason(ty: &Ty, container: &str) -> Option<String> {
     ))
 }
 
+/// Why a `Mutex<T>` cannot be a container element (B-5). Mirrors the thread
+/// refusal: a mutex owns a runtime record and is reached by borrowing it, while
+/// a container's own routines move and drop an element like a plain location.
+/// A local, a field or a `pd` gives `lock` one place to borrow.
+fn mutex_element_reason(ty: &Ty, container: &str) -> Option<String> {
+    let Ty::Mutex(elem) = ty else {
+        return None;
+    };
+    Some(format!(
+        "'Mutex<{}>' cannot be {container}: a mutex owns a runtime record and is reached by borrowing it, while a container's own routines move and drop an element like a plain location. Keep the mutex in a local or a field ('val m = Mutex.new(0)') and lock it there",
+        elem.display()
+    ))
+}
+
 /// Why a container that still carries the open-container marker cannot be a
 /// container element, in one sentence that says the real reason: `ty` is such
 /// a container, or holds one, so the generated typedef, its `push` and its drop
@@ -3782,6 +3810,9 @@ fn list_element_error(ty: &Ty) -> String {
     if let Some(reason) = thread_element_reason(ty, "a 'List' element") {
         return reason;
     }
+    if let Some(reason) = mutex_element_reason(ty, "a 'List' element") {
+        return reason;
+    }
     if let Some(reason) = open_container_element_reason(ty, "List") {
         return reason;
     }
@@ -3808,6 +3839,9 @@ fn map_element_error(ty: &Ty) -> String {
         return reason;
     }
     if let Some(reason) = thread_element_reason(ty, "a 'Map' value") {
+        return reason;
+    }
+    if let Some(reason) = mutex_element_reason(ty, "a 'Map' value") {
         return reason;
     }
     if let Some(reason) = borrowed_element_reason(ty) {
@@ -3856,6 +3890,9 @@ fn array_element_error(ty: &Ty) -> String {
     if let Some(reason) = thread_element_reason(ty, "an array element") {
         return reason;
     }
+    if let Some(reason) = mutex_element_reason(ty, "an array element") {
+        return reason;
+    }
     match ty {
         Ty::Fn { .. } => {
             return format!(
@@ -3895,6 +3932,9 @@ fn box_element_error(ty: &Ty) -> String {
     if let Some(reason) = thread_element_reason(ty, "a 'Box' element") {
         return reason;
     }
+    if let Some(reason) = mutex_element_reason(ty, "a 'Box' element") {
+        return reason;
+    }
     if let Some(reason) = open_container_element_reason(ty, "Box") {
         return reason;
     }
@@ -3905,6 +3945,23 @@ fn box_element_error(ty: &Ty) -> String {
     }
     format!(
         "'{}' cannot be a 'Box' element: use a scalar, 'String', 'Bytes', a 'datac', an 'enum', a 'List', or another 'Box'",
+        ty.display()
+    )
+}
+
+/// Why a `Mutex<T>`'s element is refused: the value set is any owned type with
+/// no borrows (the `Send`-shaped rule B-5 shares with `Thread<T>`). A borrow,
+/// a `str` or a `View` in the slot would be a thread reading data another frame
+/// owns.
+fn mutex_element_error(ty: &Ty) -> String {
+    if crate::types::is_borrowed_field_ty(ty) {
+        return format!(
+            "'{}' cannot be a 'Mutex' element: a mutex is shared across threads, and a borrow, a 'str' or a 'View' in the slot would be a thread reading data another frame owns. Guard an owned value instead",
+            ty.display()
+        );
+    }
+    format!(
+        "'{}' cannot be a 'Mutex' element: a mutex guards an owned value, and 'unit' and a function value are refused",
         ty.display()
     )
 }
@@ -8204,6 +8261,7 @@ fn base_ctx(
         unsafe_fns: project.unsafe_fns().clone(),
         freestanding: project.target().is_freestanding(),
         cpus: project.target().cpus(),
+        infer_scoped_ret: false,
     }
 }
 
@@ -9557,6 +9615,10 @@ fn check_fn_literal(
     // kind: its captures may be borrows, its environment is stack, and the
     // value's own type is `Ty::ScopedFn` (`plan/scoped-blocks.md` part 2).
     let scoped = matches!(expected, Some(Ty::ScopedFn { .. }));
+    // A `Mutex.lock` block (`std/sync`, B-5): the scoped parameter fixes the
+    // block's own parameter types, but its return is the block's tail type, so
+    // the expected `R` is ignored and filled in after the body is checked.
+    let infer_ret = ctx.infer_scoped_ret && infer_params && scoped;
     // The function signature the *expected* type names, looked through a
     // borrow because an owned function-typed parameter arrives as
     // `&closure(...)`. A block literal takes both its parameter types and its
@@ -9647,6 +9709,13 @@ fn check_fn_literal(
         };
         (params, ret)
     };
+    let mut ret = ret;
+    if infer_ret {
+        // The placeholder the body is checked against; `return EXPR` inside the
+        // block therefore needs a `unit` value. The common shapes (a bare
+        // `return`, or a tail expression) infer correctly below.
+        ret = Ty::Unit;
+    }
     // One literal, one function. The key starts with `#`, which no `.kp`
     // identifier can contain, so it cannot collide with anything a program
     // declares (the same trick receiver methods use for `Type#name`).
@@ -9687,6 +9756,9 @@ fn check_fn_literal(
     inner.receiver_struct = None;
     inner.init_state = None;
     inner.in_fn_literal = true;
+    // A nested scoped block is typed by its own callee, never by the
+    // surrounding `Mutex.lock` block's inference.
+    inner.infer_scoped_ret = false;
     inner.borrowed_captures = scoped;
     let mut tir_params = Vec::with_capacity(params.len());
     for (name, ty) in &params {
@@ -9694,9 +9766,9 @@ fn check_fn_literal(
         tir_params.push((name.clone(), ty.clone()));
     }
     let checked = match body {
-        ast::FunctionBody::Block(b) => check_block(b, &mut inner, Some(&ret))?,
+        ast::FunctionBody::Block(b) => check_block(b, &mut inner, if infer_ret { None } else { Some(&ret) })?,
         ast::FunctionBody::Expr(e) => {
-            let value = check_expr(e, &mut inner, Some(&ret))?;
+            let value = check_expr(e, &mut inner, if infer_ret { None } else { Some(&ret) })?;
             tir::Block {
                 stmts: vec![],
                 tail: Some(Box::new(value)),
@@ -9706,6 +9778,9 @@ fn check_fn_literal(
             unreachable!("the parser requires a literal body")
         }
     };
+    if infer_ret {
+        ret = checked.ty();
+    }
     // The same tail-versus-declared-return rule a declaration follows,
     // including the one divergence case (`panic` as the tail).
     let tail_diverges = checked
@@ -13232,6 +13307,11 @@ fn reachable_mut_path(
         // An atomic mutates through a shared borrow and has no `&mut` path at
         // all, which is the property the whole rule is built on (MK9 section 4).
         Ty::Atomic(_) => false,
+        // A `Mutex<T>` has no reachable path to `T` at all outside the scoped
+        // `lock` block, so it is shareable across a thread boundary whatever
+        // its element: two threads can only take turns through the lock
+        // (B-5).
+        Ty::Mutex(_) => false,
         _ => false,
     }
 }
@@ -14608,6 +14688,12 @@ fn check_method_call(
             if name == "Atomic" || crate::types::atomic_alias_elem(name).is_some() {
                 return check_atomic_associated(name, method, args, span, ctx, expected);
             }
+            // `Mutex.new(x)`, the one constructor of the builtin mutex
+            // (B-5, `std/sync`). Like `Atomic.new`, the element type comes
+            // from the value or from the binding's written type.
+            if name == "Mutex" {
+                return check_mutex_associated(name, method, args, span, ctx, expected);
+            }
             // `Widget.null()` and `Window.cast(w)` (gap 1): the two operations
             // written on a handle's type name rather than on a value.
             if let Some(handle) = ctx.handle_type_named(name) {
@@ -14723,6 +14809,9 @@ fn check_method_call(
         && ctx.sig_of(&format!("{owner}#to_int")).is_none()
     {
         return lower_enum_to_int(probe.ty.clone(), receiver, span, ctx);
+    }
+    if let Some(elem) = crate::types::mutex_elem_of(&probe.ty).cloned() {
+        return check_mutex_method(probe, receiver, &elem, method, args, span, ctx, expected);
     }
     if let Some(elem) = crate::types::atomic_elem_of(&probe.ty).cloned() {
         let key = format!("Atomic#{method}");
@@ -15641,6 +15730,182 @@ fn check_atomic_associated(
     Ok(tir::Expr {
         kind: tir::ExprKind::Call { callee: "Atomic#new".to_string(), args: vec![value] },
         ty: Ty::Atomic(Box::new(elem)),
+        span,
+    })
+}
+
+/// `Mutex.new(value)` (B-5, `std/sync`): the one constructor of the builtin
+/// mutex. The value is moved in, exactly as a `move T` parameter moves it, and
+/// the element type comes from the binding's written type or from the
+/// argument, in that order: the same two sources `Atomic.new` has.
+fn check_mutex_associated(
+    name: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if method != "new" {
+        return Err(TypeError {
+            message: format!(
+                "'{name}.{method}' is not a 'Mutex' operation: a mutex is made with 'Mutex.new(value)' and reached through the value it is bound to ('m.lock {{ v -> ... }}', 'm.into_inner()')"
+            ),
+            span,
+        });
+    }
+    if args.len() != 1 {
+        return Err(TypeError {
+            message: format!("'Mutex.new' takes exactly 1 argument, found {}", args.len()),
+            span,
+        });
+    }
+    let written = expected.and_then(crate::types::mutex_elem_of).cloned();
+    let value = check_expr(&args[0].value, ctx, written.as_ref())?;
+    if value.ty == Ty::Unit {
+        return Err(TypeError {
+            message: "'Mutex.new' needs a value to guard, found 'unit'".to_string(),
+            span: args[0].value.span(),
+        });
+    }
+    let elem = match written {
+        Some(elem) => {
+            if value.ty != elem {
+                return Err(TypeError {
+                    message: format!(
+                        "'Mutex<{}>.new' needs a '{}' value, found '{}'",
+                        elem.display(),
+                        elem.display(),
+                        value.ty.display()
+                    ),
+                    span: args[0].value.span(),
+                });
+            }
+            elem
+        }
+        None => value.ty.clone(),
+    };
+    if !crate::types::is_mutex_element(&elem) {
+        return Err(TypeError {
+            message: mutex_element_error(&elem),
+            span: args[0].value.span(),
+        });
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: "Mutex#new".to_string(), args: vec![value] },
+        ty: Ty::Mutex(Box::new(elem)),
+        span,
+    })
+}
+
+/// A method on a `Mutex<T>` (B-5). `lock` is checked structurally, because its
+/// block's return type comes from the block rather than from a fixed signature;
+/// `into_inner` consumes the receiver and hands back the guarded value.
+fn check_mutex_method(
+    probe: tir::Expr,
+    receiver: &ast::Expr,
+    elem: &Ty,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let _ = probe;
+    let cell = Ty::Mutex(Box::new(elem.clone()));
+    match method {
+        "lock" => check_mutex_lock(receiver, elem, args, span, ctx, expected),
+        "into_inner" => {
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'Mutex.into_inner' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            // The receiver is consumed: the mutex is dead once its value is
+            // out, exactly as `thread.join` consumes a handle.
+            let self_arg = check_call_arg("'self'", &cell, receiver, ctx)?;
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call {
+                    callee: "Mutex#into_inner".to_string(),
+                    args: vec![self_arg],
+                },
+                ty: elem.clone(),
+                span,
+            })
+        }
+        other => Err(TypeError {
+            message: format!(
+                "'Mutex.{other}' is not a mutex operation: write 'm.lock {{ v -> ... }}' to reach the value while the lock is held, or 'm.into_inner()' to consume the mutex and take the value out"
+            ),
+            span,
+        }),
+    }
+}
+
+/// `m.lock { v -> ... }` (B-5): the mutex is held for the block's whole run, the
+/// block receives `v: mut T`, its value is returned, and the runtime releases
+/// the lock on every way out (a normal exit, a `return`/`break` inside the
+/// block, and a panic, which poisons the mutex). The block's return type is the
+/// block's own tail type, which is why the literal is checked with the
+/// `infer_scoped_ret` flag set.
+fn check_mutex_lock(
+    receiver: &ast::Expr,
+    elem: &Ty,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let slots = arg_slots("method 'Mutex.lock'", &["block".to_string()], args, span)?;
+    let block_arg = &args[slots[0]];
+    let self_arg = check_call_arg(
+        "'self'",
+        &Ty::Ref { mutable: false, inner: Box::new(Ty::Mutex(Box::new(elem.clone()))) },
+        receiver,
+        ctx,
+    )?;
+    // The block takes `mut T`, an exclusive borrow valid only inside the call,
+    // which the existing scoped-block rules already refuse to store or return.
+    let want = Ty::ScopedFn {
+        params: vec![Ty::Ref { mutable: true, inner: Box::new(elem.clone()) }],
+        ret: Box::new(expected.cloned().unwrap_or(Ty::Unit)),
+    };
+    // The block's return is its tail type when the call site names no type
+    // (`print(m.lock { v -> *v })`), and the call's own expected type when it
+    // does (`val r: Result<_, _> = m.lock { v -> ... ? ... }`), which is what
+    // lets a `?` inside the block propagate the block's declared return.
+    ctx.infer_scoped_ret = expected.is_none();
+    let checked = check_expr(&block_arg.value, ctx, Some(&want));
+    ctx.infer_scoped_ret = false;
+    let checked = checked?;
+    let block = match checked.ty.clone() {
+        Ty::ScopedFn { .. } => checked,
+        // A literal that captured nothing is a plain `fun` value: widen it to
+        // the fat pointer the runtime calls, exactly as a block passed to any
+        // other `scoped fun(...)` parameter is.
+        Ty::Fn { params, ret } => coerce_fn_to_scoped(Ty::ScopedFn { params, ret }, checked),
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "the block 'Mutex.lock' takes has type '{}', expected a scoped function taking 'mut {}'",
+                    other.display(),
+                    elem.display()
+                ),
+                span: block_arg.value.span(),
+            })
+        }
+    };
+    let ret = match &block.ty {
+        Ty::ScopedFn { ret, .. } => (**ret).clone(),
+        _ => unreachable!("the block was widened to a scoped function"),
+    };
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: "Mutex#lock".to_string(),
+            args: vec![self_arg, block],
+        },
+        ty: ret,
         span,
     })
 }

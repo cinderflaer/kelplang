@@ -1042,4 +1042,90 @@ static void kelp_thread_drop(kelp_Thread** slot) {
     *slot = NULL;
 }
 
+// ---- kelp_Mutex: the builtin mutex (B-5, std/sync) ---------------------------
+// One record holds the pthread mutex, the poison flag, the T slot and the
+// element's own drop (NULL when T owns nothing). `Mutex.new` copies the value
+// in; `lock` runs the generated block body while the lock is held and releases
+// it on every way out; `into_inner` copies the value out and frees the record.
+// The C backend calls these directly and the LLVM backend declares them in
+// `declare_runtime`, so the layout never reaches either backend.
+typedef struct {
+    pthread_mutex_t lock;
+    int poisoned;
+    size_t size;
+    void* value;
+    void (*drop)(void*);
+} kelp_Mutex;
+
+static kelp_Mutex* kelp_mutex_new(const void* value, size_t size, void (*drop)(void*)) {
+    kelp_Mutex* m = (kelp_Mutex*)malloc(sizeof(kelp_Mutex));
+    if (m == NULL) {
+        kelp_panic("Mutex.new: out of memory");
+    }
+    if (pthread_mutex_init(&m->lock, NULL) != 0) {
+        kelp_panic("Mutex.new: pthread_mutex_init failed");
+    }
+    m->poisoned = 0;
+    m->size = size;
+    m->drop = drop;
+    m->value = malloc(size == 0 ? 1 : size);
+    if (m->value == NULL) {
+        kelp_panic("Mutex.new: out of memory");
+    }
+    memcpy(m->value, value, size);
+    return m;
+}
+
+/* Runs while the lock is held. `pthread_cleanup_push` is what makes a panicking
+   worker poison the mutex instead of leaving it locked: `kelp_panic` ends the
+   worker with `pthread_exit`, which runs this handler, so the lock is released
+   and `poisoned` set. The handler is pushed *after* the lock is acquired, so
+   its argument is just the record (an unmodified parameter, safe across the
+   macro's `setjmp`), and the normal path pops it without running it. */
+static void kelp_mutex_guard_release(void* raw) {
+    kelp_Mutex* m = (kelp_Mutex*)raw;
+    pthread_mutex_unlock(&m->lock);
+    m->poisoned = 1;
+}
+
+static void kelp_mutex_run(kelp_Mutex* m, void (*body)(void*, void*, void*, void*), void* code, void* env, void* out) {
+    pthread_mutex_lock(&m->lock);
+    pthread_cleanup_push(kelp_mutex_guard_release, m);
+    if (m->poisoned) {
+        kelp_panic("mutex poisoned");
+    }
+    /* The body's third argument is a slot holding the `&mut T` it is handed,
+       which is the only way to reach the guarded value: the slot is the
+       address of the T storage, and the generated body loads it into the
+       closure's pointer parameter. */
+    void* value_slot = m->value;
+    body(code, env, &value_slot, out);
+    pthread_cleanup_pop(0);
+    pthread_mutex_unlock(&m->lock);
+}
+
+static void kelp_mutex_into(kelp_Mutex* m, void* out) {
+    memcpy(out, m->value, m->size);
+    pthread_mutex_destroy(&m->lock);
+    free(m->value);
+    free(m);
+}
+
+/* The drop of a mutex: run the element's own drop first, then free the record.
+   The argument is the slot the local holds, so the null test covers the zero
+   value a moved binding leaves behind, exactly as `kelp_thread_drop` does. */
+static void kelp_mutex_drop(kelp_Mutex** slot) {
+    kelp_Mutex* m = *slot;
+    if (m == NULL) {
+        return;
+    }
+    if (m->drop != NULL) {
+        m->drop(m->value);
+    }
+    pthread_mutex_destroy(&m->lock);
+    free(m->value);
+    free(m);
+    *slot = NULL;
+}
+
 // ---- end Kelp runtime -------------------------------------------------------

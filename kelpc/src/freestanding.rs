@@ -518,6 +518,10 @@ fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
         }
         Ty::View => Some("View"),
         Ty::Thread(_) => Some("Thread"),
+        Ty::Mutex(inner) => {
+            let _ = inner;
+            Some("Mutex")
+        }
         Ty::List(inner) => {
             if heap_ok {
                 heap_refusal(inner, true)
@@ -553,6 +557,9 @@ fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
 /// names the two manifest keys that would let it through, and every other type
 /// stays a plain "unavailable".
 fn heap_message(kind: &'static str, heap_ok: bool) -> String {
+    if kind == "Mutex" {
+        return "'Mutex', whose runtime half is a pthread mutex: a freestanding program has no threads and no libc, so a kernel would use a spin lock over an `Atomic<T>` instead".to_string();
+    }
     if !heap_ok && matches!(kind, "Box" | "List" | "Map") {
         format!(
             "'{kind}', which needs an allocator in a freestanding build: set '[target] alloc' and '[target] dealloc' to the project's own functions"

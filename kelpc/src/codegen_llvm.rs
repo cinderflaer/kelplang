@@ -2507,6 +2507,17 @@ impl<'a> Gen<'a> {
                     .ok_or_else(|| no_value(&format!("the runtime drop '{symbol}'")))?;
                 (rt.func, rt.ty)
             }
+            // A `Mutex<T>` record is the runtime's too (B-5): `kelp_mutex_drop`
+            // takes the address of the slot holding the pointer, runs the
+            // element's own stored drop and frees the record.
+            Ty::Mutex(_) => {
+                let symbol = drop_fn_name(ty);
+                let rt = self
+                    .runtime
+                    .get(&symbol)
+                    .ok_or_else(|| no_value(&format!("the runtime drop '{symbol}'")))?;
+                (rt.func, rt.ty)
+            }
             _ => return Ok(()),
         };
         self.builder.build_call(func, fty, &[ptr], "");
@@ -5632,6 +5643,127 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(Some(handle))
     }
 
+    /// One element type's own drop, as a function-pointer value, or `None` when
+    /// the type owns nothing. `Mutex.new` stores this so the runtime's record
+    /// can free what it holds (B-5); it is the same lookup `call_drop` does,
+    /// one level earlier because a call is being built rather than emitted.
+    fn drop_fn_value(&self, ty: &Ty) -> Result<Option<Value<'a>>, String> {
+        if !needs_drop(ty, &self.g.owned) {
+            return Ok(None);
+        }
+        let func = match ty {
+            Ty::Bytes | Ty::String | Ty::Thread(_) | Ty::Mutex(_) => {
+                let symbol = drop_fn_name(ty);
+                self.g
+                    .runtime
+                    .get(&symbol)
+                    .ok_or_else(|| no_value(&format!("the runtime drop '{symbol}'")))?
+                    .func
+            }
+            Ty::Struct(name) => match self.g.drop_fns.get(name) {
+                Some((func, _)) => *func,
+                None => return Ok(None),
+            },
+            Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) => {
+                let symbol = drop_fn_name(ty);
+                match self.g.container_fns.get(&symbol) {
+                    Some((func, _)) => *func,
+                    None => return Ok(None),
+                }
+            }
+            Ty::Closure { .. } => {
+                let symbol = drop_fn_name(ty);
+                match self.g.closure_fns.get(&symbol) {
+                    Some((func, _)) => *func,
+                    None => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(func.as_value()))
+    }
+
+    /// A `Mutex<T>` operation (B-5, `std/sync`): `new` builds the runtime record,
+    /// `lock` runs the generated block body while the lock is held, and
+    /// `into_inner` moves the value out and frees the record. The C twin is
+    /// `codegen_c.rs::mutex_call`, runtime call for runtime call.
+    fn emit_mutex_call(&mut self, op: &str, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
+        let ptr = self.g.pty();
+        match op {
+            "new" => {
+                let Ty::Mutex(elem) = ret else {
+                    unreachable!("Mutex.new hands back a Mutex<T>")
+                };
+                let value = self.value_of(&args[0])?;
+                let elem_ty = self.lty(elem)?;
+                let slot = self.temp_alloca(elem_ty, "mutex.value");
+                self.g.builder.build_store(value, slot);
+                let size = self.g.layout.abi_size_of(elem_ty);
+                let drop = self
+                    .drop_fn_value(elem)?
+                    .unwrap_or_else(|| self.g.ctx.const_null(ptr));
+                let rt = self.g.rt("kelp_mutex_new")?;
+                let handle = self.g.call(
+                    rt.func,
+                    rt.ty,
+                    &[slot, self.g.v_i64(size), drop],
+                    "mutex",
+                );
+                self.cur = self.g.check_alloc(handle, self.cur_fn)?;
+                Ok(Some(handle))
+            }
+            "lock" => {
+                let block = &args[1];
+                let (_, block_ret) = crate::types::closure_parts(&block.ty)
+                    .ok_or_else(|| no_value("Mutex.lock's block signature"))?;
+                // The receiver is `&Mutex<T>`, so its value is the address of
+                // the slot holding the record pointer.
+                let cell = self.value_of(&args[0])?;
+                let mutex = self.g.builder.build_load(ptr, cell, "mutex");
+                let closure = self.value_of(block)?;
+                let code = self.g.builder.build_extract_value(closure, 0, "fn");
+                let env = self.g.builder.build_extract_value(closure, 1, "env");
+                let body = self
+                    .g
+                    .closure_symbol(&thread_body_symbol(&crate::types::closure_shape(&block.ty)))?;
+                let yields = *block_ret != Ty::Unit;
+                // A `unit` body writes nothing, so the slot is one byte nothing
+                // reads, exactly as a worker's result slot is.
+                let out_ty = if yields { self.lty(block_ret)? } else { self.g.ctx.i8() };
+                let out = self.temp_alloca(out_ty, "mutex.out");
+                let out_ptr = if yields { out } else { self.g.ctx.const_null(ptr) };
+                let rt = self.g.rt("kelp_mutex_run")?;
+                self.g.builder.build_call(
+                    rt.func,
+                    rt.ty,
+                    &[mutex, body.as_value(), code, env, out_ptr],
+                    "",
+                );
+                if yields {
+                    Ok(Some(self.g.builder.build_load(out_ty, out, "lock.value")))
+                } else {
+                    Ok(None)
+                }
+            }
+            "into_inner" => {
+                let Ty::Mutex(_) = &args[0].ty else {
+                    unreachable!("Mutex.into_inner's receiver is a Mutex<T>")
+                };
+                let mutex = self.value_of(&args[0])?;
+                let rt = self.g.rt("kelp_mutex_into")?;
+                if *ret == Ty::Unit {
+                    self.g.builder.build_call(rt.func, rt.ty, &[mutex, self.g.ctx.const_null(ptr)], "");
+                    return Ok(None);
+                }
+                let out_ty = self.lty(ret)?;
+                let out = self.temp_alloca(out_ty, "mutex.inner");
+                self.g.builder.build_call(rt.func, rt.ty, &[mutex, out], "");
+                Ok(Some(self.g.builder.build_load(out_ty, out, "inner")))
+            }
+            other => Err(no_value(&format!("the mutex operation '{other}'"))),
+        }
+    }
+
     /// `thread.join(handle)` (MK9-S3-M1 stage C1): wait for the worker, then
     /// build `Result<T, ThreadErr>` from the result slot or the message the
     /// worker panicked with. The result slot is read only on the success path,
@@ -5940,6 +6072,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         if callee == crate::stdlib::JOIN_FN {
             return self.emit_thread_join(args, ret);
+        }
+
+        // A `Mutex<T>` operation (B-5, `std/sync`): three runtime calls, the
+        // same three `codegen_c.rs::mutex_call` writes in C.
+        if let Some(op) = callee.strip_prefix("Mutex#") {
+            return self.emit_mutex_call(op, args, ret);
         }
 
         if let Some(info) = self.g.funcs.get(callee).cloned() {
@@ -6626,6 +6764,14 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                 if callee == crate::stdlib::SPAWN_FN {
                     if let Some(entry) = args.first() {
                         out.spawns.insert(entry.ty.clone());
+                    }
+                }
+                // `Mutex#lock` (B-5): the block's closure signature gets the
+                // same generated body a worker's does, because the runtime
+                // calls both through one pointer shape.
+                if callee == "Mutex#lock" {
+                    if let Some(block) = args.get(1) {
+                        out.spawns.insert(crate::types::closure_shape(&block.ty));
                     }
                 }
                 for a in args {
@@ -12631,6 +12777,14 @@ fn declare_runtime<'a>(
     decl(&mut out, "kelp_thread_message", ptr, &[ptr], true, false);
     decl(&mut out, "kelp_thread_dispose", void, &[ptr], false, false);
     decl(&mut out, "kelp_thread_drop", void, &[ptr], false, false);
+    // The mutex runtime (B-5): one opaque record, `kelp_mutex_new(value, size,
+    // drop)` builds it, `kelp_mutex_run` holds the lock while the generated
+    // body runs, `kelp_mutex_into` moves the value out and frees it, and
+    // `kelp_mutex_drop` is the slot's drop.
+    decl(&mut out, "kelp_mutex_new", ptr, &[ptr, i64, ptr], true, false);
+    decl(&mut out, "kelp_mutex_run", void, &[ptr, ptr, ptr, ptr, ptr], false, false);
+    decl(&mut out, "kelp_mutex_into", void, &[ptr, ptr], false, false);
+    decl(&mut out, "kelp_mutex_drop", void, &[ptr], false, false);
     // `kelp_Bytes`
     decl(&mut out, "kelp_Bytes__empty", bytes, &[], true, true);
     decl(&mut out, "kelp_Bytes__from_str", bytes, &[ptr], true, true);
@@ -12819,6 +12973,10 @@ fn llvm_type<'a>(
         // `Result<T, ThreadErr>` a join builds, both of which the call sites
         // name themselves.
         Ty::Thread(_) => ctx.opaque_ptr(),
+        // `Mutex<T>` is one pointer to the runtime record `Mutex.new`
+        // allocates (B-5), so the element type does not reach the IR either;
+        // only the call sites that copy the value in or out name it.
+        Ty::Mutex(_) => ctx.opaque_ptr(),
         // An opaque handle (gap 1) is a plain pointer, so the two backends
         // agree without a layout table: the C backend's `void*` typedef and
         // this `ptr` are the same value at the ABI.
@@ -13186,6 +13344,9 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // frontend accepts a handle as a field and refuses it as a container
         // element, and the pointer is what both backends lay out.
         Ty::Thread(_) => Ok(()),
+        // A `Mutex<T>` field is the same one pointer to a runtime record
+        // (B-5), accepted as a field a `lock` borrows.
+        Ty::Mutex(_) => Ok(()),
         // An opaque handle field (gap 1) is one pointer; the frontend allows
         // it as a field, a local, a parameter and a return. A `Ptr<T>` field
         // (kernel stage 13) is the same one-pointer layout: the arena's own

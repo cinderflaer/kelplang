@@ -1,0 +1,29 @@
+/* std/sync: the mutex surface (B-5). `Mutex<T>` itself is a compiler builtin,
+   in the shape `Atomic<T>`/`Thread<T>` have: a monomorphized per-element-type
+   representation, not `Copy`, with its method set lowered to the C runtime's
+   pthread mutex rather than written in Kelp. Its surface is
+
+       fun Mutex.new(value: move T).R: Mutex<T>
+       fun Mutex<T>.lock(block: scoped fun(mut T).R: R).R: R
+       fun Mutex<T>.into_inner().R: T
+
+   `Mutex.new` takes the guarded value by move. `lock` runs a scoped block while
+   the mutex is held: the block receives `v: mut T`, a mutable borrow that is
+   valid only inside the block (the existing scoped-block rules refuse storing
+   or returning it), the block's value is returned, and the mutex is released on
+   every exit of the block. A panic inside the block releases it too and marks
+   the mutex POISONED, so a later `lock` panics with "mutex poisoned"; there is
+   no unwinding, so the panicking thread's frame is abandoned
+   (`plan/mk9-memory-model.md` section 2). `into_inner` consumes the mutex and
+   returns the value it held.
+
+   `Mutex<T>` is `Sync`: a shared borrow of it may cross a thread boundary when
+   `T` is `Send`-shaped, exactly as a `&Atomic<T>` may. It is hosted only: a
+   freestanding manifest refuses it, because the runtime half is a pthread mutex
+   (a future spin-lock option is what a kernel would use instead).
+
+   The two calls have no `.kp` declarations for the reason `std/atomic`
+   documents the atomic methods it declares nowhere: the compiler builds their
+   signatures at the call site and the C runtime lowers them. This module exists
+   so a program can name the surface it is using (`impl "std/sync"`), and so the
+   module list in `plan/` has the one id the mutex belongs to. */
