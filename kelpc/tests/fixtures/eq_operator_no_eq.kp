@@ -1,0 +1,10 @@
+// H-5: `==` is only defined on a `datac`/`enum` that declares `eq`. Without
+// one the operator keeps the old refusal: no equality is derived from the
+// fields.
+datac P(val x: i32)
+
+fun main() {
+    val a = P(x = 1)
+    val b = P(x = 2)
+    print(a == b)
+}

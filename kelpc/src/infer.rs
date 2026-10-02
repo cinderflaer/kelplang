@@ -65,6 +65,35 @@ enum GenericKind {
     Sum(Vec<ast::VariantDecl>),
 }
 
+/// One `trait Name { fun Self.m(...) ... }` declaration (A-12 slice 2). The
+/// method signatures stay as written, because `Self` has no meaning until a
+/// type implements the trait: `check_trait_impls` binds it per impl.
+#[derive(Clone)]
+struct TraitInfo {
+    /// Qualified name, exactly the key a `datac` of the same name would have.
+    name: String,
+    /// The declaring module's symbol prefix and alias table, so a signature's
+    /// types resolve where the trait was written rather than where it is
+    /// implemented.
+    prefix: String,
+    aliases: HashMap<String, String>,
+    methods: Vec<ast::FunctionDecl>,
+    module: String,
+}
+
+/// One `impl Name for Type { ... }` block (A-12 slice 2), with both names
+/// qualified in the impl's own module. The methods themselves are ordinary
+/// receiver methods on the type, so this holds only what the pairing checks
+/// need.
+#[derive(Clone)]
+struct TraitImplInfo {
+    trait_name: String,
+    type_name: String,
+    methods: Vec<String>,
+    module: String,
+    impl_span: Span,
+}
+
 /// One built instantiation, on its way into the instance table.
 enum Instance {
     Record(StructDef),
@@ -128,6 +157,15 @@ struct TypeEnv {
     /// program, so a call site knows both that a callee takes extra arguments
     /// and which module the generated wrapper belongs to.
     variadic_externs: std::rc::Rc<HashMap<String, String>>,
+    /// The program's traits, keyed by qualified name (A-12 slice 2). One
+    /// answer for the whole program: the same trait is implemented in one
+    /// module and bounded in another.
+    traits: std::rc::Rc<HashMap<String, TraitInfo>>,
+    /// Trait key -> the qualified types that implement it. This is what a
+    /// bound at a call site is checked against, and it is one set for the
+    /// whole program because an impl may live in the trait's module while the
+    /// call site is elsewhere.
+    impls: std::rc::Rc<HashMap<String, std::collections::HashSet<String>>>,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -142,6 +180,11 @@ struct FuncTemplate {
     /// The method's type parameters, in order, which for a receiver method are
     /// the receiver's own arguments.
     params: Vec<String>,
+    /// `fun f<T: A + B>`: the traits each type parameter must implement, one
+    /// list per entry of `params` and in the same order (A-12 slice 2). A
+    /// parameter with no bound has an empty list, and a receiver method's
+    /// parameters are its type's, so its lists are all empty.
+    bounds: Vec<Vec<ast::TypeExpr>>,
     /// `Some` for a receiver method: the canonical receiver type name (already
     /// prefixed) and whether the receiver is `mut`.
     receiver: Option<(String, bool)>,
@@ -467,6 +510,12 @@ struct Ctx {
     /// The manifest's `[target] cpus` (kernel stage 8), which is the value
     /// `cpu_count()` folds to and the number of copies a `percpu` static has.
     cpus: u64,
+    /// Set only while checking the block argument of `Mutex.lock` (B-5): a
+    /// scoped block's return type is the block's own tail type, so
+    /// `check_fn_literal` infers it instead of taking it from the expected
+    /// `scoped fun(...).R: R`. Cleared for the body of the literal itself, so
+    /// a nested scoped block is typed by its own callee again.
+    infer_scoped_ret: bool,
 }
 
 /// One checked `static` (kernel stage 7).
@@ -1190,6 +1239,7 @@ impl TypeScope<'_> {
             || ty.name == "Map"
             || ty.name == "Atomic"
             || ty.name == "Thread"
+            || ty.name == "Mutex"
             || ty.name == "Ptr"
         {
             // `Map<K, V>` names its key type, and `Map<V>` is the shorthand
@@ -1239,6 +1289,8 @@ impl TypeScope<'_> {
                 (crate::types::is_atomic_element(&elem), atomic_element_error(&elem))
             } else if ty.name == "Thread" {
                 (crate::types::is_thread_element(&elem), thread_element_error(&elem))
+            } else if ty.name == "Mutex" {
+                (crate::types::is_mutex_element(&elem), mutex_element_error(&elem))
             } else if ty.name == "Ptr" {
                 (crate::types::is_ptr_element(&elem), crate::types::ptr_element_error(&elem))
             } else {
@@ -1258,6 +1310,8 @@ impl TypeScope<'_> {
                 Ty::Atomic(Box::new(elem))
             } else if ty.name == "Thread" {
                 Ty::Thread(Box::new(elem))
+            } else if ty.name == "Mutex" {
+                Ty::Mutex(Box::new(elem))
             } else if ty.name == "Ptr" {
                 Ty::Ptr(Box::new(elem))
             } else {
@@ -1297,7 +1351,7 @@ impl TypeScope<'_> {
             }
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>', 'Thread<T>' and 'Ptr<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
+                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>', 'Thread<T>', 'Mutex<T>' and 'Ptr<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
                     ty.name,
                     name = ty.name
                 ),
@@ -1914,22 +1968,21 @@ impl TypeScope<'_> {
 }
 
 
-/// The user types that declare their own `Map` key pair (A-12): the receiver
-/// name of every `fun T.hash()` and `fun T.eq(...)` declaration in the program.
+/// The user types that declare their own `Map` key (A-12): the receiver name of
+/// every `fun T.hash()` declaration in the program.
 ///
-/// Either name is read as a statement about the type's key, which is what makes
-/// a declared key possible with no trait and no new syntax: the pair is the two
-/// method names. The signature loop in `check_program_pass` then insists the
-/// declaration is one the map can actually call, so a half pair or a malformed
-/// one is an error at the declaration rather than a `Map` use site that can
-/// only say the type is not a key.
+/// `hash` is the half that makes the type a key, which is what makes a declared
+/// key possible with no trait and no new syntax: the pair is the two method
+/// names. The signature loop in `check_program_pass` then insists the
+/// declaration is one the map can actually call, so a `hash` with no `eq` or a
+/// malformed one is an error at the declaration rather than a `Map` use site
+/// that can only say the type is not a key. A lone `eq` (H-5) is deliberately
+/// *not* here: it gives the type `==`/`!=` without making it a key.
 fn declared_key_names(program: &ast::Program) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for f in &program.functions {
         if let Some(r) = &f.receiver {
-            if f.name == crate::types::KEY_PAIR_HASH_METHOD
-                || f.name == crate::types::KEY_PAIR_EQ_METHOD
-            {
+            if f.name == crate::types::KEY_PAIR_HASH_METHOD {
                 out.insert(r.type_name.clone());
             }
         }
@@ -1954,6 +2007,44 @@ fn declared_drop_names(program: &ast::Program) -> std::collections::HashSet<Stri
         }
     }
     out
+}
+
+/// The message for two methods that share one `Type#name` key where at least
+/// one of them came from an `impl` block (A-12 slice 2): a trait method and an
+/// explicit method of the type, or two traits' methods, cannot both answer a
+/// call of that name. `None` when neither declaration is a trait impl, which
+/// leaves the ordinary "defined more than once" message to the caller.
+fn trait_method_collision_message(
+    a: &ast::FunctionDecl,
+    b: Option<&ast::FunctionDecl>,
+) -> Option<String> {
+    let site_a = a.trait_impl.as_ref();
+    let site_b = b.and_then(|o| o.trait_impl.as_ref());
+    if site_a.is_none() && site_b.is_none() {
+        return None;
+    }
+    let owner = a
+        .receiver
+        .as_ref()
+        .map(|r| r.type_name.clone())
+        .unwrap_or_default();
+    let method = &a.name;
+    let message = match (site_a, site_b) {
+        (Some(a), Some(b)) => format!(
+            "traits '{}' and '{}' both declare '{}.{method}': one type cannot answer a call of that name through two traits, so rename the method in one of them",
+            a.trait_name, b.trait_name, owner
+        ),
+        (Some(a), None) => format!(
+            "'impl {} for {}' declares '{}.{method}', which '{}' already has as an explicit method: a trait method and an explicit method cannot share a name, so rename one of them",
+            a.trait_name, a.self_type, owner, owner
+        ),
+        (None, Some(b)) => format!(
+            "'impl {} for {}' declares '{}.{method}', which '{}' already has as an explicit method: a trait method and an explicit method cannot share a name, so rename one of them",
+            b.trait_name, b.self_type, owner, owner
+        ),
+        (None, None) => return None,
+    };
+    Some(message)
 }
 
 /// Whether one declared destructor is the shape the compiler calls: an
@@ -1985,6 +2076,373 @@ fn check_drop_method(
         return Err(err(format!(
             "'{owner}.drop' must not return a value: a drop runs where the value dies and has nowhere to hand a result, so write 'fun mut {owner}.drop()'"
         )));
+    }
+    Ok(())
+}
+
+/// Every `trait Name { ... }` in the program, keyed by qualified name (A-12
+/// slice 2). The signatures are kept as written, because `Self` is only bound
+/// when a type implements the trait.
+///
+/// The shape checks that need no resolved type are here: a method name is
+/// declared once, and `drop` is not a trait method at all (a destructor is a
+/// property of the type, written `fun mut T.drop()` in its own module).
+fn collect_traits(
+    program: &ast::Program,
+    project: &Project,
+) -> std::result::Result<HashMap<String, TraitInfo>, Diagnostic> {
+    let mut out: HashMap<String, TraitInfo> = HashMap::new();
+    for t in &program.traits {
+        let mut names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for m in &t.methods {
+            if m.name == crate::types::DROP_METHOD {
+                return Err(Diagnostic::new(
+                    format!(
+                        "a trait method cannot be named 'drop': a destructor belongs to the type and is written 'fun mut {}.drop()' in the type's own module, not through a trait",
+                        m.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("T")
+                    ),
+                    m.span,
+                    t.module.clone(),
+                ));
+            }
+            if m.variadic {
+                return Err(Diagnostic::new(
+                    format!(
+                        "trait '{}' method '{}' writes '...', which only a user 'extern fun' may write: a trait signature declares the parameters an impl has to take",
+                        t.name, m.name
+                    ),
+                    m.span,
+                    t.module.clone(),
+                ));
+            }
+            if !names.insert(&m.name) {
+                return Err(Diagnostic::new(
+                    format!("trait '{}' declares method '{}' more than once", t.name, m.name),
+                    m.span,
+                    t.module.clone(),
+                ));
+            }
+        }
+        if out.contains_key(&t.name) {
+            return Err(Diagnostic::new(
+                format!("trait '{}' is defined more than once", t.name),
+                t.span,
+                t.module.clone(),
+            ));
+        }
+        out.insert(
+            t.name.clone(),
+            TraitInfo {
+                name: t.name.clone(),
+                prefix: project.prefix_of(&t.module).to_string(),
+                aliases: project.alias_prefixes_of(&t.module),
+                methods: t.methods.clone(),
+                module: t.module.clone(),
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// Every `impl Name for Type { ... }` in the program (A-12 slice 2), with both
+/// names already canonical: `resolve.rs` qualified them where they were
+/// written. The trait has to exist and the type has to be declared; those two
+/// answers, plus coherence and the module rule, are checked by
+/// `check_trait_impl_names`.
+fn collect_trait_impls(program: &ast::Program) -> Vec<TraitImplInfo> {
+    program
+        .trait_impls
+        .iter()
+        .map(|i| TraitImplInfo {
+            trait_name: i.trait_name.clone(),
+            type_name: i.type_name.clone(),
+            methods: i.methods.clone(),
+            module: i.module.clone(),
+            impl_span: i.impl_span,
+        })
+        .collect()
+}
+
+/// A written name as its canonical key, the way `TypeScope::qualify` does it:
+/// a bare name belongs to the current module, and `alias.Item` resolves through
+/// that module's `impl` table. `None` when the name's first segment is not an
+/// imported alias.
+fn qualify_written_name(
+    name: &str,
+    prefix: &str,
+    aliases: &HashMap<String, String>,
+) -> Option<String> {
+    match name.split_once('.') {
+        Some((alias, item)) => aliases.get(alias).map(|p| format!("{p}{item}")),
+        None => Some(format!("{prefix}{name}")),
+    }
+}
+
+/// One declaration's written signature, for a diagnostic: `fun mut
+/// Self.scale(f: f64)`. A trait's signature is what an impl has to match, so
+/// the error quotes it back the way it was written.
+fn render_fn_decl(f: &ast::FunctionDecl) -> String {
+    let mut out = String::from("fun ");
+    if let Some(r) = &f.receiver {
+        if r.mutable {
+            out.push_str("mut ");
+        }
+        out.push_str(&r.type_name);
+        if !r.type_args.is_empty() {
+            out.push_str(&format!("<{}>", r.type_args.join(", ")));
+        }
+        out.push('.');
+    }
+    out.push_str(&f.name);
+    out.push('(');
+    let parts: Vec<String> = f
+        .params
+        .iter()
+        .map(|p| format!("{}{}: {}", p.mode.keyword(), p.name, p.ty.display()))
+        .collect();
+    out.push_str(&parts.join(", "));
+    out.push(')');
+    if let Some(t) = &f.return_type {
+        out.push_str(&format!(".R: {}", t.display()));
+    }
+    out
+}
+
+/// Resolves one trait method signature with `Self` bound to the implementing
+/// type: the receiver, each parameter and the return, through the same
+/// resolution a declaration's own signature goes through, so a trait signature
+/// and its impl mean exactly the same types.
+fn resolve_trait_method_sig(
+    trait_info: &TraitInfo,
+    m: &ast::FunctionDecl,
+    self_ty: &Ty,
+    structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
+    env: &TypeEnv,
+    consts: &HashMap<String, ConstInfo>,
+    const_fns: &std::rc::Rc<ConstFns>,
+) -> Result<FnSig> {
+    let mut params_map: HashMap<String, Ty> = HashMap::new();
+    params_map.insert("Self".to_string(), self_ty.clone());
+    let scope = TypeScope {
+        structs,
+        enums,
+        env: env.clone(),
+        params: &params_map,
+        prefix: &trait_info.prefix,
+        aliases: &trait_info.aliases,
+        later_datacs: None,
+        in_progress: None,
+        consts: Some(consts),
+        const_fns: Some(const_fns),
+        handles: &env.handles,
+    };
+    let receiver = m
+        .receiver
+        .as_ref()
+        .expect("a trait method always has a Self receiver");
+    let mut params = Vec::new();
+    params.push(("self".to_string(), scope.resolve_receiver(receiver)?));
+    for p in &m.params {
+        params.push((p.name.clone(), scope.resolve_param(p)?));
+    }
+    let ret = match &m.return_type {
+        Some(t) => scope.resolve_return(t)?,
+        None => Ty::Unit,
+    };
+    Ok(FnSig { params, ret })
+}
+
+/// The name-level checks on every `impl Name for Type { ... }` block (A-12
+/// slice 2): the trait exists, the type is a declared `datac`/`enum`, the impl
+/// is in one of the two modules, and no second impl of the same trait for the
+/// same type exists.
+///
+/// Runs before the signature loop, so a second impl is reported as the
+/// coherence error it is rather than as the duplicate method the two blocks
+/// happen to share.
+fn check_trait_impl_names(
+    program: &ast::Program,
+    traits: &HashMap<String, TraitInfo>,
+    impls: &[TraitImplInfo],
+    env: &TypeEnv,
+) -> std::result::Result<(), Diagnostic> {
+    // The module each declared type belongs to, for the "the impl lives in the
+    // trait's module or the type's" rule.
+    let mut type_modules: HashMap<&str, &str> = HashMap::new();
+    for d in &program.datacs {
+        type_modules.insert(&d.name, &d.module);
+    }
+    for e in &program.enums {
+        type_modules.insert(&e.name, &e.module);
+    }
+    let mut seen: HashMap<(&str, &str), &TraitImplInfo> = HashMap::new();
+    for imp in impls {
+        let Some(info) = traits.get(&imp.trait_name) else {
+            return Err(Diagnostic::new(
+                format!(
+                    "'impl {} for {}' names no declared trait: declare 'trait {} {{ ... }}' first (or import the module that does)",
+                    imp.trait_name, imp.type_name, imp.trait_name
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        };
+        let Some(type_module) = type_modules.get(imp.type_name.as_str()).copied() else {
+            return Err(Diagnostic::new(
+                format!(
+                    "'{}' is not a declared 'datac' or 'enum', so 'impl {} for {}' has nothing to implement",
+                    imp.type_name, imp.trait_name, imp.type_name
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        };
+        if imp.module != info.module && imp.module != type_module {
+            return Err(Diagnostic::new(
+                format!(
+                    "'impl {} for {}' is written in module '{}', which owns neither: an impl lives in the trait's module ('{}') or in the type's ('{}')",
+                    imp.trait_name, imp.type_name, imp.module, info.module, type_module
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        }
+        // Reaching across a module boundary is the ordinary visibility rule
+        // (A-13): a trait or a type an impl names from another module has to be
+        // exported by the module that declares it.
+        for (name, owner, what) in [
+            (&imp.trait_name, info.module.as_str(), "trait"),
+            (&imp.type_name, type_module, "type"),
+        ] {
+            if owner != imp.module && !exported(name, env) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'impl {} for {}' names the {what} '{name}', which module '{owner}' does not export: add 'pub' to its declaration, or write the impl in '{owner}'",
+                        imp.trait_name, imp.type_name
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+        }
+        if let Some(first) = seen.insert((&imp.trait_name, &imp.type_name), imp) {
+            return Err(Diagnostic::new(
+                format!(
+                    "trait '{}' already has an impl for '{}' (written in module '{}'): a trait is implemented for a type at most once",
+                    info.name, imp.type_name, first.module
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Checks that every `impl Name for Type { ... }` block implements exactly the
+/// signatures its trait declares (A-12 slice 2). Runs after the signature loop,
+/// because the impl's methods have to be resolved before they can be compared,
+/// and it is the only place that knows both resolved sides.
+#[allow(clippy::too_many_arguments)]
+fn check_trait_impl_signatures(
+    program: &ast::Program,
+    traits: &HashMap<String, TraitInfo>,
+    impls: &[TraitImplInfo],
+    structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
+    sigs: &HashMap<String, FnSig>,
+    consts: &HashMap<String, ConstInfo>,
+    const_fns: &std::rc::Rc<ConstFns>,
+    env: &TypeEnv,
+) -> std::result::Result<(), Diagnostic> {
+    // Key -> declaration, so a mismatch can quote the impl back the way it was
+    // written rather than describing a resolved `FnSig`.
+    let decl_by_key: HashMap<String, &ast::FunctionDecl> = program
+        .functions
+        .iter()
+        .map(|f| (sig_key(f), f))
+        .collect();
+    for imp in impls {
+        let info = &traits[&imp.trait_name];
+        let self_ty = Ty::Struct(imp.type_name.clone());
+        for m in &info.methods {
+            let key = format!("{}#{}", imp.type_name, m.name);
+            let Some(impl_sig) = sigs.get(&key) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "trait '{}' declares '{}', and 'impl {} for {}' does not implement it: add '{} {{ ... }}' to the block",
+                        info.name,
+                        render_fn_decl(m),
+                        imp.trait_name,
+                        imp.type_name,
+                        render_fn_decl(m)
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            };
+            let declared = resolve_trait_method_sig(
+                info,
+                m,
+                &self_ty,
+                structs,
+                enums,
+                env,
+                consts,
+                const_fns,
+            )
+            .map_err(|e| e.in_module(&info.module))?;
+            let impl_decl = decl_by_key.get(&key).copied();
+            let receiver_mut = |f: &ast::FunctionDecl| {
+                f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false)
+            };
+            if let Some(d) = impl_decl {
+                if receiver_mut(d) != receiver_mut(m) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "method '{}' takes its receiver differently than trait '{}' declares it: the trait writes '{}', the impl writes '{}'",
+                            m.name,
+                            info.name,
+                            render_fn_decl(m),
+                            render_fn_decl(d)
+                        ),
+                        d.span,
+                        d.module.clone(),
+                    ));
+                }
+            }
+            if declared.params != impl_sig.params || declared.ret != impl_sig.ret {
+                let written = impl_decl
+                    .map(render_fn_decl)
+                    .unwrap_or_else(|| key.clone());
+                return Err(Diagnostic::new(
+                    format!(
+                        "method '{}' does not match trait '{}': the trait declares '{}', the impl writes '{}'",
+                        m.name,
+                        info.name,
+                        render_fn_decl(m),
+                        written
+                    ),
+                    impl_decl.map(|d| d.span).unwrap_or(imp.impl_span),
+                    impl_decl
+                        .map(|d| d.module.clone())
+                        .unwrap_or_else(|| imp.module.clone()),
+                ));
+            }
+        }
+        for name in &imp.methods {
+            if !info.methods.iter().any(|m| &m.name == name) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}' is not declared by trait '{}': an 'impl' implements exactly the trait's methods, so remove it or add the signature to the trait",
+                        name, info.name
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -2386,6 +2844,9 @@ fn collect_exports(program: &ast::Program) -> std::collections::HashSet<String> 
     for t in &program.extern_types {
         export(&t.module, &t.name, t.is_pub);
     }
+    for t in &program.traits {
+        export(&t.module, &t.name, t.is_pub);
+    }
     for c in &program.consts {
         export(&c.module, &c.name, c.is_pub);
     }
@@ -2771,7 +3232,7 @@ impl<'a> SignatureScope<'a> {
             return Ok(());
         }
         if Ty::from_name(&ty.name).is_some()
-            || matches!(ty.name.as_str(), "List" | "Box" | "Map" | "Atomic")
+            || matches!(ty.name.as_str(), "List" | "Box" | "Map" | "Atomic" | "Thread" | "Mutex")
         {
             return Ok(());
         }
@@ -3199,6 +3660,9 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         // `c.load(...)` keys on `Atomic#load` and the element type comes from
         // the receiver (`atomic_sig`).
         Ty::Atomic(_) => Some("Atomic"),
+        // A `Mutex<T>` answers to one name whatever its element, exactly as an
+        // `Atomic<T>` does (B-5, `std/sync`).
+        Ty::Mutex(_) => Some("Mutex"),
         // The integer types answer to their written names so that the
         // conversion methods below (`n.to_u8()`) have a receiver to sit on.
         Ty::I32 => Some("i32"),
@@ -3300,6 +3764,20 @@ fn thread_element_reason(ty: &Ty, container: &str) -> Option<String> {
     ))
 }
 
+/// Why a `Mutex<T>` cannot be a container element (B-5). Mirrors the thread
+/// refusal: a mutex owns a runtime record and is reached by borrowing it, while
+/// a container's own routines move and drop an element like a plain location.
+/// A local, a field or a `pd` gives `lock` one place to borrow.
+fn mutex_element_reason(ty: &Ty, container: &str) -> Option<String> {
+    let Ty::Mutex(elem) = ty else {
+        return None;
+    };
+    Some(format!(
+        "'Mutex<{}>' cannot be {container}: a mutex owns a runtime record and is reached by borrowing it, while a container's own routines move and drop an element like a plain location. Keep the mutex in a local or a field ('val m = Mutex.new(0)') and lock it there",
+        elem.display()
+    ))
+}
+
 /// Why a container that still carries the open-container marker cannot be a
 /// container element, in one sentence that says the real reason: `ty` is such
 /// a container, or holds one, so the generated typedef, its `push` and its drop
@@ -3332,6 +3810,9 @@ fn list_element_error(ty: &Ty) -> String {
     if let Some(reason) = thread_element_reason(ty, "a 'List' element") {
         return reason;
     }
+    if let Some(reason) = mutex_element_reason(ty, "a 'List' element") {
+        return reason;
+    }
     if let Some(reason) = open_container_element_reason(ty, "List") {
         return reason;
     }
@@ -3358,6 +3839,9 @@ fn map_element_error(ty: &Ty) -> String {
         return reason;
     }
     if let Some(reason) = thread_element_reason(ty, "a 'Map' value") {
+        return reason;
+    }
+    if let Some(reason) = mutex_element_reason(ty, "a 'Map' value") {
         return reason;
     }
     if let Some(reason) = borrowed_element_reason(ty) {
@@ -3406,6 +3890,9 @@ fn array_element_error(ty: &Ty) -> String {
     if let Some(reason) = thread_element_reason(ty, "an array element") {
         return reason;
     }
+    if let Some(reason) = mutex_element_reason(ty, "an array element") {
+        return reason;
+    }
     match ty {
         Ty::Fn { .. } => {
             return format!(
@@ -3445,6 +3932,9 @@ fn box_element_error(ty: &Ty) -> String {
     if let Some(reason) = thread_element_reason(ty, "a 'Box' element") {
         return reason;
     }
+    if let Some(reason) = mutex_element_reason(ty, "a 'Box' element") {
+        return reason;
+    }
     if let Some(reason) = open_container_element_reason(ty, "Box") {
         return reason;
     }
@@ -3455,6 +3945,23 @@ fn box_element_error(ty: &Ty) -> String {
     }
     format!(
         "'{}' cannot be a 'Box' element: use a scalar, 'String', 'Bytes', a 'datac', an 'enum', a 'List', or another 'Box'",
+        ty.display()
+    )
+}
+
+/// Why a `Mutex<T>`'s element is refused: the value set is any owned type with
+/// no borrows (the `Send`-shaped rule B-5 shares with `Thread<T>`). A borrow,
+/// a `str` or a `View` in the slot would be a thread reading data another frame
+/// owns.
+fn mutex_element_error(ty: &Ty) -> String {
+    if crate::types::is_borrowed_field_ty(ty) {
+        return format!(
+            "'{}' cannot be a 'Mutex' element: a mutex is shared across threads, and a borrow, a 'str' or a 'View' in the slot would be a thread reading data another frame owns. Guard an owned value instead",
+            ty.display()
+        );
+    }
+    format!(
+        "'{}' cannot be a 'Mutex' element: a mutex guards an owned value, and 'unit' and a function value are refused",
         ty.display()
     )
 }
@@ -4546,6 +5053,8 @@ fn collect_const_fns(program: &ast::Program, project: &Project) -> ConstFns {
                     },
                     // An `extern fun` has no body to run at compile time.
                     ast::FunctionBody::Extern => continue,
+                    // A trait signature has no body at all.
+                    ast::FunctionBody::Signature => continue,
                 },
             },
         );
@@ -6318,6 +6827,7 @@ fn collect_func_templates(
             FuncTemplate {
                 key,
                 params,
+                bounds: f.type_param_bounds.clone(),
                 receiver: f
                     .receiver
                     .as_ref()
@@ -6435,6 +6945,19 @@ fn check_program_pass(
     // element or `Map` key type may be resolved before any signature is, and
     // the derived-copy fixpoints must already exclude a destructor type.
     let declared_drops = std::rc::Rc::new(declared_drop_names(program));
+    // A-12 slice 2: the program's traits, and the (trait, type) pairs its impls
+    // declare, collected before any signature is resolved because a bound at a
+    // call site is checked against the second of those and the first is what a
+    // signature's `Self` is bound through.
+    let traits = std::rc::Rc::new(collect_traits(program, project)?);
+    let trait_impls = collect_trait_impls(program);
+    let mut impls: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+    for imp in &trait_impls {
+        impls
+            .entry(imp.trait_name.clone())
+            .or_default()
+            .insert(imp.type_name.clone());
+    }
     let env = TypeEnv {
         generics: std::rc::Rc::new(generics),
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
@@ -6461,6 +6984,8 @@ fn check_program_pass(
                 .map(|f| (f.name.clone(), f.module.clone()))
                 .collect(),
         ),
+        traits: traits.clone(),
+        impls: std::rc::Rc::new(impls),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -6554,6 +7079,13 @@ fn check_program_pass(
             if structs.contains_key(name) {
                 return Err(Diagnostic::new(
                     format!("'{}' is used for both a datac and an enum", e.name),
+                    e.span,
+                    e.module.clone(),
+                ));
+            }
+            if traits.contains_key(name) {
+                return Err(Diagnostic::new(
+                    format!("'{}' is used for both a trait and a datac/enum", e.name),
                     e.span,
                     e.module.clone(),
                 ));
@@ -6686,6 +7218,13 @@ fn check_program_pass(
                 d.module.clone(),
             ));
         }
+        if traits.contains_key(&d.name) {
+            return Err(Diagnostic::new(
+                format!("'{}' is used for both a trait and a datac/enum", d.name),
+                d.span,
+                d.module.clone(),
+            ));
+        }
         if Ty::from_name(&d.name).is_some() {
             return Err(Diagnostic::new(
                 format!("'{}' is a builtin type and cannot be redeclared as a datac", d.name),
@@ -6778,6 +7317,12 @@ fn check_program_pass(
         );
     }
 
+    // A-12 slice 2: the name-level half of trait validation, before any
+    // signature is built, so a second impl of one trait for one type is
+    // reported as a coherence error rather than as the duplicate method the
+    // two blocks happen to share.
+    check_trait_impl_names(program, &traits, &trait_impls, &env)?;
+
     let mut sigs = HashMap::new();
     let mut overloads: HashMap<String, Vec<(Vec<Ty>, String)>> = HashMap::new();
     // Signature key per declaration, in declaration order: once overloads
@@ -6791,6 +7336,15 @@ fn check_program_pass(
     let mut key_pair_halves: HashMap<String, KeyPairHalf> = HashMap::new();
     let mut key_pair_types: Vec<String> = Vec::new();
     for f in &program.functions {
+        // A trait (A-12 slice 2) is named in a bound, which is a type
+        // position, so it cannot share a name with a declared type.
+        if f.receiver.is_none() && traits.contains_key(&f.name) {
+            return Err(Diagnostic::new(
+                format!("'{}' is used for both a function and a trait", f.name),
+                f.span,
+                f.module.clone(),
+            ));
+        }
         // A receiver method's key already can't collide with a struct name
         // (it always contains `#`), so this check only applies to plain
         // functions.
@@ -6908,27 +7462,28 @@ fn check_program_pass(
         // that type's declared `Map` key pair, so the shape is checked here,
         // where the receiver, the parameters and the return type are already
         // resolved, and the type is recorded so the two halves can be matched
-        // up once every declaration has been seen.
+        // up once every declaration has been seen. Only `hash` makes the type
+        // a key: a lone `eq` (H-5) is a valid declaration that gives the type
+        // `==`/`!=`, so it is validated here but kept out of `key_pair_types`.
         if let Some(r) = &f.receiver {
             if f.name == crate::types::KEY_PAIR_HASH_METHOD
                 || f.name == crate::types::KEY_PAIR_EQ_METHOD
             {
                 check_key_pair_method(f, &params, &ret)?;
-                if !key_pair_halves.contains_key(&r.type_name) {
+                if f.name == crate::types::KEY_PAIR_HASH_METHOD
+                    && !key_pair_types.contains(&r.type_name)
+                {
                     key_pair_types.push(r.type_name.clone());
                 }
-                key_pair_halves.insert(
-                    r.type_name.clone(),
-                    KeyPairHalf {
-                        method: if f.name == crate::types::KEY_PAIR_HASH_METHOD {
-                            crate::types::KEY_PAIR_HASH_METHOD
-                        } else {
-                            crate::types::KEY_PAIR_EQ_METHOD
-                        },
-                        span: f.span,
-                        module: f.module.clone(),
+                key_pair_halves.entry(r.type_name.clone()).or_insert(KeyPairHalf {
+                    method: if f.name == crate::types::KEY_PAIR_HASH_METHOD {
+                        crate::types::KEY_PAIR_HASH_METHOD
+                    } else {
+                        crate::types::KEY_PAIR_EQ_METHOD
                     },
-                );
+                    span: f.span,
+                    module: f.module.clone(),
+                });
             }
         }
         // Kernel stage 9, MK9-S6-M1: `fun mut T.drop()` on a user type is
@@ -6946,6 +7501,17 @@ fn check_program_pass(
         // `borrowck.rs` cannot be stricter here without knowing the body.
         let key = sig_key_for(f, prefix, &params);
         if sigs.contains_key(&key) {
+            // A-12 slice 2: when either declaration is an `impl` method, the
+            // collision is between a trait method and something the type
+            // already has, so the message names the trait instead of the
+            // generic "defined more than once".
+            let other = program
+                .functions
+                .iter()
+                .find(|o| !std::ptr::eq(*o, f) && sig_key(o) == sig_key(f));
+            if let Some(message) = trait_method_collision_message(f, other) {
+                return Err(Diagnostic::new(message, f.span, f.module.clone()));
+            }
             let message = match &f.receiver {
                 Some(r) => format!("method '{}.{}' is defined more than once", r.type_name, f.name),
                 None => format!(
@@ -6969,10 +7535,25 @@ fn check_program_pass(
         sigs.insert(key, FnSig { params, ret });
     }
 
-    // A-12: a key pair is both halves or neither. A type that declares only one
-    // is not a key and never could be, so it is refused here and the message
-    // names the half that is missing; a half whose own signature was wrong was
-    // already refused above.
+    // A-12 slice 2: every `impl Name for Type` block, checked against the
+    // trait's own signatures now that both sides are resolved.
+    check_trait_impl_signatures(
+        program,
+        &traits,
+        &trait_impls,
+        &structs,
+        &enums,
+        &sigs,
+        &consts,
+        &const_fns,
+        &env,
+    )?;
+
+    // A-12: a declared `Map` key is both halves. `key_pair_types` holds the
+    // types that declare `hash`, so a missing `eq` is refused here and the
+    // message names the half that is missing; a half whose own signature was
+    // wrong was already refused above. A lone `eq` is not in this list: it is
+    // a valid declaration that gives the type `==`/`!=` and no key (H-5).
     for name in &key_pair_types {
         let has = |method: &str| {
             sigs.contains_key(&crate::types::key_pair_method_key(name, method))
@@ -7680,6 +8261,7 @@ fn base_ctx(
         unsafe_fns: project.unsafe_fns().clone(),
         freestanding: project.target().is_freestanding(),
         cpus: project.target().cpus(),
+        infer_scoped_ret: false,
     }
 }
 
@@ -7922,8 +8504,9 @@ fn scan_pd_uses(
     match &f.body {
         ast::FunctionBody::Block(b) => scan.scan_block(b),
         ast::FunctionBody::Expr(e) => scan.scan_expr(e),
-        // An `extern` has no body to scan for passdown references.
-        ast::FunctionBody::Extern => {}
+        // An `extern` has no body to scan for passdown references, and a
+        // trait signature has none either.
+        ast::FunctionBody::Extern | ast::FunctionBody::Signature => {}
     }
 
     let mut used: Vec<PdInfo> = scan
@@ -8374,7 +8957,7 @@ fn check_function(
                     )
             }
             ast::FunctionBody::Expr(e) => matches!(e, ast::Expr::Asm { .. }),
-            ast::FunctionBody::Extern => false,
+            ast::FunctionBody::Extern | ast::FunctionBody::Signature => false,
         };
         if !single_asm {
             return Err(TypeError {
@@ -8522,6 +9105,19 @@ fn check_function(
                 stmts: vec![],
                 tail: None,
             }
+        }
+        // A trait method signature (A-12 slice 2) has no body and is never a
+        // function of its own: the impl supplies the body, which is an
+        // ordinary method this pass does check. Reaching here would mean a
+        // signature had been registered as a declaration.
+        ast::FunctionBody::Signature => {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' is a trait method signature and has no body: write the body in the 'impl' block",
+                    display_name(f)
+                ),
+                span: f.span,
+            })
         }
     };
 
@@ -8825,7 +9421,12 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             lower_pattern(pattern, &tmp, &value_ty, &elements, *mutable, ctx, &mut stmts, *span)?;
             Ok(stmts)
         }
-        ast::Stmt::While { cond, body, span } => {
+        ast::Stmt::While {
+            cond,
+            body,
+            iterating,
+            span,
+        } => {
             let cond = check_expr(cond, ctx, Some(&Ty::Bool))?;
             if cond.ty != Ty::Bool {
                 return Err(TypeError {
@@ -8834,7 +9435,13 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 });
             }
             let body = check_block(body, ctx, None)?;
-            Ok(vec![tir::Stmt::While { cond, body }])
+            let iterating = iterating.as_ref().and_then(|place| {
+                ast::place_path(place).map(|path| tir::IteratedPlace {
+                    path,
+                    span: place.span(),
+                })
+            });
+            Ok(vec![tir::Stmt::While { cond, body, iterating }])
         }
         ast::Stmt::Return { value, .. } => {
             let ret_ty = ctx.ret_ty.clone();
@@ -9008,6 +9615,10 @@ fn check_fn_literal(
     // kind: its captures may be borrows, its environment is stack, and the
     // value's own type is `Ty::ScopedFn` (`plan/scoped-blocks.md` part 2).
     let scoped = matches!(expected, Some(Ty::ScopedFn { .. }));
+    // A `Mutex.lock` block (`std/sync`, B-5): the scoped parameter fixes the
+    // block's own parameter types, but its return is the block's tail type, so
+    // the expected `R` is ignored and filled in after the body is checked.
+    let infer_ret = ctx.infer_scoped_ret && infer_params && scoped;
     // The function signature the *expected* type names, looked through a
     // borrow because an owned function-typed parameter arrives as
     // `&closure(...)`. A block literal takes both its parameter types and its
@@ -9098,6 +9709,13 @@ fn check_fn_literal(
         };
         (params, ret)
     };
+    let mut ret = ret;
+    if infer_ret {
+        // The placeholder the body is checked against; `return EXPR` inside the
+        // block therefore needs a `unit` value. The common shapes (a bare
+        // `return`, or a tail expression) infer correctly below.
+        ret = Ty::Unit;
+    }
     // One literal, one function. The key starts with `#`, which no `.kp`
     // identifier can contain, so it cannot collide with anything a program
     // declares (the same trick receiver methods use for `Type#name`).
@@ -9138,6 +9756,9 @@ fn check_fn_literal(
     inner.receiver_struct = None;
     inner.init_state = None;
     inner.in_fn_literal = true;
+    // A nested scoped block is typed by its own callee, never by the
+    // surrounding `Mutex.lock` block's inference.
+    inner.infer_scoped_ret = false;
     inner.borrowed_captures = scoped;
     let mut tir_params = Vec::with_capacity(params.len());
     for (name, ty) in &params {
@@ -9145,16 +9766,21 @@ fn check_fn_literal(
         tir_params.push((name.clone(), ty.clone()));
     }
     let checked = match body {
-        ast::FunctionBody::Block(b) => check_block(b, &mut inner, Some(&ret))?,
+        ast::FunctionBody::Block(b) => check_block(b, &mut inner, if infer_ret { None } else { Some(&ret) })?,
         ast::FunctionBody::Expr(e) => {
-            let value = check_expr(e, &mut inner, Some(&ret))?;
+            let value = check_expr(e, &mut inner, if infer_ret { None } else { Some(&ret) })?;
             tir::Block {
                 stmts: vec![],
                 tail: Some(Box::new(value)),
             }
         }
-        ast::FunctionBody::Extern => unreachable!("the parser requires a literal body"),
+        ast::FunctionBody::Extern | ast::FunctionBody::Signature => {
+            unreachable!("the parser requires a literal body")
+        }
     };
+    if infer_ret {
+        ret = checked.ty();
+    }
     // The same tail-versus-declared-return rule a declaration follows,
     // including the one divergence case (`panic` as the tail).
     let tail_diverges = checked
@@ -11678,6 +12304,146 @@ fn comparison_error(ty: &Ty, op: BinOp) -> String {
     }
 }
 
+/// The owned type an equality operand names: a `datac`/`enum` value, or a
+/// borrow of one. `Ty::Struct` covers both a `datac` and an `enum`, and a
+/// `Ty::Ref` is looked through because an operand may be written `a` or `*a`
+/// or be a `mut T` parameter, and all of them are one pointer to the backend.
+fn equality_owner(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Struct(name) => Some(name.as_str()),
+        Ty::Ref { inner, .. } => match inner.as_ref() {
+            Ty::Struct(name) => Some(name.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// One operand of a lowered `==`/`!=` where the declared `eq` wants `&T`: an
+/// owned operand is borrowed (`Ref`), and an operand that is already a borrow
+/// is handed on unchanged, so neither is ever moved.
+fn equality_borrow(expr: &tir::Expr, want: &Ty) -> tir::Expr {
+    match &expr.ty {
+        Ty::Ref { .. } => expr.clone(),
+        _ => tir::Expr {
+            kind: tir::ExprKind::Ref {
+                mutable: false,
+                expr: Box::new(expr.clone()),
+            },
+            ty: want.clone(),
+            span: expr.span,
+        },
+    }
+}
+
+/// One operand of a lowered `View == View`/`View == str`: a `View` is used as
+/// it is, a `str` is viewed first (`str#view`, the builtin `s.view()`), since
+/// `View.eq` takes a `View`.
+fn view_operand(expr: &tir::Expr) -> tir::Expr {
+    if matches!(expr.ty, Ty::View) {
+        expr.clone()
+    } else {
+        tir::Expr {
+            kind: tir::ExprKind::Call {
+                callee: "str#view".to_string(),
+                args: vec![expr.clone()],
+            },
+            ty: Ty::View,
+            span: expr.span,
+        }
+    }
+}
+
+/// `!=` is the lowering's result negated; `==` is the call itself.
+fn negate_comparison(op: BinOp, call: tir::Expr, span: Span) -> tir::Expr {
+    if matches!(op, BinOp::NotEq) {
+        tir::Expr {
+            kind: tir::ExprKind::Unary {
+                op: ast::UnOp::Not,
+                expr: Box::new(call),
+            },
+            ty: Ty::Bool,
+            span,
+        }
+    } else {
+        call
+    }
+}
+
+/// H-5: whether `a == b` / `a != b` is lowered in the front end into a method
+/// call instead of the scalar comparison. Two shapes lower:
+///
+/// * a `datac`/`enum` `T` that declares `fun T.eq(other: &T).R: bool` (the same
+///   method name A-12 gives a declared `Map` key), lowered to `a.eq(&b)`;
+/// * `View` against `View`, or `View` against a `str`, lowered to the builtin
+///   `View.eq`.
+///
+/// The operands are the already-checked `l`/`r` from `check_binary_operands`,
+/// so each is evaluated exactly once and left to right, and a shared `Ref` is
+/// what the declared `eq` receives, so an owned operand is borrowed rather than
+/// moved. The result is an ordinary `Call`, so `borrowck.rs` and both backends
+/// need no new shape. `None` means the ordinary comparison path applies, which
+/// includes every type with no declared `eq` and every order operator.
+fn lower_equality(
+    l: &tir::Expr,
+    r: &tir::Expr,
+    op: BinOp,
+    span: Span,
+    ctx: &Ctx,
+) -> Result<Option<tir::Expr>> {
+    if !matches!(op, BinOp::Eq | BinOp::NotEq) {
+        return Ok(None);
+    }
+    if let (Some(a), Some(b)) = (equality_owner(&l.ty), equality_owner(&r.ty)) {
+        if a == b {
+            let key = crate::types::key_pair_method_key(a, crate::types::KEY_PAIR_EQ_METHOD);
+            if let Some(sig) = ctx.sig_of(&key) {
+                // The operator is a call, so an `unsafe fun T.eq` is gated
+                // exactly as the written `a.eq(&b)` call is (the `Map` path
+                // has no such sight of the declaration and is a known gap).
+                if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'",
+                            display_callee(&key)
+                        ),
+                        span,
+                    });
+                }
+                let mut args = vec![
+                    equality_borrow(l, &sig.params[0].1),
+                    equality_borrow(r, &sig.params[1].1),
+                ];
+                args.extend(hidden_args(&key, span, ctx)?);
+                let call = tir::Expr {
+                    kind: tir::ExprKind::Call { callee: key, args },
+                    ty: Ty::Bool,
+                    span,
+                };
+                return Ok(Some(negate_comparison(op, call, span)));
+            }
+        }
+    }
+    let l_text = matches!(l.ty, Ty::View) || is_str_like(&l.ty);
+    let r_text = matches!(r.ty, Ty::View) || is_str_like(&r.ty);
+    if l_text
+        && r_text
+        && (matches!(l.ty, Ty::View) || matches!(r.ty, Ty::View))
+        && builtin_sig("View#eq").is_some()
+    {
+        let call = tir::Expr {
+            kind: tir::ExprKind::Call {
+                callee: "View#eq".to_string(),
+                args: vec![view_operand(l), view_operand(r)],
+            },
+            ty: Ty::Bool,
+            span,
+        };
+        return Ok(Some(negate_comparison(op, call, span)));
+    }
+    Ok(None)
+}
+
 /// Whether the expression is a bare numeric or character literal — a value
 /// with **no width of its own**, whose type comes entirely from its context
 /// (`syntax.md` §2.4/§5). A literal in that position has no type until
@@ -11836,6 +12602,15 @@ fn check_binary(
                 }
                 _ => false,
             };
+            // H-5: a `datac`/`enum` that declares `eq`, and the two `View`
+            // shapes, are an ordinary method call (or its negation) by the time
+            // the rest of the pipeline sees them. This runs before the
+            // operand-type match below because a `&T` against a `T` and a
+            // `View` against a `str` are two different spellings of one
+            // comparison.
+            if let Some(expr) = lower_equality(&l, &r, op, span, ctx)? {
+                return Ok(expr);
+            }
             if l.ty != r.ty && !handle_pair {
                 return Err(TypeError {
                     message: format!(
@@ -12532,6 +13307,11 @@ fn reachable_mut_path(
         // An atomic mutates through a shared borrow and has no `&mut` path at
         // all, which is the property the whole rule is built on (MK9 section 4).
         Ty::Atomic(_) => false,
+        // A `Mutex<T>` has no reachable path to `T` at all outside the scoped
+        // `lock` block, so it is shareable across a thread boundary whatever
+        // its element: two threads can only take turns through the lock
+        // (B-5).
+        Ty::Mutex(_) => false,
         _ => false,
     }
 }
@@ -13195,6 +13975,92 @@ fn func_template_named(ctx: &Ctx, name: &str, owned: &str) -> Option<String> {
     (name.contains('.') && ctx.fns.templates.contains_key(name)).then(|| name.to_string())
 }
 
+/// Checks the trait bounds one instantiation's type arguments must satisfy
+/// (A-12 slice 2). `tmpl` is the declaration and `type_args` the concrete
+/// arguments, so this answers about the type a call actually binds; `span` is
+/// the call site, which is where an unsatisfied bound is reported.
+///
+/// The bound is written in the callee's module, so its name is qualified with
+/// the *template's* prefix and alias table, exactly as its parameter and return
+/// types are.
+fn check_trait_bounds(
+    ctx: &Ctx,
+    tmpl: &FuncTemplate,
+    type_args: &[Ty],
+    span: Span,
+) -> Result<()> {
+    for (i, bounds) in tmpl.bounds.iter().enumerate() {
+        if bounds.is_empty() {
+            continue;
+        }
+        let param = tmpl.params.get(i).map(String::as_str).unwrap_or("T");
+        let Some(arg) = type_args.get(i) else {
+            continue;
+        };
+        for b in bounds {
+            // The alias may not be in the callee's table: the name is read
+            // where the declaration was written, and the call site cannot tell
+            // the two apart, so the error points at the call.
+            let key = match qualify_written_name(&b.name, &tmpl.prefix, &tmpl.aliases) {
+                Some(key) => key,
+                None => {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{}' bounds '{}' of '{}', but its first segment is not a module the declaration imports",
+                            b.name,
+                            param,
+                            display_callee(&tmpl.key)
+                        ),
+                        span,
+                    })
+                }
+            };
+            if !ctx.env.traits.contains_key(&key) {
+                return Err(TypeError {
+                    message: format!(
+                        "'{}' is not a trait, so it cannot bound '{}' of '{}': a bound names a declared trait ('trait {} {{ ... }}')",
+                        b.name,
+                        param,
+                        display_callee(&tmpl.key),
+                        b.name
+                    ),
+                    span,
+                });
+            }
+            // A bound written through another module's alias needs that module
+            // to export the trait, exactly as naming any other item there does.
+            if let Some((alias, item)) = b.name.split_once('.') {
+                if !exported(&key, &ctx.env) {
+                    return Err(private_item_error(alias, item, span));
+                }
+            }
+            let implements = struct_name_of(arg)
+                .map(|t| {
+                    ctx.env
+                        .impls
+                        .get(&key)
+                        .map(|types| types.contains(t))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if !implements {
+                return Err(TypeError {
+                    message: format!(
+                        "the call to '{}' needs '{}' to implement the trait '{}', and it does not: write 'impl {} for {} {{ ... }}' in the trait's module or in the type's",
+                        display_callee(&tmpl.key),
+                        arg.display(),
+                        b.name,
+                        b.name,
+                        arg.display()
+                    ),
+                    span,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The template key of a method declared on a generic type (A-2): `owner` is
 /// the receiver's *instance* key (`Pair<i32, String>`), and the template is
 /// declared under the type template's own name (`Pair#first`).
@@ -13269,6 +14135,11 @@ fn instantiate_function(
     } else {
         check_arity(&tmpl.key, &tmpl.params, explicit, span)?
     };
+    // A-12 slice 2: the bound is checked before the instance is registered, and
+    // before the early return below, so every call/instantiation of the
+    // template answers it. The body is then checked per concrete type exactly
+    // as it was before bounds existed, which is what keeps dispatch static.
+    check_trait_bounds(ctx, &tmpl, &type_args, span)?;
     let key = instance_key(&tmpl.key, &type_args);
     if let Some(sig) = ctx.sig_of(&key) {
         return Ok((key, sig));
@@ -13817,6 +14688,12 @@ fn check_method_call(
             if name == "Atomic" || crate::types::atomic_alias_elem(name).is_some() {
                 return check_atomic_associated(name, method, args, span, ctx, expected);
             }
+            // `Mutex.new(x)`, the one constructor of the builtin mutex
+            // (B-5, `std/sync`). Like `Atomic.new`, the element type comes
+            // from the value or from the binding's written type.
+            if name == "Mutex" {
+                return check_mutex_associated(name, method, args, span, ctx, expected);
+            }
             // `Widget.null()` and `Window.cast(w)` (gap 1): the two operations
             // written on a handle's type name rather than on a value.
             if let Some(handle) = ctx.handle_type_named(name) {
@@ -13932,6 +14809,9 @@ fn check_method_call(
         && ctx.sig_of(&format!("{owner}#to_int")).is_none()
     {
         return lower_enum_to_int(probe.ty.clone(), receiver, span, ctx);
+    }
+    if let Some(elem) = crate::types::mutex_elem_of(&probe.ty).cloned() {
+        return check_mutex_method(probe, receiver, &elem, method, args, span, ctx, expected);
     }
     if let Some(elem) = crate::types::atomic_elem_of(&probe.ty).cloned() {
         let key = format!("Atomic#{method}");
@@ -14850,6 +15730,182 @@ fn check_atomic_associated(
     Ok(tir::Expr {
         kind: tir::ExprKind::Call { callee: "Atomic#new".to_string(), args: vec![value] },
         ty: Ty::Atomic(Box::new(elem)),
+        span,
+    })
+}
+
+/// `Mutex.new(value)` (B-5, `std/sync`): the one constructor of the builtin
+/// mutex. The value is moved in, exactly as a `move T` parameter moves it, and
+/// the element type comes from the binding's written type or from the
+/// argument, in that order: the same two sources `Atomic.new` has.
+fn check_mutex_associated(
+    name: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if method != "new" {
+        return Err(TypeError {
+            message: format!(
+                "'{name}.{method}' is not a 'Mutex' operation: a mutex is made with 'Mutex.new(value)' and reached through the value it is bound to ('m.lock {{ v -> ... }}', 'm.into_inner()')"
+            ),
+            span,
+        });
+    }
+    if args.len() != 1 {
+        return Err(TypeError {
+            message: format!("'Mutex.new' takes exactly 1 argument, found {}", args.len()),
+            span,
+        });
+    }
+    let written = expected.and_then(crate::types::mutex_elem_of).cloned();
+    let value = check_expr(&args[0].value, ctx, written.as_ref())?;
+    if value.ty == Ty::Unit {
+        return Err(TypeError {
+            message: "'Mutex.new' needs a value to guard, found 'unit'".to_string(),
+            span: args[0].value.span(),
+        });
+    }
+    let elem = match written {
+        Some(elem) => {
+            if value.ty != elem {
+                return Err(TypeError {
+                    message: format!(
+                        "'Mutex<{}>.new' needs a '{}' value, found '{}'",
+                        elem.display(),
+                        elem.display(),
+                        value.ty.display()
+                    ),
+                    span: args[0].value.span(),
+                });
+            }
+            elem
+        }
+        None => value.ty.clone(),
+    };
+    if !crate::types::is_mutex_element(&elem) {
+        return Err(TypeError {
+            message: mutex_element_error(&elem),
+            span: args[0].value.span(),
+        });
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: "Mutex#new".to_string(), args: vec![value] },
+        ty: Ty::Mutex(Box::new(elem)),
+        span,
+    })
+}
+
+/// A method on a `Mutex<T>` (B-5). `lock` is checked structurally, because its
+/// block's return type comes from the block rather than from a fixed signature;
+/// `into_inner` consumes the receiver and hands back the guarded value.
+fn check_mutex_method(
+    probe: tir::Expr,
+    receiver: &ast::Expr,
+    elem: &Ty,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let _ = probe;
+    let cell = Ty::Mutex(Box::new(elem.clone()));
+    match method {
+        "lock" => check_mutex_lock(receiver, elem, args, span, ctx, expected),
+        "into_inner" => {
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'Mutex.into_inner' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            // The receiver is consumed: the mutex is dead once its value is
+            // out, exactly as `thread.join` consumes a handle.
+            let self_arg = check_call_arg("'self'", &cell, receiver, ctx)?;
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call {
+                    callee: "Mutex#into_inner".to_string(),
+                    args: vec![self_arg],
+                },
+                ty: elem.clone(),
+                span,
+            })
+        }
+        other => Err(TypeError {
+            message: format!(
+                "'Mutex.{other}' is not a mutex operation: write 'm.lock {{ v -> ... }}' to reach the value while the lock is held, or 'm.into_inner()' to consume the mutex and take the value out"
+            ),
+            span,
+        }),
+    }
+}
+
+/// `m.lock { v -> ... }` (B-5): the mutex is held for the block's whole run, the
+/// block receives `v: mut T`, its value is returned, and the runtime releases
+/// the lock on every way out (a normal exit, a `return`/`break` inside the
+/// block, and a panic, which poisons the mutex). The block's return type is the
+/// block's own tail type, which is why the literal is checked with the
+/// `infer_scoped_ret` flag set.
+fn check_mutex_lock(
+    receiver: &ast::Expr,
+    elem: &Ty,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let slots = arg_slots("method 'Mutex.lock'", &["block".to_string()], args, span)?;
+    let block_arg = &args[slots[0]];
+    let self_arg = check_call_arg(
+        "'self'",
+        &Ty::Ref { mutable: false, inner: Box::new(Ty::Mutex(Box::new(elem.clone()))) },
+        receiver,
+        ctx,
+    )?;
+    // The block takes `mut T`, an exclusive borrow valid only inside the call,
+    // which the existing scoped-block rules already refuse to store or return.
+    let want = Ty::ScopedFn {
+        params: vec![Ty::Ref { mutable: true, inner: Box::new(elem.clone()) }],
+        ret: Box::new(expected.cloned().unwrap_or(Ty::Unit)),
+    };
+    // The block's return is its tail type when the call site names no type
+    // (`print(m.lock { v -> *v })`), and the call's own expected type when it
+    // does (`val r: Result<_, _> = m.lock { v -> ... ? ... }`), which is what
+    // lets a `?` inside the block propagate the block's declared return.
+    ctx.infer_scoped_ret = expected.is_none();
+    let checked = check_expr(&block_arg.value, ctx, Some(&want));
+    ctx.infer_scoped_ret = false;
+    let checked = checked?;
+    let block = match checked.ty.clone() {
+        Ty::ScopedFn { .. } => checked,
+        // A literal that captured nothing is a plain `fun` value: widen it to
+        // the fat pointer the runtime calls, exactly as a block passed to any
+        // other `scoped fun(...)` parameter is.
+        Ty::Fn { params, ret } => coerce_fn_to_scoped(Ty::ScopedFn { params, ret }, checked),
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "the block 'Mutex.lock' takes has type '{}', expected a scoped function taking 'mut {}'",
+                    other.display(),
+                    elem.display()
+                ),
+                span: block_arg.value.span(),
+            })
+        }
+    };
+    let ret = match &block.ty {
+        Ty::ScopedFn { ret, .. } => (**ret).clone(),
+        _ => unreachable!("the block was widened to a scoped function"),
+    };
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: "Mutex#lock".to_string(),
+            args: vec![self_arg, block],
+        },
+        ty: ret,
         span,
     })
 }

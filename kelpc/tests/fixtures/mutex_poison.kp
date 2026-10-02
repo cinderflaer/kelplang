@@ -1,0 +1,27 @@
+// A worker panics while it holds the lock. The panic ends the worker with
+// `pthread_exit`, the runtime's cleanup handler releases the lock and marks
+// the mutex POISONED, and the main thread's next `lock` panics with
+// "mutex poisoned" (a panic is not unwinding, so the worker's frame is
+// abandoned, `plan/mk9-memory-model.md` section 2). The join still returns,
+// so "joined" is on stdout before the poisoned lock is reached.
+impl "std/thread"
+impl "std/result"
+
+pd val m: Mutex<i64> = Mutex.new(0)
+
+fun boom(c: &Mutex<i64>).R: i64 {
+    c.lock { v ->
+        *v = 99
+        panic("worker exploded")
+    }
+    0
+}
+
+fun main() {
+    val t = thread.spawn(boom, &m)
+    val r = thread.join(t)
+    print("joined")
+    m.lock { v ->
+        print(*v)
+    }
+}

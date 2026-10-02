@@ -22,7 +22,64 @@ pub struct Program {
     pub enums: Vec<EnumDecl>,
     /// `extern type Widget` declarations, in source order (gap 1).
     pub extern_types: Vec<ExternTypeDecl>,
+    /// `trait Name { fun Self.m(...) ... }` declarations, in source order
+    /// (A-12 slice 2). A trait is a named set of method signatures and nothing
+    /// else: it declares no type, no field and no body.
+    pub traits: Vec<TraitDecl>,
+    /// `impl Trait for Type { fun Self.m(...) { ... } }` blocks, in source
+    /// order (A-12 slice 2). The methods themselves are ordinary receiver
+    /// methods in `functions`; this is the pairing `infer.rs` validates
+    /// coherence and the exact-signature match against.
+    pub trait_impls: Vec<TraitImplDecl>,
     pub functions: Vec<FunctionDecl>,
+}
+
+/// One `trait Name { fun Self.m(args).R: T ... }` declaration (A-12 slice 2).
+#[derive(Debug, Clone)]
+pub struct TraitDecl {
+    pub name: String,
+    /// `pub trait ...` (A-13). See `ConstDecl::is_pub`.
+    pub is_pub: bool,
+    /// The method signatures, in source order. Each is an ordinary
+    /// `FunctionDecl` with a `Self` receiver and no body, so the receiver and
+    /// every other type are resolved exactly as a method's are.
+    pub methods: Vec<FunctionDecl>,
+    /// See `DatacDecl::module`.
+    pub module: String,
+    pub span: Span,
+}
+
+/// One `impl Name for Type { ... }` block (A-12 slice 2).
+#[derive(Debug, Clone)]
+pub struct TraitImplDecl {
+    /// The trait, as written (`Shape`, or `shape.Shape` through an alias).
+    /// `resolve.rs` rewrites it to its canonical, module-qualified key before
+    /// `infer.rs` sees it.
+    pub trait_name: String,
+    /// The implementing type, as written. Same qualification rule.
+    pub type_name: String,
+    /// The trait name's own span, and the `for` type's.
+    pub trait_span: Span,
+    pub type_span: Span,
+    /// The names the block declares, in source order, so an extra or a
+    /// missing one can be reported against the block.
+    pub methods: Vec<String>,
+    /// See `DatacDecl::module`.
+    pub module: String,
+    /// The `impl` keyword's own span, what a coherence error points at.
+    pub impl_span: Span,
+}
+
+/// The site one method was written at: `Some` exactly for a method inside an
+/// `impl Name for Type { ... }` block (A-12 slice 2). `resolve.rs` substitutes
+/// the written type for every `Self` in the method's signature before any later
+/// pass sees it, so nothing downstream knows the block existed.
+#[derive(Debug, Clone)]
+pub struct TraitImplSite {
+    /// The trait, as written.
+    pub trait_name: String,
+    /// The type `Self` stands for, as written in the `for` clause.
+    pub self_type: String,
 }
 
 /// One `extern type Widget`: an opaque, pointer-sized native handle. It is a
@@ -251,6 +308,15 @@ pub struct FunctionDecl {
     /// an ordinary function, and empty for a *receiver method*, whose type
     /// parameters come from the receiver instead (`Receiver::type_args`).
     pub type_params: Vec<String>,
+    /// `fun f<T: A + B>(...)`: the traits each parameter of `type_params`
+    /// must implement, one list per parameter and in the same order (A-12
+    /// slice 2). A parameter with no bound has an empty list, so the two
+    /// vectors are always the same length. Empty for a receiver method, whose
+    /// parameters are its type's and take no bound.
+    pub type_param_bounds: Vec<Vec<TypeExpr>>,
+    /// `Some` for a method declared inside an `impl Trait for Type { ... }`
+    /// block (A-12 slice 2).
+    pub trait_impl: Option<TraitImplSite>,
     /// `extern fun ...` — the body is supplied by the compiler (M6.2), so
     /// `body` is always `FunctionBody::Extern` here.
     pub extern_: bool,
@@ -315,6 +381,11 @@ pub enum FunctionBody {
     /// the compiler-supplied C body instead. Never reaches `check_function`'s
     /// block/expression paths.
     Extern,
+    /// A method signature inside a `trait` body (A-12 slice 2): no body at all,
+    /// because a trait declares only what an `impl` has to provide. A
+    /// `Signature` never reaches a code generator: the impl's own method is what
+    /// is emitted.
+    Signature,
 }
 
 #[derive(Debug, Clone)]
@@ -548,6 +619,12 @@ pub enum Stmt {
     While {
         cond: Expr,
         body: Block,
+        /// The place a `for` loop walks, when it walks one (`xs`, `self.items`).
+        /// `infer.rs` copies its path and span into the typed loop so
+        /// `borrowck.rs` can refuse a mutation of it while the body runs
+        /// (`plan/syntax.md` 6.2). `None` for a written `while` and for a `for`
+        /// over a temporary, which nothing names.
+        iterating: Option<Expr>,
         span: Span,
     },
     Return {
@@ -641,6 +718,21 @@ pub fn is_place(expr: &Expr) -> bool {
         Expr::Ident(..) | Expr::Deref { .. } => true,
         Expr::FieldAccess { base, .. } => is_place(base),
         _ => false,
+    }
+}
+
+/// The canonical path of a place expression: `xs` for an `Ident`, `self.items`
+/// for a field chain, and `None` for anything else (a temporary, a dereference,
+/// a call). `parser.rs` records the place a `for` walks this way and `infer.rs`
+/// hands the same path to the borrow checker, so both agree on what names a
+/// list.
+pub fn place_path(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name, _) => Some(name.clone()),
+        Expr::FieldAccess { base, field, .. } => {
+            place_path(base).map(|b| format!("{b}.{field}"))
+        }
+        _ => None,
     }
 }
 
@@ -1106,7 +1198,7 @@ fn first_unsafe_in_expr(expr: &Expr) -> Option<Span> {
         Expr::FnLit { body, .. } => match body.as_ref() {
             FunctionBody::Block(b) => first_unsafe_in_block(b),
             FunctionBody::Expr(e) => first_unsafe_in_expr(e),
-            FunctionBody::Extern => None,
+            FunctionBody::Extern | FunctionBody::Signature => None,
         },
         Expr::Template { parts, .. } => parts.iter().find_map(|p| match p {
             TemplatePart::Text(_) => None,

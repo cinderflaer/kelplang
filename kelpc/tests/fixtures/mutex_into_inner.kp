@@ -1,0 +1,13 @@
+// `into_inner` consumes the mutex and returns the guarded value, running the
+// element's own drop when the record dies only if the value was not moved
+// out. The `List<i32>` here was pushed through the lock and then taken out.
+fun main() {
+    val m: Mutex<List<i32>> = Mutex.new(List.empty())
+    m.lock { v ->
+        v.push(41)
+        v.push(42)
+    }
+    val xs = m.into_inner()
+    print(xs.len())
+    print(xs.get(0))
+}

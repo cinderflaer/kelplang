@@ -1,0 +1,11 @@
+// "Storing" the block's `v`: an ordinary closure's environment outlives the
+// call, and a borrow cannot be captured into one, so the same rule that keeps
+// a scoped block's borrow from escaping keeps `v` from being stored.
+fun bad(m: &Mutex<i64>) {
+    m.lock { v ->
+        val f = fun().R: i64 = *v
+        print(f())
+    }
+}
+
+fun main() {}

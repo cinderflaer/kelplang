@@ -1,0 +1,49 @@
+// H-5: `==`/`!=` over a `datac` that declares `fun T.eq(other: &T).R: bool`.
+// `eq` alone is enough for the operator (a `Map` key still needs the pair,
+// `hash` and `eq`, A-12), and the front end lowers `a == b` to `a.eq(&b)` and
+// `a != b` to `!a.eq(&b)`, so both operands are only borrowed, never moved.
+datac P(val x: i32, val tag: i32)
+
+fun P.eq(other: &P).R: bool {
+    if self.x != other.x {
+        return false
+    }
+    return self.tag == other.tag
+}
+
+// A call with an observable side effect, so the fixture can prove each operand
+// of `==`/`!=` is evaluated exactly once, left to right.
+fun mk(x: i32, tag: i32).R: P {
+    print(x)
+    return P(x = x, tag = tag)
+}
+
+// A `P` parameter is a shared borrow, so `a == b` here is borrow against
+// borrow; `one_eq` puts a borrow against an owned value.
+fun same(a: P, b: P).R: bool = a == b
+
+fun one_eq(a: P).R: bool = a == P(x = 1, tag = 1)
+
+fun main() {
+    val a = P(x = 1, tag = 1)
+    val b = P(x = 1, tag = 1)
+    val c = P(x = 2, tag = 1)
+    print(a == b)
+    print(a != c)
+    print(a == c)
+    // A borrow against an owned value, both borrowed for the call.
+    print(same(a, P(x = 1, tag = 1)))
+    print(one_eq(a))
+    // Each side is one evaluation of a side-effecting call.
+    print(mk(x = 3, tag = 1) == mk(x = 3, tag = 2))
+    print(mk(x = 4, tag = 1) != mk(x = 4, tag = 1))
+    // In `if`, `while` and `&&`.
+    if a == b && a != c {
+        print("guard")
+    }
+    var n: i32 = 0
+    while a == b && n < 3 {
+        n += 1
+    }
+    print(n)
+}

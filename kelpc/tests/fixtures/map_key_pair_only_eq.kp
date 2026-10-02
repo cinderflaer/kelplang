@@ -1,9 +1,20 @@
-// A-12: the mirror of `map_key_pair_only_hash.kp`: `eq` alone is half a key
-// pair, and the message names the `hash` that is missing.
+// A-12 + H-5: `eq` alone is a complete declaration, not half a key pair. It
+// gives the type `==`/`!=` (H-5) and it does *not* make the type a declared
+// `Map` key, which still needs both `hash` and `eq`. `Half`'s field is keyable,
+// so a `Map<Half, i32>` still works through the *derived* pair, with the
+// declared `eq` reaching only the operator.
 datac Half(val x: i32)
 
 fun Half.eq(other: &Half).R: bool = self.x == other.x
 
 fun main() {
     print(Half(x = 1).eq(other = Half(x = 1)))
+    print(Half(x = 1) == Half(x = 1))
+    print(Half(x = 1) != Half(x = 2))
+
+    var m: Map<Half, i32> = Map.new()
+    m.insert(key = Half(x = 1), v = 10)
+    m.insert(key = Half(x = 2), v = 20)
+    print(m.len())
+    print(m.get(key = Half(x = 2)))
 }

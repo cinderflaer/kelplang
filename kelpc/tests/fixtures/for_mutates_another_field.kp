@@ -1,0 +1,18 @@
+// The rule names the place, not the root: a `for` over one field of a `datac`
+// leaves a sibling field free to change.
+datac Bags(val items: List<i32>, val other: List<i32>)
+
+fun mut Bags.copy_out() {
+    for x in self.items {
+        self.other.push(x)
+    }
+}
+
+fun main() {
+    var bags = Bags(items = List.empty(), other = List.empty())
+    bags.items.push(7)
+    bags.items.push(8)
+    bags.copy_out()
+    print(bags.other.len())
+    print(bags.other.get(i = 0))
+}

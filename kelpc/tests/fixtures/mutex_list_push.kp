@@ -1,0 +1,31 @@
+// A `Mutex<List<i32>>` shared across workers: each takes the lock and pushes
+// a value. The list is owned by the runtime record, the element drop is the
+// generated `kelp_list_drop__i32` stored at construction, and the four
+// workers' pushes are all serialized by the lock.
+impl "std/thread"
+impl "std/result"
+
+pd val items: Mutex<List<i32>> = Mutex.new(List.empty())
+
+fun add(c: &Mutex<List<i32>>).R: i64 {
+    var i = 0
+    while i < 10 {
+        c.lock { v ->
+            v.push(1)
+        }
+        i = i + 1
+    }
+    0
+}
+
+fun main() {
+    val t0 = thread.spawn(add, &items)
+    val t1 = thread.spawn(add, &items)
+    val t2 = thread.spawn(add, &items)
+    val t3 = thread.spawn(add, &items)
+    val r0 = thread.join(t0)
+    val r1 = thread.join(t1)
+    val r2 = thread.join(t2)
+    val r3 = thread.join(t3)
+    print(items.lock { v -> v.len() })
+}

@@ -1,0 +1,16 @@
+impl "ring"
+
+pub trait Shape {
+    fun Self.area().R: f64
+    fun Self.label().R: str
+}
+
+// The trait's own module supplies an impl for a type it did not declare, which
+// the module rule allows (A-12 slice 2): `ring` imports nothing, so the two
+// modules cannot form a cycle.
+impl Shape for ring.Ring {
+    fun Self.area().R: f64 = r * r * 3.0
+    fun Self.label().R: str = "ring"
+}
+
+pub fun area_of<T: Shape>(s: &T).R: f64 = s.area()

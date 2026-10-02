@@ -40,6 +40,13 @@ pub const ATOMIC_MODULE: &str = "std/atomic";
 /// declaration site for the resolver to qualify a type at.
 pub const THREAD_MODULE: &str = "std/thread";
 
+/// The module that documents the mutex surface (B-5): `Mutex<T>` is a compiler
+/// builtin, but `std/sync` is the module id a program writes in its `impl` list
+/// so the surface it is using is named, exactly as `std/atomic` is for the
+/// atomic cell. There is no companion declaration to qualify through this id,
+/// so it carries no `key_prefix` of its own.
+pub const SYNC_MODULE: &str = "std/sync";
+
 /// The call key of `thread.fence`, the one function the shipped `std/thread`
 /// module holds (MK9-S3-M1 stage A2): the module id with `/` replaced by `.`
 /// plus the function's bare name, which is what `resolve.rs` builds for a
@@ -145,7 +152,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/list" => include_str!("../std/list.kp"),
         "std/atomic" => include_str!("../std/atomic.kp"),
         "std/thread" => include_str!("../std/thread.kp"),
-        "std/option" => include_str!("../std/option.kp"),
+        "std/sync" => include_str!("../std/sync.kp"),        "std/option" => include_str!("../std/option.kp"),
         "std/result" => include_str!("../std/result.kp"),
         "std/arena" => include_str!("../std/arena.kp"),
         _ => return None,
@@ -165,7 +172,7 @@ pub fn shipped() -> &'static [&'static str] {
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/http", "std/ws",
         "std/encoding", "std/list", "std/option", "std/result", "std/atomic", "std/thread",
-        "std/arena",
+        "std/arena", SYNC_MODULE,
     ]
 }
 

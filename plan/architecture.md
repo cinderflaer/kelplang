@@ -48,12 +48,12 @@ x/
       parser.rs               # tokens -> AST (recursive descent + Pratt for expressions)
       pretty.rs               # AST pretty-printer (the MK1-S1-M1 deliverable)
       types.rs                # type representations
-      infer.rs                # type inference / checking, stdlib overload resolution
+      infer.rs                # type inference / checking, stdlib overload resolution, trait/impl validation and bound checks (A-12 slice 2)
       tir.rs                  # typed IR; every node carries its resolved Ty and Span
       borrowck.rs              # move checker (MK1-S3-M1), borrow checker (MK1-S4-M1), drop (MK3)
       codegen_c.rs             # typed IR -> C source text
       driver.rs                # orchestrates pipeline, invokes `cc`
-      resolve.rs              # project/manifest loading, `impl` imports, module naming (MK2-S1-M1), capability gating (MK4-S1-M1)
+      resolve.rs              # project/manifest loading, `impl` imports, module naming (MK2-S1-M1), capability gating (MK4-S1-M1); `impl Trait for Type` methods are merged here with `Self` substituted
       deprecated.rs           # the register of outdated syntax, and the `outdated:` finding (open item 74)
       diag.rs                 # cross-file diagnostics: module id -> file/line/col (MK2-S1-M1)
       preprocess.rs            # `%*alias*%` expansion, runs before the parser (MK2-S1-M3, done)

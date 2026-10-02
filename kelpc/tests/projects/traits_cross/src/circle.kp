@@ -1,0 +1,9 @@
+impl "shape"
+
+pub datac Circle(var r: f64)
+
+// The other allowed side: the type's own module implements the imported trait.
+impl shape.Shape for Circle {
+    fun Self.area().R: f64 = r * r * 3.0
+    fun Self.label().R: str = "circle"
+}

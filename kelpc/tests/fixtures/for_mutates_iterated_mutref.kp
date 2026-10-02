@@ -1,0 +1,9 @@
+// Taking an exclusive borrow of the iterated place.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        val p = &mut xs
+        print(p.len())
+    }
+}

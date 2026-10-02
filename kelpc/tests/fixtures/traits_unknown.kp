@@ -1,0 +1,8 @@
+// An impl naming a trait that is not declared (A-12 slice 2).
+datac Circle(val r: f64)
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r
+}
+
+fun main() { }

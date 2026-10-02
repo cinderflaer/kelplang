@@ -1,0 +1,16 @@
+// pins default-one-space-between-atoms: two atoms that share a line get one space between them unless another rule here removes it.
+trait Shape {
+    fun Self.area().R: f64
+    fun mut Self.scale(f: f64)
+}
+
+datac Circle(val r: f64)
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r
+    fun mut Self.scale(f: f64) { r = r * f }
+}
+
+fun area_of<T: Shape + Grow>(s: &T).R: f64 = s.area()
+
+fun main() {}

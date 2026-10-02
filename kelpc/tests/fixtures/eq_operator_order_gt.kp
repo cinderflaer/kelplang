@@ -1,0 +1,11 @@
+// H-5: the mirror of `eq_operator_order.kp`: `>` is refused on a type whose
+// only declaration is `eq`, exactly as `<` is.
+datac P(val x: i32)
+
+fun P.eq(other: &P).R: bool = self.x == other.x
+
+fun main() {
+    val a = P(x = 1)
+    val b = P(x = 2)
+    print(a > b)
+}

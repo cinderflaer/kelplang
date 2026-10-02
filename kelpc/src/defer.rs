@@ -94,7 +94,7 @@ impl Lowerer {
         match &mut f.body {
             FunctionBody::Block(block) => self.block(block, &empty, &HashSet::new(), true),
             FunctionBody::Expr(expr) => self.expr(expr, &empty, &HashSet::new()),
-            FunctionBody::Extern => Ok(()),
+            FunctionBody::Extern | FunctionBody::Signature => Ok(()),
         }
     }
 
@@ -384,7 +384,7 @@ impl Lowerer {
                 match body.as_mut() {
                     FunctionBody::Block(b) => self.block(b, &empty, &HashSet::new(), true),
                     FunctionBody::Expr(e) => self.expr(e, &empty, &HashSet::new()),
-                    FunctionBody::Extern => Ok(()),
+                    FunctionBody::Extern | FunctionBody::Signature => Ok(()),
                 }
             }
             Expr::Template { parts, .. } => {
@@ -569,7 +569,7 @@ fn free_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>)
             match body.as_ref() {
                 FunctionBody::Block(b) => free_in_block(b, &scope, out),
                 FunctionBody::Expr(e) => free_in_expr(e, &scope, out),
-                FunctionBody::Extern => {}
+                FunctionBody::Extern | FunctionBody::Signature => {}
             }
         }
         Expr::Template { parts, .. } => {

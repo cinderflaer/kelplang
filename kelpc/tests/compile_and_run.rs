@@ -4134,6 +4134,13 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // A guard owned by a thread closure's heap environment: a worker that
         // never freed the environment would leave its box behind at exit.
         "drop_thread_closure",
+        // B-5: the single-threaded mutex paths. The runtime record and its
+        // value slot are malloc'd, the block's value is copied out, and
+        // `into_inner` moves an owned `List` out and frees the record without
+        // dropping the value, so ASAN sees a leak or a double free either way.
+        "mutex_lock_value",
+        "mutex_lock_return",
+        "mutex_into_inner",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -4452,6 +4459,55 @@ fn a_for_loop_only_walks_a_list() {
     // The desugar is `.len()`/`.get()`, so a non-list fails on `.len()` and the
     // span is the iterable — `for x in 5` points at `5`, not at the `for`.
     assert_rejected_with("tests/fixtures/for_not_a_list.kp", "has no method 'len'");
+}
+
+#[test]
+fn a_for_loop_refuses_every_mutation_of_what_it_walks() {
+    // `for x in xs { xs.push(x) }` was accepted for a `Copy` element (nothing
+    // borrowed the list) and grew the list until memory ran out. Every mutation
+    // form is now one refusal, naming the place the `for` walks.
+    for fixture in [
+        "for_mutates_iterated_push",
+        "for_mutates_iterated_remove",
+        "for_mutates_iterated_set",
+        "for_mutates_iterated_assign",
+        "for_mutates_iterated_field",
+        "for_mutates_iterated_mutref",
+        "for_mutates_iterated_mutarg",
+        "for_mutates_iterated_capture",
+        "for_mutates_iterated_move",
+        "for_mutates_iterated_nested",
+    ] {
+        assert_rejected_with(
+            &format!("tests/fixtures/{fixture}.kp"),
+            "while iterating over it",
+        );
+    }
+    // The message names the place: a local for a local, a field path for a
+    // field.
+    assert_rejected_with(
+        "tests/fixtures/for_mutates_iterated_push.kp",
+        "cannot mutate 'xs' while iterating over it",
+    );
+    assert_rejected_with(
+        "tests/fixtures/for_mutates_iterated_field.kp",
+        "cannot mutate 'self.items' while iterating over it",
+    );
+}
+
+#[test]
+fn a_for_loop_still_allows_reads_another_list_and_a_while() {
+    // The rule covers mutation of the walked place only: reading it, changing a
+    // different list, changing it after the loop, and the index-`while` that is
+    // the supported way for a loop to change what it walks all stay legal.
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iterated_place_is_read_only.kp",
+        "2\n2\n5\n10\n20\n3\n3\n1\n",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/for_mutates_another_field.kp",
+        "2\n7\n",
+    );
 }
 
 #[test]
@@ -5043,18 +5099,245 @@ fn an_enum_that_declares_hash_and_eq_is_a_map_key() {
 }
 
 #[test]
+fn a_datac_that_declares_eq_gets_the_equality_operator() {
+    // H-5: `a == b` lowers to `a.eq(&b)` and `a != b` to `!a.eq(&b)`, with
+    // `eq` alone enough for the operator. The fixture also pins that each
+    // operand is one evaluation, left to right, and that a borrow against an
+    // owned value works.
+    assert_compiles_and_runs(
+        "tests/fixtures/eq_operator_datac.kp",
+        "true\ntrue\nfalse\ntrue\ntrue\n3\n3\nfalse\n4\n4\nfalse\nguard\n3\n",
+    );
+}
+
+#[test]
+fn an_enum_that_declares_eq_gets_the_equality_operator() {
+    // H-5: the rule is the same for an `enum`.
+    assert_compiles_and_runs(
+        "tests/fixtures/eq_operator_enum.kp",
+        "true\ntrue\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn a_view_compares_with_a_view_and_a_str() {
+    // H-5: `View` against `View` and `View` against `str` lower to the builtin
+    // `View.eq`, which compares the bytes and the lengths.
+    assert_compiles_and_runs(
+        "tests/fixtures/eq_operator_view.kp",
+        "true\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn a_lone_eq_declares_the_operator_and_is_not_a_map_key() {
+    // A-12 + H-5: `eq` alone gives `==`/`!=` and leaves the type a *derived*
+    // `Map` key (both halves are still what a declared key needs).
+    assert_compiles_and_runs(
+        "tests/fixtures/map_key_pair_only_eq.kp",
+        "true\ntrue\ntrue\n2\n20\n",
+    );
+}
+
+#[test]
+fn the_equality_operator_is_refused_without_a_declared_eq() {
+    // H-5: nothing is derived, so a `datac` without `eq` keeps the old
+    // refusal, and `<` is refused even on a type that has `eq`.
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_no_eq.kp",
+        "a datac has no generated equality",
+    );
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_order.kp",
+        "cannot compare 'P' values with '<'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_order_gt.kp",
+        "cannot compare 'P' values with '>'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_bad_signature.kp",
+        "'P.eq' takes exactly one parameter",
+    );
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_type_mismatch.kp",
+        "cannot compare 'A' with 'B'",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A-12 slice 2: traits with static dispatch. A trait is a named set of method
+// signatures, an `impl` gives them to a `datac`/`enum`, and a generic function
+// bounds its type parameter on one. Every call below is the concrete type's own
+// method, so both backends emit the same direct call they would have emitted
+// without the trait.
+
+#[test]
+fn a_trait_is_implemented_by_a_datac_and_an_enum_and_called_through_a_generic() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_datac_and_enum.kp",
+        "12.000000\n27.000000\n27.000000\ncircle\ntrue\n9.000000\n18.000000\n2\n9.000000\n0.000000\n",
+    );
+}
+
+#[test]
+fn a_generic_datac_method_calls_a_bounded_generic_with_its_type_parameter() {
+    // The bound is resolved when the *method* is instantiated, so the call
+    // inside `Pair<A, B>.total()` is checked once per pair of concrete
+    // arguments, exactly as a free function's body is.
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_generic_datac_method.kp",
+        "7\n3\n",
+    );
+}
+
+#[test]
+fn a_bound_is_checked_at_every_call_and_transitively() {
+    // A call whose type argument does not implement the bound, and a generic
+    // function reaching a second bounded generic with its own parameter: the
+    // inner call is refused where the outer one is instantiated with a type
+    // that satisfies only the outer bound.
+    assert_rejected_with(
+        "tests/fixtures/traits_bound_unimplemented.kp",
+        "needs 'Point' to implement the trait 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_bound_transitive.kp",
+        "needs 'OnlyNamed' to implement the trait 'Doubled'",
+    );
+    // Two bounds on one parameter, only one of them satisfied.
+    assert_rejected_with(
+        "tests/fixtures/traits_bound_second.kp",
+        "needs 'OnlyShape' to implement the trait 'Grow'",
+    );
+}
+
+#[test]
+fn an_impl_must_implement_exactly_the_traits_signatures() {
+    assert_rejected_with(
+        "tests/fixtures/traits_missing_method.kp",
+        "does not implement it",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_wrong_signature.kp",
+        "does not match trait 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_wrong_receiver.kp",
+        "takes its receiver differently than trait 'Grow'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_extra_method.kp",
+        "'shrink' is not declared by trait 'Shape'",
+    );
+}
+
+#[test]
+fn a_trait_is_implemented_for_a_type_at_most_once() {
+    assert_rejected_with(
+        "tests/fixtures/traits_duplicate_impl.kp",
+        "already has an impl for 'Circle'",
+    );
+}
+
+#[test]
+fn a_trait_method_and_an_explicit_method_cannot_share_a_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_inherent_collision.kp",
+        "already has as an explicit method",
+    );
+}
+
+#[test]
+fn an_impl_naming_no_declared_trait_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/traits_unknown.kp",
+        "names no declared trait",
+    );
+}
+
+#[test]
+fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn.kp",
+        "'dyn' trait objects are not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_default_body.kp",
+        "default body is not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_associated_type.kp",
+        "associated types and consts are not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_impl_trait_argument.kp",
+        "a trait cannot be a parameter's type in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_where_clause.kp",
+        "'where' clause is not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_supertrait.kp",
+        "a trait cannot inherit in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_drop_declared.kp",
+        "the trait 'Drop' is built in",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_impl_for_builtin.kp",
+        "'i32' is a builtin type",
+    );
+}
+
+/// `Self` in a trait signature is the implementing type wherever it is written,
+/// not only in the receiver: a parameter, a return type, and a `T` returned by a
+/// bounded generic all resolve per instantiation.
+#[test]
+fn self_stands_for_the_implementing_type_everywhere_in_a_signature() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_self_in_signature.kp",
+        "1\n2\n",
+    );
+}
+
+/// A trait declared in one module and implemented in another: the type's own
+/// module implements the imported trait, and the trait's own module implements
+/// it for a type from a third module that imports nothing. Both are at a
+/// module boundary, so both need `pub` and the import that makes the name
+/// reachable, and the call site in the entry module names neither trait.
+#[test]
+fn a_trait_crosses_a_module_boundary_on_both_allowed_sides() {
+    assert_project_runs(
+        "traits_cross",
+        &project("traits_cross"),
+        "12.000000\n27.000000\ncircle\nring\n12.000000\n",
+    );
+}
+
+/// An impl in a third module, which owns neither the trait nor the type.
+#[test]
+fn an_impl_in_a_module_that_owns_neither_the_trait_nor_the_type_is_rejected() {
+    assert_project_rejected(
+        "traits_third_module",
+        &project("traits_third_module"),
+        "which owns neither",
+    );
+}
+
+#[test]
 fn a_declared_key_pair_that_is_half_or_misshaped_is_rejected() {
-    // A-12: either method name states that the type is a key, so half a pair,
-    // or a signature the generated map code cannot call, is refused at the
-    // declaration with the reason named rather than as a vague "not a key" at
-    // a `Map` use site.
+    // A-12: `hash` states that the type is a key, and a key needs both halves,
+    // so a lone `hash`, or a signature the generated map code cannot call, is
+    // refused at the declaration with the reason named rather than as a vague
+    // "not a key" at a `Map` use site. A lone `eq` is *not* refused (H-5): it
+    // declares the type's `==`/`!=` without making it a key, and
+    // `map_key_pair_only_eq.kp` is an accepted fixture beside this one.
     assert_rejected_with(
         "tests/fixtures/map_key_pair_only_hash.kp",
         "'Half' declares 'hash' but not 'eq'",
-    );
-    assert_rejected_with(
-        "tests/fixtures/map_key_pair_only_eq.kp",
-        "'Half' declares 'eq' but not 'hash'",
     );
     assert_rejected_with(
         "tests/fixtures/map_key_pair_hash_ret.kp",
@@ -9728,6 +10011,81 @@ fn an_accepted_spawn_or_join_builds_and_runs() {
 #[test]
 fn a_thread_stress_gate_produces_the_exact_total() {
     assert_compiles_and_runs("tests/fixtures/thread_stress.kp", "8000\n");
+}
+
+/// B-5's mutex stress gate: eight workers, each taking the lock a thousand
+/// times to increment one shared `pd val Mutex<i64>`. A missing lock shows up
+/// as a total other than 8000.
+#[test]
+fn a_mutex_stress_gate_produces_the_exact_total() {
+    assert_compiles_and_runs("tests/fixtures/mutex_stress.kp", "8000\n");
+}
+
+/// B-5: a `Mutex<List<i32>>` shared across four workers, each pushing through
+/// the lock. The element's own drop reaches the list through the runtime
+/// record, so the whole list is dropped when the mutex dies.
+#[test]
+fn a_mutex_guards_a_list_pushed_from_several_workers() {
+    assert_compiles_and_runs("tests/fixtures/mutex_list_push.kp", "40\n");
+}
+
+/// B-5: `m.lock { v -> ... }` evaluates to the block's tail, and `into_inner`
+/// consumes the mutex and hands the guarded value out.
+#[test]
+fn a_mutex_block_value_is_returned_and_into_inner_consumes_the_mutex() {
+    assert_compiles_and_runs("tests/fixtures/mutex_lock_value.kp", "8\n14\n7\n");
+    assert_compiles_and_runs("tests/fixtures/mutex_into_inner.kp", "2\n41\n");
+}
+
+/// B-5: a `return` inside a lock block ends the block, the runtime releases
+/// the lock on that exit, and a second `lock` afterwards succeeds. A `?`
+/// inside the block is the same kind of exit, and a second call that would
+/// deadlock if the first leaked the lock proves it.
+#[test]
+fn a_return_inside_a_lock_block_releases_the_mutex() {
+    assert_compiles_and_runs("tests/fixtures/mutex_lock_return.kp", "2\n");
+    assert_compiles_and_runs("tests/fixtures/mutex_lock_try.kp", "10\n");
+}
+
+/// B-5: a worker's panic poisons the mutex through the runtime's cleanup
+/// handler, and the main thread's next `lock` panics with "mutex poisoned".
+#[test]
+fn a_panic_inside_a_lock_block_poisons_the_mutex() {
+    assert_fixture_panics("mutex_poison", "mutex poisoned");
+}
+
+/// B-5: a `&Mutex<T>` of a `pd` global crosses to a worker, the `Sync` half of
+/// the crossing rule. A plain `var` datac stays refused
+/// (`thread_spawn_var_field.kp`).
+#[test]
+fn a_shared_pd_mutex_crosses_to_a_worker() {
+    assert_compiles_and_runs("tests/fixtures/mutex_spawn_borrow.kp", "1\n");
+}
+
+/// B-5: the block's `v` cannot escape. Returning it is a type mismatch, and
+/// capturing it into a closure's environment is refused by the same borrow
+/// rule a scoped block follows.
+#[test]
+fn a_lock_blocks_mutable_borrow_cannot_escape() {
+    assert_rejected_with(
+        "tests/fixtures/mutex_lock_borrow_returned.kp",
+        "expected 'unit', found 'mut i64'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/mutex_lock_borrow_stored.kp",
+        "cannot capture 'v': it is a borrow",
+    );
+}
+
+/// B-5: a freestanding build refuses `Mutex` and names the spin lock a kernel
+/// would use instead. Freestanding is LLVM-only by design, so the refusal is
+/// reached before either backend.
+#[test]
+fn a_freestanding_mutex_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_mutex",
+        "a freestanding program has no threads and no libc",
+    );
 }
 
 /// The panic gate (MK9 section 7): a worker panics, its joiner sees `Err`

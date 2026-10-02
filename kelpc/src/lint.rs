@@ -422,17 +422,33 @@ fn declared_names(tokens: &[Token]) -> Vec<Declaration> {
     let mut out = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
         match &token.kind {
-            TokenKind::Val | TokenKind::Var | TokenKind::For => {
+            TokenKind::Val | TokenKind::Var => {
                 if let Some((name, span)) = ident_at(tokens, i + 1) {
                     out.push(Declaration {
                         name,
                         span,
                         kind: NameKind::Binding,
                     });
-                } else if !matches!(token.kind, TokenKind::For)
-                    && matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::LParen))
-                {
+                } else if matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::LParen)) {
                     for (name, span) in tuple_pattern_binds(tokens, i + 1) {
+                        out.push(Declaration {
+                            name,
+                            span,
+                            kind: NameKind::Binding,
+                        });
+                    }
+                }
+            }
+            // `for x in xs { ... }` binds `x`, and `impl Name for Type { ... }`
+            // (A-12 slice 2) writes the same keyword and binds nothing: the
+            // contextual `in` after the name is what tells the two apart.
+            TokenKind::For => {
+                let is_loop = matches!(
+                    tokens.get(i + 2).map(|t| &t.kind),
+                    Some(TokenKind::Ident(word)) if word == "in"
+                );
+                if is_loop {
+                    if let Some((name, span)) = ident_at(tokens, i + 1) {
                         out.push(Declaration {
                             name,
                             span,
@@ -995,6 +1011,24 @@ mod tests {
         let found = findings(src, None).expect("lexes");
         assert_eq!(found.len(), 1);
         assert!(found[0].message.contains("consecutive '//' lines"));
+    }
+
+    #[test]
+    fn an_impl_lines_for_is_not_a_loop_binding() {
+        // `impl Name for Type { ... }` (A-12 slice 2) writes the same keyword a
+        // `for` loop does, and only the loop binds a name: the contextual `in`
+        // is what tells them apart, so a PascalCase `for` type is not read as a
+        // mis-cased loop variable.
+        let src = "trait Shape {\n    fun Self.area().R: i32\n}\n\ndatac Circle(val r: i32)\n\nimpl Shape for Circle {\n    fun Self.area().R: i32 = r\n}\n";
+        let found = findings(
+            src,
+            Some(&Naming {
+                case: NamingCase::Camel,
+                from_manifest: false,
+            }),
+        )
+        .expect("lexes");
+        assert!(found.is_empty(), "{found:?}");
     }
 
     #[test]

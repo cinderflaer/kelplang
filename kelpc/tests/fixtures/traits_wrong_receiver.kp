@@ -1,0 +1,12 @@
+// An impl whose receiver borrow does not match the trait's `mut` (A-12 slice 2).
+trait Grow {
+    fun mut Self.grow(by: f64)
+}
+
+datac Circle(var r: f64)
+
+impl Grow for Circle {
+    fun Self.grow(by: f64) { r = r + by }
+}
+
+fun main() { }

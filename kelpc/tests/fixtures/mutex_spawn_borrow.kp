@@ -1,0 +1,22 @@
+// The crossing rule's accepted shape for a mutex. A `&Mutex<T>` of a `pd`
+// global may cross to a worker, exactly as a `&Atomic<T>` does: the mutex is
+// `Sync` because the lock is the only way to reach `T` (B-5). The atomic
+// counterpart is `thread_spawn_pd_atomic.kp`, and a plain `var` datac stays
+// refused (`thread_spawn_var_field.kp`).
+impl "std/thread"
+impl "std/result"
+
+pd val counter: Mutex<i64> = Mutex.new(0)
+
+fun bump(c: &Mutex<i64>).R: i64 {
+    c.lock { v ->
+        *v = *v + 1
+    }
+    0
+}
+
+fun main() {
+    val t = thread.spawn(bump, &counter)
+    val r = thread.join(t)
+    print(counter.lock { v -> *v })
+}

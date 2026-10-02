@@ -1,0 +1,10 @@
+// A trait cannot be implemented for a builtin type.
+trait Shape {
+    fun Self.area().R: f64
+}
+
+impl Shape for i32 {
+    fun Self.area().R: f64 = 0.0
+}
+
+fun main() { }

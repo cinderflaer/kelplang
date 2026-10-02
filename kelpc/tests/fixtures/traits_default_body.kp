@@ -1,0 +1,6 @@
+// A trait declares signatures only: a default body is a later slice.
+trait Shape {
+    fun Self.area().R: f64 = 0.0
+}
+
+fun main() { }

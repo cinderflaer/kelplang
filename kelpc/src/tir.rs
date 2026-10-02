@@ -211,6 +211,28 @@ pub struct ClosureEnv {
     pub fields: Vec<(String, Ty)>,
 }
 
+/// The place a `for` walks, for the borrow checker's mutation refusal
+/// (`plan/syntax.md` 6.2): the path is the iterable as written (`xs`,
+/// `self.items`) and the span is that place on the `for` line.
+#[derive(Debug, Clone)]
+pub struct IteratedPlace {
+    pub path: String,
+    pub span: Span,
+}
+
+/// The canonical path of a place expression, the same rendering `ast::place_path`
+/// gives the surface expression, so a mutation target `borrowck.rs` reads out of
+/// the typed tree compares equal to the path `infer.rs` recorded.
+pub fn place_path(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::FieldAccess { base, field } => {
+            place_path(base).map(|b| format!("{b}.{field}"))
+        }
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
@@ -235,6 +257,11 @@ pub enum Stmt {
     While {
         cond: Expr,
         body: Block,
+        /// The place a `for` loop walks, when it walks one (`xs`, `self.items`):
+        /// the canonical path a body mutation is compared against, and the
+        /// `for` line's span a refusal names. `None` for a written `while` and
+        /// for a `for` over a temporary (`plan/syntax.md` 6.2).
+        iterating: Option<IteratedPlace>,
     },
     Return {
         value: Option<Expr>,

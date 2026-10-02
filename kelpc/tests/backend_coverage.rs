@@ -285,7 +285,13 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// Raised from 344 to the live 362 by the full sweep of the tree after the second kernel round (freestanding
 /// `str`, statics, function addresses, `defer`, bss and mem functions, the allocator hook, aarch64):
 /// 362 of 655 corpus targets build on both backends, 0 refused, 0 mismatches, 0 crashes.
-const LLVM_BUILT_BASELINE: usize = 362;
+/// Raised from 362 to 366 by MK8-S2 item A-12 slice 2 (H-5): `==`/`!=` over a declared `eq`
+/// lowers to a method call, so three new fixtures (`eq_operator_datac`, `eq_operator_enum`,
+/// `eq_operator_view`) and `map_key_pair_only_eq` (a lone `eq`, which used to be a refusal and
+/// now builds) are compared by both backends. The four new refusal fixtures
+/// (`eq_operator_no_eq`, `eq_operator_order`, `eq_operator_bad_signature`,
+/// `eq_operator_type_mismatch`) stay outside the corpus, so they do not move the count.
+const LLVM_BUILT_BASELINE: usize = 366;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

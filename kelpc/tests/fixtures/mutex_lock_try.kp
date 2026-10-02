@@ -1,0 +1,23 @@
+// A `?` inside the block is a `return` from the block literal, so the runtime
+// still returns from `kelp_mutex_run` and releases the lock. The second
+// `checked` call below would deadlock if the first left the mutex held.
+impl "std/result"
+
+fun checked(m: &Mutex<i64>, ok: bool).R: result.Result<i64, i64> {
+    return m.lock { v ->
+        val t: result.Result<i64, i64> = if ok {
+            result.Result.Ok(5)
+        } else {
+            result.Result.Err(3)
+        }
+        val x = t?
+        result.Result.Ok(*v + x)
+    }
+}
+
+fun main() {
+    val m: Mutex<i64> = Mutex.new(10)
+    val a = checked(&m, true)
+    val b = checked(&m, false)
+    print(m.lock { v -> *v })
+}

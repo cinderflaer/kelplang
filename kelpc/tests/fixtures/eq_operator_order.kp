@@ -1,0 +1,11 @@
+// H-5: declaring `eq` gives `==`/`!=` and nothing else. `<` and the other
+// orders are still refused: an equality body says nothing about an order.
+datac P(val x: i32)
+
+fun P.eq(other: &P).R: bool = self.x == other.x
+
+fun main() {
+    val a = P(x = 1)
+    val b = P(x = 2)
+    print(a < b)
+}

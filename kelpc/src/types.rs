@@ -193,6 +193,17 @@ pub enum Ty {
     /// refusal message gives: joining is a one-shot thing a container's own
     /// copy-and-drop routines would duplicate.
     Thread(Box<Ty>),
+    /// The builtin mutex (B-5, `std/sync`): `Mutex<T>`, a value whose `T` is
+    /// reached only through a scoped block (`m.lock { v -> ... }`).
+    ///
+    /// Monomorphized per element type exactly as `Atomic<T>` and `Thread<T>`
+    /// are, and `T` is the owned, borrow-free value the mutex guards
+    /// (`is_mutex_element`). **Not `Copy`.** The representation is one opaque
+    /// pointer to a record the C runtime owns (a `pthread_mutex_t`, a poison
+    /// flag and the `T` slot), so the pointer crosses both backends unchanged
+    /// and the runtime's layout stays `kelp_rt.c`'s business. Its drop frees
+    /// that record, running `T`'s own drop first.
+    Mutex(Box<Ty>),
     /// An **opaque native handle** (gap 1): `extern type Widget`, what a
     /// binding passes around in place of a `GtkWidget*`. The payload is the
     /// handle's canonical, module-qualified name, exactly as `Ty::Struct`
@@ -288,6 +299,7 @@ impl Ty {
                 Ty::Struct(_)
                     | Ty::Atomic(_)
                     | Ty::Thread(_)
+                    | Ty::Mutex(_)
                     | Ty::Bytes
                     | Ty::String
                     | Ty::List(_)
@@ -318,6 +330,7 @@ impl Ty {
                     // allocated, so it is dropped (detached) like any other
                     // owned value (MK9-S3-M1 stage C1).
                     | Ty::Thread(_)
+                    | Ty::Mutex(_)
                     | Ty::Closure { .. },
             ),
         }
@@ -399,6 +412,7 @@ impl Ty {
             Ty::Array(elem, len) => array_c_type(elem, *len),
             Ty::Atomic(elem) => atomic_c_type(elem),
             Ty::Thread(_) => thread_c_type(),
+            Ty::Mutex(_) => mutex_c_type(),
             Ty::Handle(name) => handle_c_type(name),
             // A pointer is the C pointer to whatever type it addresses. An
             // array's generated struct name and a datac's `struct_` name are
@@ -429,6 +443,14 @@ impl Ty {
             Ty::Struct(name) => format!("struct_{}", c_ident(name)),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
+                    format!("{}*", inner.c_type())
+                } else if matches!(**inner, Ty::Mutex(_)) {
+                    // A `Mutex<T>` is itself one pointer, so a shared borrow of
+                    // one is a pointer to a pointer and the `const` the shared
+                    // spelling normally adds would make `&m` and the
+                    // parameter's `&Mutex<T>` two incompatible C types. The
+                    // borrow checker, not the C qualifier, is what stops a
+                    // write through a `&Mutex<T>`.
                     format!("{}*", inner.c_type())
                 } else {
                     format!("const {}*", inner.c_type())
@@ -461,6 +483,7 @@ impl Ty {
             Ty::Box(elem) => format!("Box<{}>", elem.display()),
             Ty::Atomic(elem) => format!("Atomic<{}>", elem.display()),
             Ty::Thread(elem) => format!("Thread<{}>", elem.display()),
+            Ty::Mutex(elem) => format!("Mutex<{}>", elem.display()),
             Ty::Handle(name) => name.clone(),
             Ty::Ptr(elem) => format!("Ptr<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
@@ -550,6 +573,42 @@ pub fn closure_mangle(params: &[Ty], ret: &Ty) -> String {
         params.iter().map(|p| format!("{}__", ty_mangle(p))).collect::<String>(),
         ty_mangle(ret)
     )
+}
+
+/// The `(params, ret)` of a closure-shaped signature, whichever of the three
+/// spellings it is (`fun`, `closure`, `scoped fun`). `None` for anything else.
+pub fn closure_parts(ty: &Ty) -> Option<(&[Ty], &Ty)> {
+    match ty {
+        Ty::Fn { params, ret }
+        | Ty::Closure { params, ret }
+        | Ty::ScopedFn { params, ret } => Some((params.as_slice(), ret)),
+        _ => None,
+    }
+}
+
+/// The mangled signature fragment of a closure-shaped type. Shared by the
+/// closure machinery and the `Mutex.lock` body, which is one body per
+/// signature whichever spelling produced it (B-5).
+pub fn closure_mangle_of(ty: &Ty) -> String {
+    match closure_parts(ty) {
+        Some((params, ret)) => closure_mangle(params, ret),
+        None => unreachable!("not a closure signature: {}", ty.display()),
+    }
+}
+
+/// The `Ty::Closure` spelling of a closure-shaped signature, so the body emitted
+/// for a `scoped fun(...)` block shares the key a thread's `closure(...)` entry
+/// uses (B-5).
+pub fn closure_shape(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Fn { params, ret }
+        | Ty::Closure { params, ret }
+        | Ty::ScopedFn { params, ret } => Ty::Closure {
+            params: params.clone(),
+            ret: ret.clone(),
+        },
+        other => other.clone(),
+    }
 }
 
 /// The generated C struct tag for a closure instantiation (A-4 phase E):
@@ -867,6 +926,10 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         // worker and frees nothing, so the element type is not part of the
         // step (MK9-S3-M1 stage C1).
         Ty::Thread(_) => "kelp_thread_drop".to_string(),
+        // One runtime function for every element type: the record carries the
+        // element drop pointer `Mutex.new` stored, so the element type is not
+        // part of the step (B-5).
+        Ty::Mutex(_) => "kelp_mutex_drop".to_string(),
         Ty::Struct(name) => format!("kelp_drop_{}", c_ident(name)),
         Ty::List(elem) => format!("kelp_list_drop__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("kelp_box_drop__{}", ty_mangle(elem)),
@@ -1056,6 +1119,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::Array(elem, len) => format!("Array__{}__{}", ty_mangle(elem), len),
         Ty::Atomic(elem) => format!("Atomic__{}", ty_mangle(elem)),
         Ty::Thread(elem) => format!("Thread__{}", ty_mangle(elem)),
+        Ty::Mutex(elem) => format!("Mutex__{}", ty_mangle(elem)),
         // The canonical name is module-qualified (`ffi.Widget`), so it goes
         // through the same mangling every other generated symbol uses rather
         // than straight into a C identifier.
@@ -1141,6 +1205,15 @@ pub fn atomic_c_type(elem: &Ty) -> String {
 /// is deliberately not part of this name.
 pub fn thread_c_type() -> String {
     "kelp_Thread*".to_string()
+}
+
+/// The C type for `Mutex<T>` (B-5, `std/sync`): one pointer to the runtime's
+/// `kelp_Mutex` record, uniform over the element type for the same reason
+/// `Thread<T>` is. The element type stays in the Kelp type, where it decides
+/// what the generated `new` copies in and what `into_inner` hands back; the
+/// record's own layout, including the `T` slot, is `kelp_rt.c`'s.
+pub fn mutex_c_type() -> String {
+    "kelp_Mutex*".to_string()
 }
 
 /// The generated C typedef for one opaque handle. The typedef is what gives
@@ -1268,6 +1341,29 @@ pub fn is_thread_element(ty: &Ty) -> bool {
 /// function instead of a diagnostic at codegen time.
 pub fn is_atomic_element(ty: &Ty) -> bool {
     matches!(ty, Ty::Bool) || ty.is_integer()
+}
+
+/// Whether `ty` may be a `Mutex<T>`'s element: an owned value with no borrows,
+/// the same `Send`-shaped predicate `Thread<T>` uses (`is_thread_element`). A
+/// `Mutex<T>` shares `T` across threads, so a borrow, a `str` or a `View` in
+/// the slot would be a thread reading data another frame owns.
+pub fn is_mutex_element(ty: &Ty) -> bool {
+    !is_borrowed_field_ty(ty)
+        && !matches!(
+            ty,
+            Ty::Unit | Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. }
+        )
+}
+
+/// The element type of a `Mutex<T>`, looking through a borrow: `m.lock { ... }`
+/// arrives with the receiver typed `&Mutex<T>` (a method receiver is
+/// auto-borrowed, and a `pd` mutex is reached through its address).
+pub fn mutex_elem_of(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::Mutex(elem) => Some(elem),
+        Ty::Ref { inner, .. } => mutex_elem_of(inner),
+        _ => None,
+    }
 }
 
 /// The element type of an `Atomic<T>`, looking through a borrow: `c.load(...)`
@@ -1418,7 +1514,7 @@ pub fn container_elem_c_type(elem: &Ty) -> String {
         Ty::Struct(name) => format!("struct tag_{}", c_ident(name)),
         Ty::Ref { mutable, inner } if !matches!(**inner, Ty::Str) => {
             let pointee = container_elem_c_type(inner);
-            if *mutable {
+            if *mutable || matches!(**inner, Ty::Mutex(_)) {
                 format!("{pointee}*")
             } else {
                 format!("const {pointee}*")
@@ -1569,6 +1665,7 @@ pub fn type_layout(
         Ty::Str | Ty::Handle(_) | Ty::Ptr(_) | Ty::Fn { .. } | Ty::Ref { .. } | Ty::Thread(_) => {
             Layout { size: 8, align: 8 }
         }
+        Ty::Mutex(_) => Layout { size: 8, align: 8 },
         Ty::View => Layout { size: 16, align: 8 },
         Ty::Bytes | Ty::String | Ty::List(_) | Ty::Closure { .. } | Ty::ScopedFn { .. } => {
             Layout { size: 24, align: 8 }

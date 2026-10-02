@@ -1,0 +1,13 @@
+impl "shape"
+impl "circle"
+impl "ring"
+
+fun main() {
+    val c = circle.Circle(r = 2.0)
+    val g = ring.Ring(r = 3.0)
+    print(shape.area_of(c))
+    print(shape.area_of(g))
+    print(c.label())
+    print(g.label())
+    print(c.area())
+}

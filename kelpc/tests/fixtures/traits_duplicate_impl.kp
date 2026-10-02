@@ -1,0 +1,16 @@
+// A second `impl` of one trait for one type (A-12 slice 2).
+trait Shape {
+    fun Self.area().R: f64
+}
+
+datac Circle(val r: f64)
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r
+}
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r
+}
+
+fun main() { }

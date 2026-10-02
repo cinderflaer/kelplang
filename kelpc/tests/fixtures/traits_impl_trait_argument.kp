@@ -1,0 +1,8 @@
+// `impl Trait` in argument position is a later slice.
+trait Shape {
+    fun Self.area().R: f64
+}
+
+fun take(s: impl Shape) { }
+
+fun main() { }

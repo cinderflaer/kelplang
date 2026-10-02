@@ -1,0 +1,8 @@
+impl "shape"
+impl "circle"
+
+// Neither module owns this impl: the trait is `shape`'s and the type is
+// `circle`'s, so the block belongs in one of those two (A-12 slice 2).
+impl shape.Shape for circle.Circle {
+    fun Self.area().R: f64 = r * r
+}

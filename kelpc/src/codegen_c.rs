@@ -1837,12 +1837,12 @@ fn coerce_shim_name(key: &str, ty: &Ty) -> String {
 /// C1). One per closure signature, spelled from the signature's own mangle so
 /// the LLVM backend's IR body of the same program carries the same name.
 fn thread_body_name(sig: &Ty) -> String {
-    let Ty::Closure { params, ret } = sig else {
+    let (Ty::Closure { .. } | Ty::ScopedFn { .. }) = sig else {
         unreachable!("a thread body is emitted per closure signature: {}", sig.display())
     };
     format!(
         "kelp_thread_body__{}",
-        crate::types::closure_mangle(params, ret)
+        crate::types::closure_mangle_of(sig)
     )
 }
 
@@ -1854,11 +1854,10 @@ fn thread_body_name(sig: &Ty) -> String {
 /// returns `unit` stores nothing, because there is no slot for a result that is
 /// not a value.
 fn write_thread_body(out: &mut String, sig: &Ty) {
-    let Ty::Closure { params, ret } = sig else {
-        unreachable!("a thread body is emitted per closure signature: {}", sig.display())
-    };
+    let (params, ret) = crate::types::closure_parts(sig)
+        .expect("a thread body is emitted per closure signature");
     let arg_c = params[0].c_type();
-    let call = if **ret == Ty::Unit {
+    let call = if *ret == Ty::Unit {
         format!("((void (*)(void*, {arg_c}))code)(env, *({arg_c}*)arg);")
     } else {
         format!(
@@ -2367,6 +2366,10 @@ fn container_depth(ty: &Ty) -> usize {
                 .max()
                 .unwrap_or(0)
         }
+        // A closure signature's parameter is borrowed, so its C typedef spells
+        // the pointee (`kelp_List__i32*`), and the pointee has to be complete
+        // first: look through the borrow when computing depth.
+        Ty::Ref { inner, .. } => container_depth(inner),
         // A nested array is held inline, so it has to be complete before the
         // array that contains it: `[[u8; 4]; 8]` emits the inner one first.
         Ty::Array(elem, _) => 1 + container_depth(elem),
@@ -3145,6 +3148,14 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                         out.spawns.insert(entry.ty.clone());
                     }
                 }
+                // `Mutex#lock` (B-5): the block is a scoped closure, and its
+                // signature is what the runtime's `kelp_mutex_run` calls
+                // through the generated body of the same shape a worker's is.
+                if callee == "Mutex#lock" {
+                    if let Some(block) = args.get(1) {
+                        out.spawns.insert(crate::types::closure_shape(&block.ty));
+                    }
+                }
                 for a in args {
                     note_expr(a, out);
                 }
@@ -3231,7 +3242,7 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                     note_ty(ty, out);
                     note_expr(init, out);
                 }
-                Stmt::While { cond, body } => {
+                Stmt::While { cond, body, .. } => {
                     note_expr(cond, out);
                     note_block(body, out);
                 }
@@ -3816,7 +3827,7 @@ impl<'a> Gen<'a> {
                     }
                 }
             }
-            Stmt::While { cond, body } => {
+            Stmt::While { cond, body, .. } => {
                 let cond = self.cond_text(cond);
                 indent(&mut self.out, depth);
                 writeln!(self.out, "while {cond} {{").unwrap();
@@ -5117,6 +5128,77 @@ impl<'a> Gen<'a> {
         )
     }
 
+    /// `Mutex.new(value)` (B-5), as C: allocate the runtime record, copy the
+    /// moved value into its slot, and store the element's own drop so the
+    /// record can free what it holds when the mutex dies.
+    fn mutex_new_value(&self, value: &Expr, ret: &Ty) -> String {
+        let Ty::Mutex(elem) = ret else {
+            unreachable!("Mutex.new hands back a Mutex<T>")
+        };
+        let elem_c = elem.c_type();
+        let slot = fresh_temp();
+        let handle = fresh_temp();
+        let drop = if needs_drop(elem, &self.owned) {
+            format!("(void (*)(void*)){}", drop_fn_name(elem))
+        } else {
+            "NULL".to_string()
+        };
+        format!(
+            "({{ {elem_c} {slot} = {value}; kelp_Mutex* {handle} = kelp_mutex_new((const void*)&{slot}, sizeof({elem_c}), {drop}); {handle}; }})",
+            value = self.expr_value(value),
+        )
+    }
+
+    /// `m.lock { v -> ... }` (B-5), as C: run the generated lock body while the
+    /// runtime holds the mutex. The body has the same shape a worker's does, so
+    /// the same generator writes it; the runtime passes the `&mut T` the block
+    /// receives and releases the lock on every exit, poisoning it on a panic.
+    fn mutex_lock_value(&self, cell: &Expr, block: &Expr, ret: &Ty) -> String {
+        let _ = ret;
+        let (_, block_ret) = crate::types::closure_parts(&block.ty)
+            .expect("Mutex.lock's block is a scoped function");
+        let mutex = fresh_temp();
+        let closure = fresh_temp();
+        let body = thread_body_name(&block.ty);
+        let prelude = format!(
+            "{m_c} {mutex} = *({cell}); {b_c} {closure} = {block}; ",
+            m_c = crate::types::mutex_c_type(),
+            b_c = block.ty.c_type(),
+            cell = self.expr_value(cell),
+            block = self.expr_value(block),
+        );
+        if *block_ret == Ty::Unit {
+            return format!(
+                "({{ {prelude}kelp_mutex_run({mutex}, {body}, (void*){closure}.fn, {closure}.env, NULL); }})"
+            );
+        }
+        let out = fresh_temp();
+        format!(
+            "({{ {prelude}{out_c} {out}; kelp_mutex_run({mutex}, {body}, (void*){closure}.fn, {closure}.env, &{out}); {out}; }})",
+            out_c = block_ret.c_type(),
+        )
+    }
+
+    /// `m.into_inner()` (B-5), as C: copy the value out, then free the record
+    /// without running the element drop, because the value has a new owner.
+    fn mutex_into_value(&self, cell: &Expr, ret: &Ty) -> String {
+        let tmp = fresh_temp();
+        format!(
+            "({{ {} {tmp}; kelp_mutex_into({cell}, &{tmp}); {tmp}; }})",
+            ret.c_type(),
+            cell = self.expr_value(cell),
+        )
+    }
+
+    fn mutex_call(&self, op: &str, args: &[Expr], ret: &Ty) -> String {
+        match op {
+            "new" => self.mutex_new_value(&args[0], ret),
+            "lock" => self.mutex_lock_value(&args[0], &args[1], ret),
+            "into_inner" => self.mutex_into_value(&args[0], ret),
+            other => unreachable!("no C lowering for 'Mutex#{other}'"),
+        }
+    }
+
     /// `thread.join(handle)` (MK9-S3-M1 stage C1), as C: wait for the worker,
     /// then build `Result<T, ThreadErr>`: `Ok` the value out of the result slot,
     /// or `Err` carrying the message the worker panicked with. The result slot
@@ -5219,6 +5301,10 @@ impl<'a> Gen<'a> {
         }
         if callee == crate::stdlib::JOIN_FN {
             return self.thread_join_value(&args[0], ret);
+        }
+        // A `Mutex<T>` operation (B-5, `std/sync`): one runtime call each.
+        if let Some(op) = callee.strip_prefix("Mutex#") {
+            return self.mutex_call(op, args, ret);
         }
         // `n.to_u8()` and friends (S1): a numeric conversion, emitted inline
         // as a cast — with a range check when the target is an integer that
@@ -5966,10 +6052,11 @@ impl<'a> Gen<'a> {
             | Ty::Array(..)
             | Ty::Atomic(_)
             | Ty::Thread(_)
+            | Ty::Mutex(_)
             | Ty::Ptr(_)
             | Ty::Ref { .. } => {
                 unreachable!(
-                    "type checker rejects printing unit/struct/container/atomic/thread/pointer/reference values"
+                    "type checker rejects printing unit/struct/container/atomic/thread/mutex/pointer/reference values"
                 )
             }
         }

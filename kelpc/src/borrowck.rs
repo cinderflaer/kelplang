@@ -520,6 +520,11 @@ struct Ctx {
     /// site a move could double up with, so only their move sites are recorded
     /// as clears.
     maybe_moved: std::collections::HashSet<BindingId>,
+    /// The lists a `for` in this frame is currently walking (`plan/syntax.md`
+    /// 6.2), innermost last. A mutation of one is refused while its body runs;
+    /// a written `while` over an index pushes nothing, which is the supported
+    /// way to mutate a list a loop walks.
+    iterating: Vec<tir::IteratedPlace>,
 }
 
 impl Ctx {
@@ -750,6 +755,7 @@ impl Ctx {
     /// the owned binding `name`: codegen clears that slot there, and until the
     /// slot is written again the read is a use of a moved value.
     fn move_field_out(&mut self, name: &str, proj: Projection, expr: &tir::Expr) -> Result<()> {
+        self.check_iterated_mutation(expr)?;
         if self.moved_out_of(name, &proj) {
             return Err(BorrowError {
                 message: format!("use of moved value '{}'", field_display(name, &proj)),
@@ -896,6 +902,11 @@ impl Ctx {
             .lookup_mut(name)
             .map(|v| v.ty.is_copy())
             .unwrap_or(true);
+        // Only a real move is a mutation; a `Copy` read (a parameter that is
+        // already a borrow, a scalar) leaves the place alone.
+        if !was_copy {
+            self.check_iterated_mutation(expr)?;
+        }
         self.use_value(name, expr.span)?;
         if !was_copy {
             if let Some(binding) = self.mark_moved(name) {
@@ -1050,6 +1061,24 @@ impl Ctx {
         }
         v.reserved = true;
         Ok(())
+    }
+
+    /// Refuses a mutation of `place` while a `for` in this frame is walking it
+    /// (`plan/syntax.md` 6.2). The comparison is on the canonical path, so
+    /// `for x in self.items { self.other.push(x) }` is legal and naming the
+    /// iterated list is refused. The span is the `for` line's iterable, not the
+    /// mutation, because the rule is about the loop.
+    fn check_iterated_mutation(&self, place: &tir::Expr) -> Result<()> {
+        let Some(path) = tir::place_path(place) else {
+            return Ok(());
+        };
+        let Some(it) = self.iterating.iter().rev().find(|it| it.path == path) else {
+            return Ok(());
+        };
+        Err(BorrowError {
+            message: format!("cannot mutate '{path}' while iterating over it"),
+            span: it.span,
+        })
     }
 
     /// Phase two: the reservation becomes the exclusive borrow the call wants.
@@ -1403,6 +1432,7 @@ fn check_function(
         field_move_sites: HashMap::new(),
         enums: enums.clone(),
         maybe_moved: std::collections::HashSet::new(),
+        iterating: Vec::new(),
     };
     for (index, (name, ty)) in f.params.iter().enumerate() {
         ctx.define(name, ty);
@@ -1532,7 +1562,15 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
-        tir::Stmt::While { cond, body } => check_while(cond, body, ctx),
+        tir::Stmt::While { cond, body, iterating } => {
+            let mark = ctx.iterating.len();
+            if let Some(it) = iterating {
+                ctx.iterating.push(it.clone());
+            }
+            let result = check_while(cond, body, ctx);
+            ctx.iterating.truncate(mark);
+            result
+        }
         tir::Stmt::Return { value, span } => {
             if let Some(v) = value {
                 check_value(v, ctx)?;
@@ -1573,6 +1611,9 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
 /// plain value read.
 fn check_let_init(init: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     if let tir::ExprKind::Ref { mutable, expr: inner } = &init.kind {
+        if *mutable {
+            ctx.check_iterated_mutation(inner)?;
+        }
         check_place(inner, ctx)?;
         if let Some(root) = tir_root_ident(inner) {
             ctx.start_borrow(root, *mutable, init.span)?;
@@ -1992,6 +2033,9 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             // reassignment, which is why it's checked against currently
             // active borrows but doesn't persist tracking — see the
             // module doc's "known gap."
+            if *mutable {
+                ctx.check_iterated_mutation(inner)?;
+            }
             check_place(inner, ctx)?;
             if let Some(root) = tir_root_ident(inner) {
                 ctx.start_borrow(root, *mutable, expr.span)?;
@@ -2020,6 +2064,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                 match op.kind {
                     AsmOperandKind::In => check_value(operand, ctx)?,
                     _ => {
+                        ctx.check_iterated_mutation(operand)?;
                         check_place(operand, ctx)?;
                         if let Some(root) = tir_root_ident(operand) {
                             ctx.start_borrow(root, true, operand.span)?;
@@ -2070,6 +2115,7 @@ fn check_place_through(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 }
 
 fn check_assign_target(target: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
+    ctx.check_iterated_mutation(target)?;
     match &target.kind {
         tir::ExprKind::Ident(name) => ctx.reinit_moving(name, target.span),
         tir::ExprKind::FieldAccess { base, field } => {
@@ -2106,6 +2152,9 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     // arguments (`f(&mut c, &c)`).
     let receiver = method_receiver_index(callee, args);
     if let Some(i) = receiver {
+        if let tir::ExprKind::Ref { expr: inner, .. } = &args[i].kind {
+            ctx.check_iterated_mutation(inner)?;
+        }
         if let Some(root) = arg_root(&args[i]) {
             ctx.reserve_exclusive(root, args[i].span)?;
         }
@@ -2162,6 +2211,9 @@ fn take_call_arguments(
     let mut taken = Vec::new();
     for (i, a) in args.iter().enumerate() {
         if let tir::ExprKind::Ref { mutable, expr: inner } = &a.kind {
+            if *mutable && receiver != Some(i) {
+                ctx.check_iterated_mutation(inner)?;
+            }
             check_place(inner, ctx)?;
             if let Some(root) = tir_root_ident(inner) {
                 if receiver == Some(i) {
