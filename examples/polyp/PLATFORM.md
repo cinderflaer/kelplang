@@ -1,15 +1,16 @@
 # Polyp's platform contract
 
 *The plain-terms description of what an operating system has to provide to run a Polyp program on
-`examples/polyp/soft_backend.kp`: the four functions and the buffer the soft backend draws into
-(stage 3), and the extra facts a **bare-metal** project has to write down (stage 4, proved by
-`examples/polyp-fb-riscv64/` and `examples/polyp-fb-x86_64/`). The design is `plan/polyp-v3.md`.*
+`examples/polyp/soft_backend.kp`: the five functions and the buffer the soft backend draws into
+(stage 3 and stage 5's `now_us`), and the extra facts a **bare-metal** project has to write down
+(stage 4, proved by `examples/polyp-fb-riscv64/` and `examples/polyp-fb-x86_64/`). The design is
+`plan/polyp-v3.md`.*
 
 Polyp's soft backend owns no display. It owns a retained widget tree, lays it out with integers,
-and paints into a framebuffer the platform hands it. Everything the platform has to do is four
+and paints into a framebuffer the platform hands it. Everything the platform has to do is five
 functions and one buffer, and this file says exactly what each has to be.
 
-## The four functions
+## The five functions
 
 The interface is `trait Platform` in `examples/polyp/soft/platform.kp`. A platform implements it
 for its own type.
