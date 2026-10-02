@@ -1143,6 +1143,30 @@ everywhere the bound holds; the bound guarantees the trait's methods exist, it d
 the body to them. There is no `dyn`, no default method, no associated type and no operator
 overloading through a trait, each refused where it is written.
 
+## Language feature: default methods, supertraits and builtin impls (A-12 slice 3, 2026-10-03, not a kernel stage)
+
+**New way to reach undefined behaviour.** None. Like slice 2, this is a front-end declaration: no
+new type, no vtable, no witness argument, no new `tir` node and no new C type, so there is nothing
+for a backend to lower. A default method is a concrete copy of the body synthesized per implementing
+type and then emitted as an ordinary method; a supertrait is a relation between declarations checked
+before codegen; and an impl for a builtin is a method on that builtin's existing `Type#name` key,
+reached by the same direct call the compiler's own methods on it already were.
+
+**What the compiler does check.** That a default method's body is a body an impl may omit; that an
+impl which overrides a defaulted method still matches the declared signature; that a trait whose
+methods are all defaulted accepts an empty impl; that an impl of a trait with supertraits comes with
+an impl of each supertrait (naming both), that the supertrait relation is acyclic, and that a bound
+is satisfied through a supertrait; that a builtin `for` type is one that already carries methods and
+that the trait is declared in the same module as the impl; and that a default body is checked per
+implementing type, so an undeclared method it calls is an error.
+
+**What it does not check.** A default body is only checked for the impls that use it, so a default
+no impl omits is never type-checked, exactly as a generic function that is never called is never
+checked. A trait method whose name matches a compiler-provided method of the builtin it is
+implemented for shadows that compiler method at a call site, because a declaration is looked up
+before the builtin table; nothing refuses the shadowing. Nothing constrains the meaning of a
+default body or an impl body beyond ordinary type checking.
+
 ## Language feature: `Mutex<T>` in `std/sync` (B-5's remainder, 2026-10-02, not a kernel stage)
 
 **New way to reach undefined behaviour.** The mutex itself adds none at the language level: `lock`
