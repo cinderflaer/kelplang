@@ -741,13 +741,9 @@ impl Parser {
                 span: name_span,
             });
         }
-        if self.check(&TokenKind::Lt) {
-            return Err(ParseError {
-                message: "a trait cannot have type parameters in this slice: a trait with parameters, and an associated type, both wait for a later slice"
-                    .to_string(),
-                span: self.peek().span,
-            });
-        }
+        let name_params = self.parse_type_params()?;
+        let type_params: Vec<String> = name_params.iter().map(|(n, _)| n.clone()).collect();
+        let type_param_bounds: Vec<Vec<TypeExpr>> = name_params.into_iter().map(|(_, b)| b).collect();
         // `trait B: A + C` (A-12 slice 3): the supertraits, resolved in the
         // trait's own module exactly as a bound on a function's type parameter
         // is. A cycle is refused by `infer.rs`, where the whole trait table is
@@ -827,6 +823,8 @@ impl Parser {
         Ok(TraitDecl {
             name,
             is_pub,
+            type_params,
+            type_param_bounds,
             supertraits,
             methods,
             assoc_types,
@@ -843,13 +841,13 @@ impl Parser {
     fn parse_trait_impl_decl(&mut self) -> PResult<(TraitImplDecl, Vec<FunctionDecl>)> {
         let impl_span = self.expect(TokenKind::Impl, "'impl'")?.span;
         let (trait_name, trait_span) = self.parse_dotted_name()?;
-        if self.check(&TokenKind::Lt) {
-            return Err(ParseError {
-                message: "implementing a generic trait or fixing an associated type with an equality constraint ('impl Iterator<Item = i32> for X') is not in this slice: implement the plain trait ('impl Iterator for X') and bind the associated type inside the block ('type Item = i32')"
-                    .to_string(),
-                span: self.peek().span,
-            });
-        }
+        // `impl From<IoErr> for AppErr` (A-12 slice 6): the trait's arguments,
+        // which name the trait instance this block implements.
+        let trait_args: Vec<TypeExpr> = if self.check(&TokenKind::Lt) {
+            self.parse_type_arg_list()?.0
+        } else {
+            Vec::new()
+        };
         if trait_name == "Drop" || trait_name.ends_with(".Drop") {
             return Err(ParseError {
                 message: "the trait 'Drop' is built in, so it cannot be implemented: a type's destructor is written 'fun mut T.drop()' inside its own module"
@@ -948,18 +946,12 @@ impl Parser {
                         span: r.span,
                     })
                 }
-                None => {
-                    return Err(ParseError {
-                        message: format!(
-                            "an 'impl' declares methods, so '{}' needs a 'Self' receiver: write 'fun Self.{}(...)', or move the function to the top level",
-                            f.name, f.name
-                        ),
-                        span: f.span,
-                    })
-                }
+                None => {}
             }
             f.trait_impl = Some(TraitImplSite {
                 trait_name: trait_name.clone(),
+                trait_args: trait_args.clone(),
+                trait_instance: String::new(),
                 self_type: type_name.clone(),
             });
             names.push(f.name.clone());
@@ -970,6 +962,9 @@ impl Parser {
         Ok((
             TraitImplDecl {
                 trait_name,
+                trait_args,
+                trait_arg_names: Vec::new(),
+                trait_instance: String::new(),
                 type_name,
                 trait_span,
                 type_span,
@@ -1279,19 +1274,45 @@ impl Parser {
         let mut out = Vec::new();
         loop {
             let (name, span) = self.parse_dotted_name()?;
-            // `Iterator<Item = i32>` (A-12 slice 5): an equality constraint on
-            // an associated type. It is not in this slice, and the `<` is what
-            // says so rather than the generic-argument parser turning it into
-            // an unreadable error.
-            if self.check(&TokenKind::Lt) {
-                return Err(ParseError {
-                    message: format!(
-                        "an equality constraint on an associated type ('{name}<Item = i32>') is not in this slice: bound the parameter with the trait ('{name}') and name the concrete type where it is used ('I::Item'), rather than fixing it in the bound"
-                    ),
-                    span: self.peek().span,
-                });
-            }
-            out.push(TypeExpr::named(name, span));
+            // `Name<Arg>` (A-12 slice 6): a bound on a trait instance. The
+            // trait's own arguments are a comma-separated type list, exactly
+            // as an impl line writes them. The one `<` shape that is not in
+            // this slice is the equality constraint `Name<Item = i32>`, so it
+            // is detected by the `=` after the first name and refused where it
+            // is written rather than misreported as a bad argument list.
+            let mut bounds_span = span;
+            let args = if self.check(&TokenKind::Lt) {
+                let open = self.advance().span;
+                let mut args = Vec::new();
+                loop {
+                    if matches!(self.peek_kind(), TokenKind::Ident(_))
+                        && matches!(self.peek2_kind(), TokenKind::Eq)
+                    {
+                        let (item, _) = self.expect_ident()?;
+                        return Err(ParseError {
+                            message: format!(
+                                "an equality constraint on an associated type ('{name}<{item} = i32>') is not in this slice: bound the parameter with the trait ('{name}') and name the concrete type where it is used ('I::Item'), rather than fixing it in the bound"
+                            ),
+                            span: self.peek().span,
+                        });
+                    }
+                    args.push(self.parse_type()?);
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                        continue;
+                    }
+                    break;
+                }
+                let close = self.expect(TokenKind::Gt, "'>' to close the trait argument list")?.span;
+                bounds_span = open.to(close);
+                args
+            } else {
+                Vec::new()
+            };
+            let mut bound = TypeExpr::named(name, bounds_span);
+            bound.args = args;
+            bound.span = bounds_span;
+            out.push(bound);
             if self.check(&TokenKind::Plus) {
                 self.advance();
                 continue;
@@ -1569,13 +1590,18 @@ impl Parser {
                         span: first_span,
                     })
                 }
+                // A receiverless trait method is a **static** method (A-12
+                // slice 6): `fun from(value: T).R: Self`. It may not take type
+                // parameters of its own (a generic method stays refused), which
+                // keeps it exactly as object-unsafe-free as a receiver method.
                 None => {
-                    return Err(ParseError {
-                        message: format!(
-                            "a trait declares methods, so '{name}' needs a 'Self' receiver: write 'fun Self.{name}(...)'"
-                        ),
-                        span: first_span,
-                    })
+                    if !type_params.is_empty() {
+                        return Err(ParseError {
+                            message: "a trait method cannot take type parameters: the signature names 'Self', the trait's own types and no others"
+                                .to_string(),
+                            span: first_span,
+                        });
+                    }
                 }
             }
         }
@@ -3601,9 +3627,10 @@ mod tests {
     }
 
     #[test]
-    fn a_trait_that_takes_parameters_or_is_named_drop_does_not_parse() {
-        let err = parse_err("trait A<T> { fun Self.m() }\nfun main() {}");
-        assert!(err.message.contains("cannot have type parameters"), "{}", err.message);
+    fn a_trait_takes_parameters_and_drop_does_not_parse() {
+        // A trait may take type parameters (A-12 slice 6).
+        let p = parse("trait A<T> { fun Self.m() }\nfun main() {}");
+        assert_eq!(p.traits[0].type_params, vec!["T"]);
         let err = parse_err("trait Drop { fun Self.m() }\nfun main() {}");
         assert!(err.message.contains("'Drop' is built in"), "{}", err.message);
         // `trait A: B` no longer parses as an error: it is a supertrait.
@@ -3624,9 +3651,15 @@ mod tests {
     }
 
     #[test]
-    fn an_impl_method_without_a_self_receiver_does_not_parse() {
-        let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun area().R: f64 = r }\nfun main() {}");
-        assert!(err.message.contains("needs a 'Self' receiver"), "{}", err.message);
+    fn an_impl_static_method_parses_and_a_wrong_receiver_does_not() {
+        // A receiverless impl method is a static member (A-12 slice 6).
+        let p = parse("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun area().R: f64 = r }\nfun main() {}");
+        assert!(
+            p.functions
+                .iter()
+                .any(|f| f.name == "area" && f.receiver.is_none() && f.trait_impl.is_some()),
+            "a static impl method should parse"
+        );
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun C.area().R: f64 = r }\nfun main() {}");
         assert!(err.message.contains("receiver is written 'Self'"), "{}", err.message);
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun Self<A>.area().R: f64 = r }\nfun main() {}");

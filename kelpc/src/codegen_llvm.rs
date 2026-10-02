@@ -1336,7 +1336,12 @@ fn collect_expr_refs(expr: &Expr, from: &str, note: &mut impl FnMut(&str, &str))
             fields.iter().for_each(|f| collect_expr_refs(f, from, note))
         }
         ExprKind::EnumField { base, .. } => collect_expr_refs(base, from, note),
-        ExprKind::Try { expr, .. } => collect_expr_refs(expr, from, note),
+        ExprKind::Try { expr, convert, .. } => {
+            collect_expr_refs(expr, from, note);
+            if let Some((key, _)) = convert {
+                note(key, from);
+            }
+        }
         ExprKind::Assign { target, value } => {
             collect_expr_refs(target, from, note);
             collect_expr_refs(value, from, note);
@@ -4501,6 +4506,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 err_variant,
                 target_err_variant,
                 err_has_payload,
+                convert,
             } => self.emit_try(
                 sub,
                 source,
@@ -4509,6 +4515,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 *err_variant,
                 *target_err_variant,
                 *err_has_payload,
+                convert,
                 e.span,
                 &e.ty,
             ),
@@ -5230,6 +5237,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         err_variant: usize,
         target_err_variant: usize,
         err_has_payload: bool,
+        convert: &Option<(String, bool)>,
         span: Span,
         ty: &Ty,
     ) -> Result<Option<Value<'a>>, String> {
@@ -5304,6 +5312,24 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 .build_struct_gep(src_payload_ty, src_union, 0, "payload");
             let payload_ty = self.lty(&src.variants[err_variant].fields[0])?;
             let payload = self.g.builder.build_load(payload_ty, src_field, "payload");
+            // A-12 slice 6: a differing failure payload is converted by the
+            // static `From` method `?` resolved before it is stored into the
+            // target's failure variant. A `datac` parameter is a borrow, so a
+            // by-ref conversion is handed the payload's address; a `Copy`
+            // scalar is handed the loaded value.
+            let stored = match convert {
+                Some((key, by_ref)) => {
+                    let info = self
+                        .g
+                        .funcs
+                        .get(key)
+                        .cloned()
+                        .ok_or_else(|| no_value(&format!("the conversion '{key}'")))?;
+                    let arg = if *by_ref { src_field.into() } else { payload };
+                    self.g.builder.build_call(info.func, info.ty, &[arg], "from")
+                }
+                None => payload,
+            };
             let dst_payload_ty = dst.variants[target_err_variant].payload_ty;
             let dst_union = self
                 .g
@@ -5313,7 +5339,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 .g
                 .builder
                 .build_struct_gep(dst_payload_ty, dst_union, 0, "payload");
-            self.g.builder.build_store(payload, dst_field);
+            self.g.builder.build_store(stored, dst_field);
         }
         let drops = self.drops_at_try(span);
         self.emit_drops(&drops)?;

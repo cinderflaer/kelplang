@@ -4577,6 +4577,7 @@ impl<'a> Gen<'a> {
                 err_variant,
                 target_err_variant,
                 err_has_payload,
+                convert,
             } => {
                 let src_def = self
                     .enum_def(source)
@@ -4626,10 +4627,21 @@ impl<'a> Gen<'a> {
                         field_name(&src_def.variants[*err_variant].fields[0].name);
                     let dst_field =
                         field_name(&dst_def.variants[*target_err_variant].fields[0].name);
+                    // A-12 slice 6: a differing failure payload is converted
+                    // by the static `From` method `?` resolved, otherwise it
+                    // is moved across unchanged.
+                    let moved = format!("{}.kelp_v.{}.{}", tmp, err_member, src_field);
+                    let value = match convert {
+                        Some((key, by_ref)) if *by_ref => {
+                            format!("{}(&{})", c_name(key), moved)
+                        }
+                        Some((key, _)) => format!("{}({})", c_name(key), moved),
+                        None => moved,
+                    };
                     writeln!(
                         out,
-                        "    {}.kelp_v.{}.{} = {}.kelp_v.{}.{};",
-                        ret, dst_member, dst_field, tmp, err_member, src_field
+                        "    {}.kelp_v.{}.{} = {};",
+                        ret, dst_member, dst_field, value
                     )
                     .unwrap();
                 }

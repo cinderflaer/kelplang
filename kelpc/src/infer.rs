@@ -72,6 +72,13 @@ enum GenericKind {
 struct TraitInfo {
     /// Qualified name, exactly the key a `datac` of the same name would have.
     name: String,
+    /// `trait From<T>` (A-12 slice 6): the trait's own type parameters, in
+    /// order. Empty for an ordinary trait.
+    type_params: Vec<String>,
+    /// The bound traits on each parameter of `type_params`, as
+    /// `(written, canonical)` and in the same order, so an impl's argument can
+    /// be checked against them. Empty list per parameter for no bound.
+    type_param_bounds: Vec<Vec<(String, String)>>,
     /// The declaring module's symbol prefix and alias table, so a signature's
     /// types resolve where the trait was written rather than where it is
     /// implemented.
@@ -100,13 +107,44 @@ struct AssocTypeInfo {
     bounds: Vec<(String, String)>,
 }
 
+/// The concrete `Ty` of each trait argument, from the canonical names
+/// `resolve.rs` computed (A-12 slice 6). A canonical name is a `Ty::Struct` key
+/// unless it is a builtin, so no second scope is needed.
+fn trait_arg_tys(names: &[String]) -> Vec<Ty> {
+    names
+        .iter()
+        .map(|n| Ty::from_name(n).unwrap_or_else(|| Ty::Struct(n.clone())))
+        .collect()
+}
+
+/// The `sigs` key one impl method is stored under (A-12 slice 6): a receiver
+/// method is `Type#name`, and a static member carries its trait instance
+/// (`Type#name@Trait<Args>`), which is what lets one type implement
+/// `From<A>` and `From<B>` at once.
+fn impl_method_key(imp: &TraitImplInfo, m: &ast::FunctionDecl) -> String {
+    if m.receiver.is_none() {
+        format!("{}#{}@{}", imp.type_name, m.name, imp.trait_instance)
+    } else {
+        format!("{}#{}", imp.type_name, m.name)
+    }
+}
+
 /// One `impl Name for Type { ... }` block (A-12 slice 2), with both names
 /// qualified in the impl's own module. The methods themselves are ordinary
 /// receiver methods on the type, so this holds only what the pairing checks
 /// need.
 #[derive(Clone)]
 struct TraitImplInfo {
+    /// The canonical trait name (`pkg.From`), i.e. the trait *declaration*'s
+    /// key, not the instance's.
     trait_name: String,
+    /// The canonical trait-instance key (A-12 slice 6): `pkg.From<pkg.IoErr>`
+    /// for a generic trait, the trait name alone for an ordinary one.
+    trait_instance: String,
+    /// The canonical name of each trait argument (`pkg.IoErr`, `i32`), in
+    /// order, so the concrete `Ty` the trait's parameters are substituted with
+    /// is built with no second scope.
+    trait_arg_names: Vec<String>,
     type_name: String,
     methods: Vec<String>,
     /// `type Item = i32` (A-12 slice 5), in source order.
@@ -185,8 +223,13 @@ struct TypeEnv {
     /// Trait key -> the qualified types that implement it. This is what a
     /// bound at a call site is checked against, and it is one set for the
     /// whole program because an impl may live in the trait's module while the
-    /// call site is elsewhere.
+    /// call site is elsewhere. The key is the trait *instance* (A-12 slice 6),
+    /// so `From<i32>` and `From<String>` are two entries.
     impls: std::rc::Rc<HashMap<String, std::collections::HashSet<String>>>,
+    /// Every `impl` record, in source order (A-12 slice 6): a static method call
+    /// searches this for the impl whose trait declares the method and whose
+    /// substituted signatures match the arguments.
+    trait_impls: std::rc::Rc<Vec<TraitImplInfo>>,
     /// The `(trait, type)` pairs a `&dyn` coercion used (A-12 slice 4),
     /// collected while bodies are checked. Each one gets a vtable in
     /// `tir::Program`, and a pair no coercion names gets none.
@@ -2219,6 +2262,16 @@ fn collect_traits(
                 ));
             }
         }
+        if !t.type_params.is_empty() && !t.assoc_types.is_empty() {
+            return Err(Diagnostic::new(
+                format!(
+                    "trait '{}' declares both type parameters and an associated type, which is not in this slice: a generic trait has no single associated-type binding to name",
+                    t.name
+                ),
+                t.span,
+                t.module.clone(),
+            ));
+        }
         if out.contains_key(&t.name) {
             return Err(Diagnostic::new(
                 format!("trait '{}' is defined more than once", t.name),
@@ -2230,6 +2283,8 @@ fn collect_traits(
             t.name.clone(),
             TraitInfo {
                 name: t.name.clone(),
+                type_params: t.type_params.clone(),
+                type_param_bounds: Vec::new(),
                 prefix: project.prefix_of(&t.module).to_string(),
                 aliases: project.alias_prefixes_of(&t.module),
                 methods: t.methods.clone(),
@@ -2286,6 +2341,21 @@ fn collect_traits(
             });
         }
         for s in &t.supertraits {
+            // A supertrait of a generic trait may not be written with
+            // arguments in this slice (`trait A<T>: B<T>`): the substitution a
+            // parameterized supertrait needs is a follow-up, and a plain
+            // supertrait works for both a generic and an ordinary trait.
+            if !s.args.is_empty() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "a supertrait with arguments ('{}') is not in this slice: write the supertrait without arguments ('{}'), and bound the parameter where it is used",
+                        s.display(),
+                        s.name
+                    ),
+                    s.span,
+                    t.module.clone(),
+                ));
+            }
             let key = match qualify_written_name(
                 &s.name,
                 project.prefix_of(&t.module),
@@ -2317,9 +2387,58 @@ fn collect_traits(
                 canonical.push(key);
             }
         }
+        // A bound on the trait's own type parameter (`trait Store<K, V: Named>`)
+        // is resolved in the trait's module exactly as a supertrait is, and
+        // checked against the impl's argument below.
+        let mut param_bounds: Vec<Vec<(String, String)>> = Vec::new();
+        for bounds in &t.type_param_bounds {
+            let mut resolved = Vec::new();
+            for b in bounds {
+                if !b.args.is_empty() {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "a bound with arguments ('{}') is not in this slice: a generic trait's parameter is bounded by a plain trait name",
+                            b.display()
+                        ),
+                        b.span,
+                        t.module.clone(),
+                    ));
+                }
+                let key = match qualify_written_name(
+                    &b.name,
+                    project.prefix_of(&t.module),
+                    &project.alias_prefixes_of(&t.module),
+                ) {
+                    Some(key) => key,
+                    None => {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "'{}' names no module alias, so the bound on '{}' of '{}' cannot be resolved",
+                                b.name, t.name, t.name
+                            ),
+                            b.span,
+                            t.module.clone(),
+                        ))
+                    }
+                };
+                if !out.contains_key(&key) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'{}' is not a trait, so it cannot bound a parameter of '{}': a bound names a declared trait ('trait {} {{ ... }}')",
+                            b.name, t.name, b.name
+                        ),
+                        b.span,
+                        t.module.clone(),
+                    ));
+                }
+                resolved.push((b.name.clone(), key));
+            }
+            param_bounds.push(resolved);
+        }
         if let Some(info) = out.get_mut(&t.name) {
             info.supertraits = canonical;
             info.assoc_types = assoc;
+            info.type_param_bounds = param_bounds;
         }
     }
     if let Some(cycle) = supertrait_cycle(&out) {
@@ -2500,6 +2619,22 @@ fn check_dyn_object_safety(
     span: Span,
     traits: &HashMap<String, TraitInfo>,
 ) -> Result<()> {
+    // A-12 slice 6: a generic trait has no object-safe form, because the
+    // vtable has no slot for a type parameter. Refused by name here, where the
+    // `dyn` type is written.
+    if let Some(info) = traits.get(name) {
+        if !info.type_params.is_empty() {
+            return Err(TypeError {
+                message: format!(
+                    "'&dyn {}' is not allowed: the trait takes type parameters ('{}'), and a trait object has no vtable slot for one; use a bounded type parameter ('<T: {}<...>>') instead",
+                    name,
+                    info.type_params.join(", "),
+                    name
+                ),
+                span,
+            });
+        }
+    }
     // A-12 slice 5: a trait that declares (or inherits) an associated type has
     // no object-safe form, because the erased value carries no single binding
     // to name. Refused by name here, where the `dyn` type is written.
@@ -2516,6 +2651,17 @@ fn check_dyn_object_safety(
     flattened_trait_methods(traits, name, &mut flat);
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for m in &flat {
+        // A-12 slice 6: a static method has no receiver for the erased pointer
+        // to stand for, so it has no vtable slot.
+        if m.receiver.is_none() {
+            return Err(TypeError {
+                message: format!(
+                    "'&dyn {}' is not allowed: method '{}' has no receiver ('Self'), so there is no value for the vtable to dispatch on; call it on a concrete type instead",
+                    name, m.name
+                ),
+                span,
+            });
+        }
         if let Some(ret) = &m.return_type {
             if type_mentions_self(ret) {
                 return Err(TypeError {
@@ -2562,6 +2708,8 @@ fn collect_trait_impls(program: &ast::Program) -> Vec<TraitImplInfo> {
         .iter()
         .map(|i| TraitImplInfo {
             trait_name: i.trait_name.clone(),
+            trait_instance: i.trait_instance.clone(),
+            trait_arg_names: i.trait_arg_names.clone(),
             type_name: i.type_name.clone(),
             methods: i.methods.clone(),
             assoc_types: i
@@ -2628,6 +2776,7 @@ fn resolve_trait_method_sig(
     trait_info: &TraitInfo,
     m: &ast::FunctionDecl,
     self_ty: &Ty,
+    trait_args: &[Ty],
     structs: &HashMap<String, StructDef>,
     enums: &HashMap<String, EnumDef>,
     env: &TypeEnv,
@@ -2636,6 +2785,12 @@ fn resolve_trait_method_sig(
 ) -> Result<FnSig> {
     let mut params_map: HashMap<String, Ty> = HashMap::new();
     params_map.insert("Self".to_string(), self_ty.clone());
+    // A-12 slice 6: the trait's own parameters, bound to the impl's concrete
+    // arguments, so `fun from(value: T).R: Self` resolves for `From<IoErr>` as
+    // `fn(IoErr) -> AppErr`.
+    for (param, arg) in trait_info.type_params.iter().zip(trait_args.iter()) {
+        params_map.insert(param.clone(), arg.clone());
+    }
     // A-12 slice 5: the associated types the implementing type binds, so
     // `Self::Item` in the trait's own signature resolves to the concrete type.
     if let Some(name) = struct_name_of(self_ty)
@@ -2665,12 +2820,11 @@ fn resolve_trait_method_sig(
         const_fns: Some(const_fns),
         handles: &env.handles,
     };
-    let receiver = m
-        .receiver
-        .as_ref()
-        .expect("a trait method always has a Self receiver");
+    let receiver = m.receiver.as_ref();
     let mut params = Vec::new();
-    params.push(("self".to_string(), scope.resolve_receiver(receiver)?));
+    if let Some(receiver) = receiver {
+        params.push(("self".to_string(), scope.resolve_receiver(receiver)?));
+    }
     for p in &m.params {
         params.push((p.name.clone(), scope.resolve_param(p)?));
     }
@@ -2709,7 +2863,7 @@ fn check_trait_impl_names(
     // been seen rather than in source order.
     let declared: std::collections::HashSet<(&str, &str)> = impls
         .iter()
-        .map(|i| (i.trait_name.as_str(), i.type_name.as_str()))
+        .map(|i| (i.trait_instance.as_str(), i.type_name.as_str()))
         .collect();
     let mut seen: HashMap<(&str, &str), &TraitImplInfo> = HashMap::new();
     for imp in impls {
@@ -2723,6 +2877,46 @@ fn check_trait_impl_names(
                 imp.module.clone(),
             ));
         };
+        // A-12 slice 6: the impl names the trait instance, so it has to supply
+        // exactly the arguments the trait declares, and each one has to satisfy
+        // the bound the trait writes on that parameter.
+        if imp.trait_arg_names.len() != info.type_params.len() {
+            return Err(Diagnostic::new(
+                format!(
+                    "trait '{}' takes {} type argument(s), and 'impl {} for {}' writes {}: write 'impl {}<{}> for {}' to name the instance",
+                    info.name,
+                    info.type_params.len(),
+                    imp.trait_name,
+                    imp.type_name,
+                    imp.trait_arg_names.len(),
+                    imp.trait_name,
+                    info.type_params.join(", "),
+                    imp.type_name
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        }
+        for (i, bounds) in info.type_param_bounds.iter().enumerate() {
+            let Some(arg) = imp.trait_arg_names.get(i) else {
+                continue;
+            };
+            for (written, key) in bounds {
+                let name = Ty::from_name(arg)
+                    .and_then(|t| builtin_type_name(&t).map(|s| s.to_string()))
+                    .unwrap_or_else(|| arg.clone());
+                if !implements_trait(env, key, &name) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'{}' does not satisfy the bound '{written}' on parameter '{}' of '{}': write 'impl {written} for {arg} {{ ... }}' in the trait's module or in the type's",
+                            arg, info.type_params[i], info.name
+                        ),
+                        imp.impl_span,
+                        imp.module.clone(),
+                    ));
+                }
+            }
+        }
         // A builtin `for` type (A-12 slice 3) has no module of its own, so the
         // impl must sit in the trait's module (the orphan rule); a declared
         // `datac`/`enum` may be implemented in either owner's module.
@@ -2803,7 +2997,7 @@ fn check_trait_impl_names(
                 ));
             }
         }
-        if let Some(first) = seen.insert((&imp.trait_name, &imp.type_name), imp) {
+        if let Some(first) = seen.insert((&imp.trait_instance, &imp.type_name), imp) {
             return Err(Diagnostic::new(
                 format!(
                     "trait '{}' already has an impl for '{}' (written in module '{}'): a trait is implemented for a type at most once",
@@ -2908,7 +3102,7 @@ fn collect_assoc_bindings(
                 ));
             }
         }
-        out.insert((imp.trait_name.clone(), imp.type_name.clone()), bound);
+        out.insert((imp.trait_instance.clone(), imp.type_name.clone()), bound);
     }
     Ok(out)
 }
@@ -2949,8 +3143,9 @@ fn check_trait_impl_signatures(
         let info = &traits[&imp.trait_name];
         let self_ty = builtin_for_type_name(&imp.type_name)
             .unwrap_or_else(|| Ty::Struct(imp.type_name.clone()));
+        let trait_args = trait_arg_tys(&imp.trait_arg_names);
         for m in &info.methods {
-            let key = format!("{}#{}", imp.type_name, m.name);
+            let key = impl_method_key(imp, m);
             let Some(impl_sig) = sigs.get(&key) else {
                 return Err(Diagnostic::new(
                     format!(
@@ -2969,6 +3164,7 @@ fn check_trait_impl_signatures(
                 info,
                 m,
                 &self_ty,
+                &trait_args,
                 structs,
                 enums,
                 env,
@@ -3373,7 +3569,15 @@ fn fn_field_ty(ty: &Ty, name: &str, ctx: &Ctx) -> Option<Ty> {
 fn sig_key(f: &ast::FunctionDecl) -> String {
     match &f.receiver {
         Some(r) => format!("{}#{}", r.type_name, f.name),
-        None => f.name.clone(),
+        // A static member of a trait `impl` (A-12 slice 6) carries its trait
+        // instance, so `From<IoErr>`'s `from` and `From<String>`'s `from` for
+        // the same type are two functions rather than a collision.
+        None => match &f.trait_impl {
+            Some(site) if !site.trait_instance.is_empty() => {
+                format!("{}#{}@{}", site.self_type, f.name, site.trait_instance)
+            }
+            _ => f.name.clone(),
+        },
     }
 }
 
@@ -7554,7 +7758,7 @@ fn check_program_pass(
     let mut impls: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
     for imp in &trait_impls {
         impls
-            .entry(imp.trait_name.clone())
+            .entry(imp.trait_instance.clone())
             .or_default()
             .insert(imp.type_name.clone());
     }
@@ -7586,6 +7790,7 @@ fn check_program_pass(
         ),
         traits: traits.clone(),
         impls: std::rc::Rc::new(impls),
+        trait_impls: std::rc::Rc::new(trait_impls.clone()),
         dyn_pairs: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
         assoc: std::rc::Rc::new(HashMap::new()),
     };
@@ -11783,8 +11988,21 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // `Shape.Circle(r = 1.0)` — construction of an `enum` variant
             // (A-1). Checked before method resolution because it is the same
             // `Type.member(...)` shape as a method call, and the receiver is
-            // a *type*, not a value.
+            // a *type*, not a value. A member that is not a variant falls
+            // through to a static trait method (A-12 slice 6).
             if let Some(ename) = enum_path(receiver, ctx) {
+                let is_variant = method == "from_int"
+                    || ctx
+                        .enum_def(&ename)
+                        .map(|e| e.variant(method).is_some())
+                        .unwrap_or(false);
+                if !is_variant {
+                    if let Some(e) =
+                        check_static_method_call(&ename, method, args, *span, ctx, expected)?
+                    {
+                        return Ok(e);
+                    }
+                }
                 return check_enum_construction(&ename, method, args, *span, ctx);
             }
             if !type_args.is_empty() && !ptr_receiver(receiver, ctx) {
@@ -12710,20 +12928,34 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
             span,
         });
     }
+    // A-12 slice 6: when the two failure payload types differ, `?` converts
+    // through a declared `impl From<Source> for Target`, calling
+    // `Target.from(source)`. When they agree, the payload moves across with no
+    // call, exactly as before.
+    let mut convert: Option<(String, bool)> = None;
     if shape.err_has_payload {
-        let from = &edef.variants[shape.err].fields[0].ty;
-        let to = &rdef.variants[rshape.err].fields[0].ty;
+        let from = edef.variants[shape.err].fields[0].ty.clone();
+        let to = rdef.variants[rshape.err].fields[0].ty.clone();
         if from != to {
-            return Err(TypeError {
-                message: format!(
-                    "'?' cannot convert a failure: '{}' carries '{}' and the enclosing function returns '{}', whose failure carries '{}' — v1 has no error conversion, so the two have to be the same type",
-                    inner.ty.display(),
-                    from.display(),
-                    ret.display(),
-                    to.display()
-                ),
-                span,
-            });
+            match find_from_conversion(ctx, &from, &to)? {
+                Some(key) => convert = Some(key),
+                None => {
+                    return Err(TypeError {
+                        message: format!(
+                            "'?' cannot convert a failure: '{}' carries '{}' and the enclosing function returns '{}', whose failure carries '{}' — write 'impl From<{}> for {} {{ fun from(value: {}).R: {} {{ ... }} }}' so the operator has a conversion to call",
+                            inner.ty.display(),
+                            from.display(),
+                            ret.display(),
+                            to.display(),
+                            from.display(),
+                            to.display(),
+                            from.display(),
+                            to.display()
+                        ),
+                        span,
+                    })
+                }
+            }
         }
     }
     let ok_ty = edef.variants[shape.ok].fields[0].ty.clone();
@@ -12736,10 +12968,69 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
             err_variant: shape.err,
             target_err_variant: rshape.err,
             err_has_payload: shape.err_has_payload,
+            convert,
         },
         ty: ok_ty,
         span,
     })
+}
+
+/// The static `From` method key that converts one failure payload into another
+/// (A-12 slice 6), or `None` when no `impl From<from> for to` exists. The
+/// implementing type is the *target* payload type itself, because that is what
+/// the `for` clause names (`impl From<IoErr> for AppErr`).
+fn find_from_conversion(ctx: &Ctx, from_ty: &Ty, to_ty: &Ty) -> Result<Option<(String, bool)>> {
+    let Some(to_name) = struct_name_of(to_ty)
+        .map(|s| s.to_string())
+        .or_else(|| builtin_type_name(to_ty).map(|s| s.to_string()))
+    else {
+        return Ok(None);
+    };
+    for imp in ctx.env.trait_impls.iter() {
+        if imp.type_name != to_name {
+            continue;
+        }
+        let Some(info) = ctx.env.traits.get(&imp.trait_name) else {
+            continue;
+        };
+        // The conversion is the declared `From` trait's `from`, whatever
+        // module ships it; the operator names `From` in its refusal for the
+        // same reason.
+        if !(info.name == "From" || info.name.ends_with(".From")) {
+            continue;
+        }
+        if info.type_params.len() != 1 {
+            continue;
+        }
+        let trait_args = trait_arg_tys(&imp.trait_arg_names);
+        for m in &info.methods {
+            if m.receiver.is_some() || m.name != "from" || m.params.len() != 1 {
+                continue;
+            }
+            let sig = resolve_trait_method_sig(
+                info,
+                m,
+                to_ty,
+                &trait_args,
+                &ctx.structs,
+                &ctx.enums,
+                &ctx.env,
+                &ctx.consts,
+                &ctx.const_fns,
+            )?;
+            if sig.params.len() != 1 || sig.ret != *to_ty {
+                continue;
+            }
+            // A `datac` parameter is a shared borrow of the payload; a `Copy`
+            // scalar is taken by value. The caller passes whichever the
+            // method declares.
+            let by_ref = matches!(&sig.params[0].1, Ty::Ref { inner, .. } if **inner == *from_ty);
+            if sig.params[0].1 == *from_ty || by_ref {
+                return Ok(Some((impl_method_key(imp, m), by_ref)));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// `Shape.Circle(r = 1.0)` — one variant's worth of payload, checked against
@@ -15344,7 +15635,7 @@ fn check_trait_bounds(
                     })
                 }
             };
-            if !ctx.env.traits.contains_key(&key) {
+            let Some(info) = ctx.env.traits.get(&key) else {
                 return Err(TypeError {
                     message: format!(
                         "'{}' is not a trait, so it cannot bound '{}' of '{}': a bound names a declared trait ('trait {} {{ ... }}')",
@@ -15355,7 +15646,7 @@ fn check_trait_bounds(
                     ),
                     span,
                 });
-            }
+            };
             // A bound written through another module's alias needs that module
             // to export the trait, exactly as naming any other item there does.
             if let Some((alias, item)) = b.name.split_once('.') {
@@ -15363,11 +15654,93 @@ fn check_trait_bounds(
                     return Err(private_item_error(alias, item, span));
                 }
             }
+            // A-12 slice 6: the bound names a trait *instance*, so its
+            // arguments are resolved here, where the callee's parameters are
+            // already bound to the call's types.
+            let mut arg_names = Vec::new();
+            for a in &b.args {
+                let simple = a.tuple.is_none()
+                    && a.array_elem.is_none()
+                    && a.fn_params.is_none()
+                    && a.dyn_trait.is_none()
+                    && a.assoc.is_none()
+                    && a.args.is_empty()
+                    && !a.amp
+                    && !a.name.is_empty();
+                if !simple {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{}' bounds '{}' of '{}' with the argument '{}', which is not a named type or a builtin: a container, tuple, array, borrow, function type or projection as a bound argument is not in this slice",
+                            b.display(),
+                            param,
+                            display_callee(&tmpl.key),
+                            a.display()
+                        ),
+                        span,
+                    });
+                }
+                let resolved = if let Some(pi) = tmpl.params.iter().position(|p| *p == a.name) {
+                    type_args.get(pi).and_then(|at| {
+                        struct_name_of(at)
+                            .map(|s| s.to_string())
+                            .or_else(|| builtin_type_name(at).map(|s| s.to_string()))
+                    })
+                } else if crate::types::Ty::from_name(&a.name).is_some() {
+                    Some(a.name.clone())
+                } else {
+                    qualify_written_name(&a.name, &tmpl.prefix, &tmpl.aliases)
+                };
+                let Some(resolved) = resolved else {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{}' bounds '{}' of '{}' with the argument '{}', which names no type",
+                            b.display(),
+                            param,
+                            display_callee(&tmpl.key),
+                            a.display()
+                        ),
+                        span,
+                    });
+                };
+                arg_names.push(resolved);
+            }
+            if arg_names.len() != info.type_params.len() {
+                return Err(TypeError {
+                    message: format!(
+                        "'{}' bounds '{}' of '{}', and trait '{}' takes {} type argument(s), found {}",
+                        b.display(),
+                        param,
+                        display_callee(&tmpl.key),
+                        b.name,
+                        info.type_params.len(),
+                        arg_names.len()
+                    ),
+                    span,
+                });
+            }
+            for (bi, pbounds) in info.type_param_bounds.iter().enumerate() {
+                let Some(aname) = arg_names.get(bi) else { continue };
+                for (written, pkey) in pbounds {
+                    if !implements_trait(&ctx.env, pkey, aname) {
+                        return Err(TypeError {
+                            message: format!(
+                                "the call to '{}' instantiates '{}', and '{}' does not satisfy the bound '{written}' on its parameter '{}': write 'impl {written} for {aname} {{ ... }}'",
+                                display_callee(&tmpl.key),
+                                b.display(),
+                                aname,
+                                info.type_params[bi]
+                            ),
+                            span,
+                        });
+                    }
+                }
+            }
+            let instance = crate::types::trait_instance_key(&key, &arg_names);
             let name = struct_name_of(arg)
                 .map(|s| s.to_string())
                 .or_else(|| builtin_type_name(arg).map(|s| s.to_string()));
             let implements = name
-                .map(|n| implements_trait(&ctx.env, &key, &n))
+                .map(|n| implements_trait(&ctx.env, &instance, &n))
                 .unwrap_or(false);
             if !implements {
                 return Err(TypeError {
@@ -15375,8 +15748,8 @@ fn check_trait_bounds(
                         "the call to '{}' needs '{}' to implement the trait '{}', and it does not: write 'impl {} for {} {{ ... }}' in the trait's module or in the type's",
                         display_callee(&tmpl.key),
                         arg.display(),
-                        b.name,
-                        b.name,
+                        b.display(),
+                        b.display(),
                         arg.display()
                     ),
                     span,
@@ -16038,6 +16411,207 @@ fn check_handle_associated(
 /// `List.empty()` gets it from the binding's written type
 /// (`val xs: List<String> = List.empty()`), and `List.of(x)` from `x` or
 /// from `expected` when both are available.
+/// Whether a static method's parameter accepts an argument of this type: an
+/// exact match, or a shared borrow of the argument's type (a `datac` parameter
+/// is borrowed, so its resolved type is a `Ty::Ref` over the written type).
+fn static_param_accepts(param: &Ty, arg: &Ty) -> bool {
+    if param == arg {
+        return true;
+    }
+    matches!(param, Ty::Ref { inner, .. } if **inner == *arg)
+}
+
+/// Resolves a static method written on a **trait's** own name (A-12 slice 6):
+/// `From.from(x)`. The implementing type has to be inferable from the expected
+/// type, because the trait name alone does not name one; the call then resolves
+/// against that type's impls exactly as `AppErr.from(x)` does. `None` when the
+/// trait declares no such static method, so the ordinary method path can
+/// report it.
+fn check_trait_static_call(
+    trait_key: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<Option<tir::Expr>> {
+    let Some(info) = ctx.env.traits.get(trait_key) else {
+        return Ok(None);
+    };
+    if !info
+        .methods
+        .iter()
+        .any(|m| m.receiver.is_none() && m.name == method)
+    {
+        return Ok(None);
+    }
+    let Some(exp) = expected else {
+        return Err(TypeError {
+            message: format!(
+                "'{trait_key}.{method}' is a static method, so the implementing type has to be known here: annotate the binding with its type, or call it on the type itself ('<Type>.{method}(...)'), which names it outright"
+            ),
+            span,
+        });
+    };
+    let Some(owner) = struct_name_of(exp)
+        .map(|s| s.to_string())
+        .or_else(|| builtin_type_name(exp).map(|s| s.to_string()))
+    else {
+        return Err(TypeError {
+            message: format!(
+                "'{trait_key}.{method}' needs a concrete implementing type, and the expected type '{}' is not one: call it on the type itself ('<Type>.{method}(...)'), which names it outright",
+                exp.display()
+            ),
+            span,
+        });
+    };
+    check_static_method_call(&owner, method, args, span, ctx, expected)
+}
+
+/// The canonical type name a `Type.member(...)` receiver written as a bare
+/// identifier stands for (A-12 slice 6): a declared `datac`/`enum`, a builtin
+/// that carries methods, or the concrete type a bounded type parameter is
+/// instantiated with (`X.from(x)` in a generic body). `None` when the name is a
+/// local, a module alias, or no type at all.
+fn static_owner_name(name: &str, ctx: &Ctx) -> Option<String> {
+    if let Some(ty) = ctx.type_args.get(name) {
+        return struct_name_of(ty)
+            .map(|s| s.to_string())
+            .or_else(|| builtin_type_name(ty).map(|s| s.to_string()));
+    }
+    if ctx.structs.contains_key(name) || ctx.is_enum(name) {
+        return Some(name.to_string());
+    }
+    if crate::types::Ty::from_name(name).is_some() {
+        return Some(name.to_string());
+    }
+    let qualified = ctx.qualify_own(name);
+    if ctx.structs.contains_key(&qualified) || ctx.is_enum(&qualified) {
+        return Some(qualified);
+    }
+    None
+}
+
+/// Resolves a **static** method call written on a type name (A-12 slice 6):
+/// `AppErr.from(x)`, or `X.from(x)` where `X` is a bounded type parameter
+/// instantiated with a concrete type. Returns `None` when the type has no
+/// static member of that name, so the caller can fall back to the ordinary
+/// method path and its diagnostic.
+fn check_static_method_call(
+    owner: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<Option<tir::Expr>> {
+    let _ = expected;
+    let owner_ty = crate::types::Ty::from_name(owner)
+        .unwrap_or_else(|| Ty::Struct(owner.to_string()));
+    // Every `impl` of any trait for this type whose trait declares a static
+    // method of this name is a candidate; the argument types then pick one.
+    let mut candidates: Vec<(String, FnSig)> = Vec::new();
+    for imp in ctx.env.trait_impls.iter() {
+        if imp.type_name != owner {
+            continue;
+        }
+        let Some(info) = ctx.env.traits.get(&imp.trait_name) else {
+            continue;
+        };
+        let trait_args = trait_arg_tys(&imp.trait_arg_names);
+        for m in &info.methods {
+            if m.receiver.is_some() || m.name != method {
+                continue;
+            }
+            let sig = resolve_trait_method_sig(
+                info,
+                m,
+                &owner_ty,
+                &trait_args,
+                &ctx.structs,
+                &ctx.enums,
+                &ctx.env,
+                &ctx.consts,
+                &ctx.const_fns,
+            )?;
+            candidates.push((impl_method_key(imp, m), sig));
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    candidates.retain(|(_, s)| s.params.len() == args.len());
+    if candidates.is_empty() {
+        return Err(TypeError {
+            message: format!(
+                "'{owner}.{method}' is a static method, and no overload takes {} argument(s)",
+                args.len()
+            ),
+            span,
+        });
+    }
+    let (key, sig) = if candidates.len() == 1 {
+        candidates.remove(0)
+    } else {
+        // Several instantiations of one trait for one type (`From<A>` and
+        // `From<B>`): the argument types pick the one meant. A type-only
+        // probe, exactly as overload resolution does.
+        let mut arg_tys = Vec::with_capacity(args.len());
+        for a in args {
+            arg_tys.push(check_expr(&a.value, ctx, None)?.ty);
+        }
+        let mut hits: Vec<(String, FnSig)> = candidates
+            .into_iter()
+            .filter(|(_, s)| {
+                s.params
+                    .iter()
+                    .zip(arg_tys.iter())
+                    .all(|((_, p), a)| static_param_accepts(p, a))
+            })
+            .collect();
+        match hits.len() {
+            1 => hits.remove(0),
+            0 => {
+                return Err(TypeError {
+                    message: format!(
+                        "no static method '{owner}.{method}' matches the argument type(s) {}",
+                        arg_tys
+                            .iter()
+                            .map(|t| format!("'{}'", t.display()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    span,
+                })
+            }
+            _ => {
+                return Err(TypeError {
+                    message: format!(
+                        "call to static method '{owner}.{method}' is ambiguous: several trait impls match these argument types"
+                    ),
+                    span,
+                })
+            }
+        }
+    };
+    ctx.check_capability(&key, span)?;
+    let checked = match_args(
+        &format!("static method '{owner}.{method}'"),
+        &sig.params,
+        args,
+        span,
+        ctx,
+    )?;
+    Ok(Some(tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: key,
+            args: checked,
+        },
+        ty: sig.ret,
+        span,
+    }))
+}
+
 fn check_method_call(
     receiver: &ast::Expr,
     method: &str,
@@ -16078,6 +16652,27 @@ fn check_method_call(
             // `Ptr.from_mut(x)` and `Ptr.alloc<T>(count)` (MK9-S2 stage 1).
             if name == "Ptr" {
                 return check_ptr_associated(method, type_args, args, span, ctx, expected);
+            }
+            // A-12 slice 6: a static member written on the trait's own name
+            // (`From.from(x)`), when the expected type names the implementing
+            // type. Ambiguity is refused by name rather than guessed.
+            let trait_key = ctx.qualify_own(name);
+            if ctx.env.traits.contains_key(&trait_key) {
+                if let Some(e) =
+                    check_trait_static_call(&trait_key, method, args, span, ctx, expected)?
+                {
+                    return Ok(e);
+                }
+            }
+            // A-12 slice 6: a static member of a trait impl written on the
+            // type (`AppErr.from(x)`), or on a bounded type parameter
+            // instantiated with a concrete type (`X.from(x)`).
+            if let Some(owner) = static_owner_name(name, ctx) {
+                if let Some(e) =
+                    check_static_method_call(&owner, method, args, span, ctx, expected)?
+                {
+                    return Ok(e);
+                }
             }
             let key = format!("{name}#{method}");
             if let Some(assoc) = BUILTINS.get(&key).filter(|b| b.associated) {
@@ -16487,6 +17082,7 @@ fn check_dyn_method_call(
         info,
         decl,
         &Ty::Unit,
+        &[],
         &ctx.structs,
         &ctx.enums,
         &ctx.env,

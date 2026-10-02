@@ -40,6 +40,13 @@ pub struct TraitDecl {
     pub name: String,
     /// `pub trait ...` (A-13). See `ConstDecl::is_pub`.
     pub is_pub: bool,
+    /// `trait From<T>` (A-12 slice 6): the trait's own type parameters, in
+    /// order. Empty for an ordinary trait. A parameter is in scope in every
+    /// method signature and default body of the trait.
+    pub type_params: Vec<String>,
+    /// The bounds on each parameter of `type_params`, in the same order and
+    /// aligned with it, exactly as `FunctionDecl::type_param_bounds` is.
+    pub type_param_bounds: Vec<Vec<TypeExpr>>,
     /// `trait B: A + C` (A-12 slice 3): the supertraits, in source order. Each
     /// is stored as the bound parser wrote it (`A`, `alias.A`); `infer.rs`
     /// qualifies and resolves them, exactly as it does a bound on a function's
@@ -73,6 +80,16 @@ pub struct TraitImplDecl {
     /// `resolve.rs` rewrites it to its canonical, module-qualified key before
     /// `infer.rs` sees it.
     pub trait_name: String,
+    /// `impl From<IoErr> for AppErr` (A-12 slice 6): the trait's arguments, as
+    /// written. Empty for an ordinary trait. `resolve.rs` canonicalizes each
+    /// one and derives the trait-instance key the impl and the methods carry.
+    pub trait_args: Vec<TypeExpr>,
+    /// The canonical name of each trait argument (`pkg.IoErr`, `i32`), so
+    /// `infer.rs` can build the concrete type without a second scope.
+    pub trait_arg_names: Vec<String>,
+    /// The canonical trait-instance key (`pkg.From<pkg.IoErr>`), or the plain
+    /// canonical trait name for an ordinary trait. Set by `resolve.rs`.
+    pub trait_instance: String,
     /// The implementing type, as written. Same qualification rule.
     pub type_name: String,
     /// The trait name's own span, and the `for` type's.
@@ -108,6 +125,16 @@ pub struct AssocTypeBinding {
 pub struct TraitImplSite {
     /// The trait, as written.
     pub trait_name: String,
+    /// `impl From<IoErr> for AppErr`: the trait's arguments as written, so
+    /// `resolve.rs` can tell one instantiation's method from another's when
+    /// both are for the same type (A-12 slice 6). Empty for an ordinary trait.
+    pub trait_args: Vec<TypeExpr>,
+    /// `impl From<IoErr> for AppErr` (A-12 slice 6): the canonical
+    /// trait-instance key (`pkg.From<pkg.IoErr>`), empty for an ordinary
+    /// trait. `resolve.rs` computes it before `infer.rs` sees the method, and
+    /// it is what keeps a static impl method of one instance distinct from the
+    /// same-named method of another (`AppErr#from@pkg.From<pkg.IoErr>`).
+    pub trait_instance: String,
     /// The type `Self` stands for, as written in the `for` clause.
     pub self_type: String,
 }

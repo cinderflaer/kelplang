@@ -428,6 +428,14 @@ pub enum ExprKind {
         err_variant: usize,
         target_err_variant: usize,
         err_has_payload: bool,
+        /// A-12 slice 6: when the operand's failure payload type differs from
+        /// the enclosing function's, the static `From` method key the failure
+        /// is converted through (`AppErr#from@std.convert.From<pkg.IoErr>`),
+        /// plus whether the method's parameter is a borrow. A `datac`
+        /// parameter is borrowed, so codegen passes the payload's address; a
+        /// `Copy` scalar is passed by value. `None` when the two types agree,
+        /// which is every `?` written before this existed.
+        convert: Option<(String, bool)>,
     },
     Assign {
         target: Box<Expr>,

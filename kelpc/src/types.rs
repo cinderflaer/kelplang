@@ -908,6 +908,21 @@ pub fn eq_fn_name(ty: &Ty) -> String {
 pub const KEY_PAIR_HASH_METHOD: &str = "hash";
 pub const KEY_PAIR_EQ_METHOD: &str = "eq";
 
+/// The canonical key of one trait *instance* (A-12 slice 6): the trait's
+/// canonical name, plus its arguments when it has any (`pkg.From<pkg.IoErr>`).
+/// A trait with no type parameters keys by its name alone, exactly as it did
+/// before generic traits existed, so nothing about an ordinary trait changes.
+/// The key is also what a static impl method's function name is suffixed with,
+/// which is how `From<IoErr>`'s `from` and `From<String>`'s `from` for one type
+/// stay distinct.
+pub fn trait_instance_key(name: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}<{}>", args.join(","))
+    }
+}
+
 /// One half of a declared key pair as `sigs`/`tir` spell it: the `Type#name`
 /// key `infer.rs`'s `sig_key` gives every receiver method. The `Map`'s call
 /// target is this key mangled by `c_ident`, so it names the method's own
