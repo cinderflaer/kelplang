@@ -1,0 +1,101 @@
+// Kernel stage 15's acceptance kernel: every compiler-inserted check in a
+// freestanding build routes through one compiler-emitted entry, which detects
+// a panic raised while the handler is already running and hands its message and
+// source location to `kp_panic`. This file exercises one check per boot
+// (`selector.which()` picks), and the assembly file `double_panic.s` beside the
+// project answers a double panic with `kelp_double_panic` instead of the weak
+// wait-for-interrupt fallback the compiler emits.
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+impl "std/str"
+impl "std/option"
+impl "selector"
+
+section(".text.boot") fun kmain() {
+    val p = selector.which()
+    if p == 1 {
+        array_bounds()
+    } else if p == 2 {
+        narrow(300)
+    } else if p == 3 {
+        str_byte()
+    } else if p == 4 {
+        explicit_panic()
+    } else if p == 5 {
+        option_unwrap()
+    } else {
+        // p == 6: panic, and the handler below panics again.
+        panic("first panic")
+    }
+    uart.halt()
+}
+
+// `Array.get`'s bounds check lives in the generated accessor, which is shared
+// by every call site; the line is the caller's, kept in `kelp_panic_line`.
+fun array_bounds() {
+    val slots: [u8; 2] = [1, 2]
+    var i: usize = 2
+    uart.putc(slots.get(i = i)) // panic-line: array
+}
+
+// `x.to_u8()` on a value that does not fit is the compiler's own range check,
+// emitted inline in this function.
+fun narrow(x: i32) {
+    uart.putc(x.to_u8()) // panic-line: narrow
+}
+
+// `str.byte`'s index check is the `std/str` lowering's own, reached from here.
+fun str_byte() {
+    val s: str = "abc"
+    uart.putc(str.byte(s, 5)) // panic-line: strbyte
+}
+
+// The `panic(msg)` builtin is the program's own message, not the compiler's.
+fun explicit_panic() {
+    panic("deliberate panic") // panic-line: explicit
+}
+
+// `option.unwrap` on `None` panics from inside `std/option.kp`, so the file
+// the line names is `option.kp`, not this one.
+fun option_unwrap() {
+    val o: option.Option<u32> = option.Option.None
+    uart.putc(option.unwrap(o = o).to_u8())
+}
+
+// The three-argument handler. `file` is the source file name the diagnostic
+// ends with (`main.kp`) and `line` is the 1-based line of the statement the
+// check was inserted into. `line` has no `String` to format into here (no
+// allocator is configured), so it is printed a digit at a time.
+fun kp_panic(msg: str, file: str, line: u32) {
+    if selector.which() == 6 {
+        // A bounds failure *inside* the handler. The entry has already set the
+        // flag, so this does not recurse: it reaches `kelp_double_panic`, which
+        // the project defines in `double_panic.s`.
+        val slots: [u8; 1] = [0]
+        var i: usize = 3
+        uart.putc(slots.get(i = i))
+        return
+    }
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts(" at ")
+    uart.puts(file)
+    uart.puts(":")
+    put_u32(line)
+    uart.puts("\n")
+    uart.halt()
+}
+
+// The project's answer to a double panic, reached from `double_panic.s`, which
+// overrides the compiler's weak fallback.
+fun kp_double_panic() {
+    uart.puts("double panic\n")
+    uart.halt()
+}
+
+// Decimal, most significant digit first, through the UART.
+fun put_u32(n: u32) {
+    if n >= 10 {
+        put_u32(n / 10)
+    }
+    uart.putc((48 + (n % 10)).to_u8())
+}

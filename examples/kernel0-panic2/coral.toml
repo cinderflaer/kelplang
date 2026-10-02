@@ -1,0 +1,21 @@
+name = "kernel0-panic2"
+
+# Kernel stage 15, "panic semantics with no OS": a bare-metal riscv64 image
+# whose panic handler takes the location-carrying three-argument form. `PHASE`
+# selects one check per boot (the panic path never returns, so one boot can
+# show one check), and `README`/run.sh boot every phase. The manifest's other
+# keys are stage 4's `[target]` section (`plan/freestanding.md`) and the mmio
+# grant the UART driver needs (kernel stage 16, `plan/device-caps.md`).
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+# Only `uart` contains `unsafe`, and only it talks to the device register.
+[unsafe]
+modules = ["uart"]
+
+[caps]
+mmio = ["0x10000000+0x100"]
