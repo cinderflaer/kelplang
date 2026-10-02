@@ -82,8 +82,12 @@ one is a consequence of a language property Kelp already has, not a feature Poly
 
 ## Status
 
-**A prototype exists; the plan is still not a Mark.** `examples/polyp/` (v1, the builder syntax) and
-the frozen `examples/polyp-v0/` are a GTK4 library and a counter, built and run on both backends
-under Xvfb, on the user FFI of B-1 and the scoped trailing blocks of open item 75. It blocks nothing
-and nothing blocks it except a real UI program being wanted rather than a plan to run; what is left is
-depth (drawing, layout control, more than Linux) rather than substrate. It has no stages.
+**A prototype exists; the plan is still not a Mark.** `examples/polyp/` is at v2: a GTK4 library
+and three programs (`polyp-counter`, the keyed `polyp-todo`, and the scrolled list inside it), built
+and run on both backends under Xvfb, on the user FFI of B-1 and the scoped trailing blocks of open
+item 75. v1 built the tree fresh on every state change with one entry-retention rule; v2 keeps the
+live widget tree and patches it, with keys, in-place updates, keyed moves and new widgets and layout
+options. `plan/polyp-v2.md` is the design note and `examples/polyp/README.md` the reference. It
+blocks nothing and nothing blocks it except a real UI program being wanted rather than a plan to run;
+what is left is depth (lazy lists, animation, theming, more than Linux) rather than substrate. It has
+no stages.

@@ -60,6 +60,14 @@ and the loop drains it after each `g_main_context_iteration(null, TRUE)`, on the
 GTK callback runs on. No callback captures state at all; a callback carries an int. Both backends
 run it: `examples/polyp-counter/smoke.sh` opens a real GTK window under Xvfb and asserts the count.
 
+**Polyp v2 closes nothing in this list; it works around two language limits.** An owned field read
+by value out of a `mut` receiver is a move out of a borrow, so the builder's one-shot pending key and
+options live in `Box`es and are `take()`n; and a `pd var` counter written by a call chain conflicts
+with itself (two functions cannot hold one passdown exclusively), so the patch counters are
+`pd val AtomicI32` cells bumped through their shared-borrow operations, the shape `syntax.md` 12.5
+recommends. A programmatic widget write feeding back as the signal that produced it is handled with
+`g_signal_handler_block` around the write. `plan/polyp-v2.md` is the note.
+
 ## Suggested order
 
 1. **Spike (no compiler change):** a `[extern."gtk"]` project that opens a window through
