@@ -40,9 +40,14 @@ pub struct TraitDecl {
     pub name: String,
     /// `pub trait ...` (A-13). See `ConstDecl::is_pub`.
     pub is_pub: bool,
-    /// The method signatures, in source order. Each is an ordinary
-    /// `FunctionDecl` with a `Self` receiver and no body, so the receiver and
-    /// every other type are resolved exactly as a method's are.
+    /// `trait B: A + C` (A-12 slice 3): the supertraits, in source order. Each
+    /// is stored as the bound parser wrote it (`A`, `alias.A`); `infer.rs`
+    /// qualifies and resolves them, exactly as it does a bound on a function's
+    /// type parameter.
+    pub supertraits: Vec<TypeExpr>,
+    /// The methods, in source order. Each is an ordinary `FunctionDecl` with a
+    /// `Self` receiver; a `FunctionBody::Signature` is a required signature and
+    /// any other body is a default method an impl may omit.
     pub methods: Vec<FunctionDecl>,
     /// See `DatacDecl::module`.
     pub module: String,
@@ -342,6 +347,12 @@ pub struct FunctionDecl {
     pub body: FunctionBody,
     /// See `DatacDecl::module`.
     pub module: String,
+    /// A synthesized trait default (A-12 slice 3) resolves its *body* here when
+    /// that differs from `module`: the default was written in the trait's
+    /// module, but its signature (`Self` and the types that name it) was
+    /// substituted with the implementing type and so resolves in the impl's
+    /// module. `None` for every declaration written by a user.
+    pub body_module: Option<String>,
     /// `naked fun ...` (kernel stage 5): LLVM's `naked` and `noinline`, whose
     /// body must be exactly one `asm(...)` statement, so no prologue or
     /// epilogue is emitted around it.

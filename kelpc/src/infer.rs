@@ -77,7 +77,14 @@ struct TraitInfo {
     /// implemented.
     prefix: String,
     aliases: HashMap<String, String>,
+    /// The trait's own methods, in source order: a `FunctionBody::Signature`
+    /// is required, any other body is a default an impl may omit (A-12 slice
+    /// 3).
     methods: Vec<ast::FunctionDecl>,
+    /// The supertraits, canonical and in source order (A-12 slice 3).
+    /// Implementing this trait requires an impl of each, and a bound on this
+    /// trait satisfies a bound on any of them.
+    supertraits: Vec<String>,
     module: String,
 }
 
@@ -2137,11 +2144,121 @@ fn collect_traits(
                 prefix: project.prefix_of(&t.module).to_string(),
                 aliases: project.alias_prefixes_of(&t.module),
                 methods: t.methods.clone(),
+                supertraits: Vec::new(),
                 module: t.module.clone(),
             },
         );
     }
+    // A-12 slice 3: a supertrait is resolved in the trait's own module, once
+    // every trait is known, so `trait B: A` may name an `A` declared later in
+    // load order. It has to name a declared trait, and the relation has to be
+    // acyclic.
+    for t in &program.traits {
+        let mut canonical = Vec::new();
+        for s in &t.supertraits {
+            let key = match qualify_written_name(
+                &s.name,
+                project.prefix_of(&t.module),
+                &project.alias_prefixes_of(&t.module),
+            ) {
+                Some(key) => key,
+                None => {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'{}' names no module alias, so the supertrait of '{}' cannot be resolved",
+                            s.name, t.name
+                        ),
+                        s.span,
+                        t.module.clone(),
+                    ))
+                }
+            };
+            if !out.contains_key(&key) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}' is not a trait, so it cannot be a supertrait of '{}': a supertrait names a declared trait ('trait {} {{ ... }}')",
+                        s.name, t.name, s.name
+                    ),
+                    s.span,
+                    t.module.clone(),
+                ));
+            }
+            if !canonical.contains(&key) {
+                canonical.push(key);
+            }
+        }
+        if let Some(info) = out.get_mut(&t.name) {
+            info.supertraits = canonical;
+        }
+    }
+    if let Some(cycle) = supertrait_cycle(&out) {
+        let name = &cycle[0];
+        let span = program
+            .traits
+            .iter()
+            .find(|t| &t.name == name)
+            .map(|t| t.span)
+            .unwrap_or_else(|| program.traits[0].span);
+        let module = program
+            .traits
+            .iter()
+            .find(|t| &t.name == name)
+            .map(|t| t.module.clone())
+            .unwrap_or_default();
+        return Err(Diagnostic::new(
+            format!(
+                "the supertrait relation is cyclic: {}: a trait cannot inherit from itself",
+                cycle.join(" inherits from ")
+            ),
+            span,
+            module,
+        ));
+    }
     Ok(out)
+}
+
+/// Whether the supertrait relation has a cycle, returning one cycle (its names,
+/// first repeated once) so the error can name every participant. The relation
+/// has to be acyclic or the transitive bound check would not terminate.
+fn supertrait_cycle(traits: &HashMap<String, TraitInfo>) -> Option<Vec<String>> {
+    fn dfs(
+        name: &str,
+        traits: &HashMap<String, TraitInfo>,
+        state: &mut HashMap<String, u8>,
+        path: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        state.insert(name.to_string(), 1);
+        path.push(name.to_string());
+        for sup in &traits[name].supertraits {
+            match state.get(sup).copied().unwrap_or(0) {
+                1 => {
+                    let start = path.iter().position(|p| p == sup).unwrap_or(0);
+                    let mut cycle: Vec<String> = path[start..].to_vec();
+                    cycle.push(sup.clone());
+                    return Some(cycle);
+                }
+                0 => {
+                    if let Some(c) = dfs(sup, traits, state, path) {
+                        return Some(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+        path.pop();
+        state.insert(name.to_string(), 2);
+        None
+    }
+    let mut state: HashMap<String, u8> = HashMap::new();
+    for name in traits.keys() {
+        if state.get(name).copied().unwrap_or(0) == 0 {
+            let mut path = Vec::new();
+            if let Some(c) = dfs(name, traits, &mut state, &mut path) {
+                return Some(c);
+            }
+        }
+    }
+    None
 }
 
 /// Every `impl Name for Type { ... }` in the program (A-12 slice 2), with both
@@ -2276,6 +2393,13 @@ fn check_trait_impl_names(
     for e in &program.enums {
         type_modules.insert(&e.name, &e.module);
     }
+    // The (trait, type) pairs declared anywhere in the program, so a
+    // supertrait requirement (A-12 slice 3) is answered once every impl has
+    // been seen rather than in source order.
+    let declared: std::collections::HashSet<(&str, &str)> = impls
+        .iter()
+        .map(|i| (i.trait_name.as_str(), i.type_name.as_str()))
+        .collect();
     let mut seen: HashMap<(&str, &str), &TraitImplInfo> = HashMap::new();
     for imp in impls {
         let Some(info) = traits.get(&imp.trait_name) else {
@@ -2288,7 +2412,33 @@ fn check_trait_impl_names(
                 imp.module.clone(),
             ));
         };
-        let Some(type_module) = type_modules.get(imp.type_name.as_str()).copied() else {
+        // A builtin `for` type (A-12 slice 3) has no module of its own, so the
+        // impl must sit in the trait's module (the orphan rule); a declared
+        // `datac`/`enum` may be implemented in either owner's module.
+        let type_module: &str = if let Some(_builtin) = builtin_for_type_name(&imp.type_name) {
+            if imp.module != info.module {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'impl {} for {}' is written in module '{}', but '{}' is a builtin type, which has no module: implement a trait for a builtin in the trait's own module ('{}')",
+                        imp.trait_name, imp.type_name, imp.module, imp.type_name, info.module
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+            info.module.as_str()
+        } else if let Some(module) = type_modules.get(imp.type_name.as_str()).copied() {
+            module
+        } else if crate::types::Ty::from_name(&imp.type_name).is_some() {
+            return Err(Diagnostic::new(
+                format!(
+                    "'{}' is a builtin type that carries no methods, so 'impl {} for {}' has nothing to add: implement the trait for a 'datac'/'enum', or for a builtin whose methods the compiler already provides ('i32', 'String', ...)",
+                    imp.type_name, imp.trait_name, imp.type_name
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        } else {
             return Err(Diagnostic::new(
                 format!(
                     "'{}' is not a declared 'datac' or 'enum', so 'impl {} for {}' has nothing to implement",
@@ -2326,6 +2476,22 @@ fn check_trait_impl_names(
                 ));
             }
         }
+        // A-12 slice 3: implementing a trait means implementing its
+        // supertraits too, because a bound on the supertrait is what the
+        // callers of the subtrait's methods rely on.
+        for sup in &info.supertraits {
+            if !declared.contains(&(sup.as_str(), imp.type_name.as_str())) {
+                let display = traits.get(sup).map(|t| t.name.as_str()).unwrap_or(sup);
+                return Err(Diagnostic::new(
+                    format!(
+                        "'impl {} for {}' is missing its supertrait: '{}' needs 'impl {} for {}' as well, because trait '{}' inherits from '{}'",
+                        imp.trait_name, imp.type_name, imp.trait_name, display, imp.type_name, info.name, display
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+        }
         if let Some(first) = seen.insert((&imp.trait_name, &imp.type_name), imp) {
             return Err(Diagnostic::new(
                 format!(
@@ -2338,6 +2504,15 @@ fn check_trait_impl_names(
         }
     }
     Ok(())
+}
+
+/// A builtin type a trait may be implemented for (A-12 slice 3): one the
+/// compiler already gives methods to, which is exactly the set `builtin_type_name`
+/// names. `None` for a `datac`/`enum` name, a name that resolves to nothing, or
+/// a builtin with no method surface (`bool`, `char`, `f32`, `f64`, `unit`).
+fn builtin_for_type_name(name: &str) -> Option<Ty> {
+    let ty = crate::types::Ty::from_name(name)?;
+    builtin_type_name(&ty).map(|_| ty)
 }
 
 /// Checks that every `impl Name for Type { ... }` block implements exactly the
@@ -2365,7 +2540,8 @@ fn check_trait_impl_signatures(
         .collect();
     for imp in impls {
         let info = &traits[&imp.trait_name];
-        let self_ty = Ty::Struct(imp.type_name.clone());
+        let self_ty = builtin_for_type_name(&imp.type_name)
+            .unwrap_or_else(|| Ty::Struct(imp.type_name.clone()));
         for m in &info.methods {
             let key = format!("{}#{}", imp.type_name, m.name);
             let Some(impl_sig) = sigs.get(&key) else {
@@ -7440,7 +7616,14 @@ fn check_program_pass(
         let mut params = Vec::new();
         if let Some(r) = &f.receiver {
             let ty = scope.resolve_receiver(r).map_err(|e| e.in_module(&f.module))?;
-            if struct_name_of(&ty).is_none() {
+            // A-12 slice 3: an impl method on a builtin type is legal exactly
+            // when the builtin already carries methods (`builtin_type_name`
+            // names it); the `for` type is what `check_trait_impl_names`
+            // vetted, so this is the same set. Every other method is still on
+            // a declared `datac`/`enum`.
+            if struct_name_of(&ty).is_none()
+                && !(f.trait_impl.is_some() && builtin_type_name(&ty).is_some())
+            {
                 return Err(Diagnostic::new(
                     format!(
                         "'{}' is a builtin type — its methods are provided by the compiler and cannot be declared",
@@ -9030,6 +9213,14 @@ fn check_function(
         fns,
         statics,
     );
+    // A synthesized trait default resolves its body in the trait's module (see
+    // `FunctionDecl::body_module`): its signature was substituted with the
+    // implementing type, but its body's types and free names were written in
+    // the trait's module.
+    if let Some(m) = &f.body_module {
+        ctx.prefix = project.prefix_of(m).to_string();
+        ctx.aliases = project.alias_prefixes_of(m);
+    }
     ctx.type_args = type_args.clone();
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
@@ -14059,6 +14250,43 @@ fn func_template_named(ctx: &Ctx, name: &str, owned: &str) -> Option<String> {
     (name.contains('.') && ctx.fns.templates.contains_key(name)).then(|| name.to_string())
 }
 
+/// Whether `ty_name` implements `trait_key`, directly or through a supertrait
+/// (A-12 slice 3): a type with `impl B for` satisfies a bound on `A` whenever
+/// `B: A`, because implementing `B` required an `impl A for` the type.
+fn implements_trait(env: &TypeEnv, trait_key: &str, ty_name: &str) -> bool {
+    if env
+        .impls
+        .get(trait_key)
+        .map(|types| types.contains(ty_name))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    env.impls.iter().any(|(other, types)| {
+        other != trait_key && types.contains(ty_name) && trait_requires(env, other, trait_key)
+    })
+}
+
+/// Whether trait `sub` inherits, directly or transitively, from `sup`.
+fn trait_requires(env: &TypeEnv, sub: &str, sup: &str) -> bool {
+    let mut stack = vec![sub.to_string()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t.clone()) {
+            continue;
+        }
+        if t == sup {
+            return true;
+        }
+        if let Some(info) = env.traits.get(&t) {
+            for s in &info.supertraits {
+                stack.push(s.clone());
+            }
+        }
+    }
+    false
+}
+
 /// Checks the trait bounds one instantiation's type arguments must satisfy
 /// (A-12 slice 2). `tmpl` is the declaration and `type_args` the concrete
 /// arguments, so this answers about the type a call actually binds; `span` is
@@ -14118,14 +14346,11 @@ fn check_trait_bounds(
                     return Err(private_item_error(alias, item, span));
                 }
             }
-            let implements = struct_name_of(arg)
-                .map(|t| {
-                    ctx.env
-                        .impls
-                        .get(&key)
-                        .map(|types| types.contains(t))
-                        .unwrap_or(false)
-                })
+            let name = struct_name_of(arg)
+                .map(|s| s.to_string())
+                .or_else(|| builtin_type_name(arg).map(|s| s.to_string()));
+            let implements = name
+                .map(|n| implements_trait(&ctx.env, &key, &n))
                 .unwrap_or(false);
             if !implements {
                 return Err(TypeError {

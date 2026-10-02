@@ -121,9 +121,10 @@ pub enum TokenKind {
     /// (A-12 slice 2). The parser tells them apart by the token that follows:
     /// a string literal is an import and an identifier is an impl block.
     Impl,
-    /// `trait Name { fun Self.m(...) ... }`: a named set of method
-    /// signatures a `datac`/`enum` can implement (A-12 slice 2,
-    /// `plan/syntax.md` 9.5).
+    /// `trait Name { fun Self.m(...) ... }`: a named set of methods a
+    /// `datac`/`enum` or a builtin implements (A-12 slices 2 and 3): a method
+    /// with no body is a signature, one with a body is a default, and the
+    /// optional `: A + B` names supertraits (`plan/syntax.md` 9.5).
     Trait,
     /// The `as` keyword. Nothing accepts it: `impl "path" as name` was removed
     /// (`plan/syntax.md` 13.1), and the `impl` parser refuses the clause by name
@@ -1354,6 +1355,24 @@ mod tests {
                 TokenKind::Pub,
                 TokenKind::Trait,
                 TokenKind::Ident("foo".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_a_trait_supertrait_list_and_default_body() {
+        // The new syntax adds no token: a supertrait list is `:` and `+`, and a
+        // default body is a brace, exactly what the lexer already emits.
+        assert_eq!(
+            kinds("trait Named: Shape + Other"),
+            vec![
+                TokenKind::Trait,
+                TokenKind::Ident("Named".to_string()),
+                TokenKind::Colon,
+                TokenKind::Ident("Shape".to_string()),
+                TokenKind::Plus,
+                TokenKind::Ident("Other".to_string()),
                 TokenKind::Eof,
             ]
         );
