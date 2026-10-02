@@ -426,6 +426,16 @@ fn an_unsound_cursor_use_is_still_refused() {
         "tests/fixtures/cursor_mut_alias.kp",
         "already borrowed exclusively",
     );
+    // Both halves of a value-position `if` join: `w` may point into either
+    // owner, so mutating either is refused.
+    assert_rejected_with(
+        "tests/fixtures/cursor_branch_join.kp",
+        "cannot assign to 'a' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_branch_join2.kp",
+        "cannot assign to 'b' while it is borrowed",
+    );
 }
 
 #[test]

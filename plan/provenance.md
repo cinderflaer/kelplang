@@ -81,6 +81,9 @@ refused) and does not block reassigning the cursor (now accepted).
 - aliasing one cursor into another and then mutating the owner
   (`cursor_alias_reassign`): the aliasing binding gets its own pin, so the owner
   stays borrowed after the first holder is gone;
+- mutating an owner a joined value may point into, from either half of a
+  value-position `if` (`cursor_branch_join`, `cursor_branch_join2`) and from the
+  arm that assigned a cursor (`cursor_branch_union`);
 - returning a cursor derived from a local (`cursor_returned_from_local`);
 - reading a cursor after its root was moved: the move is refused
   (`cursor_root_moved`), because the cursor keeps the owner borrowed.
