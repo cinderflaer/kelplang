@@ -1,0 +1,30 @@
+// A trait with an associated type (A-12 slice 5), implemented by two types and
+// used through a generic function whose return type names the projection
+// `S::Out`. Dispatch stays static: each call is the concrete type's own method.
+
+trait Src {
+    type Out
+    fun Self.produce().R: Self::Out
+}
+
+datac A(val n: i32)
+datac B(val n: i64)
+
+impl Src for A {
+    type Out = i32
+    fun Self.produce().R: i32 = n * 2
+}
+
+impl Src for B {
+    type Out = i64
+    fun Self.produce().R: i64 = n * 3
+}
+
+fun produce_of<S: Src>(x: &S).R: S::Out = x.produce()
+
+fun main() {
+    val a = A(n = 3)
+    val b = B(n = 4)
+    print(produce_of(a))
+    print(produce_of(b))
+}

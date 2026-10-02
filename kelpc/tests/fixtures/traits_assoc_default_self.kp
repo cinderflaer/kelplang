@@ -1,0 +1,24 @@
+// `Self::Item` in a default method (A-12 slice 5): the synthesized per-impl
+// copy has `Self` and the projection substituted, so the default resolves and
+// emits like a written method.
+
+trait Tagged {
+    type Tag
+    fun Self.tag().R: Self::Tag
+    fun Self.show().R: Self::Tag {
+        return self.tag()
+    }
+}
+
+datac One(val n: i32)
+
+impl Tagged for One {
+    type Tag = i32
+    fun Self.tag().R: i32 = n + 100
+}
+
+fun main() {
+    val o = One(n = 7)
+    print(o.tag())
+    print(o.show())
+}

@@ -1,0 +1,8 @@
+// An associated const is not in this slice: refused by name.
+
+trait Shape {
+    const N: i32 = 1
+    fun Self.area().R: i32
+}
+
+fun main() { }

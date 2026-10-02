@@ -1,0 +1,21 @@
+// A bounded associated type the impl's type does not satisfy: refused, naming
+// the trait, the associated type and the concrete type.
+
+trait Named {
+    fun Self.name().R: str
+}
+
+trait Repo {
+    type Entry: Named
+    fun Self.entry().R: Self::Entry
+}
+
+datac Item(val n: i32)
+datac Store(val v: i32)
+
+impl Repo for Store {
+    type Entry = Item
+    fun Self.entry().R: Item = Item(n = v)
+}
+
+fun main() { }

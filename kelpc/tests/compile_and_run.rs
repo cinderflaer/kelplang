@@ -5373,7 +5373,7 @@ fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
     );
     assert_rejected_with(
         "tests/fixtures/traits_associated_type.kp",
-        "associated types and consts are not in this slice",
+        "default associated type is not in this slice",
     );
     assert_rejected_with(
         "tests/fixtures/traits_impl_trait_argument.kp",
@@ -5546,6 +5546,81 @@ fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
     assert_rejected_with(
         "tests/fixtures/traits_dyn_unknown.kp",
         "names no declared trait",
+    );
+}
+
+/// A-12 slice 5: a trait may declare an associated type, each impl binds it,
+/// and `I::Item` is usable in a generic function's return type. Dispatch stays
+/// static, so every call is the concrete type's own method.
+#[test]
+fn an_associated_type_is_bound_by_each_impl_and_projected_through_a_generic() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_assoc_two_types.kp",
+        "6\n12\n",
+    );
+}
+
+/// A-12 slice 5: `type Entry: Named` is checked at the impl, and generic code
+/// reaches the bound's method through the projection.
+#[test]
+fn a_bounded_associated_type_is_usable_inside_generic_code() {
+    assert_compiles_and_runs("tests/fixtures/traits_assoc_bound.kp", "item\n5\n");
+}
+
+/// A-12 slice 5: `Self::Item` in a default method resolves through the impl's
+/// binding when the concrete copy is synthesized.
+#[test]
+fn self_item_in_a_default_method_resolves_per_impl() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_assoc_default_self.kp",
+        "107\n107\n",
+    );
+}
+
+/// A-12 slice 5: a `pub trait` with an associated type, implemented in another
+/// module and used through a generic function whose return type names the
+/// projection.
+#[test]
+fn an_associated_type_is_bound_across_modules() {
+    assert_project_runs(
+        "traits_assoc_cross",
+        &project("traits_assoc_cross"),
+        "1\n",
+    );
+}
+
+/// A-12 slice 5 rejections: a missing binding, an extra one, a projection with
+/// no bound to name it, an equality constraint, and a bound the impl's type
+/// does not satisfy.
+#[test]
+fn the_associated_type_shapes_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_missing.kp",
+        "does not bind it",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_extra.kp",
+        "is not declared by trait 'Src'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_no_bound.kp",
+        "is not a known associated type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_equality.kp",
+        "equality constraint on an associated type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_bound_violated.kp",
+        "does not satisfy the bound 'type Entry: Named'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_const.kp",
+        "associated consts are not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_gat.kp",
+        "generic associated type is not in this slice",
     );
 }
 
