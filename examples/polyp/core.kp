@@ -885,9 +885,9 @@ pub fun child_at(seg: &Seg, key: &Key, index: usize).R: bool = when seg {
 
 fun seq().R: atomic.Ordering = atomic.Ordering.SeqCst
 
-// What the loop runs on: the state, the tree it last showed, the patches between them, and the
-// check that a patch kept the focused widget.
-pub fun run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Node<M>, update: fun (mut S, M)).R: S {
+// Zero the loop's counters before a run. A platform that drives its own frame clock resets them
+// itself; `run` does it here so both entries agree.
+pub fun reset_stats() {
     stat_created.store(value = 0, order = seq())
     stat_updated.store(value = 0, order = seq())
     stat_removed.store(value = 0, order = seq())
@@ -896,66 +896,85 @@ pub fun run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Nod
     stat_entry_texts.clear()
     focus_seen_flag.store(value = false, order = seq())
     focus_lost_flag.store(value = false, order = seq())
+}
 
-    var state = init
-    var tree = view(state)
-    val first = create_all(&tree)
-    val f0 = backend.focus()
-    backend.apply(&first)
-    snapshot(backend, f0)
+// What one turn of the loop decided, and the tree it leaves behind. A backend that blocks in
+// `pump` (GTK) loops on `run`; one whose platform delivers a frame clock calls `frame_step`
+// itself and reads the variant. The tree travels by value because a `mut` parameter of an enum
+// type cannot be reassigned in place.
+pub enum Tick<M> {
+    Idle(val tree: Node<M>)
+    Changed(val tree: Node<M>)
+    Quit(val tree: Node<M>)
+}
 
+// One turn: pump the display once, then drain its queue, running `update`/`view`/`diff`/`apply`
+// for every message. `Quit` ends the program; `Changed` means at least one patch was applied.
+pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M)).R: Tick<M> {
+    var current = tree
+    var changed = false
     var quitting = false
-    while !quitting {
-        // GTK: one blocking main-context iteration, so whatever a source posted is in the queue.
-        // Headless: nothing to pump.
-        backend.pump()
-        var draining = true
-        while draining {
-            val ev = backend.poll()
-            when ev {
-                Idle -> draining = false
-                Quit -> {
-                    quitting = true
-                    draining = false
+    // GTK: one blocking main-context iteration, so whatever a source posted is in the queue.
+    // Headless: nothing to pump.
+    backend.pump()
+    var draining = true
+    while draining {
+        val ev = backend.poll()
+        when ev {
+            Idle -> draining = false
+            Quit -> {
+                quitting = true
+                draining = false
+            }
+            Edit(index, text) -> {
+                when entry_at(backend, index) {
+                    Some(id) -> backend.set_entry_text(id = id, text = text.as_str())
+                    None -> {}
                 }
-                Edit(index, text) -> {
-                    when entry_at(backend, index) {
-                        Some(id) -> backend.set_entry_text(id = id, text = text.as_str())
-                        None -> {}
-                    }
+            }
+            Focus(index) -> {
+                when entry_at(backend, index) {
+                    Some(id) -> backend.set_focus(id = id)
+                    None -> {}
                 }
-                Focus(index) -> {
-                    when entry_at(backend, index) {
-                        Some(id) -> backend.set_focus(id = id)
-                        None -> {}
-                    }
-                }
-                Post(id) -> {
-                    when backend.path_of(id) {
-                        Some(path) -> {
-                            // The message comes from the tree the display is showing now, which
-                            // is the state's own view, so it is that view rebuilt and consumed.
-                            val probe = view(state)
-                            when take_message(probe, path, backend, id) {
-                                Some(msg) -> {
-                                    update(state, msg)
-                                    val focused = backend.focus()
-                                    val next = view(state)
-                                    val patches = diff(tree, next)
-                                    backend.apply(&patches)
-                                    tree = next
-                                    snapshot(backend, focused)
-                                }
-                                None -> {}
+            }
+            Post(id) -> {
+                when backend.path_of(id) {
+                    Some(path) -> {
+                        // The message comes from the tree the display is showing now, which
+                        // is the state's own view, so it is that view rebuilt and consumed.
+                        val probe = view(state)
+                        when take_message(probe, path, backend, id) {
+                            Some(msg) -> {
+                                update(state, msg)
+                                val focused = backend.focus()
+                                val next = view(state)
+                                val patches = diff(current, next)
+                                backend.apply(&patches)
+                                current = next
+                                snapshot(backend, focused)
+                                changed = true
                             }
+                            None -> {}
                         }
-                        None -> {}
                     }
+                    None -> {}
                 }
             }
         }
     }
+    if quitting {
+        return Tick.Quit(tree = current)
+    }
+    if changed {
+        return Tick.Changed(tree = current)
+    }
+    return Tick.Idle(tree = current)
+}
 
+// The counters, the entry count and the entry texts after a run, so a program that drove its own
+// frames reads the same values `run` leaves behind.
+pub fun publish<B: Backend>(backend: &B) {
     snapshot(backend, backend.focus())
     val st = backend.stats()
     stat_created.store(value = st.created, order = seq())
@@ -970,6 +989,33 @@ pub fun run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Nod
         stat_entry_texts.push(backend.entry_text(ids.get(i)))
         i += 1
     }
+}
+
+// What the loop runs on: the state, the tree it last showed, the patches between them, and the
+// check that a patch kept the focused widget.
+pub fun run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Node<M>, update: fun (mut S, M)).R: S {
+    reset_stats()
+
+    var state = init
+    var tree = view(state)
+    val first = create_all(&tree)
+    val f0 = backend.focus()
+    backend.apply(&first)
+    snapshot(backend, f0)
+
+    var running = true
+    while running {
+        when frame_step(backend, tree, state, view, update) {
+            Idle(next) -> tree = next
+            Changed(next) -> tree = next
+            Quit(next) -> {
+                tree = next
+                running = false
+            }
+        }
+    }
+
+    publish(backend)
     return state
 }
 
