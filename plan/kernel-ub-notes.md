@@ -1358,3 +1358,64 @@ the size, existence or overlap of a task's stack; the timer's address, interval 
 counter; that a task's `unsafe` block sequences its own `static mut` accesses; and any property
 of the machine a trap is the first thing to observe. Priorities, blocking, SMP and user-mode
 preemption are not built, so nothing here is a plan's promise either.
+
+## Stage 22: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer (`plan/x86-idt.md`)
+
+**New ways to reach undefined behaviour.** The stage moves the machine through a gate the
+compiler never models, and every fact the gate shares with the language is a number neither
+end checks against the other. The ones worth naming:
+
+- **The gate's offsets and the `TrapFrame` layout are two independent facts.** The asm pushes
+  the registers in an order that lands them at 8..120, the error code at 128 and `RIP`, `CS`
+  and `RFLAGS` at 136, 144 and 152; `TrapFrame` is an ordinary `repr(c)` declaration. A field
+  inserted before `rax`, or a gate that pushes one register fewer, makes the dispatcher read
+  the wrong word. `idt.layout_ok` checks the numbers at boot (and
+  `tests/projects/x86_idt_layout` pins them on both backends), which is a runtime guard, not
+  a compile-time one.
+- **`lidt` reads ten bytes of a value the compiler laid out.** The descriptor is a
+  `repr(packed)` `u16` followed by a `u64`, so its bytes are the limit and then the base;
+  `lidt` would read a padded layout as a different base. The packed declaration is what makes
+  that true, and the layout test pins size 10 and the base at offset 2.
+- **The gate's error-code split is a claim about each vector.** Vectors 8, 10..14 and 17 push
+  an error code and the rest do not; a gate for a vector in the wrong group shifts every word
+  of the frame by eight and the dispatcher reads a register as `RIP`. The compiler cannot see
+  the vector, and nothing checks the group but the boot's own two faults.
+- **The length table is a claim about the faulting instruction.** Resuming `#UD` and `#DE`
+  means adding 2 and 3 to the saved `rip`; the `3` is right for `REX.W F7 /6` with no
+  displacement, which is the one `div` this kernel writes. Any other `div` shape (a 32-bit
+  operand, a memory operand with a displacement) would resume in the middle of an instruction.
+- **The saved `rsp` is not in the frame, and the gate changes `rsp`.** The gate aligns `rsp`
+  down with `and rsp, -16` so the SysV callee sees a 16-byte-aligned stack, and restores it
+  from `rbx` after the call. The same-level `iretq` pops only `RIP`, `CS` and `RFLAGS`, so the
+  interrupted code resumes with the `rsp` the CPU left, which is what makes this correct; a
+  gate that ends with `rsp` anywhere else resumes the interrupted function with a wrong stack
+  and no diagnostic.
+- **A naked gate can only read a shared address after it has saved what it clobbers.** An
+  `asm` operand is materialised into a register *before* the gate's own instructions run, so
+  an operand holding the dispatcher's address destroys one of the interrupted program's
+  registers. This stage reads it from the GS base (`mov rax, gs:[0]`) with the address
+  installed by `wrmsr` at boot; a program that never set the base reads address zero, which is
+  the gate's own `#PF` because the base is a linear address.
+- **The PIC and PIT ports are device claims, like every MMIO address.** That ICW1..4 remap the
+  master to 32..39 and the slave to 40..47, that IRQ2 is the cascade, that IMR bit 0 is IRQ0,
+  that port 0x43's control byte means mode 3 lo/hi on channel 0, and that a divisor of 11932
+  is about 100 Hz are all the driver's claims. Port I/O names no address, so the `mmio` gate
+  never sees them; the only thing the compiler checks there is the port's width against the
+  `in`/`out` spelling.
+- **`CR2` means nothing outside a `#PF` handler.** The report reads it after the frame is
+  saved; any other fault in between has already overwritten it.
+
+**What the compiler does check.** That `asm` is inside `unsafe` and its module is on the
+manifest's `[unsafe] modules` list; that a `naked` body is exactly one `asm`; that the `mmio`
+grant covers the constant address the boot's last store is born at (`0x200000000`, the one
+page the kernel faults on); that the layout queries `size_of`/`offset_of` fold in the front
+end, so `layout_ok` is an ordinary comparison; that an `Atomic<T>` static is reachable without
+`unsafe`; and that the image links with no undefined symbol.
+
+**What it does not check.** The gate's push order against the `TrapFrame` declaration; the
+vector's error-code group; the instruction length the `#DE` resume adds; the 16-byte
+alignment of the stack the gate hands the dispatcher; that the GS base holds an address at
+all; the existence, meaning or rate of a port or a device; whether the IDT is reachable
+through the current page tables; and any property of the machine a gate is the first thing to
+observe. The APIC, SMP, ACPI, a TSS/IST stack and x86 user mode are deliberately not built, so
+nothing here is a plan's promise either.
