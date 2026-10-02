@@ -468,9 +468,10 @@ together or neither, and that `realloc`, when named, needs them; that each name
 is a bare identifier and a non-`extern` `fun` in the entry module; that their
 signatures are exactly `(usize, usize).R: Ptr<u8>`, `(Ptr<u8>, usize, usize)`
 and `(Ptr<u8>, usize, usize, usize).R: Ptr<u8>`; that with no pair `Box`, `List`
-and `Map` are refused with a message naming the two keys, while `View` and
-`Thread` stay refused even with one (`String` and `Bytes` join the allowed set
-in stage 13); and that a freestanding image built this way references no libc
+and `Map` are refused with a message naming the two keys, while `Thread` stays
+refused even with one (`String` and `Bytes` join the allowed set
+in stage 13, and `View` in stage 23); and that a freestanding image built this
+way references no libc
 symbol (`kelp_memcpy`/`kelp_memset` are module-private definitions, and the
 boot graph was checked with `llvm-nm -u`).
 
@@ -1637,3 +1638,43 @@ in an unreachable block, which for an owned return type is still the refusal
 above. Nothing verifies that the loop's body cannot leave (it cannot: Kelp has
 no `break`), and nothing checks the drops emitted before the terminator, which
 are unreachable in the same way.
+
+## st7: the freestanding `String` equality, the `View` surface and `std/regex`
+
+**New ways to reach undefined behaviour.** None from the language, and one
+surface a program can now hold that it could not before. `View` used to be
+refused in a freestanding build, so the only views were the compiler's own,
+created by `str#view`/`String#view` inside a `std/str` or `std/regex` body. It
+is now a value a program may bind, pass and return, which is the same borrowed
+`{ptr, len}` pair the hosted build has always had: `View.get` and `View.slice`
+bounds-check against `len` and call the project's `panic` handler exactly as
+`Bytes.get` does, and `View.eq` compares the two lengths before the byte scan,
+so a shorter slice is never read past its end. The pointer and length come from
+`str#view`/`String#view` (the compiler's own lowering) or from a previous
+`View.slice`, and neither can produce a length longer than the buffer it came
+from; a program that builds a `View` out of bad words has to go through
+`Ptr`/`unsafe` to do it, which is the same hole stage 1 recorded.
+
+The other change is in the derived key equality of a `datac`/`enum` whose fields
+include a `String`. In a freestanding image its `kelp_map_key_eq` body is now
+emitted into the module instead of being left for the hosted runtime object, as
+a byte loop over the stored key's `data` for `len` bytes. That reads exactly the
+bytes the hosted `memcmp` read and no more, and the length is the stored
+`String`'s own field, so the loop is in bounds for every `String` the compiler or
+`String`'s own operations can build; a `String` a program forged through `unsafe`
+would already be undefined behaviour in a hosted build too.
+
+**What the compiler does and does not check.** The `View` checks are the
+`View.get`/`View.slice` panics, and only they: the source pointer is not
+validated (there is no lifetime or provenance analysis behind a `View`), and a
+view of a buffer that is freed while the view is alive is a use-after-free the
+borrow checker only catches when the two are visible to it. `kelp_map_key_eq` is
+emitted for every keyable type the program declares, whether or not a `Map`
+uses one, so a type that is never a key still produces a body; it references
+nothing the image does not already define, and the `option`/`Str` bodies it
+shares with `View.eq` are `optnone` so the module's own pipeline cannot turn the
+NUL scan back into `strlen`. `std/regex` itself is ordinary checked Kelp: its
+recursion is bounded by the parser's depth limit, its repeats by the program
+size, and its only allocation is the compiled scratch, which goes through the
+project's own functions, so a bad pattern is a `RegexErr` value and never a
+crash.

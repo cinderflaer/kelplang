@@ -67,8 +67,8 @@ does not ship.
 | `std/rand` | refused: the OS entropy source | Refused by name. |
 | `std/thread` | refused: pthreads and the hosted runtime | Refused by name. |
 | `std/sync` | refused: `Mutex<T>`'s runtime half is a pthread mutex | Refused by name, separately from the `Mutex` type refusal. |
-| `std/regex` | refused: a hosted-only module, decided when it shipped (`plan/regex.md`) | Built into a riscv64 image with the allocator pair, it links with undefined `kelp_map_key_eq` (the derived equality of `Match`/`RegexErr`/`Option<String>`, which every `datac` or `enum` with a `String` field gets) and `kelp_View__slice`/`kelp_View__to_string` (runtime calls the freestanding `View` does not have). The engine itself (parser, program, Pike VM) is plain `List` and integer code. Admitting it needs a `String`-free surface or the two runtime pieces; neither is part of this table. Refused by name. |
-| `std/tz` | refused: a hosted-only module, decided when it shipped (`plan/tz.md`) | Its whole surface is `tz.load`, which reads a TZif file through the `fs` gate and asks `std/env` for `$TZDIR`, and both of its result payloads carry `String` (`TzErr.Corrupt`'s message and every `Offset`'s abbreviation), which is the derived-equality-and-runtime-call pair that keeps `std/regex` out. None of that is a subset separable by name: there is no zone without a file. Refused by name. |
+| `std/regex` | works with an allocator (kernel stage 23) | The parser, the program and the Pike VM are pure Kelp over `List<u8>`/`List<i32>` and the project's allocations. Two compiler pieces were missing when it first shipped and are now in: a `datac`/`enum` whose fields include a `String` has a derived key equality that called the hosted `kelp_map_key_eq`, which the LLVM backend now emits as a libc-free byte loop, and `View.slice`/`View.to_string` (and the `View` type) are admitted. `tests/projects/freestanding_std_regex` links clean, and `examples/kernel0-eq`/`examples/kernel0-eq-x86_64` run a real match under QEMU on both ISAs. |
+| `std/tz` | refused: a hosted-only module, decided when it shipped (`plan/tz.md`) | Its whole surface is `tz.load`, which reads a TZif file through the `fs` gate and asks `std/env` for `$TZDIR`, and both of its result payloads carry `String` (`TzErr.Corrupt`'s message and every `Offset`'s abbreviation). The `String` fields are no longer a blocker by themselves (kernel stage 23 gave the derived `String` equality a freestanding body), but the file and the environment are: there is no zone without a file. Refused by name. |
 | `std/rt` | present, not callable | The resolver injects it for a module that holds a capability domain; the `irq`/`frames` checks are front-end and emit no matcher call, and `prune` drops the module's bodies. |
 
 ## The allowed list a refusal names
@@ -76,9 +76,22 @@ does not ship.
 Every refusal of a whole module says "needs a hosted runtime" and then names
 the modules a freestanding project may implement, derived from the table (so it
 cannot drift): `std/arena, std/atomic, std/frame, std/irq, std/list, std/math,
-std/option, std/result, std/str`. `std/list` needs the allocator pair, and
-several functions inside the `Subset` rows are refused by name; both are said
-in the message of the construct that needs them, not in the list.
+std/option, std/regex, std/result, std/str`. `std/list` and `std/regex` need the
+allocator pair, and several functions inside the `Subset` rows are refused by
+name; both are said in the message of the construct that needs them, not in the
+list.
+
+## The `View` surface (kernel stage 23)
+
+`View` is a builtin type, not a shipped module, so it has no table row; the
+refusal is `heap_refusal`. It is a borrowed `{ptr, len}` pair with no storage of
+its own, and the operations the shipped modules reach (`len`, `is_empty`, `get`,
+`slice`, `eq`) are byte loops the backend lowers into the module, the same way
+the `str` subset is. `View.to_string` copies into an owned `String`, so it is
+listed with the allocator-using operations (`ALLOWED_VIEW_WITH_ALLOCATOR`) and
+is callable only with `[target] alloc`/`dealloc`. `View` being legal does not
+make it a `datac` field or a `str`: the language's own rule that a view borrows
+and never converts implicitly is unchanged.
 
 ## Tests
 
@@ -88,8 +101,15 @@ in the message of the construct that needs them, not in the list.
   undefined symbols.
 - `freestanding_std_alloc` is the allocator half: `std/list`, the
   `std/option`/`std/result` callback combinators and `str.concat`/`from_u64`.
+- `freestanding_std_regex` is `std/regex` with the allocator pair, built and
+  checked for undefined symbols; `freestanding_view` is the `View` operations
+  with no allocator at all.
 - `freestanding_std_kernel` boots under QEMU and prints `std/option`,
   `std/result` and `std/arena` results over the real UART.
+- `examples/kernel0-eq` and `examples/kernel0-eq-x86_64` boot under QEMU and
+  print a `String`-field equality, a `Map` lookup through the derived key pair,
+  a `View.slice`/`View.to_string` and a `std/regex` match on riscv64 and
+  x86-64.
 - Rejection fixtures: `freestanding_std_refused_time`,
   `freestanding_std_refused_thread`, `freestanding_std_refused_env` (three
   whole modules) and `freestanding_std_math_refused` plus

@@ -16,7 +16,11 @@ exactly as `emit_freestanding_str_bodies` writes the five `str` operations and
   an allowed type is (a local, a field, a parameter, a return, a container
   element). Without one they stay refused, with a message that names the two
   manifest keys.
-- `View` and `Thread` stay refused, by name, with or without an allocator.
+- `View` is admitted as of kernel stage 23 (`plan/freestanding-std.md`): it
+  is a borrowed `{ptr, len}` pair with no storage, and `len`/`is_empty`/`get`/
+  `slice`/`eq` are byte loops the backend emits, with `View.to_string` in the
+  allocator-only set. `Thread` stays refused, by name, with or without an
+  allocator.
 - Every operation below is a byte loop over the buffer the project's allocator
   returned; no libc symbol is emitted, and the `llvm-nm -u` check stays clean.
 
