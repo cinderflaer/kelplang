@@ -477,6 +477,31 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         }
         out.push('\n');
     }
+    // Borrowed trait objects (A-12 slice 4): one vtable struct tag and one
+    // fat-pair typedef per trait the program coerces to. The vtable's *body* is
+    // written after the `datac`s below, because a slot's return type may be one
+    // by value, but the tag is forward-declared here so the fat pair is
+    // complete at every parameter and local that names it.
+    if !program.dyn_vtables.is_empty() {
+        let mut traits: Vec<&str> = program
+            .dyn_vtables
+            .iter()
+            .map(|v| v.trait_name.as_str())
+            .collect();
+        traits.sort();
+        traits.dedup();
+        for t in traits {
+            let vtable = crate::types::dyn_vtable_c_type(t);
+            writeln!(out, "typedef struct {vtable} {vtable};").unwrap();
+            writeln!(
+                out,
+                "typedef struct {{ void* data; const {vtable}* vtable; }} {};",
+                crate::types::dyn_c_type(t)
+            )
+            .unwrap();
+        }
+        out.push('\n');
+    }
     if !containers.is_empty() || !arrays.is_empty() {
         write_tags(&mut out, &program.structs, &program.enums);
         // Every array's tag is typedef'd here, before anything can name it: a
@@ -552,6 +577,15 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             Decl::Record(s) => write_struct(&mut out, s, &owned, &clonable, &sortable, &keyable, &program.drop_types),
             Decl::Sum(e) => write_enum(&mut out, e, &owned, &clonable, &sortable, &keyable, &program.drop_types),
         }
+    }
+    // The vtable bodies (A-12 slice 4) wait until every `datac` exists, because
+    // a slot's return type may be one by value. The tag was forward-declared
+    // with the other type definitions above.
+    if !program.dyn_vtables.is_empty() {
+        for vtable in &program.dyn_vtables {
+            write_dyn_vtable_body(&mut out, vtable);
+        }
+        out.push('\n');
     }
     // A key type that declares its own pair (A-12) is reached from the `Map`
     // function sets below, and those are written before the program's own
@@ -667,6 +701,42 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     }
     out.push('\n');
 
+    // The `&dyn` machinery (A-12 slice 4): one thunk per vtable slot, then one
+    // `static const` table per `(trait, type)` pair. Both come after the
+    // prototypes above, because a thunk calls the concrete method by name.
+    if !program.dyn_vtables.is_empty() {
+        for vtable in &program.dyn_vtables {
+            for slot in &vtable.slots {
+                write_dyn_thunk(&mut out, vtable, slot);
+            }
+        }
+        for vtable in &program.dyn_vtables {
+            let fields: Vec<String> = (0..vtable.slots.len())
+                .map(|i| {
+                    crate::types::dyn_thunk_symbol(
+                        &vtable.trait_name,
+                        &vtable.type_name,
+                        &vtable.slots[i].method,
+                    )
+                })
+                .collect();
+            let init = if fields.is_empty() {
+                "{ 0 }".to_string()
+            } else {
+                format!("{{ {} }}", fields.join(", "))
+            };
+            writeln!(
+                out,
+                "static const {} {} = {};",
+                crate::types::dyn_vtable_c_type(&vtable.trait_name),
+                crate::types::dyn_vtable_symbol(&vtable.trait_name, &vtable.type_name),
+                init
+            )
+            .unwrap();
+        }
+        out.push('\n');
+    }
+
     // The shims for widened values whose function is statically known: each
     // calls the function it wraps, so it needs the prototypes above and
     // nothing else.
@@ -727,6 +797,92 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     }
 
     out
+}
+
+/// `ret name(args)` as a C declarator, with the one nesting C needs when the
+/// value is a function pointer: a vtable slot (or a thunk) whose return is a
+/// plain function value spells `ret (*name(args))(...)`, the same shape
+/// `write_signature` gives a function that returns a function value.
+fn c_decl_with_args(ty: &Ty, name: &str, args: &str) -> String {
+    match ty {
+        Ty::Fn { params, ret } => format!(
+            "{} (*{name}({args}))({})",
+            ret.c_type(),
+            crate::types::fn_params_c(params)
+        ),
+        other => format!("{} {name}({args})", other.c_type()),
+    }
+}
+
+/// One trait object's vtable struct body (A-12 slice 4): one function-pointer
+/// field per method, the supertraits' methods first (`infer.rs` built the
+/// order). The tag was forward-declared with the other type definitions, so the
+/// body can wait until every `datac` a slot names exists.
+fn write_dyn_vtable_body(out: &mut String, vtable: &crate::tir::DynVtable) {
+    writeln!(
+        out,
+        "struct {} {{",
+        crate::types::dyn_vtable_c_type(&vtable.trait_name)
+    )
+    .unwrap();
+    for (i, slot) in vtable.slots.iter().enumerate() {
+        let mut params = String::from("void* self");
+        for (j, p) in slot.params[1..].iter().enumerate() {
+            // A `unit` parameter crosses no value, exactly as in every other
+            // generated signature (`fn_params_c`).
+            if *p == Ty::Unit {
+                continue;
+            }
+            params.push_str(&format!(", {} p{j}", p.c_type()));
+        }
+        writeln!(out, "    {};", c_decl_with_args(&slot.ret, &format!("(*m{i})"), &params)).unwrap();
+    }
+    out.push_str("};\n");
+}
+
+/// One thunk per vtable slot (A-12 slice 4): a function whose first parameter is
+/// the erased data pointer, which calls the concrete method. A borrowed
+/// receiver *is* the pointer; a `Copy` builtin receiver is a load from it.
+fn write_dyn_thunk(
+    out: &mut String,
+    vtable: &crate::tir::DynVtable,
+    slot: &crate::tir::DynVtableSlot,
+) {
+    let symbol = crate::types::dyn_thunk_symbol(
+        &vtable.trait_name,
+        &vtable.type_name,
+        &slot.method,
+    );
+    let mut params = String::from("void* self");
+    for (j, p) in slot.params[1..].iter().enumerate() {
+        if *p == Ty::Unit {
+            continue;
+        }
+        params.push_str(&format!(", {} p{j}", p.c_type()));
+    }
+    let receiver = match slot.params.first() {
+        Some(Ty::Ref { .. }) | None => "self".to_string(),
+        Some(t) => format!("*({}*)self", t.c_type()),
+    };
+    let mut args = receiver;
+    for (j, p) in slot.params[1..].iter().enumerate() {
+        if *p == Ty::Unit {
+            continue;
+        }
+        args.push_str(&format!(", p{j}"));
+    }
+    let call = format!("{}({args})", c_name(&slot.target));
+    let body = if slot.ret == Ty::Unit {
+        format!("{{ {call}; }}")
+    } else {
+        format!("{{ return {call}; }}")
+    };
+    writeln!(
+        out,
+        "static {} {body}",
+        c_decl_with_args(&slot.ret, &symbol, &params)
+    )
+    .unwrap();
 }
 
 /// Emits one read-only data array per `section("...")` const (kernel stage 4).
@@ -3232,6 +3388,16 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                     }
                 }
             }
+            // A `&dyn` coercion walks the borrow inside it, and a vtable call
+            // walks its receiver and arguments (A-12 slice 4); the trait's own
+            // tables are the program's, not an instantiation.
+            ExprKind::DynCoerce { expr: inner, .. } => note_expr(inner, out),
+            ExprKind::DynCall { receiver, args, .. } => {
+                note_expr(receiver, out);
+                for a in args {
+                    note_expr(a, out);
+                }
+            }
             _ => {}
         }
     }
@@ -4490,6 +4656,37 @@ impl<'a> Gen<'a> {
                 }
                 let inner = self.expr_value(sub);
                 format!("(*{inner})")
+            }
+            // A borrow written where a `&dyn Trait` was expected (A-12 slice
+            // 4): the fat pair. `data` is the address the borrow already
+            // rendered as, and `vtable` is the pair's static table.
+            ExprKind::DynCoerce { trait_name, type_name, expr: inner } => {
+                let pair = crate::types::dyn_c_type(trait_name);
+                let table = crate::types::dyn_vtable_symbol(trait_name, type_name);
+                format!(
+                    "(({pair}){{ .data = (void*)({}), .vtable = &{} }})",
+                    self.expr_value(inner),
+                    table
+                )
+            }
+            // A method through a vtable (A-12 slice 4):
+            // `receiver.vtable->mN(receiver.data, args...)`. The receiver is
+            // bound once so a complex place is not evaluated twice.
+            ExprKind::DynCall { receiver, slot, args, .. } => {
+                let tmp = fresh_temp();
+                let recv = self.expr_value(receiver);
+                let mut argv = format!("{tmp}.data");
+                for a in args {
+                    if a.ty == Ty::Unit {
+                        continue;
+                    }
+                    argv.push_str(&format!(", {}", self.expr_value(a)));
+                }
+                format!(
+                    "({{ {} = {}; {tmp}.vtable->m{slot}({argv}); }})",
+                    receiver.ty.c_decl(&tmp),
+                    recv
+                )
             }
             ExprKind::StructLit { name, fields } => {
                 let mut s = format!("(({}){{ ", Ty::Struct(name.clone()).c_type());
@@ -6030,6 +6227,9 @@ impl<'a> Gen<'a> {
             // Same, for a closure: `infer.rs` refuses one in `print` too.
             Ty::Closure { .. } => unreachable!("a closure cannot be printed"),
             Ty::ScopedFn { .. } => unreachable!("a scoped function value cannot be printed"),
+            // A borrowed trait object is a borrow and has no text form, so
+            // `infer.rs` refuses one in `print` before codegen sees it.
+            Ty::Dyn { .. } => unreachable!("a trait object cannot be printed"),
             // An opaque handle has no readable value, so `infer.rs` refuses
             // one in `print` before codegen sees it.
             Ty::Handle(_) => unreachable!("an opaque handle cannot be printed"),

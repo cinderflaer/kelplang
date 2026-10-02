@@ -457,6 +457,9 @@ pub fn compile(
     // destructor, the shims) comes before the function bodies, the same order
     // the C backend writes them in.
     lowering.emit_closure_bodies()?;
+    // The `&dyn` thunks (A-12 slice 4), after every function they call is
+    // declared and defined, the same order the C backend writes them in.
+    lowering.emit_dyn_bodies()?;
     // The `pd` globals' two generated functions (MK7 §5), whose bodies call
     // the drops and container sets above.
     lowering.emit_pd_globals()?;
@@ -1108,6 +1111,16 @@ struct Gen<'a> {
     /// map because `emit_closure_bodies` defines each under the name it was
     /// declared with, and the two cannot drift.
     closure_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The `&dyn` machinery (A-12 slice 4): one thunk per vtable slot, keyed by
+    /// its mangled symbol, defined by `emit_dyn_bodies` under the name
+    /// `declare_dyn_fns` gave it.
+    dyn_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// One read-only `[N x ptr]` global per `(trait, type)` vtable, keyed by
+    /// the pair.
+    dyn_tables: HashMap<(String, String), Value<'a>>,
+    /// The `[N x ptr]` type of each trait's vtable, keyed by the trait's
+    /// canonical name.
+    dyn_vtable_tys: HashMap<String, Type<'a>>,
     /// The LLVM environment struct of each capturing literal, keyed by the
     /// literal's `tir` key: one field per capture, in capture order, the same
     /// fields `write_env` gives the C struct.
@@ -1324,6 +1337,9 @@ impl<'a> Gen<'a> {
             hash_fns: HashMap::new(),
             eq_fns: HashMap::new(),
             closure_fns: HashMap::new(),
+            dyn_fns: HashMap::new(),
+            dyn_tables: HashMap::new(),
+            dyn_vtable_tys: HashMap::new(),
             env_types: HashMap::new(),
             coerce_env_ty,
             libc: declare_libc(ctx, module),
@@ -1413,6 +1429,10 @@ impl<'a> Gen<'a> {
         // through. Declared after the container sets because a container whose
         // element is a closure (`Box<closure(...)>`) calls the element's drop.
         self.declare_closure_fns()?;
+        // The `&dyn` machinery (A-12 slice 4): one thunk and one read-only
+        // table per vtable the program uses. Declared after the closure
+        // machinery for the same reason, and before any function body.
+        self.declare_dyn_fns()?;
 
         let ctx = self.ctx;
 
@@ -3573,6 +3593,77 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
             ExprKind::IndirectCall { callee, args } => {
                 self.emit_indirect_call(callee, args, &e.ty)
+            }
+            // A borrow written where a `&dyn Trait` was expected (A-12 slice
+            // 4): the fat pair, the address the borrow already produced and the
+            // pair's read-only table.
+            ExprKind::DynCoerce { trait_name, type_name, expr: inner } => {
+                let data = self.value_of(inner)?;
+                let table = *self
+                    .g
+                    .dyn_tables
+                    .get(&(trait_name.clone(), type_name.clone()))
+                    .ok_or_else(|| {
+                        no_value(&format!(
+                            "the vtable for '{trait_name}' and '{type_name}'"
+                        ))
+                    })?;
+                let lty = self.lty(&e.ty)?;
+                let mut agg = self.g.ctx.undef(lty);
+                agg = self.g.builder.build_insert_value(agg, data, 0, "data");
+                agg = self.g.builder.build_insert_value(agg, table, 1, "vtable");
+                Ok(Some(agg))
+            }
+            // A method through a vtable (A-12 slice 4):
+            // `receiver.vtable[slot](receiver.data, args...)`.
+            ExprKind::DynCall { receiver, slot, args, .. } => {
+                let trait_name = match &receiver.ty {
+                    Ty::Dyn { trait_name, .. } => trait_name.clone(),
+                    other => {
+                        return Err(format!(
+                            "a dyn call on a receiver of type '{}'",
+                            other.display()
+                        ))
+                    }
+                };
+                let recv = self.value_of(receiver)?;
+                let data = self.g.builder.build_extract_value(recv, 0, "data");
+                let table = self.g.builder.build_extract_value(recv, 1, "vtable");
+                let table_ty = *self
+                    .g
+                    .dyn_vtable_tys
+                    .get(&trait_name)
+                    .ok_or_else(|| no_value(&format!("the vtable type of '{trait_name}'")))?;
+                let slot_ptr = self
+                    .g
+                    .builder
+                    .build_struct_gep(table_ty, table, *slot as u32, "m");
+                let fp = self.g.builder.build_load(self.g.pty(), slot_ptr, "fp");
+                // The first parameter is the erased data pointer the thunk
+                // takes in place of the receiver.
+                let mut params: Vec<Type<'a>> = vec![self.g.pty()];
+                let mut argv: Vec<Value<'a>> = vec![data];
+                for a in args {
+                    if a.ty == Ty::Unit {
+                        continue;
+                    }
+                    params.push(self.lty(&a.ty)?);
+                    argv.push(self.value_of(a)?);
+                }
+                let ret = if e.ty == Ty::Unit {
+                    self.g.ctx.void()
+                } else {
+                    self.lty(&e.ty)?
+                };
+                let fnty = self.g.ctx.fn_type(ret, &params, false);
+                if e.ty == Ty::Unit {
+                    self.g.builder.build_indirect_call(fp, fnty, &argv, "");
+                    Ok(None)
+                } else {
+                    Ok(Some(self.g.builder.build_indirect_call(
+                        fp, fnty, &argv, "dyncall",
+                    )))
+                }
             }
         }
     }
@@ -7636,6 +7727,32 @@ impl<'a> Gen<'a> {
             self.containers.insert(sig.clone(), ty);
         }
 
+        // The borrowed trait objects first (A-12 slice 4): a fat pair of
+        // pointers, one identified struct per trait. Both the shared and the
+        // exclusive spelling resolve to the same struct, exactly as `c_type`
+        // gives them the same C name.
+        let pair = self.ctx.opaque_ptr();
+        let mut dyn_traits: Vec<&str> = self
+            .program
+            .dyn_vtables
+            .iter()
+            .map(|v| v.trait_name.as_str())
+            .collect();
+        dyn_traits.sort();
+        dyn_traits.dedup();
+        for trait_name in dyn_traits {
+            let ty = self.ctx.struct_type(&crate::types::dyn_c_type(trait_name));
+            self.ctx.struct_set_body(ty, &[pair, pair]);
+            for mutable in [false, true] {
+                self.containers.insert(
+                    Ty::Dyn {
+                        mutable,
+                        trait_name: trait_name.to_string(),
+                    },
+                    ty,
+                );
+            }
+        }
         for elem in &lists {
             let ty = self.ctx.struct_type(&list_c_type(elem));
             self.containers.insert(Ty::List(Box::new(elem.clone())), ty);
@@ -8061,6 +8178,65 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// Declare the `&dyn` machinery (A-12 slice 4): one thunk per vtable slot
+    /// and one read-only `[N x ptr]` table per `(trait, type)` pair. The table's
+    /// initializer holds the thunks' addresses, so both are declared here, after
+    /// the container and aggregate types a slot's signature may name and before
+    /// any function body.
+    fn declare_dyn_fns(&mut self) -> Result<(), String> {
+        let ptr = self.ctx.opaque_ptr();
+        let vtables = self.program.dyn_vtables.clone();
+        for vtable in &vtables {
+            // The table's type is one identified struct of pointers per trait,
+            // so every table of the trait shares it and a call site names a
+            // field index (`build_struct_gep`).
+            if !self.dyn_vtable_tys.contains_key(&vtable.trait_name) {
+                let ty = self.ctx.struct_type(&format!(
+                    "{}_vtable",
+                    crate::types::dyn_c_type(&vtable.trait_name)
+                ));
+                self.ctx
+                    .struct_set_body(ty, &vec![ptr; vtable.slots.len()]);
+                self.dyn_vtable_tys.insert(vtable.trait_name.clone(), ty);
+            }
+            let mut elements: Vec<Value<'a>> = Vec::with_capacity(vtable.slots.len());
+            for slot in &vtable.slots {
+                let symbol = crate::types::dyn_thunk_symbol(
+                    &vtable.trait_name,
+                    &vtable.type_name,
+                    &slot.method,
+                );
+                let mut params: Vec<Type<'a>> = vec![ptr];
+                for p in &slot.params[1..] {
+                    if *p == Ty::Unit {
+                        continue;
+                    }
+                    params.push(self.lty2(p)?);
+                }
+                let ret = if slot.ret == Ty::Unit {
+                    self.ctx.void()
+                } else {
+                    self.lty2(&slot.ret)?
+                };
+                let ty = self.ctx.fn_type(ret, &params, false);
+                let func = self.module.add_function(&symbol, ty);
+                self.dyn_fns.insert(symbol, (func, ty));
+                elements.push(func.as_value());
+            }
+            let arr_ty = self.ctx.array_type(ptr, elements.len() as u64);
+            let global = self.module.add_global(
+                &crate::types::dyn_vtable_symbol(&vtable.trait_name, &vtable.type_name),
+                arr_ty,
+            );
+            global.set_initializer(self.ctx.const_array(ptr, &elements));
+            global.set_constant(true);
+            global.set_internal_linkage();
+            self.dyn_tables
+                .insert((vtable.trait_name.clone(), vtable.type_name.clone()), global);
+        }
+        Ok(())
+    }
+
     /// Define every function `declare_closure_fns` declared, in the order the C
     /// backend writes them: the per-signature drop, then the widening's
     /// machinery, then the shims.
@@ -8279,6 +8455,68 @@ impl<'a> Gen<'a> {
             self.builder.build_ret_void();
         } else {
             let v = self.call(callee.func, callee.ty, &args, "call");
+            self.builder.build_ret(v);
+        }
+        Ok(())
+    }
+
+    /// Define every thunk `declare_dyn_fns` declared (A-12 slice 4). Each one
+    /// takes the erased data pointer as its first parameter and calls the
+    /// concrete method: a borrowed receiver *is* the pointer, a `Copy` builtin
+    /// receiver is loaded from it.
+    fn emit_dyn_bodies(&self) -> Result<(), String> {
+        let vtables = self.program.dyn_vtables.clone();
+        for vtable in &vtables {
+            for slot in &vtable.slots {
+                self.emit_dyn_thunk(vtable, slot)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_dyn_thunk(
+        &self,
+        vtable: &crate::tir::DynVtable,
+        slot: &crate::tir::DynVtableSlot,
+    ) -> Result<(), String> {
+        let symbol = crate::types::dyn_thunk_symbol(
+            &vtable.trait_name,
+            &vtable.type_name,
+            &slot.method,
+        );
+        let (func, _) = *self
+            .dyn_fns
+            .get(&symbol)
+            .ok_or_else(|| no_value(&format!("the dyn thunk '{symbol}'")))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let raw = func.get_param(0);
+        let receiver = match slot.params.first() {
+            Some(Ty::Ref { .. }) | None => raw,
+            Some(t) => {
+                let lty = self.lty2(t)?;
+                self.ld(lty, raw, "recv")
+            }
+        };
+        let mut args: Vec<Value<'a>> = vec![receiver];
+        let mut next = 1u32;
+        for p in &slot.params[1..] {
+            if *p == Ty::Unit {
+                continue;
+            }
+            args.push(func.get_param(next as usize));
+            next += 1;
+        }
+        let target = self
+            .funcs
+            .get(&slot.target)
+            .cloned()
+            .ok_or_else(|| refuse(&format!("the trait method '{}'", slot.target), "S2A"))?;
+        if slot.ret == Ty::Unit {
+            self.call(target.func, target.ty, &args, "");
+            self.builder.build_ret_void();
+        } else {
+            let v = self.call(target.func, target.ty, &args, "call");
             self.builder.build_ret(v);
         }
         Ok(())
@@ -13360,6 +13598,13 @@ fn llvm_type<'a>(
         Ty::Closure { .. } | Ty::ScopedFn { .. } => *containers
             .get(ty)
             .ok_or_else(|| no_value(&format!("the closure '{}'", ty.display())))?,
+        // A borrowed trait object (A-12 slice 4) is the fat pair
+        // `{ data, vtable }`, an identified struct per trait created in
+        // `declare_container_types` (both mutability spellings resolve to the
+        // one struct).
+        Ty::Dyn { .. } => *containers
+            .get(ty)
+            .ok_or_else(|| no_value(&format!("the trait object '{}'", ty.display())))?,
         Ty::Struct(name) => *structs
             .get(name)
             .ok_or_else(|| refuse(&format!("the datac '{name}'"), "S2A"))?,
@@ -13790,6 +14035,7 @@ mod layout_tests {
             handles: Vec::new(),
             const_data: Vec::new(),
             statics: Vec::new(),
+            dyn_vtables: Vec::new(),
             functions: vec![Function {
                 name: "std.mem.alloc_raw".to_string(),
                 params: vec![("n".to_string(), Ty::Usize)],
@@ -14236,6 +14482,7 @@ mod layout_tests {
             handles: Vec::new(),
             const_data: Vec::new(),
             statics: Vec::new(),
+            dyn_vtables: Vec::new(),
             functions: vec![
                 // The bug's own shape: an `enum` in the parameter list.
                 extern_fn(
@@ -14383,6 +14630,7 @@ mod layout_tests {
             handles: Vec::new(),
             const_data: Vec::new(),
             statics: Vec::new(),
+            dyn_vtables: Vec::new(),
             functions: vec![Function {
                 name: "std.time.now_mono_ns_raw".to_string(),
                 params: Vec::new(),

@@ -76,6 +76,44 @@ pub struct Program {
     /// Each is one object with a stable address; `infer.rs` has already folded
     /// its initializer into a constant tree, so no code runs at startup.
     pub statics: Vec<Static>,
+    /// One vtable per `(Trait, Type)` pair a coercion used (A-12 slice 4),
+    /// sorted by `(trait, type)` so both backends emit the same order. Empty
+    /// for a program that writes no `&dyn`, which leaves both backends' output
+    /// unchanged.
+    pub dyn_vtables: Vec<DynVtable>,
+}
+
+/// One `(Trait, Type)` vtable (A-12 slice 4): the static, read-only table a
+/// `&dyn Trait` value points at. `slots` is the trait's flattened method list
+/// (`plan/traits.md` 9.4): the supertraits' methods first, recursively in
+/// declaration order, then the trait's own methods in source order. Every
+/// vtable of one trait has the same slots in the same order, so a call site
+/// names a slot index and the backend reads it out of whichever vtable the
+/// value carries.
+#[derive(Debug, Clone)]
+pub struct DynVtable {
+    /// The trait's canonical key.
+    pub trait_name: String,
+    /// The implementing type's name as an `impl` wrote it (a canonical
+    /// `datac`/`enum` key, or a builtin's written name such as `i32`).
+    pub type_name: String,
+    pub slots: Vec<DynVtableSlot>,
+}
+
+/// One method of one vtable: the concrete function the thunk calls and the
+/// signature the thunk (and therefore the slot) has.
+#[derive(Debug, Clone)]
+pub struct DynVtableSlot {
+    /// The trait method's own name, which is also the vtable field's name in
+    /// the C backend.
+    pub method: String,
+    /// The concrete method's key, e.g. `shapes.Circle#area`.
+    pub target: String,
+    /// The concrete method's parameter types, receiver first. `params[0]` is
+    /// the receiver: a `Ty::Ref` means the erased data pointer *is* the
+    /// receiver, anything else a `Copy` builtin the thunk loads from it.
+    pub params: Vec<Ty>,
+    pub ret: Ty,
 }
 
 /// One `static NAME: T = INIT` global (kernel stage 7).
@@ -444,6 +482,25 @@ pub enum ExprKind {
     Ref {
         mutable: bool,
         expr: Box<Expr>,
+    },
+    /// A `&T` written where a `&dyn Trait` was expected (A-12 slice 4): the
+    /// value is the fat pair `{ data pointer, vtable pointer }`. `expr` is the
+    /// `&x` the coercion was written from (a `tir::ExprKind::Ref`), so
+    /// `borrowck.rs` sees exactly the borrow the source wrote; `trait_name`
+    /// and `type_name` name the vtable the value points at.
+    DynCoerce {
+        trait_name: String,
+        type_name: String,
+        expr: Box<Expr>,
+    },
+    /// A method call through a borrowed trait object (A-12 slice 4):
+    /// `receiver.vtable[slot](receiver.data, args...)`. `slot` is the method's
+    /// index in the trait's flattened vtable, which every vtable of the trait
+    /// shares.
+    DynCall {
+        receiver: Box<Expr>,
+        slot: usize,
+        args: Vec<Expr>,
     },
     Deref {
         expr: Box<Expr>,

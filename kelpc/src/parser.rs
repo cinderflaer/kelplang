@@ -1631,16 +1631,17 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> PResult<TypeExpr> {
-        // `dyn Name` is the trait-object form, and this language has none
-        // (A-12 slice 2): a trait is a bound on a type parameter, not a type.
-        // `dyn` is not a keyword, so it is recognized where two names in a row
-        // can only mean this. `impl Name` in a type position is the other
-        // spelling of the bound, refused for the same reason.
+        // A borrowed trait object (A-12 slice 4) is `&dyn Name` (or
+        // `&mut dyn Name`). A bare `dyn Name` is refused: an owned trait object
+        // is `Box<dyn Name>`, which this slice does not have. `dyn` is not a
+        // keyword, so it is recognized where two names in a row can only mean
+        // this. `impl Name` in a type position is the other spelling of the
+        // bound, refused for the same reason.
         if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "dyn")
             && matches!(self.peek2_kind(), TokenKind::Ident(_))
         {
             return Err(ParseError {
-                message: "'dyn' trait objects are not in this slice: dispatch is static, so a trait is a bound on a type parameter ('fun f<T: Name>(x: &T)'), and a value that is one of several shapes is an 'enum'"
+                message: "a trait object has to be borrowed: write '&dyn Name' (or '&mut dyn Name'), not a bare 'dyn Name' — an owned trait object would be 'Box<dyn Name>', which this language does not have"
                     .to_string(),
                 span: self.peek().span,
             });
@@ -1662,6 +1663,50 @@ impl Parser {
         } else {
             None
         };
+        // `&dyn Name` / `&mut dyn Name`: the one place `&mut` may be written in
+        // a type position (A-12 slice 4). Everywhere else an exclusive borrow
+        // is `mut T` on a parameter, and `&mut T` keeps its refusal.
+        if let Some(amp) = amp_start {
+            let amp_mut = if self.check(&TokenKind::Mut) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+            if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "dyn") {
+                self.advance();
+                let (first, first_span) = self.expect_ident()?;
+                let mut name = first;
+                let mut span = amp.to(first_span);
+                while self.check(&TokenKind::Dot) {
+                    self.advance();
+                    let (part, part_span) = self.expect_ident()?;
+                    name.push('.');
+                    name.push_str(&part);
+                    span = span.to(part_span);
+                }
+                return Ok(TypeExpr {
+                    name: String::new(),
+                    tuple: None,
+                    args: Vec::new(),
+                    array_elem: None,
+                    array_len: None,
+                    amp: true,
+                    amp_mut,
+                    dyn_trait: Some(name),
+                    scoped: false,
+                    fn_params: None,
+                    fn_ret: None,
+                    span,
+                });
+            }
+            if amp_mut {
+                return Err(ParseError {
+                    message: "'&mut' is only written before 'dyn' in a type: a parameter writes 'mut T' for an exclusive borrow".to_string(),
+                    span: self.peek().span,
+                });
+            }
+        }
         // A function type (A-4): `fun(i32, String).R: bool`. `fun` is a
         // keyword, so this can never be an ordinary type name. A closure type
         // (A-4 phase E) is the same shape under the `closure` keyword:
@@ -1684,6 +1729,8 @@ impl Parser {
                 array_elem: Some(Box::new(elem)),
                 array_len: Some(Box::new(len)),
                 amp: amp_start.is_some(),
+                amp_mut: false,
+                dyn_trait: None,
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
@@ -1729,6 +1776,8 @@ impl Parser {
                 array_elem: None,
                 array_len: None,
                 amp: amp_start.is_some(),
+                amp_mut: false,
+                dyn_trait: None,
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
@@ -1781,6 +1830,8 @@ impl Parser {
                 array_elem: None,
                 array_len: None,
                 amp: amp_start.is_some(),
+                amp_mut: false,
+                dyn_trait: None,
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
@@ -1794,6 +1845,8 @@ impl Parser {
             array_elem: None,
             array_len: None,
             amp: amp_start.is_some(),
+            amp_mut: false,
+            dyn_trait: None,
             scoped: false,
             fn_params: None,
             fn_ret: None,
@@ -1972,6 +2025,8 @@ impl Parser {
             array_elem: None,
             array_len: None,
             amp: amp_start.is_some(),
+            amp_mut: false,
+            dyn_trait: None,
             scoped,
             fn_params: Some(params),
             fn_ret: ret,
@@ -3564,7 +3619,7 @@ mod tests {
     #[test]
     fn dyn_and_impl_in_a_type_position_do_not_parse() {
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: dyn Shape) {}\nfun main() {}");
-        assert!(err.message.contains("trait objects"), "{}", err.message);
+        assert!(err.message.contains("has to be borrowed"), "{}", err.message);
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: impl Shape) {}\nfun main() {}");
         assert!(err.message.contains("cannot be a parameter's type"), "{}", err.message);
     }
