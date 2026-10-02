@@ -115,7 +115,9 @@ the formatter, so there is no locale, no translated month name and no
 Two smaller ones are worth a line. A footer this parser does not understand is
 treated as absent rather than as corruption, so an exotic extension in a
 newer footer falls back to the last transition's type instead of failing the
-load. And `to_unix` panics on a date that is not a real calendar date (month
+load; the one bound it enforces is two weeks on an offset or a rule's time,
+which is past glibc's own ceiling of 167 hours and past anything a zone names.
+And `to_unix` panics on a date that is not a real calendar date (month
 13, day 31 in April, a leap day in a non-leap year) rather than answering
 `Gap`, because a caller's own arithmetic error is not the zone's answer; as a
 guard for the same arithmetic, every instant function panics outside the years
@@ -124,19 +126,22 @@ guard for the same arithmetic, every instant function panics outside the years
 ## Freestanding
 
 `std/tz` is hosted-only and its row in `freestanding::std_admission` is
-`Hosted`. It reads files and the environment, both of which a bare-metal image
-has no form of, and its `Result`/`enum` payloads carry `String`, which is the
-same pair of reasons `std/regex` is refused. A freestanding project that
-imports it is refused by name with the allowed-module list
-(`tests/projects/freestanding_std_refused_tz`).
+`Hosted`: it reads a file and an environment variable, neither of which a
+bare-metal image has a form of, and `TzErr.Corrupt` and every `Offset` carry a
+`String`, which is the derivation-and-runtime-call pair that keeps `std/regex`
+out. A freestanding project that imports it is refused by name with the
+allowed-module list (`tests/projects/freestanding_std_refused_tz`). The project
+grants `std/tz` the two domains its own body reaches (the refusal it pins is
+the freestanding one, which is decided after the capability checks).
 
 ## Tests
 
 `kelpc/tests/fixtures/stdlib_tz_synthetic.kp` needs no database: it builds TZif
-byte arrays in Kelp, so the footer rules, the 64-bit and 32-bit blocks, the
-`Ambiguous`/`Gap` cases, the formatter and every corrupt-data refusal are
-pinned on a machine with an empty `/usr/share/zoneinfo`, and it runs on both
-backends.
+byte arrays in Kelp, so the footer rules (an `M<m>.<w>.<d>` window, a `J<n>`
+rule, a bare `n`, a quoted abbreviation and a fixed offset with seconds in it),
+the 64-bit and 32-bit blocks, the `Ambiguous`/`Gap` cases, the formatter and
+every corrupt-data refusal are pinned on a machine with an empty
+`/usr/share/zoneinfo`, and it runs on both backends.
 
 `kelpc/tests/fixtures/stdlib_tz_zones.kp` reads the host database and prints a
 verdict table for `America/New_York` (the 2024 and 2026 transitions, with the
@@ -146,3 +151,10 @@ footer rule and a 1969 date before the first 64-bit-era table. The Rust test
 prints a skip and returns when the directory is not there, and the fixture
 itself prints one skip line and exits, so the `backend_coverage` sweep runs it
 either way.
+
+One compiler change came with the module and is recorded in
+`plan/kernel-ub-notes.md`: a function body that ends in `while true { ... }` has
+no exit edge, so the LLVM backend now closes it with an `unreachable` terminator
+instead of a fallthrough `ret` of a zero value, which an owned return type
+cannot build one of. The shape is the abbreviation reader's, and
+`tests/fixtures/owned_return_endless_loop.kp` pins it on both backends.

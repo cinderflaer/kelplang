@@ -14612,8 +14612,7 @@ fn is_diverging_tail(tail: &Expr) -> bool {
 /// Whether a block's last statement is a loop that can never be left at all:
 /// `while true { ... }`. Every way out of such a loop is a `return` or a
 /// `panic`, so the code after it is unreachable and the function needs no
-/// fallthrough `ret` — which it could not build for a declared type with no
-/// zero value.
+/// fallthrough `ret` for a return type that has no zero value.
 fn ends_in_an_endless_loop(block: &Block) -> bool {
     matches!(block.stmts.last(), Some(Stmt::While { cond, .. }) if matches!(cond.kind, ExprKind::BoolLit(true)))
 }
