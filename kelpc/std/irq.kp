@@ -1,0 +1,40 @@
+/* std/irq: an interrupt line as a capability (kernel stage 18, MK10-S1's
+   second half, `plan/irq-frame-caps.md`).
+
+   An interrupt line is a resource a driver must be granted, and the grant is a
+   *value*: `claim` is the only way a `Line` enters a program, and the compiler
+   checks the argument against the calling module's `irq` grant at the call. A
+   constant line has to fall inside a granted range, and a computed one is
+   refused unless the grant is the whole-line `["*"]`, exactly as the `mmio`
+   address check treats a `Ptr.from_addr` (`plan/device-caps.md`).
+
+       datac Line(val n: u32)
+
+       fun claim(n: u32).R: Line
+       fun Line.number().R: u32
+
+   The field is not exported, so a `Line` cannot be built outside this module:
+   a struct literal from another module is refused (`stdlib.rs::SEALED_TYPES`),
+   and `claim` is the one constructor. The module is a capability domain
+   (`stdlib::domain_of` maps it to `irq`), so every item here needs the domain
+   too: a module that holds a `Line` but no `irq` grant can carry it but not
+   read it, which is what makes the grant, rather than possession alone, the
+   authority.
+
+   A hosted program may import this module and claim a line as well: the check
+   is a compile-time one and has nothing to do with the machine, but a hosted
+   program has no interrupt hardware, so a line it "claims" is only the number
+   the compiler admitted. Freestanding is where the number names something.
+
+   Undefined behaviour this does not remove: a line number is a number, and
+   nothing ties it to a real interrupt controller, to a mask bit or to a
+   handler that is actually installed. `plan/kernel-ub-notes.md` stage 18 says
+   so. */
+
+datac Line(val n: u32)
+
+// The receipt for an `irq` grant: a line the calling module was granted.
+fun claim(n: u32).R: Line = Line(n = n)
+
+// The line's number.
+fun Line.number().R: u32 = n

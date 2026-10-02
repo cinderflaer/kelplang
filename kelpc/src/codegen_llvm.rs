@@ -471,9 +471,16 @@ pub fn compile(
     // here too, because a large frame among them would otherwise be the one
     // frame that skips the guard.
     if freestanding.is_some() {
+        // An x86-64 image has a red zone below `rsp` that an interrupt the
+        // kernel installs later would clobber, so no function may keep a live
+        // value there (kernel stage 20).
+        let x86 = triple.starts_with("x86_64");
         for func in module.functions() {
             if !func.is_declaration() {
                 func.mark_probe_stack();
+                if x86 {
+                    func.mark_noredzone();
+                }
             }
         }
     }
@@ -630,9 +637,11 @@ fn freestanding_entry_asm(triple: &str, entry_symbol: &str) -> Result<String, St
         Ok(riscv64_entry_asm(entry_symbol))
     } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
         Ok(aarch64_entry_asm(entry_symbol))
+    } else if triple.starts_with("x86_64") {
+        Ok(x86_64_entry_asm(entry_symbol))
     } else {
         Err(format!(
-            "kelpc has no freestanding '_start' stub for the triple '{triple}': it has one for riscv64 and aarch64"
+            "kelpc has no freestanding '_start' stub for the triple '{triple}': it has one for riscv64, aarch64 and x86_64"
         ))
     }
 }
@@ -646,9 +655,11 @@ fn halt_asm_template(triple: &str) -> Result<&'static str, String> {
         Ok("wfi")
     } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
         Ok("wfe")
+    } else if triple.starts_with("x86_64") {
+        Ok("hlt")
     } else {
         Err(format!(
-            "kelpc has no freestanding wait-for-interrupt instruction for the triple '{triple}': it has 'wfi' for riscv64 and 'wfe' for aarch64"
+            "kelpc has no freestanding wait-for-interrupt instruction for the triple '{triple}': it has 'wfi' for riscv64, 'wfe' for aarch64 and 'hlt' for x86_64"
         ))
     }
 }
@@ -720,6 +731,138 @@ fn aarch64_entry_asm(entry_symbol: &str) -> String {
          \x20   wfe\n\
          \x20   b 1b\n\
          \x20   .size _start, . - _start\n"
+    )
+}
+
+/// The x86-64 stub. QEMU's `-kernel` on x86 loads an ELF64 image through the
+/// Xen PVH note and enters the 32-bit physical address the note names, in
+/// 32-bit protected mode with paging off, so this stub has to leave 32-bit mode
+/// before it can call the entry: `.note.Xen` holds the PVH note (type 18) whose
+/// description is `_start`, `_start` loads a three-entry GDT, builds an
+/// identity map for the first 1 GiB out of 2 MiB pages in the `.boot_pt` NOBITS
+/// section (zeroed here, because the `.bss` clear must not touch the tables it
+/// runs under), enables PAE and `EFER.LME`, loads `CR3`, sets `CR0.PG|PE`, and
+/// far-jumps (`0xEA`) into the `.code64` half. That half reloads the data
+/// segments, loads `rsp` from `__stack_top`, clears `[__bss_start, __bss_end)`,
+/// enables SSE (`CR0.EM` clear, `CR0.MP` set, `CR4.OSFXSR` and
+/// `CR4.OSXMMEXCPT` set, `MXCSR` to its reset value) so the compiler's SSE
+/// lowering is safe, calls the entry, and spins on `hlt` if it returns. The
+/// note is its own `.note.Xen` section and `_start` is the first thing in
+/// `.text.boot`, which the linker script places at the image's 1 MiB base.
+fn x86_64_entry_asm(entry_symbol: &str) -> String {
+    format!(
+        "    .section .note.Xen, \"a\", @note\n\
+         \x20   .align 4\n\
+         \x20   .long 4\n\
+         \x20   .long 4\n\
+         \x20   .long 18\n\
+         \x20   .asciz \"Xen\"\n\
+         \x20   .align 4\n\
+         \x20   .long _start\n\
+         \x20   .align 4\n\
+         \x20   .section .text.boot, \"ax\", @progbits\n\
+         \x20   .weak __bss_start\n\
+         \x20   .weak __bss_end\n\
+         \x20   .globl _start\n\
+         \x20   .type _start, @function\n\
+         _start:\n\
+         \x20   .code32\n\
+         \x20   cli\n\
+         \x20   leal gdt_desc, %eax\n\
+         \x20   lgdt (%eax)\n\
+         \x20   movw $0x10, %ax\n\
+         \x20   movw %ax, %ds\n\
+         \x20   movw %ax, %es\n\
+         \x20   movw %ax, %ss\n\
+         \x20   leal __boot_pt_start, %edi\n\
+         \x20   leal __boot_pt_end, %ecx\n\
+         \x20   subl %edi, %ecx\n\
+         \x20   shrl $2, %ecx\n\
+         \x20   xorl %eax, %eax\n\
+         \x20   cld\n\
+         \x20   rep stosl\n\
+         \x20   leal __boot_pdpt, %eax\n\
+         \x20   orl $0x3, %eax\n\
+         \x20   leal __boot_pml4, %edi\n\
+         \x20   movl %eax, (%edi)\n\
+         \x20   leal __boot_pd, %eax\n\
+         \x20   orl $0x3, %eax\n\
+         \x20   leal __boot_pdpt, %edi\n\
+         \x20   movl %eax, (%edi)\n\
+         \x20   leal __boot_pd, %edi\n\
+         \x20   xorl %ecx, %ecx\n\
+         \x20   movl $0x83, %eax\n\
+         .Lkelp_pd_loop:\n\
+         \x20   movl %eax, (%edi,%ecx,8)\n\
+         \x20   addl $0x200000, %eax\n\
+         \x20   incl %ecx\n\
+         \x20   cmpl $512, %ecx\n\
+         \x20   jne .Lkelp_pd_loop\n\
+         \x20   movl %cr4, %eax\n\
+         \x20   orl $0x20, %eax\n\
+         \x20   movl %eax, %cr4\n\
+         \x20   movl $0xC0000080, %ecx\n\
+         \x20   rdmsr\n\
+         \x20   orl $0x100, %eax\n\
+         \x20   wrmsr\n\
+         \x20   movl $__boot_pml4, %eax\n\
+         \x20   movl %eax, %cr3\n\
+         \x20   movl %cr0, %eax\n\
+         \x20   orl $0x80000001, %eax\n\
+         \x20   movl %eax, %cr0\n\
+         \x20   .byte 0xEA\n\
+         \x20   .long .Lkelp_long\n\
+         \x20   .word 0x08\n\
+         \x20   .code64\n\
+         .Lkelp_long:\n\
+         \x20   movw $0x10, %ax\n\
+         \x20   movw %ax, %ds\n\
+         \x20   movw %ax, %es\n\
+         \x20   movw %ax, %ss\n\
+         \x20   movq $__stack_top, %rsp\n\
+         \x20   movq $__bss_start, %rdi\n\
+         \x20   movq $__bss_end, %rcx\n\
+         \x20   subq %rdi, %rcx\n\
+         \x20   addq $7, %rcx\n\
+         \x20   shrq $3, %rcx\n\
+         \x20   xorq %rax, %rax\n\
+         \x20   cld\n\
+         \x20   rep stosq\n\
+         \x20   movq %cr0, %rax\n\
+         \x20   andq $-5, %rax\n\
+         \x20   orq $0x2, %rax\n\
+         \x20   movq %rax, %cr0\n\
+         \x20   movq %cr4, %rax\n\
+         \x20   orq $0x600, %rax\n\
+         \x20   movq %rax, %cr4\n\
+         \x20   movl $0x1F80, %eax\n\
+         \x20   pushq %rax\n\
+         \x20   ldmxcsr (%rsp)\n\
+         \x20   addq $8, %rsp\n\
+         \x20   call {entry_symbol}\n\
+         1:\n\
+         \x20   hlt\n\
+         \x20   jmp 1b\n\
+         \x20   .size _start, . - _start\n\
+         \x20   .section .rodata.boot, \"a\", @progbits\n\
+         \x20   .align 8\n\
+         gdt:\n\
+         \x20   .quad 0x0000000000000000\n\
+         \x20   .quad 0x00AF9A000000FFFF\n\
+         \x20   .quad 0x00CF92000000FFFF\n\
+         gdt_desc:\n\
+         \x20   .word 0x17\n\
+         \x20   .long gdt\n\
+         \x20   .section .boot_pt, \"aw\", @nobits\n\
+         \x20   .align 4096\n\
+         __boot_pt_start:\n\
+         __boot_pml4:\n\
+         \x20   .zero 4096\n\
+         __boot_pdpt:\n\
+         \x20   .zero 4096\n\
+         __boot_pd:\n\
+         \x20   .zero 4096\n\
+         __boot_pt_end:\n"
     )
 }
 
@@ -14303,8 +14446,22 @@ mod layout_tests {
         assert!(arm.contains("bl kelp_kmain"), "{arm}");
         assert!(arm.contains("wfe"), "{arm}");
 
-        let refused = super::freestanding_entry_asm("x86_64-unknown-none", "kelp_kmain")
-            .expect_err("x86-64 has no stub yet");
-        assert!(refused.contains("x86_64-unknown-none"), "{refused}");
+        let x86 = super::freestanding_entry_asm("x86_64-unknown-none", "kelp_kmain")
+            .expect("x86_64 has a stub");
+        assert!(x86.contains(".note.Xen"), "{x86}");
+        assert!(x86.contains(".code32"), "{x86}");
+        assert!(x86.contains(".code64"), "{x86}");
+        assert!(x86.contains("rep stosl"), "{x86}");
+        assert!(x86.contains("rep stosq"), "{x86}");
+        assert!(x86.contains("call kelp_kmain"), "{x86}");
+        assert!(x86.contains("hlt"), "{x86}");
+        // The `-elf` spelling of the same triple takes the same branch.
+        let x86_elf = super::freestanding_entry_asm("x86_64-unknown-none-elf", "kelp_kmain")
+            .expect("the -elf spelling has the same prefix");
+        assert_eq!(x86_elf, x86);
+
+        let refused = super::freestanding_entry_asm("i686-unknown-none", "kelp_kmain")
+            .expect_err("x86-32 has no stub");
+        assert!(refused.contains("i686-unknown-none"), "{refused}");
     }
 }

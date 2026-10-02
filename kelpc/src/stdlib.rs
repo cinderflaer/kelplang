@@ -12,6 +12,9 @@
 //! lexer, same parser, same aliases, same prefixing — with the text coming
 //! from here instead of from `src/`.
 
+use crate::ast::{BinOp, UnOp};
+use crate::tir;
+
 /// The compiler's own runtime module (MK7 §8). It is not a library a program is
 /// meant to import: the resolver injects it for a program that imports a gated
 /// module, because that is when generated code calls the capability matcher it
@@ -150,6 +153,8 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/ws" => include_str!("../std/ws.kp"),
         "std/encoding" => include_str!("../std/encoding.kp"),
         "std/list" => include_str!("../std/list.kp"),
+        "std/irq" => include_str!("../std/irq.kp"),
+        "std/frame" => include_str!("../std/frame.kp"),
         "std/atomic" => include_str!("../std/atomic.kp"),
         "std/thread" => include_str!("../std/thread.kp"),
         "std/sync" => include_str!("../std/sync.kp"),        "std/option" => include_str!("../std/option.kp"),
@@ -172,7 +177,7 @@ pub fn shipped() -> &'static [&'static str] {
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/http", "std/ws",
         "std/encoding", "std/list", "std/option", "std/result", "std/atomic", "std/thread",
-        "std/arena", SYNC_MODULE,
+        "std/arena", SYNC_MODULE, "std/irq", "std/frame",
     ]
 }
 
@@ -201,27 +206,99 @@ pub fn may_use_unsafe(id: &str) -> bool {
 /// `resolve.rs` refuses every other list. `plan/ffi-display-domain.md` owns
 /// that decision and the per-display vocabulary it waits on.
 ///
-/// `mmio` is the one domain whose patterns are address *ranges* rather than
-/// names or paths (`"0xBASE+0xLEN"`), and the one the entry module does not
-/// hold by default: a device's address is a fact about the machine, not a
-/// resource the root of trust can be assumed to own, so a grant has to be
-/// written down (`plan/device-caps.md`). `caps(*)` hands over every other
-/// domain's whole resource and deliberately leaves `mmio` out, because the
-/// whole-address-space grant is the escape hatch a reviewer greps for.
-pub const DOMAINS: &[&str] =
-    &["fs", "net", "process", "env", "time", "rand", "ui", "mmio"];
+/// `mmio`, `frames` and `irq` are the three domains whose patterns are
+/// *ranges* rather than names or paths: `"0xBASE+0xLEN"` byte windows for the
+/// first two and a decimal line or `LO-HI` inclusive line range for `irq`.
+/// `mmio` is also the one domain the entry module does not hold by default: a
+/// device's address is a fact about the machine, not a resource the root of
+/// trust can be assumed to own, so a grant has to be written down
+/// (`plan/device-caps.md`). `irq` and `frames` are device capabilities too but
+/// the entry holds them like any name domain; `plan/irq-frame-caps.md` owns
+/// the line and frame halves. `caps(*)` hands over every other domain's whole
+/// resource and deliberately leaves `mmio` out, because the whole-address-
+/// space grant is the escape hatch a reviewer greps for.
+pub const DOMAINS: &[&str] = &[
+    "fs", "net", "process", "env", "time", "rand", "ui", "mmio", "irq", "frames",
+];
 
 pub fn is_domain(name: &str) -> bool {
     DOMAINS.contains(&name)
 }
 
-/// The `mmio` domain's wildcard: the whole address space. It is the one grant
-/// that admits a `Ptr.from_addr` whose address the compiler cannot fold, and
-/// the line a reviewer greps for to find every module that can reach any
-/// address at all.
-pub const MMIO_ANY: &str = "*";
+/// The wildcard of every range domain (`mmio`, `frames`, `irq`): the whole
+/// address space for a byte range, every line for `irq`. It is the one grant
+/// that admits a value the compiler cannot fold, and the line a reviewer greps
+/// for to find every module that can reach any address or line at all.
+pub const RANGE_ANY: &str = "*";
 
-/// Parses one `mmio` grant pattern, `"0xBASE+0xLEN"`: `BASE` and `LEN` in hex
+/// The module that declares `Line` and the gated `claim` (kernel stage 18,
+/// MK10-S1's second half, `plan/irq-frame-caps.md`). Like every gated stdlib
+/// module, all of its items need the domain, so holding a `Line` is not enough
+/// to read it: the grant is what makes `number()` reachable.
+pub const IRQ_MODULE: &str = "std/irq";
+
+/// The module that declares `Frame` and the gated `claim`, the physical-frame
+/// half of the same stage.
+pub const FRAME_MODULE: &str = "std/frame";
+
+/// The two gated resource constructors, as the canonical call keys
+/// (`resolve.rs`'s `key_prefix` plus the bare name). Both are the capability's
+/// gate: `infer.rs` checks the calling module's grant and the argument against
+/// it at the call, so `claim` is the only way `Line`/`Frame` enter a program.
+pub const IRQ_CLAIM_FN: &str = "std.irq.claim";
+pub const FRAME_CLAIM_FN: &str = "std.frame.claim";
+
+/// The domain a gated resource constructor belongs to, or `None` for every
+/// other call. One predicate so the gate and the `gated` map cannot disagree
+/// about which names they are.
+pub fn claim_domain(key: &str) -> Option<&'static str> {
+    match key {
+        IRQ_CLAIM_FN => Some("irq"),
+        FRAME_CLAIM_FN => Some("frames"),
+        _ => None,
+    }
+}
+
+/// A `Frame` is a 4 KiB-aligned physical frame address: `claim` refuses any
+/// address that is not a multiple of this, and `offset` bounds a byte against
+/// the frame's own size. The two are the same number because a frame *is* one
+/// page.
+pub const FRAME_SIZE: u128 = 4096;
+
+/// The `datac`s whose constructor is sealed to their own module. The shipped
+/// library exports every item (a transitional rule, `plan/syntax.md` 13.4) and
+/// Kelp has no field-level `pub`, so a capability value's constructor is
+/// private by *name*: `infer.rs` refuses `alias.Type(...)` for these keys
+/// wherever the caller is not the declaring module. A `Line` or a `Frame` is
+/// the receipt for a grant, and a literal from another module would forge it.
+pub const SEALED_TYPES: &[&str] = &["std.irq.Line", "std.frame.Frame"];
+
+pub fn is_sealed_type(key: &str) -> bool {
+    SEALED_TYPES.contains(&key)
+}
+
+/// The module that seals `key`'s constructor, so a refusal can name it; `None`
+/// for every other key.
+pub fn sealed_type_module(key: &str) -> Option<&'static str> {
+    match key {
+        "std.irq.Line" => Some(IRQ_MODULE),
+        "std.frame.Frame" => Some(FRAME_MODULE),
+        _ => None,
+    }
+}
+
+/// Parses one range pattern for `domain`, whichever of the three grammars it
+/// uses, into the one `(start, len)` representation every range check below
+/// shares.
+pub fn parse_range(domain: &str, pattern: &str) -> Result<(u128, u128), String> {
+    if domain == "irq" {
+        parse_irq_range(pattern)
+    } else {
+        parse_byte_range(domain, pattern)
+    }
+}
+
+/// Parses one byte-range pattern, `"0xBASE+0xLEN"`: `BASE` and `LEN` in hex
 /// (`0x`) or decimal, `+` the separator, `LEN` in bytes. Returns `(base, len)`
 /// at `u128` so `base + len` can never wrap: a range that reaches the top of
 /// the address space has to answer for its last byte, not for zero.
@@ -230,28 +307,57 @@ pub const MMIO_ANY: &str = "*";
 /// whole list to tell the two forms apart) or a range; a bare address, a
 /// missing or empty length, a non-numeric part and a zero length are all
 /// errors, each naming the pattern it read.
-pub fn parse_mmio_range(pattern: &str) -> Result<(u128, u128), String> {
+pub fn parse_byte_range(domain: &str, pattern: &str) -> Result<(u128, u128), String> {
     let (base, len) = pattern.split_once('+').ok_or_else(|| {
         format!(
-            "'{pattern}' is not an mmio range - write 'BASE+LEN' ('0x10000000+0x100'), both in hex or decimal"
+            "'{pattern}' is not {} - write 'BASE+LEN' ('0x10000000+0x100'), both in hex or decimal",
+            range_kind(domain)
         )
     })?;
-    let base = parse_mmio_number(base)
-        .ok_or_else(|| format!("the base in the mmio range '{pattern}' is not a number"))?;
-    let len = parse_mmio_number(len)
-        .ok_or_else(|| format!("the length in the mmio range '{pattern}' is not a number"))?;
+    let base = parse_byte_number(base)
+        .ok_or_else(|| format!("the base in the {domain} range '{pattern}' is not a number"))?;
+    let len = parse_byte_number(len)
+        .ok_or_else(|| format!("the length in the {domain} range '{pattern}' is not a number"))?;
     if len == 0 {
         return Err(format!(
-            "the mmio range '{pattern}' has zero length - LEN counts bytes and must be at least 1"
+            "the {domain} range '{pattern}' has zero length - LEN counts bytes and must be at least 1"
         ));
     }
     Ok((base, len))
 }
 
-/// One side of an `mmio` range: `0x`/`0X` for hex, otherwise decimal digits.
+/// Parses one `irq` pattern: a decimal line number (`"10"`) or an inclusive
+/// decimal range (`"32-47"`). Returns the same `(start, len)` shape as a byte
+/// range, so every disjointness and membership test is written once. Hex is
+/// refused, so a line number cannot mean one thing to the reader and another
+/// to the checker; an inverted `LO-HI` names the empty range it is.
+pub fn parse_irq_range(pattern: &str) -> Result<(u128, u128), String> {
+    let bad = || {
+        format!(
+            "'{pattern}' is not an irq line or range - write a decimal line number ('10') or an inclusive range ('32-47')"
+        )
+    };
+    let (lo_text, hi_text) = match pattern.split_once('-') {
+        Some((lo, hi)) => (lo, Some(hi)),
+        None => (pattern, None),
+    };
+    let lo = parse_decimal(lo_text).ok_or_else(bad)?;
+    let Some(hi_text) = hi_text else {
+        return Ok((lo, 1));
+    };
+    let hi = parse_decimal(hi_text).ok_or_else(bad)?;
+    if hi < lo {
+        return Err(format!(
+            "the irq range '{pattern}' is empty - HI counts lines and must not be below LO"
+        ));
+    }
+    Ok((lo, hi - lo + 1))
+}
+
+/// One side of a byte range: `0x`/`0X` for hex, otherwise decimal digits.
 /// No sign, no whitespace, no underscores: the grammar is small on purpose so
 /// a range cannot mean one thing to a reviewer and another to the compiler.
-fn parse_mmio_number(text: &str) -> Option<u128> {
+fn parse_byte_number(text: &str) -> Option<u128> {
     if text.is_empty() {
         return None;
     }
@@ -265,26 +371,94 @@ fn parse_mmio_number(text: &str) -> Option<u128> {
     u128::from_str_radix(digits, radix).ok()
 }
 
-/// Whether two parsed ranges share any byte. `len` is non-zero by
+/// How a byte-range refusal names what was expected. The three domains do not
+/// share an article (`an mmio`, `an irq`, `a frames`), so it is spelled out
+/// rather than guessed.
+fn range_kind(domain: &str) -> &'static str {
+    match domain {
+        "irq" => "an irq range",
+        "frames" => "a frames range",
+        _ => "an mmio range",
+    }
+}
+
+/// A decimal number, which is the whole vocabulary of an `irq` line. `0x` is
+/// deliberately not read here: a line number is decimal in every document that
+/// names one, and a range's `LO` and `HI` have to read the same way.
+fn parse_decimal(text: &str) -> Option<u128> {
+    if text.is_empty() || !text.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+/// Whether two parsed ranges share any line or byte. `len` is non-zero by
 /// construction, so an empty intersection means disjoint.
-pub fn mmio_ranges_overlap(a: (u128, u128), b: (u128, u128)) -> bool {
+pub fn ranges_overlap(a: (u128, u128), b: (u128, u128)) -> bool {
     a.0 < b.0 + b.1 && b.0 < a.0 + a.1
 }
 
-/// Whether a module's `mmio` patterns admit `addr`. A `*` admits every
-/// address; otherwise `addr` has to fall inside one half-open range,
-/// `[base, base + len)`, so `base + len - 1` is inside and `base + len` is
-/// not. Order does not matter and ranges are disjoint (the grant is validated
-/// before it is stored), so the first match wins.
-pub fn mmio_covers(patterns: &[String], addr: u128) -> bool {
+/// Whether `domain`'s patterns admit `value`. A `*` admits every line or byte;
+/// otherwise `value` has to fall inside one half-open range, `[start, start +
+/// len)`, so `start + len - 1` is inside and `start + len` is not. Order does
+/// not matter and ranges are disjoint (the grant is validated before it is
+/// stored), so the first match wins.
+pub fn range_covers(domain: &str, patterns: &[String], value: u128) -> bool {
     patterns.iter().any(|pattern| {
-        if pattern == MMIO_ANY {
+        if pattern == RANGE_ANY {
             return true;
         }
-        parse_mmio_range(pattern)
-            .map(|(base, len)| addr >= base && addr < base + len)
+        parse_range(domain, pattern)
+            .map(|(start, len)| value >= start && value < start + len)
             .unwrap_or(false)
     })
+}
+
+/// The compile-time value of a gated call's argument, when the compiler can
+/// fold it: an integer or `char` literal, a `const` (already folded to a
+/// literal by `infer.rs`), and the arithmetic and bitwise operators over
+/// those. Anything else - a local, a parameter, a `static`, a call, an `asm`
+/// result - is not a constant, and the caller says so.
+///
+/// A value is cut to 64 bits after every step, which is what `usize`
+/// arithmetic does on the target, so a folded expression means what the
+/// emitted code would compute rather than what unbounded `i128` arithmetic
+/// would. Shared by `Ptr.from_addr`'s `mmio` check and the `irq`/`frames`
+/// claim checks, so the three domains fold an argument the same way.
+pub fn const_int(expr: &tir::Expr) -> Option<u128> {
+    const MASK: u128 = u64::MAX as u128;
+    match &expr.kind {
+        tir::ExprKind::IntLit(v) if *v >= 0 => Some(*v as u128),
+        tir::ExprKind::CharLit(c) => Some(*c as u128),
+        tir::ExprKind::Unary { op, expr } => {
+            let value = const_int(expr)?;
+            let folded = match op {
+                UnOp::Neg => 0u128.wrapping_sub(value),
+                UnOp::BitNot => !value,
+                UnOp::Not => return None,
+            };
+            Some(folded & MASK)
+        }
+        tir::ExprKind::Binary { op, lhs, rhs } => {
+            let a = const_int(lhs)?;
+            let b = const_int(rhs)?;
+            let folded = match op {
+                BinOp::Add => a.wrapping_add(b),
+                BinOp::Sub => a.wrapping_sub(b),
+                BinOp::Mul => a.wrapping_mul(b),
+                BinOp::Div if b != 0 => a / b,
+                BinOp::Mod if b != 0 => a % b,
+                BinOp::BitAnd => a & b,
+                BinOp::BitOr => a | b,
+                BinOp::BitXor => a ^ b,
+                BinOp::Shl if b < 128 => a << b,
+                BinOp::Shr if b < 128 => a >> b,
+                _ => return None,
+            };
+            Some(folded & MASK)
+        }
+        _ => None,
+    }
 }
 
 /// The domain a stdlib module's items are gated on, if it is a gated module.
@@ -299,6 +473,8 @@ pub fn mmio_covers(patterns: &[String], addr: u128) -> bool {
 /// line: `caps(net = ["host:port"], rand = [])`.
 pub fn domain_of(module: &str) -> Option<&'static str> {
     Some(match module {
+        "std/irq" => "irq",
+        "std/frame" => "frames",
         "std/fs" => "fs",
         "std/net" => "net",
         "std/tls" => "net",
@@ -499,7 +675,7 @@ mod tests {
     fn the_domain_list_names_every_domain_once() {
         assert_eq!(
             DOMAINS,
-            &["fs", "net", "process", "env", "time", "rand", "ui", "mmio"]
+            &["fs", "net", "process", "env", "time", "rand", "ui", "mmio", "irq", "frames"]
         );
         let mut sorted = DOMAINS.to_vec();
         sorted.sort_unstable();
@@ -522,44 +698,92 @@ mod tests {
     }
 
     #[test]
-    fn an_mmio_range_reads_hex_or_decimal() {
-        assert_eq!(parse_mmio_range("0x10000000+0x100"), Ok((0x10000000, 0x100)));
-        assert_eq!(parse_mmio_range("0X10000000+0X100"), Ok((0x10000000, 0x100)));
-        assert_eq!(parse_mmio_range("4096+16"), Ok((4096, 16)));
+    fn irq_and_frames_are_range_domains_with_the_whole_resource_wildcard() {
+        for domain in ["irq", "frames"] {
+            assert!(is_domain(domain));
+            assert!(!patterns_are_paths(domain));
+            assert_eq!(whole_resource(domain), "*");
+        }
+        assert_eq!(domain_of("std/irq"), Some("irq"));
+        assert_eq!(domain_of("std/frame"), Some("frames"));
+        assert_eq!(claim_domain("std.irq.claim"), Some("irq"));
+        assert_eq!(claim_domain("std.frame.claim"), Some("frames"));
+        assert_eq!(claim_domain("std.irq.Line#number"), None);
+        assert!(is_sealed_type("std.irq.Line"));
+        assert!(is_sealed_type("std.frame.Frame"));
+        assert!(!is_sealed_type("std.irq.claim"));
+    }
+
+    #[test]
+    fn a_byte_range_reads_hex_or_decimal() {
+        assert_eq!(parse_byte_range("mmio", "0x10000000+0x100"), Ok((0x10000000, 0x100)));
+        assert_eq!(parse_byte_range("mmio", "0X10000000+0X100"), Ok((0x10000000, 0x100)));
+        assert_eq!(parse_byte_range("frames", "4096+16"), Ok((4096, 16)));
         assert_eq!(
-            parse_mmio_range("0x3FFFFFF000+0x1000"),
+            parse_byte_range("frames", "0x3FFFFFF000+0x1000"),
             Ok((0x3FFFFFF000, 0x1000))
         );
     }
 
     #[test]
-    fn an_mmio_range_refuses_a_bare_address_or_a_zero_length() {
-        assert!(parse_mmio_range("0x10000000").is_err());
-        assert!(parse_mmio_range("0x10000000+0x0").is_err());
-        assert!(parse_mmio_range("+0x100").is_err());
-        assert!(parse_mmio_range("0x10000000+").is_err());
-        assert!(parse_mmio_range("0x10000000+zz").is_err());
-        assert!(parse_mmio_range("0x+0x1").is_err());
-        assert!(parse_mmio_range("1_000+16").is_err());
-        assert!(parse_mmio_range("0x10000000+0x100+0x10").is_err());
+    fn a_byte_range_refuses_a_bare_address_or_a_zero_length() {
+        for domain in ["mmio", "frames"] {
+            assert!(parse_byte_range(domain, "0x10000000").is_err());
+            assert!(parse_byte_range(domain, "0x10000000+0x0").is_err());
+            assert!(parse_byte_range(domain, "+0x100").is_err());
+            assert!(parse_byte_range(domain, "0x10000000+").is_err());
+            assert!(parse_byte_range(domain, "0x10000000+zz").is_err());
+            assert!(parse_byte_range(domain, "0x+0x1").is_err());
+            assert!(parse_byte_range(domain, "1_000+16").is_err());
+            assert!(parse_byte_range(domain, "0x10000000+0x100+0x10").is_err());
+        }
     }
 
     #[test]
-    fn mmio_ranges_overlap_only_when_they_share_a_byte() {
-        assert!(!mmio_ranges_overlap((0x1000, 0x100), (0x1100, 0x100)));
-        assert!(mmio_ranges_overlap((0x1000, 0x101), (0x1100, 0x100)));
-        assert!(mmio_ranges_overlap((0x1000, 0x100), (0x1080, 0x100)));
-        assert!(mmio_ranges_overlap((0x1000, 0x100), (0x1000, 0x100)));
+    fn an_irq_pattern_reads_a_decimal_line_or_an_inclusive_range() {
+        assert_eq!(parse_irq_range("10"), Ok((10, 1)));
+        assert_eq!(parse_irq_range("0"), Ok((0, 1)));
+        assert_eq!(parse_irq_range("32-47"), Ok((32, 16)));
+        assert_eq!(parse_irq_range("32-32"), Ok((32, 1)));
     }
 
     #[test]
-    fn mmio_covers_the_half_open_range_and_the_wildcard() {
+    fn an_irq_pattern_refuses_hex_an_empty_range_and_junk() {
+        assert!(parse_irq_range("0x10").is_err());
+        assert!(parse_irq_range("47-32").is_err());
+        assert!(parse_irq_range("10-").is_err());
+        assert!(parse_irq_range("-10").is_err());
+        assert!(parse_irq_range("").is_err());
+        assert!(parse_irq_range("ten").is_err());
+        assert!(parse_irq_range("1-2-3").is_err());
+    }
+
+    #[test]
+    fn ranges_overlap_only_when_they_share_a_line_or_byte() {
+        assert!(!ranges_overlap((0x1000, 0x100), (0x1100, 0x100)));
+        assert!(ranges_overlap((0x1000, 0x101), (0x1100, 0x100)));
+        assert!(ranges_overlap((0x1000, 0x100), (0x1080, 0x100)));
+        assert!(ranges_overlap((0x1000, 0x100), (0x1000, 0x100)));
+        assert!(!ranges_overlap((10, 1), (11, 1)));
+        assert!(ranges_overlap((10, 5), (12, 1)));
+    }
+
+    #[test]
+    fn a_range_covers_the_half_open_interval_and_the_wildcard() {
         let granted = vec!["0x10000000+0x100".to_string()];
-        assert!(mmio_covers(&granted, 0x10000000));
-        assert!(mmio_covers(&granted, 0x100000FF));
-        assert!(!mmio_covers(&granted, 0x10000100));
-        assert!(!mmio_covers(&granted, 0x0FFFFFFF));
-        assert!(mmio_covers(&[MMIO_ANY.to_string()], 0xDEADBEEF));
+        assert!(range_covers("mmio", &granted, 0x10000000));
+        assert!(range_covers("mmio", &granted, 0x100000FF));
+        assert!(!range_covers("mmio", &granted, 0x10000100));
+        assert!(!range_covers("mmio", &granted, 0x0FFFFFFF));
+        assert!(range_covers("mmio", &[RANGE_ANY.to_string()], 0xDEADBEEF));
+
+        let lines = vec!["10".to_string(), "32-47".to_string()];
+        assert!(range_covers("irq", &lines, 10));
+        assert!(range_covers("irq", &lines, 32));
+        assert!(range_covers("irq", &lines, 47));
+        assert!(!range_covers("irq", &lines, 48));
+        assert!(!range_covers("irq", &lines, 11));
+        assert!(range_covers("irq", &[RANGE_ANY.to_string()], 999));
     }
 
     #[test]

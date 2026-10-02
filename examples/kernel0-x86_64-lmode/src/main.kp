@@ -1,0 +1,28 @@
+// Kernel stage 20's long-mode proof: print the greeting, prove the CPU is in
+// long mode with paging on, then fault. `inspect.long_mode_on` reads CR0, CR4
+// and EFER through `asm`; only when `EFER.LMA`, `CR0.PG` and `CR4.PAE` are all
+// set does this print `long mode on`, and then a `ud2` with a null IDT makes
+// the triple fault the boot test accepts.
+impl "uart"
+impl "inspect"
+
+section(".text.boot") fun kmain() {
+    uart.puts("\nhello from kelp (x86_64)\n")
+    if inspect.long_mode_on() {
+        uart.puts("long mode on\n")
+    } else {
+        uart.puts("long mode off\n")
+        uart.halt()
+    }
+    inspect.triple_fault()
+}
+
+// The handler `[target] panic` names: every bounds and overflow check the
+// compiler emits calls this with the static message the check was written
+// with. It prints `panic: ` and the message, then loops.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}

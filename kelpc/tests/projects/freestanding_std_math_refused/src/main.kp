@@ -1,0 +1,6 @@
+impl "std/math"
+
+section(".text.boot") fun kmain() {
+    var x: f64 = math.sqrt(4.0)
+    while true { }
+}

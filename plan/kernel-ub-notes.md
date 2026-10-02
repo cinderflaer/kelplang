@@ -1199,3 +1199,106 @@ address the check actually read, and the generated accessor bodies that read the
 whichever statement last ran, not a property of the body. `plan/panic-semantics.md` has the check
 by check table and names the two constructs the task lists that are *not* checks here: integer
 overflow wraps and division by zero is unchecked UB, on this backend and the C oracle alike.
+
+## Stage 18: IRQ lines and physical frames as capabilities (MK10-S1, roadmap C-3, `plan/irq-frame-caps.md`)
+
+**New way to reach undefined behaviour.** None from the check itself, exactly as stage 16: a
+`Line` and a `Frame` are values, and a check that admits a call says nothing about the machine. What
+the two domains *move* is where the grant's honesty stops. An `irq` line is a number, and nothing
+ties it to a controller, a mask bit or an installed handler, so `irq.claim(10)` may name a line that
+does not exist and the compiler will not say so. A `Frame` is a 4 KiB-aligned address, and
+`Frame.offset(byte)` bounds the byte against the frame's own 4096, but the `usize` it returns is
+ordinary arithmetic from then on: a caller that walks on with `+ n` is outside the frame and the
+compiler does not revisit it, which is stage 16's "born-at only" limit one level down. A frame
+handed to a device for DMA is not followed at all: the module may free it, reuse it, or hand out a
+second `Frame` for the same address, and nothing sees the conflict. `["*"]` is the same escape hatch
+it is for `mmio`: a module that holds it can claim any line or any aligned address.
+
+**What the compiler does check.** That `irq` and `frames` are capability domains and their grants
+are ranges (`irq` a decimal line or inclusive line range, `frames` a `"0xBASE+0xLEN"` window, both
+pairwise disjoint and never beside `["*"]`); that a module holds the domain before `irq.claim`,
+`frame.claim` or any accessor of either module is reachable; that a constant line or frame falls
+inside a granted range; that a constant frame address is 4096-aligned whatever the grant; that a
+computed line or address is admitted only under `["*"]`; and that a `Line`/`Frame` constructor
+cannot be written from another module (the capability type is sealed by name, `stdlib::SEALED_TYPES`,
+because a shipped module exports every item and the language has no field-level `pub`). The check is
+in the front end, so `kelpc check` and `kelpc build` agree on both backends and in both the hosted
+and the freestanding modes; the one runtime check is `Frame.claim`'s 4096-alignment test, which
+fires only for a computed address.
+
+**What it does not check.** Whether the line exists, is enabled, is shared, or has a handler;
+whether the frame is RAM, device memory, already owned by another module, or still mapped when a
+device writes to it; anything about a byte past `Frame.offset`'s returned number; and, in the other
+direction, whether a module with a correct-looking grant actually needed it. There is still no
+runtime ownership, no liveness, no provenance (roadmap D-1) and no DMA tracking. `examples/kernel0-caps`
+carries the one grant the boot uses (line 10 and `0x80100000+0x100000`), and `plan/irq-frame-caps.md`
+is the design note.
+
+## Stage 19: the freestanding standard subset (release goal 3, `plan/freestanding-std.md`)
+
+**New way to reach undefined behaviour.** None from the admission itself, and that is the point of
+this stage: it only moves a refusal from the module to the item, and every item it admits is one
+that leaves no undefined symbol behind. Two places the admission does shift a promise are worth
+naming. `std/list` and the `std/option`/`std/result` callback combinators are admitted with the
+`[target] alloc`/`dealloc` pair, and their closure *environments* are now heap boxes allocated and
+freed through the project's own functions, so stage 12's promise (alignment, size, no aliasing,
+the exact `cap + 1` byte count handed back to `dealloc`) applies to a second kind of object; a
+project allocator that gets it wrong corrupts the closure's captured state, and the compiler does
+not check it there any more than it does for `String`. `std/math`'s integer `abs` is the ordinary
+arithmetic surface: `abs(i32::MIN)` is the negation of the minimum, and that is the overflow check
+calling the project's panic handler like every other negation.
+
+**What the compiler does check.** That every `std/*` module the program reaches has a row, and that
+a module whose row is `Hosted` is refused by name with the admitted list; that a module whose row
+is `Allocator` is refused with the two manifest keys named when no pair is configured; and that a
+call into a narrowed module names an item its row admits right now, so `str.from_f64`, a libm
+function, a `std/math` `f64` overload and a callback combinator without an allocator are all
+errors in the front end rather than undefined symbols at `ld.lld`. The table is checked against
+`stdlib::shipped()` and each row's names against the shipped source by unit tests, so a rename in
+`kelpc/std/` cannot silently narrow a row into a refusal.
+
+**What it does not check.** Everything the admitted bodies already did not: a `f64` operation
+anywhere in a freestanding program is still a soft-float libcall the image has no library for (the
+stage keeps `f64` out of `std/math` but does not remove the type), and the allocator's promises,
+the arena's region, a claimed line and a claimed frame are all the caller's claims about the
+machine, as stages 12, 13, 16 and 18 said. The refusal is a compile-time decision about reachable
+symbols, not a proof about any of them.
+
+## Stage 20: the x86-64 target (`plan/x86-64.md`)
+
+**New ways to reach undefined behaviour.** The x86-64 `_start` stub is module-level
+assembly the compiler emits and never reasons about, so everything it does between the
+PVH entry and the entry call is a promise the language does not check. Three of those
+promises are the ones a project can break. The stub clears `[__bss_start, __bss_end)`
+*after* paging is on and while it is running under the page tables it built; the tables
+live in a `.boot_pt` NOBITS section the linker script must place outside that range, so
+a script that folds `.boot_pt` into `.bss` makes the clear erase the live tables and the
+next instruction faults. The stub enables SSE (`CR0.EM` clear, `CR0.MP` set,
+`CR4.OSFXSR` and `CR4.OSXMMEXCPT` set) before it calls the entry, which is what makes
+the compiler's `movaps` in a struct copy or an `f64` legal; a project that supplies its
+own `_start` in place of the generated one and does not do the same lets an SSE
+instruction take `#UD` with no handler, which is a triple fault. And the identity map
+covers the first 1 GiB only, so an address outside it is unmapped the moment paging is on
+even though `Ptr.from_addr` will build a pointer to it.
+
+Port I/O is the second surface. `in`/`out` name a port number, not an address, so the
+`mmio` capability gate does not see them: a `[caps]` grant is checked on where a
+`Ptr.from_addr` is born and a driver that writes COM1 through `asm` carries no grant for
+it. The constraint vocabulary is a register class, not a register, so the compiler
+accepts `in("r")`/`out("r")` and the template is what parks the value where the
+instruction needs it; nothing checks that the port exists, that the device answers, that
+the clobber list covers every register the template writes, or that an `in`/`out` operand
+is the width the instruction takes.
+
+**What the compiler does check.** That an x86-64 triple gets an X86 target machine and
+the x86-64 stub, and every other triple is still refused by name; that every emitted
+freestanding function carries `noredzone` (so LLVM's own register allocator keeps nothing
+live in the red zone an interrupt would clobber) and `probe-stack`; and, because the
+image is freestanding, that it references no libc symbol. The `asm` operand shapes and
+the `unsafe` listing are the stage 5 checks, unchanged.
+
+**What it does not check.** The linker script's section placement, which is where the
+`.boot_pt`-inside-`.bss` bug lives; whether anything enables SSE before generated code
+runs when a project replaces the stub; the real existence of a port or a device; the
+template against the constraints; and anything about the machine past the first 1 GiB the
+stub maps.

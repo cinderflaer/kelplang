@@ -20,9 +20,9 @@ and compares the serial output.
 
 **Why RISC-V `virt` and not x86-64 first.** QEMU's `-kernel` loads a 64-bit RISC-V ELF directly and starts it
 at its entry point in a clean machine mode, and the UART is plain memory-mapped I/O, so kernel 0 exercises
-raw pointers and `volatile` honestly. The x86-64 equivalent would need a 32-bit Multiboot stub that enters
-long mode before any Kelp runs: real work, but it is bootstrapping, not language. LLVM 21 (the one the
-compiler already links) builds the RISCV target, `lld` links it, and all three are in nixpkgs.
+raw pointers and `volatile` honestly. The x86-64 equivalent needed a 32-bit PVH stub that enters long mode
+before any Kelp runs: real work, but it is bootstrapping, not language. It followed once the stages were in
+(kernel stage 20, `plan/x86-64.md`).
 
 ## Order, and why
 
@@ -38,7 +38,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
 | 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation (done: `plan/syscall-abi.md`) | Userspace |
 | 10 | **MK9-S7-M2, MK9-S6-M2** (B-14, B-15) | stack guards and probing; panic semantics with no OS | A kernel that fails loudly instead of silently |
-| 11 | **MK10-S1** (C-3) | MMIO regions (done), IRQ lines and frames (next) as *capabilities* | The safety story: a driver can only touch what it was granted |
+| 11 | **MK10-S1** (C-3) | MMIO regions, IRQ lines and frames as *capabilities* (done) | The safety story: a driver can only touch what it was granted |
 
 Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one thing.
 
@@ -222,13 +222,64 @@ driver with `impl "uart" caps(mmio = [...])`. `caps(*)` deliberately skips
 and all thirteen still boot under QEMU; `kelpc/tests/mmio.rs` covers the
 accepting and refusing shapes with `kelpc check` (front end only, no `ld.lld`).
 The check is on the address a pointer is *born* at, so an offset applied later
-is not revisited; IRQ lines and physical frames are the rest of the row and are
-not in this stage.
+is not revisited; IRQ lines and physical frames are the rest of the row.
+
+**Row 11's IRQ-line and frame halves are done too** (MK10-S1, roadmap C-3,
+`plan/irq-frame-caps.md`): the two remaining device capabilities are domains
+now, `irq` with decimal line numbers and inclusive ranges
+(`caps(irq = ["10", "32-47"])`) and `frames` with the same `BASE+LEN` byte
+windows `mmio` uses, parsed and validated by the same code. A line or a frame
+is a *value*: `irq.claim(n)` and `frame.claim(addr)` are gated constructors in
+the shipped `std/irq` and `std/frame`, so a driver can be handed exactly what
+it was granted, and a `Line`/`Frame`'s constructor is sealed to its module so
+another module can only get one from a claim. A constant argument must fall
+inside a granted range, a `frames` address must be 4096-aligned (a compile
+error for a constant and a panic for a computed one), and a computed argument
+needs the whole-resource `["*"]`. Unlike `mmio`, the check is in `infer.rs` and
+applies to a hosted program and a freestanding image alike; the entry module
+holds both domains by default, so a kernel narrows them in its `[caps]`
+section. `examples/kernel0-caps` is the acceptance, `kelpc/tests/irq_frames.rs`
+the accepting and refusing front-end cases, and every other `examples/kernel0*`
+image still boots.
+
+**Stage 20 (a second ISA family) is done.** `[target] triple = "x86_64-unknown-none"`
+(the `-elf` spelling too) now gets the X86 target machine and an x86-64 `_start` stub:
+a `.note.Xen` `XEN_ELFNOTE_PHYS32_ENTRY` (type 18) note naming the entry, `.code32` code
+that loads a GDT with a 64-bit code segment, builds an identity map for the first 1 GiB out
+of 2 MiB pages in a `.boot_pt` NOBITS section, enables PAE and `EFER.LME`, loads CR3 and
+sets `CR0.PG|PE`, then far-jumps into `.code64`, loads `rsp` from `__stack_top`, clears
+`[__bss_start, __bss_end)`, turns SSE on and calls the entry; every emitted function is
+`noredzone`. The manifest gets the `x86-64` CPU, the static relocation model and the
+**small** code model, which is what links an image at 1 MiB. `examples/kernel0-x86_64` is
+the COM1 port-I/O driver (`hello from kelp (x86_64)`), and `examples/kernel0-x86_64-lmode`
+reads CR0/CR4/EFER through `asm`, prints `long mode on` and then takes a `ud2` with no IDT,
+so it triple-faults; both boot under `qemu-system-x86_64 -M q35 -cpu qemu64 -no-reboot` and
+three tests in `kelpc/tests/compile_and_run.rs` cover the ELF (the PVH note included) and
+the two boots. What is not there: interrupts and an IDT, the APIC, SMP and ACPI;
+`cpu_index()` has no x86-64 lowering, so a `percpu` static is refused by name.
+
+**Release goal 3's freestanding standard subset is done** (kernel stage 19,
+`plan/freestanding-std.md`). `freestanding.rs` decides each shipped `std/*`
+module with one table row (`Pure`, `Allocator`, `Subset`, `Present`,
+`Hosted`) instead of two hand-kept lists, the call-site check and `prune` are
+driven by the same row, and a whole-module refusal names the modules a
+freestanding project may implement. Newly admitted: `std/math`'s integer
+`abs`/`min`/`max`/`clamp`, and, with the `[target] alloc`/`dealloc` pair,
+`std/list` and the `std/option`/`std/result` callback combinators. The
+admitted list is `std/arena`, `std/atomic`, `std/frame`, `std/irq`,
+`std/list`, `std/math`, `std/option`, `std/result`, `std/str`; every other
+module is refused by name with "needs a hosted runtime". `std/math`'s libm
+externs and `f64` overloads and the rest of `std/str` are refused by name
+inside the admitted module, and `std/mem` stays refused because its
+`alloc_raw` is libc `malloc`. Ten `tests/projects/freestanding_std_*`
+fixtures build with zero undefined symbols, and `freestanding_std_kernel`
+boots under QEMU printing `option`/`result`/`arena` results over the UART.
 
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
 arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall
-ABI (row 9) and both halves of row 10 (guards and probing, panic semantics) are all done, and so
-is row 11's MMIO half. What remains is the IRQ-line and physical-frame halves of row 11.
+ABI (row 9), both halves of row 10 (guards and probing, panic semantics) and the whole of row 11
+(MMIO ranges, IRQ lines and physical frames) are all done. The language work the kernel path
+names is complete; §"What is deliberately not here" is what is left.
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps
@@ -305,8 +356,9 @@ records that overflow wraps and division by zero stays an unchecked UB, so neith
 ## What is deliberately not here
 
 - A specific kernel design (scheduler, filesystem, drivers). The language work above is what they would sit on.
-- x86-64 kernels. aarch64 is the second architecture and it boots (`examples/kernel0-aarch64`);
-  an x86-64 kernel still needs a 32-bit PVH or Multiboot entry stub that enters long mode before
-  any Kelp runs, which is bootstrapping rather than language work, so it follows once the stages are in.
+- x86-64 interrupts and an IDT, the APIC, SMP and ACPI: the architecture boots and runs Kelp
+  (kernel stage 20, `plan/x86-64.md`), and what a kernel needs to take an interrupt there is
+  open work, as it is for riscv64; `plan/kernel0-status.md`'s trap gap and stage 5's deferred
+  `interrupt` attribute are the same hole.
 - Memory-safety proofs about `unsafe` code. D-1/D-2/D-3 stay open; the UB catalogue has to grow a section per
   stage, and each stage's design note says what it adds to it.

@@ -1,0 +1,7 @@
+impl "std/frame" caps(frames = ["0x80000000+0x1000"])
+
+section(".text.boot") fun kmain() {
+    val phys = frame.claim(0x80000000)
+    var n: usize = phys.addr() + phys.offset(16)
+    while true { n = n + 1 }
+}

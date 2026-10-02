@@ -1,0 +1,17 @@
+// The `irq` and `frames` capability values as plain hosted values (kernel
+// stage 18, `plan/irq-frame-caps.md`). With no `[caps]` section the entry
+// module holds the whole resource of every domain but `mmio`, so a constant
+// claim is admitted, and the value it carries is the number the compiler
+// checked. A hosted program has no hardware: the check is the same one a
+// freestanding program gets, but the line and the frame name nothing.
+impl "std/irq"
+impl "std/frame"
+
+fun main() {
+    val line: irq.Line = irq.claim(10)
+    val frame: frame.Frame = frame.claim(0x80100000)
+    print(line.number())
+    print(frame.addr())
+    print(frame.offset(16))
+    print(frame.offset(4095))
+}

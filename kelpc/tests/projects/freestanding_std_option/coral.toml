@@ -1,0 +1,9 @@
+name = "freestandingstdoption"
+
+# Kernel stage 19: `std/option`'s value helpers in a freestanding project.
+# Its callback combinators need an allocator and are refused without one.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

@@ -1,0 +1,9 @@
+name = "freestandingstdmath"
+
+# Kernel stage 19: `std/math`'s integer functions in a freestanding project.
+# The module's libm externs and its `f64` overloads are refused by name.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

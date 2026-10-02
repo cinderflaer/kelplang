@@ -1,0 +1,23 @@
+// Kernel 0 on x86-64: the smallest thing that boots on bare metal and says so.
+// The message is a `str` literal in read-only data; the driver walks it one
+// byte at a time with `str.len`/`str.byte`. The leading newline separates the
+// line from SeaBIOS' own "Booting from ROM.." line, which has no newline of its
+// own, so the UART output the boot test reads has the greeting on a line of its
+// own.
+impl "uart"
+
+section(".text.boot") fun kmain() {
+    uart.puts("\nhello from kelp (x86_64)\n")
+    uart.halt()
+}
+
+// The handler `[target] panic` names: every bounds and overflow check the
+// compiler emits calls this with the static message the check was written
+// with. It prints `panic: ` and the message, then loops, because a check that
+// fired has no meaningful continuation.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}

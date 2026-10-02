@@ -1,0 +1,9 @@
+name = "freestandingstdoptionnoalloc"
+
+# Kernel stage 19: `std/option` is admitted, but a callback combinator needs
+# the allocator pair and is refused by name without it.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

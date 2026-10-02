@@ -1,0 +1,5 @@
+impl "std/env" caps(env = ["*"])
+
+section(".text.boot") fun kmain() {
+    while true { }
+}

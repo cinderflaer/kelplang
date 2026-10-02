@@ -1,0 +1,19 @@
+impl "std/arena"
+
+static mut REGION: [u8; 64] = [0; 64]
+
+section(".text.boot") fun kmain() {
+    val region: Ptr<[u8; 64]> = unsafe { Ptr.from_mut(REGION) }
+    var a: arena.Arena = arena.new(base = region.cast<u8>(), cap = 64)
+    val p: Ptr<u8> = a.alloc(size = 8, align = 8)
+    val z: Ptr<u8> = a.alloc_zeroed(size = 4, align = 4)
+    if p.is_null() == false && z.is_null() == false {
+        unsafe {
+            p.write(1)
+            z.write(0)
+        }
+        a.reset()
+    }
+    var n: usize = a.remaining()
+    while true { n = n + 1 }
+}

@@ -1056,6 +1056,14 @@ impl<'ctx> Function<'ctx> {
         self.add_enum_attribute(LLVMAttributeFunctionIndex, "nobuiltin");
     }
 
+    /// Attach LLVM's `noredzone` to this function (kernel stage 20): an x86-64
+    /// freestanding image may take an interrupt before it has an IDT, and the
+    /// System V ABI's 128-byte red zone below `rsp` is clobbered by any
+    /// interrupt handler, so the compiler must not keep live values there.
+    pub fn mark_noredzone(&self) {
+        self.add_enum_attribute(LLVMAttributeFunctionIndex, "noredzone");
+    }
+
     /// Attach LLVM's `probe-stack="inline-asm"` to this function (kernel stage
     /// 14): a frame larger than one page is built by touching each page in
     /// order from the top, so a guard page below the stack catches the overflow
@@ -2562,7 +2570,9 @@ impl TargetMachine {
     /// is placed in without the long-call sequences of `large`; aarch64 has no
     /// `medium` code model at all (LLVM refuses it: only small, tiny and large
     /// are allowed), and `small` is the one that reaches a kernel image loaded
-    /// at 0x40000000, so it is what aarch64 gets.
+    /// at 0x40000000, so it is what aarch64 gets. x86-64 gets `small` too,
+    /// because the x86-64 image is linked at 1 MiB and `kernel` assumes the code
+    /// sits in the top 2 GiB.
     ///
     /// [`for_triple`]: TargetMachine::for_triple
     pub fn for_freestanding(
@@ -2570,6 +2580,7 @@ impl TargetMachine {
         level: LLVMCodeGenOptLevel,
     ) -> Result<Self, String> {
         let is_aarch64 = triple_str.starts_with("aarch64") || triple_str.starts_with("arm64");
+        let is_x86_64 = triple_str.starts_with("x86_64");
         let (cpu, features) = if triple_str.starts_with("riscv64") {
             ("generic-rv64", "+m,+a,+c")
         } else if is_aarch64 {
@@ -2577,7 +2588,10 @@ impl TargetMachine {
         } else {
             (baseline_cpu(triple_str), "")
         };
-        let code_model = if is_aarch64 {
+        // `small` is the model that reaches an image linked at 1 MiB on
+        // x86-64; `medium` is LLVM's x86-64 default and larger than the low
+        // 2 GiB needs, and `kernel` assumes the code sits in the top 2 GiB.
+        let code_model = if is_aarch64 || is_x86_64 {
             LLVMCodeModel::LLVMCodeModelSmall
         } else {
             LLVMCodeModel::LLVMCodeModelMedium

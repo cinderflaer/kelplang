@@ -1,0 +1,11 @@
+impl "std/math"
+
+section(".text.boot") fun kmain() {
+    var n: i32 = math.abs(x = -3)
+    n = n + math.min(a = 1, b = 2)
+    n = n + math.max(a = 1, b = 2)
+    n = n + math.clamp(x = 5, lo = 0, hi = 3)
+    var seven: i64 = -7
+    var m: i64 = math.abs(x = seven)
+    while true { n = n + 1 }
+}

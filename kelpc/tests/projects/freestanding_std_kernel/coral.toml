@@ -1,0 +1,19 @@
+name = "freestandingstdkernel"
+
+# Kernel stage 19's boot: one image that uses `std/option`, `std/result` and
+# `std/arena` together and prints the results over the real UART (NS16550 at
+# 0x10000000, held as an `mmio` grant). `std/bits` is not shipped on this
+# branch, so `option`/`result`/`arena` are the three this boot names.
+
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["main", "uart"]
+
+[caps]
+mmio = ["0x10000000+0x100"]

@@ -1,0 +1,9 @@
+name = "freestandingstdatomic"
+
+# Kernel stage 19: `std/atomic` in a freestanding project. `Atomic<T>` is a
+# builtin; `Ordering` is the module's own enum.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

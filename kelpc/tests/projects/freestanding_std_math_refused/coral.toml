@@ -1,0 +1,9 @@
+name = "freestandingstdmathrefused"
+
+# Kernel stage 19: `std/math` is admitted, but its libm externs are refused
+# by name inside it rather than left to `ld.lld`.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

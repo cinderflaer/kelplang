@@ -2605,8 +2605,8 @@ fn validate_cap_grant(
             module,
         ));
     }
-    if domain == "mmio" {
-        return validate_mmio_grant(patterns, span, module);
+    if domain == "mmio" || domain == "irq" || domain == "frames" {
+        return validate_range_grant(domain, patterns, span, module);
     }
     for pattern in patterns {
         validate_cap_pattern(domain, pattern, span, module)?;
@@ -2614,42 +2614,55 @@ fn validate_cap_grant(
     Ok(())
 }
 
-/// `mmio`'s grant vocabulary: a list of half-open ranges `"0xBASE+0xLEN"`, or
-/// the whole address space as `["*"]` alone. A grant is validated here so
-/// that a module's resource set is a set of ranges the `freestanding` checker
-/// can test an address against without parsing again, and so a malformed or
-/// overlapping grant is a compile error at the `impl` line or the manifest
-/// line that wrote it rather than a surprise at the one call that reaches
-/// outside it (`plan/device-caps.md`).
-fn validate_mmio_grant(
+/// The grant vocabulary of the three range domains, `mmio` and `frames`
+/// (`"0xBASE+0xLEN"`) and `irq` (a decimal line or inclusive line range), or
+/// the whole resource as `["*"]` alone. A grant is validated here so that a
+/// module's resource set is a set of ranges the checks can test a value
+/// against without parsing again, and so a malformed or overlapping grant is a
+/// compile error at the `impl` line or the manifest line that wrote it rather
+/// than a surprise at the one call that reaches outside it
+/// (`plan/device-caps.md`, `plan/irq-frame-caps.md`).
+fn validate_range_grant(
+    domain: &str,
     patterns: &[String],
     span: Span,
     module: &str,
 ) -> Result<(), Diagnostic> {
     let err = |message: String| Err(Diagnostic::new(message, span, module));
-    if patterns.iter().any(|p| p == crate::stdlib::MMIO_ANY) {
+    if patterns.iter().any(|p| p == crate::stdlib::RANGE_ANY) {
         if patterns.len() != 1 {
-            return err(
-                "`mmio = [\"*\"]` grants the whole address space and cannot be written beside a range; keep the wildcard alone, or name the ranges it needs"
-                    .to_string(),
-            );
+            return err(format!(
+                "`{domain} = [\"*\"]` grants {} and cannot be written beside a range; keep the wildcard alone, or name the ranges it needs",
+                whole_range_phrase(domain)
+            ));
         }
         return Ok(());
     }
     let mut parsed: Vec<((u128, u128), &str)> = Vec::new();
     for pattern in patterns {
-        let range = crate::stdlib::parse_mmio_range(pattern)
+        let range = crate::stdlib::parse_range(domain, pattern)
             .map_err(|message| Diagnostic::new(message, span, module))?;
         for (earlier, earlier_pattern) in &parsed {
-            if crate::stdlib::mmio_ranges_overlap(*earlier, range) {
+            if crate::stdlib::ranges_overlap(*earlier, range) {
                 return err(format!(
-                    "the mmio ranges '{earlier_pattern}' and '{pattern}' overlap - a grant names each range once, and the ranges in it must be disjoint"
+                    "the {domain} ranges '{earlier_pattern}' and '{pattern}' overlap - a grant names each range once, and the ranges in it must be disjoint"
                 ));
             }
         }
         parsed.push((range, pattern.as_str()));
     }
     Ok(())
+}
+
+/// What a range domain's wildcard covers, for the message that refuses it
+/// beside a range. One phrase per domain, because "the whole address space"
+/// would be wrong for an interrupt line.
+fn whole_range_phrase(domain: &str) -> &'static str {
+    match domain {
+        "irq" => "every interrupt line",
+        "frames" => "every physical frame",
+        _ => "the whole address space",
+    }
 }
 
 /// A capability pattern, validated by what the domain actually names.

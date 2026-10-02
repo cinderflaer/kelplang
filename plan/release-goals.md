@@ -40,14 +40,29 @@ than kernel 0, so the release is done when, on top of stages 1-5, the following 
 - cleanup and allocation a kernel can rely on (`defer`/`Drop`, global and arena allocators, fallible allocation);
 - per-CPU storage, address-space management, a syscall ABI with untrusted-pointer validation;
 - a freestanding standard subset (the parts of `std` that need no libc, plus an `alloc`-style layer on the
-  user's allocator);
+  user's allocator): **done** (kernel stage 19, `plan/freestanding-std.md`). A freestanding project may
+  implement `std/arena`, `std/atomic`, `std/frame`, `std/irq`, `std/list` and `std/math` (its integer
+  functions), `std/option`, `std/result` and `std/str` (its byte-length subset), each narrowed to the items
+  that resolve without libc; `std/list`, the `std/option`/`std/result` callback combinators and the `String`
+  builders need the `[target] alloc`/`dealloc` pair, and every other module is refused by name with "needs a
+  hosted runtime" and the admitted list;
 - the capability model extended to devices (MMIO regions, IRQ lines, frames) so a driver can only touch what it
-  was granted: this is what makes it a *Kelp* OS and not C with nicer syntax. MMIO ranges are done
-  (`plan/device-caps.md`): a new `mmio` domain, a grant of `"0xBASE+0xLEN"` ranges or `["*"]`, and a compile-time
-  refusal of any freestanding `Ptr.from_addr` outside them. IRQ lines and physical frames are the next step, and the
-  check is on the address a pointer is born at, not on offsets applied later;
+  was granted: this is what makes it a *Kelp* OS and not C with nicer syntax. All three are done. `mmio`
+  (`plan/device-caps.md`) is a domain of `"0xBASE+0xLEN"` ranges or `["*"]` and a compile-time refusal of any
+  freestanding `Ptr.from_addr` outside them, on the address a pointer is born at rather than on offsets applied
+  later. `irq` and `frames` (`plan/irq-frame-caps.md`) are values: `irq.claim(n)` and `frame.claim(addr)` are the
+  gated constructors in the shipped `std/irq` and `std/frame`, a constant argument must fall in a granted range
+  (a frame must be 4 KiB-aligned), a computed one needs `["*"]`, and the constructor is sealed so another module
+  cannot forge a line or a frame. Unlike `mmio`, that check applies to a hosted program and a freestanding image
+  alike; `examples/kernel0-caps` boots one image that claims exactly one of each and prints them;
 - stack guards and a defined panic path with no OS underneath;
-- a second architecture target (x86-64) next to riscv64, and a test story that boots an image under QEMU.
+- a second architecture target (x86-64) next to riscv64, and a test story that boots an image under QEMU:
+  **done** (kernel stage 20, `plan/x86-64.md`). `[target] triple = "x86_64-unknown-none"` gets the X86
+  target machine and an x86-64 `_start` stub that enters long mode from the 32-bit PVH entry SeaBIOS uses,
+  and `examples/kernel0-x86_64` (a COM1 port-I/O driver) and `examples/kernel0-x86_64-lmode` (which proves
+  `EFER.LMA` and paging, then triple-faults on purpose) both boot under
+  `qemu-system-x86_64 -M q35 -cpu qemu64 -no-reboot`, checked by three tests in `kelpc/tests/compile_and_run.rs`.
+  Interrupts/IDT, APIC, SMP and ACPI are not part of it.
 
 Not required for the release: a particular kernel design, a filesystem, a network stack, a userland. The
 language and toolchain have to make writing them possible.

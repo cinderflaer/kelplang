@@ -17,10 +17,17 @@
 //!   capturing literal owns a heap environment, which the runtime would have
 //!   to free);
 //! - `Atomic<T>` and its methods (`std/atomic`), `Option`/`Result`
-//!   (`std/option`, `std/result`), which are pure Kelp;
+//!   (`std/option`, `std/result`), which are pure Kelp, and `std/arena`,
+//!   `std/irq` and `std/frame`, which are the same;
 //! - the `str` operations the compiler lowers as byte loops with no libc call:
 //!   `std/str`'s `len`, `byte`, `eq`, `starts_with` and `ptr`, and nothing else
 //!   in that module;
+//! - `std/math`'s integer `abs`, `min`, `max` and `clamp`, which are plain
+//!   Kelp comparisons, and `std/list`, whose callback combinators go through
+//!   the project allocator with the rest of the heap types;
+//! - with an allocator, the `std/option`/`std/result` callback combinators,
+//!   `str.concat` and the integer builders, whose closure environments and
+//!   owned buffers are the project allocator's;
 //! - `Ptr<T>` and the compile-time queries `size_of`/`align_of`/`offset_of`;
 //! - `Box<T>`, `List<T>` and `Map<V>` of allowed element types once `[target]
 //!   alloc`/`dealloc` name the project's own allocator (kernel stage 7,
@@ -44,8 +51,8 @@
 //!   refused whatever the manifest says; `String`/`Bytes` without an allocator,
 //!   and `List`, `Map` and `Box` when no `[target] alloc`/`dealloc` pair is
 //!   configured, since their storage is the runtime allocator's; and therefore
-//!   any `std/*` module not on the list above, and every `std/str` function
-//!   other than the listed subset;
+//!   any `std/*` module not admitted by `std_admission` below, and every
+//!   function of an admitted module that is not on its row (`plan/freestanding-std.md`);
 //! - passdowns (`pd`), whose initializers run through the generated
 //!   `kelp_init_pds` that only the hosted entry point calls.
 //!
@@ -65,24 +72,166 @@ use crate::resolve::Project;
 use crate::tir::{Block, Expr, ExprKind, Program, Stmt};
 use crate::types::Ty;
 
-/// The `std/*` modules a freestanding program may reach: the ones that are pure
-/// Kelp or a compiler builtin, with no libc call and no allocation behind them.
-/// Every other shipped module is refused, by name, when it is part of the
-/// program. `std/arena` (kernel stage 13) is pure pointer arithmetic and needs
-/// no allocator, so it joins the three pure modules.
-pub const ALLOWED_STD_MODULES: &[&str] =
-    &["std/atomic", "std/option", "std/result", "std/arena"];
+/// One shipped module's place in a freestanding program (kernel stage 19,
+/// `plan/freestanding-std.md`). The row for each module is a decision derived
+/// by building that module into a riscv64 image, not from its prose: a module
+/// whose bodies all resolve is admitted, one that leaves an undefined symbol is
+/// either narrowed to the functions that do not or refused whole.
+pub enum StdAdmission {
+    /// Every item is callable, and no body reaches libc or the allocator.
+    Pure,
+    /// Every item is callable, but the bodies need the manifest's `[target]
+    /// alloc`/`dealloc` pair; without it the module is refused with the two keys
+    /// named.
+    Allocator,
+    /// Only the named items are callable. `callable` is the set that needs
+    /// nothing, `with_allocator` the set that needs the allocator pair, and
+    /// `helpers` the private bodies a kept item reaches. Every other item is
+    /// refused by name at the call, and `prune` drops its body.
+    Subset {
+        callable: &'static [&'static str],
+        with_allocator: &'static [&'static str],
+        helpers: &'static [&'static str],
+    },
+    /// The module may be part of the program because another module imports
+    /// it, but no item is callable.
+    Present,
+    /// Nothing of the module may be part of a freestanding program.
+    Hosted,
+}
 
-/// The one module that is allowed to be *part* of a freestanding program while
-/// only some of its functions are callable, and the ones that are. A `str` is a
-/// NUL-terminated literal in read-only data, so the compiler can lower `len`,
-/// `byte`, `eq`, `starts_with` and `ptr` as byte loops inside the module (see
-/// `codegen_llvm::emit_freestanding_str_bodies`); everything else the module
-/// exposes (`concat`, `split`, `join`, `parse_i64`, `from_f64`, `trim`, ...)
-/// allocates, formats or parses, so the call-site check refuses each by name.
+/// The `std/str` functions that need no allocator: a `str` is a NUL-terminated
+/// literal in read-only data, so the compiler lowers these as byte loops inside
+/// the module (`codegen_llvm::emit_freestanding_str_bodies`), and
+/// `starts_with_at` is the one private body `eq`/`starts_with` reach.
+const STR_CALLABLE: &[&str] = &["len", "byte", "eq", "starts_with", "ptr"];
+const STR_HELPERS: &[&str] = &["starts_with_at"];
+
+/// The `std/str` bodies that build an owned `String`, so they are callable only
+/// with the allocator: without one they would reference `kelp_String__*`
+/// symbols the project cannot define.
+const STR_WITH_ALLOCATOR: &[&str] = &["concat", "from_u64", "from_i64"];
+
+/// `std/option`'s and `std/result`'s value helpers, which are `when`/`if let`
+/// and a `panic`, and their callback combinators, whose environments are heap
+/// boxes: the callback set is what a freestanding image leaves `free`
+/// undefined for without an allocator.
+const OPTION_CALLABLE: &[&str] = &["is_some", "is_none", "unwrap_or", "unwrap", "expect"];
+const OPTION_WITH_ALLOCATOR: &[&str] = &["map", "and_then", "or_else", "each"];
+const RESULT_CALLABLE: &[&str] = &[
+    "is_ok",
+    "is_err",
+    "unwrap_or",
+    "unwrap",
+    "unwrap_err",
+    "expect",
+    "expect_err",
+];
+const RESULT_WITH_ALLOCATOR: &[&str] = &["map", "map_err", "and_then", "or_else", "each"];
+
+/// `std/math`'s integer functions: one-line Kelp comparisons, against the
+/// module's sixteen libm externs and its `f64` overloads, which are the rest of
+/// it. Names are matched through the overload suffix (`std.math.min@i32,i32`),
+/// and every overload that mentions `f64` is refused by name in
+/// `item_is_callable`: on riscv64 a `f64` comparison is a soft-float libcall
+/// (`__ltdf2`), which no bare-metal image has.
+const MATH_CALLABLE: &[&str] = &["abs", "min", "max", "clamp"];
+
+/// The table. Every id `stdlib::shipped()` returns has a row here (a unit test
+/// below pins that), and an id that does not is `Hosted`: the safe default for
+/// a module this file has not decided about.
+pub fn std_admission(module: &str) -> StdAdmission {
+    match module {
+        // `std/arena` is pure pointer arithmetic and needs no allocator; `std/irq`
+        // and `std/frame` are a `datac` and two methods each, so they carry
+        // their capability by construction and their numbers come from the
+        // caller's grant, not from a runtime.
+        "std/atomic" | "std/arena" | "std/irq" | "std/frame" => StdAdmission::Pure,
+        // `std/list` exists only to carry function values over a `List<T>`: all
+        // six bodies take a closure, whose environment and result list are the
+        // allocator's.
+        "std/list" => StdAdmission::Allocator,
+        STD_STR => StdAdmission::Subset {
+            callable: STR_CALLABLE,
+            with_allocator: STR_WITH_ALLOCATOR,
+            helpers: STR_HELPERS,
+        },
+        "std/option" => StdAdmission::Subset {
+            callable: OPTION_CALLABLE,
+            with_allocator: OPTION_WITH_ALLOCATOR,
+            helpers: &[],
+        },
+        "std/result" => StdAdmission::Subset {
+            callable: RESULT_CALLABLE,
+            with_allocator: RESULT_WITH_ALLOCATOR,
+            helpers: &[],
+        },
+        "std/math" => StdAdmission::Subset {
+            callable: MATH_CALLABLE,
+            with_allocator: &[],
+            helpers: &[],
+        },
+        // `std/mem`'s one extern is libc `malloc`, and `std/rt` is injected for a
+        // capability domain; both may be present and neither is callable.
+        "std/mem" | crate::stdlib::RT_MODULE => StdAdmission::Present,
+        _ => StdAdmission::Hosted,
+    }
+}
+
+/// Whether a call into an admitted module may be written. `allocator` is
+/// whether the manifest configured `[target] alloc`/`dealloc`. One predicate so
+/// the call-site check and `prune` cannot disagree about which bodies exist.
+pub fn item_is_callable(module: &str, item: &str, allocator: bool) -> bool {
+    match std_admission(module) {
+        StdAdmission::Pure => true,
+        StdAdmission::Allocator => allocator,
+        StdAdmission::Subset {
+            callable,
+            with_allocator,
+            helpers,
+        } => {
+            // An overloaded name is declared once per numeric type, and a call
+            // names the one it picked (`std.math.min@i32,i32`), so the table's
+            // bare name is what matches. Every `f64` overload is refused
+            // whatever the table says: a `f64` comparison on the kernel's
+            // riscv64 triple is a soft-float libcall, not an instruction.
+            let base = item.split('@').next().unwrap_or(item);
+            let allowed = callable.contains(&base) || helpers.contains(&base);
+            let allocator_only = allocator && with_allocator.contains(&base);
+            (allowed || allocator_only) && !(module == "std/math" && item.contains("f64"))
+        }
+        StdAdmission::Present | StdAdmission::Hosted => false,
+    }
+}
+
+/// Whether `item` of `module` would be callable if an allocator were
+/// configured: what the refusal for a function that only needs the pair says.
+fn item_needs_allocator(module: &str, item: &str) -> bool {
+    let base = item.split('@').next().unwrap_or(item);
+    match std_admission(module) {
+        StdAdmission::Allocator => true,
+        StdAdmission::Subset { with_allocator, .. } => {
+            with_allocator.contains(&item) || with_allocator.contains(&base)
+        }
+        _ => false,
+    }
+}
+
+/// The modules a freestanding project may implement, sorted, derived from the
+/// table: what a refusal names so the reader is told what would work instead.
+pub fn allowed_modules() -> String {
+    let mut ids: Vec<&str> = crate::stdlib::shipped()
+        .iter()
+        .copied()
+        .filter(|id| !matches!(std_admission(id), StdAdmission::Present | StdAdmission::Hosted))
+        .collect();
+    ids.sort_unstable();
+    ids.join(", ")
+}
+
+/// The one module that is partly callable, named here because the rest of the
+/// compiler refers to it by id.
 pub const STD_STR: &str = "std/str";
-pub const ALLOWED_STD_STR_FUNCTIONS: &[&str] =
-    &["len", "byte", "eq", "starts_with", "ptr", "concat", "from_u64", "from_i64"];
 
 /// The `String` methods a freestanding build lowers itself, through the project
 /// allocator (kernel stage 12, MK9-S5-M2). Every other method on the type needs
@@ -121,32 +270,7 @@ pub const ALLOWED_BYTES_METHODS: &[&str] = &[
     "clear",
 ];
 
-/// The `std/str` functions `prune` keeps by name: the five operations, the
-/// private helper `starts_with` reaches, and the three bodies that build an
-/// owned `String`. Every `extern fun` in the module is kept as well, because
-/// the five lower to them.
-const EMITTED_STD_STR_FUNCTIONS: &[&str] = &[
-    "len",
-    "byte",
-    "eq",
-    "starts_with",
-    "starts_with_at",
-    "ptr",
-    "concat",
-    "from_u64",
-    "from_i64",
-];
 
-/// The three `std/str` bodies that build an owned `String`, so they are kept
-/// only when the manifest configured an allocator: without one, a kept body
-/// would reference `kelp_String__*` symbols the project cannot define.
-const STRING_BUILDER_STD_STR_FUNCTIONS: &[&str] = &["concat", "from_u64", "from_i64"];
-
-/// The `std/*` modules that may be *part* of a freestanding program without
-/// being callable. `std/str` is narrowed to its five operations at each call
-/// site; `std/mem` is here only because `std/str` imports it, and neither
-/// module's other functions are emitted (`prune`).
-const PRESENT_STD_MODULES: &[&str] = &[STD_STR, "std/mem"];
 
 /// Enforces the allowed set for `project`'s freestanding mode. A hosted project
 /// (the default, and what a manifest with no `[target]` section is) passes
@@ -281,6 +405,30 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
 
     let heap_ok = target.alloc().is_some() && target.dealloc().is_some();
 
+    // Every `std/*` module the program reaches has to be one the table admits,
+    // or one whose items are all admitted, so the project is refused by name
+    // here, before the construct checks below (a project that imports `std/fs`
+    // hears about `std/fs` rather than about a passdown inside `std/io`). A
+    // module that was imported but never called is still part of the program,
+    // so an unused `std/fmt` import is caught here. `std/list` is the one
+    // module whose *presence* needs the allocator: every body it has takes a
+    // closure over a `List<T>`.
+    if let Some(id) = first_refused_module(project, heap_ok) {
+        let reason = if matches!(std_admission(id), StdAdmission::Hosted) {
+            format!(
+                "it needs a hosted runtime (libc or the 'kelp_rt' helpers); the std modules a freestanding project may implement are {}",
+                allowed_modules()
+            )
+        } else {
+            "it needs an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions".to_string()
+        };
+        return Err(unavailable(
+            format!("the module '{id}' is unavailable in a freestanding build: {reason}"),
+            Span::new(0, 0),
+            id.to_string(),
+        ));
+    }
+
     // A passdown's initializer is a module-scope global the generated
     // `kelp_init_pds` fills in, and only the hosted `main` calls that. A
     // freestanding program therefore has no place for one.
@@ -391,26 +539,6 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
         checker.block(&f.body, &f.module)?;
     }
 
-    // Finally, every `std/*` module the program reaches has to be one of the
-    // pure three, or `std/str`, which is carried by the front end too but whose
-    // function set is narrowed at each call site below. A module that was
-    // imported but never called is still part of the program, so this is where
-    // an unused `std/fmt` import is caught.
-    for m in &project.modules {
-        if m.id.starts_with("std/")
-            && !ALLOWED_STD_MODULES.contains(&m.id.as_str())
-            && !PRESENT_STD_MODULES.contains(&m.id.as_str())
-        {
-            return Err(unavailable(
-                format!(
-                    "the module '{}' is unavailable in a freestanding build: it reaches the hosted runtime (libc or the 'kelp_rt' helpers)",
-                    m.id
-                ),
-                Span::new(0, 0),
-                m.id.clone(),
-            ));
-        }
-    }
     Ok(())
 }
 
@@ -429,39 +557,107 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
 /// exists. A hosted build compiles the whole module and links the runtime that
 /// defines the symbols, so it is untouched.
 ///
-/// Every function the program itself declares is kept, as is every function of
-/// an allowed module, so the only thing that disappears is dead code in the two
-/// present modules. The five operations, the helper they use and the three
-/// `extern` primitives they call are kept by name, plus `concat`/`from_u64`/
-/// `from_i64` when an allocator is configured; a kept `std/str` body can reach
-/// nothing else.
+/// Every function the program itself declares is kept, and so is every body
+/// the table admits for a `std` module, so the only thing that disappears is
+/// dead code in a present or narrowed module. For a `Subset` row that means the
+/// named items, the private helpers they reach and, when an allocator is
+/// configured, the allocator-only items; a kept body can reach nothing else.
 pub fn prune(program: &mut ast::Program, allocator: bool) {
     program.functions.retain(|f| {
         if !f.module.starts_with("std/") {
             return true;
         }
-        if ALLOWED_STD_MODULES.contains(&f.module.as_str()) {
-            return true;
+        match std_admission(&f.module) {
+            StdAdmission::Pure | StdAdmission::Allocator => true,
+            StdAdmission::Present | StdAdmission::Hosted => false,
+            StdAdmission::Subset { .. } => {
+                // An `extern fun` is a declaration the module's own bodies may
+                // call; a pruned body leaves it unused, and an unused
+                // declaration is no symbol.
+                if f.extern_ {
+                    return true;
+                }
+                // The AST keeps one declaration per overload under the same
+                // name (`std/math` has three `abs`s), so a `f64` overload is
+                // told apart by its parameters rather than its key; a `f64`
+                // comparison on the kernel's riscv64 triple is a soft-float
+                // libcall (`__ltdf2`), so none of them is emitted.
+                if f.module == "std/math" && f.params.iter().any(|p| p.ty.display() == "f64") {
+                    return false;
+                }
+                item_is_callable(&f.module, item_name(&f.name), allocator)
+            }
         }
-        if f.module != STD_STR {
-            return false;
-        }
-        // An `extern fun` is a declaration the module's own bodies may call; a
-        // pruned body leaves it unused, and an unused declaration is no symbol.
-        if f.extern_ {
-            return true;
-        }
-        let name = bare_name(&f.name);
-        EMITTED_STD_STR_FUNCTIONS.contains(&name)
-            && (allocator || !STRING_BUILDER_STD_STR_FUNCTIONS.contains(&name))
     });
 }
 
-/// The last dot-separated component of a function's key, which is how
-/// `externs.rs` and the allowed lists name a `std` function (`std.str.len` is
-/// `len`).
-fn bare_name(name: &str) -> &str {
-    name.rsplit('.').next().unwrap_or(name)
+/// The items a `Subset` module admits right now, for the refusal that names
+/// what would work instead. The overload suffixes are dropped (the reader
+/// cares about `abs`, not `abs@i32`) and the names sorted, so the message
+/// cannot shuffle between runs.
+fn admitted_items(module: &str, allocator: bool) -> String {
+    let StdAdmission::Subset {
+        callable,
+        with_allocator,
+        ..
+    } = std_admission(module)
+    else {
+        return String::new();
+    };
+    let mut items: Vec<&str> = callable
+        .iter()
+        .chain(with_allocator.iter().filter(|_| allocator))
+        .map(|item| item.split('@').next().unwrap_or(item))
+        .collect();
+    items.sort_unstable();
+    items.dedup();
+    items.join(", ")
+}
+
+/// The last dot-separated component of a function's key with any generic
+/// instantiation removed: how a call key names an item when a declaration key
+/// is `std.option.is_some` and the call key is `std.option.is_some<u32>`. An
+/// overload suffix (`std.math.abs@i32`) is *kept*, because the two overloads
+/// are different declarations with different bodies.
+fn item_name(name: &str) -> &str {
+    let item = name.rsplit('.').next().unwrap_or(name);
+    item.split('<').next().unwrap_or(item)
+}
+
+/// The module a refusal should name: the first `std/*` module in the program
+/// the table does not admit, preferring one that no other present `std` module
+/// imports. Resolution keeps no import graph, so the edges are read from the
+/// shipped text, which is where an `impl "std/..."` line lives; that is enough
+/// to name `std/fs`/`std/net`/`std/tls` rather than a module inside them.
+fn first_refused_module(project: &Project, heap_ok: bool) -> Option<&str> {
+    let refused = |id: &str| match std_admission(id) {
+        StdAdmission::Hosted => true,
+        StdAdmission::Allocator => !heap_ok,
+        _ => false,
+    };
+    let present: Vec<&str> = project
+        .modules
+        .iter()
+        .map(|m| m.id.as_str())
+        .filter(|id| id.starts_with("std/"))
+        .collect();
+    let mut fallback: Option<&str> = None;
+    for id in &present {
+        if !refused(id) {
+            continue;
+        }
+        fallback.get_or_insert(id);
+        let imported_by_another = present.iter().any(|other| {
+            other != id
+                && crate::stdlib::source(other)
+                    .map(|text| text.contains(&format!("\"{id}\"")))
+                    .unwrap_or(false)
+        });
+        if !imported_by_another {
+            return Some(id);
+        }
+    }
+    fallback
 }
 
 /// The compiler builtin a freestanding program may not call, and why, or
@@ -723,30 +919,38 @@ impl Checker<'_> {
                         ));
                     }
                 }
-                if let Some(callee_module) = self.module_of.get(callee.as_str()) {
-                    if callee_module.starts_with("std/") {
-                        if *callee_module == STD_STR {
-                            if !ALLOWED_STD_STR_FUNCTIONS.contains(&bare_name(callee)) {
-                                return Err(unavailable(
-                                    format!(
-                                        "the call to '{callee}' is unavailable in a freestanding build: it needs the hosted runtime, which 'std/str' reaches for everything but {}",
-                                        ALLOWED_STD_STR_FUNCTIONS.join(", ")
-                                    ),
-                                    expr.span,
-                                    module,
-                                ));
-                            }
-                        } else if !ALLOWED_STD_MODULES.contains(callee_module) {
-                            return Err(unavailable(
-                                format!(
-                                    "the call to '{callee}' is unavailable in a freestanding build: the module '{callee_module}' needs the hosted runtime"
-                                ),
-                                expr.span,
-                                module,
-                            ));
-                        }
-                    }
-                }
+    // Finally, a call into a module that is present but not wholly admissible
+    // is checked against that module's row. A `str` operation outside the five,
+    // a `std/math` libm function, and the `std/option`/`std/result` callback
+    // combinators without an allocator are each refused by name here, rather
+    // than left to a pruned body or an undefined symbol at the link.
+    if let Some(callee_module) = self.module_of.get(callee.as_str()) {
+        if callee_module.starts_with("std/") {
+            let item = item_name(callee);
+            if !item_is_callable(callee_module, item, self.heap_ok) {
+                let reason = if !self.heap_ok && item_needs_allocator(callee_module, item) {
+                    "it needs an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions".to_string()
+                } else if matches!(
+                    std_admission(callee_module),
+                    StdAdmission::Present | StdAdmission::Hosted
+                ) {
+                    format!("the module '{callee_module}' needs a hosted runtime")
+                } else {
+                    format!(
+                        "it needs the hosted runtime, which '{callee_module}' reaches for everything but {}",
+                        admitted_items(callee_module, self.heap_ok)
+                    )
+                };
+                return Err(unavailable(
+                    format!(
+                        "the call to '{callee}' is unavailable in a freestanding build: {reason}"
+                    ),
+                    expr.span,
+                    module,
+                ));
+            }
+        }
+    }
                 for arg in args {
                     self.expr(arg, module)?;
                 }
@@ -857,7 +1061,7 @@ impl Checker<'_> {
 
     /// The `mmio` gate (kernel stage 16, MK10-S1): in a freestanding build, a
     /// `Ptr.from_addr` may only name an address the module was granted. The
-    /// address is folded when it is a compile-time constant (`const_addr`)
+    /// address is folded when it is a compile-time constant (`stdlib::const_int`)
     /// and matched against the module's half-open ranges; a non-constant address
     /// needs the whole-address-space grant `["*"]`, and a module with no grant
     /// at all is refused before either question is asked.
@@ -882,10 +1086,10 @@ impl Checker<'_> {
                 module,
             ));
         }
-        if patterns.iter().any(|p| p == crate::stdlib::MMIO_ANY) {
+        if patterns.iter().any(|p| p == crate::stdlib::RANGE_ANY) {
             return Ok(());
         }
-        let Some(addr) = args.first().and_then(const_addr) else {
+        let Some(addr) = args.first().and_then(crate::stdlib::const_int) else {
             return Err(unavailable(
                 format!(
                     "'Ptr.from_addr' takes an address the compiler cannot fold, and module '{module}' holds only the range(s) {}; a computed address needs the whole-address-space grant `caps(mmio = [\"*\"])`",
@@ -895,7 +1099,7 @@ impl Checker<'_> {
                 module,
             ));
         };
-        if crate::stdlib::mmio_covers(&patterns, addr) {
+        if crate::stdlib::range_covers("mmio", &patterns, addr) {
             return Ok(());
         }
         Err(unavailable(
@@ -909,48 +1113,111 @@ impl Checker<'_> {
     }
 }
 
-/// The compile-time value of a `Ptr.from_addr` argument, when the compiler can
-/// fold it: an integer or `char` literal, a `const` (already folded to a
-/// literal by `infer.rs`), and the arithmetic and bitwise operators over
-/// those. Anything else - a local, a parameter, a `static`, a call, an `asm`
-/// result - is not a constant address, and `Checker::check_mmio` says so.
-///
-/// A value is cut to 64 bits after every step, which is what `usize`
-/// arithmetic does on the target, so a folded expression means what the
-/// emitted code would compute rather than what unbounded `i128` arithmetic
-/// would.
-fn const_addr(expr: &Expr) -> Option<u128> {
-    const MASK: u128 = u64::MAX as u128;
-    match &expr.kind {
-        ExprKind::IntLit(v) if *v >= 0 => Some(*v as u128),
-        ExprKind::CharLit(c) => Some(*c as u128),
-        ExprKind::Unary { op, expr } => {
-            let value = const_addr(expr)?;
-            let folded = match op {
-                ast::UnOp::Neg => 0u128.wrapping_sub(value),
-                ast::UnOp::BitNot => !value,
-                ast::UnOp::Not => return None,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The table has a row for every module the compiler ships. A new
+    /// `stdlib::shipped()` entry without a decision here is `Hosted` by the
+    /// catch-all, which would silently refuse a module nobody looked at, so the
+    /// list of ids the table does *not* call `Hosted` is pinned here instead:
+    /// adding a shipped module forces a line in this test and therefore a look
+    /// at `plan/freestanding-std.md`.
+    #[test]
+    fn the_verdict_table_admits_exactly_the_listed_modules() {
+        let mut admitted: Vec<&str> = crate::stdlib::shipped()
+            .iter()
+            .copied()
+            .filter(|id| !matches!(std_admission(id), StdAdmission::Hosted))
+            .collect();
+        admitted.sort_unstable();
+        assert_eq!(
+            admitted,
+            vec![
+                "std/arena",
+                "std/atomic",
+                "std/frame",
+                "std/irq",
+                "std/list",
+                "std/math",
+                "std/mem",
+                "std/option",
+                "std/result",
+                "std/str",
+            ]
+        );
+        assert_eq!(
+            allowed_modules(),
+            "std/arena, std/atomic, std/frame, std/irq, std/list, std/math, std/option, std/result, std/str"
+        );
+        // The injected runtime is not a library a program may write in an
+        // `impl`, so it is present and absent from the allowed list.
+        assert!(matches!(
+            std_admission(crate::stdlib::RT_MODULE),
+            StdAdmission::Present
+        ));
+    }
+
+    /// Every name in an admission row is a real declaration in the module it
+    /// names. Without this a rename in `kelpc/std/` would turn an admitted call
+    /// into an "unavailable" one with no test failing.
+    #[test]
+    fn every_admitted_item_is_declared_in_its_module() {
+        let declares = |source: &str, name: &str| {
+            let mut at = 0;
+            while let Some(found) = source[at..].find(&format!("fun {name}")) {
+                let after = at + found + "fun ".len() + name.len();
+                match source[after..].chars().next() {
+                    Some('(') | Some('<') => return true,
+                    _ => at = after,
+                }
+            }
+            false
+        };
+        for id in crate::stdlib::shipped() {
+            let StdAdmission::Subset {
+                callable,
+                with_allocator,
+                helpers,
+            } = std_admission(id)
+            else {
+                continue;
             };
-            Some(folded & MASK)
+            let source = crate::stdlib::source(id).expect("a shipped module has source");
+            for name in callable.iter().chain(with_allocator).chain(helpers) {
+                assert!(declares(&source, name), "'{id}' has no 'fun {name}'");
+            }
         }
-        ExprKind::Binary { op, lhs, rhs } => {
-            let a = const_addr(lhs)?;
-            let b = const_addr(rhs)?;
-            let folded = match op {
-                ast::BinOp::Add => a.wrapping_add(b),
-                ast::BinOp::Sub => a.wrapping_sub(b),
-                ast::BinOp::Mul => a.wrapping_mul(b),
-                ast::BinOp::Div if b != 0 => a / b,
-                ast::BinOp::Mod if b != 0 => a % b,
-                ast::BinOp::BitAnd => a & b,
-                ast::BinOp::BitOr => a | b,
-                ast::BinOp::BitXor => a ^ b,
-                ast::BinOp::Shl if b < 128 => a << b,
-                ast::BinOp::Shr if b < 128 => a >> b,
-                _ => return None,
+    }
+
+    /// The allocator-only rows are exactly the ones whose call site needs
+    /// `[target] alloc`/`dealloc`, and `item_needs_allocator` agrees with
+    /// `item_is_callable` about which those are.
+    #[test]
+    fn only_the_allocator_rows_need_an_allocator() {
+        for id in ["std/option", "std/result", "std/str", "std/math"] {
+            let StdAdmission::Subset { with_allocator, .. } = std_admission(id) else {
+                panic!("'{id}' should be a narrowed row");
             };
-            Some(folded & MASK)
+            for name in with_allocator {
+                assert!(!item_is_callable(id, name, false), "{id}.{name}");
+                assert!(item_is_callable(id, name, true), "{id}.{name}");
+                assert!(item_needs_allocator(id, name), "{id}.{name}");
+            }
         }
-        _ => None,
+        assert!(matches!(std_admission("std/list"), StdAdmission::Allocator));
+        assert!(item_needs_allocator("std/list", "map"));
+        assert!(!item_is_callable("std/list", "map", false));
+        assert!(item_is_callable("std/list", "map", true));
+        // A `Pure` module's items never need the pair, and an overloaded name
+        // is matched through `bare_name`.
+        assert!(!item_needs_allocator("std/math", "abs@i32"));
+        assert!(item_is_callable("std/math", "abs@i32", false));
+        assert!(!item_is_callable("std/math", "abs@f64", false));
+        assert!(!item_is_callable("std/math", "sign", false));
+        // A generic call key names its declaration through `item_name`.
+        assert_eq!(item_name("std.math.abs@i32"), "abs@i32");
+        assert_eq!(item_name("std.option.is_some<u32>"), "is_some");
+        assert_eq!(item_name("std.str.byte"), "byte");
     }
 }

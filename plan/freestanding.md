@@ -20,11 +20,10 @@ panic = "kp_panic"          # optional
   project with no `[target]` section, or with `mode = "hosted"`, builds for the
   host exactly as every project before this stage did; that is the whole
   compatibility promise.
-- `triple` is the LLVM triple the project targets. `riscv64-unknown-none-elf` and
-  `aarch64-unknown-none` are the two kernel 0 boots, and the two the compiler
-  has a target machine and a `_start` stub for; any other triple is refused by
-  name at the stub, so an x86-64 image has to wait for its own entry stub
-  (a 32-bit PVH/Multiboot one that enters long mode first).
+- `triple` is the LLVM triple the project targets. `riscv64-unknown-none-elf`,
+  `aarch64-unknown-none` and `x86_64-unknown-none` (the `-elf` spelling too) are
+  the three kernel 0 boots, and the three the compiler has a target machine and
+  a `_start` stub for; any other triple is refused by name at the stub.
 - `entry` is a bare `fun` name in the entry module, with no parameters and no
   return.
 - `linker_script` is a path relative to the directory holding `coral.toml`.
@@ -45,9 +44,11 @@ the check lives in the front end (`src/freestanding.rs`).
 a borrowed literal in read-only data; user `datac` and `enum` values; arrays
 `[T; N]`; borrows `&T`/`&mut T`; `if`, `when`, loops, functions, and closures
 that capture nothing (a capturing literal owns a heap environment that only the
-runtime could free); `Atomic<T>` and its methods, plus the pure `std/atomic`,
-`std/option`, `std/result` and `std/arena` modules (the arena is pure pointer
-arithmetic and needs no allocator, kernel stage 13), and the five `std/str` operations the
+runtime could free); `Atomic<T>` and its methods, plus the admitted standard
+modules (kernel stage 19, `plan/freestanding-std.md`): the pure `std/atomic`,
+`std/arena`, `std/irq` and `std/frame`, `std/option`'s and `std/result`'s value
+helpers, `std/math`'s integer `abs`/`min`/`max`/`clamp`, and the five `std/str`
+operations the
 compiler lowers itself (`len`, `byte`, `eq`, `starts_with` and `ptr`, kernel
 stage 7); `Ptr<T>` and the compile-time
 `size_of`/`align_of`/`offset_of`; a user `extern fun` whose module has its own
@@ -62,7 +63,10 @@ next section), with only the operations that have a libc-free lowering -
 `get`/`set`/`push`/`clone`/`reserve`/`clear`, `str.concat` and the integer
 builders, and drop - callable; every other `String`/`Bytes` method and every
 other `std/str` function is refused by name with "needs the hosted runtime"
-(`plan/freestanding-string.md`).
+(`plan/freestanding-string.md`). The same pair admits `std/list`, whose every
+function takes a closure, and the `std/option`/`std/result` callback
+combinators, whose environments are heap boxes; without it each of those is
+refused by name with the two manifest keys.
 
 **Refused, each naming the construct.** `print`/`print!` (the `printf` call),
 `assert` (the runtime's `kelp_assert`), a defined `main` (the hosted entry point
@@ -71,9 +75,10 @@ and its `argc`/`argv` globals), `Ptr.alloc`/`Ptr.free` (the hosted
 `kelp_init_pds` that only the hosted entry point calls), `View` and `Thread`
 (which reach the hosted runtime whatever the manifest says), `String` and
 `Bytes` when no allocator is configured, and `Box`, `List` and `Map` when no
-`[target] alloc`/`dealloc` pair is configured. Any `std/*` module other than the
-pure four above and the `std/str` subset is refused by name: they all reach
-libc or the allocator.
+`[target] alloc`/`dealloc` pair is configured. Any `std/*` module whose row in
+`freestanding::std_admission` is `Hosted` is refused by name with "needs a
+hosted runtime" and the list of modules that are admitted: they all reach libc
+or the allocator.
 
 `std/str` is the one module that is partly allowed, because a kernel that
 prints anything has to walk text. The listed operations are the whole of it:
@@ -157,6 +162,18 @@ _start:
 except the clear loop itself, so a kernel's first instruction already has a
 stack and already has zeroed statics; no register is read before it is written
 and no stack frame exists yet.
+
+The x86-64 stub (kernel stage 20, `plan/x86-64.md`) is the one that cannot start
+in the entry's own mode: QEMU's x86 `-kernel` loads an ELF64 image through the
+Xen PVH note and enters a 32-bit physical address in protected mode with paging
+off. The stub therefore emits a `.note.Xen` `XEN_ELFNOTE_PHYS32_ENTRY` (type 18)
+note naming `_start`, `.code32` code that loads a GDT with a 64-bit code segment,
+builds an identity map for the first 1 GiB out of 2 MiB pages in the `.boot_pt`
+NOBITS section, enables PAE and `EFER.LME`, loads `CR3`, sets `CR0.PG|PE`, and
+far-jumps into `.code64`, where it reloads the data segments, loads `rsp` from
+`__stack_top`, clears `[__bss_start, __bss_end)`, turns SSE on and calls the
+entry. `.boot_pt` sits outside the clear range and the stub zeroes the tables
+before paging is on, so the clear never erases the tables it runs under.
 
 The two bounds are `.weak` (kernel gap 4): a linker script that does not assign
 them still links, both resolve to 0, and the loop runs zero times, which is
@@ -319,17 +336,25 @@ message naming the mode and the backend, because the C backend's preamble is
 libc. The LLVM path:
 
 - loads the target's backend by name (`LLVMInitializeRISCV*` for riscv64,
-  `LLVMInitializeAArch64*` for aarch64), rather than
-  through LLVM's `LLVMInitializeAllTargets` macro: that macro is a C static
+  `LLVMInitializeAArch64*` for aarch64, `LLVMInitializeX86*` for x86-64), rather
+  than through LLVM's `LLVMInitializeAllTargets` macro: that macro is a C static
   inline whose expansion depends on the LLVM headers' own target list, and this
   host's headers registered no RISC-V through it.
 - creates the `TargetMachine` for the triple. riscv64 gets the `generic-rv64`
   CPU, `+m,+a,+c` features and the **medium** code model; aarch64 gets the
-  `generic` CPU, no extra features and the **small** code model, because
-  LLVM refuses `medium` on AArch64 (`only small, tiny and large code models are
-  allowed`) and the small model still reaches an image linked at 0x40000000.
-  The relocation model is **static** for both, and the module's triple and data
-  layout are set from the machine.
+  `generic` CPU, no extra features and the **small** code model, because LLVM
+  refuses `medium` on AArch64 (`only small, tiny and large code models are
+  allowed`) and the small model still reaches an image linked at 0x40000000;
+  x86-64 gets the `x86-64` CPU, no extra features and the **small** code model,
+  which reaches the low 2 GiB an image linked at 1 MiB lives in (`kernel`
+  assumes the code sits in the top 2 GiB, `medium` is larger than the image
+  needs). The relocation model is **static** for all three, and the module's
+  triple and data layout are set from the machine.
+- marks every emitted function `noredzone` on x86-64: the System V ABI's
+  128-byte red zone below `rsp` is clobbered by an interrupt, which a kernel is
+  allowed to take once it has an IDT, so no function may keep a live value
+  there. SSE is not disabled: the stub enables it before the entry call, so the
+  compiler's `memcpy` and float lowering is safe.
 - writes the object, then links it with `ld.lld -T <script> -o <out> --static
   <obj>`. A missing `ld.lld` is an error naming it; `kelpc` never falls back to
   `cc`, which would link the hosted startup files back in. No runtime object, no
