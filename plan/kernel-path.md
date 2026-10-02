@@ -227,10 +227,8 @@ not in this stage.
 
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
 arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall
-ABI (row 9) and the stack half of row 10 (guards and probing) are all done, and so is row 11's
-MMIO half. What remains is the panic semantics with no OS (the other half of row 10), which turn
-a check that fires into a diagnostic instead of a bare `panic` byte, and the IRQ-line and
-physical-frame halves of row 11.
+ABI (row 9) and both halves of row 10 (guards and probing, panic semantics) are all done, and so
+is row 11's MMIO half. What remains is the IRQ-line and physical-frame halves of row 11.
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps
@@ -281,7 +279,19 @@ and `stval` on that stack and resumes a second phase at the top of the kernel st
 phase overflows the same guard with one `[u8; 16384]` frame. What the example forced is a
 lowering fix: `[v; N]` now fills the local's own slot in place (`{array}__fill_into`) rather than
 returning the array by value, because LLVM's instcombine exhausted memory folding the by-value
-store of a frame-sized array at `-O2`. The panic-semantics half of the row is still open.
+store of a frame-sized array at `-O2`.
+
+**Row 10's panic half is done too** (MK9-S6-M2, `plan/panic-semantics.md`): a freestanding panic
+handler may be declared `fun(msg: str)` as before or
+`fun(msg: str, file: str, line: u32)`, and the compiler refuses any other shape by name. Every
+check calls one compiler-emitted entry that exchanges a `.bss` flag (so a check inside the handler
+does not recurse) and, on re-entry, calls `kelp_double_panic`, which the compiler defines weakly as
+a `wfi`/`wfe` loop and a project may override with a strong definition. The file and line are the
+same per-statement `SourceMap` values the hosted line tables carry; generated accessor bodies read
+them from two `.bss` globals the current statement stored. `examples/kernel0-panic2` boots one
+phase per check (array bounds, narrowing, `str.byte`, the `panic` builtin, `option.unwrap`, and a
+double panic) and asserts each exact line; `plan/panic-semantics.md` has the check table and
+records that overflow wraps and division by zero stays an unchecked UB, so neither has a message.
 
 ## Two rules that keep the language honest
 

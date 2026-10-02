@@ -12811,10 +12811,19 @@ fn kernel0_bss_clears_an_image_loaded_marker_before_the_entry_runs() {
     let bss_start = nm_address(&symbols, "__bss_start");
     let bss_end = nm_address(&symbols, "__bss_end");
     let marker = nm_address(&symbols, "kelp_bss_marker");
+    // The marker is the first thing in `.bss`, which the project's script
+    // orders `.bss.dirty` first. It is no longer the *whole* cleared range:
+    // kernel stage 15 put the panic entry's `.bss` state (`kelp_panic_active`,
+    // `kelp_panic_file`, `kelp_panic_line`) after it, so the assertion is that
+    // the range starts at the marker and covers all 64 bytes of it.
     assert_eq!(
-        (bss_start, marker + 64),
-        (marker, bss_end),
-        "the marker is not exactly the cleared range: \
+        bss_start, marker,
+        "the marker is not the first byte of the cleared range: \
+         {bss_start:#x}..{marker:#x}..{bss_end:#x}"
+    );
+    assert!(
+        bss_end >= marker + 64,
+        "the cleared range does not cover the whole marker: \
          {bss_start:#x}..{marker:#x}..{bss_end:#x}"
     );
 
