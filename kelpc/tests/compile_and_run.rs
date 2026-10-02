@@ -10585,6 +10585,25 @@ fn boot_under_qemu_containing(
     );
 }
 
+/// The same boot, for a run whose interesting output is a sequence rather than
+/// a set of whole lines. Kernel stage 22's exception reports carry a `rip` the
+/// linker chose, so each `expected` entry is a substring that has to appear
+/// after the one before it; SeaBIOS' "Booting from ROM.." is glued to the
+/// first kernel line, which is the other reason the match is not anchored.
+fn boot_under_qemu_in_order(emu: &Emulator, name: &str, target: &Path, expected: &[&str]) {
+    let marker = expected.last().expect("at least one expected line");
+    let captured = boot_and_capture(emu, name, target, &|got| got.contains(marker));
+    let mut from = 0usize;
+    for want in expected {
+        match captured[from..].find(want) {
+            Some(at) => from += at + want.len(),
+            None => panic!(
+                "the serial output of '{name}' has no '{want}' after the earlier lines:\n{captured}"
+            ),
+        }
+    }
+}
+
 /// Builds a freestanding project, boots it under `emu`, and reads the serial
 /// output until `done` says the interesting part has arrived (or the deadline
 /// fires), then kills the emulator and returns everything captured.
@@ -13485,6 +13504,112 @@ fn kernel0_x86_64_lmode_proves_long_mode_then_triple_faults() {
         "kernel0_x86_64_lmode_boot",
         &fixture("../examples/kernel0-x86_64-lmode"),
         &["hello from kelp (x86_64)", "long mode on"],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Kernel stage 22: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer.
+// `examples/kernel0-x86_64-idt` is the third x86-64 boot: it loads an IDT whose
+// gates are naked functions, resumes from a `ud2` and a divide by zero, takes
+// five timer interrupts, and ends in a store through an unmapped page whose
+// `#PF` handler prints and halts. Freestanding is LLVM-only by design, so these
+// build through the default backend; the boot needs `qemu-system-x86_64` and
+// `ld.lld` from `dev-kernel.nix`.
+// ---------------------------------------------------------------------------
+
+/// The ELF half of the stage: the five gates are functions, each of them
+/// 16-byte aligned (the `align(16)` clause, so an IDT entry never points into
+/// the middle of another gate), and the image references no undefined symbol,
+/// which is the whole claim that no libc helper sits behind the report or the
+/// dispatcher.
+#[test]
+fn kernel0_x86_64_idt_builds_five_aligned_gates_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the x86-64 idt elf test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = build_freestanding(
+        "kernel0_x86_64_idt",
+        &fixture("../examples/kernel0-x86_64-idt"),
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+
+    let symbols = tool("llvm-nm", &[path]);
+    for gate in [
+        "kelp_idt__gate_de",
+        "kelp_idt__gate_ud",
+        "kelp_idt__gate_gp",
+        "kelp_idt__gate_pf",
+        "kelp_idt__gate_timer",
+    ] {
+        let address = nm_address(&symbols, gate);
+        assert_eq!(
+            address % 16,
+            0,
+            "'{gate}' is at {address:#x}, which is not 16-byte aligned:\n{symbols}"
+        );
+    }
+
+    let undefined = tool("llvm-nm", &["-u", path]);
+    assert!(
+        undefined.trim().is_empty(),
+        "the x86-64 idt image has undefined symbols:\n{undefined}"
+    );
+}
+
+/// The boot half: the serial lines have to carry, in this order, the `#UD` and
+/// the divide by zero (both reported and both resumed, which the ticks after
+/// them prove), the five timer ticks, the boot's own `x86: done`, and the
+/// `#PF` on the unmapped store with no repair behind it, so it is the last
+/// line. The `rip` in a report is the address the linker chose, so a report is
+/// matched by shape; the error code and the `cr2` are pinned, because a
+/// supervisor write to a not-present page is error code 2 and the address is
+/// the one `main.kp` names.
+#[test]
+fn kernel0_x86_64_idt_takes_its_faults_and_ticks_the_timer_in_order() {
+    if !have_ld_lld() || !have_qemu(&X86_64_QEMU) {
+        println!(
+            "skipping the x86-64 idt boot test: 'ld.lld' or 'qemu-system-x86_64' \
+             is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu_in_order(
+        &X86_64_QEMU,
+        "kernel0_x86_64_idt_boot",
+        &fixture("../examples/kernel0-x86_64-idt"),
+        &[
+            "exception 6 err 0 rip 0x",
+            "exception 0 err 0 rip 0x",
+            "tick 1",
+            "tick 2",
+            "tick 3",
+            "tick 4",
+            "tick 5",
+            "x86: done",
+            "exception 14 err 2 rip 0x",
+            "cr2 0x0000000200000000",
+        ],
+    );
+}
+
+/// Kernel stage 22's layout contract: the gates hardcode the `TrapFrame`
+/// offsets and the offset split an IDT entry wants, and the compiler checks
+/// neither end against the other. `tests/projects/x86_idt_layout` copies the
+/// example's declarations and prints the numbers: the gate is 16 bytes with
+/// its offset at 0/6/8, the `lidt` descriptor is ten bytes with the limit at 0
+/// and the base at 2, and the frame is 160 bytes with the vector at 0, the
+/// registers from 8 to 120, the error code at 128 and `RIP`/`CS`/`RFLAGS` at
+/// 136/144/152.
+#[test]
+fn the_x86_idt_gate_and_frame_offsets_are_what_the_gates_hardcode() {
+    assert_project_runs(
+        "x86_idt_layout",
+        &project("x86_idt_layout"),
+        "16\n0\n2\n4\n5\n6\n8\n12\n10\n0\n2\n160\n0\n8\n120\n128\n136\n144\n152\n",
     );
 }
 

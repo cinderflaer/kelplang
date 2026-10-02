@@ -1,0 +1,7 @@
+name = "x86idtlayout"
+
+# Kernel stage 22 (`plan/x86-idt.md`): the IDT gate, the `lidt` descriptor and
+# the trap frame are contracts between the naked gates' hardcoded offsets and
+# the `datac`s the compiler lays out. The compiler checks neither end against
+# the other, so this project prints the numbers and the test pins them. It is
+# hosted, so it runs on both backends and needs no QEMU.
