@@ -205,6 +205,29 @@ pub fun checksum(f: Fb).R: u64 {
     return h
 }
 
+// FNV-1a 64 over what a display that ignores the alpha channel shows: each pixel's blue, green and
+// red bytes and a constant `0xFF` where `checksum` hashes the alpha. The renderer writes glyph
+// coverage into the alpha byte (a text pixel's alpha is its mask byte), so `checksum` and this
+// value differ wherever text is drawn, and a display device has no alpha to show. Stage 4's
+// `ramfb` case compares this number with the pixels QEMU captured from the display.
+pub fun checksum_rgb(f: Fb).R: u64 {
+    var h: u64 = 14695981039346656037
+    var y: i32 = 0
+    while y < f.height {
+        var x: i32 = 0
+        while x < f.width {
+            val p: u32 = unsafe { f.get(x, y) }
+            h = fnv_byte(h, (p & 0xFF).to_u8())
+            h = fnv_byte(h, ((p >> 8) & 0xFF).to_u8())
+            h = fnv_byte(h, ((p >> 16) & 0xFF).to_u8())
+            h = fnv_byte(h, 255)
+            x += 1
+        }
+        y += 1
+    }
+    return h
+}
+
 // The multiply wraps, which is exactly FNV: `u64` arithmetic in Kelp wraps instead of panicking.
 fun fnv_byte(h: u64, b: u8).R: u64 {
     val x: u64 = h ^ b.to_u64()

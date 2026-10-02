@@ -66,6 +66,17 @@ fun mut FbPlatform.push_at(at: u64, ev: move event.Event) {
 
 fun FbPlatform.frame_count().R: i32 = frames
 
+// Where the surface is, for the ramfb registration: the display device needs the physical address
+// and the stride, in pixels, of the memory it scans out. The cast is a separate binding because a
+// method with type arguments cannot be written on a call expression (`plan/user-ffi-gap-analysis.md`).
+pub fun framebuffer_addr().R: usize {
+    val base: Ptr<[u32; FB_PIXELS]> = unsafe { Ptr.from_mut(FRAME) }
+    val bytes: Ptr<u8> = base.cast<u8>()
+    return bytes.addr()
+}
+
+pub fun framebuffer_stride().R: i32 = FB_W
+
 fun FbPlatform.presented_count().R: i32 = presented
 
 fun FbPlatform.clock().R: u64 = time_ms

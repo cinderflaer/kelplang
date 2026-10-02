@@ -54,6 +54,14 @@ pub fun report(emit: fun (str), step: i32, checksum: u64, dirty: i32) {
     emit(line.as_str())
 }
 
+// The colour-only checksum of the frame the run finished with, as one line. It is what a display
+// device shows: `checksum` hashes the alpha byte, which carries glyph coverage, and a screen has
+// no alpha. Stage 4's `ramfb` case compares this line with the pixels QEMU captured from a display.
+pub fun display_line(checksum: u64).R: String {
+    val shown = hex64(checksum)
+    return str.concat("display ", shown.as_str())
+}
+
 // Run the scenario to its quit. The final model is returned so a caller can report it the way
 // `report.kp` does; the counters `core.stats()` reads are the ones the run left behind.
 pub fun drive<P: platform.Platform>(
@@ -96,5 +104,7 @@ pub fun drive<P: platform.Platform>(
         report(emit, n, fb.checksum(platform.framebuffer()), backend.last_painted())
         n += 1
     }
+    val shown = display_line(fb.checksum_rgb(platform.framebuffer()))
+    emit(shown.as_str())
     return state
 }

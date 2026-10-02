@@ -14,6 +14,7 @@ impl "deps/polyp/soft_backend"
 impl "deps/todo/app"
 impl "deps/todo/scenario"
 impl "fb_platform"
+impl "ramfb" caps(mmio = ["0x10100000+0x20"])
 impl "uart" caps(mmio = ["0x10000000+0x100"])
 impl "std/str"
 
@@ -62,6 +63,20 @@ fun emit_line(line: str) {
 section(".text.boot") fun kmain() {
     var platform = fb_platform.new()
     var backend = soft_backend.new()
+
+    // Stage 4's stretch: register the surface with QEMU's `ramfb` device through fw_cfg, so a
+    // monitor `screendump` shows what the renderer draws. `ramfb.setup` returns 0 when the device
+    // took the surface; the one line is a diagnostic for the boot log.
+    val ramfb_code = ramfb.setup(
+        pixels = fb_platform.framebuffer_addr(),
+        width = fb_platform.FB_W,
+        height = fb_platform.FB_H,
+        stride_px = fb_platform.framebuffer_stride(),
+    )
+    uart.puts("ramfb ")
+    uart.putc(48 + ramfb_code.to_u8())
+    uart.putc(10)
+
     val final = scenario.drive(backend = backend, platform = platform, emit = emit_line)
 
     // The counters and the entry text the report reads. `core.publish` fills the atomics; the entry

@@ -14594,6 +14594,7 @@ step 8 checksum 0xfa3d5e46fb8b2113 dirty 2
 step 9 checksum 0x89b8f7d6bd68e19b dirty 2
 step 10 checksum 0x12d8cf35c1606b27 dirty 3
 step 11 checksum 0x12d8cf35c1606b27 dirty 0
+display 0xc33211c98befabd7
 -- todo --
 2
 alpha
@@ -14630,6 +14631,7 @@ step 8 checksum 0xe451f4fb536873bf dirty 2
 step 9 checksum 0xe4bf0c25d129d687 dirty 2
 step 10 checksum 0xf4b409b661bcc047 dirty 3
 step 11 checksum 0xf4b409b661bcc047 dirty 0
+display 0x33651316579eafb7
 -- todo --
 2
 alpha
@@ -14703,9 +14705,9 @@ fn run_slice(text: &str) -> Vec<String> {
         .filter(|line| **line != "-- todo --")
         .map(|line| line.to_string())
         .collect();
-    // Twelve `step` lines, one per frame, and the report's twenty-one. A run whose shape changed
-    // would otherwise compare equal only by accident.
-    assert_eq!(out.len(), 12 + 21, "the run's shape changed:\n{out:?}");
+    // Twelve `step` lines, one per frame, the `display` line the run ends with, and the report's
+    // twenty-one. A run whose shape changed would otherwise compare equal only by accident.
+    assert_eq!(out.len(), 12 + 1 + 21, "the run's shape changed:\n{out:?}");
     out
 }
 
@@ -14783,6 +14785,153 @@ fn polyp_fb_x86_64_draws_the_hosted_runs_pixels() {
         expected,
         "the x86-64 kernel's serial output differs from the hosted 320x200 run; captured:\n{captured}"
     );
+}
+
+/// Polyp v3 stage 4's stretch: QEMU's `ramfb` device shows the kernel's framebuffer.
+///
+/// The riscv64 project registers its `static mut` surface with the `ramfb` device through fw_cfg (a
+/// DMA write of `etc/ramfb`: address, `XR24`, flags, width, height, stride, all big-endian, which is
+/// what `src/ramfb.kp` implements). This test boots the image with `-device ramfb` and a monitor on
+/// a pipe, waits for the run's last line, asks the monitor for a `screendump`, and checks the PPM it
+/// wrote against the kernel's own `display` line: FNV-1a 64 over each pixel's blue, green and red
+/// bytes and a constant alpha, because a display shows only the colour (the framebuffer's alpha byte
+/// carries glyph coverage, so `checksum` would not match a screen). The same function is what the
+/// raster's `checksum_rgb` computes, so a single differing pixel fails it. Skips where `ld.lld` or
+/// the emulator is absent.
+#[test]
+fn polyp_fb_riscv64_shows_its_framebuffer_on_a_real_display() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        eprintln!(
+            "skipping the riscv64 ramfb boot: 'ld.lld' or 'qemu-system-riscv64' is not on PATH \
+             (run this test in dev-kernel.nix)"
+        );
+        return;
+    }
+    let name = "polyp_fb_ramfb";
+    let bin = out_path(name);
+    let build = kelpc()
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("../examples/polyp-fb-riscv64"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding ramfb build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let serial = out_path("polyp_fb_ramfb_serial").with_extension("txt");
+    let shot = out_path("polyp_fb_ramfb_shot").with_extension("ppm");
+    let _ = std::fs::remove_file(&serial);
+    let _ = std::fs::remove_file(&shot);
+
+    // `-display none` still creates the console `ramfb` attaches to, which is what makes a
+    // `screendump` of the device possible in a headless test.
+    let mut child = Command::new("qemu-system-riscv64")
+        .args([
+            "-machine",
+            "virt",
+            "-bios",
+            "none",
+            "-no-reboot",
+            "-display",
+            "none",
+            "-device",
+            "ramfb",
+        ])
+        .arg("-serial")
+        .arg(format!("file:{}", serial.display()))
+        .args(["-monitor", "stdio"])
+        .arg("-kernel")
+        .arg(&bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn qemu-system-riscv64");
+
+    // Wait for the run to finish, then ask the monitor for the screen. Both waits are bounded by
+    // the same 20 s the other boot tests use.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let serial_text = wait_for_file_text(&serial, &deadline, |text| text.contains("\nend\n"));
+    let mut stdin = child.stdin.take().expect("qemu's monitor pipe");
+    writeln!(stdin, "screendump {}", shot.display()).expect("failed to ask for a screendump");
+    stdin.flush().expect("failed to flush the monitor pipe");
+    let _ = wait_for_file_text(&shot, &deadline, |_| true);
+    writeln!(stdin, "quit").expect("failed to ask qemu to quit");
+    let _ = stdin.flush();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let ppm = std::fs::read(&shot).expect("the PPM the monitor wrote");
+    let (width, height, body) = parse_ppm(&ppm);
+    assert_eq!((width, height), (320, 200), "the screen the ramfb device reported");
+    assert_eq!(body.len(), 320 * 200 * 3, "the PPM body length");
+    let shown = ppm_rgb_checksum(width, height, body);
+
+    // The kernel's own line, from its serial output: `display 0x<16 hex digits>`.
+    let line = serial_text
+        .lines()
+        .find(|line| line.starts_with("display "))
+        .unwrap_or_else(|| panic!("no `display` line in the kernel's serial output:\n{serial_text}"));
+    let expected = u64::from_str_radix(line.trim_start_matches("display 0x"), 16)
+        .unwrap_or_else(|_| panic!("unreadable display line '{line}'"));
+    assert_eq!(
+        shown, expected,
+        "the display device's pixels differ from the kernel's framebuffer ({line})"
+    );
+}
+
+/// Reads `path` until `done` accepts its text, or the deadline passes, and answers the text it last
+/// saw (empty when the file never appeared). The bounded wait is what keeps a kernel that never
+/// prints, or a monitor that never writes, from hanging the suite.
+fn wait_for_file_text(path: &Path, deadline: &Instant, done: impl Fn(&str) -> bool) -> String {
+    let mut last = String::new();
+    while Instant::now() < *deadline {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if done(&text) {
+                return text;
+            }
+            last = text;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    last
+}
+
+/// A binary P6 PPM as `(width, height, body)`. The three header lines are `P6`, the size and the
+/// maximum value, each terminated by a newline, which is what QEMU's `screendump` and
+/// `soft/debug.dump_ppm` both write.
+fn parse_ppm(bytes: &[u8]) -> (usize, usize, &[u8]) {
+    let mut parts = bytes.splitn(4, |b| *b == b'\n');
+    assert_eq!(parts.next(), Some(b"P6".as_slice()), "the PPM magic");
+    let size = parts.next().expect("the PPM size line");
+    let mut numbers = size
+        .split(|b| *b == b' ')
+        .map(|n| String::from_utf8_lossy(n).parse::<usize>().expect("a PPM dimension"));
+    let width = numbers.next().expect("the PPM width");
+    let height = numbers.next().expect("the PPM height");
+    assert_eq!(parts.next(), Some(b"255".as_slice()), "the PPM maximum value");
+    (width, height, parts.next().expect("the PPM body"))
+}
+
+/// The raster's `checksum_rgb` over a P6 body: FNV-1a 64 with each pixel's blue, green and red bytes
+/// and a constant `0xFF` for the fourth. The kernel prints the same number on its `display` line, so
+/// a display device that shows the framebuffer produces the same value.
+fn ppm_rgb_checksum(width: usize, height: usize, body: &[u8]) -> u64 {
+    let mut h: u64 = 14695981039346656037;
+    for i in 0..width * height {
+        let (r, g, b) = (body[3 * i], body[3 * i + 1], body[3 * i + 2]);
+        for byte in [b, g, r, 255u8] {
+            h ^= u64::from(byte);
+            h = h.wrapping_mul(1099511628211);
+        }
+    }
+    h
 }
 
 /// Polyp v3 stage 3: `PpmPlatform` writes each presented frame when `POLYP_DUMP_DIR` is set.
