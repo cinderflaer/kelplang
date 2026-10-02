@@ -106,8 +106,8 @@
 //! reads, which is why the gate is valgrind). See
 //! `tests/fixtures/owned_conditional_move.kp` for the regression.
 //! **A reference binding remembers its owner (open item 33).** A binding of
-//! reference type carries a root set — the owners its value may borrow from —
-//! and `cur = expr` REPLACES it: the old roots' pins are released at the
+//! reference type carries a root set: the owners its value may borrow from.
+//! `cur = expr` REPLACES it, so the old roots' pins are released at the
 //! assignment and the new ones are pinned to the binding's last use. A borrow
 //! made through a cursor is therefore a borrow of the owner, which is why
 //! `var cur = &list; cur = cur.next.get()` is accepted while mutating `list`
@@ -1730,11 +1730,8 @@ fn borrowed_node(expr: &tir::Expr) -> Option<(&bool, &tir::Expr)> {
     }
 }
 
-/// The root of a call argument, which is usually an auto-borrow node that
-/// `check_call_arg` synthesized — so this unwraps one `Ref` before asking
-/// `tir_root_ident`.
 /// The owner roots of a call argument, which is usually an auto-borrow node
-/// that `check_call_arg` synthesized — so this unwraps one `Ref` before asking
+/// that `check_call_arg` synthesized, so this unwraps one `Ref` before asking
 /// for the argument's place roots.
 fn arg_roots(expr: &tir::Expr, ctx: &Ctx) -> Vec<String> {
     match &expr.kind {
@@ -2613,7 +2610,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         tir::ExprKind::Ref { mutable, expr: inner } => {
             // A borrow reached generically here (not via a `val`/`var`
             // initializer, a call argument, or an assignment to a reference
-            // binding — see `check_let_init`, `take_call_arguments` and
+            // binding; see `check_let_init`, `take_call_arguments` and
             // `assign_reference`) is transient: started and released
             // immediately. It is a `&expr` written inside a struct literal or
             // another expression whose value borrows and immediately uses it.
