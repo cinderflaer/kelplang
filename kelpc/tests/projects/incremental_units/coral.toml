@@ -1,0 +1,7 @@
+name = "incrementalunits"
+
+# Roadmap A-14 slice 1: this manifest turns the backend's per-unit split on for
+# the project. `kelpc build` and `kelpc run` take `--incremental` too, and the
+# two spellings mean the same thing; the C oracle ignores both.
+[build]
+incremental = true

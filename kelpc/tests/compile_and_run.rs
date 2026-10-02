@@ -14275,3 +14275,421 @@ fn hosted_functions_carry_no_stack_probe() {
         "a hosted build carries the freestanding probe-stack attribute"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Roadmap A-14 slice 1: separate compilation (`--incremental`)
+// ---------------------------------------------------------------------------
+//
+// With the mode off the backend emits one LLVM module named `kelp`, which is why
+// nothing else in this file mentions it: the whole suite is the mode-off
+// assertion. These tests are the other half. The same programs built with the
+// per-unit split must behave identically, the split must be reproducible, and
+// the two spellings that turn it on (a flag and a manifest key) must agree.
+
+/// Builds `target` twice, once whole-program and once with `--incremental`, and
+/// reports the first difference (empty when the two agree).
+///
+/// A target that builds is run both ways and its stdout and exit status are
+/// compared; a target the front end *rejects* has to be rejected identically,
+/// down to the diagnostic, because the split is a backend change and the mode
+/// may not change what the compiler says about a program it refuses.
+fn incremental_matches_whole_program(tag: &str, target: &Path) -> Result<(), String> {
+    let whole = out_path(&format!("whole_{tag}"));
+    let split = out_path(&format!("inc_{tag}"));
+    let mut builds = Vec::new();
+    for (incremental, bin) in [(false, &whole), (true, &split)] {
+        let mut command = kelpc();
+        command.arg("build").arg(target).arg("-o").arg(bin);
+        if incremental {
+            command.arg("--incremental");
+        }
+        let build = command
+            .output()
+            .map_err(|e| format!("could not spawn kelpc: {e}"))?;
+        builds.push(build);
+    }
+    let (whole_build, split_build) = (&builds[0], &builds[1]);
+    if !whole_build.status.success() || !split_build.status.success() {
+        if whole_build.status.success() != split_build.status.success() {
+            return Err(format!(
+                "one build succeeded and the other did not:\n--incremental stderr:\n{}",
+                String::from_utf8_lossy(&split_build.stderr)
+            ));
+        }
+        if whole_build.stderr != split_build.stderr {
+            return Err(format!(
+                "the two rejections differ:\n  whole-program: {}\n  --incremental: {}",
+                String::from_utf8_lossy(&whole_build.stderr),
+                String::from_utf8_lossy(&split_build.stderr)
+            ));
+        }
+        return Ok(());
+    }
+    let run = |bin: &Path| -> Result<(Option<i32>, Vec<u8>), String> {
+        let out = Command::new(bin)
+            .output()
+            .map_err(|e| format!("could not run '{}': {e}", bin.display()))?;
+        Ok((out.status.code(), out.stdout))
+    };
+    let (whole_status, whole_stdout) = run(&whole)?;
+    let (split_status, split_stdout) = run(&split)?;
+    if whole_status != split_status {
+        return Err(format!(
+            "exit status {whole_status:?} whole-program vs {split_status:?} --incremental"
+        ));
+    }
+    if whole_stdout != split_stdout {
+        return Err(format!(
+            "stdout differs:\n  whole-program: {:?}\n  --incremental: {:?}",
+            String::from_utf8_lossy(&whole_stdout),
+            String::from_utf8_lossy(&split_stdout)
+        ));
+    }
+    Ok(())
+}
+
+/// A project target: the directory when it has a manifest, and its entry file
+/// when it does not, which is the two shapes `kelpc build` takes.
+fn incremental_project_target(name: &str) -> PathBuf {
+    let dir = project(name);
+    if dir.join("coral.toml").exists() {
+        dir
+    } else {
+        dir.join("main.kp")
+    }
+}
+
+/// A fixture that exercises one feature the split has to keep working: generics,
+/// traits, closures, threads, the containers, an owning `Drop`, a passdown, a
+/// global. Every one of them is built and run both ways by the test below.
+const INCREMENTAL_FIXTURES: &[&str] = &[
+    // generics: instances of a module's generic function belong to its unit
+    "generic_explicit_args",
+    "generic_function_basic",
+    "generic_function_owned",
+    "generic_method_basic",
+    "generic_nested_inference",
+    "generic_owned",
+    "generic_recursive",
+    "generic_type_basic",
+    "scoped_block_generic",
+    // traits: static dispatch, default bodies, supertraits, `&dyn` vtables
+    "traits_datac_and_enum",
+    "traits_default_body",
+    "traits_dyn_builtin",
+    "traits_dyn_default_super",
+    "traits_dyn_dispatch",
+    "traits_dyn_forward",
+    "traits_dyn_mut",
+    "traits_generic_datac_method",
+    "traits_impl_for_builtin",
+    "traits_self_in_signature",
+    "traits_supertrait",
+    // closures and function values: the `_support` shims and thunks
+    "closure_basic",
+    "closure_datac_borrow_param",
+    "closure_env_wide_ret",
+    "closure_move",
+    "closure_two_captures",
+    "closure_value_widening",
+    "fn_literal",
+    "fn_literal_capture",
+    "fn_value",
+    "fn_value_plain",
+    "scoped_block_captures",
+    "scoped_block_params",
+    "trailing_block_capture",
+    // threads and mutexes: the per-signature spawn body and the runtime records
+    "mutex_into_inner",
+    "mutex_list_push",
+    "mutex_lock_value",
+    "thread_current_id",
+    "thread_fence",
+    "thread_join_accepted",
+    "thread_join_unit",
+    "thread_spawn_accepted",
+    "thread_spawn_closure",
+    // the containers and the tagged union
+    "box_basic",
+    "box_owned_elements",
+    "box_recursive",
+    "enum_basic",
+    "enum_in_containers",
+    "enum_liveness",
+    "enum_owned",
+    "enum_recursive",
+    "if_let_basic",
+    "list_basic",
+    "list_growth_and_rebuild",
+    "list_nested_list",
+    "list_owned",
+    "list_slice_insert",
+    "map_basic",
+    "map_datac_key",
+    "map_datac_value_clone",
+    "map_enum_key",
+    "map_growth_and_rehash",
+    "map_nested_datac_key",
+    "map_tombstones_and_reuse",
+    "when_expr",
+    // owning `Drop`s: the generated per-type drop in `_support`
+    "drop_container",
+    "drop_control_flow",
+    "drop_declared_key",
+    "drop_enum",
+    "drop_map",
+    "drop_order",
+    // passdowns, atomics and the rest of the scalar surface
+    "atomic_counter",
+    "bitwise",
+    "consts",
+    "datac_basic",
+    "endian_scalars",
+    "for_loop",
+    "passdowns",
+    "pd_owned",
+    "section_attribute",
+    "string_build",
+    "string_views",
+    "stdlib_fmt",
+    "stdlib_sort",
+    "view",
+    "while_accumulator",
+];
+
+/// The multi-module projects the split has to keep working: a cross-module call,
+/// a cross-module `pub static` read, a cross-module type, an `impl`/alias graph,
+/// a user `extern fun`, an `unsafe` module and a `section("...")` placement.
+const INCREMENTAL_PROJECTS: &[&str] = &[
+    "alias_cross_file",
+    "alias_kpconf",
+    "closure_datac_param",
+    "incremental_units",
+    "namespace",
+    "ptrs_try_alloc",
+    "same_name",
+    "self_call",
+    "shapes",
+    "static_datac_array",
+    "static_globals",
+    "static_module",
+    "static_private",
+    "traits_cross",
+    "traits_default_cross",
+    "traits_third_module",
+    "unsafe_ptr",
+    "unsafe_unaligned",
+    "visibility_import",
+];
+
+/// Equivalence (roadmap A-14 slice 1): a program built with the per-unit split
+/// prints what the whole-program build prints and exits the same way. The list
+/// is the features the split can break, one fixture each plus the multi-module
+/// projects, and it runs on whatever backend the suite is pointed at: under the
+/// C oracle the flag is ignored, which this test then proves by construction.
+#[test]
+fn incremental_builds_match_the_whole_program_build() {
+    let mut failures: Vec<String> = Vec::new();
+    for name in INCREMENTAL_FIXTURES {
+        let source = fixture(&format!("tests/fixtures/{name}.kp"));
+        if let Err(why) = incremental_matches_whole_program(name, &source) {
+            failures.push(format!("{name}: {why}"));
+        }
+    }
+    for name in INCREMENTAL_PROJECTS {
+        let target = incremental_project_target(name);
+        if let Err(why) = incremental_matches_whole_program(name, &target) {
+            failures.push(format!("project {name}: {why}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} targets differ with --incremental:\n{}",
+        failures.len(),
+        INCREMENTAL_FIXTURES.len() + INCREMENTAL_PROJECTS.len(),
+        failures.join("\n")
+    );
+}
+
+/// Unit assignment (roadmap A-14 slice 1): a project that sets
+/// `[build] incremental = true` is split into one unit per source module plus
+/// `_support`, and the cross-unit call and `pub static` read in it still work.
+/// The manifest is the turn-on here; `--incremental` is the other spelling and
+/// the equivalence test covers it on every other target.
+#[test]
+fn a_manifest_turns_the_per_unit_split_on() {
+    if backend() == "c" {
+        println!("skipping: the C oracle keeps its one translation unit");
+        return;
+    }
+    let bin = out_path("inc_manifest_units");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("incremental_units"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the manifest-enabled split failed to build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    // One unit per module id, plus the one unit that owns the generated helpers.
+    let units = bin.with_extension("units");
+    for unit in ["main", "state", "_support"] {
+        let ir = units.join(format!("{unit}.ll"));
+        let object = units.join(format!("{unit}.o"));
+        assert!(ir.exists(), "'{}' was not written", ir.display());
+        assert!(object.exists(), "'{}' was not written", object.display());
+    }
+    // `main` is the entry module's unit, `state` owns the other module's
+    // function, static and datac, and the two are linked into one binary.
+    let main_ir = std::fs::read_to_string(units.join("main.ll")).expect("main.ll");
+    assert!(
+        main_ir.contains("define i32 @main("),
+        "the entry module's unit does not define main"
+    );
+    let state_ir = std::fs::read_to_string(units.join("state.ll")).expect("state.ll");
+    assert!(
+        state_ir.contains("@kelp_state__LIMIT = constant"),
+        "the owning unit does not define the static"
+    );
+    assert!(
+        state_ir.contains("define i64 @kelp_state__double("),
+        "the owning unit does not define the cross-unit callee"
+    );
+    assert!(
+        main_ir.contains("@kelp_state__LIMIT = external") && !main_ir.contains("@kelp_state__LIMIT = constant"),
+        "the user unit should only declare the static"
+    );
+    let run = Command::new(&bin).output().expect("failed to run the split binary");
+    assert!(run.status.success(), "the split binary failed");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n3\n7\n");
+}
+
+/// Determinism (roadmap A-14 slice 1): the same sources produce byte-identical
+/// unit IR, which is what a later slice caches objects by. `KELPC_DUMP_UNITS`
+/// writes each unit's unoptimized IR to `<dir>/<unit>.ll`.
+#[test]
+fn two_incremental_builds_produce_identical_unit_ir() {
+    if backend() == "c" {
+        println!("skipping: the C oracle writes no unit IR");
+        return;
+    }
+    let base = out_path("inc_determinism");
+    let mut dumps = Vec::new();
+    for pass in ["a", "b"] {
+        let dir = base.with_extension(pass);
+        let _ = std::fs::remove_dir_all(&dir);
+        let bin = base.with_extension(format!("bin_{pass}"));
+        let build = kelpc()
+            .env("KELPC_DUMP_UNITS", &dir)
+            .arg("build")
+            .arg(project("shapes"))
+            .arg("-o")
+            .arg(&bin)
+            .arg("--incremental")
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            build.status.success(),
+            "the determinism build failed:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        dumps.push(dir);
+    }
+    let read_dir = |dir: &Path| -> std::collections::BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("could not read '{}': {e}", dir.display()))
+            .map(|entry| {
+                let entry = entry.expect("a readable directory entry");
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(entry.path()).expect("a readable unit IR file"),
+                )
+            })
+            .collect()
+    };
+    let (a, b) = (read_dir(&dumps[0]), read_dir(&dumps[1]));
+    assert!(
+        !a.is_empty(),
+        "no unit IR was dumped into '{}'",
+        dumps[0].display()
+    );
+    assert_eq!(
+        a.keys().collect::<Vec<_>>(),
+        b.keys().collect::<Vec<_>>(),
+        "the two builds wrote different unit sets"
+    );
+    for (name, first) in &a {
+        assert_eq!(
+            Some(first),
+            b.get(name),
+            "unit '{name}' differs between two builds of one project"
+        );
+    }
+}
+
+/// The freestanding refusal (roadmap A-14 slice 1): the mode is not implemented
+/// for a bare-metal image yet, and it is refused by name rather than miscompiled
+/// or silently ignored.
+#[test]
+fn incremental_is_refused_for_a_freestanding_project() {
+    if backend() == "c" {
+        println!("skipping: the C oracle refuses a freestanding project already");
+        return;
+    }
+    let bin = out_path("inc_freestanding");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("freestanding_min"))
+        .arg("-o")
+        .arg(&bin)
+        .arg("--incremental")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "expected the freestanding split to be refused"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("'--incremental' is not implemented for a freestanding project"),
+        "the refusal does not name the mode: {stderr}"
+    );
+}
+
+/// The C oracle ignores the flag (roadmap A-14 slice 1): it is the suite's other
+/// answer to the same question, so it stays one translation unit, and a build
+/// with the flag writes the same `.c` artifact it always did.
+#[test]
+fn the_c_oracle_ignores_the_incremental_flag() {
+    let bin = out_path("inc_oracle");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(fixture("tests/fixtures/datac_basic.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .arg("--incremental")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the oracle build with --incremental failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        bin.with_extension("c").exists(),
+        "the oracle did not write its one generated C file"
+    );
+    assert!(
+        !bin.with_extension("units").exists(),
+        "the oracle split its single translation unit"
+    );
+    let run = Command::new(&bin).output().expect("failed to run the oracle binary");
+    assert!(run.status.success());
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n4\n25\n11\n");
+}
