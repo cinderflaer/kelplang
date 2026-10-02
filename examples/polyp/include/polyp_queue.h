@@ -92,4 +92,33 @@ static inline const char* polyp_poll_edit_text(void) {
     return polyp_edit_text[polyp_edit_last];
 }
 
+/* The focus channel: a program with no user asks the loop to grab the focus
+ * for an entry, so a smoke run can prove a patch keeps it. The payload is the
+ * entry's position in the tree the loop built last, exactly as the edit
+ * channel's is. */
+#define POLYP_FOCUS_CAPACITY 8
+
+static int polyp_focus_index[POLYP_FOCUS_CAPACITY];
+static int polyp_focus_head;
+static int polyp_focus_count;
+
+static inline void polyp_post_focus(int index) {
+    if (polyp_focus_count == POLYP_FOCUS_CAPACITY) {
+        return; /* full: the request is dropped rather than overwriting a pending one */
+    }
+    polyp_focus_index[(polyp_focus_head + polyp_focus_count) % POLYP_FOCUS_CAPACITY] = index;
+    polyp_focus_count++;
+}
+
+/* The entry index of the oldest pending focus request, or -1 when none is. */
+static inline int polyp_poll_focus(void) {
+    if (polyp_focus_count == 0) {
+        return -1;
+    }
+    int id = polyp_focus_index[polyp_focus_head];
+    polyp_focus_head = (polyp_focus_head + 1) % POLYP_FOCUS_CAPACITY;
+    polyp_focus_count--;
+    return id;
+}
+
 #endif
