@@ -1086,3 +1086,30 @@ direction). And it says nothing about a list mutated by another thread while a `
 which is the `Atomic`/lock story and not this rule. (An exclusive borrow taken *before* the loop,
 `val p = &mut xs` then `p.push(..)` in the body, is already refused by the lexical borrow rule: the
 desugared `.len()` needs a shared borrow of `xs` and the alias holds it exclusively.)
+
+## Language feature: `==`/`!=` over a declared `eq` (H-5, 2026-10-02, not a kernel stage)
+
+**New way to reach undefined behaviour.** None. The operator is removed before
+borrow checking and code generation: `a == b` becomes the ordinary call
+`a.eq(&b)` (and `a != b` becomes `!a.eq(&b)`), and `View` against `View`/`str`
+becomes `View.eq`. Both backends see a call of a declared function, so there is
+no new lowering, no new pointer arithmetic and no new memory access. The
+operands are the already-checked expressions from `check_binary_operands`, so a
+side-effecting operand is evaluated once and left to right, exactly as the
+written call would.
+
+**What the compiler does check.** That the type declares `fun T.eq(other: &T).R:
+bool` (the shape A-12's key-pair validation already enforces, so a lone `eq`
+with the wrong signature is an error at its declaration), and that the operand
+types are the same `datac`/`enum`, or a `View` against a `View`/`str`. A `datac`
+or `enum` with no declared `eq` keeps the old `cannot compare` refusal, nothing
+is derived from fields, and `<`/`<=`/`>`/`>=` are refused on every such type. A
+lone `eq` gives the operator and no `Map` key: the map still needs both `hash`
+and `eq`, so a keyable type with a declared `eq` is hashed and compared by the
+*derived* pair unless it declares both.
+
+**What it does not check.** Nothing new beyond what the declared `eq` body
+already does: the operator is only as sound as that body, and there is no
+requirement that it be reflexive, symmetric or transitive (a `Map` with such an
+`eq` can fail to find a key it inserted, which is a logic bug the compiler does
+not see).
