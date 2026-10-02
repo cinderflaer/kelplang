@@ -56,7 +56,13 @@ than kernel 0, so the release is done when, on top of stages 1-5, the following 
   cannot forge a line or a frame. Unlike `mmio`, that check applies to a hosted program and a freestanding image
   alike; `examples/kernel0-caps` boots one image that claims exactly one of each and prints them;
 - stack guards and a defined panic path with no OS underneath;
-- a second architecture target (x86-64) next to riscv64, and a test story that boots an image under QEMU.
+- a second architecture target (x86-64) next to riscv64, and a test story that boots an image under QEMU:
+  **done** (kernel stage 20, `plan/x86-64.md`). `[target] triple = "x86_64-unknown-none"` gets the X86
+  target machine and an x86-64 `_start` stub that enters long mode from the 32-bit PVH entry SeaBIOS uses,
+  and `examples/kernel0-x86_64` (a COM1 port-I/O driver) and `examples/kernel0-x86_64-lmode` (which proves
+  `EFER.LMA` and paging, then triple-faults on purpose) both boot under
+  `qemu-system-x86_64 -M q35 -cpu qemu64 -no-reboot`, checked by three tests in `kelpc/tests/compile_and_run.rs`.
+  Interrupts/IDT, APIC, SMP and ACPI are not part of it.
 
 Not required for the release: a particular kernel design, a filesystem, a network stack, a userland. The
 language and toolchain have to make writing them possible.

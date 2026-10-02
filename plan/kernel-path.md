@@ -20,9 +20,9 @@ and compares the serial output.
 
 **Why RISC-V `virt` and not x86-64 first.** QEMU's `-kernel` loads a 64-bit RISC-V ELF directly and starts it
 at its entry point in a clean machine mode, and the UART is plain memory-mapped I/O, so kernel 0 exercises
-raw pointers and `volatile` honestly. The x86-64 equivalent would need a 32-bit Multiboot stub that enters
-long mode before any Kelp runs: real work, but it is bootstrapping, not language. LLVM 21 (the one the
-compiler already links) builds the RISCV target, `lld` links it, and all three are in nixpkgs.
+raw pointers and `volatile` honestly. The x86-64 equivalent needed a 32-bit PVH stub that enters long mode
+before any Kelp runs: real work, but it is bootstrapping, not language. It followed once the stages were in
+(kernel stage 20, `plan/x86-64.md`).
 
 ## Order, and why
 
@@ -242,6 +242,22 @@ section. `examples/kernel0-caps` is the acceptance, `kelpc/tests/irq_frames.rs`
 the accepting and refusing front-end cases, and every other `examples/kernel0*`
 image still boots.
 
+**Stage 20 (a second ISA family) is done.** `[target] triple = "x86_64-unknown-none"`
+(the `-elf` spelling too) now gets the X86 target machine and an x86-64 `_start` stub:
+a `.note.Xen` `XEN_ELFNOTE_PHYS32_ENTRY` (type 18) note naming the entry, `.code32` code
+that loads a GDT with a 64-bit code segment, builds an identity map for the first 1 GiB out
+of 2 MiB pages in a `.boot_pt` NOBITS section, enables PAE and `EFER.LME`, loads CR3 and
+sets `CR0.PG|PE`, then far-jumps into `.code64`, loads `rsp` from `__stack_top`, clears
+`[__bss_start, __bss_end)`, turns SSE on and calls the entry; every emitted function is
+`noredzone`. The manifest gets the `x86-64` CPU, the static relocation model and the
+**small** code model, which is what links an image at 1 MiB. `examples/kernel0-x86_64` is
+the COM1 port-I/O driver (`hello from kelp (x86_64)`), and `examples/kernel0-x86_64-lmode`
+reads CR0/CR4/EFER through `asm`, prints `long mode on` and then takes a `ud2` with no IDT,
+so it triple-faults; both boot under `qemu-system-x86_64 -M q35 -cpu qemu64 -no-reboot` and
+three tests in `kelpc/tests/compile_and_run.rs` cover the ELF (the PVH note included) and
+the two boots. What is not there: interrupts and an IDT, the APIC, SMP and ACPI;
+`cpu_index()` has no x86-64 lowering, so a `percpu` static is refused by name.
+
 **Release goal 3's freestanding standard subset is done** (kernel stage 19,
 `plan/freestanding-std.md`). `freestanding.rs` decides each shipped `std/*`
 module with one table row (`Pure`, `Allocator`, `Subset`, `Present`,
@@ -340,8 +356,9 @@ records that overflow wraps and division by zero stays an unchecked UB, so neith
 ## What is deliberately not here
 
 - A specific kernel design (scheduler, filesystem, drivers). The language work above is what they would sit on.
-- x86-64 kernels. aarch64 is the second architecture and it boots (`examples/kernel0-aarch64`);
-  an x86-64 kernel still needs a 32-bit PVH or Multiboot entry stub that enters long mode before
-  any Kelp runs, which is bootstrapping rather than language work, so it follows once the stages are in.
+- x86-64 interrupts and an IDT, the APIC, SMP and ACPI: the architecture boots and runs Kelp
+  (kernel stage 20, `plan/x86-64.md`), and what a kernel needs to take an interrupt there is
+  open work, as it is for riscv64; `plan/kernel0-status.md`'s trap gap and stage 5's deferred
+  `interrupt` attribute are the same hole.
 - Memory-safety proofs about `unsafe` code. D-1/D-2/D-3 stay open; the UB catalogue has to grow a section per
   stage, and each stage's design note says what it adds to it.

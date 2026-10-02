@@ -1263,3 +1263,42 @@ stage keeps `f64` out of `std/math` but does not remove the type), and the alloc
 the arena's region, a claimed line and a claimed frame are all the caller's claims about the
 machine, as stages 12, 13, 16 and 18 said. The refusal is a compile-time decision about reachable
 symbols, not a proof about any of them.
+
+## Stage 20: the x86-64 target (`plan/x86-64.md`)
+
+**New ways to reach undefined behaviour.** The x86-64 `_start` stub is module-level
+assembly the compiler emits and never reasons about, so everything it does between the
+PVH entry and the entry call is a promise the language does not check. Three of those
+promises are the ones a project can break. The stub clears `[__bss_start, __bss_end)`
+*after* paging is on and while it is running under the page tables it built; the tables
+live in a `.boot_pt` NOBITS section the linker script must place outside that range, so
+a script that folds `.boot_pt` into `.bss` makes the clear erase the live tables and the
+next instruction faults. The stub enables SSE (`CR0.EM` clear, `CR0.MP` set,
+`CR4.OSFXSR` and `CR4.OSXMMEXCPT` set) before it calls the entry, which is what makes
+the compiler's `movaps` in a struct copy or an `f64` legal; a project that supplies its
+own `_start` in place of the generated one and does not do the same lets an SSE
+instruction take `#UD` with no handler, which is a triple fault. And the identity map
+covers the first 1 GiB only, so an address outside it is unmapped the moment paging is on
+even though `Ptr.from_addr` will build a pointer to it.
+
+Port I/O is the second surface. `in`/`out` name a port number, not an address, so the
+`mmio` capability gate does not see them: a `[caps]` grant is checked on where a
+`Ptr.from_addr` is born and a driver that writes COM1 through `asm` carries no grant for
+it. The constraint vocabulary is a register class, not a register, so the compiler
+accepts `in("r")`/`out("r")` and the template is what parks the value where the
+instruction needs it; nothing checks that the port exists, that the device answers, that
+the clobber list covers every register the template writes, or that an `in`/`out` operand
+is the width the instruction takes.
+
+**What the compiler does check.** That an x86-64 triple gets an X86 target machine and
+the x86-64 stub, and every other triple is still refused by name; that every emitted
+freestanding function carries `noredzone` (so LLVM's own register allocator keeps nothing
+live in the red zone an interrupt would clobber) and `probe-stack`; and, because the
+image is freestanding, that it references no libc symbol. The `asm` operand shapes and
+the `unsafe` listing are the stage 5 checks, unchanged.
+
+**What it does not check.** The linker script's section placement, which is where the
+`.boot_pt`-inside-`.bss` bug lives; whether anything enables SSE before generated code
+runs when a project replaces the stub; the real existence of a port or a device; the
+template against the constraints; and anything about the machine past the first 1 GiB the
+stub maps.
