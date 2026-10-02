@@ -131,7 +131,18 @@ reports the count.
 
 ## Freestanding
 
-See the last section of this file, written once the build was tried.
+`std/regex` is hosted-only. It was built into a riscv64 image with the allocator
+pair to see whether the allocator subset (`plan/freestanding-std.md`) was enough.
+The parser, the program and the VM link clean: they are `List` and integer code.
+Two things do not: `Match`, `RegexErr` and `Option<String>` each carry a `String`,
+and the derived equality the compiler emits for such a `datac`/`enum` calls the
+hosted `kelp_map_key_eq`; and `View.slice`/`View.to_string` are runtime calls that
+a freestanding build does not define. Both are compiler work outside this task,
+so the module is `Hosted` in `freestanding::std_admission` and a freestanding
+project that imports it is refused by name with the allowed-module list
+(`tests/projects/freestanding_std_refused_regex`). A future stage that gives
+freestanding a `String`-free result type (spans only) or the two runtime pieces
+can admit the engine without changing it.
 
 ## Tests
 
