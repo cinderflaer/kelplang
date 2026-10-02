@@ -1843,6 +1843,48 @@ fn the_encoding_stdlib_module_runs_from_kelp_source() {
     );
 }
 
+// `std/regex`: a linear-time regular expression engine in pure Kelp. Each
+// fixture prints its own verdict, so a failure names the case; the table and the
+// differential check both end in a count that has to be zero.
+#[test]
+fn the_regex_conformance_table_passes() {
+    assert_compiles_and_runs("tests/fixtures/stdlib_regex_table.kp", "cases: 183, failed: 0\n");
+}
+
+#[test]
+fn the_regex_refuses_bad_patterns_with_their_message_and_offset() {
+    assert_compiles_and_runs("tests/fixtures/stdlib_regex_errors.kp", "cases: 45, failed: 0\n");
+}
+
+#[test]
+fn the_regex_api_finds_captures_replaces_and_splits() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_regex_api.kp",
+        include_str!("fixtures/stdlib_regex_api.expected"),
+    );
+}
+
+#[test]
+fn the_regex_is_linear_on_patterns_that_explode_a_backtracker() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_regex_linear.kp",
+        include_str!("fixtures/stdlib_regex_linear.expected"),
+    );
+}
+
+#[test]
+fn the_regex_agrees_with_a_slow_backtracking_reference() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_regex_differential.kp",
+        "differing cases: 0\n",
+    );
+}
+
+#[test]
+fn regex_is_match_panics_on_a_bad_pattern() {
+    assert_fixture_panics("stdlib_regex_panic", "regex.is_match: unclosed group");
+}
+
 #[test]
 fn an_extern_without_a_compiler_supplied_body_is_rejected() {
     assert_rejected("tests/fixtures/extern_no_body.kp");
