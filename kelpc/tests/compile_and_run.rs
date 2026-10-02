@@ -5678,6 +5678,75 @@ fn the_associated_type_shapes_are_refused_by_name() {
     );
 }
 
+/// A-12 slice 6: a trait may take type parameters, a receiverless method is a
+/// static member, and `?` calls a declared `impl From<Source> for Target` when
+/// the two failure payload types differ. Dispatch stays static, so both backends
+/// emit the same direct calls.
+#[test]
+fn a_from_impl_converts_a_differing_failure_and_a_generic_trait_is_bounded() {
+    assert_compiles_and_runs(
+        "tests/fixtures/from_conversion.kp",
+        "true\ntrue\n5\n9\n42\n5\n",
+    );
+}
+
+/// A-12 slice 6: a static method written on the trait's own name
+/// (`From.from(x)`), with the implementing type from the expected type.
+#[test]
+fn a_static_method_is_called_on_the_traits_own_name() {
+    assert_compiles_and_runs("tests/fixtures/from_trait_name.kp", "5\n9\n");
+}
+
+/// A-12 slice 6: the `From` impl lives in the implementing type's module, and
+/// the `?` that reaches it is in another module.
+#[test]
+fn a_from_impl_is_reached_across_modules() {
+    assert_project_runs("convert_cross", &project("convert_cross"), "true\n");
+}
+
+/// A-12 slice 6 rejections: `?` with no conversion, a second impl of one trait
+/// instance for one type, `&dyn` of a generic trait, and an impl that writes
+/// the wrong number of trait arguments.
+#[test]
+fn the_generic_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/from_no_impl.kp",
+        "cannot convert a failure",
+    );
+    assert_rejected_with("tests/fixtures/from_no_impl.kp", "impl From<IoErr>");
+    assert_rejected_with(
+        "tests/fixtures/from_duplicate_impl.kp",
+        "already has an impl for 'T'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/generic_trait_dyn.kp",
+        "takes type parameters",
+    );
+    assert_rejected_with(
+        "tests/fixtures/generic_trait_arity.kp",
+        "takes 1 type argument(s)",
+    );
+}
+
+/// A-12 slice 6: `std/convert` is pure language, so a bare-metal image uses
+/// `From` and `?`'s conversion and boots with no undefined symbol.
+#[test]
+fn freestanding_convert_boots_with_a_converted_failure() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding convert boot: 'ld.lld' or 'qemu-system-riscv64' \
+             is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_convert",
+        &project("freestanding_convert"),
+        &["converted 107", "done"],
+    );
+}
+
 /// A-12 slice 4: a freestanding riscv64 image dispatches through a `&dyn` and a
 /// `&mut dyn` over the UART, and the linked ELF references no undefined symbol,
 /// which is to say the vtable is `.rodata`, the thunks are ordinary code, and
@@ -11854,7 +11923,7 @@ fn freestanding_std_kernel_boots_with_option_result_and_arena() {
 /// refusal lists the modules a freestanding project may implement.
 #[test]
 fn a_hosted_std_module_is_refused_by_name_with_the_allowed_list() {
-    let allowed = "std/arena, std/atomic, std/frame, std/irq, std/iter, std/list, \
+    let allowed = "std/arena, std/atomic, std/convert, std/frame, std/irq, std/iter, std/list, \
                    std/math, std/option, std/result, std/str";
     for (dir, module) in [
         ("freestanding_std_refused_time", "std/time"),

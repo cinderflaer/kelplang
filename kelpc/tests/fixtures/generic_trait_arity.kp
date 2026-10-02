@@ -1,0 +1,13 @@
+// A-12 slice 6: an impl names the trait instance, so it has to write the
+// arguments the trait declares.
+impl "std/convert"
+
+enum E {
+    A(val x: i32)
+}
+
+impl convert.From for E {
+    fun from(value: i32).R: E = E.A(x = value)
+}
+
+fun main() { }

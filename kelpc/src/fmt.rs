@@ -387,6 +387,7 @@ const RULES: &[Rule] = &[
             "scoped_blocks",
             "defer",
             "traits_syntax",
+            "traits_generic",
         ],
     },
 ];
