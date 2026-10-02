@@ -144,15 +144,17 @@ Each of these is refused where it is written, with the message naming the follow
   names. A trait method signature is an ordinary `FunctionDecl` with a `Self` receiver and no
   body; an impl method is an ordinary `FunctionDecl` whose `trait_impl` field records the trait
   and the written `for` type.
-- `resolve.rs` merges the traits and the impl records, and rewrites each impl method: `Self`
-  becomes the written `for` type everywhere in its signature. Nothing downstream knows an `impl`
-  block existed.
+- `resolve.rs` merges the traits and the impl records, canonicalizes both names of an impl line
+  (the trait's and the `for` type's, the same way an ordinary receiver's type name is), and
+  rewrites each impl method: `Self` becomes that canonical type everywhere in its signature.
+  Nothing downstream knows an `impl` block existed.
 - `infer.rs` is where the whole feature lives: the trait table and its signature validation, the
   coherence and module rules, the exact-signature match against each impl (so an impl method's
   resolved `FnSig` *is* the trait's), the inherent-method collision message, and the bound check
   at `instantiate_function`, which is the one place a generic function is instantiated.
-- `fmt.rs` needs no change: it is token-level, and a trait body, an impl body and a bound list are
-  braces, suffixes and binary operators it already re-emits.
+- `fmt.rs` needs no change to its emitter, and does not have one: it is token-level, and a trait
+  body, an impl body and a bound list are braces, suffixes and binary operators it already
+  re-emits. The one edit is registering the new corpus pair with the rule it pins.
 - `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
 
 ## 7. Tests
