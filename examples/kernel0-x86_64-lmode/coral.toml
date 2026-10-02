@@ -1,0 +1,16 @@
+name = "kernel0_x86_64_lmode"
+
+# Kernel stage 20's second boot: the same freestanding x86-64 image, but its
+# `kmain` proves the stub really left protected mode for long mode with paging
+# on (it reads CR0/CR4/EFER through `asm`) and then takes a #UD with no IDT, so
+# the machine triple-faults and QEMU resets it. `-no-reboot` in `run.sh` turns
+# that reset into an exit the test can read.
+[target]
+mode = "freestanding"
+triple = "x86_64-unknown-none"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["uart", "inspect"]

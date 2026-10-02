@@ -1,0 +1,68 @@
+// The long-mode and paging checks for `examples/kernel0-x86_64-lmode`. Every
+// read is `asm` in this module, which the `[unsafe]` list names; the compiler
+// only knows these are machine registers, not what they mean.
+impl "std/str"
+impl "uart"
+
+// A null IDT: limit 0, base 0, so the #UD below has no descriptor to jump
+// through and the CPU triple-faults instead of running a boot loader's
+// leftover handler.
+static mut NULL_IDT: [u64; 2] = [0, 0]
+
+// CR0 bit 31 is PG (paging on) and bit 0 is PE (protected mode). Reading a
+// control register into a general one is `mov r64, crN`.
+pub fun read_cr0().R: u64 {
+    val v: u64 = unsafe {
+        asm("mov {0}, cr0", out("r") _)
+    }
+    return v
+}
+
+// CR4 bit 5 is PAE, which long mode requires.
+pub fun read_cr4().R: u64 {
+    val v: u64 = unsafe {
+        asm("mov {0}, cr4", out("r") _)
+    }
+    return v
+}
+
+// EFER is a model-specific register at 0xC0000080, read by `rdmsr` into
+// EDX:EAX; bit 10 of the low half is LMA (long mode active). The compiler's
+// constraint vocabulary has no fixed-register form, so the template loads ECX
+// and copies EAX out itself and declares all three clobbered.
+pub fun read_efer_lo().R: u32 {
+    val msr: u32 = 0xC0000080
+    val lo: u32 = unsafe {
+        asm(
+            "mov ecx, {1}\nrdmsr\nmov {0}, eax",
+            out("r") _,
+            in("r") msr,
+            clobber("ax"),
+            clobber("dx"),
+            clobber("cx")
+        )
+    }
+    return lo
+}
+
+pub fun long_mode_on().R: bool {
+    val cr0 = read_cr0()
+    val cr4 = read_cr4()
+    val efer = read_efer_lo()
+    val lma = ((efer >> 10) & 1) == 1
+    val pg = ((cr0 >> 31) & 1) == 1
+    val pae = ((cr4 >> 5) & 1) == 1
+    return lma && pg && pae
+}
+
+// Load the null IDT, then execute `ud2`: the invalid-opcode fault has no
+// handler, so it is a triple fault and QEMU resets. Nothing after the `ud2`
+// runs; the `halt` is only so the function has a type-checkable tail.
+pub fun triple_fault() {
+    unsafe {
+        val idt: Ptr<[u64; 2]> = Ptr.from_ref(&NULL_IDT)
+        asm("lidt [{0}]", in("r") idt.addr())
+        asm("ud2")
+    }
+    uart.halt()
+}
