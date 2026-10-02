@@ -790,10 +790,24 @@ pub fn load(
                 None => f.name = format!("{}{}", m.prefix, f.name),
             }
             if let Some(mut site) = f.trait_impl.clone() {
-                let self_type = canon(&site.self_type, f.span)?;
+                let written_trait = site.trait_name.clone();
+                let written_type = site.self_type.clone();
+                let self_type = canon(&written_type, f.span)?;
+                // A-12 slice 5: the associated types this block binds, as
+                // written, so a `Self::Item` in the method's signature becomes
+                // the concrete type before the signature loop resolves it.
+                let assoc = parsed
+                    .trait_impls
+                    .iter()
+                    .find(|i| i.trait_name == written_trait && i.type_name == written_type)
+                    .map(|i| assoc_bindings(&i.assoc_types))
+                    .unwrap_or_default();
                 site.self_type = self_type.clone();
+                // Canonical, so a later pass (an associated-type lookup in
+                // `infer.rs`) reaches the same key `program.trait_impls` holds.
+                site.trait_name = canon(&written_trait, f.span)?;
                 f.trait_impl = Some(site);
-                substitute_self(&mut f, &self_type);
+                substitute_self(&mut f, &self_type, &assoc);
             }
             f.module = m.id.clone();
             program.functions.push(f);
@@ -808,7 +822,7 @@ pub fn load(
     // `for` type, so it can name it); the body resolves in the trait's module,
     // where it was written, through `body_module`. A builtin's impl is in the
     // trait's module, so the two coincide there.
-    let default_sources: Vec<(String, String, String, String, Vec<String>, Vec<ast::FunctionDecl>)> = program
+    let default_sources: Vec<(String, String, String, String, Vec<String>, Vec<ast::FunctionDecl>, std::collections::HashMap<String, ast::TypeExpr>)> = program
         .trait_impls
         .iter()
         .map(|i| {
@@ -830,10 +844,11 @@ pub fn load(
                 i.module.clone(),
                 i.methods.clone(),
                 defaults,
+                assoc_bindings(&i.assoc_types),
             )
         })
         .collect();
-    for (trait_name, type_name, trait_module, impl_module, written, defaults) in default_sources {
+    for (trait_name, type_name, trait_module, impl_module, written, defaults, assoc) in default_sources {
         for m in defaults {
             if written.contains(&m.name) {
                 continue;
@@ -843,7 +858,7 @@ pub fn load(
                 trait_name: trait_name.clone(),
                 self_type: type_name.clone(),
             });
-            substitute_self(&mut f, &type_name);
+            substitute_self(&mut f, &type_name, &assoc);
             f.module = impl_module.clone();
             f.body_module = Some(trait_module.clone());
             program.functions.push(f);
@@ -2583,50 +2598,79 @@ pub fn find_manifest_root(file: &Path) -> Option<PathBuf> {
 
 /// Canonical module id for a file: its path relative to `src/`, minus the
 /// `.kp` suffix, with `/` separators.
+/// A map from an associated type's name to the type an impl bound it to, as
+/// written (A-12 slice 5), used to substitute `Self::Item` in an impl method.
+fn assoc_bindings(bindings: &[ast::AssocTypeBinding]) -> std::collections::HashMap<String, ast::TypeExpr> {
+    bindings
+        .iter()
+        .map(|b| (b.name.clone(), b.ty.clone()))
+        .collect()
+}
+
 /// Replaces every `Self` in one `impl` method's signature with the written
 /// `for` type (A-12 slice 2). A method inside an `impl` block names its
 /// receiver `Self` so the block reads the same wherever it sits, and this is
 /// what turns it into the ordinary receiver method every later pass expects.
 /// Only a *type* named `Self` is replaced: an expression naming `Self` is left
-/// alone, and `infer.rs` refuses it there as an unknown name.
-fn substitute_self(f: &mut ast::FunctionDecl, self_type: &str) {
+/// alone, and `infer.rs` refuses it there as an unknown name. A `Self::Item`
+/// (A-12 slice 5) becomes the type the impl bound, so the signature reaches
+/// the type checker concrete.
+fn substitute_self(
+    f: &mut ast::FunctionDecl,
+    self_type: &str,
+    assoc: &std::collections::HashMap<String, ast::TypeExpr>,
+) {
     if let Some(r) = &mut f.receiver {
         if r.type_name == "Self" {
             r.type_name = self_type.to_string();
         }
     }
     for p in &mut f.params {
-        substitute_self_ty(&mut p.ty, self_type);
+        substitute_self_ty(&mut p.ty, self_type, assoc);
     }
     if let Some(t) = &mut f.return_type {
-        substitute_self_ty(t, self_type);
+        substitute_self_ty(t, self_type, assoc);
     }
 }
 
 /// One type expression's `Self`, including inside a tuple, an array, a
 /// container's arguments and a function type's parameters and return.
-fn substitute_self_ty(ty: &mut ast::TypeExpr, self_type: &str) {
-    if ty.name == "Self" && ty.args.is_empty() {
-        ty.name = self_type.to_string();
+fn substitute_self_ty(
+    ty: &mut ast::TypeExpr,
+    self_type: &str,
+    assoc: &std::collections::HashMap<String, ast::TypeExpr>,
+) {
+    if ty.name == "Self" {
+        if let Some(item) = ty.assoc.clone() {
+            if let Some(bound) = assoc.get(&item) {
+                let mut replacement = bound.clone();
+                substitute_self_ty(&mut replacement, self_type, assoc);
+                *ty = replacement;
+            }
+            return;
+        }
+        if ty.args.is_empty() {
+            ty.name = self_type.to_string();
+        }
     }
     if let Some(elems) = &mut ty.tuple {
         for e in elems {
-            substitute_self_ty(e, self_type);
+            substitute_self_ty(e, self_type, assoc);
         }
     }
     for a in &mut ty.args {
-        substitute_self_ty(a, self_type);
+        substitute_self_ty(a, self_type, assoc);
     }
     if let Some(elem) = &mut ty.array_elem {
-        substitute_self_ty(elem, self_type);
+        substitute_self_ty(elem, self_type, assoc);
     }
     if let Some(params) = &mut ty.fn_params {
         for p in params {
-            substitute_self_ty(&mut p.ty, self_type);
+            substitute_self_ty(&mut p.ty, self_type, assoc);
         }
     }
     if let Some(ret) = &mut ty.fn_ret {
-        substitute_self_ty(ret, self_type);
+        substitute_self_ty(ret, self_type, assoc);
     }
 }
 

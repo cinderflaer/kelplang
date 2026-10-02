@@ -85,7 +85,19 @@ struct TraitInfo {
     /// Implementing this trait requires an impl of each, and a bound on this
     /// trait satisfies a bound on any of them.
     supertraits: Vec<String>,
+    /// The associated types the trait declares (A-12 slice 5), in source order.
+    assoc_types: Vec<AssocTypeInfo>,
     module: String,
+}
+
+/// One `type Item[: Bound + Bound]` a trait declares (A-12 slice 5).
+#[derive(Clone)]
+struct AssocTypeInfo {
+    name: String,
+    /// The bound traits, each `(written, canonical)`, in source order: the
+    /// written name is what a diagnostic quotes, the canonical one is what the
+    /// impl's type is checked against.
+    bounds: Vec<(String, String)>,
 }
 
 /// One `impl Name for Type { ... }` block (A-12 slice 2), with both names
@@ -97,6 +109,8 @@ struct TraitImplInfo {
     trait_name: String,
     type_name: String,
     methods: Vec<String>,
+    /// `type Item = i32` (A-12 slice 5), in source order.
+    assoc_types: Vec<(String, ast::TypeExpr, Span)>,
     module: String,
     impl_span: Span,
 }
@@ -177,6 +191,11 @@ struct TypeEnv {
     /// collected while bodies are checked. Each one gets a vtable in
     /// `tir::Program`, and a pair no coercion names gets none.
     dyn_pairs: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<(String, String)>>>,
+    /// The associated-type binding each `impl` declares (A-12 slice 5), keyed
+    /// by `(trait, type)` and then by the associated type's name. One answer
+    /// for the whole program, exactly as `impls` is, so a projection at a call
+    /// site and the impl's own signature agree.
+    assoc: std::rc::Rc<HashMap<(String, String), HashMap<String, Ty>>>,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -1260,6 +1279,23 @@ impl TypeScope<'_> {
             }
             return self.resolve_fn_type(ty, params);
         }
+        // `I::Item` / `Self::Item` (A-12 slice 5): an associated type projected
+        // from a type parameter, or from `Self` in a trait signature. The
+        // projection's own key is stored beside the parameter's binding, so a
+        // bound that declares no such type is refused here.
+        if let Some(item) = &ty.assoc {
+            let key = format!("{}::{}", ty.name, item);
+            if let Some(bound) = self.params.get(&key) {
+                return Ok(bound.clone());
+            }
+            return Err(TypeError {
+                message: format!(
+                    "'{}::{}' is not a known associated type: bind '{}' with a trait that carries 'type {}' ('trait ... {{ type {} }}'), so the projection names the type an impl supplies",
+                    ty.name, item, ty.name, item, item
+                ),
+                span: ty.span,
+            });
+        }
         // A type parameter in scope (`datac Pair<A, B>`'s `A`) is whatever
         // the instantiation bound it to (A-2). Checked before every other
         // name, so a parameter shadows a type of the same name.
@@ -2189,6 +2225,7 @@ fn collect_traits(
                 aliases: project.alias_prefixes_of(&t.module),
                 methods: t.methods.clone(),
                 supertraits: Vec::new(),
+                assoc_types: Vec::new(),
                 module: t.module.clone(),
             },
         );
@@ -2199,6 +2236,46 @@ fn collect_traits(
     // acyclic.
     for t in &program.traits {
         let mut canonical = Vec::new();
+        // A-12 slice 5: the associated types and their bounds, resolved in the
+        // trait's own module exactly as a supertrait is.
+        let mut assoc: Vec<AssocTypeInfo> = Vec::new();
+        for a in &t.assoc_types {
+            let mut bounds = Vec::new();
+            for b in &a.bounds {
+                let key = match qualify_written_name(
+                    &b.name,
+                    project.prefix_of(&t.module),
+                    &project.alias_prefixes_of(&t.module),
+                ) {
+                    Some(key) => key,
+                    None => {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "'{}' names no module alias, so the bound on 'type {}' of '{}' cannot be resolved",
+                                b.name, a.name, t.name
+                            ),
+                            b.span,
+                            t.module.clone(),
+                        ))
+                    }
+                };
+                if !out.contains_key(&key) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'{}' is not a trait, so it cannot bound 'type {}' of '{}': a bound names a declared trait ('trait {} {{ ... }}')",
+                            b.name, a.name, t.name, b.name
+                        ),
+                        b.span,
+                        t.module.clone(),
+                    ));
+                }
+                bounds.push((b.name.clone(), key));
+            }
+            assoc.push(AssocTypeInfo {
+                name: a.name.clone(),
+                bounds,
+            });
+        }
         for s in &t.supertraits {
             let key = match qualify_written_name(
                 &s.name,
@@ -2233,6 +2310,7 @@ fn collect_traits(
         }
         if let Some(info) = out.get_mut(&t.name) {
             info.supertraits = canonical;
+            info.assoc_types = assoc;
         }
     }
     if let Some(cycle) = supertrait_cycle(&out) {
@@ -2365,6 +2443,45 @@ fn type_mentions_self(ty: &ast::TypeExpr) -> bool {
     false
 }
 
+/// `name` and every supertrait reachable from it, in source order, without
+/// repeats. A projection through a subtrait names a supertrait's associated
+/// type, exactly as a bound on the subtrait satisfies a bound on the supertrait
+/// (A-12 slices 3 and 5).
+fn trait_keys_with_supertraits(env: &TypeEnv, name: &str) -> Vec<String> {
+    fn go(env: &TypeEnv, name: &str, out: &mut Vec<String>) {
+        if out.iter().any(|k| k == name) {
+            return;
+        }
+        out.push(name.to_string());
+        if let Some(info) = env.traits.get(name) {
+            for sup in &info.supertraits {
+                go(env, sup, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    go(env, name, &mut out);
+    out
+}
+
+/// The first associated type `name` or one of its supertraits declares, if any
+/// (A-12 slice 5). A trait that has one cannot be a trait object.
+fn first_assoc_type<'a>(
+    traits: &'a HashMap<String, TraitInfo>,
+    name: &str,
+) -> Option<&'a str> {
+    let info = traits.get(name)?;
+    if let Some(a) = info.assoc_types.first() {
+        return Some(a.name.as_str());
+    }
+    for sup in &info.supertraits {
+        if let Some(found) = first_assoc_type(traits, sup) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 /// Object safety for `&dyn Name` (A-12 slice 4, `plan/traits.md` 9.2): no method
 /// may return `Self`, no parameter other than the receiver may mention `Self`,
 /// and no two methods of the flattened list may share a name (the vtable holds
@@ -2374,6 +2491,18 @@ fn check_dyn_object_safety(
     span: Span,
     traits: &HashMap<String, TraitInfo>,
 ) -> Result<()> {
+    // A-12 slice 5: a trait that declares (or inherits) an associated type has
+    // no object-safe form, because the erased value carries no single binding
+    // to name. Refused by name here, where the `dyn` type is written.
+    if let Some(item) = first_assoc_type(traits, name) {
+        return Err(TypeError {
+            message: format!(
+                "'&dyn {}' is not allowed: the trait declares the associated type '{}', and a trait object does not know which type an implementor binds; use a bounded type parameter ('<T: {}>') instead",
+                name, item, name
+            ),
+            span,
+        });
+    }
     let mut flat = Vec::new();
     flattened_trait_methods(traits, name, &mut flat);
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -2426,6 +2555,11 @@ fn collect_trait_impls(program: &ast::Program) -> Vec<TraitImplInfo> {
             trait_name: i.trait_name.clone(),
             type_name: i.type_name.clone(),
             methods: i.methods.clone(),
+            assoc_types: i
+                .assoc_types
+                .iter()
+                .map(|a| (a.name.clone(), a.ty.clone(), a.span))
+                .collect(),
             module: i.module.clone(),
             impl_span: i.impl_span,
         })
@@ -2493,6 +2627,22 @@ fn resolve_trait_method_sig(
 ) -> Result<FnSig> {
     let mut params_map: HashMap<String, Ty> = HashMap::new();
     params_map.insert("Self".to_string(), self_ty.clone());
+    // A-12 slice 5: the associated types the implementing type binds, so
+    // `Self::Item` in the trait's own signature resolves to the concrete type.
+    if let Some(name) = struct_name_of(self_ty)
+        .map(|s| s.to_string())
+        .or_else(|| builtin_type_name(self_ty).map(|s| s.to_string()))
+    {
+        for key in trait_keys_with_supertraits(env, &trait_info.name) {
+            if let Some(bindings) = env.assoc.get(&(key, name.clone())) {
+                for (item, ty) in bindings {
+                    params_map
+                        .entry(format!("Self::{item}"))
+                        .or_insert_with(|| ty.clone());
+                }
+            }
+        }
+    }
     let scope = TypeScope {
         structs,
         enums,
@@ -2656,6 +2806,102 @@ fn check_trait_impl_names(
         }
     }
     Ok(())
+}
+
+/// The concrete type each `impl` binds for every associated type its trait
+/// declares (A-12 slice 5), with the shape checks. The binding is resolved in
+/// the impl's own module, exactly as an impl method's signature is, and each
+/// bound the trait declares is checked against the bound type here, so a
+/// generic caller can rely on it.
+#[allow(clippy::too_many_arguments)]
+fn collect_assoc_bindings(
+    traits: &HashMap<String, TraitInfo>,
+    impls: &[TraitImplInfo],
+    structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
+    env: &TypeEnv,
+    project: &Project,
+    consts: &HashMap<String, ConstInfo>,
+    const_fns: &std::rc::Rc<ConstFns>,
+) -> std::result::Result<HashMap<(String, String), HashMap<String, Ty>>, Diagnostic> {
+    let mut out: HashMap<(String, String), HashMap<String, Ty>> = HashMap::new();
+    for imp in impls {
+        let info = &traits[&imp.trait_name];
+        let prefix = project.prefix_of(&imp.module);
+        let aliases = project.alias_prefixes_of(&imp.module);
+        let scope = TypeScope {
+            structs,
+            enums,
+            env: env.clone(),
+            params: &EMPTY_PARAMS,
+            prefix,
+            aliases: &aliases,
+            later_datacs: None,
+            in_progress: None,
+            consts: Some(consts),
+            const_fns: Some(const_fns),
+            handles: &env.handles,
+        };
+        let mut bound: HashMap<String, Ty> = HashMap::new();
+        for declared in &info.assoc_types {
+            let Some((_, written, span)) =
+                imp.assoc_types.iter().find(|(name, _, _)| *name == declared.name)
+            else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "trait '{}' declares 'type {}', and 'impl {} for {}' does not bind it: add 'type {} = <concrete type>' to the block",
+                        info.name, declared.name, imp.trait_name, imp.type_name, declared.name
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            };
+            let ty = scope
+                .resolve(written, false)
+                .map_err(|e| e.in_module(&imp.module))?;
+            let name = struct_name_of(&ty)
+                .map(|s| s.to_string())
+                .or_else(|| builtin_type_name(&ty).map(|s| s.to_string()));
+            for (written_bound, key) in &declared.bounds {
+                let implements = name
+                    .as_deref()
+                    .map(|n| implements_trait(env, key, n))
+                    .unwrap_or(false);
+                if !implements {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'type {} = {}' in 'impl {} for {}' does not satisfy the bound 'type {}: {}': '{}' does not implement '{}', which the trait requires of every binding",
+                            declared.name,
+                            ty.display(),
+                            imp.trait_name,
+                            imp.type_name,
+                            declared.name,
+                            written_bound,
+                            ty.display(),
+                            written_bound
+                        ),
+                        *span,
+                        imp.module.clone(),
+                    ));
+                }
+            }
+            bound.insert(declared.name.clone(), ty);
+        }
+        for (name, _, span) in &imp.assoc_types {
+            if !info.assoc_types.iter().any(|a| a.name == *name) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'type {name}' is not declared by trait '{}': an 'impl' binds exactly the trait's associated types, so remove it or add 'type {name}' to the trait",
+                        info.name
+                    ),
+                    *span,
+                    imp.module.clone(),
+                ));
+            }
+        }
+        out.insert((imp.trait_name.clone(), imp.type_name.clone()), bound);
+    }
+    Ok(out)
 }
 
 /// A builtin type a trait may be implemented for (A-12 slice 3): one the
@@ -7324,6 +7570,7 @@ fn check_program_pass(
         traits: traits.clone(),
         impls: std::rc::Rc::new(impls),
         dyn_pairs: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
+        assoc: std::rc::Rc::new(HashMap::new()),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -7660,6 +7907,27 @@ fn check_program_pass(
     // reported as a coherence error rather than as the duplicate method the
     // two blocks happen to share.
     check_trait_impl_names(program, &traits, &trait_impls, &env)?;
+
+    // A-12 slice 5: every impl's associated-type bindings, resolved in the
+    // impl's own module and checked against the trait's declarations. This runs
+    // before any signature is built, because a `Self::Item` in an impl method
+    // was already substituted by `resolve.rs` and a bound at a call site needs
+    // the table. The result is folded into `env` before anything downstream
+    // reads it.
+    let assoc_bindings = collect_assoc_bindings(
+        &traits,
+        &trait_impls,
+        &structs,
+        &enums,
+        &env,
+        project,
+        &consts,
+        &const_fns,
+    )?;
+    let env = TypeEnv {
+        assoc: std::rc::Rc::new(assoc_bindings),
+        ..env.clone()
+    };
 
     let mut sigs = HashMap::new();
     let mut overloads: HashMap<String, Vec<(Vec<Ty>, String)>> = HashMap::new();
@@ -8124,6 +8392,15 @@ fn check_program_pass(
             .cloned()
             .zip(type_args.iter().cloned())
             .collect();
+        let mut bindings = bindings;
+        bindings.extend(assoc_projection_bindings(
+            &env,
+            &tmpl.params,
+            &tmpl.bounds,
+            &tmpl.prefix,
+            &tmpl.aliases,
+            &type_args,
+        ));
         let checked = check_function(
             f,
             &key,
@@ -9447,6 +9724,18 @@ fn check_function(
         ctx.aliases = project.alias_prefixes_of(m);
     }
     ctx.type_args = type_args.clone();
+    // A-12 slice 5: an impl method's body may name `Self::Item` in a local
+    // annotation. `resolve.rs` substituted it in the signature only, so add the
+    // impl's bindings under the `Self::Item` spelling for the body.
+    if let Some(site) = &f.trait_impl {
+        for key in trait_keys_with_supertraits(&env, &site.trait_name) {
+            if let Some(bindings) = env.assoc.get(&(key, site.self_type.clone())) {
+                for (item, ty) in bindings {
+                    ctx.type_args.insert(format!("Self::{item}"), ty.clone());
+                }
+            }
+        }
+    }
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
     ctx.pd_global_borrow = key == "main" || is_drop_method;
@@ -11594,6 +11883,13 @@ fn bind_type_params(
                 }
             }
         }
+        return;
+    }
+    // A projection (`I::Item`, A-12 slice 5) determines no type parameter: the
+    // concrete type is the impl's, so nothing about `I` can be read off an
+    // argument of it. An explicit type argument (or another parameter) is what
+    // must determine `I`.
+    if written.assoc.is_some() {
         return;
     }
     if written.args.is_empty() {
@@ -14761,6 +15057,47 @@ fn method_template_key(ctx: &Ctx, owner: &str, method: &str) -> Option<String> {
     ctx.fns.templates.contains_key(&key).then_some(key)
 }
 
+/// The associated-type projections a generic instantiation makes available
+/// (A-12 slice 5): for each type parameter and each trait it is bounded by, the
+/// concrete type the argument's impl bound for every associated type the trait
+/// declares. The key is the written projection (`I::Item`), which is exactly
+/// what `TypeScope::resolve` looks up when it meets one.
+fn assoc_projection_bindings(
+    env: &TypeEnv,
+    params: &[String],
+    bounds: &[Vec<ast::TypeExpr>],
+    prefix: &str,
+    aliases: &HashMap<String, String>,
+    type_args: &[Ty],
+) -> HashMap<String, Ty> {
+    let mut out: HashMap<String, Ty> = HashMap::new();
+    for (i, bs) in bounds.iter().enumerate() {
+        let (Some(param), Some(arg)) = (params.get(i), type_args.get(i)) else {
+            continue;
+        };
+        let Some(arg_name) = struct_name_of(arg)
+            .map(|s| s.to_string())
+            .or_else(|| builtin_type_name(arg).map(|s| s.to_string()))
+        else {
+            continue;
+        };
+        for b in bs {
+            let Some(key) = qualify_written_name(&b.name, prefix, aliases) else {
+                continue;
+            };
+            for tk in trait_keys_with_supertraits(env, &key) {
+                if let Some(bindings) = env.assoc.get(&(tk, arg_name.clone())) {
+                    for (item, ty) in bindings {
+                        out.entry(format!("{param}::{item}"))
+                            .or_insert_with(|| ty.clone());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Instantiates a generic function for one call site (A-2), returning the
 /// instance's key and its concrete signature. The type arguments come from
 /// three places, in this order: the receiver's own instantiation (a method),
@@ -14835,12 +15172,20 @@ fn instantiate_function(
     // template's own signature, written in the template's file, so the
     // message names the instance and the span points at the use site, which
     // is the module the caller will attribute the error to.
-    let resolved: HashMap<String, Ty> = tmpl
+    let mut resolved: HashMap<String, Ty> = tmpl
         .params
         .iter()
         .cloned()
         .zip(type_args.iter().cloned())
         .collect();
+    resolved.extend(assoc_projection_bindings(
+        &ctx.env,
+        &tmpl.params,
+        &tmpl.bounds,
+        &tmpl.prefix,
+        &tmpl.aliases,
+        &type_args,
+    ));
     let scope = TypeScope {
         structs: &ctx.structs,
         enums: &ctx.enums,
