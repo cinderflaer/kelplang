@@ -1,11 +1,11 @@
 # Polyp
 
 A declarative native UI library for Kelp, over GTK4. The application describes
-what the screen should be for the current state; Polyp owns the loop and builds
-the widgets. It wraps GTK's own widgets rather than drawing, so a Polyp window
-is a GTK window.
+what the screen should be for the current state; Polyp owns the loop and patches
+the live widget tree. It wraps GTK's own widgets rather than drawing, so a Polyp
+window is a GTK window.
 
-v1 adds the builder syntax:
+v1 added the builder syntax:
 
 ```kelp
 polyp.column { k ->
@@ -19,9 +19,17 @@ written at this call site and its captures are borrows released with the call:
 `k.text` reads the view's borrowed `s`, and no callback owns the state. The v0
 plain constructors are still in the library, so both styles compile.
 
-There is no published version number; "v1" is the builder syntax plus a small
-reconciliation rule and three new widgets. `examples/polyp-v0/` and
-`examples/polyp-counter-v0/` are a frozen copy of v0 (see [Versions](#versions)).
+**v2** keeps the live GTK widget tree and **patches** it: children can carry a
+key, a matched widget is updated in place, a moved keyed child is reordered
+rather than rebuilt, and focus, selection and scroll survive. It also adds
+`scrolled`, `checkbox`, `progress`, `separator`, the layout options `spacing`,
+`margin`, `expand`, `align` and `class`, and the app-level `polyp.css`. Examples
+`polyp-counter` and `polyp-counter-v0` keep working unchanged; `examples/polyp-todo`
+is the keyed-list program and `plan/polyp-v2.md` is the design note.
+
+There is no published version number; "v2" is the patch plus what is listed
+here. `examples/polyp-v0/` and `examples/polyp-counter-v0/` are a frozen copy of
+v0 (see [Versions](#versions)).
 
 ## What a program looks like
 
@@ -98,8 +106,8 @@ a taste in UI frameworks:
 - Instead, a button's handler is a closure whose entire environment is one small
   integer. It posts that integer to a fixed-size C queue
   (`include/polyp_queue.h`), and the loop, which *does* own the state, reads the
-  integer, finds the `Msg` stored at that position in the tree it built, calls
-  `update`, re-runs `view` and rebuilds the widgets.
+  integer, finds the `Msg` its slot holds, calls `update`, re-runs `view` and
+  patches the widgets.
 
 GTK callbacks and the loop run on the same thread (`g_signal_connect` handlers
 run inside `g_main_context_iteration`, which the loop calls), so the queue needs
@@ -122,18 +130,27 @@ That makes the two declarative claims hold literally:
 ## API
 
 ```kelp
+pub enum Key { None  Str(val s: String)  Int(val n: i64) }
+pub enum Align { Fill  Start  Center  End }
+
+pub datac Opts(var margin: i32, var expand: bool, var align: i32, var classes: List<String>)
+pub datac Child<M>(val key: Key, val node: Node<M>, val opts: Opts)
+
 pub enum Node<M> {
-    Column(val children: List<Node<M>>)
-    Row(val children: List<Node<M>>)
+    Column(val children: List<Child<M>>, val spacing: i32)
+    Row(val children: List<Child<M>>, val spacing: i32)
     Text(val text: String, val size: i32, val bold: bool)
     Spacer(val height: i32)
     Entry(val text: String, val on_change: fun (String).R: M)
     Button(val label: String, val on_click: M)
+    Checkbox(val label: String, val checked: bool, val on_toggle: M)
+    Progress(val fraction: f64)
+    Separator
+    Scrolled(val children: List<Child<M>>, val spacing: i32)
 }
 
 // The builder. `column`/`row` take the trailing block; the methods on
 // `Children` are the leaf and nested constructors the block calls.
-pub datac Children<M>(var items: List<Node<M>>)
 pub fun column<M>(block: scoped fun(mut Children<M>)).R: Node<M>
 pub fun row<M>(block: scoped fun(mut Children<M>)).R: Node<M>
 fun mut Children<M>.text(t: str)
@@ -141,8 +158,23 @@ fun mut Children<M>.text_styled(t: str, size: i32, bold: bool)
 fun mut Children<M>.spacer(height: i32)
 fun mut Children<M>.button(label: str, on_click: move M)
 fun mut Children<M>.entry(value: str, on_change: fun (String).R: M)
+fun mut Children<M>.checkbox(label: str, checked: bool, on_toggle: move M)
+fun mut Children<M>.progress(fraction: f64)
+fun mut Children<M>.separator()
 fun mut Children<M>.column(block: scoped fun(mut Children<M>))
 fun mut Children<M>.row(block: scoped fun(mut Children<M>))
+fun mut Children<M>.scrolled(block: scoped fun(mut Children<M>))
+fun mut Children<M>.keyed(key: str, block: scoped fun(mut Children<M>))
+fun mut Children<M>.keyed_col(key: str, block: scoped fun(mut Children<M>))
+fun mut Children<M>.keyed_int(key: i64, block: scoped fun(mut Children<M>))
+fun mut Children<M>.keyed_int_col(key: i64, block: scoped fun(mut Children<M>))
+fun mut Children<M>.with_key(key: str)
+fun mut Children<M>.with_key_int(key: i64)
+fun mut Children<M>.spacing(n: i32)
+fun mut Children<M>.margin(n: i32)
+fun mut Children<M>.expand()
+fun mut Children<M>.align(a: Align)
+fun mut Children<M>.class(name: str)
 
 // The v0 plain constructors. `text` and `button` keep their names because
 // their builder twins are methods (a separate namespace); `column`/`row` are
@@ -156,17 +188,24 @@ pub fun button<M>(label: move String, on_click: move M).R: Node<M>
 pub fun run<S, M>(title: str, width: i32, height: i32, init: move S,
                   view: fun(S).R: Node<M>, update: fun(mut S, M)).R: S
 
+pub datac Stats(val created: i32, val updated: i32, val removed: i32, val live: i32)
+pub fun stats().R: Stats
+pub fun focus_present().R: bool
+pub fun focus_survived().R: bool
+pub fun entries_built().R: i32
+pub fun entry_text(index: i32).R: String
+pub fun css(text: str)
 pub const QUIT_ID: i32
 pub fun schedule_post(delay_ms: u32, id: i32)
 pub fun schedule_quit(delay_ms: u32)
 pub fun schedule_set_entry(delay_ms: u32, index: i32, new_text: str)
-pub fun entries_built().R: i32
+pub fun schedule_focus_entry(delay_ms: u32, index: i32)
 ```
 
-- `run` opens one `GtkWindow` with the given title and default size, renders the
-  first tree, and iterates the default GLib main context until a quit is posted.
-  It **returns the final state** (`init` is moved in, so returning it is how a
-  caller reads what the run left behind).
+- `run` opens one `GtkWindow` with the given title and default size, patches the
+  first tree into it, and iterates the default GLib main context until a quit is
+  posted. It **returns the final state** (`init` is moved in, so returning it is
+  how a caller reads what the run left behind).
 - `fun(S)` in `view`'s type is the "view borrows the state" shape: a parameter of
   an owned type is a shared borrow (`plan/syntax.md` 7.1), so an application
   writes `fun view(state: Counter).R: Node<Msg>` with no `&` anywhere. `update`
@@ -176,22 +215,51 @@ pub fun entries_built().R: i32
   escaping the text, so a `&` or `<` is shown, not parsed; `size` is points and
   `0` means GTK's default. `spacer(height)` reserves vertical pixels.
 - `entry(value, on_change)` is a text field. `value` seeds the text the first
-  time the widget is built; `on_change` is a plain `fun(String).R: M` (called
+  time the widget is built; a patch rewrites it only when the model's text
+  differs **and** the entry is not where the focus is, so a user's cursor and
+  selection are not fought. `on_change` is a plain `fun(String).R: M` (called
   with a borrowed `String`) that turns the live text into the app's `Msg`.
-- Button ids are handed out in tree order: the `i`-th `Button` in a depth-first
-  walk is id `i`. `QUIT_ID` is `-2`, because `polyp_poll` answers `-1` for an
-  empty queue. Entry ids are a separate space, so inserting an entry does not
-  shift button ids.
+- `checkbox(label, checked, msg)` posts `msg` on `toggled`; the application reads
+  the new state from its own model, exactly as a button does. `progress(fraction)`
+  is a `GtkProgressBar`. `separator()` is a horizontal rule.
+- `scrolled(block)` puts the block's children in a `GtkScrolledWindow`, laid out
+  in a vertical box inside it. The window is patched in place, so the scroll
+  offset survives.
+- `keyed(key, block)` is a keyed **row**: the block's children become one `Row`
+  child with the given key, which is the shape a list of rows wants.
+  `keyed_col` is the same for a column, `keyed_int`/`keyed_int_col` are the
+  integer-keyed twins, and `with_key`/`with_key_int` give the next pushed node a
+  key of any kind. Keys must be unique among the children of one container; a
+  duplicate panics naming it.
+- `spacing(n)` is the spacing of the box being built. `margin(n)`, `expand()`,
+  `align(a)` and `class(name)` are options of the **next pushed child**, whatever
+  its kind: `k.expand() k.column { ... }` expands the column, and
+  `k.class("row") k.keyed(...)` classes the row.
+- `css(text)` loads a `GtkCssProvider` on the default display at
+  `GTK_STYLE_PROVIDER_PRIORITY_APPLICATION`, so ordinary CSS applies to every
+  widget that carries a matching class.
+- **Ids are slots.** The loop owns one grow-only table for the run; a button,
+  checkbox or entry takes the next slot at creation and its handler captures
+  that index forever. `QUIT_ID` is `-2`, because `polyp_poll` answers `-1` for an
+  empty queue. A surviving widget keeps its id, and the patch writes the current
+  tree's `Msg` into that slot; a removed widget's slot becomes `Dead`, so a
+  queued id whose widget is gone is dropped instead of reaching `update`.
+  An application should still carry a `Msg` rather than post a raw id.
 - `schedule_post` / `schedule_quit` post an id after a delay;
   `schedule_set_entry` asks the loop to set an entry's text after a delay, which
-  fires that entry's real `changed` signal. They exist for programs that have to
-  run with no user (the smoke test is one), and they are the only reason
-  `g_timeout_add_full` is bound.
-- `entries_built()` is a diagnostic: the number of `Entry` widgets the process
-  has built. A run that reuses its entries has a smaller count than one that
-  rebuilds them, which is how the smoke test proves reconciliation.
+  fires that entry's real `changed` signal; `schedule_focus_entry` sets the
+  window's focus. They exist for programs that have to run with no user (the
+  smoke tests are), and they are the only reason `g_timeout_add_full` is bound.
+- `stats()` is a diagnostic: how many widgets the run ever built, how many
+  matched widgets it patched in place, how many it destroyed, and how many are
+  alive (`created - removed`). `focus_present()` says whether any patch found a
+  focus widget, `focus_survived()` whether every patch kept the one it found,
+  `entries_built()` how many `Entry` widgets the process built, and
+  `entry_text(index)` reads the index-th entry's text as it was when `run`
+  returned. A run that patches keeps `created` flat across state changes; a
+  rebuild-everything implementation does not.
 
-`Node<M>` is a generic enum that recurses through `List<Node<M>>`, which the
+`Node<M>` is a generic enum that recurses through `List<Child<M>>`, which the
 compiler accepts as written: a `List` element lives in the list's own heap
 buffer, so the type has a finite size and no `Box` is needed. `Node<M>` itself
 carries application data (`M`, `String`) and is moved apart as it is built, so
@@ -199,28 +267,46 @@ nothing keeps it after the widgets exist.
 
 ## Reconciliation, exactly
 
-v1 rebuilds the whole tree on every state change, with exactly one identity
-rule:
+Every state change calls `view` for the whole tree, but the loop keeps the live
+widgets and **patches** them. For each container (and for the window's single
+child):
 
-- **An `Entry` at ordinal position `i` in the new walk reuses the `i`-th entry
-  widget of the previous walk.** The previous entries are released from the old
-  box first (`gtk_widget_unparent`), each keeps its own GTK reference
-  (`g_object_ref_sink`), and the reused widget is appended into the new box. Its
-  live text, cursor and selection survive, so **focus survives a rebuild** and
-  the user's typing is not lost. The new tree's `value` is ignored for a reused
-  entry; it only seeds a freshly built one.
+- A child is matched to its previous self **by key** when it has one, and by
+  **position and widget kind** otherwise. Kinds are part of the match, so a
+  `Button` is never patched into a `Text`.
+- A matched widget is **updated in place**: label markup, button label, checkbox
+  label and active state, entry text (only when it differs and the entry does not
+  hold the focus), progress fraction, spacer height, box spacing, margins,
+  expand, alignment and CSS classes. It is the same GTK object, so its focus,
+  text selection and scroll offset survive by construction.
+- A child the new tree does not match is created and inserted at its index
+  (`gtk_box_insert_child_after`). A keyed child that only moved is reordered
+  (`gtk_box_reorder_child_after`), not rebuilt. When the matched sequence is
+  still in order the survivors are not touched at all, which is what keeps a
+  removal from disturbing the focus.
+- A child the new tree does not name is removed from its container and its
+  slots are retired; its subtree is counted as destroyed.
+- A programmatic write to a checkbox or an entry blocks that widget's signal
+  first (`g_signal_handler_block`), so setting the widget's state to match the
+  model cannot post the `Msg` that state came from.
 
-Everything else is rebuilt, and these are the honest limits:
+The old v1 rule (the `i`-th `Entry` reuses the `i`-th entry widget) is gone; the
+patch subsumes it, and it works for any widget, not only an entry. The counter's
+smoke run still prints one entry built across all its renders.
 
-- `Column`, `Row`, `Text`, `Spacer` and `Button` widgets are always built
-  fresh; **nothing about them is diffed**, and a widget's state (scroll,
-  selection, animation) is not preserved.
-- Entry identity is **ordinal**, not structural: inserting or removing an
-  earlier entry shifts the ordinals, so an entry after the change is rebuilt and
-  loses its focus. The one rule is not a tree diff and does not claim to be.
-- Because a reused entry keeps its text, another `Msg` that changes the model's
-  text does not move the widget. Keep the entry's model field in sync with what
-  the entry's `Msg` reports, which is the normal Elm shape.
+## The keyed todo list
+
+`examples/polyp-todo/` is a todo list: an entry and an add button, a scrolled
+list of keyed rows (checkbox, title, move-up and remove buttons), and a progress
+bar of done over total. Each row's key is the item's own id, never its index,
+which is what makes a row the same row after a reorder. Ticking a row patches
+its checkbox; removing a row leaves the other rows' widgets untouched.
+
+Its smoke test drives it headless (`POLYP_SMOKE=1`): it focuses the entry, types
+three titles through the real `changed` signal, adds them, ticks the second row,
+moves the third up, removes the middle one, and quits, printing the final model
+and the library's counters. The test asserts those counters, and that the entry
+still shows the last text typed even though the model cleared it.
 
 ## Using the library
 
@@ -252,14 +338,14 @@ packaging limitation, not a design choice:
    library = "gtk-4"
    header = "gtk/gtk.h"
    pkg_config = "gtk4"
-   symbols = ["gtk_init", "gtk_window_new", "gtk_window_set_title", "gtk_window_set_default_size", "gtk_window_set_child", "gtk_window_present", "gtk_box_new", "gtk_box_append", "gtk_label_new", "gtk_label_set_markup", "gtk_widget_set_size_request", "gtk_entry_new", "gtk_editable_set_text", "gtk_editable_get_text", "gtk_widget_unparent", "gtk_button_new_with_label", "g_object_unref", "g_object_ref_sink", "g_main_context_iteration", "g_timeout_add_full", "connect=g_signal_connect_data", "connect_ret=g_signal_connect_data"]
+   symbols = ["gtk_init", "gtk_window_new", "gtk_window_set_title", "gtk_window_set_default_size", "gtk_window_set_child", "gtk_window_present", "gtk_window_get_focus", "gtk_window_set_focus", "gtk_box_new", "gtk_box_append", "gtk_box_remove", "gtk_box_insert_child_after", "gtk_box_reorder_child_after", "gtk_box_set_spacing", "gtk_label_new", "gtk_label_set_markup", "gtk_widget_set_size_request", "gtk_entry_new", "gtk_editable_set_text", "gtk_editable_get_text", "gtk_button_new_with_label", "gtk_button_set_label", "gtk_check_button_new_with_label", "gtk_check_button_set_label", "gtk_check_button_set_active", "gtk_progress_bar_new", "gtk_progress_bar_set_fraction", "gtk_separator_new", "gtk_scrolled_window_new", "gtk_scrolled_window_set_child", "gtk_widget_set_margin_start", "gtk_widget_set_margin_end", "gtk_widget_set_margin_top", "gtk_widget_set_margin_bottom", "gtk_widget_set_hexpand", "gtk_widget_set_vexpand", "gtk_widget_set_halign", "gtk_widget_set_valign", "gtk_widget_add_css_class", "gtk_widget_remove_css_class", "gtk_css_provider_new", "gtk_css_provider_load_from_string", "gdk_display_get_default", "gtk_style_context_add_provider_for_display", "gtk_widget_is_ancestor", "g_object_unref", "g_main_context_iteration", "g_timeout_add_full", "connect=g_signal_connect_data", "connect_ret=g_signal_connect_data", "g_signal_handler_block", "g_signal_handler_unblock"]
 
    [extern."deps/polyp/queue"]
    domain = "ui"
    library = "c"
    header = "polyp_queue.h"
    include_dirs = ["src/deps/polyp/include"]
-   symbols = ["polyp_post", "polyp_poll", "polyp_post_edit", "polyp_poll_edit", "polyp_poll_edit_text"]
+   symbols = ["polyp_post", "polyp_poll", "polyp_post_edit", "polyp_poll_edit", "polyp_poll_edit_text", "polyp_post_focus", "polyp_poll_focus"]
    ```
 
    `header` is one key per section, which is why the queue is its own module:
@@ -286,50 +372,53 @@ parameters on a `fun(...)` literal instead.
 
 ## Versions
 
-`examples/polyp/` and `examples/polyp-counter/` are v1. `examples/polyp-v0/` is
-a frozen copy of the v0 library and `examples/polyp-counter-v0/` is the v0
-counter, whose `src/deps/polyp` link points at `polyp-v0`, so the two examples
-do not fight over the `column`/`row` names and both build:
+`examples/polyp/` and `examples/polyp-counter/` are v2, and `examples/polyp-todo/`
+is the v2 keyed-list program. `examples/polyp-v0/` is a frozen copy of the v0
+library and `examples/polyp-counter-v0/` is the v0 counter, whose `src/deps/polyp`
+link points at `polyp-v0`, so the two examples do not fight over the
+`column`/`row` names and both build:
 
 ```sh
 examples/polyp-counter/smoke.sh
 examples/polyp-counter-v0/smoke.sh
+examples/polyp-todo/smoke.sh
 ```
 
 ## Build and smoke test
 
 ```sh
-examples/polyp-counter/smoke.sh
+examples/polyp-todo/smoke.sh
 ```
 
-The script re-enters `dev-gtk.nix` (the shell beside this repository; override
-with `POLYP_DEV_GTK`), builds `kelpc`, compiles `examples/polyp-counter/` with
-the **default** (`llvm`) backend, and runs the binary under `xvfb-run -a` with
+The scripts re-enter `dev-gtk.nix` (the shell beside this repository; override
+with `POLYP_DEV_GTK`), build `kelpc`, compile the example with the **default**
+(`llvm`) backend, and run the binary under `xvfb-run -a` with
 `GSK_RENDERER=cairo GDK_BACKEND=x11` and `POLYP_SMOKE=1`. In that mode the
-program schedules its own input: post id 0 (Inc), post id 0 (Inc), post id 1
-(Dec), set the entry's text to `typed` at 300 ms (which fires the entry's real
-`changed` signal), then quit after 400 ms. stdout must be exactly
-`1\ntyped\n1`: the count, the text the entry's constructor produced, and one
-entry built across all the rebuilds. A crash, a hang (`timeout 60`) or anything
-else on stdout fails the script.
+program schedules its own input and prints a deterministic summary.
 
-The C backend (`KELPC_ORACLE=c`) produces the same three lines; both backends
-are supported, LLVM is the default.
+The counter **must print exactly** `1\ntyped\n1`: the count, the text the
+entry's constructor produced, and one entry built across all the patches. The
+todo smoke parses that summary and asserts the model, the creation marks
+(no widget is created after the adds), `removed == 5`, `live == created - removed`,
+the focus present and surviving, and the entry's text. **Both** smoke runs build
+the todo again with `KELPC_ORACLE=c` and check the same output, so the C backend
+and the default one behave identically. A crash, a hang (`timeout 60`) or
+anything else on stdout fails the script.
 
 ## Known limits
 
-- **Whole-tree rebuild with one retention rule.** Every state change builds a
-  new tree and replaces the window's child. Only an `Entry` at the same ordinal
-  is reused (see [Reconciliation](#reconciliation-exactly)); there is no general
-  diffing, so no other widget identity is preserved.
-- **Focus retention is entry-only and ordinal.** A focused button or a focused
-  entry whose ordinal changed does not keep focus.
-- **No lazy or keyed lists**, no styling beyond `text_styled`, and no layout
-  beyond `Column`/`Row`, GTK's default spacing (6 px) and `Spacer`.
-- **Ids are positional.** They are re-derived from tree order on every render,
-  so an application that leans on raw ids (rather than letting a button carry a
-  `Msg`) is leaning on an implementation detail. `polyp-counter`'s smoke run
-  does, deliberately, because the smoke run has no user to click anything.
+- **No lazy or virtualized lists.** Every child in the model is a live widget;
+  a list of 10,000 rows builds 10,000 widgets. A keyed patch makes the updates
+  cheap, not the first build.
+- **No animation and no transitions.** A patch sets a property in one step;
+  there is no interpolator and no per-frame hook.
+- **No theming beyond CSS.** `polyp.css` is the only hook: no palette, no
+  dark-mode switch, no per-widget style object.
+- **No platform but GTK on Linux.** The library is a GTK binding, not an
+  abstraction over one.
+- **Ids are slots, so they are stable but incidental.** An application that
+  posts a raw id (rather than carrying a `Msg`) is leaning on creation order;
+  the smoke runs do, deliberately, because they have no user to click anything.
 - **No exclusive captures.** A builder block may read the borrowed state but
   `state.count += 1` inside a block is still a language error
   (`plan/scoped-blocks.md`); a mutation goes through a `Msg`.
@@ -338,5 +427,7 @@ are supported, LLVM is the default.
   This is the one thing that makes Polyp awkward to consume, and it is the same
   for every Kelp library.
 - **GTK is required to build and run.** There is no pure-Kelp proof of the loop
-  without a display; the smoke test runs a real GTK window under Xvfb, which is
-  what this machine can do.
+  without a display; the smoke tests run a real GTK window under Xvfb, which is
+  what this machine can do. The focus tests read the toplevel's focus widget by
+  handle rather than `gtk_widget_has_focus`, which needs a window manager to
+  hand over global input focus.

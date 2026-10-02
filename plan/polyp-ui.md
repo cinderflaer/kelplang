@@ -82,8 +82,29 @@ one is a consequence of a language property Kelp already has, not a feature Poly
 
 ## Status
 
-**A prototype exists; the plan is still not a Mark.** `examples/polyp/` (v1, the builder syntax) and
-the frozen `examples/polyp-v0/` are a GTK4 library and a counter, built and run on both backends
-under Xvfb, on the user FFI of B-1 and the scoped trailing blocks of open item 75. It blocks nothing
-and nothing blocks it except a real UI program being wanted rather than a plan to run; what is left is
-depth (drawing, layout control, more than Linux) rather than substrate. It has no stages.
+**A prototype exists; the plan is still not a Mark.** `examples/polyp/` is at v2: a GTK4 library
+and three programs (`polyp-counter`, the keyed `polyp-todo`, and the scrolled list inside it), built
+and run on both backends under Xvfb, on the user FFI of B-1 and the scoped trailing blocks of open
+item 75. v1 built the tree fresh on every state change with one entry-retention rule; v2 keeps the
+live widget tree and patches it, with keys, in-place updates, keyed moves and new widgets and layout
+options. `plan/polyp-v2.md` is the design note and `examples/polyp/README.md` the reference. It
+blocks nothing and nothing blocks it except a real UI program being wanted rather than a plan to run;
+what is left is depth (lazy lists, animation, theming, more than Linux) rather than substrate. It has
+no stages.
+
+## Language gaps met by v2
+
+Two, both worked around in the library and neither blocking:
+
+- **No `mem.replace`.** A method's `self` is a borrow, so an owned field cannot be read out of it by
+  value. The builder's one-shot pending key and options are therefore held in `Box`es and `take()`n
+  (`examples/polyp/lib.kp`, `Children`).
+- **A `pd var` counter cannot be written from a call chain.** Two functions on one stack cannot hold
+  the same passdown exclusively, and creating a widget is nested inside the container walk that
+  counts one of its own. The patch counters are `pd val AtomicI32` cells bumped through their
+  shared-borrow operations, which `syntax.md` 12.5 already recommends.
+
+A third shape is not a language gap but a GTK one: a programmatic `set_active`/`set_text` fires the
+signal a callback is connected to, so a patch blocks that widget's handler
+(`g_signal_handler_block`) around the write rather than letting it post the `Msg` the patch is
+applying.

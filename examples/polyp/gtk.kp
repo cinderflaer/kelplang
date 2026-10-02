@@ -17,6 +17,15 @@ pub extern type Object
 pub extern type Widget: Object
 pub extern type Window: Widget
 pub extern type BoxWidget: Widget
+pub extern type ScrolledWindow: Widget
+
+// `GtkCssProvider` is a `GtkStyleProvider`, and `GdkDisplay` is a GObject; the
+// loop only ever holds them as opaque handles and hands them back to GTK, so
+// both are named by the role they play. `gtk_css_provider_new` returns
+// `GtkWidget*`-shaped pointers at the ABI level either way, which is why the
+// return types below can name the concrete handle the way `gtk_box_new` does.
+pub extern type Provider: Object
+pub extern type Display: Object
 
 // `GMainContext*`, whose null value is the default context.
 pub extern type MainContext
@@ -27,31 +36,85 @@ pub extern fun gtk_window_set_title(win: Window, title: str)
 pub extern fun gtk_window_set_default_size(win: Window, width: i32, height: i32)
 pub extern fun gtk_window_set_child(win: Window, child: Widget)
 pub extern fun gtk_window_present(win: Window)
+pub extern fun gtk_window_get_focus(win: Window).R: Widget
+
+// Setting the focus widget directly. `gtk_widget_grab_focus` on a widget whose
+// toplevel is not yet active can be a no-op under a headless server, so the
+// focus channel goes through the window instead.
+pub extern fun gtk_window_set_focus(win: Window, focus: Widget)
 
 pub extern fun gtk_box_new(orientation: i32, spacing: i32).R: BoxWidget
 pub extern fun gtk_box_append(box: BoxWidget, child: Widget)
+pub extern fun gtk_box_remove(box: BoxWidget, child: Widget)
+pub extern fun gtk_box_insert_child_after(box: BoxWidget, child: Widget, sibling: Widget)
+pub extern fun gtk_box_reorder_child_after(box: BoxWidget, child: Widget, sibling: Widget)
+pub extern fun gtk_box_set_spacing(box: BoxWidget, spacing: i32)
 
 pub extern fun gtk_label_new(text: str).R: Widget
 pub extern fun gtk_label_set_markup(label: Widget, markup: str)
 pub extern fun gtk_button_new_with_label(label: str).R: Widget
+pub extern fun gtk_button_set_label(button: Widget, label: str)
+
+// A checkbox posts a `Msg` on `toggled`; the application reads the new state
+// from its own model, exactly as a button does, so only the active flag is
+// ever set from the model side.
+pub extern fun gtk_check_button_new_with_label(label: str).R: Widget
+pub extern fun gtk_check_button_set_label(button: Widget, label: str)
+pub extern fun gtk_check_button_set_active(button: Widget, active: i32)
+
+pub extern fun gtk_progress_bar_new().R: Widget
+pub extern fun gtk_progress_bar_set_fraction(bar: Widget, fraction: f64)
+
+// A separator is oriented: `GTK_ORIENTATION_HORIZONTAL` draws the usual rule
+// between stacked rows.
+pub extern fun gtk_separator_new(orientation: i32).R: Widget
+
+// A scrolled area. Its child is the box the loop patches; the loop never
+// replaces the `GtkScrolledWindow` while the model keeps asking for one, which
+// is what lets the scroll offset survive a patch.
+pub extern fun gtk_scrolled_window_new().R: ScrolledWindow
+pub extern fun gtk_scrolled_window_set_child(window: ScrolledWindow, child: Widget)
 
 // Text input. `gtk_entry_new` returns a `GtkWidget*`; the `GtkEditable`
-// set/get pair is the interface on it, and `gtk_widget_unparent` releases a
-// widget from its box so a rebuild can move it into the new box instead of
-// recreating it. `g_object_ref_sink` is how the loop holds its own reference
-// to such a widget (`g_object_unref` above releases it).
+// set/get pair is the interface on it.
 pub extern fun gtk_entry_new().R: Widget
 pub extern fun gtk_editable_set_text(editable: Widget, text: str)
 pub extern fun gtk_editable_get_text(editable: Widget).R: str
 
 // A fixed minimum size, used by `Spacer` for its vertical gap.
 pub extern fun gtk_widget_set_size_request(widget: Widget, width: i32, height: i32)
-pub extern fun gtk_widget_unparent(widget: Widget)
+
+// Layout and style: margins, expand, alignment and CSS classes. Every one of
+// these is a property of the widget itself, so the loop can set them on an
+// existing widget and the change is a patch, not a rebuild.
+pub extern fun gtk_widget_set_margin_start(widget: Widget, margin: i32)
+pub extern fun gtk_widget_set_margin_end(widget: Widget, margin: i32)
+pub extern fun gtk_widget_set_margin_top(widget: Widget, margin: i32)
+pub extern fun gtk_widget_set_margin_bottom(widget: Widget, margin: i32)
+pub extern fun gtk_widget_set_hexpand(widget: Widget, expand: i32)
+pub extern fun gtk_widget_set_vexpand(widget: Widget, expand: i32)
+pub extern fun gtk_widget_set_halign(widget: Widget, align: i32)
+pub extern fun gtk_widget_set_valign(widget: Widget, align: i32)
+pub extern fun gtk_widget_add_css_class(widget: Widget, name: str)
+pub extern fun gtk_widget_remove_css_class(widget: Widget, name: str)
+
+// A stylesheet for the whole application, added for the default display. The
+// provider is intentionally left alive: it lives as long as the process needs
+// the style, and the loader is the only thing that would free it.
+pub extern fun gtk_css_provider_new().R: Provider
+pub extern fun gtk_css_provider_load_from_string(provider: Provider, text: str)
+pub extern fun gdk_display_get_default().R: Display
+pub extern fun gtk_style_context_add_provider_for_display(display: Display, provider: Provider, priority: u32)
+
+// Focus. The loop tracks the toplevel's focus widget by handle and asks
+// whether it is inside an entry with `gtk_widget_is_ancestor`; `gtk_widget_is_focus`
+// would say no, because GTK points the toplevel at the entry's inner text
+// widget rather than at the entry itself.
+pub extern fun gtk_widget_is_ancestor(widget: Widget, ancestor: Widget).R: i32
 
 // `g_object_unref` takes a `gpointer`, so the one binding takes the base
 // `Object` and every widget converts up to it.
 pub extern fun g_object_unref(obj: Object)
-pub extern fun g_object_ref_sink(obj: Object).R: Object
 
 // `g_main_context_iteration(context, may_block)`: a null `GMainContext*` means
 // the default context, and `null_main_context` is how this module spells that
@@ -72,7 +135,23 @@ pub fun null_main_context().R: MainContext = MainContext.null()
 pub extern fun connect(instance: Widget, signal: str, handler: move closure(Widget), flags: i32).R: u64
 pub extern fun connect_ret(instance: Widget, signal: str, handler: move closure(Window).R: i32, flags: i32).R: u64
 
+// Blocking a handler by the id `connect` returned is how a patch writes a
+// widget's state without that write coming back as a signal. GLib takes the
+// instance as a `gpointer`, so the one binding takes the `Widget`.
+pub extern fun g_signal_handler_block(instance: Widget, handler_id: u64)
+pub extern fun g_signal_handler_unblock(instance: Widget, handler_id: u64)
+
 // `g_timeout_add_full(priority, interval, function, data, notify)`: the closure
 // expands into `(function, data, notify)` and the declaration has no argument
 // after it. The handler returns `G_SOURCE_REMOVE` (0) to fire once.
 pub extern fun g_timeout_add_full(priority: i32, interval: u32, handler: move closure().R: i32).R: u32
+
+// The three things the loop needs that only this module may write: a null
+// handle to start a sibling chain with, the null test, and the downcasts from
+// the `Widget` the tree stores to the concrete shapes the box and scrolled
+// calls want. Each is a `pub fun` here because `null()`/`is_null()`/`cast` are
+// legal only under an `[extern.*]` section.
+pub fun null_widget().R: Widget = Widget.null()
+pub fun is_null_widget(widget: Widget).R: bool = widget.is_null()
+pub fun as_box(widget: Widget).R: BoxWidget = BoxWidget.cast(widget)
+pub fun as_scrolled(widget: Widget).R: ScrolledWindow = ScrolledWindow.cast(widget)
