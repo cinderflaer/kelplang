@@ -4134,6 +4134,13 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // A guard owned by a thread closure's heap environment: a worker that
         // never freed the environment would leave its box behind at exit.
         "drop_thread_closure",
+        // B-5: the single-threaded mutex paths. The runtime record and its
+        // value slot are malloc'd, the block's value is copied out, and
+        // `into_inner` moves an owned `List` out and frees the record without
+        // dropping the value, so ASAN sees a leak or a double free either way.
+        "mutex_lock_value",
+        "mutex_lock_return",
+        "mutex_into_inner",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -10004,6 +10011,81 @@ fn an_accepted_spawn_or_join_builds_and_runs() {
 #[test]
 fn a_thread_stress_gate_produces_the_exact_total() {
     assert_compiles_and_runs("tests/fixtures/thread_stress.kp", "8000\n");
+}
+
+/// B-5's mutex stress gate: eight workers, each taking the lock a thousand
+/// times to increment one shared `pd val Mutex<i64>`. A missing lock shows up
+/// as a total other than 8000.
+#[test]
+fn a_mutex_stress_gate_produces_the_exact_total() {
+    assert_compiles_and_runs("tests/fixtures/mutex_stress.kp", "8000\n");
+}
+
+/// B-5: a `Mutex<List<i32>>` shared across four workers, each pushing through
+/// the lock. The element's own drop reaches the list through the runtime
+/// record, so the whole list is dropped when the mutex dies.
+#[test]
+fn a_mutex_guards_a_list_pushed_from_several_workers() {
+    assert_compiles_and_runs("tests/fixtures/mutex_list_push.kp", "40\n");
+}
+
+/// B-5: `m.lock { v -> ... }` evaluates to the block's tail, and `into_inner`
+/// consumes the mutex and hands the guarded value out.
+#[test]
+fn a_mutex_block_value_is_returned_and_into_inner_consumes_the_mutex() {
+    assert_compiles_and_runs("tests/fixtures/mutex_lock_value.kp", "8\n14\n7\n");
+    assert_compiles_and_runs("tests/fixtures/mutex_into_inner.kp", "2\n41\n");
+}
+
+/// B-5: a `return` inside a lock block ends the block, the runtime releases
+/// the lock on that exit, and a second `lock` afterwards succeeds. A `?`
+/// inside the block is the same kind of exit, and a second call that would
+/// deadlock if the first leaked the lock proves it.
+#[test]
+fn a_return_inside_a_lock_block_releases_the_mutex() {
+    assert_compiles_and_runs("tests/fixtures/mutex_lock_return.kp", "2\n");
+    assert_compiles_and_runs("tests/fixtures/mutex_lock_try.kp", "10\n");
+}
+
+/// B-5: a worker's panic poisons the mutex through the runtime's cleanup
+/// handler, and the main thread's next `lock` panics with "mutex poisoned".
+#[test]
+fn a_panic_inside_a_lock_block_poisons_the_mutex() {
+    assert_fixture_panics("mutex_poison", "mutex poisoned");
+}
+
+/// B-5: a `&Mutex<T>` of a `pd` global crosses to a worker, the `Sync` half of
+/// the crossing rule. A plain `var` datac stays refused
+/// (`thread_spawn_var_field.kp`).
+#[test]
+fn a_shared_pd_mutex_crosses_to_a_worker() {
+    assert_compiles_and_runs("tests/fixtures/mutex_spawn_borrow.kp", "1\n");
+}
+
+/// B-5: the block's `v` cannot escape. Returning it is a type mismatch, and
+/// capturing it into a closure's environment is refused by the same borrow
+/// rule a scoped block follows.
+#[test]
+fn a_lock_blocks_mutable_borrow_cannot_escape() {
+    assert_rejected_with(
+        "tests/fixtures/mutex_lock_borrow_returned.kp",
+        "expected 'unit', found 'mut i64'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/mutex_lock_borrow_stored.kp",
+        "cannot capture 'v': it is a borrow",
+    );
+}
+
+/// B-5: a freestanding build refuses `Mutex` and names the spin lock a kernel
+/// would use instead. Freestanding is LLVM-only by design, so the refusal is
+/// reached before either backend.
+#[test]
+fn a_freestanding_mutex_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_mutex",
+        "a freestanding program has no threads and no libc",
+    );
 }
 
 /// The panic gate (MK9 section 7): a worker panics, its joiner sees `Err`

@@ -1,0 +1,10 @@
+// The block's value is returned: `m.lock { v -> ... }` evaluates to the
+// block's tail, both directly through the lock and while the runtime holds it.
+// `into_inner` then consumes the mutex and hands the value out.
+fun main() {
+    val m: Mutex<i64> = Mutex.new(7)
+    val x = m.lock { v -> *v + 1 }
+    print(x)
+    print(m.lock { v -> *v * 2 })
+    print(m.into_inner())
+}

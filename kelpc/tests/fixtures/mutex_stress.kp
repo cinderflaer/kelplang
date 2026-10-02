@@ -1,0 +1,40 @@
+// B-5's mutex stress gate: eight workers, each taking the lock a thousand
+// times to increment one shared `pd val Mutex<i64>`, every one joined before
+// the total is read. A missing (or misplaced) lock shows up as a total other
+// than 8000, and the shared borrow crosses to the workers exactly as a
+// `&Atomic<T>` does.
+impl "std/thread"
+impl "std/result"
+
+pd val counter: Mutex<i64> = Mutex.new(0)
+
+fun bump(c: &Mutex<i64>).R: i64 {
+    var i: i64 = 0
+    while i < 1000 {
+        c.lock { v ->
+            *v = *v + 1
+        }
+        i = i + 1
+    }
+    0
+}
+
+fun main() {
+    val t0 = thread.spawn(bump, &counter)
+    val t1 = thread.spawn(bump, &counter)
+    val t2 = thread.spawn(bump, &counter)
+    val t3 = thread.spawn(bump, &counter)
+    val t4 = thread.spawn(bump, &counter)
+    val t5 = thread.spawn(bump, &counter)
+    val t6 = thread.spawn(bump, &counter)
+    val t7 = thread.spawn(bump, &counter)
+    val r0 = thread.join(t0)
+    val r1 = thread.join(t1)
+    val r2 = thread.join(t2)
+    val r3 = thread.join(t3)
+    val r4 = thread.join(t4)
+    val r5 = thread.join(t5)
+    val r6 = thread.join(t6)
+    val r7 = thread.join(t7)
+    print(counter.lock { v -> *v })
+}

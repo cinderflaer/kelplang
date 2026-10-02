@@ -1,0 +1,7 @@
+// A mutex's runtime half is a pthread mutex, so a freestanding build refuses
+// the construct by name and points at the spin lock a kernel would use
+// instead. The type is reachable without an `impl`, so the refusal is on the
+// builtin, not on `std/sync`.
+fun kmain() {
+    val m: Mutex<i64> = Mutex.new(0)
+}

@@ -1,0 +1,16 @@
+// An early `return` inside the block ends the block, the runtime releases the
+// lock on that way out, and a later `lock` works: the second call only
+// succeeds if the first `return` released the mutex.
+fun take_then_return(c: &Mutex<i64>) {
+    c.lock { v ->
+        *v = *v + 1
+        return
+    }
+}
+
+fun main() {
+    val m: Mutex<i64> = Mutex.new(0)
+    take_then_return(&m)
+    take_then_return(&m)
+    print(m.lock { v -> *v })
+}

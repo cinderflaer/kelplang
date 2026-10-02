@@ -1,0 +1,10 @@
+// The block's `v` is an exclusive borrow valid only inside the block, so
+// trying to return it is a type mismatch: the lock's own type is what keeps
+// it from escaping.
+fun bad(m: &Mutex<i64>) {
+    m.lock { v ->
+        return v
+    }
+}
+
+fun main() {}
