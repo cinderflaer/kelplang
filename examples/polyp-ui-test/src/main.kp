@@ -37,6 +37,29 @@ fun rect4(x: i32, y: i32, w: i32, h: i32).R: fb.Rect = fb.Rect(x = x, y = y, w =
 
 fun nop(s: mut St, m: i32) {}
 
+// The checkbox section's state and view: a checkbox that flips a flag and a button that counts a
+// press, so Space and a click can be told apart from a no-op.
+datac Cb(var checked: bool, var presses: i32)
+
+fun cb_view(s: Cb).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.checkbox("tick", s.checked, 1)
+        k.align(core.Align.Start)
+        k.button("go", 2)
+    }
+}
+
+fun cb_update(s: mut Cb, m: i32) {
+    if m == 1 {
+        s.checked = !s.checked
+    }
+    if m == 2 {
+        s.presses = s.presses + 1
+    }
+}
+
 // A tree with one of every interactive widget, so hit-testing and focus order have something to
 // walk: a text, a row of two buttons, an entry and a checkbox.
 fun ui(s: St).R: core.Node<i32> {
@@ -177,6 +200,9 @@ fun run_edit() {
     tree = step(b, p, tree, event.Event.Char(codepoint = 89))
     print(b.entry_text(eid))
     print(b.caret_of(eid))
+    tree = step(b, p, tree, event.Event.Key(code = event.KEY_LEFT, mods = 0))
+    print(b.caret_of(eid))
+    tree = step(b, p, tree, event.Event.Key(code = event.KEY_RIGHT, mods = 0))
     tree = step(b, p, tree, event.Event.Key(code = event.KEY_HOME, mods = 0))
     tree = step(b, p, tree, event.Event.Key(code = event.KEY_DELETE, mods = 0))
     print(b.entry_text(eid))
@@ -277,6 +303,54 @@ fun run_hover() {
     print(back.w)
 }
 
+fun run_checkbox() {
+    print("checkbox")
+    var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
+    var b = soft_backend.new()
+    b.resize(WINDOW_W, WINDOW_H)
+    var st = Cb(checked = false, presses = 0)
+    var tree = cb_view(st)
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    var ids = b.interactive_ids()
+    val cid = ids.get(0)
+    val bid = ids.get(1)
+    // Space on the focused checkbox toggles it through its own message.
+    b.set_focus(cid)
+    p.push(event.Event.Key(code = event.KEY_SPACE, mods = 0))
+    val t1 = soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = cb_view, update = cb_update)
+    tree = when t1 {
+        Idle(t) -> t
+        Changed(t) -> t
+        Quit(t) -> t
+    }
+    print(st.checked)
+    // A click on the button activates it the same way.
+    val r = b.rect_of_slot(bid)
+    when r {
+        Some(rr) -> {
+            val cx = rr.x + rr.w / 2
+            val cy = rr.y + rr.h / 2
+            p.push(event.Event.PointerMove(x = cx, y = cy))
+            p.push(event.Event.PointerDown(x = cx, y = cy, button = event.BUTTON_LEFT))
+            p.push(event.Event.PointerUp(x = cx, y = cy, button = event.BUTTON_LEFT))
+        }
+        None -> {}
+    }
+    val t2 = soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = cb_view, update = cb_update)
+    tree = when t2 {
+        Idle(t) -> t
+        Changed(t) -> t
+        Quit(t) -> t
+    }
+    print(st.presses)
+}
+
 fun run_layout() {
     print("layout")
     var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
@@ -335,5 +409,6 @@ fun main() {
     run_edit()
     run_damage()
     run_hover()
+    run_checkbox()
     run_layout()
 }
