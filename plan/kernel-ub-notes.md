@@ -1488,3 +1488,34 @@ compiler bug would be a miscompile with no diagnostic); that a program does not
 call a `mut Self` method through a shared `&dyn` (the call is refused at the
 type level, but the representation carries no mutability); and anything about
 the concrete type behind a `&dyn`, since the value carries no type tag.
+
+## A-14 slice 1: separate compilation (`plan/incremental-compilation.md`)
+
+**New ways to reach undefined behaviour.** None. The mode changes how the
+backend's output is partitioned and linked, not what any instruction means: a
+unit is the same lowering in a different module, and the link puts the same
+objects in one image. The one property a program can now break that it could not
+before is linkage, and it breaks loudly rather than silently:
+
+- **A symbol that should have been external but was marked `internal` is an
+  undefined-symbol link error**, not a wrong address. The reference set is
+  computed from the typed IR plus the per-program C object's text; a reference
+  neither shows is a compiler bug, and the build fails naming the symbol.
+- **A symbol defined in two units is a multiple-definition link error** for the
+  same reason: ownership is total, and the generated helpers are defined only by
+  `_support`.
+- **A missed `main` would be caught by the C runtime's startup**, which is why
+  `main` is external unconditionally rather than by reference.
+
+**What the compiler does check.** That a unit declares every program item and
+defines only what it owns, and that every unit is verified by LLVM (before and
+after the pass pipeline) exactly as the whole-program module is.
+
+**What it does not check.** That the linkage decision is *minimal*: a symbol
+marked external that nothing outside its unit uses is correct but less
+optimizable, and nothing reports it. Nothing checks that two units' copies of a
+shared *type* agree, because only the definition of a type is emitted per unit
+and LLVM's own verifier checks each module against its own types; the layout
+agreement between two objects is the same C ABI guarantee the whole-program
+build already relies on. Cross-unit inlining does not happen in this mode, which
+is a performance property rather than a safety one.

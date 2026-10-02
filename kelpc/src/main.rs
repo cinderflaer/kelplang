@@ -76,8 +76,8 @@ const BUILD_DIR: &str = "build";
 
 fn usage() {
     eprintln!(
-        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
-         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
+        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental]\n       \
+         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental]\n       \
          {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated] [--text]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
@@ -96,6 +96,13 @@ fn usage() {
          --deny-outdated turns those findings into errors, which is the\n\
          migration gate for a project that wants to know when its own code is\n\
          on the list.\n\n\
+         --incremental (or '[build] incremental = true' in coral.toml) splits\n\
+         the backend's output into one compilation unit per source module and\n\
+         links the unit objects together: separate compilation, with no\n\
+         cross-unit inlining. It is off by default and produces the same\n\
+         program either way. The C oracle (KELPC_ORACLE=c) ignores it and\n\
+         keeps its one translation unit, and a freestanding project is\n\
+         refused by name for now (plan/incremental-compilation.md).\n\n\
          With no -o, the binary and the backend's intermediate are written to\n\
          {BUILD_DIR}/<file stem>, which the compiler creates if it is missing.\n\n\
          check runs everything a build runs except code generation: the same\n\
@@ -298,6 +305,7 @@ fn build(
     backend: Backend,
     deny_outdated: bool,
     opt: OptLevel,
+    incremental_flag: bool,
     freestanding_out: &mut bool,
 ) -> bool {
     let mut sources = SourceMap::new();
@@ -366,6 +374,22 @@ fn build(
         return false;
     }
     *freestanding_out = loaded.project.target().is_freestanding();
+
+    // Roadmap A-14 slice 1: the backend's per-unit split. `--incremental` and
+    // the manifest's `[build] incremental = true` both turn it on, and the C
+    // oracle ignores it, because the C backend's one translation unit is the
+    // other answer to the same question rather than a second implementation of
+    // this mode. A freestanding project is refused by name for now: its image
+    // is one ELF with one entry stub and one panic state, which is a slice of
+    // its own (`plan/incremental-compilation.md`).
+    let incremental = incremental_flag || loaded.project.incremental();
+    if incremental && *freestanding_out && backend == Backend::Llvm {
+        eprintln!(
+            "error: '--incremental' is not implemented for a freestanding project yet: its image is one ELF with a single entry stub and one panic state, so the per-unit split is its own slice (plan/incremental-compilation.md)"
+        );
+        return false;
+    }
+    let incremental = incremental && backend == Backend::Llvm;
 
     // One `pkg-config` invocation for every package the manifest's `[extern.*]`
     // sections named (MK9-S1-M1), shared by both backends. It runs before the
@@ -439,6 +463,7 @@ fn build(
                 &library_dirs,
                 &pkg_config_flags,
                 freestanding.as_ref(),
+                incremental,
             ) {
                 eprintln!("error: {message}");
                 return false;
@@ -1128,6 +1153,7 @@ fn main() -> ExitCode {
     let mut path: Option<String> = None;
     let mut out: Option<PathBuf> = None;
     let mut deny_outdated = false;
+    let mut incremental = false;
     let mut opt = OptLevel::DEFAULT;
     let mut i = 2;
     while i < args.len() {
@@ -1155,6 +1181,12 @@ fn main() -> ExitCode {
             i += 1;
         } else if arg == "--deny-outdated" {
             deny_outdated = true;
+            i += 1;
+        } else if arg == "--incremental" {
+            // Roadmap A-14 slice 1: the backend's per-unit split. Refused for
+            // `check`/`fmt`/`lint` by the same "unknown flag" path, since this
+            // scan only runs for `build` and `run`.
+            incremental = true;
             i += 1;
         } else if arg.starts_with("-O") {
             // One `-O<n>` argument, not `-O <n>`: the level is a single
@@ -1215,7 +1247,15 @@ fn main() -> ExitCode {
     }
 
     let mut freestanding = false;
-    if !build(&path, &out_path, backend, deny_outdated, opt, &mut freestanding) {
+    if !build(
+        &path,
+        &out_path,
+        backend,
+        deny_outdated,
+        opt,
+        incremental,
+        &mut freestanding,
+    ) {
         return ExitCode::FAILURE;
     }
 

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -196,6 +196,40 @@ pub fn link_llvm_object(
     pkg_config_flags: &[String],
     tls: bool,
 ) -> Result<(), CompileError> {
+    link_llvm_objects(
+        std::slice::from_ref(&object_path.to_path_buf()),
+        externs_object,
+        out_path,
+        opt,
+        link_libs,
+        library_dirs,
+        pkg_config_flags,
+        tls,
+    )
+}
+
+/// Links several objects into the final binary: the incremental mode's
+/// finishing step (roadmap A-14 slice 1), where each compilation unit is its
+/// own object and the link line carries all of them.
+///
+/// The invocation is [`link_llvm_object`]'s, in the same argument order: every
+/// unit object first (in the order the units were emitted, which is a function
+/// of the program's own module list), then the runtime object, then the
+/// program's `extern fun` object when there is one, then the libraries.
+///
+/// `objects` must not be empty: a build that produced no object has nothing to
+/// link, and the caller reports that as its own error rather than letting `cc`
+/// invent a linker message for it.
+pub fn link_llvm_objects(
+    objects: &[PathBuf],
+    externs_object: Option<&Path>,
+    out_path: &Path,
+    opt: OptLevel,
+    link_libs: &[String],
+    library_dirs: &[String],
+    pkg_config_flags: &[String],
+    tls: bool,
+) -> Result<(), CompileError> {
     let runtime_path = std::env::temp_dir().join(format!(
         "kelp_rt_{}_{}.o",
         std::process::id(),
@@ -211,8 +245,11 @@ pub fn link_llvm_object(
     command
         .arg(opt.cc_flag())
         .arg("-o")
-        .arg(out_path)
-        .arg(object_path)
+        .arg(out_path);
+    for object in objects {
+        command.arg(object);
+    }
+    command
         .arg(&runtime_path)
         // The runtime object holds `pthread_create`/`pthread_join` now (MK9-S3-M1
         // stage C1), so the link has to name the threading library.

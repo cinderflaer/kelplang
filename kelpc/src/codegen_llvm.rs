@@ -326,7 +326,7 @@
 //! no parameters.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::ast::{AsmOperandKind, BinOp, UnOp};
 use crate::codegen_c::asm_operand_text;
@@ -360,6 +360,13 @@ use crate::types::{
 /// written **before** the pipeline so the artifact beside the binary is the
 /// lowering at every level, which is what the MK7 stage gates assert on; the
 /// object is what the pipeline and the codegen level produced.
+///
+/// `incremental` is the roadmap A-14 slice 1 mode: instead of one module named
+/// `kelp`, the program becomes one module per source module plus a `_support`
+/// module (`plan/incremental-compilation.md`), each compiled to its own object
+/// under `<out>.units/` and linked together with the runtime and `extern fun`
+/// objects. With it off (the default) this function is exactly what it was
+/// before the mode existed.
 pub fn compile(
     program: &Program,
     drops: &DropPlan,
@@ -371,6 +378,7 @@ pub fn compile(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     freestanding: Option<&Freestanding>,
+    incremental: bool,
 ) -> Result<(), String> {
     if let Some(fs) = freestanding {
         llvm_ffi::initialize_target_for(&fs.triple)?;
@@ -385,152 +393,57 @@ pub fn compile(
         return Err("LLVM returned an empty host triple".to_string());
     }
 
-    let ctx = Context::new();
-    let mut module = Module::new(&ctx, "kelp");
-    module.set_triple(&triple);
-
-    // The target machine is created here, before any type is built, because the
+    // The target machine is created before any type is built, because the
     // tagged union's size and alignment are read back from its data layout
     // (`declare_aggregates`). It is the same machine the object is written with
     // and the one the pass pipeline reads its target from, so the layout the
     // types were built for and the layout codegen assumes cannot be two
     // different ones. It carries the level's codegen half; the pipeline below
-    // carries the module half.
+    // carries the module half. One context and one machine are shared by every
+    // unit of an incremental build: a unit is a module, not a target.
+    let ctx = Context::new();
     let machine = match freestanding {
         Some(_) => TargetMachine::for_freestanding(&triple, opt.codegen_level())?,
         None => TargetMachine::for_host_at(opt.codegen_level())?,
     };
     let layout = machine.data_layout();
-    // The module has to carry the same data layout the machine lays the object
-    // out with before any pass runs: a pass that folds a struct field to a byte
-    // offset uses the module's layout, and LLVM's default is not the host's (it
-    // aligns an `i64` to 4). See `Module::set_data_layout`.
-    module.set_data_layout(&layout);
 
-    let mut lowering = Gen::new(
-        &ctx,
-        &module,
+    if incremental {
+        return compile_units(
+            program,
+            drops,
+            sources,
+            &ctx,
+            &machine,
+            &layout,
+            &triple,
+            out_path,
+            opt,
+            link_libs,
+            include_dirs,
+            library_dirs,
+            pkg_config_flags,
+        );
+    }
+
+    let ir_path = out_path.with_extension("ll");
+    let object_path = out_path.with_extension("o");
+    lower_to_object(
         program,
         drops,
         sources,
+        &ctx,
+        &machine,
         &layout,
-        opt.is_optimized(),
-        freestanding.cloned(),
+        &triple,
+        "kelp",
+        &ir_path,
+        &object_path,
+        opt,
+        freestanding,
+        None,
     )?;
-    lowering.declare()?;
-    lowering.emit_const_data()?;
-    lowering.declare_statics()?;
-    // The small builtin accessors get their bodies here, as IR rather than a
-    // declaration into the runtime object, so the module's own `-O2` inlines
-    // them at the call site. `emit_container_bodies` below is the same idea for
-    // the monomorphized containers. A freestanding program has no runtime
-    // object to define the rest and no heap types to reach these, so it skips
-    // them: a dead body that called `strlen` would be exactly the libc
-    // reference this mode exists to exclude. The one surface it does need is
-    // the `str` one, which `emit_freestanding_str_bodies` emits as the same
-    // kind of byte loop with no libc call behind it.
-    if freestanding.is_none() {
-        lowering.emit_runtime_bodies()?;
-    } else {
-        lowering.emit_freestanding_str_bodies()?;
-        // The `String`/`Bytes` bodies a project with its own allocator needs
-        // (kernel stage 12, MK9-S5-M2). Without an allocator the front end has
-        // already refused the two types, and emitting a body that reaches
-        // libc's `malloc` would be the reference this mode exists to exclude.
-        if lowering.alloc_fns.is_some() {
-            lowering.emit_freestanding_buffer_bodies()?;
-        }
-        // The `mem*` routines LLVM's own aggregate copies call, defined weak
-        // and as loops (kernel gap 4).
-        lowering.emit_freestanding_mem_bodies()?;
-    }
-    // The generated per-`datac` and per-`enum` drops, clones and comparators are
-    // defined before the function bodies that call them, mirroring the order
-    // `codegen_c.rs` writes each typedef and its drop routine in. The container
-    // function sets come next, because a container's own drop calls the
-    // element's (MK7 §3.2: one monomorphized set per instantiation, generated
-    // into the module).
-    lowering.emit_drop_fn_bodies()?;
-    lowering.emit_clone_cmp_bodies()?;
-    lowering.emit_container_bodies()?;
-    // The S2E machinery (per-signature closure drops, the widening's thunk and
-    // destructor, the shims) comes before the function bodies, the same order
-    // the C backend writes them in.
-    lowering.emit_closure_bodies()?;
-    // The `&dyn` thunks (A-12 slice 4), after every function they call is
-    // declared and defined, the same order the C backend writes them in.
-    lowering.emit_dyn_bodies()?;
-    // The `pd` globals' two generated functions (MK7 §5), whose bodies call
-    // the drops and container sets above.
-    lowering.emit_pd_globals()?;
-    lowering.emit_all()?;
 
-    // Every function a freestanding image emits carries `probe-stack="inline-asm"`
-    // (kernel stage 14): a frame larger than one page then touches each page in
-    // order, so a guard page below the stack catches the overflow instead of a
-    // single `sub sp` stepping over it. A hosted build is unchanged. Declarations
-    // are skipped because there is no prologue to probe; the compiler-generated
-    // bodies (the `mem*` fallbacks, the drops and the container sets) are swept
-    // here too, because a large frame among them would otherwise be the one
-    // frame that skips the guard.
-    if freestanding.is_some() {
-        // An x86-64 image has a red zone below `rsp` that an interrupt the
-        // kernel installs later would clobber, so no function may keep a live
-        // value there (kernel stage 20).
-        let x86 = triple.starts_with("x86_64");
-        for func in module.functions() {
-            if !func.is_declaration() {
-                func.mark_probe_stack();
-                if x86 {
-                    func.mark_noredzone();
-                }
-            }
-        }
-    }
-
-    // The bare-metal entry stub, after every function is declared so the call
-    // to the entry symbol resolves. It is module-level assembly because setting
-    // `sp` from a linker-script symbol is not expressible in the language yet;
-    // it belongs to the boot section the linker script places first.
-    if let Some(fs) = freestanding {
-        module.append_inline_asm(&freestanding_entry_asm(&fs.triple, &symbol_name(&fs.entry))?);
-    }
-
-    // Every location has been attached now, so the debug descriptors are
-    // constructed and frozen before the module is written (MK7 S4, §4.4).
-    lowering.finalize_debug();
-
-    // A caller must verify before emitting: LLVM's object writer assumes a
-    // verified module and can crash on an unverified one rather than fail.
-    module.verify()?;
-
-    // The lowering is written before the pipeline runs, so the artifact beside
-    // the binary is the IR this backend emitted at every level. The stage gates
-    // read this text and assert an instruction's shape; an optimized module
-    // would answer a different question.
-    let ir_path = out_path.with_extension("ll");
-    std::fs::write(&ir_path, module.to_ir_string()).map_err(|e| {
-        format!("could not write generated IR to '{}': {e}", ir_path.display())
-    })?;
-
-    // The level's module half: LLVM's own `default<O<n>>` pipeline. It is run
-    // over the module the machine below will write, with the machine for the
-    // target-specific passes. At `-O0` it is `default<O0>`, which adds no pass,
-    // so the IR the lowering wrote is the IR the target machine lowers.
-    module.run_passes(opt.pipeline(), &machine)?;
-
-    // A pass can leave a module LLVM's own verifier rejects, and the object
-    // writer assumes a verified module, so the check runs again after the
-    // pipeline rather than only before it.
-    module.verify()?;
-
-    let object_path = out_path.with_extension("o");
-    machine.emit_object(&module, &object_path)?;
-
-    // The `extern fun` bodies this program reaches and the capability check's
-    // own C half, compiled into their own object (MK7 §3.2, §5). Keeping the C
-    // source beside the IR is the same artifact contract the C backend's
-    // `<out>.c` has: the text an author can read is the text that was compiled.
     // The `extern fun` bodies this program reaches and the capability check's
     // own C half, compiled into their own object (MK7 §3.2, §5). Keeping the C
     // source beside the IR is the same artifact contract the C backend's
@@ -579,6 +492,583 @@ pub fn compile(
         crate::codegen_c::uses_tls(program),
     )
     .map_err(|e| e.message)
+}
+
+/// Lower one module and write its object: the per-module half of the backend.
+/// `compile` calls it once for the whole program; the incremental mode calls it
+/// once per compilation unit, with `unit` naming the part of `program` this
+/// module defines (see `plan/incremental-compilation.md`).
+///
+/// `ir_path` receives the unoptimized lowering (the artifact `out.ll` is for the
+/// whole-program case) and `object_path` the object the level's pipeline and
+/// codegen level produced.
+fn lower_to_object(
+    program: &Program,
+    drops: &DropPlan,
+    sources: &SourceMap,
+    ctx: &Context,
+    machine: &TargetMachine,
+    layout: &DataLayout,
+    triple: &str,
+    module_name: &str,
+    ir_path: &Path,
+    object_path: &Path,
+    opt: OptLevel,
+    freestanding: Option<&Freestanding>,
+    unit: Option<Unit>,
+) -> Result<(), String> {
+    let mut module = Module::new(ctx, module_name);
+    module.set_triple(triple);
+    // The module has to carry the same data layout the machine lays the object
+    // out with before any pass runs: a pass that folds a struct field to a byte
+    // offset uses the module's layout, and LLVM's default is not the host's (it
+    // aligns an `i64` to 4). See `Module::set_data_layout`.
+    module.set_data_layout(layout);
+
+    let mut lowering = Gen::new(
+        ctx,
+        &module,
+        program,
+        drops,
+        sources,
+        layout,
+        opt.is_optimized(),
+        freestanding.cloned(),
+        unit,
+    )?;
+    lowering.declare()?;
+    lowering.emit_const_data()?;
+    lowering.declare_statics()?;
+    // The small builtin accessors get their bodies here, as IR rather than a
+    // declaration into the runtime object, so the module's own `-O2` inlines
+    // them at the call site. `emit_container_bodies` below is the same idea for
+    // the monomorphized containers. A freestanding program has no runtime
+    // object to define the rest and no heap types to reach these, so it skips
+    // them: a dead body that called `strlen` would be exactly the libc
+    // reference this mode exists to exclude. The one surface it does need is
+    // the `str` one, which `emit_freestanding_str_bodies` emits as the same
+    // kind of byte loop with no libc call behind it.
+    if freestanding.is_none() {
+        if lowering.emits_runtime_accessors() {
+            lowering.emit_runtime_bodies()?;
+        }
+    } else {
+        lowering.emit_freestanding_str_bodies()?;
+        // The `String`/`Bytes` bodies a project with its own allocator needs
+        // (kernel stage 12, MK9-S5-M2). Without an allocator the front end has
+        // already refused the two types, and emitting a body that reaches
+        // libc's `malloc` would be the reference this mode exists to exclude.
+        if lowering.alloc_fns.is_some() {
+            lowering.emit_freestanding_buffer_bodies()?;
+        }
+        // The `mem*` routines LLVM's own aggregate copies call, defined weak
+        // and as loops (kernel gap 4).
+        lowering.emit_freestanding_mem_bodies()?;
+    }
+    // The generated per-`datac` and per-`enum` drops, clones and comparators are
+    // defined before the function bodies that call them, mirroring the order
+    // `codegen_c.rs` writes each typedef and its drop routine in. The container
+    // function sets come next, because a container's own drop calls the
+    // element's (MK7 §3.2: one monomorphized set per instantiation, generated
+    // into the module). In the incremental mode only the `_support` unit gets
+    // these bodies; every other unit only declares them, so the symbol has one
+    // definition in the link (roadmap A-14 slice 1).
+    if lowering.defines_helpers() {
+        lowering.emit_drop_fn_bodies()?;
+        lowering.emit_clone_cmp_bodies()?;
+        lowering.emit_container_bodies()?;
+        // The S2E machinery (per-signature closure drops, the widening's thunk
+        // and destructor, the shims) comes before the function bodies, the same
+        // order the C backend writes them in.
+        lowering.emit_closure_bodies()?;
+        // The `&dyn` thunks (A-12 slice 4), after every function they call is
+        // declared and defined, the same order the C backend writes them in.
+        lowering.emit_dyn_bodies()?;
+        // The `pd` globals' two generated functions (MK7 §5), whose bodies call
+        // the drops and container sets above.
+        lowering.emit_pd_globals()?;
+    }
+    lowering.emit_all()?;
+
+    // Every function a freestanding image emits carries `probe-stack="inline-asm"`
+    // (kernel stage 14): a frame larger than one page then touches each page in
+    // order, so a guard page below the stack catches the overflow instead of a
+    // single `sub sp` stepping over it. A hosted build is unchanged. Declarations
+    // are skipped because there is no prologue to probe; the compiler-generated
+    // bodies (the `mem*` fallbacks, the drops and the container sets) are swept
+    // here too, because a large frame among them would otherwise be the one
+    // frame that skips the guard.
+    if freestanding.is_some() {
+        // An x86-64 image has a red zone below `rsp` that an interrupt the
+        // kernel installs later would clobber, so no function may keep a live
+        // value there (kernel stage 20).
+        let x86 = triple.starts_with("x86_64");
+        for func in module.functions() {
+            if !func.is_declaration() {
+                func.mark_probe_stack();
+                if x86 {
+                    func.mark_noredzone();
+                }
+            }
+        }
+    }
+
+    // The bare-metal entry stub, after every function is declared so the call
+    // to the entry symbol resolves. It is module-level assembly because setting
+    // `sp` from a linker-script symbol is not expressible in the language yet;
+    // it belongs to the boot section the linker script places first.
+    if let Some(fs) = freestanding {
+        module.append_inline_asm(&freestanding_entry_asm(&fs.triple, &symbol_name(&fs.entry))?);
+    }
+
+    // Every location has been attached now, so the debug descriptors are
+    // constructed and frozen before the module is written (MK7 S4, §4.4).
+    lowering.finalize_debug();
+
+    // A caller must verify before emitting: LLVM's object writer assumes a
+    // verified module and can crash on an unverified one rather than fail.
+    module.verify()?;
+
+    // The lowering is written before the pipeline runs, so the artifact beside
+    // the binary is the IR this backend emitted at every level. The stage gates
+    // read this text and assert an instruction's shape; an optimized module
+    // would answer a different question.
+    std::fs::write(ir_path, module.to_ir_string()).map_err(|e| {
+        format!("could not write generated IR to '{}': {e}", ir_path.display())
+    })?;
+
+    // The level's module half: LLVM's own `default<O<n>>` pipeline. It is run
+    // over the module the machine below will write, with the machine for the
+    // target-specific passes. At `-O0` it is `default<O0>`, which adds no pass,
+    // so the IR the lowering wrote is the IR the target machine lowers.
+    module.run_passes(opt.pipeline(), machine)?;
+
+    // A pass can leave a module LLVM's own verifier rejects, and the object
+    // writer assumes a verified module, so the check runs again after the
+    // pipeline rather than only before it.
+    module.verify()?;
+
+    machine.emit_object(&module, object_path)?;
+    Ok(())
+}
+
+/// The incremental mode (roadmap A-14 slice 1): partition the program into
+/// compilation units, lower each into its own module and object under
+/// `<out>.units/`, and link every object plus the runtime and the program's
+/// `extern fun` object into the final binary.
+///
+/// The unit rules are `plan/incremental-compilation.md`'s: one unit per source
+/// module id, holding that module's own items and the instances of its generic
+/// functions, plus one `_support` unit holding every compiler-generated helper.
+///
+/// `KELPC_DUMP_UNITS=<dir>` writes each unit's unoptimized IR to
+/// `<dir>/<unit>.ll` as well, which is what the determinism test reads: the same
+/// sources must produce byte-identical unit IR.
+fn compile_units(
+    program: &Program,
+    drops: &DropPlan,
+    sources: &SourceMap,
+    ctx: &Context,
+    machine: &TargetMachine,
+    layout: &DataLayout,
+    triple: &str,
+    out_path: &Path,
+    opt: OptLevel,
+    link_libs: &[String],
+    include_dirs: &[String],
+    library_dirs: &[String],
+    pkg_config_flags: &[String],
+) -> Result<(), String> {
+    let unit_dir = out_path.with_extension("units");
+    std::fs::create_dir_all(&unit_dir).map_err(|e| {
+        format!(
+            "could not create the unit directory '{}': {e}",
+            unit_dir.display()
+        )
+    })?;
+    let dump_dir = std::env::var_os("KELPC_DUMP_UNITS").map(PathBuf::from);
+    if let Some(dir) = &dump_dir {
+        std::fs::create_dir_all(dir).map_err(|e| {
+            format!(
+                "could not create 'KELPC_DUMP_UNITS' directory '{}': {e}",
+                dir.display()
+            )
+        })?;
+    }
+    // The program's `extern fun` bodies, capability glue and cap arrays are one
+    // object for the whole program: the C text is the C backend's own, and it
+    // has no unit to belong to. It is generated here rather than at the link,
+    // because the units must know which program items it names before they set
+    // any linkage.
+    let c_source = program_c_source(program);
+    let c_object_refs = c_source
+        .as_deref()
+        .map(|text| named_c_object_refs(program, text))
+        .unwrap_or_default();
+    let units = plan_units(program, &c_object_refs);
+
+    let mut objects = Vec::with_capacity(units.len());
+    for unit in &units {
+        let file = unit_file_name(&unit.name);
+        let ir_path = unit_dir.join(format!("{file}.ll"));
+        let object_path = unit_dir.join(format!("{file}.o"));
+        lower_to_object(
+            program,
+            drops,
+            sources,
+            ctx,
+            machine,
+            layout,
+            triple,
+            &unit.name,
+            &ir_path,
+            &object_path,
+            opt,
+            None,
+            Some(unit.clone()),
+        )?;
+        if let Some(dir) = &dump_dir {
+            let dumped = dir.join(format!("{file}.ll"));
+            std::fs::copy(&ir_path, &dumped).map_err(|e| {
+                format!(
+                    "could not write the unit IR to '{}': {e}",
+                    dumped.display()
+                )
+            })?;
+        }
+        objects.push(object_path);
+    }
+
+    // The program's `extern fun` bodies, capability glue and cap arrays are one
+    // object for the whole program, exactly as the whole-program build has them:
+    // the C text is the C backend's own, and it has no unit to belong to.
+    let program_object = match c_source {
+        Some(source) => {
+            let c_path = out_path.with_extension("externs.c");
+            let obj_path = out_path.with_extension("externs.o");
+            crate::driver::compile_c_object(
+                &source,
+                &c_path,
+                &obj_path,
+                opt,
+                include_dirs,
+                pkg_config_flags,
+            )
+            .map_err(|e| e.message)?;
+            Some(obj_path)
+        }
+        None => None,
+    };
+
+    crate::driver::link_llvm_objects(
+        &objects,
+        program_object.as_deref(),
+        out_path,
+        opt,
+        link_libs,
+        library_dirs,
+        pkg_config_flags,
+        crate::codegen_c::uses_tls(program),
+    )
+    .map_err(|e| e.message)
+}
+
+/// One compilation unit of the incremental mode (roadmap A-14 slice 1).
+#[derive(Clone)]
+struct Unit {
+    /// The unit's name: a source module's canonical id, or `_support`.
+    name: String,
+    /// `_support` defines the generated helpers; every other unit only declares
+    /// them.
+    support: bool,
+    /// The program items this unit defines that another unit references, so
+    /// their definitions keep external linkage.
+    exported: HashSet<String>,
+}
+
+/// The name of the `_support` unit: the one unit whose name is not a module id,
+/// because it owns every compiler-generated helper.
+const SUPPORT_UNIT: &str = "_support";
+
+/// The incremental mode's unit list, in a deterministic order: every module a
+/// program item is declared in, sorted by id, then `_support` last.
+///
+/// A unit's `exported` set is the program items it defines that some *other*
+/// unit references, plus `main`; those keep external linkage. Everything else a
+/// unit defines is internal, which is what lets LLVM optimize and drop within a
+/// unit the way it does in the whole-program build. Over-approximating the set
+/// is harmless (the symbol is merely visible); a missed reference is a link
+/// error rather than a miscompile, and the equivalence tests link real binaries.
+fn plan_units(program: &Program, c_object_refs: &HashSet<String>) -> Vec<Unit> {
+    let mut modules: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for f in &program.functions {
+        modules.insert(f.module.clone());
+    }
+    for s in &program.statics {
+        modules.insert(s.module.clone());
+    }
+    for c in &program.const_data {
+        modules.insert(c.module.clone());
+    }
+
+    // Which unit references which program item. A reference from a generated
+    // helper or a `pd` initializer is `_support`'s, because that is the unit
+    // whose code emits the call.
+    let mut refs: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut note = |key: &str, from: &str| {
+        refs.entry(key.to_string())
+            .or_default()
+            .insert(from.to_string());
+    };
+    for f in &program.functions {
+        if f.extern_ {
+            continue;
+        }
+        collect_block_refs(&f.body, &f.module, &mut note);
+    }
+    for pd in &program.pds {
+        collect_expr_refs(&pd.init, SUPPORT_UNIT, &mut note);
+    }
+    // Every function a *known* function value is widened from gets a shim in
+    // `_support` that calls it directly, the same set `declare_closure_fns`
+    // declares (`inst.shims`): the widening is one of the generated helpers even
+    // though the reference that created it was written in the function's own
+    // unit.
+    for (key, _) in &collect_instantiations(program).shims {
+        note(key, SUPPORT_UNIT);
+    }
+    // The per-program C object (`program_c_source`) is outside every unit, so
+    // whatever it names has to be external too.
+    for key in c_object_refs {
+        note(key, SUPPORT_UNIT);
+    }
+    for vtable in &program.dyn_vtables {
+        for slot in &vtable.slots {
+            note(&slot.target, SUPPORT_UNIT);
+        }
+    }
+    for name in &program.drop_types {
+        note(&crate::types::drop_method_key(name), SUPPORT_UNIT);
+    }
+    for name in &program.declared_keys {
+        note(
+            &crate::types::key_pair_method_key(name, crate::types::KEY_PAIR_HASH_METHOD),
+            SUPPORT_UNIT,
+        );
+        note(
+            &crate::types::key_pair_method_key(name, crate::types::KEY_PAIR_EQ_METHOD),
+            SUPPORT_UNIT,
+        );
+    }
+
+    let mut owner: HashMap<&str, &str> = HashMap::new();
+    for f in &program.functions {
+        owner.insert(f.name.as_str(), f.module.as_str());
+    }
+    for s in &program.statics {
+        owner.insert(s.name.as_str(), s.module.as_str());
+    }
+
+    let mut units: Vec<Unit> = modules
+        .into_iter()
+        .map(|name| Unit {
+            name,
+            support: false,
+            exported: HashSet::new(),
+        })
+        .collect();
+    for (key, from) in &refs {
+        let Some(owner) = owner.get(key.as_str()) else {
+            continue;
+        };
+        if !from.iter().any(|u| u != owner) {
+            continue;
+        }
+        if let Some(unit) = units.iter_mut().find(|u| &u.name == owner) {
+            unit.exported.insert(key.clone());
+        }
+    }
+    // `main` is called by the C runtime's startup, not by a unit, so nothing in
+    // the program references it and the reference scan above cannot see it.
+    if let Some(main) = program.functions.iter().find(|f| f.name == "main") {
+        if let Some(unit) = units.iter_mut().find(|u| u.name == main.module) {
+            unit.exported.insert("main".to_string());
+        }
+    }
+
+    units.push(Unit {
+        name: SUPPORT_UNIT.to_string(),
+        support: true,
+        exported: HashSet::new(),
+    });
+    units
+}
+
+/// The program items the per-program C object names (roadmap A-14 slice 1).
+///
+/// That object is outside every compilation unit, so a `kelp_`-prefixed symbol
+/// in its text has to be external in whichever unit defines it: an `extern fun`
+/// body, the capability glue or the `std/rt` prototypes can call across the
+/// object boundary in C, which the typed IR cannot show. The scan is textual
+/// for that reason, and matches a token against a program item's emitted symbol
+/// name.
+fn named_c_object_refs(program: &Program, text: &str) -> HashSet<String> {
+    let mut by_symbol: HashMap<String, String> = HashMap::new();
+    for f in &program.functions {
+        by_symbol.insert(symbol_name(&f.name), f.name.clone());
+    }
+    for s in &program.statics {
+        by_symbol.insert(symbol_name(&s.name), s.name.clone());
+    }
+    let bytes = text.as_bytes();
+    let mut out = HashSet::new();
+    let mut i = 0;
+    while i + 5 <= bytes.len() {
+        if &bytes[i..i + 5] == b"kelp_" {
+            let start = i;
+            let mut j = i + 5;
+            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                j += 1;
+            }
+            if let Some(key) = by_symbol.get(&text[start..j]) {
+                out.insert(key.clone());
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// A unit's name as a file name: a module id is a path (`shapes/circle`) and a
+/// file name is not, so every character outside `[A-Za-z0-9]` becomes `_`. The
+/// unit's *module name* in the IR is still its id, so how the artifact name is
+/// folded cannot make two units' IR disagree.
+fn unit_file_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+/// Every program item one function body references, reported through
+/// `note(key, unit)`: a call, a function value, a closure literal, a `static`,
+/// or a `pd` global.
+fn collect_block_refs(block: &Block, from: &str, note: &mut impl FnMut(&str, &str)) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let { init, .. } => collect_expr_refs(init, from, note),
+            Stmt::While { cond, body, .. } => {
+                collect_expr_refs(cond, from, note);
+                collect_block_refs(body, from, note);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(value) = value {
+                    collect_expr_refs(value, from, note);
+                }
+            }
+            Stmt::Expr(expr) => collect_expr_refs(expr, from, note),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_expr_refs(tail, from, note);
+    }
+}
+
+fn collect_expr_refs(expr: &Expr, from: &str, note: &mut impl FnMut(&str, &str)) {
+    match &expr.kind {
+        ExprKind::Call { callee, args } => {
+            note(callee, from);
+            args.iter().for_each(|a| collect_expr_refs(a, from, note));
+        }
+        ExprKind::VariadicCall {
+            callee,
+            wrapper,
+            args,
+        } => {
+            note(callee, from);
+            note(wrapper, from);
+            args.iter().for_each(|a| collect_expr_refs(a, from, note));
+        }
+        ExprKind::FnRef(key) => note(key, from),
+        ExprKind::ClosureLit { key, captures } | ExprKind::ScopedClosureLit { key, captures } => {
+            note(key, from);
+            captures.iter().for_each(|c| collect_expr_refs(c, from, note));
+        }
+        ExprKind::StaticRef(name) => note(name, from),
+        // A `pd` read names its global directly: `Ident("pd#<name>")` is what
+        // `FnGen::pd_place` resolves when a function receives no hidden
+        // parameter of its own.
+        ExprKind::Ident(name) if name.starts_with("pd#") => note(name, from),
+        ExprKind::Unary { expr, .. } | ExprKind::Deref { expr } | ExprKind::EnumTag { expr, .. } => {
+            collect_expr_refs(expr, from, note)
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            collect_expr_refs(lhs, from, note);
+            collect_expr_refs(rhs, from, note);
+        }
+        ExprKind::FieldAccess { base, .. } => collect_expr_refs(base, from, note),
+        ExprKind::StructLit { fields, .. } => {
+            for (_, value) in fields {
+                collect_expr_refs(value, from, note);
+            }
+        }
+        ExprKind::EnumLit { fields, .. } => {
+            fields.iter().for_each(|f| collect_expr_refs(f, from, note))
+        }
+        ExprKind::EnumField { base, .. } => collect_expr_refs(base, from, note),
+        ExprKind::Try { expr, .. } => collect_expr_refs(expr, from, note),
+        ExprKind::Assign { target, value } => {
+            collect_expr_refs(target, from, note);
+            collect_expr_refs(value, from, note);
+        }
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            collect_expr_refs(cond, from, note);
+            collect_block_refs(then_block, from, note);
+            if let Some(otherwise) = else_block {
+                collect_block_refs(otherwise, from, note);
+            }
+        }
+        ExprKind::Block(block) => collect_block_refs(block, from, note),
+        ExprKind::FnToClosure { func } => collect_expr_refs(func, from, note),
+        ExprKind::IndirectCall { callee, args } => {
+            collect_expr_refs(callee, from, note);
+            args.iter().for_each(|a| collect_expr_refs(a, from, note));
+        }
+        ExprKind::Ref { expr, .. } => collect_expr_refs(expr, from, note),
+        ExprKind::DynCoerce { expr, .. } => collect_expr_refs(expr, from, note),
+        ExprKind::DynCall { receiver, args, .. } => {
+            collect_expr_refs(receiver, from, note);
+            args.iter().for_each(|a| collect_expr_refs(a, from, note));
+        }
+        ExprKind::Template { pieces, .. } => {
+            for piece in pieces {
+                if let TemplatePiece::Value(value) = piece {
+                    collect_expr_refs(value, from, note);
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => elems.iter().for_each(|e| collect_expr_refs(e, from, note)),
+        ExprKind::ArrayRepeat { value } => collect_expr_refs(value, from, note),
+        ExprKind::Asm(block) => {
+            for operand in &block.operands {
+                if let Some(operand) = &operand.operand {
+                    collect_expr_refs(operand, from, note);
+                }
+            }
+        }
+        ExprKind::IntLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Capture { .. }
+        | ExprKind::Ident(_) => {}
+    }
 }
 
 /// Everything the LLVM backend needs to know about a freestanding project
@@ -1224,6 +1714,10 @@ struct Gen<'a> {
     /// dev build. A release image trusts the register and carries no check
     /// (`plan/kernel-ub-notes.md` stage 11).
     debug_checks: bool,
+    /// The compilation unit this pass emits (roadmap A-14 slice 1), or `None`
+    /// for the whole-program single module every build had before the mode
+    /// existed. See [`Gen::defines_function`] for what it decides.
+    unit: Option<Unit>,
 }
 
 /// Every container instantiation a program mentions, the mirror of
@@ -1270,6 +1764,7 @@ impl<'a> Gen<'a> {
         layout: &'a DataLayout,
         optimized: bool,
         freestanding: Option<Freestanding>,
+        unit: Option<Unit>,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
         // The one libc symbol this slice reaches: `printf`, for `print` and
@@ -1364,7 +1859,58 @@ impl<'a> Gen<'a> {
             debug_scopes: HashMap::new(),
             pd_init_scope: None,
             freestanding,
+            unit,
         })
+    }
+
+    /// Whether this pass defines the small builtin accessors (`Bytes`,
+    /// `String` and `View` methods) as IR. The whole-program build does, so its
+    /// own `-O2` inlines them at the call site. The incremental mode does not:
+    /// the runtime object exports the same functions, and a second definition
+    /// of one would be a multiple-definition error at link time. Every unit
+    /// calls the runtime object's copies instead (roadmap A-14 slice 1).
+    fn emits_runtime_accessors(&self) -> bool {
+        self.unit.is_none()
+    }
+
+    /// Whether this pass emits the compiler-generated helpers (the per-type
+    /// drops, clones, comparators and hash pairs, the container function sets,
+    /// the closure machinery, the `&dyn` vtables, the runtime accessors and the
+    /// `pd` globals). Only the `_support` unit does in the incremental mode;
+    /// every other unit declares them and calls into `_support`'s definitions
+    /// (roadmap A-14 slice 1).
+    fn defines_helpers(&self) -> bool {
+        self.unit.as_ref().map_or(true, |unit| unit.support)
+    }
+
+    /// Whether this pass emits the body of the user function `f`: every
+    /// function in the whole-program mode, and a module's own functions in the
+    /// incremental mode.
+    fn defines_function(&self, f: &Function) -> bool {
+        match &self.unit {
+            None => true,
+            Some(unit) => !unit.support && unit.name == f.module,
+        }
+    }
+
+    /// Whether this pass emits the definition of the `static` or `section(...)`
+    /// const `item`, whose owning module is `module`.
+    fn defines_static_item(&self, module: &str) -> bool {
+        match &self.unit {
+            None => true,
+            Some(unit) => !unit.support && unit.name == module,
+        }
+    }
+
+    /// Whether a definition keyed by `key` keeps external linkage: in the
+    /// incremental mode only what another unit references and what `_support`
+    /// defines does, since `_support`'s helpers are reachable from every unit.
+    /// The whole-program mode never asks: it is the one unit and sets linkage
+    /// the way it always has.
+    fn keeps_external(&self, key: &str) -> bool {
+        self.unit
+            .as_ref()
+            .map_or(false, |unit| unit.support || unit.exported.contains(key))
     }
 
     /// Declare every `datac` and `enum`, its drop, clone and comparator
@@ -1479,6 +2025,14 @@ impl<'a> Gen<'a> {
             };
             let ty = ctx.fn_type(ret, &params, false);
             let func = self.module.add_function(&symbol_name(&f.name), ty);
+            // In the incremental mode this module defines only its own unit's
+            // functions; a function of another module stays a declaration, and
+            // a function no other unit references is `internal` so the unit
+            // can optimize it the way the whole-program module does (roadmap
+            // A-14 slice 1).
+            if self.unit.is_some() && self.defines_function(f) && !self.keeps_external(&f.name) {
+                func.as_value().set_internal_linkage();
+            }
             // The `section("...")` clause a declaration wrote (kernel stage 4)
             // places its code where a linker script can find it.
             if let Some(section) = &f.section {
@@ -1692,6 +2246,13 @@ impl<'a> Gen<'a> {
     /// address, not read back through the const's name.
     fn emit_const_data(&self) -> Result<(), String> {
         for data in &self.program.const_data {
+            // A `section("...")` const is the linker's symbol, not a load (a
+            // use folds to its literal), so the units that do not own it need
+            // no declaration of it: the owning unit defines it once (roadmap
+            // A-14 slice 1).
+            if !self.defines_static_item(&data.module) {
+                continue;
+            }
             let Ty::Array(elem, len) = &data.ty else {
                 continue;
             };
@@ -1720,6 +2281,22 @@ impl<'a> Gen<'a> {
     /// an atomic writes through a shared borrow.
     fn declare_statics(&mut self) -> Result<(), String> {
         for s in &self.program.statics {
+            // A `static` another unit owns stays a declaration here (roadmap
+            // A-14 slice 1): the defining unit's object carries the storage and
+            // this one reaches it by name.
+            if !self.defines_static_item(&s.module) {
+                let lty = llvm_type(self.ctx, &self.structs, &self.containers, &s.ty)?;
+                let global = self.module.add_external_global(&symbol_name(&s.name), lty);
+                self.static_globals.insert(
+                    s.name.clone(),
+                    StaticGlobal {
+                        global,
+                        ty: s.ty.clone(),
+                        percpu: None,
+                    },
+                );
+                continue;
+            }
             if s.percpu {
                 self.declare_percpu_static(s)?;
                 continue;
@@ -1738,7 +2315,9 @@ impl<'a> Gen<'a> {
             if let Some(section) = &s.section {
                 global.set_section(section);
             }
-            global.set_internal_linkage();
+            if self.unit.is_none() || !self.keeps_external(&s.name) {
+                global.set_internal_linkage();
+            }
             self.static_globals.insert(
                 s.name.clone(),
                 StaticGlobal {
@@ -1811,13 +2390,19 @@ impl<'a> Gen<'a> {
     /// the same fact, and a freestanding image's section placement has to match
     /// on both.
     fn emit_llvm_used(&mut self) {
-        if self.program.statics.is_empty() {
+        // Only the statics this pass defines: a declaration of another unit's
+        // static is not this module's to keep alive (roadmap A-14 slice 1).
+        let owned: Vec<&crate::tir::Static> = self
+            .program
+            .statics
+            .iter()
+            .filter(|s| self.defines_static_item(&s.module))
+            .collect();
+        if owned.is_empty() {
             return;
         }
         let ptr = self.ctx.opaque_ptr();
-        let values: Vec<Value<'a>> = self
-            .program
-            .statics
+        let values: Vec<Value<'a>> = owned
             .iter()
             .filter_map(|s| self.static_globals.get(&s.name).map(|sg| sg.global))
             .collect();
@@ -1911,15 +2496,26 @@ impl<'a> Gen<'a> {
     fn declare_debug(&mut self) {
         let program = self.program;
         let sources = self.sources;
+        // In the incremental mode a unit's compile unit describes that unit's
+        // own `.kp` functions, so a fault in it names one of its own files
+        // (roadmap A-14 slice 1); the `_support` unit has no `.kp` function and
+        // so no compile unit at all.
+        let unit_functions: Vec<&Function> = program
+            .functions
+            .iter()
+            .filter(|f| match &self.unit {
+                None => true,
+                Some(unit) => !unit.support && unit.name == f.module,
+            })
+            .collect();
         // The compile unit's own file: the module that declares `main`, since
         // that is the translation unit's entry point, falling back to the first
         // declaration. A program with no function to describe has no line to
         // name, so it gets no metadata rather than an empty compile unit.
-        let main_module = program
-            .functions
+        let main_module = unit_functions
             .iter()
             .find(|f| f.name == "main" && !f.extern_)
-            .or_else(|| program.functions.iter().find(|f| !f.extern_))
+            .or_else(|| unit_functions.iter().find(|f| !f.extern_))
             .map(|f| f.module.clone());
         let Some(main_module) = main_module else {
             return;
@@ -1929,7 +2525,7 @@ impl<'a> Gen<'a> {
         // one module, so one file per module is what every location inside its
         // functions resolves through.
         let mut files: HashMap<String, Metadata<'a>> = HashMap::new();
-        for f in &program.functions {
+        for f in &unit_functions {
             if files.contains_key(&f.module) {
                 continue;
             }
@@ -1950,7 +2546,7 @@ impl<'a> Gen<'a> {
         self.module.add_debug_compile_unit(cu);
         self.module.set_debug_info_version();
 
-        for f in &program.functions {
+        for f in &unit_functions {
             // An `extern fun` has no body in this module: its C text is
             // compiled into the program's own object (S3A), so there is no
             // instruction here to locate.
@@ -1984,6 +2580,12 @@ impl<'a> Gen<'a> {
         // statements below are each passdown's own, and only the scope's file is
         // shared.
         if let Some(init_fn) = self.init_pds_fn {
+            // The initializers are emitted into the generated function itself,
+            // which is `_support`'s in the incremental mode; another unit only
+            // has the declaration to call (roadmap A-14 slice 1).
+            if !self.defines_helpers() {
+                return;
+            }
             // Every initializer has to be locatable before the function gets a
             // subprogram: a function that carries debug info must have a
             // location on each of its calls (LLVM's verifier says so, because
@@ -2071,9 +2673,21 @@ impl<'a> Gen<'a> {
             .collect();
         for pd in &self.program.pds {
             let lty = llvm_type(ctx, &self.structs, &self.containers, &pd.value_ty)?;
-            let global = self.module.add_global(&symbol_name(&pd.name), lty);
-            global.set_initializer(ctx.const_null(lty));
-            global.set_internal_linkage();
+            // The passdown storage and the two generated functions that fill
+            // and free it are the `_support` unit's in the incremental mode
+            // (roadmap A-14 slice 1): `main` and a pd's own initializer read the
+            // global from outside the declaring module, so a unit that does not
+            // own it declares the global and calls into `_support`'s bodies.
+            let global = if self.defines_helpers() {
+                let global = self.module.add_global(&symbol_name(&pd.name), lty);
+                global.set_initializer(ctx.const_null(lty));
+                if self.unit.is_none() {
+                    global.set_internal_linkage();
+                }
+                global
+            } else {
+                self.module.add_external_global(&symbol_name(&pd.name), lty)
+            };
             self.pd_globals
                 .insert(pd.name.clone(), (global, pd.value_ty.clone()));
         }
@@ -2825,6 +3439,13 @@ impl<'a> Gen<'a> {
         let program = self.program;
         for f in &program.functions {
             if f.extern_ {
+                continue;
+            }
+            // The incremental mode emits one unit's functions per pass: a unit
+            // declares every function (so a cross-unit call resolves) and
+            // defines its own, and `_support` defines none of them (roadmap
+            // A-14 slice 1).
+            if !self.defines_function(f) {
                 continue;
             }
             FnGen::new(self, f)?.emit()?;
@@ -8200,13 +8821,27 @@ impl<'a> Gen<'a> {
                 elements.push(func.as_value());
             }
             let arr_ty = self.ctx.array_type(ptr, elements.len() as u64);
-            let global = self.module.add_global(
-                &crate::types::dyn_vtable_symbol(&vtable.trait_name, &vtable.type_name),
-                arr_ty,
-            );
-            global.set_initializer(self.ctx.const_array(ptr, &elements));
-            global.set_constant(true);
-            global.set_internal_linkage();
+            // The table's *definition* is the `_support` unit's in the
+            // incremental mode, because a coercion in any unit names it; the
+            // unit that writes a `&dyn` only declares it (roadmap A-14 slice
+            // 1).
+            let global = if self.defines_helpers() {
+                let global = self.module.add_global(
+                    &crate::types::dyn_vtable_symbol(&vtable.trait_name, &vtable.type_name),
+                    arr_ty,
+                );
+                global.set_initializer(self.ctx.const_array(ptr, &elements));
+                global.set_constant(true);
+                if self.unit.is_none() {
+                    global.set_internal_linkage();
+                }
+                global
+            } else {
+                self.module.add_external_global(
+                    &crate::types::dyn_vtable_symbol(&vtable.trait_name, &vtable.type_name),
+                    arr_ty,
+                )
+            };
             self.dyn_tables
                 .insert((vtable.trait_name.clone(), vtable.type_name.clone()), global);
         }
@@ -8909,8 +9544,13 @@ impl<'a> Gen<'a> {
             // and an external symbol is one LLVM will not inline into its
             // callers, which is why the C backend's copy of these bodies runs
             // 1.15x faster than this backend's. No runtime C body names a
-            // container symbol, so nothing outside the module calls one.
-            func.as_value().set_internal_linkage();
+            // container symbol, so nothing outside the module calls one. In
+            // the incremental mode the `_support` unit defines them and every
+            // other unit calls them, so they stay external there (roadmap
+            // A-14 slice 1).
+            if self.unit.is_none() {
+                func.as_value().set_internal_linkage();
+            }
             self.container_fns.insert(s.symbol, (func, ty));
         }
         Ok(())
@@ -10832,6 +11472,10 @@ impl<'a> Gen<'a> {
         // is free to inline it away or drop it.
         let body = |symbol: &str| -> Result<LlvmFunction<'a>, String> {
             let rt = self.rt(symbol)?;
+            // Module-private: it is no link-time name, and this module's own
+            // `-O2` is free to inline it away or drop it. Only the whole-program
+            // build emits these bodies at all; the incremental mode calls the
+            // runtime object's exported copies (`emits_runtime_accessors`).
             rt.func.as_value().set_internal_linkage();
             let bb = rt.func.append_block("entry");
             self.builder.position_at_end(bb);
