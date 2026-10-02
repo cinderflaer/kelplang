@@ -17,6 +17,13 @@ impl "std/str"
 pub const HORIZONTAL: i32 = 0
 pub const VERTICAL: i32 = 1
 
+// `GtkAlign`, which is what `props.align` has to become on the way into a GTK call. The core's
+// codes are its own order, so this is the one place the two numberings meet.
+const GTK_ALIGN_FILL: i32 = 0
+const GTK_ALIGN_START: i32 = 1
+const GTK_ALIGN_END: i32 = 2
+const GTK_ALIGN_CENTER: i32 = 3
+
 // `G_PRIORITY_DEFAULT` and `GTK_STYLE_PROVIDER_PRIORITY_APPLICATION`.
 const PRIORITY_DEFAULT: i32 = 0
 const PRIORITY_APP: u32 = 600
@@ -106,6 +113,19 @@ fun label_markup(text: &str, size: i32, bold: bool).R: String {
 fun bool_i32(b: bool).R: i32 = if b { 1 } else { 0 }
 
 fun no_classes().R: List<String> = List.empty()
+
+fun gtk_align(align: i32).R: i32 {
+    if align == core.ALIGN_START {
+        return GTK_ALIGN_START
+    }
+    if align == core.ALIGN_CENTER {
+        return GTK_ALIGN_CENTER
+    }
+    if align == core.ALIGN_END {
+        return GTK_ALIGN_END
+    }
+    return GTK_ALIGN_FILL
+}
 
 // The handler a button, checkbox or entry gets: a closure whose whole environment is the slot id.
 // The native side runs it on the loop's own thread, so `polyp_post` is an ordinary store.
@@ -273,8 +293,8 @@ fun apply_opts(w: gtk.Widget, props: &core.Props) {
     gtk.gtk_widget_set_hexpand(w, bool_i32(props.expand))
     gtk.gtk_widget_set_vexpand(w, bool_i32(props.expand))
     if props.align >= 0 {
-        gtk.gtk_widget_set_halign(w, props.align)
-        gtk.gtk_widget_set_valign(w, props.align)
+        gtk.gtk_widget_set_halign(w, gtk_align(props.align))
+        gtk.gtk_widget_set_valign(w, gtk_align(props.align))
     }
 }
 

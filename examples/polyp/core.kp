@@ -25,7 +25,13 @@ pub const KIND_PROGRESS: i32 = 7
 pub const KIND_SEPARATOR: i32 = 8
 pub const KIND_SCROLLED: i32 = 9
 
-// The kinds a user can activate, so the kinds a backend gives a widget id and a signal handler.
+// The alignment codes `props.align` carries, in the core's own order: a backend maps them to its
+// display's constants.
+pub const ALIGN_FILL: i32 = 0
+pub const ALIGN_START: i32 = 1
+pub const ALIGN_CENTER: i32 = 2
+pub const ALIGN_END: i32 = 3
+
 // The counters a smoke run reads. They are atomics because v2's were and the shape cost nothing:
 // a nested function cannot hold a passdown the frame also holds (plan/syntax.md 12.5).
 pd val stat_created: AtomicI32 = AtomicI32.new(0)
@@ -37,10 +43,11 @@ pd var stat_entry_texts: List<String> = List.empty()
 pd val focus_seen_flag: AtomicBool = AtomicBool.new(false)
 pd val focus_lost_flag: AtomicBool = AtomicBool.new(false)
 
+// The kinds a user can activate, so the kinds a backend gives a widget id and a signal handler.
 pub fun interactive(kind: i32).R: bool = kind == KIND_ENTRY || kind == KIND_BUTTON || kind == KIND_CHECKBOX
 
-// `GtkAlign`'s application-facing names, as the numbers a patch carries. The mapping to GTK's own
-// constants is the backend's business.
+// The alignment names an application writes. `props.align` carries one of the `ALIGN_*` codes (or
+// -1 for unset); which number a display's own alignment constant has is the backend's business.
 pub enum Align {
     Fill
     Start
@@ -49,10 +56,10 @@ pub enum Align {
 }
 
 fun align_code(a: Align).R: i32 = when a {
-    Fill -> 0
-    Start -> 1
-    Center -> 3
-    End -> 2
+    Fill -> ALIGN_FILL
+    Start -> ALIGN_START
+    Center -> ALIGN_CENTER
+    End -> ALIGN_END
 }
 
 // A child's key. One type per list: an application uses only `Str` keys or only `Int` keys, and
