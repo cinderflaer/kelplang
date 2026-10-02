@@ -1,5 +1,0 @@
-impl "std/regex"
-
-section(".text.boot") fun kmain() {
-    while true { }
-}

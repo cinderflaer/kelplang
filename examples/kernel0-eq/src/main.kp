@@ -1,0 +1,188 @@
+// Kernel stage 23: equality and the `View` surface with no libc behind them.
+//
+// Two things the freestanding subset could not do before this stage:
+//
+// * a `datac` with a `String` field. It has a declared `Pair.eq` for `==`, and
+//   the compiler also emits the derived key equality of every keyable type, so
+//   a `Map<Pair, i32>` resolves through it. That derived body compared the
+//   `String` field with `kelp_map_key_eq`, a `memcmp` in the hosted runtime
+//   object this image does not have; the compiler now emits the same
+//   length-aware byte loop into the module (`emit_freestanding_str_bodies`).
+// * `View.slice`/`View.to_string`. The view accessors were already lowered,
+//   but the two `std/str` and `std/regex` are written on had no freestanding
+//   body and the type itself was refused. The example slices a `str` view and
+//   copies a slice back into an owned `String`.
+//
+// The regex at the end is the third piece: `std/regex` is pure Kelp over
+// `List<u8>`/`List<i32>` and the allocator, and with the two above in place it
+// builds and matches with nothing left for `ld.lld` to resolve.
+impl "std/str"
+impl "std/regex"
+impl "std/option"
+impl "std/result"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+
+static mut ARENA: [u8; 262144] = [0; 262144]
+static mut USED: usize = 0
+static mut ALLOCS: usize = 0
+static mut DEALLOCS: usize = 0
+
+const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]
+
+// `align` is always a power of two, so the round-up is a divide and multiply:
+// v1 has no bitwise operators.
+fun align_up(value: usize, align: usize).R: usize {
+    return ((value + align - 1) / align) * align
+}
+
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    val out: Ptr<u8> = unsafe {
+        val start: usize = align_up(USED, align)
+        if start + size > 262144 {
+            Ptr.null()
+        } else {
+            USED = start + size
+            ALLOCS = ALLOCS + 1
+            val arena: Ptr<[u8; 262144]> = Ptr.from_mut(ARENA)
+            val base: Ptr<u8> = arena.cast<u8>()
+            base.byte_offset(start.to_isize())
+        }
+    }
+    return out
+}
+
+// The bump allocator frees nothing, so `dealloc` counts only. A null is not an
+// allocation, the same rule `free(NULL)` follows, so it is not counted.
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            DEALLOCS = DEALLOCS + 1
+        }
+    }
+}
+
+fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).R: Ptr<u8> {
+    val fresh: Ptr<u8> = alloc(new, align)
+    if fresh.is_null() {
+        return Ptr.null()
+    }
+    if p.is_null() == false {
+        var i: usize = 0
+        while i < old {
+            unsafe {
+                val src: Ptr<u8> = p.byte_offset(i.to_isize())
+                val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
+                dst.write(src.read())
+            }
+            i = i + 1
+        }
+        dealloc(p, old, align)
+    }
+    return fresh
+}
+
+// A `String` field, so the type is keyable and the compiler derives a hash and
+// an equality for it. The declared `eq` is what `==`/`!=` lower to (H-5), and
+// it compares the two fields without moving either operand.
+datac Pair(val name: String, val id: i32)
+
+fun Pair.eq(other: &Pair).R: bool {
+    return str.eq(self.name.as_str(), other.name.as_str()) && self.id == other.id
+}
+
+fun put_str(text: &str) {
+    uart.puts(str.ptr(text), str.len(text))
+}
+
+fun newline() {
+    uart.putc(10)
+}
+
+fun line(label: &str, text: &str) {
+    put_str(label)
+    put_str(text)
+    newline()
+}
+
+fun copy(text: &str).R: String {
+    return str.concat(text, "")
+}
+
+// The declared equality, and the derived key pair behind a `Map<Pair, i32>`.
+fun equality_lines() {
+    val a = Pair(name = copy("kelp"), id = 7)
+    val b = Pair(name = copy("kelp"), id = 7)
+    val c = Pair(name = copy("kelv"), id = 8)
+    if a == b {
+        line(label = "eq same: ", text = "yes")
+    }
+    if a != c {
+        line(label = "eq differ: ", text = "yes")
+    }
+
+    var m: Map<Pair, i32> = Map.empty()
+    m.insert(a, 1)
+    m.insert(c, 2)
+    if m.len() == 2 {
+        line(label = "map keys: ", text = "2")
+    }
+    if m.has(b) {
+        line(label = "map hit: ", text = "yes")
+    }
+}
+
+// `View.slice` cuts a `str` view without allocating, and `View.to_string` is
+// the one conversion that copies a slice into an owned `String`.
+fun view_lines() {
+    val text = copy("hello kelp")
+    val v = text.view()
+    val cut = v.slice(6, 10)
+    val word = cut.to_string()
+    line(label = "view slice: ", text = word.as_str())
+    if v.slice(0, 5).eq("hello".view()) {
+        line(label = "view eq: ", text = "yes")
+    }
+}
+
+// `std/regex`, the whole point of the two pieces above: `Match` and `RegexErr`
+// carry a `String`, and the engine reads its input through a `View` and copies
+// each match text out with `View.to_string`.
+fun regex_lines() {
+    val compiled = regex.compile("[a-z]+(\\d+)")
+    if let Ok(re) = compiled {
+        var rx = re
+        val found = rx.find("xx hello42")
+        if let Some(m) = found {
+            line(label = "regex match: ", text = m.text.as_str())
+        }
+        val groups = rx.captures("xx hello42")
+        if let Some(cc) = groups {
+            val first = cc.get(1)
+            if let Some(g) = first {
+                line(label = "regex group: ", text = g.as_str())
+            }
+        }
+    }
+}
+
+section(".text.boot") fun kmain() {
+    equality_lines()
+    view_lines()
+    regex_lines()
+    unsafe {
+        if ALLOCS == DEALLOCS {
+            line(label = "", text = "balanced")
+        }
+    }
+    uart.halt()
+}
+
+// The handler `[target] panic` names: every bounds check and the allocator's
+// null return call this with the compiler's own message. It prints `panic` and
+// loops, because a check that fired has no meaningful continuation.
+fun kp_panic(_msg: str) {
+    val msg: [u8; 6] = PANIC_MSG
+    val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
+    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.halt()
+}

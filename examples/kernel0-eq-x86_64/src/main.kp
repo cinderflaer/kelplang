@@ -1,0 +1,173 @@
+// Kernel stage 23 on x86-64: the same three shapes as `examples/kernel0-eq`
+// (a `String`-field `datac` with equality and a derived key pair, `View.slice`
+// and `View.to_string`, and a `std/regex` match) booted on QEMU's x86-64 `q35`
+// machine through the Xen PVH note. Only the UART differs: COM1 is port I/O
+// rather than memory-mapped, so there is no `Ptr` and no `mmio` grant.
+//
+// The first byte out is a newline, because SeaBIOS prints "Booting from ROM.."
+// with no newline of its own and the boot test compares whole lines.
+impl "std/str"
+impl "std/regex"
+impl "std/option"
+impl "std/result"
+impl "uart"
+
+static mut ARENA: [u8; 262144] = [0; 262144]
+static mut USED: usize = 0
+static mut ALLOCS: usize = 0
+static mut DEALLOCS: usize = 0
+
+fun align_up(value: usize, align: usize).R: usize {
+    return ((value + align - 1) / align) * align
+}
+
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    val out: Ptr<u8> = unsafe {
+        val start: usize = align_up(USED, align)
+        if start + size > 262144 {
+            Ptr.null()
+        } else {
+            USED = start + size
+            ALLOCS = ALLOCS + 1
+            val arena: Ptr<[u8; 262144]> = Ptr.from_mut(ARENA)
+            val base: Ptr<u8> = arena.cast<u8>()
+            base.byte_offset(start.to_isize())
+        }
+    }
+    return out
+}
+
+// The bump allocator frees nothing, so `dealloc` counts only, and a null is
+// not counted (the rule `free(NULL)` follows).
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            DEALLOCS = DEALLOCS + 1
+        }
+    }
+}
+
+fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).R: Ptr<u8> {
+    val fresh: Ptr<u8> = alloc(new, align)
+    if fresh.is_null() {
+        return Ptr.null()
+    }
+    if p.is_null() == false {
+        var i: usize = 0
+        while i < old {
+            unsafe {
+                val src: Ptr<u8> = p.byte_offset(i.to_isize())
+                val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
+                dst.write(src.read())
+            }
+            i = i + 1
+        }
+        dealloc(p, old, align)
+    }
+    return fresh
+}
+
+// A `String` field, so the type is keyable and the compiler derives a hash and
+// an equality for it. The declared `eq` is what `==`/`!=` lower to (H-5).
+datac Pair(val name: String, val id: i32)
+
+fun Pair.eq(other: &Pair).R: bool {
+    return str.eq(self.name.as_str(), other.name.as_str()) && self.id == other.id
+}
+
+fun put_str(text: &str) {
+    uart.puts(text)
+}
+
+fun newline() {
+    uart.putc(10)
+}
+
+fun line(label: &str, text: &str) {
+    put_str(label)
+    put_str(text)
+    newline()
+}
+
+fun copy(text: &str).R: String {
+    return str.concat(text, "")
+}
+
+// The declared equality, and the derived key pair behind a `Map<Pair, i32>`.
+fun equality_lines() {
+    val a = Pair(name = copy("kelp"), id = 7)
+    val b = Pair(name = copy("kelp"), id = 7)
+    val c = Pair(name = copy("kelv"), id = 8)
+    if a == b {
+        line(label = "eq same: ", text = "yes")
+    }
+    if a != c {
+        line(label = "eq differ: ", text = "yes")
+    }
+
+    var m: Map<Pair, i32> = Map.empty()
+    m.insert(a, 1)
+    m.insert(c, 2)
+    if m.len() == 2 {
+        line(label = "map keys: ", text = "2")
+    }
+    if m.has(b) {
+        line(label = "map hit: ", text = "yes")
+    }
+}
+
+// `View.slice` cuts a `str` view without allocating, and `View.to_string` is
+// the one conversion that copies a slice into an owned `String`.
+fun view_lines() {
+    val text = copy("hello kelp")
+    val v = text.view()
+    val cut = v.slice(6, 10)
+    val word = cut.to_string()
+    line(label = "view slice: ", text = word.as_str())
+    if v.slice(0, 5).eq("hello".view()) {
+        line(label = "view eq: ", text = "yes")
+    }
+}
+
+// `std/regex`: `Match` and `RegexErr` carry a `String`, and the engine reads
+// its input through a `View` and copies each match text out with
+// `View.to_string`.
+fun regex_lines() {
+    val compiled = regex.compile("[a-z]+(\\d+)")
+    if let Ok(re) = compiled {
+        var rx = re
+        val found = rx.find("xx hello42")
+        if let Some(m) = found {
+            line(label = "regex match: ", text = m.text.as_str())
+        }
+        val groups = rx.captures("xx hello42")
+        if let Some(cc) = groups {
+            val first = cc.get(1)
+            if let Some(g) = first {
+                line(label = "regex group: ", text = g.as_str())
+            }
+        }
+    }
+}
+
+section(".text.boot") fun kmain() {
+    newline()
+    equality_lines()
+    view_lines()
+    regex_lines()
+    unsafe {
+        if ALLOCS == DEALLOCS {
+            line(label = "", text = "balanced")
+        }
+    }
+    uart.halt()
+}
+
+// The handler `[target] panic` names: every bounds check calls this with the
+// compiler's own message, then loops.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}

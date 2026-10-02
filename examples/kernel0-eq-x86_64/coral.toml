@@ -1,0 +1,21 @@
+name = "kernel0-eq-x86_64"
+
+# Kernel stage 23 on the second ISA family: the same `String`-field equality,
+# `View` slicing and regex match as `kernel0-eq`, booted on QEMU's x86-64
+# `q35` machine. The target machine, the PVH boot and the COM1 driver are
+# kernel stage 20's (`examples/kernel0-x86_64`); the allocator hook is the one
+# `kernel0-eq` configures.
+[target]
+mode = "freestanding"
+triple = "x86_64-unknown-none"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+realloc = "realloc"
+
+# `main` writes the arena through a `Ptr<u8>`; `uart` moves bytes through
+# `in`/`out`, so neither has a device address for an `mmio` grant.
+[unsafe]
+modules = ["main", "uart"]
