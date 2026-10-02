@@ -23,17 +23,30 @@ plain constructors are still in the library, so both styles compile.
 key, a matched widget is updated in place, a moved keyed child is reordered
 rather than rebuilt, and focus, selection and scroll survive. It also adds
 `scrolled`, `checkbox`, `progress`, `separator`, the layout options `spacing`,
-`margin`, `expand`, `align` and `class`, and the app-level `polyp.css`. Examples
-`polyp-counter` and `polyp-counter-v0` keep working unchanged; `examples/polyp-todo`
-is the keyed-list program and `plan/polyp-v2.md` is the design note.
+`margin`, `expand`, `align` and `class`, and the app-level `polyp.css`.
+`plan/polyp-v2.md` is its design note.
 
-There is no published version number; "v2" is the patch plus what is listed
-here. `examples/polyp-v0/` and `examples/polyp-counter-v0/` are a frozen copy of
-v0 (see [Versions](#versions)).
+**v3** splits the library into a backend-neutral **core** and one module per
+backend. The tree, the keyed diff and the Elm loop are `core.kp`, which names no
+GTK symbol, calls no `extern fun` and uses no `unsafe`; the answer to "what
+changed" is a `List<Patch>` of plain data. GTK is one implementation of the
+`core.Backend` interface (`gtk_backend.kp`) and a **headless** backend
+(`headless_backend.kp`) applies the same patches to an in-memory tree, so the
+loop and a whole program can be tested with no display at all on either compiler
+backend. The application surface is unchanged apart from the tree's type, which
+is `core.Node<M>` now that it lives in the core; `plan/polyp-v3.md` is the design
+note. Examples `polyp-counter` and `polyp-counter-v0` keep working;
+`examples/polyp-todo` is the keyed-list program and `examples/polyp-core-test` is
+the display-free test project.
+
+There is no published version number; "v3" is the backend split plus what is
+listed here. `examples/polyp-v0/` and `examples/polyp-counter-v0/` are a frozen
+copy of v0 (see [Versions](#versions)).
 
 ## What a program looks like
 
 ```kelp
+impl "deps/polyp/core"
 impl "deps/polyp/lib" caps(ui = ["*"])
 impl "std/fmt"
 impl "std/str"
@@ -49,7 +62,7 @@ enum Msg {
 // A plain `fun` value, not a closure: the entry hands it the new text.
 fun changed(text: String).R: Msg = Msg.Changed(text = String.from_str(text.as_str()))
 
-fun view(s: Counter).R: polyp.Node<Msg> {
+fun view(s: Counter).R: core.Node<Msg> {
     return polyp.column { k ->
         k.text_styled("a counter", 0, true)
         val shown = fmt.int(s.count.to_i64())
@@ -84,10 +97,11 @@ fun main() {
 ```
 
 `examples/polyp-counter/` is that program, complete and buildable. The plain
-style of the same view is still available:
+style of the same view is still available (and `core.Node<M>` is the tree type
+v3 moved into the core):
 
 ```kelp
-var kids: List<polyp.Node<Msg>> = List.empty()
+var kids: List<core.Node<Msg>> = List.empty()
 kids.push(polyp.text(String.from_str("hi")))
 kids.push(polyp.button(String.from_str("+1"), Msg.Inc))
 return polyp.plain_column(kids)
@@ -106,8 +120,13 @@ a taste in UI frameworks:
 - Instead, a button's handler is a closure whose entire environment is one small
   integer. It posts that integer to a fixed-size C queue
   (`include/polyp_queue.h`), and the loop, which *does* own the state, reads the
-  integer, finds the `Msg` its slot holds, calls `update`, re-runs `view` and
-  patches the widgets.
+  integer, finds the node it names, takes that node's `Msg` out of a fresh
+  `view`, calls `update`, re-runs `view` and patches the widgets.
+
+That is why the split into a core and a backend is not just tidiness: the only
+thing a callback carries is an integer, and the only thing a backend is told is
+plain `Props`, so the loop and the diff are expressible, and testable, with no
+display at all.
 
 GTK callbacks and the loop run on the same thread (`g_signal_connect` handlers
 run inside `g_main_context_iteration`, which the loop calls), so the queue needs
@@ -238,13 +257,13 @@ pub fun schedule_focus_entry(delay_ms: u32, index: i32)
 - `css(text)` loads a `GtkCssProvider` on the default display at
   `GTK_STYLE_PROVIDER_PRIORITY_APPLICATION`, so ordinary CSS applies to every
   widget that carries a matching class.
-- **Ids are slots.** The loop owns one grow-only table for the run; a button,
-  checkbox or entry takes the next slot at creation and its handler captures
-  that index forever. `QUIT_ID` is `-2`, because `polyp_poll` answers `-1` for an
-  empty queue. A surviving widget keeps its id, and the patch writes the current
-  tree's `Msg` into that slot; a removed widget's slot becomes `Dead`, so a
-  queued id whose widget is gone is dropped instead of reaching `update`.
-  An application should still carry a `Msg` rather than post a raw id.
+- **An id is an interactive widget's.** The core and the backend derive the same
+  integer from the same rule: the nth `Entry`, `Button` or `Checkbox` a run
+  creates is id n, ids only grow and are never reused, and a handler captures its
+  id forever. A surviving widget keeps its id; a removed one's id resolves to no
+  path, so a queued id whose widget is gone is dropped instead of reaching
+  `update`. `QUIT_ID` is `-2`, because `polyp_poll` answers `-1` for an empty
+  queue. An application should still carry a `Msg` rather than post a raw id.
 - `schedule_post` / `schedule_quit` post an id after a delay;
   `schedule_set_entry` asks the loop to set an entry's text after a delay, which
   fires that entry's real `changed` signal; `schedule_focus_entry` sets the
@@ -268,8 +287,10 @@ nothing keeps it after the widgets exist.
 ## Reconciliation, exactly
 
 Every state change calls `view` for the whole tree, but the loop keeps the live
-widgets and **patches** them. For each container (and for the window's single
-child):
+widgets and **patches** them. v3 makes the decision a pure function,
+`core.diff(old, new) -> List<Patch>`, whose output is one of `Create`,
+`Update`, `Remove` or `Move`, each naming a path; the backend applies that list
+and nothing else. For each container (and for the window's single child):
 
 - A child is matched to its previous self **by key** when it has one, and by
   **position and widget kind** otherwise. Kinds are part of the match, so a
@@ -284,8 +305,8 @@ child):
   (`gtk_box_reorder_child_after`), not rebuilt. When the matched sequence is
   still in order the survivors are not touched at all, which is what keeps a
   removal from disturbing the focus.
-- A child the new tree does not name is removed from its container and its
-  slots are retired; its subtree is counted as destroyed.
+- A child the new tree does not name is removed from its container, and its
+  subtree is counted as destroyed.
 - A programmatic write to a checkbox or an entry blocks that widget's signal
   first (`g_signal_handler_block`), so setting the widget's state to match the
   model cannot post the `Msg` that state came from.
@@ -324,8 +345,11 @@ packaging limitation, not a design choice:
    ln -s ../../../polyp src/deps/polyp      # examples/polyp-counter does this
    ```
 
-   The library's own `impl "deps/polyp/gtk"` / `"deps/polyp/queue"` lines already
-   spell that location, so the copy has to land exactly there.
+   The library's own `impl "deps/polyp/core"`, `"deps/polyp/gtk"` and
+   `"deps/polyp/queue"` lines already spell that location, so the copy has to
+   land exactly there. `core.kp` and `headless_backend.kp` are pure Kelp and
+   need no `[extern.*]` section; `gtk_backend.kp` is the one that calls the GTK
+   binding.
 
 2. **Paste the `[extern.*]` sections into the consumer's `coral.toml`.** A
    library has no manifest of its own, so the native symbols, the header, the
@@ -372,8 +396,10 @@ parameters on a `fun(...)` literal instead.
 
 ## Versions
 
-`examples/polyp/` and `examples/polyp-counter/` are v2, and `examples/polyp-todo/`
-is the v2 keyed-list program. `examples/polyp-v0/` is a frozen copy of the v0
+`examples/polyp/` and `examples/polyp-counter/` are v3, and `examples/polyp-todo/`
+is the v3 keyed-list program, whose model, view and update live in
+`src/app.kp` so `examples/polyp-core-test` can run the same program on the
+headless backend. `examples/polyp-v0/` is a frozen copy of the v0
 library and `examples/polyp-counter-v0/` is the v0 counter, whose `src/deps/polyp`
 link points at `polyp-v0`, so the two examples do not fight over the
 `column`/`row` names and both build:
@@ -414,10 +440,11 @@ anything else on stdout fails the script.
   there is no interpolator and no per-frame hook.
 - **No theming beyond CSS.** `polyp.css` is the only hook: no palette, no
   dark-mode switch, no per-widget style object.
-- **No platform but GTK on Linux.** The library is a GTK binding, not an
-  abstraction over one.
-- **Ids are slots, so they are stable but incidental.** An application that
-  posts a raw id (rather than carrying a `Msg`) is leaning on creation order;
+- **GTK is the only *drawn* backend.** v3 puts the loop and the diff behind a
+  `core.Backend` interface, so a raster or framebuffer backend is a new module
+  rather than a rewrite, but the only platform that draws today is GTK.
+- **An id still leans on creation order.** An application that posts a raw id
+  (rather than carrying a `Msg`) is relying on the order widgets are created in;
   the smoke runs do, deliberately, because they have no user to click anything.
 - **No exclusive captures.** A builder block may read the borrowed state but
   `state.count += 1` inside a block is still a language error
@@ -426,8 +453,8 @@ anything else on stdout fails the script.
   the `[extern.*]` sections and places the sources under `src/deps/polyp/`.
   This is the one thing that makes Polyp awkward to consume, and it is the same
   for every Kelp library.
-- **GTK is required to build and run.** There is no pure-Kelp proof of the loop
-  without a display; the smoke tests run a real GTK window under Xvfb, which is
-  what this machine can do. The focus tests read the toplevel's focus widget by
-  handle rather than `gtk_widget_has_focus`, which needs a window manager to
-  hand over global input focus.
+- **A display is required to *draw*.** The GTK smoke tests still run a real
+  window under Xvfb, and the focus tests read the toplevel's focus widget rather
+  than `gtk_widget_has_focus`, which needs a window manager to hand over global
+  input focus. The loop itself no longer needs one: `examples/polyp-core-test`
+  runs the whole todo program on the headless backend with no display.

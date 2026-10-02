@@ -253,3 +253,17 @@ binding that has to normalise a length or clamp an index in a kernel can now wri
 rather than in an `asm` block. The rest of the list is unchanged: a freestanding `extern fun`
 still has no trampoline, `library`/`header`/`pkg_config` still have no effect in that mode, and
 `std/mem` (whose `alloc_raw` is libc `malloc`) is still refused by name.
+
+## Status update (2026-10-03, Polyp v3 stage 1)
+
+- **No gap here is closed, and none is newly blocked.** Polyp v3 split its library into a
+  backend-neutral `core.kp`, a `gtk_backend.kp` and a `headless_backend.kp`, which is a library
+  answer to "no platform but GTK" rather than a compiler one: the core holds no `extern` call at
+  all, and the GTK binding is unchanged from v2 (the same `[extern."deps/polyp/gtk"]` and
+  `[extern."deps/polyp/queue"]` sections, the same symbols). `plan/polyp-v3.md` is the design and
+  `examples/polyp-todo/smoke.sh` still runs both backends.
+- One consequence worth recording for a *future* backend: a backend interface that passes plain
+  data (`Props`, `Patch`) and integers is expressible with what gap 1 (the opaque handle), gap 4
+  (the C-ABI callback) and gap 6 (the `ui` domain) already provide, which is why the split needed
+  no language change. A raster or soft backend that needs a `datac` to cross an `extern fun`
+  boundary would still hit gap 9.

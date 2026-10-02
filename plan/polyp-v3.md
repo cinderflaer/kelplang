@@ -18,20 +18,25 @@ implementation of an interface.
 ```
         application            view(S) -> Node<M>      update(mut S, M)
              |
-        polyp (lib.kp)         the v1/v2 surface the examples use: column { }, row { },
-             |                 keyed { }, widgets, class, css, run, stats, schedule_*
+        polyp (lib.kp)         the v1/v2 surface an application imports: column { },
+             |                 row { }, keyed { }, widgets, class, css, run, stats,
+             |                 schedule_*
+             v
+        core.kp  (hosted, pure Kelp: no GTK, no extern, no unsafe)
+        ----------------------------------------------------------
+        Node<M>, Children, Key, Opts, kind constants, Props, Path/Seg, Patch
+        diff(old, new) -> List<Patch>          the matching rules, pure
+        trait Backend                          one interface, no `M` in it
+        apply_patches(backend, patches)        the one walk every backend delegates to
+        run<B: Backend, S, M>(...)             the Elm loop, the ids, the counters
+        Event, Stats, the focus check
              |
-   +---------+---------------------------+
-   |                                     |
- core.kp  (hosted, pure Kelp)      headless_backend.kp (hosted, pure Kelp)
-   Node<M>, Children, Key, Opts      an in-memory retained tree, the same counters,
-   Kind, Props                       a scripted event list, a text dump
-   Path/Seg, Patch
-   trait Backend
-   diff(old, new) -> List<Patch>
-   run<B: Backend, S, M>(...)        gtk_backend.kp  (hosted, GTK)
-   apply_patches(backend, patches)     the live GTK widget tree, the SAME counters,
-   Event, Stats                        real signals, focus, gtk.kp + queue.kp + the C shim
+      +------+-----------------------------------+
+      |                                          |
+   gtk_backend.kp (hosted, GTK)        headless_backend.kp (hosted, pure Kelp)
+   the live GTK widget tree,           an in-memory retained tree, the same
+   real signals, focus,                counters, a scripted event list and a
+   gtk.kp + queue.kp + the C shim      text dump of the tree
 ```
 
 `core.kp` holds the loop, the tree and the matching. It names no GTK symbol, has no `extern`
@@ -65,10 +70,12 @@ Move(path, to_index)          a matched keyed node whose position changed
   itself, which is what lets it be `M`-free, and the reason `Node` can carry closures while a
   patch cannot.
 
-Matching is v2's, unchanged: a new child with a key takes the first unused old child with the
-same key; a new child without one takes the old child at the same index when it is unused and of
-the same kind. A duplicate key among one container's children panics with the key, before any
-widget is touched.
+Matching is v2's, with one tightening: a new child with a key takes the first unused old child
+with the same key, and a new child without one takes the old child at the same index when it is
+unused, of the same kind, **and unkeyed too**. v2 also let an unkeyed new child take a keyed old
+one at its index, which changes a node's identity from a key to a position and so cannot be
+expressed as a stable path; the wider rule was dropped rather than given a second path field.
+A duplicate key among one container's children panics with the key, before any widget is touched.
 
 ### The order patches are emitted in
 
@@ -96,39 +103,58 @@ lean on when they schedule a raw post.
 
 ```
 trait Backend {
-    fun mut Self.apply(patches: &List<Patch>)   // one line: core.apply_patches(self, patches)
-    // The primitives the shared walker calls. `parent` and `at` place the widget in its box.
-    fun mut Self.make(id, parent, at, kind, props: &Props)
-    fun mut Self.patch(id, props: &Props)
-    fun mut Self.drop(id)
-    fun mut Self.place(id, parent, at)
+    fun mut Self.apply(patches: &List<Patch>)     // one line: core.apply_patches(self, patches)
+    // The four widget operations the shared walker calls. A backend turns a path into its own
+    // node; `at` is the place in the parent, and the parent is the path without its last segment.
+    fun mut Self.make(path: &Path, at: i32, kind: i32, props: &Props)
+    fun mut Self.patch_widget(path: &Path, props: &Props)
+    fun mut Self.drop_widget(path: &Path)
+    fun mut Self.place_widget(path: &Path, to_index: i32)
     // What the loop needs from a display.
-    fun mut Self.pump()                          // GTK: one main-context iteration
-    fun mut Self.poll() -> Event                 // Post(id) / Edit / Focus / Quit / None
-    fun Self.focus() -> Option<i32>
+    fun mut Self.pump()                           // GTK: one main-context iteration
+    fun mut Self.poll() -> Event                  // Post(id) / Edit / Focus / Quit / Idle
+    fun Self.path_of(id) -> option.Option<Path>
+    fun Self.focus() -> option.Option<i32>
     fun mut Self.set_focus(id)
-    fun mut Self.set_entry_text(id, text: &str)  // through the display's own signal
+    fun mut Self.set_entry_text(id, text: &str)   // through the display's own signal
     fun Self.entry_text(id) -> String
-    fun Self.entry_ids() -> List<i32>            // entries in tree order
-    fun Self.path_of(id) -> Option<Path>
+    fun Self.entry_ids() -> List<i32>             // entries in tree order
+    fun Self.entries_built() -> i32
     fun Self.stats() -> Stats
 }
 ```
 
 `apply` is implemented once per backend as a one line delegation to `core.apply_patches`, so the
-walk that turns a path into an id, allocates an id for a create, retires the ids of a removed
-subtree and calls the primitives lives in the core and cannot drift between backends. A backend
-therefore writes widget code only.
+walk that turns a path into a widget call, and the id rule, live in one place and cannot drift
+between backends. What each backend writes is the widget operations on *its own* retained tree (a
+live `Mount` for GTK, an `HNode` for the headless one) plus the events its display produces. The
+loop `run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Node<M>,
+update: fun (mut S, M)) -> S` owns the state, the path-to-id table, the focus check and the
+counters, and it names no backend.
 
-The loop `run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Node<M>,
-update: fun (mut S, M)) -> S` owns the state, the slot table and the focus check, and it names no
-backend. This is the trait form the design asked for, and the language handles it: a trait method
-may take `&List<Patch>` and return an `Option<Path>`, a generic function may take `mut B` and call
-the bound's methods, and an impl may live in the type's own module (`gtk_backend.kp`) while the
-trait lives in `core.kp` (`tests/projects/traits_cross` is the same shape). The single constraint
-found is that a *default* method whose signature names a type of the trait's own module is
-resolved again in the implementing module and does not see it, so `apply` is written out per
-backend instead of defaulted; the shared walker makes that one line.
+This is the trait form the design asked for, and the language handles it: a trait method may take
+`&List<Patch>` and return `option.Option<Path>`, a generic function may take `mut B` and call the
+bound's methods, and an impl may live in the type's own module (`gtk_backend.kp`) while the trait
+lives in `core.kp` (`tests/projects/traits_cross` is the same shape). Three constraints were
+found, none of them a change of plan:
+
+- A *default* method whose signature names a type of the trait's own module is resolved again in
+  the implementing module and does not see it, so `apply` is written out per backend instead of
+  defaulted; the shared walker makes that one line.
+- `option.Option<T>` is reached as `option.Option<T>`, its variants match by their bare names, and
+  a module that names it imports `std/option`.
+- A capability is checked at the *calling* module, so the facade `lib.kp` has to delegate `ui` to
+  `gtk_backend.kp` (`impl "deps/polyp/gtk_backend" caps(ui = ["*"])`); v2 needed no clause because
+  the GTK calls were in the same module the application granted.
+
+## The facade, and what an application imports
+
+`lib.kp` stays the module an application imports: `polyp.column { k -> ... }`, the plain
+constructors, `polyp.run`, `polyp.css`, the `schedule_*` helpers and the counters, each one a thin
+forward to `core` or `gtk_backend`. Kelp has no type re-export, so the tree type is spelled
+`core.Node<M>` in a `view` signature and the examples import `deps/polyp/core` as well; that is the
+one source change v3 asked of them, and both smoke scripts' assertions are untouched. The
+`[extern.*]` sections an application pastes are unchanged, so no `coral.toml` changed.
 
 ## The five stages
 

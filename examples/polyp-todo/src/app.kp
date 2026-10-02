@@ -162,7 +162,7 @@ pub fun update(state: mut Model, msg: Msg) {
 
 // One scheduled input, as data: the delay the GTK backend arms a timeout with, and the event the
 // headless backend hands the loop. Both backends then run the same sequence.
-pub datac Step(val delay_ms: i32, val event: core.Event)
+pub datac Step(val delay_ms: u32, val event: core.Event)
 
 // The sequence the smoke runs drive themselves with: focus the entry, type three titles through
 // the entry's own `changed` signal, add each one, tick the second row's checkbox, move the third

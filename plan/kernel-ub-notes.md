@@ -1488,3 +1488,16 @@ compiler bug would be a miscompile with no diagnostic); that a program does not
 call a `mut Self` method through a shared `&dyn` (the call is refused at the
 type level, but the representation carries no mutability); and anything about
 the concrete type behind a `&dyn`, since the value carries no type tag.
+
+## Library note: Polyp v3's core and backends (2026-10-03, not a kernel stage)
+
+This stage is a library change (`examples/polyp/`), not a compiler one, so it adds no new way to
+reach undefined behaviour and nothing in the compiler changed. What it does need recorded is the
+one shape it leans on: a `core.Backend` bound monomorphizes per implementing type, so
+`GtkBackend` is checked against the trait's `make`/`patch_widget`/`drop_widget`/`place_widget`
+signatures once, with `core.apply_patches` inlined into each backend's `apply` by the front end.
+An implementation whose signature drifted would be a compile error naming the method, not a
+runtime hazard, and the trait's methods carry no raw pointer or lifetime an implementation could
+lie about. The GTK backend still calls `extern` symbols whose prototypes come from `gtk/gtk.h`,
+which is `plan/user-ffi-gap-analysis.md` gap 3 and is unchanged: a wrong prototype is still
+outside what the compiler checks.
