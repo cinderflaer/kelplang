@@ -329,6 +329,52 @@ moves the third up, removes the middle one, and quits, printing the final model
 and the library's counters. The test asserts those counters, and that the entry
 still shows the last text typed even though the model cleared it.
 
+## The software rasterizer (v3 stage 2)
+
+`examples/polyp/soft/` is the layer a **soft** backend draws through with no widget toolkit and
+no display, and the first part of Polyp built to survive a bare-metal build. It is integer-only
+(no `f32`/`f64`, so no soft-float libcall on a riscv64 target), calls no libc and no OS, never
+allocates, and the only external facts it has are a pixel pointer and a stride.
+
+```kelp
+val base: Ptr<[u32; N]> = unsafe { Ptr.from_mut(FRAME) }   // or Ptr.from_ref(&buf) for a local
+val screen = fb.new(pixels = base.cast<u32>(), width = N.to_i32(), height = 1, stride_px = N.to_i32())
+val clip = draw.clip(fb.Rect(x = 0, y = 0, w = 320, h = 200))
+val painted = draw.fill_round_rect(screen, clip, 8, 8, 64, 32, 6, 0xFF3050A0)
+```
+
+| Module | What it holds | `unsafe` |
+| --- | --- | --- |
+| `fb.kp` | `Fb(pixels, width, height, stride_px)`, `Rect`, the pixel store/load, `checksum` | yes |
+| `draw.kp` | `ClipStack` (fixed depth 8) and every primitive: `fill_rect`, `stroke_rect`, `fill_round_rect`/`stroke_round_rect`, `hline`/`vline`, `line`, `blend_pixel`/`blend_over`, `blit_mask8` | yes |
+| `font.kp` | a hand-drawn 5x7 face for ASCII 32..126, `text_width`/`text_height`, `draw_text` at scale 1..4 | no |
+| `damage.kp` | `Damage`, at most 16 dirty rectangles, `add`/`clear`/`count`/`at`/`bounds` | no |
+| `debug.kp` | `dump_ppm`, hosted only | yes |
+
+Only the three modules that dereference a pixel are on a consumer's `[unsafe] modules` list;
+`font` and `damage` are not. `debug.kp` is a separate file so a freestanding project, which does
+not import it, never compiles `std/fs`.
+
+Every primitive clips to `clip.top() ∩ fb.bounds()` and returns the number of pixels it wrote, so
+a frame's cost can be asserted. The blend is exact source-over per channel,
+`(src * a + dst * (255 - a) + 127) / 255` in `u64`. `draw_text` renders any byte outside
+32..126 as a replacement box, one box per byte, so a multi-byte UTF-8 scalar is several boxes;
+`text_width` counts bytes. `checksum(fb)` is FNV-1a 64 over the pixels row by row.
+
+Its tests live in `examples/polyp-soft-test/` and run in the plain development shell, with no
+display, on both compiler backends:
+
+```sh
+nix-shell /path/to/dev.nix --run 'cd kelpc && cargo test --test compile_and_run polyp_soft'
+nix-shell /path/to/dev.nix --run 'cd kelpc && KELPC_ORACLE=c cargo test --test compile_and_run polyp_soft'
+```
+
+Each primitive is compared pixel for pixel against an independent per-pixel reference written in
+the test project, on fixed-seed inputs with negative and zero sizes and clips on every edge; three
+fixed scenes print golden FNV checksums; the damage list is checked to stay within 16 entries and
+to cover every point ever added. Three API contracts panic (`text scale must be in 1..=4`, `clip
+stack depth 8 exceeded`, `clip stack is empty`). `plan/polyp-v3.md` stage 2 is the design.
+
 ## Using the library
 
 Kelp has **no manifest for a library**, and a project's modules resolve only

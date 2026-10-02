@@ -1,0 +1,61 @@
+// Hosted debugging output for the software raster (Polyp v3 stage 2).
+//
+// `dump_ppm` writes a binary `P6` PPM of a framebuffer, for a developer who wants to look at a
+// frame. It is a *hosted* module on purpose: it is the only one in `soft/` that names `std/fs`,
+// and a freestanding image never imports it, so the freestanding build never sees the module at
+// all. Stage 4's project imports `fb`/`draw`/`font`/`damage` and not this.
+//
+// It reads raw pixels (a framebuffer is what it dumps), so a project that imports it lists it
+// under `[unsafe] modules`. The integer-to-decimal writer is spelled out rather than reached
+// through `std/fmt`, because a PPM header is five small numbers and a `String` per number would
+// allocate for nothing.
+impl "deps/polyp/soft/fb"
+impl "std/fs"
+
+// Push the decimal digits of a non-negative `i64`.
+fun push_uint(out: mut Bytes, n: i64) {
+    if n <= 0 {
+        out.push(48)
+        return
+    }
+    var buf: [u8; 20] = [0; 20]
+    var k: usize = 0
+    var v: i64 = n
+    while v > 0 {
+        buf.set(i = k, v = (48 + (v % 10).to_u8()))
+        v = v / 10
+        k += 1
+    }
+    while k > 0 {
+        k -= 1
+        out.push(buf.get(i = k))
+    }
+}
+
+pub fun dump_ppm(f: fb.Fb, path: &str) {
+    var out: Bytes = Bytes.empty()
+    out.push(80)
+    out.push(54)
+    out.push(10)
+    push_uint(out, f.width.to_i64())
+    out.push(32)
+    push_uint(out, f.height.to_i64())
+    out.push(10)
+    out.push(50)
+    out.push(53)
+    out.push(53)
+    out.push(10)
+    var y: i32 = 0
+    while y < f.height {
+        var x: i32 = 0
+        while x < f.width {
+            val p: u32 = unsafe { f.get(x, y) }
+            out.push(((p >> 16) & 0xFF).to_u8())
+            out.push(((p >> 8) & 0xFF).to_u8())
+            out.push((p & 0xFF).to_u8())
+            x += 1
+        }
+        y += 1
+    }
+    fs.write(path, out)
+}
