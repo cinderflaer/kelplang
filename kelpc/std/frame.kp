@@ -1,0 +1,53 @@
+/* std/frame: a physical frame as a capability (kernel stage 18, MK10-S1's
+   second half, `plan/irq-frame-caps.md`).
+
+   A physical frame is a 4 KiB-aligned page a driver may own. Like a `Line`,
+   the frame is a *value* and `claim` is the only constructor: the compiler
+   checks the address against the calling module's `frames` grant at the call,
+   refuses a constant that is not `4096`-aligned, and refuses a misaligned
+   address at run time with a message. A constant address has to fall inside a
+   granted range, and a computed one is refused unless the grant is `["*"]`.
+
+       datac Frame(val addr: usize)
+
+       fun claim(addr: usize).R: Frame
+       fun Frame.addr().R: usize
+       fun Frame.offset(byte: usize).R: usize
+
+   `offset` is the only way this module hands an address back out, and it is
+   bounds-checked against the frame's own size, so a caller cannot walk out of
+   the frame by asking for byte 4096. What it cannot do is stop the caller from
+   walking on from the returned *number*: an offset applied later is the same
+   arithmetic the `mmio` check already declines to revisit
+   (`plan/device-caps.md`), and DMA is not tracked at all.
+
+   A hosted program may import this module and claim a frame as well: the check
+   is a compile-time one, but a hosted program has no physical frames of its
+   own, so a frame it "claims" is only the address the compiler admitted.
+   Freestanding is where the address names something. */
+
+datac Frame(val addr: usize)
+
+// The receipt for a `frames` grant: a frame at a 4 KiB-aligned address the
+// calling module was granted. The alignment is checked again here, because a
+// computed address is admitted under the `["*"]` grant and the compiler cannot
+// fold it.
+fun claim(addr: usize).R: Frame {
+    if addr % 4096 != 0 {
+        panic("Frame.claim: address is not 4096-aligned")
+    }
+    return Frame(addr = addr)
+}
+
+// The frame's address.
+fun Frame.addr().R: usize = addr
+
+// The address `byte` bytes into the frame. The byte is bounds-checked against
+// the frame's own 4096 bytes, so this cannot leave the frame; the returned
+// address is a plain `usize`, and nothing here says what is mapped there.
+fun Frame.offset(byte: usize).R: usize {
+    if byte >= 4096 {
+        panic("Frame.offset: byte is outside the frame")
+    }
+    return addr + byte
+}

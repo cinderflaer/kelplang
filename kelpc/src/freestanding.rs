@@ -69,9 +69,18 @@ use crate::types::Ty;
 /// Kelp or a compiler builtin, with no libc call and no allocation behind them.
 /// Every other shipped module is refused, by name, when it is part of the
 /// program. `std/arena` (kernel stage 13) is pure pointer arithmetic and needs
-/// no allocator, so it joins the three pure modules.
-pub const ALLOWED_STD_MODULES: &[&str] =
-    &["std/atomic", "std/option", "std/result", "std/arena"];
+/// no allocator, so it joins the three pure modules. `std/irq` and `std/frame`
+/// (kernel stage 18, `plan/irq-frame-caps.md`) are a `datac` and two methods
+/// each, so they are pure Kelp too: they carry the capability by construction
+/// and their numbers come from the caller's grant, not from a runtime.
+pub const ALLOWED_STD_MODULES: &[&str] = &[
+    "std/atomic",
+    "std/option",
+    "std/result",
+    "std/arena",
+    "std/irq",
+    "std/frame",
+];
 
 /// The one module that is allowed to be *part* of a freestanding program while
 /// only some of its functions are callable, and the ones that are. A `str` is a
@@ -144,9 +153,13 @@ const STRING_BUILDER_STD_STR_FUNCTIONS: &[&str] = &["concat", "from_u64", "from_
 
 /// The `std/*` modules that may be *part* of a freestanding program without
 /// being callable. `std/str` is narrowed to its five operations at each call
-/// site; `std/mem` is here only because `std/str` imports it, and neither
-/// module's other functions are emitted (`prune`).
-const PRESENT_STD_MODULES: &[&str] = &[STD_STR, "std/mem"];
+/// site; `std/mem` is here only because `std/str` imports it; and `std/rt`
+/// (the capability matcher) is injected by the resolver for any module that
+/// holds a capability domain, which `std/irq` and `std/frame` now are. None of
+/// the three is callable once `prune` has dropped its functions; the
+/// `irq`/`frames` checks are front-end and emit no matcher call, so the
+/// injected runtime leaves no symbol behind.
+const PRESENT_STD_MODULES: &[&str] = &[STD_STR, "std/mem", crate::stdlib::RT_MODULE];
 
 /// Enforces the allowed set for `project`'s freestanding mode. A hosted project
 /// (the default, and what a manifest with no `[target]` section is) passes
@@ -857,7 +870,7 @@ impl Checker<'_> {
 
     /// The `mmio` gate (kernel stage 16, MK10-S1): in a freestanding build, a
     /// `Ptr.from_addr` may only name an address the module was granted. The
-    /// address is folded when it is a compile-time constant (`const_addr`)
+    /// address is folded when it is a compile-time constant (`stdlib::const_int`)
     /// and matched against the module's half-open ranges; a non-constant address
     /// needs the whole-address-space grant `["*"]`, and a module with no grant
     /// at all is refused before either question is asked.
@@ -882,10 +895,10 @@ impl Checker<'_> {
                 module,
             ));
         }
-        if patterns.iter().any(|p| p == crate::stdlib::MMIO_ANY) {
+        if patterns.iter().any(|p| p == crate::stdlib::RANGE_ANY) {
             return Ok(());
         }
-        let Some(addr) = args.first().and_then(const_addr) else {
+        let Some(addr) = args.first().and_then(crate::stdlib::const_int) else {
             return Err(unavailable(
                 format!(
                     "'Ptr.from_addr' takes an address the compiler cannot fold, and module '{module}' holds only the range(s) {}; a computed address needs the whole-address-space grant `caps(mmio = [\"*\"])`",
@@ -895,7 +908,7 @@ impl Checker<'_> {
                 module,
             ));
         };
-        if crate::stdlib::mmio_covers(&patterns, addr) {
+        if crate::stdlib::range_covers("mmio", &patterns, addr) {
             return Ok(());
         }
         Err(unavailable(
@@ -906,51 +919,5 @@ impl Checker<'_> {
             span,
             module,
         ))
-    }
-}
-
-/// The compile-time value of a `Ptr.from_addr` argument, when the compiler can
-/// fold it: an integer or `char` literal, a `const` (already folded to a
-/// literal by `infer.rs`), and the arithmetic and bitwise operators over
-/// those. Anything else - a local, a parameter, a `static`, a call, an `asm`
-/// result - is not a constant address, and `Checker::check_mmio` says so.
-///
-/// A value is cut to 64 bits after every step, which is what `usize`
-/// arithmetic does on the target, so a folded expression means what the
-/// emitted code would compute rather than what unbounded `i128` arithmetic
-/// would.
-fn const_addr(expr: &Expr) -> Option<u128> {
-    const MASK: u128 = u64::MAX as u128;
-    match &expr.kind {
-        ExprKind::IntLit(v) if *v >= 0 => Some(*v as u128),
-        ExprKind::CharLit(c) => Some(*c as u128),
-        ExprKind::Unary { op, expr } => {
-            let value = const_addr(expr)?;
-            let folded = match op {
-                ast::UnOp::Neg => 0u128.wrapping_sub(value),
-                ast::UnOp::BitNot => !value,
-                ast::UnOp::Not => return None,
-            };
-            Some(folded & MASK)
-        }
-        ExprKind::Binary { op, lhs, rhs } => {
-            let a = const_addr(lhs)?;
-            let b = const_addr(rhs)?;
-            let folded = match op {
-                ast::BinOp::Add => a.wrapping_add(b),
-                ast::BinOp::Sub => a.wrapping_sub(b),
-                ast::BinOp::Mul => a.wrapping_mul(b),
-                ast::BinOp::Div if b != 0 => a / b,
-                ast::BinOp::Mod if b != 0 => a % b,
-                ast::BinOp::BitAnd => a & b,
-                ast::BinOp::BitOr => a | b,
-                ast::BinOp::BitXor => a ^ b,
-                ast::BinOp::Shl if b < 128 => a << b,
-                ast::BinOp::Shr if b < 128 => a >> b,
-                _ => return None,
-            };
-            Some(folded & MASK)
-        }
-        _ => None,
     }
 }

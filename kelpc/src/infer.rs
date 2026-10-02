@@ -13895,6 +13895,7 @@ fn check_call(
         None
     };
     checked.extend(hidden_args(&key, span, ctx)?);
+    check_claim_argument(&key, &checked, span, ctx)?;
 
     Ok(tir::Expr {
         kind: match wrapper {
@@ -13909,6 +13910,81 @@ fn check_call(
             },
         },
         ty: sig.ret,
+        span,
+    })
+}
+
+/// The gated resource constructors (`irq.claim`, `frame.claim`, kernel stage
+/// 18): the call is the capability's gate, so the argument is checked here,
+/// where both backends and both the hosted and the freestanding modes pass.
+/// The domain gate already ran (`check_capability`), so the module holds the
+/// domain; what is left is the value.
+///
+/// A constant argument has to fall inside a granted range, and a `frame`
+/// address has to be 4 KiB-aligned whatever the grant. A non-constant argument
+/// is admitted only under the whole-resource `["*"]`, because the compiler
+/// cannot prove a runtime value lands in a range; the same rule the `mmio`
+/// address check applies (`plan/device-caps.md`, `plan/irq-frame-caps.md`).
+fn check_claim_argument(
+    key: &str,
+    args: &[tir::Expr],
+    span: Span,
+    ctx: &Ctx,
+) -> Result<()> {
+    let Some(domain) = crate::stdlib::claim_domain(key) else {
+        return Ok(());
+    };
+    let patterns = ctx.caps.get(domain).cloned().unwrap_or_default();
+    let value = args.first().and_then(crate::stdlib::const_int);
+    // The alignment rule holds for a constant whatever the grant, including
+    // the wildcard: a misaligned frame is not a frame.
+    if domain == "frames" {
+        if let Some(v) = value {
+            if v % crate::stdlib::FRAME_SIZE != 0 {
+                return Err(TypeError {
+                    message: format!(
+                        "'frame.claim' would take the address 0x{v:X}, which is not {}-aligned: a frame is a {}-byte-aligned physical address",
+                        crate::stdlib::FRAME_SIZE, crate::stdlib::FRAME_SIZE
+                    ),
+                    span,
+                });
+            }
+        }
+    }
+    if patterns.iter().any(|p| p == crate::stdlib::RANGE_ANY) {
+        return Ok(());
+    }
+    let name = if domain == "frames" { "frame.claim" } else { "irq.claim" };
+    let what = if domain == "frames" { "address" } else { "line" };
+    let Some(value) = value else {
+        return Err(TypeError {
+            message: format!(
+                "'{name}' takes a {what} the compiler cannot fold, and module '{}' holds only the granted {what}(s) {}; a computed {what} needs the whole-resource grant `caps({domain} = [\"*\"])`",
+                ctx.module,
+                patterns.join(", "),
+            ),
+            span,
+        });
+    };
+    if crate::stdlib::range_covers(domain, &patterns, value) {
+        return Ok(());
+    }
+    if domain == "frames" {
+        return Err(TypeError {
+            message: format!(
+                "'frame.claim' would take the address 0x{value:X}, which no 'frames' grant of module '{}' covers (granted: {})",
+                ctx.module,
+                patterns.join(", ")
+            ),
+            span,
+        });
+    }
+    Err(TypeError {
+        message: format!(
+            "'irq.claim' would take the line {value}, which no 'irq' grant of module '{}' covers (granted: {})",
+            ctx.module,
+            patterns.join(", ")
+        ),
         span,
     })
 }
@@ -15961,6 +16037,20 @@ fn check_module_item(
     // reported as missing.
     if declares(&qualified, ctx) {
         ctx.check_exported(&qualified, alias, item, span)?;
+    }
+    // A capability value's constructor is sealed to its own module (kernel
+    // stage 18, `plan/irq-frame-caps.md`): the shipped library exports every
+    // item and Kelp has no field-level `pub`, so `irq.Line(n = 3)` would forge
+    // the receipt for a grant. Only `irq.claim` and `frame.claim` may build
+    // one, and they are reached as functions, not as the type's own name.
+    if crate::stdlib::is_sealed_type(&qualified) {
+        let module = crate::stdlib::sealed_type_module(&qualified).unwrap_or("its own module");
+        return Err(TypeError {
+            message: format!(
+                "'{alias}.{item}' is a capability value: its constructor is private to module '{module}', so another module cannot build one; take the value from a `claim` call instead"
+            ),
+            span,
+        });
     }
     if ctx.structs.contains_key(&qualified)
         || ctx.env.generics.contains_key(&qualified)
