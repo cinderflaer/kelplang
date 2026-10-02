@@ -1,0 +1,4 @@
+impl "shape"
+impl "bad"
+
+fun main() { }

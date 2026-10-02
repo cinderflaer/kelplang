@@ -1,0 +1,8 @@
+impl "shape"
+impl "circle"
+
+fun main() {
+    val c = circle.Circle(r = 3)
+    print(c.summary())
+    print(shape.area_of(c))
+}

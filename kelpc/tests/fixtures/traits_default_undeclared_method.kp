@@ -1,0 +1,12 @@
+// A default body is checked for the impl that uses it, so a call to an
+// undeclared method is an error at that impl (A-12 slice 3).
+
+trait Shape {
+    fun Self.describe().R: i32 { return self.nope() }
+}
+
+datac C(val r: i32)
+
+impl Shape for C { }
+
+fun main() { }

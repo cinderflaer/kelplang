@@ -5263,10 +5263,6 @@ fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
         "'dyn' trait objects are not in this slice",
     );
     assert_rejected_with(
-        "tests/fixtures/traits_default_body.kp",
-        "default body is not in this slice",
-    );
-    assert_rejected_with(
         "tests/fixtures/traits_associated_type.kp",
         "associated types and consts are not in this slice",
     );
@@ -5279,16 +5275,80 @@ fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
         "'where' clause is not in this slice",
     );
     assert_rejected_with(
-        "tests/fixtures/traits_supertrait.kp",
-        "a trait cannot inherit in this slice",
-    );
-    assert_rejected_with(
         "tests/fixtures/traits_drop_declared.kp",
         "the trait 'Drop' is built in",
     );
-    assert_rejected_with(
+}
+
+/// A-12 slice 3: a trait method may carry a default body. An impl may take it
+/// as written, override it, or omit every method of an all-default trait, and a
+/// default may call the trait's other methods through `self`.
+#[test]
+fn a_default_method_is_inherited_overridden_and_may_call_the_traits_others() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_default_body.kp",
+        "9\n9\n18\n5\n",
+    );
+}
+
+/// A-12 slice 3: `trait B: A` requires an `impl A for` the type, lets a
+/// `<T: B>` call `A`'s methods, and lets a `T: B` satisfy a `T: A` bound.
+#[test]
+fn a_supertrait_is_required_and_its_methods_are_callable_through_the_subtrait() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_supertrait.kp",
+        "12\n21\n",
+    );
+}
+
+/// A-12 slice 3: a trait implemented for a builtin type that already carries
+/// methods (`i32`, `String`) is reached through a generic exactly as a
+/// `datac`'s impl is.
+#[test]
+fn a_trait_implemented_for_a_builtin_is_called_through_a_generic() {
+    assert_compiles_and_runs(
         "tests/fixtures/traits_impl_for_builtin.kp",
-        "'i32' is a builtin type",
+        "20\n36\na string\n",
+    );
+}
+
+/// A-12 slice 3: a default body is resolved in the trait's module even when
+/// the impl that inherits it lives in the implementing type's module, so it can
+/// name the trait module's own types.
+#[test]
+fn a_default_body_resolves_in_the_traits_own_module() {
+    assert_project_runs(
+        "traits_default_cross",
+        &project("traits_default_cross"),
+        "10\n10\n",
+    );
+}
+
+/// A-12 slice 3 rejections: a missing supertrait impl, a supertrait cycle, an
+/// override that does not match the defaulted signature, a default body that
+/// calls an undeclared method, and a builtin impl outside the trait's module.
+#[test]
+fn the_new_trait_shapes_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_missing_supertrait.kp",
+        "is missing its supertrait",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_supertrait_cycle.kp",
+        "supertrait relation is cyclic",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_default_wrong_override.kp",
+        "does not match trait 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_default_undeclared_method.kp",
+        "has no method 'nope'",
+    );
+    assert_project_rejected(
+        "traits_builtin_orphan",
+        &project("traits_builtin_orphan"),
+        "is a builtin type, which has no module",
     );
 }
 

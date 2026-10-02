@@ -1,0 +1,14 @@
+// An override of a default still has to match the declared signature (A-12
+// slice 3).
+
+trait Shape {
+    fun Self.describe().R: i32 { return 100 }
+}
+
+datac C(val r: i32)
+
+impl Shape for C {
+    fun Self.describe().R: i64 = 0
+}
+
+fun main() { }
