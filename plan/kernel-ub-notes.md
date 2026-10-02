@@ -1583,3 +1583,26 @@ written once before the workers start; nothing runs the compiler many-threaded
 under a memory sanitizer. The failure path is exercised by a test-only hook that
 corrupts one unit's IR (`KELPC_TEST_CORRUPT_UNIT`), not by a real LLVM crash,
 because a real LLVM abort cannot be caught or attributed.
+
+## A-11 slice 3: a reference binding's root set (`plan/provenance.md`)
+
+**New ways to reach undefined behaviour.** None in the language: this slice
+changes only what the borrow checker accepts, not what a program compiles to.
+The typing, the emitted C and the emitted LLVM IR for every previously accepted
+program are unchanged, and the newly accepted programs are the same borrows and
+pointer walks the language already allowed, reached through a local instead of
+spelled out. The one runtime hazard an accepted program can newly reach is the
+pre-existing one the roadmap item named: dropping a very deep `Box` chain still
+recurses on the C stack, so a long enough chain overflows it exactly as a
+recursive walk would.
+
+**What the compiler does and does not check.** It checks that a borrow taken
+through a reference binding pins the *owner* the binding came from; that the
+owner cannot be mutated, moved or dropped while any cursor into it is live; that
+reassigning a cursor releases the root it left; that an `if`/`when`/loop join
+keeps every root an arm could have produced; and that a cursor derived from a
+local is still refused as a returned borrow. It does not check anything about
+the memory a cursor points into beyond the owner's lifetime: a cursor stored in
+a `datac` field, a container element or a returned temporary is still refused by
+the same "no lifetime syntax" rules as before, and a root reached through a raw
+`Ptr<T>` is not tracked at all (that is `unsafe`'s contract, unchanged).
