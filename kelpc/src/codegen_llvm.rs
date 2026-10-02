@@ -4048,7 +4048,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if !self.terminated {
             // A naked function's asm is what returns; a `return` of the
             // declared type would be an instruction the attribute forbids.
-            if self.naked {
+            //
+            // A body ending in `while true { ... }` never falls through
+            // either: the loop has no exit edge, so the block this point is
+            // emitted into has no predecessor and no value is ever returned
+            // here. A declared type with no zero value (`String`, `Bytes`, a
+            // container) has nothing to `ret`, which is the case that made
+            // this a refusal rather than an unreachable block.
+            if self.naked || ends_in_an_endless_loop(body) {
                 self.g.builder.build_unreachable();
                 self.terminated = true;
             } else {
@@ -14600,6 +14607,15 @@ fn is_str_ref(ty: &Ty) -> bool {
 /// a `panic` asks the unit-typed call for a value and reports an internal error.
 fn is_diverging_tail(tail: &Expr) -> bool {
     matches!(&tail.kind, ExprKind::Call { callee, .. } if callee == "panic")
+}
+
+/// Whether a block's last statement is a loop that can never be left at all:
+/// `while true { ... }`. Every way out of such a loop is a `return` or a
+/// `panic`, so the code after it is unreachable and the function needs no
+/// fallthrough `ret` — which it could not build for a declared type with no
+/// zero value.
+fn ends_in_an_endless_loop(block: &Block) -> bool {
+    matches!(block.stmts.last(), Some(Stmt::While { cond, .. }) if matches!(cond.kind, ExprKind::BoolLit(true)))
 }
 
 /// Whether an expression has stable storage, mirroring the subset of

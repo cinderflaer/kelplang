@@ -1885,6 +1885,18 @@ fn regex_is_match_panics_on_a_bad_pattern() {
     assert_fixture_panics("stdlib_regex_panic", "regex.is_match: unclosed group");
 }
 
+// A body that ends in `while true { ... }` never falls through, so a function
+// returning an owned type needs no fallthrough `ret` — which it could not build
+// one for anyway, a `String` having no zero value. Both backends agree here now;
+// before, the LLVM one refused the shape as a compiler defect.
+#[test]
+fn a_function_whose_body_ends_in_an_endless_loop_returns_an_owned_value() {
+    assert_compiles_and_runs(
+        "tests/fixtures/owned_return_endless_loop.kp",
+        "xxx\n\n4\n9\n",
+    );
+}
+
 #[test]
 fn an_extern_without_a_compiler_supplied_body_is_rejected() {
     assert_rejected("tests/fixtures/extern_no_body.kp");
@@ -4292,6 +4304,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "mutex_lock_value",
         "mutex_lock_return",
         "mutex_into_inner",
+        // The shape `std/tz`'s abbreviation reader has: a `String` per call,
+        // freed on every path out of the loop.
+        "owned_return_endless_loop",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
