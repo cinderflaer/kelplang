@@ -5285,6 +5285,17 @@ fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
     );
 }
 
+/// `Self` in a trait signature is the implementing type wherever it is written,
+/// not only in the receiver: a parameter, a return type, and a `T` returned by a
+/// bounded generic all resolve per instantiation.
+#[test]
+fn self_stands_for_the_implementing_type_everywhere_in_a_signature() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_self_in_signature.kp",
+        "1\n2\n",
+    );
+}
+
 /// A trait declared in one module and implemented in another: the type's own
 /// module implements the imported trait, and the trait's own module implements
 /// it for a type from a third module that imports nothing. Both are at a
