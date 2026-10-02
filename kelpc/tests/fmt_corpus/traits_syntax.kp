@@ -27,4 +27,6 @@ fun mutate(s:   &mut   dyn   Shape) {   }
 
 fun area_of<T:   Shape   +   Grow>(s:   &T).R:   f64 = s.area()
 
+fun boxed(s: Box<dyn Shape>) {   }
+
 fun main() { }

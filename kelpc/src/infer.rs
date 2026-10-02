@@ -234,6 +234,11 @@ struct TypeEnv {
     /// collected while bodies are checked. Each one gets a vtable in
     /// `tir::Program`, and a pair no coercion names gets none.
     dyn_pairs: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<(String, String)>>>,
+    /// Every trait named by a `dyn` type, borrowed or owned (A-12 slices 4
+    /// and 7), collected where the type is written. The fat-pair typedef and
+    /// the vtable tag are emitted per *trait*, so a `dyn` type that is only
+    /// named (a parameter nothing coerces to) still needs its C type to exist.
+    dyn_traits: std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>,
     /// The associated-type binding each `impl` declares (A-12 slice 5), keyed
     /// by `(trait, type)` and then by the associated type's name. One answer
     /// for the whole program, exactly as `impls` is, so a projection at a call
@@ -1238,6 +1243,18 @@ impl TypeScope<'_> {
         // would otherwise store the value, exactly as they are for `Ty::Ref`
         // (`is_borrowed_field_ty` and `resolve_element`).
         if let Some(written) = &ty.dyn_trait {
+            // A bare `dyn Name` is legal only as the argument of a `Box`, which
+            // `resolve_base` handles in its `Box` arm before the argument is
+            // resolved, so reaching here without the `&` is the bare spelling
+            // everywhere else (A-12 slice 7).
+            if !ty.amp {
+                return Err(TypeError {
+                    message: format!(
+                        "'dyn {written}' is not a type on its own: an owned trait object is written 'Box<dyn {written}>', and a borrowed one '&dyn {written}'"
+                    ),
+                    span: ty.span,
+                });
+            }
             let qualified = self.qualify(written, ty.span)?;
             if !self.env.traits.contains_key(&qualified) {
                 return Err(TypeError {
@@ -1254,7 +1271,13 @@ impl TypeScope<'_> {
                     return Err(private_item_error(alias, item, ty.span));
                 }
             }
-            check_dyn_object_safety(&qualified, ty.span, &self.env.traits)?;
+            let spelling = if ty.amp_mut {
+                format!("&mut dyn {written}")
+            } else {
+                format!("&dyn {written}")
+            };
+            check_dyn_object_safety(&spelling, &qualified, ty.span, &self.env.traits)?;
+            self.env.dyn_traits.borrow_mut().insert(qualified.clone());
             return Ok(Ty::Dyn {
                 mutable: ty.amp_mut,
                 trait_name: qualified,
@@ -1361,6 +1384,49 @@ impl TypeScope<'_> {
         // from its stage B1). All are compiler builtins, not user-definable
         // types; each checks its element against what its representation can
         // hold.
+        // `Box<dyn Name>` (A-12 slice 7): the one place a bare `dyn Name` is a
+        // type. It is handled before the element checks below, because a trait
+        // object is not an element type: the box owns the erased value itself,
+        // not a value of the element's type. The trait must be declared and
+        // object safe, exactly as it must be behind a `&dyn`, and the resolved
+        // type name is recorded so the pair's C typedef exists even when
+        // nothing coerces to it.
+        if ty.name == "Box" && ty.args.len() == 1 && ty.args[0].dyn_trait.is_some() {
+            let arg = &ty.args[0];
+            let written = arg.dyn_trait.as_ref().expect("matched above");
+            if arg.amp {
+                return Err(TypeError {
+                    message: format!(
+                        "'Box<&dyn {written}>' is not an owned trait object: a box holds its value, so write 'Box<dyn {written}>' for an owned one or '&dyn {written}' for a borrowed one"
+                    ),
+                    span: arg.span,
+                });
+            }
+            let qualified = self.qualify(written, arg.span)?;
+            if !self.env.traits.contains_key(&qualified) {
+                return Err(TypeError {
+                    message: format!(
+                        "'Box<dyn {written}>' names no declared trait: declare 'trait {written} {{ ... }}' first (or import the module that does)"
+                    ),
+                    span: arg.span,
+                });
+            }
+            if let Some((alias, item)) = written.split_once('.') {
+                if !exported(&qualified, &self.env) {
+                    return Err(private_item_error(alias, item, arg.span));
+                }
+            }
+            check_dyn_object_safety(
+                &format!("Box<dyn {written}>"),
+                &qualified,
+                arg.span,
+                &self.env.traits,
+            )?;
+            self.env.dyn_traits.borrow_mut().insert(qualified.clone());
+            return Ok(Ty::BoxDyn {
+                trait_name: qualified,
+            });
+        }
         if ty.name == "List"
             || ty.name == "Box"
             || ty.name == "Map"
@@ -2610,11 +2676,14 @@ fn first_assoc_type<'a>(
     None
 }
 
-/// Object safety for `&dyn Name` (A-12 slice 4, `plan/traits.md` 9.2): no method
-/// may return `Self`, no parameter other than the receiver may mention `Self`,
-/// and no two methods of the flattened list may share a name (the vtable holds
-/// one slot per name). A violation names the trait and the method.
+/// Object safety for a trait object, `&dyn Name` (A-12 slice 4,
+/// `plan/traits.md` 9.2) or `Box<dyn Name>` (slice 7): no method may return
+/// `Self`, no parameter other than the receiver may mention `Self`, and no two
+/// methods of the flattened list may share a name (the vtable holds one slot per
+/// name). A violation names the spelling the program wrote, the trait and the
+/// method, because the same rule now guards two type spellings.
 fn check_dyn_object_safety(
+    spelling: &str,
     name: &str,
     span: Span,
     traits: &HashMap<String, TraitInfo>,
@@ -2626,8 +2695,8 @@ fn check_dyn_object_safety(
         if !info.type_params.is_empty() {
             return Err(TypeError {
                 message: format!(
-                    "'&dyn {}' is not allowed: the trait takes type parameters ('{}'), and a trait object has no vtable slot for one; use a bounded type parameter ('<T: {}<...>>') instead",
-                    name,
+                    "'{}' is not allowed: the trait takes type parameters ('{}'), and a trait object has no vtable slot for one; use a bounded type parameter ('<T: {}<...>>') instead",
+                    spelling,
                     info.type_params.join(", "),
                     name
                 ),
@@ -2641,8 +2710,8 @@ fn check_dyn_object_safety(
     if let Some(item) = first_assoc_type(traits, name) {
         return Err(TypeError {
             message: format!(
-                "'&dyn {}' is not allowed: the trait declares the associated type '{}', and a trait object does not know which type an implementor binds; use a bounded type parameter ('<T: {}>') instead",
-                name, item, name
+                "'{}' is not allowed: the trait declares the associated type '{}', and a trait object does not know which type an implementor binds; use a bounded type parameter ('<T: {}>') instead",
+                spelling, item, name
             ),
             span,
         });
@@ -2656,8 +2725,8 @@ fn check_dyn_object_safety(
         if m.receiver.is_none() {
             return Err(TypeError {
                 message: format!(
-                    "'&dyn {}' is not allowed: method '{}' has no receiver ('Self'), so there is no value for the vtable to dispatch on; call it on a concrete type instead",
-                    name, m.name
+                    "'{}' is not allowed: method '{}' has no receiver ('Self'), so there is no value for the vtable to dispatch on; call it on a concrete type instead",
+                    spelling, m.name
                 ),
                 span,
             });
@@ -2666,8 +2735,8 @@ fn check_dyn_object_safety(
             if type_mentions_self(ret) {
                 return Err(TypeError {
                     message: format!(
-                        "'&dyn {}' is not allowed: method '{}' returns 'Self', and a trait object does not know the concrete type it would build",
-                        name, m.name
+                        "'{}' is not allowed: method '{}' returns 'Self', and a trait object does not know the concrete type it would build",
+                        spelling, m.name
                     ),
                     span,
                 });
@@ -2677,8 +2746,8 @@ fn check_dyn_object_safety(
             if type_mentions_self(&p.ty) {
                 return Err(TypeError {
                     message: format!(
-                        "'&dyn {}' is not allowed: method '{}' takes a 'Self' parameter, which a trait object cannot pass (the vtable erases the concrete type); make the parameter a borrow of a concrete type, or use a generic function instead",
-                        name, m.name
+                        "'{}' is not allowed: method '{}' takes a 'Self' parameter, which a trait object cannot pass (the vtable erases the concrete type); make the parameter a borrow of a concrete type, or use a generic function instead",
+                        spelling, m.name
                     ),
                     span,
                 });
@@ -2687,8 +2756,8 @@ fn check_dyn_object_safety(
         if !seen.insert(m.name.as_str()) {
             return Err(TypeError {
                 message: format!(
-                    "'&dyn {}' is not allowed: two methods are named '{}', and a vtable holds one slot per name",
-                    name, m.name
+                    "'{}' is not allowed: two methods are named '{}', and a vtable holds one slot per name",
+                    spelling, m.name
                 ),
                 span,
             });
@@ -7792,6 +7861,7 @@ fn check_program_pass(
         impls: std::rc::Rc::new(impls),
         trait_impls: std::rc::Rc::new(trait_impls.clone()),
         dyn_pairs: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
+        dyn_traits: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
         assoc: std::rc::Rc::new(HashMap::new()),
     };
     // A-2: the generic *function* templates, collected before signatures are
@@ -8801,6 +8871,8 @@ fn check_program_pass(
                 .map(|s| (direct.clone(), s))
                 .or_else(|| sigs.get(&prefixed).map(|s| (prefixed.clone(), s)))
             else {
+                // No concrete method for this pair: the impls table said the
+                // pair exists, so a missing signature is an internal error.
                 return Err(Diagnostic::new(
                     format!(
                         "internal: '&dyn {trait_name}' names method '{}', and no concrete method '{direct}' exists for '{type_name}'",
@@ -8821,12 +8893,25 @@ fn check_program_pass(
                 ret: sig.ret.clone(),
             });
         }
+        // The concrete type the erased data pointer addresses: the receiver of
+        // the concrete method, which is a borrow for every non-`Copy` type and
+        // the value itself for a `Copy` builtin (A-12 slice 7). The vtable's
+        // drop entry needs the `Ty` rather than the name, because dropping a
+        // `Box<dyn Trait>` runs this type's own drop glue.
+        let concrete = match slots.first().map(|s| s.params.first()) {
+            Some(Some(Ty::Ref { inner, .. })) => inner.as_ref().clone(),
+            Some(Some(t)) => t.clone(),
+            _ => Ty::Unit,
+        };
         dyn_vtables.push(tir::DynVtable {
             trait_name,
             type_name,
+            concrete,
             slots,
         });
     }
+    let mut dyn_traits: Vec<String> = env.dyn_traits.borrow().iter().cloned().collect();
+    dyn_traits.sort();
 
     Ok(tir::Program {
         structs: records,
@@ -8847,6 +8932,7 @@ fn check_program_pass(
         const_data,
         statics: static_decls,
         dyn_vtables,
+        dyn_traits,
     })
 }
 
@@ -11351,6 +11437,41 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         let want = expected.expect("matched above").clone();
         let value = check_expr(expr, ctx, None)?;
         return coerce_to_dyn(want, value, expr.span(), ctx);
+    }
+    // A `Box<T>` where a `Box<dyn Trait>` is expected (A-12 slice 7): the same
+    // expected-type position, with the box moved in rather than copied. The
+    // operand is checked with no expectation, so what is coerced is the box it
+    // already is.
+    if let Some(Ty::BoxDyn { .. }) = expected {
+        let want = expected.expect("matched above").clone();
+        // `Box.empty()` is the one box constructor whose trait only the written
+        // type can supply, so it is answered through the ordinary associated
+        // path with the expected type in hand (which also keeps a local or an
+        // alias named `Box` shadowing the type name, exactly as it does
+        // everywhere else). Every other expression is the box the coercion
+        // moves in.
+        if let ast::Expr::MethodCall {
+            receiver,
+            method,
+            type_args,
+            args,
+            span,
+        } = expr
+        {
+            if empty_container_call(expr) == Some(("Box", "empty")) {
+                return check_method_call(
+                    receiver,
+                    method,
+                    type_args,
+                    args,
+                    *span,
+                    ctx,
+                    Some(&want),
+                );
+            }
+        }
+        let value = check_expr(expr, ctx, None)?;
+        return coerce_box_to_dyn(want, value, expr.span(), ctx);
     }
     match expr {
         // Handled above, before the closure widening.
@@ -14482,6 +14603,93 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
     })
 }
 
+/// The owned half of the coercion (A-12 slice 7): a `Box<T>` where `T`
+/// implements `Trait` becomes a `Box<dyn Trait>`. The box's allocation becomes
+/// the trait object's, so this is a *move* of the operand (its binding is moved
+/// out exactly as any other read of an owned value is) and no second allocation
+/// happens. The `(trait, type)` pair is recorded, so the vtable and its drop
+/// entry are emitted for the coercion.
+fn coerce_box_to_dyn(
+    want: Ty,
+    value: tir::Expr,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let Ty::BoxDyn { trait_name } = &want else {
+        return Ok(value);
+    };
+    if value.ty == want {
+        return Ok(value);
+    }
+    // A `Box<dyn Name>` retypes to the same type and never to another trait's:
+    // there is no upcast in this slice, exactly as for a `&dyn`.
+    if let Ty::BoxDyn { trait_name: src_trait } = &value.ty {
+        return Err(TypeError {
+            message: format!(
+                "expected '{}', found '{}': an owned trait object does not convert to another trait's ('{}' to '{}'); take a bound on a type parameter, or coerce from the concrete value",
+                want.display(),
+                value.ty.display(),
+                src_trait,
+                trait_name
+            ),
+            span,
+        });
+    }
+    let Ty::Box(inner) = &value.ty else {
+        return Err(TypeError {
+            message: format!(
+                "expected '{}', found '{}': an owned trait object is built from a box of a value that implements the trait ('Box.of(v)'), and this is not a box",
+                want.display(),
+                value.ty.display()
+            ),
+            span,
+        });
+    };
+    let Some(type_name) = dyn_target_name(inner) else {
+        return Err(TypeError {
+            message: format!(
+                "expected '{}', found '{}': '{}' cannot be the value behind an owned trait object",
+                want.display(),
+                value.ty.display(),
+                inner.display()
+            ),
+            span,
+        });
+    };
+    let implements = ctx
+        .env
+        .impls
+        .get(trait_name)
+        .is_some_and(|set| set.contains(&type_name));
+    if !implements {
+        return Err(TypeError {
+            message: format!(
+                "expected '{}', found '{}': '{}' does not implement '{}', so write 'impl {} for {}' first",
+                want.display(),
+                value.ty.display(),
+                inner.display(),
+                trait_name,
+                trait_name,
+                inner.display()
+            ),
+            span,
+        });
+    }
+    ctx.env
+        .dyn_pairs
+        .borrow_mut()
+        .insert((trait_name.clone(), type_name.clone()));
+    Ok(tir::Expr {
+        kind: tir::ExprKind::BoxDynCoerce {
+            trait_name: trait_name.clone(),
+            type_name,
+            expr: Box::new(value),
+        },
+        ty: want,
+        span,
+    })
+}
+
 /// The one sentence that explains why a plain function value and a closure are
 /// different types, when one is passed where the other is expected (A-4 phase
 /// E). The two are the same shape of value and are called identically, so a
@@ -14719,6 +14927,17 @@ fn check_thread_arg(expr: &ast::Expr, value: &tir::Expr, ctx: &Ctx) -> Result<()
             }
             Ok(())
         }
+        // Rule 2's other shape: a borrowed trait object is a borrow of the
+        // value its data pointer addresses, exactly as a `Ty::Ref` is, so it
+        // never crosses. An *owned* trait object (`Box<dyn Trait>`) is not this
+        // arm: it owns its value and falls through to rule 4 like any other
+        // owned value (A-12 slice 7).
+        Ty::Dyn { trait_name, .. } => Err(TypeError {
+            message: format!(
+                "'thread.spawn' cannot send '&dyn {trait_name}': a borrowed trait object points at a value the frame owns, and the worker outlives that frame; move an owned 'Box<dyn {trait_name}>' in instead, or share a 'pd' value"
+            ),
+            span: expr.span(),
+        }),
         // Rule 2's other shapes: a `str` and a `View` are borrowed text with
         // no place of their own, so there is nothing with process lifetime for
         // them to borrow.
@@ -16713,6 +16932,23 @@ fn check_method_call(
         let (mutable, trait_name) = (*mutable, trait_name.clone());
         return check_dyn_method_call(probe, &trait_name, mutable, method, args, span, ctx);
     }
+    // A method call on an owned trait object (A-12 slice 7): `is_empty` and
+    // `get` are the box's own two methods, and every other name goes through the
+    // trait's vtable exactly as it does on a `&dyn`. A *borrow* of the box (a
+    // `mut Box<dyn Trait>` parameter's `&Box<dyn Trait>`, or a `List.get` of an
+    // element) is seen through to the box, because a box holds a pointer and the
+    // borrow is what reaches it.
+    let box_dyn_trait = match &probe.ty {
+        Ty::BoxDyn { trait_name } => Some(trait_name.clone()),
+        Ty::Ref { inner, .. } => match &**inner {
+            Ty::BoxDyn { trait_name } => Some(trait_name.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(trait_name) = box_dyn_trait {
+        return check_box_dyn_method_call(probe, &trait_name, method, args, span, ctx);
+    }
     // `w.is_null()` (gap 1): the one method an opaque handle has, comparing
     // the pointer against the type's null value. Any other name is a method
     // the handle does not have, which is a better diagnostic than the
@@ -17044,22 +17280,12 @@ fn check_dyn_method_call(
     span: Span,
     ctx: &mut Ctx,
 ) -> Result<tir::Expr> {
-    let mut flat = Vec::new();
-    flattened_trait_methods(&ctx.env.traits, trait_name, &mut flat);
-    let Some((slot, decl)) = flat.iter().enumerate().find(|(_, m)| m.name == method) else {
-        let names: Vec<&str> = flat.iter().map(|m| m.name.as_str()).collect();
-        return Err(TypeError {
-            message: format!(
-                "'&dyn {trait_name}' has no method '{method}' — its methods are {}",
-                names.join(", ")
-            ),
-            span,
-        });
-    };
-    let receiver_mut = decl
-        .receiver
-        .as_ref()
-        .is_some_and(|r| r.mutable);
+    let (slot, decl) = dyn_method_slot(&ctx.env.traits, trait_name, method, span)?;
+    let receiver_mut = decl.receiver.as_ref().is_some_and(|r| r.mutable);
+    // The declaration is cloned so the borrow of the trait table ends before
+    // the call lowerer needs `ctx` mutably; a method declaration is small and
+    // this is one call site.
+    let decl = decl.clone();
     if receiver_mut && !mutable {
         return Err(TypeError {
             message: format!(
@@ -17068,6 +17294,136 @@ fn check_dyn_method_call(
             span,
         });
     }
+    lower_dyn_call(receiver, trait_name, &decl, slot, args, span, ctx)
+}
+
+/// A method call on an owned trait object (A-12 slice 7). The two names the box
+/// itself provides are `is_empty` and `get`; every other name is the trait's
+/// method, reached through the box's vtable exactly as it is through a `&dyn`,
+/// with one difference: a `mut Self` method needs a writable place, because the
+/// box owns what it points at rather than borrowing it.
+fn check_box_dyn_method_call(
+    receiver: tir::Expr,
+    trait_name: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    // A `&Box<dyn Trait>` (a `mut Box<dyn Trait>` parameter's borrow included)
+    // reaches the pair through the borrow, exactly as `*p` does.
+    let (recv, borrowed_mut) = match receiver.ty.clone() {
+        Ty::Ref { mutable, inner } if matches!(*inner, Ty::BoxDyn { .. }) => {
+            let pair = tir::Expr {
+                kind: tir::ExprKind::Deref {
+                    expr: Box::new(receiver),
+                },
+                ty: *inner,
+                span,
+            };
+            (pair, Some(mutable))
+        }
+        _ => (receiver, None),
+    };
+    if method == "is_empty" {
+        if !args.is_empty() {
+            return Err(TypeError {
+                message: format!("'is_empty' takes no arguments, found {}", args.len()),
+                span,
+            });
+        }
+        return Ok(tir::Expr {
+            kind: tir::ExprKind::BoxDynIsEmpty {
+                expr: Box::new(recv),
+            },
+            ty: Ty::Bool,
+            span,
+        });
+    }
+    if method == "get" {
+        if !args.is_empty() {
+            return Err(TypeError {
+                message: format!("'get' takes no arguments, found {}", args.len()),
+                span,
+            });
+        }
+        return Ok(tir::Expr {
+            kind: tir::ExprKind::BoxDynBorrow {
+                mutable: false,
+                expr: Box::new(recv),
+            },
+            ty: Ty::Dyn {
+                mutable: false,
+                trait_name: trait_name.to_string(),
+            },
+            span,
+        });
+    }
+    // `take`/`set` would have to move a sized value in or out of the box, and
+    // the concrete type behind an owned trait object is exactly what is erased,
+    // so both are refused by name with the spelling that works instead.
+    if method == "take" || method == "set" {
+        return Err(TypeError {
+            message: format!(
+                "'Box<dyn {trait_name}>.{method}' is not allowed: the concrete type behind an owned trait object is erased, so no sized value can be moved in or out; borrow the trait with 'get()' and call its methods, or keep the boxed type concrete"
+            ),
+            span,
+        });
+    }
+    let (slot, decl) = dyn_method_slot(&ctx.env.traits, trait_name, method, span)?;
+    let receiver_mut = decl.receiver.as_ref().is_some_and(|r| r.mutable);
+    let decl = decl.clone();
+    if receiver_mut {
+        match borrowed_mut {
+            Some(true) => {}
+            Some(false) => {
+                return Err(TypeError {
+                    message: format!(
+                        "'{trait_name}.{method}' takes an exclusive receiver, and a shared '&Box<dyn {trait_name}>' cannot call it; take the box by 'mut' or make the binding writable"
+                    ),
+                    span,
+                })
+            }
+            None => check_target_writable(&recv, ctx)?,
+        }
+    }
+    lower_dyn_call(recv, trait_name, &decl, slot, args, span, ctx)
+}
+
+/// The vtable slot and declaration of one trait method, or the refusal that
+/// names the methods the trait does have.
+fn dyn_method_slot<'a>(
+    traits: &'a HashMap<String, TraitInfo>,
+    trait_name: &str,
+    method: &str,
+    span: Span,
+) -> Result<(usize, &'a ast::FunctionDecl)> {
+    let mut flat = Vec::new();
+    flattened_trait_methods(traits, trait_name, &mut flat);
+    let Some((slot, decl)) = flat.iter().enumerate().find(|(_, m)| m.name == method) else {
+        let names: Vec<&str> = flat.iter().map(|m| m.name.as_str()).collect();
+        return Err(TypeError {
+            message: format!(
+                "'dyn {trait_name}' has no method '{method}' — its methods are {}",
+                names.join(", ")
+            ),
+            span,
+        });
+    };
+    Ok((slot, decl))
+}
+
+/// The shared tail of both trait-object method calls: check the arguments
+/// against the trait method's own signature and lower to a `DynCall`.
+fn lower_dyn_call(
+    receiver: tir::Expr,
+    trait_name: &str,
+    decl: &ast::FunctionDecl,
+    slot: usize,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
     // The argument types come from the trait declaration, resolved in the
     // trait's own module. `Self` has no concrete meaning here, but object
     // safety already refused every method that mentions it outside the
@@ -17091,7 +17447,7 @@ fn check_dyn_method_call(
     )?;
     let params: Vec<(String, Ty)> = sig.params[1..].to_vec();
     let checked = match_args(
-        &format!("method '{trait_name}.{method}'"),
+        &format!("method '{trait_name}.{}'", decl.name),
         &params,
         args,
         span,
@@ -17526,6 +17882,37 @@ fn check_container_associated(
     ctx: &mut Ctx,
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
+    // `Box.empty()` on an owned trait object (A-12 slice 7): the null fat pair,
+    // whose trait only the binding's written type can supply. There is no
+    // element type to take it from, so it is answered here rather than through
+    // the element machinery below.
+    if container == "Box" {
+        if let Some(want @ Ty::BoxDyn { .. }) = expected {
+            if method != "empty" {
+                return Err(TypeError {
+                    message: format!(
+                        "'Box.{method}' is not an operation of an owned trait object: '{}' is made from 'Box.of(v)' where 'v' implements the trait (or 'Box.empty()'), and used through its methods",
+                        want.display()
+                    ),
+                    span,
+                });
+            }
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'Box.empty' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            return Ok(tir::Expr {
+                kind: tir::ExprKind::Call {
+                    callee: "BoxDyn#empty".to_string(),
+                    args: Vec::new(),
+                },
+                ty: want.clone(),
+                span,
+            });
+        }
+    }
     let expected_elem = expected
         .and_then(|t| match container {
             "List" => crate::types::list_elem_of(t),

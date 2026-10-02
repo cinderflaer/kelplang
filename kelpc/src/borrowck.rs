@@ -1743,8 +1743,13 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
         // (M6.4).
         tir::ExprKind::Ref { expr: inner, .. } => tir_root_ident(inner),
         // A `&dyn` coercion wraps the `&x` it was written from (A-12 slice 4),
-        // so the same chain continues through it.
-        tir::ExprKind::DynCoerce { expr: inner, .. } => tir_root_ident(inner),
+        // so the same chain continues through it. An owned trait object
+        // (A-12 slice 7) and a `&dyn` borrowed back out of one are the box's
+        // own place, so the chain continues through them too.
+        tir::ExprKind::DynCoerce { expr: inner, .. }
+        | tir::ExprKind::BoxDynCoerce { expr: inner, .. }
+        | tir::ExprKind::BoxDynBorrow { expr: inner, .. }
+        | tir::ExprKind::BoxDynIsEmpty { expr: inner } => tir_root_ident(inner),
         _ => None,
     }
 }
@@ -1756,6 +1761,9 @@ fn borrowed_node(expr: &tir::Expr) -> Option<(&bool, &tir::Expr)> {
     match &expr.kind {
         tir::ExprKind::Ref { mutable, expr: inner } => Some((mutable, inner)),
         tir::ExprKind::DynCoerce { expr: inner, .. } => borrowed_node(inner),
+        // `b.get()` on an owned trait object (A-12 slice 7) is a borrow of the
+        // box, so a binding of it keeps the box borrowed for its own lifetime.
+        tir::ExprKind::BoxDynBorrow { mutable, expr: inner } => Some((mutable, inner)),
         _ => None,
     }
 }
@@ -1790,6 +1798,9 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<Vec<String>> {
         | tir::ExprKind::EnumField { base, .. }
         | tir::ExprKind::Ref { expr: base, .. }
         | tir::ExprKind::DynCoerce { expr: base, .. }
+        | tir::ExprKind::BoxDynCoerce { expr: base, .. }
+        | tir::ExprKind::BoxDynBorrow { expr: base, .. }
+        | tir::ExprKind::BoxDynIsEmpty { expr: base }
         | tir::ExprKind::Deref { expr: base } => borrow_root(base, ctx),
         tir::ExprKind::Call { callee, args }
         | tir::ExprKind::VariadicCall { callee, args, .. } => {
@@ -2174,6 +2185,9 @@ fn expr_mentions(expr: &tir::Expr, name: &str) -> bool {
         | tir::ExprKind::Deref { expr }
         | tir::ExprKind::Ref { expr, .. }
         | tir::ExprKind::DynCoerce { expr, .. }
+        | tir::ExprKind::BoxDynCoerce { expr, .. }
+        | tir::ExprKind::BoxDynBorrow { expr, .. }
+        | tir::ExprKind::BoxDynIsEmpty { expr }
         | tir::ExprKind::FnToClosure { func: expr }
         | tir::ExprKind::ArrayRepeat { value: expr } => expr_mentions(expr, name),
         tir::ExprKind::Binary { lhs, rhs, .. }
@@ -2715,6 +2729,16 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // node inside is the `&x` it was written from, and reading the fat pair
         // is a read of the borrow.
         tir::ExprKind::DynCoerce { expr: inner, .. } => check_value(inner, ctx),
+        // An owned trait object's coercion (A-12 slice 7) *moves* the box it
+        // was written from: the box's allocation becomes the trait object's, so
+        // the operand is read as a whole value exactly as a plain read of it
+        // would be.
+        tir::ExprKind::BoxDynCoerce { expr: inner, .. } => check_value(inner, ctx),
+        // Borrowing the trait back out of the box is a read of a *place*, never
+        // a move: `BoxDynBorrow` returns a `&dyn` into the box's own storage.
+        tir::ExprKind::BoxDynBorrow { expr: inner, .. } => check_place(inner, ctx),
+        // `is_empty` reads the box's data pointer, so it is a place read too.
+        tir::ExprKind::BoxDynIsEmpty { expr: inner } => check_place(inner, ctx),
         // `asm(...)` (kernel stage 5): an `in` operand reads its value exactly
         // as any other read, and an `out`/`inout` operand writes its place, so
         // that place is taken as a transient exclusive borrow. The operand

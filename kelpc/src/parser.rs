@@ -1749,19 +1749,52 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> PResult<TypeExpr> {
-        // A borrowed trait object (A-12 slice 4) is `&dyn Name` (or
-        // `&mut dyn Name`). A bare `dyn Name` is refused: an owned trait object
-        // is `Box<dyn Name>`, which this slice does not have. `dyn` is not a
-        // keyword, so it is recognized where two names in a row can only mean
-        // this. `impl Name` in a type position is the other spelling of the
-        // bound, refused for the same reason.
+        // A trait object is `&dyn Name` (A-12 slice 4) or `Box<dyn Name>`
+        // (slice 7). `dyn` is not a keyword, so a bare `dyn Name` is recognized
+        // here, where two names in a row can only mean this, and *marked* on
+        // the `TypeExpr`: `infer.rs` accepts the mark only as the argument of a
+        // `Box` and refuses a bare `dyn Name` everywhere else, which is what
+        // makes the message name the position. `impl Name` in a type position
+        // is the other spelling of the bound, refused for the same reason.
         if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "dyn")
             && matches!(self.peek2_kind(), TokenKind::Ident(_))
         {
-            return Err(ParseError {
-                message: "a trait object has to be borrowed: write '&dyn Name' (or '&mut dyn Name'), not a bare 'dyn Name' — an owned trait object would be 'Box<dyn Name>', which this language does not have"
-                    .to_string(),
-                span: self.peek().span,
+            let start = self.advance().span;
+            let (first, first_span) = self.expect_ident()?;
+            let mut name = first;
+            let mut span = start.to(first_span);
+            while self.check(&TokenKind::Dot) {
+                self.advance();
+                let (part, part_span) = self.expect_ident()?;
+                name.push('.');
+                name.push_str(&part);
+                span = span.to(part_span);
+            }
+            // `Box<dyn A + B>` is refused where the `+` is: a vtable names one
+            // trait, and the trait that combines two is a declared trait with
+            // `A` and `B` as supertraits.
+            if self.check(&TokenKind::Plus) {
+                return Err(ParseError {
+                    message: format!(
+                        "`dyn` names one trait: write `dyn {name}`, and make a trait that combines them (`trait Both: A + B {{ ... }}`) when both sets of methods are wanted"
+                    ),
+                    span: self.peek().span,
+                });
+            }
+            return Ok(TypeExpr {
+                name: String::new(),
+                tuple: None,
+                args: Vec::new(),
+                array_elem: None,
+                assoc: None,
+                array_len: None,
+                amp: false,
+                amp_mut: false,
+                dyn_trait: Some(name),
+                scoped: false,
+                fn_params: None,
+                fn_ret: None,
+                span,
             });
         }
         if self.check(&TokenKind::Impl) {
@@ -3679,9 +3712,19 @@ mod tests {
     }
 
     #[test]
-    fn dyn_and_impl_in_a_type_position_do_not_parse() {
-        let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: dyn Shape) {}\nfun main() {}");
-        assert!(err.message.contains("has to be borrowed"), "{}", err.message);
+    fn a_bare_dyn_is_a_mark_and_impl_in_a_type_position_still_does_not_parse() {
+        // A bare `dyn Name` parses as a mark so `Box<dyn Name>` can reach the
+        // type checker (A-12 slice 7); the checker refuses the bare spelling
+        // wherever it is not a `Box` argument, and `tests/fixtures/traits_dyn.kp`
+        // pins that message.
+        let p = parse("trait Shape { fun Self.area().R: f64 }\nfun take(s: dyn Shape) {}\nfun main() {}");
+        let ty = &p.functions[0].params[0].ty;
+        assert_eq!(ty.dyn_trait.as_deref(), Some("Shape"));
+        assert!(!ty.amp);
+        // `Box<dyn A + B>` is refused where the `+` is: a trait object names one
+        // trait.
+        let err = parse_err("trait A { fun Self.a().R: i32 }\ntrait B { fun Self.b().R: i32 }\nfun take(s: Box<dyn A + B>) {}\nfun main() {}");
+        assert!(err.message.contains("names one trait"), "{}", err.message);
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: impl Shape) {}\nfun main() {}");
         assert!(err.message.contains("cannot be a parameter's type"), "{}", err.message);
     }

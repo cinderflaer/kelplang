@@ -104,6 +104,20 @@ pub enum Ty {
     /// parameter or a local: a field, a container element, a return and a
     /// `static` each refuse it, exactly as they refuse a `Ty::Ref`.
     Dyn { mutable: bool, trait_name: String },
+    /// An owned trait object (A-12 slice 7): `Box<dyn Name>`, where
+    /// `trait_name` is the trait's canonical key. The value is the *same* fat
+    /// pair a `&dyn Name` is - the erased data pointer and a pointer to the
+    /// pair's static vtable - but the box **owns** the allocation the data
+    /// pointer addresses, so it is not `Copy` and it drops what it holds. The
+    /// vtable carries a drop entry (`tir::DynVtable`), so the concrete type's
+    /// drop glue runs through it before the allocation is freed.
+    ///
+    /// It is a type of its own rather than a `Box` whose element is a
+    /// `Ty::Dyn`: the element of a `Box` is owned by value and a trait object
+    /// is not a sized value, so `Box<dyn Name>` has no element type to name.
+    /// It is legal wherever an owned value is: a field, an enum payload, a
+    /// container element, a parameter, a return and a local.
+    BoxDyn { trait_name: String },
     /// A function value (A-4): a plain C function pointer, with no captured
     /// environment — so it is `Copy`, it owns nothing, and it needs no drop.
     /// `params` are the *declared* parameter types, already through the
@@ -329,6 +343,10 @@ impl Ty {
             // A borrowed trait object is two pointers, exactly like a borrow:
             // copying it moves nothing.
             Ty::Dyn { .. } => true,
+            // An owned trait object is two pointers too, but it owns the
+            // allocation the data pointer addresses, so copying it would make
+            // two owners of one value: it moves like the `Box` it is.
+            Ty::BoxDyn { .. } => false,
             _ => !matches!(
                 self,
                 Ty::Struct(_)
@@ -360,6 +378,9 @@ impl Ty {
                     | Ty::String
                     | Ty::List(_)
                     | Ty::Box(_)
+                    // An owned trait object frees the value behind its data
+                    // pointer through the vtable's drop entry (A-12 slice 7).
+                    | Ty::BoxDyn { .. }
                     | Ty::Map(..)
                     // A `Thread<T>` owns the worker record `thread.spawn`
                     // allocated, so it is dropped (detached) like any other
@@ -480,7 +501,11 @@ impl Ty {
             // and a pointer to the trait's vtable, one C struct per trait (the
             // shared and exclusive spellings are the same C value; the borrow
             // checker is what distinguishes them).
-            Ty::Dyn { trait_name, .. } => dyn_c_type(trait_name),
+            // An owned trait object is the same fat pair the borrowed one is:
+            // the C struct is `{ void* data; const VTable* vtable; }` either
+            // way, and the borrow checker, not the C type, is what tells the
+            // owning value from the borrowed one.
+            Ty::Dyn { trait_name, .. } | Ty::BoxDyn { trait_name } => dyn_c_type(trait_name),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
                     format!("{}*", inner.c_type())
@@ -530,6 +555,7 @@ impl Ty {
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Dyn { mutable: true, trait_name } => format!("&mut dyn {trait_name}"),
             Ty::Dyn { mutable: false, trait_name } => format!("&dyn {trait_name}"),
+            Ty::BoxDyn { trait_name } => format!("Box<dyn {trait_name}>"),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
             Ty::Fn { params, ret } => {
@@ -990,6 +1016,10 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         Ty::Struct(name) => format!("kelp_drop_{}", c_ident(name)),
         Ty::List(elem) => format!("kelp_list_drop__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("kelp_box_drop__{}", ty_mangle(elem)),
+        // One drop per trait: the value behind the data pointer is dropped
+        // through the vtable's own drop entry, so the concrete type is not part
+        // of the function's name (A-12 slice 7).
+        Ty::BoxDyn { trait_name } => box_dyn_drop_fn(trait_name),
         Ty::Array(elem, len) => format!("kelp_array_drop__{}__{}", ty_mangle(elem), len),
         Ty::Map(key, value) => {
             format!("kelp_map_drop__{}__{}", ty_mangle(key), ty_mangle(value))
@@ -1019,6 +1049,9 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 pub fn is_list_element(ty: &Ty) -> bool {
     match ty {
         Ty::List(_) | Ty::Box(_) => !contains_open_container(ty),
+        // An owned trait object is a complete two-word struct with its own
+        // drop, so a list can hold one and free it element by element.
+        Ty::BoxDyn { .. } => true,
         Ty::Bytes | Ty::String | Ty::Struct(_) => true,
         // A handle is pointer-sized and `Copy`, so it lives in a list's
         // buffer as a pointer and needs no element drop, exactly as a scalar
@@ -1153,7 +1186,7 @@ pub fn is_box_element(ty: &Ty) -> bool {
         Ty::List(_) | Ty::Box(_) => !contains_open_container(ty),
         // A `View` is a borrow of text that outlives the box, with nowhere to
         // put the lifetime — the same reason `str` is refused (A-8).
-        Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit => false,
+        Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::Dyn { .. } => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
 }
@@ -1184,6 +1217,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         // A borrowed trait object is a struct per trait, so its mangled name is
         // the trait's, under its own prefix.
         Ty::Dyn { trait_name, .. } => format!("Dyn__{}", c_ident(trait_name)),
+        Ty::BoxDyn { trait_name } => format!("BoxDyn__{}", c_ident(trait_name)),
         // A `Ptr<T>` type argument names the same C type `c_type` does, under
         // the mangling every other generated symbol uses.
         Ty::Ptr(elem) => format!("Ptr__{}", ty_mangle(elem)),
@@ -1725,8 +1759,8 @@ pub fn type_layout(
         Ty::Str | Ty::Handle(_) | Ty::Ptr(_) | Ty::Fn { .. } | Ty::Ref { .. } | Ty::Thread(_) => {
             Layout { size: 8, align: 8 }
         }
-        // A borrowed trait object is the fat pair: two pointers.
-        Ty::Dyn { .. } => Layout { size: 16, align: 8 },
+        // A borrowed or owned trait object is the fat pair: two pointers.
+        Ty::Dyn { .. } | Ty::BoxDyn { .. } => Layout { size: 16, align: 8 },
         Ty::Mutex(_) => Layout { size: 8, align: 8 },
         Ty::View => Layout { size: 16, align: 8 },
         Ty::Bytes | Ty::String | Ty::List(_) | Ty::Closure { .. } | Ty::ScopedFn { .. } => {
@@ -1934,6 +1968,24 @@ pub fn dyn_thunk_symbol(trait_name: &str, type_name: &str, method: &str) -> Stri
         c_ident(type_name),
         c_ident(method)
     )
+}
+
+/// The emitted symbol of the thunk the vtable's drop entry points at (A-12
+/// slice 7): the concrete type's own drop glue over the erased pointer.
+pub fn dyn_drop_thunk_symbol(trait_name: &str, type_name: &str) -> String {
+    format!(
+        "kelp_dyn_drop__{}__{}",
+        c_ident(trait_name),
+        c_ident(type_name)
+    )
+}
+
+/// The emitted symbol that frees an *owned* trait object (A-12 slice 7), one
+/// per trait: `free` on the box's allocation, after the vtable's drop entry has
+/// run the concrete type's own drop glue. The concrete type is not part of the
+/// name, because the value behind the pointer is reached through the vtable.
+pub fn box_dyn_drop_fn(trait_name: &str) -> String {
+    format!("kelp_box_dyn_drop__{}", c_ident(trait_name))
 }
 
 /// A function's checked signature. Parameter names are kept (not just

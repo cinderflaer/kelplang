@@ -606,10 +606,16 @@ impl TypeExpr {
     /// The type as it was written, for diagnostics and the pretty-printer.
     pub fn display(&self) -> String {
         if let Some(name) = &self.dyn_trait {
+            // The `amp` flag is what tells the borrowed spelling from a bare
+            // `dyn Name`, which is legal only as the argument of a `Box`
+            // (A-12 slice 7): the bare spelling resolves to its own type, so
+            // re-emitting it with a `&` would name a different one.
             return if self.amp_mut {
                 format!("&mut dyn {name}")
-            } else {
+            } else if self.amp {
                 format!("&dyn {name}")
+            } else {
+                format!("dyn {name}")
             };
         }
         if let Some(item) = &self.assoc {
