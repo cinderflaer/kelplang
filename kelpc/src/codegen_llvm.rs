@@ -942,13 +942,12 @@ fn named_c_object_refs(program: &Program, text: &str) -> HashSet<String> {
 }
 
 /// A unit's name as a file name: a module id is a path (`shapes/circle`) and a
-/// file name is not, so every character outside `[A-Za-z0-9]` becomes `_`. The
-/// unit's *module name* in the IR is still its id, so how the artifact name is
-/// folded cannot make two units' IR disagree.
+/// file name is not, so `/` becomes `+`. A module id is a path of identifiers,
+/// so its characters are `[A-Za-z0-9_]` and the mapping is injective: two units
+/// never share an artifact name. The IR module name is still the id, so folding
+/// the artifact name cannot make two units' IR disagree.
 fn unit_file_name(name: &str) -> String {
-    name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
+    name.replace('/', "+")
 }
 
 /// Every program item one function body references, reported through
@@ -1893,9 +1892,10 @@ impl<'a> Gen<'a> {
         }
     }
 
-    /// Whether this pass emits the definition of the `static` or `section(...)`
-    /// const `item`, whose owning module is `module`.
-    fn defines_static_item(&self, module: &str) -> bool {
+    /// Whether this pass emits the definitions of the `static`s, `section(...)`
+    /// consts and functions declared in `module`: the module's own unit in the
+    /// incremental mode.
+    fn defines_module_items(&self, module: &str) -> bool {
         match &self.unit {
             None => true,
             Some(unit) => !unit.support && unit.name == module,
@@ -2250,7 +2250,7 @@ impl<'a> Gen<'a> {
             // use folds to its literal), so the units that do not own it need
             // no declaration of it: the owning unit defines it once (roadmap
             // A-14 slice 1).
-            if !self.defines_static_item(&data.module) {
+            if !self.defines_module_items(&data.module) {
                 continue;
             }
             let Ty::Array(elem, len) = &data.ty else {
@@ -2284,7 +2284,7 @@ impl<'a> Gen<'a> {
             // A `static` another unit owns stays a declaration here (roadmap
             // A-14 slice 1): the defining unit's object carries the storage and
             // this one reaches it by name.
-            if !self.defines_static_item(&s.module) {
+            if !self.defines_module_items(&s.module) {
                 let lty = llvm_type(self.ctx, &self.structs, &self.containers, &s.ty)?;
                 let global = self.module.add_external_global(&symbol_name(&s.name), lty);
                 self.static_globals.insert(
@@ -2396,7 +2396,7 @@ impl<'a> Gen<'a> {
             .program
             .statics
             .iter()
-            .filter(|s| self.defines_static_item(&s.module))
+            .filter(|s| self.defines_module_items(&s.module))
             .collect();
         if owned.is_empty() {
             return;
