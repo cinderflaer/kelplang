@@ -69,9 +69,9 @@
 //! - **comment-keeps-its-line** — A comment stays on the line the author wrote it on, with the gap around it normalised like any other gap.
 //! - **one-space-around-binary-and-assignment** — One space goes before and after a binary operator and an `=`.
 //! - **one-space-after-comma** — One space goes after a `,` and none goes before it.
-//! - **no-space-before-suffix-token** — No space goes before `,` `:` `.` `)` `]` or `?`.
+//! - **no-space-before-suffix-token** — No space goes before `,` `:` `.` `::` `)` `]` or `?`.
 //! - **brace-spacing** — `{` takes one space before it, except after a token that takes no space after itself (as `(` does in `foo({ 1 })`) and between the two braces of `{}`.
-//! - **no-space-after-open-paren** — `(` and `[` attach to a token that ends an expression (`f(x)`, `a[i]`) and take a space after one that does not (`= (a + b)`), and nothing follows `(` `[` or `.` with a space.
+//! - **no-space-after-open-paren** — `(` and `[` attach to a token that ends an expression (`f(x)`, `a[i]`) and take a space after one that does not (`= (a + b)`), and nothing follows `(` `[` `.` or `::` with a space.
 //! - **prefix-operator-binds** — A prefix operator (`!`, `~`, and `-` `+` `*` `&` with nothing that ends an expression before them) binds to its operand with no space.
 //! - **space-suppression-never-relexes** — A space is dropped only where the two atoms re-lex to exactly their own tokens, so `& &` keeps its space instead of becoming `&&`.
 //! - **alias-declaration-and-reference-atomic** — An inline `alias %*n*% = …` declaration is one atom copied to the end of its line, and a `%*name*%` reference is one atom whose five tokens stay adjacent.
@@ -326,7 +326,7 @@ const RULES: &[Rule] = &[
     },
     Rule {
         name: "no-space-before-suffix-token",
-        statement: "No space goes before `,` `:` `.` `)` `]` or `?`.",
+        statement: "No space goes before `,` `:` `.` `::` `)` `]` or `?`.",
         pins: &["spacing_dot_return"],
     },
     Rule {
@@ -340,7 +340,7 @@ const RULES: &[Rule] = &[
         name: "no-space-after-open-paren",
         statement: "`(` and `[` attach to a token that ends an expression (`f(x)`, `a[i]`) \
                     and take a space after one that does not (`= (a + b)`), and nothing \
-                    follows `(` `[` or `.` with a space.",
+                    follows `(` `[` `.` or `::` with a space.",
         pins: &["spacing_brace_after_paren"],
     },
     Rule {
@@ -1138,15 +1138,16 @@ fn needs_space(prev: &Lead, prev_prefix: bool, cur: &Lead, gap_ws: bool) -> bool
                 | TokenKind::RBracket
                 | TokenKind::Dot
                 | TokenKind::Colon
+                | TokenKind::ColonColon
                 | TokenKind::Question
         )
     ) {
         return false;
     }
-    // No space after `(`, `[` or `.`.
+    // No space after `(`, `[`, `.` or `::`.
     if matches!(
         prev,
-        Lead::Tok(TokenKind::LParen | TokenKind::LBracket | TokenKind::Dot)
+        Lead::Tok(TokenKind::LParen | TokenKind::LBracket | TokenKind::Dot | TokenKind::ColonColon)
     ) {
         return false;
     }

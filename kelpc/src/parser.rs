@@ -769,21 +769,59 @@ impl Parser {
         };
         self.expect(TokenKind::LBrace, "'{' to open the trait's body")?;
         let mut methods = Vec::new();
+        let mut assoc_types: Vec<AssocTypeDecl> = Vec::new();
         self.skip_newlines();
         while !self.check(&TokenKind::RBrace) {
+            // `type Item` / `type Item: Named` (A-12 slice 5). `type` is not a
+            // keyword, so it is an identifier here and the next token being a
+            // name is what makes this the declaration.
+            if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "type")
+                && matches!(self.peek2_kind(), TokenKind::Ident(_))
+            {
+                self.advance();
+                let (name, name_span) = self.expect_ident()?;
+                if self.check(&TokenKind::Lt) {
+                    return Err(ParseError {
+                        message: "a generic associated type is not in this slice: 'type Item' declares a plain type, so parameters wait for a later slice".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                let bounds = if self.check(&TokenKind::Colon) {
+                    self.advance();
+                    self.parse_bounds()?
+                } else {
+                    Vec::new()
+                };
+                if self.check(&TokenKind::Eq) {
+                    return Err(ParseError {
+                        message: "a default associated type is not in this slice: write 'type Item' in the trait and bind it in every 'impl' ('type Item = i32'), because a default type would let an impl inherit a type it never names".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                if assoc_types.iter().any(|a| a.name == name) {
+                    return Err(ParseError {
+                        message: format!("trait declares 'type {name}' more than once"),
+                        span: name_span,
+                    });
+                }
+                assoc_types.push(AssocTypeDecl {
+                    name,
+                    bounds,
+                });
+                self.skip_newlines();
+                continue;
+            }
             if !self.check(&TokenKind::Fun) {
-                // `type Item = ...` and any other item form: a trait body is
-                // signatures only.
+                // Any other item form: a trait body is method signatures and
+                // associated types only.
                 let what = match self.peek_kind() {
-                    TokenKind::Ident(n) if n == "type" => {
-                        "associated types and consts are not in this slice: a trait declares methods only"
-                            .to_string()
-                    }
                     TokenKind::Ident(n) => format!(
-                        "'{n}' is not part of a trait: a trait body declares methods only ('fun Self.m(...)')"
+                        "'{n}' is not part of a trait: a trait body declares methods ('fun Self.m(...)') and associated types ('type Item')"
                     ),
+                    TokenKind::Const => "associated consts are not in this slice: a trait declares methods and associated types only"
+                        .to_string(),
                     other => format!(
-                        "a trait body declares methods only, so a 'fun' is expected here, found {other:?}"
+                        "a trait body declares methods and associated types, so 'fun' or 'type' is expected here, found {other:?}"
                     ),
                 };
                 return Err(ParseError {
@@ -800,6 +838,7 @@ impl Parser {
             is_pub,
             supertraits,
             methods,
+            assoc_types,
             module: String::new(),
             span: start.to(end),
         })
@@ -813,6 +852,13 @@ impl Parser {
     fn parse_trait_impl_decl(&mut self) -> PResult<(TraitImplDecl, Vec<FunctionDecl>)> {
         let impl_span = self.expect(TokenKind::Impl, "'impl'")?.span;
         let (trait_name, trait_span) = self.parse_dotted_name()?;
+        if self.check(&TokenKind::Lt) {
+            return Err(ParseError {
+                message: "implementing a generic trait or fixing an associated type with an equality constraint ('impl Iterator<Item = i32> for X') is not in this slice: implement the plain trait ('impl Iterator for X') and bind the associated type inside the block ('type Item = i32')"
+                    .to_string(),
+                span: self.peek().span,
+            });
+        }
         if trait_name == "Drop" || trait_name.ends_with(".Drop") {
             return Err(ParseError {
                 message: "the trait 'Drop' is built in, so it cannot be implemented: a type's destructor is written 'fun mut T.drop()' inside its own module"
@@ -839,11 +885,53 @@ impl Parser {
         self.expect(TokenKind::LBrace, "'{' to open the impl's body")?;
         let mut methods = Vec::new();
         let mut names = Vec::new();
+        let mut assoc_types: Vec<AssocTypeBinding> = Vec::new();
         self.skip_newlines();
         while !self.check(&TokenKind::RBrace) {
+            // `type Item = i32` (A-12 slice 5). `type` is not a keyword, so it
+            // is an identifier and the name after it is what makes this the
+            // binding.
+            if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "type")
+                && matches!(self.peek2_kind(), TokenKind::Ident(_))
+            {
+                let start = self.advance().span;
+                let (name, name_span) = self.expect_ident()?;
+                if self.check(&TokenKind::Colon) {
+                    return Err(ParseError {
+                        message: format!(
+                            "a bound on 'type {name}' is written in the trait's declaration, not in the impl: write 'type {name}: Named' in the 'trait' body, and bind it here with 'type {name} = <concrete type>'"
+                        ),
+                        span: self.peek().span,
+                    });
+                }
+                if !self.check(&TokenKind::Eq) {
+                    return Err(ParseError {
+                        message: format!(
+                            "'type {name}' needs the type the impl binds: write 'type {name} = <concrete type>'"
+                        ),
+                        span: self.peek().span,
+                    });
+                }
+                self.advance();
+                let ty = self.parse_type()?;
+                let end = ty.span;
+                if assoc_types.iter().any(|a| a.name == name) {
+                    return Err(ParseError {
+                        message: format!("'type {name}' is bound more than once in this impl"),
+                        span: name_span,
+                    });
+                }
+                assoc_types.push(AssocTypeBinding {
+                    name,
+                    ty,
+                    span: start.to(end),
+                });
+                self.skip_newlines();
+                continue;
+            }
             if !self.check(&TokenKind::Fun) {
                 return Err(ParseError {
-                    message: "an 'impl' block declares methods only, each written 'fun Self.name(...)': move anything else to the top level"
+                    message: "an 'impl' block declares methods ('fun Self.name(...)') and associated types ('type Name = Type'): move anything else to the top level"
                         .to_string(),
                     span: self.peek().span,
                 });
@@ -895,6 +983,7 @@ impl Parser {
                 trait_span,
                 type_span,
                 methods: names,
+                assoc_types,
                 module: String::new(),
                 impl_span,
             },
@@ -1199,6 +1288,18 @@ impl Parser {
         let mut out = Vec::new();
         loop {
             let (name, span) = self.parse_dotted_name()?;
+            // `Iterator<Item = i32>` (A-12 slice 5): an equality constraint on
+            // an associated type. It is not in this slice, and the `<` is what
+            // says so rather than the generic-argument parser turning it into
+            // an unreadable error.
+            if self.check(&TokenKind::Lt) {
+                return Err(ParseError {
+                    message: format!(
+                        "an equality constraint on an associated type ('{name}<Item = i32>') is not in this slice: bound the parameter with the trait ('{name}') and name the concrete type where it is used ('I::Item'), rather than fixing it in the bound"
+                    ),
+                    span: self.peek().span,
+                });
+            }
             out.push(TypeExpr::named(name, span));
             if self.check(&TokenKind::Plus) {
                 self.advance();
@@ -1690,6 +1791,7 @@ impl Parser {
                     tuple: None,
                     args: Vec::new(),
                     array_elem: None,
+                    assoc: None,
                     array_len: None,
                     amp: true,
                     amp_mut,
@@ -1727,6 +1829,7 @@ impl Parser {
                 tuple: None,
                 args: Vec::new(),
                 array_elem: Some(Box::new(elem)),
+                assoc: None,
                 array_len: Some(Box::new(len)),
                 amp: amp_start.is_some(),
                 amp_mut: false,
@@ -1774,6 +1877,7 @@ impl Parser {
                 tuple: Some(elems),
                 args: Vec::new(),
                 array_elem: None,
+                assoc: None,
                 array_len: None,
                 amp: amp_start.is_some(),
                 amp_mut: false,
@@ -1816,6 +1920,24 @@ impl Parser {
             name.push_str(&part);
             span = span.to(part_span);
         }
+        // `I::Item` / `Self::Item` (A-12 slice 5): an associated type
+        // projected from the name just read. A generic associated type is
+        // refused here, where the `::` says this is the shape.
+        let assoc = if self.check(&TokenKind::ColonColon) {
+            self.advance();
+            let (item, ispan) = self.expect_ident()?;
+            span = span.to(ispan);
+            if self.check(&TokenKind::Lt) {
+                return Err(ParseError {
+                    message: "a generic associated type is not in this slice: 'type Item' declares a type, not a parameterized one, so write the type the impl binds without an argument list"
+                        .to_string(),
+                    span: self.peek().span,
+                });
+            }
+            Some(item)
+        } else {
+            None
+        };
         // Type arguments (collections milestone): `List<T>`. Unambiguous in
         // a type position, and v1 knows exactly one generic name, so a
         // comma-separated list is parsed here and rejected in `infer.rs`
@@ -1828,6 +1950,7 @@ impl Parser {
                 tuple: None,
                 args,
                 array_elem: None,
+                assoc,
                 array_len: None,
                 amp: amp_start.is_some(),
                 amp_mut: false,
@@ -1843,6 +1966,7 @@ impl Parser {
             tuple: None,
             args: Vec::new(),
             array_elem: None,
+            assoc,
             array_len: None,
             amp: amp_start.is_some(),
             amp_mut: false,
@@ -2023,6 +2147,7 @@ impl Parser {
             tuple: None,
             args: Vec::new(),
             array_elem: None,
+            assoc: None,
             array_len: None,
             amp: amp_start.is_some(),
             amp_mut: false,
@@ -3564,11 +3689,31 @@ mod tests {
     }
 
     #[test]
-    fn a_trait_item_that_is_not_a_method_does_not_parse() {
+    fn a_trait_item_that_is_not_a_method_or_an_associated_type_does_not_parse() {
         let err = parse_err("trait Shape { type Item = i32 }\nfun main() {}");
-        assert!(err.message.contains("associated types"), "{}", err.message);
+        assert!(err.message.contains("default associated type"), "{}", err.message);
+        let err = parse_err("trait Shape { type Item<T> }\nfun main() {}");
+        assert!(err.message.contains("generic associated type"), "{}", err.message);
         let err = parse_err("trait Shape { const N: i32 = 1 }\nfun main() {}");
-        assert!(err.message.contains("methods only"), "{}", err.message);
+        assert!(err.message.contains("associated consts"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_associated_type_is_declared_in_a_trait_and_bound_in_an_impl() {
+        let p = parse(
+            "trait Src {\n    type Out: Named\n    fun Self.produce().R: Self::Out\n}\n\nimpl Src for i32 {\n    type Out = i32\n    fun Self.produce().R: i32 = self\n}\nfun main() {}",
+        );
+        let src = &p.traits[0];
+        assert_eq!(src.assoc_types.len(), 1);
+        assert_eq!(src.assoc_types[0].name, "Out");
+        assert_eq!(src.assoc_types[0].bounds[0].name, "Named");
+        assert_eq!(src.methods[0].return_type.as_ref().unwrap().name, "Self");
+        assert_eq!(
+            src.methods[0].return_type.as_ref().unwrap().assoc.as_deref(),
+            Some("Out")
+        );
+        assert_eq!(p.trait_impls[0].assoc_types[0].name, "Out");
+        assert_eq!(p.trait_impls[0].assoc_types[0].ty.name, "i32");
     }
 
     #[test]

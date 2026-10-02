@@ -49,9 +49,21 @@ pub struct TraitDecl {
     /// `Self` receiver; a `FunctionBody::Signature` is a required signature and
     /// any other body is a default method an impl may omit.
     pub methods: Vec<FunctionDecl>,
+    /// `type Item` / `type Item: Named` (A-12 slice 5), in source order. Each
+    /// impl has to bind every one of them.
+    pub assoc_types: Vec<AssocTypeDecl>,
     /// See `DatacDecl::module`.
     pub module: String,
     pub span: Span,
+}
+
+/// One `type Name[: Bound + Bound]` inside a `trait` body (A-12 slice 5).
+#[derive(Debug, Clone)]
+pub struct AssocTypeDecl {
+    pub name: String,
+    /// The bounds after a `:`, as written (`Named`, `alias.Named`), resolved
+    /// in the trait's own module by `infer.rs`, exactly as a supertrait is.
+    pub bounds: Vec<TypeExpr>,
 }
 
 /// One `impl Name for Type { ... }` block (A-12 slice 2).
@@ -69,10 +81,23 @@ pub struct TraitImplDecl {
     /// The names the block declares, in source order, so an extra or a
     /// missing one can be reported against the block.
     pub methods: Vec<String>,
+    /// `type Item = i32` (A-12 slice 5), in source order. Every associated
+    /// type the trait declares has to be bound here, exactly once.
+    pub assoc_types: Vec<AssocTypeBinding>,
     /// See `DatacDecl::module`.
     pub module: String,
     /// The `impl` keyword's own span, what a coherence error points at.
     pub impl_span: Span,
+}
+
+/// One `type Name = Type` inside an `impl` body (A-12 slice 5).
+#[derive(Debug, Clone)]
+pub struct AssocTypeBinding {
+    pub name: String,
+    /// The concrete type, as written. `infer.rs` resolves it in the impl's own
+    /// module, exactly as it does an impl method's signature.
+    pub ty: TypeExpr,
+    pub span: Span,
 }
 
 /// The site one method was written at: `Some` exactly for a method inside an
@@ -477,6 +502,10 @@ pub struct TypeExpr {
     /// written with brackets. `name` is empty in that case, because an array
     /// type has no name of its own: it is its element and its length.
     pub array_elem: Option<Box<TypeExpr>>,
+    /// `I::Item` / `Self::Item` (A-12 slice 5): the associated type `assoc`
+    /// projected from the type parameter (or `Self`) named in `name`. `None`
+    /// for every ordinary type; the parser only sets it after a `::`.
+    pub assoc: Option<String>,
     /// The `N` of `[T; N]`, kept as an expression because a length is
     /// allowed to be computed from constants (`PAGE_SIZE / ENTRY_SIZE`,
     /// A-19), folded by `infer.rs` when the type is resolved.
@@ -524,6 +553,7 @@ impl TypeExpr {
             tuple: None,
             args: Vec::new(),
             array_elem: None,
+            assoc: None,
             array_len: None,
             amp: false,
             amp_mut: false,
@@ -554,6 +584,9 @@ impl TypeExpr {
             } else {
                 format!("&dyn {name}")
             };
+        }
+        if let Some(item) = &self.assoc {
+            return format!("{}::{item}", self.name);
         }
         let mut s = if let Some(elems) = &self.tuple {
             let parts: Vec<String> = elems.iter().map(|e| e.display()).collect();

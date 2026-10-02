@@ -6,7 +6,9 @@ trait Shape {
 }
 
 trait Named: Shape + Other {
+    type Item
     fun Self.name().R: str
+    fun Self.first().R: Self::Item
 }
 
 datac Circle(val r: f64)
