@@ -950,8 +950,16 @@ fun mut SNode.compute_measure(th: &Theme) {
     }
     if k == core.KIND_SCROLLED {
         measured_w += 2 * th.pad + th.scrollbar_w
-        measured_h += 2 * th.pad
+        // A scroll area is flexible: its content does not push its own height, and an expand
+        // child grows to the leftover, so a long list stays inside the window instead of
+        // overflowing it. The cap is the most a scroll area asks for when it is not expanded.
         content_h = main
+        var h = main + 2 * th.pad
+        val cap = th.row_h * 6 + 2 * th.pad
+        if h > cap {
+            h = cap
+        }
+        measured_h = h
     }
 }
 

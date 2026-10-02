@@ -503,7 +503,9 @@ is `0` by `props.height`; `Button` is `label + 2*pad` by `max(text_height + 2*pa
 label` by `max(box, text_height)`; `Progress` is `entry_min_w` by `progress_h`; `Separator` is
 `0` by `sep`; a `Column`/`Row` sums its children's sizes plus `spacing * (n - 1)` and takes the
 maximum across the other axis; `Scrolled` measures its children as an implicit `Column` and adds
-`2*pad + scrollbar_w` to the width and `2*pad` to the height. A child's `margin` (when non
+`2*pad + scrollbar_w` to the width, but its height asks for `content_h + 2*pad` capped at
+`row_h * 6 + 2*pad`, so a long list does not push its own height and an `expand` child grows to
+the leftover (a scroll area is flexible, like a GTK `ScrolledWindow`). A child's `margin` (when non
 negative) is added on all four of its sides; `align` is `Fill` unless set; `expand` divides the
 main axis' leftover among the expand children.
 
@@ -631,7 +633,8 @@ checksum after every frame. It must end with the same model and the same created
 live counters as the GTK and headless runs, because it runs the same `core.frame_step` body.
 
 `examples/polyp-ui-test/` is the input and layout test program: hit-test and focus-order checks,
-the entry editing sequence, the damage assertions ("changing one label's text damages its own
+the entry editing sequence, a Space and a click activation, the wheel's move and clamp, the
+damage assertions ("changing one label's text damages its own
 rectangle and no other, and the pixels outside it are identical before and after"; "a hover
 change damages only the hovered widget"; "an idle frame presents nothing"), the layout skip
 counted with a measure/arrange counter, and the golden todo checksums at 400x300 and 800x600.

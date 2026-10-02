@@ -14531,7 +14531,7 @@ fn polyp_soft_ui_hits_focuses_edits_and_damages() {
     );
 }
 
-const POLYP_UI_EXPECTED: &str = "hit\n0\n1\n2\n3\n-1\norder\n0\n1\n2\n3\n0\n1\n2\n3\n0\n3\nedit\nabcd\n0\nXabcd\n1\nXaYbcd\n3\n2\naYbcd\n0\n5\naYbc\n4\ndamage\n1\n0\n0\n24\n7\noutside-same\n1\n0\n0\nhover\n1\n22\n7\n22\n20\n1\n22\n22\ncheckbox\ntrue\n1\nlayout\n1\n0\n2\n3\n";
+const POLYP_UI_EXPECTED: &str = "hit\n0\n1\n2\n3\n-1\norder\n0\n1\n2\n3\n0\n1\n2\n3\n0\n3\nedit\nabcd\n0\nXabcd\n1\nXaYbcd\n3\n2\naYbcd\n0\n5\naYbc\n4\ndamage\n1\n0\n0\n24\n7\noutside-same\n1\n0\n0\nhover\n1\n22\n7\n22\n20\n1\n22\n22\ncheckbox\ntrue\n1\nscroll\nscrolled\n1\n0\nlayout\n1\n0\n2\n3\n";
 
 /// Polyp v3 stage 3: the todo program on the soft backend, at both golden sizes.
 ///

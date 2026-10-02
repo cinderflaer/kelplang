@@ -351,6 +351,71 @@ fun run_checkbox() {
     print(st.presses)
 }
 
+// A scroll area with far more content than the window, so the wheel moves and then clamps.
+fun scroll_view(s: St).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.expand()
+        k.scrolled { sc ->
+            sc.spacing(0)
+            var i = 0
+            while i < 100 {
+                sc.text("row")
+                i += 1
+            }
+        }
+    }
+}
+
+fun run_scroll() {
+    print("scroll")
+    var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
+    var b = soft_backend.new()
+    b.resize(WINDOW_W, WINDOW_H)
+    var st = St(n = 0)
+    var tree = scroll_view(st)
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val f = p.framebuffer()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    val before = p.checksum()
+    p.push(event.Event.PointerMove(x = 200, y = 150))
+    p.push(event.Event.Scroll(dx = 0, dy = 50))
+    val t1 = soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = scroll_view, update = nop)
+    tree = when t1 {
+        Idle(t) -> t
+        Changed(t) -> t
+        Quit(t) -> t
+    }
+    if p.checksum() != before {
+        print("scrolled")
+    } else {
+        print("same")
+    }
+    // A wheel step past the end clamps and repaints once; a second one changes nothing.
+    val n1 = p.frame_count()
+    p.push(event.Event.Scroll(dx = 0, dy = 100000))
+    val t2 = soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = scroll_view, update = nop)
+    tree = when t2 {
+        Idle(t) -> t
+        Changed(t) -> t
+        Quit(t) -> t
+    }
+    print(p.frame_count() - n1)
+    val n2 = p.frame_count()
+    p.push(event.Event.Scroll(dx = 0, dy = 100000))
+    val t3 = soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = scroll_view, update = nop)
+    tree = when t3 {
+        Idle(t) -> t
+        Changed(t) -> t
+        Quit(t) -> t
+    }
+    print(p.frame_count() - n2)
+}
+
 fun run_layout() {
     print("layout")
     var p = headless_platform.new(width = WINDOW_W, height = WINDOW_H)
@@ -410,5 +475,6 @@ fun main() {
     run_damage()
     run_hover()
     run_checkbox()
+    run_scroll()
     run_layout()
 }
