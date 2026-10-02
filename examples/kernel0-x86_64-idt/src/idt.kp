@@ -1,0 +1,529 @@
+// The x86-64 IDT, the four CPU exception gates and the timer gate
+// (kernel stage 22, `plan/x86-idt.md`).
+//
+// An exception taken in ring 0 pushes three words - `RIP`, `CS` and `RFLAGS` -
+// because no privilege change happens; vectors 8, 10..14 and 17 push an error
+// code below them, and 13 and 14 are the two of those this kernel installs. The
+// other gates push a zero in the error slot so every vector reaches one frame
+// layout, which is why the `push 0` at the top of a `#DE`/`#UD`/timer gate is
+// not a mistake.
+//
+// The gate then pushes the general registers (oldest push at the highest
+// offset, because the stack grows down) and the vector number, moves the frame
+// base into `rdi`, aligns `rsp`, calls the dispatcher, restores the registers
+// and ends in `iretq`. The numbers below are that contract and nothing in the
+// compiler checks them: `layout_ok` checks them at boot and
+// `kelpc/tests/projects/x86_idt_layout` pins them on both backends.
+impl "pic"
+impl "uart"
+
+// The boot GDT's 64-bit code segment selector, read out of the x86-64 `_start`
+// stub's own three-entry GDT (`plan/x86-64.md`).
+const KERNEL_CS: u16 = 0x08
+
+// Present, ring 0, 64-bit interrupt gate. An interrupt gate clears IF on entry,
+// which is what keeps a timer tick from nesting inside its own handler.
+const GATE_INTERRUPT: u8 = 0x8E
+
+const IDT_ENTRIES: usize = 256
+const ENTRY_BYTES: usize = 16
+
+// The four exception vectors and the timer's, and the offsets the gates
+// hardcode in their frames.
+pub const VECTOR_DE: usize = 0
+pub const VECTOR_UD: usize = 6
+pub const VECTOR_GP: usize = 13
+pub const VECTOR_PF: usize = 14
+
+const OFF_VECTOR: usize = 0
+const OFF_ERROR: usize = 128
+const OFF_RIP: usize = 136
+
+// `ud2` is `0F 0B`; the one 64-bit divide in the kernel is `div rcx`, which is
+// `REX.W F7 /6` with no displacement. A two-entry table rather than a decoder,
+// because those are the only two instructions the kernel resumes from.
+const LEN_UD: usize = 2
+const LEN_DIV: usize = 3
+
+// 256 gates, all absent until `install` fills the five this kernel handles. An
+// absent gate is a #GP, which has a gate of its own, so nothing is left at
+// address zero.
+static mut IDT: [IdtEntry; IDT_ENTRIES] = [IdtEntry(offset_low = 0, selector = 0, ist = 0, type_attr = 0, offset_mid = 0, offset_high = 0, reserved = 0); IDT_ENTRIES]
+
+// What `lidt` reads: a 16-bit limit and a 64-bit base, ten bytes, which is why
+// this is its own packed datac and is not a gate.
+static mut DESCRIPTOR: IdtDescriptor = IdtDescriptor(limit = 0, base = 0)
+
+// The dispatcher's address, reached by the gates through the GS base. An `asm`
+// operand would be materialised into a register *before* the gate has saved
+// anything, and that register is one of the interrupted program's; a base
+// register the blob loads from after the saves is the one place a naked gate
+// can read without clobbering first.
+static mut DISPATCH: u64 = 0
+
+// One 16-byte gate: the target's low 16 bits, the code selector, the IST index
+// (0: stay on the interrupted stack), the type/attribute byte, the target's
+// middle 16 bits, its high 32 bits and a reserved word.
+pub repr(c) datac IdtEntry(
+    val offset_low: u16,
+    val selector: u16,
+    val ist: u8,
+    val type_attr: u8,
+    val offset_mid: u16,
+    val offset_high: u32,
+    val reserved: u32,
+)
+
+repr(packed) datac IdtDescriptor(
+    val limit: u16,
+    val base: u64,
+)
+
+// The frame the gates build: the vector number, the general registers in the
+// order they were pushed, the error code (the CPU's or the gate's zero), and
+// the three words the CPU pushed. A fault from ring 3 would push `RSP` and `SS`
+// after `RFLAGS` as well; there is no user mode on x86-64 in this tree, so
+// nothing here is a ring-3 frame.
+pub repr(c) datac TrapFrame(
+    val vector: u64,
+    val r15: u64,
+    val r14: u64,
+    val r13: u64,
+    val r12: u64,
+    val r11: u64,
+    val r10: u64,
+    val r9: u64,
+    val r8: u64,
+    val rdi: u64,
+    val rsi: u64,
+    val rbp: u64,
+    val rbx: u64,
+    val rdx: u64,
+    val rcx: u64,
+    val rax: u64,
+    val error: u64,
+    val rip: u64,
+    val cs: u64,
+    val rflags: u64,
+)
+
+// One frame word at a byte offset, through the raw pointer the naked gate
+// handed the dispatcher. Every word in the frame is a `u64`, so an aligned
+// volatile load or store is the whole access.
+fun get(frame: Ptr<TrapFrame>, offset: usize).R: u64 {
+    unsafe {
+        frame.cast<u8>().byte_offset(offset.to_isize()).cast<u64>().read_volatile()
+    }
+}
+
+fun set(frame: Ptr<TrapFrame>, offset: usize, value: u64) {
+    unsafe {
+        frame.cast<u8>().byte_offset(offset.to_isize()).cast<u64>().write_volatile(value)
+    }
+}
+
+fun entry_for(target: usize).R: IdtEntry {
+    return IdtEntry(
+        offset_low = (target & 0xFFFF).to_u16(),
+        selector = KERNEL_CS,
+        ist = 0,
+        type_attr = GATE_INTERRUPT,
+        offset_mid = ((target >> 16) & 0xFFFF).to_u16(),
+        offset_high = (target >> 32).to_u32(),
+        reserved = 0,
+    )
+}
+
+fun set_gate(vector: usize, target: usize) {
+    val table: Ptr<[IdtEntry; IDT_ENTRIES]> = unsafe { Ptr.from_mut(IDT) }
+    val bytes: Ptr<u8> = table.cast<u8>()
+    val slot: Ptr<IdtEntry> = bytes.byte_offset((vector * ENTRY_BYTES).to_isize()).cast<IdtEntry>()
+    unsafe {
+        slot.write_volatile(entry_for(target))
+    }
+}
+
+// Build the five gates from the naked functions' addresses and load the table.
+// `Ptr.from_fn` is what keeps a mangled symbol out of this file: the addresses
+// the gates jump to are the ones the linker resolved for those declarations.
+pub fun install() {
+    set_gate(VECTOR_DE, Ptr.from_fn(gate_de).addr())
+    set_gate(VECTOR_UD, Ptr.from_fn(gate_ud).addr())
+    set_gate(VECTOR_GP, Ptr.from_fn(gate_gp).addr())
+    set_gate(VECTOR_PF, Ptr.from_fn(gate_pf).addr())
+    set_gate(pic.VECTOR_TIMER, Ptr.from_fn(gate_timer).addr())
+    val table: Ptr<[IdtEntry; IDT_ENTRIES]> = unsafe { Ptr.from_mut(IDT) }
+    val descript: Ptr<IdtDescriptor> = unsafe { Ptr.from_mut(DESCRIPTOR) }
+    val dispatch: Ptr<u64> = unsafe { Ptr.from_mut(DISPATCH) }
+    unsafe {
+        val limit: usize = IDT_ENTRIES * ENTRY_BYTES - 1
+        DESCRIPTOR = IdtDescriptor(limit = limit.to_u16(), base = table.addr().to_u64())
+        DISPATCH = Ptr.from_fn(trap_dispatch).addr().to_u64()
+        set_gs_base(dispatch.addr())
+        asm("lidt [{0}]", in("r") descript.addr())
+    }
+}
+
+// IA32_GS_BASE (0xC0000101) is EDX:EAX when `wrmsr` runs, and the compiler's
+// constraint vocabulary has no fixed-register form, so the template loads the
+// MSR number and the address's two halves itself and declares the three
+// registers clobbered.
+fun set_gs_base(addr: usize) {
+    unsafe {
+        asm(
+            "mov rcx, 0xC0000101\nmov rax, {0}\nshr rax, 32\nmov rdx, rax\nmov rax, {0}\nwrmsr",
+            in("r") addr,
+            clobber("ax"),
+            clobber("cx"),
+            clobber("dx")
+        )
+    }
+}
+
+// What the boot checks before anything relies on the asm: the gate is one
+// 16-byte descriptor with its offset in three pieces, the frame is 160 bytes,
+// and the fields the gates and the dispatcher address by number are where the
+// templates pushed them.
+pub fun layout_ok().R: bool {
+    if size_of<IdtEntry>() != ENTRY_BYTES {
+        return false
+    }
+    if offset_of<IdtEntry>("offset_low") != 0 {
+        return false
+    }
+    if offset_of<IdtEntry>("selector") != 2 {
+        return false
+    }
+    if offset_of<IdtEntry>("ist") != 4 {
+        return false
+    }
+    if offset_of<IdtEntry>("type_attr") != 5 {
+        return false
+    }
+    if offset_of<IdtEntry>("offset_mid") != 6 {
+        return false
+    }
+    if offset_of<IdtEntry>("offset_high") != 8 {
+        return false
+    }
+    if offset_of<IdtEntry>("reserved") != 12 {
+        return false
+    }
+    if size_of<TrapFrame>() != 160 {
+        return false
+    }
+    if offset_of<TrapFrame>("vector") != OFF_VECTOR {
+        return false
+    }
+    if offset_of<TrapFrame>("r15") != 8 {
+        return false
+    }
+    if offset_of<TrapFrame>("rax") != 120 {
+        return false
+    }
+    if offset_of<TrapFrame>("error") != OFF_ERROR {
+        return false
+    }
+    if offset_of<TrapFrame>("rip") != OFF_RIP {
+        return false
+    }
+    if offset_of<TrapFrame>("cs") != 144 {
+        return false
+    }
+    if offset_of<TrapFrame>("rflags") != 152 {
+        return false
+    }
+    return true
+}
+
+// The gate body, once per vector. Every register it writes has already been
+// pushed, so the interrupted program's register file is the frame and nothing
+// else is disturbed. `mov rbx, rsp` keeps the frame base across the call (the
+// callee preserves `rbx`, and `rsp` itself is about to move); `and rsp, -16`
+// gives the dispatcher the 16-byte-aligned stack the ABI wants, because the
+// interrupted code's `rsp` is only 16-aligned at a call site and a fault can be
+// taken anywhere. The dispatcher's address comes from the GS base, which is the
+// one place a naked gate can read a shared address from without clobbering a
+// register before it has saved anything.
+//
+// `#DE`: the CPU pushes no error code, so the gate pushes the zero first.
+section(".text.trap") align(16) naked fun gate_de() {
+    asm("
+            push 0
+            push rax
+            push rcx
+            push rdx
+            push rbx
+            push rbp
+            push rsi
+            push rdi
+            push r8
+            push r9
+            push r10
+            push r11
+            push r12
+            push r13
+            push r14
+            push r15
+            push 0
+            mov rbx, rsp
+            mov rdi, rsp
+            and rsp, -16
+            mov rax, gs:[0]
+            call rax
+            mov rsp, rbx
+            add rsp, 8
+            pop r15
+            pop r14
+            pop r13
+            pop r12
+            pop r11
+            pop r10
+            pop r9
+            pop r8
+            pop rdi
+            pop rsi
+            pop rbp
+            pop rbx
+            pop rdx
+            pop rcx
+            pop rax
+            add rsp, 8
+            iretq
+        ")
+}
+
+// `#UD`: no error code either, so the same dummy-zero shape with its own
+// vector number.
+section(".text.trap") align(16) naked fun gate_ud() {
+    asm("
+            push 0
+            push rax
+            push rcx
+            push rdx
+            push rbx
+            push rbp
+            push rsi
+            push rdi
+            push r8
+            push r9
+            push r10
+            push r11
+            push r12
+            push r13
+            push r14
+            push r15
+            push 6
+            mov rbx, rsp
+            mov rdi, rsp
+            and rsp, -16
+            mov rax, gs:[0]
+            call rax
+            mov rsp, rbx
+            add rsp, 8
+            pop r15
+            pop r14
+            pop r13
+            pop r12
+            pop r11
+            pop r10
+            pop r9
+            pop r8
+            pop rdi
+            pop rsi
+            pop rbp
+            pop rbx
+            pop rdx
+            pop rcx
+            pop rax
+            add rsp, 8
+            iretq
+        ")
+}
+
+// `#GP`: the CPU pushed its error code, so the gate goes straight to the
+// registers.
+section(".text.trap") align(16) naked fun gate_gp() {
+    asm("
+            push rax
+            push rcx
+            push rdx
+            push rbx
+            push rbp
+            push rsi
+            push rdi
+            push r8
+            push r9
+            push r10
+            push r11
+            push r12
+            push r13
+            push r14
+            push r15
+            push 13
+            mov rbx, rsp
+            mov rdi, rsp
+            and rsp, -16
+            mov rax, gs:[0]
+            call rax
+            mov rsp, rbx
+            add rsp, 8
+            pop r15
+            pop r14
+            pop r13
+            pop r12
+            pop r11
+            pop r10
+            pop r9
+            pop r8
+            pop rdi
+            pop rsi
+            pop rbp
+            pop rbx
+            pop rdx
+            pop rcx
+            pop rax
+            add rsp, 8
+            iretq
+        ")
+}
+
+// `#PF`: an error code too, and the one gate whose report also reads CR2.
+section(".text.trap") align(16) naked fun gate_pf() {
+    asm("
+            push rax
+            push rcx
+            push rdx
+            push rbx
+            push rbp
+            push rsi
+            push rdi
+            push r8
+            push r9
+            push r10
+            push r11
+            push r12
+            push r13
+            push r14
+            push r15
+            push 14
+            mov rbx, rsp
+            mov rdi, rsp
+            and rsp, -16
+            mov rax, gs:[0]
+            call rax
+            mov rsp, rbx
+            add rsp, 8
+            pop r15
+            pop r14
+            pop r13
+            pop r12
+            pop r11
+            pop r10
+            pop r9
+            pop r8
+            pop rdi
+            pop rsi
+            pop rbp
+            pop rbx
+            pop rdx
+            pop rcx
+            pop rax
+            add rsp, 8
+            iretq
+        ")
+}
+
+// The timer's gate: an IRQ pushes no error code, so it is the dummy-zero shape
+// again with vector 32.
+section(".text.trap") align(16) naked fun gate_timer() {
+    asm("
+            push 0
+            push rax
+            push rcx
+            push rdx
+            push rbx
+            push rbp
+            push rsi
+            push rdi
+            push r8
+            push r9
+            push r10
+            push r11
+            push r12
+            push r13
+            push r14
+            push r15
+            push 32
+            mov rbx, rsp
+            mov rdi, rsp
+            and rsp, -16
+            mov rax, gs:[0]
+            call rax
+            mov rsp, rbx
+            add rsp, 8
+            pop r15
+            pop r14
+            pop r13
+            pop r12
+            pop r11
+            pop r10
+            pop r9
+            pop r8
+            pop rdi
+            pop rsi
+            pop rbp
+            pop rbx
+            pop rdx
+            pop rcx
+            pop rax
+            add rsp, 8
+            iretq
+        ")
+}
+
+// The body the gates call with the frame in `rdi`. The timer's vector goes to
+// the PIC and returns; every other vector is a fault, and the only two the
+// kernel resumes from are `#UD` and `#DE`, whose faulting instruction the saved
+// `rip` is advanced past. `#GP` and `#PF` have no repair here, so the report is
+// followed by a halt.
+pub fun trap_dispatch(frame: Ptr<TrapFrame>) {
+    val vector: usize = get(frame, OFF_VECTOR).to_usize()
+    if vector == pic.VECTOR_TIMER {
+        pic.on_tick()
+        return
+    }
+    report(frame, vector)
+    if vector == VECTOR_UD {
+        set(frame, OFF_RIP, get(frame, OFF_RIP) + LEN_UD.to_u64())
+        return
+    }
+    if vector == VECTOR_DE {
+        set(frame, OFF_RIP, get(frame, OFF_RIP) + LEN_DIV.to_u64())
+        return
+    }
+    uart.halt()
+}
+
+fun report(frame: Ptr<TrapFrame>, vector: usize) {
+    uart.puts("exception ")
+    uart.put_dec(vector)
+    uart.puts(" err ")
+    uart.put_dec(get(frame, OFF_ERROR).to_usize())
+    uart.puts(" rip ")
+    uart.put_hex(get(frame, OFF_RIP))
+    if vector == VECTOR_PF {
+        uart.puts(" cr2 ")
+        uart.put_hex(read_cr2())
+    }
+    uart.putc(10)
+}
+
+// CR2 holds the linear address a #PF faulted on. It means nothing outside a
+// #PF handler, because the next fault overwrites it.
+pub fun read_cr2().R: u64 {
+    val v: u64 = unsafe {
+        asm("mov {0}, cr2", out("r") _)
+    }
+    return v
+}

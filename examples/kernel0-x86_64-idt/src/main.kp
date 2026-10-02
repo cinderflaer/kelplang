@@ -1,0 +1,81 @@
+// Kernel stage 22: the x86-64 IDT, four CPU exception gates and the 8259/8254
+// timer interrupt (`plan/x86-idt.md`).
+//
+// The boot is two deliberate faults the dispatcher resumes from, five real
+// timer ticks, and one store the page fault gate cannot repair. The store comes
+// last on purpose: its handler prints and halts, so it is the last thing the
+// serial port sees.
+impl "idt" caps(mmio = ["0x200000000+0x1000"])
+impl "pic"
+impl "uart"
+
+// The page the last check writes through: 8 GiB, far above the first 1 GiB the
+// x86-64 `_start` stub identity-maps, so the store is a not-present supervisor
+// write and the handler has nothing to repair. This is the one page the
+// manifest grants.
+const UNMAPPED: usize = 0x200000000
+
+section(".text.boot") fun kmain() {
+    if idt.layout_ok() == false {
+        uart.puts("idt: layout bad")
+        uart.putc(10)
+        uart.halt()
+    }
+    idt.install()
+
+    take_ud()
+    take_div_zero()
+
+    pic.remap()
+    pic.start_pit()
+    unsafe {
+        asm("sti")
+    }
+    while pic.ticks() != pic.TICKS_MAX {}
+    pic.mask_timer()
+    uart.puts("x86: done")
+    uart.putc(10)
+
+    take_page_fault()
+    uart.halt()
+}
+
+// `ud2` is `0F 0B`, so the dispatcher's two-byte advance lands on the next
+// instruction.
+fun take_ud() {
+    unsafe {
+        asm("ud2")
+    }
+}
+
+// A divide by zero: `rcx` is cleared and then used as the 64-bit divisor, which
+// is `REX.W F7 /6` and therefore three bytes, the length the dispatcher adds to
+// the saved `rip`. Everything after the asm runs on the resumed frame.
+fun take_div_zero() {
+    unsafe {
+        asm(
+            "xor rcx, rcx\ndiv rcx",
+            clobber("cx"),
+            clobber("ax"),
+            clobber("dx")
+        )
+    }
+}
+
+// The unmapped store. The pointer is born inside the granted page, and the
+// write is what makes the #PF print and halt.
+fun take_page_fault() {
+    val p: Ptr<u64> = Ptr.from_addr(UNMAPPED)
+    unsafe {
+        p.write_volatile(0)
+    }
+}
+
+// The handler `[target] panic` names: a check that fired has no meaningful
+// continuation, so it prints one line and halts.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.putc(10)
+    uart.halt()
+}
