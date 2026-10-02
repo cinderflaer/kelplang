@@ -52,6 +52,13 @@ which scripted input events a `HeadlessPlatform` has reached. A real platform re
 clock; it may return 0 forever and nothing breaks, because the backend does not time anything
 itself.
 
+### `now_us() -> u64`
+
+A monotonic clock in microseconds, added by stage 5 for the frame deadline. A platform with only a
+millisecond clock returns `now_ms() * 1000` and gets millisecond-granular deadlines. The method is
+`mut` because a test platform's clock may advance as paint work is done; a real platform only reads
+its own clock. The deadline is the only reader; `frame` (with no budget) never calls it.
+
 ### `poll_event() -> Option<Event>`
 
 The next pending input event, oldest first, or `None` when the queue is empty. The backend calls
@@ -95,6 +102,20 @@ while running {
 
 A frame with no input and no change paints nothing, presents nothing, and returns `Idle`.
 
+### The deadline
+
+`frame_budgeted(backend, platform, tree, state, view, update, budget_us)` is `frame` with a
+deadline. It returns `soft_backend.Frame.Done(tick)` when the frame finished, or
+`Frame.Deferred(tick)` when the platform's microsecond clock passed `budget_us` after some damage
+rectangle had been painted. On `Deferred`, the rectangles not yet painted are still in the damage
+list: call again with the same `tree` and `state` (from the `tick`) and it paints the rest. A
+rectangle is always painted whole or not at all, so no deferred frame leaves a half-painted widget.
+`budget_us = 0` means no deadline, which is what `frame` passes.
+
+A 60 Hz tick passes `budget_us = 16000`; a 144 Hz tick about `6900`. If the call returns `Deferred`,
+call again until it returns `Done` before running the application's next turn; the state does not
+advance twice, because `frame_step` ran on the first call.
+
 ## Allocation contract
 
 - **The platform owns the framebuffer.** It allocates it (or points at a memory-mapped device)
@@ -102,10 +123,20 @@ A frame with no input and no change paints nothing, presents nothing, and return
   allocates or frees pixels.
 - **The backend allocates only when a patch creates a widget.** The retained tree grows by one
   node, and by one list insertion in its parent, for every `Create` patch. It never shrinks its
-  capacity. An application whose tree stops changing allocates nothing.
-- **A frame allocates nothing.** Damage is a fixed 16-rectangle list, clips are values, and the
-  only scratch is a 560-byte glyph mask on the stack. There is no per-frame `malloc`, `List.push`
-  or `String` build in the paint or input path.
+  capacity. An application whose tree stops changing allocates nothing in the backend.
+- **A frame's damage, clips and glyph mask are fixed-size and allocate nothing.** Damage is a fixed
+  16-rectangle list, the clip stack is a fixed depth 8, and the glyph mask is a 560-byte stack array.
+  Exceeding the clip stack panics `clip stack depth 8 exceeded`; the damage list merges rather than
+  overflow.
+- **The patch list is reused.** The core's `diff_into` clears and refills a caller-owned
+  `List<Patch>` (the backend keeps one), so after the largest frame a smaller one allocates nothing
+  for it. The documented cap is `MAX_FRAME_PATCHES = 4096`; past it the frame panics rather than
+  growing without bound.
+- **What a frame does allocate is the application's view.** `view` rebuilds the tree through Kelp's
+  one allocator (libc `malloc` hosted, the project's `[target] alloc` pair freestanding), and the
+  core's diff builds property strings for the widgets that changed. The backend counts what it can
+  account for (`frame_alloc_count`, `frame_alloc_bytes`, `arena_high_water`) and the work-budget test
+  pins those; a whole-frame zero-allocation claim would need a retained view model and is not made.
 - **The application state is owned by the caller**, not by the platform or the backend. The
   backend holds only widgets and geometry.
 
@@ -114,6 +145,9 @@ A frame with no input and no change paints nothing, presents nothing, and return
 - `frame` is synchronous and non-blocking. It does the work of one tick and returns.
 - A platform calls `frame` once per tick. Two calls in one tick are two frames; a tick with no
   call is a tick that did not repaint. The backend has no internal clock and no timer.
+- `frame_budgeted` is the same frame with a deadline, and it does not block: it stops between whole
+  damage rectangles when `now_us` passes the budget and leaves the rest for the next call. An OS
+  that wants a bounded tick passes its tick length as `budget_us`.
 - Input is not lost if events arrive between frames: `poll_event` keeps them queued until a frame
   drains them.
 - `present` is called from inside `frame`, on the same thread, before `frame` returns. A platform

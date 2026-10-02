@@ -478,6 +478,42 @@ the project also registers its surface with QEMU's `ramfb` device through fw_cfg
 `polyp_fb_riscv64_shows_its_framebuffer_on_a_real_display` captures it with a `screendump` and
 compares it with that line (`plan/polyp-ramfb-status.md`).
 
+## Work budgets, allocation accounting and a benchmark (v3 stage 5)
+
+"Without lag" is a claim about bounded work per frame, so stage 5 makes it measurable. The design
+is `plan/polyp-v3.md`'s "Stage 5: the latency model, work budgets and a benchmark".
+
+**Work budgets.** `examples/polyp-budget-test/` drives the soft backend directly and prints exact,
+machine-independent counts. `polyp_soft_work_budgets_hold` pins them on both backends: an idle frame
+presents 0 rectangles and writes 0 pixels; a same-width label change presents exactly one rectangle
+of area 168 and, with the patch list reused, accounts for 0 allocations; a hover or focus change
+damages only the affected widget; typing one character damages at most the entry's 1800-pixel box;
+removing one row of 200 damages only rectangles at or below it; and a full 800x600 repaint writes
+945223 pixels over 480000, a factor of 1.969 (under the factor 2 the budget allows).
+
+**Allocation accounting.** The backend exposes `frame_alloc_count()`, `frame_alloc_bytes()` and
+`arena_high_water()`, and `soft_backend.apply_diff`/`core.diff_into` clear and refill a caller-owned
+patch list instead of building a new one. The counters are scoped to the backend: the steady-state
+backend paths allocate nothing (pinned at 0 by the budget test), but the application's `view`
+rebuilds its tree through Kelp's one allocator on every message, and that allocation is not counted.
+The documented cap on one frame's patch list is `MAX_FRAME_PATCHES = 4096`.
+
+**The benchmark.** `examples/polyp-bench/` runs five scenarios (200-row scroll, type 100 characters,
+toggle 50 checkboxes, resize 800x600 to 1024x768, full repaint) five times each and prints frames,
+pixels, presented rectangles, backend allocations and median/worst microseconds per frame. On the
+development host with the release `kelpc` the worst frame of any scenario is 6.6 ms, under 16 ms:
+
+```sh
+nix-shell /path/to/dev.nix --run 'cd kelpc && ../target/release/kelpc build ../examples/polyp-bench -o ../target/polyp-bench'
+( ulimit -v 1048576; ulimit -t 60; timeout 60 ./target/polyp-bench )
+```
+
+**The frame deadline.** `soft_backend.frame_budgeted(..., budget_us)` returns
+`Frame.Deferred(tick)` with the remaining damage when the platform's microsecond clock passes the
+budget, so a slow frame degrades into two frames instead of a stall. Each damage rectangle is
+painted whole or left for the next call. `frame(platform, budget_us = 0)` is the unbounded form.
+The `Platform` trait gained `now_us()` for it.
+
 ## Using the library
 
 Kelp has **no manifest for a library**, and a project's modules resolve only
@@ -559,6 +595,10 @@ examples/polyp-counter-v0/smoke.sh
 examples/polyp-todo/smoke.sh
 ```
 
+`examples/polyp-budget-test/` and `examples/polyp-bench/` are stage 5's two programs: the first is
+the work-budget test the suite pins, the second is the benchmark whose table `plan/polyp-v3.md`
+quotes. Both are hosted and headless, and both run in the plain development shell.
+
 ## Build and smoke test
 
 ```sh
@@ -586,12 +626,27 @@ anything else on stdout fails the script.
   a list of 10,000 rows builds 10,000 widgets. A keyed patch makes the updates
   cheap, not the first build.
 - **No animation and no transitions.** A patch sets a property in one step;
-  there is no interpolator and no per-frame hook.
-- **No theming beyond CSS.** `polyp.css` is the only hook: no palette, no
-  dark-mode switch, no per-widget style object.
-- **GTK is the only *drawn* backend.** v3 puts the loop and the diff behind a
-  `core.Backend` interface, so a raster or framebuffer backend is a new module
-  rather than a rewrite, but the only platform that draws today is GTK.
+  there is no interpolator and no per-frame hook. A tick paints a response to
+  input, not a curve; the frame deadline bounds how much of one tick that takes,
+  it does not add animation.
+- **No whole-frame zero-allocation claim.** The soft backend's own steady-state
+  frame path allocates nothing and the patch list is reused, but `view`
+  rebuilds the application tree through Kelp's one allocator on every message.
+  The counters in `soft_backend` measure the backend, not the application, and
+  `plan/polyp-v3.md` says so.
+- **Text is the embedded 5x7 ASCII face.** One weight, integer scales 1 to 4,
+  no vector text, no sub-pixel positioning, no shaping; a byte outside 32..126
+  is a replacement box and a UTF-8 sequence is one box per byte.
+- **No GPU.** The renderer is the integer software raster in `examples/polyp/soft/`;
+  the only hardware fact is the platform's pixel pointer.
+- **Theming on the soft backend is a `Theme` datac and a class table.**
+  `polyp.css` is GTK's hook; the soft backend's equivalent is `soft_backend`'s
+  `Theme` value and its `class_style` comparisons, not a stylesheet parser.
+- **No accessibility.** There is no focus announcement, role tree or
+  screen-reader bridge.
+- **GTK and the soft backend both draw.** `core` is backend-neutral and two
+  backends are shipped: GTK for a desktop and the pure-Kelp soft backend for a
+  framebuffer, hosted or bare metal.
 - **An id still leans on creation order.** An application that posts a raw id
   (rather than carrying a `Msg`) is relying on the order widgets are created in;
   the smoke runs do, deliberately, because they have no user to click anything.

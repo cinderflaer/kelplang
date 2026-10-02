@@ -822,3 +822,205 @@ display has no alpha, so the stage's `checksum` can never match a screen. `soft/
 emits it once as `display 0x<16 hex digits>` after the last step, and both kernels and the hosted
 run print that line, so the display comparison is a checksum comparison and not a golden image.
 `plan/polyp-ramfb-status.md` is the record, including what is deliberately not there.
+
+## Stage 5: the latency model, work budgets and a benchmark
+
+*Stage 5 of 5. "Without lag" is a claim about bounded, small work per frame, so this stage turns it
+into a latency model, invariants the tests enforce, and numbers a reader can check. The implementation
+is `examples/polyp/soft_backend.kp`, `examples/polyp/soft/platform.kp`, the work-budget program
+`examples/polyp-budget-test/` and the benchmark `examples/polyp-bench/`.*
+
+### What runs per frame
+
+`soft_backend.frame_budgeted` is the whole per-frame cost. In order:
+
+1. `platform.framebuffer()`, `backend.resize`, `backend.layout()`. Layout is a no-op unless the
+   surface size or a widget changed.
+2. Drain `platform.poll_event()` to `None`, handling each event in the backend: hit test, hover and
+   focus changes, entry edits, wheel scrolling. Each is a tree walk and a small state write, and each
+   that changes pixels adds damage.
+3. `core.frame_step_into` with the backend's own reusable patch list: pump one scripted event, and
+   for every posted message run `update`, `view`, `diff_into`, `apply`.
+4. `backend.layout()` again, for whatever the patches changed.
+5. `backend.paint_until`: one clip and one tree walk per damage rectangle, then `platform.present`
+   with the rectangles painted.
+
+What each step costs, in widgets and pixels:
+
+- **Layout.** `measure` visits the dirty subtree plus the ancestors that must learn a child's size
+  changed; `arrange` visits the whole tree only when a size changed, the window was resized, a `Move`
+  reordered children, or the tree was never laid out. A same-width text change therefore measures one
+  node and arranges none (the budget test pins `1` and `0`). Removing one row of 200 re-measures one
+  node and arranges `1002` (the whole tree, because the content height changed), but damages only
+  rectangles at or below the removed row.
+- **Paint.** One rectangle at a time. Each rectangle's clip is its intersection with the surface,
+  and the walk skips any node whose rectangle does not intersect the clip, so rows scrolled out of a
+  viewport cost nothing. Every stage-2 primitive returns the pixels it wrote; the frame's total is
+  their sum, which is what the budget tests and the benchmark pin.
+- **Input.** Hit test is a walk front to back. Hover, focus and caret moves flip a boolean or an
+  integer and damage the old and the new widget. An entry edit builds one new `String`. A wheel step
+  moves one integer and damages the scroll area.
+- **Overdraw.** A repaint fills each damage rectangle with the theme background and then draws the
+  widgets over it, so one rectangle's primitive writes exceed its area. The measured factor for a
+  full 800x600 repaint of the 200-row todo UI is `1.969x` (945223 pixel writes over 480000 pixels),
+  under the factor 2 the budget allows.
+
+### Allocation accounting
+
+The backend exposes three counters, all reset by `reset_counts` and read after a frame:
+
+- `frame_alloc_count()`: the number of allocation sites the backend executed in the last frame.
+- `frame_alloc_bytes()`: a lower bound on the bytes those sites built (the allocator's own size is
+  not observable from Kelp, so each site charges a documented estimate).
+- `arena_high_water()`: the largest patch list any frame has produced.
+
+A site is a place the backend builds a heap value: `make` copies a new widget's `Props`, an entry
+edit builds the new text, `set_entry_text` writes one, and `post_id`/`schedule`/`push` append to a
+queue. The steady-state paths call none of them, and `set_props_on` clears and refills the node's
+own `String`s instead of replacing them with fresh `copy_props` values, so a text, checkbox or
+progress patch reuses the retained node's buffers. The work-budget test pins `0` for an idle frame,
+a hover, a focus change, a caret move, a wheel step and a steady-state patch frame; typing one
+character accounts for the one allocation the new text needs.
+
+The core's `diff` may allocate its patch list, so `core.diff_into(old, new, out)` clears and refills
+a caller-owned `List<Patch>` instead. `soft_backend.apply_diff` keeps that list in a `Box` on the
+backend; it is cleared and refilled, never freed, and after the largest frame a smaller one reuses
+its capacity. `core.frame_step_into` does the same for the loop's own diffs.
+
+This counter is scoped to the backend on purpose: it is what the backend can honestly account for.
+It does **not** count the application's `view`, which rebuilds the tree through Kelp's one
+allocator (libc `malloc` in a hosted build, the project's `[target] alloc` pair freestanding), nor
+the `Props` strings the core's `diff` builds for a changed widget. A whole-frame zero-allocation
+claim would need a retained view model or an allocator hook the hosted language does not have; see
+"What is not promised".
+
+### Capacities, and what happens past one
+
+- The damage list is a fixed `[Rect; 16]` (`damage.MAX_DAMAGE = 16`). It never exceeds 16: a
+  touching or overlapping rectangle is merged, and when the list is full and nothing touches, the
+  least-waste pair is merged first. Nothing is silently dropped.
+- The clip stack is a fixed `[Rect; 8]`; a ninth push panics `clip stack depth 8 exceeded`.
+- The glyph mask is a fixed `560`-byte stack array (`5 * 4 * 7 * 4`, the font's 4x maximum); a
+  text scale outside `1..=4` panics `text scale must be in 1..=4`.
+- The reusable patch list is a `List<Patch>` that grows through `List.push`. It has no fixed size,
+  so the documented cap is `MAX_FRAME_PATCHES = 4096`: a frame that produces more patches panics
+  `polyp: frame patch list exceeds MAX_FRAME_PATCHES` rather than growing without bound.
+- The retained tree's nodes are owned by the tree's `List`s and grow by one node and one parent
+  insertion per `Create`, never shrink, and are freed only when the backend is dropped.
+
+### Work budgets, as exact tests
+
+`examples/polyp-budget-test/` drives the backend directly and prints one number per line. The Rust
+test `polyp_soft_work_budgets_hold` pins the whole output, so the numbers are the same on the LLVM
+backend and on the C oracle. At 800x600:
+
+| scenario | what it asserts |
+| --- | --- |
+| idle | an idle frame presents `0` rectangles and writes `0` pixels |
+| text | a same-width label change presents exactly `1` rectangle, area `168` (the 24x7 label), and accounts for `0` allocations after warm-up |
+| hover | a hover change presents `1` rectangle, the hovered widget |
+| focus | a focus change presents `1` rectangle (old focus was none, new is one button) |
+| type | typing one character presents `1` rectangle, the entry's `1800`-pixel box, and accounts for `1` allocation |
+| remove | removing one row of 200 damages only rectangles at or below it (smallest damage `y` is `70`, the removed row's top) |
+| append | appending a row damages only the new row (off-screen, `0` pixels) |
+| repaint | a full repaint writes `945223` pixels for `480000`, a factor of `1.969`, under 2 |
+| deadline | a 2500 us budget splits a 5-rectangle frame into `3` + `2`, every rectangle whole |
+
+The layout counter is exact too: the text change measures `1` node and arranges `0`; the row
+removal measures `1` and arranges `1002` (the whole tree, because the content height changed).
+
+### The benchmark
+
+`examples/polyp-bench/` runs five scenarios, each five times, and prints per scenario: frames,
+pixels, presented rectangles, backend allocations, and median and worst microseconds per frame.
+It uses `std/time`'s monotonic clock; the counts are exact and machine-independent, the times are
+the host's.
+
+Built and run with the release `kelpc` (the compiler's default is `-O2` for the generated program):
+
+```text
+nix-shell /home/juniper/Projects/kelp-native-ui/overnight/dev.nix --run \
+  'cd kelpc && ../target/release/kelpc build ../examples/polyp-bench -o ../target/polyp-bench'
+( ulimit -v 1048576; ulimit -t 60; timeout 60 ./target/polyp-bench )
+```
+
+On the development host (7.8 GiB, LLVM backend, release `kelpc`):
+
+| scenario | frames | pixels | rects | allocs | median us/frame | worst us/frame |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| scroll-200 | 200 | 187536900 | 200 | 0 | 3973 | 4371 |
+| type-100 | 500 | 16719500 | 500 | 500 | 4788 | 4859 |
+| toggle-50 | 250 | 7226945 | 495 | 0 | 4558 | 4632 |
+| resize | 150 | 187531425 | 2400 | 0 | 5846 | 6622 |
+| repaint | 150 | 141783450 | 150 | 0 | 3575 | 3657 |
+
+The debug `kelpc` build gives the same counts and times within a few percent (worst: scroll `4020`,
+type `4439`, toggle `4154`, resize `6123`, repaint `3355`). No scenario's worst frame exceeds 16 ms
+on this host with either build, so v3 does not need the qualifier the stage asked for. The C oracle
+is a different matter: its generated code is roughly three times slower here, so the full benchmark
+does not fit the 10 s bounded runner the test suite uses. The suite therefore sets
+`POLYP_BENCH_QUICK`, which shortens every scenario to one frame per run and keeps the same counts
+per frame; the table above is a full run.
+
+### The frame deadline
+
+`frame_budgeted(backend, platform, tree, state, view, update, budget_us)` is `frame` with a
+deadline. It reads `platform.now_us()` at the start, then after each damage rectangle, and returns
+`Frame.Deferred(tick)` with the remaining rectangles still in the damage list once the elapsed time
+passes `budget_us`. `Frame.Done(tick)` means the frame finished. A rectangle is painted whole or not
+at all, so a deferred frame presents a subset of whole rectangles and the next frame paints the
+rest; nothing is lost and no rectangle is half-painted. `budget_us = 0` means no deadline, which is
+what `frame` passes, so every existing caller is unchanged.
+
+The `Platform` trait grew a fifth method, `now_us()`, for this: `now_ms` is the coarse clock the
+scripted input uses, and a deadline needs a finer one. A platform with only a millisecond clock
+returns `now_ms() * 1000` and gets millisecond granularity; `HeadlessPlatform` has a microsecond
+clock, and its test clock advances a settable number of microseconds per read, which is how the
+budget test makes a 2500 us budget split a 5-rectangle frame into 3 and 2 deterministically.
+
+An operating system integrates it with a tick: on a 60 Hz display the tick is 16.7 ms, so it passes
+`budget_us = 16000` and, when the call returns `Deferred`, calls again in the same tick (or at the
+start of the next) with the same tree and state, until it returns `Done`; on a 144 Hz display the
+budget is about 6900 us. Because the deferred frame keeps its damage, the second call paints only
+what the first could not; the application state is not advanced twice, because `frame_step` already
+ran.
+
+### What is not promised
+
+- **No whole-frame zero-allocation claim.** The backend's own frame path allocates nothing in the
+  steady state, and the patch list is reused, but `view` rebuilds the application tree through
+  Kelp's one allocator every time a message arrives. A view that changed nothing still allocates a
+  new tree. Removing that needs a retained view model, which v3 does not have.
+- **No animation, no timers.** The backend has no clock of its own and no interpolated state; every
+  frame is a response to input or a patch. A future stage may drive `frame` from a vsync tick.
+- **No vector text, no sub-pixel positioning.** The embedded 5x7 ASCII face is the only font, at
+  integer scales 1 to 4, one pen step of `6 * scale` per byte; a byte outside 32..126 is one
+  replacement box, and a multi-byte UTF-8 sequence is one box per byte.
+- **No GPU, no display server.** The renderer is the integer software raster in `soft/`; the only
+  hardware fact is the platform's pixel pointer.
+- **Theming is a `Theme` datac and a class table.** Colours and metrics are one `datac` a platform
+  can replace, and class overrides are the `class_style` comparisons in `soft_backend.kp`; there is
+  no stylesheet parser and no selector engine.
+- **No accessibility.** There is no focus announcement, no role tree and no screen-reader bridge.
+- **Timing is the host's.** The benchmark's clock measures the process, not a display's frame
+  pacing, and the numbers are one development host's at one moment.
+
+### The final v3 status
+
+v3 is five stages, all green on the LLVM backend and the C oracle except the freestanding one, which
+is LLVM-only by design. What exists:
+
+- `core.kp`: the pure tree, the keyed diff (now `diff_into` for a caller-owned patch list), the
+  `Backend` trait and the loop.
+- `soft/`: the integer software raster (`fb`, `draw`, `font`, `damage`, `debug`), the six-variant
+  `Event`, the `Platform` trait and two hosted platforms plus the two kernels' platform.
+- `soft_backend.kp`: the retained widget tree, measure/arrange layout with the skip rule, damage-only
+  painting, input, the class hook, the allocation and pixel counters, and the deadline hook.
+- `gtk_backend.kp` and `headless_backend.kp`: the two stage-1 backends, unchanged in surface.
+- The tests: the pure diff tests, the raster's per-pixel references and golden checksums, the UI
+  hit/focus/edit/damage/layout tests, the todo run at three sizes, the two bare-metal kernels
+  (including the ramfb display), the work-budget test and the benchmark.
+
+The invariants a new backend must keep: one patch walk in `core.apply_patches`; interactive ids
+handed out by counting interactive `make` calls; focus checked across every patch; damage rectangles
+painted whole; a frame that changes nothing presents nothing; and the counters above.

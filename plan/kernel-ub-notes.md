@@ -1651,3 +1651,32 @@ that is checked, and a wrong selector, length or address is a transfer the devic
 surface QEMU never scans out. The test compares a `screendump` of the screen with the kernel's own
 `display` line, so a display that shows anything other than the framebuffer fails rather than being
 ignored (`plan/polyp-ramfb-status.md`).
+
+## Library note: Polyp v3's latency model, work budgets and deadline (2026-10-04, not a kernel stage)
+
+*Stage 5 of Polyp v3. `plan/polyp-v3.md`'s "Stage 5" section is the design; this note is the UB
+half, and it is short because the stage adds no new pointer path.*
+
+**New ways to reach UB: none in Polyp.** Stage 5 adds no `unsafe` operation, no raw pointer, no
+`extern` and no type pun. The `soft_backend` changes are integer counters, a `Box`-held
+`List<Patch>`, an in-place `String` refill and a deadline check; the `soft/platform.kp` change is
+one more method (`now_us`). The pixels, the damage list and the patch list all stay inside the
+module families the earlier notes cover, so a consumer's `[unsafe]` list is unchanged by this
+stage.
+
+**What is implementation-defined, and unchecked.** `Platform.now_us` is whatever the platform's
+clock returns: the backend compares two readings and nothing guarantees the clock is monotonic, or
+that it advances at all. A platform whose clock jumps backwards makes a budget frame run to the
+end, and a platform whose clock never moves makes `budget_us` a no-op; neither is a memory-safety
+issue, and neither is checked. `HeadlessPlatform`'s test clock advances on every read, which is a
+test model, not a promise a real clock makes. `frame_budgeted` is arithmetic on `u64` readings
+(`start + budget_us` can wrap for a near-`u64::MAX` budget, which only turns "over budget" into
+"not over budget") and the `Damage`/`ClipStack` caps are the stage-2 and stage-3 contracts
+unchanged.
+
+**What the compiler checks, and does not.** It checks the same things as every other hosted Polyp
+build: the `[unsafe]` audit list, the allowed set for a freestanding project, and the manifest. It
+does not check that a platform's clock is monotonic or that its `now_us` agrees with its `now_ms`,
+that a budget is smaller than a tick, or that the benchmark's wall-clock columns mean anything
+about a display. The budget tests are the evidence that the accounting is what the text says, and
+they are counts, not timings, so they are the same on both compiler backends.

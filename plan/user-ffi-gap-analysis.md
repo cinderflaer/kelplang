@@ -323,3 +323,26 @@ still has no trampoline, `library`/`header`/`pkg_config` still have no effect in
   - An argument that borrows a temporary cannot be a call argument (`emit(step_line(...).as_str())`
     is refused); bind it to a local first. The same shape the stage-2 note records for
     `Ptr.from_ref(&buf).cast<u32>()`.
+
+## Status update (2026-10-04, Polyp v3 stage 5)
+
+- **No FFI gap is closed and none is newly blocked.** Stage 5 adds no `extern fun`: the deadline is
+  an ordinary trait method (`Platform.now_us`) implemented in Kelp, and the benchmark's clock is
+  `std/time`, the ordinary gated namespace. The work-budget and benchmark programs live in
+  `examples/polyp-budget-test` and `examples/polyp-bench`.
+- Four Kelp shapes the stage worked around, none of them FFI:
+  - A method cannot declare its own type parameters: `fun mut SoftBackend.apply_diff<M>(...)` is a
+    parse error at the `<`, because a method's type parameters come from its receiver. The
+    reusable-patch entry points are free generic functions (`soft_backend.apply_diff(backend, old,
+    new)`) that take the backend as a `mut` parameter, which is the same shape the raster's tests
+    already use.
+  - A free function cannot be `mut` (`fun mut name(...)` is refused outside a receiver), which is
+    correct but easy to reach for: `apply_diff` is `fun apply_diff(...)` with a `mut SoftBackend`
+    parameter.
+  - Consuming an enum by value in a `when` needs a `move` parameter. `fun tick_tree<M>(t:
+    core.Tick<M>)` matched on `t` yields a `&Node`, because a non-`move` parameter is borrowed;
+    `t: move core.Tick<M>` is the spelling that binds the payload by value. The `frame` loop avoids
+    it by matching on the call's temporary directly.
+  - A `mut` parameter of a `Copy` array (`[i64; N]`) is passed by value, not borrowed, so a helper
+    that sorts a caller's samples cannot write back. The benchmark sorts a local copy inside the
+    reporting function, the same workaround the stage-2 note records for mutable scratch images.
