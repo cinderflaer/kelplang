@@ -327,7 +327,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::ast::{AsmOperandKind, BinOp, UnOp};
 use crate::cache::{Cache, KeyFields};
@@ -403,23 +405,13 @@ pub fn compile(
     // and the one the pass pipeline reads its target from, so the layout the
     // types were built for and the layout codegen assumes cannot be two
     // different ones. It carries the level's codegen half; the pipeline below
-    // carries the module half. One context and one machine are shared by every
-    // unit of an incremental build: a unit is a module, not a target.
-    let ctx = Context::new();
-    let machine = match freestanding {
-        Some(_) => TargetMachine::for_freestanding(&triple, opt.codegen_level())?,
-        None => TargetMachine::for_host_at(opt.codegen_level())?,
-    };
-    let layout = machine.data_layout();
-
+    // carries the module half. The incremental mode builds one of these per
+    // worker instead (`plan/incremental-compilation.md` slice 3).
     if incremental {
         return compile_units(
             program,
             drops,
             sources,
-            &ctx,
-            &machine,
-            &layout,
             &triple,
             out_path,
             opt,
@@ -430,6 +422,13 @@ pub fn compile(
             timings,
         );
     }
+
+    let ctx = Context::new();
+    let machine = match freestanding {
+        Some(_) => TargetMachine::for_freestanding(&triple, opt.codegen_level())?,
+        None => TargetMachine::for_host_at(opt.codegen_level())?,
+    };
+    let layout = machine.data_layout();
 
     let ir_path = out_path.with_extension("ll");
     let object_path = out_path.with_extension("o");
@@ -648,6 +647,18 @@ fn lower_to_object(
     // constructed and frozen before the module is written (MK7 S4, §4.4).
     lowering.finalize_debug();
 
+    // Test-only hook (`plan/incremental-compilation.md` slice 3): the parallel
+    // build's failure path is exercised with a real LLVM-level error, not a
+    // front-end refusal. `KELPC_TEST_CORRUPT_UNIT=<unit>` appends an empty,
+    // unterminated basic block to one of the unit's own functions, so LLVM's
+    // verifier rejects the module and the error names the unit. It does nothing
+    // unless the variable names this unit and is not a user surface.
+    if std::env::var("KELPC_TEST_CORRUPT_UNIT").as_deref() == Ok(module_name) {
+        if let Some(function) = module.functions().into_iter().find(|f| !f.is_declaration()) {
+            function.append_block("kelpc_test_corrupt");
+        }
+    }
+
     // A caller must verify before emitting: LLVM's object writer assumes a
     // verified module and can crash on an unverified one rather than fail.
     module.verify()?;
@@ -739,14 +750,91 @@ fn compiler_version() -> String {
     format!("kelpc {} llvm {}", env!("CARGO_PKG_VERSION"), llvm_ffi::version_string())
 }
 
-/// The incremental mode (roadmap A-14 slice 1): partition the program into
-/// compilation units, lower each into its own module and object under
+/// One unit's result from a worker: its cache key when it was a hit, the times
+/// to merge into the build's totals, and its per-unit `--timings` line.
+struct UnitDone {
+    hit_key: Option<String>,
+    codegen: Duration,
+    unit_compile: Duration,
+    timing: UnitTiming,
+}
+
+/// The number of unit-compilation worker threads, from `KELPC_JOBS`.
+///
+/// Unset, empty, unparsable or `0` is the default `2`. The default is not the
+/// CPU count on purpose: this host has little memory, and every worker holds a
+/// live LLVM context and the module it is compiling
+/// (`plan/incremental-compilation.md`).
+fn jobs_from(var: Option<&str>) -> usize {
+    const DEFAULT: usize = 2;
+    match var.map(str::trim) {
+        None | Some("") => DEFAULT,
+        Some(value) => match value.parse::<usize>() {
+            Ok(jobs) if jobs > 0 => jobs,
+            _ => DEFAULT,
+        },
+    }
+}
+
+/// A caught panic's message: the payload of `panic!("...")` or
+/// `panic!("{...}")`, or a placeholder for a payload that is neither.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_string()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+#[cfg(test)]
+mod jobs_tests {
+    use super::{jobs_from, panic_message};
+
+    #[test]
+    fn jobs_default_to_two_and_accept_a_positive_count() {
+        assert_eq!(jobs_from(None), 2);
+        assert_eq!(jobs_from(Some("")), 2);
+        assert_eq!(jobs_from(Some("1")), 1);
+        assert_eq!(jobs_from(Some("4")), 4);
+        assert_eq!(jobs_from(Some(" 3 ")), 3);
+    }
+
+    #[test]
+    fn a_bad_jobs_value_is_the_default() {
+        for value in ["0", "many", "-1", "2.5"] {
+            assert_eq!(jobs_from(Some(value)), 2, "'{value}' should be the default");
+        }
+    }
+
+    #[test]
+    fn a_panics_message_is_read_from_its_payload() {
+        let owned = std::panic::catch_unwind(|| panic!("boom {}", 1)).unwrap_err();
+        assert_eq!(panic_message(&*owned), "boom 1");
+        let borrowed = std::panic::catch_unwind(|| std::panic::panic_any("plain")).unwrap_err();
+        assert_eq!(panic_message(&*borrowed), "plain");
+        let opaque = std::panic::catch_unwind(|| std::panic::panic_any(7u8)).unwrap_err();
+        assert_eq!(panic_message(&*opaque), "unknown panic");
+    }
+}
+
+/// The incremental mode (roadmap A-14 slices 1 and 3): partition the program
+/// into compilation units, lower each into its own module and object under
 /// `<out>.units/`, and link every object plus the runtime and the program's
 /// `extern fun` object into the final binary.
 ///
 /// The unit rules are `plan/incremental-compilation.md`'s: one unit per source
 /// module id, holding that module's own items and the instances of its generic
 /// functions, plus one `_support` unit holding every compiler-generated helper.
+///
+/// Cache misses are compiled on `KELPC_JOBS` worker threads (default 2), each
+/// unit in its own LLVM context and each worker owning one target machine. A
+/// result is written into a slot indexed by the unit's place in the unit list,
+/// so the link line is the unit order whatever order the workers finished in.
+/// A unit that fails or panics is recorded against its index and the other
+/// workers still finish, which keeps the successful units' cache entries; after
+/// every worker has joined, the build fails with the first failing unit's name.
 ///
 /// `KELPC_DUMP_UNITS=<dir>` writes each unit's unoptimized IR to
 /// `<dir>/<unit>.ll` as well, which is what the determinism test reads: the same
@@ -761,9 +849,6 @@ fn compile_units(
     program: &Program,
     drops: &DropPlan,
     sources: &SourceMap,
-    ctx: &Context,
-    machine: &TargetMachine,
-    layout: &DataLayout,
     triple: &str,
     out_path: &Path,
     opt: OptLevel,
@@ -802,44 +887,150 @@ fn compile_units(
         .unwrap_or_default();
     let units = plan_units(program, &c_object_refs);
 
+    // One slot per unit, filled by whichever worker claims that unit. A slot
+    // left `None` means no worker reached it, which the caller treats as a
+    // failure so a unit is never silently dropped from the link.
+    let workers = jobs_from(std::env::var("KELPC_JOBS").ok().as_deref()).min(units.len());
+    let results: Mutex<Vec<Option<Result<UnitDone, String>>>> =
+        Mutex::new((0..units.len()).map(|_| None).collect());
+    if workers > 0 {
+        let next = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    // One machine per worker: it is a read-mostly description of
+                    // the target, its cache-key fields are the same for every
+                    // worker, and it is never shared across a thread boundary.
+                    let machine = match TargetMachine::for_host_at(opt.codegen_level()) {
+                        Ok(machine) => machine,
+                        Err(message) => {
+                            // Attribute the failure to the first unit; the other
+                            // workers still run and keep their cache entries.
+                            let mut slots = results.lock().expect("worker result lock");
+                            if slots[0].is_none() {
+                                slots[0] = Some(Err(message));
+                            }
+                            return;
+                        }
+                    };
+                    loop {
+                        let index = next.fetch_add(1, Ordering::SeqCst);
+                        if index >= units.len() {
+                            break;
+                        }
+                        let unit = &units[index];
+                        let file = unit_file_name(&unit.name);
+                        let ir_path = unit_dir.join(format!("{file}.ll"));
+                        let object_path = unit_dir.join(format!("{file}.o"));
+                        // The unit's LLVM context is its own: contexts are not
+                        // shared between threads, and a panic drops only this
+                        // unit's context instead of poisoning a shared one.
+                        let outcome =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                let ctx = Context::new();
+                                let layout = machine.data_layout();
+                                let mut local = Timings::new();
+                                let hit_key = lower_to_object(
+                                    program,
+                                    drops,
+                                    sources,
+                                    &ctx,
+                                    &machine,
+                                    &layout,
+                                    triple,
+                                    &unit.name,
+                                    &ir_path,
+                                    &object_path,
+                                    opt,
+                                    None,
+                                    Some(unit.clone()),
+                                    Some(&cache),
+                                    &mut local,
+                                )?;
+                                if let Some(dir) = &dump_dir {
+                                    let dumped = dir.join(format!("{file}.ll"));
+                                    std::fs::copy(&ir_path, &dumped).map_err(|e| {
+                                        format!(
+                                            "could not write the unit IR to '{}': {e}",
+                                            dumped.display()
+                                        )
+                                    })?;
+                                }
+                                Ok::<UnitDone, String>(UnitDone {
+                                    hit_key,
+                                    codegen: local.codegen,
+                                    unit_compile: local.unit_compile,
+                                    timing: local
+                                        .units
+                                        .pop()
+                                        .expect("one lowered unit pushes one timing"),
+                                })
+                            }));
+                        let result = match outcome {
+                            Ok(Ok(done)) => Ok(done),
+                            Ok(Err(message)) => Err(format!(
+                                "compilation unit '{}' failed: {message}",
+                                unit.name
+                            )),
+                            Err(panic) => Err(format!(
+                                "compilation unit '{}' panicked: {}",
+                                unit.name,
+                                panic_message(&panic)
+                            )),
+                        };
+                        results.lock().expect("worker result lock")[index] = Some(result);
+                    }
+                });
+            }
+        });
+    }
+
+    // Collect the workers' results in unit order, which is the link order and
+    // the `--timings` order. The first failure by unit index is the build's
+    // error, so which unit is named does not depend on which worker lost a race.
     let mut objects = Vec::with_capacity(units.len());
     // The units whose object came from the cache, with their keys, so a link
     // failure can name them and delete exactly their entries.
     let mut cached_hits: Vec<(String, String)> = Vec::new();
-    for unit in &units {
-        let file = unit_file_name(&unit.name);
-        let ir_path = unit_dir.join(format!("{file}.ll"));
-        let object_path = unit_dir.join(format!("{file}.o"));
-        let hit = lower_to_object(
-            program,
-            drops,
-            sources,
-            ctx,
-            machine,
-            layout,
-            triple,
-            &unit.name,
-            &ir_path,
-            &object_path,
-            opt,
-            None,
-            Some(unit.clone()),
-            Some(&cache),
-            timings,
-        )?;
-        if let Some(key) = hit {
-            cached_hits.push((unit.name.clone(), key));
+    let mut failure: Option<String> = None;
+    for (index, result) in results
+        .into_inner()
+        .expect("worker result lock")
+        .into_iter()
+        .enumerate()
+    {
+        match result {
+            Some(Ok(done)) => {
+                timings.codegen += done.codegen;
+                timings.unit_compile += done.unit_compile;
+                timings.units.push(done.timing);
+                if let Some(key) = done.hit_key {
+                    cached_hits.push((units[index].name.clone(), key));
+                }
+                let file = unit_file_name(&units[index].name);
+                objects.push(unit_dir.join(format!("{file}.o")));
+            }
+            Some(Err(message)) => {
+                if failure.is_none() {
+                    failure = Some(message);
+                }
+            }
+            None => {
+                if failure.is_none() {
+                    failure = Some(format!(
+                        "compilation unit '{}' was not compiled",
+                        units[index].name
+                    ));
+                }
+            }
         }
-        if let Some(dir) = &dump_dir {
-            let dumped = dir.join(format!("{file}.ll"));
-            std::fs::copy(&ir_path, &dumped).map_err(|e| {
-                format!(
-                    "could not write the unit IR to '{}': {e}",
-                    dumped.display()
-                )
-            })?;
-        }
-        objects.push(object_path);
+    }
+    // A unit failed: the build fails naming it, but every unit that did compile
+    // has already stored its cache entry, so the next build resumes from there.
+    if let Some(message) = failure {
+        cache.enforce_cap();
+        cache.report_stats();
+        return Err(message);
     }
 
     // The program's `extern fun` bodies, capability glue and cap arrays are one

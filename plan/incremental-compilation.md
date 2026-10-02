@@ -1,8 +1,8 @@
-# Incremental compilation: compilation units, slices 1 and 2
+# Incremental compilation: compilation units, slices 1, 2 and 3
 
-*Roadmap A-14. These are slices 1 and 2 of three: separate compilation, and a
-content-addressed object cache over the units it produces. Slice 3 compiles
-units in parallel.*
+*Roadmap A-14. Slice 1 is separate compilation, slice 2 is the content-addressed
+object cache over the units it produces, and slice 3 compiles those units in
+parallel. The measured numbers for all three are at the end of this file.*
 
 ## The decision
 
@@ -214,9 +214,103 @@ deletes the entries; both take `--dir`.
   and it is correctness rather than a defect: the alternative is a dependency
   graph the design deliberately refuses.
 
+## Slice 3: parallel unit compilation
+
+The work done here is a cache miss and nothing else: a hit is a file copy and
+stays on the calling thread. A miss for one unit is lowered, optimized and
+emitted on a worker thread, with its own LLVM state, and the objects are linked
+once every worker has joined.
+
+### Worker count and LLVM initialization
+
+- The worker count is `KELPC_JOBS` when it is set to a positive integer, else
+  **2**. The default is deliberately not the CPU count: this host has little
+  memory, each worker holds an LLVM context and the module it is compiling, and
+the floor below (`src/guard.rs`) ends a build before the machine swaps itself to
+death. A value that does not parse, or `0`, is the default rather than an error,
+the same shape `KELPC_MIN_AVAILABLE_MB` uses. More workers than units spawns one
+worker per unit.
+- LLVM's targets are registered once, in `codegen_llvm::compile`, **before** the
+  first worker starts (`initialize_native_target` or `initialize_target_for`).
+  The registration calls are not thread-safe to run concurrently, and there is no
+  reason to: one registration serves every unit.
+- The workers run inside `std::thread::scope`, so the borrows of the typed
+  program, the drop plan, the source map and the cache are ordinary shared
+  borrows and no `'static` clone of the program is needed.
+
+### One context per unit, one machine per worker
+
+- **An LLVM context is not shared between threads.** Each unit creates its own
+  `Context` (`LLVMContextCreate`) and lowers its own `Module` into it, so two
+  units never touch one context's type table at the same time, and a unit that
+  panics drops exactly its own context instead of poisoning a shared one.
+- A worker owns one `TargetMachine` for its whole life: the machine is a
+  read-mostly description of the target, the machine fields in the cache key are
+  identical for every worker, and building it once per worker rather than once
+  per unit keeps the fixed cost out of the per-unit time. The machine is created
+  after the worker starts and never crosses a thread boundary.
+- `TargetMachine::data_layout()` is still read before any type is built, exactly
+  as in the other two modes, so a unit's layout and the object it emits agree.
+
+### Determinism
+
+- The unit list is the one `plan_units` already produces: every module id sorted,
+  then `_support`. Every part of a unit's lowering is a function of the typed
+  program, never of wall-clock order or of which worker got there first.
+- Each worker writes its results into a slot indexed by the unit's position in
+  that list, and the caller links the object paths **in that order**, whatever
+  order the workers finished in. Two builds of the same sources therefore write
+  the same objects and the same link line at `KELPC_JOBS=1` and at
+  `KELPC_JOBS=4`; the determinism test compares the unit IR, the unit objects/
+  byte-for-byte and the linked binaries' stdout.
+- `--timings` still prints one line per unit in unit order and the phases sum the
+  workers' times, so the readout is a property of the program and not of the
+  schedule.
+
+### A unit that fails
+
+- A unit's error or panic fails **the build**, naming that unit, but it does not
+  stop the other workers: each unit runs inside `catch_unwind`, a failure is
+  recorded against its index, and the remaining units are still processed so
+  their cache entries are stored. After every worker has joined the caller scans
+  the results in unit order and returns the first failure's message, so which
+  unit is named does not depend on which worker lost the race.
+- Partial progress is kept: the units that succeeded before the failure have
+  their objects in the cache, and the next build resumes from them. The failed
+  unit has no entry (its object was never stored), so the next build retries it.
+- A panic is isolated to its own unit and its own context; the worker keeps its
+  machine and continues with the next unit. The process does not abort and no
+  other unit's work is discarded.
+- The failure path is exercised with a real LLVM-level error, not a front-end
+  refusal: the test-only `KELPC_TEST_CORRUPT_UNIT=<unit>` hook appends an
+  unterminated basic block to that unit's module just before LLVM's verifier
+  runs, so `LLVMVerifyModule` rejects it and the error names the unit. It is
+  compiled into the binary but does nothing unless the variable names a unit.
+  The variable is a test hook, not a user surface, and is absent from `usage()`.
+
+### The memory floor with workers running
+
+The guard (`src/guard.rs`) is unchanged and keeps working:
+
+- Its watchdog is a thread of its own. When `MemAvailable` falls below the floor
+  it prints one line and calls `_exit(75)` from that thread. `_exit` is a
+  process-wide immediate exit and runs **no** destructors on any thread, so the
+  workers' live LLVM contexts and half-built modules are simply discarded by the
+  kernel; no destructor runs under a running LLVM call and there is nothing to
+  corrupt. The exit status stays 75.
+- The floor can fire while unit workers are alive. No `cc` or `ld.lld` child is
+  running during that phase (the per-program C object is compiled before the
+  units and the link happens after they join), so there is no child for the guard
+  to kill at that moment, and it does not need one: the workers die with the
+  process.
+- The memory-floor test is run for the whole-program build and for an
+  `--incremental` build with workers, and both end with status 75.
+
 ## What these slices do not do
 
-- It does not compile in parallel: stage 3 does.
+- It does not parallelize the front end: parse, resolve, infer and borrowck stay
+  whole-program and sequential, which is the design (`The decision` above). Only
+  unit compilation and codegen leave the calling thread.
 - It does not inline across units, and that is the documented cost of the mode:
   a call between two modules is a real call in the object, not an inlinable one.
   Inside a unit, the existing pipeline is unchanged.

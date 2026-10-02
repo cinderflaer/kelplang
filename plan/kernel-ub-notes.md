@@ -1553,3 +1553,33 @@ silent reuse bug until a test catches it. Nothing checks the stored object's
 contents against a recompile; equality of IR is taken as equality of object. The
 cache is not shared between machines or compiler versions by construction, not by
 a check: a copied directory simply misses.
+
+## A-14 slice 3: parallel unit compilation (`plan/incremental-compilation.md`)
+
+**New ways to reach undefined behaviour.** None in the language: this slice
+changes *when* and *on which thread* a unit is compiled, not what is compiled.
+The sources, the IR and the objects are the same bytes as the serial build's (the
+determinism test pins this at jobs 1 and jobs 4), so no program can do anything
+new. Two implementation properties are load-bearing:
+
+- **An LLVM context is not shared between threads.** Each unit creates its own
+  context and module, so two workers never mutate one context's type table at
+  once. The worker's `TargetMachine` is per worker and read-mostly, and the
+  target registry is written once before any worker starts.
+- **`_exit` from the memory floor runs no destructors.** The guard's watchdog
+  calls `_exit(75)` while workers may be inside LLVM. `_exit` is immediate and
+  process-wide, so no worker's context or module is destroyed under a running
+  LLVM call and there is nothing to corrupt; the exit status stays 75.
+
+**What the compiler does check.** That every unit is verified by LLVM in its own
+context; that a failed or panicking unit is recorded and the build names it
+without stopping the other workers; and that results are collected by unit index,
+so the link line is the unit order regardless of thread timing.
+
+**What it does not check.** That a per-unit LLVM context is the only shared LLVM
+state that matters. The argument is that the C API's per-module calls are
+reentrant and the only shared writable state is the target registry, which is
+written once before the workers start; nothing runs the compiler many-threaded
+under a memory sanitizer. The failure path is exercised by a test-only hook that
+corrupts one unit's IR (`KELPC_TEST_CORRUPT_UNIT`), not by a real LLVM crash,
+because a real LLVM abort cannot be caught or attributed.

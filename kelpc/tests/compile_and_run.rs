@@ -14287,63 +14287,91 @@ fn hosted_functions_carry_no_stack_probe() {
 // the two spellings that turn it on (a flag and a manifest key) must agree.
 
 /// Builds `target` twice, once whole-program and once with `--incremental`, and
-/// reports the first difference (empty when the two agree).
+/// reports the first difference (empty when the two agree). `KELPC_JOBS` is left
+/// at its default, which is the mode an ordinary incremental build uses.
 ///
 /// A target that builds is run both ways and its stdout and exit status are
 /// compared; a target the front end *rejects* has to be rejected identically,
 /// down to the diagnostic, because the split is a backend change and the mode
 /// may not change what the compiler says about a program it refuses.
 fn incremental_matches_whole_program(tag: &str, target: &Path) -> Result<(), String> {
+    incremental_matches_whole_program_at_jobs(tag, target, &[None])
+}
+
+/// [`incremental_matches_whole_program`] with an explicit job setting per
+/// incremental build: `None` leaves `KELPC_JOBS` unset (the default), `Some(n)`
+/// runs that build with `n` workers. The whole-program build is done once and
+/// compared against each incremental build, so testing the parallel scheduler
+/// does not rebuild the whole-program side for every job setting.
+fn incremental_matches_whole_program_at_jobs(
+    tag: &str,
+    target: &Path,
+    jobs: &[Option<&str>],
+) -> Result<(), String> {
     let whole = out_path(&format!("whole_{tag}"));
-    let split = out_path(&format!("inc_{tag}"));
-    let mut builds = Vec::new();
-    for (incremental, bin) in [(false, &whole), (true, &split)] {
+    let whole_build = kelpc()
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&whole)
+        .output()
+        .map_err(|e| format!("could not spawn kelpc: {e}"))?;
+    for (index, job) in jobs.iter().enumerate() {
+        let split = out_path(&format!("inc_{tag}_{index}"));
         let mut command = kelpc();
-        command.arg("build").arg(target).arg("-o").arg(bin);
-        if incremental {
-            command.arg("--incremental");
+        command
+            .env_remove("KELPC_JOBS")
+            // The cache is off so each incremental build really lowers and
+            // compiles its units: with it on, the second job setting would
+            // only replay the first one's objects.
+            .env("KELPC_CACHE", "off")
+            .arg("build")
+            .arg(target)
+            .arg("-o")
+            .arg(&split)
+            .arg("--incremental");
+        if let Some(count) = job {
+            command.env("KELPC_JOBS", count);
         }
-        let build = command
+        let split_build = command
             .output()
             .map_err(|e| format!("could not spawn kelpc: {e}"))?;
-        builds.push(build);
-    }
-    let (whole_build, split_build) = (&builds[0], &builds[1]);
-    if !whole_build.status.success() || !split_build.status.success() {
-        if whole_build.status.success() != split_build.status.success() {
+        if !whole_build.status.success() || !split_build.status.success() {
+            if whole_build.status.success() != split_build.status.success() {
+                return Err(format!(
+                    "one build succeeded and the other did not:\n--incremental stderr:\n{}",
+                    String::from_utf8_lossy(&split_build.stderr)
+                ));
+            }
+            if whole_build.stderr != split_build.stderr {
+                return Err(format!(
+                    "the two rejections differ:\n  whole-program: {}\n  --incremental: {}",
+                    String::from_utf8_lossy(&whole_build.stderr),
+                    String::from_utf8_lossy(&split_build.stderr)
+                ));
+            }
+            continue;
+        }
+        let run = |bin: &Path| -> Result<(Option<i32>, Vec<u8>), String> {
+            let out = Command::new(bin)
+                .output()
+                .map_err(|e| format!("could not run '{}': {e}", bin.display()))?;
+            Ok((out.status.code(), out.stdout))
+        };
+        let (whole_status, whole_stdout) = run(&whole)?;
+        let (split_status, split_stdout) = run(&split)?;
+        if whole_status != split_status {
             return Err(format!(
-                "one build succeeded and the other did not:\n--incremental stderr:\n{}",
-                String::from_utf8_lossy(&split_build.stderr)
+                "exit status {whole_status:?} whole-program vs {split_status:?} --incremental"
             ));
         }
-        if whole_build.stderr != split_build.stderr {
+        if whole_stdout != split_stdout {
             return Err(format!(
-                "the two rejections differ:\n  whole-program: {}\n  --incremental: {}",
-                String::from_utf8_lossy(&whole_build.stderr),
-                String::from_utf8_lossy(&split_build.stderr)
+                "stdout differs:\n  whole-program: {:?}\n  --incremental: {:?}",
+                String::from_utf8_lossy(&whole_stdout),
+                String::from_utf8_lossy(&split_stdout)
             ));
         }
-        return Ok(());
-    }
-    let run = |bin: &Path| -> Result<(Option<i32>, Vec<u8>), String> {
-        let out = Command::new(bin)
-            .output()
-            .map_err(|e| format!("could not run '{}': {e}", bin.display()))?;
-        Ok((out.status.code(), out.stdout))
-    };
-    let (whole_status, whole_stdout) = run(&whole)?;
-    let (split_status, split_stdout) = run(&split)?;
-    if whole_status != split_status {
-        return Err(format!(
-            "exit status {whole_status:?} whole-program vs {split_status:?} --incremental"
-        ));
-    }
-    if whole_stdout != split_stdout {
-        return Err(format!(
-            "stdout differs:\n  whole-program: {:?}\n  --incremental: {:?}",
-            String::from_utf8_lossy(&whole_stdout),
-            String::from_utf8_lossy(&split_stdout)
-        ));
     }
     Ok(())
 }
@@ -14481,6 +14509,37 @@ const INCREMENTAL_PROJECTS: &[&str] = &[
     "unsafe_unaligned",
     "visibility_import",
 ];
+
+/// Equivalence with the parallel scheduler (roadmap A-14 slice 3): the same
+/// corpus the serial test uses is built with `KELPC_JOBS=1` and `KELPC_JOBS=4`
+/// and each split build is compared with the whole-program build, so thread
+/// count cannot change stdout, exit status or a refusal. The existing
+/// `incremental_builds_match_the_whole_program_build` below covers the default
+/// worker count.
+#[test]
+fn parallel_and_serial_builds_match_the_whole_program_build() {
+    let mut failures: Vec<String> = Vec::new();
+    let jobs = [Some("1"), Some("4")];
+    for name in INCREMENTAL_FIXTURES {
+        let source = fixture(&format!("tests/fixtures/{name}.kp"));
+        if let Err(why) = incremental_matches_whole_program_at_jobs(name, &source, &jobs) {
+            failures.push(format!("{name}: {why}"));
+        }
+    }
+    for name in INCREMENTAL_PROJECTS {
+        let target = incremental_project_target(name);
+        if let Err(why) = incremental_matches_whole_program_at_jobs(name, &target, &jobs) {
+            failures.push(format!("project {name}: {why}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} targets differ with --incremental at jobs 1 or 4:\n{}",
+        failures.len(),
+        INCREMENTAL_FIXTURES.len() + INCREMENTAL_PROJECTS.len(),
+        failures.join("\n")
+    );
+}
 
 /// Equivalence (roadmap A-14 slice 1): a program built with the per-unit split
 /// prints what the whole-program build prints and exits the same way. The list
@@ -15291,4 +15350,164 @@ fn the_cache_command_reports_and_clears() {
         "the cleared cache produced a hit"
     );
     assert_eq!(second.hits, 0);
+}
+
+// Roadmap A-14 slice 3: parallel unit compilation
+// ---------------------------------------------------------------------------
+//
+// Cache misses are compiled on worker threads, one LLVM context per unit, and
+// the results are linked in unit order. The tests here pin the three things
+// that make that safe to ship: the scheduler does not change an object, a unit
+// that fails names itself and does not discard the other units' cache entries,
+// and the compile-time job-count parsing.
+
+/// The files of a build's `<out>.units/` directory: every unit's IR and object,
+/// keyed by file name so two builds can be compared entry by entry.
+fn unit_dir_files(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("could not read '{}': {e}", dir.display()))
+        .map(|entry| {
+            let entry = entry.expect("a readable directory entry");
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                std::fs::read(entry.path()).expect("a readable unit artifact"),
+            )
+        })
+        .collect()
+}
+
+/// Determinism (roadmap A-14 slice 3): the same sources built with one worker
+/// and with four workers write byte-identical unit IR *and* byte-identical
+/// objects, and the two linked binaries print the same thing. The cache is off
+/// so both builds really lower and emit every unit rather than copying a stored
+/// object.
+#[test]
+fn serial_and_parallel_builds_write_byte_identical_units() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let target = project("shapes");
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut bins: Vec<PathBuf> = Vec::new();
+    let mut orders: Vec<Vec<String>> = Vec::new();
+    for jobs in ["1", "4"] {
+        let bin = out_path(&format!("inc_units_j{jobs}"));
+        let build = kelpc()
+            .env("KELPC_JOBS", jobs)
+            .env("KELPC_CACHE", "off")
+            .arg("build")
+            .arg(&target)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--incremental")
+            .arg("--timings")
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            build.status.success(),
+            "the jobs={jobs} build failed:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        // One unit line per unit, in unit order, whatever the worker count:
+        // the `--timings` readout is a property of the program, not of the
+        // schedule.
+        orders.push(
+            parse_unit_verdicts(&String::from_utf8_lossy(&build.stderr))
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect(),
+        );
+        assert!(
+            orders.last().map_or(false, |order| !order.is_empty()),
+            "the jobs={jobs} build listed no units"
+        );
+        dirs.push(bin.with_extension("units"));
+        bins.push(bin);
+    }
+    let (serial, parallel) = (unit_dir_files(&dirs[0]), unit_dir_files(&dirs[1]));
+    assert!(!serial.is_empty(), "the build wrote no unit artifacts");
+    assert_eq!(
+        serial.keys().collect::<Vec<_>>(),
+        parallel.keys().collect::<Vec<_>>(),
+        "the two builds wrote different unit artifact sets"
+    );
+    for (name, first) in &serial {
+        assert_eq!(
+            Some(first),
+            parallel.get(name),
+            "'{name}' differs between jobs 1 and jobs 4"
+        );
+    }
+    assert_eq!(orders[0], orders[1], "the two builds listed units in different orders");
+    let run = |bin: &Path| Command::new(bin).output().expect("failed to run a split binary");
+    let (one, four) = (run(&bins[0]), run(&bins[1]));
+    assert_eq!(one.status.code(), four.status.code());
+    assert_eq!(one.stdout, four.stdout);
+    assert_eq!(String::from_utf8_lossy(&one.stdout), "12.566360\n6.000000\n50.265440\n28.274310\n");
+}
+
+/// A failing unit (roadmap A-14 slice 3): `KELPC_TEST_CORRUPT_UNIT` appends an
+/// unterminated basic block to one unit's module, so LLVM's verifier rejects it
+/// with a real LLVM-level error. The build has to fail naming that unit, and the
+/// units that did compile have to keep their cache entries: a second build
+/// without the hook misses only the failed unit and hits the rest.
+#[test]
+fn a_failed_unit_names_itself_and_leaves_the_others_cached() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("failedunit");
+    let cache = out_path("cache_failedunit");
+    let _ = std::fs::remove_dir_all(&cache);
+    let failed_bin = out_path("cache_failedunit_bin");
+    let failed = kelpc()
+        .env("KELPC_JOBS", "4")
+        .env("KELPC_CACHE_DIR", &cache)
+        .env("KELPC_CACHE_STATS", "1")
+        .env("KELPC_TEST_CORRUPT_UNIT", "alpha")
+        .arg("build")
+        .arg(&dir)
+        .arg("-o")
+        .arg(&failed_bin)
+        .arg("--incremental")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !failed.status.success(),
+        "the corrupted unit built successfully"
+    );
+    assert_eq!(failed.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        stderr.contains("compilation unit 'alpha' failed"),
+        "the failure did not name the corrupt unit: {stderr}"
+    );
+    // A real LLVM-level error, not a front-end refusal: the verifier's own
+    // message for the unterminated block is in the diagnostic.
+    assert!(
+        stderr.contains("does not have terminator"),
+        "the failure is not the LLVM verifier's: {stderr}"
+    );
+    // The other three units stored their entries even though the build failed.
+    let (_, misses, stored) = parse_cache_stats(&stderr);
+    assert_eq!(stored, misses, "the surviving units did not store their entries");
+    assert_eq!(misses, 3, "three of the four units should have compiled");
+    // The failed unit has no entry: the next build misses it and hits the rest,
+    // which is the partial-progress resume the design promises.
+    let second = cache_build(
+        &dir,
+        &out_path("cache_failedunit_2"),
+        &cache,
+        &[],
+        &[("KELPC_JOBS", "4")],
+    );
+    assert!(second.ok, "the resume build failed:\n{}", second.stderr);
+    assert_eq!(second.verdict("alpha"), Some(false), "alpha had to miss");
+    assert_eq!(second.verdict("beta"), Some(true), "beta had to hit");
+    assert_eq!(second.verdict("main"), Some(true), "main had to hit");
+    assert_eq!(second.verdict("_support"), Some(true), "_support had to hit");
+    let (_, stdout) = run_cached_binary(&out_path("cache_failedunit_2"));
+    assert_eq!(String::from_utf8_lossy(&stdout), "hello\n");
 }
