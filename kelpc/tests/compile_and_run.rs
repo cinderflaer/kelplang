@@ -14351,3 +14351,144 @@ fn polyp_core_panics_on_a_duplicate_key_and_names_it() {
         "expected the panic to name the key, got:\n{stderr}"
     );
 }
+
+
+/// Polyp v3 stage 2: the software rasterizer's primitives, font, damage list and checksums.
+///
+/// `examples/polyp-soft-test` carries the tests in Kelp: each primitive runs against an
+/// independent per-pixel reference written in the project (full-precision integers, its own
+/// geometry), on fixed-seed LCG inputs with negative and zero sizes and clips on every edge.
+/// The project also prints golden FNV checksums for three scenes. Three panic contracts
+/// (`POLYP_SOFT_TEST=scale`, `clip_depth`, `clip_empty`) and the hosted PPM dump
+/// (`POLYP_SOFT_TEST=dump`) are exercised here, because a panic ends the process and the dump
+/// writes a file.
+///
+/// Every run goes through `run_bounded`: `ulimit -v 1048576` (1 GiB), `ulimit -t 10` and
+/// `timeout 10`, so a bug cannot take the host down the way an earlier unbounded 6.7 GB run did.
+#[test]
+fn polyp_soft_raster_matches_its_references_and_golden_checksums() {
+    let bin = out_path("polyp_soft_test");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-soft-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp soft test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = run_bounded(&bin, &[]);
+    assert!(
+        run.status.success(),
+        "expected the soft test to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        POLYP_SOFT_EXPECTED,
+        "unexpected output from the soft test"
+    );
+
+    for (mode, needle) in [
+        ("scale", "text scale must be in 1..=4"),
+        ("clip_depth", "clip stack depth 8 exceeded"),
+        ("clip_empty", "clip stack is empty"),
+    ] {
+        let run = run_bounded(&bin, &[("POLYP_SOFT_TEST", mode)]);
+        assert!(
+            !run.status.success(),
+            "expected POLYP_SOFT_TEST={mode} to panic, but the program exited successfully"
+        );
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            stderr.contains(needle),
+            "expected the {mode} panic to mention '{needle}', got:\n{stderr}"
+        );
+    }
+
+    let ppm = out_path("polyp_soft_frame").with_extension("ppm");
+    let run = run_bounded(
+        &bin,
+        &[
+            ("POLYP_SOFT_TEST", "dump"),
+            ("POLYP_SOFT_PPM", ppm.to_str().unwrap()),
+        ],
+    );
+    assert!(run.status.success(), "the dump run failed:\n{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "dumped\n");
+    let bytes = std::fs::read(&ppm).expect("the PPM the dump run wrote");
+    assert_eq!(&bytes[..13], b"P6\n40 28\n255\n", "the PPM header");
+    assert_eq!(bytes.len(), 13 + 40 * 28 * 3, "the PPM body length");
+    // Pixel (0, 0) of the dumped blend scene: `0x80FF0000` source-over the `0xFF000000`
+    // background is `(128 * 255 + 127) / 255 == 128` red, zero green, zero blue.
+    assert_eq!(&bytes[13..16], &[128u8, 0, 0], "the dumped pixel at (0, 0)");
+    let _ = std::fs::remove_file(&ppm);
+}
+
+/// Runs `bin` with `envs` under a 1 GiB address-space limit, a 10 s CPU limit and a 10 s wall
+/// timeout, and returns its output. Every compiled program this file runs on behalf of the
+/// raster tests goes through here.
+fn run_bounded(bin: &Path, envs: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
+        .arg("( ulimit -v 1048576; ulimit -t 10; timeout 10 \"$1\" )")
+        .arg("sh")
+        .arg(bin);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.output().expect("failed to run the soft test binary")
+}
+
+const POLYP_SOFT_EXPECTED: &str = "fill_rect
+60
+0
+stroke_rect
+60
+0
+fill_round_rect
+60
+0
+stroke_round_rect
+60
+0
+line
+60
+0
+blend
+40
+0
+blit_mask8
+30
+0
+draw_text
+40
+0
+clip_stack
+40
+0
+edges
+13
+0
+damage
+200
+8
+0
+cap
+16
+true
+static_fb
+5870808570317741093
+scene shapes
+14814842095218757869
+scene text
+15225207939037777876
+scene blend
+3376705936528111333
+failures
+0
+";
