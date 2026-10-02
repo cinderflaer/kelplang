@@ -1606,3 +1606,23 @@ the memory a cursor points into beyond the owner's lifetime: a cursor stored in
 a `datac` field, a container element or a returned temporary is still refused by
 the same "no lifetime syntax" rules as before, and a root reached through a raw
 `Ptr<T>` is not tracked at all (that is `unsafe`'s contract, unchanged).
+
+## A-12 slice 5: associated types (`plan/traits.md` 10)
+
+**New ways to reach undefined behaviour.** None: the slice adds a type-level
+name, not a runtime one. `I::Item` is a concrete type at every instantiation, so
+the body it appears in is checked and emitted once per concrete type exactly as
+a bound already was, and a trait with an associated type is not object safe, so
+no vtable and no erased value is involved. Both backends, and the freestanding
+mode, emit the same code they emitted before the projection existed
+(`tests/projects/freestanding_min` uses one in its barest form).
+
+**What the compiler does and does not check.** It checks that every impl binds
+every associated type its trait declares and no other; that a declared bound
+(`type Item: Named`) is satisfied by the impl's concrete type; and that a
+projection `I::Item` is written only where a bound on `I` declares `Item`
+(elsewhere it is refused where it is written). It does not check that two impls
+bind the same type, that an associated type's name has any meaning, or that a
+generic function which is never instantiated would satisfy anything: an
+uninstantiated body is never checked, exactly as it is not for a bound on a type
+parameter.

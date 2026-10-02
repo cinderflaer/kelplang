@@ -1202,6 +1202,11 @@ trait Named: Shape {
     fun Self.name().R: str
 }
 
+trait Iterator {
+    type Item
+    fun mut Self.next().R: Option<Self::Item>
+}
+
 datac Circle(val r: f64)
 
 impl Shape for Circle {
@@ -1223,6 +1228,16 @@ print(area_of(c))
   body (no `= expr` and no `{ ... }`) is a signature; a method **with** a body is a **default
   method**, written exactly like an ordinary method. A default body may call the trait's other
   methods through `self` and is checked once per implementing type.
+- A trait body may also declare an **associated type**, `type Name`, optionally bounded:
+  `type Item: Named` or `type Item: Named + Other`. Each impl binds it with `type Name = Type`,
+  and `Self::Item` names it in the trait's signatures (and in a default body); a bounded type
+  parameter names it as `I::Item` (`fun first<I: Iterator>(it: mut I).R: Option<I::Item>`). The
+  impl must bind every declared associated type and may add none, and a declared bound is checked
+  against the impl's type. Missing, extra, duplicate, a projection through a type with no such
+  bound, and a bound the impl's type does not satisfy are each refused by name. Default associated
+  types (`type Item = i32` in a trait), associated consts, generic associated types, and equality
+  constraints (`I: Iterator<Item = i32>`) are not in this slice and are refused by name;
+  `plan/traits.md` 10 is the design.
 - A trait method may take `mut` on its receiver, and the impl has to match it. A trait declaration
   takes no type parameters and neither does one of its methods.
 - A trait may name **supertraits** after a `:`, separated by `+`: `trait B: A + C { ... }`. An
@@ -1303,17 +1318,19 @@ of these. A violation is refused where the `dyn` type is written, naming the tra
 - the method's return type does not mention `Self`;
 - no parameter other than the receiver mentions `Self` (the receiver is what the erased pointer
   stands for);
-- the flattened list has no two methods of the same name (the vtable holds one slot per name).
+- the flattened list has no two methods of the same name (the vtable holds one slot per name);
+- the trait declares no associated type: the erased value has no single binding to name, so a
+  trait with `type Item` has no `&dyn` (9.5).
 
 A method with its own type parameters is already impossible (9.5), so there is nothing else to
 erase.
 
 Not in this slice, each refused where it is written: `Box<dyn Name>` and a bare `dyn Name`; an
 upcast from `&dyn B` to `&dyn A` when `B: A`; a trait object over an object-unsafe trait; a trait
-item other than a method (an associated type or const); `impl Trait` in argument position; a
-`where` clause; a generic trait (`trait Name<T>`); an impl for a generic instantiation; and any
-operator overloading through a trait (`==`/`!=` still come from a declared `eq`, 5).
-`plan/traits.md` 5 and 9.6 are the lists with the reasons and the workarounds.
+object over a trait that declares an associated type (9.5); an associated const; `impl Trait` in
+argument position; a `where` clause; a generic trait (`trait Name<T>`); an impl for a generic
+instantiation; and any operator overloading through a trait (`==`/`!=` still come from a declared
+`eq`, 5). `plan/traits.md` 5, 9.6 and 10.3 are the lists with the reasons and the workarounds.
 
 ## 10. Ownership, moves and borrowing
 
@@ -2737,10 +2754,17 @@ grant        := ident "=" "[" string ("," string)* "]"
 // to a `datac`/`enum` or to a builtin. "Self" is an ordinary identifier used
 // as a type name in both, and stands for the implementing type. A method with
 // no body is a signature; one with a body is a default the impl may omit.
-trait        := [ "pub" ] "trait" ident [ ":" bound ("+" bound)* ] "{" ( traitmethod )* "}"
+trait        := [ "pub" ] "trait" ident [ ":" bound ("+" bound)* ] "{" ( traititem )* "}"
+traititem    := traitmethod | assocdecl
+assocdecl    := "type" ident [ ":" bound ("+" bound)* ]   // no `=`: that is a default, refused
 traitmethod  := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
                 [ ".R" ":" type ] ( body | )        // no body: a signature
-traitimpl    := "impl" traitname "for" typename "{" ( method )* "}"
+traitimpl    := "impl" traitname "for" typename "{" ( traitimplitem )* "}"
+traitimplitem := method | assocbind
+assocbind    := "type" ident "=" type
+// `I::Item` (10, `plan/traits.md`): an associated type projected from a type
+// parameter or from `Self` in a trait signature. A trait body and an impl body
+// are the only places `type` is a declaration.
 traitname    := ident [ "." ident ]                    // `Shape` or `shape.Shape`
 typename     := ident [ "." ident ]
 method       := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
@@ -2764,6 +2788,7 @@ body         := "=" expr | block | <nothing for extern>
 
 type         := [ "&" [ "mut" ] "dyn" ident ]  // a borrowed trait object: `&dyn T`, `&mut dyn T`
               | [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
+                       [ "::" ident ]              // an associated type: `I::Item`, `Self::Item`
                        | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ]
                        | "[" type ";" expr "]"        // a fixed-size array: [T; N]
                        | "(" type "," type ("," type)* ")" )  // a tuple: (A, B)
@@ -2776,7 +2801,11 @@ one-element tuple, and `()` is not a type at all: `unit` is. `Self` is likewise
 an ordinary `ident` that is only meaningful inside a trait or an impl (9.5), and
 `dyn` is not a keyword: it is recognized only after a leading `&` (or `&mut`) as
 the trait-object form, `&dyn Name`, which is legal only as a parameter type or
-a local binding type (9.5.1). A bare `dyn Name` is refused by name.)
+a local binding type (9.5.1). A bare `dyn Name` is refused by name. `::` is the
+associated-type projection: it is written only after a type name that is a type
+parameter or `Self` in a trait signature, and it names a type the impl bound
+(9.5). A bound never carries an argument list: `I: Iterator<Item = i32>` is an
+equality constraint and is refused by name.)
 
 ```
 stmt         := "val" | "var" | "while" | "for" | "return" | expr

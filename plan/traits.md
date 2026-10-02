@@ -434,3 +434,102 @@ the C oracle under `KELPC_ORACLE=c`):
 
 A `&dyn` parameter-only variant of the slice is recorded in `plan/traits-dyn-status.md` if the
 local-binding half has to be cut; this file is the decision either way.
+
+## 10. Associated types (A-12 slice 5)
+
+A trait may name a **type** that each impl supplies, so a trait can promise "I produce a `next`
+value" without promising what that value is. The trait writes `type Item`, the impl writes
+`type Item = i32`, and a bound type parameter reaches the type as `I::Item`. Dispatch stays
+static: `I::Item` is a concrete type at every instantiation, so nothing in either backend
+changes and a freestanding image may use one.
+
+```
+trait Iterator {
+    type Item
+    fun mut Self.next().R: Option<Self::Item>
+}
+
+datac Counter(val n: i32)
+
+impl Iterator for Counter {
+    type Item = i32
+    fun mut Self.next().R: Option<i32> {
+        n += 1
+        return Option.Some(value = n)
+    }
+}
+
+// `I::Item` is usable in a parameter, a return and a local type.
+fun first_of<I: Iterator>(it: mut I).R: Option<I::Item> {
+    return it.next()
+}
+```
+
+### 10.1 Where an associated type may be written
+
+- A trait body may declare one or more associated types, before, between or after its methods:
+  `type Item`, in the same body, with an optional bound list after a `:` (`type Item: Named`,
+  `type Item: Named + Other`). An associated type is a bare name; the trait may not repeat one.
+- An impl must define **every** associated type the trait declares, as `type Name = Type`, and may
+  not add one the trait does not declare. A missing one, an extra one, and a duplicate one are
+  three errors, each naming the trait and the type.
+- `Self::Item` is legal in a trait method signature and in the body of a default method, where
+  `Self` stands for the implementing type. The impl's own methods may write `Self::Item` too, and
+  it means the type the impl bound.
+- `T::Item` is legal wherever `T` is a type parameter in scope: a generic function's parameter,
+  return, local and field-adjacent types, `fun f<I: Iterator>(it: mut I).R: Option<I::Item>`. It
+  is resolved at every instantiation, from the impl the concrete argument names.
+- An associated type is **projected from a bound**, so `I::Item` needs `I` to carry a bound whose
+  trait declares `Item`. A projection through a type that has no such bound is refused where it is
+  written, naming the association.
+
+### 10.2 A bounded associated type
+
+`type Item: Named` bounds what an impl may bind. The bound is checked **at every impl**: the
+concrete type of `type Item = X` must implement every trait the declaration names, or the impl is
+refused naming the trait, the associated type and the concrete type. Inside generic code the bound
+needs no separate machinery: the body is checked once per concrete type, so `I::Item` is already
+the concrete type and a `Named` method resolves on it directly.
+
+### 10.3 What is deliberately not in this slice
+
+Each refused where it is written, with the message naming the follow-up:
+
+- **Default associated types** (`type Item = i32` inside a trait). Refused by name: an associated
+  type has no default in v1, so the impl must bind it.
+- **Associated consts** (`const N: i32` inside a trait). Refused by name.
+- **Generic associated types** (`type Item<T>`, and a bound that names one). Refused by name.
+- **Equality constraints on an associated type** (`I: Iterator<Item = i32>`). Refused by name:
+  it needs the projection to be a first-class type in a bound, which is a later slice; a plain
+  bound plus a projection at the use site is the workaround.
+- **An associated type reached through `&dyn`.** A trait that declares an associated type is
+  **not object safe**: a `&dyn Name` of it is refused by name, because the erased value has no
+  single `Item` to name. Static dispatch through a bounded type parameter is the workaround.
+- **A generic trait** (`trait Name<T>`) and a `where` clause stay refused, exactly as in section 5.
+
+### 10.4 What the compiler does not check
+
+- An impl's binding is a type like any other and nothing relates it to the trait's methods beyond
+  the signatures the impl writes. `Iterator for Counter` may bind `Item = i32` and return a
+  `String` from a method, and nothing refuses it unless the trait's own signature fixes the
+  return type and is compared at the impl.
+- A bound on an associated type is checked at the impl and nowhere else. A generic function that
+  is never instantiated is never checked, exactly as a bound on a type parameter is not.
+- Two impls of one trait bind their associated types independently. Nothing requires them to
+  agree, and nothing checks that an associated type's name is meaningful.
+
+### 10.5 How it is implemented
+
+- `lexer.rs` and `fmt.rs` learn the `::` token, which is glued on both sides exactly as `.` is.
+- `parser.rs` accepts `type Name[: Bound + Bound]` in a trait body and `type Name = Type` in an
+  impl body, records the projection on `TypeExpr::assoc`, and refuses every shape 10.3 names.
+- `resolve.rs` substitutes `Self::Item` in an impl method (and in the synthesized copy of a
+  default) with the type the impl bound, so the ordinary signature loop sees a concrete type.
+- `infer.rs` holds the trait's associated-type declarations in `TraitInfo` and the concrete
+  bindings in one `(trait, type) -> name -> Ty` table. It checks the impl against the declaration
+  (a missing, extra or duplicate binding, and each declared bound), refuses a projection that no
+  bound names, and adds the projection to the instantiation's parameter map so `I::Item` resolves
+  to the concrete binding for that instantiation. `check_dyn_object_safety` refuses a trait that
+  declares an associated type. Nothing downstream knows an associated type existed: the instance's
+  signatures already name concrete types.
+- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
