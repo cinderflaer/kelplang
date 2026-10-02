@@ -615,10 +615,11 @@ fun main() {
   call. A type that implements two different instantiations of the same trait (`From<i32>` and
   `From<String>`) is dispatched by the argument type, so `AppErr.from(7)` and
   `AppErr.from("x")` are different methods of the same name.
-- A **trait-name call** (`From.from(7)`) is allowed only when the implementing type and the trait's
-  arguments are inferable: the arguments fix the trait's own parameters, and the expected type (or,
-  when there is only one impl of the instance, that impl) fixes `Self`. Anything ambiguous is
-  refused by name rather than guessed.
+- A **trait-name call** (`From.from(7)`) is allowed only when the implementing type is inferable:
+  the trait name alone does not name one, so the expected type has to fix `Self` (`val e: AppErr =
+  From.from(7)`), and the call then resolves against that type's impls exactly as `AppErr.from(7)`
+  does. A call whose implementing type is not fixed by the context is refused by name, with the
+  `Type.from(...)` spelling named instead.
 - An impl may not mix receiver and static methods of the same trait incorrectly: a method the
   trait declares with a receiver has to be written with one, and a static member has to be written
   without. The mismatch is the ordinary signature error.
