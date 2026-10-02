@@ -880,7 +880,8 @@ queue. The steady-state paths call none of them, and `set_props_on` clears and r
 own `String`s instead of replacing them with fresh `copy_props` values, so a text, checkbox or
 progress patch reuses the retained node's buffers. The work-budget test pins `0` for an idle frame,
 a hover, a focus change, a caret move, a wheel step and a steady-state patch frame; typing one
-character accounts for the one allocation the new text needs.
+character accounts for the one allocation the new text needs. Checkbox and progress patches are in
+the same test and read `0`.
 
 The core's `diff` may allocate its patch list, so `core.diff_into(old, new, out)` clears and refills
 a caller-owned `List<Patch>` instead. `soft_backend.apply_diff` keeps that list in a `Box` on the
@@ -921,6 +922,10 @@ backend and on the C oracle. At 800x600:
 | hover | a hover change presents `1` rectangle, the hovered widget |
 | focus | a focus change presents `1` rectangle (old focus was none, new is one button) |
 | type | typing one character presents `1` rectangle, the entry's `1800`-pixel box, and accounts for `1` allocation |
+| checkbox | a checkbox flip presents `1` rectangle, area `504`, and allocates `0` |
+| progress | a progress change presents `1` rectangle, area `720`, and allocates `0` |
+| caret | a caret move presents `1` rectangle, area `1800`, and allocates `0`; the text is untouched |
+| scroll | a wheel step presents `1` rectangle, area `600000`, and allocates `0` |
 | remove | removing one row of 200 damages only rectangles at or below it (smallest damage `y` is `70`, the removed row's top) |
 | append | appending a row damages only the new row (off-screen, `0` pixels) |
 | repaint | a full repaint writes `945223` pixels for `480000`, a factor of `1.969`, under 2 |
@@ -941,7 +946,7 @@ Built and run with the release `kelpc` (the compiler's default is `-O2` for the 
 ```text
 nix-shell /home/juniper/Projects/kelp-native-ui/overnight/dev.nix --run \
   'cd kelpc && ../target/release/kelpc build ../examples/polyp-bench -o ../target/polyp-bench'
-( ulimit -v 1048576; ulimit -t 60; timeout 60 ./target/polyp-bench )
+( ulimit -v 1048576; ulimit -t 20; timeout 20 ./target/polyp-bench )
 ```
 
 On the development host (7.8 GiB, LLVM backend, release `kelpc`):

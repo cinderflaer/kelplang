@@ -488,8 +488,10 @@ machine-independent counts. `polyp_soft_work_budgets_hold` pins them on both bac
 presents 0 rectangles and writes 0 pixels; a same-width label change presents exactly one rectangle
 of area 168 and, with the patch list reused, accounts for 0 allocations; a hover or focus change
 damages only the affected widget; typing one character damages at most the entry's 1800-pixel box;
-removing one row of 200 damages only rectangles at or below it; and a full 800x600 repaint writes
-945223 pixels over 480000, a factor of 1.969 (under the factor 2 the budget allows).
+a checkbox flip, a progress change, a caret move and a wheel step each damage exactly one rectangle
+and account for 0 allocations; removing one row of 200 damages only rectangles at or below it; and a
+full 800x600 repaint writes 945223 pixels over 480000, a factor of 1.969 (under the factor 2 the
+budget allows).
 
 **Allocation accounting.** The backend exposes `frame_alloc_count()`, `frame_alloc_bytes()` and
 `arena_high_water()`, and `soft_backend.apply_diff`/`core.diff_into` clear and refill a caller-owned
@@ -505,7 +507,7 @@ development host with the release `kelpc` the worst frame of any scenario is 6.6
 
 ```sh
 nix-shell /path/to/dev.nix --run 'cd kelpc && ../target/release/kelpc build ../examples/polyp-bench -o ../target/polyp-bench'
-( ulimit -v 1048576; ulimit -t 60; timeout 60 ./target/polyp-bench )
+( ulimit -v 1048576; ulimit -t 20; timeout 20 ./target/polyp-bench )
 ```
 
 **The frame deadline.** `soft_backend.frame_budgeted(..., budget_us)` returns

@@ -14986,6 +14986,9 @@ fn polyp_soft_ppm_platform_writes_a_frame() {
 ///   measures).
 /// - `type`: typing one character damages at most the entry's rectangle (area 1800) and accounts
 ///   for the one allocation the new text needs.
+/// - `checkbox`, `progress`, `caret`, `scroll`: a checkbox flip, a progress change, a caret move
+///   and a wheel step each damage exactly one rectangle (areas 504, 720, 1800 and 600000) and
+///   account for 0 allocations. The caret move leaves the text alone and the caret at byte 4.
 /// - `remove`: dropping one row of 200 re-measures one node, re-arranges the tree, and damages only
 ///   rectangles at or below the removed row (`70` is the smallest damage `y`); nothing above it is
 ///   touched.
@@ -15066,6 +15069,27 @@ append
 0
 6
 1012
+checkbox
+1
+504
+591
+0
+progress
+1
+720
+1764
+0
+caret
+1
+1800
+4101
+0
+4
+scroll
+1
+600000
+967616
+0
 repaint
 1
 945223
