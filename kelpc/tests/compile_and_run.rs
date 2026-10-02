@@ -10508,6 +10508,25 @@ const AARCH64_QEMU: Emulator = Emulator {
     ],
 };
 
+/// QEMU's x86-64 `q35` machine, the one kernel stage 20 boots. `-kernel` loads
+/// an ELF64 image through the Xen PVH note and SeaBIOS enters the 32-bit entry
+/// it names, so the target machine's CPU is the one `-cpu qemu64` is: no AVX,
+/// no AVX-512. `-no-reboot` makes the long-mode example's triple fault exit
+/// QEMU instead of rebooting into the boot loader again.
+const X86_64_QEMU: Emulator = Emulator {
+    binary: "qemu-system-x86_64",
+    args: &[
+        "-M",
+        "q35",
+        "-cpu",
+        "qemu64",
+        "-nographic",
+        "-serial",
+        "mon:stdio",
+        "-no-reboot",
+    ],
+};
+
 /// Whether `emu`'s QEMU binary is on PATH. Kernel stage 6's milestone is a
 /// real boot, so its acceptance test needs the emulator as well as `ld.lld`;
 /// like the freestanding tests, a shell without it prints a skip.
@@ -13258,6 +13277,131 @@ fn kernel0_aarch64_boots_and_prints_its_greeting_over_the_uart() {
         "kernel0_aarch64_boot",
         &fixture("../examples/kernel0-aarch64"),
         &["hello from kelp (aarch64)"],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Kernel stage 20: the second ISA family. `[target] triple =
+// "x86_64-unknown-none"` gets an X86 target machine and the x86-64 `_start`
+// stub (the Xen PVH note, a GDT, a 1 GiB identity map of 2 MiB pages, PAE and
+// `EFER.LME`, the far jump to `.code64`, the bss clear, SSE on, the entry
+// call), and `examples/kernel0-x86_64` is the COM1 driver that boots on QEMU's
+// `q35` machine. Freestanding is LLVM-only by design, so these build through
+// the default backend; they need `ld.lld` and the llvm tools, and the boots
+// need `qemu-system-x86_64`. `examples/kernel0-x86_64-lmode` is the second
+// boot: it proves EFER.LMA and paging are on and then triple-faults on purpose.
+// ---------------------------------------------------------------------------
+
+/// The ELF half of the stage: the image is ELF64 x86-64 whose entry is the
+/// linker script's 0x100000, carrying the `Xen` PVH note (type 18) whose
+/// description is that same entry, referencing no undefined symbol, and whose
+/// `_start` is real x86 code that halts. A boot that worked by accident on some
+/// other entry point could not pass these.
+#[test]
+fn kernel0_x86_64_builds_an_x86_64_elf_with_the_pvh_note() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the x86-64 elf test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = build_freestanding("kernel0_x86_64", &fixture("../examples/kernel0-x86_64"));
+    let path = bin.to_str().expect("the artifact path is utf-8");
+
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(
+        header.contains("X86-64"),
+        "not an x86-64 image:\n{header}"
+    );
+    let entry_line = header
+        .lines()
+        .find(|line| line.contains("Entry point address"))
+        .unwrap_or_default();
+    assert!(
+        entry_line.contains("0x100000"),
+        "the entry point is not the linker script's 0x100000:\n{header}"
+    );
+
+    // The PVH note: owner `Xen`, type 18 (printed in hex as 0x12), description
+    // the 32-bit entry. Without it SeaBIOS has nothing to jump to.
+    let notes = tool("llvm-readelf", &["-n", path]);
+    assert!(notes.contains("Xen"), "no Xen PVH note in the image:\n{notes}");
+    assert!(
+        notes.contains("0x00000012"),
+        "the Xen note is not XEN_ELFNOTE_PHYS32_ENTRY (type 18):\n{notes}"
+    );
+    assert!(
+        notes.contains("00 00 10 00"),
+        "the PVH note does not name the 0x100000 entry:\n{notes}"
+    );
+
+    // `llvm-objdump` is the disassembler half: the generated `_start` has to be
+    // real x86 code, not an empty section.
+    let disassembly = tool("llvm-objdump", &["-d", path]);
+    assert!(
+        disassembly.contains("_start"),
+        "no _start in the image:\n{disassembly}"
+    );
+    assert!(
+        disassembly.contains("hlt"),
+        "the _start halt is missing:\n{disassembly}"
+    );
+
+    // `llvm-nm -u` prints what the linker had to leave for someone else: an
+    // empty list is the whole claim that no libc symbol and no `kelp_rt` helper
+    // is behind the image.
+    let undefined = tool("llvm-nm", &["-u", path]);
+    assert!(
+        undefined.trim().is_empty(),
+        "the x86-64 image has undefined symbols:\n{undefined}"
+    );
+}
+
+/// The boot half: `examples/kernel0-x86_64` is a complete Kelp kernel that
+/// boots on QEMU's `q35` machine through the Xen PVH path and writes one line
+/// to the COM1 UART. The assertion is against what QEMU captured, so it proves
+/// the boot, the linker script's stack and the driver's polling, not that the
+/// source says `hello from kelp (x86_64)`.
+#[test]
+fn kernel0_x86_64_boots_and_prints_its_greeting_over_the_uart() {
+    if !have_ld_lld() || !have_qemu(&X86_64_QEMU) {
+        println!(
+            "skipping the x86-64 boot test: 'ld.lld' or 'qemu-system-x86_64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &X86_64_QEMU,
+        "kernel0_x86_64_boot",
+        &fixture("../examples/kernel0-x86_64"),
+        &["hello from kelp (x86_64)"],
+    );
+}
+
+/// The second boot: `examples/kernel0-x86_64-lmode` reads CR0/CR4/EFER through
+/// `asm` and prints `long mode on` only when EFER.LMA, CR0.PG and CR4.PAE are
+/// all set, so the greeting plus that line proves the stub really entered long
+/// mode with paging. It then loads a null IDT and executes `ud2`; with no
+/// descriptor the #UD is a triple fault, and `-no-reboot` turns QEMU's reset
+/// into an exit the test reads. The assertion is still only the two serial
+/// lines: the fault after them is the proof, not a line.
+#[test]
+fn kernel0_x86_64_lmode_proves_long_mode_then_triple_faults() {
+    if !have_ld_lld() || !have_qemu(&X86_64_QEMU) {
+        println!(
+            "skipping the x86-64 long-mode boot test: 'ld.lld' or \
+             'qemu-system-x86_64' is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &X86_64_QEMU,
+        "kernel0_x86_64_lmode_boot",
+        &fixture("../examples/kernel0-x86_64-lmode"),
+        &["hello from kelp (x86_64)", "long mode on"],
     );
 }
 
