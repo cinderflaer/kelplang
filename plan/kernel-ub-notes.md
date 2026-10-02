@@ -1674,3 +1674,24 @@ arguments are each refused where written. It does not check what a `from` body
 does with its argument, does not relate two impls of different instances of one
 trait, and does not check an uninstantiated generic function whose body would
 fail a bound, exactly as before.
+
+## Language-completeness 4: owned trait objects, `Box<dyn>` (`plan/traits.md` 12)
+
+**New ways to reach undefined behaviour.** The representation adds one: a `Box<dyn Name>` is a fat
+owned pointer whose concrete type is erased, so the compiler no longer knows the size, the
+alignment or the destructor of the value behind the data pointer when the box is dropped or read.
+Both are recovered from the vtable the box carries: the drop entry runs the concrete type's own
+`kelp_drop_<T>` before the box frees the allocation, and the coercion that built the pair is the
+only place a `(trait, type)` vtable is recorded, so a pair whose vtable was never emitted is a
+compile-time error rather than a wrong slot. The size and align entries are emitted beside the drop
+entry but nothing reads them yet. A call through the box passes the erased data pointer as the
+thunk's first parameter, exactly as a `&dyn` call does, so the receiver conversion the thunk
+performs (the pointer itself for a borrowed receiver, a load for a `Copy` scalar) is the same one
+that was already audited for `&dyn`.
+
+**What the compiler does and does not check.** It checks that a `Box<T>` coerces only when `T`
+implements the target trait, that object safety holds where the `dyn` is written, that the box is
+moved (not copied) into the trait object, and that a `mut Self` method is called only through a
+writable place. It does not check that the vtable of one trait agrees with another (one flattening
+routine computes every pair's slot order), does not track whether a box is empty (an empty box
+panics at the point of use), and does not read the size/align entries it emits.

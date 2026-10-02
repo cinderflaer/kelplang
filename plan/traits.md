@@ -274,15 +274,16 @@ fun main() {
 ### 9.1 Where a trait object may be written
 
 - The two type spellings are `&dyn Name` and `&mut dyn Name`. A bare `dyn Name` (no `&`) is
-  refused: an owned trait object would need a place to own its data, which is `Box<dyn Name>`, and
-  that is deliberately out of this slice.
+  refused where it is not the argument of a `Box`: an owned trait object needs a place to own its
+  data, which is `Box<dyn Name>` (slice 7, section 12), and a bare `dyn Name` is an unsized value
+  with nowhere to live.
 - A trait object is legal **as a parameter type and as a local binding type** (`val`/`var`). A
   parameter includes a `fun` literal's parameter and the parameter of a function *type*, which is
   a parameter position too. It is refused everywhere else by name: as a `.R:` return type, as a
   `datac`/`enum` field or payload, as a `List`/`Box`/`Map`/`Atomic`/array element or argument, as
   a tuple element, and as a `static`'s type. A function type cannot return one either, which is
-  the same borrow-return rule. `Box<dyn Name>` and a bare `dyn Name` are refused by name.
-  Nothing else changed: a borrow still cannot be returned or stored.
+  the same borrow-return rule. A bare `dyn Name` is refused by name; `Box<dyn Name>` is slice 7
+  (section 12). Nothing else changed: a borrow still cannot be returned or stored.
 - `Name` must be a declared trait. `&dyn Unknown` is refused where it is written.
 - The `mut` in `&mut dyn Name` is the whole mutability story: `&mut dyn Name` permits a `mut Self`
   method and `&dyn Name` does not. There is no `mut &dyn` and no `dyn` without a borrow.
@@ -376,7 +377,8 @@ the borrow checker sees the same node. So:
 
 Each refused where it is written:
 
-- **`Box<dyn Name>`**, an owned trait object. Refused by name; the workaround is an `enum`.
+- **`Box<dyn Name>`**, an owned trait object. **Shipped in slice 7** (section 12); a bare
+  `dyn Name` stays refused by name.
 - **A bare `dyn Name`** (an unsized value in place). Refused by name.
 - **`&dyn` in a field, a payload, a container element, a return type or a `static`.** These are
   the storage positions a borrow may not take, and the refusal is the ordinary borrowed-type one.
@@ -753,3 +755,216 @@ the C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the cove
 - `kelpc fmt` round-trips generic-trait syntax (`tests/fmt_corpus/traits_generic`);
 - the freestanding project `tests/projects/freestanding_convert` uses `std/convert` and boots under
   QEMU with no undefined symbol.
+
+## 12. Owned trait objects, `Box<dyn>` (A-12 slice 7)
+
+Slice 4 gave a trait object a *borrowed* spelling, `&dyn Name` / `&mut dyn Name`. This slice adds the
+owned one: `Box<dyn Name>`, a fat owned pointer that knows how to drop what it points at. Nothing
+else about a trait changes, and no new syntax is introduced beyond the `Box<...>` spelling the
+container already has.
+
+```
+trait Shape {
+    fun Self.area().R: f64
+    fun Self.kind().R: str
+    fun mut Self.scale(f: f64)
+}
+
+datac Circle(val r: f64)
+impl Shape for Circle { fun Self.area().R: f64 = r * r * 3.14159 }
+
+datac Holder(val shape: Box<dyn Shape>)
+
+fun make(big: bool).R: Box<dyn Shape> {
+    if big {
+        return Box.of(Circle(r = 2.0))   // the coercion happens here
+    }
+    return Box.of(Circle(r = 1.0))
+}
+
+fun describe(s: &dyn Shape).R: str = s.kind()
+
+fun main() {
+    var shapes: List<Box<dyn Shape>> = List.empty()
+    shapes.push(make(true = true))
+    val h = Holder(shape = make(big = false))
+    var i = 0
+    while i < shapes.len() {
+        print(shapes.get(i).area())      // through the vtable
+        i = i + 1
+    }
+    print(describe(h.shape.get()))       // a `&dyn` borrowed from the box
+    print(shapes.get(i = 0).kind())
+}
+```
+
+### 12.1 Representation
+
+- `Box<dyn Name>` is a **fat owned pointer**: the address of the heap value (the erased data
+  pointer) and the address of the same static, read-only vtable a `&dyn Name` carries. It is two
+  machine words, laid out exactly as `&dyn Name` is, and the two share one C struct and one LLVM
+  identified struct per trait.
+- It is **not `Copy`**: it owns the allocation `Box.of(x)` made, and it drops it. Its type is
+  `Ty::BoxDyn`, a type of its own rather than a `Box<T>` whose element is a `Ty::Dyn`, because the
+  element of a `Box` is owned by value and a trait object is not a sized value.
+- The **vtable** is the one slice 4 defined (the supertraits' methods first, recursively in
+  declaration order, then the trait's own methods in source order, one slot each, one thunk per
+  slot over the erased data pointer) with three entries appended: a **drop** entry, a **size** and
+  an **align**. The extra entries are the same for every pair of one trait's layout, and the drop
+  entry is the concrete type's drop glue. A vtable is still one per `(trait, type)` pair actually
+  used, emitted as read-only data (`.rodata`) on both backends.
+- There is deliberately no runtime type tag: `Box<dyn Name>` is not a value with a dynamic type, it
+  is a borrow of the trait's method set plus the ownership of the storage behind it.
+- `Box<dyn Name>` is an owned value with no borrows, so it is a legal `datac`/`enum` field, a
+  `List` element, a parameter (by move), a return type and a local. It is refused as a `Map` key
+  and as an `Atomic`/`Mutex` element for the reasons those sets are closed, and refused as a
+  `Thread<T>` element only by the ordinary Send-shaped rule (12.5).
+
+### 12.2 Construction: the coercion, and where it happens
+
+There is one way to make a `Box<dyn Name>`: coerce a `Box<T>` where `T` implements `Name`. The
+coercion is **implicit at every position that knows an expected type**, which is the same list a
+`&T` used in slice 4 and the same mechanism: a call argument, a typed `val`/`var` binding, a
+`return`, a `datac`/`enum` field initializer, and a container's element argument
+(`xs.push(Box.of(circle))`).
+
+- The operand must be a `Box<T>` whose `T` implements `Name`. A `Box<T>` whose `T` does not is
+  refused by name at the coercion site; a value that is not a box at all (a bare `Box.empty()` with
+  nothing to decide its element, or a `List`) is an ordinary type mismatch.
+- **The coercion is a move, not a copy**: the box's allocation becomes the trait object's
+  allocation, and the operand's binding is moved out exactly as `val b2 = b` moves a box. So the
+  factory above builds one allocation and no second one, and a `Box<dyn>` in a `return` is the box
+  the callee already had.
+- `Box.new(x)` is spelled `Box.of(x)` in this language; the move is the same one.
+- A `Box<dyn Name>` value coerces to the same `Box<dyn Name>` type, so one can be moved on to
+  another binding or another function. It does not coerce to a different trait: there is no upcast
+  from `Box<dyn B>` to `Box<dyn A>` when `B: A`, exactly as a `&dyn B` does not.
+
+### 12.3 Calls, borrows, and getting a `&dyn` back
+
+- A method call on a `Box<dyn Name>` goes **through the vtable**, exactly as it does on a
+  `&dyn Name`: `b.area()` is `b.vtable[slot](b.data)`. A `mut Self` method needs the receiver to be
+  a writable place (a `var` binding, a field, or a `&mut Box<dyn Name>`), the same rule an
+  `&mut x` argument follows. A call through a `&Box<dyn Name>` or `&mut Box<dyn Name>` works too:
+  the borrow is read (or writes through) to reach the box, and the contents are reached through the
+  box's own pointer.
+- A `&dyn Name` is borrowed from the box with `b.get()`, the same spelling `Box<T>::get` already
+  uses: `b.get()` on a `Box<dyn Name>` yields `&dyn Name` (a fat pair pointing at the box's data,
+  which is a borrow, not a second owner). That is how a boxed shape is passed to a function taking
+  `&dyn Name`. `Box.get` on a `&dyn`-shaped element is the one method the box adds here; `get`,
+  `is_empty` and the drop are its whole method surface. `take`/`set` are refused by name because
+  they would have to move an unsized value in or out.
+- `Box.empty()` is legal for a `Box<dyn Name>` written type: it is the null fat pair, the same
+  "nothing at all" a `Box<T>` has, and an empty box panics from `get()` exactly as an empty
+  `Box<T>` does.
+
+### 12.4 Dropping through the vtable
+
+- Dropping a `Box<dyn Name>` runs the concrete type's drop glue **through the vtable**: the drop
+  entry calls the same `kelp_drop_<T>` a `Box<T>` calls (the user `drop` first, then the fields in
+  declaration order), and the box's own drop then frees the allocation. So `List<Box<dyn Shape>>`
+  drops its elements through each element's own vtable, and a `datac` field of the type drops the
+  same way.
+- The drop entry is emitted per `(trait, type)` pair, so it names the concrete method's own drop
+  function. A type that needs no drop (a `Copy` scalar) gets a thunk that does nothing, and the
+  box still frees its allocation.
+- The size and align entries are emitted as data beside the drop entry. Nothing in this slice reads
+  them; they exist so the table describes the concrete type completely, which is what a later slice
+  that needs the layout of an erased value would reach for.
+
+### 12.5 Moves, borrows and threads
+
+- The borrow checker treats a `Box<dyn Name>` exactly as it treats any owned `Box`: reading it as a
+  whole moves it, a partial move out of it is refused by the ordinary rules, and its drop runs at
+  the drop points the plan already records (block end, before a `return`, reassignment of an owned
+  `var`, a container's element drop, an `atexit` pd drop).
+- A **thread** may move a `Box<dyn Name>` because the existing crossing rule admits an owned value
+  with no reachable borrow (MK9 section 5, rule 4). A `&dyn Name` — a borrow — is refused by rule 2
+  exactly as any other borrow of a frame local is. This is the whole of the `Send`-shaped story in
+  v1: there is still no `Send` marker to implement.
+- The vtable is emitted per `(trait, type)` pair and the concrete type's drop is reached through it,
+  so a `Box<dyn Name>` in a freestanding image costs the same `.rodata` a `&dyn` did and needs no
+  libc beyond the allocator the project supplies.
+
+### 12.6 Object safety, and what is refused by name
+
+Object safety is unchanged from slice 4 and is checked where the `dyn` is written, so `Box<dyn
+Name>` refuses the same traits `&dyn Name` does, with the same messages:
+
+- a method returning `Self`, a parameter other than the receiver that mentions `Self`, and two
+  methods of one name;
+- a **generic trait** (`trait Name<T>`), because the vtable has no slot for a type parameter;
+- a trait that declares an **associated type**, because the erased value has no single binding to
+  name.
+
+And the spelling itself:
+
+- **`Box<dyn A + B>`** is refused by name: a trait object names one trait, and the trait that
+  combines two is a declared trait with `A` and `B` as supertraits.
+- **A bare `dyn Name`** outside a `Box<...>` stays refused by name.
+- **`Box<dyn>` of a trait that is never implemented** is legal to *name* (a parameter may take a
+  boxed trait nothing implements in this program), but a coercion site whose type is not an impl is
+  refused by name, with the `impl Name for T` line to write.
+
+### 12.7 What is deliberately not in this slice
+
+- **Upcasting** `Box<dyn B>`/`&dyn B` to a supertrait object. Refused by name.
+- **`Box<dyn>` of a generic trait** and of a trait with an associated type, for the reason 12.6
+  gives.
+- **Moving the value out of a box** (`Box.take` on a `Box<dyn>`, or a `*b` dereference that would
+  produce an unsized place). Refused by name: the concrete value's size is not known at the use
+  site, which is what `get()` and the vtable are for.
+- **`Box<dyn Name>` printed, compared, hashed or used as a `Map` key.** Each position refuses it
+  for the reason it already refuses a `&dyn`.
+
+### 12.8 What the compiler does not check
+
+- The vtable's slot order is computed the same way at the coercion site and at the call site, so
+  nothing checks that two vtables of one trait agree beyond the single flattening routine.
+- Nothing checks that the concrete type's methods are consistent with the trait's *intent*, exactly
+  as no trait method body is checked for meaning.
+- A `Box<dyn Name>` whose box is empty is not tracked as such: `get()` panics at runtime, `is_empty`
+  is how a program asks, and a `Box<dyn Name>` never dereferenced needs no check.
+- The size and align entries are emitted but not read; a slice that reads them would be the first
+  to depend on them.
+
+### 12.9 How it is implemented
+
+- `parser.rs` parses a bare `dyn Name` as a `TypeExpr` mark (rather than refusing it where the
+  tokens are), so `Box<dyn Name>` reaches `infer.rs`; it refuses `dyn A + B` by name where the `+`
+  is, and the `&dyn` path is unchanged.
+- `types.rs` gives `Ty::BoxDyn` its `c_type` (the same fat-pair struct as `Ty::Dyn`), `display`,
+  `mangle`, `is_copy` (false), `owns_heap` (true), its layout (two words) and its drop-function
+  name. `drop_fn_name` is `kelp_box_dyn_drop__<Trait>`, one function per trait.
+- `infer.rs` resolves `Box<dyn Name>` to `Ty::BoxDyn`, reusing the object-safety check, and lowers
+  the coercion to a `tir::ExprKind::BoxDynCoerce` (a move of the box plus the pair's vtable). A
+  method call on a `Box<dyn Name>` reuses `check_dyn_method_call`, and `Box.get`/`Box.is_empty`/
+  `Box.empty` are added to the receiver's method surface. Each coercion records its `(trait, type)`
+  pair in the existing `dyn_pairs` set, and each `dyn` type resolved records its trait so the pair's
+  typedef exists even with no coercion.
+- `tir.rs` carries `DynVtable::concrete` (the concrete `Ty`, so the drop entry can name its drop
+  glue) and the `BoxDynCoerce` node.
+- `borrowck.rs` sees `BoxDynCoerce` as a move of its operand, exactly as a `&x`-based `DynCoerce`
+  is seen as the borrow inside it.
+- `codegen_c.rs` and `codegen_llvm.rs` emit the appended vtable entries, the per-trait
+  `kelp_box_dyn_drop__<Trait>`, and lower `BoxDynCoerce`. The LLVM table keeps its `[N x ptr]` shape
+  with three extra entries after the slots, its drop entry a real function pointer, so the two
+  backends' tables agree on the slot the drop lives in.
+- `plan/kernel-ub-notes.md` carries this feature's note.
+
+### 12.10 Tests
+
+`kelpc/tests/compile_and_run.rs` runs each of these on the backend under test (LLVM by default, the
+C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the coverage sweep as well:
+
+- a `List<Box<dyn Shape>>` of two implementors, summed through the vtable;
+- a factory function returning `Box<dyn Shape>` chosen by a flag;
+- a `datac` holding a `Box<dyn Trait>` field, and a `&dyn` borrowed back out with `get()`;
+- drop order with a user `drop` on the concrete types, asserted by printed output;
+- moving a box between two lists, and a method call through `&Box<dyn Trait>`/`&mut`;
+- a box moved into a spawned thread (accepted) and a `&dyn` crossing refused;
+- a freestanding riscv64 project (allocator hook) that builds with `llvm-nm -u` clean and boots
+  under QEMU with a timeout;
+- the rejections: a coercion of a type that does not implement the trait, an object-unsafe trait,
+  `Box<dyn A + B>`, a partial move out of a box, and a use after move;
+- `kelpc fmt` round-trips the `Box<dyn>` spelling.

@@ -47,6 +47,14 @@ same shape: one fixed name, one fixed signature, checked at the declaration.
   `Map<.., Guard>` (value drop), `Option<Guard>`-shaped enums (variant payload drop), and a
   `Guard` inside a `datac` inside a `List`. A closure that captured a `Guard` owns it in its
   environment and drops it where the environment is dropped.
+- An **owned trait object**, `Box<dyn Name>` (A-12 slice 7, `plan/traits.md` 12), drops through
+  its vtable: the box runs the vtable's drop entry, which is the concrete type's own
+  `kelp_drop_<T>` (so the user `drop` and then the fields, exactly as a `Box<T>` would), and then
+  frees the allocation. The concrete type is erased at the drop site, which is why the drop is a
+  vtable entry rather than the per-element function a `Box<T>` calls. Everything else is
+  unchanged: a `List<Box<dyn Name>>` frees each element through the generated
+  `kelp_box_dyn_drop__<Trait>`, a `datac` field of that type is dropped by its own generated drop,
+  and the user `drop` of the concrete types runs in reverse declaration order with the rest.
 - `defer` and `Drop` are independent: a `defer` is spliced before the block's ordinary drops, so
   on an ordinary exit a deferred action runs before the value's destructor. On a `panic` neither
   runs: there is still **no unwinding** (`plan/mk9-memory-model.md` 2), the frame is abandoned,

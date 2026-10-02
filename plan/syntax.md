@@ -1327,9 +1327,11 @@ val d: &dyn Shape = &c       // or at a typed binding
 print(describe(d))           // and a `&dyn` forwards on to another function
 ```
 
-- A trait object is legal **as a parameter type and as a local binding type** only. `Box<dyn
-  Name>`, a bare `dyn Name`, a `.R: &dyn Name` return, a `datac`/`enum` field or payload, a
+- A borrowed trait object is legal **as a parameter type and as a local binding type** only. A
+  bare `dyn Name`, a `.R: &dyn Name` return, a `datac`/`enum` field or payload named `&dyn`, a
   container element or argument, a tuple element and a `static`'s type are each refused by name.
+  The **owned** spelling `Box<dyn Name>` (9.5.3) *is* a stored type: a field, a payload, a
+  container element, a parameter, a return and a local all take one.
 - `Name` must be a declared trait. `&mut dyn Name` allows a `mut Self` method and `&dyn Name`
   does not; a `mut Self` method called through `&dyn` is refused by name.
 - **Coercion.** A `&T` where `T` implements `Name` coerces to `&dyn Name` at a call argument or a
@@ -1363,13 +1365,61 @@ of these. A violation is refused where the `dyn` type is written, naming the tra
 A method with its own type parameters is already impossible (9.5), so there is nothing else to
 erase.
 
-Not in this slice, each refused where it is written: `Box<dyn Name>` and a bare `dyn Name`; an
+Not in this slice, each refused where it is written: a bare `dyn Name` (an owned one is
+`Box<dyn Name>`, 9.5.3); an
 upcast from `&dyn B` to `&dyn A` when `B: A`; a trait object over an object-unsafe trait; a trait
 object over a trait that declares an associated type or takes a type parameter (9.5); an associated
 const; `impl Trait` in argument position; a `where` clause; an equality constraint on a trait's
 associated type; an impl for a generic instantiation; a blanket impl of any trait (including
 `Into`); and any operator overloading through a trait (`==`/`!=` still come from a declared `eq`,
 5). `plan/traits.md` 5, 9.6, 10.3 and 11.6 are the lists with the reasons and the workarounds.
+
+### 9.5.3 Owned trait objects, `Box<dyn Name>`
+
+```
+fun make(big: bool).R: Box<dyn Shape> {
+    if big {
+        return Box.of(Circle(r = 2.0))    // `Box<Circle>` coerces here
+    }
+    return Box.of(Square(s = 3.0))
+}
+
+fun main() {
+    var xs: List<Box<dyn Shape>> = List.empty()
+    xs.push(make(big = true))
+    val b = make(big = false)
+    print(b.area())                       // a method call through the vtable
+    print(describe(b.get()))              // `&dyn Shape` borrowed back out
+    print(b.is_empty())
+    val nil: Box<dyn Shape> = Box.empty()
+}
+```
+
+- `Box<dyn Name>` is an **owned trait object**: the same fat pair `&dyn Name` is (the erased data
+  pointer and a pointer to the same static vtable), except that it **owns** the allocation the data
+  pointer addresses, so it is not `Copy` and it drops what it holds. `Name` must be a declared,
+  object-safe trait (9.5.2), and `Box<dyn A + B>` is refused by name.
+- **Where it may be written:** everywhere an owned value may be, which is wider than the borrowed
+  spelling: a parameter (by `move`), a return type, a `datac`/`enum` field or payload, a `List`
+  element, a local and a `static`'s type.
+- **Coercion.** A `Box<T>` where `T` implements `Name` coerces to `Box<dyn Name>` at a call
+  argument, a typed `val`/`var` binding, a `return`, a `datac`/`enum` field initializer and a
+  container's element argument (`xs.push(Box.of(c))`). The coercion is a **move**: the box's
+  allocation becomes the trait object's, so no value is copied and no second allocation happens. A
+  `Box<dyn Name>` coerces only to the same type, never to another trait's.
+- **Methods.** A method call on the box goes through the vtable exactly as it does on a `&dyn`,
+  and a `mut Self` method needs a writable place (a `var` binding, a field, or a `mut Box<dyn
+  Name>` parameter). `get()` borrows a `&dyn Name` back out of the box, `is_empty()` asks whether
+  it holds anything, and `Box.empty()` is the null owned trait object. `take()`/`set()` are
+  refused by name: the concrete type is erased, so no sized value can be moved in or out.
+- **Dropping.** Dropping a `Box<dyn Name>` runs the concrete type's drop glue through the vtable
+  (the user `drop` first, then the fields) and then frees the allocation, so a
+  `List<Box<dyn Name>>` and a `datac` field drop theirs the same way.
+- **Threads.** An owned trait object crosses a thread boundary, because an owned value with no
+  borrows is what the crossing rule admits; a `&dyn Name` does not, exactly as any other borrow of
+  a frame local does not.
+- **Not in this slice:** upcasting between trait objects, a bare `dyn Name`, and `take`/`set` on
+  an owned trait object are each refused by name. `plan/traits.md` 12 is the design.
 
 ## 10. Ownership, moves and borrowing
 
@@ -2651,7 +2701,7 @@ These are deliberate, and each one has a workaround in this document:
 - Iteration is a `for` over a `List` (6.2), a `[T; N]`, or an `Iterator` (16.18), or a `while` plus an index when the loop is not a front-to-back walk. `break`/`continue` control either loop.
 - `?` propagates an identical failure type directly and a different one through a declared `impl From<Source> for Target`; there is no `Into` in the operator, no blanket impl, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, `From`/`Into` in `std/convert`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
-- A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1), which is a fat pair and a vtable; there is no `Box<dyn Name>`, no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
+- A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1) or owned as `Box<dyn Shape>` (9.5.3), a fat pair and a vtable in both spellings; there is no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
 - A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, variant payload or position is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
