@@ -1,0 +1,15 @@
+// Reassigning a cursor from another cursor (`q = p`) re-pins the owner under
+// the new holder: the old holder's entry is released, but `q`'s own pin keeps
+// the owner borrowed, so mutating it is still refused even after `p` is gone.
+datac Holder(val value: i32)
+
+fun main() {
+    var list = Holder(value = 1)
+    var q = &list
+    {
+        val p = &list
+        q = p
+    }
+    list = Holder(value = 9)
+    print(q.value)
+}

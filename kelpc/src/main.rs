@@ -1,6 +1,7 @@
 mod ast;
 mod backend;
 mod borrowck;
+mod cache;
 mod codegen_c;
 mod codegen_llvm;
 mod deprecated;
@@ -19,7 +20,9 @@ mod opt;
 mod parser;
 mod preprocess;
 mod resolve;
+mod sha256;
 mod stdlib;
+mod timings;
 mod tir;
 mod types;
 
@@ -31,6 +34,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::time::Instant;
 
 /// Name this compiler is installed and invoked as. Kept in sync with the
 /// crate's `[package] name` and `[[bin]] name` in `Cargo.toml`.
@@ -76,13 +80,14 @@ const BUILD_DIR: &str = "build";
 
 fn usage() {
     eprintln!(
-        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
-         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
+        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
+         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
          {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated] [--text]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
          {BIN_NAME} fmt --check <path>...\n       \
          {BIN_NAME} lint <path>...\n       \
+         {BIN_NAME} cache stats|clear [--dir <dir>]\n       \
          {BIN_NAME} version\n\n\
          The optimization level is -O0, -O1, -O2, -O3 or -Os, and -O2 is the\n\
          default. One level is one level for the whole build: it selects the\n\
@@ -96,6 +101,28 @@ fn usage() {
          --deny-outdated turns those findings into errors, which is the\n\
          migration gate for a project that wants to know when its own code is\n\
          on the list.\n\n\
+         --incremental (or '[build] incremental = true' in coral.toml) splits\n\
+         the backend's output into one compilation unit per source module and\n\
+         links the unit objects together: separate compilation, with no\n\
+         cross-unit inlining. It is off by default and produces the same\n\
+         program either way. The C oracle (KELPC_ORACLE=c) ignores it and\n\
+         keeps its one translation unit, and a freestanding project is\n\
+         refused by name for now (plan/incremental-compilation.md).\n\n\
+         Cache misses are compiled on worker threads, each unit in its own\n\
+         LLVM context. KELPC_JOBS names the worker count (a positive integer;\n\
+         the default is 2, not the CPU count); more workers than units spawns\n\
+         one per unit.\n\n\
+         --timings prints per-phase wall times (parse, resolve, infer,\n\
+         borrowck, codegen, unit compile, link) and, for an --incremental\n\
+         build, one line per unit with hit or miss, to stderr.\n\n\
+         An --incremental build keys each unit's object by the hash of its IR\n\
+         and the machine it is compiled for, and reuses the object on a later\n\
+         build when the IR is unchanged. The cache lives in\n\
+         <out dir>/.kelpc-cache unless KELPC_CACHE_DIR names another\n\
+         directory. KELPC_CACHE=off turns lookups and stores off for one build;\n\
+         KELPC_CACHE_STATS=1 prints 'kelpc cache: N hits, N misses, N stored';\n\
+         KELPC_CACHE_MAX_MB caps the cache size (default 1024).\n\
+         'kelpc cache stats' and 'kelpc cache clear' inspect and empty it.\n\n\
          With no -o, the binary and the backend's intermediate are written to\n\
          {BUILD_DIR}/<file stem>, which the compiler creates if it is missing.\n\n\
          check runs everything a build runs except code generation: the same\n\
@@ -153,7 +180,7 @@ fn front_end(
 ) -> (Vec<(Severity, Diagnostic)>, bool) {
     let mut findings: Vec<(Severity, Diagnostic)> = Vec::new();
 
-    let loaded = match resolve::load(Path::new(path), sources, entry_text) {
+    let loaded = match resolve::load(Path::new(path), sources, entry_text, None) {
         Ok(l) => l,
         Err(d) => {
             findings.push((Severity::Error, d));
@@ -275,6 +302,85 @@ fn check_command(args: &[String]) -> ExitCode {
     }
 }
 
+/// `kelpc cache stats|clear [--dir <dir>]`: inspect or empty the object cache
+/// the per-unit split keys by IR hash (roadmap A-14 slice 2).
+///
+/// The directory is `--dir` when given, else `KELPC_CACHE_DIR`, else
+/// `build/.kelpc-cache`, which is where a build with the default output path
+/// keeps it.
+fn cache_command(args: &[String]) -> ExitCode {
+    let mut action: Option<String> = None;
+    let mut dir: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--dir" {
+            let value = match args.get(i + 1) {
+                Some(v) => v.clone(),
+                None => {
+                    eprintln!("error: '--dir' requires a value");
+                    return ExitCode::FAILURE;
+                }
+            };
+            dir = Some(PathBuf::from(value));
+            i += 2;
+        } else if let Some(value) = arg.strip_prefix("--dir=") {
+            dir = Some(PathBuf::from(value));
+            i += 1;
+        } else if action.is_none() && !arg.starts_with('-') {
+            action = Some(arg.to_string());
+            i += 1;
+        } else {
+            eprintln!(
+                "error: unknown argument '{arg}'; usage: {BIN_NAME} cache stats|clear [--dir <dir>]"
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+    let Some(action) = action else {
+        eprintln!("usage: {BIN_NAME} cache stats|clear [--dir <dir>]");
+        return ExitCode::FAILURE;
+    };
+    let dir = dir.unwrap_or_else(default_cache_dir);
+    let cache = cache::Cache::with_dir(dir);
+    match action.as_str() {
+        "stats" => {
+            let (count, size) = cache.entry_count_and_size();
+            println!(
+                "kelpc cache: {count} entries, {size} bytes in {}",
+                cache.dir().display()
+            );
+            ExitCode::SUCCESS
+        }
+        "clear" => match cache.clear() {
+            Ok(removed) => {
+                println!(
+                    "kelpc cache: removed {removed} files from {}",
+                    cache.dir().display()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(message) => {
+                eprintln!("error: {message}");
+                ExitCode::FAILURE
+            }
+        },
+        other => {
+            eprintln!("error: unknown cache action '{other}'; expected 'stats' or 'clear'");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The cache directory a bare `kelpc cache` command uses, matching the build's
+/// own default (`KELPC_CACHE_DIR`, else `build/.kelpc-cache`).
+fn default_cache_dir() -> PathBuf {
+    match std::env::var_os(cache::DIR_ENV) {
+        Some(dir) => PathBuf::from(dir),
+        None => Path::new(BUILD_DIR).join(cache::CACHE_DIR_NAME),
+    }
+}
+
 /// Runs the full pipeline (load modules, typecheck, borrowcheck, codegen,
 /// finish the artifact) and produces a native binary at `out_path`. Returns
 /// `false` (having already printed a diagnostic) on any failure.
@@ -298,11 +404,14 @@ fn build(
     backend: Backend,
     deny_outdated: bool,
     opt: OptLevel,
+    incremental_flag: bool,
     freestanding_out: &mut bool,
+    print_timings: bool,
 ) -> bool {
     let mut sources = SourceMap::new();
+    let mut timing = timings::Timings::new();
 
-    let loaded = match resolve::load(Path::new(path), &mut sources, None) {
+    let loaded = match resolve::load(Path::new(path), &mut sources, None, Some(&mut timing)) {
         Ok(l) => l,
         Err(d) => {
             sources.report(&d);
@@ -317,6 +426,7 @@ fn build(
     // removes the `std` declarations it names: a call to `str.concat` has to be
     // refused by name, and that needs the declaration it names to still be
     // there. The check is a no-op for a hosted project.
+    let infer_start = Instant::now();
     let mut typed = match infer::check_program(&loaded.program, &loaded.project) {
         Ok(p) => p,
         Err(d) => {
@@ -324,6 +434,7 @@ fn build(
             return false;
         }
     };
+    timing.infer += infer_start.elapsed();
     if let Err(d) = freestanding::check(&typed, &loaded.project) {
         sources.report(&d);
         return false;
@@ -337,6 +448,7 @@ fn build(
         let allocator = loaded.project.target().alloc().is_some()
             && loaded.project.target().dealloc().is_some();
         freestanding::prune(&mut pruned, allocator);
+        let prune_infer_start = Instant::now();
         typed = match infer::check_program(&pruned, &loaded.project) {
             Ok(p) => p,
             Err(d) => {
@@ -344,8 +456,10 @@ fn build(
                 return false;
             }
         };
+        timing.infer += prune_infer_start.elapsed();
     }
 
+    let borrow_start = Instant::now();
     let drops = match borrowck::check_program(&typed) {
         Ok(plan) => plan,
         Err(d) => {
@@ -353,6 +467,7 @@ fn build(
             return false;
         }
     };
+    timing.borrowck = borrow_start.elapsed();
 
     // Kernel stage 4: a freestanding project has no hosted runtime to build
     // against, so the C backend's libc preamble cannot express it. The refusal
@@ -366,6 +481,22 @@ fn build(
         return false;
     }
     *freestanding_out = loaded.project.target().is_freestanding();
+
+    // Roadmap A-14 slice 1: the backend's per-unit split. `--incremental` and
+    // the manifest's `[build] incremental = true` both turn it on, and the C
+    // oracle ignores it, because the C backend's one translation unit is the
+    // other answer to the same question rather than a second implementation of
+    // this mode. A freestanding project is refused by name for now: its image
+    // is one ELF with one entry stub and one panic state, which is a slice of
+    // its own (`plan/incremental-compilation.md`).
+    let incremental = incremental_flag || loaded.project.incremental();
+    if incremental && *freestanding_out && backend == Backend::Llvm {
+        eprintln!(
+            "error: '--incremental' is not implemented for a freestanding project yet: its image is one ELF with a single entry stub and one panic state, so the per-unit split is its own slice (plan/incremental-compilation.md)"
+        );
+        return false;
+    }
+    let incremental = incremental && backend == Backend::Llvm;
 
     // One `pkg-config` invocation for every package the manifest's `[extern.*]`
     // sections named (MK9-S1-M1), shared by both backends. It runs before the
@@ -439,6 +570,8 @@ fn build(
                 &library_dirs,
                 &pkg_config_flags,
                 freestanding.as_ref(),
+                incremental,
+                &mut timing,
             ) {
                 eprintln!("error: {message}");
                 return false;
@@ -446,6 +579,9 @@ fn build(
         }
     }
 
+    if print_timings {
+        timing.print();
+    }
     true
 }
 
@@ -636,7 +772,7 @@ fn fmt_text(path: &Path, src: &str) -> Result<String, ()> {
     let own = fmt::format(src);
     let Ok(text) = own else {
         let mut sources = SourceMap::new();
-        return match resolve::load(path, &mut sources, None) {
+        return match resolve::load(path, &mut sources, None, None) {
             Ok(_) => fmt::format_after_resolve(src).map_err(|e| {
                 report_fmt_error(path, src, &e);
             }),
@@ -1113,6 +1249,7 @@ fn main() -> ExitCode {
         Some("fmt") => return fmt_command(&args[2..]),
         Some("lint") => return lint_command(&args[2..]),
         Some("check") => return check_command(&args[2..]),
+        Some("cache") => return cache_command(&args[2..]),
         Some(c @ ("build" | "run")) => {
             guard::start();
             c
@@ -1128,6 +1265,8 @@ fn main() -> ExitCode {
     let mut path: Option<String> = None;
     let mut out: Option<PathBuf> = None;
     let mut deny_outdated = false;
+    let mut incremental = false;
+    let mut print_timings = false;
     let mut opt = OptLevel::DEFAULT;
     let mut i = 2;
     while i < args.len() {
@@ -1155,6 +1294,16 @@ fn main() -> ExitCode {
             i += 1;
         } else if arg == "--deny-outdated" {
             deny_outdated = true;
+            i += 1;
+        } else if arg == "--timings" {
+            // Roadmap A-14 slice 2: per-phase and per-unit wall times on stderr.
+            print_timings = true;
+            i += 1;
+        } else if arg == "--incremental" {
+            // Roadmap A-14 slice 1: the backend's per-unit split. Refused for
+            // `check`/`fmt`/`lint` by the same "unknown flag" path, since this
+            // scan only runs for `build` and `run`.
+            incremental = true;
             i += 1;
         } else if arg.starts_with("-O") {
             // One `-O<n>` argument, not `-O <n>`: the level is a single
@@ -1215,7 +1364,16 @@ fn main() -> ExitCode {
     }
 
     let mut freestanding = false;
-    if !build(&path, &out_path, backend, deny_outdated, opt, &mut freestanding) {
+    if !build(
+        &path,
+        &out_path,
+        backend,
+        deny_outdated,
+        opt,
+        incremental,
+        &mut freestanding,
+        print_timings,
+    ) {
         return ExitCode::FAILURE;
     }
 

@@ -25,12 +25,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::ast;
 use crate::diag::{Diagnostic, SourceMap};
 use crate::lexer::{Lexer, Span, Token, TokenKind};
 use crate::parser::Parser;
 use crate::preprocess::{self, AliasTable};
+use crate::timings::Timings;
 
 /// Source-file extension, without the leading dot. Every extension decision
 /// in this file goes through it, so a future rebrand is one line.
@@ -102,6 +104,11 @@ pub struct Project {
     /// freestanding checker its allowed set, and the driver the triple and
     /// linker script.
     target: TargetDecl,
+    /// `coral.toml`'s `[build] incremental = true` (roadmap A-14 slice 1): the
+    /// project wants the backend's per-unit split. `None`/absent is the
+    /// default, which is the whole-program single module the compiler has
+    /// always emitted.
+    incremental: bool,
 }
 
 impl Project {
@@ -123,6 +130,13 @@ impl Project {
     /// 4). Every read of the execution environment goes through this.
     pub fn target(&self) -> &TargetDecl {
         &self.target
+    }
+
+    /// Whether the manifest asked for the backend's per-unit split (roadmap
+    /// A-14 slice 1). `kelpc build` ORs this with its own `--incremental` flag;
+    /// the C oracle ignores both.
+    pub fn incremental(&self) -> bool {
+        self.incremental
     }
 
     /// Every native library named across the project's `[extern.*]`
@@ -463,6 +477,7 @@ pub fn load(
     entry_path: &Path,
     sources: &mut SourceMap,
     entry_text: Option<String>,
+    mut timings: Option<&mut Timings>,
 ) -> Result<Loaded, Diagnostic> {
     let given = fs::canonicalize(entry_path).map_err(|e| {
         Diagnostic::new(
@@ -483,6 +498,7 @@ pub fn load(
         manifest_extern,
         manifest_unsafe,
         manifest_target,
+        manifest_incremental,
     ) = if given.is_dir() {
             let manifest_path = given.join(MANIFEST_NAME);
             let text = fs::read_to_string(&manifest_path).map_err(|_| {
@@ -519,6 +535,7 @@ pub fn load(
                 manifest.extern_modules,
                 manifest.unsafe_modules,
                 manifest.target,
+                manifest.incremental,
             )
         } else {
             match find_manifest_root(&given) {
@@ -549,6 +566,7 @@ pub fn load(
                         manifest.extern_modules,
                         manifest.unsafe_modules,
                         manifest.target,
+                        manifest.incremental,
                     )
                 }
                 None => {
@@ -567,6 +585,7 @@ pub fn load(
                         HashMap::new(),
                         Vec::new(),
                         TargetDecl::hosted(),
+                        false,
                     )
                 }
             }
@@ -601,7 +620,12 @@ pub fn load(
         extern_modules: manifest_extern,
         unsafe_modules: manifest_unsafe,
     };
+    let parse_start = Instant::now();
     loader.load_project()?;
+    if let Some(sink) = &mut timings {
+        sink.parse = parse_start.elapsed();
+    }
+    let resolve_start = Instant::now();
 
     let mut program = ast::Program {
         impls: Vec::new(),
@@ -1099,7 +1123,11 @@ pub fn load(
         extern_modules: loader.extern_modules,
         unsafe_fns,
         target: manifest_target,
+        incremental: manifest_incremental,
     };
+    if let Some(sink) = &mut timings {
+        sink.resolve = resolve_start.elapsed();
+    }
     Ok(Loaded {
         program,
         project,
@@ -1522,6 +1550,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         target: TargetDecl::hosted(),
         target_mode_set: false,
         target_cpus_set: false,
+        incremental: false,
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -1586,6 +1615,8 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                 parse_unsafe_line(&mut manifest, line, at)?;
             } else if name == "target" {
                 parse_target_line(&mut manifest, line, at)?;
+            } else if name == "build" {
+                parse_build_line(&mut manifest, line, at)?;
             }
             continue;
         }
@@ -1846,6 +1877,11 @@ struct Manifest {
     /// Whether `cpus` was set, so a duplicated key is refused rather than
     /// silently keeping one of the two values.
     target_cpus_set: bool,
+    /// `[build] incremental = true` (roadmap A-14 slice 1): whether the backend
+    /// splits the program into one compilation unit per source module. Absent
+    /// (or `false`) is the whole-program default, which is what every project
+    /// written before this section existed gets.
+    incremental: bool,
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
@@ -1972,6 +2008,44 @@ fn parse_unsafe_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
             manifest.unsafe_modules.push(module.to_string());
         }
     }
+    Ok(())
+}
+
+/// One `incremental = true|false` line inside `coral.toml`'s `[build]` section
+/// (roadmap A-14 slice 1). A bare boolean, because that is what the key is: a
+/// switch the backend reads, not a value anyone quotes. The section has one key
+/// today, so any other key is refused by name rather than skipped.
+fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
+    let Some((key, value)) = line.split_once('=') else {
+        return Err(Diagnostic::new(
+            format!("expected 'incremental = true|false' in {MANIFEST_NAME}'s [build] section, found '{line}'"),
+            at,
+            "",
+        ));
+    };
+    if key.trim() != "incremental" {
+        return Err(Diagnostic::new(
+            format!(
+                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: the section has one key, 'incremental'",
+                key.trim()
+            ),
+            at,
+            "",
+        ));
+    }
+    manifest.incremental = match value.trim() {
+        "true" => true,
+        "false" => false,
+        other => {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME} value for '[build] incremental' must be true or false, found '{other}'"
+                ),
+                at,
+                "",
+            ))
+        }
+    };
     Ok(())
 }
 
@@ -3249,6 +3323,31 @@ mod tests {
             .to_string();
         let err = manifest_err(&text);
         assert!(err.message.contains("pkg_config' is set more than once"), "{}", err.message);
+    }
+
+    #[test]
+    fn the_build_section_turns_incremental_on_and_off() {
+        // Roadmap A-14 slice 1: absent is the whole-program default, and the one
+        // key the section has reads either boolean.
+        assert!(!manifest("name = \"x\"\n").incremental);
+        assert!(manifest("name = \"x\"\n[build]\nincremental = true\n").incremental);
+        assert!(!manifest("name = \"x\"\n[build]\nincremental = false\n").incremental);
+    }
+
+    #[test]
+    fn a_malformed_build_section_is_rejected() {
+        let err = manifest_err("name = \"x\"\n[build]\nincremental = \"true\"\n");
+        assert!(
+            err.message.contains("must be true or false"),
+            "{}",
+            err.message
+        );
+        let err = manifest_err("name = \"x\"\n[build]\nunits = true\n");
+        assert!(
+            err.message.contains("the section has one key, 'incremental'"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

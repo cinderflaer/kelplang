@@ -1,0 +1,13 @@
+// A reference binding initialized from an `if` joins the two arms' roots: `w`
+// may point into either `a` or `b`, so both stay pinned while `w` is live and
+// mutating either is refused. Mutating the other owner is `cursor_branch_join2`
+// and is refused the same way.
+impl "std/str"
+
+fun main() {
+    var a = String.from_str("alpha")
+    var b = String.from_str("beta")
+    val w = if a.len() > 0 { a.as_str() } else { b.as_str() }
+    a = String.from_str("changed")
+    print(w)
+}

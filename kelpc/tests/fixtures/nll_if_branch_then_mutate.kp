@@ -1,0 +1,16 @@
+// A borrow used only inside an `if` arm is dead after the `if` statement, so
+// the owner may be mutated then. The borrow is deliberately treated as live
+// for the whole `if` (see `plan/nll.md`), which is what keeps the arms'
+// predecessors and the arm that uses it sound.
+impl "std/str"
+
+fun main() {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    val first = names.get(0)
+    if names.len() == 1 {
+        print(first.as_str())
+    }
+    names.push(String.from_str("beta"))
+    print(names.len())
+}

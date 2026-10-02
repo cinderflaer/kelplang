@@ -1488,3 +1488,121 @@ compiler bug would be a miscompile with no diagnostic); that a program does not
 call a `mut Self` method through a shared `&dyn` (the call is refused at the
 type level, but the representation carries no mutability); and anything about
 the concrete type behind a `&dyn`, since the value carries no type tag.
+
+## A-14 slice 1: separate compilation (`plan/incremental-compilation.md`)
+
+**New ways to reach undefined behaviour.** None. The mode changes how the
+backend's output is partitioned and linked, not what any instruction means: a
+unit is the same lowering in a different module, and the link puts the same
+objects in one image. The one property a program can now break that it could not
+before is linkage, and it breaks loudly rather than silently:
+
+- **A symbol that should have been external but was marked `internal` is an
+  undefined-symbol link error**, not a wrong address. The reference set is
+  computed from the typed IR plus the per-program C object's text; a reference
+  neither shows is a compiler bug, and the build fails naming the symbol.
+- **A symbol defined in two units is a multiple-definition link error** for the
+  same reason: ownership is total, and the generated helpers are defined only by
+  `_support`.
+- **A missed `main` would be caught by the C runtime's startup**, which is why
+  `main` is external unconditionally rather than by reference.
+
+**What the compiler does check.** That a unit declares every program item and
+defines only what it owns, and that every unit is verified by LLVM (before and
+after the pass pipeline) exactly as the whole-program module is.
+
+**What it does not check.** That the linkage decision is *minimal*: a symbol
+marked external that nothing outside its unit uses is correct but less
+optimizable, and nothing reports it. Nothing checks that two units' copies of a
+shared *type* agree, because only the definition of a type is emitted per unit
+and LLVM's own verifier checks each module against its own types; the layout
+agreement between two objects is the same C ABI guarantee the whole-program
+build already relies on. Cross-unit inlining does not happen in this mode, which
+is a performance property rather than a safety one.
+
+## A-14 slice 2: the unit object cache (`plan/incremental-compilation.md`)
+
+**New ways to reach undefined behaviour.** None directly. A cache hit reuses an
+object the compiler already produced, so it cannot introduce behaviour the
+object did not have; it can only reuse the *wrong* object, which is a compile
+correctness bug rather than a new UB surface. Two properties are load-bearing:
+
+- **The key must name every input that changes the object.** It names the IR
+  text, the triple, the CPU and feature string, the relocation and code model,
+  the optimization level, the debug-info setting and the compiler plus LLVM
+  version. A field missing from the key would let two different objects share an
+  entry, and a stale object for a changed unit would be a silent miscompile. The
+  compile-time half of this is the `every_field_and_the_ir_change_the_key` unit
+  test; the runtime half is the linker and the programs the cache tests run.
+- **An entry must be complete.** A truncated object would be a link error, never
+  a partially-linked binary, because the lookup rejects a file whose ELF section
+  header table falls outside it and the store renames a complete temporary into
+  place. A non-empty corruption the lookup cannot see is a link failure that
+  deletes the entry, so the recovery is a rebuild, not a retry with the same
+  bytes.
+
+**What the compiler does check.** That the key is computed from the IR text it
+is about to compile and the machine it is about to compile for; that a lookup
+sees only non-empty, complete ELF entries; that a store is atomic; and that a
+link failure deletes the entries it used and names their units.
+
+**What it does not check.** That the key's field set is complete in principle:
+that is argued, not verified, and a future machine choice (a new code model, a
+different debug format) that reaches codegen without reaching the key would be a
+silent reuse bug until a test catches it. Nothing checks the stored object's
+contents against a recompile; equality of IR is taken as equality of object. The
+cache is not shared between machines or compiler versions by construction, not by
+a check: a copied directory simply misses.
+
+## A-14 slice 3: parallel unit compilation (`plan/incremental-compilation.md`)
+
+**New ways to reach undefined behaviour.** None in the language: this slice
+changes *when* and *on which thread* a unit is compiled, not what is compiled.
+The sources, the IR and the objects are the same bytes as the serial build's (the
+determinism test pins this at jobs 1 and jobs 4), so no program can do anything
+new. Two implementation properties are load-bearing:
+
+- **An LLVM context is not shared between threads.** Each unit creates its own
+  context and module, so two workers never mutate one context's type table at
+  once. The worker's `TargetMachine` is per worker and read-mostly, and the
+  target registry is written once before any worker starts.
+- **`_exit` from the memory floor runs no destructors.** The guard's watchdog
+  calls `_exit(75)` while workers may be inside LLVM. `_exit` is immediate and
+  process-wide, so no worker's context or module is destroyed under a running
+  LLVM call and there is nothing to corrupt; the exit status stays 75.
+
+**What the compiler does check.** That every unit is verified by LLVM in its own
+context; that a failed or panicking unit is recorded and the build names it
+without stopping the other workers; and that results are collected by unit index,
+so the link line is the unit order regardless of thread timing.
+
+**What it does not check.** That a per-unit LLVM context is the only shared LLVM
+state that matters. The argument is that the C API's per-module calls are
+reentrant and the only shared writable state is the target registry, which is
+written once before the workers start; nothing runs the compiler many-threaded
+under a memory sanitizer. The failure path is exercised by a test-only hook that
+corrupts one unit's IR (`KELPC_TEST_CORRUPT_UNIT`), not by a real LLVM crash,
+because a real LLVM abort cannot be caught or attributed.
+
+## A-11 slice 3: a reference binding's root set (`plan/provenance.md`)
+
+**New ways to reach undefined behaviour.** None in the language: this slice
+changes only what the borrow checker accepts, not what a program compiles to.
+The typing, the emitted C and the emitted LLVM IR for every previously accepted
+program are unchanged, and the newly accepted programs are the same borrows and
+pointer walks the language already allowed, reached through a local instead of
+spelled out. The one runtime hazard an accepted program can newly reach is the
+pre-existing one the roadmap item named: dropping a very deep `Box` chain still
+recurses on the C stack, so a long enough chain overflows it exactly as a
+recursive walk would.
+
+**What the compiler does and does not check.** It checks that a borrow taken
+through a reference binding pins the *owner* the binding came from; that the
+owner cannot be mutated, moved or dropped while any cursor into it is live; that
+reassigning a cursor releases the root it left; that an `if`/`when`/loop join
+keeps every root an arm could have produced; and that a cursor derived from a
+local is still refused as a returned borrow. It does not check anything about
+the memory a cursor points into beyond the owner's lifetime: a cursor stored in
+a `datac` field, a container element or a returned temporary is still refused by
+the same "no lifetime syntax" rules as before, and a root reached through a raw
+`Ptr<T>` is not tracked at all (that is `unsafe`'s contract, unchanged).

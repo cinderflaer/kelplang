@@ -1,0 +1,30 @@
+// Open item 33, closed: a reference binding remembers the owner its value came
+// from, so a pointer local can be a cursor. `cur`'s root is `list` (from the
+// declaration) and `cur = cur.next.get()` rebinds the cursor, which used to be
+// refused as "cannot assign to 'cur' while it is borrowed" because the borrow
+// of `cur.next` was registered against `cur` rather than against `list`.
+//
+// The list stays short because dropping a `Box` chain still recurses on the C
+// stack, so a very deep list overflows it (as in Rust).
+datac Node(val value: i32, val next: Box<Node>)
+
+fun main() {
+    var list = Node(value = 1, next = Box.empty())
+    var i: i32 = 0
+    while i < 2000 {
+        list = Node(value = i, next = Box.of(list))
+        i += 1
+    }
+
+    var cur = &list
+    var sum = 0
+    var walked = 0
+    sum += cur.value
+    while !cur.next.is_empty() {
+        cur = cur.next.get()
+        sum += cur.value
+        walked += 1
+    }
+    print(walked)
+    print(sum)
+}

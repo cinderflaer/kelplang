@@ -1,0 +1,12 @@
+// Kelp's references are `Copy`, so this was the one way to make two live `&mut`
+// aliases to one place. The aliasing binding would need a second exclusive pin,
+// so the copy is refused instead.
+datac Holder(var value: i32)
+
+fun main() {
+    var a = Holder(value = 1)
+    val p = &mut a
+    val q = p
+    print(p.value)
+    print(q.value)
+}

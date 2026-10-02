@@ -1,0 +1,16 @@
+// A cursor carried through its own reassignment still roots at the local it
+// borrowed from, so returning it is refused: a returned borrow must come from
+// the first reference parameter, and this one would dangle when the frame pops.
+datac Node(val value: i32, val next: Box<Node>)
+
+fun pick(start: &Node).R: &Node {
+    var local = Node(value = 1, next = Box.of(Node(value = 2, next = Box.empty())))
+    var cur = &local
+    cur = cur.next.get()
+    return cur
+}
+
+fun main() {
+    val n = Node(value = 0, next = Box.empty())
+    print(pick(n).value)
+}

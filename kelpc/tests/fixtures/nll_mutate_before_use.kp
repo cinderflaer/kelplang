@@ -1,0 +1,12 @@
+// The borrow is still used after the mutation, so it is live at the `push`
+// and the mutation is refused. This is the open-item-30 example with the two
+// statements swapped.
+impl "std/str"
+
+fun main() {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    val first = names.get(0)
+    names.push(String.from_str("beta"))
+    print(first.as_str())
+}

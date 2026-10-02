@@ -1,0 +1,11 @@
+// The cursor is still used after the mutation, so the owner is still live when
+// the list is reassigned and the assignment stays refused.
+datac Node(val value: i32, val next: Box<Node>)
+
+fun main() {
+    var list = Node(value = 1, next = Box.of(Node(value = 2, next = Box.empty())))
+    var cur = &list
+    cur = cur.next.get()
+    list = Node(value = 9, next = Box.empty())
+    print(cur.value)
+}

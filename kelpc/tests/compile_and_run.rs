@@ -329,6 +329,115 @@ fn moving_a_borrowed_value_is_rejected() {
     assert_rejected("tests/fixtures/move_while_borrowed.kp");
 }
 
+/// A bound borrow ends at its last use, not at the end of its block (roadmap
+/// open item 30, `plan/nll.md`). The three accepted programs mutate, move or
+/// reassign the owner after the borrowing binding is dead; the six refused
+/// ones keep it live with a later use.
+#[test]
+fn a_bound_borrow_ends_at_its_last_use() {
+    assert_compiles_and_runs(
+        "tests/fixtures/nll_get_then_push.kp",
+        "alpha\n3\n",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/nll_if_branch_then_mutate.kp",
+        "alpha\n2\n",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/nll_last_use_before_loop.kp",
+        "alpha\n3\n",
+    );
+}
+
+#[test]
+fn a_live_borrow_still_refuses_its_owners_mutation() {
+    assert_rejected_with(
+        "tests/fixtures/nll_mutate_before_use.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_borrow_used_next_iteration.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_scoped_block_mutates_owner.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_defer_use_after_mutation.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_borrow_returned_from_local.kp",
+        "cannot return a borrow of 'local'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_view_after_reassign.kp",
+        "cannot assign to 's' while it is borrowed",
+    );
+}
+
+/// A reference binding remembers the owner its value came from, so a pointer
+/// local can be a cursor (roadmap open item 33, `plan/provenance.md`). The
+/// three accepted programs walk an owned `Box` list iteratively, index a list
+/// and re-point a cursor to a different owner; the refused ones keep a mutation
+/// of a live owner, a second exclusive cursor, a returned frame-local cursor, a
+/// moved root, or a root only one arm of an `if` assigned.
+#[test]
+fn a_reference_binding_remembers_its_root() {
+    assert_compiles_and_runs(
+        "tests/fixtures/cursor_walks_a_box_list.kp",
+        "2000\n1999001\n",
+    );
+    assert_compiles_and_runs("tests/fixtures/cursor_over_a_list_by_index.kp", "60\n");
+    assert_compiles_and_runs(
+        "tests/fixtures/cursor_retarget_releases_the_old_owner.kp",
+        "2\n10\n",
+    );
+}
+
+#[test]
+fn an_unsound_cursor_use_is_still_refused() {
+    assert_rejected_with(
+        "tests/fixtures/cursor_mutate_while_used.kp",
+        "cannot assign to 'list' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_two_mut_cursors.kp",
+        "already borrowed exclusively",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_returned_from_local.kp",
+        "cannot return a borrow of 'local'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_root_moved.kp",
+        "cannot move 'list' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_branch_union.kp",
+        "cannot assign to 'b' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_alias_reassign.kp",
+        "cannot assign to 'list' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_mut_alias.kp",
+        "already borrowed exclusively",
+    );
+    // Both halves of a value-position `if` join: `w` may point into either
+    // owner, so mutating either is refused.
+    assert_rejected_with(
+        "tests/fixtures/cursor_branch_join.kp",
+        "cannot assign to 'a' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_branch_join2.kp",
+        "cannot assign to 'b' while it is borrowed",
+    );
+}
+
 #[test]
 fn receiver_methods_resolve_and_mutate_through_self() {
     assert_compiles_and_runs("tests/fixtures/receiver_methods.kp", "12.566360\n28.274310\n");
@@ -14274,4 +14383,1240 @@ fn hosted_functions_carry_no_stack_probe() {
         !ir.contains("probe-stack"),
         "a hosted build carries the freestanding probe-stack attribute"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Roadmap A-14 slice 1: separate compilation (`--incremental`)
+// ---------------------------------------------------------------------------
+//
+// With the mode off the backend emits one LLVM module named `kelp`, which is why
+// nothing else in this file mentions it: the whole suite is the mode-off
+// assertion. These tests are the other half. The same programs built with the
+// per-unit split must behave identically, the split must be reproducible, and
+// the two spellings that turn it on (a flag and a manifest key) must agree.
+
+/// Builds `target` twice, once whole-program and once with `--incremental`, and
+/// reports the first difference (empty when the two agree). `KELPC_JOBS` is left
+/// at its default, which is the mode an ordinary incremental build uses.
+///
+/// A target that builds is run both ways and its stdout and exit status are
+/// compared; a target the front end *rejects* has to be rejected identically,
+/// down to the diagnostic, because the split is a backend change and the mode
+/// may not change what the compiler says about a program it refuses.
+fn incremental_matches_whole_program(tag: &str, target: &Path) -> Result<(), String> {
+    incremental_matches_whole_program_at_jobs(tag, target, &[None])
+}
+
+/// [`incremental_matches_whole_program`] with an explicit job setting per
+/// incremental build: `None` leaves `KELPC_JOBS` unset (the default), `Some(n)`
+/// runs that build with `n` workers. The whole-program build is done once and
+/// compared against each incremental build, so testing the parallel scheduler
+/// does not rebuild the whole-program side for every job setting.
+fn incremental_matches_whole_program_at_jobs(
+    tag: &str,
+    target: &Path,
+    jobs: &[Option<&str>],
+) -> Result<(), String> {
+    let whole = out_path(&format!("whole_{tag}"));
+    let whole_build = kelpc()
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&whole)
+        .output()
+        .map_err(|e| format!("could not spawn kelpc: {e}"))?;
+    for (index, job) in jobs.iter().enumerate() {
+        let split = out_path(&format!("inc_{tag}_{index}"));
+        let mut command = kelpc();
+        command
+            .env_remove("KELPC_JOBS")
+            // The cache is off so each incremental build really lowers and
+            // compiles its units: with it on, the second job setting would
+            // only replay the first one's objects.
+            .env("KELPC_CACHE", "off")
+            .arg("build")
+            .arg(target)
+            .arg("-o")
+            .arg(&split)
+            .arg("--incremental");
+        if let Some(count) = job {
+            command.env("KELPC_JOBS", count);
+        }
+        let split_build = command
+            .output()
+            .map_err(|e| format!("could not spawn kelpc: {e}"))?;
+        if !whole_build.status.success() || !split_build.status.success() {
+            if whole_build.status.success() != split_build.status.success() {
+                return Err(format!(
+                    "one build succeeded and the other did not:\n--incremental stderr:\n{}",
+                    String::from_utf8_lossy(&split_build.stderr)
+                ));
+            }
+            if whole_build.stderr != split_build.stderr {
+                return Err(format!(
+                    "the two rejections differ:\n  whole-program: {}\n  --incremental: {}",
+                    String::from_utf8_lossy(&whole_build.stderr),
+                    String::from_utf8_lossy(&split_build.stderr)
+                ));
+            }
+            continue;
+        }
+        let run = |bin: &Path| -> Result<(Option<i32>, Vec<u8>), String> {
+            let out = Command::new(bin)
+                .output()
+                .map_err(|e| format!("could not run '{}': {e}", bin.display()))?;
+            Ok((out.status.code(), out.stdout))
+        };
+        let (whole_status, whole_stdout) = run(&whole)?;
+        let (split_status, split_stdout) = run(&split)?;
+        if whole_status != split_status {
+            return Err(format!(
+                "exit status {whole_status:?} whole-program vs {split_status:?} --incremental"
+            ));
+        }
+        if whole_stdout != split_stdout {
+            return Err(format!(
+                "stdout differs:\n  whole-program: {:?}\n  --incremental: {:?}",
+                String::from_utf8_lossy(&whole_stdout),
+                String::from_utf8_lossy(&split_stdout)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A project target: the directory when it has a manifest, and its entry file
+/// when it does not, which is the two shapes `kelpc build` takes.
+fn incremental_project_target(name: &str) -> PathBuf {
+    let dir = project(name);
+    if dir.join("coral.toml").exists() {
+        dir
+    } else {
+        dir.join("main.kp")
+    }
+}
+
+/// A fixture that exercises one feature the split has to keep working: generics,
+/// traits, closures, threads, the containers, an owning `Drop`, a passdown, a
+/// global. Every one of them is built and run both ways by the test below.
+const INCREMENTAL_FIXTURES: &[&str] = &[
+    // generics: instances of a module's generic function belong to its unit
+    "generic_explicit_args",
+    "generic_function_basic",
+    "generic_function_owned",
+    "generic_method_basic",
+    "generic_nested_inference",
+    "generic_owned",
+    "generic_recursive",
+    "generic_type_basic",
+    "scoped_block_generic",
+    // traits: static dispatch, default bodies, supertraits, `&dyn` vtables
+    "traits_datac_and_enum",
+    "traits_default_body",
+    "traits_dyn_builtin",
+    "traits_dyn_default_super",
+    "traits_dyn_dispatch",
+    "traits_dyn_forward",
+    "traits_dyn_mut",
+    "traits_generic_datac_method",
+    "traits_impl_for_builtin",
+    "traits_self_in_signature",
+    "traits_supertrait",
+    // closures and function values: the `_support` shims and thunks
+    "closure_basic",
+    "closure_datac_borrow_param",
+    "closure_env_wide_ret",
+    "closure_move",
+    "closure_two_captures",
+    "closure_value_widening",
+    "fn_literal",
+    "fn_literal_capture",
+    "fn_value",
+    "fn_value_plain",
+    "scoped_block_captures",
+    "scoped_block_params",
+    "trailing_block_capture",
+    // threads and mutexes: the per-signature spawn body and the runtime records
+    "mutex_into_inner",
+    "mutex_list_push",
+    "mutex_lock_value",
+    "thread_current_id",
+    "thread_fence",
+    "thread_join_accepted",
+    "thread_join_unit",
+    "thread_spawn_accepted",
+    "thread_spawn_closure",
+    // the containers and the tagged union
+    "box_basic",
+    "box_owned_elements",
+    "box_recursive",
+    "enum_basic",
+    "enum_in_containers",
+    "enum_liveness",
+    "enum_owned",
+    "enum_recursive",
+    "if_let_basic",
+    "list_basic",
+    "list_growth_and_rebuild",
+    "list_nested_list",
+    "list_owned",
+    "list_slice_insert",
+    "map_basic",
+    "map_datac_key",
+    "map_datac_value_clone",
+    "map_enum_key",
+    "map_growth_and_rehash",
+    "map_nested_datac_key",
+    "map_tombstones_and_reuse",
+    "when_expr",
+    // owning `Drop`s: the generated per-type drop in `_support`
+    "drop_container",
+    "drop_control_flow",
+    "drop_declared_key",
+    "drop_enum",
+    "drop_map",
+    "drop_order",
+    // passdowns, atomics and the rest of the scalar surface
+    "atomic_counter",
+    "bitwise",
+    "consts",
+    "datac_basic",
+    "endian_scalars",
+    "for_loop",
+    "passdowns",
+    "pd_owned",
+    "section_attribute",
+    "string_build",
+    "string_views",
+    "stdlib_fmt",
+    "stdlib_sort",
+    "view",
+    "while_accumulator",
+];
+
+/// The multi-module projects the split has to keep working: a cross-module call,
+/// a cross-module `pub static` read, a cross-module type, an `impl`/alias graph,
+/// a user `extern fun`, an `unsafe` module and a `section("...")` placement.
+const INCREMENTAL_PROJECTS: &[&str] = &[
+    "alias_cross_file",
+    "alias_kpconf",
+    "closure_datac_param",
+    "incremental_units",
+    "namespace",
+    "ptrs_try_alloc",
+    "same_name",
+    "self_call",
+    "shapes",
+    "static_datac_array",
+    "static_globals",
+    "static_module",
+    "static_private",
+    "traits_cross",
+    "traits_default_cross",
+    "traits_third_module",
+    "unsafe_ptr",
+    "unsafe_unaligned",
+    "visibility_import",
+];
+
+/// Equivalence with the parallel scheduler (roadmap A-14 slice 3): the same
+/// corpus the serial test uses is built with `KELPC_JOBS=1` and `KELPC_JOBS=4`
+/// and each split build is compared with the whole-program build, so thread
+/// count cannot change stdout, exit status or a refusal. The existing
+/// `incremental_builds_match_the_whole_program_build` below covers the default
+/// worker count.
+#[test]
+fn parallel_and_serial_builds_match_the_whole_program_build() {
+    let mut failures: Vec<String> = Vec::new();
+    let jobs = [Some("1"), Some("4")];
+    for name in INCREMENTAL_FIXTURES {
+        let source = fixture(&format!("tests/fixtures/{name}.kp"));
+        if let Err(why) = incremental_matches_whole_program_at_jobs(name, &source, &jobs) {
+            failures.push(format!("{name}: {why}"));
+        }
+    }
+    for name in INCREMENTAL_PROJECTS {
+        let target = incremental_project_target(name);
+        if let Err(why) = incremental_matches_whole_program_at_jobs(name, &target, &jobs) {
+            failures.push(format!("project {name}: {why}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} targets differ with --incremental at jobs 1 or 4:\n{}",
+        failures.len(),
+        INCREMENTAL_FIXTURES.len() + INCREMENTAL_PROJECTS.len(),
+        failures.join("\n")
+    );
+}
+
+/// Equivalence (roadmap A-14 slice 1): a program built with the per-unit split
+/// prints what the whole-program build prints and exits the same way. The list
+/// is the features the split can break, one fixture each plus the multi-module
+/// projects, and it runs on whatever backend the suite is pointed at: under the
+/// C oracle the flag is ignored, which this test then proves by construction.
+#[test]
+fn incremental_builds_match_the_whole_program_build() {
+    let mut failures: Vec<String> = Vec::new();
+    for name in INCREMENTAL_FIXTURES {
+        let source = fixture(&format!("tests/fixtures/{name}.kp"));
+        if let Err(why) = incremental_matches_whole_program(name, &source) {
+            failures.push(format!("{name}: {why}"));
+        }
+    }
+    for name in INCREMENTAL_PROJECTS {
+        let target = incremental_project_target(name);
+        if let Err(why) = incremental_matches_whole_program(name, &target) {
+            failures.push(format!("project {name}: {why}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} targets differ with --incremental:\n{}",
+        failures.len(),
+        INCREMENTAL_FIXTURES.len() + INCREMENTAL_PROJECTS.len(),
+        failures.join("\n")
+    );
+}
+
+/// Unit assignment (roadmap A-14 slice 1): a project that sets
+/// `[build] incremental = true` is split into one unit per source module plus
+/// `_support`, and the cross-unit call and `pub static` read in it still work.
+/// The manifest is the turn-on here; `--incremental` is the other spelling and
+/// the equivalence test covers it on every other target.
+#[test]
+fn a_manifest_turns_the_per_unit_split_on() {
+    if backend() == "c" {
+        println!("skipping: the C oracle keeps its one translation unit");
+        return;
+    }
+    let bin = out_path("inc_manifest_units");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("incremental_units"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the manifest-enabled split failed to build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    // One unit per module id, plus the one unit that owns the generated helpers.
+    let units = bin.with_extension("units");
+    for unit in ["main", "state", "_support"] {
+        let ir = units.join(format!("{unit}.ll"));
+        let object = units.join(format!("{unit}.o"));
+        assert!(ir.exists(), "'{}' was not written", ir.display());
+        assert!(object.exists(), "'{}' was not written", object.display());
+    }
+    // `main` is the entry module's unit, `state` owns the other module's
+    // function, static and datac, and the two are linked into one binary.
+    let main_ir = std::fs::read_to_string(units.join("main.ll")).expect("main.ll");
+    assert!(
+        main_ir.contains("define i32 @main("),
+        "the entry module's unit does not define main"
+    );
+    let state_ir = std::fs::read_to_string(units.join("state.ll")).expect("state.ll");
+    assert!(
+        state_ir.contains("@kelp_state__LIMIT = constant"),
+        "the owning unit does not define the static"
+    );
+    assert!(
+        state_ir.contains("define i64 @kelp_state__double("),
+        "the owning unit does not define the cross-unit callee"
+    );
+    assert!(
+        main_ir.contains("@kelp_state__LIMIT = external") && !main_ir.contains("@kelp_state__LIMIT = constant"),
+        "the user unit should only declare the static"
+    );
+    let run = Command::new(&bin).output().expect("failed to run the split binary");
+    assert!(run.status.success(), "the split binary failed");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n3\n7\n");
+}
+
+/// Determinism (roadmap A-14 slice 1): the same sources produce byte-identical
+/// unit IR, which is what a later slice caches objects by. `KELPC_DUMP_UNITS`
+/// writes each unit's unoptimized IR to `<dir>/<unit>.ll`.
+#[test]
+fn two_incremental_builds_produce_identical_unit_ir() {
+    if backend() == "c" {
+        println!("skipping: the C oracle writes no unit IR");
+        return;
+    }
+    let base = out_path("inc_determinism");
+    let mut dumps = Vec::new();
+    for pass in ["a", "b"] {
+        let dir = base.with_extension(pass);
+        let _ = std::fs::remove_dir_all(&dir);
+        let bin = base.with_extension(format!("bin_{pass}"));
+        let build = kelpc()
+            .env("KELPC_DUMP_UNITS", &dir)
+            .arg("build")
+            .arg(project("shapes"))
+            .arg("-o")
+            .arg(&bin)
+            .arg("--incremental")
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            build.status.success(),
+            "the determinism build failed:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        dumps.push(dir);
+    }
+    let read_dir = |dir: &Path| -> std::collections::BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("could not read '{}': {e}", dir.display()))
+            .map(|entry| {
+                let entry = entry.expect("a readable directory entry");
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(entry.path()).expect("a readable unit IR file"),
+                )
+            })
+            .collect()
+    };
+    let (a, b) = (read_dir(&dumps[0]), read_dir(&dumps[1]));
+    assert!(
+        !a.is_empty(),
+        "no unit IR was dumped into '{}'",
+        dumps[0].display()
+    );
+    assert_eq!(
+        a.keys().collect::<Vec<_>>(),
+        b.keys().collect::<Vec<_>>(),
+        "the two builds wrote different unit sets"
+    );
+    for (name, first) in &a {
+        assert_eq!(
+            Some(first),
+            b.get(name),
+            "unit '{name}' differs between two builds of one project"
+        );
+    }
+}
+
+/// The freestanding refusal (roadmap A-14 slice 1): the mode is not implemented
+/// for a bare-metal image yet, and it is refused by name rather than miscompiled
+/// or silently ignored.
+#[test]
+fn incremental_is_refused_for_a_freestanding_project() {
+    if backend() == "c" {
+        println!("skipping: the C oracle refuses a freestanding project already");
+        return;
+    }
+    let bin = out_path("inc_freestanding");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("freestanding_min"))
+        .arg("-o")
+        .arg(&bin)
+        .arg("--incremental")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "expected the freestanding split to be refused"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("'--incremental' is not implemented for a freestanding project"),
+        "the refusal does not name the mode: {stderr}"
+    );
+}
+
+/// The C oracle ignores the flag (roadmap A-14 slice 1): it is the suite's other
+/// answer to the same question, so it stays one translation unit, and a build
+/// with the flag writes the same `.c` artifact it always did.
+#[test]
+fn the_c_oracle_ignores_the_incremental_flag() {
+    let bin = out_path("inc_oracle");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(fixture("tests/fixtures/datac_basic.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .arg("--incremental")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the oracle build with --incremental failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        bin.with_extension("c").exists(),
+        "the oracle did not write its one generated C file"
+    );
+    assert!(
+        !bin.with_extension("units").exists(),
+        "the oracle split its single translation unit"
+    );
+    let run = Command::new(&bin).output().expect("failed to run the oracle binary");
+    assert!(run.status.success());
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n4\n25\n11\n");
+}
+
+// Roadmap A-14 slice 2: the unit object cache
+// ---------------------------------------------------------------------------
+//
+// The cache stores a unit's object under the hash of its IR text and the
+// machine settings it was compiled for (`plan/incremental-compilation.md`).
+// These tests drive the real compiler and read its stderr: `KELPC_CACHE_STATS=1`
+// prints one hit/miss/store line per build, and `--timings` prints one
+// `hit`/`miss` line per unit. The C oracle ignores `--incremental`, so every
+// test here is llvm-only and skips under the oracle.
+
+/// One cache-enabled build's result, with the cache lines parsed out of stderr.
+struct CacheBuild {
+    ok: bool,
+    stderr: String,
+    hits: u64,
+    misses: u64,
+    stored: u64,
+    units: Vec<(String, bool)>,
+}
+
+impl CacheBuild {
+    /// Whether `unit` was a hit (`None` when the build listed no such unit).
+    fn verdict(&self, unit: &str) -> Option<bool> {
+        self.units
+            .iter()
+            .find(|(name, _)| name == unit)
+            .map(|(_, hit)| *hit)
+    }
+}
+
+/// The three counters on the `kelpc cache: H hits, M misses, S stored` line.
+fn parse_cache_stats(stderr: &str) -> (u64, u64, u64) {
+    for line in stderr.lines() {
+        let Some(rest) = line.strip_prefix("kelpc cache: ") else {
+            continue;
+        };
+        let numbers: Vec<u64> = rest
+            .split_whitespace()
+            .filter_map(|word| word.parse::<u64>().ok())
+            .collect();
+        assert_eq!(numbers.len(), 3, "unexpected cache line: {line}");
+        return (numbers[0], numbers[1], numbers[2]);
+    }
+    panic!("no 'kelpc cache:' line in stderr:\n{stderr}");
+}
+
+/// The `unit NAME: N.N ms hit|miss` lines of a `--timings` build.
+fn parse_unit_verdicts(stderr: &str) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for line in stderr.lines() {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        if tokens.len() == 5 && tokens[0] == "unit" && tokens[3] == "ms" {
+            let name = tokens[1].trim_end_matches(':').to_string();
+            out.push((name, tokens[4] == "hit"));
+        }
+    }
+    out
+}
+
+/// The three-module project the cache tests edit: `main` calls `alpha`, `alpha`
+/// calls `beta`, so every unit is a real compilation unit and the generated
+/// `_support` helper unit sits beside them.
+fn cache_project(tag: &str) -> PathBuf {
+    let dir = out_path(&format!("cacheproj_{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).expect("create the project directory");
+    std::fs::write(
+        dir.join("coral.toml"),
+        "name = \"cacheproj\"\n\n[build]\nincremental = true\n",
+    )
+    .expect("write the manifest");
+    std::fs::write(
+        dir.join("src/main.kp"),
+        "impl \"alpha\"\n\nfun main() {\n    print(alpha.greet())\n}\n",
+    )
+    .expect("write main");
+    std::fs::write(
+        dir.join("src/alpha.kp"),
+        "impl \"beta\"\n\npub fun greet().R: str = beta.message()\n",
+    )
+    .expect("write alpha");
+    std::fs::write(
+        dir.join("src/beta.kp"),
+        "pub fun message().R: str = \"hello\"\n",
+    )
+    .expect("write beta");
+    dir
+}
+
+/// Rewrites module B's function body, which is the unit the tests make miss.
+fn set_beta_message(dir: &Path, body: &str) {
+    std::fs::write(
+        dir.join("src/beta.kp"),
+        format!("pub fun message().R: str = {body}\n"),
+    )
+    .expect("rewrite beta");
+}
+
+/// One `kelpc build --incremental --timings` against `cache`, with `flags` on
+/// the command line and `envs` in the environment.
+fn cache_build(
+    target: &Path,
+    bin: &Path,
+    cache: &Path,
+    flags: &[&str],
+    envs: &[(&str, &str)],
+) -> CacheBuild {
+    let mut cmd = kelpc();
+    cmd.env_remove("KELPC_CACHE")
+        .env_remove("KELPC_CACHE_STATS")
+        .env_remove("KELPC_CACHE_MAX_MB")
+        .env_remove("KELPC_DUMP_UNITS")
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(bin)
+        .arg("--incremental")
+        .arg("--timings")
+        .env("KELPC_CACHE_DIR", cache)
+        .env("KELPC_CACHE_STATS", "1");
+    for flag in flags {
+        cmd.arg(flag);
+    }
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    let out = cmd.output().expect("failed to spawn kelpc");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let (hits, misses, stored) = parse_cache_stats(&stderr);
+    let units = parse_unit_verdicts(&stderr);
+    CacheBuild {
+        ok: out.status.success(),
+        stderr,
+        hits,
+        misses,
+        stored,
+        units,
+    }
+}
+
+/// Runs a built binary and returns its exit code and stdout.
+fn run_cached_binary(bin: &Path) -> (Option<i32>, Vec<u8>) {
+    let out = Command::new(bin)
+        .output()
+        .unwrap_or_else(|e| panic!("could not run '{}': {e}", bin.display()));
+    (out.status.code(), out.stdout)
+}
+
+/// The `<key>.o` entries in a cache directory, sorted by name.
+fn cache_entries(cache: &Path) -> Vec<PathBuf> {
+    let Ok(read) = std::fs::read_dir(cache) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = read
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with('.'))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| cache.join(name))
+        .collect()
+}
+
+/// Whether `path` holds a complete ELF object, the property a partial cache
+/// entry fails. A concurrent build must leave only such files behind.
+fn is_complete_elf(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    if bytes.len() < 64 || &bytes[..4] != b"\x7fELF" || bytes[4] != 2 {
+        return false;
+    }
+    let word = |at: usize| {
+        u64::from_le_bytes([
+            bytes[at],
+            bytes[at + 1],
+            bytes[at + 2],
+            bytes[at + 3],
+            bytes[at + 4],
+            bytes[at + 5],
+            bytes[at + 6],
+            bytes[at + 7],
+        ])
+    };
+    let half = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]) as u64;
+    let shoff = word(0x28);
+    let shentsize = half(0x3a);
+    let shnum = half(0x3c);
+    shoff != 0 && shentsize != 0 && shnum != 0 && bytes.len() as u64 >= shoff + shentsize * shnum
+}
+
+#[test]
+fn an_unchanged_project_is_all_hits_on_the_second_build() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("unchanged");
+    let cache = out_path("cache_unchanged");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first_bin = out_path("cache_unchanged_1");
+    let second_bin = out_path("cache_unchanged_2");
+    let first = cache_build(&dir, &first_bin, &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    assert_eq!(first.hits, 0);
+    assert_eq!(first.misses, first.units.len() as u64);
+    assert_eq!(first.stored, first.misses);
+    let second = cache_build(&dir, &second_bin, &cache, &[], &[]);
+    assert!(second.ok, "the second build failed:\n{}", second.stderr);
+    assert_eq!(
+        (second.hits, second.misses, second.stored),
+        (first.units.len() as u64, 0, 0),
+        "an unchanged project did not build from the cache alone"
+    );
+    assert!(
+        second.units.iter().all(|(_, hit)| *hit),
+        "not every unit was a hit: {:?}",
+        second.units
+    );
+    let (code1, stdout1) = run_cached_binary(&first_bin);
+    let (code2, stdout2) = run_cached_binary(&second_bin);
+    assert_eq!(code1, code2, "the cached build exited differently");
+    assert_eq!(stdout1, stdout2, "the cached build printed differently");
+    assert_eq!(String::from_utf8_lossy(&stdout2), "hello\n");
+    incremental_matches_whole_program("cache_unchanged", &dir).unwrap();
+}
+
+#[test]
+fn changing_one_body_misses_only_its_unit() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("onebody");
+    let cache = out_path("cache_onebody");
+    let _ = std::fs::remove_dir_all(&cache);
+    let dump_before = out_path("cache_onebody_ir1");
+    let dump_after = out_path("cache_onebody_ir2");
+    let _ = std::fs::remove_dir_all(&dump_before);
+    let _ = std::fs::remove_dir_all(&dump_after);
+    let first = cache_build(
+        &dir,
+        &out_path("cache_onebody_1"),
+        &cache,
+        &[],
+        &[("KELPC_DUMP_UNITS", dump_before.to_str().unwrap())],
+    );
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    set_beta_message(&dir, "\"hello, cache\"");
+    let second_bin = out_path("cache_onebody_2");
+    let second = cache_build(
+        &dir,
+        &second_bin,
+        &cache,
+        &[],
+        &[("KELPC_DUMP_UNITS", dump_after.to_str().unwrap())],
+    );
+    assert!(second.ok, "the second build failed:\n{}", second.stderr);
+    assert_eq!(second.verdict("beta"), Some(false), "beta had to miss");
+    assert_eq!(second.verdict("alpha"), Some(true), "alpha had to hit");
+    assert_eq!(second.verdict("main"), Some(true), "main had to hit");
+    // `_support` holds generated helpers and may or may not embed the changed
+    // literal; its verdict has to follow its IR, which the dump records.
+    let support_changed = std::fs::read(dump_before.join("_support.ll")).unwrap()
+        != std::fs::read(dump_after.join("_support.ll")).unwrap();
+    assert_eq!(
+        second.verdict("_support"),
+        Some(!support_changed),
+        "the _support verdict did not follow its IR"
+    );
+    assert_eq!(
+        second.misses,
+        1 + u64::from(support_changed),
+        "exactly the changed IR had to miss"
+    );
+    assert_eq!(
+        second.hits,
+        first.units.len() as u64 - second.misses,
+        "the other units had to hit"
+    );
+    let (_, stdout) = run_cached_binary(&second_bin);
+    assert_eq!(String::from_utf8_lossy(&stdout), "hello, cache\n");
+    incremental_matches_whole_program("cache_onebody", &dir).unwrap();
+}
+
+#[test]
+fn changing_a_callee_signature_misses_the_caller_too() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = out_path("cache_signature");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).expect("create the project directory");
+    std::fs::write(
+        dir.join("coral.toml"),
+        "name = \"cachesig\"\n\n[build]\nincremental = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.kp"),
+        "impl \"alpha\"\n\nfun main() {\n    print(alpha.greet())\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/alpha.kp"),
+        "impl \"beta\"\n\npub fun greet().R: i64 = beta.value()\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/beta.kp"), "pub fun value().R: i64 = 41\n").unwrap();
+    let cache = out_path("cache_signature_cache");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first = cache_build(&dir, &out_path("cache_signature_1"), &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    // The signature changes and B's body with it; A's source is rewritten only
+    // because the call now takes the argument, and its own unit misses because
+    // every unit declares every program item.
+    std::fs::write(
+        dir.join("src/alpha.kp"),
+        "impl \"beta\"\n\npub fun greet().R: i64 = beta.value(0)\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/beta.kp"), "pub fun value(x: i64).R: i64 = x + 41\n").unwrap();
+    let second_bin = out_path("cache_signature_2");
+    let second = cache_build(&dir, &second_bin, &cache, &[], &[]);
+    assert!(second.ok, "the second build failed:\n{}", second.stderr);
+    assert_eq!(second.verdict("beta"), Some(false), "beta had to miss");
+    assert_eq!(
+        second.verdict("alpha"),
+        Some(false),
+        "alpha had to miss with the callee's declaration"
+    );
+    // `main` is not asserted: every unit declares every program item, so a
+    // callee's signature change is visible in each one's IR, which is the
+    // documented cost of having no interface files.
+    let (_, stdout) = run_cached_binary(&second_bin);
+    assert_eq!(String::from_utf8_lossy(&stdout), "41\n");
+    incremental_matches_whole_program("cache_signature", &dir).unwrap();
+}
+
+#[test]
+fn different_optimization_levels_never_share_entries() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("optlevel");
+    let cache = out_path("cache_optlevel");
+    let _ = std::fs::remove_dir_all(&cache);
+    let at_o0 = cache_build(&dir, &out_path("cache_opt_0"), &cache, &["-O0"], &[]);
+    assert!(at_o0.ok, "the -O0 build failed:\n{}", at_o0.stderr);
+    assert_eq!(at_o0.stored, at_o0.units.len() as u64);
+    let at_o2 = cache_build(&dir, &out_path("cache_opt_2"), &cache, &["-O2"], &[]);
+    assert!(at_o2.ok, "the -O2 build failed:\n{}", at_o2.stderr);
+    assert_eq!(
+        at_o2.hits, 0,
+        "an -O2 build reused an -O0 entry:\n{}",
+        at_o2.stderr
+    );
+    assert_eq!(at_o2.misses, at_o0.units.len() as u64);
+    // The two levels' entries coexist, and each build's program is the same.
+    let (_, o0_out) = run_cached_binary(&out_path("cache_opt_0"));
+    let (_, o2_out) = run_cached_binary(&out_path("cache_opt_2"));
+    assert_eq!(o0_out, o2_out);
+    incremental_matches_whole_program("cache_optlevel", &dir).unwrap();
+}
+
+#[test]
+fn a_truncated_entry_is_a_miss_and_is_rewritten() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("truncate");
+    let cache = out_path("cache_truncate");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first = cache_build(&dir, &out_path("cache_truncate_1"), &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    let entries = cache_entries(&cache);
+    assert!(!entries.is_empty(), "the first build stored nothing");
+    let victim = entries[0].clone();
+    let full_len = std::fs::metadata(&victim).unwrap().len();
+    assert!(full_len > 64);
+    // Truncate to the 64-byte ELF header: the file is non-empty and still
+    // starts with the magic, so only the section-header bounds check can see
+    // that it is incomplete.
+    let bytes = std::fs::read(&victim).unwrap();
+    std::fs::write(&victim, &bytes[..64]).unwrap();
+    let second = cache_build(&dir, &out_path("cache_truncate_2"), &cache, &[], &[]);
+    assert!(second.ok, "the recovery build failed:\n{}", second.stderr);
+    assert_eq!(second.misses, 1, "the truncated entry was not a miss");
+    assert_eq!(second.stored, 1, "the miss was not stored again");
+    assert!(
+        std::fs::metadata(&victim).unwrap().len() >= full_len,
+        "the truncated entry was not rewritten"
+    );
+    incremental_matches_whole_program("cache_truncate", &dir).unwrap();
+}
+
+#[test]
+fn concurrent_builds_share_a_cache_without_partial_files() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("concurrent");
+    let cache = out_path("cache_concurrent");
+    let _ = std::fs::remove_dir_all(&cache);
+    let spawn = |bin: &Path| {
+        kelpc()
+            .env_remove("KELPC_CACHE")
+            .env_remove("KELPC_CACHE_STATS")
+            .env("KELPC_CACHE_DIR", &cache)
+            .arg("build")
+            .arg(&dir)
+            .arg("-o")
+            .arg(bin)
+            .arg("--incremental")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn kelpc")
+    };
+    let bin_a = out_path("cache_concurrent_a");
+    let bin_b = out_path("cache_concurrent_b");
+    let child_a = spawn(&bin_a);
+    let child_b = spawn(&bin_b);
+    let out_a = child_a.wait_with_output().expect("wait for the first build");
+    let out_b = child_b.wait_with_output().expect("wait for the second build");
+    assert!(
+        out_a.status.success(),
+        "the first concurrent build failed:\n{}",
+        String::from_utf8_lossy(&out_a.stderr)
+    );
+    assert!(
+        out_b.status.success(),
+        "the second concurrent build failed:\n{}",
+        String::from_utf8_lossy(&out_b.stderr)
+    );
+    let (_, stdout_a) = run_cached_binary(&bin_a);
+    let (_, stdout_b) = run_cached_binary(&bin_b);
+    assert_eq!(stdout_a, stdout_b);
+    assert_eq!(String::from_utf8_lossy(&stdout_a), "hello\n");
+    // Atomic writes mean the cache holds only complete entries and no
+    // temporary file from either build.
+    for entry in cache_entries(&cache) {
+        let name = entry.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.ends_with(".o"),
+            "'{name}' is not a cache entry name"
+        );
+        assert!(
+            is_complete_elf(&entry),
+            "'{name}' is not a complete object file"
+        );
+    }
+    let leftovers: Vec<String> = std::fs::read_dir(&cache)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('.'))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "a concurrent build left temporary files: {leftovers:?}"
+    );
+}
+
+#[test]
+fn the_size_cap_evicts_the_oldest_entry() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("cap");
+    let cache = out_path("cache_cap");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first = cache_build(&dir, &out_path("cache_cap_1"), &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    let entries = cache_entries(&cache);
+    assert!(entries.len() >= 2, "the cap test needs more than one entry");
+    // Give the entries distinct mtimes, earliest first, so the eviction order
+    // is a fact rather than a tie the filesystem breaks differently.
+    let base = std::time::SystemTime::now();
+    let mut sizes = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        sizes.push(std::fs::metadata(entry).unwrap().len());
+        std::fs::File::options()
+            .write(true)
+            .open(entry)
+            .unwrap()
+            .set_modified(base + Duration::from_secs(i as u64))
+            .unwrap();
+    }
+    let total: u64 = sizes.iter().sum();
+    let cap = total - sizes[0];
+    let cap_mb = format!("{}", cap as f64 / (1024.0 * 1024.0));
+    let second = cache_build(
+        &dir,
+        &out_path("cache_cap_2"),
+        &cache,
+        &[],
+        &[("KELPC_CACHE_MAX_MB", cap_mb.as_str())],
+    );
+    assert!(second.ok, "the capped build failed:\n{}", second.stderr);
+    assert_eq!(second.misses, 0, "the capped build recompiled a unit");
+    assert!(
+        !entries[0].exists(),
+        "the oldest entry survived the size cap"
+    );
+    for entry in &entries[1..] {
+        assert!(entry.exists(), "'{}' was evicted before the oldest", entry.display());
+    }
+    let remaining: u64 = entries[1..]
+        .iter()
+        .map(|entry| std::fs::metadata(entry).unwrap().len())
+        .sum();
+    assert!(remaining <= cap, "the cap was not enforced");
+    incremental_matches_whole_program("cache_cap", &dir).unwrap();
+}
+
+#[test]
+fn cache_off_writes_nothing() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("off");
+    let cache = out_path("cache_off");
+    let _ = std::fs::remove_dir_all(&cache);
+    let bin = out_path("cache_off_bin");
+    let build = cache_build(&dir, &bin, &cache, &[], &[("KELPC_CACHE", "off")]);
+    assert!(build.ok, "the KELPC_CACHE=off build failed:\n{}", build.stderr);
+    assert!(
+        !cache.exists(),
+        "KELPC_CACHE=off created '{}'",
+        cache.display()
+    );
+    assert_eq!(
+        (build.hits, build.misses, build.stored),
+        (0, 0, 0),
+        "KELPC_CACHE=off still consulted the cache"
+    );
+    let (_, stdout) = run_cached_binary(&bin);
+    assert_eq!(String::from_utf8_lossy(&stdout), "hello\n");
+    incremental_matches_whole_program("cache_off", &dir).unwrap();
+}
+
+#[test]
+fn the_cache_command_reports_and_clears() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("command");
+    let cache = out_path("cache_command");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first = cache_build(&dir, &out_path("cache_command_1"), &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    let entries = cache_entries(&cache);
+    assert!(!entries.is_empty());
+    let stats = kelpc()
+        .arg("cache")
+        .arg("stats")
+        .arg("--dir")
+        .arg(&cache)
+        .output()
+        .expect("failed to spawn kelpc cache stats");
+    assert!(stats.status.success());
+    let stats_text = String::from_utf8_lossy(&stats.stdout);
+    assert!(
+        stats_text.contains(&format!("{} entries", entries.len())),
+        "kelpc cache stats did not report {} entries: {stats_text}",
+        entries.len()
+    );
+    let clear = kelpc()
+        .arg("cache")
+        .arg("clear")
+        .arg("--dir")
+        .arg(&cache)
+        .output()
+        .expect("failed to spawn kelpc cache clear");
+    assert!(clear.status.success());
+    assert!(
+        cache_entries(&cache).is_empty(),
+        "kelpc cache clear left entries behind"
+    );
+    let second = cache_build(&dir, &out_path("cache_command_2"), &cache, &[], &[]);
+    assert!(second.ok, "the rebuild after a clear failed:\n{}", second.stderr);
+    assert_eq!(
+        second.misses,
+        first.units.len() as u64,
+        "the cleared cache produced a hit"
+    );
+    assert_eq!(second.hits, 0);
+}
+
+// Roadmap A-14 slice 3: parallel unit compilation
+// ---------------------------------------------------------------------------
+//
+// Cache misses are compiled on worker threads, one LLVM context per unit, and
+// the results are linked in unit order. The tests here pin the three things
+// that make that safe to ship: the scheduler does not change an object, a unit
+// that fails names itself and does not discard the other units' cache entries,
+// and the compile-time job-count parsing.
+
+/// The files of a build's `<out>.units/` directory: every unit's IR and object,
+/// keyed by file name so two builds can be compared entry by entry.
+fn unit_dir_files(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("could not read '{}': {e}", dir.display()))
+        .map(|entry| {
+            let entry = entry.expect("a readable directory entry");
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                std::fs::read(entry.path()).expect("a readable unit artifact"),
+            )
+        })
+        .collect()
+}
+
+/// Determinism (roadmap A-14 slice 3): the same sources built with one worker
+/// and with four workers write byte-identical unit IR *and* byte-identical
+/// objects, and the two linked binaries print the same thing. The cache is off
+/// so both builds really lower and emit every unit rather than copying a stored
+/// object.
+#[test]
+fn serial_and_parallel_builds_write_byte_identical_units() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let target = project("shapes");
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut bins: Vec<PathBuf> = Vec::new();
+    let mut orders: Vec<Vec<String>> = Vec::new();
+    for jobs in ["1", "4"] {
+        let bin = out_path(&format!("inc_units_j{jobs}"));
+        let build = kelpc()
+            .env("KELPC_JOBS", jobs)
+            .env("KELPC_CACHE", "off")
+            .arg("build")
+            .arg(&target)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--incremental")
+            .arg("--timings")
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            build.status.success(),
+            "the jobs={jobs} build failed:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        // One unit line per unit, in unit order, whatever the worker count:
+        // the `--timings` readout is a property of the program, not of the
+        // schedule.
+        orders.push(
+            parse_unit_verdicts(&String::from_utf8_lossy(&build.stderr))
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect(),
+        );
+        assert!(
+            orders.last().map_or(false, |order| !order.is_empty()),
+            "the jobs={jobs} build listed no units"
+        );
+        dirs.push(bin.with_extension("units"));
+        bins.push(bin);
+    }
+    let (serial, parallel) = (unit_dir_files(&dirs[0]), unit_dir_files(&dirs[1]));
+    assert!(!serial.is_empty(), "the build wrote no unit artifacts");
+    assert_eq!(
+        serial.keys().collect::<Vec<_>>(),
+        parallel.keys().collect::<Vec<_>>(),
+        "the two builds wrote different unit artifact sets"
+    );
+    for (name, first) in &serial {
+        assert_eq!(
+            Some(first),
+            parallel.get(name),
+            "'{name}' differs between jobs 1 and jobs 4"
+        );
+    }
+    assert_eq!(orders[0], orders[1], "the two builds listed units in different orders");
+    let run = |bin: &Path| Command::new(bin).output().expect("failed to run a split binary");
+    let (one, four) = (run(&bins[0]), run(&bins[1]));
+    assert_eq!(one.status.code(), four.status.code());
+    assert_eq!(one.stdout, four.stdout);
+    assert_eq!(String::from_utf8_lossy(&one.stdout), "12.566360\n6.000000\n50.265440\n28.274310\n");
+}
+
+/// A failing unit (roadmap A-14 slice 3): `KELPC_TEST_CORRUPT_UNIT` appends an
+/// unterminated basic block to one unit's module, so LLVM's verifier rejects it
+/// with a real LLVM-level error. The build has to fail naming that unit, and the
+/// units that did compile have to keep their cache entries: a second build
+/// without the hook misses only the failed unit and hits the rest.
+#[test]
+fn a_failed_unit_names_itself_and_leaves_the_others_cached() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("failedunit");
+    let cache = out_path("cache_failedunit");
+    let _ = std::fs::remove_dir_all(&cache);
+    let failed_bin = out_path("cache_failedunit_bin");
+    let failed = kelpc()
+        .env("KELPC_JOBS", "4")
+        .env("KELPC_CACHE_DIR", &cache)
+        .env("KELPC_CACHE_STATS", "1")
+        .env("KELPC_TEST_CORRUPT_UNIT", "alpha")
+        .arg("build")
+        .arg(&dir)
+        .arg("-o")
+        .arg(&failed_bin)
+        .arg("--incremental")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !failed.status.success(),
+        "the corrupted unit built successfully"
+    );
+    assert_eq!(failed.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        stderr.contains("compilation unit 'alpha' failed"),
+        "the failure did not name the corrupt unit: {stderr}"
+    );
+    // A real LLVM-level error, not a front-end refusal: the verifier's own
+    // message for the unterminated block is in the diagnostic.
+    assert!(
+        stderr.contains("does not have terminator"),
+        "the failure is not the LLVM verifier's: {stderr}"
+    );
+    // The other three units stored their entries even though the build failed.
+    let (_, misses, stored) = parse_cache_stats(&stderr);
+    assert_eq!(stored, misses, "the surviving units did not store their entries");
+    assert_eq!(misses, 3, "three of the four units should have compiled");
+    // The failed unit has no entry: the next build misses it and hits the rest,
+    // which is the partial-progress resume the design promises.
+    let second = cache_build(
+        &dir,
+        &out_path("cache_failedunit_2"),
+        &cache,
+        &[],
+        &[("KELPC_JOBS", "4")],
+    );
+    assert!(second.ok, "the resume build failed:\n{}", second.stderr);
+    assert_eq!(second.verdict("alpha"), Some(false), "alpha had to miss");
+    assert_eq!(second.verdict("beta"), Some(true), "beta had to hit");
+    assert_eq!(second.verdict("main"), Some(true), "main had to hit");
+    assert_eq!(second.verdict("_support"), Some(true), "_support had to hit");
+    let (_, stdout) = run_cached_binary(&out_path("cache_failedunit_2"));
+    assert_eq!(String::from_utf8_lossy(&stdout), "hello\n");
 }

@@ -1,0 +1,12 @@
+// A `View` made from a `String` is still used after the `String` is
+// reassigned, so the assignment is refused while the view is live. The view
+// is the borrowed value; reassigning the owner would leave it pointing at the
+// old buffer.
+impl "std/str"
+
+fun main() {
+    var s = String.from_str("hi")
+    val v = s.view()
+    s = String.from_str("bye")
+    print(v)
+}

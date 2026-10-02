@@ -1,0 +1,15 @@
+// Roadmap open item 30, closed: a bound borrow ends at its last use, not at
+// the end of its block. `names.get(0)` borrows the list, and the borrow is
+// dead once `first` has been read, so the `push` after it no longer conflicts.
+// The workaround this fixture used to need was an extra `{ }` around the read.
+impl "std/str"
+
+fun main() {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    names.push(String.from_str("beta"))
+    val first = names.get(0)
+    print(first.as_str())
+    names.push(String.from_str("gamma"))
+    print(names.len())
+}

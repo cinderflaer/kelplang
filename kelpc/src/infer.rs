@@ -5588,6 +5588,7 @@ fn collect_statics(
         table.insert(decl.name.clone(), info);
         out.push(tir::Static {
             name: decl.name.clone(),
+            module: decl.module.clone(),
             ty,
             mutable: decl.mutable,
             percpu: decl.percpu,
@@ -8147,8 +8148,11 @@ fn check_program_pass(
         functions.push(checked);
     }
     // The capability data `codegen_c.rs` compiles in: each module's
-    // patterns per domain, and which functions are gated (M7).
-    let caps: Vec<tir::CapsGrant> = project
+    // patterns per domain, and which functions are gated (M7). Sorted, because
+    // `Project::caps` is a map and a backend that emitted its entries in
+    // iteration order would produce different IR for the same sources on two
+    // runs (roadmap A-14 slice 1's determinism requirement).
+    let mut caps: Vec<tir::CapsGrant> = project
         .caps()
         .iter()
         .flat_map(|(module, domains)| {
@@ -8159,6 +8163,7 @@ fn check_program_pass(
             })
         })
         .collect();
+    caps.sort_by(|a, b| (&a.module, &a.domain).cmp(&(&b.module, &b.domain)));
     // A-2: the instantiations discovered on demand are part of the program's
     // declarations, and a hand-written type may contain one by value, so the
     // two sets are merged and given one topological order before codegen sees
@@ -8170,8 +8175,18 @@ fn check_program_pass(
     let mut sums: Vec<EnumDef> = enum_order.iter().map(|name| enums[name].clone()).collect();
     {
         let st = env.instances.borrow();
-        records.extend(st.records.values().cloned());
-        sums.extend(st.sums.values().cloned());
+        // Sorted by name: the instances live in a map, and a vector in a hash
+        // map's iteration order makes the same sources produce different IR on
+        // two runs (the type-creation order, and with it every type's printed
+        // number, would differ). `order_declarations` assigns each type's
+        // `order` from a `(order, name)` sort, so the input order here decides
+        // nothing else.
+        let mut instances: Vec<StructDef> = st.records.values().cloned().collect();
+        instances.sort_by(|a, b| a.name.cmp(&b.name));
+        records.extend(instances);
+        let mut instance_sums: Vec<EnumDef> = st.sums.values().cloned().collect();
+        instance_sums.sort_by(|a, b| a.name.cmp(&b.name));
+        sums.extend(instance_sums);
     }
     order_declarations(&mut records, &mut sums);
     // A-4: one function per `fun` literal, synthesized while bodies were
@@ -8231,6 +8246,7 @@ fn check_program_pass(
         match (&info.value.ty, &info.value.kind) {
             (Ty::Array(_, _), tir::ExprKind::ArrayLit(_)) => const_data.push(tir::ConstData {
                 name: decl.name.clone(),
+                module: decl.module.clone(),
                 ty: info.value.ty.clone(),
                 section: section.clone(),
                 values: match &info.value.kind {

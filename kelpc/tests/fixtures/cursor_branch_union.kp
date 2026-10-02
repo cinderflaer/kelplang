@@ -1,0 +1,15 @@
+// The two arms of an `if` assign different roots, so the joined root set keeps
+// both pinned: `b` may still be what `cur` points at, so mutating it is
+// refused even though only one arm assigned it.
+datac Holder(val value: i32)
+
+fun main() {
+    var a = Holder(value = 1)
+    var b = Holder(value = 2)
+    var cur = &a
+    if a.value == 1 {
+        cur = &b
+    }
+    b = Holder(value = 3)
+    print(cur.value)
+}

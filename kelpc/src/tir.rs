@@ -122,6 +122,11 @@ pub struct Static {
     /// The module-prefixed top-level name, which is the emitted symbol (each
     /// backend mangles it with its own prefix).
     pub name: String,
+    /// Canonical id of the module this `static` was declared in, like
+    /// `Function::module`: the split backend needs it to know which unit owns
+    /// the global's definition (roadmap A-14), since the name alone is
+    /// prefix-relative and the entry module's prefix is empty.
+    pub module: String,
     pub ty: Ty,
     /// `static mut NAME` — every access is `unsafe`.
     pub mutable: bool,
@@ -164,6 +169,9 @@ pub struct ConstData {
     /// The module-prefixed top-level name, which is the emitted symbol
     /// (`kelp_...`/the C backend's own mangling is applied by each backend).
     pub name: String,
+    /// Canonical id of the module this `const` was declared in; see
+    /// `Static::module`.
+    pub module: String,
     /// The array's element type and length, already checked.
     pub ty: Ty,
     /// The section the `section(...)` clause named.

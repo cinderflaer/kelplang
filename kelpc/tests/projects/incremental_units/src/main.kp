@@ -1,0 +1,8 @@
+impl "state"
+
+fun main() {
+    print(state.double(21))
+    print(state.LIMIT)
+    val b = state.Boxed(value = 7)
+    print(b.value)
+}

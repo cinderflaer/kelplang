@@ -1,0 +1,7 @@
+// The other unit: `main` calls `double` and reads `LIMIT` across the boundary,
+// so the module that owns them has to emit both with external linkage.
+pub static LIMIT: i64 = 3
+
+pub datac Boxed(val value: i64)
+
+pub fun double(x: i64).R: i64 = x * 2

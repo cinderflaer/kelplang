@@ -1,0 +1,16 @@
+// The borrow is used inside the loop, so it is live for the whole loop,
+// including the statements before the use in the body: the next iteration
+// reaches the use after the mutation.
+impl "std/str"
+
+fun main() {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    val first = names.get(0)
+    var i = 0
+    while i < 2 {
+        names.push(String.from_str("beta"))
+        print(first.as_str())
+        i += 1
+    }
+}
