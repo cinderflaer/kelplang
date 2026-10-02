@@ -1,0 +1,7 @@
+name = "polyp_core_test"
+version = "0.1.0"
+entry = "src/main.kp"
+
+# This project has no `[extern.*]` section at all: the core and the headless backend are pure
+# Kelp, so the whole test builds and runs with no display, no GTK and no C library of its own.
+# `src/deps/polyp` links the library and `src/deps/todo` links the todo example's program.

@@ -1,0 +1,228 @@
+// The todo list program itself, with no display: the model, the view, the update and the scripted
+// input sequence. `examples/polyp-todo/src/main.kp` runs it on the GTK backend and
+// `examples/polyp-core-test` runs the same script on the headless one, so the counters the two
+// smoke runs compare are the same program's.
+impl "deps/polyp/core"
+impl "std/fmt"
+impl "std/str"
+
+pub datac Todo(val id: i32, val title: String, var done: bool)
+
+// `marks` records `core.stats().created` after each action, which is the smoke test's evidence
+// that adding, ticking, moving and removing reuse widgets rather than rebuild the list. It is a
+// diagnostic field, not application state.
+pub datac Model(
+    var draft: String,
+    var items: List<Todo>,
+    var next_id: i32,
+    var marks: List<i32>,
+)
+
+// Every action names an item by id, not by position, for the same reason the view keys by id.
+pub enum Msg {
+    Changed(val text: String)
+    Add
+    Toggle(val id: i32)
+    MoveUp(val id: i32)
+    Remove(val id: i32)
+}
+
+pub fun initial().R: Model = Model(
+    draft = String.from_str(""),
+    items = List.empty(),
+    next_id = 1,
+    marks = List.empty(),
+)
+
+// The constructor the entry's `on_change` is: a top-level `fun`, so nothing is captured and the
+// type is exactly `fun(String).R: Msg`.
+fun changed(text: String).R: Msg = Msg.Changed(text = String.from_str(text.as_str()))
+
+fun find_index(s: Model, id: i32).R: i32 {
+    var i: usize = 0
+    while i < s.items.len() {
+        if s.items.get(i).id == id {
+            return i.to_i32()
+        }
+        i += 1
+    }
+    return -1
+}
+
+fun done_count(s: Model).R: i32 {
+    var n: i32 = 0
+    var i: usize = 0
+    while i < s.items.len() {
+        if s.items.get(i).done {
+            n += 1
+        }
+        i += 1
+    }
+    return n
+}
+
+fun fraction(s: Model).R: f64 {
+    val total = s.items.len()
+    if total == 0 {
+        return 0.0
+    }
+    return done_count(s).to_f64() / total.to_f64()
+}
+
+// One keyed row per item: the checkbox, the title and the two buttons are the row's children, and
+// the key is the item's id. The class depends on the item's state, which is the one thing the
+// stylesheet is used for.
+pub fun view(s: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(8)
+        k.margin(12)
+        k.class("todo-app")
+        k.row { r ->
+            r.spacing(6)
+            r.expand()
+            r.entry(s.draft.as_str(), changed)
+            r.button("add", Msg.Add)
+        }
+        k.separator()
+        k.expand()
+        k.scrolled { sc ->
+            sc.spacing(4)
+            sc.margin(4)
+            var i: usize = 0
+            while i < s.items.len() {
+                val item = s.items.get(i)
+                val key = fmt.int(item.id.to_i64())
+                if item.done {
+                    sc.class("todo-done")
+                } else {
+                    sc.class("todo-pending")
+                }
+                sc.keyed(key.as_str()) { r ->
+                    r.spacing(6)
+                    r.checkbox("", item.done, Msg.Toggle(id = item.id))
+                    r.expand()
+                    r.text(item.title.as_str())
+                    r.button("^", Msg.MoveUp(id = item.id))
+                    r.button("x", Msg.Remove(id = item.id))
+                }
+                i += 1
+            }
+        }
+        k.progress(fraction(s))
+    }
+}
+
+fun mark(state: mut Model) {
+    state.marks.push(core.stats().created)
+}
+
+pub fun update(state: mut Model, msg: Msg) {
+    when msg {
+        Changed(text) -> {
+            state.draft = String.from_str(text.as_str())
+        }
+        Add -> {
+            val draft_now = String.from_str(state.draft.as_str())
+            val has_draft = !str.is_empty(draft_now.as_str())
+            if has_draft {
+                val id = state.next_id
+                state.next_id = id + 1
+                state.items.push(Todo(id = id, title = draft_now, done = false))
+                state.draft = String.from_str("")
+            }
+            mark(state)
+        }
+        Toggle(id) -> {
+            val at = find_index(state, id)
+            if at >= 0 {
+                val u = at.to_usize()
+                val was = state.items.get(u).done
+                val title = String.from_str(state.items.get(u).title.as_str())
+                state.items.set(u, Todo(id = id, title = title, done = !was))
+            }
+            mark(state)
+        }
+        MoveUp(id) -> {
+            val at = find_index(state, id)
+            if at > 0 {
+                val item = state.items.remove(at.to_usize())
+                state.items.insert((at - 1).to_usize(), item)
+            }
+            mark(state)
+        }
+        Remove(id) -> {
+            val at = find_index(state, id)
+            if at >= 0 {
+                val gone = state.items.remove(at.to_usize())
+            }
+            mark(state)
+        }
+    }
+}
+
+// One scheduled input, as data: the delay the GTK backend arms a timeout with, and the event the
+// headless backend hands the loop. Both backends then run the same sequence.
+pub datac Step(val delay_ms: i32, val event: core.Event)
+
+// The sequence the smoke runs drive themselves with: focus the entry, type three titles through
+// the entry's own `changed` signal, add each one, tick the second row's checkbox, move the third
+// row up, remove the row that is now the middle one, and quit. The ids are the interactive widget
+// ids: the entry and the add button are 0 and 1, and each row takes three more in creation order
+// (checkbox, move, remove), so the first row is 2/3/4, the second 5/6/7 and the third 8/9/10.
+pub fun script().R: List<Step> {
+    var steps: List<Step> = List.empty()
+    steps.push(Step(delay_ms = 100, event = core.Event.Focus(index = 0)))
+    steps.push(Step(delay_ms = 150, event = core.Event.Edit(index = 0, text = String.from_str("alpha"))))
+    steps.push(Step(delay_ms = 200, event = core.Event.Post(id = 1)))
+    steps.push(Step(delay_ms = 250, event = core.Event.Edit(index = 0, text = String.from_str("beta"))))
+    steps.push(Step(delay_ms = 300, event = core.Event.Post(id = 1)))
+    steps.push(Step(delay_ms = 350, event = core.Event.Edit(index = 0, text = String.from_str("gamma"))))
+    steps.push(Step(delay_ms = 400, event = core.Event.Post(id = 1)))
+    steps.push(Step(delay_ms = 450, event = core.Event.Post(id = 5)))
+    steps.push(Step(delay_ms = 500, event = core.Event.Post(id = 9)))
+    steps.push(Step(delay_ms = 550, event = core.Event.Post(id = 10)))
+    steps.push(Step(delay_ms = 650, event = core.Event.Quit))
+    return steps
+}
+
+// Just the events, which is what the headless backend takes.
+pub fun events().R: List<core.Event> {
+    var out: List<core.Event> = List.empty()
+    var steps = script()
+    var i: usize = 0
+    while i < steps.len() {
+        out.push(core.clone_event(steps.get(i).event))
+        i += 1
+    }
+    return out
+}
+
+// The final state, then the library's counters. Every line is deterministic, which is what
+// examples/polyp-todo/smoke.sh and the core test read.
+pub fun report(final: Model) {
+    print(final.items.len())
+    var i: usize = 0
+    while i < final.items.len() {
+        print(final.items.get(i).title)
+        print(final.items.get(i).done)
+        i += 1
+    }
+    var m: usize = 0
+    while m < final.marks.len() {
+        print(final.marks.get(m))
+        m += 1
+    }
+    val st = core.stats()
+    print(st.created)
+    print(st.updated)
+    print(st.removed)
+    print(st.live)
+    print(core.focus_present())
+    print(core.focus_survived())
+    print(core.entries_built())
+    print(core.entry_text(0))
+    print(final.draft)
+    // A final marker, so the empty draft line above is not the last line: a shell strips trailing
+    // newlines, and this keeps it.
+    print("end")
+}

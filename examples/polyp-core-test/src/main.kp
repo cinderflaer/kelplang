@@ -1,0 +1,141 @@
+// Polyp v3 stage 1's tests, in plain Kelp with no display.
+//
+// The first half asserts the pure diff: identical trees produce nothing, a text change produces
+// one Update, a keyed reorder produces Moves and no Create or Remove, an insert creates, a remove
+// removes, a kind change replaces, and a duplicate key panics naming the key (run separately, with
+// POLYP_TEST=dupkey, because a panic ends the process).
+//
+// The second half runs the todo example's own program on the headless backend with the same
+// scripted input `examples/polyp-todo/smoke.sh` gives the GTK backend, and prints the same summary,
+// so the two backends' counters can be compared line by line.
+impl "deps/polyp/core"
+impl "deps/polyp/headless_backend"
+impl "deps/todo/app"
+impl "std/env"
+impl "std/str"
+
+datac Counts(var create: i32, var update: i32, var remove: i32, var moved: i32)
+
+fun count(patches: &List<core.Patch>).R: Counts {
+    var c = Counts(create = 0, update = 0, remove = 0, moved = 0)
+    var i: usize = 0
+    while i < patches.len() {
+        when patches.get(i) {
+            Create(_, _, _) -> {
+                c.create += 1
+            }
+            Update(_, _) -> {
+                c.update += 1
+            }
+            Remove(_) -> {
+                c.remove += 1
+            }
+            Move(_, _) -> {
+                c.moved += 1
+            }
+        }
+        i += 1
+    }
+    return c
+}
+
+fun show(label: str, old: core.Node<i32>, new: core.Node<i32>) {
+    val patches = core.diff(old, new)
+    val c = count(patches)
+    print(label)
+    print(c.create)
+    print(c.update)
+    print(c.remove)
+    print(c.moved)
+}
+
+fun rows_reversed().R: core.Node<i32> = core.column { k ->
+    k.keyed("b") { r -> r.text("two") }
+    k.keyed("a") { r -> r.text("one") }
+}
+
+fun rows().R: core.Node<i32> = core.column { k ->
+    k.keyed("a") { r -> r.text("one") }
+    k.keyed("b") { r -> r.text("two") }
+}
+
+fun rows_with_new().R: core.Node<i32> = core.column { k ->
+    k.keyed("a") { r -> r.text("one") }
+    k.keyed("x") { r -> r.text("inserted") }
+    k.keyed("b") { r -> r.text("two") }
+}
+
+fun rows_one().R: core.Node<i32> = core.column { k ->
+    k.keyed("a") { r -> r.text("one") }
+}
+
+fun one_text(t: str).R: core.Node<i32> {
+    val n: core.Node<i32> = core.text(String.from_str(t))
+    return n
+}
+
+fun empty_column().R: core.Node<i32> {
+    val out: core.Node<i32> = core.plain_column(List.empty())
+    return out
+}
+
+fun empty_row().R: core.Node<i32> {
+    val out: core.Node<i32> = core.plain_row(List.empty())
+    return out
+}
+
+fun run_diff_tests() {
+    // Identical trees: nothing at all.
+    show("identical", rows(), rows())
+    // A text change: one Update and nothing else.
+    show("text", one_text("a"), one_text("b"))
+    // A keyed reorder: two Moves, no Create, no Remove, no Update.
+    show("reorder", rows(), rows_reversed())
+    // An insert: the new keyed row and its Text child, two Creates.
+    show("insert", rows(), rows_with_new())
+    // A remove: one patch, for the whole subtree.
+    show("remove", rows(), rows_one())
+    // A kind change: the node is replaced rather than patched.
+    show("kind", empty_column(), empty_row())
+}
+
+// The duplicate-key case, run only when POLYP_TEST=dupkey, because a `panic` ends the process.
+fun run_duplicate_key() {
+    val a: core.Node<i32> = core.column { k ->
+        k.keyed("dup") { r -> r.text("one") }
+    }
+    val b: core.Node<i32> = core.column { k ->
+        k.keyed("dup") { r -> r.text("one") }
+        k.keyed("dup") { r -> r.text("two") }
+    }
+    val patches = core.diff(a, b)
+    print(patches.len())
+}
+
+fun run_headless_todo() {
+    var backend = headless_backend.new(script = app.events())
+    val final = core.run(
+        backend = backend,
+        init = app.initial(),
+        view = app.view,
+        update = app.update,
+    )
+    print("-- todo --")
+    app.report(final)
+    print("-- tree --")
+    print(headless_backend.dump(backend))
+}
+
+fun which() {
+    val mode = env.get("POLYP_TEST")
+    if str.eq(mode.as_str(), "dupkey") {
+        run_duplicate_key()
+        return
+    }
+    run_diff_tests()
+    run_headless_todo()
+}
+
+fun main() {
+    which()
+}

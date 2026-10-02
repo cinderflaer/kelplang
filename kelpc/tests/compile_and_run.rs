@@ -14275,3 +14275,79 @@ fn hosted_functions_carry_no_stack_probe() {
         "a hosted build carries the freestanding probe-stack attribute"
     );
 }
+
+/// Polyp v3 stage 1: the pure diff and the whole todo program on the headless backend.
+///
+/// `examples/polyp-core-test` has no `[extern.*]` section at all, so this runs in the plain
+/// development shell with no X server and no GTK, on the backend under test. The first half is the
+/// diff: identical trees produce nothing, a text change one Update, a keyed reorder two Moves and
+/// no Create or Remove, an insert two Creates (the keyed row and its Text child), a remove one
+/// patch for the whole subtree, a kind change a replace, and a duplicate key a panic naming it.
+///
+/// The second half runs the todo example's own program (`examples/polyp-todo/src/app.kp`, linked in
+/// as `deps/todo`) on the headless backend with the same scripted input `examples/polyp-todo/smoke.sh`
+/// arms the GTK backend with, and prints the same summary. The counters here must be the ones that
+/// smoke asserts: created 22, updated 10, removed 5, live 17, focus present and surviving, one
+/// entry built, and the entry still showing `gamma` while the model's draft is empty.
+#[test]
+fn polyp_core_diffs_and_runs_the_todo_program_with_no_display() {
+    let bin = out_path("polyp_core_test");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-core-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp core test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&bin).output().expect("failed to run the core test binary");
+    assert!(
+        run.status.success(),
+        "expected the core test to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        EXPECTED,
+        "unexpected output from the polyp core test"
+    );
+}
+
+const EXPECTED: &str = "identical\n0\n0\n0\n0\ntext\n0\n1\n0\n0\nreorder\n0\n0\n0\n2\ninsert\n2\n0\n0\n0\nremove\n0\n0\n1\n0\nkind\n1\n0\n1\n0\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n-- tree --\ncolumn\n  row\n    entry id=0 \"gamma\"\n    button id=1 \"add\"\n  separator\n  scrolled\n    row #1\n      checkbox id=2 unchecked\n      text \"alpha\"\n      button id=3 \"^\"\n      button id=4 \"x\"\n    row #2\n      checkbox id=5 checked\n      text \"beta\"\n      button id=6 \"^\"\n      button id=7 \"x\"\n  progress 0.500\n\n";
+
+/// The duplicate-key half, in its own run because a `panic` ends the process.
+#[test]
+fn polyp_core_panics_on_a_duplicate_key_and_names_it() {
+    let bin = out_path("polyp_core_dupkey");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/polyp-core-test"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp core test project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&bin)
+        .env("POLYP_TEST", "dupkey")
+        .output()
+        .expect("failed to run the core test binary");
+    assert!(
+        !run.status.success(),
+        "expected a duplicate key to panic, but the program exited successfully"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("duplicate key 'dup' among the children of one container"),
+        "expected the panic to name the key, got:\n{stderr}"
+    );
+}
