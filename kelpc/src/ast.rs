@@ -689,6 +689,24 @@ pub enum Stmt {
         iterating: Option<Expr>,
         span: Span,
     },
+    /// `for x in <expr> { ... }` (`plan/iterators.md`). Kept as written rather
+    /// than desugared here, because which desugar applies depends on the
+    /// iterable's type: a `List<T>`/`[T; N]` keeps the index walk, and an
+    /// `Iterator` becomes the `next()` loop. `infer.rs` is the first pass that
+    /// knows the type, so it does the desugar and `borrowck.rs` and both
+    /// backends only ever see the `while` it produces.
+    For {
+        binding: String,
+        binding_span: Span,
+        iterable: Expr,
+        body: Block,
+        span: Span,
+    },
+    /// `break` (`plan/iterators.md`): leave the innermost loop. A statement of
+    /// its own so both backends branch out of the loop they are emitting.
+    Break { span: Span },
+    /// `continue`: skip to the next pass of the innermost loop.
+    Continue { span: Span },
     Return {
         value: Option<Expr>,
         span: Span,
@@ -1219,8 +1237,12 @@ fn first_unsafe_in_block(block: &Block) -> Option<Span> {
         Stmt::While { cond, body, .. } => {
             first_unsafe_in_expr(cond).or_else(|| first_unsafe_in_block(body))
         }
+        Stmt::For {
+            iterable, body, ..
+        } => first_unsafe_in_expr(iterable).or_else(|| first_unsafe_in_block(body)),
         Stmt::Return { value, .. } => value.as_ref().and_then(first_unsafe_in_expr),
         Stmt::Defer { expr, .. } => first_unsafe_in_expr(expr),
+        Stmt::Break { .. } | Stmt::Continue { .. } => None,
         Stmt::Expr { expr, .. } => first_unsafe_in_expr(expr),
     })
 }

@@ -1285,6 +1285,7 @@ fn collect_block_refs(block: &Block, from: &str, note: &mut impl FnMut(&str, &st
                     collect_expr_refs(value, from, note);
                 }
             }
+            Stmt::Break { .. } | Stmt::Continue { .. } => {}
             Stmt::Expr(expr) => collect_expr_refs(expr, from, note),
         }
     }
@@ -3833,6 +3834,11 @@ struct FnGen<'g, 'a> {
     /// returns, so no parameter slots, no `return` of the declared type, and an
     /// `unreachable` terminator after the asm.
     naked: bool,
+    /// The loops currently being emitted, innermost last: the block a
+    /// `continue` branches to (the loop's condition) and the block a `break`
+    /// branches to (the loop's exit). `plan/iterators.md` adds the two loop
+    /// control statements, and this is what gives them somewhere to go.
+    loops: Vec<(BasicBlock<'a>, BasicBlock<'a>)>,
 }
 
 impl<'g, 'a> FnGen<'g, 'a> {
@@ -3872,6 +3878,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             decl_span: Some(f.span),
             alloca_after: None,
             naked: f.naked,
+            loops: Vec::new(),
         })
     }
 
@@ -3912,6 +3919,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             decl_span: Some(pd.init.span),
             alloca_after: None,
             naked: false,
+            loops: Vec::new(),
         })
     }
 
@@ -4164,6 +4172,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             Stmt::Let { init, .. } => self.locate(init.span),
             Stmt::Return { span, .. } => self.locate(*span),
             Stmt::While { cond, .. } => self.locate(cond.span),
+            Stmt::Break { span } | Stmt::Continue { span } => self.locate(*span),
             Stmt::Expr(e) => self.locate(e.span),
         }
         match stmt {
@@ -4252,6 +4261,32 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.terminated = true;
             }
             Stmt::While { cond, body, .. } => self.emit_while(cond, body)?,
+            // Free the loop's own owned locals, then branch. `self.terminated`
+            // stops the rest of the block, exactly as a `return` does.
+            Stmt::Break { span } => {
+                let drops = self.drops_at_break(*span);
+                self.emit_drops(&drops)?;
+                if !self.terminated {
+                    let (_, exit) = *self
+                        .loops
+                        .last()
+                        .ok_or_else(|| "a 'break' outside a loop".to_string())?;
+                    self.g.builder.build_br(exit);
+                }
+                self.terminated = true;
+            }
+            Stmt::Continue { span } => {
+                let drops = self.drops_at_continue(*span);
+                self.emit_drops(&drops)?;
+                if !self.terminated {
+                    let (header, _) = *self
+                        .loops
+                        .last()
+                        .ok_or_else(|| "a 'continue' outside a loop".to_string())?;
+                    self.g.builder.build_br(header);
+                }
+                self.terminated = true;
+            }
             Stmt::Expr(e) => {
                 self.emit_expr(e)?;
             }
@@ -4275,6 +4310,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// set and the same order a written `return` frees (`DropPlan::at_try`).
     fn drops_at_try(&self, span: Span) -> Vec<DropTarget> {
         self.g.drops.at_try(&self.fn_name, span).to_vec()
+    }
+
+    fn drops_at_break(&self, span: Span) -> Vec<DropTarget> {
+        self.g.drops.at_break(&self.fn_name, span).to_vec()
+    }
+
+    fn drops_at_continue(&self, span: Span) -> Vec<DropTarget> {
+        self.g.drops.at_continue(&self.fn_name, span).to_vec()
     }
 
     /// Free the still-live owned locals the plan names, in the plan's order
@@ -4338,7 +4381,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.builder.position_at_end(body_bb);
         self.cur = body_bb;
         self.terminated = false;
-        self.emit_block_value(body)?;
+        // A `continue` branches to the condition and a `break` to the exit;
+        // both run their loop's own drops first (see `emit_stmt`).
+        self.loops.push((header, exit_bb));
+        let body = self.emit_block_value(body);
+        self.loops.pop();
+        body?;
         if !self.terminated {
             let back = self.g.builder.build_br(header);
             // A loop whose bound is a small literal is unrolled in full, so its
@@ -8019,6 +8067,7 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                         note_expr(e, out);
                     }
                 }
+                Stmt::Break { .. } | Stmt::Continue { .. } => {}
                 Stmt::Expr(e) => note_expr(e, out),
             }
         }

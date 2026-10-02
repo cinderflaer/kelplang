@@ -316,6 +316,13 @@ pub enum Stmt {
         /// before returning is keyed by it.
         span: Span,
     },
+    /// `break` (`plan/iterators.md`): leave the innermost loop. The span keys
+    /// the drops of the locals declared inside that loop (`DropPlan::at_break`),
+    /// the same way `Return::span` keys the frame's.
+    Break { span: Span },
+    /// `continue`: skip to the next pass of the innermost loop, running the
+    /// drops of the locals declared inside it first.
+    Continue { span: Span },
     Expr(Expr),
 }
 

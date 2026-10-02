@@ -3417,6 +3417,7 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                         note_expr(v, out);
                     }
                 }
+                Stmt::Break { .. } | Stmt::Continue { .. } => {}
                 Stmt::Expr(e) => note_expr(e, out),
             }
         }
@@ -3756,6 +3757,14 @@ impl<'a> Gen<'a> {
         self.drops.at_try(&self.function, span).to_vec()
     }
 
+    fn drops_at_break(&self, span: Span) -> Vec<DropTarget> {
+        self.drops.at_break(&self.function, span).to_vec()
+    }
+
+    fn drops_at_continue(&self, span: Span) -> Vec<DropTarget> {
+        self.drops.at_continue(&self.function, span).to_vec()
+    }
+
     /// Frees owned locals in the order `borrowck.rs` decided (reverse
     /// declaration order — a later binding is freed before an earlier one it
     /// may have taken its value from).
@@ -3944,6 +3953,9 @@ impl<'a> Gen<'a> {
             Stmt::Let { init, .. } => self.write_line_marker(init.span, depth),
             Stmt::Return { span, .. } => self.write_line_marker(*span, depth),
             Stmt::While { cond, .. } => self.write_line_marker(cond.span, depth),
+            Stmt::Break { span } | Stmt::Continue { span } => {
+                self.write_line_marker(*span, depth)
+            }
             Stmt::Expr(e) => self.write_line_marker(e.span, depth),
         }
         match stmt {
@@ -4000,6 +4012,20 @@ impl<'a> Gen<'a> {
                 self.write_block_body(body, depth + 1);
                 indent(&mut self.out, depth);
                 self.out.push_str("}\n");
+            }
+            // The drops of the locals declared inside the loop run before the
+            // jump, exactly as a `return` frees the frame first.
+            Stmt::Break { span } => {
+                let drops = self.drops_at_break(*span);
+                self.write_drops(&drops, depth);
+                indent(&mut self.out, depth);
+                self.out.push_str("break;\n");
+            }
+            Stmt::Continue { span } => {
+                let drops = self.drops_at_continue(*span);
+                self.write_drops(&drops, depth);
+                indent(&mut self.out, depth);
+                self.out.push_str("continue;\n");
             }
             Stmt::Expr(e) => self.write_stmt_like_expr(e, depth),
         }

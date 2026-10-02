@@ -516,6 +516,15 @@ struct Ctx {
     /// How many scrutinee temporaries a `when` has staged, so each one's
     /// synthesized binding has a name of its own (`infer::WHEN_TEMP_PREFIX`).
     when_temps: usize,
+    /// How many `for` loops this body has desugared, so each loop's
+    /// synthesized sequence and index names are unique (`plan/iterators.md`).
+    /// A `fun` literal's body starts a fresh count, exactly as a function
+    /// does.
+    for_temps: usize,
+    /// How many loops enclose the statement being checked. A `break` or
+    /// `continue` outside every loop is refused here rather than reaching a
+    /// backend that has no loop to branch out of.
+    loop_depth: usize,
     /// The same counter for a destructuring binding's value and its nested
     /// levels (`infer::TUPLE_TEMP_PREFIX`).
     tuple_temps: usize,
@@ -7168,6 +7177,14 @@ impl<'a> ConstEvaluator<'a> {
                         tail = Some(v);
                     }
                 }
+                // A `for` is a loop over a runtime value, which a constant
+                // expression cannot fold (there is no loop in `ConstValue`).
+                ast::Stmt::For { span, .. } => {
+                    return Err(self.unsupported(*span, "a 'for' loop"));
+                }
+                ast::Stmt::Break { span } | ast::Stmt::Continue { span } => {
+                    return Err(self.unsupported(*span, "a 'break' or 'continue'"));
+                }
                 // `defer` is lowered away before checking, so a constant
                 // initializer never contains one.
                 ast::Stmt::Defer { span, .. } => {
@@ -8948,6 +8965,8 @@ fn base_ctx(
         outer_receiver: None,
         receiver_struct: None,
         when_temps: 0,
+        for_temps: 0,
+        loop_depth: 0,
         tuple_temps: 0,
         defer_empty_container: false,
         unsafe_depth: 0,
@@ -9047,6 +9066,20 @@ impl PdScan {
                 self.scan_expr(cond);
                 self.scan_block(body);
             }
+            ast::Stmt::For {
+                binding,
+                iterable,
+                body,
+                ..
+            } => {
+                self.scan_expr(iterable);
+                self.scopes.push(std::collections::HashSet::new());
+                self.define(binding);
+                for stmt in &body.stmts {
+                    self.scan_stmt(stmt);
+                }
+                self.scopes.pop();
+            }
             ast::Stmt::Return { value, .. } => {
                 if let Some(v) = value {
                     self.scan_expr(v);
@@ -9054,6 +9087,7 @@ impl PdScan {
             }
             ast::Stmt::Expr { expr, .. } => self.scan_expr(expr),
             ast::Stmt::Defer { expr, .. } => self.scan_expr(expr),
+            ast::Stmt::Break { .. } | ast::Stmt::Continue { .. } => {}
         }
     }
 
@@ -10147,7 +10181,10 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                     span: *span,
                 });
             }
-            let body = check_block(body, ctx, None)?;
+            ctx.loop_depth += 1;
+            let body = check_block(body, ctx, None);
+            ctx.loop_depth -= 1;
+            let body = body?;
             let iterating = iterating.as_ref().and_then(|place| {
                 ast::place_path(place).map(|path| tir::IteratedPlace {
                     path,
@@ -10155,6 +10192,62 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 })
             });
             Ok(vec![tir::Stmt::While { cond, body, iterating }])
+        }
+        // A `for` keeps its two desugars (`plan/iterators.md`): a `List<T>` or
+        // `[T; N]` walks by index exactly as before, and anything that
+        // implements `std.iter.Iterator` becomes a `var` over `next()`. Only
+        // this pass knows the iterable's type, so this is where the choice is
+        // made. A type-only probe is enough to choose and is what
+        // `check_method_call` already does before it re-checks its receiver;
+        // the desugar re-checks the iterable for real, once.
+        ast::Stmt::For {
+            binding,
+            binding_span,
+            iterable,
+            body,
+            span,
+        } => {
+            let probe = check_expr(iterable, ctx, None)?;
+            let iter_ty = probe.ty.clone();
+            let list = crate::types::list_elem_of(&iter_ty).is_some()
+                || crate::types::array_elem_of(&iter_ty).is_some();
+            if list {
+                let desugared =
+                    desugar_list_for(binding, *binding_span, iterable, body, *span, ctx);
+                return check_stmt(&desugared, ctx);
+            }
+            if !implements_iterator(ctx, &iter_ty) {
+                return Err(TypeError {
+                    message: format!(
+                        "'for' walks a 'List<T>' or a type that implements 'Iterator', and '{}' is neither: implement 'std.iter.Iterator' for it ('type Item' and 'fun mut Self.next().R: option.Option<Self::Item>'), or walk a 'List' by index",
+                        iter_ty.display()
+                    ),
+                    span: *span,
+                });
+            }
+            let desugared =
+                desugar_iterator_for(binding, *binding_span, iterable, body, *span, &iter_ty, ctx);
+            check_stmt(&desugared, ctx)
+        }
+        ast::Stmt::Break { span } | ast::Stmt::Continue { span } => {
+            if ctx.loop_depth == 0 {
+                let what = if matches!(stmt, ast::Stmt::Break { .. }) {
+                    "break"
+                } else {
+                    "continue"
+                };
+                return Err(TypeError {
+                    message: format!(
+                        "'{what}' is a loop control statement, and no loop encloses it: write it inside a 'while' or a 'for'"
+                    ),
+                    span: *span,
+                });
+            }
+            Ok(vec![if matches!(stmt, ast::Stmt::Break { .. }) {
+                tir::Stmt::Break { span: *span }
+            } else {
+                tir::Stmt::Continue { span: *span }
+            }])
         }
         ast::Stmt::Return { value, .. } => {
             let ret_ty = ctx.ret_ty.clone();
@@ -10209,6 +10302,251 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 .to_string(),
             span: *span,
         }),
+    }
+}
+
+/// The canonical key of `std.iter.Iterator`, the one trait a `for` accepts
+/// (`plan/iterators.md`). A project spells it `impl "std/iter"` and reaches the
+/// trait as `iter.Iterator`; the canonical key is what the impl table is keyed
+/// by.
+const ITERATOR_TRAIT_KEY: &str = crate::stdlib::ITERATOR_TRAIT;
+
+/// Whether a `for` may walk this type: it implements `std.iter.Iterator`,
+/// possibly through a supertrait.
+fn implements_iterator(ctx: &Ctx, ty: &Ty) -> bool {
+    let name = struct_name_of(ty)
+        .map(|s| s.to_string())
+        .or_else(|| builtin_type_name(ty).map(|s| s.to_string()));
+    name.map_or(false, |n| implements_trait(&ctx.env, ITERATOR_TRAIT_KEY, &n))
+}
+
+/// The index desugar a `for x in <List<T>|[T; N]>` becomes (`plan/syntax.md`
+/// 6.2), unchanged from the parser's old one except that the index advances
+/// **before** the body runs. That is what makes a `continue` in the body jump
+/// to the next element instead of re-reading the same one: the desugared loop
+/// is an ordinary `while`, and its `continue` re-tests the condition.
+///
+/// A place iterable is walked as written so `borrowck.rs` can name it and
+/// refuse a mutation of it while the body runs; anything else is staged into a
+/// synthesized binding so it is evaluated exactly once.
+fn desugar_list_for(
+    binding: &str,
+    binding_span: Span,
+    iterable: &ast::Expr,
+    body: &ast::Block,
+    span: Span,
+    ctx: &mut Ctx,
+) -> ast::Stmt {
+    let n = ctx.for_temps;
+    ctx.for_temps += 1;
+    let seq_name = format!("#for{n}");
+    let idx_name = format!("#for{n}_i");
+    let idx_span = binding_span;
+    let iterating = ast::temporary_root(iterable)
+        .is_none()
+        .then(|| iterable.clone());
+    let mut stmts: Vec<ast::Stmt> = Vec::new();
+    let seq = match ast::temporary_root(iterable).cloned() {
+        None => iterable.clone(),
+        Some(root) => {
+            let init_span = root.span();
+            stmts.push(ast::Stmt::Let {
+                name: seq_name.clone(),
+                mutable: false,
+                ty: None,
+                init: root,
+                span: init_span,
+            });
+            ast::rebase_root(iterable, &ast::Expr::Ident(seq_name.clone(), init_span))
+        }
+    };
+    let seq_span = seq.span();
+    let cond = ast::Expr::Binary {
+        op: ast::BinOp::Lt,
+        lhs: Box::new(ast::Expr::Ident(idx_name.clone(), idx_span)),
+        rhs: Box::new(ast::Expr::MethodCall {
+            receiver: Box::new(seq.clone()),
+            method: "len".to_string(),
+            type_args: Vec::new(),
+            args: Vec::new(),
+            span: seq_span,
+        }),
+        span,
+    };
+    let element = ast::Stmt::Let {
+        name: binding.to_string(),
+        mutable: false,
+        ty: None,
+        init: ast::Expr::MethodCall {
+            receiver: Box::new(seq),
+            method: "get".to_string(),
+            type_args: Vec::new(),
+            args: vec![ast::CallArg {
+                name: None,
+                value: ast::Expr::Ident(idx_name.clone(), idx_span),
+            }],
+            span: binding_span,
+        },
+        span: binding_span,
+    };
+    let increment = ast::Stmt::Expr {
+        expr: ast::Expr::Assign {
+            target: Box::new(ast::Expr::Ident(idx_name.clone(), idx_span)),
+            value: Box::new(ast::Expr::Binary {
+                op: ast::BinOp::Add,
+                lhs: Box::new(ast::Expr::Ident(idx_name.clone(), idx_span)),
+                rhs: Box::new(ast::Expr::IntLit(1, idx_span)),
+                span: idx_span,
+            }),
+            span: idx_span,
+        },
+        span: idx_span,
+    };
+    let mut inner_stmts = vec![element, increment];
+    inner_stmts.extend(body.stmts.iter().cloned());
+    stmts.push(ast::Stmt::Let {
+        name: idx_name,
+        mutable: true,
+        ty: Some(ast::TypeExpr::named("usize", idx_span)),
+        init: ast::Expr::IntLit(0, idx_span),
+        span: idx_span,
+    });
+    stmts.push(ast::Stmt::While {
+        cond,
+        body: ast::Block {
+            stmts: vec![ast::Stmt::Expr {
+                expr: ast::Expr::Block(ast::Block {
+                    stmts: inner_stmts,
+                    span: body.span,
+                }),
+                span: body.span,
+            }],
+            span: body.span,
+        },
+        iterating,
+        span,
+    });
+    ast::Stmt::Expr {
+        expr: ast::Expr::Block(ast::Block { stmts, span }),
+        span,
+    }
+}
+
+/// The `next()` desugar a `for x in <Iterator>` becomes
+/// (`plan/iterators.md`): the loop holds the iterator, calls `next()` once per
+/// pass, binds the owned item in the `Some` arm, and leaves on `None`.
+///
+/// A **place** iterator is borrowed exclusively for the loop's duration, so a
+/// use of it in the body is the ordinary "already borrowed" error; an iterator
+/// built at the `for` line (a call result) is owned by a synthesized `var`. The
+/// item is owned because `next()` returns an owned `Option`.
+fn desugar_iterator_for(
+    binding: &str,
+    binding_span: Span,
+    iterable: &ast::Expr,
+    body: &ast::Block,
+    span: Span,
+    iter_ty: &Ty,
+    ctx: &mut Ctx,
+) -> ast::Stmt {
+    let n = ctx.for_temps;
+    ctx.for_temps += 1;
+    let it_name = format!("#for{n}");
+    let is_place = ast::temporary_root(iterable).is_none();
+    let (init, mutable) = if !is_place {
+        (iterable.clone(), true)
+    } else if matches!(iter_ty, Ty::Ref { mutable: true, .. }) {
+        // Already an exclusive borrow (`it: mut I`): bind the borrow itself;
+        // `&mut it` would be a borrow of a borrow and would not resolve the
+        // receiver's own methods.
+        (iterable.clone(), false)
+    } else {
+        (
+            ast::Expr::Ref {
+                mutable: true,
+                expr: Box::new(iterable.clone()),
+                span,
+            },
+            false,
+        )
+    };
+    let it_span = iterable.span();
+    let scrutinee = ast::Expr::MethodCall {
+        receiver: Box::new(ast::Expr::Ident(it_name.clone(), it_span)),
+        method: "next".to_string(),
+        type_args: Vec::new(),
+        args: Vec::new(),
+        span,
+    };
+    // The body's statements run in the `Some` arm, and the arm block has to be
+    // unit like the `None` arm, so a trailing binding keeps the body's own tail
+    // a statement rather than the arm's value (the same rule the index desugar
+    // applies when it discards a tail).
+    let mut some_stmts = body.stmts.clone();
+    some_stmts.push(ast::Stmt::Let {
+        name: format!("#for{n}_unit"),
+        mutable: false,
+        ty: None,
+        init: ast::Expr::BoolLit(false, span),
+        span,
+    });
+    let some_body = ast::Expr::Block(ast::Block {
+        stmts: some_stmts,
+        span: body.span,
+    });
+    let none_body = ast::Expr::Block(ast::Block {
+        stmts: vec![ast::Stmt::Break { span }],
+        span,
+    });
+    let when = ast::Expr::When {
+        scrutinee: Box::new(scrutinee),
+        arms: vec![
+            ast::WhenArm {
+                pattern: Some(ast::VariantPattern {
+                    variant: "Some".to_string(),
+                    binds: vec![Some(binding.to_string())],
+                    span: binding_span,
+                }),
+                body: some_body,
+                span,
+            },
+            ast::WhenArm {
+                pattern: Some(ast::VariantPattern {
+                    variant: "None".to_string(),
+                    binds: Vec::new(),
+                    span,
+                }),
+                body: none_body,
+                span,
+            },
+        ],
+        span,
+    };
+    let while_body = ast::Block {
+        stmts: vec![ast::Stmt::Expr { expr: when, span }],
+        span,
+    };
+    let block = ast::Block {
+        stmts: vec![
+            ast::Stmt::Let {
+                name: it_name,
+                mutable,
+                ty: None,
+                init,
+                span,
+            },
+            ast::Stmt::While {
+                cond: ast::Expr::BoolLit(true, span),
+                body: while_body,
+                iterating: None,
+                span,
+            },
+        ],
+        span,
+    };
+    ast::Stmt::Expr {
+        expr: ast::Expr::Block(block),
+        span,
     }
 }
 
@@ -10301,6 +10639,8 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
         ast::Stmt::Let { span, .. } => *span,
         ast::Stmt::LetTuple { span, .. } => *span,
         ast::Stmt::While { span, .. } => *span,
+        ast::Stmt::For { span, .. } => *span,
+        ast::Stmt::Break { span } | ast::Stmt::Continue { span } => *span,
         ast::Stmt::Return { span, .. } => *span,
         ast::Stmt::Expr { span, .. } => *span,
         ast::Stmt::Defer { span, .. } => *span,
@@ -10469,6 +10809,11 @@ fn check_fn_literal(
     inner.receiver_struct = None;
     inner.init_state = None;
     inner.in_fn_literal = true;
+    // A literal is its own function: a `break`/`continue` in its body targets
+    // a loop in *it*, never a loop of the enclosing frame, and its synthesized
+    // loop names start fresh.
+    inner.loop_depth = 0;
+    inner.for_temps = 0;
     // A nested scoped block is typed by its own callee, never by the
     // surrounding `Mutex.lock` block's inference.
     inner.infer_scoped_ret = false;

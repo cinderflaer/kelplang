@@ -7,9 +7,6 @@ pub struct Parser {
     /// How many `if let`s have been desugared, so each one's synthesized
     /// scrutinee binding has a name of its own (`parser::IF_LET_PREFIX`).
     if_lets: usize,
-    /// How many `for` loops have been desugared, for the same reason
-    /// (`parser::FOR_PREFIX`).
-    fors: usize,
     /// True while parsing the head of an `if`/`elif`/`while`/`for`/`when`, where
     /// a `{` after an expression opens the body and not a trailing block
     /// (`plan/trailing-closure.md`). A call's argument list and a block reset it.
@@ -44,18 +41,12 @@ fn mixing_wildcard_error(span: Span) -> ParseError {
 /// parameter.
 const IF_LET_PREFIX: &str = "#iflet";
 
-/// The name prefix of the two locals a `for` loop synthesizes: the sequence
-/// (`#for0`) and its index (`#for0_i`). Same `#` trick as `IF_LET_PREFIX`, so
-/// a synthesized name can never collide with one the user wrote.
-const FOR_PREFIX: &str = "#for";
-
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
             tokens,
             pos: 0,
             if_lets: 0,
-            fors: 0,
             no_trailing_block: false,
         }
     }
@@ -2252,19 +2243,19 @@ impl Parser {
             TokenKind::For => self.parse_for_stmt(),
             TokenKind::Defer => self.parse_defer_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
-            // `break` and `continue` are not keywords, so they reach here as
-            // ordinary names; a bare one is a statement that does not exist,
-            // and naming that beats the "cannot find 'break'" a resolution
-            // would give. Used as a name (`break + 1`, `break()`) they stay
-            // ordinary expressions.
+            // `break` and `continue` are read as ordinary names everywhere
+            // else, so a bare one here (the statement ends after it) is the
+            // loop control statement (`plan/iterators.md`); `break + 1` and
+            // `break()` stay expressions.
             TokenKind::Ident(name)
                 if (name == "break" || name == "continue") && self.statement_ends_here() =>
             {
-                Err(ParseError {
-                    message: format!(
-                        "'{name}' is not a Kelp statement: the language has no 'break' or 'continue' (plan/syntax.md 11); a loop leaves through its own condition ('while i < xs.len() && !done') or walks a 'for' over the list"
-                    ),
-                    span: self.peek().span,
+                let is_break = name == "break";
+                let span = self.advance().span;
+                Ok(if is_break {
+                    Stmt::Break { span }
+                } else {
+                    Stmt::Continue { span }
                 })
             }
             // `pub` leads a declaration, and a declaration is not a statement,
@@ -2431,127 +2422,20 @@ impl Parser {
         let iterable = self.parse_head_expr()?;
         let body = self.parse_block()?;
         let span = start.to(body.span);
-        // A place iterable stays a place and is walked as written, so the
-        // borrow checker can name it and refuse a mutation of it in the body
-        // (`plan/syntax.md` 6.2). A temporary is staged into `#forN` and has no
-        // name a body could mutate.
-        let iterating = (temporary_root(&iterable).is_none()).then(|| iterable.clone());
-
-        self.fors += 1;
-        let seq_name = format!("{}{}", FOR_PREFIX, self.fors - 1);
-        let idx_name = format!("{seq_name}_i");
-        // Every synthesized node is spelled with the `for`'s own span: a
-        // diagnostic about a desugared `.len()`/`.get()` should point at the
-        // loop, not at nothing.
-        let idx_span = word_span;
-
-        let mut stmts = Vec::new();
-        let iterable = match temporary_root(&iterable).cloned() {
-            // A place is re-read as written on every iteration. It costs
-            // nothing, and binding one by value would *move* it: a parameter
-            // is a borrow, so the common `for x in xs` inside a function would
-            // move out of a borrow.
-            None => iterable,
-            // Anything else is evaluated once and bound first, so the loop
-            // walks the sequence the `for` line saw. A field chain over a
-            // temporary stages its *root*: `for x in mk().items` binds `mk()`
-            // once instead of calling it again for the condition and for every
-            // element.
-            Some(root) => {
-                let init_span = root.span();
-                stmts.push(Stmt::Let {
-                    name: seq_name.clone(),
-                    mutable: false,
-                    ty: None,
-                    init: root,
-                    span: init_span,
-                });
-                rebase_root(&iterable, &Expr::Ident(seq_name.clone(), init_span))
-            }
-        };
-        let seq_span = iterable.span();
-
-        let cond = Expr::Binary {
-            op: BinOp::Lt,
-            lhs: Box::new(Expr::Ident(idx_name.clone(), idx_span)),
-            rhs: Box::new(Expr::MethodCall {
-                receiver: Box::new(iterable.clone()),
-                method: "len".to_string(),
-                type_args: Vec::new(),
-                args: Vec::new(),
-                span: seq_span,
-            }),
-            span,
-        };
-        let element = Stmt::Let {
-            name: binding,
-            mutable: false,
-            ty: None,
-            init: Expr::MethodCall {
-                receiver: Box::new(iterable),
-                method: "get".to_string(),
-                type_args: Vec::new(),
-                args: vec![CallArg {
-                    name: None,
-                    value: Expr::Ident(idx_name.clone(), idx_span),
-                }],
-                span: binding_span,
-            },
-            span: binding_span,
-        };
-        let mut element_block_stmts = vec![element];
-        element_block_stmts.extend(body.stmts);
-
-        let increment = Stmt::Expr {
-            expr: Expr::Assign {
-                target: Box::new(Expr::Ident(idx_name.clone(), idx_span)),
-                value: Box::new(Expr::Binary {
-                    op: BinOp::Add,
-                    lhs: Box::new(Expr::Ident(idx_name.clone(), idx_span)),
-                    rhs: Box::new(Expr::IntLit(1, idx_span)),
-                    span: idx_span,
-                }),
-                span: idx_span,
-            },
-            span: idx_span,
-        };
-
-        stmts.push(Stmt::Let {
-            name: idx_name,
-            mutable: true,
-            ty: Some(TypeExpr::named("usize", idx_span)),
-            init: Expr::IntLit(0, idx_span),
-            span: idx_span,
-        });
-        stmts.push(Stmt::While {
-            cond,
-            body: Block {
-                stmts: vec![
-                    Stmt::Expr {
-                        expr: Expr::Block(Block {
-                            stmts: element_block_stmts,
-                            span: body.span,
-                        }),
-                        span: body.span,
-                    },
-                    increment,
-                ],
-                span: body.span,
-            },
-            iterating,
-            span,
-        });
-
-        Ok(Stmt::Expr {
-            expr: Expr::Block(Block { stmts, span }),
+        // The type of the iterable decides the desugar (`plan/iterators.md`),
+        // and only `infer.rs` knows it, so the statement is kept as written.
+        Ok(Stmt::For {
+            binding,
+            binding_span,
+            iterable,
+            body,
             span,
         })
     }
 
     /// Whether the token after the current one ends the statement: a newline,
-    /// the block's `}`, or the end of the file. Used to tell a bare `break`
-    /// statement (which the language does not have) from a name used in an
-    /// expression.
+    /// the block's `}`, or the end of the file. Used to tell a bare `break` or
+    /// `continue` statement from a name used in an expression.
     fn statement_ends_here(&self) -> bool {
         matches!(
             self.peek2_kind(),
@@ -4336,11 +4220,10 @@ mod tests {
     }
 
     #[test]
-    fn for_loop_desugars_to_a_synthesized_index_and_a_while() {
-        // A-5: `for x in xs { BODY }` becomes
-        // `{ var #for0_i: usize = 0  while #for0_i < xs.len() {
-        //      { val x = xs.get(#for0_i) BODY }  #for0_i = #for0_i + 1 } }`.
-        // A place iterable is used as written, so there is no `#for0` binding.
+    fn a_for_loop_is_kept_as_written_until_its_iterable_has_a_type() {
+        // A-5/`plan/iterators.md`: which desugar applies depends on the
+        // iterable's type, which only `infer.rs` knows, so the parser keeps the
+        // statement and `infer.rs` lowers it.
         let p = parse(
             "fun main() {\n    for x in xs {\n        print(x)\n    }\n}",
         );
@@ -4348,90 +4231,33 @@ mod tests {
             FunctionBody::Block(b) => &b.stmts,
             _ => panic!("expected block body"),
         };
-        let outer = match &stmts[0] {
-            Stmt::Expr { expr: Expr::Block(b), .. } => b,
-            other => panic!("expected a desugared block, got {other:?}"),
-        };
-        assert_eq!(outer.stmts.len(), 2);
-        match &outer.stmts[0] {
-            Stmt::Let { name, mutable, ty, .. } => {
-                assert_eq!(name, "#for0_i");
-                assert!(*mutable);
-                assert_eq!(ty.as_ref().map(|t| t.name.as_str()), Some("usize"));
+        match &stmts[0] {
+            Stmt::For {
+                binding,
+                iterable,
+                body,
+                ..
+            } => {
+                assert_eq!(binding, "x");
+                assert!(matches!(iterable, Expr::Ident(n, _) if n == "xs"));
+                assert_eq!(body.stmts.len(), 1);
             }
-            other => panic!("expected the index binding, got {other:?}"),
+            other => panic!("expected the raw 'for', got {other:?}"),
         }
-        let while_body = match &outer.stmts[1] {
-            Stmt::While { cond, body, .. } => {
-                let lhs = match cond {
-                    Expr::Binary { op: BinOp::Lt, lhs, .. } => lhs,
-                    other => panic!("expected an index comparison, got {other:?}"),
-                };
-                assert!(matches!(**lhs, Expr::Ident(ref n, _) if n == "#for0_i"));
-                body
-            }
-            other => panic!("expected the while, got {other:?}"),
-        };
-        assert_eq!(while_body.stmts.len(), 2);
-        let inner = match &while_body.stmts[0] {
-            Stmt::Expr { expr: Expr::Block(b), .. } => b,
-            other => panic!("expected the element block, got {other:?}"),
-        };
-        match &inner.stmts[0] {
-            Stmt::Let { name, init, .. } => {
-                assert_eq!(name, "x");
-                match init {
-                    Expr::MethodCall { method, args, .. } if method == "get" => {
-                        assert!(matches!(
-                            args[0].value,
-                            Expr::Ident(ref n, _) if n == "#for0_i"
-                        ));
-                    }
-                    other => panic!("expected the element read, got {other:?}"),
-                }
-            }
-            other => panic!("expected the element binding, got {other:?}"),
-        }
-        // The body's statement survives, and the increment is last.
-        assert!(matches!(&inner.stmts[1], Stmt::Expr { .. }));
-        assert!(matches!(&while_body.stmts[1], Stmt::Expr { expr: Expr::Assign { .. }, .. }));
     }
 
     #[test]
-    fn a_non_place_iterable_is_bound_to_a_temporary_first() {
-        // A call result is evaluated once, into `#for0`, which the desugared
-        // block owns and frees — the reason `for x in make()` is not a call
-        // per iteration.
-        let p = parse("fun main() {\n    for x in make() {\n        print(x)\n    }\n}");
-        let stmts = match &p.functions[0].body {
-            FunctionBody::Block(b) => &b.stmts,
+    fn a_bare_break_or_continue_is_a_loop_control_statement() {
+        let p = parse("fun main() {\n    while true {\n        break\n    }\n}");
+        let outer = match &p.functions[0].body {
+            FunctionBody::Block(b) => b,
             _ => panic!("expected block body"),
         };
-        let outer = match &stmts[0] {
-            Stmt::Expr { expr: Expr::Block(b), .. } => b,
-            other => panic!("expected a desugared block, got {other:?}"),
-        };
-        assert_eq!(outer.stmts.len(), 3);
-        match &outer.stmts[0] {
-            Stmt::Let { name, init, .. } => {
-                assert_eq!(name, "#for0");
-                assert!(matches!(init, Expr::Call { .. }));
-            }
-            other => panic!("expected the sequence binding, got {other:?}"),
-        }
-        match &outer.stmts[2] {
-            Stmt::While { cond, .. } => match cond {
-                Expr::Binary { rhs, .. } => match &**rhs {
-                    Expr::MethodCall { receiver, method, .. } => {
-                        assert_eq!(method, "len");
-                        assert!(matches!(**receiver, Expr::Ident(ref n, _) if n == "#for0"));
-                    }
-                    other => panic!("expected the length call, got {other:?}"),
-                },
-                other => panic!("expected an index comparison, got {other:?}"),
-            },
+        let inner = match &outer.stmts[0] {
+            Stmt::While { body, .. } => body,
             other => panic!("expected the while, got {other:?}"),
-        }
+        };
+        assert!(matches!(inner.stmts[0], Stmt::Break { .. }));
     }
 
     #[test]
@@ -5199,16 +5025,14 @@ mod tests {
         assert!(matches!(expr, Expr::Block(b) if b.stmts.len() == 2));
     }
 
-    /// `break` and `continue` are not Kelp statements (`plan/syntax.md` 11), so
-    /// a bare one is refused by name. Used as a name it stays an expression.
+    /// `break` and `continue` are not keywords (`plan/syntax.md` 2.3), so a
+    /// bare one is the loop control statement (`plan/iterators.md`) and a name
+    /// used in an expression is still a name.
     #[test]
-    fn a_bare_break_or_continue_is_refused_by_name() {
-        let e = parse_err("fun main() {\n    while true {\n        break\n    }\n}");
-        assert!(e.message.contains("'break' is not a Kelp statement"), "got: {}", e.message);
-        let e = parse_err("fun main() {\n    continue\n}");
-        assert!(e.message.contains("'continue' is not a Kelp statement"), "got: {}", e.message);
-        // A name, not a statement.
+    fn break_and_continue_stay_ordinary_names_outside_statement_position() {
         let p = parse("fun main() {\n    val break = 2\n    print(break)\n}");
+        assert_eq!(p.functions.len(), 1);
+        let p = parse("fun main() {\n    val continue = 3\n    print(continue + 1)\n}");
         assert_eq!(p.functions.len(), 1);
     }
 }

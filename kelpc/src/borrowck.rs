@@ -265,6 +265,13 @@ pub struct FnDrops {
     at_return: HashMap<Span, Vec<DropTarget>>,
     at_assign: HashMap<Span, Vec<DropTarget>>,
     at_try: HashMap<Span, Vec<DropTarget>>,
+    /// The owned locals freed by the `break` at `span`, on the way out of the
+    /// loop: only the locals declared *inside* that loop, in reverse
+    /// declaration order. A `break` leaves the frame alive, so unlike a
+    /// `return` it must not free the enclosing scope's locals.
+    at_break: HashMap<Span, Vec<DropTarget>>,
+    /// The same, for the `continue` at `span` (`plan/iterators.md`).
+    at_continue: HashMap<Span, Vec<DropTarget>>,
     /// The expressions that *move* an owned binding's value out of it and
     /// therefore have to clear the binding's slot after copying the value out
     /// — one entry per moved expression, so codegen can ask about the node it
@@ -335,6 +342,25 @@ impl DropPlan {
         self.functions
             .get(function)
             .and_then(|f| f.at_try.get(&span))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The owned locals freed by the `break` at `span`: every local declared
+    /// inside the loop being left, innermost first.
+    pub fn at_break(&self, function: &str, span: Span) -> &[DropTarget] {
+        self.functions
+            .get(function)
+            .and_then(|f| f.at_break.get(&span))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The owned locals freed by the `continue` at `span`.
+    pub fn at_continue(&self, function: &str, span: Span) -> &[DropTarget] {
+        self.functions
+            .get(function)
+            .and_then(|f| f.at_continue.get(&span))
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
@@ -587,6 +613,10 @@ struct Ctx {
     /// a written `while` over an index pushes nothing, which is the supported
     /// way to mutate a list a loop walks.
     iterating: Vec<tir::IteratedPlace>,
+    /// For each loop currently being checked, the `scopes.len()` at its entry:
+    /// a `break`/`continue` frees every owned local declared in the scopes at
+    /// or above this mark, and nothing outside the loop (`plan/iterators.md`).
+    loop_marks: Vec<usize>,
     /// Which owner root is currently borrowed, and how, for the whole frame.
     /// Frame-wide rather than on the root's `VarState` because a retarget
     /// inside an inner block may reach a root declared in an outer one, and
@@ -1888,6 +1918,7 @@ fn check_function(
         enums: enums.clone(),
         maybe_moved: std::collections::HashSet::new(),
         iterating: Vec::new(),
+        loop_marks: Vec::new(),
         pins: HashMap::new(),
     };
     for (index, (name, ty)) in f.params.iter().enumerate() {
@@ -2044,6 +2075,23 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
             }
             Ok(())
         }
+        // A `break`/`continue` frees every owned local declared inside the
+        // loop it leaves, which is `live_drops_since_loop`. The innermost loop
+        // is the one at the top of `loop_marks`, pushed by `check_while`.
+        tir::Stmt::Break { span } => {
+            let drops = live_drops_since_loop(ctx);
+            if !drops.is_empty() {
+                ctx.plan.at_break.insert(*span, drops);
+            }
+            Ok(())
+        }
+        tir::Stmt::Continue { span } => {
+            let drops = live_drops_since_loop(ctx);
+            if !drops.is_empty() {
+                ctx.plan.at_continue.insert(*span, drops);
+            }
+            Ok(())
+        }
         tir::Stmt::Expr(e) => {
             // A borrow produced by a statement's *temporary* — `print(l.get(0))`,
             // where the view is consumed inside the statement — is released at
@@ -2100,6 +2148,7 @@ fn stmt_mentions(stmt: &tir::Stmt, name: &str) -> bool {
         tir::Stmt::Return { value, .. } => {
             value.as_ref().map_or(false, |v| expr_mentions(v, name))
         }
+        tir::Stmt::Break { .. } | tir::Stmt::Continue { .. } => false,
         tir::Stmt::Expr(e) => expr_mentions(e, name),
     }
 }
@@ -2202,11 +2251,19 @@ fn check_let_init(init: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 /// to move before returning are still available to the code that runs after
 /// it, and marking them moved would reject ordinary `return early` code.
 fn diverges(block: &tir::Block) -> bool {
-    matches!(block.stmts.last(), Some(tir::Stmt::Return { .. }))
+    matches!(
+        block.stmts.last(),
+        Some(tir::Stmt::Return { .. })
+            | Some(tir::Stmt::Break { .. })
+            | Some(tir::Stmt::Continue { .. })
+    )
 }
 
 fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()> {
     let before = ctx.snapshot();
+    // Every scope the body opens sits at or above this mark; a `break` or
+    // `continue` in it frees the owned locals those scopes declared.
+    ctx.loop_marks.push(ctx.scopes.len());
 
     // First pass: one iteration.
     check_value(cond, ctx)?;
@@ -2217,6 +2274,7 @@ fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()>
     // (loops aren't guaranteed to run only once).
     check_value(cond, ctx)?;
     check_block(body, ctx)?;
+    ctx.loop_marks.pop();
 
     // The loop may also run zero times, so nothing here becomes
     // *definitely* moved unless it already was before the loop. A body that
@@ -2229,6 +2287,22 @@ fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()>
     let after = ctx.snapshot();
     ctx.merge_into(before, after);
     Ok(())
+}
+
+/// Every live owned local declared inside the innermost loop, innermost scope
+/// first — what a `break`/`continue` there has to free (`plan/iterators.md`).
+/// The mark is `scopes.len()` when `check_while` started, so the slice from it
+/// holds the loop body's own scope and every scope nested inside it, and
+/// nothing declared outside the loop.
+fn live_drops_since_loop(ctx: &Ctx) -> Vec<DropTarget> {
+    let Some(&mark) = ctx.loop_marks.last() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for scope in ctx.scopes[mark..].iter().rev() {
+        out.extend(live_drops(scope.owned.iter()));
+    }
+    out
 }
 
 fn check_if(then_block: &tir::Block, else_block: &Option<tir::Block>, ctx: &mut Ctx) -> Result<()> {
