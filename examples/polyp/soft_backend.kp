@@ -22,7 +22,6 @@ impl "deps/polyp/soft/damage"
 impl "deps/polyp/soft/draw"
 impl "deps/polyp/soft/event"
 impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/frac"
 impl "deps/polyp/soft/font"
 impl "deps/polyp/soft/platform"
 impl "std/option"
@@ -272,6 +271,7 @@ pub datac SoftBackend(
     var entry_builds: i32,
     var measures: i32,
     var arranges: i32,
+    var painted: i32,
     var input: List<event.Event>,
     var pending: List<core.Event>,
     var script: List<core.Event>,
@@ -300,6 +300,7 @@ pub fun new().R: SoftBackend = SoftBackend(
     entry_builds = 0,
     measures = 0,
     arranges = 0,
+    painted = 0,
     input = List.empty(),
     pending = List.empty(),
     script = List.empty(),
@@ -329,7 +330,7 @@ fun copy_props(p: &core.Props).R: core.Props {
     out.bold = p.bold
     out.label = String.from_str(p.label.as_str())
     out.checked = p.checked
-    out.fraction = p.fraction
+    out.permille = p.permille
     out.spacing = p.spacing
     out.height = p.height
     out.margin = p.margin
@@ -474,22 +475,25 @@ fun collect_entries(kids: &List<SNode>, out: mut List<i32>) {
     }
 }
 
-fun find_text(kids: &List<SNode>, id: i32).R: option.Option<String> {
+// Find the entry widget at `id` and copy its text into `out`. A `bool` and a caller-owned buffer
+// rather than an `Option<String>`: a keyable `Option<String>` makes the compiler emit a derived
+// equality that compares the string through `kelp_map_key_eq`, a hosted runtime symbol a bare-metal
+// image has no body for (`plan/polyp-v3.md`, stage 4).
+fun find_text(kids: &List<SNode>, id: i32, out: mut String).R: bool {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
         if n.slot == id {
-            return option.Option.Some(value = String.from_str(n.props.text.as_str()))
+            out.clear()
+            out.push_str(n.props.text.as_str())
+            return true
         }
-        when find_text(n.kids, id) {
-            Some(found) -> {
-                return option.Option.Some(value = found)
-            }
-            None -> {}
+        if find_text(n.kids, id, out) {
+            return true
         }
         i += 1
     }
-    return option.Option.None
+    return false
 }
 
 fun find_path(kids: &List<SNode>, base: &core.Path, id: i32).R: option.Option<core.Path> {
@@ -1205,7 +1209,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
         val _ = font.draw_text(f, cs, r.x + th.box + th.gap, r.y + (r.h - thh) / 2, n.props.label.as_str(), sc, st.fg)
     } else if k == core.KIND_PROGRESS {
         val _ = draw.fill_round_rect(f, cs, r.x, r.y, r.w, r.h, st.radius, th.panel)
-        val permille = frac.of(n.props.fraction)
+        val permille = n.props.permille
         var fw = (r.w - 2) * permille / 1000
         if fw < 0 {
             fw = 0
@@ -1566,6 +1570,7 @@ pub fun frame<P: platform.Platform, S, M>(
     val tick = core.frame_step(backend, tree, state, view, update)
     backend.layout()
     val painted = backend.paint(f)
+    backend.note_painted(painted.count())
     if painted.count() > 0 {
         platform.present(f, painted)
     }
@@ -1658,6 +1663,14 @@ fun mut SoftBackend.reset_counts() {
 fun SoftBackend.measure_count().R: i32 = measures
 
 fun SoftBackend.arrange_count().R: i32 = arranges
+
+// The number of rectangles the last `paint` returned, which is what `present` was handed. A frame
+// driver reports it per step, and an idle frame reads 0 because `paint` returned nothing.
+fun SoftBackend.last_painted().R: i32 = painted
+
+fun mut SoftBackend.note_painted(n: usize) {
+    painted = n.to_i32()
+}
 
 fun SoftBackend.damage_count().R: usize = self.damage.count()
 
@@ -1867,13 +1880,12 @@ impl core.Backend for SoftBackend {
         if !root.is_empty() && root.get(0).slot == id {
             return String.from_str(root.get(0).props.text.as_str())
         }
+        var out: String = String.from_str("")
         if root.is_empty() {
-            return String.from_str("")
+            return out
         }
-        return when find_text(root.get(0).kids, id) {
-            Some(t) -> t
-            None -> String.from_str("")
-        }
+        val _ = find_text(root.get(0).kids, id, out)
+        return out
     }
 
     fun Self.entry_ids().R: List<i32> {

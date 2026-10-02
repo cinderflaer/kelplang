@@ -9,6 +9,7 @@
 // scripted input `examples/polyp-todo/smoke.sh` gives the GTK backend, and prints the same summary,
 // so the two backends' counters can be compared line by line.
 impl "deps/polyp/core"
+impl "deps/polyp/diag"
 impl "deps/polyp/headless_backend"
 impl "deps/todo/app"
 impl "std/env"
@@ -112,6 +113,11 @@ fun run_duplicate_key() {
     print(patches.len())
 }
 
+// The report's sink: this program prints each line the way `examples/polyp-todo/smoke.sh` reads it.
+fun say(line: str) {
+    print(line)
+}
+
 fun run_headless_todo() {
     var backend = headless_backend.new(script = app.events())
     val final = core.run(
@@ -120,8 +126,12 @@ fun run_headless_todo() {
         view = app.view,
         update = app.update,
     )
+    // `core.run` leaves the counters behind; the entry texts are `diag`'s snapshot, because a
+    // `List<String>` global cannot live in the core (plan/polyp-v3.md, stage 4).
+    diag.capture(backend)
+    val entry = diag.entry_text(0)
     print("-- todo --")
-    app.report(final)
+    app.report(final, entry.as_str(), say)
     print("-- tree --")
     print(headless_backend.dump(backend))
 }

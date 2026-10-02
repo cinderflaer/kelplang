@@ -8,7 +8,6 @@
 // The split is plan/polyp-v3.md. v2's matching rules, keys, builder and counters are unchanged;
 // the GTK calls moved to `gtk_backend.kp` and `lib.kp` is the facade the examples import.
 impl "std/atomic"
-impl "std/fmt"
 impl "std/option"
 impl "std/str"
 
@@ -33,15 +32,19 @@ pub const ALIGN_CENTER: i32 = 2
 pub const ALIGN_END: i32 = 3
 
 // The counters a smoke run reads. They are atomics because v2's were and the shape cost nothing:
-// a nested function cannot hold a passdown the frame also holds (plan/syntax.md 12.5).
-pd val stat_created: AtomicI32 = AtomicI32.new(0)
-pd val stat_updated: AtomicI32 = AtomicI32.new(0)
-pd val stat_removed: AtomicI32 = AtomicI32.new(0)
-pd val stat_live: AtomicI32 = AtomicI32.new(0)
-pd val stat_entries: AtomicI32 = AtomicI32.new(0)
-pd var stat_entry_texts: List<String> = List.empty()
-pd val focus_seen_flag: AtomicBool = AtomicBool.new(false)
-pd val focus_lost_flag: AtomicBool = AtomicBool.new(false)
+// a nested function cannot hold a passdown the frame also holds (plan/syntax.md 12.5). They are
+// `static`s rather than passdowns so a freestanding image carries them too: a `pd`'s initializer
+// runs through `kelp_init_pds`, which only the hosted entry point calls, while an `Atomic` static
+// is data the linker places and its methods write through a shared borrow, which needs no
+// `unsafe`. The entry-text snapshot that is a `List<String>` cannot be a static, so it lives in
+// `diag.kp`, which a freestanding project does not import (`plan/polyp-v3.md`, stage 4).
+static stat_created: AtomicI32 = AtomicI32.new(0)
+static stat_updated: AtomicI32 = AtomicI32.new(0)
+static stat_removed: AtomicI32 = AtomicI32.new(0)
+static stat_live: AtomicI32 = AtomicI32.new(0)
+static stat_entries: AtomicI32 = AtomicI32.new(0)
+static focus_seen_flag: AtomicBool = AtomicBool.new(false)
+static focus_lost_flag: AtomicBool = AtomicBool.new(false)
 
 // The kinds a user can activate, so the kinds a backend gives a widget id and a signal handler.
 pub fun interactive(kind: i32).R: bool = kind == KIND_ENTRY || kind == KIND_BUTTON || kind == KIND_CHECKBOX
@@ -94,7 +97,7 @@ pub enum Node<M> {
     Entry(val text: String, val on_change: fun (String).R: M)
     Button(val label: String, val on_click: M)
     Checkbox(val label: String, val checked: bool, val on_toggle: M)
-    Progress(val fraction: f64)
+    Progress(val permille: i32)
     Separator
     Scrolled(val children: List<Child<M>>, val spacing: i32)
 }
@@ -148,6 +151,35 @@ pub fun key_is_none(k: &Key).R: bool = when k {
     else -> false
 }
 
+// `Key` and `Event` declare their own `Map` key pair, which is what stops the compiler emitting the
+// derived `kelp_hash_<T>`/`kelp_eq_<T>` pair for them. The derived equality compares a `String`
+// field through `kelp_map_key_eq`, a hosted runtime symbol a bare-metal image has no body for, and
+// the derived pair is emitted for every keyable type in the program whether or not anything uses it
+// as a key (Polyp v3 stage 4; `plan/polyp-v3.md` records the finding). A declared pair is used
+// instead of the derived one, so the two below are a real hash and a real field-by-field
+// comparison, and a `Map` keyed by either type still works on both backends.
+
+// FNV-1a over a string's bytes, built from the two `str` operations a freestanding image lowers
+// itself. Equal strings hash equal, which is the whole contract a key's hash owes.
+pub fun hash_str(s: str).R: u64 {
+    var h: u64 = 14695981039346656037
+    val n = str.len(s)
+    var i: usize = 0
+    while i < n {
+        h = (h ^ str.byte(s, i).to_u64()) * 1099511628211
+        i += 1
+    }
+    return h
+}
+
+fun Key.hash().R: u64 = when self {
+    None -> 3
+    Str(s) -> hash_str(s.as_str())
+    Int(n) -> hash_str("int") ^ n.to_u64()
+}
+
+fun Key.eq(other: &Key).R: bool = key_eq(self, other)
+
 pub fun clone_key(k: &Key).R: Key = when k {
     None -> Key.None
     Str(s) -> Key.Str(s = String.from_str(s.as_str()))
@@ -161,7 +193,7 @@ fun duplicate_message(k: &Key).R: String = when k {
         str.concat(head.as_str(), "' among the children of one container")
     }
     Int(n) -> {
-        val shown = fmt.int(n)
+        val shown = str.from_i64(n)
         val head = str.concat("polyp: duplicate key ", shown.as_str())
         str.concat(head.as_str(), " among the children of one container")
     }
@@ -242,8 +274,11 @@ fun mut Children<M>.checkbox(label: str, checked: bool, on_toggle: move M) {
     self.push_node(Node.Checkbox(label = String.from_str(label), checked = checked, on_toggle = on_toggle))
 }
 
-fun mut Children<M>.progress(fraction: f64) {
-    self.push_node(Node.Progress(fraction = fraction))
+// The fraction is an integer permille (`0..=1000`), not an `f64`: a f64 comparison on a
+// bare-metal riscv64 target is a `__eqdf2` soft-float call, and a view that computed the ratio
+// with floats would need a division helper too (`plan/polyp-v3.md`, stage 4).
+fun mut Children<M>.progress(permille: i32) {
+    self.push_node(Node.Progress(permille = permille))
 }
 
 fun mut Children<M>.separator() {
@@ -390,7 +425,7 @@ pub datac Props(
     var bold: bool,
     var label: String,
     var checked: bool,
-    var fraction: f64,
+    var permille: i32,
     var spacing: i32,
     var height: i32,
     var margin: i32,
@@ -427,6 +462,38 @@ pub fun clone_event(e: &Event).R: Event = when e {
     Edit(index, text) -> Event.Edit(index = index, text = String.from_str(text.as_str()))
     Focus(index) -> Event.Focus(index = index)
     Quit -> Event.Quit
+}
+
+// The other half of the declared key pair the note above the `Key` one explains.
+fun Event.hash().R: u64 = when self {
+    Idle -> 1
+    Post(id) -> hash_str("post") ^ id.to_u64()
+    Edit(index, text) -> ((hash_str("edit") ^ index.to_u64()) * 31) ^ hash_str(text.as_str())
+    Focus(index) -> hash_str("focus") ^ index.to_u64()
+    Quit -> 2
+}
+
+fun Event.eq(other: &Event).R: bool = when self {
+    Idle -> when other {
+        Idle -> true
+        else -> false
+    }
+    Post(id) -> when other {
+        Post(other_id) -> id == other_id
+        else -> false
+    }
+    Edit(index, text) -> when other {
+        Edit(other_index, other_text) -> index == other_index && str.eq(text.as_str(), other_text.as_str())
+        else -> false
+    }
+    Focus(index) -> when other {
+        Focus(other_index) -> index == other_index
+        else -> false
+    }
+    Quit -> when other {
+        Quit -> true
+        else -> false
+    }
 }
 
 // What a backend is. `apply` is one line in each backend: the walk that turns a path into a widget
@@ -497,7 +564,7 @@ pub fun props_default().R: Props = Props(
     bold = false,
     label = String.from_str(""),
     checked = false,
-    fraction = 0.0,
+    permille = 0,
     spacing = 0,
     height = 0,
     margin = -1,
@@ -533,8 +600,8 @@ pub fun props_of<M>(node: &Node<M>).R: Props {
             p.label = String.from_str(label.as_str())
             p.checked = checked
         }
-        Progress(fraction) -> {
-            p.fraction = fraction
+        Progress(permille) -> {
+            p.permille = permille
         }
         Separator -> {}
         Scrolled(_, spacing) -> {
@@ -609,8 +676,8 @@ fun node_props_eq<M>(a: &Node<M>, b: &Node<M>).R: bool = when a {
         Checkbox(lb, cb, _) -> str.eq(la.as_str(), lb.as_str()) && ca == cb
         else -> false
     }
-    Progress(fa) -> when b {
-        Progress(fb) -> fa == fb
+    Progress(pa) -> when b {
+        Progress(pb) -> pa == pb
         else -> false
     }
     Separator -> when b {
@@ -893,7 +960,6 @@ pub fun reset_stats() {
     stat_removed.store(value = 0, order = seq())
     stat_live.store(value = 0, order = seq())
     stat_entries.store(value = 0, order = seq())
-    stat_entry_texts.clear()
     focus_seen_flag.store(value = false, order = seq())
     focus_lost_flag.store(value = false, order = seq())
 }
@@ -972,8 +1038,9 @@ pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: 
     return Tick.Idle(tree = current)
 }
 
-// The counters, the entry count and the entry texts after a run, so a program that drove its own
-// frames reads the same values `run` leaves behind.
+// The counters and the entry count after a run, so a program that drove its own frames reads the
+// same values `run` leaves behind. The entry texts are `diag.capture`'s, because the snapshot is a
+// `List<String>` and cannot live in this module (plan/polyp-v3.md, stage 4).
 pub fun publish<B: Backend>(backend: &B) {
     snapshot(backend, backend.focus())
     val st = backend.stats()
@@ -982,13 +1049,6 @@ pub fun publish<B: Backend>(backend: &B) {
     stat_removed.store(value = st.removed, order = seq())
     stat_live.store(value = st.live, order = seq())
     stat_entries.store(value = backend.entries_built(), order = seq())
-    stat_entry_texts.clear()
-    val ids = backend.entry_ids()
-    var i: usize = 0
-    while i < ids.len() {
-        stat_entry_texts.push(backend.entry_text(ids.get(i)))
-        i += 1
-    }
 }
 
 // What the loop runs on: the state, the tree it last showed, the patches between them, and the
@@ -1071,13 +1131,3 @@ pub fun focus_survived().R: bool = !focus_lost_flag.load(order = seq())
 pub fun focus_present().R: bool = focus_seen_flag.load(order = seq())
 
 pub fun entries_built().R: i32 = stat_entries.load(order = seq())
-
-// The live text of the index-th entry of the tree the run finished with, or "" when there was no
-// such entry. A diagnostic: it reads what the display showed, not the model.
-pub fun entry_text(index: i32).R: String {
-    if index < 0 || index.to_usize() >= stat_entry_texts.len() {
-        return String.from_str("")
-    }
-    val text = stat_entry_texts.get(index.to_usize())
-    return String.from_str(text.as_str())
-}

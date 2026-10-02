@@ -36,6 +36,11 @@ fun arm_smoke() {
     }
 }
 
+// The report's sink: the GTK program prints each line the way the smoke script reads it.
+fun say(line: str) {
+    print(line)
+}
+
 fun main() {
     if smoke_enabled() {
         arm_smoke()
@@ -49,5 +54,6 @@ fun main() {
         view = app.view,
         update = app.update,
     )
-    app.report(final)
+    val entry = polyp.entry_text(0)
+    app.report(final, entry.as_str(), say)
 }

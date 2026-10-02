@@ -275,9 +275,13 @@ fun checkbox_widget(props: &core.Props).R: gtk.Widget {
     return w
 }
 
+// The core carries a progress fraction as an integer permille, so the one display that wants an
+// `f64` converts it here. Hosted float arithmetic: no bare-metal build emits this module.
+fun fraction_of(permille: i32).R: f64 = permille.to_f64() / 1000.0
+
 fun progress_widget(props: &core.Props).R: gtk.Widget {
     val w = gtk.gtk_progress_bar_new()
-    gtk.gtk_progress_bar_set_fraction(w, props.fraction)
+    gtk.gtk_progress_bar_set_fraction(w, fraction_of(props.permille))
     return w
 }
 
@@ -407,7 +411,7 @@ fun apply_props_to(rec: mut Mount, props: &core.Props, focus: gtk.Widget) {
         gtk.gtk_check_button_set_active(w, bool_i32(props.checked))
         gtk.g_signal_handler_unblock(w, rec.handler)
     } else if rec.kind == core.KIND_PROGRESS {
-        gtk.gtk_progress_bar_set_fraction(w, props.fraction)
+        gtk.gtk_progress_bar_set_fraction(w, fraction_of(props.permille))
     } else if rec.kind == core.KIND_SCROLLED {
         gtk.gtk_box_set_spacing(gtk.as_box(rec.inner), props.spacing)
     }

@@ -1,0 +1,34 @@
+// The run diagnostics a hosted program reads after a run: the live text of each entry widget, as
+// the display showed it (Polyp v3 stage 4).
+//
+// It is a module of its own because its one global is a `pd var List<String>`. A freestanding
+// build refuses every passdown (its initializer runs through `kelp_init_pds`, which only the hosted
+// entry point calls) and a static cannot hold a heap type, so the counter set lives in `core.kp`
+// as `Atomic` statics and this one snapshot lives here, where a project that must not carry a `pd`
+// simply does not import it. plan/polyp-v3.md, stage 4 is the design.
+impl "deps/polyp/core"
+
+// One entry text per entry widget, in tree order, as of the last `capture`.
+pd var entry_texts: List<String> = List.empty()
+
+// Take the snapshot the counters do not carry. A program driven by `core.run` calls this once,
+// after the run, before it reads `entry_text`.
+pub fun capture<B: core.Backend>(backend: &B) {
+    entry_texts.clear()
+    val ids = backend.entry_ids()
+    var i: usize = 0
+    while i < ids.len() {
+        entry_texts.push(backend.entry_text(ids.get(i)))
+        i += 1
+    }
+}
+
+// The live text of the index-th entry of the tree the run finished with, or "" when there was no
+// such entry. A diagnostic: it reads what the display showed, not the model.
+pub fun entry_text(index: i32).R: String {
+    if index < 0 || index.to_usize() >= entry_texts.len() {
+        return String.from_str("")
+    }
+    val text = entry_texts.get(index.to_usize())
+    return String.from_str(text.as_str())
+}

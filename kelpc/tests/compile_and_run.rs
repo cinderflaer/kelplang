@@ -14535,11 +14535,14 @@ const POLYP_UI_EXPECTED: &str = "hit\n0\n1\n2\n3\n-1\norder\n0\n1\n2\n3\n0\n1\n2
 
 /// Polyp v3 stage 3: the todo program on the soft backend, at both golden sizes.
 ///
-/// `examples/polyp-todo-soft` links `examples/polyp-todo/src/app.kp` unchanged and drives
-/// `soft_backend.frame` once per scripted event, so its final model and the library's counters
-/// are the ones `examples/polyp-todo/smoke.sh` and `examples/polyp-core-test` produce. The
-/// framebuffer checksum after every frame is the golden value, and `POLYP_SOFT_SIZE=big` reruns
-/// the same binary at 800x600 for the second golden set.
+/// `examples/polyp-todo-soft` links `examples/polyp-todo/src/app.kp` (the program) and
+/// `examples/polyp-todo/src/scenario.kp` (the driver the framebuffer kernels share with it), so its
+/// final model and the library's counters are the ones `examples/polyp-todo/smoke.sh` and
+/// `examples/polyp-core-test` produce. It prints one `step <n> checksum <hex> dirty <count>` line
+/// per frame and then the report, and every line here is the golden value; `POLYP_SOFT_SIZE=big`
+/// reruns the same binary at 800x600 for the second golden set, and `POLYP_SOFT_SIZE=kernel` at the
+/// 320x200 the framebuffer kernels use, which is the expected output the two kernels below compare
+/// against.
 #[test]
 fn polyp_todo_runs_on_the_soft_backend_with_the_same_counters() {
     let bin = out_path("polyp_todo_soft");
@@ -14579,9 +14582,77 @@ fn polyp_todo_runs_on_the_soft_backend_with_the_same_counters() {
     );
 }
 
-const POLYP_TODO_SOFT_400: &str = "4605422441263621173\n825819539801538037\n3505840153396948632\n6820583268082838876\n15521019796143736421\n7926694901207617612\n1386295763497285285\n10238765916012351741\n18031672142022254867\n9923954280583717275\n1358063117436742439\n1358063117436742439\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n";
+const POLYP_TODO_SOFT_400: &str = "step 0 checksum 0x3fe9bf4f4c216435 dirty 1
+step 1 checksum 0x0b75e67efe727df5 dirty 1
+step 2 checksum 0x30a73f0b7686ae98 dirty 1
+step 3 checksum 0x5ea79458670ced5c dirty 2
+step 4 checksum 0xd765bd454cf40665 dirty 1
+step 5 checksum 0x6e014703e561504c dirty 2
+step 6 checksum 0x133d1ca6e8e276a5 dirty 1
+step 7 checksum 0x8e17675a724b10fd dirty 2
+step 8 checksum 0xfa3d5e46fb8b2113 dirty 2
+step 9 checksum 0x89b8f7d6bd68e19b dirty 2
+step 10 checksum 0x12d8cf35c1606b27 dirty 3
+step 11 checksum 0x12d8cf35c1606b27 dirty 0
+-- todo --
+2
+alpha
+false
+beta
+true
+7
+12
+17
+22
+22
+22
+22
+10
+5
+17
+true
+true
+1
+gamma
 
-const POLYP_TODO_SOFT_800: &str = "17312697123900647733\n17602737083526760309\n17959363302367364856\n4580469716640004092\n15364558893530403877\n10346603115030226028\n16996074193763166181\n6719299833503821565\n16452200274034455487\n16482906517761808007\n17632729119990792263\n17632729119990792263\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n";
+end
+";
+
+const POLYP_TODO_SOFT_800: &str = "step 0 checksum 0xf0430e4ebe066935 dirty 1
+step 1 checksum 0xf4497c1d3a354775 dirty 1
+step 2 checksum 0xf93c79c54dcb06f8 dirty 1
+step 3 checksum 0x3f9118f05cc2f7fc dirty 2
+step 4 checksum 0xd539e0e8a372d425 dirty 1
+step 5 checksum 0x8f9684b6e753a46c dirty 2
+step 6 checksum 0xebde2f6e1f6fe7e5 dirty 1
+step 7 checksum 0x5d3fbf9923562efd dirty 2
+step 8 checksum 0xe451f4fb536873bf dirty 2
+step 9 checksum 0xe4bf0c25d129d687 dirty 2
+step 10 checksum 0xf4b409b661bcc047 dirty 3
+step 11 checksum 0xf4b409b661bcc047 dirty 0
+-- todo --
+2
+alpha
+false
+beta
+true
+7
+12
+17
+22
+22
+22
+22
+10
+5
+17
+true
+true
+1
+gamma
+
+end
+";
 
 /// Polyp v3 stage 3: `PpmPlatform` writes each presented frame when `POLYP_DUMP_DIR` is set.
 #[test]

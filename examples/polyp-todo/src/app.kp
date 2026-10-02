@@ -1,9 +1,12 @@
-// The todo list program itself, with no display: the model, the view, the update and the scripted
-// input sequence. `examples/polyp-todo/src/main.kp` runs it on the GTK backend and
-// `examples/polyp-core-test` runs the same script on the headless one, so the counters the two
-// smoke runs compare are the same program's.
+// The todo list program itself, with no display: the model, the view, the update, the scripted
+// input sequence and the report. `examples/polyp-todo/src/main.kp` runs it on the GTK backend,
+// `examples/polyp-core-test` runs the same script on the headless one and
+// `examples/polyp-fb-riscv64`/`examples/polyp-fb-x86_64` run it on bare metal, so the counters and
+// the pixels the four runs compare are the same program's. The report writes through a `fun (str)`
+// the caller supplies rather than through `print`, because a freestanding build refuses `print`
+// wherever it appears in a module it compiles and this module is the program both sides run
+// (`plan/polyp-v3.md`, stage 4).
 impl "deps/polyp/core"
-impl "std/fmt"
 impl "std/str"
 
 pub datac Todo(val id: i32, val title: String, var done: bool)
@@ -18,6 +21,12 @@ pub datac Model(
     var marks: List<i32>,
 )
 
+// The other half of the declared key pair the note above `hash_str` explains: `Todo` and `Msg` both
+// hold a `String`, so the derived pair would compare it through the hosted `kelp_map_key_eq`.
+fun Todo.hash().R: u64 = core.hash_str(title.as_str()) ^ id.to_u64()
+
+fun Todo.eq(other: &Todo).R: bool = id == other.id && done == other.done && str.eq(title.as_str(), other.title.as_str())
+
 // Every action names an item by id, not by position, for the same reason the view keys by id.
 pub enum Msg {
     Changed(val text: String)
@@ -25,6 +34,37 @@ pub enum Msg {
     Toggle(val id: i32)
     MoveUp(val id: i32)
     Remove(val id: i32)
+}
+
+fun Msg.hash().R: u64 = when self {
+    Changed(text) -> core.hash_str("changed") ^ core.hash_str(text.as_str())
+    Add -> 4
+    Toggle(id) -> core.hash_str("toggle") ^ id.to_u64()
+    MoveUp(id) -> core.hash_str("moveup") ^ id.to_u64()
+    Remove(id) -> core.hash_str("remove") ^ id.to_u64()
+}
+
+fun Msg.eq(other: &Msg).R: bool = when self {
+    Changed(text) -> when other {
+        Changed(other_text) -> str.eq(text.as_str(), other_text.as_str())
+        else -> false
+    }
+    Add -> when other {
+        Add -> true
+        else -> false
+    }
+    Toggle(id) -> when other {
+        Toggle(other_id) -> id == other_id
+        else -> false
+    }
+    MoveUp(id) -> when other {
+        MoveUp(other_id) -> id == other_id
+        else -> false
+    }
+    Remove(id) -> when other {
+        Remove(other_id) -> id == other_id
+        else -> false
+    }
 }
 
 pub fun initial().R: Model = Model(
@@ -61,12 +101,15 @@ fun done_count(s: Model).R: i32 {
     return n
 }
 
-fun fraction(s: Model).R: f64 {
+// The progress fraction as an integer permille, the way the core carries it: a float division here
+// would be a soft-float call on a bare-metal riscv64 image, which has no FPU (`plan/polyp-v3.md`,
+// stage 4). `frac.of` and `frac.from_permille` used to convert; the core is integer now.
+fun permille(s: Model).R: i32 {
     val total = s.items.len()
     if total == 0 {
-        return 0.0
+        return 0
     }
-    return done_count(s).to_f64() / total.to_f64()
+    return done_count(s) * 1000 / total.to_i32()
 }
 
 // One keyed row per item: the checkbox, the title and the two buttons are the row's children, and
@@ -91,7 +134,7 @@ pub fun view(s: Model).R: core.Node<Msg> {
             var i: usize = 0
             while i < s.items.len() {
                 val item = s.items.get(i)
-                val key = fmt.int(item.id.to_i64())
+                val key = str.from_i64(item.id.to_i64())
                 if item.done {
                     sc.class("todo-done")
                 } else {
@@ -108,7 +151,7 @@ pub fun view(s: Model).R: core.Node<Msg> {
                 i += 1
             }
         }
-        k.progress(fraction(s))
+        k.progress(permille(s))
     }
 }
 
@@ -123,7 +166,7 @@ pub fun update(state: mut Model, msg: Msg) {
         }
         Add -> {
             val draft_now = String.from_str(state.draft.as_str())
-            val has_draft = !str.is_empty(draft_now.as_str())
+            val has_draft = !draft_now.is_empty()
             if has_draft {
                 val id = state.next_id
                 state.next_id = id + 1
@@ -197,32 +240,50 @@ pub fun events().R: List<core.Event> {
     return out
 }
 
-// The final state, then the library's counters. Every line is deterministic, which is what
-// examples/polyp-todo/smoke.sh and the core test read.
-pub fun report(final: Model) {
-    print(final.items.len())
+// One integer line, through whatever sink the run supplied. `str.from_i64` is the compiler's own
+// libc-free builder, so this is the same text a hosted `print` writes.
+fun say_int(out: fun (str), n: i64) {
+    val shown = str.from_i64(n)
+    out(shown.as_str())
+}
+
+fun say_bool(out: fun (str), b: bool) {
+    if b {
+        out("true")
+    } else {
+        out("false")
+    }
+}
+
+// The final state, then the library's counters, one line each. `entry` is the live text of the
+// first entry widget as the display showed it: the core cannot hold that snapshot (a
+// `List<String>` is not a static and a `pd` is refused bare-metal), so `diag.entry_text` or the
+// backend itself supplies it. Every line is deterministic, which is what
+// examples/polyp-todo/smoke.sh, the core test and the framebuffer equivalence test read.
+pub fun report(final: Model, entry: str, out: fun (str)) {
+    say_int(out, final.items.len().to_i64())
     var i: usize = 0
     while i < final.items.len() {
-        print(final.items.get(i).title)
-        print(final.items.get(i).done)
+        out(final.items.get(i).title.as_str())
+        say_bool(out, final.items.get(i).done)
         i += 1
     }
     var m: usize = 0
     while m < final.marks.len() {
-        print(final.marks.get(m))
+        say_int(out, final.marks.get(m).to_i64())
         m += 1
     }
     val st = core.stats()
-    print(st.created)
-    print(st.updated)
-    print(st.removed)
-    print(st.live)
-    print(core.focus_present())
-    print(core.focus_survived())
-    print(core.entries_built())
-    print(core.entry_text(0))
-    print(final.draft)
+    say_int(out, st.created.to_i64())
+    say_int(out, st.updated.to_i64())
+    say_int(out, st.removed.to_i64())
+    say_int(out, st.live.to_i64())
+    say_bool(out, core.focus_present())
+    say_bool(out, core.focus_survived())
+    say_int(out, core.entries_built().to_i64())
+    out(entry)
+    out(final.draft.as_str())
     // A final marker, so the empty draft line above is not the last line: a shell strips trailing
     // newlines, and this keeps it.
-    print("end")
+    out("end")
 }

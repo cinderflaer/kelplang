@@ -1,0 +1,100 @@
+// The scripted todo scenario, shared by every Polyp run: the hosted soft backend, the two
+// bare-metal framebuffer projects (Polyp v3 stage 4).
+//
+// `drive` is the whole scenario as one function. It builds the application's initial state and
+// tree, paints the first frame, schedules every `app.script()` event on the backend's programmatic
+// channel, then calls `soft_backend.frame` once per step until the program quits, emitting one line
+// per step. `SoftBackend.pump` releases exactly one queued `core.Event` per frame, so step 0 is the
+// first frame and step n is the frame that ran scripted event n.
+//
+// `emit` is the one thing a run may do differently: a hosted entry prints the line, a kernel writes
+// the bytes to its UART. The line itself is built here, with integer formatting only (`str.from_i64`
+// and a hex table), so the two sides cannot disagree about how the same checksum reads.
+impl "deps/polyp/core"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft_backend"
+impl "deps/todo/app"
+impl "std/str"
+
+const DIGITS: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102]
+
+// A `u64` as `0x` plus sixteen lowercase hex digits, fixed width so every step line is the same
+// shape and a human can line them up.
+fun hex64(value: u64).R: String {
+    var out: String = String.from_str("0x")
+    var i: i32 = 15
+    while i >= 0 {
+        val nibble = ((value >> (i * 4).to_u64()) & 15).to_usize()
+        out.push(DIGITS.get(nibble))
+        i -= 1
+    }
+    return out
+}
+
+// `step <n> checksum 0x<16 hex digits> dirty <rectangles>`: the shape the framebuffer equivalence
+// test compares between the hosted run and the two kernels.
+pub fun step_line(step: i32, checksum: u64, dirty: i32).R: String {
+    // Every borrow of a temporary has to be bound to a local first (a call that returns a borrow of
+    // its own argument cannot take a value built in the same expression), so the pieces are named.
+    val shown_step = str.from_i64(step.to_i64())
+    val head = str.concat("step ", shown_step.as_str())
+    val bits = str.concat(head.as_str(), " checksum ")
+    val shown_checksum = hex64(checksum)
+    val hex = str.concat(bits.as_str(), shown_checksum.as_str())
+    val tail = str.concat(hex.as_str(), " dirty ")
+    val shown_dirty = str.from_i64(dirty.to_i64())
+    return str.concat(tail.as_str(), shown_dirty.as_str())
+}
+
+// One step's line, so an entry can emit the same text the driver does when it drives its own first
+// frame. `dirty` is the count `paint` returned for that step.
+pub fun report(emit: fun (str), step: i32, checksum: u64, dirty: i32) {
+    val line = step_line(step, checksum, dirty)
+    emit(line.as_str())
+}
+
+// Run the scenario to its quit. The final model is returned so a caller can report it the way
+// `report.kp` does; the counters `core.stats()` reads are the ones the run left behind.
+pub fun drive<P: platform.Platform>(
+    backend: mut soft_backend.SoftBackend,
+    platform: mut P,
+    emit: fun (str),
+).R: app.Model {
+    var state = app.initial()
+    var tree: core.Node<app.Msg> = app.view(state)
+    val surface = platform.framebuffer()
+    backend.resize(surface.width, surface.height)
+    val first = core.create_all(&tree)
+    backend.apply(first)
+    backend.layout()
+    val f0 = platform.framebuffer()
+    val d0 = backend.paint(f0)
+    if d0.count() > 0 {
+        platform.present(f0, d0)
+    }
+    report(emit, 0, fb.checksum(f0), d0.count().to_i32())
+
+    var steps = app.script()
+    var i: usize = 0
+    while i < steps.len() {
+        backend.schedule(core.clone_event(steps.get(i).event))
+        i += 1
+    }
+
+    var n: i32 = 1
+    var running = true
+    while running {
+        when soft_backend.frame(backend = backend, platform = platform, tree = tree, state = state, view = app.view, update = app.update) {
+            Idle(next) -> tree = next
+            Changed(next) -> tree = next
+            Quit(next) -> {
+                tree = next
+                running = false
+            }
+        }
+        report(emit, n, fb.checksum(platform.framebuffer()), backend.last_painted())
+        n += 1
+    }
+    return state
+}

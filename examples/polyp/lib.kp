@@ -5,6 +5,7 @@
 // the thin, stable surface an application imports: the builder, `run`, the stylesheet hook, the
 // scheduled-input helpers and the counters. plan/polyp-v3.md is the design.
 impl "deps/polyp/core"
+impl "deps/polyp/diag"
 impl "deps/polyp/gtk_backend" caps(ui = ["*"])
 impl "std/str"
 
@@ -30,6 +31,7 @@ pub fun button<M>(label: move String, on_click: move M).R: core.Node<M> = core.b
 pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (S).R: core.Node<M>, update: fun (mut S, M)).R: S {
     var backend = gtk_backend.open(title = title, width = width, height = height)
     val final = core.run(backend = backend, init = init, view = view, update = update)
+    diag.capture(backend)
     gtk_backend.close(backend)
     return final
 }
@@ -77,4 +79,4 @@ pub fun entries_built().R: i32 = core.entries_built()
 
 // The live text of the index-th entry of the tree the run finished with, or "" when there was no
 // such entry.
-pub fun entry_text(index: i32).R: String = core.entry_text(index)
+pub fun entry_text(index: i32).R: String = diag.entry_text(index)

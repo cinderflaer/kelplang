@@ -52,6 +52,10 @@ pub fun new(script: move List<core.Event>).R: Headless = Headless(
 
 pub fun empty_path().R: core.Path = core.Path(segs = List.empty())
 
+// The `f64` a text dump shows, from the core's integer permille. Hosted float arithmetic: the
+// permille is the core's, and only a display that wants a fraction converts it.
+fun fraction_of(permille: i32).R: f64 = permille.to_f64() / 1000.0
+
 pub fun copy_props(p: &core.Props).R: core.Props {
     var out = core.props_default()
     out.text = String.from_str(p.text.as_str())
@@ -59,7 +63,7 @@ pub fun copy_props(p: &core.Props).R: core.Props {
     out.bold = p.bold
     out.label = String.from_str(p.label.as_str())
     out.checked = p.checked
-    out.fraction = p.fraction
+    out.permille = p.permille
     out.spacing = p.spacing
     out.height = p.height
     out.margin = p.margin
@@ -356,7 +360,7 @@ fun render(kids: &List<HNode>, level: i32, out: mut List<String>) {
             line = append(line, if n.props.checked { " checked" } else { " unchecked" })
         }
         if n.kind == core.KIND_PROGRESS {
-            val shown_fraction = fmt.float(n.props.fraction, 3)
+            val shown_fraction = fmt.float(fraction_of(n.props.permille), 3)
             line = append(line, " ")
             line = append(line, shown_fraction.as_str())
         }
