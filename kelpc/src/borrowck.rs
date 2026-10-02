@@ -105,13 +105,16 @@
 //! backend's `-O2` build read clean because clang deletes the allocation nothing
 //! reads, which is why the gate is valgrind). See
 //! `tests/fixtures/owned_conditional_move.kp` for the regression.
+//! **A reference binding remembers its owner (open item 33).** A binding of
+//! reference type carries a root set — the owners its value may borrow from —
+//! and `cur = expr` REPLACES it: the old roots' pins are released at the
+//! assignment and the new ones are pinned to the binding's last use. A borrow
+//! made through a cursor is therefore a borrow of the owner, which is why
+//! `var cur = &list; cur = cur.next.get()` is accepted while mutating `list`
+//! under a live cursor stays refused. `plan/provenance.md` is the rule and the
+//! algorithm.
 //!
-//! Known, deliberately out-of-scope gap: `p = &c` *reassigning* an
-//! existing binding to a fresh borrow is checked at the moment of
-//! assignment (conflicts with anything currently active are still caught)
-//! but doesn't persist scope-durable tracking the way a `val`/`var`
-//! *declaration* does: only declaration-time borrows are exercised by any
-//! fixture here. Also out of scope: receiver-form methods, and `&str`
+//! Also out of scope: receiver-form methods (shipped since), and `&str`
 //! return-lifetime elision (moot for now since `&str` isn't routed through
 //! `Ty::Ref` at all).
 //!
@@ -378,7 +381,6 @@ struct VarState {
     /// the old value needs freeing when an assignment overwrites it.
     ty: Ty,
     moved_at: Option<Span>,
-    borrow: BorrowKind,
     /// A pending exclusive borrow, taken for a method call's receiver and not
     /// yet committed (MISSING-n4Bz7). While it is set the place may still be
     /// *read* and shared-borrowed — that is what lets
@@ -387,10 +389,12 @@ struct VarState {
     /// `borrow = Exclusive`, which fails if a shared borrow taken meanwhile is
     /// still live (`f(&mut c, &c)`).
     reserved: bool,
-    /// The place root this binding's value came from, when the binding *is* a
-    /// borrow — the provenance a pattern binding would otherwise lose. See
-    /// `set_origin`.
-    origin: Option<String>,
+    /// The owner roots this binding's value may borrow from, when the binding
+    /// *is* a reference. The provenance a pattern binding would otherwise lose,
+    /// and what makes a pointer local usable as a cursor (open item 33). Empty
+    /// means no recorded provenance: the binding's own name is its root. See
+    /// `set_roots` and `plan/provenance.md`.
+    roots: Vec<String>,
 }
 
 /// An owned local declared in some scope, tracked for the drop plan.
@@ -414,14 +418,59 @@ struct OwnedVar {
     moved: std::collections::BTreeSet<Projection>,
 }
 
-/// One scope-durable borrow: the owner root, and the statement after which
-/// the borrow is dead (the binding's own last use, or a derived binding's).
-/// `usize::MAX` is the old lexical answer: live to the end of the scope that
-/// declared it.
+/// One scope-durable borrow: the owner root, the binding that holds it (or
+/// `None` for a temporary a statement produced), whether it is exclusive, and
+/// the statement after which the borrow is dead.
+///
+/// `holder` is what lets a reassignment of a reference binding release exactly
+/// the borrows that binding held, and it is what lets a statement release only
+/// its own temporaries (`release_unheld_since`) without also releasing the
+/// borrow an assignment stored. `usize::MAX` is the old lexical answer: live to
+/// the end of the scope that declared it.
 #[derive(Clone)]
 struct ScopeBorrow {
     root: String,
+    holder: Option<String>,
+    mutable: bool,
     release_after: usize,
+}
+
+/// The roots a reference binding's value may borrow from, normalized: sorted,
+/// deduplicated, and with a `str` literal's static storage dropped as soon as
+/// a real owner is in the set.
+fn normalize_roots(mut roots: Vec<String>) -> Vec<String> {
+    roots.sort();
+    roots.dedup();
+    if roots.iter().any(|r| r != STATIC_ROOT) {
+        roots.retain(|r| r != STATIC_ROOT);
+    }
+    roots
+}
+
+/// The union of two branches' root sets, the answer a branch merge takes.
+fn union_roots(a: &[String], b: &[String]) -> Vec<String> {
+    let mut out = a.to_vec();
+    out.extend_from_slice(b);
+    normalize_roots(out)
+}
+
+/// The union of two branches' borrow-entry lists, keyed by (holder, root): a
+/// binding one arm points at A and the other at B ends up keeping both roots.
+fn union_borrows(a: &[ScopeBorrow], b: &[ScopeBorrow]) -> Vec<ScopeBorrow> {
+    let mut out: Vec<ScopeBorrow> = Vec::with_capacity(a.len() + b.len());
+    for entry in a.iter().chain(b.iter()) {
+        match out
+            .iter_mut()
+            .find(|o| o.root == entry.root && o.holder == entry.holder)
+        {
+            Some(existing) => {
+                existing.mutable |= entry.mutable;
+                existing.release_after = existing.release_after.max(entry.release_after);
+            }
+            None => out.push(entry.clone()),
+        }
+    }
+    out
 }
 
 #[derive(Clone, Default)]
@@ -437,31 +486,28 @@ struct Scope {
 
 impl Scope {
     fn merge(a: Scope, b: Scope) -> Scope {
-        // Scope-durable borrows recorded before the branch survive it: the
-        // branch's own entries were released when its scope popped, and what
-        // is left is the identical pre-branch set. Dropping them here (as this
-        // used to) lost the release point, so the owner stayed borrowed for the
-        // rest of the scope even after the borrow's last use.
-        let scope_borrows = a.scope_borrows;
+        // Scope-durable borrows recorded before the branch survive it, and the
+        // two arms' entries are unioned: a binding the arms point at different
+        // roots keeps every root, so every owner it may still point at stays
+        // pinned. `merge_into` recomputes the pins from this list.
+        let scope_borrows = union_borrows(&a.scope_borrows, &b.scope_borrows);
         let mut vars = HashMap::new();
         for (name, va) in a.vars {
             let moved_at = va.moved_at.or_else(|| b.vars.get(&name).and_then(|vb| vb.moved_at));
-            // Borrow state doesn't survive a branch merge — both arms'
-            // borrows are already released (each `if`/`else` block pops
-            // its own scope-durable borrows before this runs), so what's
-            // left on either side is whatever state existed going in,
-            // which is identical on both sides by construction.
+            let roots = match b.vars.get(&name) {
+                Some(vb) => union_roots(&va.roots, &vb.roots),
+                None => va.roots.clone(),
+            };
             vars.insert(
                 name,
                 VarState {
                     ty: va.ty.clone(),
                     moved_at,
-                    borrow: va.borrow,
-                    // Identical on both sides for the same reason `borrow` is:
-                    // a reservation is active before the branch and no arm
-                    // releases it, so there is nothing to merge.
+                    // Identical on both sides: a reservation is active before
+                    // the branch and no arm releases it, so there is nothing to
+                    // merge.
                     reserved: va.reserved,
-                    origin: va.origin.clone(),
+                    roots,
                 },
             );
         }
@@ -541,11 +587,59 @@ struct Ctx {
     /// a written `while` over an index pushes nothing, which is the supported
     /// way to mutate a list a loop walks.
     iterating: Vec<tir::IteratedPlace>,
+    /// Which owner root is currently borrowed, and how, for the whole frame.
+    /// Frame-wide rather than on the root's `VarState` because a retarget
+    /// inside an inner block may reach a root declared in an outer one, and
+    /// because a branch merge recomputes it from the merged borrow entries.
+    /// See `plan/provenance.md`.
+    pins: HashMap<String, BorrowKind>,
 }
 
 impl Ctx {
     fn push_scope(&mut self) {
         self.scopes.push(Scope::default());
+    }
+
+    fn pin_of(&self, root: &str) -> BorrowKind {
+        self.pins.get(root).cloned().unwrap_or(BorrowKind::None)
+    }
+
+    fn set_pin(&mut self, root: &str, kind: BorrowKind) {
+        if kind == BorrowKind::None {
+            self.pins.remove(root);
+        } else {
+            self.pins.insert(root.to_string(), kind);
+        }
+    }
+
+    /// Adds one pin without a conflict check: shared counts up, exclusive wins.
+    fn add_pin(&mut self, root: &str, mutable: bool) {
+        let kind = match (self.pin_of(root), mutable) {
+            (_, true) => BorrowKind::Exclusive,
+            (BorrowKind::Exclusive, false) => BorrowKind::Exclusive,
+            (BorrowKind::Shared(n), false) => BorrowKind::Shared(n + 1),
+            (BorrowKind::None, false) => BorrowKind::Shared(1),
+        };
+        self.set_pin(root, kind);
+    }
+
+    /// Rebuilds the frame's pins from the scope-durable entries after a branch
+    /// merge, where one arm's pins and the other's were unioned into one list.
+    fn recompute_pins(&mut self) {
+        let entries: Vec<(String, bool)> = self
+            .scopes
+            .iter()
+            .flat_map(|scope| {
+                scope
+                    .scope_borrows
+                    .iter()
+                    .map(|e| (e.root.clone(), e.mutable))
+            })
+            .collect();
+        self.pins.clear();
+        for (root, mutable) in entries {
+            self.add_pin(&root, mutable);
+        }
     }
 
     /// Ends a block: releases its scope-durable borrows and records the drops
@@ -622,17 +716,34 @@ impl Ctx {
             VarState {
                 ty: ty.clone(),
                 moved_at: None,
-                borrow: BorrowKind::None,
                 reserved: false,
-                origin: None,
+                roots: Vec::new(),
             },
         );
     }
 
-    /// Records that `name` holds a value derived from the place rooted at
-    /// `origin`, when the binding is a borrow. `borrow_root` follows these, and
-    /// that is what lets a binding introduced by a pattern keep its
-    /// provenance:
+    /// Whether `name` is a binding whose value is a reference, so an
+    /// assignment to it retargets provenance rather than replacing a value
+    /// (`plan/provenance.md`).
+    fn binds_reference(&self, name: &str) -> bool {
+        self.lookup(name)
+            .map(|state| is_reference_ty(&state.ty))
+            .unwrap_or(false)
+    }
+
+    fn lookup(&self, name: &str) -> Option<&VarState> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(v) = scope.vars.get(name) {
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    /// Records that `name` holds a value derived from the places in `roots`,
+    /// when the binding is a reference. `borrow_root` follows these, and that
+    /// is what lets a binding introduced by a pattern, or a cursor rebound from
+    /// one owner to another, keep its provenance:
     ///
     /// ```kelp
     /// fun as_str(v: &Json).R: &str {
@@ -647,9 +758,9 @@ impl Ctx {
     /// the payload binding is a shared borrow of `v`'s payload, and returning a
     /// view of it is exactly as safe as returning a view of a field of `v`.
     ///
-    /// **Only borrow-typed bindings are recorded.** A binding of an owned type
-    /// is a *move*, and tracing a root through one would let a view of a local
-    /// masquerade as a view of the parameter:
+    /// **Only reference-typed bindings are recorded.** A binding of an owned
+    /// type is a *move*, and tracing a root through one would let a view of a
+    /// local masquerade as a view of the parameter:
     ///
     /// ```kelp
     /// fun f(x: String).R: &str {
@@ -657,22 +768,25 @@ impl Ctx {
     ///     return y.as_str()    // must stay refused: `y` dies with this frame
     /// }
     /// ```
-    fn set_origin(&mut self, name: &str, origin: Option<String>) {
+    fn set_roots(&mut self, name: &str, roots: Vec<String>) {
         if let Some(state) = self.lookup_mut(name) {
-            state.origin = origin;
+            state.roots = normalize_roots(roots);
         }
     }
 
-    /// The place root `name` is derived from, if it is a borrow of one.
-    /// Innermost scope wins, and a name nothing is recorded for is its own
-    /// root — which is what `borrow_root` falls back to.
-    fn origin_of(&self, name: &str) -> Option<String> {
+    /// The owner roots a place rooted at `name` may borrow from. A binding with
+    /// recorded provenance resolves to that set; anything else is its own root,
+    /// which is what a plain local, a parameter and a `pd` global are.
+    fn roots_of(&self, name: &str) -> Vec<String> {
         for scope in self.scopes.iter().rev() {
             if let Some(state) = scope.vars.get(name) {
-                return state.origin.clone();
+                if !state.roots.is_empty() {
+                    return state.roots.clone();
+                }
+                break;
             }
         }
-        None
+        vec![name.to_string()]
     }
 
     /// Registers an owned local so its drop point can be planned.
@@ -898,13 +1012,14 @@ impl Ctx {
                 span,
             });
         }
-        if v.borrow != BorrowKind::None || v.reserved {
+        let reserved = v.reserved;
+        if self.pin_of(name) != BorrowKind::None || reserved {
             return Err(BorrowError {
                 message: format!("cannot move {} while it is borrowed", display_root(name)),
                 span,
             });
         }
-        if !v.ty.is_copy() {
+        if let Some(v) = self.lookup_mut(name) {
             v.moved_at = Some(span);
         }
         Ok(())
@@ -951,16 +1066,20 @@ impl Ctx {
     /// Assigning a fresh value into `name` reinitializes it (clears moved
     /// state), but only while nothing currently borrows it.
     fn reinit(&mut self, name: &str, span: Span) -> Result<()> {
-        let Some(v) = self.lookup_mut(name) else {
+        if !self.knows(name) {
             return Ok(());
-        };
-        if v.borrow != BorrowKind::None || v.reserved {
+        }
+        if self.pin_of(name) != BorrowKind::None
+            || self.lookup(name).map(|v| v.reserved).unwrap_or(false)
+        {
             return Err(BorrowError {
                 message: format!("cannot assign to {} while it is borrowed", display_root(name)),
                 span,
             });
         }
-        v.moved_at = None;
+        if let Some(v) = self.lookup_mut(name) {
+            v.moved_at = None;
+        }
         Ok(())
     }
 
@@ -973,10 +1092,8 @@ impl Ctx {
     }
 
     fn start_borrow(&mut self, root: &str, mutable: bool, span: Span) -> Result<()> {
-        let Some(v) = self.lookup_mut(root) else {
-            return Ok(());
-        };
-        if v.moved_at.is_some() {
+        let moved = self.lookup(root).map(|v| v.moved_at.is_some()).unwrap_or(false);
+        if moved {
             return Err(BorrowError {
                 message: format!("cannot borrow {}: value was moved", display_root(root)),
                 span,
@@ -987,7 +1104,8 @@ impl Ctx {
         // second exclusive borrow: `xs.insert(0, xs.remove(0))` is still two
         // mutable borrows of one list. `commit` is what rejects a shared
         // borrow that is still live when the receiver's own borrow begins.
-        if v.reserved {
+        let reserved = self.lookup(root).map(|v| v.reserved).unwrap_or(false);
+        if reserved {
             if mutable {
                 return Err(BorrowError {
                     message: format!(
@@ -997,13 +1115,10 @@ impl Ctx {
                     span,
                 });
             }
-            v.borrow = match &v.borrow {
-                BorrowKind::Shared(n) => BorrowKind::Shared(n + 1),
-                _ => BorrowKind::Shared(1),
-            };
+            self.add_pin(root, false);
             return Ok(());
         }
-        v.borrow = match (&v.borrow, mutable) {
+        let new = match (self.pin_of(root), mutable) {
             (BorrowKind::Exclusive, _) => {
                 return Err(BorrowError {
                     message: format!(
@@ -1026,38 +1141,38 @@ impl Ctx {
             (BorrowKind::None, true) => BorrowKind::Exclusive,
             (BorrowKind::None, false) => BorrowKind::Shared(1),
         };
+        self.set_pin(root, new);
         Ok(())
     }
 
     fn end_borrow(&mut self, root: &str) {
-        if let Some(v) = self.lookup_mut(root) {
-            v.borrow = match &v.borrow {
-                BorrowKind::Shared(n) if *n > 1 => BorrowKind::Shared(n - 1),
-                _ => BorrowKind::None,
-            };
-        }
+        let new = match self.pin_of(root) {
+            BorrowKind::Shared(n) if n > 1 => BorrowKind::Shared(n - 1),
+            _ => BorrowKind::None,
+        };
+        self.set_pin(root, new);
     }
 
     /// Phase one of a two-phase borrow: the receiver of a method call is set
     /// aside before its own arguments are checked, so an argument may read the
     /// same place. Nothing is borrow-checked as exclusive yet (MISSING-n4Bz7).
     fn reserve_exclusive(&mut self, root: &str, span: Span) -> Result<()> {
-        let Some(v) = self.lookup_mut(root) else {
+        if !self.knows(root) {
             return Ok(());
-        };
-        if v.moved_at.is_some() {
+        }
+        if self.lookup(root).map(|v| v.moved_at.is_some()).unwrap_or(false) {
             return Err(BorrowError {
                 message: format!("cannot borrow {}: value was moved", display_root(root)),
                 span,
             });
         }
-        if v.reserved {
+        if self.lookup(root).map(|v| v.reserved).unwrap_or(false) {
             return Err(BorrowError {
                 message: format!("cannot borrow {}: already borrowed exclusively", display_root(root)),
                 span,
             });
         }
-        match &v.borrow {
+        match self.pin_of(root) {
             BorrowKind::Exclusive => {
                 return Err(BorrowError {
                     message: format!("cannot borrow {}: already borrowed exclusively", display_root(root)),
@@ -1075,7 +1190,9 @@ impl Ctx {
             }
             BorrowKind::None => {}
         }
-        v.reserved = true;
+        if let Some(v) = self.lookup_mut(root) {
+            v.reserved = true;
+        }
         Ok(())
     }
 
@@ -1102,11 +1219,10 @@ impl Ctx {
     /// live here is a real conflict (`f(&mut c, &c)`), and so is a move, which
     /// `use_value` already refused.
     fn commit_exclusive(&mut self, root: &str, span: Span) -> Result<()> {
-        let Some(v) = self.lookup_mut(root) else {
-            return Ok(());
-        };
-        v.reserved = false;
-        if v.borrow != BorrowKind::None {
+        if let Some(v) = self.lookup_mut(root) {
+            v.reserved = false;
+        }
+        if self.pin_of(root) != BorrowKind::None {
             return Err(BorrowError {
                 message: format!(
                     "cannot borrow {} as exclusive: already borrowed as shared",
@@ -1115,48 +1231,219 @@ impl Ctx {
                 span,
             });
         }
-        v.borrow = BorrowKind::Exclusive;
+        self.set_pin(root, BorrowKind::Exclusive);
         Ok(())
     }
 
     fn register_scope_borrow(&mut self, root: &str) {
+        self.register_held_borrow(root, None, false, usize::MAX);
+    }
+
+    fn register_held_borrow(
+        &mut self,
+        root: &str,
+        holder: Option<&str>,
+        mutable: bool,
+        release_after: usize,
+    ) {
         self.scopes.last_mut().unwrap().scope_borrows.push(ScopeBorrow {
             root: root.to_string(),
-            release_after: usize::MAX,
+            holder: holder.map(|s| s.to_string()),
+            mutable,
+            release_after,
         });
     }
 
-    /// Narrows the scope-durable borrows this `val`/`var` just declared (or
-    /// derives from) so they end after `last`, the statement of the binding's
-    /// own last use. `at` is where the statement's own fresh borrows begin.
-    ///
-    /// A binding whose initializer took a fresh borrow owns those entries; its
-    /// own last use is their release point. A binding that merely *copies* an
-    /// existing borrow (`val q = p`, a `View` bound from one) added no entry
-    /// of its own, so the entries already recorded for the same owner root in
-    /// this block are extended to the copy's last use — that is what keeps
-    /// `val q = p; ...; print(q)` from dropping the pin too early.
-    fn narrow_borrow(&mut self, root: Option<&str>, at: usize, last: usize) {
-        let Some(root) = root else { return };
-        if root == STATIC_ROOT {
-            return;
-        }
-        let Some(scope) = self.scopes.last_mut() else { return };
-        let at = at.min(scope.scope_borrows.len());
-        let fresh: Vec<usize> = (at..scope.scope_borrows.len())
-            .filter(|&i| scope.scope_borrows[i].root == root)
-            .collect();
-        if !fresh.is_empty() {
-            for i in fresh {
-                scope.scope_borrows[i].release_after = last;
+    /// Records that the reference binding `name` holds the borrows of `roots`.
+    /// The entries the initializer just created (untagged, from `at`) are
+    /// tagged with `name` and given `last`, the binding's own last use in its
+    /// block, as release point. A root the initializer did not borrow (an alias
+    /// like `val q = p`, or a pattern binding) gets a fresh pin and entry here;
+    /// that is what keeps `val q = p; ...; print(q)` from dropping the pin too
+    /// early.
+    fn hold(
+        &mut self,
+        name: &str,
+        roots: &[String],
+        mutable: bool,
+        at: usize,
+        last: usize,
+        span: Span,
+    ) -> Result<()> {
+        let at = {
+            let scope = self.scopes.last().unwrap();
+            at.min(scope.scope_borrows.len())
+        };
+        let mut missing: Vec<String> = Vec::new();
+        for root in roots {
+            if root == STATIC_ROOT {
+                continue;
             }
-            return;
-        }
-        for entry in scope.scope_borrows.iter_mut() {
-            if entry.root == root {
-                entry.release_after = entry.release_after.max(last);
+            let tagged = self.scopes.last_mut().unwrap().scope_borrows[at..]
+                .iter_mut()
+                .find(|e| e.holder.is_none() && e.root == *root);
+            match tagged {
+                Some(entry) => {
+                    entry.holder = Some(name.to_string());
+                    entry.release_after = last;
+                    entry.mutable |= mutable;
+                }
+                None => missing.push(root.clone()),
             }
         }
+        for root in missing {
+            self.start_borrow(&root, mutable, span)?;
+            self.register_held_borrow(&root, Some(name), mutable, last);
+        }
+        Ok(())
+    }
+
+    /// Releases every borrow `name` holds and returns the scope that held it
+    /// and the release point it had, so a reassignment can carry both forward.
+    /// `None` when the binding holds no borrow here.
+    fn release_holder(&mut self, name: &str) -> Option<(usize, usize)> {
+        let mut released: Vec<String> = Vec::new();
+        let mut spot: Option<(usize, usize)> = None;
+        for (index, scope) in self.scopes.iter_mut().enumerate() {
+            scope.scope_borrows.retain(|entry| {
+                if entry.holder.as_deref() == Some(name) {
+                    released.push(entry.root.clone());
+                    spot = Some(match spot {
+                        None => (index, entry.release_after),
+                        Some((i, r)) => (i.min(index), r.max(entry.release_after)),
+                    });
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        for root in released {
+            self.end_borrow(&root);
+        }
+        spot
+    }
+
+    /// Moves the untagged borrow entries a statement just created (from `at` in
+    /// the current scope) into `target`, the scope that declared the binding
+    /// being reassigned, and tags them with `holder`. An entry the value created
+    /// lives in the current scope, which for a retarget inside a loop body or
+    /// an inner block would release the borrow when that block ends; the
+    /// declaring scope is where the binding lives, so that is where its borrow
+    /// must be recorded. `filter` limits adoption to the value's own roots.
+    /// Returns the roots adopted.
+    fn adopt_fresh_borrows(
+        &mut self,
+        target: usize,
+        at: usize,
+        holder: &str,
+        release: usize,
+        filter: Option<&[String]>,
+    ) -> Vec<String> {
+        let current = self.scopes.len() - 1;
+        let at = at.min(self.scopes[current].scope_borrows.len());
+        let mut adopted: Vec<ScopeBorrow> = Vec::new();
+        {
+            let scope = &mut self.scopes[current];
+            let mut keep = Vec::with_capacity(scope.scope_borrows.len());
+            for (index, entry) in scope.scope_borrows.drain(..).enumerate() {
+                if index >= at
+                    && entry.holder.is_none()
+                    && filter.map_or(true, |roots| roots.contains(&entry.root))
+                {
+                    adopted.push(ScopeBorrow {
+                        root: entry.root,
+                        holder: Some(holder.to_string()),
+                        mutable: entry.mutable,
+                        release_after: release,
+                    });
+                } else {
+                    keep.push(entry);
+                }
+            }
+            scope.scope_borrows = keep;
+        }
+        let mut roots = Vec::new();
+        for entry in adopted {
+            roots.push(entry.root.clone());
+            self.scopes[target].scope_borrows.push(entry);
+        }
+        roots
+    }
+
+    /// Pushes one borrow entry into `scope`, which is the scope that declared
+    /// the holder (not necessarily the current one).
+    fn push_entry(
+        &mut self,
+        scope: usize,
+        root: &str,
+        holder: Option<&str>,
+        mutable: bool,
+        release_after: usize,
+    ) {
+        self.scopes[scope].scope_borrows.push(ScopeBorrow {
+            root: root.to_string(),
+            holder: holder.map(|s| s.to_string()),
+            mutable,
+            release_after,
+        });
+    }
+
+    /// A reference binding's assignment. The old value is overwritten, so the
+    /// borrows it held end here and the new value's roots replace them. That is
+    /// what lets a pointer local be a cursor: `cur = cur.next.get()` no longer
+    /// looks like assigning to a borrowed place, and re-pointing from owner A
+    /// to owner B makes A mutable again (`plan/provenance.md`).
+    fn assign_reference(&mut self, name: &str, value: &tir::Expr, span: Span) -> Result<()> {
+        // The binding itself, not its roots: `&cur` would pin `cur`.
+        if self.pin_of(name) != BorrowKind::None {
+            return Err(BorrowError {
+                message: format!("cannot assign to {} while it is borrowed", display_root(name)),
+                span,
+            });
+        }
+        // The old borrow ends at the reassignment; the new one inherits the
+        // release point (the binding's own last use), so the new root stays
+        // pinned exactly as long as the old one would have.
+        let held = self.release_holder(name);
+        let target = held.map(|(scope, _)| scope).unwrap_or(self.scopes.len() - 1);
+        let release = held.map(|(_, r)| r).unwrap_or(usize::MAX);
+        let roots = match borrowed_node(value) {
+            Some((m, inner)) => {
+                if *m {
+                    self.check_iterated_mutation(inner)?;
+                }
+                check_place(inner, self)?;
+                let roots = place_roots(inner, self);
+                for root in &roots {
+                    if root == STATIC_ROOT {
+                        continue;
+                    }
+                    self.start_borrow(root, *m, span)?;
+                    self.push_entry(target, root, Some(name), *m, release);
+                }
+                roots
+            }
+            None => {
+                let at = self.scopes.last().map(|s| s.scope_borrows.len()).unwrap_or(0);
+                check_value(value, self)?;
+                let mut roots = borrow_root(value, self).unwrap_or_default();
+                let mut adopted =
+                    self.adopt_fresh_borrows(target, at, name, release, Some(&roots));
+                if adopted.is_empty() {
+                    // `borrow_root` named nothing useful: adopt whatever the
+                    // value registered rather than leave the cursor unpinned.
+                    adopted = self.adopt_fresh_borrows(target, at, name, release, None);
+                }
+                roots.extend(adopted);
+                normalize_roots(roots)
+            }
+        };
+        if let Some(state) = self.lookup_mut(name) {
+            state.moved_at = None;
+        }
+        self.set_roots(name, roots);
+        Ok(())
     }
 
     /// Releases every scope-durable borrow in the current scope whose binding
@@ -1195,6 +1482,30 @@ impl Ctx {
         }
     }
 
+    /// Releases the *temporary* borrows a statement took: entries from `at`
+    /// with no holder. An entry a cursor assignment adopted has a holder and
+    /// survives, so the borrow that assignment stored is not dropped at the end
+    /// of its own statement (`plan/provenance.md`).
+    fn release_unheld_since(&mut self, at: usize) {
+        let Some(scope) = self.scopes.last_mut() else {
+            return;
+        };
+        let at = at.min(scope.scope_borrows.len());
+        let mut released: Vec<String> = Vec::new();
+        let mut kept: Vec<ScopeBorrow> = Vec::new();
+        for (index, entry) in scope.scope_borrows.drain(..).enumerate() {
+            if index >= at && entry.holder.is_none() {
+                released.push(entry.root);
+            } else {
+                kept.push(entry);
+            }
+        }
+        scope.scope_borrows = kept;
+        for root in released {
+            self.end_borrow(&root);
+        }
+    }
+
     /// The parameter index a callee's returned borrow is elided from, for a
     /// `.kp` function or a builtin method.
     fn borrow_root_param_of(&self, callee: &str) -> Option<usize> {
@@ -1215,23 +1526,40 @@ impl Ctx {
         if !self.ret_is_borrow {
             return Ok(());
         }
-        let root = borrow_root(value, self);
-        if root.as_deref() == Some(STATIC_ROOT) {
-            return Ok(());
+        // The value may have come from either of two branches, so its root is a
+        // set. A `str` literal's static storage needs no owner and is dropped;
+        // what is left must be exactly the elided parameter. `None` means the
+        // value has no recognised root at all, which is refused.
+        let Some(roots) = borrow_root(value, self) else {
+            return Err(self.unrooted_return_error(value.span));
+        };
+        let mut owners: Vec<String> = roots
+            .into_iter()
+            .filter(|r| r != STATIC_ROOT)
+            .collect();
+        owners.sort();
+        owners.dedup();
+        if owners.is_empty() {
+            return Ok(()); // a `str` literal: static storage, no owner to pin
         }
-        if let (Some(root), Some(param)) = (root, self.ret_borrow_param.clone()) {
-            if root == param {
-                return Ok(());
-            }
-            return Err(BorrowError {
+        match self.ret_borrow_param.clone() {
+            Some(param) if owners.len() == 1 && owners[0] == param => Ok(()),
+            Some(param) => Err(BorrowError {
                 message: format!(
-                    "cannot return a borrow of '{root}': '{}' borrows from its first reference parameter '{param}', so the returned value must be derived from '{param}'",
+                    "cannot return a borrow of '{}': '{}' borrows from its first reference parameter '{param}', so the returned value must be derived from '{param}'",
+                    owners[0],
                     self.ret_ty.display()
                 ),
                 span: value.span,
-            });
+            }),
+            None => Err(self.unrooted_return_error(value.span)),
         }
-        Err(BorrowError {
+    }
+
+    /// The refusal a borrowed return owes when its value is not derived from
+    /// the elided parameter: named after the parameter when there is one.
+    fn unrooted_return_error(&self, span: Span) -> BorrowError {
+        BorrowError {
             message: match &self.ret_borrow_param {
                 Some(param) => format!(
                     "cannot return this value as '{}': it is not derived from a reference parameter (an elided return lifetime is '{param}', or a 'str' literal)",
@@ -1242,40 +1570,65 @@ impl Ctx {
                     self.ret_ty.display()
                 ),
             },
-            span: value.span,
-        })
+            span,
+        }
     }
 
-    fn snapshot(&self) -> Vec<Scope> {
-        self.scopes.clone()
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            scopes: self.scopes.clone(),
+            pins: self.pins.clone(),
+        }
     }
 
-    fn restore(&mut self, snapshot: Vec<Scope>) {
-        self.scopes = snapshot;
+    fn restore(&mut self, snapshot: Snapshot) {
+        self.scopes = snapshot.scopes;
+        self.pins = snapshot.pins;
     }
 
-    fn merge_into(&mut self, then_snap: Vec<Scope>, else_snap: Vec<Scope>) {
+    fn merge_into(&mut self, then_snap: Snapshot, else_snap: Snapshot) {
         let merged: Vec<Scope> = then_snap
+            .scopes
             .into_iter()
-            .zip(else_snap)
+            .zip(else_snap.scopes)
             .map(|(a, b)| Scope::merge(a, b))
             .collect();
+        self.scopes = merged;
+        // The two arms' borrow lists were unioned, so the pins have to be
+        // rebuilt from them: a binding one arm points at A and the other at B
+        // now keeps both roots (`plan/provenance.md`).
+        self.recompute_pins();
         // A binding whose two paths disagree now has a *conditional* move, so
         // its move sites have to clear its slot even though it is still
         // dropped — see the module doc.
-        for scope in &merged {
+        for scope in &self.scopes {
             for owned in &scope.owned {
                 if owned.state == MoveState::MaybeMoved {
                     self.maybe_moved.insert(owned.binding);
                 }
             }
         }
-        self.restore(merged);
     }
+}
+
+/// The scope stack and the frame-wide pins, captured together: a branch is
+/// checked against one snapshot and merged from two.
+#[derive(Clone)]
+struct Snapshot {
+    scopes: Vec<Scope>,
+    pins: HashMap<String, BorrowKind>,
 }
 
 fn is_copy(ty: &Ty) -> bool {
     ty.is_copy()
+}
+
+/// Whether a binding of this type is a reference whose provenance a cursor
+/// carries: a shared or exclusive borrow, a `View`, a `str` or a `&dyn`.
+/// `str`/`Dyn` join the borrow types here because `borrow_root` and the
+/// existing `val`/`var` tracking already treat them as borrowed values.
+fn is_reference_ty(ty: &Ty) -> bool {
+    crate::infer::is_borrowed_value(ty) || matches!(ty, Ty::Str | Ty::Dyn { .. })
 }
 
 /// A root name as a person wrote it. A passdown's hidden parameter is
@@ -1366,10 +1719,13 @@ fn borrowed_node(expr: &tir::Expr) -> Option<(&bool, &tir::Expr)> {
 /// The root of a call argument, which is usually an auto-borrow node that
 /// `check_call_arg` synthesized — so this unwraps one `Ref` before asking
 /// `tir_root_ident`.
-fn arg_root(expr: &tir::Expr) -> Option<&str> {
+/// The owner roots of a call argument, which is usually an auto-borrow node
+/// that `check_call_arg` synthesized — so this unwraps one `Ref` before asking
+/// for the argument's place roots.
+fn arg_roots(expr: &tir::Expr, ctx: &Ctx) -> Vec<String> {
     match &expr.kind {
-        tir::ExprKind::Ref { expr: inner, .. } => tir_root_ident(inner),
-        _ => tir_root_ident(expr),
+        tir::ExprKind::Ref { expr: inner, .. } => place_roots(inner, ctx),
+        _ => place_roots(expr, ctx),
     }
 }
 
@@ -1377,19 +1733,18 @@ fn arg_root(expr: &tir::Expr) -> Option<&str> {
 /// return lifetime and never pins an owner.
 const STATIC_ROOT: &str = "<static>";
 
-/// The variable a borrow is ultimately derived from. A borrow-returning call
+/// The owner roots a borrow is ultimately derived from. A borrow-returning call
 /// chains back through its own elided lifetime, so `trim_start(s)` roots at
 /// `s`, and `f(s.as_str())` roots at whatever `s` was borrowed from. `None`
 /// when the value has no such root.
-fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
+fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<Vec<String>> {
     match &expr.kind {
-        tir::ExprKind::StringLit(_) => Some(STATIC_ROOT.to_string()),
-        // A binding that *is* a borrow carries the root it was made from, so a
-        // name introduced by a pattern resolves back through it to the place
-        // the payload came from (`set_origin` has the reasoning).
-        tir::ExprKind::Ident(name) => {
-            Some(ctx.origin_of(name).unwrap_or_else(|| name.clone()))
-        }
+        tir::ExprKind::StringLit(_) => Some(vec![STATIC_ROOT.to_string()]),
+        // A binding that *is* a reference carries the roots it was made from,
+        // so a cursor resolves back through it to the place its value borrows
+        // from, and a pattern binding keeps the place its payload came from
+        // (`set_roots` has the reasoning).
+        tir::ExprKind::Ident(name) => Some(ctx.roots_of(name)),
         tir::ExprKind::FieldAccess { base, .. }
         | tir::ExprKind::EnumField { base, .. }
         | tir::ExprKind::Ref { expr: base, .. }
@@ -1400,14 +1755,12 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
             let idx = ctx.borrow_root_param_of(callee)?;
             borrow_root(args.get(idx)?, ctx)
         }
-        // `if`/`when` in value position: the branches have to agree on the
-        // owner, with the one exception `merge_roots` describes — a branch
-        // whose value is a `str` literal has static storage and needs nobody
-        // to pin it. That is what
+        // `if`/`when` in value position: the joined value may have come from
+        // either branch, so its root is the union of the arms' roots, with a
+        // `str` literal's static storage dropped as soon as a real owner is in
+        // the set. That is what
         // `fun f(v: &J).R: &str = when v { S(s) -> s.as_str()  N -> "n" }`
-        // needs: one owner (`v`) and one static string, which used to be
-        // refused for the two roots not being equal — even after arm typing
-        // learned that `str` and `&str` are one type.
+        // needs: one owner (`v`) and one static string.
         tir::ExprKind::Block(b) => block_tail_root(b, ctx),
         tir::ExprKind::If {
             then_block,
@@ -1416,14 +1769,25 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
         } => {
             let then_root = block_tail_root(then_block, ctx)?;
             let else_root = block_tail_root(else_block.as_ref()?, ctx)?;
-            merge_roots(&then_root, &else_root)
+            Some(merge_root_sets(&then_root, &else_root))
         }
         _ => None,
     }
 }
 
-fn block_tail_root(block: &tir::Block, ctx: &Ctx) -> Option<String> {
+fn block_tail_root(block: &tir::Block, ctx: &Ctx) -> Option<Vec<String>> {
     borrow_root(block.tail.as_deref()?, ctx)
+}
+
+/// The owner roots a place expression borrows from: the binding at the bottom
+/// of the chain, resolved through that binding's own provenance. This is what
+/// makes a borrow made through a cursor a borrow of the *owner* rather than of
+/// the cursor (`plan/provenance.md`).
+fn place_roots(expr: &tir::Expr, ctx: &Ctx) -> Vec<String> {
+    match tir_root_ident(expr) {
+        Some(name) => ctx.roots_of(name),
+        None => Vec::new(),
+    }
 }
 
 /// The one root a value has when it may come from either of two branches: the
@@ -1439,16 +1803,10 @@ fn block_tail_root(block: &tir::Block, ctx: &Ctx) -> Option<String> {
 /// ```
 ///
 /// One owner plus a literal is a value with a single owner. Two different
-/// non-static roots still have no single owner, and are still refused — as is a
-/// view of a local in a function with no reference parameter to root it in.
-fn merge_roots(left: &str, right: &str) -> Option<String> {
-    match (left == STATIC_ROOT, right == STATIC_ROOT) {
-        (false, false) if left == right => Some(left.to_string()),
-        (false, false) => None,
-        (true, false) => Some(right.to_string()),
-        (false, true) => Some(left.to_string()),
-        (true, true) => Some(STATIC_ROOT.to_string()),
-    }
+/// non-static roots are both kept: the joined value may have come from either
+/// owner, so both stay pinned (`plan/provenance.md`).
+fn merge_root_sets(left: &[String], right: &[String]) -> Vec<String> {
+    union_roots(left, right)
 }
 
 pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
@@ -1519,6 +1877,7 @@ fn check_function(
         enums: enums.clone(),
         maybe_moved: std::collections::HashSet::new(),
         iterating: Vec::new(),
+        pins: HashMap::new(),
     };
     for (index, (name, ty)) in f.params.iter().enumerate() {
         ctx.define(name, ty);
@@ -1631,20 +1990,19 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
             let result = check_let_init(init, ctx);
             result?;
             ctx.define(name, ty);
-            // A borrow-typed binding keeps its provenance, so `borrow_root`
-            // can follow a pattern binding back to the place its payload came
-            // from. Recorded *after* `define` (the entry has to exist) and only
-            // for borrows (see `set_origin` for why an owned binding must not
-            // be traced).
-            let binds_a_borrow =
-                crate::infer::is_borrowed_value(ty) || matches!(ty, Ty::Str | Ty::Dyn { .. });
-            if binds_a_borrow {
-                let origin = borrow_root(init, ctx);
-                ctx.set_origin(name, origin.clone());
+            // A reference binding keeps its provenance, so `borrow_root` can
+            // follow a pattern binding back to the place its payload came
+            // from, and a cursor back to the owner it points into. Recorded
+            // *after* `define` (the entry has to exist) and only for
+            // references (`set_roots` has the reasoning).
+            if is_reference_ty(ty) {
+                let roots = borrow_root(init, ctx).unwrap_or_default();
                 if ctx.scopes.len() == mark {
                     let last = last_use_index(block, index, name);
-                    ctx.narrow_borrow(origin.as_deref(), at, last);
+                    let mutable = matches!(ty, Ty::Ref { mutable: true, .. });
+                    ctx.hold(name, &roots, mutable, at, last, init.span)?;
                 }
+                ctx.set_roots(name, roots);
             } else if ctx.scopes.len() == mark {
                 ctx.release_borrows_since(at);
             }
@@ -1690,7 +2048,9 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
             let at = ctx.scopes.last().map(|s| s.scope_borrows.len()).unwrap_or(0);
             let checked = check_value(e, ctx);
             if ctx.scopes.len() == mark {
-                ctx.release_borrows_since(at);
+                // Only the untagged temporaries; a borrow a cursor assignment
+                // stored has a holder and survives the statement.
+                ctx.release_unheld_since(at);
             }
             checked
         }
@@ -1810,9 +2170,15 @@ fn check_let_init(init: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             ctx.check_iterated_mutation(inner)?;
         }
         check_place(inner, ctx)?;
-        if let Some(root) = tir_root_ident(inner) {
-            ctx.start_borrow(root, *mutable, init.span)?;
-            ctx.register_scope_borrow(root);
+        // A borrow through a cursor is a borrow of the owner the cursor points
+        // into, so the roots are resolved through the cursor's provenance
+        // (`place_roots`) rather than keyed on the cursor itself.
+        for root in place_roots(inner, ctx) {
+            if root == STATIC_ROOT {
+                continue;
+            }
+            ctx.start_borrow(&root, *mutable, init.span)?;
+            ctx.register_scope_borrow(&root);
         }
         Ok(())
     } else {
@@ -2132,6 +2498,15 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             Ok(())
         }
         tir::ExprKind::Assign { target, value } => {
+            // A reference binding's assignment is a *retarget*, not a value
+            // replacement: the borrow it held ends here and the new value's
+            // roots replace it. That is what lets a pointer local be a cursor
+            // (`plan/provenance.md`).
+            if let tir::ExprKind::Ident(name) = &target.kind {
+                if ctx.binds_reference(name) {
+                    return ctx.assign_reference(name, value, target.span);
+                }
+            }
             check_value(value, ctx)?;
             // Read *before* `check_assign_target` reinitializes the binding:
             // `x = f(x)`, where `f` takes its argument by value, moved x into
@@ -2145,14 +2520,6 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                 _ => false,
             };
             check_assign_target(target, ctx)?;
-            // A `var` borrow that is reassigned points somewhere else now, so
-            // its recorded provenance is stale. Dropping it is the safe
-            // direction: a later view of it falls back to the binding's own
-            // name as its root, which the elision check then refuses rather
-            // than wrongly accepting.
-            if let tir::ExprKind::Ident(name) = &target.kind {
-                ctx.set_origin(name, None);
-            }
             // Assigning a fresh value into an owned binding frees the old one
             // (it has no other owner and v1 has no user destructors, so
             // nothing could observe it either way — freeing it is simply the
@@ -2231,19 +2598,21 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         tir::ExprKind::Block(b) => check_block(b, ctx),
         tir::ExprKind::Ref { mutable, expr: inner } => {
             // A borrow reached generically here (not via a `val`/`var`
-            // initializer or a call argument — see check_let_init and
-            // check_call) is transient: started and released immediately.
-            // The only realistic surface form this covers is `p = &c`
-            // reassignment, which is why it's checked against currently
-            // active borrows but doesn't persist tracking — see the
-            // module doc's "known gap."
+            // initializer, a call argument, or an assignment to a reference
+            // binding — see `check_let_init`, `take_call_arguments` and
+            // `assign_reference`) is transient: started and released
+            // immediately. It is a `&expr` written inside a struct literal or
+            // another expression whose value borrows and immediately uses it.
             if *mutable {
                 ctx.check_iterated_mutation(inner)?;
             }
             check_place(inner, ctx)?;
-            if let Some(root) = tir_root_ident(inner) {
-                ctx.start_borrow(root, *mutable, expr.span)?;
-                ctx.end_borrow(root);
+            for root in place_roots(inner, ctx) {
+                if root == STATIC_ROOT {
+                    continue;
+                }
+                ctx.start_borrow(&root, *mutable, expr.span)?;
+                ctx.end_borrow(&root);
             }
             Ok(())
         }
@@ -2274,9 +2643,12 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                     _ => {
                         ctx.check_iterated_mutation(operand)?;
                         check_place(operand, ctx)?;
-                        if let Some(root) = tir_root_ident(operand) {
-                            ctx.start_borrow(root, true, operand.span)?;
-                            ctx.end_borrow(root);
+                        for root in place_roots(operand, ctx) {
+                            if root == STATIC_ROOT {
+                                continue;
+                            }
+                            ctx.start_borrow(&root, true, operand.span)?;
+                            ctx.end_borrow(&root);
                         }
                     }
                 }
@@ -2363,26 +2735,25 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         if let tir::ExprKind::Ref { expr: inner, .. } = &args[i].kind {
             ctx.check_iterated_mutation(inner)?;
         }
-        if let Some(root) = arg_root(&args[i]) {
-            ctx.reserve_exclusive(root, args[i].span)?;
+        for root in arg_roots(&args[i], ctx) {
+            ctx.reserve_exclusive(&root, args[i].span)?;
         }
     }
     let mut taken = take_call_arguments(args, ctx, receiver)?;
     if let Some(i) = receiver {
-        if let Some(root) = arg_root(&args[i]) {
-            ctx.commit_exclusive(root, args[i].span)?;
+        for root in arg_roots(&args[i], ctx) {
+            ctx.commit_exclusive(&root, args[i].span)?;
         }
     }
     if crate::infer::is_borrowed_value(&expr.ty) {
         let idx = ctx.borrow_root_param_of(callee);
-        if let Some(root) = idx
-            .and_then(|i| args.get(i))
-            .and_then(arg_root)
-        {
+        if let Some(arg) = idx.and_then(|i| args.get(i)) {
             // Held for the scope the result lives in, exactly like
             // `val p = &c` (see `check_let_init`).
-            ctx.register_scope_borrow(root);
-            taken.retain(|r| r != root);
+            for root in arg_roots(arg, ctx) {
+                ctx.register_scope_borrow(&root);
+                taken.retain(|r| *r != root);
+            }
         }
     }
     release_call_borrows(&taken, ctx);
@@ -2423,12 +2794,15 @@ fn take_call_arguments(
                 ctx.check_iterated_mutation(inner)?;
             }
             check_place(inner, ctx)?;
-            if let Some(root) = tir_root_ident(inner) {
+            for root in place_roots(inner, ctx) {
+                if root == STATIC_ROOT {
+                    continue;
+                }
                 if receiver == Some(i) {
-                    taken.push(root.to_string());
+                    taken.push(root);
                 } else {
-                    ctx.start_borrow(root, *mutable, a.span)?;
-                    taken.push(root.to_string());
+                    ctx.start_borrow(&root, *mutable, a.span)?;
+                    taken.push(root);
                 }
             }
         } else {
@@ -2442,9 +2816,12 @@ fn take_call_arguments(
                 for c in captures {
                     if let tir::ExprKind::Ref { mutable, expr: inner } = &c.kind {
                         check_place(inner, ctx)?;
-                        if let Some(root) = tir_root_ident(inner) {
-                            ctx.start_borrow(root, *mutable, c.span)?;
-                            taken.push(root.to_string());
+                        for root in place_roots(inner, ctx) {
+                            if root == STATIC_ROOT {
+                                continue;
+                            }
+                            ctx.start_borrow(&root, *mutable, c.span)?;
+                            taken.push(root);
                         }
                     }
                 }
