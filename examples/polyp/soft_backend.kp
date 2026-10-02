@@ -42,6 +42,11 @@ const OP_END: i32 = 6
 // the backend executed, and that is the number a budget test pins.
 const PATCH_BYTES: i64 = 64
 
+// The hard cap on one frame's patch list. The reusable buffer grows with `List.push` up to this
+// many patches and then panics rather than growing without bound, so a view that suddenly emits a
+// pathological number of patches is a named failure and not silent heap growth.
+const MAX_FRAME_PATCHES: i32 = 4096
+
 // The default palette and metrics, one value so a platform can replace every number here.
 // Colours are `0xAARRGGBB`; the metrics are described at the point that uses them.
 pub datac Theme(
@@ -365,6 +370,9 @@ pub fun apply_diff<M>(backend: mut SoftBackend, old: &core.Node<M>, new: &core.N
     var buf = backend.patch_buf.take()
     core.diff_into(old, new, buf)
     val n = buf.len().to_i32()
+    if n > MAX_FRAME_PATCHES {
+        panic("polyp: frame patch list exceeds MAX_FRAME_PATCHES")
+    }
     if n > backend.arena_high {
         backend.arena_high = n
         backend.note_alloc(n.to_i64() * PATCH_BYTES)
