@@ -1408,6 +1408,9 @@ impl Ctx {
         let held = self.release_holder(name);
         let target = held.map(|(scope, _)| scope).unwrap_or(self.scopes.len() - 1);
         let release = held.map(|(_, r)| r).unwrap_or(usize::MAX);
+        // A cursor's own mutability, for the pin a value that registers no
+        // entry needs (an alias like `q = p`, where nothing was called).
+        let mutable = matches!(&value.ty, Ty::Ref { mutable: true, .. });
         let roots = match borrowed_node(value) {
             Some((m, inner)) => {
                 if *m {
@@ -1434,6 +1437,17 @@ impl Ctx {
                     // `borrow_root` named nothing useful: adopt whatever the
                     // value registered rather than leave the cursor unpinned.
                     adopted = self.adopt_fresh_borrows(target, at, name, release, None);
+                }
+                // A root the value did not register (an alias `q = p`, or a
+                // value produced without a call) needs its own pin and entry
+                // here: the holder that had one was released just above, so
+                // nothing else keeps the owner borrowed.
+                for root in &roots {
+                    if root == STATIC_ROOT || adopted.contains(root) {
+                        continue;
+                    }
+                    self.start_borrow(root, mutable, span)?;
+                    self.push_entry(target, root, Some(name), mutable, release);
                 }
                 roots.extend(adopted);
                 normalize_roots(roots)

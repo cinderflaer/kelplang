@@ -418,6 +418,10 @@ fn an_unsound_cursor_use_is_still_refused() {
         "tests/fixtures/cursor_branch_union.kp",
         "cannot assign to 'b' while it is borrowed",
     );
+    assert_rejected_with(
+        "tests/fixtures/cursor_alias_reassign.kp",
+        "cannot assign to 'list' while it is borrowed",
+    );
 }
 
 #[test]

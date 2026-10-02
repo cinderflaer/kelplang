@@ -78,9 +78,18 @@ refused) and does not block reassigning the cursor (now accepted).
 
 - mutating a list while a cursor into it is used later (`cursor_mutate_while_used`);
 - two `mut` cursors into one root (`cursor_two_mut_cursors`);
+- aliasing one cursor into another and then mutating the owner
+  (`cursor_alias_reassign`): the aliasing binding gets its own pin, so the owner
+  stays borrowed after the first holder is gone;
 - returning a cursor derived from a local (`cursor_returned_from_local`);
 - reading a cursor after its root was moved: the move is refused
   (`cursor_root_moved`), because the cursor keeps the owner borrowed.
+
+One rule got stricter as a consequence: copying an exclusive borrow into a
+second binding (`val q = p` where `p: &mut T`) is now refused, because the
+second binding would need a second exclusive pin. Kelp's references are `Copy`,
+so this was the one way to make two live `&mut` aliases to one place; the
+hold-every-root rule closes it by refusing the copy instead of allowing it.
 
 ## What changed in an existing fixture
 
