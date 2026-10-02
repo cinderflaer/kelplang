@@ -43,6 +43,10 @@ impl Shape for Figure {
 
 fun area_of<T: Shape>(s: &T).R: f64 = s.area()
 
+// `T: Shape` reaching another bounded generic with the same bound is fine: the
+// bound the outer call was checked against is the one the inner call needs.
+fun area_twice<T: Shape>(s: &T).R: f64 = area_of(s) + area_of(s)
+
 fun grow_and_measure<T: Shape + Grow>(s: mut T).R: f64 {
     s.grow(by = 1.0)
     return s.area()
@@ -58,6 +62,7 @@ fun main() {
 
     val f = Figure.Square(side = 3.0)
     print(area_of(f))
+    print(area_twice(f))
     print(f.rank())
     print(area_of<Figure>(s = f))
     val d = Figure.Dot
