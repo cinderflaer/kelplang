@@ -1,0 +1,176 @@
+// st2: the HTTP server under test. A hazard, not a fixture, because it waits for
+// clients: `compile_and_run.rs` starts it on port 0, reads the port from its
+// first stdout line, drives it from Rust over loopback, and every case ends when
+// the program has answered `max_requests` requests (`serve_on`), so nothing here
+// can run unbounded. argv: max_requests, max_body, head_ms, body_ms, idle_ms,
+// max_requests_per_conn. The last stdout line is `served <n> fds <before> <after>`, the descriptor counts
+// around the whole run, which must be equal (no leak, no double close).
+impl "std/fmt"
+impl "std/fs"
+impl "std/io"
+
+impl "std/option"
+impl "std/process"
+impl "std/result"
+impl "std/str"
+impl "std/http" caps(net = ["127.0.0.1:*"])
+
+fun arg_u64(i: usize).R: u64 {
+    val args = process.args()
+    return result.expect(
+        r = str.parse_u64(args.get(i).as_str()),
+        message = "http_server: an argument is not a number",
+    )
+}
+
+fun say(text: &str) {
+    val f = io.stdout()
+    val a = f.write_str(text)
+    val b = f.write_str("\n")
+}
+
+fun big().R: http.ServerResponse {
+    var b = Bytes.empty()
+    var i: usize = 0
+    while i < 4194304 {
+        b.push(97)
+        i = i + 1
+    }
+    return http.ServerResponse(status = 200, headers = List.empty(), body = b)
+}
+
+fun echo(req: &http.ServerRequest).R: http.ServerResponse {
+    var hs: List<http.Header> = List.empty()
+    hs.push(http.Header(name = String.from_str("Content-Type"), value = String.from_str("application/octet-stream")))
+    return http.ServerResponse(status = 200, headers = hs, body = req.body.clone())
+}
+
+fun param(req: &http.ServerRequest, name: &str).R: String {
+    val v = req.query_param(name)
+    return when v {
+        Some(s) -> s
+        None -> String.from_str("<none>")
+    }
+}
+
+fun handle(req: &http.ServerRequest).R: http.ServerResponse {
+    val segs = req.path_segments()
+    if segs.len() == 0 {
+        return http.ok_text("hello")
+    }
+    val first = segs.get(0).as_str()
+    if str.eq(first, "echo") {
+        return echo(req)
+    }
+    if str.eq(first, "method") {
+        var out = String.with_capacity(64)
+        out.push_str(req.method.as_str())
+        out.push_str(" ")
+        out.push_str(req.target.as_str())
+        out.push_str(" ")
+        out.push_str(req.path.as_str())
+        out.push_str(" ")
+        out.push_str(req.query.as_str())
+        return http.ok_text(out.as_str())
+    }
+    if str.eq(first, "users") && segs.len() == 2 {
+        var out = String.with_capacity(64)
+        out.push_str("{\"id\":\"")
+        out.push_str(segs.get(1).as_str())
+        out.push_str("\"}")
+        return http.json(out.as_str())
+    }
+    if str.eq(first, "seg") {
+        var out = String.with_capacity(64)
+        var i: usize = 0
+        while i < segs.len() {
+            if i > 0 {
+                out.push_str("|")
+            }
+            out.push_str(segs.get(i).as_str())
+            i = i + 1
+        }
+        return http.ok_text(out.as_str())
+    }
+    if str.eq(first, "q") {
+        var out = String.with_capacity(64)
+        val a = param(req, "name")
+        val b = param(req, "n")
+        val c = param(req, "missing")
+        out.push_str(a.as_str())
+        out.push_str(",")
+        out.push_str(b.as_str())
+        out.push_str(",")
+        out.push_str(c.as_str())
+        return http.html(out.as_str())
+    }
+    if str.eq(first, "hdr") {
+        var out = String.with_capacity(64)
+        val v = req.header("x-test")
+        out.push_str(v.as_str())
+        if req.has_header("X-TEST") {
+            out.push_str("|has")
+        }
+        if !req.has_header("x-absent") {
+            out.push_str("|absent")
+        }
+        val r = http.ok_text(out.as_str())
+        return r.with_header("X-Reply", "yes")
+    }
+    if str.eq(first, "nocontent") {
+        return http.status(204)
+    }
+    if str.eq(first, "teapot") {
+        return http.status(418)
+    }
+    if str.eq(first, "bad") {
+        return http.bad_request("nope")
+    }
+    if str.eq(first, "close") {
+        val r = http.ok_text("bye")
+        return r.with_header("Connection", "close")
+    }
+    if str.eq(first, "big") {
+        return big()
+    }
+    if str.eq(first, "len") {
+        val n = fmt.uint(req.body.len().to_u64())
+        return http.ok_text(n.as_str())
+    }
+    return http.not_found()
+}
+
+fun fd_count().R: usize {
+    val listing = fs.list("/proc/self/fd")
+    return listing.len()
+}
+
+fun main() {
+    val before = fd_count()
+    val s = http.listen(0)
+    val port = fmt.uint(s.port().to_u64())
+    say(port.as_str())
+    val limits = http.Limits(
+        max_request_line = 8192,
+        max_header_bytes = 16384,
+        max_headers = 100,
+        max_body = arg_u64(2).to_usize(),
+        head_timeout_ms = arg_u64(3),
+        body_timeout_ms = arg_u64(4),
+        idle_timeout_ms = arg_u64(5),
+        max_requests_per_conn = arg_u64(6).to_usize(),
+    )
+    val n = http.serve_on(&s, handle, &limits, arg_u64(1))
+    s.close()
+    val after = fd_count()
+    var line = String.from_str("served ")
+    val t = fmt.uint(n)
+    line.push_str(t.as_str())
+    line.push_str(" fds ")
+    val b = fmt.uint(before.to_u64())
+    line.push_str(b.as_str())
+    line.push_str(" ")
+    val a = fmt.uint(after.to_u64())
+    line.push_str(a.as_str())
+    say(line.as_str())
+}

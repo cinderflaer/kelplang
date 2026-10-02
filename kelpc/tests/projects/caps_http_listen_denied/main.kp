@@ -1,0 +1,9 @@
+// The grant names port 1 only, and the program asks to listen on another port:
+// `http.listen` is `net.listen`, whose check matches the port, so the call is
+// denied before anything is bound. The denial prints the granted pattern.
+impl "std/http" caps(net = ["127.0.0.1:1"])
+
+fun main() {
+    val s = http.listen(38917)
+    s.close()
+}

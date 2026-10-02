@@ -33,8 +33,11 @@ extern fun connect_raw(host: &str, port: u16).R: i32
 extern fun connect_try_raw(host: &str, port: u16, reason: mut String).R: i32
 extern fun listen_raw(port: u16).R: i32
 extern fun accept_raw(fd: i32).R: i32
+extern fun accept_try_raw(fd: i32, reason: mut String).R: i32
+extern fun mono_ms_raw().R: i64
 extern fun close_raw(fd: i32)
 extern fun shutdown_write_raw(fd: i32)
+extern fun shutdown_write_try_raw(fd: i32).R: bool
 extern fun send_raw(fd: i32, data: Bytes).R: usize
 extern fun send_all_raw(fd: i32, data: Bytes).R: usize
 extern fun send_all_try_raw(fd: i32, data: Bytes, reason: mut String).R: i32
@@ -159,6 +162,28 @@ fun listen(port: u16).R: Listener = Listener(fd = listen_raw(port))
 // Panics: if `accept` fails.
 fun accept(l: Listener).R: Socket = Socket(fd = accept_raw(l.fd))
 
+// `accept`, with a failed accept as an `Err` instead of a panic. After
+// `Listener.set_timeout(ms)` a call that sees no peer for that long is the
+// `Err` whose reason is `net.accept: timed out`, which is how a server loop
+// stops waiting without a second thread. Several threads may call this on one
+// listener: the kernel hands each connection to exactly one of them.
+fun try_accept(l: Listener).R: result.Result<Socket, NetErr> {
+    var reason = String.empty()
+    val fd = accept_try_raw(l.fd, &mut reason)
+    if fd < 0 {
+        return result.Result.Err(error = NetErr(reason = reason))
+    }
+    return result.Result.Ok(value = Socket(fd = fd))
+}
+
+// Milliseconds on the monotonic clock, from an arbitrary start: only the
+// difference of two readings means anything. It exists for connection
+// deadlines (a server cutting off a client that trickles its request), and it
+// sits in `net` rather than `time` so that a module holding `net` can keep a
+// deadline without also being handed the `time` capability; it reads nothing
+// but elapsed time.
+fun mono_ms().R: i64 = mono_ms_raw()
+
 // Panics: if the descriptor cannot be closed.
 fun close(s: Socket) {
     close_raw(s.fd)
@@ -182,6 +207,11 @@ fun Listener.close() {
 fun shutdown_write(s: Socket) {
     shutdown_write_raw(s.fd)
 }
+
+// `shutdown_write`, with a socket that is no longer connected (the peer reset
+// it) as `false` instead of a panic. A server ending a connection it does not
+// know the state of is the case this exists for.
+fun try_shutdown_write(s: Socket).R: bool = shutdown_write_try_raw(s.fd)
 
 // One `send(2)`: it may write fewer bytes than it was given, and it does not
 // block until they are all out. `send_all` is the one most callers want. A
@@ -247,6 +277,15 @@ fun Socket.wait_writable(timeout_ms: u64).R: bool {
 //
 // Panics: if the socket options cannot be set.
 fun mut Socket.set_timeout(ms: u64) {
+    set_timeout_raw(fd, ms)
+}
+
+// Sets the receive timeout on a listening socket, which `accept` honours: a
+// `try_accept` that waits this long with no peer returns a timeout `Err`. `0`
+// is "wait forever", as on a connected socket.
+//
+// Panics: if the socket option cannot be set.
+fun mut Listener.set_timeout(ms: u64) {
     set_timeout_raw(fd, ms)
 }
 

@@ -1,0 +1,63 @@
+// st2: `serve_threaded_on` under test: 4 workers accepting on one listener. A
+// hazard (it waits for clients); `compile_and_run.rs` drives it with 8
+// concurrent clients. argv: workers, idle_ms (a worker stops when nobody has
+// connected for that long). `/id` sleeps 200 ms and answers with the id of the
+// thread that served it, so concurrency is visible in the answers. The last
+// stdout line is `served <n> fds <before> <after>`.
+impl "std/fmt"
+impl "std/fs"
+impl "std/io"
+impl "std/process"
+impl "std/result"
+impl "std/str"
+impl "std/thread"
+impl "std/http" caps(net = ["127.0.0.1:*"])
+
+fun arg_u64(i: usize).R: u64 {
+    val args = process.args()
+    return result.expect(
+        r = str.parse_u64(args.get(i).as_str()),
+        message = "http_server_threaded: an argument is not a number",
+    )
+}
+
+fun say(text: &str) {
+    val f = io.stdout()
+    val a = f.write_str(text)
+    val b = f.write_str("\n")
+}
+
+fun fd_count().R: usize {
+    val listing = fs.list("/proc/self/fd")
+    return listing.len()
+}
+
+fun handle(req: &http.ServerRequest).R: http.ServerResponse {
+    if str.eq(req.path.as_str(), "/id") {
+        thread.sleep_ms(200)
+        val id = fmt.uint(thread.current_id())
+        return http.ok_text(id.as_str())
+    }
+    return http.ok_text("hello")
+}
+
+fun main() {
+    val before = fd_count()
+    val s = http.listen(0)
+    val port = fmt.uint(s.port().to_u64())
+    say(port.as_str())
+    val limits = http.default_limits()
+    val n = http.serve_threaded_on(&s, handle, &limits, arg_u64(1).to_usize(), arg_u64(2))
+    s.close()
+    val after = fd_count()
+    var line = String.from_str("served ")
+    val t = fmt.uint(n)
+    line.push_str(t.as_str())
+    line.push_str(" fds ")
+    val b = fmt.uint(before.to_u64())
+    line.push_str(b.as_str())
+    line.push_str(" ")
+    val a = fmt.uint(after.to_u64())
+    line.push_str(a.as_str())
+    say(line.as_str())
+}
