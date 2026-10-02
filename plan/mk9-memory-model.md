@@ -163,7 +163,7 @@ Not in this sequence: MK9-S3-M3 (thread-local and per-CPU storage, `B-11`), whic
 - **`async`/`await`, green threads, an executor, thread pools as a language feature.** `async` needs a state-machine transform in codegen; a pool is a program, not a primitive, and §4 plus §2 are enough to write one.
 - **`Relaxed`, `Acquire`, `Release` in the surface.** Reserved by §3, not shipped.
 - **A runtime race detector as the enforcement mechanism.** Wanted as a testing instrument under MK11-S2-M1.
-- **Channels and `Mutex` as v1 requirements.** Both are value types obeying the rule of §1, and both are reasonable next steps after C1; neither is needed for A1 to be useful or for C1 to be sound.
+- **Channels and a `Mutex` as *checker* requirements.** A channel is still a value type obeying the rule of §1 and a reasonable next step. **`Mutex<T>` itself shipped as B-5's remainder** in `std/sync` (`plan/mutex.md`): a compiler builtin in the shape `Atomic<T>` has, reached only through the scoped block `m.lock { v -> ... }`, released on every exit and poisoned by a panic inside the block. It obeys §1: a `&Mutex<T>` has no reachable `&mut` path, so the one crossing rule covers it, and the `Sync`-shaped walk answers `false` for `Ty::Mutex(_)` whatever `T` is.
 - **`unsafe`, `AtomicPtr`, raw memory.** MK9-S2-M1.
 - **Per-CPU and thread-local storage.** MK9-S3-M3.
 - **A user-facing `Send`/`Sync` trait.** A-12 first; the rule is structural until then (§5).

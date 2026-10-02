@@ -1142,3 +1142,26 @@ bound's own signature list, so a call to an inherent method of the concrete type
 everywhere the bound holds; the bound guarantees the trait's methods exist, it does not restrict
 the body to them. There is no `dyn`, no default method, no associated type and no operator
 overloading through a trait, each refused where it is written.
+
+## Language feature: `Mutex<T>` in `std/sync` (B-5's remainder, 2026-10-02, not a kernel stage)
+
+**New way to reach undefined behaviour.** The mutex itself adds none at the language level: `lock`
+hands the block a `mut T` borrow the existing scoped-block rules refuse to store or return, and
+`into_inner` moves the value out, so no two paths reach the guarded value unsynchronized. The new
+surface is the runtime record (`kelp_rt.c`: a `pthread_mutex_t`, a poison flag, the `T` slot and
+`T`'s stored drop pointer), and the one way to get it wrong is a value copied into the record and
+then dropped by its old owner as well: the checker's `Mutex.new(value: move T)` argument is the
+ordinary moved argument, so the caller's binding is marked moved and its drop is a no-op.
+
+**What the compiler does check.** That `T` is owned and borrow-free (`is_mutex_element`, the
+`Send`-shaped `!is_borrowed_field_ty`, with `unit` and a function value refused), that a `Mutex` is
+not a container element, that the block's `v` cannot escape, that the receiver of `into_inner` is
+consumed, and that a freestanding manifest refuses the whole type by name.
+
+**What it does not check.** Nothing about what a block does with `v` beyond the borrow rules: two
+`lock` calls in one thread deadlock, a program can deadlock on lock ordering, and poisoning is a
+runtime flag the compiler cannot see. A panic inside the block releases the lock and poisons the
+mutex through the runtime's `pthread_cleanup_push` handler, but the panicking frame's owned values
+are still abandoned (`plan/mk9-memory-model.md` section 2). The runtime's cleanup is only reached
+on the `pthread_exit` path a worker takes; a panic on the main thread still ends the process with
+`exit(1)`, so a mutex it held is never unlocked and never observed.

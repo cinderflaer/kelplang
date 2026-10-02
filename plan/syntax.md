@@ -1992,6 +1992,7 @@ Nineteen modules ship inside the compiler binary. Import them with `impl "std/<n
 | `std/result` | none | `Result<T, E>` and its helpers |
 | `std/atomic` | none | `Ordering`, the ordering argument of the `Atomic<T>` builtins (12.5) |
 | `std/thread` | none | `fence`, the standalone fence (12.6) |
+| `std/sync` | none | `Mutex<T>`, the lock reached only through a scoped block (B-5) |
 
 ### 16.1 `std/str`
 
@@ -2440,6 +2441,38 @@ fun main() {
     c.close(1000, "done")
 }
 ```
+
+### 16.19 `std/sync`
+
+The mutex surface (B-5, `plan/mutex.md`): `Mutex<T>` is a compiler builtin in the
+shape `Atomic<T>`/`Thread<T>` have, and this module is the id a program names in
+its `impl` list. The two calls and the constructor are documented here rather
+than declared, for the reason 16.17's `spawn`/`join` are: what the lock carries
+decides the signature, so the compiler builds it at the call site.
+
+```kelp
+fun Mutex.new(value: move T).R: Mutex<T>
+fun Mutex<T>.lock(block: scoped fun(mut T).R: R).R: R
+fun Mutex<T>.into_inner().R: T
+```
+
+The guarded value is reachable only through the scoped block: `v` is a `mut T`
+whose borrow cannot escape (plan/scoped-blocks.md), the block's tail is the call's value, and the
+mutex is released on every exit. A panic inside the block releases the lock and
+marks the mutex poisoned, so a later `lock` panics with `mutex poisoned`. A
+`&Mutex<T>` of a `pd` global is `Sync` and crosses to a worker in the one shape
+12.7 allows, exactly as a `&Atomic<T>` does, whatever `T` holds.
+
+```kelp
+impl "std/sync"
+
+val m: Mutex<i64> = Mutex.new(0)
+print(m.lock { v -> *v + 1 })
+print(m.into_inner())
+```
+
+The surface is hosted only: a freestanding manifest refuses `Mutex<T>` and names
+the spin lock over an `Atomic<T>` a kernel would use instead.
 
 ## 17. Limits in v1
 
