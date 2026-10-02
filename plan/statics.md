@@ -20,7 +20,9 @@ declaration sits in the canonical order next to `const` (after `impl`, before `d
 `T` is closed:
 
 - a `Copy` scalar (`bool`, `char`, every integer, `f32`/`f64`),
-- `[T; N]` where `T` is one of the allowed scalars,
+- `[T; N]` where `T` is one of the allowed types: a `Copy` scalar, a `datac` of
+  those, or another such array (kernel stage 21 widened the element from a
+  scalar so that a scheduler's `[Task; N]` table has a spelling),
 - a `datac` whose fields are all of the allowed types (recursively),
 - `Atomic<T>`.
 

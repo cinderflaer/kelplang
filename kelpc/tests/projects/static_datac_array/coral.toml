@@ -1,0 +1,7 @@
+name = "staticdatacarray"
+
+# Kernel stage 21: a static whose type is an array of `datac`, which is what a
+# scheduler's task table is. The mutable table is a `static mut`, so `main` is
+# on the audit list.
+[unsafe]
+modules = ["main"]

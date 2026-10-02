@@ -11451,6 +11451,19 @@ fn static_mut_counter_and_a_lookup_table_run() {
     );
 }
 
+/// Kernel stage 21: an array static's element may be a `datac`, and a nested
+/// array is the same rule one level down. This is the shape a scheduler's table
+/// of tasks needs (a saved frame and a stack per task), and it runs on both
+/// backends because the project is an ordinary hosted program.
+#[test]
+fn a_static_can_hold_an_array_of_datac_values() {
+    assert_project_runs(
+        "static_datac_array",
+        &project("static_datac_array"),
+        "45\n2\n3\n9\n1\n",
+    );
+}
+
 /// An `Atomic<i64>` static incremented from two `thread.spawn`ed workers and
 /// read back after both joins: exactly 1000, with no `unsafe`, because an
 /// atomic mutates through a shared borrow.
@@ -11929,6 +11942,20 @@ fn the_trap_frame_offsets_are_what_the_trap_entry_hardcodes() {
         "trap_frame_layout",
         &project("trap_frame_layout"),
         "264\n0\n8\n240\n248\n256\n",
+    );
+}
+
+/// Kernel stage 21: the scheduler's task table is the second hardcoded layout.
+/// The naked trap entry saves `x1..x31` at 0..240, `sepc` at 248 and `mstatus`
+/// at 256, reads the scheduler's address from the word at 264, and the
+/// scheduler reaches `state` at 272, `id` at 280 and the 4096-byte stack at 288
+/// from the table's base. `sched.layout_ok` checks the same numbers at boot.
+#[test]
+fn the_scheduler_task_offsets_are_what_the_trap_entry_hardcodes() {
+    assert_project_runs(
+        "sched_task_layout",
+        &project("sched_task_layout"),
+        "264\n8\n248\n256\n4384\n0\n264\n272\n280\n288\n",
     );
 }
 

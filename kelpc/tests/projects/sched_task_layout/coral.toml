@@ -1,0 +1,7 @@
+name = "schedtasklayout"
+
+# Kernel stage 21: the task table's layout is a contract between the naked trap
+# entry's hardcoded offsets and the `datac` the scheduler reads, and the
+# compiler checks neither end against the other. This project mirrors the
+# example's declarations and prints the numbers the test pins. It is hosted, so
+# it runs on both backends and needs no QEMU.

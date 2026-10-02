@@ -5300,9 +5300,17 @@ fn check_static_type_inner(
         Ty::Array(elem, _) => {
             if matches!(**elem, Ty::Bool | Ty::Char) || elem.is_integer() {
                 Ok(())
+            } else if matches!(**elem, Ty::Struct(_) | Ty::Array(..)) {
+                // Kernel stage 21: an array of `datac` is what a scheduler's
+                // table of tasks is, and a nested array is the same rule one
+                // level down. The element has to obey its own type's rule, so
+                // an array of a heap type or a `Ptr` is refused by the
+                // recursion rather than by a second list.
+                check_static_type_inner(elem.as_ref(), structs, seen)
             } else {
                 Err(format!(
-                    "an array static's element must be an integer, 'bool' or 'char', not '{}'",
+                    "an array static's element must be an integer, 'bool', 'char' or a \
+                     'datac' of those, not '{}'",
                     elem.display()
                 ))
             }

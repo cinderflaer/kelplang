@@ -1,0 +1,65 @@
+// Kernel stage 21 (`plan/scheduler.md`): the layout the naked trap entry and the
+// scheduler's pointer arithmetic hardcode. The copy of the declarations in
+// `examples/kernel0-sched` is this fixture's job, exactly as the trap-frame
+// fixture copies kernel stage 11's frame.
+//
+// The numbers: the frame is 33 words (264 bytes) with `sepc` at 248 and
+// `mstatus` at 256; `dispatch` is the word after it, at 264; then `state` at
+// 272, `id` at 280 and the 4096-byte stack at 288, for a 4384-byte task. The
+// trap entry reads the dispatch word at 264 and saves no register past 263.
+repr(c) datac TrapFrame(
+    val x1: u64,
+    val x2: u64,
+    val x3: u64,
+    val x4: u64,
+    val x5: u64,
+    val x6: u64,
+    val x7: u64,
+    val x8: u64,
+    val x9: u64,
+    val x10: u64,
+    val x11: u64,
+    val x12: u64,
+    val x13: u64,
+    val x14: u64,
+    val x15: u64,
+    val x16: u64,
+    val x17: u64,
+    val x18: u64,
+    val x19: u64,
+    val x20: u64,
+    val x21: u64,
+    val x22: u64,
+    val x23: u64,
+    val x24: u64,
+    val x25: u64,
+    val x26: u64,
+    val x27: u64,
+    val x28: u64,
+    val x29: u64,
+    val x30: u64,
+    val x31: u64,
+    val sepc: u64,
+    val mstatus: u64,
+)
+
+datac Task(
+    var frame: [u64; 33],
+    var dispatch: u64,
+    var state: usize,
+    var id: usize,
+    var stack: [u8; 4096],
+)
+
+fun main() {
+    print(size_of<TrapFrame>())
+    print(offset_of<TrapFrame>("x2"))
+    print(offset_of<TrapFrame>("sepc"))
+    print(offset_of<TrapFrame>("mstatus"))
+    print(size_of<Task>())
+    print(offset_of<Task>("frame"))
+    print(offset_of<Task>("dispatch"))
+    print(offset_of<Task>("state"))
+    print(offset_of<Task>("id"))
+    print(offset_of<Task>("stack"))
+}
