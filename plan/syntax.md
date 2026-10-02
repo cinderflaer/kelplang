@@ -2055,6 +2055,7 @@ Nineteen modules ship inside the compiler binary. Import them with `impl "std/<n
 | `std/net` | `net` | TCP sockets, listener, readiness, DNS |
 | `std/http` | none (holds `net`) | HTTP client, request and response types, connection pool |
 | `std/encoding` | none | base64, base32, base58, hex and percent encoding |
+| `std/regex` | none | linear-time regular expressions: `compile`, `find`, `captures`, `find_all`, `replace_all`, `split` (`plan/regex.md`) |
 | `std/list` | none | the callback-shaped operations on `List<T>` (`map`, `filter`, `each`, …) |
 | `std/option` | none | `Option<T>` and its helpers |
 | `std/result` | none | `Result<T, E>` and its helpers |

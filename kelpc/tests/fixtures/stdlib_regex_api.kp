@@ -1,0 +1,139 @@
+// std/regex API: find, find_at, captures, find_all, replace, replace_all with
+// groups, split, and the one-shot `regex.is_match`.
+impl "std/regex"
+impl "std/option"
+impl "std/result"
+impl "std/str"
+
+fun compile_or_die(pat: &str).R: regex.Regex {
+    val r = regex.compile(pat)
+    if let Ok(re) = r {
+        return re
+    }
+    panic("bad pattern in the fixture")
+}
+
+fun show_match(label: &str, m: &option.Option<regex.Match>) {
+    if let Some(x) = m {
+        print("${label}: ${x.start}..${x.end} '${x.text}'")
+    } else {
+        print("${label}: none")
+    }
+}
+
+fun show_all(label: &str, ms: &List<regex.Match>) {
+    var i: usize = 0
+    while i < ms.len() {
+        val m = ms.get(i)
+        print("${label}[${i}]: ${m.start}..${m.end} '${m.text}'")
+        i += 1
+    }
+    print("${label}: ${ms.len()} matches")
+}
+
+fun show_parts(label: &str, ps: &List<String>) {
+    var i: usize = 0
+    while i < ps.len() {
+        print("${label}[${i}]: '${ps.get(i)}'")
+        i += 1
+    }
+}
+
+fun main() {
+    // find / find_at / is_match
+    var re = compile_or_die("[a-z]+")
+    print(re.is_match("123 abc"))
+    print(re.is_match("123 456"))
+    val m1 = re.find("123 abc def")
+    show_match("find", m1)
+    val m2 = re.find_at("123 abc def", 7)
+    show_match("find_at 7", m2)
+    val m3 = re.find_at("123 abc def", 11)
+    show_match("find_at 11", m3)
+    val m4 = re.find_at("123", 4)
+    show_match("find_at past end", m4)
+    var anch = compile_or_die("^b")
+    val m5 = anch.find_at("ab", 1)
+    show_match("anchor sees the whole text", m5)
+    var wb = compile_or_die("\\bb")
+    val m6 = wb.find_at("ab b", 1)
+    show_match("word boundary sees the whole text", m6)
+    print(re.group_count())
+
+    // captures
+    var d = compile_or_die("(\\d+)-(\\d+)(x)?")
+    print(d.group_count())
+    val c = d.captures("id 12-345 end")
+    if let Some(cc) = c {
+        print(cc.len())
+        var i: usize = 0
+        while i < 5 {
+            val g = cc.get(i)
+            if let Some(s) = g {
+                print("group ${i}: '${s}'")
+            } else {
+                print("group ${i}: none")
+            }
+            i += 1
+        }
+        val sp = cc.span(2)
+        if let Some(s) = sp {
+            print("span 2: ${s.start}..${s.end} '${s.text}'")
+        }
+        val sp3 = cc.span(3)
+        print(option.is_none(sp3))
+    }
+    val cn = d.captures("nothing")
+    print(option.is_none(cn))
+
+    // find_all
+    var w = compile_or_die("\\w+")
+    val all = w.find_all("one, two;three")
+    show_all("words", all)
+    var star = compile_or_die("a*")
+    val st = star.find_all("baac")
+    show_all("a*", st)
+    val none = w.find_all("...")
+    show_all("none", none)
+    var empty = compile_or_die("")
+    val em = empty.find_all("ab")
+    show_all("empty", em)
+
+    // replace
+    var num = compile_or_die("(\\d+)")
+    print(num.replace("a1b22c333", "<$1>"))
+    print(num.replace_all("a1b22c333", "<$1>"))
+    print(num.replace_all("a1b22c333", "[$0]"))
+    print(num.replace_all("a1b22c333", "$$"))
+    print(num.replace_all("a1b22c333", "$"))
+    print(num.replace_all("a1b22c333", "$-"))
+    print(num.replace_all("nodigits", "X"))
+    var swap = compile_or_die("(\\w+) (\\w+)")
+    print(swap.replace_all("hello world foo bar", "$2 $1"))
+    print(swap.replace_all("hello world", "$2$1$2"))
+    var opt = compile_or_die("(a)|(b)")
+    print(opt.replace_all("ab", "[$1|$2|$3]"))
+    print(star.replace_all("baac", "-"))
+    print(empty.replace_all("abc", "."))
+    var ws = compile_or_die("\\s+")
+    print(ws.replace_all("  a   b  ", " "))
+    var nine = compile_or_die("(a)(b)(c)(d)(e)(f)(g)(h)(i)")
+    print(nine.replace("abcdefghi", "$9$8$7$6$5$4$3$2$1"))
+
+    // split
+    var comma = compile_or_die(",\\s*")
+    val p1 = comma.split("a, b,c,   d")
+    show_parts("split", p1)
+    val p2 = comma.split("")
+    print(p2.len())
+    val p3 = comma.split(",,")
+    print(p3.len())
+    var every = compile_or_die("")
+    val p4 = every.split("abc")
+    print(p4.len())
+    show_parts("every", p4)
+
+    // one-shot
+    print(regex.is_match("^[a-f0-9]+$", "deadbeef"))
+    print(regex.is_match("^[a-f0-9]+$", "deadbeeg"))
+}

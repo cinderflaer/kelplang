@@ -1,0 +1,7 @@
+// `regex.is_match` is the one-shot form for a literal pattern: a pattern that
+// does not compile is a bug in the source, so it panics with the reason.
+impl "std/regex"
+
+fun main() {
+    print(regex.is_match("a(b", "ab"))
+}

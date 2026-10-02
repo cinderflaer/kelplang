@@ -1,0 +1,401 @@
+// std/regex against an independent, deliberately slow reference: a
+// backtracking matcher over a hand-built tree that returns, for a node and a
+// position, every end position in priority order (greedy tries more first,
+// lazy fewer first, alternation left first), so the first end of the first
+// start that has any is the leftmost-first answer. It shares no code with the
+// engine. The inputs come from a fixed-seed LCG, so a failure reproduces.
+impl "std/regex"
+impl "std/option"
+impl "std/result"
+impl "std/str"
+
+const K_LIT: i32 = 0
+const K_SET: i32 = 1
+const K_NSET: i32 = 2
+const K_DOT: i32 = 3
+const K_CAT: i32 = 4
+const K_ALT: i32 = 5
+const K_REP: i32 = 6
+const K_BOL: i32 = 7
+const K_EOL: i32 = 8
+const K_WORDB: i32 = 9
+
+datac Ref(
+    var k: List<i32>,
+    var a: List<i32>,
+    var b: List<i32>,
+    var c: List<i32>,
+    var d: List<i32>
+)
+
+fun mut Ref.mk(kind: i32, a: i32, b: i32, c: i32, d: i32).R: i32 {
+    k.push(kind)
+    self.a.push(a)
+    self.b.push(b)
+    self.c.push(c)
+    self.d.push(d)
+    return (k.len() - 1).to_i32()
+}
+
+fun mut Ref.lit(ch: u8).R: i32 = self.mk(K_LIT, ch.to_i32(), 0, 0, 0)
+fun mut Ref.set(lo: u8, hi: u8).R: i32 = self.mk(K_SET, lo.to_i32(), hi.to_i32(), 0, 0)
+fun mut Ref.nset(lo: u8, hi: u8).R: i32 = self.mk(K_NSET, lo.to_i32(), hi.to_i32(), 0, 0)
+fun mut Ref.cat(x: i32, y: i32).R: i32 = self.mk(K_CAT, x, y, 0, 0)
+fun mut Ref.alt(x: i32, y: i32).R: i32 = self.mk(K_ALT, x, y, 0, 0)
+fun mut Ref.rep(x: i32, mn: i32, mx: i32, greedy: bool).R: i32 {
+    var g: i32 = 0
+    if greedy {
+        g = 1
+    }
+    return self.mk(K_REP, x, mn, mx, g)
+}
+
+fun is_w(b: u8).R: bool {
+    return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
+// The end positions of `n` matched at `pos`, best first.
+fun Ref.ends(n: i32, pos: usize, text: View).R: List<usize> {
+    var out: List<usize> = List.empty()
+    val i = n.to_usize()
+    val kind = k.get(i)
+    val len = text.len()
+    if kind == K_LIT {
+        if pos < len && text.get(pos).to_i32() == a.get(i) {
+            out.push(pos + 1)
+        }
+    } elif kind == K_SET {
+        if pos < len && text.get(pos).to_i32() >= a.get(i) && text.get(pos).to_i32() <= b.get(i) {
+            out.push(pos + 1)
+        }
+    } elif kind == K_NSET {
+        if pos < len && (text.get(pos).to_i32() < a.get(i) || text.get(pos).to_i32() > b.get(i)) {
+            out.push(pos + 1)
+        }
+    } elif kind == K_DOT {
+        if pos < len && text.get(pos) != 10 {
+            out.push(pos + 1)
+        }
+    } elif kind == K_BOL {
+        if pos == 0 {
+            out.push(pos)
+        }
+    } elif kind == K_EOL {
+        if pos == len {
+            out.push(pos)
+        }
+    } elif kind == K_WORDB {
+        var before = false
+        var after = false
+        if pos > 0 {
+            before = is_w(text.get(pos - 1))
+        }
+        if pos < len {
+            after = is_w(text.get(pos))
+        }
+        if before != after {
+            out.push(pos)
+        }
+    } elif kind == K_CAT {
+        val first = self.ends(a.get(i), pos, text)
+        var x: usize = 0
+        while x < first.len() {
+            val second = self.ends(b.get(i), first.get(x), text)
+            var y: usize = 0
+            while y < second.len() {
+                out.push(second.get(y))
+                y += 1
+            }
+            x += 1
+        }
+    } elif kind == K_ALT {
+        val left = self.ends(a.get(i), pos, text)
+        val right = self.ends(b.get(i), pos, text)
+        var x: usize = 0
+        while x < left.len() {
+            out.push(left.get(x))
+            x += 1
+        }
+        x = 0
+        while x < right.len() {
+            out.push(right.get(x))
+            x += 1
+        }
+    } else {
+        return self.rep_ends(n, pos, 0, text)
+    }
+    return out
+}
+
+// The ends of `count` iterations already done, then as many more as allowed.
+fun Ref.rep_ends(n: i32, pos: usize, count: i32, text: View).R: List<usize> {
+    var out: List<usize> = List.empty()
+    val i = n.to_usize()
+    val mn = b.get(i)
+    val mx = c.get(i)
+    val greedy = d.get(i) == 1
+    var more: List<usize> = List.empty()
+    if mx == -1 || count < mx {
+        val one = self.ends(a.get(i), pos, text)
+        var x: usize = 0
+        while x < one.len() {
+            val e = one.get(x)
+            // An empty iteration is only taken while the minimum is unmet.
+            if e != pos || count < mn {
+                val rest = self.rep_ends(n, e, count + 1, text)
+                var y: usize = 0
+                while y < rest.len() {
+                    more.push(rest.get(y))
+                    y += 1
+                }
+            }
+            x += 1
+        }
+    }
+    val may_stop = count >= mn
+    if greedy {
+        var x: usize = 0
+        while x < more.len() {
+            out.push(more.get(x))
+            x += 1
+        }
+        if may_stop {
+            out.push(pos)
+        }
+    } else {
+        if may_stop {
+            out.push(pos)
+        }
+        var x: usize = 0
+        while x < more.len() {
+            out.push(more.get(x))
+            x += 1
+        }
+    }
+    return out
+}
+
+datac Pat(val src: String, val root: i32)
+
+fun new_ref().R: Ref {
+    return Ref(k = List.empty(), a = List.empty(), b = List.empty(), c = List.empty(), d = List.empty())
+}
+
+fun seq3(r: mut Ref, x: i32, y: i32, z: i32).R: i32 {
+    val yz = r.cat(y, z)
+    return r.cat(x, yz)
+}
+
+fun compile_or_die(pat: &str).R: regex.Regex {
+    val res = regex.compile(pat)
+    if let Ok(re) = res {
+        return re
+    }
+    panic("bad pattern in the fixture")
+}
+
+datac Lcg(var state: u64)
+
+fun mut Lcg.next().R: u64 {
+    state = (state * 1103515245 + 12345) % 2147483648
+    return state / 65536
+}
+
+// The input: `len` bytes from "abcd\n", biased towards a and b.
+fun mut Lcg.input(len: usize).R: String {
+    var s = String.empty()
+    var i: usize = 0
+    while i < len {
+        val r = self.next() % 8
+        if r < 3 {
+            s.push('a')
+        } elif r < 5 {
+            s.push('b')
+        } elif r == 5 {
+            s.push('c')
+        } elif r == 6 {
+            s.push('d')
+        } else {
+            s.push(10)
+        }
+        i += 1
+    }
+    return s
+}
+
+// Checks one pattern on `count` random inputs; returns how many differed.
+fun check(label: &str, pat: &str, r: &Ref, root: i32, seed: u64, count: i32, nullable: bool).R: i32 {
+    var re = compile_or_die(pat)
+    var rng = Lcg(state = seed)
+    var bad: i32 = 0
+    var matched: i32 = 0
+    var n: i32 = 0
+    while n < count {
+        val len = (rng.next() % 11).to_usize()
+        val text = rng.input(len)
+        val tv = text.view()
+        // The reference's answer.
+        var rs: i64 = -1
+        var re_end: i64 = -1
+        var s: usize = 0
+        while s <= len && rs < 0 {
+            val es = r.ends(root, s, tv)
+            if es.len() > 0 {
+                rs = s.to_i64()
+                re_end = es.get(0).to_i64()
+            }
+            s += 1
+        }
+        // The engine's.
+        var gs: i64 = -1
+        var ge: i64 = -1
+        val m = re.find(text.as_str())
+        if let Some(x) = m {
+            gs = x.start.to_i64()
+            ge = x.end.to_i64()
+        }
+        val yes = re.is_match(text.as_str())
+        if gs != rs || ge != re_end || yes != (rs >= 0) {
+            bad += 1
+            print("DIFF ${label} on '${text}': engine ${gs}..${ge}, reference ${rs}..${re_end}")
+        }
+        if rs >= 0 {
+            matched += 1
+        }
+        n += 1
+    }
+    // A pattern that never matched (or, unless it can match empty, always did)
+    // would test nothing.
+    if matched == 0 || (matched == count && !nullable) {
+        print("weak input mix for ${label}: ${matched} of ${count} matched")
+        bad += 1
+    }
+    return bad
+}
+
+fun main() {
+    var bad: i32 = 0
+    val per: i32 = 400
+
+    var r1 = new_ref()
+    val a1 = r1.lit('a')
+    val b1 = r1.lit('b')
+    val s1 = r1.rep(a1, 0, -1, true)
+    val t1 = r1.cat(s1, b1)
+    bad += check("a*b", "a*b", r1, t1, 11, per, false)
+
+    var r2 = new_ref()
+    val a2 = r2.lit('a')
+    val b2 = r2.lit('b')
+    val c2 = r2.lit('c')
+    val d2 = r2.lit('d')
+    val ab2 = r2.cat(a2, b2)
+    val g1 = r2.alt(a2, ab2)
+    val bcd2 = seq3(r2, b2, c2, d2)
+    val g2 = r2.alt(c2, bcd2)
+    val ds2 = r2.rep(d2, 0, -1, true)
+    val t2 = seq3(r2, g1, g2, ds2)
+    bad += check("(a|ab)(c|bcd)(d*)", "(a|ab)(c|bcd)(d*)", r2, t2, 22, per, false)
+
+    var r3 = new_ref()
+    val a3 = r3.lit('a')
+    val b3 = r3.lit('b')
+    val ap3 = r3.rep(a3, 1, -1, false)
+    val bo3 = r3.rep(b3, 0, 1, true)
+    val t3 = r3.cat(ap3, bo3)
+    bad += check("a+?b?", "a+?b?", r3, t3, 33, per, false)
+
+    var r4 = new_ref()
+    val a4 = r4.lit('a')
+    val b4 = r4.lit('b')
+    val ab4 = r4.alt(a4, b4)
+    val st4 = r4.rep(ab4, 0, -1, true)
+    val abb4 = seq3(r4, a4, b4, b4)
+    val t4 = r4.cat(st4, abb4)
+    bad += check("(a|b)*abb", "(a|b)*abb", r4, t4, 44, per, false)
+
+    var r5 = new_ref()
+    val ab5 = r5.set('a', 'b')
+    val c5 = r5.lit('c')
+    val rp5 = r5.rep(ab5, 2, 3, true)
+    val co5 = r5.rep(c5, 0, 1, true)
+    val t5 = r5.cat(rp5, co5)
+    bad += check("[ab]{2,3}c?", "[ab]{2,3}c?", r5, t5, 55, per, false)
+
+    var r6 = new_ref()
+    val a6 = r6.lit('a')
+    val b6 = r6.lit('b')
+    val ao6 = r6.rep(a6, 0, 1, false)
+    val t6 = r6.cat(ao6, b6)
+    bad += check("a??b", "a??b", r6, t6, 66, per, false)
+
+    var r7 = new_ref()
+    val a7 = r7.lit('a')
+    val b7 = r7.lit('b')
+    val c7 = r7.lit('c')
+    val ab7 = r7.cat(a7, b7)
+    val lz7 = r7.rep(ab7, 0, -1, false)
+    val t7 = r7.cat(lz7, c7)
+    bad += check("(?:ab)*?c", "(?:ab)*?c", r7, t7, 77, per, false)
+
+    var r8 = new_ref()
+    val bol8 = r8.mk(K_BOL, 0, 0, 0, 0)
+    val eol8 = r8.mk(K_EOL, 0, 0, 0, 0)
+    val dot8 = r8.mk(K_DOT, 0, 0, 0, 0)
+    val a8 = r8.lit('a')
+    val d8 = r8.lit('d')
+    val ds8 = r8.rep(dot8, 0, -1, true)
+    val tail8 = seq3(r8, ds8, d8, eol8)
+    val t8 = seq3(r8, bol8, a8, tail8)
+    bad += check("^a.*d$", "^a.*d$", r8, t8, 88, per, false)
+
+    var r9 = new_ref()
+    val wb9 = r9.mk(K_WORDB, 0, 0, 0, 0)
+    val a9 = r9.lit('a')
+    val b9 = r9.lit('b')
+    val wab9 = seq3(r9, wb9, a9, b9)
+    val bp9 = r9.rep(b9, 1, -1, true)
+    val t9 = r9.alt(wab9, bp9)
+    bad += check("\\bab|b+", "\\bab|b+", r9, t9, 99, per, false)
+
+    var r10 = new_ref()
+    val a10 = r10.lit('a')
+    val na10 = r10.nset('a', 'a')
+    val d10 = r10.lit('d')
+    val np10 = r10.rep(na10, 1, -1, true)
+    val npa10 = r10.cat(np10, a10)
+    val t10 = r10.alt(npa10, d10)
+    bad += check("[^a]+a|d", "[^a]+a|d", r10, t10, 110, per, false)
+
+    var r11 = new_ref()
+    val a11 = r11.lit('a')
+    val b11 = r11.lit('b')
+    val c11 = r11.lit('c')
+    val abx = r11.cat(a11, b11)
+    val ab11 = r11.alt(abx, a11)
+    val bcx = r11.cat(b11, c11)
+    val bc11 = r11.alt(bcx, c11)
+    val bco = r11.rep(bc11, 0, 1, true)
+    val t11 = r11.cat(ab11, bco)
+    bad += check("(ab|a)(bc|c)?", "(ab|a)(bc|c)?", r11, t11, 121, per, false)
+
+    var r12 = new_ref()
+    val a12 = r12.lit('a')
+    val b12 = r12.lit('b')
+    val aa12 = r12.rep(a12, 2, 2, true)
+    val bb12 = r12.rep(b12, 1, 2, false)
+    val t12 = r12.cat(aa12, bb12)
+    bad += check("a{2}b{1,2}?", "a{2}b{1,2}?", r12, t12, 132, per, false)
+
+    var r13 = new_ref()
+    val a13 = r13.lit('a')
+    val b13 = r13.lit('b')
+    val ab13 = r13.cat(a13, b13)
+    val as13 = r13.rep(a13, 0, -1, true)
+    val abs13 = r13.rep(ab13, 0, -1, true)
+    val bs13 = r13.rep(b13, 0, -1, true)
+    val t13 = seq3(r13, as13, abs13, bs13)
+    bad += check("a*(?:ab)*b*", "a*(?:ab)*b*", r13, t13, 143, per, true)
+
+    print("differing cases: ${bad}")
+}
