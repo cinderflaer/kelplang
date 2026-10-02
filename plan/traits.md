@@ -194,6 +194,11 @@ Each of these is refused where it is written, with the message naming the follow
 - A trait method whose name matches a compiler-provided method of a builtin (`i32#to_u8`,
   `String#len`) shadows the builtin at a call site, because a declaration is looked up before the
   builtin table. Nothing refuses the shadowing.
+- A default body's **types, free function calls and consts** resolve in the trait's module, but its
+  *capabilities* and *passdowns* are read in the implementing module: only the type/name scope is
+  swapped. A default that reaches a capability-gated call or a `pd` the trait's module owns is
+  therefore checked against the impl's module, which is a narrower surface than the trait module's
+  and may refuse the call.
 
 ## 7. How it is implemented
 
