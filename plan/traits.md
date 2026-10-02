@@ -276,10 +276,12 @@ fun main() {
 - The two type spellings are `&dyn Name` and `&mut dyn Name`. A bare `dyn Name` (no `&`) is
   refused: an owned trait object would need a place to own its data, which is `Box<dyn Name>`, and
   that is deliberately out of this slice.
-- A trait object is legal **as a parameter type and as a local binding type** (`val`/`var`). It is
-  refused everywhere else by name: as a `.R:` return type, as a `datac`/`enum` field or payload, as
-  a `List`/`Box`/`Map`/`Atomic`/array element or argument, as a tuple element, as a `static`'s
-  type, and as the parameter or return of a function *type*. `Box<dyn Name>` is refused by name.
+- A trait object is legal **as a parameter type and as a local binding type** (`val`/`var`). A
+  parameter includes a `fun` literal's parameter and the parameter of a function *type*, which is
+  a parameter position too. It is refused everywhere else by name: as a `.R:` return type, as a
+  `datac`/`enum` field or payload, as a `List`/`Box`/`Map`/`Atomic`/array element or argument, as
+  a tuple element, and as a `static`'s type. A function type cannot return one either, which is
+  the same borrow-return rule. `Box<dyn Name>` and a bare `dyn Name` are refused by name.
   Nothing else changed: a borrow still cannot be returned or stored.
 - `Name` must be a declared trait. `&dyn Unknown` is refused where it is written.
 - The `mut` in `&mut dyn Name` is the whole mutability story: `&mut dyn Name` permits a `mut Self`
@@ -324,10 +326,10 @@ The rules, in full:
 - A `&dyn Trait` value coerces to the **same** `&dyn Trait` type, so one can be passed on to
   another function. It does not coerce to a different trait, and there is no upcast from
   `&dyn B` to `&dyn A` when `B: A`; that is out of this slice.
-- Everything else is an explicit error: a temporary `&Circle(r = 1.0)` is fine (the same
-  expression-scoped temporary a shared borrow may already point at), a type that implements the
-  trait but arrives as an owned value is not, and neither is a `&dyn` where a concrete `&T` is
-  expected.
+- Everything else is an explicit error: a type that implements the trait but arrives as an owned
+  value (or as a bare place with no `&`) is not coerced, and neither is a `&dyn` where a concrete
+  `&T` is expected. An `&mut` operand also has to be a durable place, exactly as an `&mut`
+  argument of a declared parameter does: `&mut <a temporary>` is refused.
 
 ### 9.4 Representation: the fat pair and the vtable
 
