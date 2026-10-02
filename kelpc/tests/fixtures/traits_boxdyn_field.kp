@@ -1,0 +1,33 @@
+// A-12 slice 7: a `datac` holds a `Box<dyn Trait>` field, a `mut Self` method
+// is called through the box's own vtable, and `get` borrows the trait back out.
+// The user `drop` on the concrete type runs through the vtable when each box
+// dies, so the printed order is the drop order.
+trait Shape {
+    fun Self.area().R: f64
+    fun mut Self.scale(f: f64)
+}
+
+datac Circle(var r: f64)
+
+fun mut Circle.drop() {
+    print("drop circle")
+}
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r * 3.0
+    fun mut Self.scale(f: f64) { r = r * f }
+}
+
+datac Holder(val shape: Box<dyn Shape>)
+
+fun make().R: Box<dyn Shape> = Box.of(Circle(r = 1.0))
+
+fun main() {
+    val h = Holder(shape = make())
+    print(h.shape.area())
+    print(h.shape.get().area())
+    var b = make()
+    b.scale(2.0)
+    print(b.area())
+    print(b.is_empty())
+}

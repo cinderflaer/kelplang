@@ -1,0 +1,8 @@
+// A-12 slice 7: a generic trait has no object-safe form behind `Box<dyn>`
+// either, for the reason it has none behind `&dyn`: the vtable has no slot for
+// a type parameter.
+impl "std/convert"
+
+fun take(s: Box<dyn convert.From>) { }
+
+fun main() { }

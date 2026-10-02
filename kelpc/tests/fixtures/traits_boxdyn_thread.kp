@@ -1,0 +1,31 @@
+// A-12 slice 7: an owned trait object crosses a thread boundary, because an
+// owned value with no borrows is what the crossing rule admits. The worker owns
+// the box and drops it through the vtable when it returns.
+impl "std/thread"
+impl "std/result"
+
+trait Shape {
+    fun Self.area().R: f64
+}
+
+datac Circle(val r: f64)
+
+fun mut Circle.drop() {
+    print("drop circle")
+}
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r * 3.0
+}
+
+fun area_of(s: move Box<dyn Shape>).R: f64 = s.area()
+
+fun make().R: Box<dyn Shape> = Box.of(Circle(r = 2.0))
+
+fun main() {
+    val h = thread.spawn(area_of, make())
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

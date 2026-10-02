@@ -5423,7 +5423,7 @@ fn an_impl_naming_no_declared_trait_is_rejected() {
 fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
     assert_rejected_with(
         "tests/fixtures/traits_dyn.kp",
-        "has to be borrowed",
+        "is not a type on its own",
     );
     assert_rejected_with(
         "tests/fixtures/traits_associated_type.kp",
@@ -5569,8 +5569,9 @@ fn a_builtin_impl_is_reached_through_a_dyn() {
 }
 
 /// A-12 slice 4 rejections: an object-unsafe trait that returns `Self` or takes
-/// another `Self`, an owned trait object, a trait object in a field, a returned
-/// `&dyn`, a type that does not implement the trait, and an unknown trait.
+/// another `Self`, a bare `dyn` that is neither borrowed nor boxed, a trait
+/// object in a field, a returned `&dyn`, a type that does not implement the
+/// trait, and an unknown trait.
 #[test]
 fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
     assert_rejected_with(
@@ -5582,8 +5583,8 @@ fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
         "takes a 'Self' parameter",
     );
     assert_rejected_with(
-        "tests/fixtures/traits_dyn_boxed.kp",
-        "has to be borrowed",
+        "tests/fixtures/traits_dyn.kp",
+        "is not a type on its own",
     );
     assert_rejected_with(
         "tests/fixtures/traits_dyn_field.kp",
@@ -5791,6 +5792,170 @@ fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
         "freestanding_dyn",
         &project("freestanding_dyn"),
         &["hello from dyn", "1", "bye from dyn", "2"],
+    );
+}
+
+/// A-12 slice 7: a `List<Box<dyn Shape>>` of two implementors, each element a
+/// fat owned pointer dispatched through its own vtable and freed through it when
+/// the list drops.
+#[test]
+fn a_list_of_owned_trait_objects_is_dispatched_through_each_vtable() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_list.kp",
+        "circle\nsquare\n21.000000\n",
+    );
+}
+
+/// A-12 slice 7: a factory function returns a `Box<dyn Shape>` chosen by a flag,
+/// and a `&dyn` borrowed back out of a box goes on to a free function.
+#[test]
+fn a_factory_returns_an_owned_trait_object_and_the_trait_is_borrowed_back() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_factory.kp",
+        "circle\nsquare\n12.000000\n9.000000\n",
+    );
+}
+
+/// A-12 slice 7: a `datac` holds a `Box<dyn Trait>` field, a `mut Self` method is
+/// dispatched through the box's vtable, and each concrete type's user `drop`
+/// runs through the vtable when its box dies.
+#[test]
+fn a_datac_field_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_field.kp",
+        "3.000000\n3.000000\n12.000000\nfalse\ndrop circle\ndrop circle\n",
+    );
+}
+
+/// A-12 slice 7: an `enum` payload holds an owned trait object, and the live
+/// variant's payload drops through the vtable when the binding that holds it
+/// dies.
+#[test]
+fn an_enum_payload_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_enum.kp",
+        "empty\n12.000000\ndrop circle\ndone\n",
+    );
+}
+
+/// A-12 slice 7: a box moves between lists with `pop`/`push`, `Box.empty()` is
+/// the null owned trait object, and a `move Box<dyn Trait>` parameter owns one
+/// by value.
+#[test]
+fn an_owned_trait_object_moves_between_lists_and_through_a_move_parameter() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_move.kp",
+        "true\n12.000000\n0\nfalse\n12.000000\n0\n",
+    );
+}
+
+/// A-12 slice 7: an owned trait object crosses a thread boundary (an owned value
+/// with no borrows is what the crossing rule admits), and the worker drops it
+/// through the vtable when it returns.
+#[test]
+fn an_owned_trait_object_crosses_a_thread_boundary() {
+    // The worker owns the box, so its drop runs when `area_of` returns, before
+    // the join hands the result back to the main thread to print.
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_thread.kp",
+        "drop circle\n12.000000\n",
+    );
+}
+
+/// A-12 slice 7 rejections: a coercion of a type that does not implement the
+/// trait, an object-unsafe trait behind `Box<dyn>`, `Box<dyn A + B>`, a use
+/// after a move, a partial move out of a `datac` field, a borrowed trait object
+/// crossing a thread boundary, and `take`/`set` on an owned trait object.
+#[test]
+fn the_owned_trait_object_shapes_this_slice_refuses_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_not_impl.kp",
+        "does not implement 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_object_safe.kp",
+        "'Box<dyn Maker>' is not allowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_plus.kp",
+        "`dyn` names one trait",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_use_after_move.kp",
+        "use of moved value 'b'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_partial_move.kp",
+        "use of moved value 'h.shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_thread_borrow.kp",
+        "cannot send '&dyn Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_take.kp",
+        "'Box<dyn Shape>.take' is not allowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_generic_trait.kp",
+        "takes type parameters",
+    );
+}
+
+/// A-12 slice 7 in a bare-metal image: two owned trait objects built through the
+/// project's own allocator are dispatched through `.rodata` vtables and freed
+/// through each vtable's drop entry, so the user `drop`s reach the UART in drop
+/// order and the linked ELF references no undefined symbol.
+#[test]
+fn a_freestanding_image_owns_trait_objects_and_frees_them_through_the_vtable() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding boxdyn boot: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_boxdyn");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_boxdyn"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding boxdyn build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding boxdyn image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+    boot_under_qemu_in_order(
+        &RISCV64_QEMU,
+        "freestanding_boxdyn",
+        &project("freestanding_boxdyn"),
+        &[
+            "hello from boxdyn",
+            "1",
+            "bye from boxdyn",
+            "2",
+            "hello from boxdyn",
+            "drop hello",
+            "drop bye",
+            "drop hello",
+            "boxdyn done",
+        ],
     );
 }
 

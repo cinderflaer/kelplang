@@ -1,0 +1,116 @@
+// A-12 slice 7 in a bare-metal image: owned trait objects. Two `Box<dyn Line>`
+// values are built with the project's own bump allocator, dispatched through
+// the `.rodata` vtable, and freed through the vtable's drop entry when `run`
+// returns, so `drop hello`/`drop bye` reach the UART from inside the generated
+// drop. Nothing here calls libc: the allocations and the frees go through
+// `alloc`/`dealloc` below.
+impl "std/str"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+
+static mut ARENA: [u8; 4096] = [0; 4096]
+static mut USED: usize = 0
+
+trait Line {
+    fun Self.write()
+    fun Self.count().R: i64
+}
+
+datac Hello()
+datac Bye()
+
+fun mut Hello.drop() {
+    uart.puts("drop hello\n")
+}
+
+fun mut Bye.drop() {
+    uart.puts("drop bye\n")
+}
+
+impl Line for Hello {
+    fun Self.write() { uart.puts("hello from boxdyn\n") }
+    fun Self.count().R: i64 = 1
+}
+
+impl Line for Bye {
+    fun Self.write() { uart.puts("bye from boxdyn\n") }
+    fun Self.count().R: i64 = 2
+}
+
+fun announce(l: &dyn Line) {
+    l.write()
+    uart.putc((b'0' + l.count().to_u8()))
+    uart.putc(b'\n')
+}
+
+fun align_up(value: usize, align: usize).R: usize {
+    return ((value + align - 1) / align) * align
+}
+
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    val out: Ptr<u8> = unsafe {
+        val start: usize = align_up(USED, align)
+        if start + size > 4096 {
+            Ptr.null()
+        } else {
+            USED = start + size
+            val arena: Ptr<[u8; 4096]> = Ptr.from_mut(ARENA)
+            val base: Ptr<u8> = arena.cast<u8>()
+            base.byte_offset(start.to_isize())
+        }
+    }
+    return out
+}
+
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            USED = USED
+        }
+    }
+}
+
+fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).R: Ptr<u8> {
+    val fresh: Ptr<u8> = alloc(new, align)
+    if fresh.is_null() {
+        return Ptr.null()
+    }
+    if p.is_null() == false {
+        var i: usize = 0
+        while i < old {
+            unsafe {
+                val src: Ptr<u8> = p.byte_offset(i.to_isize())
+                val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
+                dst.write(src.read())
+            }
+            i = i + 1
+        }
+        dealloc(p, old, align)
+    }
+    return fresh
+}
+
+// The boxes and the list are locals of `run`, so all three drops run when it
+// returns: the list's element first, then the two boxes in reverse declaration
+// order.
+fun run() {
+    val a: Box<dyn Line> = Box.of(Hello())
+    val b: Box<dyn Line> = Box.of(Bye())
+    announce(a.get())
+    announce(b.get())
+    var lines: List<Box<dyn Line>> = List.empty()
+    lines.push(Box.of(Hello()))
+    announce(lines.get(i = 0).get())
+}
+
+section(".text.boot") fun kmain() {
+    run()
+    uart.puts("boxdyn done\n")
+    uart.halt()
+}
+
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}

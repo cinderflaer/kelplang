@@ -1,0 +1,26 @@
+// A-12 slice 7: a *borrowed* trait object never crosses a thread boundary; the
+// crossing rule's borrow arm refuses it exactly as it refuses any other borrow
+// of a frame local. An owned `Box<dyn Trait>` is what crosses.
+impl "std/thread"
+impl "std/result"
+
+trait Shape {
+    fun Self.area().R: f64
+}
+
+datac Circle(val r: f64)
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r * 3.0
+}
+
+fun area_of(s: &dyn Shape).R: f64 = s.area()
+
+fun main() {
+    val c = Circle(r = 2.0)
+    val d: &dyn Shape = &c
+    val h = thread.spawn(area_of, d)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}
