@@ -1,0 +1,69 @@
+// A headless platform that also writes each presented frame to a PPM file (Polyp v3 stage 3).
+//
+// With `POLYP_DUMP_DIR` set, every `present` writes `<dir>/frame_0.ppm`, `frame_1.ppm`, ... and
+// then records the frame as `HeadlessPlatform` does; with the variable unset it is exactly a
+// `HeadlessPlatform`. It is the "look at a frame" platform for a developer, the same job
+// `soft/debug.kp` does for the raster, and it is hosted-only for the same reason: `std/fs`.
+impl "deps/polyp/soft/damage"
+impl "deps/polyp/soft/debug" caps(fs = ["/**"])
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "std/env"
+impl "std/fmt"
+impl "std/option"
+impl "std/str"
+
+pub datac PpmPlatform(var inner: headless_platform.HeadlessPlatform, var dir: String, var n: i32)
+
+pub fun new(width: i32, height: i32).R: PpmPlatform = PpmPlatform(
+    inner = headless_platform.new(width = width, height = height),
+    dir = env.get("POLYP_DUMP_DIR"),
+    n = 0,
+)
+
+// The frame index the next dump will use, so a test can tell "dumping" from "not".
+fun PpmPlatform.dumps().R: bool = !dir.is_empty()
+
+fun PpmPlatform.dump_dir().R: String = String.from_str(dir.as_str())
+
+fun mut PpmPlatform.push(ev: move event.Event) {
+    inner.push(ev)
+}
+
+fun mut PpmPlatform.advance(ms: u64) {
+    inner.advance(ms)
+}
+
+fun PpmPlatform.checksum().R: u64 = inner.checksum()
+
+fun PpmPlatform.frame_count().R: i32 = inner.frame_count()
+
+fun PpmPlatform.presented_count().R: usize = inner.presented_count()
+
+fun PpmPlatform.pixel(x: i32, y: i32).R: u32 = inner.pixel(x, y)
+
+fun mut PpmPlatform.dump(f: fb.Fb) {
+    if !dir.is_empty() {
+        val head = str.concat(dir.as_str(), "/frame_")
+        val index = fmt.int(n.to_i64())
+        val mid = str.concat(head.as_str(), index.as_str())
+        val path = str.concat(mid.as_str(), ".ppm")
+        debug.dump_ppm(f, path.as_str())
+        n += 1
+    }
+}
+
+impl platform.Platform for PpmPlatform {
+    fun mut Self.present(fb: fb.Fb, dirty: &damage.Damage) {
+        self.dump(fb)
+        inner.present(fb, dirty)
+    }
+
+    fun Self.now_ms().R: u64 = inner.now_ms()
+
+    fun mut Self.poll_event().R: option.Option<event.Event> = inner.poll_event()
+
+    fun Self.framebuffer().R: fb.Fb = inner.framebuffer()
+}

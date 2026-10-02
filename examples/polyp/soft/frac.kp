@@ -1,0 +1,51 @@
+// An f64's magnitude as an integer permille (Polyp v3 stage 3).
+//
+// `core.Props.fraction` is an `f64` because v2's `progress` takes one, and Kelp has no
+// float-to-integer conversion on purpose: it would silently drop the fraction. A pixel fill is
+// an integer, so this module turns the value into `0..=1000` by reading its eight bytes as a
+// `u64` and decoding the IEEE-754 sign, exponent and mantissa with integer shifts:
+//
+//     value = (-1)^sign * 2^(exponent - 1023) * (1 + mantissa / 2^52)
+//
+// Every operation is integer arithmetic and every intermediate is bounded, so a freestanding
+// build needs no soft-float libcall for a progress bar. The read is a type-punning load through
+// a `Ptr<u64>`; it is the only pointer work in the module, which is why the module has its own
+// short `[unsafe]` audit entry (`plan/kernel-ub-notes.md`, stage 3).
+
+// The bit pattern of an `f64`. Both IEEE formats store sign, exponent and mantissa most
+// significant first, and both a `u64` and an `f64` use the target's byte order, so the value
+// formed from the eight bytes is the pattern on a little- or a big-endian target alike.
+fun bits(x: f64).R: u64 {
+    val p: Ptr<f64> = unsafe { Ptr.from_ref(x) }
+    val q: Ptr<u64> = p.cast<u64>()
+    return unsafe { q.read() }
+}
+
+// The value as permille, saturated into `0..=1000`. A negative value, a subnormal and a `nan`
+// are `0`; `inf` and anything at or above `1.0` are `1000`. The saturation is deliberate: a
+// caller clamps a fill width, and a value outside the unit interval is a caller bug, not a
+// reason to panic on a frame.
+pub fun of(fraction: f64).R: i32 {
+    val b: u64 = bits(fraction)
+    val sign: u64 = b >> 63
+    val e_raw: u64 = (b >> 52) & 0x7FF
+    val mant: u64 = b & 0xFFFFFFFFFFFFF
+    if sign != 0 {
+        return 0
+    }
+    if e_raw == 0x7FF {
+        return 0
+    }
+    if e_raw >= 1023 {
+        return 1000
+    }
+    // value = (2^52 + mant) / 2^(52 + q), with q >= 1. The product is under 2^63, so a shift of
+    // 63 or more has to answer zero rather than ask for an out-of-range shift.
+    val q: u64 = 1023 - e_raw
+    val shift: u64 = 52 + q
+    if shift >= 63 {
+        return 0
+    }
+    val scaled: u64 = (0x10000000000000 + mant) * 1000
+    return (scaled >> shift).to_i32()
+}
