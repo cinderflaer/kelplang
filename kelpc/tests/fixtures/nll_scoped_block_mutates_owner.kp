@@ -1,0 +1,17 @@
+// A borrow captured by a scoped block lives for the call the block was
+// written in, so the same call cannot take the owner exclusively. Deleting
+// the `print(v)` would make this legal: the borrow would be dead, and the
+// exclusive argument would be the only use of `s`.
+impl "std/str"
+
+fun each(s: mut String, f: scoped fun(i32)) {
+    f(1)
+}
+
+fun main() {
+    var s = String.from_str("hi")
+    val v = s.as_str()
+    each(s) { n ->
+        print(v)
+    }
+}

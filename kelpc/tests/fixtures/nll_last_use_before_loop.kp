@@ -1,0 +1,19 @@
+// A borrow whose last use is before a loop is dead before the loop runs, so
+// the loop may mutate the owner. The mirror case, a borrow used inside the
+// loop, is `nll_borrow_used_next_iteration.kp` and stays refused: a use in a
+// loop body keeps the borrow live for the whole loop, because the next
+// iteration reaches it.
+impl "std/str"
+
+fun main() {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    val first = names.get(0)
+    print(first.as_str())
+    var i = 0
+    while i < 2 {
+        names.push(String.from_str("beta"))
+        i += 1
+    }
+    print(names.len())
+}

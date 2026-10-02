@@ -414,12 +414,22 @@ struct OwnedVar {
     moved: std::collections::BTreeSet<Projection>,
 }
 
+/// One scope-durable borrow: the owner root, and the statement after which
+/// the borrow is dead (the binding's own last use, or a derived binding's).
+/// `usize::MAX` is the old lexical answer: live to the end of the scope that
+/// declared it.
+#[derive(Clone)]
+struct ScopeBorrow {
+    root: String,
+    release_after: usize,
+}
+
 #[derive(Clone, Default)]
 struct Scope {
     vars: HashMap<String, VarState>,
-    /// Roots borrowed by a `val`/`var` declared in this scope, released
-    /// when the scope pops (see the module doc's "scope-durable" lifetime).
-    scope_borrows: Vec<String>,
+    /// Roots borrowed by a `val`/`var` declared in this scope, each with the
+    /// statement its borrowing binding is last used at (see `plan/nll.md`).
+    scope_borrows: Vec<ScopeBorrow>,
     /// Owned (heap-owning) locals declared in this scope, in declaration
     /// order — the candidates for this block's end-of-scope drops.
     owned: Vec<OwnedVar>,
@@ -427,6 +437,12 @@ struct Scope {
 
 impl Scope {
     fn merge(a: Scope, b: Scope) -> Scope {
+        // Scope-durable borrows recorded before the branch survive it: the
+        // branch's own entries were released when its scope popped, and what
+        // is left is the identical pre-branch set. Dropping them here (as this
+        // used to) lost the release point, so the owner stayed borrowed for the
+        // rest of the scope even after the borrow's last use.
+        let scope_borrows = a.scope_borrows;
         let mut vars = HashMap::new();
         for (name, va) in a.vars {
             let moved_at = va.moved_at.or_else(|| b.vars.get(&name).and_then(|vb| vb.moved_at));
@@ -472,7 +488,7 @@ impl Scope {
                 }
             }
         }
-        Scope { vars, scope_borrows: Vec::new(), owned }
+        Scope { vars, scope_borrows, owned }
     }
 }
 
@@ -536,8 +552,8 @@ impl Ctx {
     /// for the owned locals it declared that are still live here.
     fn pop_scope(&mut self, block: &tir::Block, unreachable_end: bool) {
         let popped = self.scopes.pop().expect("pop_scope without a matching push_scope");
-        for root in popped.scope_borrows {
-            self.end_borrow(&root);
+        for entry in popped.scope_borrows {
+            self.end_borrow(&entry.root);
         }
         // A block that ends by returning never reaches its end, and the
         // return's own drops already cover everything live at that point.
@@ -1104,7 +1120,62 @@ impl Ctx {
     }
 
     fn register_scope_borrow(&mut self, root: &str) {
-        self.scopes.last_mut().unwrap().scope_borrows.push(root.to_string());
+        self.scopes.last_mut().unwrap().scope_borrows.push(ScopeBorrow {
+            root: root.to_string(),
+            release_after: usize::MAX,
+        });
+    }
+
+    /// Narrows the scope-durable borrows this `val`/`var` just declared (or
+    /// derives from) so they end after `last`, the statement of the binding's
+    /// own last use. `at` is where the statement's own fresh borrows begin.
+    ///
+    /// A binding whose initializer took a fresh borrow owns those entries; its
+    /// own last use is their release point. A binding that merely *copies* an
+    /// existing borrow (`val q = p`, a `View` bound from one) added no entry
+    /// of its own, so the entries already recorded for the same owner root in
+    /// this block are extended to the copy's last use — that is what keeps
+    /// `val q = p; ...; print(q)` from dropping the pin too early.
+    fn narrow_borrow(&mut self, root: Option<&str>, at: usize, last: usize) {
+        let Some(root) = root else { return };
+        if root == STATIC_ROOT {
+            return;
+        }
+        let Some(scope) = self.scopes.last_mut() else { return };
+        let at = at.min(scope.scope_borrows.len());
+        let fresh: Vec<usize> = (at..scope.scope_borrows.len())
+            .filter(|&i| scope.scope_borrows[i].root == root)
+            .collect();
+        if !fresh.is_empty() {
+            for i in fresh {
+                scope.scope_borrows[i].release_after = last;
+            }
+            return;
+        }
+        for entry in scope.scope_borrows.iter_mut() {
+            if entry.root == root {
+                entry.release_after = entry.release_after.max(last);
+            }
+        }
+    }
+
+    /// Releases every scope-durable borrow in the current scope whose binding
+    /// is dead after statement `index` (`plan/nll.md`).
+    fn release_expired(&mut self, index: usize) {
+        let Some(scope) = self.scopes.last_mut() else { return };
+        let mut released: Vec<String> = Vec::new();
+        let mut kept: Vec<ScopeBorrow> = Vec::new();
+        for entry in scope.scope_borrows.drain(..) {
+            if entry.release_after <= index {
+                released.push(entry.root);
+            } else {
+                kept.push(entry);
+            }
+        }
+        scope.scope_borrows = kept;
+        for root in released {
+            self.end_borrow(&root);
+        }
     }
 
     /// Releases every scope-durable borrow recorded in the current scope from
@@ -1118,9 +1189,9 @@ impl Ctx {
             return;
         };
         let at = at.min(scope.scope_borrows.len());
-        let released: Vec<String> = scope.scope_borrows.split_off(at);
-        for root in released {
-            self.end_borrow(&root);
+        let released: Vec<ScopeBorrow> = scope.scope_borrows.split_off(at);
+        for entry in released {
+            self.end_borrow(&entry.root);
         }
     }
 
@@ -1524,8 +1595,9 @@ fn check_function(
 fn check_block(block: &tir::Block, ctx: &mut Ctx) -> Result<()> {
     ctx.push_scope();
     let result = (|| {
-        for stmt in &block.stmts {
-            check_stmt(stmt, ctx)?;
+        for (index, stmt) in block.stmts.iter().enumerate() {
+            check_stmt(block, index, stmt, ctx)?;
+            ctx.release_expired(index);
         }
         if let Some(tail) = &block.tail {
             check_value(tail, ctx)?;
@@ -1536,7 +1608,7 @@ fn check_block(block: &tir::Block, ctx: &mut Ctx) -> Result<()> {
     result
 }
 
-fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
+fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
     match stmt {
         tir::Stmt::Let { name, ty, init } => {
             // A borrow taken *inside* the initializer is dead once the value is
@@ -1568,7 +1640,11 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
                 crate::infer::is_borrowed_value(ty) || matches!(ty, Ty::Str | Ty::Dyn { .. });
             if binds_a_borrow {
                 let origin = borrow_root(init, ctx);
-                ctx.set_origin(name, origin);
+                ctx.set_origin(name, origin.clone());
+                if ctx.scopes.len() == mark {
+                    let last = last_use_index(block, index, name);
+                    ctx.narrow_borrow(origin.as_deref(), at, last);
+                }
             } else if ctx.scopes.len() == mark {
                 ctx.release_borrows_since(at);
             }
@@ -1618,6 +1694,110 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
             }
             checked
         }
+    }
+}
+
+/// The last statement index of `block` at or after `from` whose statement
+/// mentions `name`, or `block.stmts.len()` when the block's tail does. `from`
+/// itself is the floor: a binding nothing later uses is dead right after its
+/// own declaration.
+///
+/// A use inside a loop body or an `if` arm is a use of the statement that
+/// contains it, and that statement's index is what this returns. That is the
+/// loop rule and the branch rule together (`plan/nll.md`): a borrow used in a
+/// loop body stays live for the whole loop, including the statements before
+/// the use, because the next iteration reaches them.
+fn last_use_index(block: &tir::Block, from: usize, name: &str) -> usize {
+    let mut last = from;
+    for (index, stmt) in block.stmts.iter().enumerate().skip(from + 1) {
+        if stmt_mentions(stmt, name) {
+            last = index;
+        }
+    }
+    if block.tail.as_ref().map_or(false, |tail| expr_mentions(tail, name)) {
+        last = block.stmts.len();
+    }
+    last
+}
+
+fn stmt_mentions(stmt: &tir::Stmt, name: &str) -> bool {
+    match stmt {
+        tir::Stmt::Let { init, .. } => expr_mentions(init, name),
+        tir::Stmt::While { cond, body, .. } => {
+            expr_mentions(cond, name) || block_mentions(body, name)
+        }
+        tir::Stmt::Return { value, .. } => {
+            value.as_ref().map_or(false, |v| expr_mentions(v, name))
+        }
+        tir::Stmt::Expr(e) => expr_mentions(e, name),
+    }
+}
+
+fn block_mentions(block: &tir::Block, name: &str) -> bool {
+    block.stmts.iter().any(|s| stmt_mentions(s, name))
+        || block.tail.as_ref().map_or(false, |e| expr_mentions(e, name))
+}
+
+/// Whether the expression names the binding anywhere in it. Spelled out per
+/// `ExprKind` rather than lowered, because the walk has to see through every
+/// position a use can hide in: a nested block, a loop, a template piece, an
+/// `asm` operand, a closure's capture list. Reading a binding is what extends
+/// its borrow's life, and every read reaches this node somewhere.
+fn expr_mentions(expr: &tir::Expr, name: &str) -> bool {
+    match &expr.kind {
+        tir::ExprKind::Ident(n) => n == name,
+        tir::ExprKind::Unary { expr, .. }
+        | tir::ExprKind::FieldAccess { base: expr, .. }
+        | tir::ExprKind::EnumTag { expr, .. }
+        | tir::ExprKind::EnumField { base: expr, .. }
+        | tir::ExprKind::Try { expr, .. }
+        | tir::ExprKind::Deref { expr }
+        | tir::ExprKind::Ref { expr, .. }
+        | tir::ExprKind::DynCoerce { expr, .. }
+        | tir::ExprKind::FnToClosure { func: expr }
+        | tir::ExprKind::ArrayRepeat { value: expr } => expr_mentions(expr, name),
+        tir::ExprKind::Binary { lhs, rhs, .. }
+        | tir::ExprKind::Assign { target: lhs, value: rhs } => {
+            expr_mentions(lhs, name) || expr_mentions(rhs, name)
+        }
+        tir::ExprKind::Call { args, .. } | tir::ExprKind::VariadicCall { args, .. } => {
+            args.iter().any(|a| expr_mentions(a, name))
+        }
+        tir::ExprKind::IndirectCall { callee, args }
+        | tir::ExprKind::DynCall { receiver: callee, args, .. } => {
+            expr_mentions(callee, name) || args.iter().any(|a| expr_mentions(a, name))
+        }
+        tir::ExprKind::StructLit { fields, .. } => {
+            fields.iter().any(|(_, v)| expr_mentions(v, name))
+        }
+        tir::ExprKind::EnumLit { fields, .. } | tir::ExprKind::ArrayLit(fields) => {
+            fields.iter().any(|v| expr_mentions(v, name))
+        }
+        tir::ExprKind::If { cond, then_block, else_block } => {
+            expr_mentions(cond, name)
+                || block_mentions(then_block, name)
+                || else_block.as_ref().map_or(false, |b| block_mentions(b, name))
+        }
+        tir::ExprKind::Block(b) => block_mentions(b, name),
+        tir::ExprKind::ClosureLit { captures, .. }
+        | tir::ExprKind::ScopedClosureLit { captures, .. } => {
+            captures.iter().any(|c| expr_mentions(c, name))
+        }
+        tir::ExprKind::Template { pieces, .. } => pieces.iter().any(|p| match p {
+            tir::TemplatePiece::Value(v) => expr_mentions(v, name),
+            tir::TemplatePiece::Text(_) => false,
+        }),
+        tir::ExprKind::Asm(block) => block.operands.iter().any(|op| {
+            op.operand.as_ref().map_or(false, |e| expr_mentions(e, name))
+        }),
+        tir::ExprKind::IntLit(_)
+        | tir::ExprKind::CharLit(_)
+        | tir::ExprKind::FloatLit(_)
+        | tir::ExprKind::StringLit(_)
+        | tir::ExprKind::BoolLit(_)
+        | tir::ExprKind::StaticRef(_)
+        | tir::ExprKind::FnRef(_)
+        | tir::ExprKind::Capture { .. } => false,
     }
 }
 

@@ -329,6 +329,54 @@ fn moving_a_borrowed_value_is_rejected() {
     assert_rejected("tests/fixtures/move_while_borrowed.kp");
 }
 
+/// A bound borrow ends at its last use, not at the end of its block (roadmap
+/// open item 30, `plan/nll.md`). The three accepted programs mutate, move or
+/// reassign the owner after the borrowing binding is dead; the six refused
+/// ones keep it live with a later use.
+#[test]
+fn a_bound_borrow_ends_at_its_last_use() {
+    assert_compiles_and_runs(
+        "tests/fixtures/nll_get_then_push.kp",
+        "alpha\n3\n",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/nll_if_branch_then_mutate.kp",
+        "alpha\n2\n",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/nll_last_use_before_loop.kp",
+        "alpha\n3\n",
+    );
+}
+
+#[test]
+fn a_live_borrow_still_refuses_its_owners_mutation() {
+    assert_rejected_with(
+        "tests/fixtures/nll_mutate_before_use.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_borrow_used_next_iteration.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_scoped_block_mutates_owner.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_defer_use_after_mutation.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_borrow_returned_from_local.kp",
+        "cannot return a borrow of 'local'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/nll_view_after_reassign.kp",
+        "cannot assign to 's' while it is borrowed",
+    );
+}
+
 #[test]
 fn receiver_methods_resolve_and_mutate_through_self() {
     assert_compiles_and_runs("tests/fixtures/receiver_methods.kp", "12.566360\n28.274310\n");

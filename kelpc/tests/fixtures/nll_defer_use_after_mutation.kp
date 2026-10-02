@@ -1,0 +1,11 @@
+// `defer` lowers to a copy of its action at the block's exit, before this
+// pass runs, so the deferred `print(v)` is a use of the borrow *after* the
+// mutation and keeps it live there: the `push` is refused.
+impl "std/str"
+
+fun main() {
+    var s = String.from_str("hi")
+    val v = s.as_str()
+    defer print(v)
+    s.push(33)
+}
