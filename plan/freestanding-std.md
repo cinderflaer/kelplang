@@ -102,14 +102,17 @@ and never converts implicitly is unchanged.
 - `freestanding_std_alloc` is the allocator half: `std/list`, the
   `std/option`/`std/result` callback combinators and `str.concat`/`from_u64`.
 - `freestanding_std_regex` is `std/regex` with the allocator pair, built and
-  checked for undefined symbols; `freestanding_view` is the `View` operations
-  with no allocator at all.
+  checked for undefined symbols (`every_admitted_std_module_builds_with_no_undefined_symbols`);
+  `freestanding_view` is the `View` operations with no allocator at all
+  (`a_freestanding_view_slice_and_eq_build_without_an_allocator`).
 - `freestanding_std_kernel` boots under QEMU and prints `std/option`,
   `std/result` and `std/arena` results over the real UART.
 - `examples/kernel0-eq` and `examples/kernel0-eq-x86_64` boot under QEMU and
   print a `String`-field equality, a `Map` lookup through the derived key pair,
   a `View.slice`/`View.to_string` and a `std/regex` match on riscv64 and
-  x86-64.
+  x86-64: `kernel0_eq_builds_with_no_undefined_symbols`,
+  `kernel0_eq_boots_and_prints_the_equality_and_regex_lines` and
+  `kernel0_eq_x86_64_builds_and_boots_the_same_lines`.
 - Rejection fixtures: `freestanding_std_refused_time`,
   `freestanding_std_refused_thread`, `freestanding_std_refused_env` (three
   whole modules) and `freestanding_std_math_refused` plus

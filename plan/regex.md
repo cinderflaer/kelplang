@@ -157,7 +157,12 @@ a `Map<Pair, i32>` that resolves through the derived pair, a `View.slice` and
 `View.to_string`, and `regex.compile("[a-z]+(\\d+)")` matched against
 `"xx hello42"`, with the match text and capture group printed over the UART
 under QEMU; both images link with no undefined symbol but the linker script's
-weak `__bss_*`.
+weak `__bss_*`. The tests are `kernel0_eq_builds_with_no_undefined_symbols`,
+`kernel0_eq_boots_and_prints_the_equality_and_regex_lines` and
+`kernel0_eq_x86_64_builds_and_boots_the_same_lines`, plus
+the
+`freestanding_std_regex` build project and the new `std/regex` row in the
+`freestanding::std_admission` unit test.
 
 ## Tests
 
