@@ -1258,11 +1258,62 @@ print(area_of(c))
 - `trait Drop` cannot be declared: `fun mut T.drop()` is a type's destructor (8) and is not spelled
   through a trait.
 
-Not in this slice, each refused where it is written: `dyn` and trait objects; a trait item other
-than a method (an associated type or const); `impl Trait` in argument position; a `where` clause;
-a generic trait (`trait Name<T>`); an impl for a generic instantiation; and any operator
-overloading through a trait (`==`/`!=` still come from a declared `eq`, 5). `plan/traits.md` 5 is
-the list with the reason and the workaround.
+### 9.5.1 Trait objects and `&dyn`
+
+An **object-safe** trait (9.5.2) may be used behind a borrow as a trait object, written
+`&dyn Name` (shared) or `&mut dyn Name` (exclusive):
+
+```kelp
+fun area_of<T: Shape>(s: &T).R: f64 = s.area()
+fun describe(s: &dyn Shape).R: String = s.describe()
+fun grow(s: &mut dyn Shape) { s.scale(2.0) }
+
+val c = Circle(r = 2.0)
+print(describe(&c))          // `&c` coerces to `&dyn Shape`
+val d: &dyn Shape = &c       // or at a typed binding
+print(describe(d))           // and a `&dyn` forwards on to another function
+```
+
+- A trait object is legal **as a parameter type and as a local binding type** only. `Box<dyn
+  Name>`, a bare `dyn Name`, a `.R: &dyn Name` return, a `datac`/`enum` field or payload, a
+  container element or argument, a tuple element and a `static`'s type are each refused by name.
+- `Name` must be a declared trait. `&mut dyn Name` allows a `mut Self` method and `&dyn Name`
+  does not; a `mut Self` method called through `&dyn` is refused by name.
+- **Coercion.** A `&T` where `T` implements `Name` coerces to `&dyn Name` at a call argument or a
+  typed `val`/`var` binding, written as the ordinary borrow (`describe(&c)`); a `&mut T` coerces
+  to both `&dyn Name` and `&mut dyn Name`; a `&dyn Name` passes where the same type is expected. A
+  plain place with no `&` is not coerced. Everything else is an error, naming what was written.
+- **Object safety (9.5.2).** `dyn` of a trait with a method that returns `Self` or takes another
+  `Self` is refused by name, naming the method. So is a trait whose flattened method list repeats
+  a name. A generic method is already impossible.
+- **Representation.** The value is a fat pair (the borrowed value's address and a pointer to a
+  static vtable); it is `Copy`, owns nothing and drops nothing. A method call goes through the
+  vtable (`s.vtable.area(s.data)`), with one slot per trait method and supertrait method,
+  supertraits first. The calls are bounds-free and allocation-free, so a freestanding build can
+  use `&dyn`; `plan/traits.md` 9 is the design.
+- **Borrowing.** The coercion is the borrow it was written from, so a `&dyn` local keeps its
+  referent borrowed to the end of the scope and a `&mut dyn` is exclusive. A `&dyn` can never be
+  stored or returned, so it cannot outlive what it borrows.
+
+### 9.5.2 Object safety
+
+A trait is object safe when every method in its flattened list (supertraits first) satisfies all
+of these. A violation is refused where the `dyn` type is written, naming the trait and the method:
+
+- the method's return type does not mention `Self`;
+- no parameter other than the receiver mentions `Self` (the receiver is what the erased pointer
+  stands for);
+- the flattened list has no two methods of the same name (the vtable holds one slot per name).
+
+A method with its own type parameters is already impossible (9.5), so there is nothing else to
+erase.
+
+Not in this slice, each refused where it is written: `Box<dyn Name>` and a bare `dyn Name`; an
+upcast from `&dyn B` to `&dyn A` when `B: A`; a trait object over an object-unsafe trait; a trait
+item other than a method (an associated type or const); `impl Trait` in argument position; a
+`where` clause; a generic trait (`trait Name<T>`); an impl for a generic instantiation; and any
+operator overloading through a trait (`==`/`!=` still come from a declared `eq`, 5).
+`plan/traits.md` 5 and 9.6 are the lists with the reasons and the workarounds.
 
 ## 10. Ownership, moves and borrowing
 
@@ -2499,7 +2550,7 @@ These are deliberate, and each one has a workaround in this document:
 - No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
 - `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
-- A trait (9.5) is a set of method signatures and a bound on a type parameter, not a type: there is no `dyn`, no default method, no associated type, and no way to implement one for a builtin (`i32`, `String`, `List<T>`) or for a generic instantiation. A trait's methods are still reached through a value and dispatched statically, so a call on a `T` is the call the concrete type declares.
+- A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1), which is a fat pair and a vtable; there is no `Box<dyn Name>`, no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
 - A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, variant payload or position is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
@@ -2711,7 +2762,8 @@ fun          := [ "pub" ] [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] ".
 param        := ident ":" [ "mut" | "move" ] type
 body         := "=" expr | block | <nothing for extern>
 
-type         := [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
+type         := [ "&" [ "mut" ] "dyn" ident ]  // a borrowed trait object: `&dyn T`, `&mut dyn T`
+              | [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
                        | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ]
                        | "[" type ";" expr "]"        // a fixed-size array: [T; N]
                        | "(" type "," type ("," type)* ")" )  // a tuple: (A, B)
@@ -2722,8 +2774,9 @@ fparam       := [ "mut" | "move" ] type
 `String`, not a keyword. `(T)` is the parenthesized type `T`, not a
 one-element tuple, and `()` is not a type at all: `unit` is. `Self` is likewise
 an ordinary `ident` that is only meaningful inside a trait or an impl (9.5), and
-`dyn` is not a keyword: `dyn Name` is refused by name as the trait-object form
-this language does not have.)
+`dyn` is not a keyword: it is recognized only after a leading `&` (or `&mut`) as
+the trait-object form, `&dyn Name`, which is legal only as a parameter type or
+a local binding type (9.5.1). A bare `dyn Name` is refused by name.)
 
 ```
 stmt         := "val" | "var" | "while" | "for" | "return" | expr

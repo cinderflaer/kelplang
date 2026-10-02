@@ -1443,3 +1443,48 @@ all; the existence, meaning or rate of a port or a device; whether the IDT is re
 through the current page tables; and any property of the machine a gate is the first thing to
 observe. The APIC, SMP, ACPI, a TSS/IST stack and x86 user mode are deliberately not built, so
 nothing here is a plan's promise either.
+
+## A-12 slice 4: borrowed trait objects (`&dyn`, `plan/traits.md` 9)
+
+**New ways to reach undefined behaviour.** The slice puts a function pointer in a
+`.rodata` table and calls it with a pointer the compiler erased to `void*`. The
+facts a program can break:
+
+- **The erased data pointer and the thunk that reads it are two independent
+  claims.** A thunk casts the `void*` back to the concrete receiver (a `datac`
+  pointer, a `String` pointer, or a `Copy` scalar load). If a vtable were built
+  for the wrong `(Trait, Type)` pair the call would hand a `Circle*` where a
+  `Square*` is read; the compiler pairs them from the one coercion site, so this
+  is a compiler bug rather than a program's mistake, but nothing at run time
+  checks the pairing.
+- **A `&dyn` keeps a borrow alive with no lifetime in the value.** The value is
+  two raw pointers; the borrow checker is the only thing that stops the
+  referent from being moved or dropped while a `&dyn` to it lives. The slice
+  routes the coercion through the same `&x` node the language already had, so
+  the existing rules apply: a `&dyn` cannot be stored, returned or put in a
+  container, which is why no lifetime syntax was needed.
+- **A `mut Self` method called through a `&mut dyn` writes through an erased
+  pointer.** The exclusivity is the borrow checker's; the C `void*` and the
+  LLVM `ptr` carry no constness, so a shared `&dyn` whose thunk happens to be a
+  `mut Self` one would write through a shared borrow. The type checker refuses
+  that call by name, and nothing else does.
+- **The vtable's slot order is a compiler invariant.** A call names a slot
+  index computed from the trait's flattened method list; a vtable whose slots
+  were built in another order would call another method with the same erased
+  pointer. Both are derived from the same list at one place, and no diagnostic
+  would catch a drift.
+
+**What the compiler does check.** That a `dyn` names a declared trait; that the
+trait is object safe (no method returns `Self`, no parameter other than the
+receiver mentions `Self`, no two methods share a name); that the operand of a
+coercion is a borrow of a type that implements the trait; that a `mut Self`
+method is called only through a `&mut dyn`; and that the coercion is a borrow the
+borrow checker already tracks (so the referent stays borrowed to the end of the
+scope, exclusively for `&mut`).
+
+**What it does not check.** That a vtable exists for a pair the program never
+coerces; that a thunk's erased pointer really addresses the concrete type (a
+compiler bug would be a miscompile with no diagnostic); that a program does not
+call a `mut Self` method through a shared `&dyn` (the call is refused at the
+type level, but the representation carries no mutability); and anything about
+the concrete type behind a `&dyn`, since the value carries no type tag.

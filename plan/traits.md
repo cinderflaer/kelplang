@@ -240,3 +240,195 @@ the C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the cove
 - the cross-module project `tests/projects/traits_cross` and the freestanding
   `tests/projects/freestanding_min`, which uses a default method;
 - `kelpc fmt` round-trips trait/impl/bound/default/supertrait syntax.
+
+## 9. Trait objects, `&dyn` (A-12 slice 4)
+
+So far a trait is a bound on a type parameter: the concrete type is known at every call, so
+dispatch is static and neither backend lowers anything new. This slice adds the borrowed trait
+object, `&dyn Name` and `&mut dyn Name`, so one function can call one of several types through a
+runtime vtable. The value is still a borrow: the compiler never owns a trait object.
+
+```
+trait Shape {
+    fun Self.area().R: f64
+    fun Self.describe().R: String { return "a shape" }
+    fun mut Self.scale(f: f64)
+}
+
+trait Named: Shape { fun Self.name().R: str }
+
+datac Circle(val r: f64)
+impl Shape for Circle { fun Self.area().R: f64 = r * r * 3.14159 }
+
+fun describe(s: &dyn Shape).R: String = s.describe()
+fun grow(s: &mut dyn Shape) { s.scale(2.0) }
+
+fun main() {
+    val c = Circle(r = 2.0)
+    print(describe(&c))         // the coercion happens here
+    val d: &dyn Shape = &c      // or at a typed binding
+    print(describe(d))          // a `&dyn` forwards to another function
+}
+```
+
+### 9.1 Where a trait object may be written
+
+- The two type spellings are `&dyn Name` and `&mut dyn Name`. A bare `dyn Name` (no `&`) is
+  refused: an owned trait object would need a place to own its data, which is `Box<dyn Name>`, and
+  that is deliberately out of this slice.
+- A trait object is legal **as a parameter type and as a local binding type** (`val`/`var`). It is
+  refused everywhere else by name: as a `.R:` return type, as a `datac`/`enum` field or payload, as
+  a `List`/`Box`/`Map`/`Atomic`/array element or argument, as a tuple element, as a `static`'s
+  type, and as the parameter or return of a function *type*. `Box<dyn Name>` is refused by name.
+  Nothing else changed: a borrow still cannot be returned or stored.
+- `Name` must be a declared trait. `&dyn Unknown` is refused where it is written.
+- The `mut` in `&mut dyn Name` is the whole mutability story: `&mut dyn Name` permits a `mut Self`
+  method and `&dyn Name` does not. There is no `mut &dyn` and no `dyn` without a borrow.
+
+### 9.2 Object safety
+
+A trait used behind `dyn` must be object safe. The rule is exact and the compiler refuses the trait
+by name, naming the offending method:
+
+- No method may **return `Self`**. A return type that mentions `Self` anywhere (including nested in
+  a container) is refused.
+- No method may **take another `Self`**: no parameter other than the receiver may mention `Self`.
+  The receiver itself is always `Self` (or `mut Self`) and is what the erased pointer stands for,
+  so it is not counted.
+- Two methods of the same name are refused too, because the vtable names one field per method and
+  two methods cannot share it. This can only happen through a supertrait that repeats a name.
+- A generic method is already impossible (`traits.md` 1): a trait method declares no type
+  parameters, so there is nothing to erase.
+
+Object safety is checked where the `dyn` type is written, so the error names the trait and the
+method even if that `dyn` value is never built.
+
+### 9.3 Coercion
+
+A `&T` where `T` implements `Trait` coerces to `&dyn Trait` at exactly two places, and both are
+implicit, that is, the caller writes the ordinary borrow and nothing else:
+
+- a **call argument**: `describe(&circle)` where `describe(s: &dyn Shape)`;
+- a **typed `val`/`var` binding**: `val d: &dyn Shape = &circle`.
+
+The rules, in full:
+
+- The operand is an ordinary `&x` or `&mut x` (or a value that already is a `&T`, e.g. a parameter
+  of a borrow type). A plain place with no `&` is *not* coerced: `describe(circle)` is an error and
+  the message says to write `&circle`. This is the one place the slice is narrower than "an
+  implicit borrow everywhere", and it keeps the coercion visible at the call site.
+- `&T` coerces to `&dyn Trait`. `&mut T` coerces to both `&dyn Trait` and `&mut dyn Trait`.
+  `&T` never coerces to `&mut dyn Trait`.
+- `T` must implement `Trait` (an `impl Trait for T` anywhere in the program). A type that does not
+  is refused by name at the coercion site.
+- A `&dyn Trait` value coerces to the **same** `&dyn Trait` type, so one can be passed on to
+  another function. It does not coerce to a different trait, and there is no upcast from
+  `&dyn B` to `&dyn A` when `B: A`; that is out of this slice.
+- Everything else is an explicit error: a temporary `&Circle(r = 1.0)` is fine (the same
+  expression-scoped temporary a shared borrow may already point at), a type that implements the
+  trait but arrives as an owned value is not, and neither is a `&dyn` where a concrete `&T` is
+  expected.
+
+### 9.4 Representation: the fat pair and the vtable
+
+A `&dyn Trait` value is **two pointers**: the address of the borrowed value (the *erased data
+pointer*, `void*`) and the address of a static, read-only vtable. It is `Copy` (copying two
+pointers moves nothing), it owns nothing, and dropping it drops nothing: it is a borrow, exactly
+like a `Ty::Ref`, and the value it points at is still owned by whoever it was borrowed from.
+
+- **One vtable per `(Trait, Type)` pair actually used in a coercion.** A pair that is never
+  coerced to has no vtable. Each vtable is emitted once per program, as `static const` data in
+  `.rodata` on both backends.
+- **One slot per method, in one fixed order**: the trait's supertraits first, recursively in
+  declaration order, then the trait's own methods in source order. So `&dyn Named` has `Shape`'s
+  methods before `Named`'s, and a supertrait method is callable on a `&dyn Named`.
+- **Each slot is a thunk** whose first parameter is the erased data pointer and whose remaining
+  parameters and return are the method's own. The thunk calls the concrete method
+  (`Type#method`, the same `Type#name` key an ordinary receiver call uses), including a
+  defaulted method's synthesized per-impl copy and a supertrait's impl on the type. The concrete
+  method's receiver is read from the erased pointer: a borrowed receiver is the pointer itself,
+  and a `Copy` builtin receiver (an integer scalar) is a load from it.
+- **A method call goes through the vtable**: `s.area()` where `s: &dyn Shape` becomes
+  `s.vtable.area(s.data)`. The call is bounds-free and allocation-free: no libc, no allocator, no
+  witness argument and no runtime type tag. A freestanding image can use `&dyn`, and the vtables
+  cost only `.rodata`.
+- **A `mut Self` method needs a `&mut dyn`**: calling `scale` through a `&dyn Shape` is refused by
+  name (the receiver is a shared borrow), while a `&mut dyn Shape` permits it. A non-`mut`
+  method is callable through either.
+
+### 9.5 Borrows and soundness
+
+The coercion is not a new borrow: the `&x` inside it is the borrow the language already had, and
+the borrow checker sees the same node. So:
+
+- a `val d: &dyn Shape = &c` keeps `c` borrowed for the rest of the scope, exactly as `val p =
+  &c` does, and `c` cannot be moved or reassigned while `d` lives;
+- `&mut c` coerced to a `&mut dyn` is an exclusive borrow, so it excludes every other borrow,
+  shared or exclusive;
+- a `&dyn` passed as a call argument is a call-scoped borrow, released after the call, exactly as
+  the `&x` it came from is;
+- a `&dyn` never outlives its referent because it can never be stored (9.1) and never returned.
+  There is no lifetime syntax in v1 and this slice does not add one.
+
+### 9.6 What is deliberately not in this slice
+
+Each refused where it is written:
+
+- **`Box<dyn Name>`**, an owned trait object. Refused by name; the workaround is an `enum`.
+- **A bare `dyn Name`** (an unsized value in place). Refused by name.
+- **`&dyn` in a field, a payload, a container element, a return type or a `static`.** These are
+  the storage positions a borrow may not take, and the refusal is the ordinary borrowed-type one.
+- **Upcasting `&dyn B` to `&dyn A`** when `B: A`. Refused: a `&dyn` coerces only to its own type.
+- **Object-unsafe traits** (returning `Self` or taking another `Self`). Refused by name.
+- **A trait object over a trait with a lifetime or an associated type.** Neither exists in v1.
+- **A `dyn` of a trait implemented for a builtin with no addressable receiver.** The supported
+  builtin receivers are the ones a trait may already be implemented for (`traits.md` 4), and the
+  thunk loads a `Copy` scalar or passes the borrow for every other one.
+
+### 9.7 What the compiler does not check
+
+- The compiler does not check that a vtable's slot order matches any other vtable's. It is one
+  order for the (trait, type) pair, computed the same way at every call site, so a mismatch would
+  be a compiler bug rather than a program's mistake.
+- Nothing requires a trait method's body to be consistent across the types that implement it,
+  exactly as static dispatch does not (6).
+- The vtable is emitted per pair used; a call through a `&dyn` always knows the trait from the
+  type, so there is no dynamic type tag and no way to ask a `&dyn` what concrete type it holds.
+- A `&dyn Trait` cannot be compared, printed, hashed or used as a container element; the compiler
+  refuses each position for the ordinary reason (there is no such method, or it is a borrow).
+
+### 9.8 How it is implemented
+
+- `parser.rs` parses `&dyn Name` / `&mut dyn Name` in a type position and records it on
+  `TypeExpr`; the `dyn` refusal that shipped in slice 2 is replaced by the object-safety-aware
+  parse path. `fmt.rs` needs no change (token-level).
+- `infer.rs` resolves the type to `Ty::Dyn { mutable, trait_name }`, checks object safety, records
+  each `(trait, type)` coercion pair, lowers a coercion to a `tir::ExprKind::DynCoerce` and a
+  method call on a `&dyn` to a `tir::ExprKind::DynCall`. The vtable list lands in `tir::Program`.
+- `types.rs` gives `Ty::Dyn` its `c_type`/`display`/`mangle`/`is_copy`/`owns_heap` answers and its
+  refusal as a stored type.
+- `codegen_c.rs` emits the vtable struct typedef per trait, the `&dyn` struct typedef, one thunk
+  and one `static const` vtable per pair, and lowers `DynCoerce`/`DynCall`. `codegen_llvm.rs`
+  mirrors all of it as an identified struct, a `[N x ptr]` global and thunk functions.
+- `borrowck.rs` looks through `DynCoerce` to the `&x` node inside it, so every borrow, move and
+  drop rule applies unchanged.
+
+### 9.9 Tests
+
+`kelpc/tests/compile_and_run.rs` runs each of these on the backend under test (LLVM by default,
+the C oracle under `KELPC_ORACLE=c`):
+
+- two types implementing one trait, called through `&dyn` in a loop over borrowed bindings;
+- a default method and a supertrait method through `&dyn`;
+- `&mut dyn` mutating its target;
+- passing a `&dyn` on to another function;
+- a trait implemented for `i32` used through `&dyn`;
+- a freestanding riscv64 project that uses `&dyn`, built with `llvm-nm -u` clean and booted under
+  QEMU with a timeout;
+- the rejections: an object-unsafe trait returning `Self`, `Box<dyn T>`, `dyn` in a `datac` field,
+  returning a `&dyn`, coercing a type that does not implement the trait, and `&dyn` of an unknown
+  trait;
+- `kelpc fmt` round-trips the `&dyn` spelling.
+
+A `&dyn` parameter-only variant of the slice is recorded in `plan/traits-dyn-status.md` if the
+local-binding half has to be cut; this file is the decision either way.
