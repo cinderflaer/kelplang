@@ -533,3 +533,222 @@ Each refused where it is written, with the message naming the follow-up:
   declares an associated type. Nothing downstream knows an associated type existed: the instance's
   signatures already name concrete types.
 - `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+
+## 11. Generic traits, `From`, and error conversion for `?` (A-12 slice 6, roadmap A-3 and A-12)
+
+*Design note. Slice 2 gave a trait methods with `Self` receivers, slice 3 gave it default bodies,
+supertraits and impls for builtins, slice 4 gave it `&dyn`, and slice 5 gave it associated types.
+This slice lets a trait take **type parameters of its own**, so a trait can say "I convert a `T`"
+rather than "I have these methods". Dispatch stays static, so neither backend learns a new
+lowering and a freestanding image may use one. On top of it, `?` converts its failure through a
+`From` impl, which is the last piece roadmap A-3 named.*
+
+### 11.1 A trait may take type parameters
+
+```
+pub trait From<T> {
+    fun from(value: T).R: Self
+}
+
+pub trait Into<T> {
+    fun Self.into().R: T
+}
+
+trait Store<K, V: Named> {
+    fun Self.get(key: K).R: V
+}
+```
+
+- A trait's type-parameter list is the same one a `datac`, an `enum` and a `fun` take, written
+  after the trait's name and before any `:` supertrait list: `trait Name<A, B: Bound>`. A
+  parameter is in scope in every method signature and default body of the trait, alongside `Self`,
+  and a trait may not declare the same parameter twice. A trait's own parameters are *not*
+  monomorphized into hidden instances; they are substituted at each `impl` and each bound, exactly
+  as a generic function's parameters are substituted at each call.
+- The **trait name plus its arguments** identifies a *trait instance* - `From<IoErr>` and
+  `From<String>` are two different traits to implement and to bound, while sharing one declaration
+  and one method list.
+- A trait type parameter's own bound (`V: Named`) is checked where the trait is instantiated: the
+  concrete type an `impl`'s argument names has to implement the bound, and so does a bound's own
+  argument, with the same rule a bound on a function's type parameter uses.
+- A generic trait may name **supertraits**, and a supertrait without arguments works exactly as it
+does for an ordinary trait (`trait Sorted<T>: Named`), so `impl Sorted<i32> for X` needs `impl
+Named for X` and a `<T: Sorted<i32>>` may call `Named`'s methods. A supertrait *with* arguments
+(`trait Sorted<T>: Compare<T>`) is a follow-up, refused by name: the substitution a parameterized
+supertrait needs is a second rule on top of the impl's own arguments.
+- **Refused by name.** The trait arguments a bound or an impl writes are a *named* type (a
+  `datac`/`enum`, dotted through an alias as usual) or a builtin type; a container, a tuple, an
+  array, a borrow, a function type and a handle are refused where they are written, with the
+  follow-up named. A generic trait may not declare an associated type
+  (`trait Name<T> { type Item }`) and may not be used behind `dyn`: an associated type has no
+  single binding to name and the vtable has no slot for a parameter, so both are follow-ups. A
+  `where` clause and an equality constraint on a parameter stay refused, exactly as in section 5.
+
+### 11.2 A static method has no receiver
+
+An ordinary trait method is reached through a value and writes a `Self` receiver. A method that
+has no `self` at all is **static**, and is written with no receiver:
+
+```
+pub trait From<T> {
+    fun from(value: T).R: Self
+}
+
+datac AppErr(val code: i32, val note: String)
+
+impl From<i32> for AppErr {
+    fun from(value: i32).R: AppErr = AppErr(code = value, note = "int")
+}
+
+fun main() {
+    val e = AppErr.from(7)          // the static method, on the type name
+    print(e.code)
+}
+```
+
+- A static method is a trait signature with no body, or an impl method with no `Self` receiver and
+  exactly the declared signature. It is called on the **type**: `AppErr.from(7)`, and through a
+  **bounded type parameter**: `X.from(7)` for `fun f<X: From<i32>>(v: i32).R: X`. The return type
+  `Self` is the implementing type, so the call's type is `AppErr` (or `X`).
+- `AppErr.from(7)` is resolved against the impls of every trait the type has: the compiler finds
+  the impl whose trait declares a static `from` and whose substituted parameter types match the
+  call. A type that implements two different instantiations of the same trait (`From<i32>` and
+  `From<String>`) is dispatched by the argument type, so `AppErr.from(7)` and
+  `AppErr.from("x")` are different methods of the same name.
+- A **trait-name call** (`From.from(7)`) is allowed only when the implementing type and the trait's
+  arguments are inferable: the arguments fix the trait's own parameters, and the expected type (or,
+  when there is only one impl of the instance, that impl) fixes `Self`. Anything ambiguous is
+  refused by name rather than guessed.
+- An impl may not mix receiver and static methods of the same trait incorrectly: a method the
+  trait declares with a receiver has to be written with one, and a static member has to be written
+  without. The mismatch is the ordinary signature error.
+- A static method shares the trait method's name with any other method the *type* declares, so a
+  second static method of the same name (from another impl of the same instance) is the ordinary
+  duplicate error, and an inherent receiver method of that name collides at the impl exactly as it
+  does today.
+
+### 11.3 Coherence and the impl's trait arguments
+
+- The `impl` line writes the trait's arguments after its name: `impl From<IoErr> for AppErr { ... }`.
+  **One impl per (trait instance, type) pair**: `impl From<IoErr> for AppErr` and
+  `impl From<String> for AppErr` are two legal impls, and a second `impl From<IoErr> for AppErr` is
+  the coherence error naming both.
+- The impl's methods are resolved with the trait's parameters substituted by the impl's arguments
+  and `Self` by the implemented type, so the same trait signature is checked against every impl
+  exactly as it is today.
+- Everything else in sections 2 to 4 holds unchanged: the type has to be a `datac`/`enum` or a
+  builtin that carries methods, the impl lives in the trait's module or the type's (the trait's only,
+  for a builtin), and every non-defaulted signature has to be implemented with exactly the declared
+  shape.
+
+### 11.4 `std/convert`
+
+The shipped `std/convert` declares the two conversion traits and nothing else:
+
+```
+// `std/convert`
+pub trait From<T> {
+    fun from(value: T).R: Self
+}
+
+pub trait Into<T> {
+    fun Self.into().R: T
+}
+```
+
+- **There are no blanket impls.** `impl<T> Into<U> for T where U: From<T>` would need a
+  compiler-known blanket impl, which this slice does not add, so a type that wants `into` writes
+  its own `impl Into<U> for X` (or uses `From` directly). The reason is the same one section 5
+  gives for `where` clauses: a blanket impl is a second inference rule in a slice whose whole point
+  is that `?` can call `From` with no new machinery.
+- `?` uses `From` directly, never `Into`, so a program that only propagates errors writes only
+  `impl From<...> for ...`.
+
+### 11.5 The `?` operator converts through `From`
+
+The operator's existing shape is unchanged: the operand is an enum shaped `Ok`/`Err` or
+`Some`/`None` held by value, and a failure returns immediately out of the enclosing function. What
+is new is only the `Ok`/`Err` failure payload:
+
+- When the operand's failure payload type **is** the enclosing function's failure payload type,
+  `?` moves it across as before; no conversion call is emitted.
+- When the two differ, and an `impl From<E1> for E2` exists where `E1` is the operand's failure
+  payload and `E2` the function's, `?` calls `E2.from(e1)` and returns the result in the failure.
+  The signature is checked: the impl's `from` has to take exactly `E1` and return exactly `E2`, so
+  the call is the ordinary static call of section 11.2.
+- When no such impl exists, the error names both failure types and names `From`, and says to write
+  `impl From<E1> for E2 { fun from(value: E1).R: E2 { ... } }`.
+- `Some`/`None` has no payload to convert, so `Option` to `Option` is unchanged: the two have to
+  be the same shape and there is nothing else to check.
+- The two enums may be different declarations (`Result` propagated out of a function that returns
+  a program's own `Ok`/`Err` enum), exactly as the shape rule already allowed; only the failure
+  payload type is now allowed to differ, and only through `From`.
+
+### 11.6 What is deliberately not in this slice
+
+Each refused where it is written, with the message naming the follow-up:
+
+- **A blanket impl** (`impl<T> Into<U> for T`, `impl<T: From<T>> ...`). There is no blanket impl
+  of any trait in this slice; `std/convert`'s `Into` is declared but not derived for anything.
+- **`Into` in `?`.** `?` uses `From` only, so an `Into` impl with no matching `From` does not
+  convert.
+- **An associated type in a generic trait**, and **`&dyn` of a generic trait.** Both are refused
+  by name: the projection and the vtable each have no slot for a trait parameter.
+- **A generic trait argument that is not a named type or a builtin** (a container, a tuple, an
+  array, a borrow, a function type, a handle). Refused by name.
+- **An equality constraint** (`I: Iterator<Item = i32>`) and a **`where` clause**, as before.
+- **A generic method of a trait** (`fun Self.map<U>(...)`), and a **generic static method**.
+
+### 11.7 What the compiler does not check
+
+- A static method's arguments are matched by the *resolved* parameter types, not by the written
+  argument names alone; a call that matches two impls of the same name is refused as ambiguous
+  rather than picked by source order, but a call whose arguments match exactly one impl has no
+  other check that the impl is "the intended" one.
+- A `From` impl's body is checked like any other method body: nothing requires the returned `Self`
+  to be built from `value`, and a `from` that ignores its argument compiles.
+- The trait's own type parameters are substituted structurally at each impl; nothing checks that
+  two impls of different instances of one trait agree about anything.
+- An uninstantiated generic function whose body would fail a bound is never checked, exactly as
+  before.
+
+### 11.8 How it is implemented
+
+- `parser.rs` parses a trait's type-parameter list, a receiverless method (a static signature or a
+  static impl method), the `impl From<IoErr> for AppErr` argument list, and a bound with
+  arguments (`<X: From<i32>>`). It refuses the shapes 11.6 names where the tokens are, and it
+  keeps the trait argument list in `TraitImplDecl`.
+- `resolve.rs` canonicalizes each trait argument (a dotted name by the usual `canon`, a builtin
+  left alone) and stores the resulting **trait instance key** (`From<pkg.IoErr>`) on the impl
+  record and on every method's `TraitImplSite`. A static impl method's function key gets the
+  instance appended (`AppErr#from@From<pkg.IoErr>`), so the two instances of one trait for one type
+  are two functions rather than a collision; `types::c_ident` already mangles the `@` and the
+  angle brackets, so both backends emit them unchanged.
+- `infer.rs` holds the trait's parameters in `TraitInfo` and keys the `impls` table by the trait
+  instance. It substitutes the impl's arguments into the trait's signature when it checks the
+  impl, checks each declared parameter bound, and resolves a static call by searching the impls of
+  the receiver type (or of the concrete type a bounded parameter is instantiated with). The `?`
+  node carries an optional conversion key, which codegen lowers as the ordinary static call.
+- `codegen_c.rs` and `codegen_llvm.rs` need no new node: a static method is an ordinary free
+  function keyed by its mangled name, and the `?` conversion is one more function call in the
+  failure arm.
+- `std/convert.kp` is added to `stdlib.rs`'s source table and to the freestanding allowed set (it
+  is pure language, so a kernel may use it).
+- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+
+### 11.9 Tests
+
+`kelpc/tests/compile_and_run.rs` runs each of these on the backend under test (LLVM by default,
+the C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the coverage sweep as well:
+
+- `From<A>` and `From<B>` implemented for one error `enum`, used by `?` on a function returning
+  each, with the same type implementing two instances of one trait;
+- a generic function bounded `<X: From<i32>>` that calls `X.from(x)`;
+- a `From` impl reached across modules (the `tests/projects/convert_cross` project);
+- the existing `?` fixtures pass untouched;
+- the rejections: `?` with no `From` impl (the message names both failure types and `From`), two
+  identical `From<A> for T` impls, a generic trait used as `&dyn`, and a wrong arity of trait
+  arguments;
+- `kelpc fmt` round-trips generic-trait syntax (`tests/fmt_corpus/traits_generic`);
+- the freestanding project `tests/projects/freestanding_convert` uses `std/convert` and boots under
+  QEMU with no undefined symbol.

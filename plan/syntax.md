@@ -629,7 +629,7 @@ fun loud(n: i64).R: Option<String> {
 ```
 
 - The operand must be an `enum` **held by value** and shaped either `Ok`/`Err` (the failure carries a payload) or `Some`/`None` (it does not). The shape is the contract: the enum's *name* does not matter, so `std/result`'s `Result`, `std/option`'s `Option` and a program's own declaration of either all work.
-- The enclosing function must return an enum of the **same shape**, and for `Ok`/`Err` with the **same failure payload type** — v1 has no error conversion, so `Result<i64, String>` cannot be propagated out of a function returning `Result<i64, IoErr>`. A function returning `Unit` (including `main`) has nowhere to propagate to.
+- The enclosing function must return an enum of the **same shape**. For `Ok`/`Err`, when the two failure payload types differ, `?` converts the failure through a declared `impl From<Source> for Target` (9.5), calling `Target.from(source)`; when they are the same type the payload moves across with no call. When no such impl exists the error names both failure types and `From`. `Option` to `Option` has no payload to convert, so it stays exact. A function returning `Unit` (including `main`) has nowhere to propagate to.
 - The value of `expr?` is the success payload, so it composes: `1 + half(n = n)?`. A failure returns immediately, which means the enclosing function's locals are dropped on the way out, exactly as any `return` drops them.
 - `?` is postfix and binds tighter than every binary operator. Because it moves a payload out of the operand, a borrow cannot be an operand: match that with `when` (6.3) or `if let` (6.1).
 - It applies to the expression it is written on and to nothing else, so a tuple is never its operand. When a tuple is the *success* payload, `?` reaches the `Result` the element is and hands the tuple back: `val (lo, hi) = min_max_checked(xs)?` where the function returns `Result<(i32, i32), String>` is the tuple, taken apart by the binding (3.1, 4). A tuple is not an enum, so writing `?` on the tuple itself is the ordinary "the operand must be an `enum`" refusal.
@@ -1276,8 +1276,8 @@ print(area_of(c))
   types (`type Item = i32` in a trait), associated consts, generic associated types, and equality
   constraints (`I: Iterator<Item = i32>`) are not in this slice and are refused by name;
   `plan/traits.md` 10 is the design.
-- A trait method may take `mut` on its receiver, and the impl has to match it. A trait declaration
-  takes no type parameters and neither does one of its methods.
+- A trait may take **type parameters** of its own: `pub trait From<T> { ... }`, written exactly like a `datac`/`fun` parameter list (with bounds: `trait Store<K, V: Named>`). The parameters are in scope in every method signature and default body, and the trait name plus its arguments (*trait instance*, `From<IoErr>`) is what an impl and a bound name. A trait method may take `mut` on its receiver, and the impl has to match it. A trait method may not take type parameters of its own (a generic method is still refused). A generic trait's argument is a named type or a builtin; a container, tuple, array, borrow, function type or handle is refused by name. A generic trait may not declare an associated type and may not be used behind `&dyn` (both follow-ups).
+- A trait method written with **no receiver** is a **static method**: `fun from(value: T).R: Self`, and an impl writes it without a receiver too (`fun from(value: IoErr).R: AppErr { ... }`). It is called on the type name (`AppErr.from(7)`) or through a bounded parameter (`X.from(7)` for `<X: From<i32>>`); `Self` in its return type is the implementing type. A type may implement `From<A>` and `From<B>` at once, and the call picks by argument type; a trait-name call (`From.from(7)`) is allowed only when `Self` and the trait's arguments are inferable. `std/convert` ships `From<T>` and `Into<T>` with **no blanket impls**. `plan/traits.md` 11 is the design.
 - A trait may name **supertraits** after a `:`, separated by `+`: `trait B: A + C { ... }`. An
   `impl B for X` requires an `impl A for X` and an `impl C for X`; a `<T: B>` may call `A`'s
   methods on a `T`; a `T: B` satisfies a `T: A` bound; and a cycle is an error.
@@ -1365,10 +1365,11 @@ erase.
 
 Not in this slice, each refused where it is written: `Box<dyn Name>` and a bare `dyn Name`; an
 upcast from `&dyn B` to `&dyn A` when `B: A`; a trait object over an object-unsafe trait; a trait
-object over a trait that declares an associated type (9.5); an associated const; `impl Trait` in
-argument position; a `where` clause; a generic trait (`trait Name<T>`); an impl for a generic
-instantiation; and any operator overloading through a trait (`==`/`!=` still come from a declared
-`eq`, 5). `plan/traits.md` 5, 9.6 and 10.3 are the lists with the reasons and the workarounds.
+object over a trait that declares an associated type or takes a type parameter (9.5); an associated
+const; `impl Trait` in argument position; a `where` clause; an equality constraint on a trait's
+associated type; an impl for a generic instantiation; a blanket impl of any trait (including
+`Into`); and any operator overloading through a trait (`==`/`!=` still come from a declared `eq`,
+5). `plan/traits.md` 5, 9.6, 10.3 and 11.6 are the lists with the reasons and the workarounds.
 
 ## 10. Ownership, moves and borrowing
 
@@ -2422,7 +2423,7 @@ fun or_else<T, E, F>(r: &Result<T, E>, f: closure(&E).R: Result<T, F>).R: Result
 fun each<T, E>(r: &Result<T, E>, f: closure(&T))
 ```
 
-`Ok`/`Err` is the shape that carries a reason, and `?` requires the operand's failure payload type and the enclosing function's to be *identical* — there is no error conversion, which is where a trait (or a `From`-shaped builtin) would go.
+`Ok`/`Err` is the shape that carries a reason. The operand's failure payload type and the enclosing function's may differ when an `impl From<Source> for Target` exists, which `?` calls; when they are the same no call is emitted. `std/convert` ships the `From` and `Into` traits (9.5).
 
 The `Copy` requirements left here are on the side a helper has to **rebuild** through a borrow: `unwrap_or`/`unwrap`/`unwrap_err` hand a payload out of a borrowed result, and `and_then`/`or_else` rebuild the other variant out of one. `map` and `map_err` take the result with **`move`** instead, so the side they rebuild may be owned: `result.map` over a `Result<T, MyErr>` moves the error payload into the fresh `Err` (17's partial moves).
 
@@ -2648,7 +2649,7 @@ These are deliberate, and each one has a workaround in this document:
 
 - A tuple is a record with positional fields, so it is read by destructuring and nothing else: there is no positional access on a value (`t.0`), no tuple pattern in `when` (6.3), no destructuring `for` binding (6.2), and no tuple value in a `const` initializer (3.1, 14.1). Bind the whole tuple to a `val` when the positions need to be visible separately, and print its positions rather than the tuple (`print` takes a scalar, a `str` or a `String`).
 - Iteration is a `for` over a `List` (6.2), a `[T; N]`, or an `Iterator` (16.18), or a `while` plus an index when the loop is not a front-to-back walk. `break`/`continue` control either loop.
-- `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
+- `?` propagates an identical failure type directly and a different one through a declared `impl From<Source> for Target`; there is no `Into` in the operator, no blanket impl, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, `From`/`Into` in `std/convert`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
 - A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1), which is a fat pair and a vtable; there is no `Box<dyn Name>`, no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
 - A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, variant payload or position is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
@@ -2837,13 +2838,14 @@ grant        := ident "=" "[" string ("," string)* "]"
 // to a `datac`/`enum` or to a builtin. "Self" is an ordinary identifier used
 // as a type name in both, and stands for the implementing type. A method with
 // no body is a signature; one with a body is a default the impl may omit.
-trait        := [ "pub" ] "trait" ident [ ":" bound ("+" bound)* ] "{" ( traititem )* "}"
-traititem    := traitmethod | assocdecl
+trait        := [ "pub" ] "trait" ident [ typeparams ] [ ":" bound ("+" bound)* ] "{" ( traititem )* "}"
+traititem    := traitmethod | staticmethod | assocdecl
 assocdecl    := "type" ident [ ":" bound ("+" bound)* ]   // no `=`: that is a default, refused
 traitmethod  := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
                 [ ".R" ":" type ] ( body | )        // no body: a signature
-traitimpl    := "impl" traitname "for" typename "{" ( traitimplitem )* "}"
-traitimplitem := method | assocbind
+staticmethod := "fun" ident "(" [ param ("," param)* ] ")" [ ".R" ":" type ] ( body | )
+traitimpl    := "impl" traitname [ typeargs ] "for" typename "{" ( traitimplitem )* "}"
+traitimplitem := method | staticmethod | assocbind
 assocbind    := "type" ident "=" type
 // `I::Item` (10, `plan/traits.md`): an associated type projected from a type
 // parameter or from `Self` in a trait signature. A trait body and an impl body
@@ -2859,7 +2861,7 @@ field        := ("val" | "var") ident ":" type
 enum         := [ "pub" ] "enum" ident [ typeparams ] "{" ( ident [ "(" [ field ("," field)* ] ")" ] )* "}"
 typeparams   := "<" typeparam ("," typeparam)* ">"
 typeparam    := ident [ ":" bound ("+" bound)* ]
-bound        := traitname
+bound        := traitname [ typeargs ]
 typeargs     := "<" type ("," type)* ">"   // in an expression: adjacent to the name and to "("
 fun          := [ "pub" ] [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
                 "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body

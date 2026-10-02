@@ -73,10 +73,12 @@ does not ship.
 
 Every refusal of a whole module says "needs a hosted runtime" and then names
 the modules a freestanding project may implement, derived from the table (so it
-cannot drift): `std/arena, std/atomic, std/frame, std/irq, std/list, std/math,
-std/option, std/result, std/str`. `std/list` needs the allocator pair, and
-several functions inside the `Subset` rows are refused by name; both are said
-in the message of the construct that needs them, not in the list.
+cannot drift): `std/arena, std/atomic, std/convert, std/frame, std/irq,
+std/list, std/math, std/option, std/result, std/str`. `std/list` needs the
+allocator pair, and several functions inside the `Subset` rows are refused by
+name; both are said in the message of the construct that needs them, not in the
+list. `std/convert` is pure language (two traits and no runtime), so a kernel
+may use `From` exactly as a hosted program does.
 
 ## Tests
 

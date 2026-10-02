@@ -1648,3 +1648,29 @@ matches the trait signature, which the trait machinery already did); it does not
 check that the iterator terminates, so an infinite iterator without a `break` is
 a non-terminating program, exactly as `while true` is; and it does not track the
 cursor through a raw `Ptr<T>` any more than it did before.
+
+## Language-completeness 3: generic traits, `From`, and `?` (`plan/traits.md` 11)
+
+**New ways to reach undefined behaviour.** None by itself. A static trait method
+is an ordinary monomorphized function keyed by its type and trait instance, so
+the call the compiler emits is the direct call it already emitted for a receiver
+method; `?`'s conversion is one more such call in the failure arm, between
+moving the payload out of the operand and freeing the frame. The payload that
+crosses is the same value the failure arm already moved: a `datac` failure is
+passed by the address of the temporary's own union member, exactly the address
+the successful path would have read, and a `Copy` scalar is passed by value. No
+new borrow, no new drop and no new allocation is introduced, so no new way to
+reach undefined behaviour is added.
+
+**What the compiler does and does not check.** It checks that a generic trait's
+impl writes exactly the arguments the trait declares and that each satisfies the
+declared parameter bound; that an impl of a `From`-named trait for the target
+payload type takes exactly the source payload type and returns the target; that
+a bound `<X: From<A>>` resolves its argument (a concrete type, a builtin or
+another type parameter of the same declaration) and that the instantiated type
+implements that trait instance; and that `&dyn` of a generic trait, a bound or
+impl argument that is not a named type or a builtin, and a supertrait with
+arguments are each refused where written. It does not check what a `from` body
+does with its argument, does not relate two impls of different instances of one
+trait, and does not check an uninstantiated generic function whose body would
+fail a bound, exactly as before.
