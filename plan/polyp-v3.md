@@ -473,9 +473,11 @@ widget identity: an interactive widget's `slot` is handed out by counting intera
 calls from zero, and a path is resolved with the same `core.child_at` / sibling-index rule. Only
 `make` grows anything (one `SNode` and one `List` per created widget, in the widget's parent),
 and only `List.push` inside `make`/`insert_into` allocates. `patch_widget`, `drop_widget`,
-`place_widget`, `layout`, `paint` and every input handler allocate nothing: damage is the stage-2
-fixed `Damage`, the clip is a fixed `ClipStack`, and the only per-frame scratch is the glyph
-mask `font.kp` already builds on the stack. A hosted run may therefore use `List` freely, and a
+`place_widget`, `layout` and `paint` allocate nothing: damage is the stage-2 fixed `Damage`, the
+clip is a fixed `ClipStack`, and the only per-frame scratch is the glyph mask `font.kp` already
+builds on the stack. Two input handlers do own a temporary, both only when they run: `Tab`/
+`Shift-Tab` collects the interactive ids into a `List<i32>`, and an entry edit builds the new
+`String`. Neither is the per-frame path. A hosted run may therefore use `List` freely, and a
 per-frame profile has no allocator call to find.
 
 `uid` is a grow-only node number used only for tests and diagnostics; `slot` is the interactive
