@@ -344,6 +344,25 @@ phase per check (array bounds, narrowing, `str.byte`, the `panic` builtin, `opti
 double panic) and asserts each exact line; `plan/panic-semantics.md` has the check table and
 records that overflow wraps and division by zero stays an unchecked UB, so neither has a message.
 
+**Kernel stage 21 is done: a timer interrupt and a preemptive round-robin scheduler**
+(`plan/scheduler.md`). `examples/kernel0-sched` is a bare-metal riscv64 image, still in machine
+mode with no paging, that programs the CLINT's machine timer (`mtimecmp` at `0x02004000 + 8 *
+hart`, `mtime` at `0x0200BFF8`, granted as exactly those two windows), enables `mie.MTIE` and
+`mstatus.MIE`, and handles the interrupt in a naked `trap_entry` that saves all 31 general
+registers, `mepc` and `mstatus` into the current task's frame in a `static mut [Task; 3]` table,
+calls `schedule(frame)` and restores whichever frame it returns, ending in `mret`. Three tasks
+that never yield each loop forever over their own counter and print `A`/`B`/`C` every 50000
+iterations through an `Atomic<bool>` spin lock released by `defer`, so the letters can only
+interleave because the timer preempted them; the kernel stops itself after 40 ticks with
+`sched: done ticks=40`. `examples/kernel0-sched/run.sh` boot-asserts all three letters, at least
+three letter transitions and no torn line from QEMU's own stdout, and a test in
+`compile_and_run.rs` runs it. The one compiler change is the table's type: an array static's
+element may now be a `datac` or another array (recursively), which `tests/projects/static_datac_array`
+pins on both backends, and `tests/projects/sched_task_layout` pins the layout the naked entry
+hardcodes. In this stage: the timer interrupt and preemptive round-robin in M-mode. Not in it:
+priorities, blocking, task exit, SMP, and preemption of user mode, which is why the U-mode process
+of `plan/syscall-abi.md` is still one program at a time.
+
 ## Two rules that keep the language honest
 
 1. **`unsafe` is auditable, not ambient.** A module may contain `unsafe` only if `coral.toml` lists it
@@ -355,7 +374,8 @@ records that overflow wraps and division by zero stays an unchecked UB, so neith
 
 ## What is deliberately not here
 
-- A specific kernel design (scheduler, filesystem, drivers). The language work above is what they would sit on.
+- A specific kernel design beyond the round-robin scheduler of kernel stage 21: priorities, blocking,
+  a filesystem and drivers are still not here. The language work above is what they would sit on.
 - x86-64 interrupts and an IDT, the APIC, SMP and ACPI: the architecture boots and runs Kelp
   (kernel stage 20, `plan/x86-64.md`), and what a kernel needs to take an interrupt there is
   open work, as it is for riscv64; `plan/kernel0-status.md`'s trap gap and stage 5's deferred

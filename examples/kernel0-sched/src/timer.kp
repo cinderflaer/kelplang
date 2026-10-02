@@ -1,0 +1,36 @@
+// The CLINT's timer registers on QEMU's riscv64 `virt` machine
+// (`plan/scheduler.md`).
+//
+// A hart's compare register lives at `0x02004000 + 8 * hart`, and the shared
+// free-running counter at `0x0200BFF8`. The kernel runs on hart 0 (the
+// compiler's `_start` stub parks every other hart), so the compare register is
+// the first one, at `0x02004000`. Both are 64-bit, so on RV64 one volatile
+// `ld`/`sd` is the whole access; the two addresses are compile-time constants
+// and `coral.toml`'s `[caps]` grants exactly those two windows.
+
+const MTIMECMP_0: usize = 0x02004000
+const MTIME: usize = 0x0200BFF8
+
+// The machine timer's frequency on this machine is 10 MHz, so 10000 ticks are
+// one millisecond: a tick short enough that three tasks interleave visibly and
+// long enough that the print path finishes inside it.
+pub const TICK: u64 = 10000
+
+// The free-running counter the compare register is measured against.
+pub fun now().R: u64 {
+    unsafe {
+        val p: Ptr<u64> = Ptr.from_addr(MTIME)
+        p.read_volatile()
+    }
+}
+
+// Make the next machine timer interrupt fire when the counter reaches
+// `deadline`. The register is written whole; a value already in the past fires
+// again immediately, which is why the scheduler always adds the interval to a
+// fresh `now`.
+pub fun arm(deadline: u64) {
+    unsafe {
+        val p: Ptr<u64> = Ptr.from_addr(MTIMECMP_0)
+        p.write_volatile(deadline)
+    }
+}

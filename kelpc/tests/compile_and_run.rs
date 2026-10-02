@@ -12012,6 +12012,62 @@ fn kernel0_user_image_links_with_no_undefined_symbols() {
     assert_no_undefined_symbols("kernel0_user", &fixture("../examples/kernel0-user"));
 }
 
+/// Kernel stage 21's acceptance boot: `examples/kernel0-sched` programs the
+/// CLINT's `mtimecmp`, enables the machine timer interrupt and round-robins
+/// three tasks that never yield, so the letters in the serial log can only come
+/// from preemption. The example's `run.sh` boots it and asserts that all three
+/// letters appear, that the letter changes at least three times and that no
+/// line is torn; this runs that script, which is where the serial assertions
+/// live.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_sched_preempts_three_tasks_on_the_machine_timer() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-sched boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let script = fixture("../examples/kernel0-sched/run.sh");
+    let run = Command::new("sh")
+        .arg(&script)
+        .env("KELPC", kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .output()
+        .expect("failed to spawn the kernel0-sched run script");
+    assert!(
+        run.status.success(),
+        "examples/kernel0-sched/run.sh failed:\n{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("no torn lines"),
+        "the run script did not reach its final line:\n{stdout}"
+    );
+}
+
+/// The scheduler image links with no undefined symbol: the trap entry, the
+/// scheduler and the CLINT driver reach only the image's own code, the linker
+/// script's stack symbols and the two device windows it was granted.
+///
+/// It needs `ld.lld` and the llvm tools from `dev-kernel.nix`.
+#[test]
+fn kernel0_sched_image_links_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the kernel0-sched symbol test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    assert_no_undefined_symbols("kernel0_sched", &fixture("../examples/kernel0-sched"));
+}
+
 /// A `pub static`/`pub static mut` is reached across modules exactly as a
 /// `pub const` is (`state.COUNT`, `state.LIMIT`), and the mutable one is still
 /// `unsafe` on the importing side.

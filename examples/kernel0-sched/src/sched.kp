@@ -1,0 +1,262 @@
+// The task table, the three tasks and the round-robin scheduler
+// (`plan/scheduler.md`).
+//
+// There is no separate idle context: the boot takes one `ecall` with a frame of
+// its own, the first `schedule` call picks task 0, and from then on every trap
+// is either the machine timer (preempt) or a task's `ecall` (yield), and both
+// end at the same `pick`. Nothing in a task ever calls `yield`, so a task only
+// loses the CPU to the timer, which is what makes the interleaving in the serial
+// log a proof of preemption rather than of cooperation.
+//
+// The scheduler runs with `mstatus.MIE` clear (a trap clears it), on whichever
+// stack the interrupted task was using, and returns the frame the naked entry
+// resumes. It never returns to its caller in the ordinary sense after the boot:
+// the boot's frame is abandoned the first time task 0 is chosen.
+impl "trap"
+impl "timer"
+impl "uart"
+
+pub const NTASKS: usize = 3
+
+const STATE_READY: usize = 0
+const STATE_RUNNING: usize = 1
+
+const STACK_BYTES: usize = 4096
+
+// A task prints every this many iterations of its own loop. The number only
+// sets how much of the 40 ms run is spent in the print path: large enough that
+// a task has run for a while before it prints, small enough that every task
+// prints many times.
+const PRINT_EVERY: usize = 50000
+
+// The kernel stops itself after this many timer ticks and prints the line the
+// test waits for, so the run is bounded by ticks rather than by wall clock.
+const TICKS_DONE: usize = 40
+
+const MTIE_BIT: usize = 128
+const MIE_BIT: usize = 8
+
+// One task: the saved register file, the scheduler address the trap entry loads
+// out of the frame, its state, its id and its own 4 KiB stack. The frame is 33
+// words, exactly `TrapFrame`'s, and `dispatch` sits immediately after it, which
+// is the word at `trap.DISPATCH_OFF`. The initializer is all zero, so the whole
+// table is `.bss` and `_start` clears it.
+static mut TASKS: [Task; NTASKS] = [Task(frame = [0; 33], dispatch = 0, state = STATE_READY, id = 0, stack = [0; STACK_BYTES]); NTASKS]
+
+// The boot's own frame. Only its dispatch word is ever read: the trap entry
+// saves the boot's registers into it and the first `pick` throws it away.
+static mut BOOT: [u64; 34] = [0; 34]
+
+// The index `pick` rotates from. It starts one before task 0, so the boot's own
+// trap chooses task 0 first rather than task 1.
+const START_CURRENT: usize = NTASKS - 1
+static mut CURRENT: usize = START_CURRENT
+static mut TICKS: usize = 0
+
+pub datac Task(
+    var frame: [u64; 33],
+    var dispatch: u64,
+    var state: usize,
+    var id: usize,
+    var stack: [u8; STACK_BYTES],
+)
+
+// The task table's first byte. Every frame and stack is reached from here with
+// `byte_offset`, so no module turns a computed address into a pointer and the
+// `mmio` grant stays the two device windows it is.
+fun table().R: Ptr<u8> {
+    val raw: Ptr<[Task; NTASKS]> = unsafe { Ptr.from_mut(TASKS) }
+    val bytes: Ptr<u8> = raw.cast<u8>()
+    return bytes
+}
+
+fun field_ptr(i: usize, offset: usize).R: Ptr<u64> {
+    val bytes: Ptr<u8> = table().byte_offset((i * size_of<Task>() + offset).to_isize())
+    val word: Ptr<u64> = bytes.cast<u64>()
+    return word
+}
+
+fun frame_of(i: usize).R: Ptr<trap.TrapFrame> {
+    val bytes: Ptr<u8> = table().byte_offset((i * size_of<Task>() + offset_of<Task>("frame")).to_isize())
+    val f: Ptr<trap.TrapFrame> = bytes.cast<trap.TrapFrame>()
+    return f
+}
+
+// The top of a task's stack, rounded down to the 16-byte alignment the ABI
+// wants: the table's own base is only 8-aligned.
+fun stack_top(i: usize).R: usize {
+    val base: Ptr<u8> = table()
+    val end: usize = base.addr() + i * size_of<Task>() + offset_of<Task>("stack") + STACK_BYTES
+    return end & (~15)
+}
+
+fun task_state(i: usize).R: usize {
+    unsafe {
+        field_ptr(i, offset_of<Task>("state")).read_volatile().to_usize()
+    }
+}
+
+fun set_task_state(i: usize, state: usize) {
+    unsafe {
+        field_ptr(i, offset_of<Task>("state")).write_volatile(state.to_u64())
+    }
+}
+
+fun boot_frame().R: Ptr<trap.TrapFrame> {
+    val raw: Ptr<[u64; 34]> = unsafe { Ptr.from_mut(BOOT) }
+    val f: Ptr<trap.TrapFrame> = raw.cast<trap.TrapFrame>()
+    return f
+}
+
+// One task's whole body: its counter is a local on its own stack, so the three
+// tasks have three counters without any shared state, and the only shared
+// object they touch is the UART's lock. `id` arrives in `a0` because the frame
+// `init_task` builds has it in `x10`, which is what `mret` loads before the
+// first instruction.
+pub fun task(id: usize) {
+    var n: usize = 0
+    while true {
+        n = n + 1
+        if n % PRINT_EVERY == 0 {
+            uart.line(65 + id.to_u8(), n)
+        }
+    }
+}
+
+// Build every task's first frame: its stack, its entry, the `mstatus` `mret`
+// turns into an enabled interrupt and machine mode, its id in `a0` and the
+// scheduler address the trap entry reads.
+fun init_task(i: usize) {
+    val f: Ptr<trap.TrapFrame> = frame_of(i)
+    trap.set(f, trap.OFF_SP, stack_top(i).to_u64())
+    trap.set(f, trap.OFF_MEPC, Ptr.from_fn(task).addr().to_u64())
+    trap.set(f, trap.OFF_MSTATUS, trap.MSTATUS_TASK.to_u64())
+    trap.set(f, trap.OFF_X10, i.to_u64())
+    trap.set(f, trap.DISPATCH_OFF, Ptr.from_fn(schedule).addr().to_u64())
+    unsafe {
+        field_ptr(i, offset_of<Task>("id")).write_volatile(i.to_u64())
+    }
+    set_task_state(i, STATE_READY)
+}
+
+// The next READY task, or the only READY one when the others are not (none are
+// in this kernel: a task never exits, so the walk is a plain rotation and the
+// state field is what a blocking or finished task would use).
+fun pick().R: Ptr<trap.TrapFrame> {
+    val last: usize = unsafe { CURRENT }
+    var next: usize = (last + 1) % NTASKS
+    var scanned: usize = 0
+    while scanned < NTASKS && task_state(next) != STATE_READY {
+        next = (next + 1) % NTASKS
+        scanned = scanned + 1
+    }
+    if last < NTASKS {
+        set_task_state(last, STATE_READY)
+    }
+    set_task_state(next, STATE_RUNNING)
+    unsafe {
+        CURRENT = next
+    }
+    return frame_of(next)
+}
+
+// The body the naked trap entry calls with the frame in `a0`. It reads `mcause`
+// itself, arms the next timer tick, advances a yielded task's `mepc` past the
+// `ecall`, and answers the frame to resume.
+pub fun schedule(frame: Ptr<trap.TrapFrame>).R: Ptr<trap.TrapFrame> {
+    val cause: usize = unsafe { asm("csrr {0}, mcause", out("r") _) }
+    if cause == trap.CAUSE_TIMER {
+        timer.arm(timer.now() + timer.TICK)
+        unsafe {
+            TICKS = TICKS + 1
+        }
+        if unsafe { TICKS } >= TICKS_DONE {
+            finish()
+        }
+    } else {
+        if cause == trap.CAUSE_ECALL_M {
+            trap.set(frame, trap.OFF_MEPC, trap.get(frame, trap.OFF_MEPC) + 4)
+        } else {
+            fault(cause)
+        }
+    }
+    return pick()
+}
+
+// The last line of the run. It is printed from a trap, with interrupts already
+// off and the console lock therefore free, and the kernel then waits in a loop
+// the test's `timeout` ends.
+fun finish() {
+    val ticks: usize = unsafe { TICKS }
+    uart.lock_acquire()
+    defer uart.lock_release()
+    uart.puts("sched: done ticks=")
+    uart.put_dec(ticks)
+    uart.putc(10)
+    uart.halt()
+}
+
+// A cause that is neither the timer nor an `ecall`: nothing in this kernel can
+// resume it, so it prints the cause and stops the machine rather than spinning
+// on the faulting instruction.
+fun fault(cause: usize) {
+    uart.lock_acquire()
+    uart.puts("sched: fault ")
+    uart.put_dec(cause)
+    uart.putc(10)
+    uart.halt()
+}
+
+// What the boot checks against the frame layout, so that a `datac` that grows
+// cannot move the fields the asm hardcodes.
+pub fun layout_ok().R: bool {
+    if trap.layout_ok() == false {
+        return false
+    }
+    if size_of<Task>() != 4384 {
+        return false
+    }
+    if offset_of<Task>("frame") != 0 {
+        return false
+    }
+    if offset_of<Task>("dispatch") != trap.DISPATCH_OFF {
+        return false
+    }
+    if offset_of<Task>("state") != 272 {
+        return false
+    }
+    if offset_of<Task>("id") != 280 {
+        return false
+    }
+    if offset_of<Task>("stack") != 288 {
+        return false
+    }
+    return true
+}
+
+// Build the frames, arm the timer and enter the scheduler through its own trap
+// path: the `ecall` here is taken by `trap_entry`, whose dispatcher picks task 0
+// and `mret`s into it with interrupts enabled from that frame's `MPIE`.
+//
+// `mstatus.MIE` is set here too, not only in the frames, because the machine
+// timer is only enabled when both `mie.MTIE` and `mstatus.MIE` are. The compare
+// register was armed a millisecond out before either store, so the window
+// between enabling it and the `ecall` cannot hold the first tick; if it did, the
+// trap would take the timer path and pick task 0 exactly as the `ecall` does.
+pub fun start() {
+    var i: usize = 0
+    while i < NTASKS {
+        init_task(i)
+        i = i + 1
+    }
+    trap.set(boot_frame(), trap.DISPATCH_OFF, Ptr.from_fn(schedule).addr().to_u64())
+
+    timer.arm(timer.now() + timer.TICK)
+    unsafe {
+        asm("csrw mie, {0}", in("r") MTIE_BIT)
+        asm("csrw mscratch, {0}", in("r") boot_frame().addr())
+        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") mstatus | MIE_BIT)
+        asm("ecall")
+    }
+}

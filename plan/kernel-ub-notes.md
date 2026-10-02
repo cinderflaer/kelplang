@@ -1302,3 +1302,59 @@ the `unsafe` listing are the stage 5 checks, unchanged.
 runs when a project replaces the stub; the real existence of a port or a device; the
 template against the constraints; and anything about the machine past the first 1 GiB the
 stub maps.
+
+## Stage 21: the machine timer interrupt and a preemptive scheduler (`plan/scheduler.md`)
+
+**New ways to reach undefined behaviour.** The stage moves the machine between contexts the
+compiler never models, so most of its promises are unchecked in the same way `plan/inline-asm.md`
+and `plan/syscall-abi.md` said their handlers were. The ones worth naming:
+
+- **The trap entry's offsets and the `datac` layout are two independent facts.** The asm saves
+  `x1..x31` at 0..240, `sepc` at 248 and `mstatus` at 256, and reads the scheduler address from
+  the word at 264; `TrapFrame` and `Task` are ordinary `repr(c)` declarations the compiler lays
+  out, and it checks neither end against the other. A field inserted before `sepc`, or a
+  `Task` whose `dispatch` is not the word after the frame, makes the entry save registers over
+  the wrong words or call through a stale value. `trap.layout_ok` and `sched.layout_ok` check
+  the numbers at boot (and `tests/projects/sched_task_layout` pins them), which is a runtime
+  guard, not a compile-time one.
+- **`mstatus`/`mie` are written by hand.** Every lock acquisition clears `mstatus.MIE` by
+  reading and rewriting the whole register, and the trap entry restores the whole saved
+  `mstatus` before `mret`. A wrong mask loses a machine-mode cause other than the timer, or
+  leaves interrupts enabled inside a handler; a saved `mstatus` with `MIE` already clear
+  silently disables preemption forever. The compiler checks neither the masks nor the
+  ordering.
+- **The frame is both the saved register file and the scheduler's argument.** `schedule`
+  receives a `Ptr<TrapFrame>` into the task table and may write `mepc`; the same memory is the
+  task's saved state. A scheduler that returns a frame whose `x2` is not a valid stack top, or
+  a state machine that resumes a frame it already overwrote, is a wild jump the language
+  cannot see. The entry trusts the returned pointer completely.
+- **A task's stack is a `[u8; 4096]` inside the table with no guard page.** The language's
+  stack guard (`plan/stack-guard.md`) probes the frames the compiler emits, but the value
+  loaded into `sp` before a task's first instruction is arithmetic on the table's address, and
+  nothing checks that the stack the scheduler hands out exists, is large enough, or does not
+  overlap the frame above it.
+- **The CLINT's register is a device claim, like every other MMIO address.** That `mtimecmp` is
+  at `0x02004000 + 8 * hart`, that a 64-bit store is atomic against the counter, and that hart
+  0 is the one running are the driver's claims; `[caps] mmio` checks only that the constant
+  address a `Ptr.from_addr` is born at falls inside a granted window. A wrong address, a wrong
+  interval or a compare register in the past is a device-level bug with no diagnostic beyond
+  the trap the kernel fabricates.
+- **The single-hart argument behind the lock is not in the type system.** "A task holding the
+  lock has `MIE` clear, so it cannot be preempted, so the scheduler never spins" is true on one
+  hart and false the moment a second hart runs tasks; the same table, frame and lock would
+  then be concurrently mutated with no synchronization the compiler sees.
+
+**What the compiler does check.** That an array static's element is a scalar, a `datac` or
+another array of those, recursively, and that its initializer folds to a constant (kernel stage
+7's rules, widened by kernel stage 21); that the `mmio` grant covers each constant address a
+`Ptr.from_addr` names; that `asm` is inside `unsafe` and its module is on the manifest's
+`[unsafe] modules` list; that a `naked` body is exactly one `asm`; and that the project links
+with no undefined symbol. The alignment and size queries the two `layout_ok` functions use are
+folded in the front end, so the checks themselves are ordinary comparisons.
+
+**What it does not check.** The entry's offsets against the declarations (above); the masks and
+the restore used for `mstatus`/`mie`; the validity of the frame pointer the scheduler returns;
+the size, existence or overlap of a task's stack; the timer's address, interval or that it is a
+counter; that a task's `unsafe` block sequences its own `static mut` accesses; and any property
+of the machine a trap is the first thing to observe. Priorities, blocking, SMP and user-mode
+preemption are not built, so nothing here is a plan's promise either.

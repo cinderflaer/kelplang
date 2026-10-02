@@ -1,0 +1,36 @@
+// Kernel stage 21: the machine timer interrupt and a preemptive round-robin
+// scheduler, in machine mode with no paging (`plan/scheduler.md`).
+//
+// The boot is short because everything interesting is a trap: install the
+// vector, build the task table and start the scheduler. From then on the only
+// way this code runs again is the panic handler.
+impl "sched"
+impl "timer" caps(mmio = ["0x2004000+0x8", "0x200BFF8+0x8"])
+impl "trap"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+
+section(".text.boot") fun kmain() {
+    trap.install()
+
+    // The frame offsets the naked entry hardcodes, and the task table's layout
+    // the scheduler's pointer arithmetic depends on. A mismatch here is a wrong
+    // register saved or a frame written over a stack, which the compiler cannot
+    // see.
+    if sched.layout_ok() == false {
+        uart.puts("sched: layout bad")
+        uart.putc(10)
+        uart.halt()
+    }
+
+    sched.start()
+    uart.halt()
+}
+
+// The handler `[target] panic` names: a check that fired has no meaningful
+// continuation, so it prints one line and halts.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.putc(10)
+    uart.halt()
+}
