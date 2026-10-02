@@ -38,7 +38,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
 | 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation (done: `plan/syscall-abi.md`) | Userspace |
 | 10 | **MK9-S7-M2, MK9-S6-M2** (B-14, B-15) | stack guards and probing; panic semantics with no OS | A kernel that fails loudly instead of silently |
-| 11 | **MK10-S1** (C-3) | MMIO regions (done), IRQ lines and frames (next) as *capabilities* | The safety story: a driver can only touch what it was granted |
+| 11 | **MK10-S1** (C-3) | MMIO regions, IRQ lines and frames as *capabilities* (done) | The safety story: a driver can only touch what it was granted |
 
 Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one thing.
 
@@ -222,13 +222,31 @@ driver with `impl "uart" caps(mmio = [...])`. `caps(*)` deliberately skips
 and all thirteen still boot under QEMU; `kelpc/tests/mmio.rs` covers the
 accepting and refusing shapes with `kelpc check` (front end only, no `ld.lld`).
 The check is on the address a pointer is *born* at, so an offset applied later
-is not revisited; IRQ lines and physical frames are the rest of the row and are
-not in this stage.
+is not revisited; IRQ lines and physical frames are the rest of the row.
+
+**Row 11's IRQ-line and frame halves are done too** (MK10-S1, roadmap C-3,
+`plan/irq-frame-caps.md`): the two remaining device capabilities are domains
+now, `irq` with decimal line numbers and inclusive ranges
+(`caps(irq = ["10", "32-47"])`) and `frames` with the same `BASE+LEN` byte
+windows `mmio` uses, parsed and validated by the same code. A line or a frame
+is a *value*: `irq.claim(n)` and `frame.claim(addr)` are gated constructors in
+the shipped `std/irq` and `std/frame`, so a driver can be handed exactly what
+it was granted, and a `Line`/`Frame`'s constructor is sealed to its module so
+another module can only get one from a claim. A constant argument must fall
+inside a granted range, a `frames` address must be 4096-aligned (a compile
+error for a constant and a panic for a computed one), and a computed argument
+needs the whole-resource `["*"]`. Unlike `mmio`, the check is in `infer.rs` and
+applies to a hosted program and a freestanding image alike; the entry module
+holds both domains by default, so a kernel narrows them in its `[caps]`
+section. `examples/kernel0-caps` is the acceptance, `kelpc/tests/irq_frames.rs`
+the accepting and refusing front-end cases, and every other `examples/kernel0*`
+image still boots.
 
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
 arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall
-ABI (row 9) and both halves of row 10 (guards and probing, panic semantics) are all done, and so
-is row 11's MMIO half. What remains is the IRQ-line and physical-frame halves of row 11.
+ABI (row 9), both halves of row 10 (guards and probing, panic semantics) and the whole of row 11
+(MMIO ranges, IRQ lines and physical frames) are all done. The language work the kernel path
+names is complete; §"What is deliberately not here" is what is left.
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps

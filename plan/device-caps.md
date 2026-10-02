@@ -1,8 +1,9 @@
 # Device capabilities: MMIO ranges (kernel stage 16, MK10-S1 / roadmap C-3)
 
 *Design and record for kernel-path row 11's MMIO half. The IRQ-line and
-physical-frame halves are not in this stage, and the "Next" section says what
-they would need.*
+physical-frame halves are now done too, in `plan/irq-frame-caps.md`, which
+reuses this file's range parser and validator; what this file owns is the
+`mmio` domain and the address check.*
 
 ## What this adds
 
@@ -78,26 +79,30 @@ which is recorded per example in `plan/kernel-ub-notes.md`.
 - **Freestanding only.** LLVM is the only freestanding backend by design
   (kernel stage 4), so the C oracle never sees this check; hosted builds of both
   backends are unaffected.
-- **Not IRQ lines or frames.** An interrupt line and a physical frame are the
-  other two device capabilities row 11 names and neither is here.
+- **Not the whole of row 11's device story.** An interrupt line and a physical
+  frame are now capabilities too (`plan/irq-frame-caps.md`), and they share this
+  stage's range vocabulary: `frames` is the same byte window and `irq` is a
+  decimal line or line range. What neither this file nor that one can do is
+  follow an offset applied later or track DMA, so a granted range is still a
+  grant on birth, not an ownership story.
 
-## Next: IRQ lines and physical frames
+## IRQ lines and physical frames
 
-Both are the same shape as a range and neither needs a new mechanism:
-`irq = ["12"]` would gate the `csrw mie`/`mtvec`-adjacent surface the same way,
-and `frames = ["0x80000000+0x400000"]` would gate `Ptr.from_addr` over a frame
-allocator's region, which is the same address check this stage already runs.
-What they need first is a place to apply them: an IRQ line is claimed at a call
-(`irq.claim(n)`), not at a pointer's birth, and a frame is owned and returned
-rather than merely named, so both want the runtime-derived authority of roadmap
-C-1 and an ownership story (a frame is released when it is freed, not when the
-grant is written). Until then a kernel grants the range its frame allocator
-carves and says so.
+Both are the same shape as an address range and both reuse this file's parser,
+validator and coverage test: `irq = ["10", "32-47"]` and
+`frames = ["0x80100000+0x400000"]` are a new domain and two gated constructors,
+not a new mechanism. They are implemented, in `stdlib.rs`'s `DOMAINS`, the
+shipped `std/irq` and `std/frame`, and `infer.rs::check_claim_argument`, and
+`plan/irq-frame-caps.md` is their design and record. The two differences from
+`mmio` are that the check runs in a hosted program as well as a freestanding
+one, and that the value rather than the pointer's birth is what the grant
+admits.
 
 ## Tests
 
 - The range parser and its edge cases are unit tests in `stdlib.rs`
-  (`parse_mmio_range`, `mmio_ranges_overlap`, `mmio_covers`).
+  (`parse_byte_range`, `ranges_overlap`, `range_covers`; the three functions are
+  shared with the `frames` domain `plan/irq-frame-caps.md` adds).
 - `kelpc/tests/mmio.rs` writes a freestanding project per case and runs
   `kelpc check` (front end only, so no `ld.lld` and no QEMU): an address inside,
   `base + len - 1`, `base + len`, an address outside, `["*"]` with a computed

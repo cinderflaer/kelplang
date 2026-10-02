@@ -1199,3 +1199,37 @@ address the check actually read, and the generated accessor bodies that read the
 whichever statement last ran, not a property of the body. `plan/panic-semantics.md` has the check
 by check table and names the two constructs the task lists that are *not* checks here: integer
 overflow wraps and division by zero is unchecked UB, on this backend and the C oracle alike.
+
+## Stage 18: IRQ lines and physical frames as capabilities (MK10-S1, roadmap C-3, `plan/irq-frame-caps.md`)
+
+**New way to reach undefined behaviour.** None from the check itself, exactly as stage 16: a
+`Line` and a `Frame` are values, and a check that admits a call says nothing about the machine. What
+the two domains *move* is where the grant's honesty stops. An `irq` line is a number, and nothing
+ties it to a controller, a mask bit or an installed handler, so `irq.claim(10)` may name a line that
+does not exist and the compiler will not say so. A `Frame` is a 4 KiB-aligned address, and
+`Frame.offset(byte)` bounds the byte against the frame's own 4096, but the `usize` it returns is
+ordinary arithmetic from then on: a caller that walks on with `+ n` is outside the frame and the
+compiler does not revisit it, which is stage 16's "born-at only" limit one level down. A frame
+handed to a device for DMA is not followed at all: the module may free it, reuse it, or hand out a
+second `Frame` for the same address, and nothing sees the conflict. `["*"]` is the same escape hatch
+it is for `mmio`: a module that holds it can claim any line or any aligned address.
+
+**What the compiler does check.** That `irq` and `frames` are capability domains and their grants
+are ranges (`irq` a decimal line or inclusive line range, `frames` a `"0xBASE+0xLEN"` window, both
+pairwise disjoint and never beside `["*"]`); that a module holds the domain before `irq.claim`,
+`frame.claim` or any accessor of either module is reachable; that a constant line or frame falls
+inside a granted range; that a constant frame address is 4096-aligned whatever the grant; that a
+computed line or address is admitted only under `["*"]`; and that a `Line`/`Frame` constructor
+cannot be written from another module (the capability type is sealed by name, `stdlib::SEALED_TYPES`,
+because a shipped module exports every item and the language has no field-level `pub`). The check is
+in the front end, so `kelpc check` and `kelpc build` agree on both backends and in both the hosted
+and the freestanding modes; the one runtime check is `Frame.claim`'s 4096-alignment test, which
+fires only for a computed address.
+
+**What it does not check.** Whether the line exists, is enabled, is shared, or has a handler;
+whether the frame is RAM, device memory, already owned by another module, or still mapped when a
+device writes to it; anything about a byte past `Frame.offset`'s returned number; and, in the other
+direction, whether a module with a correct-looking grant actually needed it. There is still no
+runtime ownership, no liveness, no provenance (roadmap D-1) and no DMA tracking. `examples/kernel0-caps`
+carries the one grant the boot uses (line 10 and `0x80100000+0x100000`), and `plan/irq-frame-caps.md`
+is the design note.
