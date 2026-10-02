@@ -1,0 +1,12 @@
+// Two exclusive cursors into one root: the second `&mut a` is refused while the
+// first is live, because an exclusive borrow excludes every other borrow of the
+// same owner.
+datac Holder(var value: i32)
+
+fun main() {
+    var a = Holder(value = 1)
+    val c1 = &mut a
+    val c2 = &mut a
+    print(c1.value)
+    print(c2.value)
+}

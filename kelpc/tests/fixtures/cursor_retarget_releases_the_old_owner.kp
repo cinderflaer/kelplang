@@ -1,0 +1,16 @@
+// Re-pointing a cursor from owner A to owner B switches its root and releases
+// A at that point, so A is mutable again while the cursor points at B. Without
+// the release the cursor's first owner would stay pinned for the cursor's whole
+// life, which is stricter than the borrow is.
+datac Holder(val value: i32)
+
+fun main() {
+    var a = Holder(value = 1)
+    var b = Holder(value = 2)
+    var cur = &a
+    cur = &b
+    // `a` is no longer borrowed by `cur`, so this is accepted.
+    a = Holder(value = 10)
+    print(cur.value)
+    print(a.value)
+}

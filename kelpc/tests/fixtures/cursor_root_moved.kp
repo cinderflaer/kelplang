@@ -1,0 +1,11 @@
+// A cursor read after its root was moved. The move itself is what is refused:
+// the cursor keeps the owner borrowed, so the owner cannot be moved out from
+// under it.
+datac Node(val value: i32, val next: Box<Node>)
+
+fun main() {
+    var list = Node(value = 1, next = Box.empty())
+    var cur = &list
+    val moved = list
+    print(cur.value)
+}

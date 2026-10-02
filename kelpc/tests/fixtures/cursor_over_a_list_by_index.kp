@@ -1,0 +1,22 @@
+// A cursor over a `List<Node>` by index: `xs.get(i)` returns a borrow rooted
+// at `xs`, and rebinding the cursor in the loop keeps `xs` pinned for as long
+// as the cursor is used. This is the list half of open item 33.
+impl "std/str"
+
+datac Node(val value: i32)
+
+fun main() {
+    var xs: List<Node> = List.empty()
+    xs.push(Node(value = 10))
+    xs.push(Node(value = 20))
+    xs.push(Node(value = 30))
+    var i: usize = 0
+    var cur = xs.get(0)
+    var total = 0
+    while i < xs.len() {
+        cur = xs.get(i)
+        total += cur.value
+        i += 1
+    }
+    print(total)
+}

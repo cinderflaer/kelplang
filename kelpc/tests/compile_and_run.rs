@@ -377,6 +377,49 @@ fn a_live_borrow_still_refuses_its_owners_mutation() {
     );
 }
 
+/// A reference binding remembers the owner its value came from, so a pointer
+/// local can be a cursor (roadmap open item 33, `plan/provenance.md`). The
+/// three accepted programs walk an owned `Box` list iteratively, index a list
+/// and re-point a cursor to a different owner; the refused ones keep a mutation
+/// of a live owner, a second exclusive cursor, a returned frame-local cursor, a
+/// moved root, or a root only one arm of an `if` assigned.
+#[test]
+fn a_reference_binding_remembers_its_root() {
+    assert_compiles_and_runs(
+        "tests/fixtures/cursor_walks_a_box_list.kp",
+        "2000\n1999001\n",
+    );
+    assert_compiles_and_runs("tests/fixtures/cursor_over_a_list_by_index.kp", "60\n");
+    assert_compiles_and_runs(
+        "tests/fixtures/cursor_retarget_releases_the_old_owner.kp",
+        "2\n10\n",
+    );
+}
+
+#[test]
+fn an_unsound_cursor_use_is_still_refused() {
+    assert_rejected_with(
+        "tests/fixtures/cursor_mutate_while_used.kp",
+        "cannot assign to 'list' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_two_mut_cursors.kp",
+        "already borrowed exclusively",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_returned_from_local.kp",
+        "cannot return a borrow of 'local'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_root_moved.kp",
+        "cannot move 'list' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/cursor_branch_union.kp",
+        "cannot assign to 'b' while it is borrowed",
+    );
+}
+
 #[test]
 fn receiver_methods_resolve_and_mutate_through_self() {
     assert_compiles_and_runs("tests/fixtures/receiver_methods.kp", "12.566360\n28.274310\n");
