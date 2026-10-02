@@ -1,0 +1,10 @@
+// H-5: `eq` makes `==` available for the type it is declared on, and the two
+// operands still have to be that same type.
+datac A(val x: i32)
+datac B(val x: i32)
+
+fun A.eq(other: &A).R: bool = self.x == other.x
+
+fun main() {
+    print(A(x = 1) == B(x = 1))
+}

@@ -1914,22 +1914,21 @@ impl TypeScope<'_> {
 }
 
 
-/// The user types that declare their own `Map` key pair (A-12): the receiver
-/// name of every `fun T.hash()` and `fun T.eq(...)` declaration in the program.
+/// The user types that declare their own `Map` key (A-12): the receiver name of
+/// every `fun T.hash()` declaration in the program.
 ///
-/// Either name is read as a statement about the type's key, which is what makes
-/// a declared key possible with no trait and no new syntax: the pair is the two
-/// method names. The signature loop in `check_program_pass` then insists the
-/// declaration is one the map can actually call, so a half pair or a malformed
-/// one is an error at the declaration rather than a `Map` use site that can
-/// only say the type is not a key.
+/// `hash` is the half that makes the type a key, which is what makes a declared
+/// key possible with no trait and no new syntax: the pair is the two method
+/// names. The signature loop in `check_program_pass` then insists the
+/// declaration is one the map can actually call, so a `hash` with no `eq` or a
+/// malformed one is an error at the declaration rather than a `Map` use site
+/// that can only say the type is not a key. A lone `eq` (H-5) is deliberately
+/// *not* here: it gives the type `==`/`!=` without making it a key.
 fn declared_key_names(program: &ast::Program) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for f in &program.functions {
         if let Some(r) = &f.receiver {
-            if f.name == crate::types::KEY_PAIR_HASH_METHOD
-                || f.name == crate::types::KEY_PAIR_EQ_METHOD
-            {
+            if f.name == crate::types::KEY_PAIR_HASH_METHOD {
                 out.insert(r.type_name.clone());
             }
         }
@@ -6908,27 +6907,28 @@ fn check_program_pass(
         // that type's declared `Map` key pair, so the shape is checked here,
         // where the receiver, the parameters and the return type are already
         // resolved, and the type is recorded so the two halves can be matched
-        // up once every declaration has been seen.
+        // up once every declaration has been seen. Only `hash` makes the type
+        // a key: a lone `eq` (H-5) is a valid declaration that gives the type
+        // `==`/`!=`, so it is validated here but kept out of `key_pair_types`.
         if let Some(r) = &f.receiver {
             if f.name == crate::types::KEY_PAIR_HASH_METHOD
                 || f.name == crate::types::KEY_PAIR_EQ_METHOD
             {
                 check_key_pair_method(f, &params, &ret)?;
-                if !key_pair_halves.contains_key(&r.type_name) {
+                if f.name == crate::types::KEY_PAIR_HASH_METHOD
+                    && !key_pair_types.contains(&r.type_name)
+                {
                     key_pair_types.push(r.type_name.clone());
                 }
-                key_pair_halves.insert(
-                    r.type_name.clone(),
-                    KeyPairHalf {
-                        method: if f.name == crate::types::KEY_PAIR_HASH_METHOD {
-                            crate::types::KEY_PAIR_HASH_METHOD
-                        } else {
-                            crate::types::KEY_PAIR_EQ_METHOD
-                        },
-                        span: f.span,
-                        module: f.module.clone(),
+                key_pair_halves.entry(r.type_name.clone()).or_insert(KeyPairHalf {
+                    method: if f.name == crate::types::KEY_PAIR_HASH_METHOD {
+                        crate::types::KEY_PAIR_HASH_METHOD
+                    } else {
+                        crate::types::KEY_PAIR_EQ_METHOD
                     },
-                );
+                    span: f.span,
+                    module: f.module.clone(),
+                });
             }
         }
         // Kernel stage 9, MK9-S6-M1: `fun mut T.drop()` on a user type is
@@ -6969,10 +6969,11 @@ fn check_program_pass(
         sigs.insert(key, FnSig { params, ret });
     }
 
-    // A-12: a key pair is both halves or neither. A type that declares only one
-    // is not a key and never could be, so it is refused here and the message
-    // names the half that is missing; a half whose own signature was wrong was
-    // already refused above.
+    // A-12: a declared `Map` key is both halves. `key_pair_types` holds the
+    // types that declare `hash`, so a missing `eq` is refused here and the
+    // message names the half that is missing; a half whose own signature was
+    // wrong was already refused above. A lone `eq` is not in this list: it is
+    // a valid declaration that gives the type `==`/`!=` and no key (H-5).
     for name in &key_pair_types {
         let has = |method: &str| {
             sigs.contains_key(&crate::types::key_pair_method_key(name, method))
@@ -11689,6 +11690,146 @@ fn comparison_error(ty: &Ty, op: BinOp) -> String {
     }
 }
 
+/// The owned type an equality operand names: a `datac`/`enum` value, or a
+/// borrow of one. `Ty::Struct` covers both a `datac` and an `enum`, and a
+/// `Ty::Ref` is looked through because an operand may be written `a` or `*a`
+/// or be a `mut T` parameter, and all of them are one pointer to the backend.
+fn equality_owner(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Struct(name) => Some(name.as_str()),
+        Ty::Ref { inner, .. } => match inner.as_ref() {
+            Ty::Struct(name) => Some(name.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// One operand of a lowered `==`/`!=` where the declared `eq` wants `&T`: an
+/// owned operand is borrowed (`Ref`), and an operand that is already a borrow
+/// is handed on unchanged, so neither is ever moved.
+fn equality_borrow(expr: &tir::Expr, want: &Ty) -> tir::Expr {
+    match &expr.ty {
+        Ty::Ref { .. } => expr.clone(),
+        _ => tir::Expr {
+            kind: tir::ExprKind::Ref {
+                mutable: false,
+                expr: Box::new(expr.clone()),
+            },
+            ty: want.clone(),
+            span: expr.span,
+        },
+    }
+}
+
+/// One operand of a lowered `View == View`/`View == str`: a `View` is used as
+/// it is, a `str` is viewed first (`str#view`, the builtin `s.view()`), since
+/// `View.eq` takes a `View`.
+fn view_operand(expr: &tir::Expr) -> tir::Expr {
+    if matches!(expr.ty, Ty::View) {
+        expr.clone()
+    } else {
+        tir::Expr {
+            kind: tir::ExprKind::Call {
+                callee: "str#view".to_string(),
+                args: vec![expr.clone()],
+            },
+            ty: Ty::View,
+            span: expr.span,
+        }
+    }
+}
+
+/// `!=` is the lowering's result negated; `==` is the call itself.
+fn negate_comparison(op: BinOp, call: tir::Expr, span: Span) -> tir::Expr {
+    if matches!(op, BinOp::NotEq) {
+        tir::Expr {
+            kind: tir::ExprKind::Unary {
+                op: ast::UnOp::Not,
+                expr: Box::new(call),
+            },
+            ty: Ty::Bool,
+            span,
+        }
+    } else {
+        call
+    }
+}
+
+/// H-5: whether `a == b` / `a != b` is lowered in the front end into a method
+/// call instead of the scalar comparison. Two shapes lower:
+///
+/// * a `datac`/`enum` `T` that declares `fun T.eq(other: &T).R: bool` (the same
+///   method name A-12 gives a declared `Map` key), lowered to `a.eq(&b)`;
+/// * `View` against `View`, or `View` against a `str`, lowered to the builtin
+///   `View.eq`.
+///
+/// The operands are the already-checked `l`/`r` from `check_binary_operands`,
+/// so each is evaluated exactly once and left to right, and a shared `Ref` is
+/// what the declared `eq` receives, so an owned operand is borrowed rather than
+/// moved. The result is an ordinary `Call`, so `borrowck.rs` and both backends
+/// need no new shape. `None` means the ordinary comparison path applies, which
+/// includes every type with no declared `eq` and every order operator.
+fn lower_equality(
+    l: &tir::Expr,
+    r: &tir::Expr,
+    op: BinOp,
+    span: Span,
+    ctx: &Ctx,
+) -> Result<Option<tir::Expr>> {
+    if !matches!(op, BinOp::Eq | BinOp::NotEq) {
+        return Ok(None);
+    }
+    if let (Some(a), Some(b)) = (equality_owner(&l.ty), equality_owner(&r.ty)) {
+        if a == b {
+            let key = crate::types::key_pair_method_key(a, crate::types::KEY_PAIR_EQ_METHOD);
+            if let Some(sig) = ctx.sig_of(&key) {
+                // The operator is a call, so an `unsafe fun T.eq` is gated
+                // exactly as the written `a.eq(&b)` call is (the `Map` path
+                // has no such sight of the declaration and is a known gap).
+                if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'",
+                            display_callee(&key)
+                        ),
+                        span,
+                    });
+                }
+                let mut args = vec![
+                    equality_borrow(l, &sig.params[0].1),
+                    equality_borrow(r, &sig.params[1].1),
+                ];
+                args.extend(hidden_args(&key, span, ctx)?);
+                let call = tir::Expr {
+                    kind: tir::ExprKind::Call { callee: key, args },
+                    ty: Ty::Bool,
+                    span,
+                };
+                return Ok(Some(negate_comparison(op, call, span)));
+            }
+        }
+    }
+    let l_text = matches!(l.ty, Ty::View) || is_str_like(&l.ty);
+    let r_text = matches!(r.ty, Ty::View) || is_str_like(&r.ty);
+    if l_text
+        && r_text
+        && (matches!(l.ty, Ty::View) || matches!(r.ty, Ty::View))
+        && builtin_sig("View#eq").is_some()
+    {
+        let call = tir::Expr {
+            kind: tir::ExprKind::Call {
+                callee: "View#eq".to_string(),
+                args: vec![view_operand(l), view_operand(r)],
+            },
+            ty: Ty::Bool,
+            span,
+        };
+        return Ok(Some(negate_comparison(op, call, span)));
+    }
+    Ok(None)
+}
+
 /// Whether the expression is a bare numeric or character literal — a value
 /// with **no width of its own**, whose type comes entirely from its context
 /// (`syntax.md` §2.4/§5). A literal in that position has no type until
@@ -11847,6 +11988,15 @@ fn check_binary(
                 }
                 _ => false,
             };
+            // H-5: a `datac`/`enum` that declares `eq`, and the two `View`
+            // shapes, are an ordinary method call (or its negation) by the time
+            // the rest of the pipeline sees them. This runs before the
+            // operand-type match below because a `&T` against a `T` and a
+            // `View` against a `str` are two different spellings of one
+            // comparison.
+            if let Some(expr) = lower_equality(&l, &r, op, span, ctx)? {
+                return Ok(expr);
+            }
             if l.ty != r.ty && !handle_pair {
                 return Err(TypeError {
                     message: format!(

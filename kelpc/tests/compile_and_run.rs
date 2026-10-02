@@ -5092,18 +5092,79 @@ fn an_enum_that_declares_hash_and_eq_is_a_map_key() {
 }
 
 #[test]
+fn a_datac_that_declares_eq_gets_the_equality_operator() {
+    // H-5: `a == b` lowers to `a.eq(&b)` and `a != b` to `!a.eq(&b)`, with
+    // `eq` alone enough for the operator. The fixture also pins that each
+    // operand is one evaluation, left to right, and that a borrow against an
+    // owned value works.
+    assert_compiles_and_runs(
+        "tests/fixtures/eq_operator_datac.kp",
+        "true\ntrue\nfalse\ntrue\ntrue\n3\n3\nfalse\n4\n4\nfalse\nguard\n3\n",
+    );
+}
+
+#[test]
+fn an_enum_that_declares_eq_gets_the_equality_operator() {
+    // H-5: the rule is the same for an `enum`.
+    assert_compiles_and_runs(
+        "tests/fixtures/eq_operator_enum.kp",
+        "true\ntrue\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn a_view_compares_with_a_view_and_a_str() {
+    // H-5: `View` against `View` and `View` against `str` lower to the builtin
+    // `View.eq`, which compares the bytes and the lengths.
+    assert_compiles_and_runs(
+        "tests/fixtures/eq_operator_view.kp",
+        "true\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn a_lone_eq_declares_the_operator_and_is_not_a_map_key() {
+    // A-12 + H-5: `eq` alone gives `==`/`!=` and leaves the type a *derived*
+    // `Map` key (both halves are still what a declared key needs).
+    assert_compiles_and_runs(
+        "tests/fixtures/map_key_pair_only_eq.kp",
+        "true\ntrue\ntrue\n2\n20\n",
+    );
+}
+
+#[test]
+fn the_equality_operator_is_refused_without_a_declared_eq() {
+    // H-5: nothing is derived, so a `datac` without `eq` keeps the old
+    // refusal, and `<` is refused even on a type that has `eq`.
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_no_eq.kp",
+        "a datac has no generated equality",
+    );
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_order.kp",
+        "cannot compare 'P' values with '<'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_bad_signature.kp",
+        "'P.eq' takes exactly one parameter",
+    );
+    assert_rejected_with(
+        "tests/fixtures/eq_operator_type_mismatch.kp",
+        "cannot compare 'A' with 'B'",
+    );
+}
+
+#[test]
 fn a_declared_key_pair_that_is_half_or_misshaped_is_rejected() {
-    // A-12: either method name states that the type is a key, so half a pair,
-    // or a signature the generated map code cannot call, is refused at the
-    // declaration with the reason named rather than as a vague "not a key" at
-    // a `Map` use site.
+    // A-12: `hash` states that the type is a key, and a key needs both halves,
+    // so a lone `hash`, or a signature the generated map code cannot call, is
+    // refused at the declaration with the reason named rather than as a vague
+    // "not a key" at a `Map` use site. A lone `eq` is *not* refused (H-5): it
+    // declares the type's `==`/`!=` without making it a key, and
+    // `map_key_pair_only_eq.kp` is an accepted fixture beside this one.
     assert_rejected_with(
         "tests/fixtures/map_key_pair_only_hash.kp",
         "'Half' declares 'hash' but not 'eq'",
-    );
-    assert_rejected_with(
-        "tests/fixtures/map_key_pair_only_eq.kp",
-        "'Half' declares 'eq' but not 'hash'",
     );
     assert_rejected_with(
         "tests/fixtures/map_key_pair_hash_ret.kp",

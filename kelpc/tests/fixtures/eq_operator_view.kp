@@ -1,0 +1,17 @@
+// H-5: `==`/`!=` for `View`, which lowers to the builtin `View.eq` (byte-wise
+// and length-aware). A `View` against a `str` is allowed too: the `str` is
+// viewed first, the same `s.view()` the method spelling needs.
+fun main() {
+    val v = "the quick brown fox".view()
+    val w = "the quick brown fox".view()
+    val short = v.slice(0, 3)
+    print(v == w)
+    print(v != short)
+    print(short == "the")
+    print("the" != v)
+    print(v.slice(0, 3) == "the".view())
+    // One `str` on either side, and an owned `String`'s borrow.
+    val s = String.from_str(s = "the quick brown fox")
+    print(s.as_str() == v)
+    print("the quick brown fox".view() != s.as_str())
+}

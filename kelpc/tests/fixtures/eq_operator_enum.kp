@@ -1,0 +1,25 @@
+// H-5: the same rule for an `enum`. `fun K.eq(other: &K)` is the declaration,
+// and `==`/`!=` on two `K` values lower to it.
+enum K {
+    A(val v: i32)
+    B
+}
+
+fun K.eq(other: &K).R: bool = when self {
+    A(a) -> when other {
+        A(b) -> a == b
+        B -> false
+    }
+    B -> when other {
+        A(b) -> false
+        B -> true
+    }
+}
+
+fun main() {
+    val x = K.A(v = 1)
+    print(x == K.A(v = 1))
+    print(x != K.B)
+    print(K.B == K.B)
+    print(K.A(v = 1) == K.A(v = 2))
+}
