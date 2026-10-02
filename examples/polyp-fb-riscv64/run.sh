@@ -9,9 +9,10 @@
 #
 # The kernel prints one `step <n> checksum <hex> dirty <count>` line per frame, then a
 # `display` line (the colour-only checksum of the last frame) and the todo program's
-# report. It also registers its framebuffer with QEMU's `ramfb` device, so adding
-# `-device ramfb` to the command below puts those pixels on a screen; the boot test
-# that captures that screen is
+# report. It also registers its framebuffer with QEMU's `ramfb` device, which is why
+# `-device ramfb` is on the command below: those pixels are what a screen shows, and a
+# `ramfb 0` line before the steps says the device took the surface. The boot test that
+# captures the screen is
 # `polyp_fb_riscv64_shows_its_framebuffer_on_a_real_display`, and
 # `cargo test --test compile_and_run polyp_fb` is the test that compares the step lines
 # with the hosted soft backend's. This script is the manual boot.
@@ -65,6 +66,7 @@ timeout 20 qemu-system-riscv64 \
     -bios none \
     -nographic \
     -no-reboot \
+    -device ramfb \
     -serial mon:stdio \
     -kernel "$elf" >"$serial" 2>"$qemu_stderr" </dev/null &
 qpid=$!
