@@ -180,7 +180,7 @@ struct FuncTemplate {
     /// The method's type parameters, in order, which for a receiver method are
     /// the receiver's own arguments.
     params: Vec<String>,
-    /// `fun f<T: A + B>` — the traits each type parameter must implement, one
+    /// `fun f<T: A + B>`: the traits each type parameter must implement, one
     /// list per entry of `params` and in the same order (A-12 slice 2). A
     /// parameter with no bound has an empty list, and a receiver method's
     /// parameters are its type's, so its lists are all empty.
@@ -2094,6 +2094,16 @@ fn collect_traits(
                     t.module.clone(),
                 ));
             }
+            if m.variadic {
+                return Err(Diagnostic::new(
+                    format!(
+                        "trait '{}' method '{}' writes '...', which only a user 'extern fun' may write: a trait signature declares the parameters an impl has to take",
+                        t.name, m.name
+                    ),
+                    m.span,
+                    t.module.clone(),
+                ));
+            }
             if !names.insert(&m.name) {
                 return Err(Diagnostic::new(
                     format!("trait '{}' declares method '{}' more than once", t.name, m.name),
@@ -2124,7 +2134,7 @@ fn collect_traits(
 }
 
 /// Every `impl Name for Type { ... }` in the program (A-12 slice 2), with both
-/// names already canonical — `resolve.rs` qualified them where they were
+/// names already canonical: `resolve.rs` qualified them where they were
 /// written. The trait has to exist and the type has to be declared; those two
 /// answers, plus coherence and the module rule, are checked by
 /// `check_trait_impl_names`.

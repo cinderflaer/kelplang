@@ -5169,7 +5169,7 @@ fn the_equality_operator_is_refused_without_a_declared_eq() {
 fn a_trait_is_implemented_by_a_datac_and_an_enum_and_called_through_a_generic() {
     assert_compiles_and_runs(
         "tests/fixtures/traits_datac_and_enum.kp",
-        "12.000000\n27.000000\n27.000000\ncircle\ntrue\n9.000000\n2\n9.000000\n0.000000\n",
+        "12.000000\n27.000000\n27.000000\ncircle\ntrue\n9.000000\n18.000000\n2\n9.000000\n0.000000\n",
     );
 }
 
@@ -5197,6 +5197,11 @@ fn a_bound_is_checked_at_every_call_and_transitively() {
     assert_rejected_with(
         "tests/fixtures/traits_bound_transitive.kp",
         "needs 'OnlyNamed' to implement the trait 'Doubled'",
+    );
+    // Two bounds on one parameter, only one of them satisfied.
+    assert_rejected_with(
+        "tests/fixtures/traits_bound_second.kp",
+        "needs 'OnlyShape' to implement the trait 'Grow'",
     );
 }
 

@@ -635,14 +635,14 @@ pub fn load(
         let module_alias_prefixes = alias_prefixes.get(&m.id).cloned().unwrap_or_default();
         // A written type name as its canonical, module-qualified key: a bare
         // name is this module's own, and `alias.Item` goes through the import
-        // table — exactly the rule `TypeScope::qualify` applies, but at the
+        // table: exactly the rule `TypeScope::qualify` applies, but at the
         // point the name was written.
         let canon = |name: &str, span: Span| -> Result<String, Diagnostic> {
             match name.split_once('.') {
                 Some((alias, item)) => match module_alias_prefixes.get(alias) {
                     Some(p) => Ok(format!("{p}{item}")),
                     None => Err(Diagnostic::new(
-                        format!("unknown module alias '{alias}' in type '{name}' — was it imported?"),
+                        format!("unknown module alias '{alias}' in type '{name}': was it imported?"),
                         span,
                         m.id.clone(),
                     )),
@@ -751,7 +751,7 @@ pub fn load(
                 // the prefix, not the method name. An `impl` block's method is
                 // the exception (A-12 slice 2): its receiver was written
                 // `Self`, and the `for` type's canonical name is substituted
-                // for it below — prefixing `Self` here would name nothing.
+                // for it below, so prefixing `Self` here would name nothing.
                 Some(r) if f.trait_impl.is_none() => {
                     r.type_name = format!("{}{}", m.prefix, r.type_name)
                 }

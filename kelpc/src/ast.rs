@@ -308,7 +308,7 @@ pub struct FunctionDecl {
     /// an ordinary function, and empty for a *receiver method*, whose type
     /// parameters come from the receiver instead (`Receiver::type_args`).
     pub type_params: Vec<String>,
-    /// `fun f<T: A + B>(...)` — the traits each parameter of `type_params`
+    /// `fun f<T: A + B>(...)`: the traits each parameter of `type_params`
     /// must implement, one list per parameter and in the same order (A-12
     /// slice 2). A parameter with no bound has an empty list, so the two
     /// vectors are always the same length. Empty for a receiver method, whose

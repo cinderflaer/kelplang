@@ -323,7 +323,7 @@ impl Parser {
             } else if self.check(&TokenKind::Impl) {
                 if !consts.is_empty() || !statics.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'impl' lines must come first (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
+                        message: "'impl' lines must come first (canonical order: impl, const/pd, datac/enum/trait/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
@@ -331,7 +331,7 @@ impl Parser {
             } else if self.check(&TokenKind::Const) {
                 if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'const' lines must come before any 'pd', 'datac', 'enum' or 'fun' (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
+                        message: "'const' lines must come before any 'pd', 'datac', 'enum', 'trait' or 'fun' (canonical order: impl, const/pd, datac/enum/trait/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
@@ -339,7 +339,7 @@ impl Parser {
             } else if self.check(&TokenKind::Static) {
                 if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'static' lines must come before any 'pd', 'datac', 'enum' or 'fun' (canonical order: impl, const/static/pd, datac/enum/fun)".to_string(),
+                        message: "'static' lines must come before any 'pd', 'datac', 'enum', 'trait' or 'fun' (canonical order: impl, const/static/pd, datac/enum/trait/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
@@ -347,7 +347,7 @@ impl Parser {
             } else if self.check(&TokenKind::Pd) {
                 if !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'pd' lines must come before any 'datac', 'enum' or 'fun' (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
+                        message: "'pd' lines must come before any 'datac', 'enum', 'trait' or 'fun' (canonical order: impl, const/pd, datac/enum/trait/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
@@ -856,6 +856,15 @@ impl Parser {
             }
             let mut f = self.parse_function(false, false, false, None, None, false)?;
             match &f.receiver {
+                Some(r) if r.type_name == "Self" && !r.type_args.is_empty() => {
+                    return Err(ParseError {
+                        message: format!(
+                            "an 'impl' method cannot take type parameters: the block already names the type it implements for, so write 'fun Self.{}(...)'",
+                            f.name
+                        ),
+                        span: r.span,
+                    })
+                }
                 Some(r) if r.type_name == "Self" => {}
                 Some(r) => {
                     return Err(ParseError {
@@ -1169,7 +1178,7 @@ impl Parser {
                     span: pspan,
                 });
             }
-            // `T: Name` — the traits the parameter must implement. A parameter
+            // `T: Name`: the traits the parameter must implement. A parameter
             // with no `:` has an empty list, which is every parameter written
             // before bounds existed.
             let bounds = if self.check(&TokenKind::Colon) {
@@ -1234,8 +1243,8 @@ impl Parser {
     }
 
     /// A dotted name: an identifier, then `.` and another identifier, repeated
-    /// (`Shape`, `shape.Shape`). Used where only a name is legal — a bound, an
-    /// `impl` line's trait, and its `for` type (A-12 slice 2) — so a generic
+    /// (`Shape`, `shape.Shape`). Used where only a name is legal (a bound, an
+    /// `impl` line's trait, and its `for` type, A-12 slice 2), so a generic
     /// argument or a `&` is refused rather than silently accepted.
     fn parse_dotted_name(&mut self) -> PResult<(String, Span)> {
         let (first, start) = self.expect_ident()?;
@@ -3516,6 +3525,8 @@ mod tests {
         assert!(err.message.contains("needs a 'Self' receiver"), "{}", err.message);
         let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun C.area().R: f64 = r }\nfun main() {}");
         assert!(err.message.contains("receiver is written 'Self'"), "{}", err.message);
+        let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun Self<A>.area().R: f64 = r }\nfun main() {}");
+        assert!(err.message.contains("cannot take type parameters"), "{}", err.message);
     }
 
     #[test]

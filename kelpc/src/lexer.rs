@@ -116,12 +116,12 @@ pub enum TokenKind {
     /// `pd val name = expr` / `pd var name = expr` — a passdown
     /// (`plan/syntax.md` §9).
     Pd,
-    /// `impl "path/to/module"` — the import keyword (`plan/syntax.md` §8),
-    /// and `impl Trait for Type { ... }` — the trait-implementation form
+    /// `impl "path/to/module"`: the import keyword (`plan/syntax.md` §8),
+    /// and `impl Trait for Type { ... }`: the trait-implementation form
     /// (A-12 slice 2). The parser tells them apart by the token that follows:
     /// a string literal is an import and an identifier is an impl block.
     Impl,
-    /// `trait Name { fun Self.m(...) ... }` — a named set of method
+    /// `trait Name { fun Self.m(...) ... }`: a named set of method
     /// signatures a `datac`/`enum` can implement (A-12 slice 2,
     /// `plan/syntax.md` 9.5).
     Trait,

@@ -1,0 +1,25 @@
+// Two bounds on one parameter, where the call satisfies only the second's
+// neighbour: `OnlyShape` implements `Shape` but not `Grow` (A-12 slice 2).
+trait Shape {
+    fun Self.area().R: f64
+}
+
+trait Grow {
+    fun mut Self.grow(by: f64)
+}
+
+datac OnlyShape(val r: f64)
+
+impl Shape for OnlyShape {
+    fun Self.area().R: f64 = r
+}
+
+fun grow_and_measure<T: Shape + Grow>(s: mut T).R: f64 {
+    s.grow(by = 1.0)
+    return s.area()
+}
+
+fun main() {
+    var p = OnlyShape(r = 1.0)
+    print(grow_and_measure(p))
+}
