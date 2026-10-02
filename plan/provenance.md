@@ -85,11 +85,12 @@ refused) and does not block reassigning the cursor (now accepted).
 - reading a cursor after its root was moved: the move is refused
   (`cursor_root_moved`), because the cursor keeps the owner borrowed.
 
-One rule got stricter as a consequence: copying an exclusive borrow into a
-second binding (`val q = p` where `p: &mut T`) is now refused, because the
-second binding would need a second exclusive pin. Kelp's references are `Copy`,
-so this was the one way to make two live `&mut` aliases to one place; the
-hold-every-root rule closes it by refusing the copy instead of allowing it.
+One rule got stricter as a consequence, and it is a fixture too: copying an
+exclusive borrow into a second binding (`val q = p` where `p: &mut T`) is
+refused (`cursor_mut_alias`), because the second binding would need a second
+exclusive pin. Kelp's references are `Copy`, so this was the one way to make two
+live `&mut` aliases to one place; the hold-every-root rule closes it by refusing
+the copy instead of allowing it.
 
 ## What changed in an existing fixture
 

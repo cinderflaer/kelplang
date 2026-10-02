@@ -422,6 +422,10 @@ fn an_unsound_cursor_use_is_still_refused() {
         "tests/fixtures/cursor_alias_reassign.kp",
         "cannot assign to 'list' while it is borrowed",
     );
+    assert_rejected_with(
+        "tests/fixtures/cursor_mut_alias.kp",
+        "already borrowed exclusively",
+    );
 }
 
 #[test]
