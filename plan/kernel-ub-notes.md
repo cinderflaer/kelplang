@@ -1501,3 +1501,43 @@ runtime hazard, and the trait's methods carry no raw pointer or lifetime an impl
 lie about. The GTK backend still calls `extern` symbols whose prototypes come from `gtk/gtk.h`,
 which is `plan/user-ffi-gap-analysis.md` gap 3 and is unchanged: a wrong prototype is still
 outside what the compiler checks.
+
+## Library note: Polyp v3's software rasterizer (2026-10-02, not a kernel stage)
+
+A library stage (`examples/polyp/soft/`), not a compiler one: nothing in the compiler changed, so
+the only new ways to reach undefined behaviour are the pointer operations a drawing library has
+by nature, and they are the same `Ptr<T>` operations stage 1 catalogued.
+
+**The new shapes.** `fb.get`/`fb.put` read and write one `u32` through `self.pixels.offset(index)`
+with no bounds check; `checksum` reads every live pixel; `draw`'s primitives call `put`/`get`
+after clipping to `clip.top() ∩ fb.bounds()`, and `blit_mask8` reads `w * h` coverage bytes
+through a `Ptr<u8>`. `debug.dump_ppm` reads the whole framebuffer and writes it to a path
+through `std/fs`. All of that goes through `unsafe fun` or an `unsafe` block, and the modules
+that contain it (`deps/polyp/soft/fb`, `.../draw`, `.../debug`) are the only ones a consumer
+lists under `[unsafe] modules`; `font` and `damage` do all their work in integers over `Rect`
+values and are deliberately off the list.
+
+**What the compiler checks, and does not.** It checks that a module containing `unsafe` is on the
+manifest's list, and nothing else about these operations: not that a pointer is inside the
+buffer it was derived from, not that `stride_px >= width` or that the pixels are mapped or
+writable, not that `index`'s `i64` result fits an `isize`, not that a clip rectangle is inside
+the framebuffer (a `ClipStack` is a plain rectangle the caller supplies), and not that the
+`blit_mask8` mask really has `w * h` bytes (a shorter one is read past its end). A frame drawn
+with a stale `Fb` is stage 1's dangling-pointer case: the pointer carries no provenance, so
+nothing detects it.
+
+**What is defined.** The stage is written so that its observables do not depend on
+implementation-defined behaviour: the blend and the circle test are `u64`/`i64` integer
+arithmetic with the overflow order chosen so no intermediate can wrap silently past what the
+formula intends, the checksum takes each pixel's bytes by masking the `u32` value rather than
+reading memory (so it is the same on a little- or big-endian host), and no `f32`/`f64` appears
+anywhere, which is what keeps a freestanding riscv64 build from needing a soft-float libcall.
+Kelp's integer arithmetic wraps rather than trapping (a `u64` FNV multiply is the checksum's
+whole point), so an over-large coordinate is a wrapped index and an out-of-bounds access, not a
+checked panic; the tests keep their inputs small and rely on the clip for the rest.
+
+**What the tests pin.** The references in `examples/polyp-soft-test` are per-pixel loops with
+full-precision integers, so a primitive that disagrees in one pixel or one count fails rather
+than passing on a checksum. The three golden FNV checksums cover the scenes end to end, and the
+damage list's "union covers every added rectangle" property is checked per pixel, not by
+rectangle containment.

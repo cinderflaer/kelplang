@@ -267,3 +267,20 @@ still has no trampoline, `library`/`header`/`pkg_config` still have no effect in
   (the C-ABI callback) and gap 6 (the `ui` domain) already provide, which is why the split needed
   no language change. A raster or soft backend that needs a `datac` to cross an `extern fun`
   boundary would still hit gap 9.
+
+## Status update (2026-10-02, Polyp v3 stage 2)
+
+- **No FFI gap is closed and none is newly blocked.** The software rasterizer
+  (`examples/polyp/soft/`) is pure Kelp with no `extern` call at all: the only external facts a
+  drawing primitive has are a `Ptr<u32>` and a stride, which is the shape gap 1 already admits,
+  and a caller with a `static mut [u32; N]` reaches the pixels through `Ptr.from_mut` and
+  `cast<u32>()`. `debug.dump_ppm` uses `std/fs`, which is the ordinary gated namespace, not an
+  FFI gap. `plan/polyp-v3.md` is the design.
+- One Kelp *language* shape the stage hit and worked around, worth recording for any I/O-heavy
+  binding: a method call with explicit type arguments cannot be written directly on a call
+  expression. `Ptr.from_ref(&buf).cast<u32>()` is refused ("'cast' does not take type arguments:
+  a method's type parameters come from its receiver"), while
+  `val b: Ptr<[u32; N]> = Ptr.from_ref(&buf)` followed by `b.cast<u32>()` is accepted. Bind the
+  receiver first. Nothing about FFI depends on this, but it will bite a generated binding.
+- The per-program C object's trampoline is untouched, so an application still pastes the same
+  `[extern.*]` sections as v2/v3 stage 1.

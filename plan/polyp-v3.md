@@ -186,3 +186,242 @@ one source change v3 asked of them, and both smoke scripts' assertions are untou
   widget, so a patch that drops it is a finding rather than an assumption.
 - A matched entry whose text differs is written by the patch, through a signal-blocked write, and
   a focused entry is left alone, exactly as v2.
+
+## Stage 2: the software rasterizer
+
+*Stage 2 of 5. `examples/polyp/soft/` is the module family this section designs; stage 3
+builds the soft backend on it and stage 4 proves it freestanding.*
+
+Stage 2 is the layer stage 3's soft backend draws through, and it is also the first thing in
+Polyp that has to survive a bare-metal build. The hard constraints are therefore fixed before
+any of the API: **integer only** (no `f32`/`f64` anywhere, so no soft-float libcall on a
+riscv64 target), **no libc and no OS call** (the only external facts are a pixel pointer and a
+stride the platform hands over), **no heap allocation in any drawing function** (scratch is
+the caller's, a fixed `static` or a stack array), and **only the modules that touch raw pixels
+carry `unsafe`**. `plan/freestanding.md` is what stage 4 may use; nothing in the four core
+modules names a `std` module except `std/str`'s `len`/`byte`, which the freestanding backend
+lowers itself.
+
+### The modules
+
+```
+examples/polyp/soft/
+  fb.kp      Fb, Rect, the pixel store/load, checksum            (unsafe: raw pixel access)
+  draw.kp    ClipStack and every primitive                       (unsafe: raw pixel access)
+  font.kp    the embedded 5x7 face, metrics and draw_text        (no unsafe)
+  damage.kp  the 16-rectangle dirty list                         (no unsafe)
+  debug.kp   dump_ppm, hosted only                               (unsafe: raw pixel reads)
+```
+
+The split is by what a module is allowed to do, not by size. `font`/`damage` do all their
+geometry in integers over the `Rect`/`Fb` values `fb.kp` and `draw.kp` expose and never
+dereference anything, so they need no audit entry; the three that read or write through a
+`Ptr<u32>` are the only ones on a project's `[unsafe] modules` list. A consumer's manifest
+therefore reads:
+
+```toml
+[unsafe]
+modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/debug"]
+```
+
+and `font`/`damage` are deliberately absent. `debug.kp` is a separate file rather than a
+`when` inside `fb.kp` so the freestanding build never names `std/fs`: a module that is not
+imported is not compiled, and stage 4's project does not import it. It is also the one module in
+`soft/` that allocates (a `Bytes` for the PPM it writes), which is fine because it is hosted debug
+output, not a drawing function, and is never compiled freestanding.
+
+### `Fb` and `Rect`
+
+```text
+datac Fb(val pixels: Ptr<u32>, val width: i32, val height: i32, val stride_px: i32)
+datac Rect(val x: i32, val y: i32, val w: i32, val h: i32)
+```
+
+A pixel is `0xAARRGGBB`. `stride_px` is in pixels, not bytes, because the platform that hands
+over a framebuffer thinks in pixels and the byte offset is `pixels.offset(y * stride_px + x)`.
+`fb.new(pixels, width, height, stride_px)` is the constructor; a caller with a
+`static mut [u32; N]` writes `val base: Ptr<[u32; N]> = unsafe { Ptr.from_mut(FRAME) }` and
+then `fb.new(pixels = base.cast<u32>(), ...)`. There is no N-generic helper because Kelp has
+no const generics (`[T; N]`'s `N` is a literal or a `const`, never a type parameter), and
+`Ptr.from_ref(&buf).cast<u32>()` cannot be written as one chained expression (see the gaps
+below), so the cast is a separate binding. That is the documented idiom, not a missing API.
+
+`Rect` is total: every operation accepts an empty (`w <= 0 || h <= 0`), negative-sized or
+off-canvas rectangle and answers something defined. `right()`/`bottom()`/`area()` widen to
+`i64` first and `intersect`/`union`/`contains` compare `i64`s, so two rectangles at
+`i32::MAX` do not wrap; the one narrowing (`clamp_i32`) saturates rather than panics.
+`intersect` of anything empty is the empty rectangle, `union` of empty is the other operand.
+`touches(a, b)` is true when they overlap or share an edge (a zero-width gap still merges),
+which is the predicate the damage list coalesces on.
+
+### The primitives
+
+Every primitive takes `(fb, clip, ...)` where `clip` is a `&ClipStack`, and clips to
+`clip.top() ∩ fb.bounds()` before it touches a pixel. Each returns the number of pixels it
+wrote, so stage 5 can assert on it. No primitive allocates.
+
+- `fill_rect`, `hline`, `vline`: an opaque store of the colour; the count is the area of the
+  clipped rectangle.
+- `stroke_rect(x, y, w, h, thickness)`: four **disjoint** bands (top, bottom, left middle,
+  right middle), each clamped independently, so no pixel is written twice and the count is the
+  area of the ring.
+- `blend_pixel` and `blend_over(dst, src)`: source-over with an 8-bit alpha, exact and
+  integer. Per 8-bit channel `c` of `src`/`dst`, with `a` the source alpha,
+  `out = (src_c * a + dst_c * (255 - a) + 127) / 255` in `u64`. `a == 255` returns `src`
+  exactly and `a == 0` returns `dst` exactly; both are properties the test asserts. All four
+  channels are blended, alpha included.
+- `blit_mask8(x, y, w, h, mask: Ptr<u8>, color)`: `mask` is `w * h` tightly packed coverage
+  bytes; a byte `m` blends `color` with source alpha `(color.a * m + 127) / 255`, a byte `0`
+  touches nothing and is not counted. This is the glyph path.
+- `line`: the classic Bresenham error loop over the major axis, exactly one pixel per major
+  step (`max(|dx|, |dy|) + 1` pixels), symmetric in sign, with a single pixel for a degenerate
+  point. The test's independent reference is the closed form for the same set: for the major
+  step `i`, the minor offset is `(2 * dminor * i + dmajor - 1) / (2 * dmajor)`, full-precision
+  integer, which is Bresenham's "round to nearest, ties toward the start" written without an
+  error accumulator.
+
+### Rounded rectangles, without floats and without seams
+
+`fill_round_rect(x, y, w, h, radius, color)` clamps `radius` to `[0, min(w, h) / 2]` and
+computes one span per row. A row in a corner has an inset from the exact integer circle
+predicate, in doubled coordinates so no division appears:
+
+```text
+pixel (i, row) of the top-left corner is inside iff
+    (2 * (r - 1 - i) + 1)^2 + (2 * (r - 1 - row) + 1)^2 <= (2 * r)^2
+```
+
+which is the pixel-center test. `i = 0` is the outer corner, so the predicate cuts a quarter
+disc out of each `r x r` corner square and the remainder of the row is a single span; there is
+no float, no accumulated error and no second write anywhere. This is the "integer circle" the
+stage asked for, realised as an exact squared comparison rather than the classic midpoint
+error recurrence: the recurrence's half-step tie choice is not one closed-form predicate, and
+the test's reference has to be a full-precision integer computation that agrees pixel for
+pixel, so the exact predicate is the one both sides share. The corner row of radius 1 is
+uncut (`inset 0`) and that is correct: a radius of one only shaves the corner pixel when the
+doubled test says so. `stroke_round_rect` is the outer shape minus the inner shape at
+`(x + t, y + t, w - 2t, h - 2t, r - t)`, computed as two disjoint spans per row, so the count
+is exact and nothing is overdrawn. Both are tested to write nothing outside the bounding
+rectangle (a sentinel background is checked outside it) and to write exactly the reference's
+pixel count.
+
+### The clip stack
+
+```text
+datac ClipStack(var rects: [Rect; 8], var depth: usize)
+fun clip(rect: Rect).R: ClipStack
+fun mut ClipStack.push(rect: Rect)
+fun mut ClipStack.pop()
+fun ClipStack.top().R: Rect
+```
+
+A push intersects the new rectangle with the current top, so the stack is monotone; `depth`
+starts at 1 and never exceeds 8. Two API contracts panic rather than silently misbehave, and
+they are the only panic fixtures this stage adds: pushing onto a full stack panics
+`clip stack depth 8 exceeded`, and popping the base panics `clip stack is empty` (the base
+rectangle is what makes `top()` total). Both are exercised by the test project under
+`POLYP_SOFT_TEST=clip_depth` / `clip_empty`, with the process bounded like every other run.
+
+### The font
+
+A 5x7 face for printable ASCII 32..126, hand-drawn for this stage (not copied from a licensed
+font), stored as one `static FONT: [u8; 95 * 5]`: five bytes per glyph, one per column, bit
+`r` of a column byte is the pixel at row `r` with row 0 at the top. The glyph cell is 5x7 and
+the advance is 6 columns; `text_width(&str, scale)` is `bytes * 6 * scale` (`i64` arithmetic,
+saturated into `i32`) and `text_height(scale)` is `7 * scale`. `draw_glyph` scales the glyph
+into a fixed `[u8; 5 * 4 * 7 * 4]` coverage mask (the 4x maximum) and hands it to
+`blit_mask8`, so the font never touches a pixel itself and needs no `unsafe`. `draw_text`
+advances the pen by `6 * scale` per **byte** and returns the total pixels written. A byte
+outside 32..126 renders a fixed replacement box, and a multi-byte UTF-8 sequence renders one
+box per byte; the limit is documented in the module and in the README. `scale` must be in
+1..=4 and a call outside that panics `text scale must be in 1..=4`, which is the third and
+last panic fixture.
+
+### Damage tracking
+
+```text
+const MAX_DAMAGE: usize = 16
+datac Damage(var rects: [Rect; 16], var len: usize)
+fun new().R: Damage
+fun mut Damage.add(rect: Rect)
+fun mut Damage.clear()
+fun Damage.count().R: usize
+fun Damage.at(i: usize).R: Rect
+fun Damage.bounds().R: Rect
+```
+
+The policy, in order, and it never allocates and never lets `len` exceed 16:
+
+1. an empty rectangle is dropped;
+2. if `len < 16` and the rectangle overlaps or touches an existing one, that entry becomes the
+   union, then a coalesce pass merges any entries the union made touch, and the call returns;
+3. otherwise, if `len < 16`, the rectangle is appended;
+4. otherwise (the list is full and nothing touches), the pair `(i, j)` minimising the wasted
+   area `union(i, j).area() - area(i) - area(j)` is merged, which drops `len` to 15, the new
+   rectangle is appended, and a coalesce pass runs; ties on the wasted area break on the
+   lowest `(i, j)` so the result is deterministic.
+
+The coalesce pass is what makes the list small in the common case: after any change, touching
+pairs are merged until none remain, and each merge strictly reduces `len`, so it terminates in
+at most 15 merges. The alternative the stage allowed (collapse everything to one bounding
+rectangle when full) is not used because the least-waste pair preserves more detail for the
+same cap; `bounds()` exists for a caller that really wants the one-rectangle answer. The test
+asserts the two invariants that matter: `count() <= 16` after every `add`, and every point that
+was ever added is covered by the current list (checked per pixel over the whole test canvas,
+not just rectangle containment).
+
+### Determinism, checksums and the tests
+
+`checksum(fb)` is FNV-1a 64 (offset basis `14695981039346656037`, prime `1099511628211`) over
+the pixels row by row, ignoring `stride_px` padding, feeding each pixel's four bytes
+little-endian (`b0 = p & 0xFF`, then `b1`, `b2`, `b3`). The byte order is fixed by masking the
+`u32` value rather than reading memory, so the checksum is the same on a little- or
+big-endian host. `debug.dump_ppm(fb, path)` writes a binary `P6` PPM through `std/fs`; it is
+hosted-only, is compiled only when a program imports `debug.kp`, and the test writes it into
+the cargo target directory and checks the header and one pixel's bytes.
+
+`examples/polyp-soft-test/` next to the library carries the tests. They run in the plain
+development shell with no display, and the Rust test builds it once and runs it on the backend
+under test (LLVM by default, `KELPC_ORACLE=c` for the oracle), asserting the exact stdout:
+
+- every primitive against an independent per-pixel reference implementation written in the
+  test, with full-precision integers, over seeded LCG inputs: random rectangles (negative and
+  zero sizes included), random clip rectangles (empty and off-canvas included), random
+  endpoints for the line, random alphas for the blend, and explicit cases where the shape
+  crosses each of the four edges of the clip and of the framebuffer;
+- the round rectangle and its stroke additionally against a per-pixel predicate reference, with
+  a sentinel check that nothing outside the bounding rectangle changed;
+- text at scales 1, 2 and 3 against a reference that places the font columns itself, plus the
+  replacement box for a byte outside ASCII;
+- the damage invariants above;
+- golden FNV checksums for three fixed scenes: `shapes` (fills, strokes, a line and a round
+  rectangle), `text` (all three scales), and `blend` (an overlapping alpha blend), printed as
+  three lines the Rust test pins.
+
+The three panic contracts are the only rejection/panic fixtures, as above.
+
+### What this stage found, and did not do
+
+- Kelp has no method call with explicit type arguments on a *call expression* receiver:
+  `Ptr.from_ref(&buf).cast<u32>()` is refused ("'cast' does not take type arguments"), while
+  `val b: Ptr<[u32; N]> = Ptr.from_ref(&buf)` followed by `b.cast<u32>()` is accepted. The
+  modules bind the receiver first; this is recorded in `plan/user-ffi-gap-analysis.md`.
+- No const generics, so the "view a `static mut [u32; N]`" helper is `fb.new` plus a
+  `.cast<u32>()` in the caller.
+- No `Copy` for a `datac`, even one whose fields are all scalars, so `Rect` is copied by an
+  explicit `dup()` or a constructor. The reference implementations and the primitive
+  signatures are written around that.
+- No `break`/`continue`, so the Bresenham loop and the circle boundary search exit through a
+  flag; no `[]` subscript, so array reads and writes are `get`/`set`; and a statement ends at a
+  newline, so an array literal or a `static` initializer has to be written on one line (the font
+  table is one 475-number line).
+- A borrow taken in an `if`/`while` *condition* is live for the whole statement, so
+  `if fb.touches(rects.get(i = i), r) { rects.set(...) }` is refused as an exclusive borrow of
+  what the condition already reads. The damage methods copy the element out first (`dup()`) and
+  keep the test in its own statement; the check is not weakened, the shape is written around it.
+- A `mut` parameter of a *`Copy`* array (`[u32; N]`) is passed by value rather than borrowed, so
+  a mutable scratch image in the test is a `datac` field (`Img`/`Grid`) rather than a bare array.
+  The drawing modules take `&ClipStack`/`&Fb` and never need a mutable array parameter.
+- Deliberately absent: a general `Blend` operator beyond source-over (no multiply/screen), any
+  gradient or pattern fill, sub-pixel positioning, and a colour type beyond `u32`. Stage 3
+  consumes exactly the surface above and nothing more.
