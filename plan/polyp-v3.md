@@ -872,7 +872,9 @@ The backend exposes three counters, all reset by `reset_counts` and read after a
 - `frame_alloc_count()`: the number of allocation sites the backend executed in the last frame.
 - `frame_alloc_bytes()`: a lower bound on the bytes those sites built (the allocator's own size is
   not observable from Kelp, so each site charges a documented estimate).
-- `arena_high_water()`: the largest patch list any frame has produced.
+- `arena_high_water()`: the largest patch list `apply_diff`, the direct patch path, has produced.
+  The loop's `frame_step_into` shares the same `Box`-held buffer, so the capacity is one buffer, but
+  the counter is updated by `apply_diff`.
 
 A site is a place the backend builds a heap value: `make` copies a new widget's `Props`, an entry
 edit builds the new text, `set_entry_text` writes one, and `post_id`/`schedule`/`push` append to a

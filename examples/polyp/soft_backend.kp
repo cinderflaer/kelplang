@@ -1878,8 +1878,10 @@ fun SoftBackend.frame_alloc_count().R: i32 = frame_allocs
 
 fun SoftBackend.frame_alloc_bytes().R: i64 = frame_bytes
 
-// The largest patch list any frame has produced, the documented capacity `apply_diff`'s reusable
-// buffer reaches. Once a frame has been that large, later frames of the same size do not grow it.
+// The largest patch list `apply_diff` has produced, the documented capacity its reusable buffer
+// reaches. The loop's `frame_step_into` shares that same `Box`-held buffer (section 5's
+// caller-provided patch buffer), but it is core code and does not update this counter; a driver
+// that only calls `frame` still reuses the buffer, it just does not read a high-water from here.
 fun SoftBackend.arena_high_water().R: i32 = arena_high
 
 // Pixels the last paint wrote, from the primitives' own return values, and the running total.
