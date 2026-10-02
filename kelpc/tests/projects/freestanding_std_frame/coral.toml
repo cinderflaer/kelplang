@@ -1,0 +1,8 @@
+name = "freestandingstdframe"
+
+# Kernel stage 19: `std/frame` in a freestanding project.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

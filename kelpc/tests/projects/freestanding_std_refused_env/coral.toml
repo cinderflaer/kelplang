@@ -1,0 +1,8 @@
+name = "freestandingstdrefusedenv"
+
+# Kernel stage 19: `std/env` needs `getenv`, so it is refused by name.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

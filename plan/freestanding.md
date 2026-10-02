@@ -45,9 +45,11 @@ the check lives in the front end (`src/freestanding.rs`).
 a borrowed literal in read-only data; user `datac` and `enum` values; arrays
 `[T; N]`; borrows `&T`/`&mut T`; `if`, `when`, loops, functions, and closures
 that capture nothing (a capturing literal owns a heap environment that only the
-runtime could free); `Atomic<T>` and its methods, plus the pure `std/atomic`,
-`std/option`, `std/result` and `std/arena` modules (the arena is pure pointer
-arithmetic and needs no allocator, kernel stage 13), and the five `std/str` operations the
+runtime could free); `Atomic<T>` and its methods, plus the admitted standard
+modules (kernel stage 19, `plan/freestanding-std.md`): the pure `std/atomic`,
+`std/arena`, `std/irq` and `std/frame`, `std/option`'s and `std/result`'s value
+helpers, `std/math`'s integer `abs`/`min`/`max`/`clamp`, and the five `std/str`
+operations the
 compiler lowers itself (`len`, `byte`, `eq`, `starts_with` and `ptr`, kernel
 stage 7); `Ptr<T>` and the compile-time
 `size_of`/`align_of`/`offset_of`; a user `extern fun` whose module has its own
@@ -62,7 +64,10 @@ next section), with only the operations that have a libc-free lowering -
 `get`/`set`/`push`/`clone`/`reserve`/`clear`, `str.concat` and the integer
 builders, and drop - callable; every other `String`/`Bytes` method and every
 other `std/str` function is refused by name with "needs the hosted runtime"
-(`plan/freestanding-string.md`).
+(`plan/freestanding-string.md`). The same pair admits `std/list`, whose every
+function takes a closure, and the `std/option`/`std/result` callback
+combinators, whose environments are heap boxes; without it each of those is
+refused by name with the two manifest keys.
 
 **Refused, each naming the construct.** `print`/`print!` (the `printf` call),
 `assert` (the runtime's `kelp_assert`), a defined `main` (the hosted entry point
@@ -71,9 +76,10 @@ and its `argc`/`argv` globals), `Ptr.alloc`/`Ptr.free` (the hosted
 `kelp_init_pds` that only the hosted entry point calls), `View` and `Thread`
 (which reach the hosted runtime whatever the manifest says), `String` and
 `Bytes` when no allocator is configured, and `Box`, `List` and `Map` when no
-`[target] alloc`/`dealloc` pair is configured. Any `std/*` module other than the
-pure four above and the `std/str` subset is refused by name: they all reach
-libc or the allocator.
+`[target] alloc`/`dealloc` pair is configured. Any `std/*` module whose row in
+`freestanding::std_admission` is `Hosted` is refused by name with "needs a
+hosted runtime" and the list of modules that are admitted: they all reach libc
+or the allocator.
 
 `std/str` is the one module that is partly allowed, because a kernel that
 prints anything has to walk text. The listed operations are the whole of it:

@@ -1,0 +1,12 @@
+name = "freestandingstdarena"
+
+# Kernel stage 19: `std/arena` in a freestanding project. The region is the
+# caller's, so no `[target] alloc` pair is configured.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+
+[unsafe]
+modules = ["main"]

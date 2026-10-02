@@ -40,7 +40,12 @@ than kernel 0, so the release is done when, on top of stages 1-5, the following 
 - cleanup and allocation a kernel can rely on (`defer`/`Drop`, global and arena allocators, fallible allocation);
 - per-CPU storage, address-space management, a syscall ABI with untrusted-pointer validation;
 - a freestanding standard subset (the parts of `std` that need no libc, plus an `alloc`-style layer on the
-  user's allocator);
+  user's allocator): **done** (kernel stage 19, `plan/freestanding-std.md`). A freestanding project may
+  implement `std/arena`, `std/atomic`, `std/frame`, `std/irq`, `std/list` and `std/math` (its integer
+  functions), `std/option`, `std/result` and `std/str` (its byte-length subset), each narrowed to the items
+  that resolve without libc; `std/list`, the `std/option`/`std/result` callback combinators and the `String`
+  builders need the `[target] alloc`/`dealloc` pair, and every other module is refused by name with "needs a
+  hosted runtime" and the admitted list;
 - the capability model extended to devices (MMIO regions, IRQ lines, frames) so a driver can only touch what it
   was granted: this is what makes it a *Kelp* OS and not C with nicer syntax. All three are done. `mmio`
   (`plan/device-caps.md`) is a domain of `"0xBASE+0xLEN"` ranges or `["*"]` and a compile-time refusal of any

@@ -1,0 +1,5 @@
+impl "std/time" caps(time = [])
+
+section(".text.boot") fun kmain() {
+    while true { }
+}

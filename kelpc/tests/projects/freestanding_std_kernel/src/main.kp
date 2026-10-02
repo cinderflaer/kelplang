@@ -1,0 +1,94 @@
+impl "std/option"
+impl "std/result"
+impl "std/arena"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+
+static mut REGION: [u8; 256] = [0; 256]
+
+// One value in, one classification out: `Some` for the number the search
+// looks for, `Ok` for a non-negative one.
+fun find(n: i32).R: option.Option<i32> {
+    if n == 7 {
+        return option.Option.Some(value = n * 2)
+    }
+    return option.Option.None
+}
+
+fun classify(n: i32).R: result.Result<i32, i32> {
+    if n < 0 {
+        return result.Result.Err(error = n)
+    }
+    return result.Result.Ok(value = n)
+}
+
+fun flag(value: bool).R: usize {
+    if value {
+        return 1
+    }
+    return 0
+}
+
+fun put_num(value: usize) {
+    if value == 0 {
+        uart.putc(48)
+        return
+    }
+    var digits: [u8; 20] = [0; 20]
+    var i: usize = 20
+    var v: usize = value
+    while v > 0 {
+        i = i - 1
+        digits.set(i = i, v = (48 + (v % 10)).to_u8())
+        v = v / 10
+    }
+    while i < 20 {
+        uart.putc(digits.get(i = i))
+        i = i + 1
+    }
+}
+
+fun line(label: str, value: usize) {
+    uart.puts(label)
+    put_num(value)
+    uart.puts("\n")
+}
+
+section(".text.boot") fun kmain() {
+    val full: option.Option<i32> = find(7)
+    val empty: option.Option<i32> = find(1)
+    line(label = "some ", value = flag(option.is_some(o = &full)))
+    line(label = "none ", value = flag(option.is_none(o = &empty)))
+    line(label = "unwrapped ", value = option.unwrap(o = full).to_usize())
+
+    val good: result.Result<i32, i32> = classify(3)
+    val bad: result.Result<i32, i32> = classify(-1)
+    line(label = "ok ", value = flag(result.is_ok(r = &good)))
+    line(label = "err ", value = flag(result.is_err(r = &bad)))
+    line(label = "fallback ", value = result.unwrap_or(r = &bad, fallback = 9).to_usize())
+
+    // The arena carves a page-aligned block out of a static region; only the
+    // returned address and the byte written through it are checked.
+    val region: Ptr<[u8; 256]> = unsafe { Ptr.from_mut(REGION) }
+    var a: arena.Arena = arena.new(base = region.cast<u8>(), cap = 256)
+    val p: Ptr<u8> = a.alloc(size = 4, align = 16)
+    unsafe {
+        p.write(66)
+    }
+    line(label = "arena aligned ", value = flag(p.addr() % 16 == 0))
+    unsafe {
+        line(label = "arena byte ", value = p.read().to_usize())
+    }
+    line(label = "arena used ", value = a.used())
+
+    uart.puts("done\n")
+    uart.halt()
+}
+
+// The handler `[target] panic` names: a check that fires stops with the
+// compiler's own message on the wire.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}

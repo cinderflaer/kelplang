@@ -11257,6 +11257,161 @@ fn freestanding_str_builds_the_five_operations_with_no_undefined_symbols() {
 }
 
 // ---------------------------------------------------------------------------
+// Kernel stage 19 (release goal 3): the freestanding standard subset. Each
+// admitted module has a project here that imports it and calls a
+// representative function; every one is built for riscv64 and checked for zero
+// undefined symbols, which is what "admitted" means. `plan/freestanding-std.md`
+// is the table and how it was derived; `plan/freestanding.md` owns the mode.
+// ---------------------------------------------------------------------------
+
+/// The admitted set: one project per module the table admits, plus the boot.
+/// Every one must link with no undefined symbol, so a module that reaches libc
+/// or the allocator cannot be on the list by accident.
+#[test]
+fn every_admitted_std_module_builds_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding std tests: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    for dir in [
+        "freestanding_std_option",
+        "freestanding_std_result",
+        "freestanding_std_atomic",
+        "freestanding_std_arena",
+        "freestanding_std_irq",
+        "freestanding_std_frame",
+        "freestanding_std_str",
+        "freestanding_std_math",
+        "freestanding_std_alloc",
+        "freestanding_std_kernel",
+    ] {
+        let bin = out_path(dir);
+        let build = Command::new(kelpc_bin())
+            .env_remove("KELPC_BACKEND")
+            .env_remove("KELPC_ORACLE")
+            .arg("build")
+            .arg(project(dir))
+            .arg("-o")
+            .arg(&bin)
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            build.status.success(),
+            "the freestanding build of '{dir}' failed:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let path = bin.to_str().expect("the artifact path is utf-8");
+        let undefined = tool("llvm-nm", &["-u", path]);
+        assert!(
+            undefined.trim().is_empty(),
+            "'{dir}' links with undefined symbols:\n{undefined}"
+        );
+    }
+}
+
+/// Kernel stage 19's boot: `std/option`, `std/result` and `std/arena` in one
+/// riscv64 image, printed over the real UART. `std/bits` is not shipped on this
+/// branch, so those are the three the boot names.
+#[test]
+fn freestanding_std_kernel_boots_with_option_result_and_arena() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding std boot: 'ld.lld' or 'qemu-system-riscv64' \
+             is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_std_kernel",
+        &project("freestanding_std_kernel"),
+        &[
+            "some 1",
+            "none 1",
+            "unwrapped 14",
+            "ok 1",
+            "err 1",
+            "fallback 9",
+            "arena aligned 1",
+            "arena byte 66",
+            "arena used 4",
+            "done",
+        ],
+    );
+}
+
+/// A whole std module that needs a hosted runtime is refused by name, and the
+/// refusal lists the modules a freestanding project may implement.
+#[test]
+fn a_hosted_std_module_is_refused_by_name_with_the_allowed_list() {
+    let allowed = "std/arena, std/atomic, std/frame, std/irq, std/list, \
+                   std/math, std/option, std/result, std/str";
+    for (dir, module) in [
+        ("freestanding_std_refused_time", "std/time"),
+        ("freestanding_std_refused_thread", "std/thread"),
+        ("freestanding_std_refused_env", "std/env"),
+    ] {
+        let bin = out_path(dir);
+        let build = Command::new(kelpc_bin())
+            .env_remove("KELPC_BACKEND")
+            .env_remove("KELPC_ORACLE")
+            .arg("build")
+            .arg(project(dir))
+            .arg("-o")
+            .arg(&bin)
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            !build.status.success(),
+            "expected '{dir}' to be rejected in a freestanding build"
+        );
+        let stderr = String::from_utf8_lossy(&build.stderr);
+        for needle in [
+            format!("the module '{module}' is unavailable in a freestanding build"),
+            "needs a hosted runtime".to_string(),
+            allowed.to_string(),
+        ] {
+            assert!(
+                stderr.contains(&needle),
+                "the refusal of '{dir}' does not mention '{needle}':\n{stderr}"
+            );
+        }
+    }
+}
+
+/// `std/math` is admitted but its libm externs are not: a call to one is
+/// refused by name inside the admitted module, rather than left for `ld.lld`.
+#[test]
+fn a_std_math_function_outside_the_integer_subset_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_std_math_refused",
+        "'std.math.sqrt' is unavailable in a freestanding build",
+    );
+    assert_rejected_with(
+        "tests/projects/freestanding_std_math_refused",
+        "needs the hosted runtime",
+    );
+}
+
+/// A `std/option` callback combinator is admitted only with the allocator pair:
+/// its closure environment is a heap box, and without one the call is refused by
+/// name rather than left as an undefined `free`.
+#[test]
+fn a_std_option_callback_without_an_allocator_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_std_option_no_alloc",
+        "'std.option.map<i32, i32>' is unavailable in a freestanding build",
+    );
+    assert_rejected_with(
+        "tests/projects/freestanding_std_option_no_alloc",
+        "needs an allocator",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Kernel stage 7: global `static` data. A `static` is one object with a stable
 // address, `static mut` is the audited mutable form, and an `Atomic<T>` static
 // is the safe shared mutable. Every run test here passes on the default LLVM

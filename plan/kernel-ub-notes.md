@@ -1233,3 +1233,33 @@ direction, whether a module with a correct-looking grant actually needed it. The
 runtime ownership, no liveness, no provenance (roadmap D-1) and no DMA tracking. `examples/kernel0-caps`
 carries the one grant the boot uses (line 10 and `0x80100000+0x100000`), and `plan/irq-frame-caps.md`
 is the design note.
+
+## Stage 19: the freestanding standard subset (release goal 3, `plan/freestanding-std.md`)
+
+**New way to reach undefined behaviour.** None from the admission itself, and that is the point of
+this stage: it only moves a refusal from the module to the item, and every item it admits is one
+that leaves no undefined symbol behind. Two places the admission does shift a promise are worth
+naming. `std/list` and the `std/option`/`std/result` callback combinators are admitted with the
+`[target] alloc`/`dealloc` pair, and their closure *environments* are now heap boxes allocated and
+freed through the project's own functions, so stage 12's promise (alignment, size, no aliasing,
+the exact `cap + 1` byte count handed back to `dealloc`) applies to a second kind of object; a
+project allocator that gets it wrong corrupts the closure's captured state, and the compiler does
+not check it there any more than it does for `String`. `std/math`'s integer `abs` is the ordinary
+arithmetic surface: `abs(i32::MIN)` is the negation of the minimum, and that is the overflow check
+calling the project's panic handler like every other negation.
+
+**What the compiler does check.** That every `std/*` module the program reaches has a row, and that
+a module whose row is `Hosted` is refused by name with the admitted list; that a module whose row
+is `Allocator` is refused with the two manifest keys named when no pair is configured; and that a
+call into a narrowed module names an item its row admits right now, so `str.from_f64`, a libm
+function, a `std/math` `f64` overload and a callback combinator without an allocator are all
+errors in the front end rather than undefined symbols at `ld.lld`. The table is checked against
+`stdlib::shipped()` and each row's names against the shipped source by unit tests, so a rename in
+`kelpc/std/` cannot silently narrow a row into a refusal.
+
+**What it does not check.** Everything the admitted bodies already did not: a `f64` operation
+anywhere in a freestanding program is still a soft-float libcall the image has no library for (the
+stage keeps `f64` out of `std/math` but does not remove the type), and the allocator's promises,
+the arena's region, a claimed line and a claimed frame are all the caller's claims about the
+machine, as stages 12, 13, 16 and 18 said. The refusal is a compile-time decision about reachable
+symbols, not a proof about any of them.

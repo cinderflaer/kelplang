@@ -1,0 +1,15 @@
+name = "freestandingstdalloc"
+
+# Kernel stage 19: the allocator half of the admitted set. `std/list`, the
+# `std/option`/`std/result` callback combinators and `str.concat`/`from_u64`
+# all build through the project's own allocator.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+alloc = "alloc"
+dealloc = "dealloc"
+
+[unsafe]
+modules = ["main"]

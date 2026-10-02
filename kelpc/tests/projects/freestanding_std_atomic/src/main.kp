@@ -1,0 +1,11 @@
+impl "std/atomic"
+
+section(".text.boot") fun kmain() {
+    var a: Atomic<u32> = Atomic.new(1)
+    a.store(value = 2, order = atomic.Ordering.SeqCst)
+    var n: u32 = a.load(order = atomic.Ordering.SeqCst)
+    if a.swap(value = 5, order = atomic.Ordering.SeqCst) == 2 {
+        n = n + 1
+    }
+    while true { n = n + 1 }
+}

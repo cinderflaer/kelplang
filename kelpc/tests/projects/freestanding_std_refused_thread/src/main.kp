@@ -1,0 +1,5 @@
+impl "std/thread"
+
+section(".text.boot") fun kmain() {
+    while true { }
+}

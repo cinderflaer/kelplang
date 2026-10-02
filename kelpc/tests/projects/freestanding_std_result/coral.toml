@@ -1,0 +1,8 @@
+name = "freestandingstdresult"
+
+# Kernel stage 19: `std/result`'s value helpers in a freestanding project.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

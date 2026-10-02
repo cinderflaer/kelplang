@@ -242,6 +242,23 @@ section. `examples/kernel0-caps` is the acceptance, `kelpc/tests/irq_frames.rs`
 the accepting and refusing front-end cases, and every other `examples/kernel0*`
 image still boots.
 
+**Release goal 3's freestanding standard subset is done** (kernel stage 19,
+`plan/freestanding-std.md`). `freestanding.rs` decides each shipped `std/*`
+module with one table row (`Pure`, `Allocator`, `Subset`, `Present`,
+`Hosted`) instead of two hand-kept lists, the call-site check and `prune` are
+driven by the same row, and a whole-module refusal names the modules a
+freestanding project may implement. Newly admitted: `std/math`'s integer
+`abs`/`min`/`max`/`clamp`, and, with the `[target] alloc`/`dealloc` pair,
+`std/list` and the `std/option`/`std/result` callback combinators. The
+admitted list is `std/arena`, `std/atomic`, `std/frame`, `std/irq`,
+`std/list`, `std/math`, `std/option`, `std/result`, `std/str`; every other
+module is refused by name with "needs a hosted runtime". `std/math`'s libm
+externs and `f64` overloads and the rest of `std/str` are refused by name
+inside the admitted module, and `std/mem` stays refused because its
+`alloc_raw` is libc `malloc`. Ten `tests/projects/freestanding_std_*`
+fixtures build with zero undefined symbols, and `freestanding_std_kernel`
+boots under QEMU printing `option`/`result`/`arena` results over the UART.
+
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
 arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall
 ABI (row 9), both halves of row 10 (guards and probing, panic semantics) and the whole of row 11

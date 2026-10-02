@@ -1,0 +1,7 @@
+impl "std/irq" caps(irq = ["10"])
+
+section(".text.boot") fun kmain() {
+    val line = irq.claim(10)
+    var n: u32 = line.number()
+    while true { n = n + 1 }
+}

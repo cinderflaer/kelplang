@@ -1,0 +1,9 @@
+name = "freestandingstdrefusedtime"
+
+# Kernel stage 19: a whole std module that needs a hosted runtime is
+# refused by name, and the message names the modules that are admitted.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

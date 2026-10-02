@@ -1,0 +1,8 @@
+name = "freestandingstdstr"
+
+# Kernel stage 19: the `std/str` subset in a freestanding project.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

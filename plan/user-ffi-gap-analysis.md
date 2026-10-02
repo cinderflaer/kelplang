@@ -235,3 +235,13 @@ for `pub extern type TlsHandle`, `TlsStream.handle` is now a `TlsHandle` rather 
 `std/http`/`std/ws` carry `option.Option<tls.TlsHandle>` so `None`, not `0`, is "not TLS". Fixtures
 `tls_handle_not_an_integer.kp` and `tls_handle_not_forged.kp` show the two integer directions are refused.
 `plan/tls-handle.md` is the record.
+
+## What kernel stage 19 (the freestanding standard subset) changed for this list
+
+Nothing is closed, and one thing a binding could use is now reachable: a freestanding program may
+call `std/math`'s integer `abs`/`min`/`max`/`clamp` and, with the allocator pair, `std/list` and
+the `std/option`/`std/result` callback combinators, where before the whole module was refused. A
+binding that has to normalise a length or clamp an index in a kernel can now write that in Kelp
+rather than in an `asm` block. The rest of the list is unchanged: a freestanding `extern fun`
+still has no trampoline, `library`/`header`/`pkg_config` still have no effect in that mode, and
+`std/mem` (whose `alloc_raw` is libc `malloc`) is still refused by name.

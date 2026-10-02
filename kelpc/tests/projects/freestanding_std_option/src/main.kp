@@ -1,0 +1,11 @@
+impl "std/option"
+
+section(".text.boot") fun kmain() {
+    val full: option.Option<i32> = option.Option.Some(value = 7)
+    val empty: option.Option<i32> = option.Option.None
+    var n: i32 = option.unwrap_or(o = option.Option.Some(value = 1), fallback = 0)
+    if option.is_some(o = &full) && option.is_none(o = &empty) {
+        n = option.unwrap(o = full)
+    }
+    while true { n = n + 1 }
+}

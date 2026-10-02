@@ -1,0 +1,9 @@
+name = "freestandingstdirq"
+
+# Kernel stage 19: `std/irq` in a freestanding project. The line is a value
+# the caller was granted; the module reaches no runtime.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
