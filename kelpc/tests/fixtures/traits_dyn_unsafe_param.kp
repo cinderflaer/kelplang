@@ -1,0 +1,11 @@
+// A-12 slice 4: a trait method taking another `Self` cannot be dispatched
+// through a trait object.
+trait Comparable {
+    fun Self.same_as(other: &Self).R: bool
+}
+
+datac Circle(val r: f64)
+
+fun take(s: &dyn Comparable) { }
+
+fun main() { }

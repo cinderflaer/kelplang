@@ -20,6 +20,9 @@ impl   Named   for   i32   {
     fun   Self.name().R:   str   =   "n"
 }
 
+fun describe(s:   &dyn   Shape).R:   f64 =   s.area()
+fun mutate(s:   &mut   dyn   Shape) {   }
+
 fun area_of<T:   Shape   +   Grow>(s:   &T).R:   f64 = s.area()
 
 fun main() { }

@@ -5260,7 +5260,7 @@ fn an_impl_naming_no_declared_trait_is_rejected() {
 fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
     assert_rejected_with(
         "tests/fixtures/traits_dyn.kp",
-        "'dyn' trait objects are not in this slice",
+        "has to be borrowed",
     );
     assert_rejected_with(
         "tests/fixtures/traits_associated_type.kp",
@@ -5360,6 +5360,130 @@ fn self_stands_for_the_implementing_type_everywhere_in_a_signature() {
     assert_compiles_and_runs(
         "tests/fixtures/traits_self_in_signature.kp",
         "1\n2\n",
+    );
+}
+
+/// A-12 slice 4: two types implementing one trait, called through a `&dyn` in
+/// a loop over borrowed bindings.
+#[test]
+fn two_types_are_dispatched_through_a_dyn_in_a_loop() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_dyn_dispatch.kp",
+        "circle\nsquare\n21.000000\n",
+    );
+}
+
+/// A-12 slice 4: a default method and a supertrait method are both callable
+/// through a `&dyn` of the subtrait.
+#[test]
+fn a_default_and_a_supertrait_method_are_callable_through_a_dyn() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_dyn_default_super.kp",
+        "circle\na shape\n16.000000\n",
+    );
+}
+
+/// A-12 slice 4: `&mut dyn` mutates its target through the vtable.
+#[test]
+fn a_mut_dyn_mutates_its_target() {
+    assert_compiles_and_runs("tests/fixtures/traits_dyn_mut.kp", "11\n18\n");
+}
+
+/// A-12 slice 4: a `&dyn` binding forwards on to another function.
+#[test]
+fn a_dyn_borrow_forwards_to_another_function() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_dyn_forward.kp",
+        "36.000000\n18.000000\n",
+    );
+}
+
+/// A-12 slice 4: a trait implemented for a `Copy` builtin is reached through a
+/// `&dyn`, so the thunk reads the scalar out of the erased pointer.
+#[test]
+fn a_builtin_impl_is_reached_through_a_dyn() {
+    assert_compiles_and_runs("tests/fixtures/traits_dyn_builtin.kp", "84\n");
+}
+
+/// A-12 slice 4 rejections: an object-unsafe trait that returns `Self` or takes
+/// another `Self`, an owned trait object, a trait object in a field, a returned
+/// `&dyn`, a type that does not implement the trait, and an unknown trait.
+#[test]
+fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_unsafe_self.kp",
+        "returns 'Self'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_unsafe_param.kp",
+        "takes a 'Self' parameter",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_boxed.kp",
+        "has to be borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_field.kp",
+        "is a borrowed type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_return.kp",
+        "cannot be a return type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_not_impl.kp",
+        "does not implement 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn_unknown.kp",
+        "names no declared trait",
+    );
+}
+
+/// A-12 slice 4: a freestanding riscv64 image dispatches through a `&dyn` and a
+/// `&mut dyn` over the UART, and the linked ELF references no undefined symbol,
+/// which is to say the vtable is `.rodata`, the thunks are ordinary code, and
+/// no `kelp_rt` or libc helper is reached.
+#[test]
+fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding dyn boot: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_dyn");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_dyn"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding dyn build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding dyn image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_dyn",
+        &project("freestanding_dyn"),
+        &["hello from dyn", "1", "bye from dyn", "2"],
     );
 }
 

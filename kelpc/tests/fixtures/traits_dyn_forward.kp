@@ -1,0 +1,18 @@
+// A-12 slice 4: a `&dyn` binding forwards on to another function, and the
+// binding keeps its referent borrowed.
+trait Shape {
+    fun Self.area().R: f64
+}
+
+datac Circle(val r: f64)
+impl Shape for Circle { fun Self.area().R: f64 = r * r * 2.0 }
+
+fun inner(s: &dyn Shape).R: f64 = s.area()
+fun outer(s: &dyn Shape).R: f64 = inner(s) + inner(s)
+
+fun main() {
+    val c = Circle(r = 3.0)
+    val d: &dyn Shape = &c
+    print(outer(d))
+    print(inner(&c))
+}
