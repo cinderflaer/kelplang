@@ -108,6 +108,10 @@ fn usage() {
          program either way. The C oracle (KELPC_ORACLE=c) ignores it and\n\
          keeps its one translation unit, and a freestanding project is\n\
          refused by name for now (plan/incremental-compilation.md).\n\n\
+         Cache misses are compiled on worker threads, each unit in its own\n\
+         LLVM context. KELPC_JOBS names the worker count (a positive integer;\n\
+         the default is 2, not the CPU count); more workers than units spawns\n\
+         one per unit.\n\n\
          --timings prints per-phase wall times (parse, resolve, infer,\n\
          borrowck, codegen, unit compile, link) and, for an --incremental\n\
          build, one line per unit with hit or miss, to stderr.\n\n\
