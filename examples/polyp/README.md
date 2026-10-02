@@ -398,7 +398,7 @@ program schedules its own input and prints a deterministic summary.
 
 The counter **must print exactly** `1\ntyped\n1`: the count, the text the
 entry's constructor produced, and one entry built across all the patches. The
-todo smoke parses a 20-value summary and asserts the model, the creation marks
+todo smoke parses that summary and asserts the model, the creation marks
 (no widget is created after the adds), `removed == 5`, `live == created - removed`,
 the focus present and surviving, and the entry's text. **Both** smoke runs build
 the todo again with `KELPC_ORACLE=c` and check the same output, so the C backend
