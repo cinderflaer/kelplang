@@ -611,10 +611,45 @@ pub fn load(
         datacs: Vec::new(),
         enums: Vec::new(),
         extern_types: Vec::new(),
+        traits: Vec::new(),
+        trait_impls: Vec::new(),
         functions: Vec::new(),
     };
+    // `alias -> the target module's symbol prefix`, per module. Built before
+    // the merge loop because an `impl` line's two names are qualified with it
+    // (A-12 slice 2): the trait and the `for` type may each be this module's
+    // own or reached through an alias, and the canonical key is what every
+    // later pass looks a trait up by.
+    let mut alias_prefixes = HashMap::new();
+    for m in &loader.modules {
+        let mut table = HashMap::new();
+        for (alias, target) in &m.aliases {
+            let prefix = loader.prefixes.get(target).cloned().unwrap_or_default();
+            table.insert(alias.clone(), prefix);
+        }
+        alias_prefixes.insert(m.id.clone(), table);
+    }
+
     for m in &loader.modules {
         let parsed = &loader.parsed[&m.id];
+        let module_alias_prefixes = alias_prefixes.get(&m.id).cloned().unwrap_or_default();
+        // A written type name as its canonical, module-qualified key: a bare
+        // name is this module's own, and `alias.Item` goes through the import
+        // table — exactly the rule `TypeScope::qualify` applies, but at the
+        // point the name was written.
+        let canon = |name: &str, span: Span| -> Result<String, Diagnostic> {
+            match name.split_once('.') {
+                Some((alias, item)) => match module_alias_prefixes.get(alias) {
+                    Some(p) => Ok(format!("{p}{item}")),
+                    None => Err(Diagnostic::new(
+                        format!("unknown module alias '{alias}' in type '{name}' — was it imported?"),
+                        span,
+                        m.id.clone(),
+                    )),
+                },
+                None => Ok(format!("{}{}", m.prefix, name)),
+            }
+        };
         // `unsafe` is auditable, not ambient (kernel-path rule 1): a module may
         // contain an `unsafe` block or an `unsafe fun` only if `coral.toml`
         // lists it, the same shape `[extern.*]` takes. A project with no
@@ -696,13 +731,38 @@ pub fn load(
             e.module = m.id.clone();
             program.extern_types.push(e);
         }
+        for t in &parsed.traits {
+            let mut t = t.clone();
+            t.name = format!("{}{}", m.prefix, t.name);
+            t.module = m.id.clone();
+            program.traits.push(t);
+        }
+        for i in &parsed.trait_impls {
+            let mut i = i.clone();
+            i.trait_name = canon(&i.trait_name, i.trait_span)?;
+            i.type_name = canon(&i.type_name, i.type_span)?;
+            i.module = m.id.clone();
+            program.trait_impls.push(i);
+        }
         for f in &parsed.functions {
             let mut f = f.clone();
             match &mut f.receiver {
                 // A method's key is `Type#name`, so the *receiver type* gets
-                // the prefix, not the method name.
-                Some(r) => r.type_name = format!("{}{}", m.prefix, r.type_name),
+                // the prefix, not the method name. An `impl` block's method is
+                // the exception (A-12 slice 2): its receiver was written
+                // `Self`, and the `for` type's canonical name is substituted
+                // for it below — prefixing `Self` here would name nothing.
+                Some(r) if f.trait_impl.is_none() => {
+                    r.type_name = format!("{}{}", m.prefix, r.type_name)
+                }
+                Some(_) => {}
                 None => f.name = format!("{}{}", m.prefix, f.name),
+            }
+            if let Some(mut site) = f.trait_impl.clone() {
+                let self_type = canon(&site.self_type, f.span)?;
+                site.self_type = self_type.clone();
+                f.trait_impl = Some(site);
+                substitute_self(&mut f, &self_type);
             }
             f.module = m.id.clone();
             program.functions.push(f);
@@ -737,20 +797,6 @@ pub fn load(
             }
             merged_order += 1;
         }
-    }
-
-    let mut alias_prefixes = HashMap::new();
-    for m in &loader.modules {
-        let mut table = HashMap::new();
-        for (alias, target) in &m.aliases {
-            let prefix = loader
-                .prefixes
-                .get(target)
-                .cloned()
-                .unwrap_or_default();
-            table.insert(alias.clone(), prefix);
-        }
-        alias_prefixes.insert(m.id.clone(), table);
     }
 
     // ---- M7: capability sets -------------------------------------------
@@ -2406,6 +2452,53 @@ pub fn find_manifest_root(file: &Path) -> Option<PathBuf> {
 
 /// Canonical module id for a file: its path relative to `src/`, minus the
 /// `.kp` suffix, with `/` separators.
+/// Replaces every `Self` in one `impl` method's signature with the written
+/// `for` type (A-12 slice 2). A method inside an `impl` block names its
+/// receiver `Self` so the block reads the same wherever it sits, and this is
+/// what turns it into the ordinary receiver method every later pass expects.
+/// Only a *type* named `Self` is replaced: an expression naming `Self` is left
+/// alone, and `infer.rs` refuses it there as an unknown name.
+fn substitute_self(f: &mut ast::FunctionDecl, self_type: &str) {
+    if let Some(r) = &mut f.receiver {
+        if r.type_name == "Self" {
+            r.type_name = self_type.to_string();
+        }
+    }
+    for p in &mut f.params {
+        substitute_self_ty(&mut p.ty, self_type);
+    }
+    if let Some(t) = &mut f.return_type {
+        substitute_self_ty(t, self_type);
+    }
+}
+
+/// One type expression's `Self`, including inside a tuple, an array, a
+/// container's arguments and a function type's parameters and return.
+fn substitute_self_ty(ty: &mut ast::TypeExpr, self_type: &str) {
+    if ty.name == "Self" && ty.args.is_empty() {
+        ty.name = self_type.to_string();
+    }
+    if let Some(elems) = &mut ty.tuple {
+        for e in elems {
+            substitute_self_ty(e, self_type);
+        }
+    }
+    for a in &mut ty.args {
+        substitute_self_ty(a, self_type);
+    }
+    if let Some(elem) = &mut ty.array_elem {
+        substitute_self_ty(elem, self_type);
+    }
+    if let Some(params) = &mut ty.fn_params {
+        for p in params {
+            substitute_self_ty(&mut p.ty, self_type);
+        }
+    }
+    if let Some(ret) = &mut ty.fn_ret {
+        substitute_self_ty(ret, self_type);
+    }
+}
+
 fn module_id_of(file: &Path, src_dir: &Path) -> Result<String, Diagnostic> {
     let rel = file.strip_prefix(src_dir).map_err(|_| {
         Diagnostic::new(

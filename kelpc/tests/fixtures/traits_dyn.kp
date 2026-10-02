@@ -1,0 +1,8 @@
+// `dyn Name` is the trait-object form, which this slice does not have.
+trait Shape {
+    fun Self.area().R: f64
+}
+
+fun take(s: dyn Shape) { }
+
+fun main() { }

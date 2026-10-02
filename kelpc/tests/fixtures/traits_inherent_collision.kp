@@ -1,0 +1,14 @@
+// A trait method and an explicit method of the type share one name (A-12 slice 2).
+trait Shape {
+    fun Self.area().R: f64
+}
+
+datac Circle(val r: f64)
+
+fun Circle.area().R: f64 = r
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r
+}
+
+fun main() { }

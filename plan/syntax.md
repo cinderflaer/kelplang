@@ -1008,6 +1008,7 @@ print(c.total())
 - `fun mut Type.name()` takes an exclusive borrow, so the receiver must be reachable mutably: a `var` binding, a `mut` parameter, or a field of one. Calling it on a `val` binding fails with `cannot borrow 'c' as exclusive` (see 19).
 - Passing a receiver to a method does not move it.
 - Builtin types have methods too, listed in 12 and 13 (`String.push_str`, `List.push`, `n.to_u64`, and so on).
+- A method declared by a `trait` writes its receiver with `Self` in place of the type, and a method in an `impl` block writes it the same way: `fun Self.area()` (9.5). Everywhere else the receiver names its type.
 
 **The destructor.** A user `datac`/`enum` may declare exactly one method named `drop`,
 written `fun mut T.drop()`: an exclusive receiver, no parameters, and no return. The name is
@@ -1182,6 +1183,69 @@ print(identity<i32>(x = 5))
 - The form is `Name<...>(` — the `<` written **against** the name and the `(` written **against** the `>`. Write a space before `<` when you mean a comparison: `a < b > (c)` is a comparison chain, `a<b>(c)` is read as an instantiation and then fails on `b` not being a type. This is the one place the two spellings could collide, and adjacency is what separates them.
 - An explicit instantiation with the wrong number of arguments is an error naming the count, and so is one written on something that is not generic — a non-generic type, a non-generic function, or a method (whose parameters come from its receiver).
 - A payload-less variant cannot take one, because there is no call to attach it to: write the expected type instead (`val none: Option<i32> = Option.None`).
+
+### 9.5 Traits and static dispatch
+
+A `trait` is a named set of method signatures, and `impl` makes a type provide them. A generic
+function may then require that its type parameter implements one, which is what a function like
+`fun area_of<T: Shape>(s: &T)` needs. Dispatch is **static**: the method a `T` calls is the one the
+concrete type declares, resolved once per instantiation, exactly as 9.3 resolves a type parameter.
+
+```kelp
+pub trait Shape {
+    fun Self.area().R: f64
+    fun mut Self.scale(f: f64)
+}
+
+datac Circle(val r: f64)
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r * 3.14159
+    fun mut Self.scale(f: f64) { r = r * f }
+}
+
+fun area_of<T: Shape>(s: &T).R: f64 = s.area()
+fun describe<T: Shape + Named>(s: &T).R: f64 = s.area() + s.name_length()
+
+val c = Circle(r = 2.0)
+print(area_of(c))
+```
+
+- A trait body is one or more **signatures**, each in the receiver form of 8 with `Self` where the
+  method's type would be. `Self` names the implementing type, and it is also legal in the
+  signature's other types (`fun Self.smaller_than(other: &Self).R: bool`). A signature has no body:
+  no `= expr` and no `{ ... }`.
+- A trait method may take `mut` on its receiver, and the impl has to match it. A trait declaration
+  takes no type parameters and neither does one of its methods.
+- `impl Trait for Type { ... }` is told from an import (`impl "..."`, 13.1) by what follows
+  `impl`: a string literal imports a module, an identifier starts this form. The block declares
+  one method per declared signature, each with a `Self` receiver, and the body is an ordinary
+  method body (the type's fields are read and written by their bare names). The impl may live in
+  the trait's module or in the type's module, and nowhere else.
+- A type has **at most one** impl of a trait, and the type has to be a `datac` or an `enum`
+  declared in the program: a builtin (`i32`, `String`, `List<T>`, ...) and a generic instantiation
+  are refused. An explicit method of the type (`fun Circle.area()`, 8) and a trait method of the
+  same name cannot both exist, so the impl is refused at the name it collides on.
+- Every declared signature must be implemented with exactly the declared signature: the same
+  receiver (with or without `mut`), the same parameter names and types in the same order, and the
+  same return type. A missing method, an extra method and a mismatched one are three errors, each
+  naming the trait and the method.
+- A bound is written after the parameter's name: `fun f<T: Shape>(...)`, and several bounds are
+  separated by `+` (`<T: Shape + Named>`). At every call, each type argument has to implement
+  every bound, so a call that does not is an error naming the callee, the type and the trait. A
+  generic function that is never called is never checked, exactly as in 9.3.
+- Inside the body, a method call on a `T` resolves the way a method call on the concrete type
+  does, because the body is checked once per instantiation. The call is then the same direct call
+  the concrete type's method already was: there is no vtable and no witness, so a trait costs
+  nothing at run time and works in a freestanding build (`plan/traits.md` 6).
+- `trait Drop` cannot be declared: `fun mut T.drop()` is a type's destructor (8) and is not spelled
+  through a trait.
+
+Not in this slice, each refused where it is written: `dyn` and trait objects; a default method
+(a signature with a body); a trait item other than a method (an associated type or const);
+`impl Trait` in argument position; a trait implemented for a builtin type; a `where` clause;
+trait inheritance (`trait A: B`); and any operator overloading through a trait (`==`/`!=` still
+come from a declared `eq`, 5). `plan/traits.md` 4 is the list with the reason and the workaround.
 
 ## 10. Ownership, moves and borrowing
 
@@ -2385,6 +2449,7 @@ These are deliberate, and each one has a workaround in this document:
 - No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
 - `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
+- A trait (9.5) is a set of method signatures and a bound on a type parameter, not a type: there is no `dyn`, no default method, no associated type, and no way to implement one for a builtin (`i32`, `String`, `List<T>`) or for a generic instantiation. A trait's methods are still reached through a value and dispatched statically, so a call on a `T` is the call the concrete type declares.
 - A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, variant payload or position is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
@@ -2557,7 +2622,7 @@ directory walk are printed as raw strings and are not in that data.
 
 ```
 program      := line* EOF
-line         := impl | const | pd | datac | enum | fun
+line         := impl | trait | traitimpl | const | pd | datac | enum | fun
 
 impl         := "impl" string [ "caps" "(" ( grant ( "," grant )* | "*" ) ")" ]
                 // `caps(*)` (15.2) delegates the whole resource of every domain and
@@ -2565,17 +2630,33 @@ impl         := "impl" string [ "caps" "(" ( grant ( "," grant )* | "*" ) ")" ]
                 // `as name` was removed (13.1) and `with caps(...)` with it (15.2):
                 // the parser refuses each by name, and `as` stays a keyword
 grant        := ident "=" "[" string ("," string)* "]"
-// A leading "pub" (13.4) is accepted on const, datac, enum and fun, and
-// nowhere else: a `pd` is module-scoped and an impl is not an item.
+// A leading "pub" (13.4) is accepted on trait, const, datac, enum and fun, and
+// nowhere else: a `pd` is module-scoped and an import is not an item.
+// `trait`/`traitimpl` (9.5): a trait is a set of signatures, an impl gives them
+// to a `datac`/`enum`. "Self" is an ordinary identifier used as a type name in
+// both, and stands for the implementing type.
+trait        := [ "pub" ] "trait" ident "{" ( traitmethod )* "}"
+traitmethod  := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
+                [ ".R" ":" type ]                     // a signature: no body
+traitimpl    := "impl" traitname "for" typename "{" ( method )* "}"
+traitname    := ident [ "." ident ]                    // `Shape` or `shape.Shape`
+typename     := ident [ "." ident ]
+method       := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
+                [ ".R" ":" type ] body
 const        := [ "pub" ] "const" ident ":" type "=" expr
 pd           := "pd" ("val" | "var") ident [ ":" type ] "=" expr
 datac        := [ "pub" ] "datac" ident [ typeparams ] "(" [ field ("," field)* ] ")"
 field        := ("val" | "var") ident ":" type
 enum         := [ "pub" ] "enum" ident [ typeparams ] "{" ( ident [ "(" [ field ("," field)* ] ")" ] )* "}"
-typeparams   := "<" ident ("," ident)* ">"
+typeparams   := "<" typeparam ("," typeparam)* ">"
+typeparam    := ident [ ":" bound ("+" bound)* ]
+bound        := traitname
 typeargs     := "<" type ("," type)* ">"   // in an expression: adjacent to the name and to "("
 fun          := [ "pub" ] [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
                 "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body
+                // `[typeparams]` after the function's own name bounds its type
+                // parameters (9.5); on a receiver it names the receiver's type
+                // arguments and takes no bounds.
 param        := ident ":" [ "mut" | "move" ] type
 body         := "=" expr | block | <nothing for extern>
 
@@ -2588,7 +2669,10 @@ fparam       := [ "mut" | "move" ] type
 
 (`View` is an ordinary `ident` here — it is a builtin type name like `str` or
 `String`, not a keyword. `(T)` is the parenthesized type `T`, not a
-one-element tuple, and `()` is not a type at all: `unit` is.)
+one-element tuple, and `()` is not a type at all: `unit` is. `Self` is likewise
+an ordinary `ident` that is only meaningful inside a trait or an impl (9.5), and
+`dyn` is not a keyword: `dyn Name` is refused by name as the trait-object form
+this language does not have.)
 
 ```
 stmt         := "val" | "var" | "while" | "for" | "return" | expr

@@ -1,0 +1,6 @@
+// `Drop` is the one compiler-known trait and is not declared this way.
+trait Drop {
+    fun Self.drop_it()
+}
+
+fun main() { }

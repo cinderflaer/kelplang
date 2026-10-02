@@ -220,6 +220,8 @@ impl Parser {
         let mut datacs = Vec::new();
         let mut enums = Vec::new();
         let mut extern_types = Vec::new();
+        let mut traits = Vec::new();
+        let mut trait_impls = Vec::new();
         let mut functions = Vec::new();
         // One counter across both type declarations: it is what `resolve.rs`
         // uses to rebuild a single merged declaration order from the two
@@ -309,8 +311,17 @@ impl Parser {
                     span: self.peek().span,
                 });
             }
-            if self.check(&TokenKind::Impl) {
-                if !consts.is_empty() || !statics.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
+            if self.check(&TokenKind::Impl) && !self.at_module_impl() {
+                // `impl Name for Type { ... }` (A-12 slice 2). It declares
+                // methods, so it belongs to the last group with `datac`,
+                // `enum`, `fun` and `trait`, and may sit anywhere among them.
+                let (decl, methods) = self.parse_trait_impl_decl()?;
+                trait_impls.push(decl);
+                functions.extend(methods);
+            } else if self.check(&TokenKind::Trait) {
+                traits.push(self.parse_trait_decl(is_pub)?);
+            } else if self.check(&TokenKind::Impl) {
+                if !consts.is_empty() || !statics.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
                         message: "'impl' lines must come first (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
                         span: self.peek().span,
@@ -318,7 +329,7 @@ impl Parser {
                 }
                 impls.push(self.parse_impl_decl()?);
             } else if self.check(&TokenKind::Const) {
-                if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
+                if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
                         message: "'const' lines must come before any 'pd', 'datac', 'enum' or 'fun' (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
                         span: self.peek().span,
@@ -326,7 +337,7 @@ impl Parser {
                 }
                 consts.push(self.parse_const_decl(is_pub, section)?);
             } else if self.check(&TokenKind::Static) {
-                if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
+                if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
                         message: "'static' lines must come before any 'pd', 'datac', 'enum' or 'fun' (canonical order: impl, const/static/pd, datac/enum/fun)".to_string(),
                         span: self.peek().span,
@@ -334,7 +345,7 @@ impl Parser {
                 }
                 statics.push(self.parse_static_decl(is_pub, section, percpu)?);
             } else if self.check(&TokenKind::Pd) {
-                if !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
+                if !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
                         message: "'pd' lines must come before any 'datac', 'enum' or 'fun' (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
                         span: self.peek().span,
@@ -361,7 +372,18 @@ impl Parser {
                 // identifier tokens and the lookahead is what makes them
                 // declaration markers here.
                 let (unsafe_, naked) = self.check_function_markers();
-                functions.push(self.parse_function(is_pub, unsafe_, naked, section, align)?);
+                let f = self.parse_function(is_pub, unsafe_, naked, section, align, false)?;
+                // `Self` is a receiver only inside a `trait` or an `impl`
+                // (A-12 slice 2): at the top level it names nothing.
+                if let Some(r) = &f.receiver {
+                    if r.type_name == "Self" {
+                        return Err(ParseError {
+                            message: "'Self' can only be written inside a 'trait' or an 'impl': it names the implementing type, so a method of a named type writes that type ('fun Circle.area()')".to_string(),
+                            span: r.span,
+                        });
+                    }
+                }
+                functions.push(f);
             }
             self.skip_newlines();
         }
@@ -373,6 +395,8 @@ impl Parser {
             datacs,
             enums,
             extern_types,
+            traits,
+            trait_impls,
             functions,
         })
     }
@@ -431,6 +455,7 @@ impl Parser {
             | TokenKind::Extern
             | TokenKind::Datac
             | TokenKind::Enum
+            | TokenKind::Trait
             | TokenKind::Const
             | TokenKind::Static => Ok(()),
             // `pub unsafe fun ...` / `pub naked fun ...`, in either order: both
@@ -697,10 +722,187 @@ impl Parser {
         })
     }
 
+    /// `trait Name { fun Self.m(...).R: T ... }` (A-12 slice 2). The body is
+    /// method signatures only: a body, an associated item and an inheritance
+    /// clause are each refused here, where the reason can name the follow-up.
+    fn parse_trait_decl(&mut self, is_pub: bool) -> PResult<TraitDecl> {
+        let start = self.expect(TokenKind::Trait, "'trait'")?.span;
+        let (name, name_span) = self.expect_ident()?;
+        if name == "Drop" {
+            return Err(ParseError {
+                message: "the trait 'Drop' is built in: a type's destructor is written 'fun mut T.drop()', not through a trait"
+                    .to_string(),
+                span: name_span,
+            });
+        }
+        if name == "Self" {
+            return Err(ParseError {
+                message: "'Self' is the implementing type inside a 'trait' or an 'impl', so it cannot be a trait's own name"
+                    .to_string(),
+                span: name_span,
+            });
+        }
+        if crate::types::Ty::from_name(&name).is_some() {
+            return Err(ParseError {
+                message: format!(
+                    "'{name}' is a builtin type, so it cannot be a trait's name"
+                ),
+                span: name_span,
+            });
+        }
+        if self.check(&TokenKind::Lt) {
+            return Err(ParseError {
+                message: "a trait cannot have type parameters in this slice: a trait with parameters, and an associated type, both wait for a later slice"
+                    .to_string(),
+                span: self.peek().span,
+            });
+        }
+        if self.check(&TokenKind::Colon) {
+            return Err(ParseError {
+                message: "a trait cannot inherit in this slice: there are no supertraits, so list every trait a function needs at the bound ('fun f<T: A + B>')"
+                    .to_string(),
+                span: self.peek().span,
+            });
+        }
+        self.expect(TokenKind::LBrace, "'{' to open the trait's body")?;
+        let mut methods = Vec::new();
+        self.skip_newlines();
+        while !self.check(&TokenKind::RBrace) {
+            if !self.check(&TokenKind::Fun) {
+                // `type Item = ...` and any other item form: a trait body is
+                // signatures only.
+                let what = match self.peek_kind() {
+                    TokenKind::Ident(n) if n == "type" => {
+                        "associated types and consts are not in this slice: a trait declares method signatures only"
+                            .to_string()
+                    }
+                    TokenKind::Ident(n) => format!(
+                        "'{n}' is not part of a trait: a trait body declares method signatures only ('fun Self.m(...)')"
+                    ),
+                    other => format!(
+                        "a trait body declares method signatures only, so a 'fun' is expected here, found {other:?}"
+                    ),
+                };
+                return Err(ParseError {
+                    message: what,
+                    span: self.peek().span,
+                });
+            }
+            methods.push(self.parse_function(false, false, false, None, None, true)?);
+            self.skip_newlines();
+        }
+        let end = self.expect(TokenKind::RBrace, "'}' to close the trait's body")?.span;
+        Ok(TraitDecl {
+            name,
+            is_pub,
+            methods,
+            module: String::new(),
+            span: start.to(end),
+        })
+    }
+
+    /// `impl Name for Type { fun Self.m(...) { ... } ... }` (A-12 slice 2).
+    /// Returns the pairing (what `infer.rs` checks coherence and the exact
+    /// signatures against) and the methods, which are ordinary receiver
+    /// methods from here on: `resolve.rs` substitutes `Self` with the `for`
+    /// type before any later pass sees them.
+    fn parse_trait_impl_decl(&mut self) -> PResult<(TraitImplDecl, Vec<FunctionDecl>)> {
+        let impl_span = self.expect(TokenKind::Impl, "'impl'")?.span;
+        let (trait_name, trait_span) = self.parse_dotted_name()?;
+        if trait_name == "Drop" || trait_name.ends_with(".Drop") {
+            return Err(ParseError {
+                message: "the trait 'Drop' is built in, so it cannot be implemented: a type's destructor is written 'fun mut T.drop()' inside its own module"
+                    .to_string(),
+                span: trait_span,
+            });
+        }
+        self.expect(TokenKind::For, "'for' after the trait name ('impl Name for Type') and not 'impl \"path\"', which imports a module")?;
+        let (type_name, type_span) = self.parse_dotted_name()?;
+        if type_name == "Self" || type_name.ends_with(".Self") {
+            return Err(ParseError {
+                message: "the 'for' type names the implementing type, not 'Self': 'Self' is what the methods of this block call it"
+                    .to_string(),
+                span: type_span,
+            });
+        }
+        if self.check(&TokenKind::Lt) {
+            return Err(ParseError {
+                message: "implementing a trait for a generic instantiation is not in this slice: a trait is implemented for a declared 'datac' or 'enum' name"
+                    .to_string(),
+                span: self.peek().span,
+            });
+        }
+        if let Some(builtin) = crate::types::Ty::from_name(&type_name) {
+            return Err(ParseError {
+                message: format!(
+                    "'{}' is a builtin type ('{}'), so a trait cannot be implemented for it in this slice: a builtin's operations come from the compiler",
+                    type_name,
+                    builtin.display()
+                ),
+                span: type_span,
+            });
+        }
+        self.expect(TokenKind::LBrace, "'{' to open the impl's body")?;
+        let mut methods = Vec::new();
+        let mut names = Vec::new();
+        self.skip_newlines();
+        while !self.check(&TokenKind::RBrace) {
+            if !self.check(&TokenKind::Fun) {
+                return Err(ParseError {
+                    message: "an 'impl' block declares methods only, each written 'fun Self.name(...)': move anything else to the top level"
+                        .to_string(),
+                    span: self.peek().span,
+                });
+            }
+            let mut f = self.parse_function(false, false, false, None, None, false)?;
+            match &f.receiver {
+                Some(r) if r.type_name == "Self" => {}
+                Some(r) => {
+                    return Err(ParseError {
+                        message: format!(
+                            "an 'impl' method's receiver is written 'Self', not '{}': 'Self' stands for the type the block implements for ('fun Self.{}(...)')",
+                            r.type_name, f.name
+                        ),
+                        span: r.span,
+                    })
+                }
+                None => {
+                    return Err(ParseError {
+                        message: format!(
+                            "an 'impl' declares methods, so '{}' needs a 'Self' receiver: write 'fun Self.{}(...)', or move the function to the top level",
+                            f.name, f.name
+                        ),
+                        span: f.span,
+                    })
+                }
+            }
+            f.trait_impl = Some(TraitImplSite {
+                trait_name: trait_name.clone(),
+                self_type: type_name.clone(),
+            });
+            names.push(f.name.clone());
+            methods.push(f);
+            self.skip_newlines();
+        }
+        self.expect(TokenKind::RBrace, "'}' to close the impl's body")?;
+        Ok((
+            TraitImplDecl {
+                trait_name,
+                type_name,
+                trait_span,
+                type_span,
+                methods: names,
+                module: String::new(),
+                impl_span,
+            },
+            methods,
+        ))
+    }
+
     fn parse_datac_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<DatacDecl> {
         let start = self.expect(TokenKind::Datac, "'datac'")?.span;
         let (name, _) = self.expect_ident()?;
-        let type_params = self.parse_type_params()?;
+        let type_params = Parser::no_type_param_bounds(self.parse_type_params()?)?;
         self.expect(TokenKind::LParen, "'('")?;
         let fields = self.parse_field_list()?;
         let end = self.expect(TokenKind::RParen, "')'")?.span;
@@ -943,7 +1145,11 @@ impl Parser {
 
     /// `<T, U>` after a declared type name (A-2). Returns an empty vector when
     /// no `<` was written, so this is a no-op for every ordinary declaration.
-    fn parse_type_params(&mut self) -> PResult<Vec<String>> {
+    /// A `<...>` parameter list, one `(name, bounds)` pair per parameter
+    /// (A-2, with the bound half from A-12 slice 2): `fun f<T: A + B>` gives
+    /// `("T", [A, B])`, and a parameter with no bound gets an empty list, so
+    /// the two halves stay in step by construction.
+    fn parse_type_params(&mut self) -> PResult<Vec<(String, Vec<TypeExpr>)>> {
         if !self.check(&TokenKind::Lt) {
             return Ok(Vec::new());
         }
@@ -954,16 +1160,25 @@ impl Parser {
                 span: open.to(self.peek().span),
             });
         }
-        let mut params = Vec::new();
+        let mut params: Vec<(String, Vec<TypeExpr>)> = Vec::new();
         loop {
             let (param, pspan) = self.expect_ident()?;
-            if params.contains(&param) {
+            if params.iter().any(|(p, _)| *p == param) {
                 return Err(ParseError {
                     message: format!("type parameter '{param}' is declared more than once"),
                     span: pspan,
                 });
             }
-            params.push(param);
+            // `T: Name` — the traits the parameter must implement. A parameter
+            // with no `:` has an empty list, which is every parameter written
+            // before bounds existed.
+            let bounds = if self.check(&TokenKind::Colon) {
+                self.advance();
+                self.parse_bounds()?
+            } else {
+                Vec::new()
+            };
+            params.push((param, bounds));
             if self.check(&TokenKind::Comma) {
                 self.advance();
                 continue;
@@ -972,6 +1187,68 @@ impl Parser {
         }
         self.expect(TokenKind::Gt, "'>' to close the type parameter list")?;
         Ok(params)
+    }
+
+    /// One or more trait names separated by `+` (A-12 slice 2): `Name`,
+    /// `alias.Name`, `A + B`. A bound names a trait and nothing else, so no
+    /// argument list and no `&` is accepted.
+    fn parse_bounds(&mut self) -> PResult<Vec<TypeExpr>> {
+        let mut out = Vec::new();
+        loop {
+            let (name, span) = self.parse_dotted_name()?;
+            out.push(TypeExpr::named(name, span));
+            if self.check(&TokenKind::Plus) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        Ok(out)
+    }
+
+    /// A `datac`/`enum` parameter list, with a bound refused (A-12 slice 2): a
+    /// type declaration's parameters are bound at the use site (a function's
+    /// `fun f<T: Name>`), not on the type itself. The list's names are what the
+    /// declaration wants, so this is where the pair is taken apart.
+    fn no_type_param_bounds(
+        params: Vec<(String, Vec<TypeExpr>)>,
+    ) -> PResult<Vec<String>> {
+        if let Some((param, bounds)) = params.iter().find(|(_, b)| !b.is_empty()) {
+            return Err(ParseError {
+                message: format!(
+                    "a bound cannot be written on a type declaration's parameter '{param}': a bound is written where the parameter is used ('fun f<T: Name>'), so a type declaration lists its parameters alone"
+                ),
+                span: bounds[0].span,
+            });
+        }
+        Ok(params.into_iter().map(|(n, _)| n).collect())
+    }
+
+    /// Whether the `impl` at the cursor opens an **import** (`impl "path"`,
+    /// `plan/syntax.md` 13.1) rather than an `impl Trait for Type { ... }`
+    /// block (A-12 slice 2): the two are told apart by the token after the
+    /// keyword, a string literal for the import and an identifier for the
+    /// block.
+    fn at_module_impl(&self) -> bool {
+        self.check(&TokenKind::Impl) && matches!(self.peek2_kind(), TokenKind::StringLit(_))
+    }
+
+    /// A dotted name: an identifier, then `.` and another identifier, repeated
+    /// (`Shape`, `shape.Shape`). Used where only a name is legal — a bound, an
+    /// `impl` line's trait, and its `for` type (A-12 slice 2) — so a generic
+    /// argument or a `&` is refused rather than silently accepted.
+    fn parse_dotted_name(&mut self) -> PResult<(String, Span)> {
+        let (first, start) = self.expect_ident()?;
+        let mut name = first;
+        let mut end = start;
+        while self.check(&TokenKind::Dot) {
+            self.advance();
+            let (part, pspan) = self.expect_ident()?;
+            name.push('.');
+            name.push_str(&part);
+            end = pspan;
+        }
+        Ok((name, start.to(end)))
     }
 
     /// The payload of a variant, or a `datac`'s field list, with the opening
@@ -1012,7 +1289,7 @@ impl Parser {
     fn parse_enum_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<EnumDecl> {
         let start = self.expect(TokenKind::Enum, "'enum'")?.span;
         let (name, _) = self.expect_ident()?;
-        let type_params = self.parse_type_params()?;
+        let type_params = Parser::no_type_param_bounds(self.parse_type_params()?)?;
         self.expect(TokenKind::LBrace, "'{'")?;
         self.skip_newlines();
         let mut variants = Vec::new();
@@ -1091,7 +1368,12 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>, align: Option<u32>) -> PResult<FunctionDecl> {
+    /// One function declaration. `signature` is set only for a method written
+    /// inside a `trait` body (A-12 slice 2): its body must be absent, and its
+    /// receiver must be `Self`. Every other spelling of the declaration is
+    /// shared, so a trait signature and an `impl` method are parsed by the same
+    /// code and cannot drift apart.
+    fn parse_function(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>, align: Option<u32>, signature: bool) -> PResult<FunctionDecl> {
         // `extern fun ...` — a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -1127,17 +1409,29 @@ impl Parser {
         // the receiver's type name (`fun Pair<A, B>.first()`); which one it is
         // is settled by whether a `.` comes next (A-2).
         let name_params = self.parse_type_params()?;
-        let (receiver, name, type_params) = if self.check(&TokenKind::Dot) {
+        let (receiver, name, type_params, type_param_bounds) = if self.check(&TokenKind::Dot) {
             self.advance();
             let (method, _) = self.expect_ident()?;
+            // A receiver's parameters are its type's, so there is nowhere for a
+            // bound to go (A-12 slice 2): the type's own parameters are bound
+            // by whoever declares the generic type.
+            if let Some((param, _)) = name_params.iter().find(|(_, b)| !b.is_empty()) {
+                return Err(ParseError {
+                    message: format!(
+                        "a bound cannot be written on a receiver's type parameter '{param}': those parameters come from the receiver's type, so bind them there, or write the bound on a function's own parameter list ('fun f<T: Name>')"
+                    ),
+                    span: first_span,
+                });
+            }
             (
                 Some(Receiver {
                     type_name: first,
-                    type_args: name_params,
+                    type_args: name_params.into_iter().map(|(n, _)| n).collect(),
                     mutable: receiver_mutable,
                     span: first_span,
                 }),
                 method,
+                Vec::new(),
                 Vec::new(),
             )
         } else {
@@ -1147,8 +1441,43 @@ impl Parser {
                     span: first_span,
                 });
             }
-            (None, first, name_params)
+            let type_params: Vec<String> = name_params.iter().map(|(n, _)| n.clone()).collect();
+            let bounds: Vec<Vec<TypeExpr>> = name_params.into_iter().map(|(_, b)| b).collect();
+            (None, first, type_params, bounds)
         };
+        // A trait's method signatures are the trait's interface: they take no
+        // type parameters of their own, and their receiver is `Self` (A-12
+        // slice 2). Both are refused here, where the receiver and the
+        // parameter list are already in hand.
+        if signature {
+            match &receiver {
+                Some(r) if r.type_name == "Self" => {
+                    if !type_params.is_empty() {
+                        return Err(ParseError {
+                            message: "a trait method cannot take type parameters: the signature names 'Self' and the trait's own types".to_string(),
+                            span: first_span,
+                        });
+                    }
+                }
+                Some(r) => {
+                    return Err(ParseError {
+                        message: format!(
+                            "a trait method's receiver is written 'Self', not '{}': 'Self' stands for the implementing type ('fun Self.{name}(...)')",
+                            r.type_name
+                        ),
+                        span: first_span,
+                    })
+                }
+                None => {
+                    return Err(ParseError {
+                        message: format!(
+                            "a trait declares method signatures, so '{name}' needs a 'Self' receiver: write 'fun Self.{name}(...)'"
+                        ),
+                        span: first_span,
+                    })
+                }
+            }
+        }
 
         // A method is reached through a value of its type, never through a
         // module alias, so `pub` on one has nothing to govern: the type's own
@@ -1199,7 +1528,28 @@ impl Parser {
             None
         };
 
-        let body = if extern_ {
+        // `where T: Name` is the other spelling of a bound (A-12 slice 2). It
+        // is not in this slice, and it would otherwise be read as the start of
+        // a body and fail with something about `=`, so it is refused by name.
+        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "where") {
+            return Err(ParseError {
+                message: "a 'where' clause is not in this slice: write the bound on the type parameter itself ('fun f<T: Name>(...)'), and write several of them separated by '+' ('fun f<T: A + B>')".to_string(),
+                span: self.peek().span,
+            });
+        }
+
+        let body = if signature {
+            // A signature has no body at all: no `=` and no `{ ... }`. A body
+            // here would be a default method, which is not in this slice.
+            if self.check(&TokenKind::Eq) || self.check(&TokenKind::LBrace) {
+                return Err(ParseError {
+                    message: "a trait declares method signatures only, so a default body is not in this slice: write the body in the 'impl' block ('impl Name for Type { fun Self.m(...) { ... } })'"
+                        .to_string(),
+                    span: self.peek().span,
+                });
+            }
+            FunctionBody::Signature
+        } else if extern_ {
             // No body and no `=`: the C is supplied by the compiler. A
             // written body would be dead code, so say so rather than ignore
             // it.
@@ -1233,12 +1583,21 @@ impl Parser {
         let end = match &body {
             FunctionBody::Block(b) => b.span,
             FunctionBody::Expr(e) => e.span(),
-            FunctionBody::Extern => return_type.as_ref().map(|t| t.span).unwrap_or(start),
+            // A declaration with no body ends where its signature does: at
+            // the return type if one was written, otherwise at the last
+            // parameter's type.
+            FunctionBody::Extern | FunctionBody::Signature => return_type
+                .as_ref()
+                .map(|t| t.span)
+                .or_else(|| params.last().map(|p| p.ty.span))
+                .unwrap_or(start),
         };
         Ok(FunctionDecl {
             name,
             is_pub,
             type_params,
+            type_param_bounds,
+            trait_impl: None,
             extern_,
             unsafe_,
             variadic,
@@ -1255,6 +1614,27 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> PResult<TypeExpr> {
+        // `dyn Name` is the trait-object form, and this language has none
+        // (A-12 slice 2): a trait is a bound on a type parameter, not a type.
+        // `dyn` is not a keyword, so it is recognized where two names in a row
+        // can only mean this. `impl Name` in a type position is the other
+        // spelling of the bound, refused for the same reason.
+        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "dyn")
+            && matches!(self.peek2_kind(), TokenKind::Ident(_))
+        {
+            return Err(ParseError {
+                message: "'dyn' trait objects are not in this slice: dispatch is static, so a trait is a bound on a type parameter ('fun f<T: Name>(x: &T)'), and a value that is one of several shapes is an 'enum'"
+                    .to_string(),
+                span: self.peek().span,
+            });
+        }
+        if self.check(&TokenKind::Impl) {
+            return Err(ParseError {
+                message: "a trait cannot be a parameter's type in this slice: name a type parameter and bound it ('fun f<T: Name>(x: &T)'), rather than writing 'impl Name'"
+                    .to_string(),
+                span: self.peek().span,
+            });
+        }
         // A leading `&` is recorded but not applied here: in a parameter
         // position `&str`/`&T` is exactly what the bare name already means
         // (a borrowed view passed by value), while in a *return* position it
@@ -3039,6 +3419,125 @@ mod tests {
         assert_eq!(p.enums[0].repr, Some(Repr::Int("u8".to_string())));
         assert_eq!(p.enums[0].variants[0].discriminant, Some(0));
         assert_eq!(p.enums[0].variants[1].discriminant, Some(1));
+    }
+
+    /// A-12 slice 2: a trait is a set of `Self`-receiver signatures, an impl
+    /// block is a set of `Self`-receiver methods, and a bound is written on a
+    /// function's own type parameter.
+    #[test]
+    fn parses_a_trait_an_impl_and_bounds() {
+        let p = parse(
+            "trait Shape {\n    fun Self.area().R: f64\n    fun mut Self.scale(f: f64)\n}\ndatac C(val r: f64)\nimpl Shape for C {\n    fun Self.area().R: f64 = r\n    fun mut Self.scale(f: f64) { r = f }\n}\nfun f<T: Shape + Other>(x: &T).R: f64 = x.area()\nfun main() {}",
+        );
+        assert_eq!(p.traits.len(), 1);
+        let t = &p.traits[0];
+        assert_eq!(t.name, "Shape");
+        assert!(!t.is_pub);
+        assert_eq!(t.methods.len(), 2);
+        assert_eq!(t.methods[0].name, "area");
+        assert_eq!(
+            t.methods[0].receiver.as_ref().map(|r| r.type_name.as_str()),
+            Some("Self")
+        );
+        assert!(!t.methods[0].receiver.as_ref().unwrap().mutable);
+        assert!(t.methods[1].receiver.as_ref().unwrap().mutable);
+        assert!(matches!(t.methods[0].body, FunctionBody::Signature));
+        assert_eq!(p.trait_impls.len(), 1);
+        assert_eq!(p.trait_impls[0].trait_name, "Shape");
+        assert_eq!(p.trait_impls[0].type_name, "C");
+        assert_eq!(p.trait_impls[0].methods, vec!["area", "scale"]);
+        // The methods of an impl block are ordinary receiver methods, tagged
+        // with the site they were written at.
+        let impl_methods: Vec<&FunctionDecl> = p
+            .functions
+            .iter()
+            .filter(|f| f.trait_impl.is_some())
+            .collect();
+        assert_eq!(impl_methods.len(), 2);
+        assert_eq!(
+            impl_methods[0].receiver.as_ref().map(|r| r.type_name.as_str()),
+            Some("Self")
+        );
+        assert_eq!(
+            impl_methods[0]
+                .trait_impl
+                .as_ref()
+                .map(|s| s.self_type.as_str()),
+            Some("C")
+        );
+        // `fun f<T: Shape + Other>`: one parameter, two bounds, in order.
+        let f = p.functions.iter().find(|f| f.name == "f").unwrap();
+        assert_eq!(f.type_params, vec!["T"]);
+        assert_eq!(f.type_param_bounds.len(), 1);
+        assert_eq!(f.type_param_bounds[0].len(), 2);
+        assert_eq!(f.type_param_bounds[0][0].name, "Shape");
+        assert_eq!(f.type_param_bounds[0][1].name, "Other");
+    }
+
+    #[test]
+    fn a_trait_signature_with_a_body_does_not_parse() {
+        let err = parse_err("trait Shape { fun Self.area().R: f64 = 0.0 }\nfun main() {}");
+        assert!(err.message.contains("default body"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_trait_item_that_is_not_a_method_does_not_parse() {
+        let err = parse_err("trait Shape { type Item = i32 }\nfun main() {}");
+        assert!(err.message.contains("associated types"), "{}", err.message);
+        let err = parse_err("trait Shape { const N: i32 = 1 }\nfun main() {}");
+        assert!(err.message.contains("method signatures only"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_trait_that_inherits_or_takes_parameters_does_not_parse() {
+        let err = parse_err("trait A: B { fun Self.m() }\nfun main() {}");
+        assert!(err.message.contains("cannot inherit"), "{}", err.message);
+        let err = parse_err("trait A<T> { fun Self.m() }\nfun main() {}");
+        assert!(err.message.contains("cannot have type parameters"), "{}", err.message);
+        let err = parse_err("trait Drop { fun Self.m() }\nfun main() {}");
+        assert!(err.message.contains("'Drop' is built in"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_bound_on_a_receivers_type_parameter_does_not_parse() {
+        let err = parse_err("datac Pair<A, B>(val first: A, val second: B)\nfun Pair<A: Shape, B>.first().R: A = first\nfun main() {}");
+        assert!(err.message.contains("bound cannot be written"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_bound_on_a_type_declarations_parameter_does_not_parse() {
+        let err = parse_err("datac Pair<A: Shape>(val first: A)\nfun main() {}");
+        assert!(err.message.contains("bound cannot be written"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_impl_method_without_a_self_receiver_does_not_parse() {
+        let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun area().R: f64 = r }\nfun main() {}");
+        assert!(err.message.contains("needs a 'Self' receiver"), "{}", err.message);
+        let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun C.area().R: f64 = r }\nfun main() {}");
+        assert!(err.message.contains("receiver is written 'Self'"), "{}", err.message);
+    }
+
+    #[test]
+    fn self_outside_a_trait_or_an_impl_does_not_parse() {
+        let err = parse_err("fun Self.area().R: f64 = 0.0\nfun main() {}");
+        assert!(err.message.contains("inside a 'trait' or an 'impl'"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_impl_for_a_builtin_or_a_bare_generic_does_not_parse() {
+        let err = parse_err("trait Shape { fun Self.area().R: f64 }\nimpl Shape for i32 { fun Self.area().R: f64 = 0.0 }\nfun main() {}");
+        assert!(err.message.contains("builtin type"), "{}", err.message);
+        let err = parse_err("trait Shape { fun Self.area().R: f64 }\nimpl Shape for List<i32> { fun Self.area().R: f64 = 0.0 }\nfun main() {}");
+        assert!(err.message.contains("generic instantiation"), "{}", err.message);
+    }
+
+    #[test]
+    fn dyn_and_impl_in_a_type_position_do_not_parse() {
+        let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: dyn Shape) {}\nfun main() {}");
+        assert!(err.message.contains("trait objects"), "{}", err.message);
+        let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: impl Shape) {}\nfun main() {}");
+        assert!(err.message.contains("cannot be a parameter's type"), "{}", err.message);
     }
 
     #[test]

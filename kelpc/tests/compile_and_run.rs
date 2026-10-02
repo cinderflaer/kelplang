@@ -5158,6 +5158,152 @@ fn the_equality_operator_is_refused_without_a_declared_eq() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// A-12 slice 2: traits with static dispatch. A trait is a named set of method
+// signatures, an `impl` gives them to a `datac`/`enum`, and a generic function
+// bounds its type parameter on one. Every call below is the concrete type's own
+// method, so both backends emit the same direct call they would have emitted
+// without the trait.
+
+#[test]
+fn a_trait_is_implemented_by_a_datac_and_an_enum_and_called_through_a_generic() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_datac_and_enum.kp",
+        "12.000000\n27.000000\n27.000000\ncircle\ntrue\n9.000000\n2\n9.000000\n0.000000\n",
+    );
+}
+
+#[test]
+fn a_generic_datac_method_calls_a_bounded_generic_with_its_type_parameter() {
+    // The bound is resolved when the *method* is instantiated, so the call
+    // inside `Pair<A, B>.total()` is checked once per pair of concrete
+    // arguments, exactly as a free function's body is.
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_generic_datac_method.kp",
+        "7\n3\n",
+    );
+}
+
+#[test]
+fn a_bound_is_checked_at_every_call_and_transitively() {
+    // A call whose type argument does not implement the bound, and a generic
+    // function reaching a second bounded generic with its own parameter: the
+    // inner call is refused where the outer one is instantiated with a type
+    // that satisfies only the outer bound.
+    assert_rejected_with(
+        "tests/fixtures/traits_bound_unimplemented.kp",
+        "needs 'Point' to implement the trait 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_bound_transitive.kp",
+        "needs 'OnlyNamed' to implement the trait 'Doubled'",
+    );
+}
+
+#[test]
+fn an_impl_must_implement_exactly_the_traits_signatures() {
+    assert_rejected_with(
+        "tests/fixtures/traits_missing_method.kp",
+        "does not implement it",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_wrong_signature.kp",
+        "does not match trait 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_wrong_receiver.kp",
+        "takes its receiver differently than trait 'Grow'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_extra_method.kp",
+        "'shrink' is not declared by trait 'Shape'",
+    );
+}
+
+#[test]
+fn a_trait_is_implemented_for_a_type_at_most_once() {
+    assert_rejected_with(
+        "tests/fixtures/traits_duplicate_impl.kp",
+        "already has an impl for 'Circle'",
+    );
+}
+
+#[test]
+fn a_trait_method_and_an_explicit_method_cannot_share_a_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_inherent_collision.kp",
+        "already has as an explicit method",
+    );
+}
+
+#[test]
+fn an_impl_naming_no_declared_trait_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/traits_unknown.kp",
+        "names no declared trait",
+    );
+}
+
+#[test]
+fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_dyn.kp",
+        "'dyn' trait objects are not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_default_body.kp",
+        "default body is not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_associated_type.kp",
+        "associated types and consts are not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_impl_trait_argument.kp",
+        "a trait cannot be a parameter's type in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_where_clause.kp",
+        "'where' clause is not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_supertrait.kp",
+        "a trait cannot inherit in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_drop_declared.kp",
+        "the trait 'Drop' is built in",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_impl_for_builtin.kp",
+        "'i32' is a builtin type",
+    );
+}
+
+/// A trait declared in one module and implemented in another: the type's own
+/// module implements the imported trait, and the trait's own module implements
+/// it for a type from a third module that imports nothing. Both are at a
+/// module boundary, so both need `pub` and the import that makes the name
+/// reachable, and the call site in the entry module names neither trait.
+#[test]
+fn a_trait_crosses_a_module_boundary_on_both_allowed_sides() {
+    assert_project_runs(
+        "traits_cross",
+        &project("traits_cross"),
+        "12.000000\n27.000000\ncircle\nring\n12.000000\n",
+    );
+}
+
+/// An impl in a third module, which owns neither the trait nor the type.
+#[test]
+fn an_impl_in_a_module_that_owns_neither_the_trait_nor_the_type_is_rejected() {
+    assert_project_rejected(
+        "traits_third_module",
+        &project("traits_third_module"),
+        "which owns neither",
+    );
+}
+
 #[test]
 fn a_declared_key_pair_that_is_half_or_misshaped_is_rejected() {
     // A-12: `hash` states that the type is a key, and a key needs both halves,

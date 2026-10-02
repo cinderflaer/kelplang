@@ -1,0 +1,65 @@
+// A trait with two methods, implemented by a `datac` and by an `enum`, and
+// called through generic functions bounded on it (A-12 slice 2). Dispatch is
+// static: every call below is the concrete type's own method.
+
+trait Shape {
+    fun Self.area().R: f64
+    fun Self.name().R: str
+    fun Self.rank().R: i32
+    fun Self.same_as(other: &Self).R: bool
+}
+
+trait Grow {
+    fun mut Self.grow(by: f64)
+}
+
+datac Circle(var r: f64)
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r * 3.0
+    fun Self.name().R: str = "circle"
+    fun Self.rank().R: i32 = 1
+    fun Self.same_as(other: &Self).R: bool = r == other.r
+}
+
+impl Grow for Circle {
+    fun mut Self.grow(by: f64) { r = r + by }
+}
+
+enum Figure {
+    Square(val side: f64)
+    Dot
+}
+
+impl Shape for Figure {
+    fun Self.area().R: f64 = when self {
+        Square(s) -> s * s
+        Dot -> 0.0
+    }
+    fun Self.name().R: str = "figure"
+    fun Self.rank().R: i32 = 2
+    fun Self.same_as(other: &Self).R: bool = false
+}
+
+fun area_of<T: Shape>(s: &T).R: f64 = s.area()
+
+fun grow_and_measure<T: Shape + Grow>(s: mut T).R: f64 {
+    s.grow(by = 1.0)
+    return s.area()
+}
+
+fun main() {
+    var c = Circle(r = 2.0)
+    print(area_of(c))
+    print(grow_and_measure(c))
+    print(c.area())
+    print(c.name())
+    print(c.same_as(c))
+
+    val f = Figure.Square(side = 3.0)
+    print(area_of(f))
+    print(f.rank())
+    print(area_of<Figure>(s = f))
+    val d = Figure.Dot
+    print(area_of(d))
+}

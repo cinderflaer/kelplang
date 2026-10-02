@@ -1,0 +1,6 @@
+// A trait declares methods only: associated types and consts are a later slice.
+trait Shape {
+    type Item = i32
+}
+
+fun main() { }

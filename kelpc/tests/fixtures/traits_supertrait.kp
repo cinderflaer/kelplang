@@ -1,0 +1,10 @@
+// Trait inheritance is a later slice: list every trait at the bound.
+trait Shape {
+    fun Self.area().R: f64
+}
+
+trait Named: Shape {
+    fun Self.name().R: str
+}
+
+fun main() { }

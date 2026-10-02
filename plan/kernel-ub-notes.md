@@ -1113,3 +1113,32 @@ already does: the operator is only as sound as that body, and there is no
 requirement that it be reflexive, symmetric or transitive (a `Map` with such an
 `eq` can fail to find a key it inserted, which is a logic bug the compiler does
 not see).
+
+## Language feature: traits with static dispatch (A-12 slice 2, 2026-10-02, not a kernel stage)
+
+**New way to reach undefined behaviour.** None. A trait is a front-end declaration: it adds no
+type, no vtable, no witness argument and no new `tir` node, so there is nothing for a backend to
+lower and nothing for a program to reach at run time that it could not reach before. An `impl`
+block's methods are ordinary receiver methods on the type, and a bound on a type parameter is
+checked where the instantiation is created and then disappears: the emitted call is the direct call
+the concrete type's method already was. A freestanding image proves it
+(`tests/projects/freestanding_min` uses a trait and still links with no undefined symbol, no libc
+and no runtime helper), and the trait implementation in that image is a plain direct call.
+
+**What the compiler does check.** That a trait is declared once with method names that are unique
+and are not `drop`; that a signature's receiver is `Self` and it has no body; that an impl is the
+only impl of that trait for that type, lives in the trait's module or the type's, names a declared
+`datac`/`enum`, and implements exactly the declared signatures with the declared receiver `mut`,
+parameter names and types, and return type; that an explicit method of the type does not share a
+name with a trait method; and that every type argument at every call/instantiation implements every
+bound on its parameter, transitively. `trait Drop` is refused: `fun mut T.drop()` stays the one
+destructor spelling, and a type with a destructor keeps every rule stage 12 gave it.
+
+**What it does not check.** Nothing about the *meaning* of an implementation: a trait method's body
+is checked like any other method's, so an `area` that is not an area, an implementation that
+panics, and two traits implemented for one type that disagree all compile. A method call on a
+parameterised `T` resolves against the type each instantiation binds rather than against the
+bound's own signature list, so a call to an inherent method of the concrete type also compiles
+everywhere the bound holds; the bound guarantees the trait's methods exist, it does not restrict
+the body to them. There is no `dyn`, no default method, no associated type and no operator
+overloading through a trait, each refused where it is written.

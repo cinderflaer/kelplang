@@ -116,9 +116,15 @@ pub enum TokenKind {
     /// `pd val name = expr` / `pd var name = expr` — a passdown
     /// (`plan/syntax.md` §9).
     Pd,
-    /// `impl "path/to/module"` — the import keyword (`plan/syntax.md` §8;
-    /// `impl` method blocks do not exist, receivers replaced them).
+    /// `impl "path/to/module"` — the import keyword (`plan/syntax.md` §8),
+    /// and `impl Trait for Type { ... }` — the trait-implementation form
+    /// (A-12 slice 2). The parser tells them apart by the token that follows:
+    /// a string literal is an import and an identifier is an impl block.
     Impl,
+    /// `trait Name { fun Self.m(...) ... }` — a named set of method
+    /// signatures a `datac`/`enum` can implement (A-12 slice 2,
+    /// `plan/syntax.md` 9.5).
+    Trait,
     /// The `as` keyword. Nothing accepts it: `impl "path" as name` was removed
     /// (`plan/syntax.md` 13.1), and the `impl` parser refuses the clause by name
     /// rather than letting a stale one read as something else.
@@ -844,6 +850,7 @@ impl<'a> Lexer<'a> {
                         "enum" => TokenKind::Enum,
                         "pd" => TokenKind::Pd,
                         "impl" => TokenKind::Impl,
+                        "trait" => TokenKind::Trait,
                         "as" => TokenKind::As,
                         "const" => TokenKind::Const,
                         "static" => TokenKind::Static,
@@ -1328,7 +1335,7 @@ mod tests {
     #[test]
     fn lexes_keywords_and_idents() {
         assert_eq!(
-            kinds("fun val var mut if else elif while for when return true false datac pub foo"),
+            kinds("fun val var mut if else elif while for when return true false datac pub trait foo"),
             vec![
                 TokenKind::Fun,
                 TokenKind::Val,
@@ -1345,6 +1352,7 @@ mod tests {
                 TokenKind::False,
                 TokenKind::Datac,
                 TokenKind::Pub,
+                TokenKind::Trait,
                 TokenKind::Ident("foo".to_string()),
                 TokenKind::Eof,
             ]
