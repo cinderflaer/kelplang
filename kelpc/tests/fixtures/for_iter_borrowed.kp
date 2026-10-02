@@ -1,0 +1,23 @@
+// A place iterator is borrowed exclusively for the loop, so touching it in the
+// body is the ordinary "already borrowed" error.
+impl "std/option"
+impl "std/iter"
+
+datac Fib(var a: i64, var b: i64)
+
+impl iter.Iterator for Fib {
+    type Item = i64
+    fun mut Self.next().R: option.Option<i64> {
+        val v = self.a
+        self.a = self.a + self.b
+        return option.Option.Some(value = v)
+    }
+}
+
+fun main() {
+    var f = Fib(a = 0, b = 1)
+    for x in f {
+        print(x)
+        val q = f.next()
+    }
+}

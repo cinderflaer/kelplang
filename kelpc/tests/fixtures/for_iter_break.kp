@@ -1,0 +1,36 @@
+// A user iterator whose sequence never ends: `break` is what stops the loop, and
+// `continue` skips to the next `next()` call.
+impl "std/option"
+impl "std/iter"
+
+datac Fib(var a: i64, var b: i64)
+
+impl iter.Iterator for Fib {
+    type Item = i64
+    fun mut Self.next().R: option.Option<i64> {
+        val v = self.a
+        val n = self.a + self.b
+        self.a = self.b
+        self.b = n
+        return option.Option.Some(value = v)
+    }
+}
+
+fun main() {
+    var f = Fib(a = 0, b = 1)
+    for x in f {
+        if x > 20 {
+            break
+        }
+        print(x)
+    }
+    // `continue` reaches the next element: the even numbers below ten.
+    var even_sum: i64 = 0
+    for i in iter.range(0, 10) {
+        if i % 2 != 0 {
+            continue
+        }
+        even_sum += i
+    }
+    print(even_sum)
+}

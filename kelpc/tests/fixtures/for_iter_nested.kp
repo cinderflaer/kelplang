@@ -1,0 +1,13 @@
+// Two iterator loops nest with independent cursors, exactly as two index walks
+// do.
+impl "std/iter"
+
+fun main() {
+    for a in iter.range(0, 3) {
+        for b in iter.range(0, 3) {
+            print!(a * 10 + b)
+            print!(" ")
+        }
+    }
+    print("")
+}

@@ -1,5 +1,6 @@
-// `break` is not a statement, so it cannot appear in a deferred action either;
-// the parser's own refusal is what the program sees.
+// A deferred action runs while its block is being left, so it cannot leave the
+// loop again: `break` inside it is refused, naming the `defer` (`plan/defer.md`,
+// `plan/iterators.md`).
 fun main() {
     while true {
         defer {

@@ -1,0 +1,10 @@
+name = "freestandingiter"
+
+# Kernel stage 4's freestanding mode with the iterator protocol: the entry walks
+# `iter.range`, whose `for` lowers to an ordinary `while` over `Range.next`, so
+# the image references no libc symbol and no runtime helper.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

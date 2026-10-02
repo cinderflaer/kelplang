@@ -4564,10 +4564,12 @@ fn a_for_loop_needs_its_in() {
 }
 
 #[test]
-fn a_for_loop_only_walks_a_list() {
-    // The desugar is `.len()`/`.get()`, so a non-list fails on `.len()` and the
-    // span is the iterable — `for x in 5` points at `5`, not at the `for`.
-    assert_rejected_with("tests/fixtures/for_not_a_list.kp", "has no method 'len'");
+fn a_for_loop_only_walks_a_list_or_an_iterator() {
+    // A `List`/array keeps the index walk; anything else has to implement
+    // `std.iter.Iterator`, and the refusal names the trait so the fix is one
+    // `impl` away (`plan/iterators.md`). The span is the `for` line.
+    assert_rejected_with("tests/fixtures/for_not_a_list.kp", "implements 'Iterator'");
+    assert_rejected_with("tests/fixtures/for_iter_no_impl.kp", "implements 'Iterator'");
 }
 
 #[test]
@@ -4616,6 +4618,58 @@ fn a_for_loop_still_allows_reads_another_list_and_a_while() {
     assert_compiles_and_runs(
         "tests/fixtures/for_mutates_another_field.kp",
         "2\n7\n",
+    );
+}
+
+#[test]
+fn a_for_loop_over_an_iterator_walks_it_by_next() {
+    // `plan/iterators.md`: a type implementing `std.iter.Iterator` walks through
+    // `next()`, and `Range` is the shipped one. A step and a descending step are
+    // the same loop with a different `step`.
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_range.kp",
+        "0\n1\n2\n3\n4\n0\n2\n4\n3\n2\n1\n",
+    );
+}
+
+#[test]
+fn a_user_iterator_loop_stops_on_break_and_skips_on_continue() {
+    // The sequence is infinite, so `break` is the loop's exit; `continue`
+    // reaches the next `next()` call.
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_break.kp",
+        "0\n1\n1\n2\n3\n5\n8\n13\n20\n",
+    );
+}
+
+#[test]
+fn a_defer_in_an_iterator_body_runs_once_per_iteration() {
+    assert_compiles_and_runs("tests/fixtures/for_iter_defer.kp", "0 d1 d2 d\n");
+}
+
+#[test]
+fn two_iterator_loops_nest_with_independent_cursors() {
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_nested.kp",
+        "0 1 2 10 11 12 20 21 22 \n",
+    );
+}
+
+#[test]
+fn the_iterator_helpers_count_sum_and_collect() {
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_helpers.kp",
+        "7\n10\n3\n0\n1\n2\n",
+    );
+}
+
+#[test]
+fn a_place_iterator_is_borrowed_by_its_loop() {
+    // The loop holds `&mut f`, so naming `f` in the body is the ordinary
+    // "already borrowed" error — the iterator mutability the design promises.
+    assert_rejected_with(
+        "tests/fixtures/for_iter_borrowed.kp",
+        "already borrowed",
     );
 }
 
@@ -11245,6 +11299,53 @@ fn freestanding_min_builds_a_riscv_elf_with_no_undefined_symbols() {
     );
 }
 
+/// `plan/iterators.md`'s freestanding half: a kernel-style loop over
+/// `iter.range` lowers to an ordinary `while` over `Range.next`, so the image
+/// links with no undefined symbol. This is the same acceptance test as
+/// `freestanding_min`, run on the project that walks a range, and it needs the
+/// same `dev-kernel.nix` tools.
+#[test]
+fn a_freestanding_project_can_walk_a_range() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding iterator test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_iter");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_iter"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding iterator build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding iterator image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Kernel stage 5 (MK9-S7-M1/M3, roadmap B-9/B-16): inline `asm` and `naked
 // fun`. The templates in these fixtures are x86-64 assembly in Intel syntax,
@@ -11753,7 +11854,7 @@ fn freestanding_std_kernel_boots_with_option_result_and_arena() {
 /// refusal lists the modules a freestanding project may implement.
 #[test]
 fn a_hosted_std_module_is_refused_by_name_with_the_allowed_list() {
-    let allowed = "std/arena, std/atomic, std/frame, std/irq, std/list, \
+    let allowed = "std/arena, std/atomic, std/frame, std/irq, std/iter, std/list, \
                    std/math, std/option, std/result, std/str";
     for (dir, module) in [
         ("freestanding_std_refused_time", "std/time"),
@@ -12657,23 +12758,29 @@ fn a_defer_naming_a_later_local_is_refused() {
     );
 }
 
-/// Kelp has no `break` or `continue` (`plan/syntax.md` 11), so the parser names
-/// that rather than reading either as an unknown identifier.
+/// `break`/`continue` are ordinary loop control in a written `while`
+/// (`plan/iterators.md`).
 #[test]
-fn a_break_statement_is_refused_by_name() {
+fn break_and_continue_control_a_while_loop() {
+    assert_compiles_and_runs("tests/fixtures/break_and_continue.kp", "1\n2\n4\n5\n");
+}
+
+/// A deferred action runs while its block is being left, so a `break` inside it
+/// has no loop to leave.
+#[test]
+fn a_break_inside_a_deferred_action_is_refused() {
     assert_rejected_with(
-        "tests/fixtures/break_statement_is_refused.kp",
-        "'break' is not a Kelp statement",
+        "tests/fixtures/defer_break_inside.kp",
+        "a deferred action cannot contain 'break'",
     );
 }
 
-/// The same refusal applies inside a deferred action, where an exit would be
-/// even less meaningful.
+/// `break`/`continue` outside every loop is refused at the statement.
 #[test]
-fn a_break_inside_a_deferred_action_is_refused_by_name() {
+fn break_outside_a_loop_is_refused() {
     assert_rejected_with(
-        "tests/fixtures/defer_break_inside.kp",
-        "'break' is not a Kelp statement",
+        "tests/fixtures/for_iter_break_outside.kp",
+        "no loop encloses it",
     );
 }
 

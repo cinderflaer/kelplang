@@ -1,0 +1,11 @@
+// A `defer` in an iterator loop body runs once per iteration, after the body.
+impl "std/iter"
+
+fun main() {
+    for i in iter.range(0, 3) {
+        defer print!("d")
+        print!(i)
+        print!(" ")
+    }
+    print("")
+}

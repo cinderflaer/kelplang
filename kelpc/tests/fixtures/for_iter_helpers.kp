@@ -1,0 +1,13 @@
+// The free helpers that drain an iterator: how many, what they sum to, and the
+// list they collect into.
+impl "std/iter"
+
+fun main() {
+    print(iter.count(iter.range(0, 7)))
+    print(iter.sum_i64(iter.range(0, 5)))
+    val xs = iter.collect_list(iter.range(0, 3))
+    print(xs.len())
+    for i in iter.range(0, 3) {
+        print(xs.get(i.to_usize()))
+    }
+}

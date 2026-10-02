@@ -1,0 +1,16 @@
+// `break` and `continue` are ordinary loop control in a written `while`
+// (`plan/iterators.md`). `continue` re-tests the condition, so the increment
+// has to be part of the loop's own logic, exactly as in C.
+fun main() {
+    var i = 0
+    while i < 10 {
+        i += 1
+        if i == 3 {
+            continue
+        }
+        if i == 6 {
+            break
+        }
+        print(i)
+    }
+}
