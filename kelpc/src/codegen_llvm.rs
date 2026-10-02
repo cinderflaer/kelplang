@@ -327,8 +327,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::ast::{AsmOperandKind, BinOp, UnOp};
+use crate::cache::{Cache, KeyFields};
 use crate::codegen_c::asm_operand_text;
 use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::llvm_ffi::{
@@ -339,6 +341,7 @@ use crate::llvm_ffi::{
 use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::opt::OptLevel;
+use crate::timings::{Timings, UnitTiming};
 use crate::tir::{Block, Expr, ExprKind, Function, Pd, Program, Stmt, TemplatePiece};
 use crate::types::{
     box_c_type, capture_field, clone_fn_name, closure_c_type, closure_mangle, cmp_fn_name,
@@ -379,6 +382,7 @@ pub fn compile(
     pkg_config_flags: &[String],
     freestanding: Option<&Freestanding>,
     incremental: bool,
+    timings: &mut Timings,
 ) -> Result<(), String> {
     if let Some(fs) = freestanding {
         llvm_ffi::initialize_target_for(&fs.triple)?;
@@ -423,6 +427,7 @@ pub fn compile(
             include_dirs,
             library_dirs,
             pkg_config_flags,
+            timings,
         );
     }
 
@@ -442,6 +447,8 @@ pub fn compile(
         opt,
         freestanding,
         None,
+        None,
+        timings,
     )?;
 
     // The `extern fun` bodies this program reaches and the capability check's
@@ -455,12 +462,14 @@ pub fn compile(
     // is the linker's to resolve against whatever the script or the build puts
     // beside this object.
     if let Some(fs) = freestanding {
-        return crate::driver::link_freestanding_object(
+        let link_start = Instant::now();
+        let linked = crate::driver::link_freestanding_object(
             &object_path,
             Path::new(&fs.linker_script),
             out_path,
-        )
-        .map_err(|e| e.message);
+        );
+        timings.link += link_start.elapsed();
+        return linked.map_err(|e| e.message);
     }
 
     let program_object = match program_c_source(program) {
@@ -481,7 +490,8 @@ pub fn compile(
         None => None,
     };
 
-    crate::driver::link_llvm_object(
+    let link_start = Instant::now();
+    let linked = crate::driver::link_llvm_object(
         &object_path,
         program_object.as_deref(),
         out_path,
@@ -490,8 +500,9 @@ pub fn compile(
         library_dirs,
         pkg_config_flags,
         crate::codegen_c::uses_tls(program),
-    )
-    .map_err(|e| e.message)
+    );
+    timings.link += link_start.elapsed();
+    linked.map_err(|e| e.message)
 }
 
 /// Lower one module and write its object: the per-module half of the backend.
@@ -502,6 +513,15 @@ pub fn compile(
 /// `ir_path` receives the unoptimized lowering (the artifact `out.ll` is for the
 /// whole-program case) and `object_path` the object the level's pipeline and
 /// codegen level produced.
+///
+/// `cache` is the object cache in the incremental mode (roadmap A-14 slice 2):
+/// the IR text is the key's largest field, so the module is lowered either way
+/// and the key is computed before the pass pipeline runs. A hit copies the
+/// cached object over `object_path` and skips the passes and codegen, which is
+/// the whole point of the cache; `Ok(Some(key))` reports that hit so the caller
+/// can delete the entry if the link later fails. `None` is an ordinary compile.
+/// Whole-program builds pass `None` for `cache`: there is no unit, so there is
+/// nothing to key.
 fn lower_to_object(
     program: &Program,
     drops: &DropPlan,
@@ -516,7 +536,10 @@ fn lower_to_object(
     opt: OptLevel,
     freestanding: Option<&Freestanding>,
     unit: Option<Unit>,
-) -> Result<(), String> {
+    cache: Option<&Cache>,
+    timings: &mut Timings,
+) -> Result<Option<String>, String> {
+    let started = Instant::now();
     let mut module = Module::new(ctx, module_name);
     module.set_triple(triple);
     // The module has to carry the same data layout the machine lays the object
@@ -633,14 +656,51 @@ fn lower_to_object(
     // the binary is the IR this backend emitted at every level. The stage gates
     // read this text and assert an instruction's shape; an optimized module
     // would answer a different question.
-    std::fs::write(ir_path, module.to_ir_string()).map_err(|e| {
+    let ir_text = module.to_ir_string();
+    let lower_elapsed = started.elapsed();
+    std::fs::write(ir_path, &ir_text).map_err(|e| {
         format!("could not write generated IR to '{}': {e}", ir_path.display())
     })?;
+
+    // The object is a pure function of the IR text and the machine's own
+    // settings, so the key is computed from exactly those (`cache::object_key`)
+    // before any pass runs.
+    let key = crate::cache::object_key(
+        &KeyFields {
+            triple: machine.triple(),
+            cpu: machine.cpu(),
+            features: machine.features(),
+            reloc: machine.reloc(),
+            code_model: machine.code_model(),
+            opt: opt.pipeline(),
+            debug: DEBUG_INFO_SETTING,
+            compiler: &compiler_version(),
+        },
+        &ir_text,
+    );
+    if let Some(cache) = cache {
+        if let Some(entry) = cache.lookup(&key) {
+            std::fs::copy(&entry, object_path).map_err(|e| {
+                format!(
+                    "could not write the cached unit object to '{}': {e}",
+                    object_path.display()
+                )
+            })?;
+            timings.codegen += lower_elapsed;
+            timings.units.push(UnitTiming {
+                name: module_name.to_string(),
+                hit: true,
+                elapsed: lower_elapsed,
+            });
+            return Ok(Some(key));
+        }
+    }
 
     // The level's module half: LLVM's own `default<O<n>>` pipeline. It is run
     // over the module the machine below will write, with the machine for the
     // target-specific passes. At `-O0` it is `default<O0>`, which adds no pass,
     // so the IR the lowering wrote is the IR the target machine lowers.
+    let compile_start = Instant::now();
     module.run_passes(opt.pipeline(), machine)?;
 
     // A pass can leave a module LLVM's own verifier rejects, and the object
@@ -649,7 +709,34 @@ fn lower_to_object(
     module.verify()?;
 
     machine.emit_object(&module, object_path)?;
-    Ok(())
+    let compile_elapsed = compile_start.elapsed();
+    if let Some(cache) = cache {
+        cache.store(&key, object_path)?;
+        timings.codegen += lower_elapsed;
+        timings.unit_compile += compile_elapsed;
+        timings.units.push(UnitTiming {
+            name: module_name.to_string(),
+            hit: false,
+            elapsed: lower_elapsed + compile_elapsed,
+        });
+        Ok(None)
+    } else {
+        timings.codegen += lower_elapsed + compile_elapsed;
+        Ok(None)
+    }
+}
+
+/// The debug-info setting a cached object was built with. DWARF is always on
+/// (MK7 S4, `compile`), so this is a constant that exists to make the key name
+/// the setting rather than to choose one.
+const DEBUG_INFO_SETTING: &str = "dwarf";
+
+/// The compiler's identity for the cache key: this `kelpc`'s version and the
+/// LLVM that wrote the object. Both matter: an object is the IR run through a
+/// specific LLVM, so a compiler built against a different LLVM must not reuse
+/// these objects.
+fn compiler_version() -> String {
+    format!("kelpc {} llvm {}", env!("CARGO_PKG_VERSION"), llvm_ffi::version_string())
 }
 
 /// The incremental mode (roadmap A-14 slice 1): partition the program into
@@ -664,6 +751,12 @@ fn lower_to_object(
 /// `KELPC_DUMP_UNITS=<dir>` writes each unit's unoptimized IR to
 /// `<dir>/<unit>.ll` as well, which is what the determinism test reads: the same
 /// sources must produce byte-identical unit IR.
+///
+/// Each unit's object is looked up in the content-addressed cache before it is
+/// compiled and stored after (roadmap A-14 slice 2, `crate::cache`): an
+/// unchanged unit is a hit and its pass pipeline and codegen are skipped. A
+/// link failure is not retried silently: the hit entries are deleted so the
+/// next build recompiles them, and the error names the units that were reused.
 fn compile_units(
     program: &Program,
     drops: &DropPlan,
@@ -678,7 +771,9 @@ fn compile_units(
     include_dirs: &[String],
     library_dirs: &[String],
     pkg_config_flags: &[String],
+    timings: &mut Timings,
 ) -> Result<(), String> {
+    let cache = Cache::for_build(out_path);
     let unit_dir = out_path.with_extension("units");
     std::fs::create_dir_all(&unit_dir).map_err(|e| {
         format!(
@@ -708,11 +803,14 @@ fn compile_units(
     let units = plan_units(program, &c_object_refs);
 
     let mut objects = Vec::with_capacity(units.len());
+    // The units whose object came from the cache, with their keys, so a link
+    // failure can name them and delete exactly their entries.
+    let mut cached_hits: Vec<(String, String)> = Vec::new();
     for unit in &units {
         let file = unit_file_name(&unit.name);
         let ir_path = unit_dir.join(format!("{file}.ll"));
         let object_path = unit_dir.join(format!("{file}.o"));
-        lower_to_object(
+        let hit = lower_to_object(
             program,
             drops,
             sources,
@@ -726,7 +824,12 @@ fn compile_units(
             opt,
             None,
             Some(unit.clone()),
+            Some(&cache),
+            timings,
         )?;
+        if let Some(key) = hit {
+            cached_hits.push((unit.name.clone(), key));
+        }
         if let Some(dir) = &dump_dir {
             let dumped = dir.join(format!("{file}.ll"));
             std::fs::copy(&ir_path, &dumped).map_err(|e| {
@@ -760,7 +863,8 @@ fn compile_units(
         None => None,
     };
 
-    crate::driver::link_llvm_objects(
+    let link_start = Instant::now();
+    let linked = crate::driver::link_llvm_objects(
         &objects,
         program_object.as_deref(),
         out_path,
@@ -769,8 +873,32 @@ fn compile_units(
         library_dirs,
         pkg_config_flags,
         crate::codegen_c::uses_tls(program),
-    )
-    .map_err(|e| e.message)
+    );
+    timings.link += link_start.elapsed();
+    // A unit object that came from the cache and does not link is corrupt in a
+    // way the lookup could not see. Delete the hit entries rather than retry
+    // silently: the next build misses and recompiles them, and the error names
+    // the units that were reused so the failure is attributable.
+    let result = match linked {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            for (_, key) in &cached_hits {
+                cache.delete(key);
+            }
+            let mut message = e.message;
+            if !cached_hits.is_empty() {
+                let names: Vec<&str> = cached_hits.iter().map(|(unit, _)| unit.as_str()).collect();
+                message = format!(
+                    "the link failed with cached unit object(s) for {}; their cache entries were deleted, so the next build recompiles them\n{message}",
+                    names.join(", "),
+                );
+            }
+            Err(message)
+        }
+    };
+    cache.enforce_cap();
+    cache.report_stats();
+    result
 }
 
 /// One compilation unit of the incremental mode (roadmap A-14 slice 1).
@@ -14835,7 +14963,7 @@ mod layout_tests {
         std::fs::write(&entry, entry_source).expect("the entry file");
 
         let mut sources = SourceMap::new();
-        let loaded = crate::resolve::load(&entry, &mut sources, None)
+        let loaded = crate::resolve::load(&entry, &mut sources, None, None)
             .expect("an import of every shipped stdlib module resolves");
         let program = crate::infer::check_program(&loaded.program, &loaded.project)
             .expect("the shipped stdlib type-checks");

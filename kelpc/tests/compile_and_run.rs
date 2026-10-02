@@ -14693,3 +14693,602 @@ fn the_c_oracle_ignores_the_incremental_flag() {
     assert!(run.status.success());
     assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n4\n25\n11\n");
 }
+
+// Roadmap A-14 slice 2: the unit object cache
+// ---------------------------------------------------------------------------
+//
+// The cache stores a unit's object under the hash of its IR text and the
+// machine settings it was compiled for (`plan/incremental-compilation.md`).
+// These tests drive the real compiler and read its stderr: `KELPC_CACHE_STATS=1`
+// prints one hit/miss/store line per build, and `--timings` prints one
+// `hit`/`miss` line per unit. The C oracle ignores `--incremental`, so every
+// test here is llvm-only and skips under the oracle.
+
+/// One cache-enabled build's result, with the cache lines parsed out of stderr.
+struct CacheBuild {
+    ok: bool,
+    stderr: String,
+    hits: u64,
+    misses: u64,
+    stored: u64,
+    units: Vec<(String, bool)>,
+}
+
+impl CacheBuild {
+    /// Whether `unit` was a hit (`None` when the build listed no such unit).
+    fn verdict(&self, unit: &str) -> Option<bool> {
+        self.units
+            .iter()
+            .find(|(name, _)| name == unit)
+            .map(|(_, hit)| *hit)
+    }
+}
+
+/// The three counters on the `kelpc cache: H hits, M misses, S stored` line.
+fn parse_cache_stats(stderr: &str) -> (u64, u64, u64) {
+    for line in stderr.lines() {
+        let Some(rest) = line.strip_prefix("kelpc cache: ") else {
+            continue;
+        };
+        let numbers: Vec<u64> = rest
+            .split_whitespace()
+            .filter_map(|word| word.parse::<u64>().ok())
+            .collect();
+        assert_eq!(numbers.len(), 3, "unexpected cache line: {line}");
+        return (numbers[0], numbers[1], numbers[2]);
+    }
+    panic!("no 'kelpc cache:' line in stderr:\n{stderr}");
+}
+
+/// The `unit NAME: N.N ms hit|miss` lines of a `--timings` build.
+fn parse_unit_verdicts(stderr: &str) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for line in stderr.lines() {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        if tokens.len() == 5 && tokens[0] == "unit" && tokens[3] == "ms" {
+            let name = tokens[1].trim_end_matches(':').to_string();
+            out.push((name, tokens[4] == "hit"));
+        }
+    }
+    out
+}
+
+/// The three-module project the cache tests edit: `main` calls `alpha`, `alpha`
+/// calls `beta`, so every unit is a real compilation unit and the generated
+/// `_support` helper unit sits beside them.
+fn cache_project(tag: &str) -> PathBuf {
+    let dir = out_path(&format!("cacheproj_{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).expect("create the project directory");
+    std::fs::write(
+        dir.join("coral.toml"),
+        "name = \"cacheproj\"\n\n[build]\nincremental = true\n",
+    )
+    .expect("write the manifest");
+    std::fs::write(
+        dir.join("src/main.kp"),
+        "impl \"alpha\"\n\nfun main() {\n    print(alpha.greet())\n}\n",
+    )
+    .expect("write main");
+    std::fs::write(
+        dir.join("src/alpha.kp"),
+        "impl \"beta\"\n\npub fun greet().R: str = beta.message()\n",
+    )
+    .expect("write alpha");
+    std::fs::write(
+        dir.join("src/beta.kp"),
+        "pub fun message().R: str = \"hello\"\n",
+    )
+    .expect("write beta");
+    dir
+}
+
+/// Rewrites module B's function body, which is the unit the tests make miss.
+fn set_beta_message(dir: &Path, body: &str) {
+    std::fs::write(
+        dir.join("src/beta.kp"),
+        format!("pub fun message().R: str = {body}\n"),
+    )
+    .expect("rewrite beta");
+}
+
+/// One `kelpc build --incremental --timings` against `cache`, with `flags` on
+/// the command line and `envs` in the environment.
+fn cache_build(
+    target: &Path,
+    bin: &Path,
+    cache: &Path,
+    flags: &[&str],
+    envs: &[(&str, &str)],
+) -> CacheBuild {
+    let mut cmd = kelpc();
+    cmd.env_remove("KELPC_CACHE")
+        .env_remove("KELPC_CACHE_STATS")
+        .env_remove("KELPC_CACHE_MAX_MB")
+        .env_remove("KELPC_DUMP_UNITS")
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(bin)
+        .arg("--incremental")
+        .arg("--timings")
+        .env("KELPC_CACHE_DIR", cache)
+        .env("KELPC_CACHE_STATS", "1");
+    for flag in flags {
+        cmd.arg(flag);
+    }
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    let out = cmd.output().expect("failed to spawn kelpc");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let (hits, misses, stored) = parse_cache_stats(&stderr);
+    let units = parse_unit_verdicts(&stderr);
+    CacheBuild {
+        ok: out.status.success(),
+        stderr,
+        hits,
+        misses,
+        stored,
+        units,
+    }
+}
+
+/// Runs a built binary and returns its exit code and stdout.
+fn run_cached_binary(bin: &Path) -> (Option<i32>, Vec<u8>) {
+    let out = Command::new(bin)
+        .output()
+        .unwrap_or_else(|e| panic!("could not run '{}': {e}", bin.display()));
+    (out.status.code(), out.stdout)
+}
+
+/// The `<key>.o` entries in a cache directory, sorted by name.
+fn cache_entries(cache: &Path) -> Vec<PathBuf> {
+    let Ok(read) = std::fs::read_dir(cache) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = read
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with('.'))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| cache.join(name))
+        .collect()
+}
+
+/// Whether `path` holds a complete ELF object, the property a partial cache
+/// entry fails. A concurrent build must leave only such files behind.
+fn is_complete_elf(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    if bytes.len() < 64 || &bytes[..4] != b"\x7fELF" || bytes[4] != 2 {
+        return false;
+    }
+    let word = |at: usize| {
+        u64::from_le_bytes([
+            bytes[at],
+            bytes[at + 1],
+            bytes[at + 2],
+            bytes[at + 3],
+            bytes[at + 4],
+            bytes[at + 5],
+            bytes[at + 6],
+            bytes[at + 7],
+        ])
+    };
+    let half = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]) as u64;
+    let shoff = word(0x28);
+    let shentsize = half(0x3a);
+    let shnum = half(0x3c);
+    shoff != 0 && shentsize != 0 && shnum != 0 && bytes.len() as u64 >= shoff + shentsize * shnum
+}
+
+#[test]
+fn an_unchanged_project_is_all_hits_on_the_second_build() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("unchanged");
+    let cache = out_path("cache_unchanged");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first_bin = out_path("cache_unchanged_1");
+    let second_bin = out_path("cache_unchanged_2");
+    let first = cache_build(&dir, &first_bin, &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    assert_eq!(first.hits, 0);
+    assert_eq!(first.misses, first.units.len() as u64);
+    assert_eq!(first.stored, first.misses);
+    let second = cache_build(&dir, &second_bin, &cache, &[], &[]);
+    assert!(second.ok, "the second build failed:\n{}", second.stderr);
+    assert_eq!(
+        (second.hits, second.misses, second.stored),
+        (first.units.len() as u64, 0, 0),
+        "an unchanged project did not build from the cache alone"
+    );
+    assert!(
+        second.units.iter().all(|(_, hit)| *hit),
+        "not every unit was a hit: {:?}",
+        second.units
+    );
+    let (code1, stdout1) = run_cached_binary(&first_bin);
+    let (code2, stdout2) = run_cached_binary(&second_bin);
+    assert_eq!(code1, code2, "the cached build exited differently");
+    assert_eq!(stdout1, stdout2, "the cached build printed differently");
+    assert_eq!(String::from_utf8_lossy(&stdout2), "hello\n");
+    incremental_matches_whole_program("cache_unchanged", &dir).unwrap();
+}
+
+#[test]
+fn changing_one_body_misses_only_its_unit() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("onebody");
+    let cache = out_path("cache_onebody");
+    let _ = std::fs::remove_dir_all(&cache);
+    let dump_before = out_path("cache_onebody_ir1");
+    let dump_after = out_path("cache_onebody_ir2");
+    let _ = std::fs::remove_dir_all(&dump_before);
+    let _ = std::fs::remove_dir_all(&dump_after);
+    let first = cache_build(
+        &dir,
+        &out_path("cache_onebody_1"),
+        &cache,
+        &[],
+        &[("KELPC_DUMP_UNITS", dump_before.to_str().unwrap())],
+    );
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    set_beta_message(&dir, "\"hello, cache\"");
+    let second_bin = out_path("cache_onebody_2");
+    let second = cache_build(
+        &dir,
+        &second_bin,
+        &cache,
+        &[],
+        &[("KELPC_DUMP_UNITS", dump_after.to_str().unwrap())],
+    );
+    assert!(second.ok, "the second build failed:\n{}", second.stderr);
+    assert_eq!(second.verdict("beta"), Some(false), "beta had to miss");
+    assert_eq!(second.verdict("alpha"), Some(true), "alpha had to hit");
+    assert_eq!(second.verdict("main"), Some(true), "main had to hit");
+    // `_support` holds generated helpers and may or may not embed the changed
+    // literal; its verdict has to follow its IR, which the dump records.
+    let support_changed = std::fs::read(dump_before.join("_support.ll")).unwrap()
+        != std::fs::read(dump_after.join("_support.ll")).unwrap();
+    assert_eq!(
+        second.verdict("_support"),
+        Some(!support_changed),
+        "the _support verdict did not follow its IR"
+    );
+    assert_eq!(
+        second.misses,
+        1 + u64::from(support_changed),
+        "exactly the changed IR had to miss"
+    );
+    assert_eq!(
+        second.hits,
+        first.units.len() as u64 - second.misses,
+        "the other units had to hit"
+    );
+    let (_, stdout) = run_cached_binary(&second_bin);
+    assert_eq!(String::from_utf8_lossy(&stdout), "hello, cache\n");
+    incremental_matches_whole_program("cache_onebody", &dir).unwrap();
+}
+
+#[test]
+fn changing_a_callee_signature_misses_the_caller_too() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = out_path("cache_signature");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).expect("create the project directory");
+    std::fs::write(
+        dir.join("coral.toml"),
+        "name = \"cachesig\"\n\n[build]\nincremental = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.kp"),
+        "impl \"alpha\"\n\nfun main() {\n    print(alpha.greet())\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/alpha.kp"),
+        "impl \"beta\"\n\npub fun greet().R: i64 = beta.value()\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/beta.kp"), "pub fun value().R: i64 = 41\n").unwrap();
+    let cache = out_path("cache_signature_cache");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first = cache_build(&dir, &out_path("cache_signature_1"), &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    // The signature changes and B's body with it; A's source is rewritten only
+    // because the call now takes the argument, and its own unit misses because
+    // every unit declares every program item.
+    std::fs::write(
+        dir.join("src/alpha.kp"),
+        "impl \"beta\"\n\npub fun greet().R: i64 = beta.value(0)\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/beta.kp"), "pub fun value(x: i64).R: i64 = x + 41\n").unwrap();
+    let second_bin = out_path("cache_signature_2");
+    let second = cache_build(&dir, &second_bin, &cache, &[], &[]);
+    assert!(second.ok, "the second build failed:\n{}", second.stderr);
+    assert_eq!(second.verdict("beta"), Some(false), "beta had to miss");
+    assert_eq!(
+        second.verdict("alpha"),
+        Some(false),
+        "alpha had to miss with the callee's declaration"
+    );
+    // `main` is not asserted: every unit declares every program item, so a
+    // callee's signature change is visible in each one's IR, which is the
+    // documented cost of having no interface files.
+    let (_, stdout) = run_cached_binary(&second_bin);
+    assert_eq!(String::from_utf8_lossy(&stdout), "41\n");
+    incremental_matches_whole_program("cache_signature", &dir).unwrap();
+}
+
+#[test]
+fn different_optimization_levels_never_share_entries() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("optlevel");
+    let cache = out_path("cache_optlevel");
+    let _ = std::fs::remove_dir_all(&cache);
+    let at_o0 = cache_build(&dir, &out_path("cache_opt_0"), &cache, &["-O0"], &[]);
+    assert!(at_o0.ok, "the -O0 build failed:\n{}", at_o0.stderr);
+    assert_eq!(at_o0.stored, at_o0.units.len() as u64);
+    let at_o2 = cache_build(&dir, &out_path("cache_opt_2"), &cache, &["-O2"], &[]);
+    assert!(at_o2.ok, "the -O2 build failed:\n{}", at_o2.stderr);
+    assert_eq!(
+        at_o2.hits, 0,
+        "an -O2 build reused an -O0 entry:\n{}",
+        at_o2.stderr
+    );
+    assert_eq!(at_o2.misses, at_o0.units.len() as u64);
+    // The two levels' entries coexist, and each build's program is the same.
+    let (_, o0_out) = run_cached_binary(&out_path("cache_opt_0"));
+    let (_, o2_out) = run_cached_binary(&out_path("cache_opt_2"));
+    assert_eq!(o0_out, o2_out);
+    incremental_matches_whole_program("cache_optlevel", &dir).unwrap();
+}
+
+#[test]
+fn a_truncated_entry_is_a_miss_and_is_rewritten() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("truncate");
+    let cache = out_path("cache_truncate");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first = cache_build(&dir, &out_path("cache_truncate_1"), &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    let entries = cache_entries(&cache);
+    assert!(!entries.is_empty(), "the first build stored nothing");
+    let victim = entries[0].clone();
+    let full_len = std::fs::metadata(&victim).unwrap().len();
+    assert!(full_len > 64);
+    // Truncate to the 64-byte ELF header: the file is non-empty and still
+    // starts with the magic, so only the section-header bounds check can see
+    // that it is incomplete.
+    let bytes = std::fs::read(&victim).unwrap();
+    std::fs::write(&victim, &bytes[..64]).unwrap();
+    let second = cache_build(&dir, &out_path("cache_truncate_2"), &cache, &[], &[]);
+    assert!(second.ok, "the recovery build failed:\n{}", second.stderr);
+    assert_eq!(second.misses, 1, "the truncated entry was not a miss");
+    assert_eq!(second.stored, 1, "the miss was not stored again");
+    assert!(
+        std::fs::metadata(&victim).unwrap().len() >= full_len,
+        "the truncated entry was not rewritten"
+    );
+    incremental_matches_whole_program("cache_truncate", &dir).unwrap();
+}
+
+#[test]
+fn concurrent_builds_share_a_cache_without_partial_files() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("concurrent");
+    let cache = out_path("cache_concurrent");
+    let _ = std::fs::remove_dir_all(&cache);
+    let spawn = |bin: &Path| {
+        kelpc()
+            .env_remove("KELPC_CACHE")
+            .env_remove("KELPC_CACHE_STATS")
+            .env("KELPC_CACHE_DIR", &cache)
+            .arg("build")
+            .arg(&dir)
+            .arg("-o")
+            .arg(bin)
+            .arg("--incremental")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn kelpc")
+    };
+    let bin_a = out_path("cache_concurrent_a");
+    let bin_b = out_path("cache_concurrent_b");
+    let child_a = spawn(&bin_a);
+    let child_b = spawn(&bin_b);
+    let out_a = child_a.wait_with_output().expect("wait for the first build");
+    let out_b = child_b.wait_with_output().expect("wait for the second build");
+    assert!(
+        out_a.status.success(),
+        "the first concurrent build failed:\n{}",
+        String::from_utf8_lossy(&out_a.stderr)
+    );
+    assert!(
+        out_b.status.success(),
+        "the second concurrent build failed:\n{}",
+        String::from_utf8_lossy(&out_b.stderr)
+    );
+    let (_, stdout_a) = run_cached_binary(&bin_a);
+    let (_, stdout_b) = run_cached_binary(&bin_b);
+    assert_eq!(stdout_a, stdout_b);
+    assert_eq!(String::from_utf8_lossy(&stdout_a), "hello\n");
+    // Atomic writes mean the cache holds only complete entries and no
+    // temporary file from either build.
+    for entry in cache_entries(&cache) {
+        let name = entry.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.ends_with(".o"),
+            "'{name}' is not a cache entry name"
+        );
+        assert!(
+            is_complete_elf(&entry),
+            "'{name}' is not a complete object file"
+        );
+    }
+    let leftovers: Vec<String> = std::fs::read_dir(&cache)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('.'))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "a concurrent build left temporary files: {leftovers:?}"
+    );
+}
+
+#[test]
+fn the_size_cap_evicts_the_oldest_entry() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("cap");
+    let cache = out_path("cache_cap");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first = cache_build(&dir, &out_path("cache_cap_1"), &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    let entries = cache_entries(&cache);
+    assert!(entries.len() >= 2, "the cap test needs more than one entry");
+    // Give the entries distinct mtimes, earliest first, so the eviction order
+    // is a fact rather than a tie the filesystem breaks differently.
+    let base = std::time::SystemTime::now();
+    let mut sizes = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        sizes.push(std::fs::metadata(entry).unwrap().len());
+        std::fs::File::options()
+            .write(true)
+            .open(entry)
+            .unwrap()
+            .set_modified(base + Duration::from_secs(i as u64))
+            .unwrap();
+    }
+    let total: u64 = sizes.iter().sum();
+    let cap = total - sizes[0];
+    let cap_mb = format!("{}", cap as f64 / (1024.0 * 1024.0));
+    let second = cache_build(
+        &dir,
+        &out_path("cache_cap_2"),
+        &cache,
+        &[],
+        &[("KELPC_CACHE_MAX_MB", cap_mb.as_str())],
+    );
+    assert!(second.ok, "the capped build failed:\n{}", second.stderr);
+    assert_eq!(second.misses, 0, "the capped build recompiled a unit");
+    assert!(
+        !entries[0].exists(),
+        "the oldest entry survived the size cap"
+    );
+    for entry in &entries[1..] {
+        assert!(entry.exists(), "'{}' was evicted before the oldest", entry.display());
+    }
+    let remaining: u64 = entries[1..]
+        .iter()
+        .map(|entry| std::fs::metadata(entry).unwrap().len())
+        .sum();
+    assert!(remaining <= cap, "the cap was not enforced");
+    incremental_matches_whole_program("cache_cap", &dir).unwrap();
+}
+
+#[test]
+fn cache_off_writes_nothing() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("off");
+    let cache = out_path("cache_off");
+    let _ = std::fs::remove_dir_all(&cache);
+    let bin = out_path("cache_off_bin");
+    let build = cache_build(&dir, &bin, &cache, &[], &[("KELPC_CACHE", "off")]);
+    assert!(build.ok, "the KELPC_CACHE=off build failed:\n{}", build.stderr);
+    assert!(
+        !cache.exists(),
+        "KELPC_CACHE=off created '{}'",
+        cache.display()
+    );
+    assert_eq!(
+        (build.hits, build.misses, build.stored),
+        (0, 0, 0),
+        "KELPC_CACHE=off still consulted the cache"
+    );
+    let (_, stdout) = run_cached_binary(&bin);
+    assert_eq!(String::from_utf8_lossy(&stdout), "hello\n");
+    incremental_matches_whole_program("cache_off", &dir).unwrap();
+}
+
+#[test]
+fn the_cache_command_reports_and_clears() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("command");
+    let cache = out_path("cache_command");
+    let _ = std::fs::remove_dir_all(&cache);
+    let first = cache_build(&dir, &out_path("cache_command_1"), &cache, &[], &[]);
+    assert!(first.ok, "the first build failed:\n{}", first.stderr);
+    let entries = cache_entries(&cache);
+    assert!(!entries.is_empty());
+    let stats = kelpc()
+        .arg("cache")
+        .arg("stats")
+        .arg("--dir")
+        .arg(&cache)
+        .output()
+        .expect("failed to spawn kelpc cache stats");
+    assert!(stats.status.success());
+    let stats_text = String::from_utf8_lossy(&stats.stdout);
+    assert!(
+        stats_text.contains(&format!("{} entries", entries.len())),
+        "kelpc cache stats did not report {} entries: {stats_text}",
+        entries.len()
+    );
+    let clear = kelpc()
+        .arg("cache")
+        .arg("clear")
+        .arg("--dir")
+        .arg(&cache)
+        .output()
+        .expect("failed to spawn kelpc cache clear");
+    assert!(clear.status.success());
+    assert!(
+        cache_entries(&cache).is_empty(),
+        "kelpc cache clear left entries behind"
+    );
+    let second = cache_build(&dir, &out_path("cache_command_2"), &cache, &[], &[]);
+    assert!(second.ok, "the rebuild after a clear failed:\n{}", second.stderr);
+    assert_eq!(
+        second.misses,
+        first.units.len() as u64,
+        "the cleared cache produced a hit"
+    );
+    assert_eq!(second.hits, 0);
+}

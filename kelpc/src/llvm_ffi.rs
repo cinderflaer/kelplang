@@ -78,7 +78,7 @@ use llvm_sys::core::{
     LLVMGetFirstInstruction,
     LLVMGetIntTypeWidth, LLVMGetMDKindIDInContext, LLVMGetNamedFunction, LLVMGetNextFunction,
     LLVMGetNextInstruction,
-    LLVMGetParam, LLVMIsDeclaration,
+    LLVMGetParam, LLVMGetVersion, LLVMIsDeclaration,
     LLVMGetInlineAsm,
     LLVMStructTypeInContext,
     LLVMGetTarget, LLVMGetTypeKind,
@@ -2491,6 +2491,53 @@ fn baseline_cpu(triple: &str) -> &'static str {
 /// keeps `cc` for linking: LLVM writes the object, the driver links it.
 pub struct TargetMachine {
     raw: LLVMTargetMachineRef,
+    /// The subtarget choices this machine was created with, kept so an object
+    /// cache can describe the machine that produced an object (roadmap A-14
+    /// slice 2). LLVM's C API has no getters for them, so they are recorded at
+    /// creation rather than read back.
+    triple: String,
+    cpu: String,
+    features: String,
+    reloc: &'static str,
+    code_model: &'static str,
+}
+
+/// The relocation model's name, part of a target machine's cache identity.
+fn reloc_name(reloc: LLVMRelocMode) -> &'static str {
+    match reloc {
+        LLVMRelocMode::LLVMRelocDefault => "default",
+        LLVMRelocMode::LLVMRelocStatic => "static",
+        LLVMRelocMode::LLVMRelocPIC => "pic",
+        LLVMRelocMode::LLVMRelocDynamicNoPic => "dynamic-no-pic",
+        LLVMRelocMode::LLVMRelocROPI => "ropi",
+        LLVMRelocMode::LLVMRelocRWPI => "rwpi",
+        LLVMRelocMode::LLVMRelocROPI_RWPI => "ropi-rwpi",
+    }
+}
+
+/// The code model's name, part of a target machine's cache identity.
+fn code_model_name(model: LLVMCodeModel) -> &'static str {
+    match model {
+        LLVMCodeModel::LLVMCodeModelDefault => "default",
+        LLVMCodeModel::LLVMCodeModelJITDefault => "jit-default",
+        LLVMCodeModel::LLVMCodeModelTiny => "tiny",
+        LLVMCodeModel::LLVMCodeModelSmall => "small",
+        LLVMCodeModel::LLVMCodeModelKernel => "kernel",
+        LLVMCodeModel::LLVMCodeModelMedium => "medium",
+        LLVMCodeModel::LLVMCodeModelLarge => "large",
+    }
+}
+
+/// The linked LLVM's version, from `LLVMGetVersion`. An object is a function of
+/// the LLVM that wrote it as well as of the IR, so the cache key includes it: a
+/// compiler built against a different LLVM must not reuse these objects.
+pub fn version_string() -> String {
+    let mut major = 0u32;
+    let mut minor = 0u32;
+    let mut patch = 0u32;
+    // SAFETY: the three out-parameters point at our own slots.
+    unsafe { LLVMGetVersion(&mut major, &mut minor, &mut patch) };
+    format!("{major}.{minor}.{patch}")
 }
 
 impl TargetMachine {
@@ -2658,7 +2705,41 @@ impl TargetMachine {
                 triple.to_string_lossy()
             ));
         }
-        Ok(TargetMachine { raw })
+        Ok(TargetMachine {
+            raw,
+            triple: triple_str.to_string(),
+            cpu: cpu.to_string_lossy().into_owned(),
+            features: features.to_string_lossy().into_owned(),
+            reloc: reloc_name(reloc),
+            code_model: code_model_name(code_model),
+        })
+    }
+
+    /// The triple this machine targets.
+    pub fn triple(&self) -> &str {
+        &self.triple
+    }
+
+    /// The CPU name the machine was created with (a portable architecture
+    /// baseline, not the host's own CPU; see `baseline_cpu`).
+    pub fn cpu(&self) -> &str {
+        &self.cpu
+    }
+
+    /// The subtarget feature string, empty for every machine this compiler
+    /// builds except a freestanding riscv64 one.
+    pub fn features(&self) -> &str {
+        &self.features
+    }
+
+    /// The relocation model's name.
+    pub fn reloc(&self) -> &'static str {
+        self.reloc
+    }
+
+    /// The code model's name.
+    pub fn code_model(&self) -> &'static str {
+        self.code_model
     }
 
     /// The underlying `LLVMTargetMachineRef`, for a C API call this wrapper lacks.

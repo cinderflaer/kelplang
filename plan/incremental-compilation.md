@@ -1,7 +1,8 @@
-# Incremental compilation: compilation units, slice 1
+# Incremental compilation: compilation units, slices 1 and 2
 
-*Roadmap A-14. This is slice 1 of three: separate compilation. Slice 2 caches a
-unit's object by the hash of its IR, slice 3 compiles units in parallel.*
+*Roadmap A-14. These are slices 1 and 2 of three: separate compilation, and a
+content-addressed object cache over the units it produces. Slice 3 compiles
+units in parallel.*
 
 ## The decision
 
@@ -42,7 +43,12 @@ equivalence test compares the two backends' *programs*, not their object counts.
 
 `KELPC_DUMP_UNITS=<dir>` writes each unit's unoptimized LLVM IR to
 `<dir>/<unit>.ll`. It is how the determinism test reads the IR (identical
-sources must produce byte-identical unit IR); it does nothing outside the mode.
+sources must produce byte-identical unit IR) and how the cache tests read which
+units' IR changed; it does nothing outside the mode.
+
+`--timings` prints per-phase wall times (parse, resolve, infer, borrowck,
+codegen, unit compile, link) and one line per unit with `hit` or `miss`, to
+stderr. It is the observable half of slice 2.
 
 ## Unit assignment
 
@@ -126,9 +132,90 @@ pointer-derived name reaches a cross-unit symbol.
   "not in this slice" decision, not a backend limitation: hosted LLVM is the
   default and the mode is defined for it.
 
-## What this slice does not do
+## Slice 2: the object cache
 
-- It does not cache: stage 2 hashes each unit's IR and reuses the object.
+Every unit is lowered to its LLVM IR either way, because the IR text is the
+largest field of the key. The cache is then a pure lookup: on a hit the pass
+pipeline and code generation for that unit are skipped and the stored object is
+copied to `<out>.units/<unit>.o` (the artifact every build writes). On a miss the
+unit is optimized, emitted and stored.
+
+The design rests on one claim, and the whole slice is that claim: **a unit's
+object is a pure function of (its IR text, target triple, CPU and feature
+string, optimization level, relocation and code model, debug-info setting,
+compiler version string)**. The IR already carries every front-end decision and
+every cross-unit declaration, so if two IR texts are identical the objects are
+identical, whatever changed elsewhere in the program. There is therefore no
+dependency tracking and no interface file, and correctness cannot depend on a
+dependency graph: a stale entry is impossible because the key names the exact
+input that produced it.
+
+### The key
+
+The key is the lowercase hex SHA-256 of a canonical byte string built from the
+labelled fields and the IR text:
+
+```
+kelpc-object-cache-1
+triple=...\ncpu=...\nfeatures=...\nreloc=...\ncode_model=...
+opt=...\ndebug=...\ncompiler=...\nir-bytes=<n>\n<IR text>
+```
+
+Each field is labelled so its identity is part of the hashed bytes, and the IR
+is last and length-prefixed because it is the one value that can contain a
+newline. `opt` is the LLVM pipeline string (`default<O2>`), which pins the
+module passes, and the machine's codegen level for that level is pinned by the
+same one-to-one mapping. `compiler` is `kelpc <version>` plus the linked LLVM's
+version: an object is the IR run through a specific LLVM, so a compiler built
+against a different LLVM must not reuse these objects. SHA-256 is implemented in
+`kelpc/src/sha256.rs` with the standard test vectors; `kelpc` deliberately has
+no third-party dependency.
+
+### Layout and lifetime
+
+The cache directory is `$KELPC_CACHE_DIR` when set, else `<out dir>/.kelpc-cache`
+next to the build's other output, which for the default output path is
+`build/.kelpc-cache`. Entries are `<key>.o`. A store writes a temporary file in
+the same directory and then `rename`s it into place, so two concurrent builds
+sharing one cache never observe a partial entry; the loser of the rename simply
+installs the same bytes again. A lookup is a miss for an entry that is missing,
+unreadable, empty, or visibly incomplete (an ELF whose section header table
+falls outside the file), which is the corruption a truncated object presents.
+
+A non-empty entry that survives that check but fails to link is not retried
+silently: the link error is reported with the units whose objects came from the
+cache, their entries are deleted, and the next build recompiles them. The build
+that failed still fails; the deletion is the recovery, not a hidden second
+try.
+
+`KELPC_CACHE=off` turns lookups and stores off for one build. `KELPC_CACHE_STATS=1`
+prints one stderr line, `kelpc cache: <H> hits, <M> misses, <S> stored`, and
+`--timings` prints a per-phase line and a per-unit `hit`/`miss` line with
+milliseconds. `KELPC_CACHE_MAX_MB` (default 1024) is the size cap: at the end of
+a build, entries are deleted oldest-modified first until the total is under it.
+`kelpc cache stats` prints the entry count and total size and `kelpc cache clear`
+deletes the entries; both take `--dir`.
+
+### The limits this keeps
+
+- **No cross-unit inlining.** Unchanged from slice 1: a call between two units
+  is a real call in the object. The cache does not change this and cannot.
+- **The cache grows with distinct IR.** A body edit produces a new key and a new
+  entry; the old one is not evicted until the size cap or `kelpc cache clear`
+  removes it. The cap is what bounds it, and it deletes by modification time, so
+  a long-lived cache keeps the most recently useful objects.
+- **The cache is not shared between machines.** The key names the triple, CPU,
+  features, relocation and code model, so a directory copied to a different
+  machine simply misses and rebuilds. It is also not shared across `kelpc`
+  versions or LLVM versions, by the `compiler` field.
+- **A signature change is broad.** Every unit declares every program item, so
+  changing one callee's signature changes the declaring IR in more units than
+  the caller's; they all miss. That is the price of having no interface files,
+  and it is correctness rather than a defect: the alternative is a dependency
+  graph the design deliberately refuses.
+
+## What these slices do not do
+
 - It does not compile in parallel: stage 3 does.
 - It does not inline across units, and that is the documented cost of the mode:
   a call between two modules is a real call in the object, not an inlinable one.

@@ -25,12 +25,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::ast;
 use crate::diag::{Diagnostic, SourceMap};
 use crate::lexer::{Lexer, Span, Token, TokenKind};
 use crate::parser::Parser;
 use crate::preprocess::{self, AliasTable};
+use crate::timings::Timings;
 
 /// Source-file extension, without the leading dot. Every extension decision
 /// in this file goes through it, so a future rebrand is one line.
@@ -475,6 +477,7 @@ pub fn load(
     entry_path: &Path,
     sources: &mut SourceMap,
     entry_text: Option<String>,
+    mut timings: Option<&mut Timings>,
 ) -> Result<Loaded, Diagnostic> {
     let given = fs::canonicalize(entry_path).map_err(|e| {
         Diagnostic::new(
@@ -617,7 +620,12 @@ pub fn load(
         extern_modules: manifest_extern,
         unsafe_modules: manifest_unsafe,
     };
+    let parse_start = Instant::now();
     loader.load_project()?;
+    if let Some(sink) = &mut timings {
+        sink.parse = parse_start.elapsed();
+    }
+    let resolve_start = Instant::now();
 
     let mut program = ast::Program {
         impls: Vec::new(),
@@ -1117,6 +1125,9 @@ pub fn load(
         target: manifest_target,
         incremental: manifest_incremental,
     };
+    if let Some(sink) = &mut timings {
+        sink.resolve = resolve_start.elapsed();
+    }
     Ok(Loaded {
         program,
         project,

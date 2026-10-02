@@ -1519,3 +1519,37 @@ and LLVM's own verifier checks each module against its own types; the layout
 agreement between two objects is the same C ABI guarantee the whole-program
 build already relies on. Cross-unit inlining does not happen in this mode, which
 is a performance property rather than a safety one.
+
+## A-14 slice 2: the unit object cache (`plan/incremental-compilation.md`)
+
+**New ways to reach undefined behaviour.** None directly. A cache hit reuses an
+object the compiler already produced, so it cannot introduce behaviour the
+object did not have; it can only reuse the *wrong* object, which is a compile
+correctness bug rather than a new UB surface. Two properties are load-bearing:
+
+- **The key must name every input that changes the object.** It names the IR
+  text, the triple, the CPU and feature string, the relocation and code model,
+  the optimization level, the debug-info setting and the compiler plus LLVM
+  version. A field missing from the key would let two different objects share an
+  entry, and a stale object for a changed unit would be a silent miscompile. The
+  compile-time half of this is the `every_field_and_the_ir_change_the_key` unit
+  test; the runtime half is the linker and the programs the cache tests run.
+- **An entry must be complete.** A truncated object would be a link error, never
+  a partially-linked binary, because the lookup rejects a file whose ELF section
+  header table falls outside it and the store renames a complete temporary into
+  place. A non-empty corruption the lookup cannot see is a link failure that
+  deletes the entry, so the recovery is a rebuild, not a retry with the same
+  bytes.
+
+**What the compiler does check.** That the key is computed from the IR text it
+is about to compile and the machine it is about to compile for; that a lookup
+sees only non-empty, complete ELF entries; that a store is atomic; and that a
+link failure deletes the entries it used and names their units.
+
+**What it does not check.** That the key's field set is complete in principle:
+that is argued, not verified, and a future machine choice (a new code model, a
+different debug format) that reaches codegen without reaching the key would be a
+silent reuse bug until a test catches it. Nothing checks the stored object's
+contents against a recompile; equality of IR is taken as equality of object. The
+cache is not shared between machines or compiler versions by construction, not by
+a check: a copied directory simply misses.
