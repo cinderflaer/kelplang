@@ -11568,6 +11568,50 @@ fn kernel0_percpu_boots_with_two_harts_and_shows_the_other_copy() {
 }
 
 // ---------------------------------------------------------------------------
+// Kernel stage 18 (MK10-S1's second half): IRQ lines and physical frames as
+// capabilities. The hosted fixture below is a value test both backends run;
+// the boot is freestanding riscv64 and skips in a shell without `ld.lld` and
+// `qemu-system-riscv64`. The front-end refusals live in `tests/irq_frames.rs`.
+// ---------------------------------------------------------------------------
+
+/// The two capability values as plain hosted values: with no `[caps]` section
+/// the entry holds the whole resource, so a constant claim is admitted and the
+/// value it carries is the number the compiler checked. The C oracle computes
+/// the same literal.
+#[test]
+fn an_irq_line_and_a_frame_are_values_a_hosted_program_can_claim() {
+    assert_compiles_and_runs(
+        "tests/fixtures/irq_frame_claim.kp",
+        "10\n2148532224\n2148532240\n2148536319\n",
+    );
+}
+
+/// Kernel stage 18's acceptance boot: `examples/kernel0-caps` holds exactly one
+/// interrupt line and one physical frame in its `[caps]` section, claims both
+/// with the gated constructors, and a driver that holds the same grants prints
+/// `line 10`, `frame 0x80100000` and `offset 0x80100010` over the NS16550. The
+/// ungranted module in the same `src/` is a compile-error fixture the driver
+/// never imports, so it does not reach the image.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_caps_claims_one_line_and_one_frame_and_prints_them() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-caps boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "kernel0_caps",
+        &fixture("../examples/kernel0-caps"),
+        &["line 10", "frame 0x80100000", "offset 0x80100010"],
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Kernel stage 10 (MK9-S4-M8): Sv39 address spaces. The encoders below are
 // pure arithmetic and run hosted on both backends; the boot and the two faults
 // are freestanding riscv64 and skip in a shell without `ld.lld` and
