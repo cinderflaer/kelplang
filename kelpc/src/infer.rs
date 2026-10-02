@@ -13462,6 +13462,26 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
             span,
         });
     }
+    // An `&mut` operand needs a place to write into, exactly as an `&mut`
+    // argument of a declared parameter does: a temporary staged for the call
+    // would swallow the write, and a field of one would take the write down
+    // with it. A value that is already a borrow (a `mut T` parameter read, or
+    // a call's result) is a pointer in hand and needs no such place.
+    if *src_mut {
+        if let tir::ExprKind::Ref { expr: place, .. } = &value.kind {
+            if !is_durable_place(place) {
+                return Err(TypeError {
+                    message: format!(
+                        "expected '{}', found '{}': an exclusive borrow needs a variable or field to write through, not a temporary value",
+                        want.display(),
+                        value.ty.display()
+                    ),
+                    span,
+                });
+            }
+            check_target_writable(place, ctx)?;
+        }
+    }
     let Some(type_name) = dyn_target_name(inner) else {
         return Err(TypeError {
             message: format!(
