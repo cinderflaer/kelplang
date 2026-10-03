@@ -1616,6 +1616,7 @@ impl TypeScope<'_> {
             || ty.name == "Atomic"
             || ty.name == "Thread"
             || ty.name == "Mutex"
+            || ty.name == "RwLock"
             || ty.name == "Ptr"
         {
             // `Map<K, V>` names its key type, and `Map<V>` is the shorthand
@@ -1667,6 +1668,8 @@ impl TypeScope<'_> {
                 (crate::types::is_thread_element(&elem), thread_element_error(&elem))
             } else if ty.name == "Mutex" {
                 (crate::types::is_mutex_element(&elem), mutex_element_error(&elem))
+            } else if ty.name == "RwLock" {
+                (crate::types::is_rwlock_element(&elem), rwlock_element_error(&elem))
             } else if ty.name == "Ptr" {
                 (crate::types::is_ptr_element(&elem), crate::types::ptr_element_error(&elem))
             } else {
@@ -1688,6 +1691,8 @@ impl TypeScope<'_> {
                 Ty::Thread(Box::new(elem))
             } else if ty.name == "Mutex" {
                 Ty::Mutex(Box::new(elem))
+            } else if ty.name == "RwLock" {
+                Ty::RwLock(Box::new(elem))
             } else if ty.name == "Ptr" {
                 Ty::Ptr(Box::new(elem))
             } else {
@@ -1732,7 +1737,7 @@ impl TypeScope<'_> {
             }
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>', 'Thread<T>', 'Mutex<T>' and 'Ptr<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
+                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>', 'Thread<T>', 'Mutex<T>', 'RwLock<T>' and 'Ptr<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
                     ty.name,
                     name = ty.name
                 ),
@@ -4441,7 +4446,7 @@ impl<'a> SignatureScope<'a> {
             return Ok(());
         }
         if Ty::from_name(&ty.name).is_some()
-            || matches!(ty.name.as_str(), "List" | "Box" | "Map" | "Atomic" | "Thread" | "Mutex")
+            || matches!(ty.name.as_str(), "List" | "Box" | "Map" | "Atomic" | "Thread" | "Mutex" | "RwLock")
         {
             return Ok(());
         }
@@ -4872,6 +4877,10 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         // A `Mutex<T>` answers to one name whatever its element, exactly as an
         // `Atomic<T>` does (B-5, `std/sync`).
         Ty::Mutex(_) => Some("Mutex"),
+        // An `RwLock<T>` answers to one name whatever its element, and the
+        // non-generic `Condvar` answers to its own.
+        Ty::RwLock(_) => Some("RwLock"),
+        Ty::Condvar => Some("Condvar"),
         // The integer types answer to their written names so that the
         // conversion methods below (`n.to_u8()`) have a receiver to sit on.
         Ty::I32 => Some("i32"),
@@ -4987,6 +4996,22 @@ fn mutex_element_reason(ty: &Ty, container: &str) -> Option<String> {
     ))
 }
 
+/// Why an `RwLock<T>` or a `Condvar` cannot be a container element. Mirrors the
+/// mutex refusal for the lock; a `Condvar` is shared by construction and a
+/// container's copy-and-drop would name the one record twice.
+fn rwlock_element_reason(ty: &Ty, container: &str) -> Option<String> {
+    match ty {
+        Ty::RwLock(elem) => Some(format!(
+            "'RwLock<{}>' cannot be {container}: an rwlock owns a runtime record and is reached by borrowing it, while a container's own routines move and drop an element like a plain location. Keep the rwlock in a local or a field ('val rw = RwLock.new(0)') and borrow it there",
+            elem.display()
+        )),
+        Ty::Condvar => Some(format!(
+            "'Condvar' cannot be {container}: a condition variable is a shared runtime record paired with one mutex, while a container's own routines move and drop an element like a plain location. Keep it in a local or a field beside the mutex it pairs with"
+        )),
+        _ => None,
+    }
+}
+
 /// Why a container that still carries the open-container marker cannot be a
 /// container element, in one sentence that says the real reason: `ty` is such
 /// a container, or holds one, so the generated typedef, its `push` and its drop
@@ -5022,6 +5047,9 @@ fn list_element_error(ty: &Ty) -> String {
     if let Some(reason) = mutex_element_reason(ty, "a 'List' element") {
         return reason;
     }
+    if let Some(reason) = rwlock_element_reason(ty, "a 'List' element") {
+        return reason;
+    }
     if let Some(reason) = open_container_element_reason(ty, "List") {
         return reason;
     }
@@ -5051,6 +5079,9 @@ fn map_element_error(ty: &Ty) -> String {
         return reason;
     }
     if let Some(reason) = mutex_element_reason(ty, "a 'Map' value") {
+        return reason;
+    }
+    if let Some(reason) = rwlock_element_reason(ty, "a 'Map' value") {
         return reason;
     }
     if let Some(reason) = borrowed_element_reason(ty) {
@@ -5102,6 +5133,9 @@ fn array_element_error(ty: &Ty) -> String {
     if let Some(reason) = mutex_element_reason(ty, "an array element") {
         return reason;
     }
+    if let Some(reason) = rwlock_element_reason(ty, "an array element") {
+        return reason;
+    }
     match ty {
         Ty::Fn { .. } => {
             return format!(
@@ -5144,6 +5178,9 @@ fn box_element_error(ty: &Ty) -> String {
     if let Some(reason) = mutex_element_reason(ty, "a 'Box' element") {
         return reason;
     }
+    if let Some(reason) = rwlock_element_reason(ty, "a 'Box' element") {
+        return reason;
+    }
     if let Some(reason) = open_container_element_reason(ty, "Box") {
         return reason;
     }
@@ -5171,6 +5208,22 @@ fn mutex_element_error(ty: &Ty) -> String {
     }
     format!(
         "'{}' cannot be a 'Mutex' element: a mutex guards an owned value, and 'unit' and a function value are refused",
+        ty.display()
+    )
+}
+
+/// Why an `RwLock<T>`'s element is refused: the same `Send`-shaped rule
+/// `Mutex<T>` uses. A borrow, a `str` or a `View` in the slot would be a thread
+/// reading data another frame owns.
+fn rwlock_element_error(ty: &Ty) -> String {
+    if crate::types::is_borrowed_field_ty(ty) {
+        return format!(
+            "'{}' cannot be an 'RwLock' element: an rwlock is shared across threads, and a borrow, a 'str' or a 'View' in the slot would be a thread reading data another frame owns. Guard an owned value instead",
+            ty.display()
+        );
+    }
+    format!(
+        "'{}' cannot be an 'RwLock' element: an rwlock guards an owned value, and 'unit' and a function value are refused",
         ty.display()
     )
 }
@@ -15695,6 +15748,12 @@ fn reachable_mut_path(
         // its element: two threads can only take turns through the lock
         // (B-5).
         Ty::Mutex(_) => false,
+        // An `RwLock<T>` reaches `T` only through its scoped `read`/`write`
+        // blocks, so it is shareable across a thread boundary whatever its
+        // element, exactly as `Mutex<T>` is (B-5). A `Condvar` holds no `T` at
+        // all and is shared by construction.
+        Ty::RwLock(_) => false,
+        Ty::Condvar => false,
         _ => false,
     }
 }
@@ -17548,6 +17607,14 @@ fn check_method_call(
             if name == "Mutex" {
                 return check_mutex_associated(name, method, args, span, ctx, expected);
             }
+            // `RwLock.new(x)` and `Condvar.new()`, the constructors of the
+            // builtin rwlock and condition variable (`std/sync`).
+            if name == "RwLock" {
+                return check_rwlock_associated(name, method, args, span, ctx, expected);
+            }
+            if name == "Condvar" {
+                return check_condvar_associated(name, method, args, span, ctx, expected);
+            }
             // `Widget.null()` and `Window.cast(w)` (gap 1): the two operations
             // written on a handle's type name rather than on a value.
             if let Some(handle) = ctx.handle_type_named(name) {
@@ -17712,6 +17779,12 @@ fn check_method_call(
     }
     if let Some(elem) = crate::types::mutex_elem_of(&probe.ty).cloned() {
         return check_mutex_method(probe, receiver, &elem, method, args, span, ctx, expected);
+    }
+    if let Some(elem) = crate::types::rwlock_elem_of(&probe.ty).cloned() {
+        return check_rwlock_method(probe, receiver, &elem, method, args, span, ctx, expected);
+    }
+    if matches!(probe.ty, Ty::Condvar) {
+        return check_condvar_method(probe, receiver, method, args, span, ctx);
     }
     if let Some(elem) = crate::types::atomic_elem_of(&probe.ty).cloned() {
         let key = format!("Atomic#{method}");
@@ -18947,6 +19020,14 @@ fn check_mutex_method(
     let cell = Ty::Mutex(Box::new(elem.clone()));
     match method {
         "lock" => check_mutex_lock(receiver, elem, args, span, ctx, expected),
+        // `m.wait_while(cv, pred) { v -> ... }` and its timed twin: the
+        // condition variable's own `wait` cannot be spelled with a scoped
+        // guard, so the wait lives on the mutex, which owns the lock the wait
+        // has to release atomically (B-5 rem, `plan/sync.md`).
+        "wait_while" => check_mutex_wait(receiver, elem, args, span, ctx, expected, false),
+        "wait_while_timeout" => {
+            check_mutex_wait(receiver, elem, args, span, ctx, expected, true)
+        }
         "into_inner" => {
             if !args.is_empty() {
                 return Err(TypeError {
@@ -19040,6 +19121,406 @@ fn check_mutex_lock(
         ty: ret,
         span,
     })
+}
+
+/// The `Option<T>` a scoped-block call hands back when the block may not run,
+/// named through `std/option`'s key exactly as `try_to_<T>` names it, so a
+/// program that never imported the module is told to rather than given an
+/// internal error.
+fn option_ty(ctx: &Ctx, elem: Ty, span: Span) -> Result<Ty> {
+    let option_key = format!(
+        "{}Option",
+        crate::stdlib::key_prefix(crate::stdlib::OPTION_MODULE)
+    );
+    if !ctx.env.generics.contains_key(&option_key) {
+        return Err(TypeError {
+            message: format!(
+                "this call hands back 'Option<T>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
+                option_key,
+                crate::stdlib::OPTION_MODULE
+            ),
+            span,
+        });
+    }
+    ctx.instantiate_type(&option_key, &[elem], span)
+}
+
+/// `RwLock.new(value)` (`std/sync`): the one constructor of the builtin
+/// reader/writer lock. The value is moved in, exactly as `Mutex.new` moves its
+/// value, and the element type comes from the binding's written type or from
+/// the argument, in that order.
+fn check_rwlock_associated(
+    name: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if method != "new" {
+        return Err(TypeError {
+            message: format!(
+                "'{name}.{method}' is not an 'RwLock' operation: an rwlock is made with 'RwLock.new(value)' and reached through the value it is bound to ('rw.read {{ v -> ... }}', 'rw.write {{ v -> ... }}', 'rw.into_inner()')"
+            ),
+            span,
+        });
+    }
+    if args.len() != 1 {
+        return Err(TypeError {
+            message: format!("'RwLock.new' takes exactly 1 argument, found {}", args.len()),
+            span,
+        });
+    }
+    let written = expected.and_then(crate::types::rwlock_elem_of).cloned();
+    let value = check_expr(&args[0].value, ctx, written.as_ref())?;
+    if value.ty == Ty::Unit {
+        return Err(TypeError {
+            message: "'RwLock.new' needs a value to guard, found 'unit'".to_string(),
+            span: args[0].value.span(),
+        });
+    }
+    let elem = match written {
+        Some(elem) => {
+            if value.ty != elem {
+                return Err(TypeError {
+                    message: format!(
+                        "'RwLock<{}>.new' needs a '{}' value, found '{}'",
+                        elem.display(),
+                        elem.display(),
+                        value.ty.display()
+                    ),
+                    span: args[0].value.span(),
+                });
+            }
+            elem
+        }
+        None => value.ty.clone(),
+    };
+    if !crate::types::is_rwlock_element(&elem) {
+        return Err(TypeError {
+            message: rwlock_element_error(&elem),
+            span: args[0].value.span(),
+        });
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: "RwLock#new".to_string(), args: vec![value] },
+        ty: Ty::RwLock(Box::new(elem)),
+        span,
+    })
+}
+
+/// A method on an `RwLock<T>` (`std/sync`). `read`/`write` are checked
+/// structurally, because each block's return type comes from the block rather
+/// than from a fixed signature; `try_read`/`try_write` wrap that value in an
+/// `Option` (`None` when the lock was busy and the block did not run).
+fn check_rwlock_method(
+    probe: tir::Expr,
+    receiver: &ast::Expr,
+    elem: &Ty,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let _ = probe;
+    let cell = Ty::RwLock(Box::new(elem.clone()));
+    match method {
+        "read" => check_rwlock_block(receiver, elem, false, false, args, span, ctx, expected),
+        "write" => check_rwlock_block(receiver, elem, true, false, args, span, ctx, expected),
+        "try_read" => check_rwlock_block(receiver, elem, false, true, args, span, ctx, expected),
+        "try_write" => check_rwlock_block(receiver, elem, true, true, args, span, ctx, expected),
+        "into_inner" => {
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'RwLock.into_inner' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            let self_arg = check_call_arg("'self'", &cell, receiver, ctx)?;
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call {
+                    callee: "RwLock#into_inner".to_string(),
+                    args: vec![self_arg],
+                },
+                ty: elem.clone(),
+                span,
+            })
+        }
+        other => Err(TypeError {
+            message: format!(
+                "'RwLock.{other}' is not an rwlock operation: write 'rw.read {{ v -> ... }}' or 'rw.write {{ v -> ... }}' to reach the value with the lock held, 'rw.try_read'/'.try_write' for the non-blocking form, or 'rw.into_inner()' to consume it"
+            ),
+            span,
+        }),
+    }
+}
+
+/// The shared body of `read`/`write`/`try_read`/`try_write`: the receiver is
+/// `&RwLock<T>`, the block is a `scoped fun` taking `&T` (read) or `mut T`
+/// (write), and `try` wraps the block's value in `Option`.
+#[allow(clippy::too_many_arguments)]
+fn check_rwlock_block(
+    receiver: &ast::Expr,
+    elem: &Ty,
+    write: bool,
+    try_lock: bool,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let name = if try_lock {
+        if write { "try_write" } else { "try_read" }
+    } else if write {
+        "write"
+    } else {
+        "read"
+    };
+    let slots = arg_slots(&format!("method 'RwLock.{name}'"), &["block".to_string()], args, span)?;
+    let block_arg = &args[slots[0]];
+    let self_arg = check_call_arg(
+        "'self'",
+        &Ty::Ref {
+            mutable: false,
+            inner: Box::new(Ty::RwLock(Box::new(elem.clone()))),
+        },
+        receiver,
+        ctx,
+    )?;
+    let param = Ty::Ref { mutable: write, inner: Box::new(elem.clone()) };
+    let want = Ty::ScopedFn {
+        params: vec![param],
+        ret: Box::new(expected.cloned().unwrap_or(Ty::Unit)),
+    };
+    // `read`/`write` return the block's tail type when the call site names no
+    // type, exactly as `Mutex.lock` does. `try_*` always infer, because the
+    // call's own type is `Option<R>` and the block's is `R`.
+    ctx.infer_scoped_ret = try_lock || expected.is_none();
+    let checked = check_expr(&block_arg.value, ctx, Some(&want));
+    ctx.infer_scoped_ret = false;
+    let checked = checked?;
+    let block = match checked.ty.clone() {
+        Ty::ScopedFn { .. } => checked,
+        Ty::Fn { params, ret } => coerce_fn_to_scoped(Ty::ScopedFn { params, ret }, checked),
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "the block 'RwLock.{name}' takes has type '{}', expected a scoped function taking '{} {}'",
+                    other.display(),
+                    if write { "mut" } else { "&" },
+                    elem.display()
+                ),
+                span: block_arg.value.span(),
+            })
+        }
+    };
+    let ret = match &block.ty {
+        Ty::ScopedFn { ret, .. } => (**ret).clone(),
+        _ => unreachable!("the block was widened to a scoped function"),
+    };
+    let ty = if try_lock { option_ty(ctx, ret, span)? } else { ret };
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: format!("RwLock#{name}"),
+            args: vec![self_arg, block],
+        },
+        ty,
+        span,
+    })
+}
+
+/// `Condvar.new()` (`std/sync`): the one constructor of the builtin condition
+/// variable. It takes no argument: a condition variable guards no value of its
+/// own; it is paired with one `Mutex<T>` at each `wait_while`.
+fn check_condvar_associated(
+    name: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    _ctx: &mut Ctx,
+    _expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if method != "new" {
+        return Err(TypeError {
+            message: format!(
+                "'{name}.{method}' is not a 'Condvar' operation: a condition variable is made with 'Condvar.new()' and reached through the value it is bound to ('cv.notify_one()')"
+            ),
+            span,
+        });
+    }
+    if !args.is_empty() {
+        return Err(TypeError {
+            message: format!("'Condvar.new' takes no arguments, found {}", args.len()),
+            span,
+        });
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: "Condvar#new".to_string(), args: vec![] },
+        ty: Ty::Condvar,
+        span,
+    })
+}
+
+/// `cv.notify_one()` and `cv.notify_all()`: the two ways to wake a waiter.
+/// There is no bare `wait`; the wait is `Mutex.wait_while` (B-5 rem,
+/// `plan/sync.md`).
+fn check_condvar_method(
+    probe: tir::Expr,
+    receiver: &ast::Expr,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let _ = probe;
+    if method != "notify_one" && method != "notify_all" {
+        return Err(TypeError {
+            message: format!(
+                "'Condvar.{method}' is not a condition variable operation: write 'cv.notify_one()' or 'cv.notify_all()' to wake a waiter; a wait is 'm.wait_while(cv, pred) {{ v -> ... }}' on the mutex that guards the state"
+            ),
+            span,
+        });
+    }
+    if !args.is_empty() {
+        return Err(TypeError {
+            message: format!("'Condvar.{method}' takes no arguments, found {}", args.len()),
+            span,
+        });
+    }
+    let self_arg = check_call_arg("'self'", &Ty::Ref { mutable: false, inner: Box::new(Ty::Condvar) }, receiver, ctx)?;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: format!("Condvar#{method}"),
+            args: vec![self_arg],
+        },
+        ty: Ty::Unit,
+        span,
+    })
+}
+
+/// `m.wait_while(cv, pred) { v -> ... }` and its timed twin (`std/sync`). The
+/// mutex is held for the block's whole run; the wait releases it around every
+/// sleep and re-tests `pred(&T)` after each wakeup, so a spurious wakeup never
+/// reaches the caller. The timed form hands back `Option<R>`: `None` when the
+/// deadline passed with the predicate still true and the block did not run.
+#[allow(clippy::too_many_arguments)]
+fn check_mutex_wait(
+    receiver: &ast::Expr,
+    elem: &Ty,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    _expected: Option<&Ty>,
+    timed: bool,
+) -> Result<tir::Expr> {
+    let method = if timed { "wait_while_timeout" } else { "wait_while" };
+    let names: Vec<String> = if timed {
+        vec!["cv".into(), "pred".into(), "millis".into(), "block".into()]
+    } else {
+        vec!["cv".into(), "pred".into(), "block".into()]
+    };
+    let slots = arg_slots(&format!("method 'Mutex.{method}'"), &names, args, span)?;
+    let self_arg = check_call_arg(
+        "'self'",
+        &Ty::Ref {
+            mutable: false,
+            inner: Box::new(Ty::Mutex(Box::new(elem.clone()))),
+        },
+        receiver,
+        ctx,
+    )?;
+    let cv_arg = check_call_arg(
+        "'cv'",
+        &Ty::Ref { mutable: false, inner: Box::new(Ty::Condvar) },
+        &args[slots[0]].value,
+        ctx,
+    )?;
+    // The predicate is a `fun(&T).R: bool` (or a closure of that shape): a
+    // parameter is already a shared borrow in Kelp, so its resolved type is
+    // `T` for a `Copy` element and `&T` for an owned one
+    // (`implicit_borrow_wrap`), and the runtime hands the generated body the
+    // element's address accordingly. It is called with the lock held, once
+    // before the first wait and again after every wakeup.
+    let pred_param = implicit_borrow_wrap(elem.clone(), false);
+    let pred_want = Ty::Closure {
+        params: vec![pred_param.clone()],
+        ret: Box::new(Ty::Bool),
+    };
+    let pred_expr = check_expr(&args[slots[1]].value, ctx, None)?;
+    let pred = match pred_expr.ty.clone() {
+        Ty::Closure { params, ret } if params == pred_want_params(&pred_want) && *ret == Ty::Bool => pred_expr,
+        Ty::Fn { params, ret }
+            if params == pred_want_params(&pred_want) && *ret == Ty::Bool =>
+        {
+            coerce_fn_to_closure(pred_want, pred_expr)
+        }
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "the predicate 'Mutex.{method}' takes has type '{}', expected 'fun({}).R: bool'",
+                    other.display(),
+                    pred_param.display()
+                ),
+                span: args[slots[1]].value.span(),
+            })
+        }
+    };
+    let millis = if timed {
+        Some(check_call_arg("'millis'", &Ty::I64, &args[slots[2]].value, ctx)?)
+    } else {
+        None
+    };
+    let block_arg = &args[slots[if timed { 3 } else { 2 }]];
+    let want = Ty::ScopedFn {
+        params: vec![Ty::Ref { mutable: true, inner: Box::new(elem.clone()) }],
+        ret: Box::new(Ty::Unit),
+    };
+    ctx.infer_scoped_ret = true;
+    let checked = check_expr(&block_arg.value, ctx, Some(&want));
+    ctx.infer_scoped_ret = false;
+    let checked = checked?;
+    let block = match checked.ty.clone() {
+        Ty::ScopedFn { .. } => checked,
+        Ty::Fn { params, ret } => coerce_fn_to_scoped(Ty::ScopedFn { params, ret }, checked),
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "the block 'Mutex.{method}' takes has type '{}', expected a scoped function taking 'mut {}'",
+                    other.display(),
+                    elem.display()
+                ),
+                span: block_arg.value.span(),
+            })
+        }
+    };
+    let inner = match &block.ty {
+        Ty::ScopedFn { ret, .. } => (**ret).clone(),
+        _ => unreachable!("the block was widened to a scoped function"),
+    };
+    let mut call_args = vec![self_arg, cv_arg, pred];
+    if let Some(millis) = millis {
+        call_args.push(millis);
+    }
+    call_args.push(block);
+    let ty = if timed { option_ty(ctx, inner, span)? } else { inner };
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: format!("Mutex#{method}"),
+            args: call_args,
+        },
+        ty,
+        span,
+    })
+}
+
+/// The `&T` parameter a wait predicate takes. Pulled out so the two shape
+/// matches above stay readable.
+fn pred_want_params(want: &Ty) -> Vec<Ty> {
+    match want {
+        Ty::Closure { params, .. } => params.clone(),
+        _ => unreachable!("the caller built a closure shape"),
+    }
 }
 
 /// A bare name that only exists as an imported item's *qualified* name is a

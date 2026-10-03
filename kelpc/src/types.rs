@@ -244,6 +244,20 @@ pub enum Ty {
     /// and the runtime's layout stays `kelp_rt.c`'s business. Its drop frees
     /// that record, running `T`'s own drop first.
     Mutex(Box<Ty>),
+    /// The builtin reader/writer lock (`std/sync`): `RwLock<T>`, whose `T` is
+    /// reached through `read`/`write` scoped blocks.
+    ///
+    /// Monomorphized per element type exactly as `Mutex<T>` is, and `T` is the
+    /// owned, borrow-free value it guards (`is_rwlock_element`). **Not `Copy`.**
+    /// The representation is one opaque pointer to a runtime record (a state
+    /// mutex, two condition variables, the reader/writer counters, a poison flag
+    /// and the `T` slot), so the pointer crosses both backends unchanged. Its
+    /// drop frees that record, running `T`'s own drop first.
+    RwLock(Box<Ty>),
+    /// The builtin condition variable (`std/sync`): `Condvar`, one opaque
+    /// pointer to a `pthread_cond_t` the runtime owns. **Not `Copy`** and it
+    /// owns heap memory, so it needs a drop (`kelp_condvar_drop`).
+    Condvar,
     /// An **opaque native handle** (gap 1): `extern type Widget`, what a
     /// binding passes around in place of a `GtkWidget*`. The payload is the
     /// handle's canonical, module-qualified name, exactly as `Ty::Struct`
@@ -336,6 +350,9 @@ impl Ty {
             "Bytes" => Ty::Bytes,
             "String" => Ty::String,
             "View" => Ty::View,
+            // The one non-generic builtin in the family: `Condvar` is one
+            // pointer to a runtime record whatever it guards.
+            "Condvar" => Ty::Condvar,
             // `AtomicI64` and its siblings name one instantiation of the
             // builtin `Atomic<T>`, so the name stands for the whole cell rather
             // than for the element it holds.
@@ -366,6 +383,8 @@ impl Ty {
                     | Ty::Atomic(_)
                     | Ty::Thread(_)
                     | Ty::Mutex(_)
+                    | Ty::RwLock(_)
+                    | Ty::Condvar
                     | Ty::Bytes
                     | Ty::String
                     | Ty::List(_)
@@ -400,6 +419,8 @@ impl Ty {
                     // owned value (MK9-S3-M1 stage C1).
                     | Ty::Thread(_)
                     | Ty::Mutex(_)
+                    | Ty::RwLock(_)
+                    | Ty::Condvar
                     | Ty::Closure { .. },
             ),
         }
@@ -488,6 +509,8 @@ impl Ty {
             Ty::Atomic(elem) => atomic_c_type(elem),
             Ty::Thread(_) => thread_c_type(),
             Ty::Mutex(_) => mutex_c_type(),
+            Ty::RwLock(_) => rwlock_c_type(),
+            Ty::Condvar => condvar_c_type(),
             Ty::Handle(name) => handle_c_type(name),
             // A pointer is the C pointer to whatever type it addresses. An
             // array's generated struct name and a datac's `struct_` name are
@@ -528,13 +551,13 @@ impl Ty {
             Ty::Ref { mutable, inner } => {
                 if *mutable {
                     format!("{}*", inner.c_type())
-                } else if matches!(**inner, Ty::Mutex(_)) {
-                    // A `Mutex<T>` is itself one pointer, so a shared borrow of
-                    // one is a pointer to a pointer and the `const` the shared
-                    // spelling normally adds would make `&m` and the
-                    // parameter's `&Mutex<T>` two incompatible C types. The
-                    // borrow checker, not the C qualifier, is what stops a
-                    // write through a `&Mutex<T>`.
+                } else if matches!(**inner, Ty::Mutex(_) | Ty::RwLock(_) | Ty::Condvar) {
+                    // A `Mutex<T>`/`RwLock<T>`/`Condvar` is itself one pointer,
+                    // so a shared borrow of one is a pointer to a pointer and
+                    // the `const` the shared spelling normally adds would make
+                    // `&m` and the parameter's `&Mutex<T>` two incompatible C
+                    // types. The borrow checker, not the C qualifier, is what
+                    // stops a write through a `&Mutex<T>`.
                     format!("{}*", inner.c_type())
                 } else {
                     format!("const {}*", inner.c_type())
@@ -568,6 +591,8 @@ impl Ty {
             Ty::Atomic(elem) => format!("Atomic<{}>", elem.display()),
             Ty::Thread(elem) => format!("Thread<{}>", elem.display()),
             Ty::Mutex(elem) => format!("Mutex<{}>", elem.display()),
+            Ty::RwLock(elem) => format!("RwLock<{}>", elem.display()),
+            Ty::Condvar => "Condvar".to_string(),
             Ty::Handle(name) => name.clone(),
             Ty::Ptr(elem) => format!("Ptr<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
@@ -1055,6 +1080,8 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         // element drop pointer `Mutex.new` stored, so the element type is not
         // part of the step (B-5).
         Ty::Mutex(_) => "kelp_mutex_drop".to_string(),
+        Ty::RwLock(_) => "kelp_rwlock_drop".to_string(),
+        Ty::Condvar => "kelp_condvar_drop".to_string(),
         Ty::Struct(name) => format!("kelp_drop_{}", c_ident(name)),
         Ty::List(elem) => format!("kelp_list_drop__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("kelp_box_drop__{}", ty_mangle(elem)),
@@ -1255,6 +1282,8 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::Atomic(elem) => format!("Atomic__{}", ty_mangle(elem)),
         Ty::Thread(elem) => format!("Thread__{}", ty_mangle(elem)),
         Ty::Mutex(elem) => format!("Mutex__{}", ty_mangle(elem)),
+        Ty::RwLock(elem) => format!("RwLock__{}", ty_mangle(elem)),
+        Ty::Condvar => "Condvar".to_string(),
         // The canonical name is module-qualified (`ffi.Widget`), so it goes
         // through the same mangling every other generated symbol uses rather
         // than straight into a C identifier.
@@ -1353,6 +1382,18 @@ pub fn thread_c_type() -> String {
 /// record's own layout, including the `T` slot, is `kelp_rt.c`'s.
 pub fn mutex_c_type() -> String {
     "kelp_Mutex*".to_string()
+}
+
+/// The C type for `RwLock<T>`: one pointer to the runtime's `kelp_RwLock`
+/// record, uniform over the element type for the same reason `Mutex<T>` is.
+pub fn rwlock_c_type() -> String {
+    "kelp_RwLock*".to_string()
+}
+
+/// The C type for `Condvar`: one pointer to the runtime's `kelp_Condvar`
+/// record, which wraps one `pthread_cond_t`.
+pub fn condvar_c_type() -> String {
+    "kelp_Condvar*".to_string()
 }
 
 /// The generated C typedef for one opaque handle. The typedef is what gives
@@ -1492,6 +1533,24 @@ pub fn is_mutex_element(ty: &Ty) -> bool {
             ty,
             Ty::Unit | Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. }
         )
+}
+
+/// Whether `ty` may be an `RwLock<T>`'s element: the same `Send`-shaped
+/// predicate `Mutex<T>` uses. `RwLock<T>` shares `T` across threads, so a
+/// borrow, a `str` or a `View` in the slot would be a thread reading data
+/// another frame owns.
+pub fn is_rwlock_element(ty: &Ty) -> bool {
+    is_mutex_element(ty)
+}
+
+/// The element type of an `RwLock<T>`, looking through a borrow: `rw.read { ... }`
+/// arrives with the receiver typed `&RwLock<T>`.
+pub fn rwlock_elem_of(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::RwLock(elem) => Some(elem),
+        Ty::Ref { inner, .. } => rwlock_elem_of(inner),
+        _ => None,
+    }
 }
 
 /// The element type of a `Mutex<T>`, looking through a borrow: `m.lock { ... }`
@@ -1653,7 +1712,7 @@ pub fn container_elem_c_type(elem: &Ty) -> String {
         Ty::Struct(name) => format!("struct tag_{}", c_ident(name)),
         Ty::Ref { mutable, inner } if !matches!(**inner, Ty::Str) => {
             let pointee = container_elem_c_type(inner);
-            if *mutable || matches!(**inner, Ty::Mutex(_)) {
+            if *mutable || matches!(**inner, Ty::Mutex(_) | Ty::RwLock(_) | Ty::Condvar) {
                 format!("{pointee}*")
             } else {
                 format!("const {pointee}*")
@@ -1807,6 +1866,7 @@ pub fn type_layout(
         // A borrowed or owned trait object is the fat pair: two pointers.
         Ty::Dyn { .. } | Ty::BoxDyn { .. } => Layout { size: 16, align: 8 },
         Ty::Mutex(_) => Layout { size: 8, align: 8 },
+        Ty::RwLock(_) | Ty::Condvar => Layout { size: 8, align: 8 },
         Ty::View => Layout { size: 16, align: 8 },
         Ty::Bytes | Ty::String | Ty::List(_) | Ty::Closure { .. } | Ty::ScopedFn { .. } => {
             Layout { size: 24, align: 8 }

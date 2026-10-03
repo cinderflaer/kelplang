@@ -1,0 +1,5 @@
+// A condition variable's runtime half is a pthread object, so a freestanding
+// build refuses the construct by name and points at a wait queue.
+fun kmain() {
+    val cv: Condvar = Condvar.new()
+}

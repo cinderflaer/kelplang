@@ -3770,6 +3770,17 @@ impl<'a> Gen<'a> {
                     .ok_or_else(|| no_value(&format!("the runtime drop '{symbol}'")))?;
                 (rt.func, rt.ty)
             }
+            // An `RwLock<T>` record and a `Condvar` are the runtime's too
+            // (`std/sync`): the rwlock's drop runs the element's own stored
+            // drop, the condvar's destroys the pthread object.
+            Ty::RwLock(_) | Ty::Condvar => {
+                let symbol = drop_fn_name(ty);
+                let rt = self
+                    .runtime
+                    .get(&symbol)
+                    .ok_or_else(|| no_value(&format!("the runtime drop '{symbol}'")))?;
+                (rt.func, rt.ty)
+            }
             _ => return Ok(()),
         };
         self.builder.build_call(func, fty, &[ptr], "");
@@ -7112,7 +7123,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             return Ok(None);
         }
         let func = match ty {
-            Ty::Bytes | Ty::String | Ty::Thread(_) | Ty::Mutex(_) => {
+            Ty::Bytes | Ty::String | Ty::Thread(_) | Ty::Mutex(_) | Ty::RwLock(_) | Ty::Condvar => {
                 let symbol = drop_fn_name(ty);
                 self.g
                     .runtime
@@ -7222,6 +7233,286 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
             other => Err(no_value(&format!("the mutex operation '{other}'"))),
         }
+    }
+
+    /// Store `Some(payload)` or `None` into a fresh `Option` slot according to
+    /// `ran`, and hand back the loaded option. The `try_*` and timed-wait paths
+    /// share it (`std/sync`), so the two backends build the same enum.
+    fn emit_option_from_run(
+        &mut self,
+        ret: &Ty,
+        ran: Value<'a>,
+        payload: Option<Value<'a>>,
+    ) -> Result<Value<'a>, String> {
+        let Ty::Struct(name) = ret else {
+            unreachable!("a scoped-block result is an Option")
+        };
+        let info = self.enum_info_of(ret)?;
+        let decl = self
+            .g
+            .program
+            .enums
+            .iter()
+            .find(|e| &e.name == name)
+            .ok_or_else(|| no_value("the Option enum"))?;
+        let some = decl
+            .variants
+            .iter()
+            .position(|v| v.name == "Some")
+            .ok_or_else(|| no_value("the 'Some' variant"))?;
+        let none = decl
+            .variants
+            .iter()
+            .position(|v| v.name == "None")
+            .ok_or_else(|| no_value("the 'None' variant"))?;
+        let ret_ty = self.lty(ret)?;
+        let slot = self.temp_alloca(ret_ty, "option");
+        self.g.builder.build_store(self.g.ctx.const_null(ret_ty), slot);
+        let some_bb = self.cur_fn.append_block("opt.some");
+        let none_bb = self.cur_fn.append_block("opt.none");
+        let done_bb = self.cur_fn.append_block("opt.done");
+        self.g.builder.build_cond_br(ran, some_bb, none_bb);
+        self.g.builder.position_at_end(some_bb);
+        self.cur = some_bb;
+        self.terminated = false;
+        match payload {
+            Some(v) => self.store_enum_variant(slot, &info, some, &[v])?,
+            None => self.store_enum_variant(slot, &info, some, &[])?,
+        }
+        self.g.builder.build_br(done_bb);
+        self.g.builder.position_at_end(none_bb);
+        self.cur = none_bb;
+        self.terminated = false;
+        self.store_enum_variant(slot, &info, none, &[])?;
+        self.g.builder.build_br(done_bb);
+        self.g.builder.position_at_end(done_bb);
+        self.cur = done_bb;
+        self.terminated = false;
+        Ok(self.g.builder.build_load(ret_ty, slot, "option.value"))
+    }
+
+    /// `RwLock<T>` operations (`std/sync`). The C twin is
+    /// `codegen_c.rs::rwlock_call`, runtime call for runtime call.
+    fn emit_rwlock_call(
+        &mut self,
+        op: &str,
+        args: &[Expr],
+        ret: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
+        let ptr = self.g.pty();
+        match op {
+            "new" => {
+                let Ty::RwLock(elem) = ret else {
+                    unreachable!("RwLock.new hands back an RwLock<T>")
+                };
+                let value = self.value_of(&args[0])?;
+                let elem_ty = self.lty(elem)?;
+                let slot = self.temp_alloca(elem_ty, "rwlock.value");
+                self.g.builder.build_store(value, slot);
+                let size = self.g.layout.abi_size_of(elem_ty);
+                let drop = self
+                    .drop_fn_value(elem)?
+                    .unwrap_or_else(|| self.g.ctx.const_null(ptr));
+                let rt = self.g.rt("kelp_rwlock_new")?;
+                let handle = self.g.call(
+                    rt.func,
+                    rt.ty,
+                    &[slot, self.g.v_i64(size), drop],
+                    "rwlock",
+                );
+                self.cur = self.g.check_alloc(handle, self.cur_fn)?;
+                Ok(Some(handle))
+            }
+            "read" | "write" | "try_read" | "try_write" => {
+                let block = &args[1];
+                let (_, block_ret) = crate::types::closure_parts(&block.ty)
+                    .ok_or_else(|| no_value("an rwlock block signature"))?;
+                let cell = self.value_of(&args[0])?;
+                let rw = self.g.builder.build_load(ptr, cell, "rwlock");
+                let closure = self.value_of(block)?;
+                let code = self.g.builder.build_extract_value(closure, 0, "fn");
+                let env = self.g.builder.build_extract_value(closure, 1, "env");
+                let body = self.g.closure_symbol(&thread_body_symbol(
+                    &crate::types::closure_shape(&block.ty),
+                ))?;
+                let yields = *block_ret != Ty::Unit;
+                let out_ty = if yields { self.lty(block_ret)? } else { self.g.ctx.i8() };
+                let out = self.temp_alloca(out_ty, "rwlock.out");
+                let out_ptr = if yields { out } else { self.g.ctx.const_null(ptr) };
+                let symbol = match op {
+                    "read" => "kelp_rwlock_read",
+                    "write" => "kelp_rwlock_write",
+                    "try_read" => "kelp_rwlock_try_read",
+                    "try_write" => "kelp_rwlock_try_write",
+                    _ => unreachable!(),
+                };
+                let rt = self.g.rt(symbol)?;
+                if !op.starts_with("try_") {
+                    self.g.builder.build_call(
+                        rt.func,
+                        rt.ty,
+                        &[rw, body.as_value(), code, env, out_ptr],
+                        "",
+                    );
+                    if yields {
+                        return Ok(Some(self.g.builder.build_load(out_ty, out, "rwlock.value")));
+                    }
+                    return Ok(None);
+                }
+                let ran = self.g.call(
+                    rt.func,
+                    rt.ty,
+                    &[rw, body.as_value(), code, env, out_ptr],
+                    "rwlock.try",
+                );
+                let zero = self.g.ctx.const_int(self.g.ctx.i32(), 0, false);
+                let ok = self.g.builder.build_icmp(IntCmp::Ne, ran, zero, "rwlock.ran");
+                let payload = if yields {
+                    Some(self.g.builder.build_load(out_ty, out, "rwlock.value"))
+                } else {
+                    None
+                };
+                Ok(Some(self.emit_option_from_run(ret, ok, payload)?))
+            }
+            "into_inner" => {
+                let rw = self.value_of(&args[0])?;
+                let rt = self.g.rt("kelp_rwlock_into")?;
+                if *ret == Ty::Unit {
+                    self.g.builder.build_call(rt.func, rt.ty, &[rw, self.g.ctx.const_null(ptr)], "");
+                    return Ok(None);
+                }
+                let out_ty = self.lty(ret)?;
+                let out = self.temp_alloca(out_ty, "rwlock.inner");
+                self.g.builder.build_call(rt.func, rt.ty, &[rw, out], "");
+                Ok(Some(self.g.builder.build_load(out_ty, out, "inner")))
+            }
+            other => Err(no_value(&format!("the rwlock operation '{other}'"))),
+        }
+    }
+
+    /// `Condvar` operations (`std/sync`): the constructor and the two
+    /// notifies, one runtime call each. The C twin is
+    /// `codegen_c.rs::condvar_call`.
+    fn emit_condvar_call(
+        &mut self,
+        op: &str,
+        args: &[Expr],
+        _ret: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
+        let ptr = self.g.pty();
+        match op {
+            "new" => {
+                let rt = self.g.rt("kelp_condvar_new")?;
+                let cv = self.g.call(rt.func, rt.ty, &[], "condvar");
+                self.cur = self.g.check_alloc(cv, self.cur_fn)?;
+                Ok(Some(cv))
+            }
+            "notify_one" | "notify_all" => {
+                let cell = self.value_of(&args[0])?;
+                let cv = self.g.builder.build_load(ptr, cell, "condvar");
+                let symbol = if op == "notify_one" {
+                    "kelp_condvar_notify_one"
+                } else {
+                    "kelp_condvar_notify_all"
+                };
+                let rt = self.g.rt(symbol)?;
+                self.g.builder.build_call(rt.func, rt.ty, &[cv], "");
+                Ok(None)
+            }
+            other => Err(no_value(&format!("the condvar operation '{other}'"))),
+        }
+    }
+
+    /// `Mutex#wait_while` / `wait_while_timeout` (`std/sync`). The C twin is
+    /// `codegen_c.rs::mutex_wait_value`: the runtime calls the predicate body
+    /// while the lock is held, releases it around each sleep, then calls the
+    /// block body; the timed form returns `Option`.
+    fn emit_mutex_wait(
+        &mut self,
+        op: &str,
+        args: &[Expr],
+        ret: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
+        let timed = op == "wait_while_timeout";
+        let ptr = self.g.pty();
+        let block = args
+            .last()
+            .ok_or_else(|| no_value("the block of a wait"))?;
+        let (_, block_ret) = crate::types::closure_parts(&block.ty)
+            .ok_or_else(|| no_value("a wait block signature"))?;
+        let pred = &args[2];
+        let cell = self.value_of(&args[0])?;
+        let m = self.g.builder.build_load(ptr, cell, "mutex");
+        let cv_cell = self.value_of(&args[1])?;
+        let cv = self.g.builder.build_load(ptr, cv_cell, "condvar");
+        let pred_v = self.value_of(pred)?;
+        let pcode = self.g.builder.build_extract_value(pred_v, 0, "fn");
+        let penv = self.g.builder.build_extract_value(pred_v, 1, "env");
+        let block_v = self.value_of(block)?;
+        let code = self.g.builder.build_extract_value(block_v, 0, "fn");
+        let env = self.g.builder.build_extract_value(block_v, 1, "env");
+        let pred_body = self.g.closure_symbol(&thread_body_symbol(
+            &crate::types::closure_shape(&pred.ty),
+        ))?;
+        let body = self.g.closure_symbol(&thread_body_symbol(
+            &crate::types::closure_shape(&block.ty),
+        ))?;
+        let yields = *block_ret != Ty::Unit;
+        let out_ty = if yields { self.lty(block_ret)? } else { self.g.ctx.i8() };
+        let out = self.temp_alloca(out_ty, "wait.out");
+        let out_ptr = if yields { out } else { self.g.ctx.const_null(ptr) };
+        let millis = if timed {
+            self.value_of(&args[3])?
+        } else {
+            self.g.ctx.const_int(self.g.ctx.i64(), 0, false)
+        };
+        // A `Copy` element's predicate parameter is the value itself and an
+        // owned element's is a shared borrow, so the runtime is told which
+        // address to hand the generated body (`implicit_borrow_wrap`).
+        let pred_by_ref = crate::types::closure_parts(&pred.ty)
+            .map(|(params, _)| matches!(params.first(), Some(Ty::Ref { .. })))
+            .unwrap_or(false);
+        let pbr = self
+            .g
+            .ctx
+            .const_int(self.g.ctx.i32(), if pred_by_ref { 1 } else { 0 }, false);
+        let symbol = if timed {
+            "kelp_mutex_wait_while_timeout"
+        } else {
+            "kelp_mutex_wait_while"
+        };
+        let rt = self.g.rt(symbol)?;
+        let mut call_args: Vec<Value<'a>> = vec![
+            m,
+            cv,
+            pred_body.as_value(),
+            pcode,
+            penv,
+            pbr,
+        ];
+        if timed {
+            call_args.push(millis);
+        }
+        call_args.push(body.as_value());
+        call_args.push(code);
+        call_args.push(env);
+        call_args.push(out_ptr);
+        if !timed {
+            self.g.builder.build_call(rt.func, rt.ty, &call_args, "");
+            if yields {
+                return Ok(Some(self.g.builder.build_load(out_ty, out, "wait.value")));
+            }
+            return Ok(None);
+        }
+        let ran = self.g.call(rt.func, rt.ty, &call_args, "wait");
+        let zero = self.g.ctx.const_int(self.g.ctx.i32(), 0, false);
+        let ok = self.g.builder.build_icmp(IntCmp::Ne, ran, zero, "wait.ran");
+        let payload = if yields {
+            Some(self.g.builder.build_load(out_ty, out, "wait.value"))
+        } else {
+            None
+        };
+        Ok(Some(self.emit_option_from_run(ret, ok, payload)?))
     }
 
     /// `thread.join(handle)` (MK9-S3-M1 stage C1): wait for the worker, then
@@ -7541,7 +7832,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // A `Mutex<T>` operation (B-5, `std/sync`): three runtime calls, the
         // same three `codegen_c.rs::mutex_call` writes in C.
         if let Some(op) = callee.strip_prefix("Mutex#") {
+            if op == "wait_while" || op == "wait_while_timeout" {
+                return self.emit_mutex_wait(op, args, ret);
+            }
             return self.emit_mutex_call(op, args, ret);
+        }
+        // An `RwLock<T>` or `Condvar` operation (`std/sync`).
+        if let Some(op) = callee.strip_prefix("RwLock#") {
+            return self.emit_rwlock_call(op, args, ret);
+        }
+        if let Some(op) = callee.strip_prefix("Condvar#") {
+            return self.emit_condvar_call(op, args, ret);
         }
 
         if let Some(info) = self.g.funcs.get(callee).cloned() {
@@ -8242,6 +8543,28 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                 // calls both through one pointer shape.
                 if callee == "Mutex#lock" {
                     if let Some(block) = args.get(1) {
+                        out.spawns.insert(crate::types::closure_shape(&block.ty));
+                    }
+                }
+                // `RwLock#read`/`write`/`try_read`/`try_write`: the block is a
+                // scoped closure of the same shape a mutex lock's is.
+                if callee == "RwLock#read"
+                    || callee == "RwLock#write"
+                    || callee == "RwLock#try_read"
+                    || callee == "RwLock#try_write"
+                {
+                    if let Some(block) = args.last() {
+                        out.spawns.insert(crate::types::closure_shape(&block.ty));
+                    }
+                }
+                // `Mutex#wait_while`/`wait_while_timeout`: the predicate is a
+                // plain closure and the block a scoped one, and both are called
+                // through the generated body of their own signature.
+                if callee == "Mutex#wait_while" || callee == "Mutex#wait_while_timeout" {
+                    if let Some(pred) = args.get(2) {
+                        out.spawns.insert(crate::types::closure_shape(&pred.ty));
+                    }
+                    if let Some(block) = args.last() {
                         out.spawns.insert(crate::types::closure_shape(&block.ty));
                     }
                 }
@@ -14731,6 +15054,34 @@ fn declare_runtime<'a>(
     decl(&mut out, "kelp_mutex_run", void, &[ptr, ptr, ptr, ptr, ptr], false, false);
     decl(&mut out, "kelp_mutex_into", void, &[ptr, ptr], false, false);
     decl(&mut out, "kelp_mutex_drop", void, &[ptr], false, false);
+    // The reader/writer lock and condition variable runtime (`std/sync`).
+    decl(&mut out, "kelp_rwlock_new", ptr, &[ptr, i64, ptr], true, false);
+    decl(&mut out, "kelp_rwlock_read", void, &[ptr, ptr, ptr, ptr, ptr], false, false);
+    decl(&mut out, "kelp_rwlock_write", void, &[ptr, ptr, ptr, ptr, ptr], false, false);
+    decl(&mut out, "kelp_rwlock_try_read", ctx.i32(), &[ptr, ptr, ptr, ptr, ptr], true, false);
+    decl(&mut out, "kelp_rwlock_try_write", ctx.i32(), &[ptr, ptr, ptr, ptr, ptr], true, false);
+    decl(&mut out, "kelp_rwlock_into", void, &[ptr, ptr], false, false);
+    decl(&mut out, "kelp_rwlock_drop", void, &[ptr], false, false);
+    decl(&mut out, "kelp_condvar_new", ptr, &[], true, false);
+    decl(&mut out, "kelp_condvar_notify_one", void, &[ptr], false, false);
+    decl(&mut out, "kelp_condvar_notify_all", void, &[ptr], false, false);
+    decl(&mut out, "kelp_condvar_drop", void, &[ptr], false, false);
+    decl(
+        &mut out,
+        "kelp_mutex_wait_while",
+        void,
+        &[ptr, ptr, ptr, ptr, ptr, ctx.i32(), ptr, ptr, ptr, ptr],
+        false,
+        false,
+    );
+    decl(
+        &mut out,
+        "kelp_mutex_wait_while_timeout",
+        ctx.i32(),
+        &[ptr, ptr, ptr, ptr, ptr, ctx.i32(), i64, ptr, ptr, ptr, ptr],
+        true,
+        false,
+    );
     // `kelp_Bytes`
     decl(&mut out, "kelp_Bytes__empty", bytes, &[], true, true);
     decl(&mut out, "kelp_Bytes__from_str", bytes, &[ptr], true, true);
@@ -14923,6 +15274,9 @@ fn llvm_type<'a>(
         // allocates (B-5), so the element type does not reach the IR either;
         // only the call sites that copy the value in or out name it.
         Ty::Mutex(_) => ctx.opaque_ptr(),
+        // `RwLock<T>` and `Condvar` are the same one pointer to a runtime
+        // record (`std/sync`), so the element type never reaches the IR.
+        Ty::RwLock(_) | Ty::Condvar => ctx.opaque_ptr(),
         // An opaque handle (gap 1) is a plain pointer, so the two backends
         // agree without a layout table: the C backend's `void*` typedef and
         // this `ptr` are the same value at the ABI.
@@ -15307,8 +15661,9 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // element, and the pointer is what both backends lay out.
         Ty::Thread(_) => Ok(()),
         // A `Mutex<T>` field is the same one pointer to a runtime record
-        // (B-5), accepted as a field a `lock` borrows.
-        Ty::Mutex(_) => Ok(()),
+        // (B-5), accepted as a field a `lock` borrows. An `RwLock<T>` and a
+        // `Condvar` field are the same pointer (`std/sync`).
+        Ty::Mutex(_) | Ty::RwLock(_) | Ty::Condvar => Ok(()),
         // An owned trait object field (A-12 slice 7) is the fat pair struct the
         // container pass emits before every `datac`, exactly as a `Box` field
         // is. The *borrowed* spelling never reaches here: the frontend refuses

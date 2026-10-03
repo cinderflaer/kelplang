@@ -1,0 +1,22 @@
+// `try_read`/`try_write` run their block only when the lock is free and hand
+// back `Option`: a nested `try_write` under a read and a nested `try_read`
+// under a write both see the lock busy, so both are `None`.
+impl "std/option"
+
+fun main() {
+    val rw: RwLock<i64> = RwLock.new(1)
+    val got = rw.try_read { v -> *v }
+    print(option.unwrap(o = got))
+    val busy = rw.read { v ->
+        val w = rw.try_write { x -> *x = 9 }
+        print(option.is_none(o = w))
+        *v
+    }
+    print(busy)
+    rw.write { v ->
+        val r = rw.try_read { x -> *x }
+        print(option.is_none(o = r))
+        *v = 5
+    }
+    print(rw.read { v -> *v })
+}

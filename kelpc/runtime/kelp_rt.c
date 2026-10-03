@@ -1128,4 +1128,290 @@ static void kelp_mutex_drop(kelp_Mutex** slot) {
     *slot = NULL;
 }
 
+// ---- kelp_RwLock: the builtin reader/writer lock (std/sync) ------------------
+// A writer-preferring reader/writer lock: many readers at once, one writer
+// alone, and a waiting writer blocks new readers so a stream of readers cannot
+// starve it. A panic inside `write` poisons it; a reader leaves the value
+// untouched, so a panic inside `read` does not. The body runs with the state
+// lock released, so the cleanup handler is what re-acquires it on the panic
+// path.
+typedef struct {
+    pthread_mutex_t lock;
+    pthread_cond_t readers_ok;
+    pthread_cond_t writers_ok;
+    int readers;
+    int writer;
+    int writers_waiting;
+    int poisoned;
+    size_t size;
+    void* value;
+    void (*drop)(void*);
+} kelp_RwLock;
+
+static kelp_RwLock* kelp_rwlock_new(const void* value, size_t size, void (*drop)(void*)) {
+    kelp_RwLock* rw = (kelp_RwLock*)malloc(sizeof(kelp_RwLock));
+    if (rw == NULL) {
+        kelp_panic("RwLock.new: out of memory");
+    }
+    if (pthread_mutex_init(&rw->lock, NULL) != 0
+        || pthread_cond_init(&rw->readers_ok, NULL) != 0
+        || pthread_cond_init(&rw->writers_ok, NULL) != 0) {
+        kelp_panic("RwLock.new: pthread init failed");
+    }
+    rw->readers = 0;
+    rw->writer = 0;
+    rw->writers_waiting = 0;
+    rw->poisoned = 0;
+    rw->size = size;
+    rw->drop = drop;
+    rw->value = malloc(size == 0 ? 1 : size);
+    if (rw->value == NULL) {
+        kelp_panic("RwLock.new: out of memory");
+    }
+    memcpy(rw->value, value, size);
+    return rw;
+}
+
+/* The read side's release, run on both exits: the normal one and the
+   `pthread_exit` a worker's panic takes. A reader never poisons. */
+static void kelp_rwlock_read_end(void* raw) {
+    kelp_RwLock* rw = (kelp_RwLock*)raw;
+    pthread_mutex_lock(&rw->lock);
+    rw->readers--;
+    if (rw->readers == 0) {
+        pthread_cond_signal(&rw->writers_ok);
+    }
+    pthread_mutex_unlock(&rw->lock);
+}
+
+/* The writer's normal release: the writer is done and both queues may run. */
+static void kelp_rwlock_write_end(void* raw) {
+    kelp_RwLock* rw = (kelp_RwLock*)raw;
+    pthread_mutex_lock(&rw->lock);
+    rw->writer = 0;
+    pthread_cond_signal(&rw->writers_ok);
+    pthread_cond_broadcast(&rw->readers_ok);
+    pthread_mutex_unlock(&rw->lock);
+}
+
+/* The writer's panic release: release the lock and mark it poisoned, so a
+   later read/write panics rather than trusting a half-written value. */
+static void kelp_rwlock_write_poison(void* raw) {
+    kelp_RwLock* rw = (kelp_RwLock*)raw;
+    pthread_mutex_lock(&rw->lock);
+    rw->poisoned = 1;
+    rw->writer = 0;
+    pthread_cond_signal(&rw->writers_ok);
+    pthread_cond_broadcast(&rw->readers_ok);
+    pthread_mutex_unlock(&rw->lock);
+}
+
+static void kelp_rwlock_read(kelp_RwLock* rw, void (*body)(void*, void*, void*, void*), void* code, void* env, void* out) {
+    pthread_mutex_lock(&rw->lock);
+    if (rw->poisoned) {
+        pthread_mutex_unlock(&rw->lock);
+        kelp_panic("rwlock poisoned");
+    }
+    while (rw->writer || rw->writers_waiting > 0) {
+        pthread_cond_wait(&rw->readers_ok, &rw->lock);
+    }
+    rw->readers++;
+    pthread_mutex_unlock(&rw->lock);
+    void* value_slot = rw->value;
+    pthread_cleanup_push(kelp_rwlock_read_end, rw);
+    body(code, env, &value_slot, out);
+    pthread_cleanup_pop(1);
+}
+
+static void kelp_rwlock_write(kelp_RwLock* rw, void (*body)(void*, void*, void*, void*), void* code, void* env, void* out) {
+    pthread_mutex_lock(&rw->lock);
+    if (rw->poisoned) {
+        pthread_mutex_unlock(&rw->lock);
+        kelp_panic("rwlock poisoned");
+    }
+    rw->writers_waiting++;
+    while (rw->writer || rw->readers > 0) {
+        pthread_cond_wait(&rw->writers_ok, &rw->lock);
+    }
+    rw->writers_waiting--;
+    rw->writer = 1;
+    pthread_mutex_unlock(&rw->lock);
+    void* value_slot = rw->value;
+    pthread_cleanup_push(kelp_rwlock_write_poison, rw);
+    body(code, env, &value_slot, out);
+    pthread_cleanup_pop(0);
+    kelp_rwlock_write_end(rw);
+}
+
+static int kelp_rwlock_try_read(kelp_RwLock* rw, void (*body)(void*, void*, void*, void*), void* code, void* env, void* out) {
+    pthread_mutex_lock(&rw->lock);
+    if (rw->poisoned) {
+        pthread_mutex_unlock(&rw->lock);
+        kelp_panic("rwlock poisoned");
+    }
+    if (rw->writer || rw->writers_waiting > 0) {
+        pthread_mutex_unlock(&rw->lock);
+        return 0;
+    }
+    rw->readers++;
+    pthread_mutex_unlock(&rw->lock);
+    void* value_slot = rw->value;
+    pthread_cleanup_push(kelp_rwlock_read_end, rw);
+    body(code, env, &value_slot, out);
+    pthread_cleanup_pop(1);
+    return 1;
+}
+
+static int kelp_rwlock_try_write(kelp_RwLock* rw, void (*body)(void*, void*, void*, void*), void* code, void* env, void* out) {
+    pthread_mutex_lock(&rw->lock);
+    if (rw->poisoned) {
+        pthread_mutex_unlock(&rw->lock);
+        kelp_panic("rwlock poisoned");
+    }
+    if (rw->writer || rw->readers > 0) {
+        pthread_mutex_unlock(&rw->lock);
+        return 0;
+    }
+    rw->writer = 1;
+    pthread_mutex_unlock(&rw->lock);
+    void* value_slot = rw->value;
+    pthread_cleanup_push(kelp_rwlock_write_poison, rw);
+    body(code, env, &value_slot, out);
+    pthread_cleanup_pop(0);
+    kelp_rwlock_write_end(rw);
+    return 1;
+}
+
+static void kelp_rwlock_into(kelp_RwLock* rw, void* out) {
+    memcpy(out, rw->value, rw->size);
+    pthread_mutex_destroy(&rw->lock);
+    pthread_cond_destroy(&rw->readers_ok);
+    pthread_cond_destroy(&rw->writers_ok);
+    free(rw->value);
+    free(rw);
+}
+
+static void kelp_rwlock_drop(kelp_RwLock** slot) {
+    kelp_RwLock* rw = *slot;
+    if (rw == NULL) {
+        return;
+    }
+    if (rw->drop != NULL) {
+        rw->drop(rw->value);
+    }
+    pthread_mutex_destroy(&rw->lock);
+    pthread_cond_destroy(&rw->readers_ok);
+    pthread_cond_destroy(&rw->writers_ok);
+    free(rw->value);
+    free(rw);
+    *slot = NULL;
+}
+
+// ---- kelp_Condvar: the builtin condition variable (std/sync) --------------
+// One `pthread_cond_t`; the wait is `Mutex.wait_while`, because a wait has to
+// release the mutex's lock atomically and a scoped guard cannot express that.
+typedef struct {
+    pthread_cond_t cond;
+} kelp_Condvar;
+
+static kelp_Condvar* kelp_condvar_new(void) {
+    kelp_Condvar* cv = (kelp_Condvar*)malloc(sizeof(kelp_Condvar));
+    if (cv == NULL) {
+        kelp_panic("Condvar.new: out of memory");
+    }
+    if (pthread_cond_init(&cv->cond, NULL) != 0) {
+        kelp_panic("Condvar.new: pthread_cond_init failed");
+    }
+    return cv;
+}
+
+static void kelp_condvar_notify_one(kelp_Condvar* cv) {
+    pthread_cond_signal(&cv->cond);
+}
+
+static void kelp_condvar_notify_all(kelp_Condvar* cv) {
+    pthread_cond_broadcast(&cv->cond);
+}
+
+static void kelp_condvar_drop(kelp_Condvar** slot) {
+    kelp_Condvar* cv = *slot;
+    if (cv == NULL) {
+        return;
+    }
+    pthread_cond_destroy(&cv->cond);
+    free(cv);
+    *slot = NULL;
+}
+
+/* `m.wait_while(cv, pred)`: hold the mutex, re-test the predicate after every
+   wakeup, then run the block with the lock still held. `pthread_cleanup_push`
+   is what makes a panic inside the predicate or the block release and poison
+   the mutex rather than leave it locked, exactly as `kelp_mutex_run` does. */
+static void kelp_mutex_wait_while(kelp_Mutex* m, kelp_Condvar* cv, void (*pred)(void*, void*, void*, void*), void* pcode, void* penv, int pred_by_ref, void (*body)(void*, void*, void*, void*), void* code, void* env, void* out) {
+    pthread_mutex_lock(&m->lock);
+    pthread_cleanup_push(kelp_mutex_guard_release, m);
+    if (m->poisoned) {
+        kelp_panic("mutex poisoned");
+    }
+    void* value_slot = m->value;
+    void* pred_arg = pred_by_ref ? (void*)&value_slot : value_slot;
+    for (;;) {
+        unsigned char keep = 0;
+        pred(pcode, penv, pred_arg, &keep);
+        if (!keep) {
+            break;
+        }
+        pthread_cond_wait(&cv->cond, &m->lock);
+    }
+    body(code, env, &value_slot, out);
+    pthread_cleanup_pop(0);
+    pthread_mutex_unlock(&m->lock);
+}
+
+/* The timed twin: `pthread_cond_timedwait` against one absolute deadline, and
+   a final predicate test so a notify that raced the deadline still counts as
+   a wakeup. Returns 1 when the block ran, 0 when the deadline passed with the
+   predicate still true. */
+static int kelp_mutex_wait_while_timeout(kelp_Mutex* m, kelp_Condvar* cv, void (*pred)(void*, void*, void*, void*), void* pcode, void* penv, int pred_by_ref, long millis, void (*body)(void*, void*, void*, void*), void* code, void* env, void* out) {
+    pthread_mutex_lock(&m->lock);
+    int timed_out = 0;
+    pthread_cleanup_push(kelp_mutex_guard_release, m);
+    if (m->poisoned) {
+        kelp_panic("mutex poisoned");
+    }
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    if (millis < 0) {
+        millis = 0;
+    }
+    deadline.tv_sec += millis / 1000;
+    deadline.tv_nsec += (millis % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    void* value_slot = m->value;
+    void* pred_arg = pred_by_ref ? (void*)&value_slot : value_slot;
+    for (;;) {
+        unsigned char keep = 0;
+        pred(pcode, penv, pred_arg, &keep);
+        if (!keep) {
+            break;
+        }
+        if (pthread_cond_timedwait(&cv->cond, &m->lock, &deadline) == ETIMEDOUT) {
+            pred(pcode, penv, pred_arg, &keep);
+            if (keep) {
+                timed_out = 1;
+            }
+            break;
+        }
+    }
+    if (!timed_out) {
+        body(code, env, &value_slot, out);
+    }
+    pthread_cleanup_pop(0);
+    pthread_mutex_unlock(&m->lock);
+    return timed_out ? 0 : 1;
+}
+
 // ---- end Kelp runtime -------------------------------------------------------

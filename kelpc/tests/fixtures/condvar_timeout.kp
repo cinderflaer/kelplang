@@ -1,0 +1,16 @@
+// `wait_while_timeout` waits until the predicate goes false or the deadline
+// elapses. Nothing ever notifies, so the wait returns `None` and the block
+// does not run; a second call with the predicate already false returns `Some`.
+impl "std/option"
+
+fun is_zero(v: &i64).R: bool = v == 0
+
+fun main() {
+    val m: Mutex<i64> = Mutex.new(0)
+    val cv: Condvar = Condvar.new()
+    val timed = m.wait_while_timeout(&cv, is_zero, 30) { v -> *v }
+    print(option.is_none(o = timed))
+    m.lock { v -> *v = 7 }
+    val got = m.wait_while_timeout(&cv, is_zero, 30) { v -> *v }
+    print(option.unwrap(o = got))
+}

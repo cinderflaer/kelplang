@@ -1,0 +1,10 @@
+// The read block's `v` is a shared borrow valid only inside the block, so
+// trying to return it is a type mismatch: the lock's own type keeps it from
+// escaping.
+fun bad(rw: &RwLock<i64>) {
+    rw.read { v ->
+        return v
+    }
+}
+
+fun main() {}

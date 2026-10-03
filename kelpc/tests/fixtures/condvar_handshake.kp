@@ -1,0 +1,46 @@
+// A condition-variable handshake: a worker waits until a shared flag goes
+// false, the predicate records that it reached the wait in the guarded value's
+// own atomic, and the main thread only flips the flag once it has seen that
+// record. The predicate is re-tested by the library, so a spurious wakeup is
+// invisible to the block. The mutex and the condition variable travel to the
+// worker as one shared borrow of a `pd`, the shape the crossing rule allows.
+impl "std/thread"
+impl "std/result"
+impl "std/atomic"
+
+pd val state: State = State(
+    m = Mutex.new(Gate(waiting = AtomicBool.new(false), value = 0)),
+    cv = Condvar.new(),
+)
+
+datac Gate(val waiting: AtomicBool, var value: i64)
+datac State(val m: Mutex<Gate>, val cv: Condvar)
+
+fun is_zero(v: &Gate).R: bool {
+    v.waiting.store(value = true, order = atomic.Ordering.SeqCst)
+    v.value == 0
+}
+
+fun waiter(s: &State).R: i64 {
+    s.m.wait_while(&s.cv, is_zero) { v ->
+        v.value
+    }
+}
+
+fun main() {
+    val t = thread.spawn(waiter, &state)
+    val ready = AtomicBool.new(false)
+    while !ready.load(order = atomic.Ordering.SeqCst) {
+        state.m.lock { v ->
+            if v.waiting.load(order = atomic.Ordering.SeqCst) {
+                ready.store(value = true, order = atomic.Ordering.SeqCst)
+            }
+        }
+    }
+    state.m.lock { v -> v.value = 42 }
+    state.cv.notify_all()
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

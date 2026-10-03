@@ -1,0 +1,22 @@
+// A panic inside `read` releases the read and does NOT poison: a reader never
+// writes the value, so the main thread's next `read` succeeds and sees it
+// unchanged.
+impl "std/thread"
+impl "std/result"
+
+pd val rw: RwLock<i64> = RwLock.new(7)
+
+fun boom(r: &RwLock<i64>).R: i64 {
+    r.read { v ->
+        panic("reader exploded")
+    }
+}
+
+fun main() {
+    val t = thread.spawn(boom, &rw)
+    when thread.join(t) {
+        Ok(_) -> print("joined")
+        Err(_) -> print("worker failed")
+    }
+    print(rw.read { v -> *v })
+}

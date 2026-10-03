@@ -1,0 +1,17 @@
+// A `&RwLock<T>` of a `pd` global crosses to a worker, the `Sync` half of the
+// crossing rule. A plain `var` datac stays refused, exactly as for a mutex.
+impl "std/thread"
+impl "std/result"
+
+pd val counter: RwLock<i64> = RwLock.new(0)
+
+fun bump(c: &RwLock<i64>).R: i64 {
+    c.write { v -> *v = *v + 1 }
+    0
+}
+
+fun main() {
+    val t = thread.spawn(bump, &counter)
+    val r = thread.join(t)
+    print(counter.read { v -> *v })
+}

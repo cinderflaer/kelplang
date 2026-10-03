@@ -2003,3 +2003,32 @@ value is "reasonable" for the array it sizes (a `Buf<1_000_000>` is a megabyte o
 storage, and the target's own layout is the only limit), and it does not check an uninstantiated
 generic body whose const length would be zero until the instantiation supplies a value (zero stays
 refused where it is written).
+
+## st1: the `RwLock`, `Condvar` and (later) channel runtime records
+
+**New ways to reach undefined behaviour.** None from the language, and three
+records a hosted program can now share that it could not before. `RwLock<T>`
+reaches its `T` only through the scoped `read`/`write` blocks, so the borrow
+that names it is the same non-escaping one `Mutex<T>` has; the runtime record is
+a state mutex plus two condition variables and the reader/writer counters, and
+every wait re-tests under the mutex, so a spurious wakeup cannot expose a
+partially written value. `Condvar` is one `pthread_cond_t`, and a wait is only
+reachable as `Mutex.wait_while`, which is the one shape that releases the
+mutex's own lock atomically around the sleep; a bare `wait` that could be called
+without the lock does not exist. The predicate a wait takes is a checked Kelp
+function value (a `fun` literal or a declared `fun`), so it cannot be a raw
+pointer, and the element type is the same `Send`-shaped set `Mutex<T>` uses.
+
+**What the compiler does and does not check.** The `try_*` forms and the timed
+wait build an `Option` around the block's value; the block is not run when the
+lock was busy, and the runtime is what decides that, so a program cannot observe
+a value the block never produced. The poison flag is set by the runtime's
+`pthread_cleanup` handler on a write's panic path and by nothing else; a read's
+panic releases the read and leaves the flag alone. As with `Mutex<T>`, a panic
+still abandons the panicking frame's owned values (MK9 section 2); what the
+cleanup handler protects is the lock, not the frame. The reader/writer counters
+and the poison flag are `int`s touched only under the state mutex, so they are
+not a data race; the `T` slot is touched only under the same discipline. A
+program that shares a `&RwLock<T>` without a `pd`-lifetime place is refused by
+the existing crossing rule, and a freestanding manifest refuses `RwLock` and
+`Condvar` by name.
