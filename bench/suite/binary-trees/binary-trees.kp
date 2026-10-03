@@ -1,0 +1,57 @@
+// binary-trees: the Benchmarks Game allocation benchmark (min depth 4, stretch tree, long-lived tree).
+// Prints the sum of every tree check. Size = max depth (default 16).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+datac Node(val left: Box<Node>, val right: Box<Node>)
+
+fun make(d: i32).R: Node {
+    if d == 0 {
+        return Node(left = Box.empty(), right = Box.empty())
+    }
+    return Node(left = Box.of(make(d - 1)), right = Box.of(make(d - 1)))
+}
+
+fun check(n: &Node).R: i64 {
+    if n.left.is_empty() {
+        return 1
+    }
+    return 1 + check(n.left.get()) + check(n.right.get())
+}
+
+fun main() {
+    val max_depth = size_arg(16).to_i32()
+    val min_depth: i32 = 4
+    var total: i64 = 0
+    val stretch = make(max_depth + 1)
+    total = total + check(stretch)
+    val long_lived = make(max_depth)
+    var d = min_depth
+    while d <= max_depth {
+        val iters = 1 << (max_depth - d + min_depth)
+        var sum: i64 = 0
+        var i: i32 = 0
+        while i < iters {
+            val t = make(d)
+            sum = sum + check(t)
+            i = i + 1
+        }
+        total = total + sum
+        d = d + 2
+    }
+    total = total + check(long_lived)
+    print("binary-trees $max_depth $total")
+}
