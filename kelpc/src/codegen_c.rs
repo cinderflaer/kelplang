@@ -6413,6 +6413,9 @@ impl<'a> Gen<'a> {
             // Same, for a closure: `infer.rs` refuses one in `print` too.
             Ty::Closure { .. } => unreachable!("a closure cannot be printed"),
             Ty::ScopedFn { .. } => unreachable!("a scoped function value cannot be printed"),
+            // A const argument is substituted before codegen, so it never
+            // reaches a `print`.
+            Ty::ConstInt { .. } => unreachable!("a const argument cannot be printed"),
             // A borrowed trait object is a borrow and has no text form, so
             // `infer.rs` refuses one in `print` before codegen sees it.
             Ty::Dyn { .. } | Ty::BoxDyn { .. } => {

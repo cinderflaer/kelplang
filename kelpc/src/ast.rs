@@ -288,8 +288,14 @@ pub struct DatacDecl {
     /// Empty for an ordinary `datac`. A parameter is in scope inside every
     /// field type of this declaration and nowhere else; the declaration is a
     /// *template*, so `infer.rs` does not resolve its fields until an
-    /// instantiation supplies concrete arguments for them.
+    /// instantiation supplies concrete arguments for them. A `const`
+    /// parameter is listed here too, in declaration order, and its value is
+    /// carried by `const_params` (A-20).
     pub type_params: Vec<String>,
+    /// `datac Buf<const N: usize>` — the `const` parameters of the list above,
+    /// in declaration order (A-20). Every name here also appears in
+    /// `type_params`; this is what says which of them is a value.
+    pub const_params: Vec<ConstParamDecl>,
     pub fields: Vec<FieldDecl>,
     /// The `repr(...)` clause, or `None` for the default C layout.
     pub repr: Option<Repr>,
@@ -318,6 +324,9 @@ pub struct EnumDecl {
     /// `enum Option<T>` — the declared type parameters, in order (A-2). See
     /// `DatacDecl::type_params`.
     pub type_params: Vec<String>,
+    /// `enum Buf<const N: usize>` — the `const` parameters of the list above
+    /// (A-20). See `DatacDecl::const_params`.
+    pub const_params: Vec<ConstParamDecl>,
     pub variants: Vec<VariantDecl>,
     /// The `repr(...)` clause, or `None` for the default C layout and an `i32`
     /// tag.
@@ -365,6 +374,9 @@ pub struct FunctionDecl {
     /// an ordinary function, and empty for a *receiver method*, whose type
     /// parameters come from the receiver instead (`Receiver::type_args`).
     pub type_params: Vec<String>,
+    /// `fun sum<const N: usize>(...)` — the `const` parameters of the list
+    /// above (A-20). See `DatacDecl::const_params`.
+    pub const_params: Vec<ConstParamDecl>,
     /// `fun f<T: A + B>(...)`: the traits each parameter of `type_params`
     /// must implement, one list per parameter and in the same order (A-12
     /// slice 2). A parameter with no bound has an empty list, so the two
@@ -430,7 +442,24 @@ pub struct Receiver {
     /// method's type parameters (A-2). They must be exactly the generic type's
     /// own parameter list, in order, so the body can name them.
     pub type_args: Vec<String>,
+    /// The `const` parameters of the receiver's own parameter list (A-20),
+    /// when one of them is declared with `const` (`fun Buf<const N>.push()`).
+    /// Empty for a receiver whose list is all type parameters.
+    pub const_params: Vec<ConstParamDecl>,
     pub mutable: bool,
+    pub span: Span,
+}
+
+/// One `const N: usize` parameter (A-20). It is a `const` type parameter:
+/// a parameter of a `datac`/`enum`/`fun` whose argument is a compile-time
+/// value rather than a type, and which monomorphizes into one copy per
+/// distinct value exactly as a type parameter does.
+#[derive(Debug, Clone)]
+pub struct ConstParamDecl {
+    pub name: String,
+    /// The declared integer type, as written (`usize`, `u8`..`u64`, `i32`,
+    /// `i64`, `bool`).
+    pub ty: String,
     pub span: Span,
 }
 
@@ -568,6 +597,19 @@ pub struct TypeExpr {
     /// The `.R: T` of a function type. `None` means `Unit`, exactly as it
     /// does on a declaration.
     pub fn_ret: Option<Box<TypeExpr>>,
+    /// A **const argument** (A-20): the expression `N` of `Buf<16>` or
+    /// `Buf<SIZE * 2>`. `Some` exactly when this "type argument" is really a
+    /// compile-time value, which is decided where the parameter it binds is
+    /// declared: a type parameter takes a type and a `const` parameter takes
+    /// this value. A bare name is also kept here (`Buf<SIZE>`) so a `const`
+    /// parameter can fold it, because the two are written identically.
+    pub const_expr: Option<Box<Expr>>,
+    /// `impl Name` written as a parameter's type (A-20). `Some` is the trait,
+    /// as written. The parser records it and the desugar in `parser.rs`
+    /// rewrites it into a fresh bounded type parameter, so no pass after the
+    /// parser sees this shape; `infer.rs` refuses any that is left (a `let`,
+    /// a field, a return).
+    pub impl_trait: Option<String>,
     pub span: Span,
 }
 
@@ -588,6 +630,30 @@ impl TypeExpr {
             scoped: false,
             fn_params: None,
             fn_ret: None,
+            const_expr: None,
+            impl_trait: None,
+            span,
+        }
+    }
+
+    /// A const argument written like a type argument (`Buf<16>`): the folded
+    /// expression is carried in `const_expr`, and the name is left empty.
+    pub fn const_arg(expr: Expr, span: Span) -> TypeExpr {
+        TypeExpr {
+            name: String::new(),
+            tuple: None,
+            args: Vec::new(),
+            array_elem: None,
+            assoc: None,
+            array_len: None,
+            amp: false,
+            amp_mut: false,
+            dyn_trait: None,
+            scoped: false,
+            fn_params: None,
+            fn_ret: None,
+            const_expr: Some(Box::new(expr)),
+            impl_trait: None,
             span,
         }
     }
@@ -605,6 +671,12 @@ impl TypeExpr {
 
     /// The type as it was written, for diagnostics and the pretty-printer.
     pub fn display(&self) -> String {
+        if let Some(trait_name) = &self.impl_trait {
+            return format!("impl {trait_name}");
+        }
+        if let Some(e) = &self.const_expr {
+            return e.display_source();
+        }
         if let Some(name) = &self.dyn_trait {
             // The `amp` flag is what tells the borrowed spelling from a bare
             // `dyn Name`, which is legal only as the argument of a `Box`

@@ -49,6 +49,10 @@ struct GenericTemplate {
     /// would have had.
     name: String,
     params: Vec<String>,
+    /// The declared type of each `const` parameter of `params`, in declaration
+    /// order (A-20). A name here is also in `params`; this is what says which
+    /// entries are values and how wide their values are.
+    const_params: Vec<(String, Ty)>,
     kind: GenericKind,
     /// The `repr(...)` clause of the declaration, so an instantiation keeps
     /// the layout its template asked for (kernel stage 2).
@@ -258,6 +262,9 @@ struct FuncTemplate {
     /// The method's type parameters, in order, which for a receiver method are
     /// the receiver's own arguments.
     params: Vec<String>,
+    /// The declared type of each `const` parameter of `params` (A-20). See
+    /// `GenericTemplate::const_params`.
+    const_params: Vec<(String, Ty)>,
     /// `fun f<T: A + B>`: the traits each type parameter must implement, one
     /// list per entry of `params` and in the same order (A-12 slice 2). A
     /// parameter with no bound has an empty list, and a receiver method's
@@ -340,6 +347,149 @@ fn decl_type_params(f: &ast::FunctionDecl) -> &[String] {
         Some(r) => &r.type_args,
         None => &f.type_params,
     }
+}
+
+/// The declared type of each `const` parameter of a declaration, validated
+/// (A-20). A const parameter's type is one of the integer types a value can be
+/// judged against at compile time, or `bool`; anything else is refused where
+/// it is written.
+fn const_param_tys(
+    decls: &[ast::ConstParamDecl],
+    module: &str,
+) -> std::result::Result<Vec<(String, Ty)>, Diagnostic> {
+    let mut out = Vec::with_capacity(decls.len());
+    for d in decls {
+        let ty = match d.ty.as_str() {
+            "usize" => Ty::Usize,
+            "u8" => Ty::U8,
+            "u16" => Ty::U16,
+            "u32" => Ty::U32,
+            "u64" => Ty::U64,
+            "i32" => Ty::I32,
+            "i64" => Ty::I64,
+            "bool" => Ty::Bool,
+            other => {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'const {}' has type '{other}': a const parameter's type is one of 'usize', 'u8', 'u16', 'u32', 'u64', 'i32', 'i64' or 'bool'",
+                        d.name
+                    ),
+                    d.span,
+                    module.to_string(),
+                ))
+            }
+        };
+        out.push((d.name.clone(), ty));
+    }
+    Ok(out)
+}
+
+/// Checks each const argument against its parameter's declared type and
+/// re-types it, and refuses a const argument in a type parameter's position
+/// (A-20). `args` is positional against `params`, so the two must be the same
+/// length.
+fn bind_const_args(
+    params: &[String],
+    const_params: &[(String, Ty)],
+    args: &mut [Ty],
+    span: Span,
+) -> Result<()> {
+    for (name, declared) in const_params {
+        let Some(idx) = params.iter().position(|p| p == name) else {
+            continue;
+        };
+        let Some(arg) = args.get(idx) else { continue };
+        let Ty::ConstInt { value, .. } = arg else {
+            return Err(TypeError {
+                message: format!(
+                    "const parameter '{name}' expects a constant expression of type '{}', but a type was written: write a literal or a 'const' ('Buf<16>', 'Buf<SIZE>'), not a type name",
+                    declared.display()
+                ),
+                span,
+            });
+        };
+        let value = *value;
+        if matches!(declared, Ty::Bool) {
+            if value != 0 && value != 1 {
+                return Err(TypeError {
+                    message: format!(
+                        "const parameter '{name}' is a 'bool', so its argument has to be 'true' or 'false'"
+                    ),
+                    span,
+                });
+            }
+        } else {
+            check_int_literal(value, declared, false, span)?;
+        }
+        args[idx] = Ty::ConstInt {
+            value,
+            ty: Box::new(declared.clone()),
+        };
+    }
+    for (idx, name) in params.iter().enumerate() {
+        if const_params.iter().any(|(n, _)| n == name) {
+            continue;
+        }
+        if let Some(Ty::ConstInt { .. }) = args.get(idx) {
+            return Err(TypeError {
+                message: format!(
+                    "type parameter '{name}' expects a type, but a constant expression was written: a 'const' parameter is declared 'const {name}: usize' where the value belongs"
+                ),
+                span,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The name of the first `const` type parameter a written length expression
+/// mentions (A-20), if any. Used to refuse type-level arithmetic on a const
+/// parameter by name rather than folding it.
+fn const_param_in(
+    expr: &ast::Expr,
+    params: &HashMap<String, Ty>,
+) -> Option<String> {
+    match expr {
+        ast::Expr::Ident(name, _) => match params.get(name) {
+            Some(Ty::ConstInt { .. }) => Some(name.clone()),
+            _ => None,
+        },
+        ast::Expr::Unary { expr, .. } => const_param_in(expr, params),
+        ast::Expr::Binary { lhs, rhs, .. } => {
+            const_param_in(lhs, params).or_else(|| const_param_in(rhs, params))
+        }
+        ast::Expr::Call { args, .. } => {
+            args.iter().find_map(|a| const_param_in(&a.value, params))
+        }
+        ast::Expr::FieldAccess { base, .. } => const_param_in(base, params),
+        _ => None,
+    }
+}
+
+/// The constant expression a written type argument stands for when it is a
+/// bare or dotted name (`Buf<SIZE>`, `Buf<math.PAGE>`, A-20): the parser kept
+/// those as a type, and a `const` parameter position reconstructs the
+/// expression the name stands for. `None` for any other shape.
+fn named_const_expr(ty: &ast::TypeExpr) -> Option<ast::Expr> {
+    if ty.name.is_empty()
+        || !ty.args.is_empty()
+        || ty.array_elem.is_some()
+        || ty.tuple.is_some()
+        || ty.fn_params.is_some()
+        || ty.dyn_trait.is_some()
+        || ty.impl_trait.is_some()
+        || ty.assoc.is_some()
+    {
+        return None;
+    }
+    Some(match ty.name.split_once('.') {
+        Some((alias, field)) if !field.contains('.') => ast::Expr::FieldAccess {
+            base: Box::new(ast::Expr::Ident(alias.to_string(), ty.span)),
+            field: field.to_string(),
+            span: ty.span,
+        },
+        _ => ast::Expr::Ident(ty.name.clone(), ty.span),
+    })
 }
 
 /// The canonical name of one instantiation: `Pair<i32, String>`. It is a
@@ -1223,6 +1373,30 @@ impl TypeScope<'_> {
     }
 
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
+        // A const argument (`Buf<16>`, A-20) only means something where a
+        // `const` parameter's declaration says so; the generic-instantiation
+        // path folds it there. Anywhere else it is a value written where a
+        // type belongs.
+        if ty.const_expr.is_some() {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' is a constant expression, not a type: a constant argument is only legal where the declaration's parameter is 'const' ('datac Buf<const N: usize> ...'), and a type belongs here",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
+        // `impl Trait` in argument position (A-20) is desugared at the
+        // declaration, so any one still here is in a position the sugar does
+        // not cover (a `let`, a field, a return).
+        if let Some(trait_name) = &ty.impl_trait {
+            return Err(TypeError {
+                message: format!(
+                    "'impl {trait_name}' is only legal as a whole parameter type of a declared function: write 'fun f(x: impl {trait_name})', and name a type parameter where a stored, returned or container type belongs"
+                ),
+                span: ty.span,
+            });
+        }
         // `scoped` is a *parameter* modifier (`plan/scoped-blocks.md` part 2)
         // and is handled by `resolve_param_mode`, before this is reached. Any
         // other position — a return type, a `val` annotation, a `datac`
@@ -1376,6 +1550,15 @@ impl TypeScope<'_> {
         // name, so a parameter shadows a type of the same name.
         if ty.args.is_empty() && !ty.name.contains('.') {
             if let Some(bound) = self.params.get(&ty.name) {
+                if let Ty::ConstInt { .. } = bound {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{}' is a const parameter, not a type: use it as a value ('i < {}'), as an array length ('[i32; {}]') or in a repeat expression ('[0; {}]'), and write a type parameter where a type belongs",
+                            ty.name, ty.name, ty.name, ty.name
+                        ),
+                        span: ty.span,
+                    });
+                }
                 return Ok(bound.clone());
             }
         }
@@ -1537,8 +1720,13 @@ impl TypeScope<'_> {
                     });
                 }
                 let mut args = Vec::with_capacity(ty.args.len());
-                for a in &ty.args {
-                    args.push(self.resolve(a, true)?);
+                for (i, a) in ty.args.iter().enumerate() {
+                    let declared = tmpl
+                        .const_params
+                        .iter()
+                        .find(|(n, _)| tmpl.params.get(i) == Some(n))
+                        .map(|(_, t)| t);
+                    args.push(self.resolve_type_arg(a, declared)?);
                 }
                 return self.instantiate(&qualified, &args, ty.span);
             }
@@ -1672,6 +1860,32 @@ impl TypeScope<'_> {
 
     /// Folds the length of an array type or of a repeat literal (A-19).
     fn array_len(&self, expr: &ast::Expr) -> Result<u64> {
+        // A const parameter as a length (A-20): `[T; N]` inside a template,
+        // where the instantiation binds `N` to a value.
+        if let ast::Expr::Ident(name, _) = expr {
+            if let Some(Ty::ConstInt { value, .. }) = self.params.get(name) {
+                if *value < 1 {
+                    return Err(TypeError {
+                        message: format!(
+                            "an array length has to be at least 1, and '{name}' is {value}: v1 has no zero-length form ('[T; 0]' would be a C array with no elements, which is not standard C)"
+                        ),
+                        span: expr.span(),
+                    });
+                }
+                return Ok(*value as u64);
+            }
+        }
+        // A const parameter anywhere else in a length is arithmetic on a
+        // const parameter in a type, which is not in this slice (A-20):
+        // refuse it by name rather than folding it.
+        if let Some(name) = const_param_in(expr, self.params) {
+            return Err(TypeError {
+                message: format!(
+                    "'{name}' is a const parameter, and arithmetic on one in a type ('[T; {name} + 1]') is not in this slice: write the length the instantiation binds ('[T; {name}]'), or compute it from a 'const' ('const M: usize = ...')"
+                ),
+                span: expr.span(),
+            });
+        }
         let (Some(consts), Some(const_fns)) = (self.consts, self.const_fns) else {
             return Err(TypeError {
                 message: "an array length has to be a compile-time constant, and this position has no constants in reach".to_string(),
@@ -1683,6 +1897,127 @@ impl TypeScope<'_> {
             self.prefix,
             self.aliases,
         )
+    }
+
+    /// One type-argument position of a generic instantiation (A-20). When the
+    /// parameter there is a `const`, the written argument is folded with the
+    /// parameter's declared type; otherwise it resolves as a type and a
+    /// constant expression written in its place is refused.
+    fn resolve_type_arg(&self, ty: &ast::TypeExpr, declared: Option<&Ty>) -> Result<Ty> {
+        match declared {
+            None => {
+                if ty.const_expr.is_some() {
+                    return Err(TypeError {
+                        message: format!(
+                            "a type argument expected a type, but '{}' is a constant expression: declare the parameter 'const' ('datac Buf<const N: usize>') where a value belongs",
+                            ty.display()
+                        ),
+                        span: ty.span,
+                    });
+                }
+                self.resolve(ty, true)
+            }
+            Some(declared) => {
+                let expr = ty
+                    .const_expr
+                    .as_deref()
+                    .cloned()
+                    .or_else(|| named_const_expr(ty));
+                let Some(expr) = expr else {
+                    return Err(TypeError {
+                        message: format!(
+                            "a 'const' parameter expects a constant expression of type '{}', but the type '{}' was written: write a literal or a 'const' ('Buf<16>', 'Buf<SIZE>')",
+                            declared.display(),
+                            ty.display()
+                        ),
+                        span: ty.span,
+                    });
+                };
+                self.fold_const_arg(&expr, declared)
+            }
+        }
+    }
+
+    /// Folds one const argument to a value of the parameter's declared type
+    /// (A-20). The existing constant evaluation is the whole of it, so a
+    /// literal, a `const`, a module `const` and a plain `fun` call all work
+    /// exactly as they do in a `const` initializer.
+    fn fold_const_arg(&self, expr: &ast::Expr, declared: &Ty) -> Result<Ty> {
+        // A const parameter written as a const argument (`Ring<N>` in the
+        // template's own signature, A-20): its value is what the enclosing
+        // instantiation bound, re-typed to the parameter it is being passed
+        // to.
+        if let ast::Expr::Ident(name, span) = expr {
+            if let Some(Ty::ConstInt { value, .. }) = self.params.get(name) {
+                let value = *value;
+                if !matches!(declared, Ty::Bool) {
+                    check_int_literal(value, declared, false, *span)?;
+                }
+                return Ok(Ty::ConstInt {
+                    value,
+                    ty: Box::new(declared.clone()),
+                });
+            }
+        }
+        let (Some(consts), Some(const_fns)) = (self.consts, self.const_fns) else {
+            return Err(TypeError {
+                message: "a const argument has to be a compile-time constant, and this position has no constants in reach".to_string(),
+                span: expr.span(),
+            });
+        };
+        let evaluator =
+            ConstEvaluator::new(const_fns, self.structs, &self.enums, &self.env, consts);
+        let mut scope = ConstScope::new(self.prefix.to_string(), self.aliases.clone());
+        let (value, _) = evaluator.eval(expr, Some(declared), &mut scope)?;
+        let value = match value {
+            ConstValue::Int(n) => n,
+            ConstValue::Bool(b) => i128::from(b),
+            _ => {
+                return Err(TypeError {
+                    message: format!(
+                        "a const parameter of type '{}' takes an integer or boolean value, and this expression is not one",
+                        declared.display()
+                    ),
+                    span: expr.span(),
+                })
+            }
+        };
+        Ok(Ty::ConstInt {
+            value,
+            ty: Box::new(declared.clone()),
+        })
+    }
+
+    /// Folds a const argument with no parameter type to steer it (A-20): used
+    /// by the explicit-instantiation path, which resolves its arguments before
+    /// it knows which template they belong to. The folded result carries the
+    /// expression's own type, and `bind_const_args` re-types it where the
+    /// declaration is known.
+    fn fold_const_arg_any(&self, expr: &ast::Expr) -> Result<Ty> {
+        let (Some(consts), Some(const_fns)) = (self.consts, self.const_fns) else {
+            return Err(TypeError {
+                message: "a const argument has to be a compile-time constant, and this position has no constants in reach".to_string(),
+                span: expr.span(),
+            });
+        };
+        let evaluator =
+            ConstEvaluator::new(const_fns, self.structs, &self.enums, &self.env, consts);
+        let mut scope = ConstScope::new(self.prefix.to_string(), self.aliases.clone());
+        let (value, ty) = evaluator.eval(expr, None, &mut scope)?;
+        let value = match value {
+            ConstValue::Int(n) => n,
+            ConstValue::Bool(b) => i128::from(b),
+            _ => {
+                return Err(TypeError {
+                    message: "a const argument has to be an integer or boolean value".to_string(),
+                    span: expr.span(),
+                })
+            }
+        };
+        Ok(Ty::ConstInt {
+            value,
+            ty: Box::new(ty),
+        })
     }
 
     /// A written name as its canonical, module-qualified key: a bare name
@@ -1710,6 +2045,13 @@ impl TypeScope<'_> {
     /// (`Box<Node<i32>>` inside `Node<i32>`) terminates on the key rather
     /// than recursing forever; the finished definition is stored afterwards.
     fn instantiate(&self, name: &str, args: &[Ty], span: Span) -> Result<Ty> {
+        // A-20: a const argument is re-typed to its parameter's declared type
+        // (and range-checked) before anything keys off it, so the instance key
+        // and every later binding see the same value.
+        let mut args = args.to_vec();
+        let tmpl = self.env.generics[name].clone();
+        bind_const_args(&tmpl.params, &tmpl.const_params, &mut args, span)?;
+        let args = args.as_slice();
         let key = instance_key(name, args);
         {
             let st = self.env.instances.borrow();
@@ -1723,7 +2065,6 @@ impl TypeScope<'_> {
                 return Ok(Ty::Struct(key));
             }
         }
-        let tmpl = self.env.generics[name].clone();
         let params: HashMap<String, Ty> = tmpl
             .params
             .iter()
@@ -1890,6 +2231,18 @@ impl TypeScope<'_> {
         }
         if mode.moves() {
             return self.resolve_move_param(ty);
+        }
+        // `&[T; N]`: a written `&` on a *parameter* is otherwise what the bare
+        // name already means, but an array is a by-value type, so the `&` is
+        // the one way to write "a borrow of the caller's array" (A-20, and the
+        // shape the const-generic examples use). An exclusive `mut [T; N]`
+        // takes the ordinary path below.
+        if ty.array_elem.is_some() && ty.amp && !mode.mutable() {
+            let base = self.resolve(ty, false)?;
+            return Ok(Ty::Ref {
+                mutable: false,
+                inner: Box::new(base),
+            });
         }
         let base = self.resolve(ty, false)?;
         if mode.mutable() && matches!(base, Ty::Fn { .. }) {
@@ -7545,11 +7898,13 @@ fn collect_templates(
                 module.clone(),
             ));
         }
-        let (params, kind, repr) = if let Some(d) = program.datacs.iter().find(|d| &d.name == name) {
+        let (params, kind, repr, const_decls) =
+            if let Some(d) = program.datacs.iter().find(|d| &d.name == name) {
             (
                 d.type_params.clone(),
                 GenericKind::Record(d.fields.clone()),
                 d.repr.clone().unwrap_or(Repr::C),
+                d.const_params.clone(),
             )
         } else {
             let e = program
@@ -7561,8 +7916,10 @@ fn collect_templates(
                 e.type_params.clone(),
                 GenericKind::Sum(e.variants.clone()),
                 e.repr.clone().unwrap_or(Repr::C),
+                e.const_params.clone(),
             )
         };
+        let const_params = const_param_tys(&const_decls, module)?;
         for p in &params {
             if Ty::from_name(p).is_some() {
                 return Err(Diagnostic::new(
@@ -7596,6 +7953,7 @@ fn collect_templates(
             GenericTemplate {
                 name: name.clone(),
                 params,
+                const_params,
                 kind,
                 repr,
                 prefix,
@@ -7641,6 +7999,11 @@ fn collect_func_templates(
                 ));
             }
         }
+        let const_decls: &[ast::ConstParamDecl] = match &f.receiver {
+            Some(r) => &r.const_params,
+            None => &f.const_params,
+        };
+        let const_params = const_param_tys(const_decls, &f.module)?;
         if let Some(r) = &f.receiver {
             // A method on a generic type: the receiver writes the type's own
             // parameters, in order, and they are the method's type parameters
@@ -7700,6 +8063,7 @@ fn collect_func_templates(
             FuncTemplate {
                 key,
                 params,
+                const_params,
                 bounds: f.type_param_bounds.clone(),
                 receiver: f
                     .receiver
@@ -11590,6 +11954,21 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     span: *span,
                 });
             }
+            // A const type parameter read as a value (A-20): the
+            // instantiation folded it to a literal, so `i < N` and `[0; N]`
+            // see the value the monomorphization was built for.
+            if let Some(Ty::ConstInt { value, ty }) = ctx.type_args.get(name) {
+                let kind = if matches!(**ty, Ty::Bool) {
+                    tir::ExprKind::BoolLit(*value != 0)
+                } else {
+                    tir::ExprKind::IntLit(*value)
+                };
+                return Ok(tir::Expr {
+                    kind,
+                    ty: (**ty).clone(),
+                    span: *span,
+                });
+            }
             // Not a local or parameter — inside a receiver-form method,
             // fall back to the receiver's field of that name (no `self.`
             // qualifier is ever written; see `plan/syntax.md` §5).
@@ -12495,7 +12874,26 @@ fn resolve_explicit_args(type_args: &[ast::TypeExpr], ctx: &Ctx) -> Result<Vec<T
     let scope = ctx.type_scope();
     let mut out = Vec::with_capacity(type_args.len());
     for t in type_args {
-        out.push(scope.resolve(t, true)?);
+        // A const argument (A-20): a literal or an arithmetic expression the
+        // parser already recognized, folded with no declared type here and
+        // re-typed by `bind_const_args` once the template is known.
+        if let Some(expr) = &t.const_expr {
+            out.push(scope.fold_const_arg_any(expr)?);
+            continue;
+        }
+        match scope.resolve(t, true) {
+            Ok(ty) => out.push(ty),
+            // A bare or dotted name that is not a type may be a named `const`
+            // (`sum<SIZE>`): fold it, and let the template's parameter list
+            // decide which one it is. A name that is neither keeps its type
+            // error.
+            Err(type_err) => match named_const_expr(t) {
+                Some(expr) if scope.fold_const_arg_any(&expr).is_ok() => {
+                    out.push(scope.fold_const_arg_any(&expr)?)
+                }
+                _ => return Err(type_err),
+            },
+        }
     }
     Ok(out)
 }
@@ -12582,6 +12980,25 @@ fn bind_type_params(
     // argument of it. An explicit type argument (or another parameter) is what
     // must determine `I`.
     if written.assoc.is_some() {
+        return;
+    }
+    // A fixed-size array (A-18) binds its element parameters and, when the
+    // length is a bare parameter name, the const parameter the length stands
+    // for (A-20): `sum(&arr)` infers `N` from `arr`'s own length.
+    if let Some(written_elem) = &written.array_elem {
+        if let Ty::Array(actual_elem, len) = actual {
+            bind_type_params(env, prefix, aliases, written_elem, actual_elem, params, out);
+            if let Some(len_expr) = written.array_len.as_deref() {
+                if let ast::Expr::Ident(name, _) = len_expr {
+                    if params.iter().any(|p| p == name) {
+                        out.entry(name.clone()).or_insert(Ty::ConstInt {
+                            value: *len as i128,
+                            ty: Box::new(Ty::Usize),
+                        });
+                    }
+                }
+            }
+        }
         return;
     }
     if written.args.is_empty() {
@@ -16342,11 +16759,14 @@ fn instantiate_function(
             }
         }
     }
-    let type_args = if explicit.is_empty() {
+    let mut type_args = if explicit.is_empty() {
         finish_type_args(&tmpl.key, &tmpl.params, &bindings, span)?
     } else {
         check_arity(&tmpl.key, &tmpl.params, explicit, span)?
     };
+    // A-20: re-type every const argument to its parameter's declared type and
+    // range-check it, exactly as a type instantiation does.
+    bind_const_args(&tmpl.params, &tmpl.const_params, &mut type_args, span)?;
     // A-12 slice 2: the bound is checked before the instance is registered, and
     // before the early return below, so every call/instantiation of the
     // template answers it. The body is then checked per concrete type exactly

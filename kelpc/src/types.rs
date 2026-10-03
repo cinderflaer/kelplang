@@ -188,6 +188,19 @@ pub enum Ty {
     /// copy, while an array of `String` owns those strings and moves, which
     /// is the rule `plan/syntax.md` 3 states for the type.
     Array(Box<Ty>, u64),
+    /// The value of one **const type parameter** at one instantiation (A-20):
+    /// `Buf<16>`'s `16`, or `Flags<true>`'s `true`. `value` is the folded
+    /// value and `ty` is the parameter's declared type (`usize`, `u8`..`u64`,
+    /// `i32`, `i64`, `bool`).
+    ///
+    /// It is a `Ty` only so that one monomorphization path can carry both
+    /// kinds of generic argument: it appears in an instantiation's argument
+    /// list, in the key `Buf<16>`, and in the parameter bindings while the
+    /// template's fields and body are resolved. It never survives an
+    /// instantiation as a real type: a field, a parameter, a return and a
+    /// container element all refuse it, and the body it appears in resolves
+    /// `N` to a literal.
+    ConstInt { value: i128, ty: Box<Ty> },
     /// The builtin atomic cell (MK9-S3-M1 stage A1): `Atomic<T>`, one location
     /// every access to which is a single atomic operation.
     ///
@@ -466,6 +479,12 @@ impl Ty {
             Ty::Box(elem) => box_c_type(elem),
             Ty::Map(key, value) => map_c_type(key, value),
             Ty::Array(elem, len) => array_c_type(elem, *len),
+            // A const argument never reaches code generation: it appears only
+            // in an instantiation's argument list and in a template's
+            // bindings, both gone by the time a C type is needed.
+            Ty::ConstInt { .. } => {
+                unreachable!("a const argument has no C type; it is substituted before codegen")
+            }
             Ty::Atomic(elem) => atomic_c_type(elem),
             Ty::Thread(_) => thread_c_type(),
             Ty::Mutex(_) => mutex_c_type(),
@@ -552,6 +571,13 @@ impl Ty {
             Ty::Handle(name) => name.clone(),
             Ty::Ptr(elem) => format!("Ptr<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
+            Ty::ConstInt { value, ty } => {
+                if matches!(**ty, Ty::Bool) {
+                    if *value == 0 { "false".to_string() } else { "true".to_string() }
+                } else {
+                    value.to_string()
+                }
+            }
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Dyn { mutable: true, trait_name } => format!("&mut dyn {trait_name}"),
             Ty::Dyn { mutable: false, trait_name } => format!("&dyn {trait_name}"),
@@ -1223,6 +1249,9 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::Box(elem) => format!("Box__{}", ty_mangle(elem)),
         Ty::Map(key, value) => format!("Map__{}__{}", ty_mangle(key), ty_mangle(value)),
         Ty::Array(elem, len) => format!("Array__{}__{}", ty_mangle(elem), len),
+        Ty::ConstInt { .. } => {
+            unreachable!("a const argument has no mangled type; it is substituted before codegen")
+        }
         Ty::Atomic(elem) => format!("Atomic__{}", ty_mangle(elem)),
         Ty::Thread(elem) => format!("Thread__{}", ty_mangle(elem)),
         Ty::Mutex(elem) => format!("Mutex__{}", ty_mangle(elem)),
@@ -1794,6 +1823,9 @@ pub fn type_layout(
                 align: l.align,
             }
         }
+        // A const argument is substituted before any layout query, so it is
+        // not a type with a layout.
+        Ty::ConstInt { .. } => return None,
         Ty::Struct(name) => {
             if let Some(e) = enums.get(name) {
                 let (tag_bytes, _) = e.tag_storage();

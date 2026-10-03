@@ -21,6 +21,17 @@ pub struct ParseError {
 
 type PResult<T> = Result<T, ParseError>;
 
+/// One entry of a parameter list `T`, `T: A + B`, or `const N: usize`
+/// (A-2, A-20). The const form is a *value* parameter; every other entry is a
+/// type parameter.
+struct TypeParamParsed {
+    name: String,
+    bounds: Vec<TypeExpr>,
+    /// `Some(ty)` for `const N: ty`, and then `bounds` is empty.
+    const_ty: Option<String>,
+    span: Span,
+}
+
 /// The refusal for a `*` that does not stand alone in a `caps(...)` clause
 /// (`caps(*, fs = [...])` and `caps(fs = [...], *)`). `*` already means every
 /// domain, so a named domain beside it has nothing left to say; the message
@@ -40,6 +51,92 @@ fn mixing_wildcard_error(span: Span) -> ParseError {
 /// one the user wrote — the same trick `infer.rs` uses for a hidden passdown
 /// parameter.
 const IF_LET_PREFIX: &str = "#iflet";
+
+/// The span of the first `impl Trait` anywhere in a written type, when there
+/// is one (A-20). Used to refuse the shapes the sugar does not cover: a nested
+/// position (`List<impl Shape>`), a return type, a field and a `let`.
+fn impl_trait_anywhere(ty: &TypeExpr) -> Option<Span> {
+    if ty.impl_trait.is_some() {
+        return Some(ty.span);
+    }
+    if let Some(elem) = &ty.array_elem {
+        if let Some(s) = impl_trait_anywhere(elem) {
+            return Some(s);
+        }
+    }
+    for a in &ty.args {
+        if let Some(s) = impl_trait_anywhere(a) {
+            return Some(s);
+        }
+    }
+    if let Some(elems) = &ty.tuple {
+        for e in elems {
+            if let Some(s) = impl_trait_anywhere(e) {
+                return Some(s);
+            }
+        }
+    }
+    if let Some(params) = &ty.fn_params {
+        for p in params {
+            if let Some(s) = impl_trait_anywhere(&p.ty) {
+                return Some(s);
+            }
+        }
+    }
+    if let Some(ret) = &ty.fn_ret {
+        if let Some(s) = impl_trait_anywhere(ret) {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// `impl Trait` in argument position (A-20): each occurrence becomes a fresh
+/// bounded type parameter, and the parameter's type becomes that parameter.
+/// `&impl Trait` keeps its `&`, which is the ordinary borrow a parameter
+/// already carries.
+fn desugar_impl_trait_params(
+    params: Vec<Param>,
+    mut type_params: Vec<String>,
+    mut type_param_bounds: Vec<Vec<TypeExpr>>,
+    is_method: bool,
+    is_signature: bool,
+    span: Span,
+) -> PResult<(Vec<Param>, Vec<String>, Vec<Vec<TypeExpr>>)> {
+    let mut out = Vec::with_capacity(params.len());
+    let mut fresh = 0usize;
+    for mut p in params {
+        if let Some(trait_name) = p.ty.impl_trait.clone() {
+            if is_signature {
+                return Err(ParseError {
+                    message: "a trait method cannot write 'impl Trait': its signature names 'Self' and the trait's own types, and a method takes no type parameters of its own".to_string(),
+                    span,
+                });
+            }
+            if is_method {
+                return Err(ParseError {
+                    message: "'impl Trait' cannot be written on a method's parameter: a method's type parameters come from its receiver, so declare the parameter on a free function, or name the receiver type's own parameter".to_string(),
+                    span: p.ty.span,
+                });
+            }
+            let name = format!("#impl{fresh}");
+            fresh += 1;
+            type_params.push(name.clone());
+            type_param_bounds.push(vec![TypeExpr::named(trait_name, p.ty.span)]);
+            let mut replacement = TypeExpr::named(name, p.ty.span);
+            replacement.amp = p.ty.amp;
+            replacement.amp_mut = p.ty.amp_mut;
+            p.ty = replacement;
+        } else if let Some(span) = impl_trait_anywhere(&p.ty) {
+            return Err(ParseError {
+                message: "'impl Trait' is only legal as a whole parameter type: write it bare ('x: impl Trait') or behind a borrow ('x: &impl Trait'), not nested inside another type".to_string(),
+                span,
+            });
+        }
+        out.push(p);
+    }
+    Ok((out, type_params, type_param_bounds))
+}
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
@@ -742,8 +839,18 @@ impl Parser {
             });
         }
         let name_params = self.parse_type_params()?;
-        let type_params: Vec<String> = name_params.iter().map(|(n, _)| n.clone()).collect();
-        let type_param_bounds: Vec<Vec<TypeExpr>> = name_params.into_iter().map(|(_, b)| b).collect();
+        if let Some(p) = name_params.iter().find(|p| p.const_ty.is_some()) {
+            return Err(ParseError {
+                message: format!(
+                    "a trait cannot take a const parameter ('const {}'): a const parameter is a value on a type or a function (A-20), and a trait is implemented for a type",
+                    p.name
+                ),
+                span: p.span,
+            });
+        }
+        let type_params: Vec<String> = name_params.iter().map(|p| p.name.clone()).collect();
+        let type_param_bounds: Vec<Vec<TypeExpr>> =
+            name_params.into_iter().map(|p| p.bounds).collect();
         // `trait B: A + C` (A-12 slice 3): the supertraits, resolved in the
         // trait's own module exactly as a bound on a function's type parameter
         // is. A cycle is refused by `infer.rs`, where the whole trait table is
@@ -980,7 +1087,8 @@ impl Parser {
     fn parse_datac_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<DatacDecl> {
         let start = self.expect(TokenKind::Datac, "'datac'")?.span;
         let (name, _) = self.expect_ident()?;
-        let type_params = Parser::no_type_param_bounds(self.parse_type_params()?)?;
+        let (type_params, const_params) =
+            Parser::no_type_param_bounds(self.parse_type_params()?)?;
         self.expect(TokenKind::LParen, "'('")?;
         let fields = self.parse_field_list()?;
         let end = self.expect(TokenKind::RParen, "')'")?.span;
@@ -988,6 +1096,7 @@ impl Parser {
             name,
             is_pub,
             type_params,
+            const_params,
             fields,
             repr,
             order: 0,
@@ -1227,7 +1336,7 @@ impl Parser {
     /// (A-2, with the bound half from A-12 slice 2): `fun f<T: A + B>` gives
     /// `("T", [A, B])`, and a parameter with no bound gets an empty list, so
     /// the two halves stay in step by construction.
-    fn parse_type_params(&mut self) -> PResult<Vec<(String, Vec<TypeExpr>)>> {
+    fn parse_type_params(&mut self) -> PResult<Vec<TypeParamParsed>> {
         if !self.check(&TokenKind::Lt) {
             return Ok(Vec::new());
         }
@@ -1238,25 +1347,60 @@ impl Parser {
                 span: open.to(self.peek().span),
             });
         }
-        let mut params: Vec<(String, Vec<TypeExpr>)> = Vec::new();
+        let mut params: Vec<TypeParamParsed> = Vec::new();
         loop {
-            let (param, pspan) = self.expect_ident()?;
-            if params.iter().any(|(p, _)| *p == param) {
-                return Err(ParseError {
-                    message: format!("type parameter '{param}' is declared more than once"),
+            // `const N: usize` (A-20): a compile-time value parameter rather
+            // than a type. `const` is a keyword, so the two forms never
+            // collide.
+            if self.check(&TokenKind::Const) {
+                self.advance();
+                let (param, pspan) = self.expect_ident()?;
+                if params.iter().any(|p| p.name == param) {
+                    return Err(ParseError {
+                        message: format!("parameter '{param}' is declared more than once"),
+                        span: pspan,
+                    });
+                }
+                self.expect(TokenKind::Colon, "': then the integer type of the const parameter, as in 'const N: usize'")?;
+                let (ty, _) = self.expect_ident()?;
+                if self.check(&TokenKind::Lt) || self.check(&TokenKind::Colon) {
+                    return Err(ParseError {
+                        message: format!(
+                            "a const parameter's type is one of 'usize', 'u8'..'u64', 'i32', 'i64' or 'bool', so '{ty}' cannot take arguments or bounds"
+                        ),
+                        span: self.peek().span,
+                    });
+                }
+                params.push(TypeParamParsed {
+                    name: param,
+                    bounds: Vec::new(),
+                    const_ty: Some(ty),
+                    span: pspan,
+                });
+            } else {
+                let (param, pspan) = self.expect_ident()?;
+                if params.iter().any(|p| p.name == param) {
+                    return Err(ParseError {
+                        message: format!("type parameter '{param}' is declared more than once"),
+                        span: pspan,
+                    });
+                }
+                // `T: Name`: the traits the parameter must implement. A parameter
+                // with no `:` has an empty list, which is every parameter written
+                // before bounds existed.
+                let bounds = if self.check(&TokenKind::Colon) {
+                    self.advance();
+                    self.parse_bounds()?
+                } else {
+                    Vec::new()
+                };
+                params.push(TypeParamParsed {
+                    name: param,
+                    bounds,
+                    const_ty: None,
                     span: pspan,
                 });
             }
-            // `T: Name`: the traits the parameter must implement. A parameter
-            // with no `:` has an empty list, which is every parameter written
-            // before bounds existed.
-            let bounds = if self.check(&TokenKind::Colon) {
-                self.advance();
-                self.parse_bounds()?
-            } else {
-                Vec::new()
-            };
-            params.push((param, bounds));
             if self.check(&TokenKind::Comma) {
                 self.advance();
                 continue;
@@ -1324,20 +1468,32 @@ impl Parser {
 
     /// A `datac`/`enum` parameter list, with a bound refused (A-12 slice 2): a
     /// type declaration's parameters are bound at the use site (a function's
-    /// `fun f<T: Name>`), not on the type itself. The list's names are what the
-    /// declaration wants, so this is where the pair is taken apart.
+    /// `fun f<T: Name>`), not on the type itself. A `const` parameter keeps
+    /// its integer type and is split out into `const_params` (A-20).
     fn no_type_param_bounds(
-        params: Vec<(String, Vec<TypeExpr>)>,
-    ) -> PResult<Vec<String>> {
-        if let Some((param, bounds)) = params.iter().find(|(_, b)| !b.is_empty()) {
+        params: Vec<TypeParamParsed>,
+    ) -> PResult<(Vec<String>, Vec<ConstParamDecl>)> {
+        if let Some(p) = params.iter().find(|p| !p.bounds.is_empty()) {
             return Err(ParseError {
                 message: format!(
-                    "a bound cannot be written on a type declaration's parameter '{param}': a bound is written where the parameter is used ('fun f<T: Name>'), so a type declaration lists its parameters alone"
+                    "a bound cannot be written on a type declaration's parameter '{}': a bound is written where the parameter is used ('fun f<T: Name>'), so a type declaration lists its parameters alone",
+                    p.name
                 ),
-                span: bounds[0].span,
+                span: p.bounds[0].span,
             });
         }
-        Ok(params.into_iter().map(|(n, _)| n).collect())
+        let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+        let consts: Vec<ConstParamDecl> = params
+            .into_iter()
+            .filter_map(|p| {
+                p.const_ty.map(|ty| ConstParamDecl {
+                    name: p.name,
+                    ty,
+                    span: p.span,
+                })
+            })
+            .collect();
+        Ok((names, consts))
     }
 
     /// Whether the `impl` at the cursor opens an **import** (`impl "path"`,
@@ -1405,7 +1561,8 @@ impl Parser {
     fn parse_enum_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<EnumDecl> {
         let start = self.expect(TokenKind::Enum, "'enum'")?.span;
         let (name, _) = self.expect_ident()?;
-        let type_params = Parser::no_type_param_bounds(self.parse_type_params()?)?;
+        let (type_params, const_params) =
+            Parser::no_type_param_bounds(self.parse_type_params()?)?;
         self.expect(TokenKind::LBrace, "'{'")?;
         self.skip_newlines();
         let mut variants = Vec::new();
@@ -1476,6 +1633,7 @@ impl Parser {
             name,
             is_pub,
             type_params,
+            const_params,
             variants,
             repr,
             order: 0,
@@ -1525,28 +1683,43 @@ impl Parser {
         // the receiver's type name (`fun Pair<A, B>.first()`); which one it is
         // is settled by whether a `.` comes next (A-2).
         let name_params = self.parse_type_params()?;
-        let (receiver, name, type_params, type_param_bounds) = if self.check(&TokenKind::Dot) {
+        let (receiver, name, type_params, type_param_bounds, const_params) =
+            if self.check(&TokenKind::Dot) {
             self.advance();
             let (method, _) = self.expect_ident()?;
             // A receiver's parameters are its type's, so there is nowhere for a
             // bound to go (A-12 slice 2): the type's own parameters are bound
             // by whoever declares the generic type.
-            if let Some((param, _)) = name_params.iter().find(|(_, b)| !b.is_empty()) {
+            if let Some(p) = name_params.iter().find(|p| !p.bounds.is_empty()) {
                 return Err(ParseError {
                     message: format!(
-                        "a bound cannot be written on a receiver's type parameter '{param}': those parameters come from the receiver's type, so bind them there, or write the bound on a function's own parameter list ('fun f<T: Name>')"
+                        "a bound cannot be written on a receiver's type parameter '{}': those parameters come from the receiver's type, so bind them there, or write the bound on a function's own parameter list ('fun f<T: Name>')",
+                        p.name
                     ),
                     span: first_span,
                 });
             }
+            let type_args: Vec<String> = name_params.iter().map(|p| p.name.clone()).collect();
+            let const_params: Vec<ConstParamDecl> = name_params
+                .into_iter()
+                .filter_map(|p| {
+                    p.const_ty.map(|ty| ConstParamDecl {
+                        name: p.name,
+                        ty,
+                        span: p.span,
+                    })
+                })
+                .collect();
             (
                 Some(Receiver {
                     type_name: first,
-                    type_args: name_params.into_iter().map(|(n, _)| n).collect(),
+                    type_args,
+                    const_params,
                     mutable: receiver_mutable,
                     span: first_span,
                 }),
                 method,
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
             )
@@ -1557,9 +1730,20 @@ impl Parser {
                     span: first_span,
                 });
             }
-            let type_params: Vec<String> = name_params.iter().map(|(n, _)| n.clone()).collect();
-            let bounds: Vec<Vec<TypeExpr>> = name_params.into_iter().map(|(_, b)| b).collect();
-            (None, first, type_params, bounds)
+            let type_params: Vec<String> = name_params.iter().map(|p| p.name.clone()).collect();
+            let bounds: Vec<Vec<TypeExpr>> =
+                name_params.iter().map(|p| p.bounds.clone()).collect();
+            let const_params: Vec<ConstParamDecl> = name_params
+                .into_iter()
+                .filter_map(|p| {
+                    p.const_ty.map(|ty| ConstParamDecl {
+                        name: p.name,
+                        ty,
+                        span: p.span,
+                    })
+                })
+                .collect();
+            (None, first, type_params, bounds, const_params)
         };
         // A trait's method signatures are the trait's interface: they take no
         // type parameters of their own, and their receiver is `Self` (A-12
@@ -1617,6 +1801,19 @@ impl Parser {
         }
 
         let (params, variadic) = self.parse_params()?;
+        // A-20: `impl Trait` in argument position is sugar for a fresh bounded
+        // type parameter, one per `impl` occurrence. The rewrite happens here,
+        // at the declaration, so every later pass sees an ordinary generic
+        // function. A receiver method takes no type parameters of its own, and
+        // a trait signature declares none either, so both refuse it.
+        let (params, type_params, type_param_bounds) = desugar_impl_trait_params(
+            params,
+            type_params,
+            type_param_bounds,
+            receiver.is_some(),
+            signature,
+            first_span,
+        )?;
 
         if extern_ && receiver.is_some() {
             return Err(ParseError {
@@ -1650,7 +1847,14 @@ impl Parser {
                 });
             }
             self.expect(TokenKind::Colon, "':'")?;
-            Some(self.parse_type()?)
+            let ty = self.parse_type()?;
+            if let Some(span) = impl_trait_anywhere(&ty) {
+                return Err(ParseError {
+                    message: "'impl Trait' is not allowed in return position: write a named type parameter and bound it ('fun f<T: Trait>(...).R: T') when the caller needs a concrete type, or return the owning value ('Box<dyn Trait>')".to_string(),
+                    span,
+                });
+            }
+            Some(ty)
         } else {
             None
         };
@@ -1731,6 +1935,7 @@ impl Parser {
             is_pub,
             type_params,
             type_param_bounds,
+            const_params,
             trait_impl: None,
             extern_,
             unsafe_,
@@ -1794,14 +1999,9 @@ impl Parser {
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
+                const_expr: None,
+                impl_trait: None,
                 span,
-            });
-        }
-        if self.check(&TokenKind::Impl) {
-            return Err(ParseError {
-                message: "a trait cannot be a parameter's type in this slice: name a type parameter and bound it ('fun f<T: Name>(x: &T)'), rather than writing 'impl Name'"
-                    .to_string(),
-                span: self.peek().span,
             });
         }
         // A leading `&` is recorded but not applied here: in a parameter
@@ -1849,6 +2049,8 @@ impl Parser {
                     scoped: false,
                     fn_params: None,
                     fn_ret: None,
+                    const_expr: None,
+                    impl_trait: None,
                     span,
                 });
             }
@@ -1858,6 +2060,42 @@ impl Parser {
                     span: self.peek().span,
                 });
             }
+        }
+        // `impl Name` in a parameter position (A-20): the sugar for a fresh
+        // bounded type parameter. The parser records it and the declaration
+        // desugars it, so it never reaches type resolution from a `fun`; any
+        // other position (`let`, a field, a return) is refused in `infer.rs`.
+        // A leading `&` is kept, since `&impl Name` is the borrowed spelling
+        // of the same parameter.
+        if self.check(&TokenKind::Impl) {
+            let start = self.advance().span;
+            let (trait_name, tspan) = self.parse_dotted_name()?;
+            if self.check(&TokenKind::Lt) {
+                return Err(ParseError {
+                    message: format!(
+                        "'impl {trait_name}' cannot take the trait's own arguments here: write a named type parameter bounded by the trait ('fun f<T: {trait_name}<Arg>>(x: T)')"
+                    ),
+                    span: self.peek().span,
+                });
+            }
+            let span = amp_start.map(|a| a.to(tspan)).unwrap_or_else(|| start.to(tspan));
+            return Ok(TypeExpr {
+                name: String::new(),
+                tuple: None,
+                args: Vec::new(),
+                array_elem: None,
+                assoc: None,
+                array_len: None,
+                amp: amp_start.is_some(),
+                amp_mut: false,
+                dyn_trait: None,
+                scoped: false,
+                fn_params: None,
+                fn_ret: None,
+                const_expr: None,
+                impl_trait: Some(trait_name),
+                span,
+            });
         }
         // A function type (A-4): `fun(i32, String).R: bool`. `fun` is a
         // keyword, so this can never be an ordinary type name. A closure type
@@ -1887,6 +2125,8 @@ impl Parser {
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
+                const_expr: None,
+                impl_trait: None,
                 span: amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close)),
             });
         }
@@ -1935,6 +2175,8 @@ impl Parser {
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
+                const_expr: None,
+                impl_trait: None,
                 span,
             });
         }
@@ -2008,6 +2250,8 @@ impl Parser {
                 scoped: false,
                 fn_params: None,
                 fn_ret: None,
+                const_expr: None,
+                impl_trait: None,
                 span: amp_start.map(|a| a.to(span)).unwrap_or(span),
             });
         }
@@ -2024,6 +2268,8 @@ impl Parser {
             scoped: false,
             fn_params: None,
             fn_ret: None,
+            const_expr: None,
+            impl_trait: None,
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
         })
     }
@@ -2205,6 +2451,8 @@ impl Parser {
             scoped,
             fn_params: Some(params),
             fn_ret: ret,
+            const_expr: None,
+            impl_trait: None,
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
         })
     }
@@ -2216,7 +2464,7 @@ impl Parser {
         self.expect(TokenKind::Lt, "'<'")?;
         let mut args = Vec::new();
         loop {
-            args.push(self.parse_type()?);
+            args.push(self.parse_type_arg()?);
             if self.check(&TokenKind::Comma) {
                 self.advance();
                 continue;
@@ -2225,6 +2473,58 @@ impl Parser {
         }
         let close = self.expect(TokenKind::Gt, "'>' to close the type argument list")?;
         Ok((args, close.span))
+    }
+
+    /// One argument of a `<...>` list. A type argument is either a type or,
+    /// for a `const` parameter, a compile-time expression written the same way
+    /// (`Buf<16>`, `Buf<SIZE * 2>`, A-20). The two are told apart by lookahead
+    /// here and settled for good where the declaration's parameter list says
+    /// which one it takes.
+    fn parse_type_arg(&mut self) -> PResult<TypeExpr> {
+        if self.starts_const_arg() {
+            let start = self.peek().span;
+            let e = self.parse_const_arg_expr()?;
+            let end = e.span();
+            return Ok(TypeExpr::const_arg(e, start.to(end)));
+        }
+        // A bare or dotted name is ambiguous: it may be a type argument or a
+        // named `const` written as a const argument (`Buf<SIZE>`). It is kept
+        // as a type here and reconstructed as an expression by
+        // `named_const_expr` where a `const` parameter is the one being bound.
+        self.parse_type()
+    }
+
+    /// Whether the tokens at the cursor begin a const argument rather than a
+    /// type: an integer or boolean literal, a leading `-`, or a name that is
+    /// called or used in an arithmetic expression (`SIZE * 2`, `size()`).
+    fn starts_const_arg(&self) -> bool {
+        match self.peek_kind() {
+            TokenKind::IntLit(_) | TokenKind::True | TokenKind::False | TokenKind::Minus => true,
+            TokenKind::Ident(_) => {
+                let mut i = self.pos + 1;
+                while matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Dot))
+                    && matches!(
+                        self.tokens.get(i + 1).map(|t| &t.kind),
+                        Some(TokenKind::Ident(_))
+                    )
+                {
+                    i += 2;
+                }
+                matches!(
+                    self.tokens.get(i).map(|t| &t.kind),
+                    Some(TokenKind::LParen)
+                        | Some(TokenKind::Plus)
+                        | Some(TokenKind::Minus)
+                        | Some(TokenKind::Star)
+                        | Some(TokenKind::Slash)
+                        | Some(TokenKind::Percent)
+                        | Some(TokenKind::Amp)
+                        | Some(TokenKind::Pipe)
+                        | Some(TokenKind::Caret)
+                )
+            }
+            _ => false,
+        }
     }
 
     /// `<T, U>` in an *expression*, immediately followed by `(` — the explicit
@@ -2629,6 +2929,17 @@ impl Parser {
     }
 
     fn parse_binary(&mut self, min_bp: u8) -> PResult<Expr> {
+        self.parse_binary_filtered(min_bp, true)
+    }
+
+    /// A binary expression that stops before every comparison operator. Used
+    /// for a const argument (`Buf<SIZE * 2>`, A-20), where `<` and `>` are the
+    /// delimiters of the argument list rather than operators.
+    fn parse_const_arg_expr(&mut self) -> PResult<Expr> {
+        self.parse_binary_filtered(0, false)
+    }
+
+    fn parse_binary_filtered(&mut self, min_bp: u8, comparisons: bool) -> PResult<Expr> {
         let mut lhs = self.parse_unary()?;
         loop {
             // Shifts first: they are two tokens wide, so the table above
@@ -2641,13 +2952,28 @@ impl Parser {
                     None => break,
                 }
             };
+            if !comparisons
+                && matches!(
+                    op,
+                    BinOp::Lt
+                        | BinOp::LtEq
+                        | BinOp::Gt
+                        | BinOp::GtEq
+                        | BinOp::Eq
+                        | BinOp::NotEq
+                        | BinOp::Or
+                        | BinOp::And
+                )
+            {
+                break;
+            }
             if bp < min_bp {
                 break;
             }
             for _ in 0..width {
                 self.advance();
             }
-            let rhs = self.parse_binary(bp + 1)?;
+            let rhs = self.parse_binary_filtered(bp + 1, comparisons)?;
             let span = lhs.span().to(rhs.span());
             lhs = Expr::Binary {
                 op,
@@ -3712,7 +4038,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_dyn_is_a_mark_and_impl_in_a_type_position_still_does_not_parse() {
+    fn a_bare_dyn_is_a_mark_and_impl_in_argument_position_is_desugared() {
         // A bare `dyn Name` parses as a mark so `Box<dyn Name>` can reach the
         // type checker (A-12 slice 7); the checker refuses the bare spelling
         // wherever it is not a `Box` argument, and `tests/fixtures/traits_dyn.kp`
@@ -3725,8 +4051,13 @@ mod tests {
         // trait.
         let err = parse_err("trait A { fun Self.a().R: i32 }\ntrait B { fun Self.b().R: i32 }\nfun take(s: Box<dyn A + B>) {}\nfun main() {}");
         assert!(err.message.contains("names one trait"), "{}", err.message);
-        let err = parse_err("trait Shape { fun Self.area().R: f64 }\nfun take(s: impl Shape) {}\nfun main() {}");
-        assert!(err.message.contains("cannot be a parameter's type"), "{}", err.message);
+        // A-20: `impl Shape` now parses as a *parameter* type and is
+        // desugared into a fresh bounded parameter; a stored position (`let`,
+        // a field, a return) is refused by the type checker.
+        let p = parse("trait Shape { fun Self.area().R: f64 }\nfun take(s: impl Shape) {}\nfun main() {}");
+        assert_eq!(p.functions[0].params[0].ty.impl_trait, None);
+        assert_eq!(p.functions[0].type_params.len(), 1);
+        assert_eq!(p.functions[0].type_param_bounds[0][0].name, "Shape");
     }
 
     #[test]
@@ -4387,6 +4718,64 @@ mod tests {
         let r = f.receiver.as_ref().expect("a receiver");
         assert_eq!(r.type_name, "Pair");
         assert_eq!(r.type_args, vec!["A".to_string(), "B".to_string()]);
+    }
+
+    #[test]
+    fn parses_const_type_parameters_and_const_arguments() {
+        // A-20: `const N: usize` is a value parameter, listed with the type
+        // parameters and recorded separately. A const argument is written like
+        // a type argument (`Buf<16>`, `Buf<SIZE * 2>`).
+        let p = parse(
+            "datac Buf<const N: usize>(var data: [i32; N], var len: usize)\nfun main() {}",
+        );
+        assert_eq!(p.datacs[0].type_params, vec!["N".to_string()]);
+        assert_eq!(p.datacs[0].const_params.len(), 1);
+        assert_eq!(p.datacs[0].const_params[0].name, "N");
+        assert_eq!(p.datacs[0].const_params[0].ty, "usize");
+
+        let p = parse("fun f<const N: usize, T>().R: i32 = 0\nfun main() {}");
+        assert_eq!(p.functions[0].type_params, vec!["N".to_string(), "T".to_string()]);
+        assert_eq!(p.functions[0].const_params.len(), 1);
+        assert_eq!(p.functions[0].const_params[0].name, "N");
+
+        let p = parse("fun f(a: Buf<16>).R: i32 = 0\nfun main() {}");
+        let arg = &p.functions[0].params[0].ty.args[0];
+        assert!(arg.const_expr.is_some());
+        assert!(arg.name.is_empty());
+
+        let p = parse("fun f(a: Buf<SIZE * 2>).R: i32 = 0\nfun main() {}");
+        let arg = &p.functions[0].params[0].ty.args[0];
+        assert!(matches!(
+            arg.const_expr.as_deref(),
+            Some(Expr::Binary { op: BinOp::Mul, .. })
+        ));
+
+        // A bare name (`Buf<SIZE>`) parses as a type argument; the resolver
+        // reads it as the const where the parameter is a `const`.
+        let p = parse("fun f(a: Buf<SIZE>).R: i32 = 0\nfun main() {}");
+        assert_eq!(p.functions[0].params[0].ty.args[0].name, "SIZE");
+    }
+
+    #[test]
+    fn parses_impl_trait_in_argument_position_as_a_bounded_parameter() {
+        // A-20: each `impl Trait` occurrence becomes its own fresh parameter,
+        // and the trait is its bound.
+        let p = parse("fun f(x: impl Shape, y: &impl Shape).R: i32 = 0\nfun main() {}");
+        let f = &p.functions[0];
+        assert_eq!(f.type_params.len(), 2);
+        assert_ne!(f.type_params[0], f.type_params[1]);
+        assert_eq!(f.type_param_bounds.len(), 2);
+        assert_eq!(f.type_param_bounds[0][0].name, "Shape");
+        assert_eq!(f.params[0].ty.name, f.type_params[0]);
+        assert_eq!(f.params[1].ty.name, f.type_params[1]);
+        assert!(f.params[1].ty.amp);
+    }
+
+    #[test]
+    fn impl_trait_in_a_return_position_is_refused_at_parse_time() {
+        parse_err(
+            "trait Shape { fun Self.area().R: i32 }\nfun f().R: impl Shape = 1\nfun main() {}",
+        );
     }
 
     #[test]

@@ -388,6 +388,7 @@ const RULES: &[Rule] = &[
             "defer",
             "traits_syntax",
             "traits_generic",
+            "const_generics",
         ],
     },
 ];
