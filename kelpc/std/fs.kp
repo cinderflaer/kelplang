@@ -65,20 +65,20 @@ extern fun try_open_raw(path: &str, mode: &str, err: mut i32).R: i32
 // panics on), exposed so a fallible reader can ask before it copies.
 extern fun utf8_valid_raw(data: &Bytes).R: bool
 
-// A point-in-time view of one path (MK5-S5). `mode` is the low 12 permission
-// bits (`07777`), and `is_dir`/`is_file` are the two cases worth branching
-// on.
+/// A point-in-time view of one path (MK5-S5). `mode` is the low 12 permission
+/// bits (`07777`), and `is_dir`/`is_file` are the two cases worth branching
+/// on.
 datac Metadata(val size: u64, val mtime: i64, val mode: u32, val is_dir: bool, val is_file: bool)
 
-// The whole file, as owned bytes.
-// Panics: if the file cannot be read.
+/// The whole file, as owned bytes.
+/// Panics: if the file cannot be read.
 fun read(path: &str).R: Bytes = read_raw(path)
 
-// The whole file, as owned bytes, or the reason it cannot be read: the
-// fallible twin of `read` for a path the caller did not author, a scanner, an
-// indexer or a backup tool that skips what it may not read instead of ending
-// the run on the first such file. The error carries the POSIX `errno` and its
-// text (`io.IoErr`).
+/// The whole file, as owned bytes, or the reason it cannot be read: the
+/// fallible twin of `read` for a path the caller did not author, a scanner, an
+/// indexer or a backup tool that skips what it may not read instead of ending
+/// the run on the first such file. The error carries the POSIX `errno` and its
+/// text (`io.IoErr`).
 fun try_read(path: &str).R: result.Result<Bytes, io.IoErr> {
     var err: i32 = 0
     val data = try_read_raw(path, &mut err)
@@ -88,13 +88,13 @@ fun try_read(path: &str).R: result.Result<Bytes, io.IoErr> {
     return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
-// The whole file, as owned text.
-// Panics: if the file cannot be read, or is not valid utf-8.
+/// The whole file, as owned text.
+/// Panics: if the file cannot be read, or is not valid utf-8.
 fun read_text(path: &str).R: String = String.from_bytes(read_raw(path))
 
-// The whole file as text, or the reason it cannot be read. A file that is not
-// valid UTF-8 is a failure too: its `errno` is 0, because no syscall failed,
-// and `message` says so.
+/// The whole file as text, or the reason it cannot be read. A file that is not
+/// valid UTF-8 is a failure too: its `errno` is 0, because no syscall failed,
+/// and `message` says so.
 fun try_read_text(path: &str).R: result.Result<String, io.IoErr> {
     var err: i32 = 0
     val data = try_read_raw(path, &mut err)
@@ -107,92 +107,92 @@ fun try_read_text(path: &str).R: result.Result<String, io.IoErr> {
     return result.Result.Ok(value = String.from_bytes(data))
 }
 
-// Writing takes the bytes or the text by value: the data is handed over, not
-// borrowed, since the call consumes nothing else of it.
-// Panics: if the file cannot be written.
+/// Writing takes the bytes or the text by value: the data is handed over, not
+/// borrowed, since the call consumes nothing else of it.
+/// Panics: if the file cannot be written.
 fun write(path: &str, data: Bytes) {
     write_raw(path, data)
 }
 
-// Panics: if the file cannot be written.
+/// Panics: if the file cannot be written.
 fun write_text(path: &str, text: String) {
     write_text_raw(path, text)
 }
 
-// The process's current working directory, absolute and free of `.`/`..`.
-//
-// Gated on `fs` like every other name here, but it matches no pattern: it is
-// the domain's own view of where the process stands, and a caller cannot ask
-// for a different one. Turning a relative argument into a path the capability
-// check will accept is `path.absolute(fs.cwd(), arg)`.
-// Panics: if the kernel cannot report it.
+/// The process's current working directory, absolute and free of `.`/`..`.
+///
+/// Gated on `fs` like every other name here, but it matches no pattern: it is
+/// the domain's own view of where the process stands, and a caller cannot ask
+/// for a different one. Turning a relative argument into a path the capability
+/// check will accept is `path.absolute(fs.cwd(), arg)`.
+/// Panics: if the kernel cannot report it.
 fun cwd().R: String = cwd_raw()
 
 fun exists(path: &str).R: bool = exists_raw(path)
 fun is_file(path: &str).R: bool = is_file_raw(path)
 fun is_dir(path: &str).R: bool = is_dir_raw(path)
 
-// Whether `path` is itself a symlink. `is_file`/`is_dir` follow a link and
-// answer for what it points at; this is `lstat`, so it answers for the link,
-// and a broken link is `true` here and `false` for both of the others. The
-// path is normalized and symlink-resolved for the capability check like every
-// other `fs` path, so a link out of the grant is denied rather than reported.
+/// Whether `path` is itself a symlink. `is_file`/`is_dir` follow a link and
+/// answer for what it points at; this is `lstat`, so it answers for the link,
+/// and a broken link is `true` here and `false` for both of the others. The
+/// path is normalized and symlink-resolved for the capability check like every
+/// other `fs` path, so a link out of the grant is denied rather than reported.
 fun is_symlink(path: &str).R: bool = is_symlink_raw(path)
 
-// The text `path` points at, exactly as it was stored: a relative target stays
-// relative (it is relative to the link's own directory), and a broken link
-// still has one.
-// Panics: if `path` is not a symlink, or cannot be read.
+/// The text `path` points at, exactly as it was stored: a relative target stays
+/// relative (it is relative to the link's own directory), and a broken link
+/// still has one.
+/// Panics: if `path` is not a symlink, or cannot be read.
 fun read_link(path: &str).R: String = read_link_raw(path)
 
-// Panics: if the file does not exist.
+/// Panics: if the file does not exist.
 fun size(path: &str).R: u64 = size_raw(path)
 
-// Panics: if the file cannot be removed.
+/// Panics: if the file cannot be removed.
 fun remove(path: &str) {
     remove_raw(path)
 }
 
-// Both paths are checked against the grant: `rename` is the one call with
-// two resource arguments.
-// Panics: if either path is outside the granted capability, or the rename
-// fails.
+/// Both paths are checked against the grant: `rename` is the one call with
+/// two resource arguments.
+/// Panics: if either path is outside the granted capability, or the rename
+/// fails.
 fun rename(from: &str, to: &str) {
     rename_raw(from, to)
 }
 
-// One directory. `fs.mkdir_all` needs to walk prefixes of its path and is
-// deferred with the rest of the growable-path work.
-// Panics: if the directory cannot be created.
+/// One directory. `fs.mkdir_all` needs to walk prefixes of its path and is
+/// deferred with the rest of the growable-path work.
+/// Panics: if the directory cannot be created.
 fun mkdir(path: &str) {
     mkdir_raw(path)
 }
 
-// Appends `data` to the file, creating it if it does not exist. This is the
-// streaming primitive: it needs no growable buffer, only a buffer's worth of
-// data at a time, which is why it lands before the collections milestone that
-// `fs.append` was pencilled in with.
-// Panics: if the file cannot be opened or written.
+/// Appends `data` to the file, creating it if it does not exist. This is the
+/// streaming primitive: it needs no growable buffer, only a buffer's worth of
+/// data at a time, which is why it lands before the collections milestone that
+/// `fs.append` was pencilled in with.
+/// Panics: if the file cannot be opened or written.
 fun append(path: &str, data: Bytes) {
     append_raw(path, data)
 }
 
-// Forces everything written to the file so far out to storage. Without this a
-// timing is a timing of the page cache; with it, of the device.
-// Panics: if the file cannot be opened or synced.
+/// Forces everything written to the file so far out to storage. Without this a
+/// timing is a timing of the page cache; with it, of the device.
+/// Panics: if the file cannot be opened or synced.
 fun sync(path: &str) {
     sync_raw(path)
 }
 
-// The entries of one directory, sorted by name (`.` and `..` are dropped by
-// the raw walk). Each entry is a name, not a path: join it to a directory to
-// build something `fs` will accept.
-//
-// Returning *N* items needed the growable sequence type, which is why this
-// arrived with the collections milestone rather than M7, the raw walk hands
-// back one newline-separated buffer (`str.split` then turns it into a
-// `List<String>`).
-// Panics: if the directory cannot be read.
+/// The entries of one directory, sorted by name (`.` and `..` are dropped by
+/// the raw walk). Each entry is a name, not a path: join it to a directory to
+/// build something `fs` will accept.
+///
+/// Returning *N* items needed the growable sequence type, which is why this
+/// arrived with the collections milestone rather than M7, the raw walk hands
+/// back one newline-separated buffer (`str.split` then turns it into a
+/// `List<String>`).
+/// Panics: if the directory cannot be read.
 fun list(path: &str).R: List<String> {
     val raw = list_raw(path)
     if str.len(raw.as_str()) == 0 {
@@ -210,32 +210,32 @@ fun list(path: &str).R: List<String> {
 // through the same call-site capability check as a caller-written one,
 // because the check sits on the public `fs` functions, not on the syscalls.
 
-// Creates every missing component of `path`, in order, treating an existing
-// component as success, so repeated setup is idempotent. The walk happens
-// inside one `extern` rather than in Kelp: the whole path is checked against the
-// grant once, at the call site, and a recursive Kelp version would have to check
-// each prefix, including the ones *above* the granted root (which is exactly
-// what a grant on `/var/lib/app/**` does not admit).
-//
-// Panics: if any directory along the way cannot be created.
+/// Creates every missing component of `path`, in order, treating an existing
+/// component as success, so repeated setup is idempotent. The walk happens
+/// inside one `extern` rather than in Kelp: the whole path is checked against the
+/// grant once, at the call site, and a recursive Kelp version would have to check
+/// each prefix, including the ones *above* the granted root (which is exactly
+/// what a grant on `/var/lib/app/**` does not admit).
+///
+/// Panics: if any directory along the way cannot be created.
 fun mkdir_all(path: &str) {
     mkdir_all_raw(path)
 }
 
-// Removes `path`, recursively when it is a directory. A symlink is removed and
-// never descended into, `is_symlink` is checked before `is_dir`, so a link to a
-// directory is unlinked rather than walked into (BUG-a9Km4), and because every
-// child it does name is checked against the grant *after* resolution, a link
-// inside the grant that points outside it makes this panic instead of escaping.
-// `fs.symlink` cannot create such a link, since it checks both of its paths, but
-// one made by another tool can still be sitting in the tree.
-//
-// Panics: if anything cannot be removed, including a link out of the grant
-// that the walk reaches.
-//
-// The parameter is `target` rather than `path` because the module namespace
-// `path` is what the join below goes through, and a local binding shadows a
-// module name.
+/// Removes `path`, recursively when it is a directory. A symlink is removed and
+/// never descended into, `is_symlink` is checked before `is_dir`, so a link to a
+/// directory is unlinked rather than walked into (BUG-a9Km4), and because every
+/// child it does name is checked against the grant *after* resolution, a link
+/// inside the grant that points outside it makes this panic instead of escaping.
+/// `fs.symlink` cannot create such a link, since it checks both of its paths, but
+/// one made by another tool can still be sitting in the tree.
+///
+/// Panics: if anything cannot be removed, including a link out of the grant
+/// that the walk reaches.
+///
+/// The parameter is `target` rather than `path` because the module namespace
+/// `path` is what the join below goes through, and a local binding shadows a
+/// module name.
 fun remove_all(target: &str) {
     if is_symlink(target) {
         remove_raw(target)
@@ -253,15 +253,15 @@ fun remove_all(target: &str) {
     remove_raw(target)
 }
 
-// Every name under `dir`, recursively, each joined to its parent. A
-// depth-first walk driven by an explicit stack: `fs.list` is sorted per
-// directory, so the output is deterministic. A symlink is reported as an entry
-// and **not** descended into, so a link back up the tree cannot make the walk
-// run until the kernel refuses the path length (MISSING-cK4hT). Entries are
-// popped off the stack, which is also why the pending list is mutated without a
-// live borrow of itself (`List.get` would hold one for the whole loop body).
-//
-// Panics: if any directory cannot be read.
+/// Every name under `dir`, recursively, each joined to its parent. A
+/// depth-first walk driven by an explicit stack: `fs.list` is sorted per
+/// directory, so the output is deterministic. A symlink is reported as an entry
+/// and **not** descended into, so a link back up the tree cannot make the walk
+/// run until the kernel refuses the path length (MISSING-cK4hT). Entries are
+/// popped off the stack, which is also why the pending list is mutated without a
+/// live borrow of itself (`List.get` would hold one for the whole loop body).
+///
+/// Panics: if any directory cannot be read.
 fun walk(dir: &str).R: List<String> {
     var out: List<String> = List.empty()
     var pending: List<String> = List.empty()
@@ -289,50 +289,50 @@ fun walk(dir: &str).R: List<String> {
     return out
 }
 
-// Copies `from` to `to`, creating or truncating `to`. One `sendfile(2)`
-// loop, so a large file is never held in memory: a read/write loop would
-// buffer the whole thing at 20 GiB, and the repo already benchmarks that.
-//
-// Both paths are checked against the grant: `copy`, like `rename`, is a
-// two-resource call.
-// Panics: if either path is outside the grant, or the copy fails.
+/// Copies `from` to `to`, creating or truncating `to`. One `sendfile(2)`
+/// loop, so a large file is never held in memory: a read/write loop would
+/// buffer the whole thing at 20 GiB, and the repo already benchmarks that.
+///
+/// Both paths are checked against the grant: `copy`, like `rename`, is a
+/// two-resource call.
+/// Panics: if either path is outside the grant, or the copy fails.
 fun copy(from: &str, to: &str) {
     copy_raw(from, to)
 }
 
-// Creates `link` as a symlink whose contents are `target`. Both paths are
-// checked against the grant: `symlink`, like `rename` and `copy`, is a
-// two-resource call, so the link is created inside the grant and may only
-// point inside it as well. `target` must be absolute, for the reason every
-// path here must be; it does not have to exist yet, since a dangling link is a
-// legitimate thing to create.
-//
-// Panics: if either path is outside the grant, `target` is not absolute, or
-// the link cannot be created.
+/// Creates `link` as a symlink whose contents are `target`. Both paths are
+/// checked against the grant: `symlink`, like `rename` and `copy`, is a
+/// two-resource call, so the link is created inside the grant and may only
+/// point inside it as well. `target` must be absolute, for the reason every
+/// path here must be; it does not have to exist yet, since a dangling link is a
+/// legitimate thing to create.
+///
+/// Panics: if either path is outside the grant, `target` is not absolute, or
+/// the link cannot be created.
 fun symlink(target: &str, link: &str) {
     symlink_raw(target, link)
 }
 
-// Creates `path` when it is missing and sets its modification time to now
-// when it exists.
-// Panics: if the file cannot be created or its timestamp cannot be set.
+/// Creates `path` when it is missing and sets its modification time to now
+/// when it exists.
+/// Panics: if the file cannot be created or its timestamp cannot be set.
 fun touch(path: &str) {
     touch_raw(path)
 }
 
-// A `File` over `path`. `mode` is one of `"r"`, `"w"`, `"a"`, `"rw"`; the
-// returned value is `std/io`'s `File`, so `fs.open` is the bridge from a
-// path to the descriptor API. `"w"` and `"a"` create, `"rw"` creates and
-// does not truncate.
-//
-// Panics: if the mode is unknown or the file cannot be opened.
+/// A `File` over `path`. `mode` is one of `"r"`, `"w"`, `"a"`, `"rw"`; the
+/// returned value is `std/io`'s `File`, so `fs.open` is the bridge from a
+/// path to the descriptor API. `"w"` and `"a"` create, `"rw"` creates and
+/// does not truncate.
+///
+/// Panics: if the mode is unknown or the file cannot be opened.
 fun open(path: &str, mode: &str).R: io.File {
     return io.File(fd = open_raw(path, mode))
 }
 
-// A `File` over `path`, or the reason it cannot be opened: the fallible twin of
-// `open`, with the same modes and the same error type as `try_read`. An unknown
-// mode is a failure with `errno` `EINVAL` (22) rather than a panic.
+/// A `File` over `path`, or the reason it cannot be opened: the fallible twin of
+/// `open`, with the same modes and the same error type as `try_read`. An unknown
+/// mode is a failure with `errno` `EINVAL` (22) rather than a panic.
 fun try_open(path: &str, mode: &str).R: result.Result<io.File, io.IoErr> {
     var err: i32 = 0
     val fd = try_open_raw(path, mode, &mut err)
@@ -342,11 +342,11 @@ fun try_open(path: &str, mode: &str).R: result.Result<io.File, io.IoErr> {
     return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
-// Every line of a text file, without the line endings and without the empty
-// string a trailing newline would otherwise leave at the end (the same shape
-// `io.read_lines` produces).
-//
-// Panics: if the file cannot be read or is not valid utf-8.
+/// Every line of a text file, without the line endings and without the empty
+/// string a trailing newline would otherwise leave at the end (the same shape
+/// `io.read_lines` produces).
+///
+/// Panics: if the file cannot be read or is not valid utf-8.
 fun read_lines(path: &str).R: List<String> {
     val text = read_text(path)
     val s = text.as_str()
@@ -361,18 +361,18 @@ fun read_lines(path: &str).R: List<String> {
     return parts
 }
 
-// A fresh, empty file whose name starts with `prefix` (the `XXXXXX` suffix
-// is filled in by `mkstemp`). The prefix is what the grant is checked
-// against, so the random suffix cannot escape it; the file is created, not
-// just named.
-//
-// Panics: if the file cannot be created.
+/// A fresh, empty file whose name starts with `prefix` (the `XXXXXX` suffix
+/// is filled in by `mkstemp`). The prefix is what the grant is checked
+/// against, so the random suffix cannot escape it; the file is created, not
+/// just named.
+///
+/// Panics: if the file cannot be created.
 fun temp_path(prefix: &str).R: String = temp_path_raw(prefix)
 
-// The whole of `Metadata` from one `stat`, so a walk that measures every entry
-// pays one syscall per entry rather than the five this used to charge.
-//
-// Panics: if the path cannot be stat-ed.
+/// The whole of `Metadata` from one `stat`, so a walk that measures every entry
+/// pays one syscall per entry rather than the five this used to charge.
+///
+/// Panics: if the path cannot be stat-ed.
 fun metadata(path: &str).R: Metadata {
     var size: u64 = 0
     var mtime: i64 = 0

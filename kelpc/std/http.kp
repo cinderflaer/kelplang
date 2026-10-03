@@ -65,10 +65,10 @@ const DEFAULT_HTTPS_PORT: u16 = 443
 const DEFAULT_TIMEOUT_MS: u64 = 30000
 const DEFAULT_MAX_REDIRECTS: i32 = 5
 
-// The project's connection ceiling, from `coral.toml`'s `http_pool` key. The
-// compiler substitutes the number here *before* this text is lexed, so a
-// project with no manifest gets the compiler default. `0` means "no pooling":
-// every exchange gets a fresh connection and nothing is kept.
+/// The project's connection ceiling, from `coral.toml`'s `http_pool` key. The
+/// compiler substitutes the number here *before* this text is lexed, so a
+/// project with no manifest gets the compiler default. `0` means "no pooling":
+/// every exchange gets a fresh connection and nothing is kept.
 const pool_size: usize = __KELP_HTTP_POOL__
 
 datac Url(val scheme: String, val host: String, val port: u16, val path: String)
@@ -77,23 +77,23 @@ datac Header(val name: String, val value: String)
 
 datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val reusable: bool)
 
-// The `X-RateLimit-*` bucket headers, bundled (MISSING-p5Xtr). Discord is the
-// worked example the issue names, and its five headers — `Limit`,
-// `Remaining`, `Reset`, `Reset-After`, `Bucket` — are also what GitHub and
-// Twitch send under the same names, so those are the names this module uses
-// rather than inventing its own vocabulary. `Global` and `Scope`, which
-// Discord sends only on some `429`s and nowhere else, are left out: this is a
-// bucket reader, not the whole of Discord's rate-limit protocol.
-//
-// Every field is an `Option` because no server is required to send all five
-// (`Limit`/`Remaining` are the two nearly everyone sends; a per-route
-// `Bucket` hash is closer to Discord's own scheme), and a response that sends
-// none of them is not a parse failure — `Response.rate_limit()` on a plain
-// `200` returns a `RateLimit` of five `None`s.
-//
-// `reset` and `reset_after` are `f64`, not `u64`: Discord's own docs give
-// them with fractional seconds (`"X-RateLimit-Reset-After": "0.253"`), and a
-// caller that only wants whole seconds can round.
+/// The `X-RateLimit-*` bucket headers, bundled (MISSING-p5Xtr). Discord is the
+/// worked example the issue names, and its five headers — `Limit`,
+/// `Remaining`, `Reset`, `Reset-After`, `Bucket` — are also what GitHub and
+/// Twitch send under the same names, so those are the names this module uses
+/// rather than inventing its own vocabulary. `Global` and `Scope`, which
+/// Discord sends only on some `429`s and nowhere else, are left out: this is a
+/// bucket reader, not the whole of Discord's rate-limit protocol.
+///
+/// Every field is an `Option` because no server is required to send all five
+/// (`Limit`/`Remaining` are the two nearly everyone sends; a per-route
+/// `Bucket` hash is closer to Discord's own scheme), and a response that sends
+/// none of them is not a parse failure — `Response.rate_limit()` on a plain
+/// `200` returns a `RateLimit` of five `None`s.
+///
+/// `reset` and `reset_after` are `f64`, not `u64`: Discord's own docs give
+/// them with fractional seconds (`"X-RateLimit-Reset-After": "0.253"`), and a
+/// caller that only wants whole seconds can round.
 datac RateLimit(
     val limit: option.Option<u64>,
     val remaining: option.Option<u64>,
@@ -104,26 +104,26 @@ datac RateLimit(
 
 datac Request(val method: String, val url: String, val headers: List<Header>, val body: Bytes)
 
-// `timeout_ms = 0` is "no timeout" (that is what `SO_RCVTIMEO` of zero means),
-// which is deliberate: a program that wants to wait forever can say so.
+/// `timeout_ms = 0` is "no timeout" (that is what `SO_RCVTIMEO` of zero means),
+/// which is deliberate: a program that wants to wait forever can say so.
 datac Client(val timeout_ms: u64, val max_redirects: i32, val follow_redirects: bool)
 
-// Why a fallible request failed, as a value a caller can branch on
-// (MISSING-p7Kdm). The variants split on the one question a retry needs
-// answered: **could the server have seen the request?**
-//
-// `Dial`: nothing was sent. The name did not resolve, the connection was
-// refused, or (for `https`) the TLS handshake failed, so retrying any method
-// is safe. `Exchange`: the connection was open and the request may have
-// reached the server: a send failed, the peer reset or closed before the
-// response was complete, a read timed out, or the response was malformed (a bad
-// status line, a bad `Content-Length` or chunk). Retrying an idempotent
-// request is the caller's call, and a `POST` is not safe to repeat without
-// knowing more. `Redirects`: the chain was longer than the client allows; the
-// requests before it did complete.
-//
-// Every `reason` is the text the panicking form panics with, so a caller that
-// logs it prints what `send` would have printed on stderr.
+/// Why a fallible request failed, as a value a caller can branch on
+/// (MISSING-p7Kdm). The variants split on the one question a retry needs
+/// answered: **could the server have seen the request?**
+///
+/// `Dial`: nothing was sent. The name did not resolve, the connection was
+/// refused, or (for `https`) the TLS handshake failed, so retrying any method
+/// is safe. `Exchange`: the connection was open and the request may have
+/// reached the server: a send failed, the peer reset or closed before the
+/// response was complete, a read timed out, or the response was malformed (a bad
+/// status line, a bad `Content-Length` or chunk). Retrying an idempotent
+/// request is the caller's call, and a `POST` is not safe to repeat without
+/// knowing more. `Redirects`: the chain was longer than the client allows; the
+/// requests before it did complete.
+///
+/// Every `reason` is the text the panicking form panics with, so a caller that
+/// logs it prints what `send` would have printed on stderr.
 enum HttpErr {
     Dial(val reason: String)
     Exchange(val reason: String)
@@ -136,8 +136,8 @@ fun http_err_reason(e: move HttpErr).R: String = when e {
     Redirects(reason) -> reason
 }
 
-// The panicking end of every fallible call below: one `panic` over the reason,
-// so the two forms cannot report different causes.
+/// The panicking end of every fallible call below: one `panic` over the reason,
+/// so the two forms cannot report different causes.
 fun fail_http<T>(e: move HttpErr).R: T {
     val reason = http_err_reason(e)
     panic(reason.as_str())
@@ -147,18 +147,18 @@ fun exchange_failed<T>(text: &str).R: result.Result<T, HttpErr> {
     return result.Result.Err(error = HttpErr.Exchange(reason = String.from_str(text)))
 }
 
-// A set of kept-alive connections to one `host:port`, keyed on the host **as
-// written** — never on a resolved address, because the capability check
-// matches the string the author wrote (S3's rule), and two spellings of one
-// address can fall under different grants.
-//
-// `idle` holds the descriptors of connections that are open and not in use, and
-// `size` is how many of those the pool agrees to *keep*. That is the standard
-// "max idle" reading rather than a hard cap on open connections: a request that
-// arrives while every kept connection is busy gets a fresh one, and `release`
-// decides afterwards whether there is room to keep it. A program therefore
-// never fails because its pool was small, which is worth more than a strict
-// ceiling.
+/// A set of kept-alive connections to one `host:port`, keyed on the host **as
+/// written** — never on a resolved address, because the capability check
+/// matches the string the author wrote (S3's rule), and two spellings of one
+/// address can fall under different grants.
+///
+/// `idle` holds the descriptors of connections that are open and not in use, and
+/// `size` is how many of those the pool agrees to *keep*. That is the standard
+/// "max idle" reading rather than a hard cap on open connections: a request that
+/// arrives while every kept connection is busy gets a fresh one, and `release`
+/// decides afterwards whether there is room to keep it. A program therefore
+/// never fails because its pool was small, which is worth more than a strict
+/// ceiling.
 datac Pool(
     val host: String,
     val port: u16,
@@ -167,25 +167,25 @@ datac Pool(
     var idle: List<Conn>,
 )
 
-// Permission to use one pooled connection for one exchange. `fd`/`tls_handle`
-// *are* the pair the pool hands out (a `Lease` and a `Conn` carry the same
-// two fields; `Lease.conn` is the conversion), and `reused` says whether the
-// connection was already open. Nothing here is owned, and `release` takes the
-// lease by value, so the value is gone afterwards: releasing twice, or using a
-// lease after release, does not compile. That check is the reason to have the
-// pool in Kelp rather than in C — it is the borrow checker's, and it is free.
+/// Permission to use one pooled connection for one exchange. `fd`/`tls_handle`
+/// *are* the pair the pool hands out (a `Lease` and a `Conn` carry the same
+/// two fields; `Lease.conn` is the conversion), and `reused` says whether the
+/// connection was already open. Nothing here is owned, and `release` takes the
+/// lease by value, so the value is gone afterwards: releasing twice, or using a
+/// lease after release, does not compile. That check is the reason to have the
+/// pool in Kelp rather than in C — it is the borrow checker's, and it is free.
 datac Lease(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, val reused: bool)
 
-// One open connection, plain or TLS. `tls_handle` is the OpenSSL `SSL*` from
-// `tls.handshake`, carried as the opaque `tls.TlsHandle`; a plain connection
-// is `None` and a TLS one is `Some`, so there is no integer sentinel and no
-// handle has to be invented for "not TLS".
-//
-// Everywhere this module used to hold a `net.Socket` it holds a `Conn`
-// instead: the dial, the pool, redirect-following and the framing reader
-// (`Cursor`) do not need to know which kind of connection they were handed,
-// because `conn_send_all`/`conn_recv`/`conn_recv_into`/`conn_close` below are
-// the one place that dispatches on it.
+/// One open connection, plain or TLS. `tls_handle` is the OpenSSL `SSL*` from
+/// `tls.handshake`, carried as the opaque `tls.TlsHandle`; a plain connection
+/// is `None` and a TLS one is `Some`, so there is no integer sentinel and no
+/// handle has to be invented for "not TLS".
+///
+/// Everywhere this module used to hold a `net.Socket` it holds a `Conn`
+/// instead: the dial, the pool, redirect-following and the framing reader
+/// (`Cursor`) do not need to know which kind of connection they were handed,
+/// because `conn_send_all`/`conn_recv`/`conn_recv_into`/`conn_close` below are
+/// the one place that dispatches on it.
 datac Conn(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>)
 
 fun Conn.is_tls().R: bool = when tls_handle {
@@ -193,9 +193,9 @@ fun Conn.is_tls().R: bool = when tls_handle {
     None -> false
 }
 
-// The TLS stream over this connection. Only legal after `is_tls()`, which is
-// what every caller below checks first; the `panic` is unreachable and exists
-// only because a handle has no null value to unwrap here.
+/// The TLS stream over this connection. Only legal after `is_tls()`, which is
+/// what every caller below checks first; the `panic` is unreachable and exists
+/// only because a handle has no null value to unwrap here.
 fun Conn.tls().R: tls.TlsStream {
     if let Some(h) = tls_handle {
         return tls.TlsStream(fd = fd, handle = h)
@@ -203,7 +203,7 @@ fun Conn.tls().R: tls.TlsStream {
     panic("http: this connection is not TLS")
 }
 
-// Panics: as `tls.write_all`/`net.send_all`.
+/// Panics: as `tls.write_all`/`net.send_all`.
 fun conn_send_all(c: Conn, data: Bytes).R: usize {
     if c.is_tls() {
         return tls.write_all(c.tls(), data)
@@ -211,7 +211,7 @@ fun conn_send_all(c: Conn, data: Bytes).R: usize {
     return net.send_all(net.Socket(fd = c.fd), data)
 }
 
-// Panics: as `tls.read`/`net.recv`.
+/// Panics: as `tls.read`/`net.recv`.
 fun conn_recv(c: Conn, max: usize).R: Bytes {
     if c.is_tls() {
         return tls.read(c.tls(), max)
@@ -219,7 +219,7 @@ fun conn_recv(c: Conn, max: usize).R: Bytes {
     return net.recv(net.Socket(fd = c.fd), max)
 }
 
-// Panics: as `tls.read_into`/`net.recv_into`.
+/// Panics: as `tls.read_into`/`net.recv_into`.
 fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize).R: usize {
     if c.is_tls() {
         return tls.read_into(c.tls(), buf, at)
@@ -227,8 +227,8 @@ fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize).R: usize {
     return net.recv_into(net.Socket(fd = c.fd), buf, at)
 }
 
-// The fallible twins of the three calls above. A failure is `Exchange`: the
-// connection was open, so the request may have reached the server.
+/// The fallible twins of the three calls above. A failure is `Exchange`: the
+/// connection was open, so the request may have reached the server.
 fun conn_send_all_try(c: Conn, data: Bytes).R: result.Result<usize, HttpErr> {
     if c.is_tls() {
         return when tls.try_write_all(c.tls(), data) {
@@ -268,12 +268,12 @@ fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: usize).R: result.Result<usiz
     }
 }
 
-// Ends the TLS session first (so the peer sees a clean `close_notify`, not a
-// bare TCP reset) and then closes the socket. A plain connection just closes
-// the socket. The shutdown is best effort: a peer that has already gone away
-// is routine at the end of a connection, so the `Err` is dropped rather than
-// panicked, the same contract `std/tls`'s own header gives it. Panics: as
-// `net.close`.
+/// Ends the TLS session first (so the peer sees a clean `close_notify`, not a
+/// bare TCP reset) and then closes the socket. A plain connection just closes
+/// the socket. The shutdown is best effort: a peer that has already gone away
+/// is routine at the end of a connection, so the `Err` is dropped rather than
+/// panicked, the same contract `std/tls`'s own header gives it. Panics: as
+/// `net.close`.
 fun conn_close(c: Conn) {
     if c.is_tls() {
         val _ended = tls.try_shutdown(c.tls())
@@ -281,12 +281,12 @@ fun conn_close(c: Conn) {
     net.close(net.Socket(fd = c.fd))
 }
 
-// Dials `host:port` and, for `https`, performs the TLS handshake — the one
-// place a connection is actually made, called from a fresh exchange and from
-// a pool's checkout alike.
-//
-// Panics: if the connection fails, the capability denies the host, or (for
-// `https`) the handshake fails.
+/// Dials `host:port` and, for `https`, performs the TLS handshake — the one
+/// place a connection is actually made, called from a fresh exchange and from
+/// a pool's checkout alike.
+///
+/// Panics: if the connection fails, the capability denies the host, or (for
+/// `https`) the handshake fails.
 fun connect_configured(host: &str, port: u16, timeout_ms: u64, use_tls: bool).R: Conn {
     val up = when connect_configured_try(host, port, timeout_ms, use_tls) {
         Ok(c) -> c
@@ -295,12 +295,12 @@ fun connect_configured(host: &str, port: u16, timeout_ms: u64, use_tls: bool).R:
     return up
 }
 
-// The fallible dial: a refused or unresolvable dial, or a failed TLS handshake
-// (the socket is closed first), is `HttpErr.Dial`, because nothing has been
-// sent yet.
-//
-// Panics: if the capability denies the host. That check is compiled into the
-// caller and has no value-returning form, exactly as `net.try_connect`'s.
+/// The fallible dial: a refused or unresolvable dial, or a failed TLS handshake
+/// (the socket is closed first), is `HttpErr.Dial`, because nothing has been
+/// sent yet.
+///
+/// Panics: if the capability denies the host. That check is compiled into the
+/// caller and has no value-returning form, exactly as `net.try_connect`'s.
 fun connect_configured_try(host: &str, port: u16, timeout_ms: u64, use_tls: bool).R: result.Result<Conn, HttpErr> {
     val dialed = net.try_connect(host, port)
     return when dialed {
@@ -326,26 +326,26 @@ fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool).R:
     return result.Result.Ok(value = Conn(fd = s.fd, tls_handle = option.Option.None))
 }
 
-// The read cursor for one response: bytes already received, and how far into
-// them we are. It refills from the connection when it runs dry. It holds the
-// connection's plain scalar fields rather than a `Conn` itself — the same
-// reason `net.Socket` used to be unpacked to `fd: i32` here — because no
-// `datac` is `Copy`, and a parameter is always a borrow: `Cursor(conn = c,
-// ...)` would need to move `c`'s referent out of that borrow to store it,
-// which does not compile. `fd` is `i32` and `tls_handle` is a handle the type
-// system tracks (an `Option`, so its `None` is a real "not TLS" value rather
-// than a sentinel), so reading the two off the borrow and rebuilding a `Conn`
-// locally in each method below (`Conn(fd = fd, tls_handle = tls_handle)`)
-// costs nothing and needs no move.
+/// The read cursor for one response: bytes already received, and how far into
+/// them we are. It refills from the connection when it runs dry. It holds the
+/// connection's plain scalar fields rather than a `Conn` itself — the same
+/// reason `net.Socket` used to be unpacked to `fd: i32` here — because no
+/// `datac` is `Copy`, and a parameter is always a borrow: `Cursor(conn = c,
+/// ...)` would need to move `c`'s referent out of that borrow to store it,
+/// which does not compile. `fd` is `i32` and `tls_handle` is a handle the type
+/// system tracks (an `Option`, so its `None` is a real "not TLS" value rather
+/// than a sentinel), so reading the two off the borrow and rebuilding a `Conn`
+/// locally in each method below (`Conn(fd = fd, tls_handle = tls_handle)`)
+/// costs nothing and needs no move.
 datac Cursor(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, var buf: Bytes, var start: usize)
 
 fun Cursor.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 
 // ----- URLs -----
 
-// The default port for a scheme this module knows: 80 for `http`, 443 for
-// `https`. Panics: never — `parse_url` has already rejected anything else by
-// the time this is called.
+/// The default port for a scheme this module knows: 80 for `http`, 443 for
+/// `https`. Panics: never — `parse_url` has already rejected anything else by
+/// the time this is called.
 fun default_port_for(scheme: &str).R: u16 {
     if str.eq(scheme, "https") {
         return DEFAULT_HTTPS_PORT
@@ -353,16 +353,16 @@ fun default_port_for(scheme: &str).R: u16 {
     return DEFAULT_PORT
 }
 
-// Whether `u` is an `https` URL — the one place that question is asked as a
-// named call instead of a `str.eq` scattered at each site that needs it.
+/// Whether `u` is an `https` URL — the one place that question is asked as a
+/// named call instead of a `str.eq` scattered at each site that needs it.
 fun url_is_https(u: Url).R: bool = str.eq(u.scheme.as_str(), "https")
 
-// Parses an absolute `http://` or `https://` URL. Panics: if there is no
-// scheme, no host, or the scheme is anything else.
-//
-// The port is split at the *first* `:`, so an IPv6 literal is not expressible
-// here either — the same rule `net`'s capability patterns follow, for the same
-// reason: a host that contains the port separator would be ambiguous.
+/// Parses an absolute `http://` or `https://` URL. Panics: if there is no
+/// scheme, no host, or the scheme is anything else.
+///
+/// The port is split at the *first* `:`, so an IPv6 literal is not expressible
+/// here either — the same rule `net`'s capability patterns follow, for the same
+/// reason: a host that contains the port separator would be ambiguous.
 fun parse_url(s: &str).R: Url {
     val sep = option.expect(
         o = str.index_of(s, "://"),
@@ -376,9 +376,9 @@ fun parse_url(s: &str).R: Url {
     return split_authority(rest, scheme.as_str())
 }
 
-// Splits `host[:port][/path]` — the part after `://`. The path is everything
-// from the first `/`, so a query string without a path (`host?a=b`) parses as
-// part of the authority and fails there rather than silently losing the query.
+/// Splits `host[:port][/path]` — the part after `://`. The path is everything
+/// from the first `/`, so a query string without a path (`host?a=b`) parses as
+/// part of the authority and fails there rather than silently losing the query.
 fun split_authority(rest: &str, scheme: &str).R: Url {
     if str.is_empty(rest) {
         panic("http.parse_url: URL has no host")
@@ -436,10 +436,10 @@ fun parse_port(text: &str).R: u16 {
 
 // ----- headers -----
 
-// ASCII case-insensitive comparison. Header names are case-insensitive, the
-// values here are ASCII by construction, and `str.to_lower` is ASCII-only
-// (open item 48), so this is exactly as correct as the case operations
-// underneath it.
+/// ASCII case-insensitive comparison. Header names are case-insensitive, the
+/// values here are ASCII by construction, and `str.to_lower` is ASCII-only
+/// (open item 48), so this is exactly as correct as the case operations
+/// underneath it.
 fun name_eq(a: &str, b: &str).R: bool {
     if str.len(a) != str.len(b) {
         return false
@@ -466,18 +466,18 @@ fun Response.has_header(name: &str).R: bool {
     return false
 }
 
-// The first matching header's value, or an empty `String` when absent — v1
-// has no `Option`, so absence is the empty string and `has_header` is the
-// honest test.
-//
-// The result is *owned*, which is a deviation from the API sketch that had it
-// return `&str`, and it is forced by two v1 facts rather than chosen: `&str`
-// return elision roots at a parameter or a local, so a borrow reached through
-// `List.get` cannot be handed back (`return headers.get(i).value.as_str()`
-// fails the place rule, and binding the element first makes the root that
-// binding instead of `self`), and a `list`-less view type does not exist yet.
-// One allocation per lookup, until the length-carrying view (open item 44)
-// makes the borrow expressible.
+/// The first matching header's value, or an empty `String` when absent — v1
+/// has no `Option`, so absence is the empty string and `has_header` is the
+/// honest test.
+///
+/// The result is *owned*, which is a deviation from the API sketch that had it
+/// return `&str`, and it is forced by two v1 facts rather than chosen: `&str`
+/// return elision roots at a parameter or a local, so a borrow reached through
+/// `List.get` cannot be handed back (`return headers.get(i).value.as_str()`
+/// fails the place rule, and binding the element first makes the root that
+/// binding instead of `self`), and a `list`-less view type does not exist yet.
+/// One allocation per lookup, until the length-carrying view (open item 44)
+/// makes the borrow expressible.
 fun Response.header(name: &str).R: String {
     var i: usize = 0
     while i < headers.len() {
@@ -492,20 +492,20 @@ fun Response.header(name: &str).R: String {
 
 fun Response.is_ok().R: bool = status >= 200 && status < 300
 
-// The body as owned text. Panics: if the bytes are not valid utf-8
-// (`String.from_bytes` validates). The body is cloned first because the
-// response is borrowed here, and a field of a borrow cannot be moved out.
+/// The body as owned text. Panics: if the bytes are not valid utf-8
+/// (`String.from_bytes` validates). The body is cloned first because the
+/// response is borrowed here, and a field of a borrow cannot be moved out.
 fun Response.text().R: String = String.from_bytes(body.clone())
 
-// The `Retry-After` header, in seconds — `None` when it is absent, or when it
-// names an HTTP-date instead of a delay (MISSING-p5Xtr). The date form
-// (`Retry-After: Fri, 31 Dec 1999 23:59:59 GMT`) needs a calendar parser this
-// module does not have: `std/time` (M7) is the gated clock namespace, and
-// turning a date into a delay needs `now()` from it, which would put a second
-// capability on every `std/http` program on the strength of a header real
-// APIs rarely send that way (Discord, the worked example, always sends the
-// seconds form). So the date form is read like any other malformed value: to
-// `None`, the same answer as no header at all.
+/// The `Retry-After` header, in seconds — `None` when it is absent, or when it
+/// names an HTTP-date instead of a delay (MISSING-p5Xtr). The date form
+/// (`Retry-After: Fri, 31 Dec 1999 23:59:59 GMT`) needs a calendar parser this
+/// module does not have: `std/time` (M7) is the gated clock namespace, and
+/// turning a date into a delay needs `now()` from it, which would put a second
+/// capability on every `std/http` program on the strength of a header real
+/// APIs rarely send that way (Discord, the worked example, always sends the
+/// seconds form). So the date form is read like any other malformed value: to
+/// `None`, the same answer as no header at all.
 fun Response.retry_after().R: option.Option<u64> {
     val text = header_value(headers, "retry-after")
     if str.is_empty(text.as_str()) {
@@ -518,10 +518,10 @@ fun Response.retry_after().R: option.Option<u64> {
     }
 }
 
-// The `X-RateLimit-*` bucket headers, bundled: a caller reading one after a
-// `429` (or checking ahead of one) wants what all five have to say in one
-// read, not five separate scans of `headers` — see `RateLimit`'s own comment
-// for why these are the five and why each is an `Option`.
+/// The `X-RateLimit-*` bucket headers, bundled: a caller reading one after a
+/// `429` (or checking ahead of one) wants what all five have to say in one
+/// read, not five separate scans of `headers` — see `RateLimit`'s own comment
+/// for why these are the five and why each is an `Option`.
 fun Response.rate_limit().R: RateLimit = RateLimit(
     limit = header_u64(headers, "x-ratelimit-limit"),
     remaining = header_u64(headers, "x-ratelimit-remaining"),
@@ -532,13 +532,13 @@ fun Response.rate_limit().R: RateLimit = RateLimit(
 
 // ----- request text -----
 
-// The whole request head, ending with the blank line. `Content-Length` is sent
-// only when there is a body: `Content-Length: 0` on a `GET` is legal but
-// unusual, and some servers object to it.
-//
-// No `Connection` header is sent on purpose. HTTP/1.1 is persistent unless the
-// client asks otherwise, and staying silent is what lets the server's own
-// `Connection: close` (if it sends one) be the single source of truth.
+/// The whole request head, ending with the blank line. `Content-Length` is sent
+/// only when there is a body: `Content-Length: 0` on a `GET` is legal but
+/// unusual, and some servers object to it.
+///
+/// No `Connection` header is sent on purpose. HTTP/1.1 is persistent unless the
+/// client asks otherwise, and staying silent is what lets the server's own
+/// `Connection: close` (if it sends one) be the single source of truth.
 fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize).R: String {
     var out = String.with_capacity(256)
     out.push_str(method)
@@ -575,10 +575,10 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize).R: 
 
 // ----- the response cursor -----
 
-// Makes at least one byte available, refilling from the socket if needed.
-//
-// Fallible core; `ensure` is the panicking form. The `usize` is always 0: a
-// `Result<unit, E>` has no success value to write (MISSING-n6Bsc).
+/// Makes at least one byte available, refilling from the socket if needed.
+///
+/// Fallible core; `ensure` is the panicking form. The `usize` is always 0: a
+/// `Result<unit, E>` has no success value to write (MISSING-n6Bsc).
 fun mut Cursor.try_ensure().R: result.Result<usize, HttpErr> {
     if start >= buf.len() {
         val chunk = conn_recv_try(self.conn(), 4096)?
@@ -592,7 +592,7 @@ fun mut Cursor.try_ensure().R: result.Result<usize, HttpErr> {
     return result.Result.Ok(value = 0)
 }
 
-// Panics: if the peer closed instead of sending the rest of the body.
+/// Panics: if the peer closed instead of sending the rest of the body.
 fun mut Cursor.ensure() {
     val done = when self.try_ensure() {
         Ok(n) -> n
@@ -600,10 +600,10 @@ fun mut Cursor.ensure() {
     }
 }
 
-// One line, up to and including the `LF`; the `LF` is consumed and a `CR` is
-// dropped. Dropping every `CR` rather than only a trailing one is safe here
-// because neither a chunk size nor a header value may contain one — and it
-// avoids a `String` truncation that does not exist yet.
+/// One line, up to and including the `LF`; the `LF` is consumed and a `CR` is
+/// dropped. Dropping every `CR` rather than only a trailing one is safe here
+/// because neither a chunk size nor a header value may contain one — and it
+/// avoids a `String` truncation that does not exist yet.
 fun mut Cursor.try_read_line().R: result.Result<String, HttpErr> {
     var out = String.empty()
     var going = true
@@ -622,7 +622,7 @@ fun mut Cursor.try_read_line().R: result.Result<String, HttpErr> {
     return result.Result.Ok(value = out)
 }
 
-// Panics: as `ensure`.
+/// Panics: as `ensure`.
 fun mut Cursor.read_line().R: String {
     val line = when self.try_read_line() {
         Ok(l) -> l
@@ -631,10 +631,10 @@ fun mut Cursor.read_line().R: String {
     return line
 }
 
-// Consumes one line and discards it: the `CRLF` after a chunk's data. This
-// exists because discarding an owned `String` in statement position is
-// rejected ("a non-tail statement that produces an owned value"), and there is
-// no `_ =` to say "drop this".
+/// Consumes one line and discards it: the `CRLF` after a chunk's data. This
+/// exists because discarding an owned `String` in statement position is
+/// rejected ("a non-tail statement that produces an owned value"), and there is
+/// no `_ =` to say "drop this".
 fun mut Cursor.try_skip_line().R: result.Result<usize, HttpErr> {
     var going = true
     while going {
@@ -648,7 +648,7 @@ fun mut Cursor.try_skip_line().R: result.Result<usize, HttpErr> {
     return result.Result.Ok(value = 0)
 }
 
-// Panics: as `ensure`.
+/// Panics: as `ensure`.
 fun mut Cursor.skip_line() {
     val done = when self.try_skip_line() {
         Ok(n) -> n
@@ -656,10 +656,10 @@ fun mut Cursor.skip_line() {
     }
 }
 
-// Exactly `n` bytes: whatever the cursor already holds, then direct reads into
-// a buffer sized for the whole thing. Reading straight into the destination
-// means the socket can never over-read past the body, which is what makes a
-// pooled connection safe to reuse afterwards.
+/// Exactly `n` bytes: whatever the cursor already holds, then direct reads into
+/// a buffer sized for the whole thing. Reading straight into the destination
+/// means the socket can never over-read past the body, which is what makes a
+/// pooled connection safe to reuse afterwards.
 fun mut Cursor.try_read_exact(n: usize).R: result.Result<Bytes, HttpErr> {
     var out = mem.alloc(n)
     var got: usize = 0
@@ -682,7 +682,7 @@ fun mut Cursor.try_read_exact(n: usize).R: result.Result<Bytes, HttpErr> {
     return result.Result.Ok(value = out)
 }
 
-// Panics: if the peer closes before `n` bytes have arrived.
+/// Panics: if the peer closes before `n` bytes have arrived.
 fun mut Cursor.read_exact(n: usize).R: Bytes {
     val body = when self.try_read_exact(n) {
         Ok(b) -> b
@@ -691,11 +691,11 @@ fun mut Cursor.read_exact(n: usize).R: Bytes {
     return body
 }
 
-// Everything up to end of file. Only for a response with no framing at all,
-// which is also the case that cannot be pooled: the connection is spent
-// finding the end of the body. With a timeout set, a peer that keeps the
-// connection open turns this into `net.recv`'s "timed out" failure rather than
-// a hang, which is the documented cost of an unframed response.
+/// Everything up to end of file. Only for a response with no framing at all,
+/// which is also the case that cannot be pooled: the connection is spent
+/// finding the end of the body. With a timeout set, a peer that keeps the
+/// connection open turns this into `net.recv`'s "timed out" failure rather than
+/// a hang, which is the documented cost of an unframed response.
 fun mut Cursor.try_read_to_end().R: result.Result<Bytes, HttpErr> {
     var out = Bytes.empty()
     while start < buf.len() {
@@ -716,7 +716,7 @@ fun mut Cursor.try_read_to_end().R: result.Result<Bytes, HttpErr> {
     return result.Result.Ok(value = out)
 }
 
-// Panics: if a read fails.
+/// Panics: if a read fails.
 fun mut Cursor.read_to_end().R: Bytes {
     val body = when self.try_read_to_end() {
         Ok(b) -> b
@@ -725,7 +725,7 @@ fun mut Cursor.read_to_end().R: Bytes {
     return body
 }
 
-// One hex digit, or -1 when the byte is not one.
+/// One hex digit, or -1 when the byte is not one.
 fun hex_value(c: u8).R: i64 {
     if str.is_digit(c) {
         return (c - 48).to_i64()
@@ -739,7 +739,7 @@ fun hex_value(c: u8).R: i64 {
     return -1
 }
 
-// One hex digit. Panics: if the byte is not one.
+/// One hex digit. Panics: if the byte is not one.
 fun hex_digit(c: u8).R: u32 {
     val v = hex_value(c)
     if v < 0 {
@@ -748,8 +748,8 @@ fun hex_digit(c: u8).R: u32 {
     return v.to_u32()
 }
 
-// A chunk size: hex digits, optionally followed by `;extension`, which is
-// ignored. A malformed size is an `Exchange` failure: the response is broken.
+/// A chunk size: hex digits, optionally followed by `;extension`, which is
+/// ignored. A malformed size is an `Exchange` failure: the response is broken.
 fun parse_hex_try(text: &str).R: result.Result<usize, HttpErr> {
     if str.is_empty(text) {
         return exchange_failed("http: empty chunk size")
@@ -779,7 +779,7 @@ fun parse_hex_try(text: &str).R: result.Result<usize, HttpErr> {
     return result.Result.Ok(value = value)
 }
 
-// Panics: if there are no digits, or a digit is not hexadecimal.
+/// Panics: if there are no digits, or a digit is not hexadecimal.
 fun parse_hex(text: &str).R: usize {
     val v = when parse_hex_try(text) {
         Ok(n) -> n
@@ -788,11 +788,11 @@ fun parse_hex(text: &str).R: usize {
     return v
 }
 
-// Decodes a chunked body: a hex size line, that many bytes, a `CRLF`, repeated
-// until a zero size, then trailers until a blank line. This is what keep-alive
-// makes mandatory: with a persistent connection there is no other way to find
-// where a chunked body stops, and reading to end of file would block until the
-// server closed a connection it intends to keep.
+/// Decodes a chunked body: a hex size line, that many bytes, a `CRLF`, repeated
+/// until a zero size, then trailers until a blank line. This is what keep-alive
+/// makes mandatory: with a persistent connection there is no other way to find
+/// where a chunked body stops, and reading to end of file would block until the
+/// server closed a connection it intends to keep.
 fun mut Cursor.try_read_chunked().R: result.Result<Bytes, HttpErr> {
     var out = Bytes.empty()
     var going = true
@@ -817,7 +817,7 @@ fun mut Cursor.try_read_chunked().R: result.Result<Bytes, HttpErr> {
     return result.Result.Ok(value = out)
 }
 
-// Panics: on a malformed chunk or a peer that closes early.
+/// Panics: on a malformed chunk or a peer that closes early.
 fun mut Cursor.read_chunked().R: Bytes {
     val body = when self.try_read_chunked() {
         Ok(b) -> b
@@ -828,16 +828,16 @@ fun mut Cursor.read_chunked().R: Bytes {
 
 // ----- response reading -----
 
-// The offset just past the blank line that ends the header block, or 0 when it
-// has not arrived yet. 0 is a usable sentinel because a header block can never
-// end at offset 0 — the terminator alone is four bytes.
-//
-// This scans **bytes**, and that is not an optimization. `Bytes.as_str()`
-// validates utf-8, and the buffer holds whatever arrived alongside the
-// headers — so the first response with a binary body would panic right here,
-// before the headers had even been located. Every synthetic test had an
-// all-ASCII body, which is why it took `examples/download.kp` (a 200 KB image)
-// to find this.
+/// The offset just past the blank line that ends the header block, or 0 when it
+/// has not arrived yet. 0 is a usable sentinel because a header block can never
+/// end at offset 0 — the terminator alone is four bytes.
+///
+/// This scans **bytes**, and that is not an optimization. `Bytes.as_str()`
+/// validates utf-8, and the buffer holds whatever arrived alongside the
+/// headers — so the first response with a binary body would panic right here,
+/// before the headers had even been located. Every synthetic test had an
+/// all-ASCII body, which is why it took `examples/download.kp` (a 200 KB image)
+/// to find this.
 fun find_head_end(b: Bytes).R: usize {
     val n = b.len()
     var i: usize = 0
@@ -850,11 +850,11 @@ fun find_head_end(b: Bytes).R: usize {
     return 0
 }
 
-// The header block as text: the bytes before the terminator, copied and
-// validated in one step, since `String.from_bytes` *adopts* the buffer instead
-// of copying it. A header block that is not valid utf-8 is a malformed
-// response, and this is where that becomes loud rather than producing a
-// `String` that lies about its own invariant.
+/// The header block as text: the bytes before the terminator, copied and
+/// validated in one step, since `String.from_bytes` *adopts* the buffer instead
+/// of copying it. A header block that is not valid utf-8 is a malformed
+/// response, and this is where that becomes loud rather than producing a
+/// `String` that lies about its own invariant.
 fun head_text(b: Bytes, end: usize).R: String {
     val n = end - 4
     var raw = mem.alloc(n)
@@ -866,9 +866,9 @@ fun head_text(b: Bytes, end: usize).R: String {
     return String.from_bytes(raw)
 }
 
-// The status line: `HTTP/1.1 200 OK`. Only the code matters here; the reason
-// phrase may be absent or anything at all. A line with no code, or a code that
-// is not a number, is an `Exchange` failure: the response is malformed.
+/// The status line: `HTTP/1.1 200 OK`. Only the code matters here; the reason
+/// phrase may be absent or anything at all. A line with no code, or a code that
+/// is not a number, is an `Exchange` failure: the response is malformed.
 fun parse_status_line_try(line: &str).R: result.Result<i32, HttpErr> {
     val sp = str.index_of(line, " ")
     if let Some(first) = sp {
@@ -883,7 +883,7 @@ fun parse_status_line_try(line: &str).R: result.Result<i32, HttpErr> {
     return exchange_failed("http: malformed status line (no status code)")
 }
 
-// Panics: if the line has no code, or the code is not a number.
+/// Panics: if the line has no code, or the code is not a number.
 fun parse_status_line(line: &str).R: i32 {
     val code = when parse_status_line_try(line) {
         Ok(c) -> c
@@ -911,9 +911,9 @@ fun status_code(text: &str).R: i32 {
     return code
 }
 
-// Every header line after the status line, name and value split at the first
-// `:`, both trimmed. A line with no `:` is skipped rather than treated as an
-// error: HTTP allows a recipient to ignore what it does not understand.
+/// Every header line after the status line, name and value split at the first
+/// `:`, both trimmed. A line with no `:` is skipped rather than treated as an
+/// error: HTTP allows a recipient to ignore what it does not understand.
 fun parse_headers(lines: List<String>).R: List<Header> {
     var hs: List<Header> = List.empty()
     var i: usize = 1
@@ -943,11 +943,11 @@ fun header_value(hs: List<Header>, name: &str).R: String {
     return String.empty()
 }
 
-// A header's value as `u64`, or `None`. Absent and malformed are the same
-// answer here: there is nothing to distinguish "the server didn't send this"
-// from "the server sent something that isn't a number", and a caller only
-// cares that it has no number to use either way (used for `Retry-After` and
-// the integer `X-RateLimit-*` fields, MISSING-p5Xtr).
+/// A header's value as `u64`, or `None`. Absent and malformed are the same
+/// answer here: there is nothing to distinguish "the server didn't send this"
+/// from "the server sent something that isn't a number", and a caller only
+/// cares that it has no number to use either way (used for `Retry-After` and
+/// the integer `X-RateLimit-*` fields, MISSING-p5Xtr).
 fun header_u64(hs: List<Header>, name: &str).R: option.Option<u64> {
     val text = header_value(hs, name)
     if str.is_empty(text.as_str()) {
@@ -960,9 +960,9 @@ fun header_u64(hs: List<Header>, name: &str).R: option.Option<u64> {
     }
 }
 
-// As `header_u64`, but `f64` — for `X-RateLimit-Reset` and
-// `X-RateLimit-Reset-After`, which carry fractional seconds on the API this
-// module was designed against.
+/// As `header_u64`, but `f64` — for `X-RateLimit-Reset` and
+/// `X-RateLimit-Reset-After`, which carry fractional seconds on the API this
+/// module was designed against.
 fun header_f64(hs: List<Header>, name: &str).R: option.Option<f64> {
     val text = header_value(hs, name)
     if str.is_empty(text.as_str()) {
@@ -975,10 +975,10 @@ fun header_f64(hs: List<Header>, name: &str).R: option.Option<f64> {
     }
 }
 
-// A header's value as an owned `String`, or `None` for an absent header —
-// unlike `Response.header`, which answers "" either way, this is for a caller
-// that needs to tell "absent" apart from "present and empty" (used for
-// `X-RateLimit-Bucket`, an opaque string with no numeric fallback).
+/// A header's value as an owned `String`, or `None` for an absent header —
+/// unlike `Response.header`, which answers "" either way, this is for a caller
+/// that needs to tell "absent" apart from "present and empty" (used for
+/// `X-RateLimit-Bucket`, an opaque string with no numeric fallback).
 fun header_opt(hs: List<Header>, name: &str).R: option.Option<String> {
     val text = header_value(hs, name)
     if str.is_empty(text.as_str()) {
@@ -987,10 +987,10 @@ fun header_opt(hs: List<Header>, name: &str).R: option.Option<String> {
     return option.Option.Some(value = text)
 }
 
-// `-1` for absent, which is not a legal `Content-Length` — an absent header is
-// not a parse failure, and the value is a count whose every non-negative value
-// is meaningful, so there is nothing for an `Option` to add here. A header that
-// is present and not a number is an `Exchange` failure.
+/// `-1` for absent, which is not a legal `Content-Length` — an absent header is
+/// not a parse failure, and the value is a count whose every non-negative value
+/// is meaningful, so there is nothing for an `Option` to add here. A header that
+/// is present and not a number is an `Exchange` failure.
 fun content_length_try(hs: List<Header>).R: result.Result<i64, HttpErr> {
     val text = header_value(hs, "content-length")
     if str.is_empty(text.as_str()) {
@@ -1003,7 +1003,7 @@ fun content_length_try(hs: List<Header>).R: result.Result<i64, HttpErr> {
     return exchange_failed("http: Content-Length is not a number")
 }
 
-// Panics: if the header is present and not a number.
+/// Panics: if the header is present and not a number.
 fun content_length_of(hs: List<Header>).R: i64 {
     val n = when content_length_try(hs) {
         Ok(v) -> v
@@ -1024,15 +1024,15 @@ fun wants_close(hs: List<Header>).R: bool {
     return str.contains(text.as_str(), "close")
 }
 
-// One whole response off one socket: header block, framing decision, body.
-//
-// Everything is a local because there is no destructuring: a helper that
-// returned `(status, headers, cursor)` would have to be taken apart to be
-// used, and no syntax does that. So the framing lives in `Cursor`'s methods
-// and the parsing lives in the helpers above, while the assembly of the
-// `Response` happens here, where every piece is still a plain binding.
-//
-// Fallible core: every failure is an `HttpErr.Exchange`.
+/// One whole response off one socket: header block, framing decision, body.
+///
+/// Everything is a local because there is no destructuring: a helper that
+/// returned `(status, headers, cursor)` would have to be taken apart to be
+/// used, and no syntax does that. So the framing lives in `Cursor`'s methods
+/// and the parsing lives in the helpers above, while the assembly of the
+/// `Response` happens here, where every piece is still a plain binding.
+///
+/// Fallible core: every failure is an `HttpErr.Exchange`.
 fun read_response_try(c: Conn).R: result.Result<Response, HttpErr> {
     var buf = Bytes.empty()
     var end: usize = 0
@@ -1078,8 +1078,8 @@ fun read_response_try(c: Conn).R: result.Result<Response, HttpErr> {
     return result.Result.Ok(value = Response(status = status, headers = hs, body = body, reusable = reusable))
 }
 
-// Panics: on a peer that closes early, a malformed status line, a
-// non-numeric `Content-Length`, a malformed chunk, or a read failure.
+/// Panics: on a peer that closes early, a malformed status line, a
+/// non-numeric `Content-Length`, a malformed chunk, or a read failure.
 fun read_response(c: Conn).R: Response {
     val r = when read_response_try(c) {
         Ok(v) -> v
@@ -1090,11 +1090,11 @@ fun read_response(c: Conn).R: Response {
 
 // ----- one exchange, and redirects -----
 
-// A full round trip on one socket: send the head and body, read the response.
-// The socket's timeout is set by whoever opened it, not here, because a pooled
-// connection is configured once on connect rather than on every request.
-//
-// Fallible core: a failed send or response read is an `HttpErr.Exchange`.
+/// A full round trip on one socket: send the head and body, read the response.
+/// The socket's timeout is set by whoever opened it, not here, because a pooled
+/// connection is configured once on connect rather than on every request.
+///
+/// Fallible core: a failed send or response read is an `HttpErr.Exchange`.
 fun one_exchange_try(c: Conn, method: &str, u: Url, headers: List<Header>, body: Bytes).R: result.Result<Response, HttpErr> {
     val head = build_head(method, u, headers, body.len())
     conn_send_all_try(c, head.into_bytes())?
@@ -1104,7 +1104,7 @@ fun one_exchange_try(c: Conn, method: &str, u: Url, headers: List<Header>, body:
     return read_response_try(c)
 }
 
-// Panics: if the send or the response read fails.
+/// Panics: if the send or the response read fails.
 fun one_exchange(c: Conn, method: &str, u: Url, headers: List<Header>, body: Bytes).R: Response {
     val r = when one_exchange_try(c, method, u, headers, body) {
         Ok(v) -> v
@@ -1113,23 +1113,23 @@ fun one_exchange(c: Conn, method: &str, u: Url, headers: List<Header>, body: Byt
     return r
 }
 
-// 301/302/303 become `GET` with no body (the historical behavior every browser
-// implements); 307/308 preserve the method and body, which is exactly why they
-// were standardized.
+/// 301/302/303 become `GET` with no body (the historical behavior every browser
+/// implements); 307/308 preserve the method and body, which is exactly why they
+/// were standardized.
 fun keep_body_on(status: i32).R: bool = status == 307 || status == 308
 
 fun is_redirect(status: i32).R: bool {
     return status == 301 || status == 302 || status == 303 || status == 307 || status == 308
 }
 
-// A `Location` that is not absolute is resolved against the URL that produced
-// the redirect. Only the scheme, host and port are inherited; the pool key
-// and the capability check both use the resulting URL's own host, so a
-// redirect to another name is a *different* connection needing its own
-// grant. Inheriting `base.scheme` (not always `http`) is what keeps a
-// relative redirect on an `https` connection from silently downgrading to
-// plain `http` — an *absolute* `Location`, returned unchanged just above,
-// is the only way a redirect actually crosses schemes.
+/// A `Location` that is not absolute is resolved against the URL that produced
+/// the redirect. Only the scheme, host and port are inherited; the pool key
+/// and the capability check both use the resulting URL's own host, so a
+/// redirect to another name is a *different* connection needing its own
+/// grant. Inheriting `base.scheme` (not always `http`) is what keeps a
+/// relative redirect on an `https` connection from silently downgrading to
+/// plain `http` — an *absolute* `Location`, returned unchanged just above,
+/// is the only way a redirect actually crosses schemes.
 fun absolute_url(base: Url, loc: &str).R: String {
     if str.starts_with(loc, "http://") || str.starts_with(loc, "https://") {
         return String.from_str(loc)
@@ -1150,16 +1150,16 @@ fun absolute_url(base: Url, loc: &str).R: String {
     return out
 }
 
-// Whether to follow this response, and where to. Panics: if the redirect chain
-// is longer than the client allows — a loop is a malformed server, and v1 has
-// no `Result` to report it with.
-// Where a redirect chain goes next, or an empty string for "do not follow".
-//
-// The next URL is *returned by a call* (`absolute_url`) rather than carried in
-// a `datac`, so the join rule lives in one place and every caller gets a
-// freshly built value.
-//
-// Panics: if the chain is longer than the client allows.
+/// Whether to follow this response, and where to. Panics: if the redirect chain
+/// is longer than the client allows — a loop is a malformed server, and v1 has
+/// no `Result` to report it with.
+/// Where a redirect chain goes next, or an empty string for "do not follow".
+///
+/// The next URL is *returned by a call* (`absolute_url`) rather than carried in
+/// a `datac`, so the join rule lives in one place and every caller gets a
+/// freshly built value.
+///
+/// Panics: if the chain is longer than the client allows.
 fun follow_url(client: Client, base: Url, resp: Response, hops: i32).R: String {
     val next = when follow_url_try(client, base, resp, hops) {
         Ok(u) -> u
@@ -1168,8 +1168,8 @@ fun follow_url(client: Client, base: Url, resp: Response, hops: i32).R: String {
     return next
 }
 
-// The fallible core of `follow_url`: a chain longer than the client allows is
-// `HttpErr.Redirects`.
+/// The fallible core of `follow_url`: a chain longer than the client allows is
+/// `HttpErr.Redirects`.
 fun follow_url_try(client: Client, base: Url, resp: Response, hops: i32).R: result.Result<String, HttpErr> {
     if !client.follow_redirects {
         return result.Result.Ok(value = String.empty())
@@ -1193,13 +1193,13 @@ fun default_client().R: Client = Client(
     follow_redirects = true,
 )
 
-// One request on a fresh connection, following redirects. Every hop connects
-// again, which is the correct behavior for a redirect that changes host and
-// the only option without a pool to consult.
-//
-// Panics: if the connection fails, the capability denies the host, the
-// response is malformed, or the redirect chain is too long. `try_send` is the
-// same call with every one of those but the capability denial as a value.
+/// One request on a fresh connection, following redirects. Every hop connects
+/// again, which is the correct behavior for a redirect that changes host and
+/// the only option without a pool to consult.
+///
+/// Panics: if the connection fails, the capability denies the host, the
+/// response is malformed, or the redirect chain is too long. `try_send` is the
+/// same call with every one of those but the capability denial as a value.
 fun Client.send(req: Request).R: Response {
     val r = when self.try_send(req) {
         Ok(v) -> v
@@ -1208,13 +1208,13 @@ fun Client.send(req: Request).R: Response {
     return r
 }
 
-// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm): `Dial` when nothing
-// was sent, `Exchange` when the request may have reached the server, `Redirects`
-// for a chain that is too long.
-//
-// Panics: if the capability denies the host, or the URL is malformed. Both are
-// mistakes in the program rather than conditions of the network, and the
-// capability check has no value-returning form.
+/// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm): `Dial` when nothing
+/// was sent, `Exchange` when the request may have reached the server, `Redirects`
+/// for a chain that is too long.
+///
+/// Panics: if the capability denies the host, or the URL is malformed. Both are
+/// mistakes in the program rather than conditions of the network, and the
+/// capability check has no value-returning form.
 fun Client.try_send(req: Request).R: result.Result<Response, HttpErr> = send_fresh_try(
     self,
     req.method.clone(),
@@ -1265,20 +1265,20 @@ fun send_fresh_try(
     return send_fresh_try(client, String.from_str("GET"), next, headers, Bytes.empty(), hops - 1)
 }
 
-// A single exchange on a connection the caller already holds: parse the URL,
-// send, read. This is the concurrency-ready primitive — no pool and no client
-// are named while it runs — and `Client.send`/`Pool.send` are the redirect
-// loops built on top of it.
-//
-// Panics: as `one_exchange`, plus a malformed URL.
+/// A single exchange on a connection the caller already holds: parse the URL,
+/// send, read. This is the concurrency-ready primitive — no pool and no client
+/// are named while it runs — and `Client.send`/`Pool.send` are the redirect
+/// loops built on top of it.
+///
+/// Panics: as `one_exchange`, plus a malformed URL.
 fun exchange(c: Conn, req: Request).R: Response {
     val u = parse_url(req.url.as_str())
     return one_exchange(c, req.method.as_str(), u, req.headers, req.body)
 }
 
-// `exchange`, with a failed send or response read as an `HttpErr.Exchange`.
-//
-// Panics: on a malformed URL.
+/// `exchange`, with a failed send or response read as an `HttpErr.Exchange`.
+///
+/// Panics: on a malformed URL.
 fun exchange_try(c: Conn, req: Request).R: result.Result<Response, HttpErr> {
     val u = parse_url(req.url.as_str())
     return one_exchange_try(c, req.method.as_str(), u, req.headers, req.body)
@@ -1286,9 +1286,9 @@ fun exchange_try(c: Conn, req: Request).R: result.Result<Response, HttpErr> {
 
 // ----- the pool -----
 
-// The pool for one `host:port`. The ceiling and the timeout come from the
-// program's configuration (`http_pool`) and the default client; nothing is
-// connected here, so creating a pool costs nothing.
+/// The pool for one `host:port`. The ceiling and the timeout come from the
+/// program's configuration (`http_pool`) and the default client; nothing is
+/// connected here, so creating a pool costs nothing.
 fun pool(host: &str, port: u16).R: Pool = Pool(
     host = String.from_str(host),
     port = port,
@@ -1304,24 +1304,24 @@ fun empty_idle().R: List<Conn> {
 
 fun Pool.size().R: usize = size
 
-// How many connections the pool is keeping right now.
+/// How many connections the pool is keeping right now.
 fun Pool.len().R: usize = idle.len()
 
 fun Lease.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 
-// Opens up to `size` connections now, so the first request does not pay for
-// them. Optional by design: eager connecting is what makes a pool hurt startup,
-// so it is a call a program makes rather than the default. `use_tls` has to be
-// given here because a `Pool` is not itself keyed on a scheme — only on
-// `host:port` — so warming has no request to read it from the way `checkout`
-// does; the caller says how it means to use the pool.
-//
-// The pool's fields are copied into locals first and the idle count is read
-// inside a block. That is not decoration: a shared borrow created in a *binding
-// initializer* stays live to the end of the block (the lexical lifetimes open
-// item 30 records), and `idle.push` needs the pool exclusively a line later.
-//
-// Panics: if a connection fails.
+/// Opens up to `size` connections now, so the first request does not pay for
+/// them. Optional by design: eager connecting is what makes a pool hurt startup,
+/// so it is a call a program makes rather than the default. `use_tls` has to be
+/// given here because a `Pool` is not itself keyed on a scheme — only on
+/// `host:port` — so warming has no request to read it from the way `checkout`
+/// does; the caller says how it means to use the pool.
+///
+/// The pool's fields are copied into locals first and the idle count is read
+/// inside a block. That is not decoration: a shared borrow created in a *binding
+/// initializer* stays live to the end of the block (the lexical lifetimes open
+/// item 30 records), and `idle.push` needs the pool exclusively a line later.
+///
+/// Panics: if a connection fails.
 fun mut Pool.warm(use_tls: bool) {
     val h = host.clone()
     val p = port
@@ -1338,16 +1338,16 @@ fun mut Pool.warm(use_tls: bool) {
     }
 }
 
-// Hands out a connection: an idle one if there is one, a fresh one if there is
-// not. The pool never refuses — the ceiling governs how many connections are
-// *kept*, not how many may be in flight — so a caller holding two leases simply
-// gets two connections, and only one of them is kept on release. An idle
-// connection is reused only when its scheme is the one asked for: a kept
-// connection of the other scheme (one `host:port` answering both `http` and
-// `https`) is closed and replaced by a fresh one, so an `https` request is
-// never sent over a plain connection and the reverse.
-//
-// Panics: if connecting fails.
+/// Hands out a connection: an idle one if there is one, a fresh one if there is
+/// not. The pool never refuses — the ceiling governs how many connections are
+/// *kept*, not how many may be in flight — so a caller holding two leases simply
+/// gets two connections, and only one of them is kept on release. An idle
+/// connection is reused only when its scheme is the one asked for: a kept
+/// connection of the other scheme (one `host:port` answering both `http` and
+/// `https`) is closed and replaced by a fresh one, so an `https` request is
+/// never sent over a plain connection and the reverse.
+///
+/// Panics: if connecting fails.
 fun mut Pool.checkout(use_tls: bool).R: Lease {
     val l = when self.try_checkout(use_tls) {
         Ok(v) -> v
@@ -1356,9 +1356,9 @@ fun mut Pool.checkout(use_tls: bool).R: Lease {
     return l
 }
 
-// `checkout`, with a failed dial as `HttpErr.Dial`.
-//
-// Panics: if the capability denies the host.
+/// `checkout`, with a failed dial as `HttpErr.Dial`.
+///
+/// Panics: if the capability denies the host.
 fun mut Pool.try_checkout(use_tls: bool).R: result.Result<Lease, HttpErr> {
     if !idle.is_empty() {
         val c = idle.pop()
@@ -1374,12 +1374,12 @@ fun mut Pool.try_checkout(use_tls: bool).R: result.Result<Lease, HttpErr> {
     return result.Result.Ok(value = Lease(fd = c.fd, tls_handle = c.tls_handle, reused = false))
 }
 
-// Gives a connection back. `release` consumes the lease, so this cannot happen
-// twice. A connection that is not reusable — an unframed body, or a server that
-// said `Connection: close` — is closed instead of kept, and so is one beyond
-// the ceiling: the pool keeps at most `size`.
-//
-// Panics: if closing a connection fails.
+/// Gives a connection back. `release` consumes the lease, so this cannot happen
+/// twice. A connection that is not reusable — an unframed body, or a server that
+/// said `Connection: close` — is closed instead of kept, and so is one beyond
+/// the ceiling: the pool keeps at most `size`.
+///
+/// Panics: if closing a connection fails.
 fun mut Pool.release(lease: Lease, reusable: bool) {
     if reusable && idle.len() < size {
         idle.push(lease.conn())
@@ -1388,7 +1388,7 @@ fun mut Pool.release(lease: Lease, reusable: bool) {
     }
 }
 
-// Panics: if closing a connection fails.
+/// Panics: if closing a connection fails.
 fun mut Pool.close_all() {
     var going = true
     while going {
@@ -1416,15 +1416,15 @@ fun mut Pool.send(req: Request).R: Response {
     return r
 }
 
-// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm), as `Client.try_send`
-// reports them. A connection that failed mid-exchange is closed and not put
-// back, so a pool never hands out a connection a failure left half read. An
-// `Exchange` failure on a *reused* connection is the classic stale keep-alive
-// (the server closed an idle connection before this request reached it), which
-// is why a caller that retries an idempotent request once on `Exchange` is
-// doing the ordinary thing.
-//
-// Panics: as `Client.try_send`.
+/// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm), as `Client.try_send`
+/// reports them. A connection that failed mid-exchange is closed and not put
+/// back, so a pool never hands out a connection a failure left half read. An
+/// `Exchange` failure on a *reused* connection is the classic stale keep-alive
+/// (the server closed an idle connection before this request reached it), which
+/// is why a caller that retries an idempotent request once on `Exchange` is
+/// doing the ordinary thing.
+///
+/// Panics: as `Client.try_send`.
 fun mut Pool.try_send(req: Request).R: result.Result<Response, HttpErr> {
     val c = default_client()
     return pooled_hop_try(
@@ -1515,10 +1515,10 @@ fun pooled_hop_try(
 
 // ----- https with a private CA, a client certificate or ALPN -----
 
-// The plain client's dial, with `tls.TlsClientOptions` for the handshake: a
-// private CA file, a client certificate (mTLS), ALPN. Verification stays
-// mandatory, as in `connect_configured_try`. A failed handshake is
-// `HttpErr.Dial`. Panics: if the capability denies the host.
+/// The plain client's dial, with `tls.TlsClientOptions` for the handshake: a
+/// private CA file, a client certificate (mTLS), ALPN. Verification stays
+/// mandatory, as in `connect_configured_try`. A failed handshake is
+/// `HttpErr.Dial`. Panics: if the capability denies the host.
 fun connect_tls_try(host: &str, port: u16, timeout_ms: u64, opts: &tls.TlsClientOptions).R: result.Result<Conn, HttpErr> {
     val dialed = net.try_connect(host, port)
     return when dialed {
@@ -1541,9 +1541,9 @@ fun finish_dial_opts(sock: net.Socket, host: &str, timeout_ms: u64, opts: &tls.T
     }
 }
 
-// `Client.try_send` for a URL that may be `https`, with the TLS options above
-// applied to every `https` hop (a plain `http` hop ignores them). Every hop is
-// a fresh connection, as in `Client.try_send`.
+/// `Client.try_send` for a URL that may be `https`, with the TLS options above
+/// applied to every `https` hop (a plain `http` hop ignores them). Every hop is
+/// a fresh connection, as in `Client.try_send`.
 fun Client.try_send_tls(req: Request, opts: &tls.TlsClientOptions).R: result.Result<Response, HttpErr> = send_tls_try(
     self,
     opts,
@@ -1585,13 +1585,13 @@ fun send_tls_try(
     return send_tls_try(client, opts, String.from_str("GET"), next, headers, Bytes.empty(), hops - 1)
 }
 
-// A `GET` with the TLS options: `try_get` for a private CA and mTLS.
+/// A `GET` with the TLS options: `try_get` for a private CA and mTLS.
 fun try_get_tls(url: &str, opts: &tls.TlsClientOptions).R: result.Result<Response, HttpErr> {
     val c = default_client()
     return c.try_send_tls(make_get(url), opts)
 }
 
-// Panics: as `get`, and if the TLS handshake fails.
+/// Panics: as `get`, and if the TLS handshake fails.
 fun get_tls(url: &str, opts: &tls.TlsClientOptions).R: Response {
     val r = when try_get_tls(url, opts) {
         Ok(v) -> v
@@ -1602,19 +1602,19 @@ fun get_tls(url: &str, opts: &tls.TlsClientOptions).R: Response {
 
 // ----- the one-liners -----
 
-// A `GET` on a fresh connection, no pool. Pooling is opt-in through an
-// explicit `Pool` because a process-wide default pool would be shared mutable
-// state, and threads (T1) would then need a lock around every request — see
-// the plan's open item 61.
-//
-// Panics: if the connection fails, the capability denies the host, or the
-// response is malformed.
+/// A `GET` on a fresh connection, no pool. Pooling is opt-in through an
+/// explicit `Pool` because a process-wide default pool would be shared mutable
+/// state, and threads (T1) would then need a lock around every request — see
+/// the plan's open item 61.
+///
+/// Panics: if the connection fails, the capability denies the host, or the
+/// response is malformed.
 fun get(url: &str).R: Response {
     val c = default_client()
     return c.send(make_get(url))
 }
 
-// `get`, with the failures as an `HttpErr` (`Client.try_send`).
+/// `get`, with the failures as an `HttpErr` (`Client.try_send`).
 fun try_get(url: &str).R: result.Result<Response, HttpErr> {
     val c = default_client()
     return c.try_send(make_get(url))
@@ -1627,7 +1627,7 @@ fun make_get(url: &str).R: Request = Request(
     body = Bytes.empty(),
 )
 
-// Panics: as `get`.
+/// Panics: as `get`.
 fun post_text(url: &str, body: &str, content_type: &str).R: Response {
     var hs: List<Header> = List.empty()
     hs.push(Header(name = String.from_str("Content-Type"), value = String.from_str(content_type)))
@@ -1655,11 +1655,11 @@ fun post_text(url: &str, body: &str, content_type: &str).R: Response {
 
 // ----- limits -----
 
-// What one server will accept from one client. Every field is a ceiling and
-// every violation is answered with its own status and a closed connection
-// (`plan/http-server.md`). The timeouts are *deadlines*, not per-read waits: a
-// client that trickles its request one byte at a time is cut off when the head
-// deadline passes, which a per-`recv` timeout would never do.
+/// What one server will accept from one client. Every field is a ceiling and
+/// every violation is answered with its own status and a closed connection
+/// (`plan/http-server.md`). The timeouts are *deadlines*, not per-read waits: a
+/// client that trickles its request one byte at a time is cut off when the head
+/// deadline passes, which a per-`recv` timeout would never do.
 datac Limits(
     val max_request_line: usize,
     val max_header_bytes: usize,
@@ -1671,9 +1671,9 @@ datac Limits(
     val max_requests_per_conn: usize,
 )
 
-// 8 KiB request line, 16 KiB of headers, 100 headers, 1 MiB body, 10 s for the
-// head, 30 s for the body, 5 s idle between requests, 100 requests per
-// connection.
+/// 8 KiB request line, 16 KiB of headers, 100 headers, 1 MiB body, 10 s for the
+/// head, 30 s for the body, 5 s idle between requests, 100 requests per
+/// connection.
 fun default_limits().R: Limits = Limits(
     max_request_line = 8192,
     max_header_bytes = 16384,
@@ -1685,8 +1685,8 @@ fun default_limits().R: Limits = Limits(
     max_requests_per_conn = 100,
 )
 
-// A copy with other timeouts: `Limits` is a `datac`, so a worker that needs its
-// own value rebuilds one.
+/// A copy with other timeouts: `Limits` is a `datac`, so a worker that needs its
+/// own value rebuilds one.
 fun Limits.with_timeouts(head_ms: u64, body_ms: u64, idle_ms: u64).R: Limits = Limits(
     max_request_line = max_request_line,
     max_header_bytes = max_header_bytes,
@@ -1702,9 +1702,9 @@ fun Limits.dup().R: Limits = self.with_timeouts(head_timeout_ms, body_timeout_ms
 
 // ----- requests and responses -----
 
-// One parsed request. `path` and `query` are the two halves of `target` around
-// the first `?`, both still percent-encoded; `query_param` and `path_segments`
-// decode. A header name keeps the case the client wrote; lookups ignore case.
+/// One parsed request. `path` and `query` are the two halves of `target` around
+/// the first `?`, both still percent-encoded; `query_param` and `path_segments`
+/// decode. A header name keeps the case the client wrote; lookups ignore case.
 datac ServerRequest(
     val method: String,
     val target: String,
@@ -1714,8 +1714,8 @@ datac ServerRequest(
     val body: Bytes,
 )
 
-// What a handler returns. `Content-Length` and `Connection` are the server's:
-// a header of either name set here is dropped when the response is written.
+/// What a handler returns. `Content-Length` and `Connection` are the server's:
+/// a header of either name set here is dropped when the response is written.
 datac ServerResponse(val status: i32, val headers: List<Header>, val body: Bytes)
 
 fun headers_have(hs: List<Header>, name: &str).R: bool {
@@ -1733,12 +1733,12 @@ fun ServerRequest.header(name: &str).R: String = header_value(headers, name)
 
 fun ServerRequest.has_header(name: &str).R: bool = headers_have(headers, name)
 
-// The body as owned text. Panics: if the bytes are not valid utf-8.
+/// The body as owned text. Panics: if the bytes are not valid utf-8.
 fun ServerRequest.text().R: String = String.from_bytes(body.clone())
 
-// A decoded query value: `+` is a space, `%XX` is a byte. The text is kept as
-// written when it is not valid percent-encoding, since a handler would rather
-// see the raw parameter than lose it.
+/// A decoded query value: `+` is a space, `%XX` is a byte. The text is kept as
+/// written when it is not valid percent-encoding, since a handler would rather
+/// see the raw parameter than lose it.
 fun srv_decode_form(raw: &str).R: String {
     return when encoding.form_decode(raw) {
         Ok(s) -> s
@@ -1753,8 +1753,8 @@ fun srv_decode_path(raw: &str).R: String {
     }
 }
 
-// The value of the first query parameter called `name`, percent-decoded, or
-// `None`. `?a` is `Some("")` for `a`; names are compared after decoding.
+/// The value of the first query parameter called `name`, percent-decoded, or
+/// `None`. `?a` is `Some("")` for `a`; names are compared after decoding.
 fun ServerRequest.query_param(name: &str).R: option.Option<String> {
     val pairs = str.split(query.as_str(), "&")
     var i: usize = 0
@@ -1780,8 +1780,8 @@ fun ServerRequest.query_param(name: &str).R: option.Option<String> {
     return option.Option.None
 }
 
-// The non-empty `/`-separated pieces of the path, each percent-decoded, so
-// `/users/42/` is `["users", "42"]` and `/a%2Fb` is one segment `a/b`.
+/// The non-empty `/`-separated pieces of the path, each percent-decoded, so
+/// `/users/42/` is `["users", "42"]` and `/a%2Fb` is one segment `a/b`.
 fun ServerRequest.path_segments().R: List<String> {
     val raw = str.split(path.as_str(), "/")
     var out: List<String> = List.empty()
@@ -1910,25 +1910,25 @@ fun srv_response(code: i32, content_type: &str, body: move Bytes).R: ServerRespo
     return ServerResponse(status = code, headers = hs, body = body)
 }
 
-// `200` with a `text/plain; charset=utf-8` body.
+/// `200` with a `text/plain; charset=utf-8` body.
 fun ok_text(text: &str).R: ServerResponse = srv_response(200, "text/plain; charset=utf-8", Bytes.from_str(text))
 
-// `200` with an `application/json` body; the text is sent as written.
+/// `200` with an `application/json` body; the text is sent as written.
 fun json(text: &str).R: ServerResponse = srv_response(200, "application/json", Bytes.from_str(text))
 
-// `200` with a `text/html; charset=utf-8` body.
+/// `200` with a `text/html; charset=utf-8` body.
 fun html(text: &str).R: ServerResponse = srv_response(200, "text/html; charset=utf-8", Bytes.from_str(text))
 
-// An empty response with this status.
+/// An empty response with this status.
 fun status(code: i32).R: ServerResponse = srv_response(code, "", Bytes.empty())
 
 fun not_found().R: ServerResponse = srv_response(404, "text/plain; charset=utf-8", Bytes.from_str("not found\n"))
 
-// `400` whose body is `message`.
+/// `400` whose body is `message`.
 fun bad_request(message: &str).R: ServerResponse = srv_response(400, "text/plain; charset=utf-8", Bytes.from_str(message))
 
-// A copy of the response with one more header. The original is borrowed, so
-// this copies its headers and body; use `add_header` to grow one in place.
+/// A copy of the response with one more header. The original is borrowed, so
+/// this copies its headers and body; use `add_header` to grow one in place.
 fun ServerResponse.with_header(name: &str, value: &str).R: ServerResponse {
     var hs: List<Header> = List.empty()
     var i: usize = 0
@@ -1947,12 +1947,12 @@ fun mut ServerResponse.add_header(name: &str, value: &str) {
 
 // ----- the listener and the connection -----
 
-// A bound, listening socket. Nothing closes on drop: `close` is the end.
+/// A bound, listening socket. Nothing closes on drop: `close` is the end.
 datac Server(val fd: i32)
 
-// Binds `port` on every interface (0 asks for a free one, `Server.port` says
-// which). Gated exactly as `net.listen`: the importer's grant must cover the
-// port. Panics: as `net.listen`.
+/// Binds `port` on every interface (0 asks for a free one, `Server.port` says
+/// which). Gated exactly as `net.listen`: the importer's grant must cover the
+/// port. Panics: as `net.listen`.
 fun listen(port: u16).R: Server {
     val l = net.listen(port)
     return Server(fd = l.fd)
@@ -1963,9 +1963,9 @@ fun Server.port().R: u16 {
     return l.port()
 }
 
-// Makes `accept`/`try_accept` give up after `ms` without a peer (0 = never).
-// The timeout belongs to the listening socket, so every thread accepting on it
-// sees it.
+/// Makes `accept`/`try_accept` give up after `ms` without a peer (0 = never).
+/// The timeout belongs to the listening socket, so every thread accepting on it
+/// sees it.
 fun Server.set_accept_timeout(ms: u64) {
     var l = net.Listener(fd = fd)
     l.set_timeout(ms)
@@ -1976,9 +1976,9 @@ fun Server.close() {
     l.close()
 }
 
-// One accepted connection: the descriptor, the bytes read ahead of the request
-// being parsed (pipelined requests wait here), and what the last request asked
-// of the response.
+/// One accepted connection: the descriptor, the bytes read ahead of the request
+/// being parsed (pipelined requests wait here), and what the last request asked
+/// of the response.
 datac ServerConn(
     val fd: i32,
     var buf: Bytes,
@@ -2001,8 +2001,8 @@ fun new_conn(fd: i32).R: ServerConn = ServerConn(
     tls_handle = option.Option.None,
 )
 
-// A connection whose TLS handshake (`tls.accept`) is done: every read, write
-// and the close go through the same `Conn` dispatch the client uses.
+/// A connection whose TLS handshake (`tls.accept`) is done: every read, write
+/// and the close go through the same `Conn` dispatch the client uses.
 fun new_conn_tls(t: tls.TlsStream).R: ServerConn = ServerConn(
     fd = t.fd,
     buf = Bytes.empty(),
@@ -2016,9 +2016,9 @@ fun new_conn_tls(t: tls.TlsStream).R: ServerConn = ServerConn(
 
 fun ServerConn.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 
-// Decrypted bytes OpenSSL already holds for this connection (always 0 for a
-// plain one): the socket shows nothing readable while a whole record waits
-// there, so `fill` has to ask before it waits.
+/// Decrypted bytes OpenSSL already holds for this connection (always 0 for a
+/// plain one): the socket shows nothing readable while a whole record waits
+/// there, so `fill` has to ask before it waits.
 fun ServerConn.pending().R: usize {
     if let Some(h) = tls_handle {
         val t = tls.TlsStream(fd = fd, handle = h)
@@ -2027,15 +2027,15 @@ fun ServerConn.pending().R: usize {
     return 0
 }
 
-// Blocks for the next client. Panics: if `accept` fails.
+/// Blocks for the next client. Panics: if `accept` fails.
 fun Server.accept().R: ServerConn {
     val l = net.Listener(fd = fd)
     val s = net.accept(l)
     return new_conn(s.fd)
 }
 
-// `accept` with a failure as a value: a listener with an accept timeout
-// returns `Err` (reason `net.accept: timed out`) when nobody came.
+/// `accept` with a failure as a value: a listener with an accept timeout
+/// returns `Err` (reason `net.accept: timed out`) when nobody came.
 fun Server.try_accept().R: result.Result<ServerConn, HttpErr> {
     val l = net.Listener(fd = fd)
     return when net.try_accept(l) {
@@ -2044,10 +2044,10 @@ fun Server.try_accept().R: result.Result<ServerConn, HttpErr> {
     }
 }
 
-// An error is `HttpErr.Exchange` whose reason starts with the status code the
-// server answers with (`408 request timed out`); a reason that does not start
-// with one (the peer reset, or closed between requests) is answered with
-// nothing. `http_error_status` reads it back, `ServerConn.write_error` answers.
+/// An error is `HttpErr.Exchange` whose reason starts with the status code the
+/// server answers with (`408 request timed out`); a reason that does not start
+/// with one (the peer reset, or closed between requests) is answered with
+/// nothing. `http_error_status` reads it back, `ServerConn.write_error` answers.
 fun srv_err<T>(code: i32, text: &str).R: result.Result<T, HttpErr> {
     var r = String.with_capacity(64)
     val c = fmt.int(code.to_i64())
@@ -2081,8 +2081,8 @@ fun srv_reason_status(reason: &str).R: i32 {
     return code
 }
 
-// The status a failed `read_request` is answered with, or 0 when it is not
-// answered at all (the peer is gone or merely idle).
+/// The status a failed `read_request` is answered with, or 0 when it is not
+/// answered at all (the peer is gone or merely idle).
 fun http_error_status(e: &HttpErr).R: i32 {
     return when e {
         Dial(reason) -> srv_reason_status(reason.as_str())
@@ -2099,9 +2099,9 @@ fun http_error_text(e: &HttpErr).R: String {
     }
 }
 
-// Reads at most 4096 more bytes into the buffer, waiting no later than
-// `deadline` (a `net.mono_ms` reading). `Ok(0)` is the peer's end of stream;
-// a deadline that passes is `408`.
+/// Reads at most 4096 more bytes into the buffer, waiting no later than
+/// `deadline` (a `net.mono_ms` reading). `Ok(0)` is the peer's end of stream;
+/// a deadline that passes is `408`.
 fun mut ServerConn.fill(deadline: i64).R: result.Result<usize, HttpErr> {
     val now = net.mono_ms()
     if now >= deadline {
@@ -2124,7 +2124,7 @@ fun mut ServerConn.fill(deadline: i64).R: result.Result<usize, HttpErr> {
     }
 }
 
-// Drops the bytes the previous request used, keeping the read-ahead.
+/// Drops the bytes the previous request used, keeping the read-ahead.
 fun mut ServerConn.compact() {
     if start == 0 {
         return
@@ -2149,11 +2149,11 @@ fun srv_bytes_range(b: Bytes, from: usize, to: usize).R: Bytes {
     return out
 }
 
-// The end of the head: the offset just past the blank line, 0 while it has not
-// arrived, -1 when what has arrived can never be a head (a bare `LF`, a `CR`
-// with no `LF`, a control byte, a byte above 127, an empty line before the
-// request line). Everything a head holds is therefore plain ASCII, which is
-// what lets it become a `String` without a validation that could panic.
+/// The end of the head: the offset just past the blank line, 0 while it has not
+/// arrived, -1 when what has arrived can never be a head (a bare `LF`, a `CR`
+/// with no `LF`, a control byte, a byte above 127, an empty line before the
+/// request line). Everything a head holds is therefore plain ASCII, which is
+/// what lets it become a `String` without a validation that could panic.
 fun srv_scan_head(b: Bytes).R: i64 {
     val n = b.len()
     var line_start: usize = 0
@@ -2188,7 +2188,7 @@ fun srv_scan_head(b: Bytes).R: i64 {
     return 0
 }
 
-// The offset of the first `LF`, or the buffer length when there is none.
+/// The offset of the first `LF`, or the buffer length when there is none.
 fun srv_first_lf(b: Bytes).R: usize {
     var i: usize = 0
     while i < b.len() {
@@ -2200,7 +2200,7 @@ fun srv_first_lf(b: Bytes).R: usize {
     return b.len()
 }
 
-// An RFC 9110 token character: what a method or a header name is made of.
+/// An RFC 9110 token character: what a method or a header name is made of.
 fun srv_tchar(c: u8).R: bool {
     if str.is_digit(c) {
         return true
@@ -2241,7 +2241,7 @@ fun srv_count_headers(hs: List<Header>, name: &str).R: usize {
     return n
 }
 
-// Whether any `Connection` header lists `token` (compared lower-case).
+/// Whether any `Connection` header lists `token` (compared lower-case).
 fun srv_connection_has(hs: List<Header>, token: &str).R: bool {
     var i: usize = 0
     while i < hs.len() {
@@ -2262,10 +2262,10 @@ fun srv_connection_has(hs: List<Header>, token: &str).R: bool {
     return false
 }
 
-// The one `Content-Length` of a request: -1 when absent, otherwise the number.
-// Every value must be digits only, and repeated headers must agree
-// (a disagreement is how request smuggling starts); a value too long to be a
-// real size is answered as too large.
+/// The one `Content-Length` of a request: -1 when absent, otherwise the number.
+/// Every value must be digits only, and repeated headers must agree
+/// (a disagreement is how request smuggling starts); a value too long to be a
+/// real size is answered as too large.
 fun srv_content_length(hs: List<Header>) .R: result.Result<i64, HttpErr> {
     var found = false
     var value: i64 = -1
@@ -2300,7 +2300,7 @@ fun srv_content_length(hs: List<Header>) .R: result.Result<i64, HttpErr> {
     return result.Result.Ok(value = value)
 }
 
-// The first value of a header, trimmed and lower-cased.
+/// The first value of a header, trimmed and lower-cased.
 fun srv_header_token(hs: List<Header>, name: &str).R: String {
     val raw = header_value(hs, name)
     val trimmed = str.trim(raw.as_str())
@@ -2311,9 +2311,9 @@ fun srv_method_needs_length(m: &str).R: bool {
     return str.eq(m, "POST") || str.eq(m, "PUT") || str.eq(m, "PATCH")
 }
 
-// One line of the chunked framing (a size line or a trailer), without its
-// `CRLF`. Waits for more bytes until `deadline`; a line longer than `max_len`
-// is `too_long`.
+/// One line of the chunked framing (a size line or a trailer), without its
+/// `CRLF`. Waits for more bytes until `deadline`; a line longer than `max_len`
+/// is `too_long`.
 fun mut ServerConn.take_line(deadline: i64, max_len: usize, too_long: i32).R: result.Result<String, HttpErr> {
     var from = start
     while true {
@@ -2356,7 +2356,7 @@ fun mut ServerConn.take_line(deadline: i64, max_len: usize, too_long: i32).R: re
     return srv_silent("unreachable")
 }
 
-// Makes `n` bytes available from `start`.
+/// Makes `n` bytes available from `start`.
 fun mut ServerConn.need(n: usize, deadline: i64).R: result.Result<usize, HttpErr> {
     while buf.len() - start < n {
         val got = self.fill(deadline)?
@@ -2396,8 +2396,8 @@ fun srv_hex_size(text: &str, max_body: usize).R: result.Result<usize, HttpErr> {
     return result.Result.Ok(value = value)
 }
 
-// A chunked body: size line, data, `CRLF`, repeated to the zero chunk, then
-// trailers (read and discarded, bounded by the header limit).
+/// A chunked body: size line, data, `CRLF`, repeated to the zero chunk, then
+/// trailers (read and discarded, bounded by the header limit).
 fun mut ServerConn.read_chunked(limits: &Limits, deadline: i64).R: result.Result<Bytes, HttpErr> {
     var out = Bytes.empty()
     var going = true
@@ -2434,8 +2434,8 @@ fun mut ServerConn.read_chunked(limits: &Limits, deadline: i64).R: result.Result
     return result.Result.Ok(value = out)
 }
 
-// The next request on this connection, parsed and framed, or why not. See
-// `plan/http-server.md` for the status of every failure.
+/// The next request on this connection, parsed and framed, or why not. See
+/// `plan/http-server.md` for the status of every failure.
 fun mut ServerConn.read_request(limits: &Limits).R: result.Result<ServerRequest, HttpErr> {
     self.compact()
     close_after = false
@@ -2653,7 +2653,7 @@ fun mut ServerConn.read_request(limits: &Limits).R: result.Result<ServerRequest,
     ))
 }
 
-// Asks for the connection to close after the response being written.
+/// Asks for the connection to close after the response being written.
 fun mut ServerConn.mark_close() {
     close_after = true
 }
@@ -2681,11 +2681,11 @@ fun srv_clean_header(h: Header).R: bool {
     return n > 0
 }
 
-// Writes one response: the status line, the headers (minus any header of
-// ours: `Content-Length`, `Transfer-Encoding`, `Connection`; and any whose
-// name or value could split the response), the framing the server owns, and
-// the body unless the request was `HEAD` or the status has none. A write that
-// fails because the peer is gone is an `Err`, never a panic.
+/// Writes one response: the status line, the headers (minus any header of
+/// ours: `Content-Length`, `Transfer-Encoding`, `Connection`; and any whose
+/// name or value could split the response), the framing the server owns, and
+/// the body unless the request was `HEAD` or the status has none. A write that
+/// fails because the peer is gone is an `Err`, never a panic.
 fun mut ServerConn.write_response(resp: &ServerResponse).R: result.Result<usize, HttpErr> {
     val code = resp.status
     var out = String.with_capacity(256)
@@ -2734,9 +2734,9 @@ fun mut ServerConn.write_response(resp: &ServerResponse).R: result.Result<usize,
     return conn_send_all_try(self.conn(), wire)
 }
 
-// Answers a failed `read_request` with its status and the reason as text, and
-// marks the connection to close; does nothing when the failure has no status
-// (the peer is gone, or the connection was only idle).
+/// Answers a failed `read_request` with its status and the reason as text, and
+/// marks the connection to close; does nothing when the failure has no status
+/// (the peer is gone, or the connection was only idle).
 fun mut ServerConn.write_error(e: &HttpErr).R: result.Result<usize, HttpErr> {
     val code = http_error_status(e)
     if code == 0 {
@@ -2752,11 +2752,11 @@ fun mut ServerConn.write_error(e: &HttpErr).R: result.Result<usize, HttpErr> {
     return self.write_response(&resp)
 }
 
-// Ends the connection: half-closes so the peer reads the response and then end
-// of stream, reads and discards what the peer is still sending for a short,
-// bounded while (closing with unread data makes the kernel reset the
-// connection, which can destroy a response the client has not read yet), then
-// closes the descriptor.
+/// Ends the connection: half-closes so the peer reads the response and then end
+/// of stream, reads and discards what the peer is still sending for a short,
+/// bounded while (closing with unread data makes the kernel reset the
+/// connection, which can destroy a response the client has not read yet), then
+/// closes the descriptor.
 fun ServerConn.close() {
     // A TLS connection ends its session first (`close_notify`), then goes
     // through the same half-close and drain: what is drained afterwards is
@@ -2796,10 +2796,10 @@ fun ServerConn.close() {
 
 // ----- serving -----
 
-// Serves one connection to its end and closes it. `budget` is the most
-// requests to answer (0 = no limit); the count returned is how many requests
-// got a response, an error response included. A request whose handler ran
-// counts even if the response could not be written.
+/// Serves one connection to its end and closes it. `budget` is the most
+/// requests to answer (0 = no limit); the count returned is how many requests
+/// got a response, an error response included. A request whose handler ran
+/// counts even if the response could not be written.
 fun mut ServerConn.serve(handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits, budget: u64).R: u64 {
     var count: u64 = 0
     var going = true
@@ -2832,11 +2832,11 @@ fun mut ServerConn.serve(handler: fun(&ServerRequest).R: ServerResponse, limits:
     return count
 }
 
-// The accept loop on a listener you already hold: one connection at a time,
-// each served to its end, until `max_requests` requests have been answered
-// (0 = never stop) or, if the listener has an accept timeout, nobody came for
-// that long. Returns the count. A failed accept (a connection that died in the
-// queue) is skipped.
+/// The accept loop on a listener you already hold: one connection at a time,
+/// each served to its end, until `max_requests` requests have been answered
+/// (0 = never stop) or, if the listener has an accept timeout, nobody came for
+/// that long. Returns the count. A failed accept (a connection that died in the
+/// queue) is skipped.
 fun serve_on(server: &Server, handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits, max_requests: u64).R: u64 {
     var total: u64 = 0
     var going = true
@@ -2868,16 +2868,16 @@ fun serve_on(server: &Server, handler: fun(&ServerRequest).R: ServerResponse, li
     return total
 }
 
-// Listens on `port` and serves forever, one connection at a time, with the
-// default limits.
+/// Listens on `port` and serves forever, one connection at a time, with the
+/// default limits.
 fun serve(port: u16, handler: fun(&ServerRequest).R: ServerResponse) {
     val s = listen(port)
     val limits = default_limits()
     val n = serve_on(&s, handler, &limits, 0)
 }
 
-// As `serve`, returning once `max_requests` requests have been answered, with
-// the listener closed. This is what makes a server testable.
+/// As `serve`, returning once `max_requests` requests have been answered, with
+/// the listener closed. This is what makes a server testable.
 fun serve_n(port: u16, handler: fun(&ServerRequest).R: ServerResponse, max_requests: u64).R: u64 {
     val s = listen(port)
     val limits = default_limits()
@@ -2888,12 +2888,12 @@ fun serve_n(port: u16, handler: fun(&ServerRequest).R: ServerResponse, max_reque
 
 // ----- serving HTTPS -----
 
-// As `serve_on`, with every accepted connection put through the TLS server
-// handshake first (`tls.accept`, under the config's deadline). A client whose
-// handshake fails (no certificate where one is required, no common protocol, a
-// reset) costs that socket and nothing else: it is closed and the loop goes on.
-// The limits, statuses and per-connection rules are `serve_on`'s. `config` is
-// shared and never changed, so threads may serve from the same one.
+/// As `serve_on`, with every accepted connection put through the TLS server
+/// handshake first (`tls.accept`, under the config's deadline). A client whose
+/// handshake fails (no certificate where one is required, no common protocol, a
+/// reset) costs that socket and nothing else: it is closed and the loop goes on.
+/// The limits, statuses and per-connection rules are `serve_on`'s. `config` is
+/// shared and never changed, so threads may serve from the same one.
 fun serve_tls_on(server: &Server, config: &tls.ServerConfig, handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits, max_requests: u64).R: u64 {
     var total: u64 = 0
     var going = true
@@ -2933,18 +2933,18 @@ fun serve_tls_on(server: &Server, config: &tls.ServerConfig, handler: fun(&Serve
     return total
 }
 
-// Listens on `port` and serves HTTPS forever, one connection at a time, with
-// the default limits. `net.listen` takes a port, not an address, and binds
-// every interface.
+/// Listens on `port` and serves HTTPS forever, one connection at a time, with
+/// the default limits. `net.listen` takes a port, not an address, and binds
+/// every interface.
 fun serve_tls(port: u16, config: &tls.ServerConfig, handler: fun(&ServerRequest).R: ServerResponse) {
     val s = listen(port)
     val limits = default_limits()
     val n = serve_tls_on(&s, config, handler, &limits, 0)
 }
 
-// As `serve_tls`, returning once `max_requests` requests have been answered
-// (or, with an accept timeout set on the listener, nobody came): what makes an
-// HTTPS server testable.
+/// As `serve_tls`, returning once `max_requests` requests have been answered
+/// (or, with an accept timeout set on the listener, nobody came): what makes an
+/// HTTPS server testable.
 fun serve_tls_n(port: u16, config: &tls.ServerConfig, handler: fun(&ServerRequest).R: ServerResponse, max_requests: u64).R: u64 {
     val s = listen(port)
     val limits = default_limits()
@@ -2953,9 +2953,9 @@ fun serve_tls_n(port: u16, config: &tls.ServerConfig, handler: fun(&ServerReques
     return n
 }
 
-// What a worker thread is handed: the shared listener's descriptor and its own
-// copy of the limits. The handler is a plain function value, so nothing
-// borrowed crosses the thread boundary.
+/// What a worker thread is handed: the shared listener's descriptor and its own
+/// copy of the limits. The handler is a plain function value, so nothing
+/// borrowed crosses the thread boundary.
 datac Worker(val fd: i32, val handler: fun(&ServerRequest).R: ServerResponse, val limits: Limits)
 
 fun worker_main(w: move Worker).R: u64 {
@@ -2963,9 +2963,9 @@ fun worker_main(w: move Worker).R: u64 {
     return serve_on(&s, w.handler, &w.limits, 0)
 }
 
-// One thread per worker, spawned one inside the next so that the handles never
-// need a container (a `Thread` cannot be a list element): each level spawns its
-// worker, runs the rest, then joins its own.
+/// One thread per worker, spawned one inside the next so that the handles never
+/// need a container (a `Thread` cannot be a list element): each level spawns its
+/// worker, runs the rest, then joins its own.
 fun run_workers(n: usize, fd: i32, handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits).R: u64 {
     if n == 0 {
         return 0
@@ -2979,17 +2979,17 @@ fun run_workers(n: usize, fd: i32, handler: fun(&ServerRequest).R: ServerRespons
     return rest + mine
 }
 
-// `workers` threads, each accepting on the listener you hold and serving one
-// connection at a time. With `idle_ms` above 0 a worker stops when no client
-// has connected for that long and the call returns the total requests
-// answered; with 0 it never returns. The listener is not closed.
+/// `workers` threads, each accepting on the listener you hold and serving one
+/// connection at a time. With `idle_ms` above 0 a worker stops when no client
+/// has connected for that long and the call returns the total requests
+/// answered; with 0 it never returns. The listener is not closed.
 fun serve_threaded_on(server: &Server, handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits, workers: usize, idle_ms: u64).R: u64 {
     server.set_accept_timeout(idle_ms)
     return run_workers(workers, server.fd, handler, limits)
 }
 
-// Listens on `port` and serves forever on `workers` threads, with the default
-// limits. A panic in a handler ends its worker thread, not the process.
+/// Listens on `port` and serves forever on `workers` threads, with the default
+/// limits. A panic in a handler ends its worker thread, not the process.
 fun serve_threaded(port: u16, handler: fun(&ServerRequest).R: ServerResponse, workers: usize) {
     val s = listen(port)
     val limits = default_limits()

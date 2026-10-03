@@ -10,10 +10,10 @@ extern fun now_unix_raw().R: i64
 extern fun now_mono_ns_raw().R: i64
 extern fun sleep_ms_raw(ms: u64)
 
-// Seconds since the Unix epoch.
+/// Seconds since the Unix epoch.
 fun now_unix().R: i64 = now_unix_raw()
 
-// Nanoseconds on the monotonic clock: the one to measure elapsed time with.
+/// Nanoseconds on the monotonic clock: the one to measure elapsed time with.
 fun now_mono_ns().R: i64 = now_mono_ns_raw()
 
 fun sleep_ms(ms: u64) {

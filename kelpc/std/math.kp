@@ -47,8 +47,8 @@ fun atan2(y: f64, x: f64).R: f64 = atan2_raw(y, x)
 fun is_nan(x: f64).R: bool = is_nan_raw(x)
 fun is_finite(x: f64).R: bool = is_finite_raw(x)
 
-// `sign` is f64-only: an integer `sign` would return an integer, which is a
-// different function, and nothing needs it yet.
+/// `sign` is f64-only: an integer `sign` would return an integer, which is a
+/// different function, and nothing needs it yet.
 fun sign(x: f64).R: f64 = if x < 0.0 { -1.0 } else { if x > 0.0 { 1.0 } else { 0.0 } }
 
 // ---- overloaded -----------------------------------------------------------
