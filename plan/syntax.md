@@ -1224,6 +1224,68 @@ print(identity<i32>(x = 5))
 - An explicit instantiation with the wrong number of arguments is an error naming the count, and so is one written on something that is not generic — a non-generic type, a non-generic function, or a method (whose parameters come from its receiver).
 - A payload-less variant cannot take one, because there is no call to attach it to: write the expected type instead (`val none: Option<i32> = Option.None`).
 
+#### Const type parameters
+
+A parameter may be declared `const N: <type>`: a compile-time *value* the declaration is
+parameterized by. The types are the integers a value can be judged against at compile time, plus
+`bool`: `usize`, `u8`, `u16`, `u32`, `u64`, `i32`, `i64` and `bool`.
+
+```kelp
+const SIZE: usize = 2
+
+datac Buf<const N: usize>(var data: [i32; N], var len: usize)
+
+fun Buf<const N: usize>.total().R: i32 {
+    var sum: i32 = 0
+    var i: usize = 0
+    while i < N { sum = sum + data.get(i = i); i = i + 1 }
+    return sum
+}
+
+fun sum<const N: usize>(a: &[i32; N]).R: i32 { ... }
+fun zeros<const N: usize>().R: [i32; N] = [0; N]
+```
+
+- A const parameter is listed with the type parameters, in declaration order, and its name is in
+  scope in every field, payload, parameter and return type of the declaration, and **as a value**
+  inside a body (`i < N`).
+- A const argument is a compile-time expression written exactly like a type argument: `Buf<16>`,
+  `Buf<SIZE * 2>`, `capacity<twice(n = 4)>()`. The existing constant evaluation (14.1) is the whole
+  of it: literals, `const`s of the same or another module, and plain `fun` calls, with the
+  parameter's declared type as the expected type. A value that does not fit the declared type is
+  an error that names the parameter.
+- The argument is **inferred** where it can be: from an array argument's length (`sum(a = &arr)`
+  infers `N` from `arr`'s type), from a construction's array field (`Buf(data = [1, 2, 3], len = 3)`
+  infers `N = 3`), or from the expected type. A parameter neither determines is an error naming it,
+  exactly as a type parameter is.
+- `N` is usable as an array length (`[i32; N]`), as a repeat count (`[0; N]`) and as a const
+  argument to another instantiation (`Ring<N>`), as well as a value. The one thing it cannot do is
+  participate in **arithmetic inside a type**: `[T; N + 1]` and `Buf<N * 2>` are refused by name,
+  because the length an instantiation takes has to be one the compiler can already fold.
+- One copy per distinct value, exactly as for a type argument: `Ring<4>` and `Ring<8>` are two
+  types with two sets of generated functions.
+- A trait may not take a const parameter (a trait is implemented for a type).
+
+#### `impl Trait` in argument position
+
+A parameter written `impl Name` is sugar for a fresh type parameter bounded by `Name` (9.5), and
+saves declaring and naming one:
+
+```kelp
+fun describe(s: impl Shape).R: str = s.name()
+fun pair_area(a: impl Shape, b: &impl Shape).R: f64 = a.area() + b.area()
+```
+
+- Each `impl` occurrence is its **own** parameter, so one call may pass two different shapes, and
+  the bound is checked at the call exactly as an explicit `fun f<T: Shape>(x: T)` call is. Dispatch
+  inside the body is static, exactly as 9.5's is.
+- `impl Trait` is only legal as a whole parameter type of a declared `fun`. A return position
+  (`fun f().R: impl Shape`), a `let`, a field, an enum payload, a container element and a nested
+  position (`List<impl Shape>`) are each refused by name.
+- A receiver method's parameter cannot write it (a method's type parameters come from its receiver),
+  and neither can a trait method's signature. The bound must be a declared trait; `&impl Name` is
+  the borrowed spelling of the same parameter.
+
 ### 9.5 Traits and static dispatch
 
 A `trait` is a named set of methods, and `impl` makes a type provide them. A generic function may
@@ -1371,11 +1433,12 @@ Not in this slice, each refused where it is written: a bare `dyn Name` (an owned
 `Box<dyn Name>`, 9.5.3); an
 upcast from `&dyn B` to `&dyn A` when `B: A`; a trait object over an object-unsafe trait; a trait
 object over a trait that declares an associated type or takes a type parameter (9.5); an associated
-const; `impl Trait` in argument position; a `where` clause; an equality constraint on a trait's
+const; a `where` clause; an equality constraint on a trait's
 associated type; an impl for a generic instantiation; and a blanket impl of any trait (including
 `Into`). Operator overloading is through the shipped `std/ops` traits only (9.5.4): a program
 implements those, not a trait of its own. `plan/traits.md` 5, 9.6, 10.3, 11.6 and 13 are the lists
-with the reasons and the workarounds.
+with the reasons and the workarounds. (`impl Trait` in argument position is no longer on this
+list: 9.3 is its reference.)
 
 ### 9.5.3 Owned trait objects, `Box<dyn Name>`
 

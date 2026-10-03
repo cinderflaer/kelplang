@@ -1715,3 +1715,29 @@ generic type parameter, a user-declared operator trait, and a bitwise/shift/logi
 through a trait are refused where they are written; and that a type with only `Ord` is still refused
 `==`/`!=` with a message naming `eq`. It does not check that an `add` body adds or a `cmp` body
 orders, does not relate a type's `Ord` to its `eq`, and does not check an unused impl.
+
+## Language-completeness 6: const generics and `impl Trait` in argument position (A-20)
+
+**New ways to reach undefined behaviour.** None on its own. A const parameter is monomorphization
+by a compile-time value exactly as a type parameter is monomorphization by a type, and the one
+thing the generated code does differently is read a literal where it would have read a value: the
+parameter is folded into a literal before any body is checked, so `i < N` is `i < 4` and `[0; N]`
+is `[0; 4]`, a length the array type already carries. `impl Trait` in argument position is a fresh
+bounded type parameter, so it reaches only the A-12 dispatch that was already audited. Nothing new
+is allocated, borrowed, moved or dropped.
+
+The one *footgun* the surface adds is worth naming because it is a compile-time, not a runtime,
+matter: a const parameter is a value the compiler folds, so a program that expects `N` to be read
+at run time (for example from a mutable binding) is refused, not silently given a stale value.
+`N` cannot be assigned to, and a local that shadows it shadows the folded literal.
+
+**What the compiler does and does not check.** It checks that a const parameter's declared type is
+one of `usize`, `u8`, `u16`, `u32`, `u64`, `i32`, `i64` or `bool`; that every const argument folds
+and fits its parameter's declared type; that a const parameter is not used as a type and a type is
+not passed where a const argument belongs; that a length that is arithmetic over a const parameter
+in a type is refused by name; and that an `impl Trait` parameter names a declared trait and appears
+only as a whole parameter type of a declared `fun`. It does not check that a const parameter's
+value is "reasonable" for the array it sizes (a `Buf<1_000_000>` is a megabyte of stack or static
+storage, and the target's own layout is the only limit), and it does not check an uninstantiated
+generic body whose const length would be zero until the instantiation supplies a value (zero stays
+refused where it is written).
