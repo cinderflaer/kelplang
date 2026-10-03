@@ -470,8 +470,12 @@ pub fn const_int(expr: &tir::Expr) -> Option<u128> {
                 BinOp::BitAnd => a & b,
                 BinOp::BitOr => a | b,
                 BinOp::BitXor => a ^ b,
-                BinOp::Shl if b < 128 => a << b,
-                BinOp::Shr if b < 128 => a >> b,
+                // A shift by 64 or more is not a constant: the compiler's
+                // 128-bit arithmetic would fold it to 0 while the target
+                // shifts by `n mod 64`, so the folded address and the real one
+                // would differ (threat model M2).
+                BinOp::Shl if b < 64 => a << b,
+                BinOp::Shr if b < 64 => a >> b,
                 _ => return None,
             };
             Some(folded & MASK)
@@ -502,6 +506,34 @@ pub fn domain_of(module: &str) -> Option<&'static str> {
         "std/env" => "env",
         "std/time" => "time",
         "std/rand" => "rand",
+        _ => return None,
+    })
+}
+
+/// The capability domains that may build a value of the standard library's
+/// descriptor-carrying types (`io.File`, `net.Socket`, `net.Listener`, the http
+/// and ws connections, `process.Child`) out of bare numbers, or `None` for a
+/// type that is not one. `key` is the canonical key of the `datac`
+/// (`std.net.Socket`) and `fields` its field names.
+///
+/// A descriptor is an authority and a small integer, and nothing in `fs`,
+/// `net` or `process` stops a module from guessing the integer of one another
+/// module opened. `std/io` is ungated and its `File(fd = n)` was a constructor
+/// any module could call, so a module with *no* grant at all could read, write
+/// or close every descriptor of the process (threat model H1). Building one by
+/// hand now needs a domain that mints that kind of handle; a module holding no
+/// grant has no way to name a descriptor it was not handed. Two modules that
+/// both hold a domain can still forge between each other's descriptors, which
+/// is the residual gap recorded in `plan/threat-model.md`.
+pub fn handle_ctor_domains(key: &str, fields: &[&str]) -> Option<&'static [&'static str]> {
+    if !key.starts_with("std.") || !fields.iter().any(|f| *f == "fd" || *f == "pid") {
+        return None;
+    }
+    let module = key.rsplit_once('.').map(|(m, _)| m).unwrap_or("");
+    Some(match module {
+        "std.io" => &["fs", "net", "process"],
+        "std.net" | "std.http" | "std.tls" | "std.ws" => &["net"],
+        "std.process" => &["process"],
         _ => return None,
     })
 }

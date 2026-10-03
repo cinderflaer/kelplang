@@ -16430,6 +16430,29 @@ fn check_call(
         .struct_def(callee)
         .or_else(|| ctx.struct_def(&ctx.qualify_own(callee)))
     {
+        let field_names: Vec<&str> = sdef.fields.iter().map(|f| f.name.as_str()).collect();
+        if let Some(domains) = crate::stdlib::handle_ctor_domains(&sdef.name, &field_names) {
+            // A module inside the library builds its own handles; any other
+            // module needs a domain that mints this kind (threat model H1).
+            let inside = !ctx.prefix.is_empty() && sdef.name.starts_with(ctx.prefix.as_str());
+            let ctx_is_shipped = is_shipped_module(&ctx.module);
+            if !inside && !ctx_is_shipped && !domains.iter().any(|d| ctx.caps.contains_key(*d)) {
+                return Err(TypeError {
+                    message: format!(
+                        "'{}' wraps an operating-system descriptor, so building one from a number needs the '{}' capability, which module '{}' was not granted{}; a module that holds no grant can only use the handles it is given",
+                        display_callee(&sdef.name),
+                        domains[0],
+                        ctx.module,
+                        if domains.len() > 1 {
+                            format!(" (any of {} would do)", domains.join(", "))
+                        } else {
+                            String::new()
+                        }
+                    ),
+                    span,
+                });
+            }
+        }
         let params: Vec<(String, Ty)> = sdef.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
         let checked = match_args(&format!("datac '{}'", sdef.name), &params, args, span, ctx)?;
         let fields = sdef

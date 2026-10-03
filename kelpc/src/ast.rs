@@ -1317,6 +1317,29 @@ pub fn first_unsafe(program: &Program) -> Option<(Span, &'static str)> {
             }
         }
     }
+    // A trait's default methods live in the declaration, not in `functions`,
+    // and an `unsafe` there runs in every impl that keeps the default: it has
+    // to put the module in the audit list like any other (threat model U3).
+    for t in &program.traits {
+        for f in &t.methods {
+            if f.unsafe_ {
+                return Some((f.span, "fun"));
+            }
+            match &f.body {
+                FunctionBody::Block(b) => {
+                    if let Some(span) = first_unsafe_in_block(b) {
+                        return Some((span, "block"));
+                    }
+                }
+                FunctionBody::Expr(e) => {
+                    if let Some(span) = first_unsafe_in_expr(e) {
+                        return Some((span, "block"));
+                    }
+                }
+                FunctionBody::Extern | FunctionBody::Signature => {}
+            }
+        }
+    }
     for p in &program.pds {
         if let Some(span) = first_unsafe_in_expr(&p.init) {
             return Some((span, "block"));
