@@ -3940,6 +3940,184 @@ fn a_const_may_call_a_function_and_the_call_is_evaluated_at_compile_time() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// A-20: const type parameters, and `impl Trait` in argument position. Every
+// fixture here runs on the default (LLVM) backend and on the C oracle, because
+// the suite is run twice.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_const_parameter_is_a_value_a_length_and_a_repeat_count() {
+    // `Buf<const N: usize>` infers `N` from its construction, `sum<const N>`
+    // infers `N` from an array argument's own length, `N` is read as a value
+    // (`i < N`), used as an array length (`[i32; N]`) and used as a repeat
+    // count (`[0; N]`), and a `bool` const parameter is read too.
+    assert_compiles_and_runs(
+        "tests/fixtures/const_generics_basic.kp",
+        "3\n3\n6\n100\n7\n3\n0\n15\n1\n5\n",
+    );
+}
+
+#[test]
+fn two_const_instantiations_of_one_ring_buffer_keep_their_own_state() {
+    // `Ring<4>` and `Ring<8>` are two monomorphized types, so the loop writes
+    // two independent buffers and each keeps its own head and count.
+    assert_compiles_and_runs(
+        "tests/fixtures/const_generics_two_sizes.kp",
+        "4\n8\n30\n44\n4\n8\n",
+    );
+}
+
+#[test]
+fn a_const_argument_may_be_a_compile_time_expression() {
+    // `Buf<SIZE * 2>`, `Buf<WIDTH>` where `WIDTH` is a `const` computed by a
+    // plain `fun`, and `capacity<twice(n = 4)>()`: the existing constant
+    // evaluation is the whole of it.
+    assert_compiles_and_runs(
+        "tests/fixtures/const_generics_expr_arg.kp",
+        "6\n6\n6\n8\n",
+    );
+}
+
+#[test]
+fn a_const_length_mismatch_names_both_lengths() {
+    assert_rejected_with(
+        "tests/fixtures/const_generics_mismatch.kp",
+        "[i32; 3]",
+    );
+    assert_rejected_with(
+        "tests/fixtures/const_generics_mismatch.kp",
+        "[i32; 4]",
+    );
+}
+
+#[test]
+fn arithmetic_on_a_const_parameter_in_a_type_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/const_generics_arithmetic.kp",
+        "arithmetic on one in a type",
+    );
+}
+
+#[test]
+fn impl_trait_arguments_are_fresh_bounded_type_parameters() {
+    // `fun pair_area(a: impl Shape, b: &impl Shape)` is two parameters, so two
+    // different types may be passed, and the trait's methods dispatch
+    // statically inside the body.
+    assert_compiles_and_runs(
+        "tests/fixtures/impl_trait_args.kp",
+        "19\nsquare\nrect\n",
+    );
+    // The shape A-12 recorded as "a later slice" now compiles and runs with no
+    // output: `impl Trait` is a parameter type, not a refusal.
+    assert_compiles_and_runs("tests/fixtures/traits_impl_trait_argument.kp", "");
+}
+
+#[test]
+fn impl_trait_in_return_position_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/impl_trait_return_refused.kp",
+        "not allowed in return position",
+    );
+}
+
+#[test]
+fn impl_trait_in_a_field_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/impl_trait_field_refused.kp",
+        "only legal as a whole parameter type",
+    );
+}
+
+/// The two instantiations of one const-generic buffer are two copies, read
+/// back out of the generated C: this is a codegen-shape assertion, so it pins
+/// `KELPC_ORACLE=c`, whose `<out>.c` is the artifact under test. The LLVM half
+/// of the same claim is the freestanding `llvm-nm` test below, which finds both
+/// mangled names in the bare-metal image.
+#[test]
+fn a_const_generics_two_instantiations_emit_two_copies() {
+    let bin = out_path("const_generics_two_copies");
+    let build = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(fixture("tests/fixtures/const_generics_two_sizes.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the ring fixture to compile on the oracle, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let generated = std::fs::read_to_string(bin.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    for name in [
+        "kelp_Ring__push__l__4__g__",
+        "kelp_Ring__push__l__8__g__",
+        "kelp_Ring__total__l__4__g__",
+        "kelp_Ring__total__l__8__g__",
+    ] {
+        assert!(
+            generated.contains(name),
+            "the generated C must hold a copy for each const value, and '{name}' is missing:\n{generated}"
+        );
+    }
+}
+
+/// A-20's freestanding half: a const-generic ring buffer in the kernel image
+/// links with no libc symbol, and both `Ring<4>` and `Ring<8>` are emitted (the
+/// same acceptance test as `freestanding_min`, run on the const-generic
+/// project). It needs the `dev-kernel.nix` tools; a shell without them prints a
+/// skip.
+#[test]
+fn a_freestanding_const_generic_buffer_links_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding const-generic test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_constgen");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_constgen"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding const-generic build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+    let symbols = tool("llvm-nm", &[path]);
+    for name in [
+        "kelp_Ring__push__l__4__g__",
+        "kelp_Ring__push__l__8__g__",
+    ] {
+        assert!(
+            symbols.contains(name),
+            "the freestanding image must hold one copy per const value, and '{name}' is missing:\n{symbols}"
+        );
+    }
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
 #[test]
 fn a_modules_own_items_are_reachable_bare_inside_it() {
     // `util.kp` calls `doubled` and constructs `Pair` without qualifying
@@ -5511,10 +5689,10 @@ fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
         "tests/fixtures/traits_associated_type.kp",
         "default associated type is not in this slice",
     );
-    assert_rejected_with(
-        "tests/fixtures/traits_impl_trait_argument.kp",
-        "a trait cannot be a parameter's type in this slice",
-    );
+    // `impl Trait` in argument position was on this list and is now a shipped
+    // sugar (A-20, 9.3);
+    // `impl_trait_arguments_are_fresh_bounded_type_parameters` pins the
+    // positive half, and the stored positions stay refused.
     assert_rejected_with(
         "tests/fixtures/traits_where_clause.kp",
         "'where' clause is not in this slice",

@@ -1,0 +1,7 @@
+// A-20: arithmetic on a const parameter inside a type (`[T; N + 1]`) is not in
+// this slice and is refused by name, rather than executed.
+fun make<const N: usize>().R: [i32; N] = [0; N + 1]
+
+fun main() {
+    print(make<3>().len())
+}
