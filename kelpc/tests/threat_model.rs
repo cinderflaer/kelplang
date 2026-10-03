@@ -1130,3 +1130,112 @@ fn n08_ws_and_tls_are_behind_the_net_gate() {
     );
     lab.denied("is outside the net capability");
 }
+
+// ---------------------------------------------------------------------------
+// handles
+// ---------------------------------------------------------------------------
+
+/// H1: a module that holds no grant cannot build a descriptor-carrying handle
+/// from a number. `io.File(fd = n)` was a constructor any module could call, so
+/// a dependency with no authority at all could read, write or close every
+/// descriptor another module had opened (a secret file, a socket). The refusal
+/// is at compile time, and names the capability that would be needed.
+#[test]
+fn h01_a_module_without_a_grant_cannot_forge_a_descriptor_handle() {
+    for (what, imports, body, needle) in [
+        (
+            "file_scan",
+            &["std/io", "std/str"][..],
+            "    var i: i32 = 3\n    while i < 40 {\n        val f = io.File(fd = i)\n        if f.is_open() {\n            print(String.from_bytes(f.read(16)))\n        }\n        i = i + 1\n    }",
+            "wraps an operating-system descriptor",
+        ),
+        (
+            "socket",
+            &["std/net"][..],
+            "    val s = net.Socket(fd = 5)\n    net.send_text(s, \"x\")",
+            "needs the 'net' capability, which module 'util' was not granted",
+        ),
+        (
+            "listener",
+            &["std/net"][..],
+            "    val l = net.Listener(fd = 5)\n    print(l.port())",
+            "needs the 'net' capability, which module 'util' was not granted",
+        ),
+        (
+            "child",
+            &["std/process", "std/io"][..],
+            "    val c = process.Child(pid = 1, stdin = io.File(fd = 0), stdout = io.File(fd = 1), stderr = io.File(fd = 2), exited = false, code = 0)\n    c.kill(9)",
+            "wraps an operating-system descriptor",
+        ),
+    ] {
+        let lab = Lab::new(&format!("h01_{what}"));
+        // The secret is opened (and, as programs do, not closed) by a module
+        // that was granted it; the module under test has no grant.
+        lab.src(
+            "main.kp",
+            "impl \"opener\" caps(fs = [\"__T__/secret/**\"])\nimpl \"util\"\n\nfun main() {\n    opener.open_and_leak()\n    util.go()\n}\n",
+        );
+        lab.src(
+            "opener.kp",
+            "impl \"std/fs\"\n\npub fun open_and_leak() {\n    val f = fs.open(\"__T__/secret/s.txt\", \"r\")\n}\n",
+        );
+        let mut util = String::new();
+        for i in imports {
+            util.push_str(&format!("impl \"{i}\"\n"));
+        }
+        util.push_str(&format!("\npub fun go() {{\n{body}\n}}\n"));
+        lab.src("util.kp", &util);
+        lab.refused(&[needle]);
+    }
+}
+
+/// H2: holding one domain does not let a module forge a handle of another's:
+/// a module with only `fs` cannot build a socket or a child.
+#[test]
+fn h02_a_domain_mints_only_its_own_handles() {
+    for (grant, imports, body) in [
+        ("fs = [\"/**\"]", &["std/fs", "std/net"][..], "    val s = net.Socket(fd = 5)"),
+        (
+            "net = [\"*\"]",
+            &["std/net", "std/process", "std/io"][..],
+            "    val c = process.Child(pid = 1, stdin = io.File(fd = 0), stdout = io.File(fd = 1), stderr = io.File(fd = 2), exited = false, code = 0)",
+        ),
+    ] {
+        let lab = Lab::new("h02");
+        lab.simple(grant, imports, body);
+        lab.refused(&["needs the"]);
+    }
+}
+
+/// H3 (known gap): two modules that each hold a domain can still forge
+/// between each other's descriptors. `io.File(fd = n)` is open to any module
+/// that holds `fs`, `net` or `process`, so a module granted only `data/**` can
+/// read a descriptor another module opened on `secret/`. Closing it needs
+/// opaque handle types (no integer constructor outside the library) and an
+/// explicit, gated `from_fd`; see `plan/threat-model.md`, Known gaps.
+#[test]
+#[ignore = "known gap: descriptors are small integers, forgeable between two modules that both hold a domain (plan/threat-model.md H3)"]
+fn h03_a_granted_module_can_read_a_descriptor_another_module_opened() {
+    let lab = Lab::new("h03");
+    lab.src(
+        "main.kp",
+        "impl \"opener\" caps(fs = [\"__T__/secret/**\"])\nimpl \"util\" caps(fs = [\"__T__/data/**\"])\n\nfun main() {\n    opener.open_and_leak()\n    util.go()\n}\n",
+    );
+    lab.src(
+        "opener.kp",
+        "impl \"std/fs\"\n\npub fun open_and_leak() {\n    val f = fs.open(\"__T__/secret/s.txt\", \"r\")\n}\n",
+    );
+    lab.src(
+        "util.kp",
+        "impl \"std/fs\"\nimpl \"std/io\"\n\npub fun go() {\n    var i: i32 = 3\n    while i < 40 {\n        val f = io.File(fd = i)\n        if f.is_open() {\n            print(String.from_bytes(f.read(16)))\n        }\n        i = i + 1\n    }\n}\n",
+    );
+    // The attack is expected to be refused; today it leaks.
+    let b = lab.build(false);
+    if b.status.success() {
+        let out = lab.run(false, &[]);
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains(TOKEN),
+            "the secret leaked through a forged descriptor"
+        );
+    }
+}
