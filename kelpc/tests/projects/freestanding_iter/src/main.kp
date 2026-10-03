@@ -1,0 +1,17 @@
+// A kernel-style loop over `iter.range`. The `for` is the iterator desugar
+// (`plan/iterators.md`): a `while` over `Range.next`, whose body is an ordinary
+// call. Nothing here reaches libc, so the linked image has no undefined symbol.
+//
+// `acc` is perturbed each pass so the loop has no exit the optimizer can turn
+// into a return, exactly as `freestanding_min` does.
+impl "std/iter"
+impl "std/option"
+
+section(".text.boot") fun kmain() {
+    var acc: i64 = 0
+    while true {
+        for i in iter.range(0, 8) {
+            acc += i
+        }
+    }
+}

@@ -1,0 +1,19 @@
+// The type's module owns the conversion impl (A-12 slice 6), which is one of
+// the two modules the orphan rule admits for a `datac`/`enum`.
+impl "std/convert"
+
+pub enum IoErr {
+    Bad(val code: i32)
+}
+
+pub enum AppErr {
+    Io(val code: i32, val note: String)
+}
+
+impl convert.From<IoErr> for AppErr {
+    fun from(value: IoErr).R: AppErr {
+        return when value {
+            Bad(code) -> AppErr.Io(code = code, note = "cross")
+        }
+    }
+}

@@ -1,0 +1,44 @@
+// Language-completeness 5: compound assignment keeps its `a = a OP b` desugar,
+// so on a user type `v += b` is `v = v.add(&b)`. The place is a `var`, so
+// writing it twice names the same storage, and the addition's operand `b` is
+// borrowed once.
+impl "std/ops"
+
+datac Vec2(val x: i64, val y: i64)
+
+impl ops.Add for Vec2 {
+    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+}
+
+impl ops.Sub for Vec2 {
+    fun Self.sub(rhs: &Self).R: Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
+}
+
+impl ops.Mul for Vec2 {
+    fun Self.mul(rhs: &Self).R: Vec2 = Vec2(x = x * rhs.x, y = y * rhs.y)
+}
+
+datac Holder(var v: Vec2)
+
+fun main() {
+    var v = Vec2(x = 1, y = 2)
+    val b = Vec2(x = 3, y = 4)
+
+    v += b
+    print(v.x)
+    print(v.y)
+
+    v -= b
+    print(v.x)
+    print(v.y)
+
+    v *= b
+    print(v.x)
+    print(v.y)
+
+    // A field place takes the same desugar.
+    var h = Holder(v = Vec2(x = 1, y = 1))
+    h.v += b
+    print(h.v.x)
+    print(h.v.y)
+}

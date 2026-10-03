@@ -1,0 +1,66 @@
+// A-20: a `const` type parameter. `Buf<const N: usize>` is one template whose
+// length is a compile-time value, and `sum(a: &[i32; N])` infers `N` from the
+// array argument's own length. `N` is a value inside the body (`i < N`), an
+// array length (`[i32; N]`) and a repeat expression (`[0; N]`), and each
+// distinct value monomorphizes into its own copy exactly as a type argument
+// does.
+const SIZE: usize = 2
+
+datac Buf<const N: usize>(var data: [i32; N], var len: usize)
+
+// A `bool` const parameter, read as a value in the body.
+datac Flag<const ON: bool>(var value: i32)
+
+fun Buf<const N: usize>.total().R: i32 {
+    var sum: i32 = 0
+    var i: usize = 0
+    while i < N {
+        sum = sum + data.get(i = i)
+        i = i + 1
+    }
+    return sum
+}
+
+fun sum<const N: usize>(a: &[i32; N]).R: i32 {
+    var total: i32 = 0
+    var i: usize = 0
+    while i < N {
+        total = total + a.get(i = i)
+        i = i + 1
+    }
+    return total
+}
+
+fun zeros<const N: usize>().R: [i32; N] = [0; N]
+
+fun flag<const ON: bool>().R: i32 {
+    if ON {
+        return 1
+    }
+    return 0
+}
+
+fun main() {
+    val b = Buf(data = [1, 2, 3], len = 3)
+    print(b.data.len())
+    print(b.len)
+    print(b.total())
+
+    val arr: [i32; 4] = [10, 20, 30, 40]
+    print(sum(a = &arr))
+
+    // `N` inferred from the argument's type, with nothing else to go on.
+    val pair: [i32; 2] = [3, 4]
+    print(sum(a = &pair))
+
+    // A repeat expression over the parameter, and the parameter as a value.
+    val z = zeros<3>()
+    print(z.len())
+    print(z.get(i = 0))
+
+    // A const argument written as a `const`, and a `bool` const parameter.
+    val sized: Buf<SIZE> = Buf(data = [7, 8], len = 2)
+    print(sized.total())
+    print(flag<true>() + flag<false>())
+    print(Flag<true>(value = 5).value)
+}

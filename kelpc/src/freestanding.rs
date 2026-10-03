@@ -148,13 +148,29 @@ pub fn std_admission(module: &str) -> StdAdmission {
         // and `std/frame` are a `datac` and two methods each, so they carry
         // their capability by construction and their numbers come from the
         // caller's grant, not from a runtime.
-        "std/atomic" | "std/arena" | "std/irq" | "std/frame" => StdAdmission::Pure,
+        "std/atomic" | "std/arena" | "std/irq" | "std/frame" | "std/convert" | "std/ops" => {
+            StdAdmission::Pure
+        }
         // `std/list` exists only to carry function values over a `List<T>`: all
         // six bodies take a closure, whose environment and result list are the
         // allocator's. `std/regex` is a pure-Kelp engine whose one allocation
         // is the compiled program and its scratch (`List`/`String`), so it is
         // the same shape: every item is callable once the pair is configured.
         "std/list" | "std/regex" => StdAdmission::Allocator,
+        // `std/iter` is a `datac` and a handful of `while` loops, so `range`,
+        // `range_step`, `count` and `sum_i64` build bare-metal. `collect_list`
+        // allocates its result list, so it waits for an allocator. A method is
+        // named here by its bare name, because `prune` reads `FunctionDecl::name`
+        // and a receiver method's name carries no receiver: the one method is
+        // `Range.next`, and a `for` over an `iter.range` lowers to a call to it.
+        crate::stdlib::ITER_MODULE => StdAdmission::Subset {
+            // A receiver method is named by its bare name: `prune` reads
+            // `FunctionDecl::name`, and `item_is_callable` strips the `Type#`
+            // from a call key, so both sides agree on `next`.
+            callable: &["next", "range", "range_step", "count", "sum_i64"],
+            with_allocator: &["collect_list"],
+            helpers: &[],
+        },
         STD_STR => StdAdmission::Subset {
             callable: STR_CALLABLE,
             with_allocator: STR_WITH_ALLOCATOR,
@@ -202,7 +218,11 @@ pub fn item_is_callable(module: &str, item: &str, allocator: bool) -> bool {
             // names the one it picked (`std.math.min@i32,i32`), so the table's
             // bare name is what matches. Every `f64` overload is refused
             // whatever the table says: a `f64` comparison on the kernel's
-            // riscv64 triple is a soft-float libcall, not an instruction.
+            // riscv64 triple is a soft-float libcall, not an instruction. A
+            // receiver method's call key carries its type (`Range#next`),
+            // while the table names the method (`next`), so the receiver is
+            // stripped too.
+            let item = item.rsplit('#').next().unwrap_or(item);
             let base = item.split('@').next().unwrap_or(item);
             let allowed = callable.contains(&base) || helpers.contains(&base);
             let allocator_only = allocator && with_allocator.contains(&base);
@@ -886,6 +906,7 @@ impl Checker<'_> {
                 Some(value) => self.expr(value, module),
                 None => Ok(()),
             },
+            Stmt::Break { .. } | Stmt::Continue { .. } => Ok(()),
             Stmt::Expr(expr) => self.expr(expr, module),
         }
     }
@@ -1059,7 +1080,10 @@ impl Checker<'_> {
             // build: the vtable is `.rodata`, the thunk is ordinary code and no
             // runtime helper is reached. The borrow inside a coercion and a
             // vtable call's receiver and arguments are checked as usual.
-            ExprKind::DynCoerce { expr: inner, .. } => self.expr(inner, module),
+            ExprKind::DynCoerce { expr: inner, .. }
+            | ExprKind::BoxDynCoerce { expr: inner, .. }
+            | ExprKind::BoxDynBorrow { expr: inner, .. }
+            | ExprKind::BoxDynIsEmpty { expr: inner } => self.expr(inner, module),
             ExprKind::DynCall { receiver, args, .. } => {
                 self.expr(receiver, module)?;
                 for arg in args {
@@ -1175,11 +1199,14 @@ mod tests {
             vec![
                 "std/arena",
                 "std/atomic",
+                "std/convert",
                 "std/frame",
                 "std/irq",
+                "std/iter",
                 "std/list",
                 "std/math",
                 "std/mem",
+                "std/ops",
                 "std/option",
                 "std/regex",
                 "std/result",
@@ -1188,7 +1215,7 @@ mod tests {
         );
         assert_eq!(
             allowed_modules(),
-            "std/arena, std/atomic, std/frame, std/irq, std/list, std/math, std/option, std/regex, std/result, std/str"
+            "std/arena, std/atomic, std/convert, std/frame, std/irq, std/iter, std/list, std/math, std/ops, std/option, std/regex, std/result, std/str"
         );
         // The injected runtime is not a library a program may write in an
         // `impl`, so it is present and absent from the allowed list.
@@ -1203,10 +1230,21 @@ mod tests {
     /// into an "unavailable" one with no test failing.
     #[test]
     fn every_admitted_item_is_declared_in_its_module() {
+        // A free function is `fun name(`, and a receiver method is
+        // `fun Self.name(` / `fun mut Self.name(` — a method's declaration
+        // carries the receiver, so the name alone never matches.
         let declares = |source: &str, name: &str| {
             let mut at = 0;
             while let Some(found) = source[at..].find(&format!("fun {name}")) {
                 let after = at + found + "fun ".len() + name.len();
+                match source[after..].chars().next() {
+                    Some('(') | Some('<') => return true,
+                    _ => at = after,
+                }
+            }
+            let mut at = 0;
+            while let Some(found) = source[at..].find(&format!(".{name}")) {
+                let after = at + found + 1 + name.len();
                 match source[after..].chars().next() {
                     Some('(') | Some('<') => return true,
                     _ => at = after,

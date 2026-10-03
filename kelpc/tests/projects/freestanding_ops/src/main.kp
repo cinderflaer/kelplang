@@ -1,0 +1,37 @@
+// A kernel-style loop whose arithmetic and comparison go through `std/ops`:
+// `acc + one` is `acc.add(&one)` and `two < acc` is `two.cmp(&acc) < 0`, so
+// dispatch is static and the linked image references no libc symbol.
+//
+// `acc` is perturbed each pass so the loop has no exit the optimizer can turn
+// into a return, exactly as `freestanding_min` does.
+impl "std/ops"
+
+datac V(val x: u64)
+
+impl ops.Add for V {
+    fun Self.add(rhs: &Self).R: V = V(x = x + rhs.x)
+}
+
+impl ops.Ord for V {
+    fun Self.cmp(other: &Self).R: i32 {
+        if x < other.x {
+            return -1
+        }
+        if x > other.x {
+            return 1
+        }
+        return 0
+    }
+}
+
+section(".text.boot") fun kmain() {
+    val one = V(x = 1)
+    val two = V(x = 2)
+    var acc = V(x = 0)
+    while true {
+        acc = acc + one
+        if two < acc {
+            acc = V(x = 0)
+        }
+    }
+}

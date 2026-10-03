@@ -1,0 +1,14 @@
+impl "iter"
+impl "std/option"
+
+pub datac Counter(var n: i32)
+
+// The type's own module implements the imported trait and binds its associated
+// type; the trait's method signature names `Self::Item` and this is the answer.
+impl iter.Iter for Counter {
+    type Item = i32
+    fun mut Self.next().R: option.Option<i32> {
+        n += 1
+        return option.Option.Some(value = n)
+    }
+}

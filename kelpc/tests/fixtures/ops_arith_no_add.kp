@@ -1,0 +1,12 @@
+// Language-completeness 5: `+` on a `datac` that does not implement `Add` is
+// refused, and the message names the trait and the impl to write. The builtin
+// operators are untouched, so this is the only way a user type gets `+`.
+impl "std/ops"
+
+datac P(val x: i32)
+
+fun main() {
+    val a = P(x = 1)
+    val b = P(x = 2)
+    print((a + b).x)
+}

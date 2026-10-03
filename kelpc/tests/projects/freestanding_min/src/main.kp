@@ -8,20 +8,22 @@
 // in `.rodata.boot`, so the script's placement is what the test reads back out
 // of the ELF.
 //
-// A trait with a default method is exercised here on purpose (A-12 slices 2 and
-// 3): dispatch is static, so the calls below are ordinary direct calls into the
-// synthesized per-type default and a bare-metal image grows no vtable, no
-// witness and no undefined symbol for them.
+// A trait with a default method and an associated type is exercised here on
+// purpose (A-12 slices 2, 3 and 5): dispatch is static, so the calls below are
+// ordinary direct calls into the synthesized per-type default and a bare-metal
+// image grows no vtable, no witness and no undefined symbol for them.
 section(".rodata.boot") const BOOT_MAGIC: [u8; 4] = [75, 69, 76, 80]
 
 trait Step {
-    fun Self.step(v: u64).R: u64
-    fun Self.bump(v: u64).R: u64 { return self.step(v) + 1 }
+    type Item
+    fun Self.step(v: Self::Item).R: Self::Item
+    fun Self.bump(v: Self::Item).R: Self::Item { return self.step(v) + 1 }
 }
 
 datac Thrice(val factor: u64)
 
 impl Step for Thrice {
+    type Item = u64
     fun Self.step(v: u64).R: u64 = v * factor
 }
 

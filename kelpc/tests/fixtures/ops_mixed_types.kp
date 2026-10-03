@@ -1,0 +1,21 @@
+// Language-completeness 5: an overloaded operator needs both operands to name
+// the same user type, exactly as the builtin operators need a matching pair.
+impl "std/ops"
+
+datac A(val x: i32)
+
+datac B(val x: i32)
+
+impl ops.Add for A {
+    fun Self.add(rhs: &Self).R: A = A(x = x + rhs.x)
+}
+
+impl ops.Add for B {
+    fun Self.add(rhs: &Self).R: B = B(x = x + rhs.x)
+}
+
+fun main() {
+    val a = A(x = 1)
+    val b = B(x = 2)
+    print((a + b).x)
+}

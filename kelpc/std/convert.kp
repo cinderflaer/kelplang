@@ -1,0 +1,23 @@
+/* std/convert — `From<T>` and `Into<T>` (A-12 slice 6, `plan/traits.md` 11).
+
+   `From<T>` is the conversion `?` calls when an operand's failure payload type
+   differs from the enclosing function's: `impl From<IoErr> for AppErr { fun
+   from(value: IoErr).R: AppErr { ... } }` makes `Result<_, IoErr>?` usable in
+   a function returning `Result<_, AppErr>`.
+
+   There are deliberately **no blanket impls**. `impl<T> Into<U> for T where
+   U: From<T>` is the shape Rust gives this pair, but it is a compiler-known
+   blanket impl, which this slice does not add, and `?` uses `From` directly,
+   never `Into`. A type that wants `into` writes its own impl.
+
+   `Into<T>` is here because a program that spells a conversion as a
+   method-like call wants the name, not because the operator needs it; it is
+   not derived for anything. */
+
+pub trait From<T> {
+    fun from(value: T).R: Self
+}
+
+pub trait Into<T> {
+    fun Self.into().R: T
+}

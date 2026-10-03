@@ -1869,3 +1869,137 @@ recursion is bounded by the parser's depth limit, its repeats by the program
 size, and its only allocation is the compiled scratch, which goes through the
 project's own functions, so a bad pattern is a `RegexErr` value and never a
 crash.
+## A-12 slice 5: associated types (`plan/traits.md` 10)
+
+**New ways to reach undefined behaviour.** None: the slice adds a type-level
+name, not a runtime one. `I::Item` is a concrete type at every instantiation, so
+the body it appears in is checked and emitted once per concrete type exactly as
+a bound already was, and a trait with an associated type is not object safe, so
+no vtable and no erased value is involved. Both backends, and the freestanding
+mode, emit the same code they emitted before the projection existed
+(`tests/projects/freestanding_min` uses one in its barest form).
+
+**What the compiler does and does not check.** It checks that every impl binds
+every associated type its trait declares and no other; that a declared bound
+(`type Item: Named`) is satisfied by the impl's concrete type; and that a
+projection `I::Item` is written only where a bound on `I` declares `Item`
+(elsewhere it is refused where it is written). It does not check that two impls
+bind the same type, that an associated type's name has any meaning, or that a
+generic function which is never instantiated would satisfy anything: an
+uninstantiated body is never checked, exactly as it is not for a bound on a type
+parameter.
+
+## Language-completeness 2: the iterator protocol (`plan/iterators.md`)
+
+**New ways to reach undefined behaviour.** None by itself. The `for` desugar
+builds ordinary statements (`while`, `when`, `let`, `break`) and calls an
+ordinary method, so a bug in it is a wrong program, not an unsafe one. The two
+new statements are the only new control flow: `break` leaves the innermost loop
+and `continue` re-tests its condition, and each frees exactly the owned locals
+declared inside that loop before branching (`DropPlan::at_break`/
+`at_continue`, filled from the loop mark in `borrowck.rs`). A jump that freed
+one local too few would leak; one too many would double-free; the plan is the
+same shape as the `return` plan and is keyed the same way, and the compiler
+emits it on both backends and in a freestanding image.
+
+**What the compiler does and does not check.** It checks that a `for` iterable
+is a `List`/array or implements `std.iter.Iterator`; that a `break`/`continue`
+has an enclosing loop; and that a `List` body does not mutate the place it
+walks. It does not check that a type's `next` is the trait's (only that the impl
+matches the trait signature, which the trait machinery already did); it does not
+check that the iterator terminates, so an infinite iterator without a `break` is
+a non-terminating program, exactly as `while true` is; and it does not track the
+cursor through a raw `Ptr<T>` any more than it did before.
+
+## Language-completeness 3: generic traits, `From`, and `?` (`plan/traits.md` 11)
+
+**New ways to reach undefined behaviour.** None by itself. A static trait method
+is an ordinary monomorphized function keyed by its type and trait instance, so
+the call the compiler emits is the direct call it already emitted for a receiver
+method; `?`'s conversion is one more such call in the failure arm, between
+moving the payload out of the operand and freeing the frame. The payload that
+crosses is the same value the failure arm already moved: a `datac` failure is
+passed by the address of the temporary's own union member, exactly the address
+the successful path would have read, and a `Copy` scalar is passed by value. No
+new borrow, no new drop and no new allocation is introduced, so no new way to
+reach undefined behaviour is added.
+
+**What the compiler does and does not check.** It checks that a generic trait's
+impl writes exactly the arguments the trait declares and that each satisfies the
+declared parameter bound; that an impl of a `From`-named trait for the target
+payload type takes exactly the source payload type and returns the target; that
+a bound `<X: From<A>>` resolves its argument (a concrete type, a builtin or
+another type parameter of the same declaration) and that the instantiated type
+implements that trait instance; and that `&dyn` of a generic trait, a bound or
+impl argument that is not a named type or a builtin, and a supertrait with
+arguments are each refused where written. It does not check what a `from` body
+does with its argument, does not relate two impls of different instances of one
+trait, and does not check an uninstantiated generic function whose body would
+fail a bound, exactly as before.
+
+## Language-completeness 4: owned trait objects, `Box<dyn>` (`plan/traits.md` 12)
+
+**New ways to reach undefined behaviour.** The representation adds one: a `Box<dyn Name>` is a fat
+owned pointer whose concrete type is erased, so the compiler no longer knows the size, the
+alignment or the destructor of the value behind the data pointer when the box is dropped or read.
+Both are recovered from the vtable the box carries: the drop entry runs the concrete type's own
+`kelp_drop_<T>` before the box frees the allocation, and the coercion that built the pair is the
+only place a `(trait, type)` vtable is recorded, so a pair whose vtable was never emitted is a
+compile-time error rather than a wrong slot. The size and align entries are emitted beside the drop
+entry and are read only by the box's free when the project supplies its own allocator (whose
+dealloc takes a size and an alignment); libc's `free` ignores them. A call through the box passes the erased data pointer as the
+thunk's first parameter, exactly as a `&dyn` call does, so the receiver conversion the thunk
+performs (the pointer itself for a borrowed receiver, a load for a `Copy` scalar) is the same one
+that was already audited for `&dyn`.
+
+**What the compiler does and does not check.** It checks that a `Box<T>` coerces only when `T`
+implements the target trait, that object safety holds where the `dyn` is written, that the box is
+moved (not copied) into the trait object, and that a `mut Self` method is called only through a
+writable place. It does not check that the vtable of one trait agrees with another (one flattening
+routine computes every pair's slot order), does not track whether a box is empty (an empty box
+panics at the point of use), and does not read the size/align entries it emits.
+
+## Language-completeness 5: operator traits and `Display` (`plan/traits.md` 13)
+
+**New ways to reach undefined behaviour.** None. Every operator is a front-end desugar into an
+ordinary method call (`a + b` is `a.add(&b)`, `a < b` is `a.cmp(&b) < 0`, `-a` is `a.neg()`, and a
+`Display` value in `"${x}"` or `print(x)` is `x.to_text()`), so the code both backends emit is the
+direct `Type#method` call they already emitted for an `==` over a declared `eq`. The operands are
+checked once, left to right, and are only borrowed, never moved, exactly as H-5's `==` operands
+are, so no new borrow, drop or allocation is introduced. `std/ops` and `std/fmt` are ordinary
+shipped module declarations with no body, so a freestanding image that imports `std/ops` links no
+runtime symbol.
+
+**What the compiler does and does not check.** It checks that both operands name the same
+`datac`/`enum` and that the type implements the shipped trait before lowering (a type without `Add`
+is refused by name, and the message names the trait and the impl to write); that an operator on a
+generic type parameter, a user-declared operator trait, and a bitwise/shift/logical operator
+through a trait are refused where they are written; and that a type with only `Ord` is still refused
+`==`/`!=` with a message naming `eq`. It does not check that an `add` body adds or a `cmp` body
+orders, does not relate a type's `Ord` to its `eq`, and does not check an unused impl.
+
+## Language-completeness 6: const generics and `impl Trait` in argument position (A-20)
+
+**New ways to reach undefined behaviour.** None on its own. A const parameter is monomorphization
+by a compile-time value exactly as a type parameter is monomorphization by a type, and the one
+thing the generated code does differently is read a literal where it would have read a value: the
+parameter is folded into a literal before any body is checked, so `i < N` is `i < 4` and `[0; N]`
+is `[0; 4]`, a length the array type already carries. `impl Trait` in argument position is a fresh
+bounded type parameter, so it reaches only the A-12 dispatch that was already audited. Nothing new
+is allocated, borrowed, moved or dropped.
+
+The one *footgun* the surface adds is worth naming because it is a compile-time, not a runtime,
+matter: a const parameter is a value the compiler folds, so a program that expects `N` to be read
+at run time (for example from a mutable binding) is refused, not silently given a stale value.
+`N` cannot be assigned to, and a local that shadows it shadows the folded literal.
+
+**What the compiler does and does not check.** It checks that a const parameter's declared type is
+one of `usize`, `u8`, `u16`, `u32`, `u64`, `i32`, `i64` or `bool`; that every const argument folds
+and fits its parameter's declared type; that a const parameter is not used as a type and a type is
+not passed where a const argument belongs; that a length that is arithmetic over a const parameter
+in a type is refused by name; and that an `impl Trait` parameter names a declared trait and appears
+only as a whole parameter type of a declared `fun`. It does not check that a const parameter's
+value is "reasonable" for the array it sizes (a `Buf<1_000_000>` is a megabyte of stack or static
+storage, and the target's own layout is the only limit), and it does not check an uninstantiated
+generic body whose const length would be zero until the instantiation supplies a value (zero stays
+refused where it is written).

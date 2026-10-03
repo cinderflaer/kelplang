@@ -161,6 +161,10 @@ pub enum TokenKind {
     /// statement separator.
     Semi,
     Colon,
+    /// `::` is the associated-type projection (A-12 slice 5): `I::Item`,
+    /// `Self::Item`. One token so a formatter can glue both sides the way it
+    /// glues `.`, and two colons written apart stay two `Colon`s.
+    ColonColon,
     Dot,
     /// `...` — the variadic marker a user `extern fun` may write as its last
     /// parameter (gap 7). Nothing follows it, and it is not a value: it only
@@ -531,7 +535,12 @@ impl<'a> Lexer<'a> {
                 }
                 b':' => {
                     self.advance();
-                    TokenKind::Colon
+                    if self.peek() == Some(b':') {
+                        self.advance();
+                        TokenKind::ColonColon
+                    } else {
+                        TokenKind::Colon
+                    }
                 }
                 b'.' => {
                     self.advance();
@@ -1355,6 +1364,31 @@ mod tests {
                 TokenKind::Pub,
                 TokenKind::Trait,
                 TokenKind::Ident("foo".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_an_associated_type_projection() {
+        // `::` is one token, so the formatter can glue both sides the way it
+        // glues a `.`, and two colons written apart stay two `Colon`s.
+        assert_eq!(
+            kinds("Self::Item"),
+            vec![
+                TokenKind::Ident("Self".to_string()),
+                TokenKind::ColonColon,
+                TokenKind::Ident("Item".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+        assert_eq!(
+            kinds("a : : b"),
+            vec![
+                TokenKind::Ident("a".to_string()),
+                TokenKind::Colon,
+                TokenKind::Colon,
+                TokenKind::Ident("b".to_string()),
                 TokenKind::Eof,
             ]
         );

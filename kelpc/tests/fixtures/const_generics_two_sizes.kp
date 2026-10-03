@@ -1,0 +1,43 @@
+// A-20: two instantiations of one const-generic ring buffer in one program.
+// `Ring<4>` and `Ring<8>` are separate types with separate function copies, so
+// the generated image holds two of everything (each `kelp_Ring__...__l__N__g__`
+// symbol is emitted twice, once per length) and the two buffers keep their own
+// state while the loop writes to both.
+datac Ring<const N: usize>(var slot: [i32; N], var head: usize, var count: usize)
+
+fun mut Ring<const N: usize>.push(v: i32) {
+    slot.set(i = head, v = v)
+    head = (head + 1) % N
+    if count < N {
+        count = count + 1
+    }
+}
+
+fun Ring<const N: usize>.total().R: i32 {
+    var sum: i32 = 0
+    var i: usize = 0
+    while i < N {
+        sum = sum + slot.get(i = i)
+        i = i + 1
+    }
+    return sum
+}
+
+fun Ring<const N: usize>.rings().R: usize = N
+
+fun main() {
+    var small = Ring<4>(slot = [0; 4], head = 0, count = 0)
+    var big = Ring<8>(slot = [0; 8], head = 0, count = 0)
+    var i: i32 = 0
+    while i < 10 {
+        small.push(v = i)
+        big.push(v = i)
+        i = i + 1
+    }
+    print(small.count)
+    print(big.count)
+    print(small.total())
+    print(big.total())
+    print(small.rings())
+    print(big.rings())
+}

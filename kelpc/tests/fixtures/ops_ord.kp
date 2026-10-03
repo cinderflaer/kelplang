@@ -1,0 +1,60 @@
+// Language-completeness 5: `Ord` gives `<`, `<=`, `>` and `>=` through `cmp`.
+// The comparison is the `i32` `cmp` returns against zero, so a hand-written
+// sort with a `while` loop is ordinary code.
+impl "std/ops"
+
+datac Version(val major: i32, val minor: i32)
+
+impl ops.Ord for Version {
+    fun Self.cmp(other: &Self).R: i32 {
+        if major < other.major {
+            return -1
+        }
+        if major > other.major {
+            return 1
+        }
+        if minor < other.minor {
+            return -1
+        }
+        if minor > other.minor {
+            return 1
+        }
+        return 0
+    }
+}
+
+fun main() {
+    var a = Version(major = 2, minor = 0)
+    var b = Version(major = 1, minor = 9)
+    var c = Version(major = 2, minor = 1)
+
+    print(a > b)
+    print(b >= c)
+    print(a <= b)
+    print(c >= c)
+
+    // A bubble pass repeated until nothing moves: three owned values and a
+    // `while` loop, sorted by the overloaded `<` alone.
+    var sorted = false
+    while !sorted {
+        sorted = true
+        if b < a {
+            val t = a
+            a = b
+            b = t
+            sorted = false
+        }
+        if c < b {
+            val t = b
+            b = c
+            c = t
+            sorted = false
+        }
+    }
+    print(a.major)
+    print(a.minor)
+    print(b.major)
+    print(b.minor)
+    print(c.major)
+    print(c.minor)
+}

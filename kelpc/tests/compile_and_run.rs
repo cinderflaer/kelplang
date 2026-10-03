@@ -4036,6 +4036,184 @@ fn a_const_may_call_a_function_and_the_call_is_evaluated_at_compile_time() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// A-20: const type parameters, and `impl Trait` in argument position. Every
+// fixture here runs on the default (LLVM) backend and on the C oracle, because
+// the suite is run twice.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_const_parameter_is_a_value_a_length_and_a_repeat_count() {
+    // `Buf<const N: usize>` infers `N` from its construction, `sum<const N>`
+    // infers `N` from an array argument's own length, `N` is read as a value
+    // (`i < N`), used as an array length (`[i32; N]`) and used as a repeat
+    // count (`[0; N]`), and a `bool` const parameter is read too.
+    assert_compiles_and_runs(
+        "tests/fixtures/const_generics_basic.kp",
+        "3\n3\n6\n100\n7\n3\n0\n15\n1\n5\n",
+    );
+}
+
+#[test]
+fn two_const_instantiations_of_one_ring_buffer_keep_their_own_state() {
+    // `Ring<4>` and `Ring<8>` are two monomorphized types, so the loop writes
+    // two independent buffers and each keeps its own head and count.
+    assert_compiles_and_runs(
+        "tests/fixtures/const_generics_two_sizes.kp",
+        "4\n8\n30\n44\n4\n8\n",
+    );
+}
+
+#[test]
+fn a_const_argument_may_be_a_compile_time_expression() {
+    // `Buf<SIZE * 2>`, `Buf<WIDTH>` where `WIDTH` is a `const` computed by a
+    // plain `fun`, and `capacity<twice(n = 4)>()`: the existing constant
+    // evaluation is the whole of it.
+    assert_compiles_and_runs(
+        "tests/fixtures/const_generics_expr_arg.kp",
+        "6\n6\n6\n8\n",
+    );
+}
+
+#[test]
+fn a_const_length_mismatch_names_both_lengths() {
+    assert_rejected_with(
+        "tests/fixtures/const_generics_mismatch.kp",
+        "[i32; 3]",
+    );
+    assert_rejected_with(
+        "tests/fixtures/const_generics_mismatch.kp",
+        "[i32; 4]",
+    );
+}
+
+#[test]
+fn arithmetic_on_a_const_parameter_in_a_type_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/const_generics_arithmetic.kp",
+        "arithmetic on one in a type",
+    );
+}
+
+#[test]
+fn impl_trait_arguments_are_fresh_bounded_type_parameters() {
+    // `fun pair_area(a: impl Shape, b: &impl Shape)` is two parameters, so two
+    // different types may be passed, and the trait's methods dispatch
+    // statically inside the body.
+    assert_compiles_and_runs(
+        "tests/fixtures/impl_trait_args.kp",
+        "19\nsquare\nrect\n",
+    );
+    // The shape A-12 recorded as "a later slice" now compiles and runs with no
+    // output: `impl Trait` is a parameter type, not a refusal.
+    assert_compiles_and_runs("tests/fixtures/traits_impl_trait_argument.kp", "");
+}
+
+#[test]
+fn impl_trait_in_return_position_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/impl_trait_return_refused.kp",
+        "not allowed in return position",
+    );
+}
+
+#[test]
+fn impl_trait_in_a_field_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/impl_trait_field_refused.kp",
+        "only legal as a whole parameter type",
+    );
+}
+
+/// The two instantiations of one const-generic buffer are two copies, read
+/// back out of the generated C: this is a codegen-shape assertion, so it pins
+/// `KELPC_ORACLE=c`, whose `<out>.c` is the artifact under test. The LLVM half
+/// of the same claim is the freestanding `llvm-nm` test below, which finds both
+/// mangled names in the bare-metal image.
+#[test]
+fn a_const_generics_two_instantiations_emit_two_copies() {
+    let bin = out_path("const_generics_two_copies");
+    let build = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(fixture("tests/fixtures/const_generics_two_sizes.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the ring fixture to compile on the oracle, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let generated = std::fs::read_to_string(bin.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    for name in [
+        "kelp_Ring__push__l__4__g__",
+        "kelp_Ring__push__l__8__g__",
+        "kelp_Ring__total__l__4__g__",
+        "kelp_Ring__total__l__8__g__",
+    ] {
+        assert!(
+            generated.contains(name),
+            "the generated C must hold a copy for each const value, and '{name}' is missing:\n{generated}"
+        );
+    }
+}
+
+/// A-20's freestanding half: a const-generic ring buffer in the kernel image
+/// links with no libc symbol, and both `Ring<4>` and `Ring<8>` are emitted (the
+/// same acceptance test as `freestanding_min`, run on the const-generic
+/// project). It needs the `dev-kernel.nix` tools; a shell without them prints a
+/// skip.
+#[test]
+fn a_freestanding_const_generic_buffer_links_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding const-generic test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_constgen");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_constgen"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding const-generic build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+    let symbols = tool("llvm-nm", &[path]);
+    for name in [
+        "kelp_Ring__push__l__4__g__",
+        "kelp_Ring__push__l__8__g__",
+    ] {
+        assert!(
+            symbols.contains(name),
+            "the freestanding image must hold one copy per const value, and '{name}' is missing:\n{symbols}"
+        );
+    }
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
 #[test]
 fn a_modules_own_items_are_reachable_bare_inside_it() {
     // `util.kp` calls `doubled` and constructs `Pair` without qualifying
@@ -4667,10 +4845,12 @@ fn a_for_loop_needs_its_in() {
 }
 
 #[test]
-fn a_for_loop_only_walks_a_list() {
-    // The desugar is `.len()`/`.get()`, so a non-list fails on `.len()` and the
-    // span is the iterable — `for x in 5` points at `5`, not at the `for`.
-    assert_rejected_with("tests/fixtures/for_not_a_list.kp", "has no method 'len'");
+fn a_for_loop_only_walks_a_list_or_an_iterator() {
+    // A `List`/array keeps the index walk; anything else has to implement
+    // `std.iter.Iterator`, and the refusal names the trait so the fix is one
+    // `impl` away (`plan/iterators.md`). The span is the `for` line.
+    assert_rejected_with("tests/fixtures/for_not_a_list.kp", "implements 'Iterator'");
+    assert_rejected_with("tests/fixtures/for_iter_no_impl.kp", "implements 'Iterator'");
 }
 
 #[test]
@@ -4719,6 +4899,58 @@ fn a_for_loop_still_allows_reads_another_list_and_a_while() {
     assert_compiles_and_runs(
         "tests/fixtures/for_mutates_another_field.kp",
         "2\n7\n",
+    );
+}
+
+#[test]
+fn a_for_loop_over_an_iterator_walks_it_by_next() {
+    // `plan/iterators.md`: a type implementing `std.iter.Iterator` walks through
+    // `next()`, and `Range` is the shipped one. A step and a descending step are
+    // the same loop with a different `step`.
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_range.kp",
+        "0\n1\n2\n3\n4\n0\n2\n4\n3\n2\n1\n",
+    );
+}
+
+#[test]
+fn a_user_iterator_loop_stops_on_break_and_skips_on_continue() {
+    // The sequence is infinite, so `break` is the loop's exit; `continue`
+    // reaches the next `next()` call.
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_break.kp",
+        "0\n1\n1\n2\n3\n5\n8\n13\n20\n",
+    );
+}
+
+#[test]
+fn a_defer_in_an_iterator_body_runs_once_per_iteration() {
+    assert_compiles_and_runs("tests/fixtures/for_iter_defer.kp", "0 d1 d2 d\n");
+}
+
+#[test]
+fn two_iterator_loops_nest_with_independent_cursors() {
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_nested.kp",
+        "0 1 2 10 11 12 20 21 22 \n",
+    );
+}
+
+#[test]
+fn the_iterator_helpers_count_sum_and_collect() {
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_helpers.kp",
+        "7\n10\n3\n0\n1\n2\n",
+    );
+}
+
+#[test]
+fn a_place_iterator_is_borrowed_by_its_loop() {
+    // The loop holds `&mut f`, so naming `f` in the body is the ordinary
+    // "already borrowed" error — the iterator mutability the design promises.
+    assert_rejected_with(
+        "tests/fixtures/for_iter_borrowed.kp",
+        "already borrowed",
     );
 }
 
@@ -5378,6 +5610,88 @@ fn the_equality_operator_is_refused_without_a_declared_eq() {
 }
 
 // ---------------------------------------------------------------------------
+// Language-completeness 5: operator traits and `Display` (`plan/traits.md` 13).
+// `std/ops` declares `Add`/`Sub`/`Mul`/`Div`/`Rem`/`Neg`/`Ord` and `std/fmt`
+// declares `Display`, and the front end lowers each operator and each
+// interpolation into the method it names, so both backends run the ordinary
+// direct call.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_arithmetic_operators_lower_to_std_ops_methods() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_arithmetic.kp",
+        "4\n6\n-1\n0\n-1\n-2\n3\n8\n4\n0\n1\n3\n",
+    );
+}
+
+#[test]
+fn ord_gives_the_order_operators_and_a_hand_written_sort_works() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_ord.kp",
+        "true\nfalse\nfalse\ntrue\n1\n9\n2\n0\n2\n1\n",
+    );
+}
+
+#[test]
+fn display_lets_a_value_into_a_template_and_print_and_nests() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_display.kp",
+        "v = (3, 4)\n(3, 4)\n3\nline = (3, 4) -> (5, 6)\n(3, 4) -> (5, 6)\n(3, 4) -> (5, 6)\n",
+    );
+}
+
+#[test]
+fn compound_assignment_on_a_user_type_is_the_add_then_assign_desugar() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_compound_assign.kp",
+        "4\n6\n1\n2\n3\n8\n4\n5\n",
+    );
+}
+
+#[test]
+fn every_operand_of_an_overloaded_operator_is_evaluated_once_left_to_right() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_operands_once.kp",
+        "1\n2\n3\n3\n4\ntrue\n5\n6\n7\n4\n",
+    );
+}
+
+#[test]
+fn an_operator_resolves_on_a_bounded_generic_type_parameter() {
+    // A generic body is checked once per instantiation, so `T` is the concrete
+    // `Vec2` when `a + b` and `a < b` are lowered.
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_generic.kp",
+        "4\n7\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn an_operator_needs_its_trait_and_the_order_trait_is_not_equality() {
+    assert_rejected_with(
+        "tests/fixtures/ops_arith_no_add.kp",
+        "it does not implement 'Add' from 'std/ops'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/ops_ord_no_eq.kp",
+        "'==' and '!=' come from a declared 'eq' method, and 'Ord' does not supply one",
+    );
+    assert_rejected_with(
+        "tests/fixtures/ops_display_missing.kp",
+        "it does not implement 'Display'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/ops_orphan_builtin.kp",
+        "'i32' is a builtin type, which has no module",
+    );
+    assert_rejected_with(
+        "tests/fixtures/ops_mixed_types.kp",
+        "the operands must have the same type",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // A-12 slice 2: traits with static dispatch. A trait is a named set of method
 // signatures, an `impl` gives them to a `datac`/`enum`, and a generic function
 // bounds its type parameter on one. Every call below is the concrete type's own
@@ -5472,16 +5786,16 @@ fn an_impl_naming_no_declared_trait_is_rejected() {
 fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
     assert_rejected_with(
         "tests/fixtures/traits_dyn.kp",
-        "has to be borrowed",
+        "is not a type on its own",
     );
     assert_rejected_with(
         "tests/fixtures/traits_associated_type.kp",
-        "associated types and consts are not in this slice",
+        "default associated type is not in this slice",
     );
-    assert_rejected_with(
-        "tests/fixtures/traits_impl_trait_argument.kp",
-        "a trait cannot be a parameter's type in this slice",
-    );
+    // `impl Trait` in argument position was on this list and is now a shipped
+    // sugar (A-20, 9.3);
+    // `impl_trait_arguments_are_fresh_bounded_type_parameters` pins the
+    // positive half, and the stored positions stay refused.
     assert_rejected_with(
         "tests/fixtures/traits_where_clause.kp",
         "'where' clause is not in this slice",
@@ -5618,8 +5932,9 @@ fn a_builtin_impl_is_reached_through_a_dyn() {
 }
 
 /// A-12 slice 4 rejections: an object-unsafe trait that returns `Self` or takes
-/// another `Self`, an owned trait object, a trait object in a field, a returned
-/// `&dyn`, a type that does not implement the trait, and an unknown trait.
+/// another `Self`, a bare `dyn` that is neither borrowed nor boxed, a trait
+/// object in a field, a returned `&dyn`, a type that does not implement the
+/// trait, and an unknown trait.
 #[test]
 fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
     assert_rejected_with(
@@ -5631,8 +5946,8 @@ fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
         "takes a 'Self' parameter",
     );
     assert_rejected_with(
-        "tests/fixtures/traits_dyn_boxed.kp",
-        "has to be borrowed",
+        "tests/fixtures/traits_dyn.kp",
+        "is not a type on its own",
     );
     assert_rejected_with(
         "tests/fixtures/traits_dyn_field.kp",
@@ -5649,6 +5964,150 @@ fn the_dyn_shapes_this_slice_does_not_reach_are_refused_by_name() {
     assert_rejected_with(
         "tests/fixtures/traits_dyn_unknown.kp",
         "names no declared trait",
+    );
+}
+
+/// A-12 slice 5: a trait may declare an associated type, each impl binds it,
+/// and `I::Item` is usable in a generic function's return type. Dispatch stays
+/// static, so every call is the concrete type's own method.
+#[test]
+fn an_associated_type_is_bound_by_each_impl_and_projected_through_a_generic() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_assoc_two_types.kp",
+        "6\n12\n",
+    );
+}
+
+/// A-12 slice 5: `type Entry: Named` is checked at the impl, and generic code
+/// reaches the bound's method through the projection.
+#[test]
+fn a_bounded_associated_type_is_usable_inside_generic_code() {
+    assert_compiles_and_runs("tests/fixtures/traits_assoc_bound.kp", "item\n5\n");
+}
+
+/// A-12 slice 5: `Self::Item` in a default method resolves through the impl's
+/// binding when the concrete copy is synthesized.
+#[test]
+fn self_item_in_a_default_method_resolves_per_impl() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_assoc_default_self.kp",
+        "107\n107\n",
+    );
+}
+
+/// A-12 slice 5: a `pub trait` with an associated type, implemented in another
+/// module and used through a generic function whose return type names the
+/// projection.
+#[test]
+fn an_associated_type_is_bound_across_modules() {
+    assert_project_runs(
+        "traits_assoc_cross",
+        &project("traits_assoc_cross"),
+        "1\n",
+    );
+}
+
+/// A-12 slice 5 rejections: a missing binding, an extra one, a projection with
+/// no bound to name it, an equality constraint, and a bound the impl's type
+/// does not satisfy.
+#[test]
+fn the_associated_type_shapes_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_missing.kp",
+        "does not bind it",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_extra.kp",
+        "is not declared by trait 'Src'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_no_bound.kp",
+        "is not a known associated type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_equality.kp",
+        "equality constraint on an associated type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_bound_violated.kp",
+        "does not satisfy the bound 'type Entry: Named'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_const.kp",
+        "associated consts are not in this slice",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_assoc_gat.kp",
+        "generic associated type is not in this slice",
+    );
+}
+
+/// A-12 slice 6: a trait may take type parameters, a receiverless method is a
+/// static member, and `?` calls a declared `impl From<Source> for Target` when
+/// the two failure payload types differ. Dispatch stays static, so both backends
+/// emit the same direct calls.
+#[test]
+fn a_from_impl_converts_a_differing_failure_and_a_generic_trait_is_bounded() {
+    assert_compiles_and_runs(
+        "tests/fixtures/from_conversion.kp",
+        "true\ntrue\n5\n9\n42\n5\n",
+    );
+}
+
+/// A-12 slice 6: a static method written on the trait's own name
+/// (`From.from(x)`), with the implementing type from the expected type.
+#[test]
+fn a_static_method_is_called_on_the_traits_own_name() {
+    assert_compiles_and_runs("tests/fixtures/from_trait_name.kp", "5\n9\n");
+}
+
+/// A-12 slice 6: the `From` impl lives in the implementing type's module, and
+/// the `?` that reaches it is in another module.
+#[test]
+fn a_from_impl_is_reached_across_modules() {
+    assert_project_runs("convert_cross", &project("convert_cross"), "true\n");
+}
+
+/// A-12 slice 6 rejections: `?` with no conversion, a second impl of one trait
+/// instance for one type, `&dyn` of a generic trait, and an impl that writes
+/// the wrong number of trait arguments.
+#[test]
+fn the_generic_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/from_no_impl.kp",
+        "cannot convert a failure",
+    );
+    assert_rejected_with("tests/fixtures/from_no_impl.kp", "impl From<IoErr>");
+    assert_rejected_with(
+        "tests/fixtures/from_duplicate_impl.kp",
+        "already has an impl for 'T'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/generic_trait_dyn.kp",
+        "takes type parameters",
+    );
+    assert_rejected_with(
+        "tests/fixtures/generic_trait_arity.kp",
+        "takes 1 type argument(s)",
+    );
+}
+
+/// A-12 slice 6: `std/convert` is pure language, so a bare-metal image uses
+/// `From` and `?`'s conversion and boots with no undefined symbol.
+#[test]
+fn freestanding_convert_boots_with_a_converted_failure() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding convert boot: 'ld.lld' or 'qemu-system-riscv64' \
+             is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_convert",
+        &project("freestanding_convert"),
+        &["converted 107", "done"],
     );
 }
 
@@ -5696,6 +6155,174 @@ fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
         "freestanding_dyn",
         &project("freestanding_dyn"),
         &["hello from dyn", "1", "bye from dyn", "2"],
+    );
+}
+
+/// A-12 slice 7: a `List<Box<dyn Shape>>` of two implementors, each element a
+/// fat owned pointer dispatched through its own vtable and freed through it when
+/// the list drops.
+#[test]
+fn a_list_of_owned_trait_objects_is_dispatched_through_each_vtable() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_list.kp",
+        "circle\nsquare\n21.000000\n",
+    );
+}
+
+/// A-12 slice 7: a factory function returns a `Box<dyn Shape>` chosen by a flag,
+/// and a `&dyn` borrowed back out of a box goes on to a free function.
+#[test]
+fn a_factory_returns_an_owned_trait_object_and_the_trait_is_borrowed_back() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_factory.kp",
+        "circle\nsquare\n12.000000\n9.000000\n",
+    );
+}
+
+/// A-12 slice 7: a `datac` holds a `Box<dyn Trait>` field, a `mut Self` method is
+/// dispatched through the box's vtable, and each concrete type's user `drop`
+/// runs through the vtable when its box dies.
+#[test]
+fn a_datac_field_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_field.kp",
+        "3.000000\n3.000000\n12.000000\nfalse\ndrop circle\ndrop circle\n",
+    );
+}
+
+/// A-12 slice 7: an `enum` payload holds an owned trait object, and the live
+/// variant's payload drops through the vtable when the binding that holds it
+/// dies.
+#[test]
+fn an_enum_payload_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_enum.kp",
+        "empty\n12.000000\ndrop circle\ndone\n",
+    );
+}
+
+/// A-12 slice 7: a box moves between lists with `pop`/`push`, `Box.empty()` is
+/// the null owned trait object, and a `move Box<dyn Trait>` parameter owns one
+/// by value.
+#[test]
+fn an_owned_trait_object_moves_between_lists_and_through_a_move_parameter() {
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_move.kp",
+        "true\n12.000000\n0\nfalse\n12.000000\n0\n",
+    );
+}
+
+/// A-12 slice 7: an owned trait object crosses a thread boundary (an owned value
+/// with no borrows is what the crossing rule admits), and the worker drops it
+/// through the vtable when it returns.
+#[test]
+fn an_owned_trait_object_crosses_a_thread_boundary() {
+    // The worker owns the box, so its drop runs when `area_of` returns, before
+    // the join hands the result back to the main thread to print.
+    assert_compiles_and_runs(
+        "tests/fixtures/traits_boxdyn_thread.kp",
+        "drop circle\n12.000000\n",
+    );
+}
+
+/// A-12 slice 7 rejections: a coercion of a type that does not implement the
+/// trait, an object-unsafe trait behind `Box<dyn>`, `Box<dyn A + B>`, a use
+/// after a move, a partial move out of a `datac` field, a borrowed trait object
+/// crossing a thread boundary, and `take`/`set` on an owned trait object.
+#[test]
+fn the_owned_trait_object_shapes_this_slice_refuses_are_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_not_impl.kp",
+        "does not implement 'Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_object_safe.kp",
+        "'Box<dyn Maker>' is not allowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_plus.kp",
+        "`dyn` names one trait",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_use_after_move.kp",
+        "use of moved value 'b'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_partial_move.kp",
+        "use of moved value 'h.shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_thread_borrow.kp",
+        "cannot send '&dyn Shape'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_take.kp",
+        "'Box<dyn Shape>.take' is not allowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_generic_trait.kp",
+        "takes type parameters",
+    );
+    assert_rejected_with(
+        "tests/fixtures/traits_boxdyn_mut_while_borrowed.kp",
+        "already borrowed as shared",
+    );
+}
+
+/// A-12 slice 7 in a bare-metal image: two owned trait objects built through the
+/// project's own allocator are dispatched through `.rodata` vtables and freed
+/// through each vtable's drop entry, so the user `drop`s reach the UART in drop
+/// order and the linked ELF references no undefined symbol.
+#[test]
+fn a_freestanding_image_owns_trait_objects_and_frees_them_through_the_vtable() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding boxdyn boot: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_boxdyn");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_boxdyn"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding boxdyn build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding boxdyn image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+    boot_under_qemu_in_order(
+        &RISCV64_QEMU,
+        "freestanding_boxdyn",
+        &project("freestanding_boxdyn"),
+        &[
+            "hello from boxdyn",
+            "1",
+            "bye from boxdyn",
+            "2",
+            "hello from boxdyn",
+            "drop hello",
+            "drop bye",
+            "drop hello",
+            "boxdyn done",
+        ],
     );
 }
 
@@ -11273,6 +11900,99 @@ fn freestanding_min_builds_a_riscv_elf_with_no_undefined_symbols() {
     );
 }
 
+/// `plan/iterators.md`'s freestanding half: a kernel-style loop over
+/// `iter.range` lowers to an ordinary `while` over `Range.next`, so the image
+/// links with no undefined symbol. This is the same acceptance test as
+/// `freestanding_min`, run on the project that walks a range, and it needs the
+/// same `dev-kernel.nix` tools.
+#[test]
+fn a_freestanding_project_can_walk_a_range() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding iterator test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_iter");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_iter"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding iterator build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding iterator image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
+/// Language-completeness 5's freestanding half: a `datac` with `Add` and `Ord`
+/// from `std/ops`, used by `+` and `<`. The traits are pure language, so the
+/// image links with no undefined symbol, exactly as the iterator one does.
+/// Needs `dev-kernel.nix` tools.
+#[test]
+fn a_freestanding_project_can_use_the_operator_traits() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding operator-trait test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_ops");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_ops"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding operator-trait build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding operator-trait image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Kernel stage 5 (MK9-S7-M1/M3, roadmap B-9/B-16): inline `asm` and `naked
 // fun`. The templates in these fixtures are x86-64 assembly in Intel syntax,
@@ -11783,8 +12503,8 @@ fn freestanding_std_kernel_boots_with_option_result_and_arena() {
 /// refusal lists the modules a freestanding project may implement.
 #[test]
 fn a_hosted_std_module_is_refused_by_name_with_the_allowed_list() {
-    let allowed = "std/arena, std/atomic, std/frame, std/irq, std/list, \
-                   std/math, std/option, std/regex, std/result, std/str";
+    let allowed = "std/arena, std/atomic, std/convert, std/frame, std/irq, std/iter, std/list, \
+                   std/math, std/ops, std/option, std/regex, std/result, std/str";
     for (dir, module) in [
         ("freestanding_std_refused_time", "std/time"),
         ("freestanding_std_refused_thread", "std/thread"),
@@ -12688,23 +13408,29 @@ fn a_defer_naming_a_later_local_is_refused() {
     );
 }
 
-/// Kelp has no `break` or `continue` (`plan/syntax.md` 11), so the parser names
-/// that rather than reading either as an unknown identifier.
+/// `break`/`continue` are ordinary loop control in a written `while`
+/// (`plan/iterators.md`).
 #[test]
-fn a_break_statement_is_refused_by_name() {
+fn break_and_continue_control_a_while_loop() {
+    assert_compiles_and_runs("tests/fixtures/break_and_continue.kp", "1\n2\n4\n5\n");
+}
+
+/// A deferred action runs while its block is being left, so a `break` inside it
+/// has no loop to leave.
+#[test]
+fn a_break_inside_a_deferred_action_is_refused() {
     assert_rejected_with(
-        "tests/fixtures/break_statement_is_refused.kp",
-        "'break' is not a Kelp statement",
+        "tests/fixtures/defer_break_inside.kp",
+        "a deferred action cannot contain 'break'",
     );
 }
 
-/// The same refusal applies inside a deferred action, where an exit would be
-/// even less meaningful.
+/// `break`/`continue` outside every loop is refused at the statement.
 #[test]
-fn a_break_inside_a_deferred_action_is_refused_by_name() {
+fn break_outside_a_loop_is_refused() {
     assert_rejected_with(
-        "tests/fixtures/defer_break_inside.kp",
-        "'break' is not a Kelp statement",
+        "tests/fixtures/for_iter_break_outside.kp",
+        "no loop encloses it",
     );
 }
 

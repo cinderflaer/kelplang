@@ -6,7 +6,9 @@ trait   Shape   {
 }
 
 trait   Named:   Shape   +   Other   {
+    type   Item
     fun   Self.name().R:   str
+    fun   Self.first().R:   Self::Item
 }
 
 datac  Circle(val r: f64)
@@ -24,5 +26,7 @@ fun describe(s:   &dyn   Shape).R:   f64 =   s.area()
 fun mutate(s:   &mut   dyn   Shape) {   }
 
 fun area_of<T:   Shape   +   Grow>(s:   &T).R:   f64 = s.area()
+
+fun boxed(s: Box<dyn Shape>) {   }
 
 fun main() { }

@@ -1,0 +1,17 @@
+// `plan/iterators.md`: `for` over a `List`/array keeps the index walk, and
+// everything else is the `Iterator` protocol. `Range` is the shipped iterator,
+// and the loop is its `next()` desugar.
+impl "std/iter"
+
+fun main() {
+    for i in iter.range(0, 5) {
+        print(i)
+    }
+    // A step and a descending range are the same loop with a different step.
+    for i in iter.range_step(0, 6, 2) {
+        print(i)
+    }
+    for i in iter.range_step(3, 0, -1) {
+        print(i)
+    }
+}

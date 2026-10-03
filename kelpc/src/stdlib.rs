@@ -89,6 +89,17 @@ pub fn is_thread_fn(key: &str) -> bool {
 /// `Result<T, T>` (MK9 4) and has no declaration site to name it at.
 pub const RESULT_MODULE: &str = "std/result";
 
+/// The module that declares `Iterator`, the trait a `for` accepts over
+/// anything that is not a `List`/array (`plan/iterators.md`). The compiler
+/// knows the trait's canonical key, because that is what a `for` looks for and
+/// what the impl table is keyed by.
+pub const ITER_MODULE: &str = "std/iter";
+
+/// The canonical key of the one trait a `for` accepts, and the module that
+/// ships it. `key_prefix(ITER_MODULE) + "Iterator"` is what the impl table and
+/// the `for` check agree on, so the two cannot drift apart.
+pub const ITERATOR_TRAIT: &str = "std.iter.Iterator";
+
 /// The function-key prefix of a module id: `std/rt` is `std.rt.`. The two have
 /// to agree everywhere a key is built or recognized, so the rule lives here
 /// rather than being spelled out at each call site.
@@ -159,6 +170,9 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/thread" => include_str!("../std/thread.kp"),
         "std/sync" => include_str!("../std/sync.kp"),        "std/option" => include_str!("../std/option.kp"),
         "std/result" => include_str!("../std/result.kp"),
+        "std/iter" => include_str!("../std/iter.kp"),
+        "std/convert" => include_str!("../std/convert.kp"),
+        "std/ops" => include_str!("../std/ops.kp"),
         "std/arena" => include_str!("../std/arena.kp"),
         "std/regex" => include_str!("../std/regex.kp"),
         "std/tz" => include_str!("../std/tz.kp"),
@@ -178,8 +192,8 @@ pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/http", "std/ws",
-        "std/encoding", "std/list", "std/option", "std/result", "std/atomic", "std/thread",
-        "std/arena", SYNC_MODULE, "std/irq", "std/frame", "std/regex", "std/tz",
+        "std/encoding", "std/list", "std/option", "std/result", "std/iter", "std/convert", "std/ops", "std/atomic",
+        "std/thread", "std/arena", SYNC_MODULE, "std/irq", "std/frame", "std/regex", "std/tz",
     ]
 }
 

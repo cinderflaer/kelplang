@@ -1,0 +1,12 @@
+// `I::Item` where `I` carries no bound that declares `Item`: refused where the
+// instantiation is created.
+
+datac A(val n: i32)
+
+fun pick<I>(x: I).R: I::Item = x.produce()
+
+fun main() {
+    val a = A(n = 1)
+    val r = pick(a)
+    print(0)
+}

@@ -274,15 +274,16 @@ fun main() {
 ### 9.1 Where a trait object may be written
 
 - The two type spellings are `&dyn Name` and `&mut dyn Name`. A bare `dyn Name` (no `&`) is
-  refused: an owned trait object would need a place to own its data, which is `Box<dyn Name>`, and
-  that is deliberately out of this slice.
+  refused where it is not the argument of a `Box`: an owned trait object needs a place to own its
+  data, which is `Box<dyn Name>` (slice 7, section 12), and a bare `dyn Name` is an unsized value
+  with nowhere to live.
 - A trait object is legal **as a parameter type and as a local binding type** (`val`/`var`). A
   parameter includes a `fun` literal's parameter and the parameter of a function *type*, which is
   a parameter position too. It is refused everywhere else by name: as a `.R:` return type, as a
   `datac`/`enum` field or payload, as a `List`/`Box`/`Map`/`Atomic`/array element or argument, as
   a tuple element, and as a `static`'s type. A function type cannot return one either, which is
-  the same borrow-return rule. `Box<dyn Name>` and a bare `dyn Name` are refused by name.
-  Nothing else changed: a borrow still cannot be returned or stored.
+  the same borrow-return rule. A bare `dyn Name` is refused by name; `Box<dyn Name>` is slice 7
+  (section 12). Nothing else changed: a borrow still cannot be returned or stored.
 - `Name` must be a declared trait. `&dyn Unknown` is refused where it is written.
 - The `mut` in `&mut dyn Name` is the whole mutability story: `&mut dyn Name` permits a `mut Self`
   method and `&dyn Name` does not. There is no `mut &dyn` and no `dyn` without a borrow.
@@ -376,7 +377,8 @@ the borrow checker sees the same node. So:
 
 Each refused where it is written:
 
-- **`Box<dyn Name>`**, an owned trait object. Refused by name; the workaround is an `enum`.
+- **`Box<dyn Name>`**, an owned trait object. **Shipped in slice 7** (section 12); a bare
+  `dyn Name` stays refused by name.
 - **A bare `dyn Name`** (an unsized value in place). Refused by name.
 - **`&dyn` in a field, a payload, a container element, a return type or a `static`.** These are
   the storage positions a borrow may not take, and the refusal is the ordinary borrowed-type one.
@@ -434,3 +436,741 @@ the C oracle under `KELPC_ORACLE=c`):
 
 A `&dyn` parameter-only variant of the slice is recorded in `plan/traits-dyn-status.md` if the
 local-binding half has to be cut; this file is the decision either way.
+
+## 10. Associated types (A-12 slice 5)
+
+A trait may name a **type** that each impl supplies, so a trait can promise "I produce a `next`
+value" without promising what that value is. The trait writes `type Item`, the impl writes
+`type Item = i32`, and a bound type parameter reaches the type as `I::Item`. Dispatch stays
+static: `I::Item` is a concrete type at every instantiation, so nothing in either backend
+changes and a freestanding image may use one.
+
+```
+trait Iterator {
+    type Item
+    fun mut Self.next().R: Option<Self::Item>
+}
+
+datac Counter(val n: i32)
+
+impl Iterator for Counter {
+    type Item = i32
+    fun mut Self.next().R: Option<i32> {
+        n += 1
+        return Option.Some(value = n)
+    }
+}
+
+// `I::Item` is usable in a parameter, a return and a local type.
+fun first_of<I: Iterator>(it: mut I).R: Option<I::Item> {
+    return it.next()
+}
+```
+
+### 10.1 Where an associated type may be written
+
+- A trait body may declare one or more associated types, before, between or after its methods:
+  `type Item`, in the same body, with an optional bound list after a `:` (`type Item: Named`,
+  `type Item: Named + Other`). An associated type is a bare name; the trait may not repeat one.
+- An impl must define **every** associated type the trait declares, as `type Name = Type`, and may
+  not add one the trait does not declare. A missing one, an extra one, and a duplicate one are
+  three errors, each naming the trait and the type.
+- `Self::Item` is legal in a trait method signature and in the body of a default method, where
+  `Self` stands for the implementing type. The impl's own methods may write `Self::Item` too, and
+  it means the type the impl bound.
+- `T::Item` is legal wherever `T` is a type parameter in scope: a generic function's parameter,
+  return, local and field-adjacent types, `fun f<I: Iterator>(it: mut I).R: Option<I::Item>`. It
+  is resolved at every instantiation, from the impl the concrete argument names.
+- An associated type is **projected from a bound**, so `I::Item` needs `I` to carry a bound whose
+  trait declares `Item`. A projection through a type that has no such bound is refused where it is
+  written, naming the association.
+
+### 10.2 A bounded associated type
+
+`type Item: Named` bounds what an impl may bind. The bound is checked **at every impl**: the
+concrete type of `type Item = X` must implement every trait the declaration names, or the impl is
+refused naming the trait, the associated type and the concrete type. Inside generic code the bound
+needs no separate machinery: the body is checked once per concrete type, so `I::Item` is already
+the concrete type and a `Named` method resolves on it directly.
+
+### 10.3 What is deliberately not in this slice
+
+Each refused where it is written, with the message naming the follow-up:
+
+- **Default associated types** (`type Item = i32` inside a trait). Refused by name: an associated
+  type has no default in v1, so the impl must bind it.
+- **Associated consts** (`const N: i32` inside a trait). Refused by name.
+- **Generic associated types** (`type Item<T>`, and a bound that names one). Refused by name.
+- **Equality constraints on an associated type** (`I: Iterator<Item = i32>`). Refused by name:
+  it needs the projection to be a first-class type in a bound, which is a later slice; a plain
+  bound plus a projection at the use site is the workaround.
+- **An associated type reached through `&dyn`.** A trait that declares an associated type is
+  **not object safe**: a `&dyn Name` of it is refused by name, because the erased value has no
+  single `Item` to name. Static dispatch through a bounded type parameter is the workaround.
+- **A generic trait** (`trait Name<T>`) and a `where` clause stay refused, exactly as in section 5.
+
+### 10.4 What the compiler does not check
+
+- An impl's binding is a type like any other and nothing relates it to the trait's methods beyond
+  the signatures the impl writes. `Iterator for Counter` may bind `Item = i32` and return a
+  `String` from a method, and nothing refuses it unless the trait's own signature fixes the
+  return type and is compared at the impl.
+- A bound on an associated type is checked at the impl and nowhere else. A generic function that
+  is never instantiated is never checked, exactly as a bound on a type parameter is not.
+- Two impls of one trait bind their associated types independently. Nothing requires them to
+  agree, and nothing checks that an associated type's name is meaningful.
+
+### 10.5 How it is implemented
+
+- `lexer.rs` and `fmt.rs` learn the `::` token, which is glued on both sides exactly as `.` is.
+- `parser.rs` accepts `type Name[: Bound + Bound]` in a trait body and `type Name = Type` in an
+  impl body, records the projection on `TypeExpr::assoc`, and refuses every shape 10.3 names.
+- `resolve.rs` substitutes `Self::Item` in an impl method (and in the synthesized copy of a
+  default) with the type the impl bound, so the ordinary signature loop sees a concrete type.
+- `infer.rs` holds the trait's associated-type declarations in `TraitInfo` and the concrete
+  bindings in one `(trait, type) -> name -> Ty` table. It checks the impl against the declaration
+  (a missing, extra or duplicate binding, and each declared bound), refuses a projection that no
+  bound names, and adds the projection to the instantiation's parameter map so `I::Item` resolves
+  to the concrete binding for that instantiation. `check_dyn_object_safety` refuses a trait that
+  declares an associated type. Nothing downstream knows an associated type existed: the instance's
+  signatures already name concrete types.
+- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+
+## 11. Generic traits, `From`, and error conversion for `?` (A-12 slice 6, roadmap A-3 and A-12)
+
+*Design note. Slice 2 gave a trait methods with `Self` receivers, slice 3 gave it default bodies,
+supertraits and impls for builtins, slice 4 gave it `&dyn`, and slice 5 gave it associated types.
+This slice lets a trait take **type parameters of its own**, so a trait can say "I convert a `T`"
+rather than "I have these methods". Dispatch stays static, so neither backend learns a new
+lowering and a freestanding image may use one. On top of it, `?` converts its failure through a
+`From` impl, which is the last piece roadmap A-3 named.*
+
+### 11.1 A trait may take type parameters
+
+```
+pub trait From<T> {
+    fun from(value: T).R: Self
+}
+
+pub trait Into<T> {
+    fun Self.into().R: T
+}
+
+trait Store<K, V: Named> {
+    fun Self.get(key: K).R: V
+}
+```
+
+- A trait's type-parameter list is the same one a `datac`, an `enum` and a `fun` take, written
+  after the trait's name and before any `:` supertrait list: `trait Name<A, B: Bound>`. A
+  parameter is in scope in every method signature and default body of the trait, alongside `Self`,
+  and a trait may not declare the same parameter twice. A trait's own parameters are *not*
+  monomorphized into hidden instances; they are substituted at each `impl` and each bound, exactly
+  as a generic function's parameters are substituted at each call.
+- The **trait name plus its arguments** identifies a *trait instance* - `From<IoErr>` and
+  `From<String>` are two different traits to implement and to bound, while sharing one declaration
+  and one method list.
+- A trait type parameter's own bound (`V: Named`) is checked where the trait is instantiated: the
+  concrete type an `impl`'s argument names has to implement the bound, and so does a bound's own
+  argument, with the same rule a bound on a function's type parameter uses.
+- A generic trait may name **supertraits**, and a supertrait without arguments works exactly as it
+does for an ordinary trait (`trait Sorted<T>: Named`), so `impl Sorted<i32> for X` needs `impl
+Named for X` and a `<T: Sorted<i32>>` may call `Named`'s methods. A supertrait *with* arguments
+(`trait Sorted<T>: Compare<T>`) is a follow-up, refused by name: the substitution a parameterized
+supertrait needs is a second rule on top of the impl's own arguments.
+- **Refused by name.** The trait arguments a bound or an impl writes are a *named* type (a
+  `datac`/`enum`, dotted through an alias as usual) or a builtin type; a container, a tuple, an
+  array, a borrow, a function type and a handle are refused where they are written, with the
+  follow-up named. A generic trait may not declare an associated type
+  (`trait Name<T> { type Item }`) and may not be used behind `dyn`: an associated type has no
+  single binding to name and the vtable has no slot for a parameter, so both are follow-ups. A
+  `where` clause and an equality constraint on a parameter stay refused, exactly as in section 5.
+
+### 11.2 A static method has no receiver
+
+An ordinary trait method is reached through a value and writes a `Self` receiver. A method that
+has no `self` at all is **static**, and is written with no receiver:
+
+```
+pub trait From<T> {
+    fun from(value: T).R: Self
+}
+
+datac AppErr(val code: i32, val note: String)
+
+impl From<i32> for AppErr {
+    fun from(value: i32).R: AppErr = AppErr(code = value, note = "int")
+}
+
+fun main() {
+    val e = AppErr.from(7)          // the static method, on the type name
+    print(e.code)
+}
+```
+
+- A static method is a trait signature with no body, or an impl method with no `Self` receiver and
+  exactly the declared signature. It is called on the **type**: `AppErr.from(7)`, and through a
+  **bounded type parameter**: `X.from(7)` for `fun f<X: From<i32>>(v: i32).R: X`. The return type
+  `Self` is the implementing type, so the call's type is `AppErr` (or `X`).
+- `AppErr.from(7)` is resolved against the impls of every trait the type has: the compiler finds
+  the impl whose trait declares a static `from` and whose substituted parameter types match the
+  call. A type that implements two different instantiations of the same trait (`From<i32>` and
+  `From<String>`) is dispatched by the argument type, so `AppErr.from(7)` and
+  `AppErr.from("x")` are different methods of the same name.
+- A **trait-name call** (`From.from(7)`) is allowed only when the implementing type is inferable:
+  the trait name alone does not name one, so the expected type has to fix `Self` (`val e: AppErr =
+  From.from(7)`), and the call then resolves against that type's impls exactly as `AppErr.from(7)`
+  does. A call whose implementing type is not fixed by the context is refused by name, with the
+  `Type.from(...)` spelling named instead.
+- An impl may not mix receiver and static methods of the same trait incorrectly: a method the
+  trait declares with a receiver has to be written with one, and a static member has to be written
+  without. The mismatch is the ordinary signature error.
+- A static method shares the trait method's name with any other method the *type* declares, so a
+  second static method of the same name (from another impl of the same instance) is the ordinary
+  duplicate error, and an inherent receiver method of that name collides at the impl exactly as it
+  does today.
+
+### 11.3 Coherence and the impl's trait arguments
+
+- The `impl` line writes the trait's arguments after its name: `impl From<IoErr> for AppErr { ... }`.
+  **One impl per (trait instance, type) pair**: `impl From<IoErr> for AppErr` and
+  `impl From<String> for AppErr` are two legal impls, and a second `impl From<IoErr> for AppErr` is
+  the coherence error naming both.
+- The impl's methods are resolved with the trait's parameters substituted by the impl's arguments
+  and `Self` by the implemented type, so the same trait signature is checked against every impl
+  exactly as it is today.
+- Everything else in sections 2 to 4 holds unchanged: the type has to be a `datac`/`enum` or a
+  builtin that carries methods, the impl lives in the trait's module or the type's (the trait's only,
+  for a builtin), and every non-defaulted signature has to be implemented with exactly the declared
+  shape.
+
+### 11.4 `std/convert`
+
+The shipped `std/convert` declares the two conversion traits and nothing else:
+
+```
+// `std/convert`
+pub trait From<T> {
+    fun from(value: T).R: Self
+}
+
+pub trait Into<T> {
+    fun Self.into().R: T
+}
+```
+
+- **There are no blanket impls.** `impl<T> Into<U> for T where U: From<T>` would need a
+  compiler-known blanket impl, which this slice does not add, so a type that wants `into` writes
+  its own `impl Into<U> for X` (or uses `From` directly). The reason is the same one section 5
+  gives for `where` clauses: a blanket impl is a second inference rule in a slice whose whole point
+  is that `?` can call `From` with no new machinery.
+- `?` uses `From` directly, never `Into`, so a program that only propagates errors writes only
+  `impl From<...> for ...`.
+
+### 11.5 The `?` operator converts through `From`
+
+The operator's existing shape is unchanged: the operand is an enum shaped `Ok`/`Err` or
+`Some`/`None` held by value, and a failure returns immediately out of the enclosing function. What
+is new is only the `Ok`/`Err` failure payload:
+
+- When the operand's failure payload type **is** the enclosing function's failure payload type,
+  `?` moves it across as before; no conversion call is emitted.
+- When the two differ, and an `impl From<E1> for E2` exists where `E1` is the operand's failure
+  payload and `E2` the function's, `?` calls `E2.from(e1)` and returns the result in the failure.
+  The signature is checked: the impl's `from` has to take exactly `E1` and return exactly `E2`, so
+  the call is the ordinary static call of section 11.2.
+- When no such impl exists, the error names both failure types and names `From`, and says to write
+  `impl From<E1> for E2 { fun from(value: E1).R: E2 { ... } }`.
+- `Some`/`None` has no payload to convert, so `Option` to `Option` is unchanged: the two have to
+  be the same shape and there is nothing else to check.
+- The two enums may be different declarations (`Result` propagated out of a function that returns
+  a program's own `Ok`/`Err` enum), exactly as the shape rule already allowed; only the failure
+  payload type is now allowed to differ, and only through `From`.
+
+### 11.6 What is deliberately not in this slice
+
+Each refused where it is written, with the message naming the follow-up:
+
+- **A blanket impl** (`impl<T> Into<U> for T`, `impl<T: From<T>> ...`). There is no blanket impl
+  of any trait in this slice; `std/convert`'s `Into` is declared but not derived for anything.
+- **`Into` in `?`.** `?` uses `From` only, so an `Into` impl with no matching `From` does not
+  convert.
+- **An associated type in a generic trait**, and **`&dyn` of a generic trait.** Both are refused
+  by name: the projection and the vtable each have no slot for a trait parameter.
+- **A generic trait argument that is not a named type or a builtin** (a container, a tuple, an
+  array, a borrow, a function type, a handle). Refused by name.
+- **An equality constraint** (`I: Iterator<Item = i32>`) and a **`where` clause**, as before.
+- **A generic method of a trait** (`fun Self.map<U>(...)`), and a **generic static method**.
+
+### 11.7 What the compiler does not check
+
+- A static method's arguments are matched by the *resolved* parameter types, not by the written
+  argument names alone; a call that matches two impls of the same name is refused as ambiguous
+  rather than picked by source order, but a call whose arguments match exactly one impl has no
+  other check that the impl is "the intended" one.
+- A `From` impl's body is checked like any other method body: nothing requires the returned `Self`
+  to be built from `value`, and a `from` that ignores its argument compiles.
+- The trait's own type parameters are substituted structurally at each impl; nothing checks that
+  two impls of different instances of one trait agree about anything.
+- An uninstantiated generic function whose body would fail a bound is never checked, exactly as
+  before.
+
+### 11.8 How it is implemented
+
+- `parser.rs` parses a trait's type-parameter list, a receiverless method (a static signature or a
+  static impl method), the `impl From<IoErr> for AppErr` argument list, and a bound with
+  arguments (`<X: From<i32>>`). It refuses the shapes 11.6 names where the tokens are, and it
+  keeps the trait argument list in `TraitImplDecl`.
+- `resolve.rs` canonicalizes each trait argument (a dotted name by the usual `canon`, a builtin
+  left alone) and stores the resulting **trait instance key** (`From<pkg.IoErr>`) on the impl
+  record and on every method's `TraitImplSite`. A static impl method's function key gets the
+  instance appended (`AppErr#from@From<pkg.IoErr>`), so the two instances of one trait for one type
+  are two functions rather than a collision; `types::c_ident` already mangles the `@` and the
+  angle brackets, so both backends emit them unchanged.
+- `infer.rs` holds the trait's parameters in `TraitInfo` and keys the `impls` table by the trait
+  instance. It substitutes the impl's arguments into the trait's signature when it checks the
+  impl, checks each declared parameter bound, and resolves a static call by searching the impls of
+  the receiver type (or of the concrete type a bounded parameter is instantiated with). The `?`
+  node carries an optional conversion key, which codegen lowers as the ordinary static call.
+- `codegen_c.rs` and `codegen_llvm.rs` need no new node: a static method is an ordinary free
+  function keyed by its mangled name, and the `?` conversion is one more function call in the
+  failure arm.
+- `std/convert.kp` is added to `stdlib.rs`'s source table and to the freestanding allowed set (it
+  is pure language, so a kernel may use it).
+- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+
+### 11.9 Tests
+
+`kelpc/tests/compile_and_run.rs` runs each of these on the backend under test (LLVM by default,
+the C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the coverage sweep as well:
+
+- `From<A>` and `From<B>` implemented for one error `enum`, used by `?` on a function returning
+  each, with the same type implementing two instances of one trait;
+- a generic function bounded `<X: From<i32>>` that calls `X.from(x)`;
+- a `From` impl reached across modules (the `tests/projects/convert_cross` project);
+- the existing `?` fixtures pass untouched;
+- the rejections: `?` with no `From` impl (the message names both failure types and `From`), two
+  identical `From<A> for T` impls, a generic trait used as `&dyn`, and a wrong arity of trait
+  arguments;
+- `kelpc fmt` round-trips generic-trait syntax (`tests/fmt_corpus/traits_generic`);
+- the freestanding project `tests/projects/freestanding_convert` uses `std/convert` and boots under
+  QEMU with no undefined symbol.
+
+## 12. Owned trait objects, `Box<dyn>` (A-12 slice 7)
+
+Slice 4 gave a trait object a *borrowed* spelling, `&dyn Name` / `&mut dyn Name`. This slice adds the
+owned one: `Box<dyn Name>`, a fat owned pointer that knows how to drop what it points at. Nothing
+else about a trait changes, and no new syntax is introduced beyond the `Box<...>` spelling the
+container already has.
+
+```
+trait Shape {
+    fun Self.area().R: f64
+    fun Self.kind().R: str
+    fun mut Self.scale(f: f64)
+}
+
+datac Circle(val r: f64)
+impl Shape for Circle { fun Self.area().R: f64 = r * r * 3.14159 }
+
+datac Holder(val shape: Box<dyn Shape>)
+
+fun make(big: bool).R: Box<dyn Shape> {
+    if big {
+        return Box.of(Circle(r = 2.0))   // the coercion happens here
+    }
+    return Box.of(Circle(r = 1.0))
+}
+
+fun describe(s: &dyn Shape).R: str = s.kind()
+
+fun main() {
+    var shapes: List<Box<dyn Shape>> = List.empty()
+    shapes.push(make(true = true))
+    val h = Holder(shape = make(big = false))
+    var i = 0
+    while i < shapes.len() {
+        print(shapes.get(i).area())      // through the vtable
+        i = i + 1
+    }
+    print(describe(h.shape.get()))       // a `&dyn` borrowed from the box
+    print(shapes.get(i = 0).kind())
+}
+```
+
+### 12.1 Representation
+
+- `Box<dyn Name>` is a **fat owned pointer**: the address of the heap value (the erased data
+  pointer) and the address of the same static, read-only vtable a `&dyn Name` carries. It is two
+  machine words, laid out exactly as `&dyn Name` is, and the two share one C struct and one LLVM
+  identified struct per trait.
+- It is **not `Copy`**: it owns the allocation `Box.of(x)` made, and it drops it. Its type is
+  `Ty::BoxDyn`, a type of its own rather than a `Box<T>` whose element is a `Ty::Dyn`, because the
+  element of a `Box` is owned by value and a trait object is not a sized value.
+- The **vtable** is the one slice 4 defined (the supertraits' methods first, recursively in
+  declaration order, then the trait's own methods in source order, one slot each, one thunk per
+  slot over the erased data pointer) with three entries appended: a **drop** entry, a **size** and
+  an **align**. The extra entries are the same for every pair of one trait's layout, and the drop
+  entry is the concrete type's drop glue. A vtable is still one per `(trait, type)` pair actually
+  used, emitted as read-only data (`.rodata`) on both backends.
+- There is deliberately no runtime type tag: `Box<dyn Name>` is not a value with a dynamic type, it
+  is a borrow of the trait's method set plus the ownership of the storage behind it.
+- `Box<dyn Name>` is an owned value with no borrows, so it is a legal `datac`/`enum` field, a
+  `List` element, a parameter (by move), a return type and a local. It is refused as a `Map` key
+  and as an `Atomic`/`Mutex` element for the reasons those sets are closed, and refused as a
+  `Thread<T>` element only by the ordinary Send-shaped rule (12.5).
+
+### 12.2 Construction: the coercion, and where it happens
+
+There is one way to make a `Box<dyn Name>`: coerce a `Box<T>` where `T` implements `Name`. The
+coercion is **implicit at every position that knows an expected type**, which is the same list a
+`&T` used in slice 4 and the same mechanism: a call argument, a typed `val`/`var` binding, a
+`return`, a `datac`/`enum` field initializer, and a container's element argument
+(`xs.push(Box.of(circle))`).
+
+- The operand must be a `Box<T>` whose `T` implements `Name`. A `Box<T>` whose `T` does not is
+  refused by name at the coercion site; a value that is not a box at all (a bare `Box.empty()` with
+  nothing to decide its element, or a `List`) is an ordinary type mismatch.
+- **The coercion is a move, not a copy**: the box's allocation becomes the trait object's
+  allocation, and the operand's binding is moved out exactly as `val b2 = b` moves a box. So the
+  factory above builds one allocation and no second one, and a `Box<dyn>` in a `return` is the box
+  the callee already had.
+- `Box.new(x)` is spelled `Box.of(x)` in this language; the move is the same one.
+- A `Box<dyn Name>` value coerces to the same `Box<dyn Name>` type, so one can be moved on to
+  another binding or another function. It does not coerce to a different trait: there is no upcast
+  from `Box<dyn B>` to `Box<dyn A>` when `B: A`, exactly as a `&dyn B` does not.
+
+### 12.3 Calls, borrows, and getting a `&dyn` back
+
+- A method call on a `Box<dyn Name>` goes **through the vtable**, exactly as it does on a
+  `&dyn Name`: `b.area()` is `b.vtable[slot](b.data)`. A `mut Self` method needs the receiver to be
+  a writable place (a `var` binding, a field, or a `&mut Box<dyn Name>`), the same rule an
+  `&mut x` argument follows. A call through a `&Box<dyn Name>` or `&mut Box<dyn Name>` works too:
+  the borrow is read (or writes through) to reach the box, and the contents are reached through the
+  box's own pointer.
+- A `&dyn Name` is borrowed from the box with `b.get()`, the same spelling `Box<T>::get` already
+  uses: `b.get()` on a `Box<dyn Name>` yields `&dyn Name` (a fat pair pointing at the box's data,
+  which is a borrow, not a second owner). That is how a boxed shape is passed to a function taking
+  `&dyn Name`. `Box.get` on a `&dyn`-shaped element is the one method the box adds here; `get`,
+  `is_empty` and the drop are its whole method surface. `take`/`set` are refused by name because
+  they would have to move an unsized value in or out.
+- `Box.empty()` is legal for a `Box<dyn Name>` written type: it is the null fat pair, the same
+  "nothing at all" a `Box<T>` has, and an empty box panics from `get()` exactly as an empty
+  `Box<T>` does.
+
+### 12.4 Dropping through the vtable
+
+- Dropping a `Box<dyn Name>` runs the concrete type's drop glue **through the vtable**: the drop
+  entry calls the same `kelp_drop_<T>` a `Box<T>` calls (the user `drop` first, then the fields in
+  declaration order), and the box's own drop then frees the allocation. So `List<Box<dyn Shape>>`
+  drops its elements through each element's own vtable, and a `datac` field of the type drops the
+  same way.
+- The drop entry is emitted per `(trait, type)` pair, so it names the concrete method's own drop
+  function. A type that needs no drop (a `Copy` scalar) gets a thunk that does nothing, and the
+  box still frees its allocation.
+- The size and align entries are emitted as data beside the drop entry. The box's own free reads
+  them when the project supplies an allocator whose free takes a size and an alignment (the
+  freestanding hook), because the size of an erased value is not known at the free site; libc's
+  `free` does not need them. They exist so the table describes the concrete type completely, which
+  is what a later slice that needs the layout of an erased value would reach for.
+
+### 12.5 Moves, borrows and threads
+
+- The borrow checker treats a `Box<dyn Name>` exactly as it treats any owned `Box`: reading it as a
+  whole moves it, a partial move out of it is refused by the ordinary rules, and its drop runs at
+  the drop points the plan already records (block end, before a `return`, reassignment of an owned
+  `var`, a container's element drop, an `atexit` pd drop).
+- A **thread** may move a `Box<dyn Name>` because the existing crossing rule admits an owned value
+  with no reachable borrow (MK9 section 5, rule 4). A `&dyn Name`, a borrow, is refused by rule 2
+  exactly as any other borrow of a frame local is. This is the whole of the `Send`-shaped story in
+  v1: there is still no `Send` marker to implement.
+- The vtable is emitted per `(trait, type)` pair and the concrete type's drop is reached through it,
+  so a `Box<dyn Name>` in a freestanding image costs the same `.rodata` a `&dyn` did and needs no
+  libc beyond the allocator the project supplies.
+
+### 12.6 Object safety, and what is refused by name
+
+Object safety is unchanged from slice 4 and is checked where the `dyn` is written, so `Box<dyn
+Name>` refuses the same traits `&dyn Name` does, with the same messages:
+
+- a method returning `Self`, a parameter other than the receiver that mentions `Self`, and two
+  methods of one name;
+- a **generic trait** (`trait Name<T>`), because the vtable has no slot for a type parameter;
+- a trait that declares an **associated type**, because the erased value has no single binding to
+  name.
+
+And the spelling itself:
+
+- **`Box<dyn A + B>`** is refused by name: a trait object names one trait, and the trait that
+  combines two is a declared trait with `A` and `B` as supertraits.
+- **A bare `dyn Name`** outside a `Box<...>` stays refused by name.
+- **`Box<dyn>` of a trait that is never implemented** is legal to *name* (a parameter may take a
+  boxed trait nothing implements in this program), but a coercion site whose type is not an impl is
+  refused by name, with the `impl Name for T` line to write.
+
+### 12.7 What is deliberately not in this slice
+
+- **Upcasting** `Box<dyn B>`/`&dyn B` to a supertrait object. Refused by name.
+- **`Box<dyn>` of a generic trait** and of a trait with an associated type, for the reason 12.6
+  gives.
+- **Moving the value out of a box** (`Box.take` on a `Box<dyn>`, or a `*b` dereference that would
+  produce an unsized place). Refused by name: the concrete value's size is not known at the use
+  site, which is what `get()` and the vtable are for.
+- **`Box<dyn Name>` printed, compared, hashed or used as a `Map` key.** Each position refuses it
+  for the reason it already refuses a `&dyn`.
+
+### 12.8 What the compiler does not check
+
+- The vtable's slot order is computed the same way at the coercion site and at the call site, so
+  nothing checks that two vtables of one trait agree beyond the single flattening routine.
+- Nothing checks that the concrete type's methods are consistent with the trait's *intent*, exactly
+  as no trait method body is checked for meaning.
+- A `Box<dyn Name>` whose box is empty is not tracked as such: `get()` panics at runtime, `is_empty`
+  is how a program asks, and a `Box<dyn Name>` never dereferenced needs no check.
+- The size and align entries are emitted but not read; a slice that reads them would be the first
+  to depend on them.
+
+### 12.9 How it is implemented
+
+- `parser.rs` parses a bare `dyn Name` as a `TypeExpr` mark (rather than refusing it where the
+  tokens are), so `Box<dyn Name>` reaches `infer.rs`; it refuses `dyn A + B` by name where the `+`
+  is, and the `&dyn` path is unchanged.
+- `types.rs` gives `Ty::BoxDyn` its `c_type` (the same fat-pair struct as `Ty::Dyn`), `display`,
+  `mangle`, `is_copy` (false), `owns_heap` (true), its layout (two words) and its drop-function
+  name. `drop_fn_name` is `kelp_box_dyn_drop__<Trait>`, one function per trait.
+- `infer.rs` resolves `Box<dyn Name>` to `Ty::BoxDyn`, reusing the object-safety check, and lowers
+  the coercion to a `tir::ExprKind::BoxDynCoerce` (a move of the box plus the pair's vtable). A
+  method call on a `Box<dyn Name>` reuses `check_dyn_method_call`, and `Box.get`/`Box.is_empty`/
+  `Box.empty` are added to the receiver's method surface. Each coercion records its `(trait, type)`
+  pair in the existing `dyn_pairs` set, and each `dyn` type resolved records its trait so the pair's
+  typedef exists even with no coercion.
+- `tir.rs` carries `DynVtable::concrete` (the concrete `Ty`, so the drop entry can name its drop
+  glue) and the `BoxDynCoerce` node.
+- `borrowck.rs` sees `BoxDynCoerce` as a move of its operand, exactly as a `&x`-based `DynCoerce`
+  is seen as the borrow inside it.
+- `codegen_c.rs` and `codegen_llvm.rs` emit the appended vtable entries, the per-trait
+  `kelp_box_dyn_drop__<Trait>`, and lower `BoxDynCoerce`. The LLVM table becomes the literal struct
+  `{ [N x ptr], ptr, i64, i64 }` (the method array first, so the call site's slot index is
+  unchanged, then the drop, the size and the align), and the C struct puts the same three entries
+  after the same method slots, so the two backends' tables agree field for field.
+- `plan/kernel-ub-notes.md` carries this feature's note.
+
+### 12.10 Tests
+
+`kelpc/tests/compile_and_run.rs` runs each of these on the backend under test (LLVM by default, the
+C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the coverage sweep as well:
+
+- a `List<Box<dyn Shape>>` of two implementors, summed through the vtable;
+- a factory function returning `Box<dyn Shape>` chosen by a flag;
+- a `datac` holding a `Box<dyn Trait>` field, and a `&dyn` borrowed back out with `get()`;
+- drop order with a user `drop` on the concrete types, asserted by printed output;
+- moving a box between two lists, and a method call through `&Box<dyn Trait>`/`&mut`;
+- a box moved into a spawned thread (accepted) and a `&dyn` crossing refused;
+- a freestanding riscv64 project (allocator hook) that builds with `llvm-nm -u` clean and boots
+  under QEMU with a timeout;
+- the rejections: a coercion of a type that does not implement the trait, an object-unsafe trait,
+  `Box<dyn A + B>`, a partial move out of a box, and a use after move;
+- `kelpc fmt` round-trips the `Box<dyn>` spelling.
+
+## 13. Operator traits, ordering and `Display` (language-completeness task 5)
+
+*Design note. Slice 2 through slice 7 gave a trait methods, defaults, supertraits, builtin impls,
+`&dyn`, associated types, generic traits and `Box<dyn>`. Slice 2's H-5 half already lowered one
+operator, `==`/`!=`, into a declared `eq` method in the front end. This slice extends the same trick
+to the arithmetic operators, the order operators and string interpolation: a `std/ops` module
+declares the operator traits, and `std/fmt` gains `Display`. Every operator is a **desugar in the
+front end** into an ordinary method call, so neither backend learns a new lowering and a freestanding
+image may use one. The decision was made in full before the work started; nothing here is left
+open.*
+
+### 13.1 The operator traits
+
+`std/ops` declares one trait per operator, all `pub`, each with exactly the receiver form and
+signature the lowering calls:
+
+```
+// std/ops
+pub trait Add {
+    fun Self.add(rhs: &Self).R: Self
+}
+
+pub trait Sub {
+    fun Self.sub(rhs: &Self).R: Self
+}
+
+pub trait Mul {
+    fun Self.mul(rhs: &Self).R: Self
+}
+
+pub trait Div {
+    fun Self.div(rhs: &Self).R: Self
+}
+
+pub trait Rem {
+    fun Self.rem(rhs: &Self).R: Self
+}
+
+pub trait Neg {
+    fun Self.neg().R: Self
+}
+
+pub trait Ord {
+    fun Self.cmp(other: &Self).R: i32
+}
+```
+
+- An operator trait takes no type parameters and declares exactly one method, so a type either
+  implements the operator or does not. `Add`, `Sub`, `Mul`, `Div` and `Rem` all have the shape
+  `fun Self.name(rhs: &Self).R: Self`; `Neg` is `fun Self.neg().R: Self`; `Ord` is
+  `fun Self.cmp(other: &Self).R: i32`.
+- `cmp` returns the sign of the order: negative for less, zero for equal, positive for greater,
+  exactly as `memcmp` does. The lowering never calls `cmp` for equality (13.3).
+- The trait module is an ordinary shipped module: a program writes `impl "std/ops"` and reaches the
+  traits as `ops.Add`, `ops.Ord` and so on, or writes `impl Add`, `impl Ord` after importing. It is
+  pure language with no body and no allocator, so it is admitted to the freestanding set
+  (`plan/freestanding-std.md`) and a kernel may use it.
+
+### 13.2 Arithmetic operators
+
+For a `datac`/`enum` operand type `T` that implements `Add` (and `Sub`, `Mul`, `Div`, `Rem` for
+their operators), `a + b` means `a.add(&b)` and the others follow one-for-one. `-a` on a `T` that
+implements `Neg` means `a.neg()`.
+
+- The desugar is in `infer.rs`, at the operator's own check, so both operands are checked **once**,
+  left to right, and each is only **borrowed**, never moved. `a + b` leaves both `a` and `b` owned
+  and valid; the result is a fresh `Self` the method returns. That is why the operands are `&Self`:
+  the operator reads both and the method decides what the result is.
+- The call is the ordinary direct method call `T#add`, so `borrowck.rs` and both backends need no
+  new shape. Both the operands' types have to name the **same** `T` (a borrow of `T` counts, exactly
+  as an `==` operand may be `&T`), which is the ordinary "matching operands" rule: `a + b` of two
+  different user types is refused, and mixing a user type with a number is refused.
+- **Builtin numeric types are unaffected.** `i32 + i32` keeps the builtin operator it always had,
+  and a builtin with no operator trait in this slice (`f64`, `bool`, a `String`, a container) keeps
+  its own rule. The desugar runs only where the builtin arithmetic check would already have failed,
+  so nothing that compiled before changes meaning.
+- A `datac`/`enum` with no `impl Add` is refused by name, and the message names the trait and the
+  impl to write. A user `impl Add for i32` is refused by the ordinary orphan rule (slice 3): a
+  builtin has no module, so its impl must sit in the trait's module, and `std/ops` is the trait's.
+- **Compound assignment.** `a += b` keeps the parser's long-standing desugar `a = a + b`, so for a
+  user type it becomes `a = a.add(&b)`. `a` is a `var` place (an identifier, a field path or a
+  dereference), and a place expression has no side effect, so writing it twice evaluates the same
+  place; the `+` itself still evaluates each operand of the *addition* once, left to right. `-=`,
+  `*=`, `/=`, `%=` follow their operators, and there is no `Neg` compound form because there is no
+  `-a` assignment.
+
+### 13.3 Order operators
+
+For a `datac`/`enum` operand type `T` that implements `Ord` (the `cmp`-shaped trait above), `a < b`
+means `a.cmp(&b) < 0`, `a <= b` means `a.cmp(&b) <= 0`, `a > b` means `a.cmp(&b) > 0` and
+`a >= b` means `a.cmp(&b) >= 0`.
+
+- The desugar is again in `infer.rs`, at the comparison's own check, and the result is the
+  ordinary integer comparison of the `i32` the `cmp` call returns. Both operands are checked once,
+  left to right, and only borrowed. `cmp` says nothing about equality, so `==`/`!=` are unchanged:
+  they still lower to a declared `eq` (13.4), and a type that implements `Ord` but not `eq` gets no
+  `==` at all.
+- **A type that implements only `eq` keeps the old `<`/`>` refusal** (slice 2), and the message
+  stays the same. **A type that implements only `Ord` and no `eq`** is refused `==`/`!=` with a
+  message that says so: the order trait does not supply equality, so `eq` is what the operator
+  needs. The two rules are separate declarations and neither implies the other.
+- Builtin types are unaffected, exactly as in 13.2: `i32 < i32` keeps the builtin comparison, and a
+  type with neither trait keeps the existing "cannot compare" refusal.
+
+### 13.4 `Display`
+
+`std/fmt` gains one trait:
+
+```
+// std/fmt
+pub trait Display {
+    fun Self.to_text().R: String
+}
+```
+
+A value whose type implements `Display` may appear in `"${x}"` and as the argument of `print`/
+`print!`, lowered to `x.to_text()` before the template or the print call sees it, exactly as
+`==`/`!=` lower to `eq`. The call returns an owned `String`, which is printable under the existing
+rule, so neither the template lowering nor either backend learns a new value shape and the ordinary
+temporary handling frees the text after it is printed.
+
+- The receiver is a shared borrow (`Self`), so the value is only read, never moved, and
+  `"${v}"`/`print(v)` leave `v` owned and valid.
+- **Builtin types are unaffected**: a number, `bool`, `char`, `str`, `String`, `Bytes` and `View`
+  keep the formatting they always had, and a `datac`/`enum` that implements `Display` reaches the
+  template only through `to_text`.
+- A `datac`/`enum` **without** `Display` in `${}` and in `print` keeps the existing refusal, and the
+  message now **names `Display`** and shows the impl to write. Opaque handles keep their own
+  "no printable value" message, and a function value, a closure, a tuple, a container and a borrow
+  keep theirs.
+- `x.to_text()` may be called explicitly wherever the method is declared, like any other trait
+  method; the interpolation and `print` desugars are the convenience, not a new method surface.
+
+### 13.5 What is deliberately not in this slice
+
+Each refused where it is written, with the message naming the follow-up:
+
+- **Derive-like helpers.** There is no macro and no `derive`; a type writes its `impl` by hand, and
+  no impl is generated for it. A `datac`/`enum` still has no `==`, `<` or `Display` unless it
+  declares one.
+- **Bitwise operators, `&&`/`||`, `!`, `~`, shifts and `?` through a trait.** Only the arithmetic
+  operators, the order operators and the unary minus are overloaded. `&&`/`||` stay `bool`, and the
+  bitwise set stays integral.
+- **A user trait that supplies an operator.** The lowering names the shipped `std/ops` traits by
+  their canonical names, not "any trait with a method named `add`", so a program cannot introduce a
+  second operator trait (and does not need to: it implements `std/ops`'s).
+- **A blanket impl.** Nothing derives `Add` for a numeric type or `Display` for a `String`, and
+  `std/ops`/`std/fmt` declare the traits only.
+- **`Display` used to build a string.** A template is still not a value: `to_text` is what to call
+  when the text is wanted as a `String` (`str.concat`, `fmt.*` and `String` are the other ways).
+
+An operator on a **generic type parameter** is deliberately *not* on that list: a generic
+function's body is checked once per instantiation, so `T` is a concrete `datac`/`enum` by the time
+the operator is lowered. `fun sum<T: ops.Add>(a: T, b: T).R: T = a + b` compiles for every `T` that
+implements `Add`, and `Display` in a template behaves the same way.
+
+### 13.6 What the compiler does not check
+
+- The `std/ops` and `std/fmt` method shapes are trusted as declared, exactly as an ordinary trait
+  method is: the impl is checked against the trait signature (slice 2's exact match), so `add` takes
+  `&Self` and returns `Self`, but nothing requires a body to be "an addition" or a `cmp` to be
+  consistent with an `eq` on the same type.
+- The lowering is one call site, so an operand a method call would have borrowed implicitly is
+  borrowed explicitly here; nothing else changes about the borrow checker's view.
+- An operator on a `T` whose impl is written but never reached from an operator is an ordinary
+  method call: nothing checks that a type's `Add` is ever used, and an unused impl is emitted like
+  any other method (or pruned in a freestanding build).
+- `Display` is not a formatting mini-language: `to_text` returns the whole text, and nothing checks
+  that it does not panic or allocate.
+
+### 13.7 How it is implemented
+
+- `kelpc/std/ops.kp` is the new shipped module; `stdlib.rs` adds it to the source table and to the
+  freestanding allowed set (it is pure), and `std/fmt.kp` gains the `Display` trait.
+- `types.rs` names the canonical trait keys (`std.ops.Add` ... `std.ops.Ord`, `std.fmt.Display`)
+  beside the existing key-pair and destructor constants.
+- `infer.rs` does the whole feature: the arithmetic branch of `check_binary` lowers through
+  `Add`/`Sub`/`Mul`/`Div`/`Rem`, the unary branch lowers `-` through `Neg`, the comparison branch
+  lowers `<`/`<=`/`>`/`>=` through `Ord`, `lower_equality` gains the `Ord`-without-`eq` message, and
+  `check_template` plus the `print`/`print!` argument check lower a `Display` value through
+  `to_text`. Each lowering is the ordinary `Type#method` call with both operands borrowed, exactly
+  as H-5's `eq` lowering is, so `borrowck.rs` and both backends are unchanged.
+- `std/ops` and `std/fmt` need no parser, resolver or backend change: they are ordinary trait
+  declarations in ordinary shipped modules.
+- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+
+### 13.8 Tests
+
+`kelpc/tests/compile_and_run.rs` runs each of these on the backend under test (LLVM by default,
+the C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the coverage sweep as well:
+
+- a `Vec2` `datac` with `Add`, `Sub`, `Neg` and `Mul`, used in arithmetic expressions and a chain
+  `a + b - c`;
+- `Ord` on a `Version` `datac`, used in `<`, `>=` and a hand-written `while` sort;
+- a `Display` impl used in `"${v}"`, in `print(v)` and nested in another type's `to_text`;
+- `+=` on a `var` of a user type;
+- a side-effect counter proving each operand is evaluated exactly once, left to right;
+- the builtin arithmetic fixtures, untouched, proving the desugar does not change a builtin;
+- the rejections: `+` on a type without `Add`, `<` on a type with only `eq`, `${x}` without
+  `Display` (the message names it), `impl Add for i32` in user code (the orphan rule), and `a + b`
+  of two different user types;
+- a freestanding riscv64 project that uses `Add` and `Ord`, built with `llvm-nm -u` clean.

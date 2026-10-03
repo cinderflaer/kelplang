@@ -81,6 +81,11 @@ pub struct Program {
     /// for a program that writes no `&dyn`, which leaves both backends' output
     /// unchanged.
     pub dyn_vtables: Vec<DynVtable>,
+    /// Every trait a `dyn` type names, borrowed or owned (A-12 slices 4 and
+    /// 7), sorted. The fat-pair typedef and the vtable struct tag are emitted
+    /// per *trait*, so a `dyn` type that is written but never coerced to still
+    /// has a C type to name. Empty for a program with no trait object.
+    pub dyn_traits: Vec<String>,
 }
 
 /// One `(Trait, Type)` vtable (A-12 slice 4): the static, read-only table a
@@ -97,6 +102,11 @@ pub struct DynVtable {
     /// The implementing type's name as an `impl` wrote it (a canonical
     /// `datac`/`enum` key, or a builtin's written name such as `i32`).
     pub type_name: String,
+    /// The concrete type itself, recovered from the concrete method's own
+    /// receiver. The drop entry needs it: dropping a `Box<dyn Trait>` runs this
+    /// type's drop glue through the vtable, and the name alone cannot say which
+    /// `Ty` it is (a `datac` key, a scalar, `String`, an atomic alias).
+    pub concrete: Ty,
     pub slots: Vec<DynVtableSlot>,
 }
 
@@ -316,6 +326,13 @@ pub enum Stmt {
         /// before returning is keyed by it.
         span: Span,
     },
+    /// `break` (`plan/iterators.md`): leave the innermost loop. The span keys
+    /// the drops of the locals declared inside that loop (`DropPlan::at_break`),
+    /// the same way `Return::span` keys the frame's.
+    Break { span: Span },
+    /// `continue`: skip to the next pass of the innermost loop, running the
+    /// drops of the locals declared inside it first.
+    Continue { span: Span },
     Expr(Expr),
 }
 
@@ -421,6 +438,14 @@ pub enum ExprKind {
         err_variant: usize,
         target_err_variant: usize,
         err_has_payload: bool,
+        /// A-12 slice 6: when the operand's failure payload type differs from
+        /// the enclosing function's, the static `From` method key the failure
+        /// is converted through (`AppErr#from@std.convert.From<pkg.IoErr>`),
+        /// plus whether the method's parameter is a borrow. A `datac`
+        /// parameter is borrowed, so codegen passes the payload's address; a
+        /// `Copy` scalar is passed by value. `None` when the two types agree,
+        /// which is every `?` written before this existed.
+        convert: Option<(String, bool)>,
     },
     Assign {
         target: Box<Expr>,
@@ -501,6 +526,31 @@ pub enum ExprKind {
         type_name: String,
         expr: Box<Expr>,
     },
+    /// A `Box<T>` written where a `Box<dyn Trait>` was expected (A-12 slice 7):
+    /// the box *is* the fat pair's data pointer, so this is a move of `expr`
+    /// (whose type is `Ty::Box(T)`) with the `(trait, type)` pair's vtable
+    /// attached. `borrowck.rs` reads the operand as a whole value, which is
+    /// what moves the box and stops its old binding from dropping it.
+    BoxDynCoerce {
+        trait_name: String,
+        type_name: String,
+        expr: Box<Expr>,
+    },
+    /// A `&dyn Trait` borrowed from an owned trait object (A-12 slice 7):
+    /// `b.get()` on a `Box<dyn Trait>`. The value *is* the fat pair the box
+    /// holds, so no data moves; the node exists so `borrowck.rs` sees the
+    /// borrow of the box (the box is read through a borrow, not moved) and so
+    /// the resulting `&dyn` keeps the box alive for its own lifetime.
+    BoxDynBorrow {
+        mutable: bool,
+        expr: Box<Expr>,
+    },
+    /// Whether an owned trait object holds nothing (A-12 slice 7): the box's
+    /// data pointer is `NULL`. The value is a `bool`, and the operand is read
+    /// as a place.
+    BoxDynIsEmpty {
+        expr: Box<Expr>,
+    },
     /// A method call through a borrowed trait object (A-12 slice 4):
     /// `receiver.vtable[slot](receiver.data, args...)`. `slot` is the method's
     /// index in the trait's flattened vtable, which every vtable of the trait
@@ -509,6 +559,13 @@ pub enum ExprKind {
         receiver: Box<Expr>,
         slot: usize,
         args: Vec<Expr>,
+        /// The receiver is an *owned* trait object and the method it calls is
+        /// `mut Self` (A-12 slice 7): the call writes through the box's data
+        /// pointer, so `borrowck.rs` holds an exclusive borrow of the
+        /// receiver's own place for the duration of the call. A call through
+        /// `&dyn`/`&mut dyn` is `false`: the borrow is already the fat pair the
+        /// value is, so the receiver is a `Copy` read.
+        exclusive: bool,
     },
     Deref {
         expr: Box<Expr>,

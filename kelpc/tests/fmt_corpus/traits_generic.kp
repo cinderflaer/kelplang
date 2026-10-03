@@ -1,0 +1,20 @@
+// pins default-one-space-between-atoms: the generic-trait, static-method and trait-instance spelling shares lines too.
+trait   From<T>   {
+    fun   from(value:   T).R:   Self
+}
+
+trait   Into<T>   {
+    fun   Self.into().R:   T
+}
+
+datac  AppErr(val code: i32)
+
+impl   From<i32>   for   AppErr   {
+    fun from(value:   i32).R:   AppErr   =   AppErr(code = value)
+}
+
+fun make<X:   From<i32>>(v:   i32).R:   X   {
+    return   X.from(value = v)
+}
+
+fun main() {}

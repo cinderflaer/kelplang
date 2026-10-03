@@ -1,4 +1,6 @@
-// A trait declares methods only: associated types and consts are a later slice.
+// A default associated type is not in this slice: the trait declares `type Item`
+// and every impl binds it, so a `type Item = ...` inside the trait is refused by
+// name.
 trait Shape {
     type Item = i32
 }

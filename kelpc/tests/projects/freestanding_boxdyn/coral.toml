@@ -1,0 +1,22 @@
+name = "freestandingboxdyn"
+
+# A-12 slice 7: an owned trait object (`Box<dyn Line>`) in a bare-metal image.
+# The boxes are made through the project's own bump allocator, dispatched
+# through `.rodata` vtables, and freed through each vtable's drop entry on the
+# way out, so the image reaches no libc symbol at all. `panic` routes the
+# compiler's own checks to `kp_panic`, exactly as `examples/kernel0` does.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+realloc = "realloc"
+
+[unsafe]
+modules = ["main", "uart"]
+
+[caps]
+mmio = ["0x10000000+0x100"]

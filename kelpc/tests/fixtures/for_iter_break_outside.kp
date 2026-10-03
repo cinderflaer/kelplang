@@ -1,0 +1,5 @@
+// Loop control outside every loop is refused where it is written.
+fun main() {
+    var i = 0
+    break
+}

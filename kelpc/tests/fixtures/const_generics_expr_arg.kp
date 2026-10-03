@@ -1,0 +1,21 @@
+// A-20: a const argument is a compile-time expression, evaluated by the
+// existing constant evaluation. `Buf<SIZE * 2>` and `Buf<WIDTH>` both fold,
+// where `WIDTH` is itself computed by a plain `fun` call (A-19).
+const SIZE: usize = 3
+
+const WIDTH: usize = twice(n = 3)
+
+fun twice(n: usize).R: usize = n * 2
+
+datac Buf<const N: usize>(var data: [i32; N], var len: usize)
+
+fun capacity<const N: usize>().R: usize = N
+
+fun main() {
+    val a: Buf<SIZE * 2> = Buf(data = [0; 6], len = 0)
+    val b: Buf<WIDTH> = Buf(data = [1; 6], len = 6)
+    print(a.data.len())
+    print(b.data.len())
+    print(capacity<SIZE * 2>())
+    print(capacity<twice(n = 4)>())
+}

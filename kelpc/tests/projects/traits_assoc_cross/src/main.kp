@@ -1,0 +1,10 @@
+impl "iter"
+impl "counter"
+
+fun main() {
+    var c = counter.Counter(n = 0)
+    val a = iter.first(c)
+    if let Some(x) = a {
+        print(x)
+    }
+}

@@ -1,0 +1,18 @@
+name = "freestandingconvert"
+
+# A-12 slice 6: `std/convert` is pure language (two traits and no runtime), so a
+# bare-metal image may use `From` and `?`'s error conversion. This image boots
+# under QEMU and prints the converted failure over the real UART.
+
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["main", "uart"]
+
+[caps]
+mmio = ["0x10000000+0x100"]

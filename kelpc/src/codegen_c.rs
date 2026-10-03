@@ -434,6 +434,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         arrays: array_tys,
         atomics: atomic_tys,
         spawns: spawn_tys,
+        box_dyns,
     } = collection;
     // An array is emitted after the types it holds by value, so it is sorted
     // innermost-first like a container, and the ones a `datac` field needs are
@@ -477,25 +478,40 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         }
         out.push('\n');
     }
-    // Borrowed trait objects (A-12 slice 4): one vtable struct tag and one
-    // fat-pair typedef per trait the program coerces to. The vtable's *body* is
-    // written after the `datac`s below, because a slot's return type may be one
-    // by value, but the tag is forward-declared here so the fat pair is
-    // complete at every parameter and local that names it.
-    if !program.dyn_vtables.is_empty() {
-        let mut traits: Vec<&str> = program
-            .dyn_vtables
-            .iter()
-            .map(|v| v.trait_name.as_str())
-            .collect();
-        traits.sort();
-        traits.dedup();
-        for t in traits {
+    // Trait objects (A-12 slices 4 and 7): one vtable struct tag and one
+    // fat-pair typedef per trait the program names with a `dyn`, borrowed or
+    // owned. The vtable's *body* is written after the `datac`s below, because a
+    // slot's return type may be one by value, but the tag is forward-declared
+    // here so the fat pair is complete at every parameter and local that names
+    // it. A trait only named (a `Box<dyn T>` parameter nothing coerces to) is
+    // in the list too: its fat pair still has to exist, and its vtable tag
+    // simply stays incomplete because no table of that pair is emitted.
+    let dyn_traits = dyn_trait_names(program);
+    if !dyn_traits.is_empty() {
+        for t in &dyn_traits {
             let vtable = crate::types::dyn_vtable_c_type(t);
             writeln!(out, "typedef struct {vtable} {vtable};").unwrap();
             writeln!(
                 out,
                 "typedef struct {{ void* data; const {vtable}* vtable; }} {};",
+                crate::types::dyn_c_type(t)
+            )
+            .unwrap();
+        }
+        out.push('\n');
+    }
+    // One drop per *owned* trait object (A-12 slice 7): a `Box<dyn Trait>` is
+    // freed through its vtable, so the function takes no element type and one
+    // definition per trait is enough. Prototyped here because a `datac` that
+    // holds one drops it, and that drop is defined with the other `datac`
+    // bodies above the container function sets.
+    let box_dyn_traits = box_dyn_trait_names(&box_dyns);
+    if !box_dyn_traits.is_empty() {
+        for t in &box_dyn_traits {
+            writeln!(
+                out,
+                "static void {}({}* v);",
+                crate::types::box_dyn_drop_fn(t),
                 crate::types::dyn_c_type(t)
             )
             .unwrap();
@@ -586,6 +602,22 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             write_dyn_vtable_body(&mut out, vtable);
         }
         out.push('\n');
+    }
+    // One drop function per owned trait object (A-12 slice 7): the box frees
+    // whatever the coercion allocated through the vtable's drop entry, so the
+    // concrete type's own drop glue is what runs and this function knows no
+    // element type. `free` is the same allocator `Box.of` used, so the pair a
+    // `Box<T>` made is freed exactly as that box's own drop would free it.
+    if !box_dyn_traits.is_empty() {
+        for t in &box_dyn_traits {
+            let pair = crate::types::dyn_c_type(t);
+            writeln!(
+                out,
+                "static void {}({pair}* self) {{\n    if (self->data != NULL) {{\n        self->vtable->drop_(self->data);\n        free(self->data);\n        self->data = NULL;\n    }}\n}}\n",
+                crate::types::box_dyn_drop_fn(t)
+            )
+            .unwrap();
+        }
     }
     // A key type that declares its own pair (A-12) is reached from the `Map`
     // function sets below, and those are written before the program's own
@@ -709,9 +741,14 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             for slot in &vtable.slots {
                 write_dyn_thunk(&mut out, vtable, slot);
             }
+            // The drop entry's thunk: the concrete type's own drop glue, which
+            // `Box<dyn Trait>`'s free runs through the vtable (A-12 slice 7). A
+            // type that needs no drop gets an empty body, and the box still
+            // frees its allocation.
+            write_dyn_drop_thunk(&mut out, vtable, &owned);
         }
         for vtable in &program.dyn_vtables {
-            let fields: Vec<String> = (0..vtable.slots.len())
+            let mut fields: Vec<String> = (0..vtable.slots.len())
                 .map(|i| {
                     crate::types::dyn_thunk_symbol(
                         &vtable.trait_name,
@@ -720,17 +757,24 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
                     )
                 })
                 .collect();
-            let init = if fields.is_empty() {
-                "{ 0 }".to_string()
-            } else {
-                format!("{{ {} }}", fields.join(", "))
-            };
+            // The three appended entries: the drop, then the size and the
+            // align of the concrete type. A hosted build never reads the last
+            // two (libc's `free` needs no size); they are there so the table
+            // describes the concrete type completely and so the LLVM backend's
+            // freestanding allocator hook can free an erased value, whose size
+            // it cannot know otherwise.
+            fields.push(crate::types::dyn_drop_thunk_symbol(
+                &vtable.trait_name,
+                &vtable.type_name,
+            ));
+            fields.push(format!("sizeof({})", vtable.concrete.c_type()));
+            fields.push(format!("_Alignof({})", vtable.concrete.c_type()));
             writeln!(
                 out,
-                "static const {} {} = {};",
+                "static const {} {} = {{ {} }};",
                 crate::types::dyn_vtable_c_type(&vtable.trait_name),
                 crate::types::dyn_vtable_symbol(&vtable.trait_name, &vtable.type_name),
-                init
+                fields.join(", ")
             )
             .unwrap();
         }
@@ -837,7 +881,31 @@ fn write_dyn_vtable_body(out: &mut String, vtable: &crate::tir::DynVtable) {
         }
         writeln!(out, "    {};", c_decl_with_args(&slot.ret, &format!("(*m{i})"), &params)).unwrap();
     }
+    // The three entries every trait object carries beyond its methods (A-12
+    // slices 4 and 7): the drop entry a `Box<dyn Trait>` frees through, and the
+    // size and align of the concrete type. They come after the methods so a
+    // slot index is a method's index for every vtable of the trait.
+    out.push_str("    void (*drop_)(void* self);\n    size_t size;\n    size_t align;\n");
     out.push_str("};\n");
+}
+
+/// The drop entry's thunk (A-12 slice 7): it runs the concrete type's own drop
+/// glue on the erased pointer, which is exactly what a `Box<T>`'s own drop
+/// calls. A concrete type that needs no drop (a `Copy` scalar) gets a thunk with
+/// an empty body, so the box's allocation is still freed.
+fn write_dyn_drop_thunk(out: &mut String, vtable: &crate::tir::DynVtable, owned: &HashSet<String>) {
+    let symbol = crate::types::dyn_drop_thunk_symbol(&vtable.trait_name, &vtable.type_name);
+    writeln!(out, "static void {symbol}(void* self) {{").unwrap();
+    if needs_drop(&vtable.concrete, owned) {
+        writeln!(
+            out,
+            "    {}(({}*)self);",
+            drop_fn_name(&vtable.concrete),
+            vtable.concrete.c_type()
+        )
+        .unwrap();
+    }
+    out.push_str("}\n");
 }
 
 /// One thunk per vtable slot (A-12 slice 4): a function whose first parameter is
@@ -3240,6 +3308,44 @@ struct Instantiations {
     /// pointers, so one per signature is enough and the element type stays out
     /// of it.
     spawns: HashSet<Ty>,
+    /// Owned trait objects (A-12 slice 7): `Box<dyn Trait>` values need one
+    /// drop function per *trait*, because the value behind the data pointer is
+    /// freed through the vtable rather than by a per-element routine. The
+    /// fat-pair typedef itself comes with the vtable machinery.
+    box_dyns: HashSet<Ty>,
+}
+
+/// Every trait the program writes a `dyn` of, borrowed or owned, sorted so both
+/// backends emit the same typedefs in the same order. A trait only named (a
+/// `Box<dyn T>` parameter nothing coerces to) is here too, because its fat pair
+/// is a type its signature names; the vtable struct tag stays incomplete, which
+/// is all a pointer to it needs.
+fn dyn_trait_names(program: &Program) -> Vec<String> {
+    let mut names: Vec<String> = program
+        .dyn_traits
+        .iter()
+        .cloned()
+        .chain(program.dyn_vtables.iter().map(|v| v.trait_name.clone()))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The trait of every owned trait object the program builds, sorted: one
+/// `kelp_box_dyn_drop__<Trait>` per entry (A-12 slice 7). A trait that only
+/// appears behind a `&dyn` has no owned box to free and gets no drop.
+fn box_dyn_trait_names(box_dyns: &HashSet<Ty>) -> Vec<String> {
+    let mut names: Vec<String> = box_dyns
+        .iter()
+        .filter_map(|ty| match ty {
+            Ty::BoxDyn { trait_name } => Some(trait_name.clone()),
+            _ => None,
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn collect_containers(program: &Program, out: &mut Instantiations) {
@@ -3280,6 +3386,9 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
             Ty::Atomic(elem) => {
                 out.atomics.insert(ty.clone());
                 note_ty(elem, out);
+            }
+            Ty::BoxDyn { .. } => {
+                out.box_dyns.insert(ty.clone());
             }
             Ty::Ref { inner, .. } => note_ty(inner, out),
             _ => {}
@@ -3391,7 +3500,10 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
             // A `&dyn` coercion walks the borrow inside it, and a vtable call
             // walks its receiver and arguments (A-12 slice 4); the trait's own
             // tables are the program's, not an instantiation.
-            ExprKind::DynCoerce { expr: inner, .. } => note_expr(inner, out),
+            ExprKind::DynCoerce { expr: inner, .. }
+            | ExprKind::BoxDynCoerce { expr: inner, .. }
+            | ExprKind::BoxDynBorrow { expr: inner, .. }
+            | ExprKind::BoxDynIsEmpty { expr: inner } => note_expr(inner, out),
             ExprKind::DynCall { receiver, args, .. } => {
                 note_expr(receiver, out);
                 for a in args {
@@ -3417,6 +3529,7 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                         note_expr(v, out);
                     }
                 }
+                Stmt::Break { .. } | Stmt::Continue { .. } => {}
                 Stmt::Expr(e) => note_expr(e, out),
             }
         }
@@ -3756,6 +3869,14 @@ impl<'a> Gen<'a> {
         self.drops.at_try(&self.function, span).to_vec()
     }
 
+    fn drops_at_break(&self, span: Span) -> Vec<DropTarget> {
+        self.drops.at_break(&self.function, span).to_vec()
+    }
+
+    fn drops_at_continue(&self, span: Span) -> Vec<DropTarget> {
+        self.drops.at_continue(&self.function, span).to_vec()
+    }
+
     /// Frees owned locals in the order `borrowck.rs` decided (reverse
     /// declaration order — a later binding is freed before an earlier one it
     /// may have taken its value from).
@@ -3944,6 +4065,9 @@ impl<'a> Gen<'a> {
             Stmt::Let { init, .. } => self.write_line_marker(init.span, depth),
             Stmt::Return { span, .. } => self.write_line_marker(*span, depth),
             Stmt::While { cond, .. } => self.write_line_marker(cond.span, depth),
+            Stmt::Break { span } | Stmt::Continue { span } => {
+                self.write_line_marker(*span, depth)
+            }
             Stmt::Expr(e) => self.write_line_marker(e.span, depth),
         }
         match stmt {
@@ -4000,6 +4124,20 @@ impl<'a> Gen<'a> {
                 self.write_block_body(body, depth + 1);
                 indent(&mut self.out, depth);
                 self.out.push_str("}\n");
+            }
+            // The drops of the locals declared inside the loop run before the
+            // jump, exactly as a `return` frees the frame first.
+            Stmt::Break { span } => {
+                let drops = self.drops_at_break(*span);
+                self.write_drops(&drops, depth);
+                indent(&mut self.out, depth);
+                self.out.push_str("break;\n");
+            }
+            Stmt::Continue { span } => {
+                let drops = self.drops_at_continue(*span);
+                self.write_drops(&drops, depth);
+                indent(&mut self.out, depth);
+                self.out.push_str("continue;\n");
             }
             Stmt::Expr(e) => self.write_stmt_like_expr(e, depth),
         }
@@ -4551,6 +4689,7 @@ impl<'a> Gen<'a> {
                 err_variant,
                 target_err_variant,
                 err_has_payload,
+                convert,
             } => {
                 let src_def = self
                     .enum_def(source)
@@ -4600,10 +4739,21 @@ impl<'a> Gen<'a> {
                         field_name(&src_def.variants[*err_variant].fields[0].name);
                     let dst_field =
                         field_name(&dst_def.variants[*target_err_variant].fields[0].name);
+                    // A-12 slice 6: a differing failure payload is converted
+                    // by the static `From` method `?` resolved, otherwise it
+                    // is moved across unchanged.
+                    let moved = format!("{}.kelp_v.{}.{}", tmp, err_member, src_field);
+                    let value = match convert {
+                        Some((key, by_ref)) if *by_ref => {
+                            format!("{}(&{})", c_name(key), moved)
+                        }
+                        Some((key, _)) => format!("{}({})", c_name(key), moved),
+                        None => moved,
+                    };
                     writeln!(
                         out,
-                        "    {}.kelp_v.{}.{} = {}.kelp_v.{}.{};",
-                        ret, dst_member, dst_field, tmp, err_member, src_field
+                        "    {}.kelp_v.{}.{} = {};",
+                        ret, dst_member, dst_field, value
                     )
                     .unwrap();
                 }
@@ -4667,6 +4817,36 @@ impl<'a> Gen<'a> {
                     "(({pair}){{ .data = (void*)({}), .vtable = &{} }})",
                     self.expr_value(inner),
                     table
+                )
+            }
+            // An owned trait object where a `Box<dyn Trait>` was expected
+            // (A-12 slice 7): the box's allocation *becomes* the trait object's
+            // data, so this is the same pair with the box's own pointer in it,
+            // and the box's temporary/free is gone with the coercion. The temp
+            // keeps the box expression evaluated exactly once.
+            ExprKind::BoxDynCoerce { trait_name, type_name, expr: inner } => {
+                let pair = crate::types::dyn_c_type(trait_name);
+                let table = crate::types::dyn_vtable_symbol(trait_name, type_name);
+                let tmp = fresh_temp();
+                format!(
+                    "({{ {} = {}; (({pair}){{ .data = (void*)({tmp}.value), .vtable = &{} }}); }})",
+                    inner.ty.c_decl(&tmp),
+                    self.expr_value(inner),
+                    table
+                )
+            }
+            // A `&dyn Trait` borrowed back out of an owned trait object
+            // (A-12 slice 7): the same fat pair, so the value is the box's own
+            // two words. No allocation is made and nothing is freed here.
+            ExprKind::BoxDynBorrow { expr: inner, .. } => self.expr_value(inner),
+            // `b.is_empty()` on an owned trait object: the null data pointer is
+            // the empty box, exactly as it is for a `Box<T>`.
+            ExprKind::BoxDynIsEmpty { expr: inner } => {
+                let tmp = fresh_temp();
+                format!(
+                    "({{ {} = {}; ({tmp}.data == NULL); }})",
+                    inner.ty.c_decl(&tmp),
+                    self.expr_value(inner)
                 )
             }
             // A method through a vtable (A-12 slice 4):
@@ -5462,6 +5642,12 @@ impl<'a> Gen<'a> {
         if callee == crate::types::HANDLE_NULL_KEY {
             return format!("(({})(NULL))", ret.c_type());
         }
+        // The empty owned trait object (A-12 slice 7): the null fat pair, which
+        // is the one value `Box.empty()` can build without knowing a concrete
+        // type.
+        if callee == "BoxDyn#empty" {
+            return format!("(({}){{ .data = NULL, .vtable = NULL }})", ret.c_type());
+        }
         if callee == crate::types::HANDLE_IS_NULL_KEY {
             let value = self.expr_value(&args[0]);
             return format!("(({value}) == NULL)");
@@ -6227,9 +6413,14 @@ impl<'a> Gen<'a> {
             // Same, for a closure: `infer.rs` refuses one in `print` too.
             Ty::Closure { .. } => unreachable!("a closure cannot be printed"),
             Ty::ScopedFn { .. } => unreachable!("a scoped function value cannot be printed"),
+            // A const argument is substituted before codegen, so it never
+            // reaches a `print`.
+            Ty::ConstInt { .. } => unreachable!("a const argument cannot be printed"),
             // A borrowed trait object is a borrow and has no text form, so
             // `infer.rs` refuses one in `print` before codegen sees it.
-            Ty::Dyn { .. } => unreachable!("a trait object cannot be printed"),
+            Ty::Dyn { .. } | Ty::BoxDyn { .. } => {
+                unreachable!("a trait object cannot be printed")
+            }
             // An opaque handle has no readable value, so `infer.rs` refuses
             // one in `print` before codegen sees it.
             Ty::Handle(_) => unreachable!("an opaque handle cannot be printed"),

@@ -40,6 +40,13 @@ pub struct TraitDecl {
     pub name: String,
     /// `pub trait ...` (A-13). See `ConstDecl::is_pub`.
     pub is_pub: bool,
+    /// `trait From<T>` (A-12 slice 6): the trait's own type parameters, in
+    /// order. Empty for an ordinary trait. A parameter is in scope in every
+    /// method signature and default body of the trait.
+    pub type_params: Vec<String>,
+    /// The bounds on each parameter of `type_params`, in the same order and
+    /// aligned with it, exactly as `FunctionDecl::type_param_bounds` is.
+    pub type_param_bounds: Vec<Vec<TypeExpr>>,
     /// `trait B: A + C` (A-12 slice 3): the supertraits, in source order. Each
     /// is stored as the bound parser wrote it (`A`, `alias.A`); `infer.rs`
     /// qualifies and resolves them, exactly as it does a bound on a function's
@@ -49,9 +56,21 @@ pub struct TraitDecl {
     /// `Self` receiver; a `FunctionBody::Signature` is a required signature and
     /// any other body is a default method an impl may omit.
     pub methods: Vec<FunctionDecl>,
+    /// `type Item` / `type Item: Named` (A-12 slice 5), in source order. Each
+    /// impl has to bind every one of them.
+    pub assoc_types: Vec<AssocTypeDecl>,
     /// See `DatacDecl::module`.
     pub module: String,
     pub span: Span,
+}
+
+/// One `type Name[: Bound + Bound]` inside a `trait` body (A-12 slice 5).
+#[derive(Debug, Clone)]
+pub struct AssocTypeDecl {
+    pub name: String,
+    /// The bounds after a `:`, as written (`Named`, `alias.Named`), resolved
+    /// in the trait's own module by `infer.rs`, exactly as a supertrait is.
+    pub bounds: Vec<TypeExpr>,
 }
 
 /// One `impl Name for Type { ... }` block (A-12 slice 2).
@@ -61,6 +80,16 @@ pub struct TraitImplDecl {
     /// `resolve.rs` rewrites it to its canonical, module-qualified key before
     /// `infer.rs` sees it.
     pub trait_name: String,
+    /// `impl From<IoErr> for AppErr` (A-12 slice 6): the trait's arguments, as
+    /// written. Empty for an ordinary trait. `resolve.rs` canonicalizes each
+    /// one and derives the trait-instance key the impl and the methods carry.
+    pub trait_args: Vec<TypeExpr>,
+    /// The canonical name of each trait argument (`pkg.IoErr`, `i32`), so
+    /// `infer.rs` can build the concrete type without a second scope.
+    pub trait_arg_names: Vec<String>,
+    /// The canonical trait-instance key (`pkg.From<pkg.IoErr>`), or the plain
+    /// canonical trait name for an ordinary trait. Set by `resolve.rs`.
+    pub trait_instance: String,
     /// The implementing type, as written. Same qualification rule.
     pub type_name: String,
     /// The trait name's own span, and the `for` type's.
@@ -69,10 +98,23 @@ pub struct TraitImplDecl {
     /// The names the block declares, in source order, so an extra or a
     /// missing one can be reported against the block.
     pub methods: Vec<String>,
+    /// `type Item = i32` (A-12 slice 5), in source order. Every associated
+    /// type the trait declares has to be bound here, exactly once.
+    pub assoc_types: Vec<AssocTypeBinding>,
     /// See `DatacDecl::module`.
     pub module: String,
     /// The `impl` keyword's own span, what a coherence error points at.
     pub impl_span: Span,
+}
+
+/// One `type Name = Type` inside an `impl` body (A-12 slice 5).
+#[derive(Debug, Clone)]
+pub struct AssocTypeBinding {
+    pub name: String,
+    /// The concrete type, as written. `infer.rs` resolves it in the impl's own
+    /// module, exactly as it does an impl method's signature.
+    pub ty: TypeExpr,
+    pub span: Span,
 }
 
 /// The site one method was written at: `Some` exactly for a method inside an
@@ -83,6 +125,16 @@ pub struct TraitImplDecl {
 pub struct TraitImplSite {
     /// The trait, as written.
     pub trait_name: String,
+    /// `impl From<IoErr> for AppErr`: the trait's arguments as written, so
+    /// `resolve.rs` can tell one instantiation's method from another's when
+    /// both are for the same type (A-12 slice 6). Empty for an ordinary trait.
+    pub trait_args: Vec<TypeExpr>,
+    /// `impl From<IoErr> for AppErr` (A-12 slice 6): the canonical
+    /// trait-instance key (`pkg.From<pkg.IoErr>`), empty for an ordinary
+    /// trait. `resolve.rs` computes it before `infer.rs` sees the method, and
+    /// it is what keeps a static impl method of one instance distinct from the
+    /// same-named method of another (`AppErr#from@pkg.From<pkg.IoErr>`).
+    pub trait_instance: String,
     /// The type `Self` stands for, as written in the `for` clause.
     pub self_type: String,
 }
@@ -236,8 +288,14 @@ pub struct DatacDecl {
     /// Empty for an ordinary `datac`. A parameter is in scope inside every
     /// field type of this declaration and nowhere else; the declaration is a
     /// *template*, so `infer.rs` does not resolve its fields until an
-    /// instantiation supplies concrete arguments for them.
+    /// instantiation supplies concrete arguments for them. A `const`
+    /// parameter is listed here too, in declaration order, and its value is
+    /// carried by `const_params` (A-20).
     pub type_params: Vec<String>,
+    /// `datac Buf<const N: usize>` — the `const` parameters of the list above,
+    /// in declaration order (A-20). Every name here also appears in
+    /// `type_params`; this is what says which of them is a value.
+    pub const_params: Vec<ConstParamDecl>,
     pub fields: Vec<FieldDecl>,
     /// The `repr(...)` clause, or `None` for the default C layout.
     pub repr: Option<Repr>,
@@ -266,6 +324,9 @@ pub struct EnumDecl {
     /// `enum Option<T>` — the declared type parameters, in order (A-2). See
     /// `DatacDecl::type_params`.
     pub type_params: Vec<String>,
+    /// `enum Buf<const N: usize>` — the `const` parameters of the list above
+    /// (A-20). See `DatacDecl::const_params`.
+    pub const_params: Vec<ConstParamDecl>,
     pub variants: Vec<VariantDecl>,
     /// The `repr(...)` clause, or `None` for the default C layout and an `i32`
     /// tag.
@@ -313,6 +374,9 @@ pub struct FunctionDecl {
     /// an ordinary function, and empty for a *receiver method*, whose type
     /// parameters come from the receiver instead (`Receiver::type_args`).
     pub type_params: Vec<String>,
+    /// `fun sum<const N: usize>(...)` — the `const` parameters of the list
+    /// above (A-20). See `DatacDecl::const_params`.
+    pub const_params: Vec<ConstParamDecl>,
     /// `fun f<T: A + B>(...)`: the traits each parameter of `type_params`
     /// must implement, one list per parameter and in the same order (A-12
     /// slice 2). A parameter with no bound has an empty list, so the two
@@ -378,7 +442,24 @@ pub struct Receiver {
     /// method's type parameters (A-2). They must be exactly the generic type's
     /// own parameter list, in order, so the body can name them.
     pub type_args: Vec<String>,
+    /// The `const` parameters of the receiver's own parameter list (A-20),
+    /// when one of them is declared with `const` (`fun Buf<const N>.push()`).
+    /// Empty for a receiver whose list is all type parameters.
+    pub const_params: Vec<ConstParamDecl>,
     pub mutable: bool,
+    pub span: Span,
+}
+
+/// One `const N: usize` parameter (A-20). It is a `const` type parameter:
+/// a parameter of a `datac`/`enum`/`fun` whose argument is a compile-time
+/// value rather than a type, and which monomorphizes into one copy per
+/// distinct value exactly as a type parameter does.
+#[derive(Debug, Clone)]
+pub struct ConstParamDecl {
+    pub name: String,
+    /// The declared integer type, as written (`usize`, `u8`..`u64`, `i32`,
+    /// `i64`, `bool`).
+    pub ty: String,
     pub span: Span,
 }
 
@@ -477,6 +558,10 @@ pub struct TypeExpr {
     /// written with brackets. `name` is empty in that case, because an array
     /// type has no name of its own: it is its element and its length.
     pub array_elem: Option<Box<TypeExpr>>,
+    /// `I::Item` / `Self::Item` (A-12 slice 5): the associated type `assoc`
+    /// projected from the type parameter (or `Self`) named in `name`. `None`
+    /// for every ordinary type; the parser only sets it after a `::`.
+    pub assoc: Option<String>,
     /// The `N` of `[T; N]`, kept as an expression because a length is
     /// allowed to be computed from constants (`PAGE_SIZE / ENTRY_SIZE`,
     /// A-19), folded by `infer.rs` when the type is resolved.
@@ -512,6 +597,19 @@ pub struct TypeExpr {
     /// The `.R: T` of a function type. `None` means `Unit`, exactly as it
     /// does on a declaration.
     pub fn_ret: Option<Box<TypeExpr>>,
+    /// A **const argument** (A-20): the expression `N` of `Buf<16>` or
+    /// `Buf<SIZE * 2>`. `Some` exactly when this "type argument" is really a
+    /// compile-time value, which is decided where the parameter it binds is
+    /// declared: a type parameter takes a type and a `const` parameter takes
+    /// this value. A bare name is also kept here (`Buf<SIZE>`) so a `const`
+    /// parameter can fold it, because the two are written identically.
+    pub const_expr: Option<Box<Expr>>,
+    /// `impl Name` written as a parameter's type (A-20). `Some` is the trait,
+    /// as written. The parser records it and the desugar in `parser.rs`
+    /// rewrites it into a fresh bounded type parameter, so no pass after the
+    /// parser sees this shape; `infer.rs` refuses any that is left (a `let`,
+    /// a field, a return).
+    pub impl_trait: Option<String>,
     pub span: Span,
 }
 
@@ -524,6 +622,7 @@ impl TypeExpr {
             tuple: None,
             args: Vec::new(),
             array_elem: None,
+            assoc: None,
             array_len: None,
             amp: false,
             amp_mut: false,
@@ -531,6 +630,30 @@ impl TypeExpr {
             scoped: false,
             fn_params: None,
             fn_ret: None,
+            const_expr: None,
+            impl_trait: None,
+            span,
+        }
+    }
+
+    /// A const argument written like a type argument (`Buf<16>`): the folded
+    /// expression is carried in `const_expr`, and the name is left empty.
+    pub fn const_arg(expr: Expr, span: Span) -> TypeExpr {
+        TypeExpr {
+            name: String::new(),
+            tuple: None,
+            args: Vec::new(),
+            array_elem: None,
+            assoc: None,
+            array_len: None,
+            amp: false,
+            amp_mut: false,
+            dyn_trait: None,
+            scoped: false,
+            fn_params: None,
+            fn_ret: None,
+            const_expr: Some(Box::new(expr)),
+            impl_trait: None,
             span,
         }
     }
@@ -548,12 +671,27 @@ impl TypeExpr {
 
     /// The type as it was written, for diagnostics and the pretty-printer.
     pub fn display(&self) -> String {
+        if let Some(trait_name) = &self.impl_trait {
+            return format!("impl {trait_name}");
+        }
+        if let Some(e) = &self.const_expr {
+            return e.display_source();
+        }
         if let Some(name) = &self.dyn_trait {
+            // The `amp` flag is what tells the borrowed spelling from a bare
+            // `dyn Name`, which is legal only as the argument of a `Box`
+            // (A-12 slice 7): the bare spelling resolves to its own type, so
+            // re-emitting it with a `&` would name a different one.
             return if self.amp_mut {
                 format!("&mut dyn {name}")
-            } else {
+            } else if self.amp {
                 format!("&dyn {name}")
+            } else {
+                format!("dyn {name}")
             };
+        }
+        if let Some(item) = &self.assoc {
+            return format!("{}::{item}", self.name);
         }
         let mut s = if let Some(elems) = &self.tuple {
             let parts: Vec<String> = elems.iter().map(|e| e.display()).collect();
@@ -656,6 +794,24 @@ pub enum Stmt {
         iterating: Option<Expr>,
         span: Span,
     },
+    /// `for x in <expr> { ... }` (`plan/iterators.md`). Kept as written rather
+    /// than desugared here, because which desugar applies depends on the
+    /// iterable's type: a `List<T>`/`[T; N]` keeps the index walk, and an
+    /// `Iterator` becomes the `next()` loop. `infer.rs` is the first pass that
+    /// knows the type, so it does the desugar and `borrowck.rs` and both
+    /// backends only ever see the `while` it produces.
+    For {
+        binding: String,
+        binding_span: Span,
+        iterable: Expr,
+        body: Block,
+        span: Span,
+    },
+    /// `break` (`plan/iterators.md`): leave the innermost loop. A statement of
+    /// its own so both backends branch out of the loop they are emitting.
+    Break { span: Span },
+    /// `continue`: skip to the next pass of the innermost loop.
+    Continue { span: Span },
     Return {
         value: Option<Expr>,
         span: Span,
@@ -1186,8 +1342,12 @@ fn first_unsafe_in_block(block: &Block) -> Option<Span> {
         Stmt::While { cond, body, .. } => {
             first_unsafe_in_expr(cond).or_else(|| first_unsafe_in_block(body))
         }
+        Stmt::For {
+            iterable, body, ..
+        } => first_unsafe_in_expr(iterable).or_else(|| first_unsafe_in_block(body)),
         Stmt::Return { value, .. } => value.as_ref().and_then(first_unsafe_in_expr),
         Stmt::Defer { expr, .. } => first_unsafe_in_expr(expr),
+        Stmt::Break { .. } | Stmt::Continue { .. } => None,
         Stmt::Expr { expr, .. } => first_unsafe_in_expr(expr),
     })
 }

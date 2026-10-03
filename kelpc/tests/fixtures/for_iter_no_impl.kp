@@ -1,0 +1,9 @@
+// A type that is neither a `List`/array nor an `Iterator` cannot be walked, and
+// the diagnostic names the trait so the fix is one line away.
+impl "std/iter"
+
+fun main() {
+    for x in 5 {
+        print(x)
+    }
+}

@@ -265,6 +265,13 @@ pub struct FnDrops {
     at_return: HashMap<Span, Vec<DropTarget>>,
     at_assign: HashMap<Span, Vec<DropTarget>>,
     at_try: HashMap<Span, Vec<DropTarget>>,
+    /// The owned locals freed by the `break` at `span`, on the way out of the
+    /// loop: only the locals declared *inside* that loop, in reverse
+    /// declaration order. A `break` leaves the frame alive, so unlike a
+    /// `return` it must not free the enclosing scope's locals.
+    at_break: HashMap<Span, Vec<DropTarget>>,
+    /// The same, for the `continue` at `span` (`plan/iterators.md`).
+    at_continue: HashMap<Span, Vec<DropTarget>>,
     /// The expressions that *move* an owned binding's value out of it and
     /// therefore have to clear the binding's slot after copying the value out
     /// — one entry per moved expression, so codegen can ask about the node it
@@ -335,6 +342,25 @@ impl DropPlan {
         self.functions
             .get(function)
             .and_then(|f| f.at_try.get(&span))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The owned locals freed by the `break` at `span`: every local declared
+    /// inside the loop being left, innermost first.
+    pub fn at_break(&self, function: &str, span: Span) -> &[DropTarget] {
+        self.functions
+            .get(function)
+            .and_then(|f| f.at_break.get(&span))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The owned locals freed by the `continue` at `span`.
+    pub fn at_continue(&self, function: &str, span: Span) -> &[DropTarget] {
+        self.functions
+            .get(function)
+            .and_then(|f| f.at_continue.get(&span))
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
@@ -587,6 +613,10 @@ struct Ctx {
     /// a written `while` over an index pushes nothing, which is the supported
     /// way to mutate a list a loop walks.
     iterating: Vec<tir::IteratedPlace>,
+    /// For each loop currently being checked, the `scopes.len()` at its entry:
+    /// a `break`/`continue` frees every owned local declared in the scopes at
+    /// or above this mark, and nothing outside the loop (`plan/iterators.md`).
+    loop_marks: Vec<usize>,
     /// Which owner root is currently borrowed, and how, for the whole frame.
     /// Frame-wide rather than on the root's `VarState` because a retarget
     /// inside an inner block may reach a root declared in an outer one, and
@@ -1713,8 +1743,13 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
         // (M6.4).
         tir::ExprKind::Ref { expr: inner, .. } => tir_root_ident(inner),
         // A `&dyn` coercion wraps the `&x` it was written from (A-12 slice 4),
-        // so the same chain continues through it.
-        tir::ExprKind::DynCoerce { expr: inner, .. } => tir_root_ident(inner),
+        // so the same chain continues through it. An owned trait object
+        // (A-12 slice 7) and a `&dyn` borrowed back out of one are the box's
+        // own place, so the chain continues through them too.
+        tir::ExprKind::DynCoerce { expr: inner, .. }
+        | tir::ExprKind::BoxDynCoerce { expr: inner, .. }
+        | tir::ExprKind::BoxDynBorrow { expr: inner, .. }
+        | tir::ExprKind::BoxDynIsEmpty { expr: inner } => tir_root_ident(inner),
         _ => None,
     }
 }
@@ -1726,6 +1761,9 @@ fn borrowed_node(expr: &tir::Expr) -> Option<(&bool, &tir::Expr)> {
     match &expr.kind {
         tir::ExprKind::Ref { mutable, expr: inner } => Some((mutable, inner)),
         tir::ExprKind::DynCoerce { expr: inner, .. } => borrowed_node(inner),
+        // `b.get()` on an owned trait object (A-12 slice 7) is a borrow of the
+        // box, so a binding of it keeps the box borrowed for its own lifetime.
+        tir::ExprKind::BoxDynBorrow { mutable, expr: inner } => Some((mutable, inner)),
         _ => None,
     }
 }
@@ -1760,6 +1798,9 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<Vec<String>> {
         | tir::ExprKind::EnumField { base, .. }
         | tir::ExprKind::Ref { expr: base, .. }
         | tir::ExprKind::DynCoerce { expr: base, .. }
+        | tir::ExprKind::BoxDynCoerce { expr: base, .. }
+        | tir::ExprKind::BoxDynBorrow { expr: base, .. }
+        | tir::ExprKind::BoxDynIsEmpty { expr: base }
         | tir::ExprKind::Deref { expr: base } => borrow_root(base, ctx),
         tir::ExprKind::Call { callee, args }
         | tir::ExprKind::VariadicCall { callee, args, .. } => {
@@ -1888,6 +1929,7 @@ fn check_function(
         enums: enums.clone(),
         maybe_moved: std::collections::HashSet::new(),
         iterating: Vec::new(),
+        loop_marks: Vec::new(),
         pins: HashMap::new(),
     };
     for (index, (name, ty)) in f.params.iter().enumerate() {
@@ -2044,6 +2086,23 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
             }
             Ok(())
         }
+        // A `break`/`continue` frees every owned local declared inside the
+        // loop it leaves, which is `live_drops_since_loop`. The innermost loop
+        // is the one at the top of `loop_marks`, pushed by `check_while`.
+        tir::Stmt::Break { span } => {
+            let drops = live_drops_since_loop(ctx);
+            if !drops.is_empty() {
+                ctx.plan.at_break.insert(*span, drops);
+            }
+            Ok(())
+        }
+        tir::Stmt::Continue { span } => {
+            let drops = live_drops_since_loop(ctx);
+            if !drops.is_empty() {
+                ctx.plan.at_continue.insert(*span, drops);
+            }
+            Ok(())
+        }
         tir::Stmt::Expr(e) => {
             // A borrow produced by a statement's *temporary* — `print(l.get(0))`,
             // where the view is consumed inside the statement — is released at
@@ -2100,6 +2159,7 @@ fn stmt_mentions(stmt: &tir::Stmt, name: &str) -> bool {
         tir::Stmt::Return { value, .. } => {
             value.as_ref().map_or(false, |v| expr_mentions(v, name))
         }
+        tir::Stmt::Break { .. } | tir::Stmt::Continue { .. } => false,
         tir::Stmt::Expr(e) => expr_mentions(e, name),
     }
 }
@@ -2125,6 +2185,9 @@ fn expr_mentions(expr: &tir::Expr, name: &str) -> bool {
         | tir::ExprKind::Deref { expr }
         | tir::ExprKind::Ref { expr, .. }
         | tir::ExprKind::DynCoerce { expr, .. }
+        | tir::ExprKind::BoxDynCoerce { expr, .. }
+        | tir::ExprKind::BoxDynBorrow { expr, .. }
+        | tir::ExprKind::BoxDynIsEmpty { expr }
         | tir::ExprKind::FnToClosure { func: expr }
         | tir::ExprKind::ArrayRepeat { value: expr } => expr_mentions(expr, name),
         tir::ExprKind::Binary { lhs, rhs, .. }
@@ -2202,11 +2265,19 @@ fn check_let_init(init: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 /// to move before returning are still available to the code that runs after
 /// it, and marking them moved would reject ordinary `return early` code.
 fn diverges(block: &tir::Block) -> bool {
-    matches!(block.stmts.last(), Some(tir::Stmt::Return { .. }))
+    matches!(
+        block.stmts.last(),
+        Some(tir::Stmt::Return { .. })
+            | Some(tir::Stmt::Break { .. })
+            | Some(tir::Stmt::Continue { .. })
+    )
 }
 
 fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()> {
     let before = ctx.snapshot();
+    // Every scope the body opens sits at or above this mark; a `break` or
+    // `continue` in it frees the owned locals those scopes declared.
+    ctx.loop_marks.push(ctx.scopes.len());
 
     // First pass: one iteration.
     check_value(cond, ctx)?;
@@ -2217,6 +2288,7 @@ fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()>
     // (loops aren't guaranteed to run only once).
     check_value(cond, ctx)?;
     check_block(body, ctx)?;
+    ctx.loop_marks.pop();
 
     // The loop may also run zero times, so nothing here becomes
     // *definitely* moved unless it already was before the loop. A body that
@@ -2229,6 +2301,22 @@ fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()>
     let after = ctx.snapshot();
     ctx.merge_into(before, after);
     Ok(())
+}
+
+/// Every live owned local declared inside the innermost loop, innermost scope
+/// first — what a `break`/`continue` there has to free (`plan/iterators.md`).
+/// The mark is `scopes.len()` when `check_while` started, so the slice from it
+/// holds the loop body's own scope and every scope nested inside it, and
+/// nothing declared outside the loop.
+fn live_drops_since_loop(ctx: &Ctx) -> Vec<DropTarget> {
+    let Some(&mark) = ctx.loop_marks.last() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for scope in ctx.scopes[mark..].iter().rev() {
+        out.extend(live_drops(scope.owned.iter()));
+    }
+    out
 }
 
 fn check_if(then_block: &tir::Block, else_block: &Option<tir::Block>, ctx: &mut Ctx) -> Result<()> {
@@ -2399,13 +2487,40 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             release_call_borrows(&taken, ctx);
             Ok(())
         }
-        // A method call through a `&dyn` (A-12 slice 4): the receiver is a
-        // borrow (`Copy`), so reading it moves nothing; the arguments follow
-        // exactly the rule a named call's do.
-        tir::ExprKind::DynCall { receiver, args, .. } => {
-            check_place(receiver, ctx)?;
+        // A method call through a trait object (A-12 slices 4 and 7). Through a
+        // `&dyn` the receiver is a borrow (`Copy`), so reading it moves nothing.
+        // Through an *owned* trait object a `mut Self` method writes through the
+        // box's data pointer, so the call holds an exclusive borrow of the
+        // receiver's own place for its duration, exactly as a `mut T` argument
+        // does: that is what refuses `b.scale(f)` while `b.get()`'s `&dyn` is
+        // still live.
+        tir::ExprKind::DynCall {
+            receiver,
+            args,
+            exclusive,
+            ..
+        } => {
+            let roots = if *exclusive {
+                ctx.check_iterated_mutation(receiver)?;
+                check_place(receiver, ctx)?;
+                let roots = place_roots(receiver, ctx);
+                for root in &roots {
+                    if root != STATIC_ROOT {
+                        ctx.start_borrow(root, true, expr.span)?;
+                    }
+                }
+                roots
+            } else {
+                check_place(receiver, ctx)?;
+                Vec::new()
+            };
             let taken = take_call_arguments(args, ctx, None)?;
             release_call_borrows(&taken, ctx);
+            for root in &roots {
+                if root != STATIC_ROOT {
+                    ctx.end_borrow(root);
+                }
+            }
             Ok(())
         }
         // `expr?` reads its operand as a whole value: the failure payload is
@@ -2641,6 +2756,16 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // node inside is the `&x` it was written from, and reading the fat pair
         // is a read of the borrow.
         tir::ExprKind::DynCoerce { expr: inner, .. } => check_value(inner, ctx),
+        // An owned trait object's coercion (A-12 slice 7) *moves* the box it
+        // was written from: the box's allocation becomes the trait object's, so
+        // the operand is read as a whole value exactly as a plain read of it
+        // would be.
+        tir::ExprKind::BoxDynCoerce { expr: inner, .. } => check_value(inner, ctx),
+        // Borrowing the trait back out of the box is a read of a *place*, never
+        // a move: `BoxDynBorrow` returns a `&dyn` into the box's own storage.
+        tir::ExprKind::BoxDynBorrow { expr: inner, .. } => check_place(inner, ctx),
+        // `is_empty` reads the box's data pointer, so it is a place read too.
+        tir::ExprKind::BoxDynIsEmpty { expr: inner } => check_place(inner, ctx),
         // `asm(...)` (kernel stage 5): an `in` operand reads its value exactly
         // as any other read, and an `out`/`inout` operand writes its place, so
         // that place is taken as a transient exclusive borrow. The operand

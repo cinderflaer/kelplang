@@ -1,0 +1,40 @@
+// A-20: a fixed-size ring buffer whose capacity is a `const` type parameter.
+// Two instantiations exist in the image, `Ring<4>` and `Ring<8>`, and each is
+// monomorphized into its own struct and its own function copies with no
+// allocator and no libc symbol.
+section(".rodata.boot") const BOOT_MAGIC: [u8; 4] = [75, 69, 76, 80]
+
+datac Ring<const N: usize>(var slot: [u32; N], var head: usize, var count: usize)
+
+fun mut Ring<const N: usize>.push(v: u32) {
+    slot.set(i = head, v = v)
+    head = (head + 1) % N
+    if count < N {
+        count = count + 1
+    }
+}
+
+fun Ring<const N: usize>.sum().R: u32 {
+    var total: u32 = 0
+    var i: usize = 0
+    while i < N {
+        total = total + slot.get(i = i)
+        i = i + 1
+    }
+    return total
+}
+
+section(".text.boot") fun kmain() {
+    var small = Ring<4>(slot = [0; 4], head = 0, count = 0)
+    var big = Ring<8>(slot = [0; 8], head = 0, count = 0)
+    var i: u32 = 0
+    while i < 10 {
+        small.push(v = i)
+        big.push(v = i)
+        i = i + 1
+    }
+    var acc: u32 = small.sum() + big.sum() + BOOT_MAGIC.get(i = 0).to_u32()
+    while true {
+        acc = acc + 1
+    }
+}

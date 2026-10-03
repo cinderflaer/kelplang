@@ -1,0 +1,62 @@
+// Language-completeness 5: the arithmetic operators come from the shipped
+// `std/ops` traits. `a + b` is `a.add(&b)` and the chain `a + b - c` is
+// `a.add(&b).sub(&c)`, so each step is an ordinary method call and each operand
+// is only borrowed, never moved.
+impl "std/ops"
+
+datac Vec2(val x: i64, val y: i64)
+
+impl ops.Add for Vec2 {
+    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+}
+
+impl ops.Sub for Vec2 {
+    fun Self.sub(rhs: &Self).R: Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
+}
+
+impl ops.Mul for Vec2 {
+    fun Self.mul(rhs: &Self).R: Vec2 = Vec2(x = x * rhs.x, y = y * rhs.y)
+}
+
+impl ops.Div for Vec2 {
+    fun Self.div(rhs: &Self).R: Vec2 = Vec2(x = x / rhs.x, y = y / rhs.y)
+}
+
+impl ops.Rem for Vec2 {
+    fun Self.rem(rhs: &Self).R: Vec2 = Vec2(x = x % rhs.x, y = y % rhs.y)
+}
+
+impl ops.Neg for Vec2 {
+    fun Self.neg().R: Vec2 = Vec2(x = 0 - x, y = 0 - y)
+}
+
+fun main() {
+    val a = Vec2(x = 1, y = 2)
+    val b = Vec2(x = 3, y = 4)
+    val c = Vec2(x = 5, y = 6)
+
+    val sum = a + b
+    print(sum.x)
+    print(sum.y)
+
+    val chain = a + b - c
+    print(chain.x)
+    print(chain.y)
+
+    val neg = -a
+    print(neg.x)
+    print(neg.y)
+
+    val product = a * b
+    print(product.x)
+    print(product.y)
+
+    val q = Vec2(x = 8, y = 9)
+    val d = Vec2(x = 2, y = 3)
+    print((q / d).x)
+    print((q % d).y)
+
+    // The operands are only borrowed, so both are still owned and usable.
+    print(a.x)
+    print(b.x)
+}

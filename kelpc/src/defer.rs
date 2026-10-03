@@ -171,6 +171,18 @@ impl Lowerer {
                         ));
                     }
                     refuse_later_locals(&expr, &not_yet_here, span, &self.module)?;
+                    if let Some(exit_span) = first_loop_exit_in_expr(&expr) {
+                        return Err(Diagnostic::new(
+                            "a deferred action cannot contain 'break' or 'continue': the action runs while the block is being left, so it cannot leave the loop again".to_string(),
+                            exit_span,
+                            self.module.clone(),
+                        )
+                        .with_note(
+                            "the 'defer' whose action this is".to_string(),
+                            span,
+                            self.module.clone(),
+                        ));
+                    }
                     let mut expr = expr;
                     // The action's own inner blocks are lowered once and then
                     // cloned into each exit, so a nested `defer` inside it
@@ -239,6 +251,19 @@ impl Lowerer {
                                 });
                             }
                         }
+                        // A `break`/`continue` leaves the block just as a
+                        // `return` does, so the actions active here run first.
+                        // A plain `break`/`continue` (no `active`) is pushed
+                        // unchanged, so a loop body with no defers emits
+                        // exactly what it wrote.
+                        Stmt::Break { span } => {
+                            self.push_exit_actions(&mut new_stmts, &active);
+                            new_stmts.push(Stmt::Break { span });
+                        }
+                        Stmt::Continue { span } => {
+                            self.push_exit_actions(&mut new_stmts, &active);
+                            new_stmts.push(Stmt::Continue { span });
+                        }
                         mut other => {
                             self.stmt(&mut other, &exit, &not_yet_here)?;
                             new_stmts.push(other);
@@ -263,6 +288,22 @@ impl Lowerer {
 
         block.stmts = new_stmts;
         Ok(())
+    }
+
+    /// Run the actions `active` owes, in execution order, as ordinary
+    /// statements. Used before a `break`/`continue`, which leaves the block
+    /// the way a `return` does.
+    fn push_exit_actions(&mut self, out: &mut Vec<Stmt>, active: &[Cleanup]) {
+        for c in active.iter().rev() {
+            let name = self.fresh(TMP_PREFIX);
+            out.push(Stmt::Let {
+                name,
+                mutable: false,
+                ty: None,
+                init: c.expr.clone(),
+                span: c.span,
+            });
+        }
     }
 
     /// `return e` (or a function body's tail) with the actions `exit` owes
@@ -315,10 +356,20 @@ impl Lowerer {
                 self.expr(cond, outer, not_yet)?;
                 self.block(body, outer, not_yet, false)
             }
+            Stmt::For {
+                iterable, body, ..
+            } => {
+                self.expr(iterable, outer, not_yet)?;
+                self.block(body, outer, not_yet, false)
+            }
             Stmt::Expr { expr, .. } => self.expr(expr, outer, not_yet),
-            // A `return` is rewritten by `block`, and a `defer` never reaches
-            // this arm; both are handled where their position is known.
-            Stmt::Return { .. } | Stmt::Defer { .. } => Ok(()),
+            // A `return`, a `break` and a `continue` are rewritten by `block`,
+            // and a `defer` never reaches this arm; all are handled where their
+            // position is known.
+            Stmt::Return { .. }
+            | Stmt::Defer { .. }
+            | Stmt::Break { .. }
+            | Stmt::Continue { .. } => Ok(()),
         }
     }
 
@@ -493,6 +544,17 @@ fn free_in_stmt(stmt: &Stmt, bound: &HashSet<String>, out: &mut HashSet<String>)
             free_in_expr(cond, bound, out);
             free_in_block(body, bound, out);
         }
+        Stmt::For {
+            binding,
+            iterable,
+            body,
+            ..
+        } => {
+            free_in_expr(iterable, bound, out);
+            let mut scope = bound.clone();
+            scope.insert(binding.clone());
+            free_in_block(body, &scope, out);
+        }
         Stmt::Return { value, .. } => {
             if let Some(v) = value {
                 free_in_expr(v, bound, out);
@@ -500,6 +562,7 @@ fn free_in_stmt(stmt: &Stmt, bound: &HashSet<String>, out: &mut HashSet<String>)
         }
         Stmt::Expr { expr, .. } => free_in_expr(expr, bound, out),
         Stmt::Defer { expr, .. } => free_in_expr(expr, bound, out),
+        Stmt::Break { .. } | Stmt::Continue { .. } => {}
     }
 }
 
@@ -619,9 +682,13 @@ fn first_try_in_block(block: &Block) -> Option<Span> {
         Stmt::Let { init, .. } => first_try_in_expr(init),
         Stmt::LetTuple { init, .. } => first_try_in_expr(init),
         Stmt::While { cond, body, .. } => first_try_in_expr(cond).or_else(|| first_try_in_block(body)),
+        Stmt::For {
+            iterable, body, ..
+        } => first_try_in_expr(iterable).or_else(|| first_try_in_block(body)),
         Stmt::Return { value, .. } => value.as_ref().and_then(first_try_in_expr),
         Stmt::Expr { expr, .. } => first_try_in_expr(expr),
         Stmt::Defer { expr, .. } => first_try_in_expr(expr),
+        Stmt::Break { .. } | Stmt::Continue { .. } => None,
     })
 }
 
@@ -745,7 +812,85 @@ fn first_return_in_block(block: &Block) -> Option<Span> {
         Stmt::While { cond, body, .. } => {
             first_return_in_expr(cond).or_else(|| first_return_in_block(body))
         }
+        Stmt::For {
+            iterable, body, ..
+        } => first_return_in_expr(iterable).or_else(|| first_return_in_block(body)),
         Stmt::Expr { expr, .. } => first_return_in_expr(expr),
         Stmt::Defer { expr, .. } => first_return_in_expr(expr),
+        Stmt::Break { .. } | Stmt::Continue { .. } => None,
+    })
+}
+
+/// The first `break`/`continue` inside a deferred action, not descending into a
+/// `fun` literal (whose loop control is its own).
+fn first_loop_exit_in_expr(expr: &Expr) -> Option<Span> {
+    match expr {
+        Expr::Block(b) | Expr::Unsafe { block: b, .. } => first_loop_exit_in_block(b),
+        Expr::If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } => first_loop_exit_in_expr(cond)
+            .or_else(|| first_loop_exit_in_block(then_block))
+            .or_else(|| match else_block.as_deref() {
+                Some(ElseBranch::Block(b)) => first_loop_exit_in_block(b),
+                Some(ElseBranch::If(e)) => first_loop_exit_in_expr(e),
+                None => None,
+            }),
+        Expr::When { scrutinee, arms, .. } => first_loop_exit_in_expr(scrutinee)
+            .or_else(|| arms.iter().find_map(|a| first_loop_exit_in_expr(&a.body))),
+        Expr::Unary { expr, .. }
+        | Expr::Ref { expr, .. }
+        | Expr::Deref { expr, .. }
+        | Expr::Try { expr, .. } => first_loop_exit_in_expr(expr),
+        Expr::Binary { lhs, rhs, .. } => {
+            first_loop_exit_in_expr(lhs).or_else(|| first_loop_exit_in_expr(rhs))
+        }
+        Expr::Call { args, .. } => args.iter().find_map(|a| first_loop_exit_in_expr(&a.value)),
+        Expr::MethodCall { receiver, args, .. } => first_loop_exit_in_expr(receiver)
+            .or_else(|| args.iter().find_map(|a| first_loop_exit_in_expr(&a.value))),
+        Expr::FieldAccess { base, .. } => first_loop_exit_in_expr(base),
+        Expr::Assign { target, value, .. } => {
+            first_loop_exit_in_expr(target).or_else(|| first_loop_exit_in_expr(value))
+        }
+        Expr::Template { parts, .. } => parts.iter().find_map(|p| match p {
+            TemplatePart::Text(_) => None,
+            TemplatePart::Expr(e) => first_loop_exit_in_expr(e),
+        }),
+        Expr::Asm { operands, .. } => operands
+            .iter()
+            .find_map(|o| o.operand.as_ref().and_then(first_loop_exit_in_expr)),
+        Expr::ArrayLit { elems, .. } | Expr::TupleLit { elems, .. } => {
+            elems.iter().find_map(first_loop_exit_in_expr)
+        }
+        Expr::ArrayRepeat { value, len, .. } => {
+            first_loop_exit_in_expr(value).or_else(|| first_loop_exit_in_expr(len))
+        }
+        Expr::IntLit(..)
+        | Expr::CharLit(..)
+        | Expr::ByteLit(..)
+        | Expr::FloatLit(..)
+        | Expr::StringLit(..)
+        | Expr::BoolLit(..)
+        | Expr::Ident(..)
+        | Expr::FnLit { .. } => None,
+    }
+}
+
+fn first_loop_exit_in_block(block: &Block) -> Option<Span> {
+    block.stmts.iter().find_map(|s| match s {
+        Stmt::Break { span } | Stmt::Continue { span } => Some(*span),
+        Stmt::Let { init, .. } => first_loop_exit_in_expr(init),
+        Stmt::LetTuple { init, .. } => first_loop_exit_in_expr(init),
+        Stmt::While { cond, body, .. } => {
+            first_loop_exit_in_expr(cond).or_else(|| first_loop_exit_in_block(body))
+        }
+        Stmt::For {
+            iterable, body, ..
+        } => first_loop_exit_in_expr(iterable).or_else(|| first_loop_exit_in_block(body)),
+        Stmt::Return { value, .. } => value.as_ref().and_then(first_loop_exit_in_expr),
+        Stmt::Expr { expr, .. } => first_loop_exit_in_expr(expr),
+        Stmt::Defer { expr, .. } => first_loop_exit_in_expr(expr),
     })
 }

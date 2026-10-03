@@ -1,0 +1,13 @@
+impl "std/option"
+
+// A `pub trait` that declares an associated type, and a `pub` generic function
+// whose return type names the projection `I::Item` (A-12 slice 5). Both reach
+// another module through the alias.
+pub trait Iter {
+    type Item
+    fun mut Self.next().R: option.Option<Self::Item>
+}
+
+pub fun first<I: Iter>(it: mut I).R: option.Option<I::Item> {
+    return it.next()
+}

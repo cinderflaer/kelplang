@@ -331,7 +331,7 @@ print("area = ${c.area()}")
 print("r = $c.r")            // $name names an identifier, nothing more
 ```
 
-`$name` interpolates one identifier; `${...}` interpolates any expression, and the expression may contain a nested template or span several lines. A template is not a value: the only place it may appear is as the single argument of `print` or `print!`. To build a string with the same content, use `str.concat`, `fmt.*`, or a `String`.
+`$name` interpolates one identifier; `${...}` interpolates any expression, and the expression may contain a nested template or span several lines. An interpolated value must be printable: a scalar, `bool`, `char`, `str`, `String`, `Bytes`, `View`, or a type that implements `Display` (5, 9.5.4), which is lowered to `x.to_text()`. A template is not a value: the only place it may appear is as the single argument of `print` or `print!`. To build a string with the same content, use `str.concat`, `fmt.*`, `x.to_text()`, or a `String`.
 
 ### 2.6 Operators
 
@@ -566,6 +566,8 @@ Facts worth knowing:
 
 **Equality by declaration (H-5).** `==` and `!=` are defined on a `datac`/`enum` `T` when `T` declares `fun T.eq(other: &T).R: bool`, the same `eq` method name A-12 already gives a declared `Map` key. `a == b` means `a.eq(&b)` and `a != b` means `!a.eq(&b)`: the front end rewrites the operator into that method call *before* borrow checking and code generation, so both are ordinary calls of the declared body and no backend gains an operator. `eq` alone is enough for `==` (a `Map` key still needs the pair, `hash` and `eq`; a lone `hash` is still refused). Each operand is evaluated exactly once, left to right, and is only borrowed, never moved, so an owned binding, a `&T`/`mut T` borrow, or a mix of the two all compare. `View` against `View`, and `View` against `str`, lower the same way through the builtin `View.eq`. Nothing is *derived*: a type without a declared `eq` keeps the old `cannot compare` refusal, and so does `<`/`<=`/`>`/`>=` on any such type.
 
+**Operators by trait (language-completeness 5).** The arithmetic operators, the order operators and unary minus are defined on a `datac`/`enum` through the shipped traits in `std/ops` (9.5.4): with `impl Add for T`, `a + b` means `a.add(&b)`; with `impl Sub`, `a - b` is `a.sub(&b)`; likewise `Mul`, `Div` and `Rem`; `-a` with `impl Neg` is `a.neg()`; and with `impl Ord`, `a < b` means `a.cmp(&b) < 0` (and `<=`, `>`, `>=` the matching comparison of the `i32` `cmp` returns). Each lowering is the same front-end desugar `==` gets, done at the operator's own check, so each operand is evaluated exactly once, left to right, and is only borrowed, never moved. Builtin numeric types keep their builtin operators and are unaffected: the desugar runs only where the builtin arithmetic or comparison would already have been a type error, and mixing types is still the ordinary mismatch. A type with a declared `eq` but no `Ord` keeps the old `<`/`>` refusal, and a type with `Ord` but no `eq` gets no `==`/`!=`: the `Ord`-only message says the operator needs `eq`. Compound assignment keeps the parser's `a = a + b` desugar, so `a += b` is `a = a.add(&b)` when `a` is a `var` place. `fmt.Display` (9.5.4) is what a type implements to appear in `"${x}"` and in `print(x)`/`print!(x)`.
+
 #### 5.0 Numeric conversion, in full
 
 Operands must match exactly, so the language never converts a number for you — but it does give you the conversion to write:
@@ -629,7 +631,7 @@ fun loud(n: i64).R: Option<String> {
 ```
 
 - The operand must be an `enum` **held by value** and shaped either `Ok`/`Err` (the failure carries a payload) or `Some`/`None` (it does not). The shape is the contract: the enum's *name* does not matter, so `std/result`'s `Result`, `std/option`'s `Option` and a program's own declaration of either all work.
-- The enclosing function must return an enum of the **same shape**, and for `Ok`/`Err` with the **same failure payload type** — v1 has no error conversion, so `Result<i64, String>` cannot be propagated out of a function returning `Result<i64, IoErr>`. A function returning `Unit` (including `main`) has nowhere to propagate to.
+- The enclosing function must return an enum of the **same shape**. For `Ok`/`Err`, when the two failure payload types differ, `?` converts the failure through a declared `impl From<Source> for Target` (9.5), calling `Target.from(source)`; when they are the same type the payload moves across with no call. When no such impl exists the error names both failure types and `From`. `Option` to `Option` has no payload to convert, so it stays exact. A function returning `Unit` (including `main`) has nowhere to propagate to.
 - The value of `expr?` is the success payload, so it composes: `1 + half(n = n)?`. A failure returns immediately, which means the enclosing function's locals are dropped on the way out, exactly as any `return` drops them.
 - `?` is postfix and binds tighter than every binary operator. Because it moves a payload out of the operand, a borrow cannot be an operand: match that with `when` (6.3) or `if let` (6.1).
 - It applies to the expression it is written on and to nothing else, so a tuple is never its operand. When a tuple is the *success* payload, `?` reaches the `Result` the element is and hands the tuple back: `val (lo, hi) = min_max_checked(xs)?` where the function returns `Result<(i32, i32), String>` is the tuple, taken apart by the binding (3.1, 4). A tuple is not an enum, so writing `?` on the tuple itself is the ordinary "the operand must be an `enum`" refusal.
@@ -715,31 +717,66 @@ if let Circle(r) = shape {
 
 ### 6.2 `for` and `while`
 
-`for` walks a `List` front to back:
+`for` walks a `List` front to back, or any type that implements the iterator
+protocol (`std/iter`, 16.18):
 
 ```kelp
 for x in xs {
     print!(x)
     print!(" ")
 }
+
+for i in iter.range(0, 5) {
+    print(i)
+}
 ```
 
-- The iterable must be a `List<T>` or a `[T; N]` (12.4). `for` is **desugared by the parser** into the index-and-`while` walk below, so anything with `.len()` and `.get(i)` walks the same way, and there is no protocol to implement (`iter`/`next` is a post-v1 question). A `Map` is not one of them: it has `.len()`, but its `.get` takes a key rather than an index, so `for k in map` is a type error (write `for k in map.keys()`).
-- The element binding gives exactly what `List.get` gives (12.1): a copy of a `Copy` element, and a shared borrow of an owned one. So `for n in numbers` reads `n: i32` directly, while `for name in names` reads `name: &String` and a `str.*` call wants `name.as_str()` (the same wart as 12.1).
-- The iterable is *borrowed*, not moved, when it is a place (`xs`, `self.items`): `for x in xs` inside a function that takes `xs: List<i32>` is the ordinary case. Anything else — a call, a literal — is bound to a temporary that the loop owns and frees, so it is evaluated **once**.
+- The iterable must be a `List<T>`, a `[T; N]` (12.4), or a type that implements
+  `std.iter.Iterator` (`plan/iterators.md`). A `Map` is none of them: it has
+  `.len()`, but its `.get` takes a key rather than an index, so `for k in map`
+  is a type error (write `for k in map.keys()`). Anything else is refused with a
+  message naming `Iterator`.
+- **Which desugar applies is decided where the type is known, not in the
+  parser.** A `List`/array is still the index-and-`while` walk below, byte for
+  byte: same `.len()`/`.get(i)`, same speed, same element binding. A type that
+  implements `Iterator` becomes `var it = <iterable>` plus a `while true` over
+  `it.next()`: the `Some` item runs the body, the `None` arm leaves the loop.
+  `x` is the **owned** item, so `for x in it` binds a value the body may move.
+- The element binding of a `List` gives exactly what `List.get` gives (12.1): a
+  copy of a `Copy` element, and a shared borrow of an owned one. So `for n in
+  numbers` reads `n: i32` directly, while `for name in names` reads `name:
+  &String` and a `str.*` call wants `name.as_str()` (the same wart as 12.1).
+- A `List` iterable is *borrowed*, not moved, when it is a place (`xs`,
+  `self.items`): `for x in xs` inside a function that takes `xs: List<i32>` is
+  the ordinary case. Anything else — a call, a literal — is bound to a temporary
+  that the loop owns and frees, so it is evaluated **once**. An **iterator**
+  place (`var f = Fib(...)`; `for x in f`) is borrowed **exclusively** for the
+  loop, so naming `f` in the body is the ordinary already-borrowed error; a
+  temporary iterator is owned by the loop.
 - The loop variable is a `val`. Copy it into a `var` to mutate it.
-- The body may **read** the place it walks (`xs.get(i)`, `xs.len()`, `&xs`) and may walk or change a
-  **different** list, but it may not mutate the one it walks. A `mut` receiver method on it (`push`,
-  `pop`, `remove`, `insert`, `set`, `clear`, `sort`, `reverse`), an assignment to it, a move of it,
-  taking `&mut xs`, and passing it to a `mut` parameter are all one compile error, `cannot mutate
-  'xs' while iterating over it`, reported on the `for` line. A `fun` literal written in the body
-  cannot capture it either: a capture moves or copies, and the move is refused the same way. The
-  rule names the place, so `for x in self.items { self.other.push(x) }` is legal.
-- When the loop has to change what it walks, walk it by index with `while` (below) instead: that is
-  the supported pattern, and no such rule applies to it.
-- There is no `break` and no `continue`; the body runs from the first element to the last.
+- `break` leaves the innermost loop and `continue` re-tests its condition. Both
+  are ordinary names everywhere else (2.3), so `break + 1` is still an
+  expression; a bare one outside every loop is refused.
+- A `defer` in the body runs on the way out of `break`/`continue` as it does on
+  the way out of any block, and a deferred action may not itself contain
+  `break`/`continue` (`plan/defer.md`).
+- The body of a **`List`** `for` may **read** the place it walks (`xs.get(i)`,
+  `xs.len()`, `&xs`) and may walk or change a **different** list, but it may not
+  mutate the one it walks. A `mut` receiver method on it (`push`, `pop`,
+  `remove`, `insert`, `set`, `clear`, `sort`, `reverse`), an assignment to it, a
+  move of it, taking `&mut xs`, and passing it to a `mut` parameter are all one
+  compile error, `cannot mutate 'xs' while iterating over it`, reported on the
+  `for` line. A `fun` literal written in the body cannot capture it either: a
+  capture moves or copies, and the move is refused the same way. The rule names
+  the place, so `for x in self.items { self.other.push(x) }` is legal. It does
+  not apply to a user iterator, which is protected by the ordinary borrow rule
+  instead.
+- When the loop has to change what it walks, walk it by index with `while`
+  (below) instead: that is the supported pattern, and no such rule applies to
+  it.
 
-Walking a `List` by index is still available, and is what `for` becomes:
+Walking a `List` by index is still available, and is what a `List` `for`
+becomes:
 
 ```kelp
 var i: usize = 0
@@ -749,7 +786,10 @@ while i < xs.len() {
 }
 ```
 
-`while` is the only loop besides `for`, and it is the general one — a condition, re-evaluated before each pass. `str.split`, `Map.keys()` and `Map.values()` hand back `List`s so iteration over text and over maps reads the same way as over a list.
+`while` is the other loop, and it is the general one — a condition,
+re-evaluated before each pass. `break` and `continue` work in it exactly as in
+an iterator `for`. `str.split`, `Map.keys()` and `Map.values()` hand back
+`List`s so iteration over text and over maps reads the same way as over a list.
 
 ### 6.3 `when`
 
@@ -1184,6 +1224,68 @@ print(identity<i32>(x = 5))
 - An explicit instantiation with the wrong number of arguments is an error naming the count, and so is one written on something that is not generic — a non-generic type, a non-generic function, or a method (whose parameters come from its receiver).
 - A payload-less variant cannot take one, because there is no call to attach it to: write the expected type instead (`val none: Option<i32> = Option.None`).
 
+#### Const type parameters
+
+A parameter may be declared `const N: <type>`: a compile-time *value* the declaration is
+parameterized by. The types are the integers a value can be judged against at compile time, plus
+`bool`: `usize`, `u8`, `u16`, `u32`, `u64`, `i32`, `i64` and `bool`.
+
+```kelp
+const SIZE: usize = 2
+
+datac Buf<const N: usize>(var data: [i32; N], var len: usize)
+
+fun Buf<const N: usize>.total().R: i32 {
+    var sum: i32 = 0
+    var i: usize = 0
+    while i < N { sum = sum + data.get(i = i); i = i + 1 }
+    return sum
+}
+
+fun sum<const N: usize>(a: &[i32; N]).R: i32 { ... }
+fun zeros<const N: usize>().R: [i32; N] = [0; N]
+```
+
+- A const parameter is listed with the type parameters, in declaration order, and its name is in
+  scope in every field, payload, parameter and return type of the declaration, and **as a value**
+  inside a body (`i < N`).
+- A const argument is a compile-time expression written exactly like a type argument: `Buf<16>`,
+  `Buf<SIZE * 2>`, `capacity<twice(n = 4)>()`. The existing constant evaluation (14.1) is the whole
+  of it: literals, `const`s of the same or another module, and plain `fun` calls, with the
+  parameter's declared type as the expected type. A value that does not fit the declared type is
+  an error that names the parameter.
+- The argument is **inferred** where it can be: from an array argument's length (`sum(a = &arr)`
+  infers `N` from `arr`'s type), from a construction's array field (`Buf(data = [1, 2, 3], len = 3)`
+  infers `N = 3`), or from the expected type. A parameter neither determines is an error naming it,
+  exactly as a type parameter is.
+- `N` is usable as an array length (`[i32; N]`), as a repeat count (`[0; N]`) and as a const
+  argument to another instantiation (`Ring<N>`), as well as a value. The one thing it cannot do is
+  participate in **arithmetic inside a type**: `[T; N + 1]` and `Buf<N * 2>` are refused by name,
+  because the length an instantiation takes has to be one the compiler can already fold.
+- One copy per distinct value, exactly as for a type argument: `Ring<4>` and `Ring<8>` are two
+  types with two sets of generated functions.
+- A trait may not take a const parameter (a trait is implemented for a type).
+
+#### `impl Trait` in argument position
+
+A parameter written `impl Name` is sugar for a fresh type parameter bounded by `Name` (9.5), and
+saves declaring and naming one:
+
+```kelp
+fun describe(s: impl Shape).R: str = s.name()
+fun pair_area(a: impl Shape, b: &impl Shape).R: f64 = a.area() + b.area()
+```
+
+- Each `impl` occurrence is its **own** parameter, so one call may pass two different shapes, and
+  the bound is checked at the call exactly as an explicit `fun f<T: Shape>(x: T)` call is. Dispatch
+  inside the body is static, exactly as 9.5's is.
+- `impl Trait` is only legal as a whole parameter type of a declared `fun`. A return position
+  (`fun f().R: impl Shape`), a `let`, a field, an enum payload, a container element and a nested
+  position (`List<impl Shape>`) are each refused by name.
+- A receiver method's parameter cannot write it (a method's type parameters come from its receiver),
+  and neither can a trait method's signature. The bound must be a declared trait; `&impl Name` is
+  the borrowed spelling of the same parameter.
+
 ### 9.5 Traits and static dispatch
 
 A `trait` is a named set of methods, and `impl` makes a type provide them. A generic function may
@@ -1200,6 +1302,11 @@ pub trait Shape {
 
 trait Named: Shape {
     fun Self.name().R: str
+}
+
+trait Iterator {
+    type Item
+    fun mut Self.next().R: Option<Self::Item>
 }
 
 datac Circle(val r: f64)
@@ -1223,8 +1330,18 @@ print(area_of(c))
   body (no `= expr` and no `{ ... }`) is a signature; a method **with** a body is a **default
   method**, written exactly like an ordinary method. A default body may call the trait's other
   methods through `self` and is checked once per implementing type.
-- A trait method may take `mut` on its receiver, and the impl has to match it. A trait declaration
-  takes no type parameters and neither does one of its methods.
+- A trait body may also declare an **associated type**, `type Name`, optionally bounded:
+  `type Item: Named` or `type Item: Named + Other`. Each impl binds it with `type Name = Type`,
+  and `Self::Item` names it in the trait's signatures (and in a default body); a bounded type
+  parameter names it as `I::Item` (`fun first<I: Iterator>(it: mut I).R: Option<I::Item>`). The
+  impl must bind every declared associated type and may add none, and a declared bound is checked
+  against the impl's type. Missing, extra, duplicate, a projection through a type with no such
+  bound, and a bound the impl's type does not satisfy are each refused by name. Default associated
+  types (`type Item = i32` in a trait), associated consts, generic associated types, and equality
+  constraints (`I: Iterator<Item = i32>`) are not in this slice and are refused by name;
+  `plan/traits.md` 10 is the design.
+- A trait may take **type parameters** of its own: `pub trait From<T> { ... }`, written exactly like a `datac`/`fun` parameter list (with bounds: `trait Store<K, V: Named>`). The parameters are in scope in every method signature and default body, and the trait name plus its arguments (*trait instance*, `From<IoErr>`) is what an impl and a bound name. A trait method may take `mut` on its receiver, and the impl has to match it. A trait method may not take type parameters of its own (a generic method is still refused). A generic trait's argument is a named type or a builtin; a container, tuple, array, borrow, function type or handle is refused by name. A generic trait may not declare an associated type and may not be used behind `&dyn` (both follow-ups).
+- A trait method written with **no receiver** is a **static method**: `fun from(value: T).R: Self`, and an impl writes it without a receiver too (`fun from(value: IoErr).R: AppErr { ... }`). It is called on the type name (`AppErr.from(7)`) or through a bounded parameter (`X.from(7)` for `<X: From<i32>>`); `Self` in its return type is the implementing type. A type may implement `From<A>` and `From<B>` at once, and the call picks by argument type; a trait-name call (`From.from(7)`) is allowed only when `Self` and the trait's arguments are inferable. `std/convert` ships `From<T>` and `Into<T>` with **no blanket impls**. `plan/traits.md` 11 is the design.
 - A trait may name **supertraits** after a `:`, separated by `+`: `trait B: A + C { ... }`. An
   `impl B for X` requires an `impl A for X` and an `impl C for X`; a `<T: B>` may call `A`'s
   methods on a `T`; a `T: B` satisfies a `T: A` bound; and a cycle is an error.
@@ -1274,9 +1391,11 @@ val d: &dyn Shape = &c       // or at a typed binding
 print(describe(d))           // and a `&dyn` forwards on to another function
 ```
 
-- A trait object is legal **as a parameter type and as a local binding type** only. `Box<dyn
-  Name>`, a bare `dyn Name`, a `.R: &dyn Name` return, a `datac`/`enum` field or payload, a
+- A borrowed trait object is legal **as a parameter type and as a local binding type** only. A
+  bare `dyn Name`, a `.R: &dyn Name` return, a `datac`/`enum` field or payload named `&dyn`, a
   container element or argument, a tuple element and a `static`'s type are each refused by name.
+  The **owned** spelling `Box<dyn Name>` (9.5.3) *is* a stored type: a field, a payload, a
+  container element, a parameter, a return and a local all take one.
 - `Name` must be a declared trait. `&mut dyn Name` allows a `mut Self` method and `&dyn Name`
   does not; a `mut Self` method called through `&dyn` is refused by name.
 - **Coercion.** A `&T` where `T` implements `Name` coerces to `&dyn Name` at a call argument or a
@@ -1303,17 +1422,140 @@ of these. A violation is refused where the `dyn` type is written, naming the tra
 - the method's return type does not mention `Self`;
 - no parameter other than the receiver mentions `Self` (the receiver is what the erased pointer
   stands for);
-- the flattened list has no two methods of the same name (the vtable holds one slot per name).
+- the flattened list has no two methods of the same name (the vtable holds one slot per name);
+- the trait declares no associated type: the erased value has no single binding to name, so a
+  trait with `type Item` has no `&dyn` (9.5).
 
 A method with its own type parameters is already impossible (9.5), so there is nothing else to
 erase.
 
-Not in this slice, each refused where it is written: `Box<dyn Name>` and a bare `dyn Name`; an
+Not in this slice, each refused where it is written: a bare `dyn Name` (an owned one is
+`Box<dyn Name>`, 9.5.3); an
 upcast from `&dyn B` to `&dyn A` when `B: A`; a trait object over an object-unsafe trait; a trait
-item other than a method (an associated type or const); `impl Trait` in argument position; a
-`where` clause; a generic trait (`trait Name<T>`); an impl for a generic instantiation; and any
-operator overloading through a trait (`==`/`!=` still come from a declared `eq`, 5).
-`plan/traits.md` 5 and 9.6 are the lists with the reasons and the workarounds.
+object over a trait that declares an associated type or takes a type parameter (9.5); an associated
+const; a `where` clause; an equality constraint on a trait's
+associated type; an impl for a generic instantiation; and a blanket impl of any trait (including
+`Into`). Operator overloading is through the shipped `std/ops` traits only (9.5.4): a program
+implements those, not a trait of its own. `plan/traits.md` 5, 9.6, 10.3, 11.6 and 13 are the lists
+with the reasons and the workarounds. (`impl Trait` in argument position is no longer on this
+list: 9.3 is its reference.)
+
+### 9.5.3 Owned trait objects, `Box<dyn Name>`
+
+```
+fun make(big: bool).R: Box<dyn Shape> {
+    if big {
+        return Box.of(Circle(r = 2.0))    // `Box<Circle>` coerces here
+    }
+    return Box.of(Square(s = 3.0))
+}
+
+fun main() {
+    var xs: List<Box<dyn Shape>> = List.empty()
+    xs.push(make(big = true))
+    val b = make(big = false)
+    print(b.area())                       // a method call through the vtable
+    print(describe(b.get()))              // `&dyn Shape` borrowed back out
+    print(b.is_empty())
+    val nil: Box<dyn Shape> = Box.empty()
+}
+```
+
+- `Box<dyn Name>` is an **owned trait object**: the same fat pair `&dyn Name` is (the erased data
+  pointer and a pointer to the same static vtable), except that it **owns** the allocation the data
+  pointer addresses, so it is not `Copy` and it drops what it holds. `Name` must be a declared,
+  object-safe trait (9.5.2), and `Box<dyn A + B>` is refused by name.
+- **Where it may be written:** everywhere an owned value may be, which is wider than the borrowed
+  spelling: a parameter (by `move`), a return type, a `datac`/`enum` field or payload, a `List`
+  element, a local and a `static`'s type.
+- **Coercion.** A `Box<T>` where `T` implements `Name` coerces to `Box<dyn Name>` at a call
+  argument, a typed `val`/`var` binding, a `return`, a `datac`/`enum` field initializer and a
+  container's element argument (`xs.push(Box.of(c))`). The coercion is a **move**: the box's
+  allocation becomes the trait object's, so no value is copied and no second allocation happens. A
+  `Box<dyn Name>` coerces only to the same type, never to another trait's.
+- **Methods.** A method call on the box goes through the vtable exactly as it does on a `&dyn`,
+  and a `mut Self` method needs a writable place (a `var` binding, a field, or a `mut Box<dyn
+  Name>` parameter). `get()` borrows a `&dyn Name` back out of the box, `is_empty()` asks whether
+  it holds anything, and `Box.empty()` is the null owned trait object. `take()`/`set()` are
+  refused by name: the concrete type is erased, so no sized value can be moved in or out.
+- **Dropping.** Dropping a `Box<dyn Name>` runs the concrete type's drop glue through the vtable
+  (the user `drop` first, then the fields) and then frees the allocation, so a
+  `List<Box<dyn Name>>` and a `datac` field drop theirs the same way.
+- **Threads.** An owned trait object crosses a thread boundary, because an owned value with no
+  borrows is what the crossing rule admits; a `&dyn Name` does not, exactly as any other borrow of
+  a frame local does not.
+- **Not in this slice:** upcasting between trait objects, a bare `dyn Name`, and `take`/`set` on
+  an owned trait object are each refused by name. `plan/traits.md` 12 is the design.
+
+### 9.5.4 Operator traits and `Display`
+
+Four operators and text interpolation are traits the shipped standard library declares, and a
+`datac`/`enum` implements one to get the operator. Every one of them is a **front-end desugar** into
+the method it names, so the call is an ordinary direct method call and nothing downstream learns an
+operator.
+
+```kelp
+impl "std/ops"
+impl "std/fmt"
+
+datac Vec2(val x: f64, val y: f64)
+
+impl ops.Add for Vec2 {
+    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+}
+
+impl ops.Ord for Vec2 {
+    fun Self.cmp(other: &Self).R: i32 {
+        if x < other.x { return -1 }
+        if x > other.x { return 1 }
+        return 0
+    }
+}
+
+impl fmt.Display for Vec2 {
+    fun Self.to_text().R: String {
+        return str.concat("(", str.concat(fmt.float(x, 1), ")"))
+    }
+}
+
+fun main() {
+    val a = Vec2(x = 1.0, y = 2.0)
+    val b = Vec2(x = 3.0, y = 4.0)
+    val c = a + b                 // a.add(&b)
+    print(c)                      // c.to_text()
+    print("sum = ${c}")           // c.to_text()
+    print(a < b)                  // a.cmp(&b) < 0
+    var v = a
+    v += b                        // v = v.add(&b)
+}
+```
+
+- `std/ops` declares one trait per operator: `Add`, `Sub`, `Mul`, `Div`, `Rem` (each
+  `fun Self.name(rhs: &Self).R: Self`), `Neg` (`fun Self.neg().R: Self`) and `Ord`
+  (`fun Self.cmp(other: &Self).R: i32`). `std/fmt` declares `Display`
+  (`fun Self.to_text().R: String`). The trait names are ordinary trait names: import the module and
+  write `ops.Add`, or write `impl Add` after the import.
+- `a + b` means `a.add(&b)`, `a - b` means `a.sub(&b)`, and `*`, `/`, `%` follow the same method
+  names (`mul`, `div`, `rem`); `-a` means `a.neg()`. For `Ord`, `a < b` means `a.cmp(&b) < 0`,
+  `a <= b` is `<= 0`, `a > b` is `> 0` and `a >= b` is `>= 0`. A value of a type that implements
+  `Display` may appear in `"${x}"` and as the argument of `print`/`print!`, lowered to `x.to_text()`.
+- Each operand is evaluated **exactly once, left to right**, and is only **borrowed**, never moved,
+  so `a + b` leaves `a` and `b` owned and valid. Both operands must name the same `T`: `a + b` of
+  two different user types is the ordinary mismatch.
+- **Builtin numeric types are unaffected.** `i32 + i32` and `i32 < i32` keep the builtin operators,
+  and so does every scalar, `bool`, `String` and container. The desugar runs only where the builtin
+  arithmetic or comparison would already have been a type error.
+- `==`/`!=` are separate: they come from a declared `eq` (5), never from `Ord`. A type that
+  implements only `Ord` still has no `==`, and the refusal says so; a type that declares only `eq`
+  keeps the old `<`/`>` refusal.
+- Compound assignment keeps its historical `a = a + b` desugar, so `a += b` on a user type is
+  `a = a.add(&b)` when `a` is a `var` place.
+- An operator on a **generic type parameter** works, because a generic function's body is checked
+  once per instantiation and `T` is a concrete `datac`/`enum` by then: `fun sum<T: ops.Add>(a: T,
+  b: T).R: T = a + b` compiles for every `T` that implements `Add`.
+- Not in this slice, each refused by name: a user trait that supplies an operator (only the shipped
+  `std/ops` traits are named by the lowering), a bitwise/shift/logical operator through a trait,
+  and any derive or macro helper. `plan/traits.md` 13 is the design.
 
 ## 10. Ownership, moves and borrowing
 
@@ -1434,7 +1676,7 @@ print(owned_bytes)       // a Bytes buffer
 print(c.area())          // the result of a call
 ```
 
-`print` takes exactly one positional argument. It accepts scalars, `str`, `String`, `Bytes` and a template. It does not accept a `datac`, a `List`, a `Map` or a `Box`, and it takes no named arguments. Integers print in decimal, floats print with six decimals (`print(1.5)` prints `1.500000`), and `bool` prints `true` or `false`. Formatting with a width or a chosen number of decimals goes through `fmt` (11.4).
+`print` takes exactly one positional argument. It accepts scalars, `str`, `String`, `Bytes`, a type that implements `Display` (9.5.4, lowered to `x.to_text()`), and a template. It does not accept a `datac`/`enum` without `Display`, a `List`, a `Map` or a `Box`, and it takes no named arguments. Integers print in decimal, floats print with six decimals (`print(1.5)` prints `1.500000`), and `bool` prints `true` or `false`. Formatting with a width or a chosen number of decimals goes through `fmt` (11.4).
 
 `std/io` adds `print_bare`, `eprint` and `eprint_bare` for the same job with control over the newline and the stream, plus `File` writes for anything else.
 
@@ -2057,6 +2299,7 @@ Nineteen modules ship inside the compiler binary. Import them with `impl "std/<n
 | `std/encoding` | none | base64, base32, base58, hex and percent encoding |
 | `std/regex` | none | linear-time regular expressions: `compile`, `find`, `captures`, `find_all`, `replace_all`, `split` (`plan/regex.md`) |
 | `std/list` | none | the callback-shaped operations on `List<T>` (`map`, `filter`, `each`, …) |
+| `std/ops` | none | the operator traits `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg` and `Ord` (9.5.4) |
 | `std/option` | none | `Option<T>` and its helpers |
 | `std/result` | none | `Result<T, E>` and its helpers |
 | `std/atomic` | none | `Ordering`, the ordering argument of the `Atomic<T>` builtins (12.5) |
@@ -2368,7 +2611,7 @@ fun or_else<T, E, F>(r: &Result<T, E>, f: closure(&E).R: Result<T, F>).R: Result
 fun each<T, E>(r: &Result<T, E>, f: closure(&T))
 ```
 
-`Ok`/`Err` is the shape that carries a reason, and `?` requires the operand's failure payload type and the enclosing function's to be *identical* — there is no error conversion, which is where a trait (or a `From`-shaped builtin) would go.
+`Ok`/`Err` is the shape that carries a reason. The operand's failure payload type and the enclosing function's may differ when an `impl From<Source> for Target` exists, which `?` calls; when they are the same no call is emitted. `std/convert` ships the `From` and `Into` traits (9.5).
 
 The `Copy` requirements left here are on the side a helper has to **rebuild** through a borrow: `unwrap_or`/`unwrap`/`unwrap_err` hand a payload out of a borrowed result, and `and_then`/`or_else` rebuild the other variant out of one. `map` and `map_err` take the result with **`move`** instead, so the side they rebuild may be owned: `result.map` over a `Result<T, MyErr>` moves the error payload into the fresh `Err` (17's partial moves).
 
@@ -2543,15 +2786,60 @@ print(m.into_inner())
 The surface is hosted only: a freestanding manifest refuses `Mutex<T>` and names
 the spin lock over an `Atomic<T>` a kernel would use instead.
 
+### 16.20 `std/iter`
+
+The iterator protocol (`plan/iterators.md`): what a `for` walks when it is not a
+`List`/array, plus the range and the drain helpers that ship with it. The trait
+is the whole contract; the compiler knows only its canonical key.
+
+```kelp
+pub trait Iterator {
+    type Item
+    fun mut Self.next().R: option.Option<Self::Item>
+}
+
+pub datac Range(var lo: i64, val hi: i64, val step: i64)
+fun range(a: i64, b: i64).R: Range                       // [a, b), step 1
+fun range_step(a: i64, b: i64, step: i64).R: Range       // a negative step walks down
+
+fun count<I: Iterator>(it: move I).R: usize
+fun sum_i64<I: Iterator>(it: move I).R: i64              // the item must be an i64
+fun collect_list<I: Iterator>(it: move I).R: List<I::Item>
+```
+
+A type opts in by implementing the trait, as a `datac` implementing `Shape`
+does; a type with a method that merely happens to be called `next` is not
+iterable. The item is **owned**, so `for x in it` binds a value the body may
+move, and the loop borrows the iterator exclusively, so naming a place iterator
+in its own body is the ordinary already-borrowed error.
+
+```kelp
+impl "std/iter"
+
+for i in iter.range(0, 5) {
+    print(i)
+}
+```
+
+`List.into_iter()`, `take`/`skip`/`enumerate`/`zip`/`chain`, and the
+closure-taking `map`/`filter` are **not** in this slice: each is a generic type
+implementing `Iterator` (`impl<I: Iterator> Iterator for Take<I>`), and generic
+trait impls are the follow-up slice. Section 5 of `plan/iterators.md` says
+exactly which feature blocks each one.
+
+The module is pure Kelp and builds freestanding when `std/option` does;
+`collect_list` waits for an allocator, and a freestanding manifest admits the
+rest.
+
 ## 17. Limits in v1
 
 These are deliberate, and each one has a workaround in this document:
 
 - A tuple is a record with positional fields, so it is read by destructuring and nothing else: there is no positional access on a value (`t.0`), no tuple pattern in `when` (6.3), no destructuring `for` binding (6.2), and no tuple value in a `const` initializer (3.1, 14.1). Bind the whole tuple to a `val` when the positions need to be visible separately, and print its positions rather than the tuple (`print` takes a scalar, a `str` or a `String`).
-- No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
-- `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
+- Iteration is a `for` over a `List` (6.2), a `[T; N]`, or an `Iterator` (16.18), or a `while` plus an index when the loop is not a front-to-back walk. `break`/`continue` control either loop.
+- `?` propagates an identical failure type directly and a different one through a declared `impl From<Source> for Target`; there is no `Into` in the operator, no blanket impl, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, `From`/`Into` in `std/convert`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
-- A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1), which is a fat pair and a vtable; there is no `Box<dyn Name>`, no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
+- A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1) or owned as `Box<dyn Shape>` (9.5.3), a fat pair and a vtable in both spellings; there is no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
 - A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, variant payload or position is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
@@ -2738,10 +3026,18 @@ grant        := ident "=" "[" string ("," string)* "]"
 // to a `datac`/`enum` or to a builtin. "Self" is an ordinary identifier used
 // as a type name in both, and stands for the implementing type. A method with
 // no body is a signature; one with a body is a default the impl may omit.
-trait        := [ "pub" ] "trait" ident [ ":" bound ("+" bound)* ] "{" ( traitmethod )* "}"
+trait        := [ "pub" ] "trait" ident [ typeparams ] [ ":" bound ("+" bound)* ] "{" ( traititem )* "}"
+traititem    := traitmethod | staticmethod | assocdecl
+assocdecl    := "type" ident [ ":" bound ("+" bound)* ]   // no `=`: that is a default, refused
 traitmethod  := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
                 [ ".R" ":" type ] ( body | )        // no body: a signature
-traitimpl    := "impl" traitname "for" typename "{" ( method )* "}"
+staticmethod := "fun" ident "(" [ param ("," param)* ] ")" [ ".R" ":" type ] ( body | )
+traitimpl    := "impl" traitname [ typeargs ] "for" typename "{" ( traitimplitem )* "}"
+traitimplitem := method | staticmethod | assocbind
+assocbind    := "type" ident "=" type
+// `I::Item` (10, `plan/traits.md`): an associated type projected from a type
+// parameter or from `Self` in a trait signature. A trait body and an impl body
+// are the only places `type` is a declaration.
 traitname    := ident [ "." ident ]                    // `Shape` or `shape.Shape`
 typename     := ident [ "." ident ]
 method       := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
@@ -2753,7 +3049,7 @@ field        := ("val" | "var") ident ":" type
 enum         := [ "pub" ] "enum" ident [ typeparams ] "{" ( ident [ "(" [ field ("," field)* ] ")" ] )* "}"
 typeparams   := "<" typeparam ("," typeparam)* ">"
 typeparam    := ident [ ":" bound ("+" bound)* ]
-bound        := traitname
+bound        := traitname [ typeargs ]
 typeargs     := "<" type ("," type)* ">"   // in an expression: adjacent to the name and to "("
 fun          := [ "pub" ] [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
                 "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body
@@ -2765,6 +3061,7 @@ body         := "=" expr | block | <nothing for extern>
 
 type         := [ "&" [ "mut" ] "dyn" ident ]  // a borrowed trait object: `&dyn T`, `&mut dyn T`
               | [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
+                       [ "::" ident ]              // an associated type: `I::Item`, `Self::Item`
                        | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ]
                        | "[" type ";" expr "]"        // a fixed-size array: [T; N]
                        | "(" type "," type ("," type)* ")" )  // a tuple: (A, B)
@@ -2777,7 +3074,11 @@ one-element tuple, and `()` is not a type at all: `unit` is. `Self` is likewise
 an ordinary `ident` that is only meaningful inside a trait or an impl (9.5), and
 `dyn` is not a keyword: it is recognized only after a leading `&` (or `&mut`) as
 the trait-object form, `&dyn Name`, which is legal only as a parameter type or
-a local binding type (9.5.1). A bare `dyn Name` is refused by name.)
+a local binding type (9.5.1). A bare `dyn Name` is refused by name. `::` is the
+associated-type projection: it is written only after a type name that is a type
+parameter or `Self` in a trait signature, and it names a type the impl bound
+(9.5). A bound never carries an argument list: `I: Iterator<Item = i32>` is an
+equality constraint and is refused by name.)
 
 ```
 stmt         := "val" | "var" | "while" | "for" | "return" | expr
@@ -2984,7 +3285,7 @@ Facts that make this pattern work, and the traps in it:
 - **`text.get(i)` is a `u8`, and a character literal takes that type**, so the comparisons read as characters: `c == '"'`, `c == '\\'`, `c >= '0' && c <= '9'`.
 - **`View.slice` never allocates.** Slicing is what a scanner does most; the owned `String` is made once, at the point the token becomes data (`text.slice(a, b)` into a `String` parameter or return, which copies by length).
 - **The text is borrowed, not copied.** `fun parse(text: &str)` takes the caller's view and calls `text.view()` once inside. Nothing is copied before the scan starts.
-- **No `break` and no `continue`.** Write the loop condition so it covers every exit: `while pos < text.len() { ... if pos < text.len() { ... } }` is the shape a "skip blanks, then maybe stop" loop needs.
+- **`break` and `continue` are available** (6.2): a scan that stops at a delimiter can `break` and one that skips blanks can `continue`. The condition-first shape still reads better when the loop has one exit.
 - **`List.get(i)` gives a copy for a `Copy` element and a shared borrow otherwise**, which is why `xs.get(i).as_str()` has the `.as_str()` — `xs.get(0)` is a `&String`, not a `String`.
 - **Byte-indexed, not character-indexed.** `View.get`, `str.byte` and `str.len` are bytes; `str.char_count`/`str.char_at` are the codepoint pair. A UTF-8 continuation byte is a byte like any other, so scan to a delimiter or to the end rather than counting characters.
 
@@ -3054,7 +3355,7 @@ if counts.has("a") { print(counts.get("a")) }
 - `List.empty()` and `Map.new()` need the element type from somewhere. Write it on the binding, or let the first `push`/`insert`/`set` decide it: `var xs = List.empty()` followed by `xs.push(1)` is a `List<i32>`.
 - `Map` keys are `String`, an integer, `bool`, a `char`, or a `datac`/`enum` whose every field (or every variant payload) is itself keyable. The compiler derives the hash and the equality, so a float, a `Bytes`, a container, a view, a borrow, and a `datac`/`enum` with a field outside that set are all refused.
 - Both keep insertion order; `Map` has no `Map<String, Map<i32>>` (a container value is refused), while a `List<List<i32>>` and a `List<Box<i32>>` are fine since A-10 slice 1.
-- `for x in xs { }` walks a `List` front to back. There is no `break`; to stop early, put the condition in a `while` with an index. The body cannot mutate the list it walks (`xs.push`, `xs.set`, `&mut xs`, a move of it): that is `cannot mutate 'xs' while iterating over it`, and the shape when the loop has to change the list is the index `while` (6.2).
+- `for x in xs { }` walks a `List`, a `[T; N]`, or an `Iterator` (6.2). `break` stops it early and `continue` moves to the next element. The body of a `List` loop cannot mutate the list it walks (`xs.push`, `xs.set`, `&mut xs`, a move of it): that is `cannot mutate 'xs' while iterating over it`, and the shape when the loop has to change the list is the index `while` (6.2).
 
 ### 22.7 Capabilities are declared where you import
 

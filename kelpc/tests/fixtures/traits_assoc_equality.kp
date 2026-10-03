@@ -1,0 +1,11 @@
+// An equality constraint on an associated type is not in this slice: refused by
+// name.
+
+trait Src {
+    type Out
+    fun Self.produce().R: Self::Out
+}
+
+fun pick<I: Src<Out = i32>>(x: &I).R: i32 = 0
+
+fun main() { }

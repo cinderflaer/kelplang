@@ -104,6 +104,20 @@ pub enum Ty {
     /// parameter or a local: a field, a container element, a return and a
     /// `static` each refuse it, exactly as they refuse a `Ty::Ref`.
     Dyn { mutable: bool, trait_name: String },
+    /// An owned trait object (A-12 slice 7): `Box<dyn Name>`, where
+    /// `trait_name` is the trait's canonical key. The value is the *same* fat
+    /// pair a `&dyn Name` is - the erased data pointer and a pointer to the
+    /// pair's static vtable - but the box **owns** the allocation the data
+    /// pointer addresses, so it is not `Copy` and it drops what it holds. The
+    /// vtable carries a drop entry (`tir::DynVtable`), so the concrete type's
+    /// drop glue runs through it before the allocation is freed.
+    ///
+    /// It is a type of its own rather than a `Box` whose element is a
+    /// `Ty::Dyn`: the element of a `Box` is owned by value and a trait object
+    /// is not a sized value, so `Box<dyn Name>` has no element type to name.
+    /// It is legal wherever an owned value is: a field, an enum payload, a
+    /// container element, a parameter, a return and a local.
+    BoxDyn { trait_name: String },
     /// A function value (A-4): a plain C function pointer, with no captured
     /// environment — so it is `Copy`, it owns nothing, and it needs no drop.
     /// `params` are the *declared* parameter types, already through the
@@ -174,6 +188,19 @@ pub enum Ty {
     /// copy, while an array of `String` owns those strings and moves, which
     /// is the rule `plan/syntax.md` 3 states for the type.
     Array(Box<Ty>, u64),
+    /// The value of one **const type parameter** at one instantiation (A-20):
+    /// `Buf<16>`'s `16`, or `Flags<true>`'s `true`. `value` is the folded
+    /// value and `ty` is the parameter's declared type (`usize`, `u8`..`u64`,
+    /// `i32`, `i64`, `bool`).
+    ///
+    /// It is a `Ty` only so that one monomorphization path can carry both
+    /// kinds of generic argument: it appears in an instantiation's argument
+    /// list, in the key `Buf<16>`, and in the parameter bindings while the
+    /// template's fields and body are resolved. It never survives an
+    /// instantiation as a real type: a field, a parameter, a return and a
+    /// container element all refuse it, and the body it appears in resolves
+    /// `N` to a literal.
+    ConstInt { value: i128, ty: Box<Ty> },
     /// The builtin atomic cell (MK9-S3-M1 stage A1): `Atomic<T>`, one location
     /// every access to which is a single atomic operation.
     ///
@@ -329,6 +356,10 @@ impl Ty {
             // A borrowed trait object is two pointers, exactly like a borrow:
             // copying it moves nothing.
             Ty::Dyn { .. } => true,
+            // An owned trait object is two pointers too, but it owns the
+            // allocation the data pointer addresses, so copying it would make
+            // two owners of one value: it moves like the `Box` it is.
+            Ty::BoxDyn { .. } => false,
             _ => !matches!(
                 self,
                 Ty::Struct(_)
@@ -360,6 +391,9 @@ impl Ty {
                     | Ty::String
                     | Ty::List(_)
                     | Ty::Box(_)
+                    // An owned trait object frees the value behind its data
+                    // pointer through the vtable's drop entry (A-12 slice 7).
+                    | Ty::BoxDyn { .. }
                     | Ty::Map(..)
                     // A `Thread<T>` owns the worker record `thread.spawn`
                     // allocated, so it is dropped (detached) like any other
@@ -445,6 +479,12 @@ impl Ty {
             Ty::Box(elem) => box_c_type(elem),
             Ty::Map(key, value) => map_c_type(key, value),
             Ty::Array(elem, len) => array_c_type(elem, *len),
+            // A const argument never reaches code generation: it appears only
+            // in an instantiation's argument list and in a template's
+            // bindings, both gone by the time a C type is needed.
+            Ty::ConstInt { .. } => {
+                unreachable!("a const argument has no C type; it is substituted before codegen")
+            }
             Ty::Atomic(elem) => atomic_c_type(elem),
             Ty::Thread(_) => thread_c_type(),
             Ty::Mutex(_) => mutex_c_type(),
@@ -480,7 +520,11 @@ impl Ty {
             // and a pointer to the trait's vtable, one C struct per trait (the
             // shared and exclusive spellings are the same C value; the borrow
             // checker is what distinguishes them).
-            Ty::Dyn { trait_name, .. } => dyn_c_type(trait_name),
+            // An owned trait object is the same fat pair the borrowed one is:
+            // the C struct is `{ void* data; const VTable* vtable; }` either
+            // way, and the borrow checker, not the C type, is what tells the
+            // owning value from the borrowed one.
+            Ty::Dyn { trait_name, .. } | Ty::BoxDyn { trait_name } => dyn_c_type(trait_name),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
                     format!("{}*", inner.c_type())
@@ -527,9 +571,17 @@ impl Ty {
             Ty::Handle(name) => name.clone(),
             Ty::Ptr(elem) => format!("Ptr<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
+            Ty::ConstInt { value, ty } => {
+                if matches!(**ty, Ty::Bool) {
+                    if *value == 0 { "false".to_string() } else { "true".to_string() }
+                } else {
+                    value.to_string()
+                }
+            }
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Dyn { mutable: true, trait_name } => format!("&mut dyn {trait_name}"),
             Ty::Dyn { mutable: false, trait_name } => format!("&dyn {trait_name}"),
+            Ty::BoxDyn { trait_name } => format!("Box<dyn {trait_name}>"),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
             Ty::Fn { params, ret } => {
@@ -908,6 +960,21 @@ pub fn eq_fn_name(ty: &Ty) -> String {
 pub const KEY_PAIR_HASH_METHOD: &str = "hash";
 pub const KEY_PAIR_EQ_METHOD: &str = "eq";
 
+/// The canonical key of one trait *instance* (A-12 slice 6): the trait's
+/// canonical name, plus its arguments when it has any (`pkg.From<pkg.IoErr>`).
+/// A trait with no type parameters keys by its name alone, exactly as it did
+/// before generic traits existed, so nothing about an ordinary trait changes.
+/// The key is also what a static impl method's function name is suffixed with,
+/// which is how `From<IoErr>`'s `from` and `From<String>`'s `from` for one type
+/// stay distinct.
+pub fn trait_instance_key(name: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}<{}>", args.join(","))
+    }
+}
+
 /// One half of a declared key pair as `sigs`/`tir` spell it: the `Type#name`
 /// key `infer.rs`'s `sig_key` gives every receiver method. The `Map`'s call
 /// target is this key mangled by `c_ident`, so it names the method's own
@@ -927,6 +994,22 @@ pub const DROP_METHOD: &str = "drop";
 pub fn drop_method_key(type_name: &str) -> String {
     format!("{}#{}", type_name, DROP_METHOD)
 }
+
+/// The canonical names of the shipped operator traits (`std/ops`, language-
+/// completeness 5). `infer.rs` lowers `+`/`-`/`*`/`/`/`%`, unary `-` and the
+/// order operators through these, so the name is a fixed spelling rather than
+/// "whatever trait declares a method called `add`".
+pub const ADD_TRAIT: &str = "std.ops.Add";
+pub const SUB_TRAIT: &str = "std.ops.Sub";
+pub const MUL_TRAIT: &str = "std.ops.Mul";
+pub const DIV_TRAIT: &str = "std.ops.Div";
+pub const REM_TRAIT: &str = "std.ops.Rem";
+pub const NEG_TRAIT: &str = "std.ops.Neg";
+pub const ORD_TRAIT: &str = "std.ops.Ord";
+
+/// The canonical name of `std/fmt`'s `Display`, the trait a value implements
+/// to appear in `"${x}"` and as the argument of `print`/`print!`.
+pub const DISPLAY_TRAIT: &str = "std.fmt.Display";
 
 /// The emitted symbol of a type's declared destructor, the same spelling on
 /// both backends (`codegen_c.rs::write_signature` and
@@ -975,6 +1058,10 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         Ty::Struct(name) => format!("kelp_drop_{}", c_ident(name)),
         Ty::List(elem) => format!("kelp_list_drop__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("kelp_box_drop__{}", ty_mangle(elem)),
+        // One drop per trait: the value behind the data pointer is dropped
+        // through the vtable's own drop entry, so the concrete type is not part
+        // of the function's name (A-12 slice 7).
+        Ty::BoxDyn { trait_name } => box_dyn_drop_fn(trait_name),
         Ty::Array(elem, len) => format!("kelp_array_drop__{}__{}", ty_mangle(elem), len),
         Ty::Map(key, value) => {
             format!("kelp_map_drop__{}__{}", ty_mangle(key), ty_mangle(value))
@@ -1004,6 +1091,9 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 pub fn is_list_element(ty: &Ty) -> bool {
     match ty {
         Ty::List(_) | Ty::Box(_) => !contains_open_container(ty),
+        // An owned trait object is a complete two-word struct with its own
+        // drop, so a list can hold one and free it element by element.
+        Ty::BoxDyn { .. } => true,
         Ty::Bytes | Ty::String | Ty::Struct(_) => true,
         // A handle is pointer-sized and `Copy`, so it lives in a list's
         // buffer as a pointer and needs no element drop, exactly as a scalar
@@ -1138,7 +1228,7 @@ pub fn is_box_element(ty: &Ty) -> bool {
         Ty::List(_) | Ty::Box(_) => !contains_open_container(ty),
         // A `View` is a borrow of text that outlives the box, with nowhere to
         // put the lifetime — the same reason `str` is refused (A-8).
-        Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit => false,
+        Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::Dyn { .. } => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
 }
@@ -1159,6 +1249,9 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::Box(elem) => format!("Box__{}", ty_mangle(elem)),
         Ty::Map(key, value) => format!("Map__{}__{}", ty_mangle(key), ty_mangle(value)),
         Ty::Array(elem, len) => format!("Array__{}__{}", ty_mangle(elem), len),
+        Ty::ConstInt { .. } => {
+            unreachable!("a const argument has no mangled type; it is substituted before codegen")
+        }
         Ty::Atomic(elem) => format!("Atomic__{}", ty_mangle(elem)),
         Ty::Thread(elem) => format!("Thread__{}", ty_mangle(elem)),
         Ty::Mutex(elem) => format!("Mutex__{}", ty_mangle(elem)),
@@ -1169,6 +1262,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         // A borrowed trait object is a struct per trait, so its mangled name is
         // the trait's, under its own prefix.
         Ty::Dyn { trait_name, .. } => format!("Dyn__{}", c_ident(trait_name)),
+        Ty::BoxDyn { trait_name } => format!("BoxDyn__{}", c_ident(trait_name)),
         // A `Ptr<T>` type argument names the same C type `c_type` does, under
         // the mangling every other generated symbol uses.
         Ty::Ptr(elem) => format!("Ptr__{}", ty_mangle(elem)),
@@ -1710,8 +1804,8 @@ pub fn type_layout(
         Ty::Str | Ty::Handle(_) | Ty::Ptr(_) | Ty::Fn { .. } | Ty::Ref { .. } | Ty::Thread(_) => {
             Layout { size: 8, align: 8 }
         }
-        // A borrowed trait object is the fat pair: two pointers.
-        Ty::Dyn { .. } => Layout { size: 16, align: 8 },
+        // A borrowed or owned trait object is the fat pair: two pointers.
+        Ty::Dyn { .. } | Ty::BoxDyn { .. } => Layout { size: 16, align: 8 },
         Ty::Mutex(_) => Layout { size: 8, align: 8 },
         Ty::View => Layout { size: 16, align: 8 },
         Ty::Bytes | Ty::String | Ty::List(_) | Ty::Closure { .. } | Ty::ScopedFn { .. } => {
@@ -1729,6 +1823,9 @@ pub fn type_layout(
                 align: l.align,
             }
         }
+        // A const argument is substituted before any layout query, so it is
+        // not a type with a layout.
+        Ty::ConstInt { .. } => return None,
         Ty::Struct(name) => {
             if let Some(e) = enums.get(name) {
                 let (tag_bytes, _) = e.tag_storage();
@@ -1919,6 +2016,24 @@ pub fn dyn_thunk_symbol(trait_name: &str, type_name: &str, method: &str) -> Stri
         c_ident(type_name),
         c_ident(method)
     )
+}
+
+/// The emitted symbol of the thunk the vtable's drop entry points at (A-12
+/// slice 7): the concrete type's own drop glue over the erased pointer.
+pub fn dyn_drop_thunk_symbol(trait_name: &str, type_name: &str) -> String {
+    format!(
+        "kelp_dyn_drop__{}__{}",
+        c_ident(trait_name),
+        c_ident(type_name)
+    )
+}
+
+/// The emitted symbol that frees an *owned* trait object (A-12 slice 7), one
+/// per trait: `free` on the box's allocation, after the vtable's drop entry has
+/// run the concrete type's own drop glue. The concrete type is not part of the
+/// name, because the value behind the pointer is reached through the vtable.
+pub fn box_dyn_drop_fn(trait_name: &str) -> String {
+    format!("kelp_box_dyn_drop__{}", c_ident(trait_name))
 }
 
 /// A function's checked signature. Parameter names are kept (not just

@@ -1,0 +1,8 @@
+// A generic associated type is not in this slice: refused by name.
+
+trait Shape {
+    type Item<T>
+    fun Self.area().R: i32
+}
+
+fun main() { }

@@ -1,0 +1,44 @@
+/* std/ops — the operator traits (language-completeness 5, `plan/traits.md` 13).
+
+   Declaring one of these for a `datac`/`enum` gives the type the operator, and
+   the front end lowers the operator into the trait method before borrow
+   checking and code generation: with `impl Add for T`, `a + b` is `a.add(&b)`;
+   with `impl Ord for T`, `a < b` is `a.cmp(&b) < 0`; and `-a` with `impl Neg`
+   is `a.neg()`. Both operands are evaluated once, left to right, and are only
+   borrowed, so `a + b` leaves `a` and `b` owned. Builtin numeric types keep
+   their builtin operators: the desugar runs only where the builtin check would
+   already have failed.
+
+   There are deliberately **no blanket impls**, exactly as `std/convert` has
+   none, and no operator is derived: a type that wants one writes the impl. */
+
+pub trait Add {
+    fun Self.add(rhs: &Self).R: Self
+}
+
+pub trait Sub {
+    fun Self.sub(rhs: &Self).R: Self
+}
+
+pub trait Mul {
+    fun Self.mul(rhs: &Self).R: Self
+}
+
+pub trait Div {
+    fun Self.div(rhs: &Self).R: Self
+}
+
+pub trait Rem {
+    fun Self.rem(rhs: &Self).R: Self
+}
+
+pub trait Neg {
+    fun Self.neg().R: Self
+}
+
+// The order trait: `cmp` returns the sign of the order (negative, zero,
+// positive), like `memcmp`. It supplies `<`, `<=`, `>` and `>=` and not
+// equality: `==`/`!=` come from a declared `eq` (`plan/syntax.md` 5).
+pub trait Ord {
+    fun Self.cmp(other: &Self).R: i32
+}

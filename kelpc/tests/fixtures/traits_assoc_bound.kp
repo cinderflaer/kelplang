@@ -1,0 +1,35 @@
+// A bounded associated type (A-12 slice 5): `type Entry: Named` is checked at
+// the impl, and generic code reaches the bound's method through `R::Entry`.
+
+trait Named {
+    fun Self.name().R: str
+}
+
+trait Repo {
+    type Entry: Named
+    fun Self.entry().R: Self::Entry
+}
+
+datac Item(val n: i32)
+
+impl Named for Item {
+    fun Self.name().R: str = "item"
+}
+
+datac Store(val v: i32)
+
+impl Repo for Store {
+    type Entry = Item
+    fun Self.entry().R: Item = Item(n = v)
+}
+
+fun describe<R: Repo>(r: &R).R: str {
+    val e = r.entry()
+    return e.name()
+}
+
+fun main() {
+    val s = Store(v = 5)
+    print(describe(s))
+    print(s.entry().n)
+}

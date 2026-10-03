@@ -772,6 +772,18 @@ pub fn load(
             } else {
                 canon(&i.type_name, i.type_span)?
             };
+            // `impl From<IoErr> for AppErr` (A-12 slice 6): each trait argument
+            // is a named type or a builtin, canonicalized the same way. The
+            // canonical instance key is what the methods below carry, so a
+            // static impl method of `From<IoErr>` and one of `From<String>` are
+            // two functions rather than a name collision.
+            let mut arg_names = Vec::new();
+            for a in &i.trait_args {
+                arg_names.push(canon_trait_arg(a, &canon, &m.id)?);
+            }
+            i.trait_instance =
+                crate::types::trait_instance_key(&i.trait_name, &arg_names);
+            i.trait_arg_names = arg_names;
             i.module = m.id.clone();
             program.trait_impls.push(i);
         }
@@ -787,13 +799,43 @@ pub fn load(
                     r.type_name = format!("{}{}", m.prefix, r.type_name)
                 }
                 Some(_) => {}
+                // A static member of a trait `impl` (A-12 slice 6) is keyed
+                // from its impl site, so its bare name is kept and the
+                // instance is what `infer.rs` appends.
+                None if f.trait_impl.is_some() => {}
                 None => f.name = format!("{}{}", m.prefix, f.name),
             }
             if let Some(mut site) = f.trait_impl.clone() {
-                let self_type = canon(&site.self_type, f.span)?;
+                let written_trait = site.trait_name.clone();
+                let written_type = site.self_type.clone();
+                let self_type = canon(&written_type, f.span)?;
+                // A-12 slice 6: the canonical trait-instance key, computed from
+                // the arguments this method's own `impl` line wrote, so two
+                // instantiations of one trait for one type are two functions
+                // rather than a name collision.
+                let trait_key = canon(&written_trait, f.span)?;
+                let mut arg_names = Vec::new();
+                for a in &site.trait_args {
+                    arg_names.push(canon_trait_arg(a, &canon, &m.id)?);
+                }
+                // A-12 slice 5: the associated types this block binds, as
+                // written, so a `Self::Item` in the method's signature becomes
+                // the concrete type before the signature loop resolves it.
+                // Matched on the canonical instance (an associated type only
+                // exists on an ordinary trait, whose instance is its name).
+                let impl_decl = program.trait_impls.iter().find(|i| {
+                    i.trait_name == trait_key
+                        && i.type_name == self_type
+                        && i.trait_arg_names == arg_names
+                });
+                let assoc = impl_decl
+                    .map(|i| assoc_bindings(&i.assoc_types))
+                    .unwrap_or_default();
                 site.self_type = self_type.clone();
+                site.trait_name = trait_key.clone();
+                site.trait_instance = crate::types::trait_instance_key(&trait_key, &arg_names);
                 f.trait_impl = Some(site);
-                substitute_self(&mut f, &self_type);
+                substitute_self(&mut f, &self_type, &assoc);
             }
             f.module = m.id.clone();
             program.functions.push(f);
@@ -808,7 +850,7 @@ pub fn load(
     // `for` type, so it can name it); the body resolves in the trait's module,
     // where it was written, through `body_module`. A builtin's impl is in the
     // trait's module, so the two coincide there.
-    let default_sources: Vec<(String, String, String, String, Vec<String>, Vec<ast::FunctionDecl>)> = program
+    let default_sources: Vec<(String, String, String, String, String, Vec<String>, Vec<ast::FunctionDecl>, std::collections::HashMap<String, ast::TypeExpr>, Vec<(String, ast::TypeExpr)>)> = program
         .trait_impls
         .iter()
         .map(|i| {
@@ -823,17 +865,26 @@ pub fn load(
                         .collect()
                 })
                 .unwrap_or_default();
+            // A-12 slice 6: the trait's own parameters, paired with the impl's
+            // written arguments, so a synthesized default's signature has its
+            // `T` replaced by the concrete type the impl names.
+            let params: Vec<(String, ast::TypeExpr)> = trait_decl
+                .map(|t| t.type_params.iter().cloned().zip(i.trait_args.iter().cloned()).collect())
+                .unwrap_or_default();
             (
                 i.trait_name.clone(),
+                i.trait_instance.clone(),
                 i.type_name.clone(),
                 trait_module,
                 i.module.clone(),
                 i.methods.clone(),
                 defaults,
+                assoc_bindings(&i.assoc_types),
+                params,
             )
         })
         .collect();
-    for (trait_name, type_name, trait_module, impl_module, written, defaults) in default_sources {
+    for (trait_name, trait_instance, type_name, trait_module, impl_module, written, defaults, assoc, params) in default_sources {
         for m in defaults {
             if written.contains(&m.name) {
                 continue;
@@ -841,9 +892,12 @@ pub fn load(
             let mut f = m;
             f.trait_impl = Some(ast::TraitImplSite {
                 trait_name: trait_name.clone(),
+                trait_args: Vec::new(),
+                trait_instance: trait_instance.clone(),
                 self_type: type_name.clone(),
             });
-            substitute_self(&mut f, &type_name);
+            substitute_type_params(&mut f, &params);
+            substitute_self(&mut f, &type_name, &assoc);
             f.module = impl_module.clone();
             f.body_module = Some(trait_module.clone());
             program.functions.push(f);
@@ -2583,50 +2637,162 @@ pub fn find_manifest_root(file: &Path) -> Option<PathBuf> {
 
 /// Canonical module id for a file: its path relative to `src/`, minus the
 /// `.kp` suffix, with `/` separators.
+/// A map from an associated type's name to the type an impl bound it to, as
+/// written (A-12 slice 5), used to substitute `Self::Item` in an impl method.
+fn assoc_bindings(bindings: &[ast::AssocTypeBinding]) -> std::collections::HashMap<String, ast::TypeExpr> {
+    bindings
+        .iter()
+        .map(|b| (b.name.clone(), b.ty.clone()))
+        .collect()
+}
+
+/// One `impl` line's trait argument (A-12 slice 6), canonicalized the way the
+/// `for` type is: a builtin keeps its name, and a declared `datac`/`enum` is
+/// qualified with its module prefix. A trait argument has to be a named type or
+/// a builtin, so a container, a tuple, an array, a borrow, a function type and
+/// a projection are refused here, where the argument was written.
+fn canon_trait_arg(
+    a: &ast::TypeExpr,
+    canon: &dyn Fn(&str, Span) -> Result<String, Diagnostic>,
+    module: &str,
+) -> Result<String, Diagnostic> {
+    let simple = a.tuple.is_none()
+        && a.array_elem.is_none()
+        && a.fn_params.is_none()
+        && a.dyn_trait.is_none()
+        && a.assoc.is_none()
+        && a.args.is_empty()
+        && !a.amp
+        && !a.name.is_empty();
+    if !simple {
+        return Err(Diagnostic::new(
+            format!(
+                "a trait argument has to be a named type or a builtin, not '{}': a container, tuple, array, borrow, function type or projection as a trait's argument is not in this slice",
+                a.display()
+            ),
+            a.span,
+            module.to_string(),
+        ));
+    }
+    if crate::types::Ty::from_name(&a.name).is_some() {
+        return Ok(a.name.clone());
+    }
+    canon(&a.name, a.span)
+}
+
+/// Replaces the trait's own type parameters with the impl's arguments in a
+/// synthesized default method's signature (A-12 slice 6): the trait wrote
+/// `value: T`, and the copy has to write the concrete type the impl named.
+fn substitute_type_params(f: &mut ast::FunctionDecl, params: &[(String, ast::TypeExpr)]) {
+    for (name, repl) in params {
+        for p in &mut f.params {
+            substitute_named_ty(&mut p.ty, name, repl);
+        }
+        if let Some(t) = &mut f.return_type {
+            substitute_named_ty(t, name, repl);
+        }
+    }
+}
+
+/// One named type anywhere in a type expression replaced by another, for the
+/// trait-parameter substitution above. A `Name::Item` projection and a name
+/// that already carries arguments are left alone.
+fn substitute_named_ty(ty: &mut ast::TypeExpr, name: &str, repl: &ast::TypeExpr) {
+    if ty.name == name
+        && ty.assoc.is_none()
+        && ty.args.is_empty()
+        && ty.tuple.is_none()
+        && ty.array_elem.is_none()
+        && ty.fn_params.is_none()
+    {
+        *ty = repl.clone();
+        return;
+    }
+    if let Some(elems) = &mut ty.tuple {
+        for e in elems {
+            substitute_named_ty(e, name, repl);
+        }
+    }
+    for a in &mut ty.args {
+        substitute_named_ty(a, name, repl);
+    }
+    if let Some(elem) = &mut ty.array_elem {
+        substitute_named_ty(elem, name, repl);
+    }
+    if let Some(params) = &mut ty.fn_params {
+        for p in params {
+            substitute_named_ty(&mut p.ty, name, repl);
+        }
+    }
+    if let Some(ret) = &mut ty.fn_ret {
+        substitute_named_ty(ret, name, repl);
+    }
+}
+
 /// Replaces every `Self` in one `impl` method's signature with the written
 /// `for` type (A-12 slice 2). A method inside an `impl` block names its
 /// receiver `Self` so the block reads the same wherever it sits, and this is
 /// what turns it into the ordinary receiver method every later pass expects.
 /// Only a *type* named `Self` is replaced: an expression naming `Self` is left
-/// alone, and `infer.rs` refuses it there as an unknown name.
-fn substitute_self(f: &mut ast::FunctionDecl, self_type: &str) {
+/// alone, and `infer.rs` refuses it there as an unknown name. A `Self::Item`
+/// (A-12 slice 5) becomes the type the impl bound, so the signature reaches
+/// the type checker concrete.
+fn substitute_self(
+    f: &mut ast::FunctionDecl,
+    self_type: &str,
+    assoc: &std::collections::HashMap<String, ast::TypeExpr>,
+) {
     if let Some(r) = &mut f.receiver {
         if r.type_name == "Self" {
             r.type_name = self_type.to_string();
         }
     }
     for p in &mut f.params {
-        substitute_self_ty(&mut p.ty, self_type);
+        substitute_self_ty(&mut p.ty, self_type, assoc);
     }
     if let Some(t) = &mut f.return_type {
-        substitute_self_ty(t, self_type);
+        substitute_self_ty(t, self_type, assoc);
     }
 }
 
 /// One type expression's `Self`, including inside a tuple, an array, a
 /// container's arguments and a function type's parameters and return.
-fn substitute_self_ty(ty: &mut ast::TypeExpr, self_type: &str) {
-    if ty.name == "Self" && ty.args.is_empty() {
-        ty.name = self_type.to_string();
+fn substitute_self_ty(
+    ty: &mut ast::TypeExpr,
+    self_type: &str,
+    assoc: &std::collections::HashMap<String, ast::TypeExpr>,
+) {
+    if ty.name == "Self" {
+        if let Some(item) = ty.assoc.clone() {
+            if let Some(bound) = assoc.get(&item) {
+                let mut replacement = bound.clone();
+                substitute_self_ty(&mut replacement, self_type, assoc);
+                *ty = replacement;
+            }
+            return;
+        }
+        if ty.args.is_empty() {
+            ty.name = self_type.to_string();
+        }
     }
     if let Some(elems) = &mut ty.tuple {
         for e in elems {
-            substitute_self_ty(e, self_type);
+            substitute_self_ty(e, self_type, assoc);
         }
     }
     for a in &mut ty.args {
-        substitute_self_ty(a, self_type);
+        substitute_self_ty(a, self_type, assoc);
     }
     if let Some(elem) = &mut ty.array_elem {
-        substitute_self_ty(elem, self_type);
+        substitute_self_ty(elem, self_type, assoc);
     }
     if let Some(params) = &mut ty.fn_params {
         for p in params {
-            substitute_self_ty(&mut p.ty, self_type);
+            substitute_self_ty(&mut p.ty, self_type, assoc);
         }
     }
     if let Some(ret) = &mut ty.fn_ret {
-        substitute_self_ty(ret, self_type);
+        substitute_self_ty(ret, self_type, assoc);
     }
 }
 

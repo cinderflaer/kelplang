@@ -1,0 +1,15 @@
+// A trait declares an associated type and the impl does not bind it: refused,
+// naming the trait and the type.
+
+trait Src {
+    type Out
+    fun Self.produce().R: i32
+}
+
+datac A(val n: i32)
+
+impl Src for A {
+    fun Self.produce().R: i32 = n
+}
+
+fun main() { }

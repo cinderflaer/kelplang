@@ -1,0 +1,31 @@
+// A-20: `impl Trait` in argument position is sugar for fresh bounded type
+// parameters. Each occurrence is its own parameter, the bound is checked at the
+// call, and the trait's methods dispatch statically inside the body.
+trait Shape {
+    fun Self.area().R: i32
+    fun Self.name().R: str
+}
+
+datac Square(val side: i32)
+
+datac Rect(val width: i32, val height: i32)
+
+impl Shape for Square {
+    fun Self.area().R: i32 = side * side
+    fun Self.name().R: str = "square"
+}
+
+impl Shape for Rect {
+    fun Self.area().R: i32 = width * height
+    fun Self.name().R: str = "rect"
+}
+
+fun pair_area(a: impl Shape, b: &impl Shape).R: i32 = a.area() + b.area()
+
+fun describe(s: &impl Shape).R: str = s.name()
+
+fun main() {
+    print(pair_area(a = Square(side = 3), b = Rect(width = 2, height = 5)))
+    print(describe(s = Square(side = 4)))
+    print(describe(s = Rect(width = 1, height = 6)))
+}

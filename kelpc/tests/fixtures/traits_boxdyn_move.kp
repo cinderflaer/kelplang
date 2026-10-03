@@ -1,0 +1,28 @@
+// A-12 slice 7: a box moves between two lists with `pop`/`push`, `Box.empty()`
+// is the null owned trait object, and a `move Box<dyn Trait>` parameter takes
+// ownership of one by value.
+trait Shape {
+    fun Self.area().R: f64
+}
+
+datac Circle(val r: f64)
+impl Shape for Circle {
+    fun Self.area().R: f64 = r * r * 3.0
+}
+
+fun area_of(s: move Box<dyn Shape>).R: f64 = s.area()
+
+fun main() {
+    var a: List<Box<dyn Shape>> = List.empty()
+    var b: List<Box<dyn Shape>> = List.empty()
+    a.push(Box.of(Circle(r = 2.0)))
+    b.push(a.pop())
+    var empty: Box<dyn Shape> = Box.empty()
+    print(empty.is_empty())
+    print(b.get(i = 0).area())
+    print(a.len())
+    empty = b.pop()
+    print(empty.is_empty())
+    print(area_of(empty))
+    print(b.len())
+}

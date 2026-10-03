@@ -1,0 +1,11 @@
+name = "freestandingconstgen"
+
+# A-20: a kernel-style fixed buffer whose length is a const type parameter.
+# The image uses two instantiations of one ring buffer, each monomorphized to
+# its own struct and its own function copies, and links with no libc symbol.
+
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
