@@ -10,6 +10,7 @@
 #   KELPC          the compiler to use (default: kelpc on PATH)
 #   SAN_COUNT      how many fixtures each sanitizer must cover (default 40)
 #   SAN_CANDIDATES how many fixtures to try at most (default 400)
+#   SAN_FILTER     extended regex the fixture file names must match (default all)
 #
 # Fixture selection is automatic and deterministic (sorted names): a fixture is
 # a candidate when its name does not look like network, stdin, sleep or process
@@ -42,7 +43,7 @@ export ASAN_OPTIONS="detect_leaks=1:abort_on_error=0:hard_rss_limit_mb=1024:exit
 export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1:exitcode=66"
 export TSAN_OPTIONS="exitcode=66:halt_on_error=0"
 
-candidates=$(ls "$fixtures" | grep '\.kp$' | grep -Ev 'net|http|tcp|udp|tls|dns|socket|sleep|stdin|input|server|spawn|process|signal|fail|panic|abort|bad|error|refus|reject|bounds|overflow|hazard|asm|irq|mmio|kernel|qemu|freestanding' | head -n "$SAN_CANDIDATES")
+candidates=$(ls "$fixtures" | grep '\.kp$' | grep -Ev 'net|http|tcp|udp|tls|dns|socket|sleep|stdin|input|server|spawn|process|signal|fail|panic|abort|bad|error|refus|reject|bounds|overflow|hazard|asm|irq|mmio|kernel|qemu|freestanding' | grep -E "${SAN_FILTER:-.}" | head -n "$SAN_CANDIDATES")
 
 status=0
 for san in $sans; do

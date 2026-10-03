@@ -48,8 +48,9 @@ typedef struct {
    identity, the slot the worker writes its result into, the slot the argument
    was moved into, and the message the worker died with when it panicked.
    `thread.join` waits on the worker and reads those slots; the drop of a handle
-   nobody joined detaches the worker and leaks the handle, because the handle
-   cannot be freed while the worker may still write through it.
+   nobody joined detaches the worker and hands the handle to it: whichever of the
+   owner's drop and the worker's exit comes second frees the handle (`state`),
+   because the handle cannot be freed while the worker may still write through it.
 
    The panic policy is MK9 section 2: a panic inside a worker records its
    message here and ends that worker, while a panic anywhere else keeps today's
@@ -61,6 +62,11 @@ typedef struct {
     void* result;
     void* arg;
     const char* message;
+    /* Who frees the handle of a worker nobody joins: 0 while both the owner and
+       the worker are live, 1 once the owner dropped it unjoined, 2 once the
+       worker has ended. Each side swaps in its own value, and the side that
+       sees the other's value already there does the freeing. */
+    int state;
 } kelp_Thread;
 
 static _Thread_local kelp_Thread* kelp_thread_self = NULL;
@@ -947,12 +953,20 @@ typedef struct {
     void (*env_drop)(void*);
 } kelp_ThreadStart;
 
+static void kelp_thread_dispose(kelp_Thread* h);
+
 static void kelp_thread_release(void* raw) {
     kelp_ThreadStart* s = (kelp_ThreadStart*)raw;
+    kelp_Thread* h = s->handle;
     if (s->env != NULL && s->env_drop != NULL) {
         s->env_drop(s->env);
     }
     free(s);
+    /* The worker's last touch of the handle. If the owner already dropped it
+       unjoined, nobody else will free it. */
+    if (__atomic_exchange_n(&h->state, 2, __ATOMIC_ACQ_REL) == 1) {
+        kelp_thread_dispose(h);
+    }
 }
 
 static void* kelp_thread_tramp(void* raw) {
@@ -975,6 +989,7 @@ static kelp_Thread* kelp_thread_new(size_t arg_size, size_t result_size) {
     }
     h->panicked = 0;
     h->message = NULL;
+    h->state = 0;
     h->result = malloc(result_size == 0 ? 1 : result_size);
     h->arg = malloc(arg_size == 0 ? 1 : arg_size);
     if (h->result == NULL || h->arg == NULL) {
@@ -1026,10 +1041,12 @@ static void kelp_thread_dispose(kelp_Thread* h) {
     free(h);
 }
 
-/* The drop of a handle nobody joined: detach the worker and leak the handle and
-   its two slots. Freeing them would be a use-after-free the moment the worker
-   runs, and refusing to drop a handle is a rule the language does not have
-   (MK9 section 5, stage C1). The argument is the slot the local holds, so the
+/* The drop of a handle nobody joined: detach the worker and hand it the handle
+   and its two slots (see `state`): freeing them here would be a use-after-free
+   if the worker is still running, so the worker frees them on its way out, or
+   this does when the worker already ended. (A result the worker produced is
+   not dropped; only the three allocations are freed.) Refusing to drop a
+   handle is a rule the language does not have (MK9 section 5, stage C1). The argument is the slot the local holds, so the
    generated drop passes `&h` and the null test covers the zero value a moved
    binding leaves behind. The worker's own record is not part of this: the
    trampoline frees that on the way out, whichever way it leaves. */
@@ -1040,6 +1057,9 @@ static void kelp_thread_drop(kelp_Thread** slot) {
     }
     pthread_detach(h->tid);
     *slot = NULL;
+    if (__atomic_exchange_n(&h->state, 1, __ATOMIC_ACQ_REL) == 2) {
+        kelp_thread_dispose(h);
+    }
 }
 
 // ---- kelp_Mutex: the builtin mutex (B-5, std/sync) ---------------------------

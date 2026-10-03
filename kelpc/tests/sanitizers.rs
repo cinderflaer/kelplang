@@ -16,6 +16,7 @@ const FIXTURES: &[&str] = &[
     "bytes_build",
     "closure_move",
     "chan_bounded_mpsc",
+    "pool_drop_joins",
 ];
 
 fn tests_dir() -> PathBuf {
