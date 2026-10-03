@@ -80,8 +80,8 @@ const BUILD_DIR: &str = "build";
 
 fn usage() {
     eprintln!(
-        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
-         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
+        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings] [--sanitize=address|undefined|thread]\n       \
+         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings] [--sanitize=address|undefined|thread]\n       \
          {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated] [--text]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
@@ -112,6 +112,15 @@ fn usage() {
          LLVM context. KELPC_JOBS names the worker count (a positive integer;\n\
          the default is 2, not the CPU count); more workers than units spawns\n\
          one per unit.\n\n\
+         --sanitize=address|undefined|thread (or '[build] sanitize = \"address\"'\n\
+         in coral.toml; the flag wins) builds the program with that sanitizer\n\
+         and links its runtime. Only the C backend can do it, so the build is\n\
+         refused on the default LLVM backend with a message naming the way:\n\
+         run it as KELPC_ORACLE=c kelpc run --sanitize=address file.kp. address\n\
+         catches out-of-bounds and use-after-free through unsafe, Ptr<T>, FFI\n\
+         and asm, and leaks; undefined stops the program at the first undefined\n\
+         C behavior; thread reports data races between spawned threads\n\
+         (plan/sanitizers.md).\n\n\
          --timings prints per-phase wall times (parse, resolve, infer,\n\
          borrowck, codegen, unit compile, link) and, for an --incremental\n\
          build, one line per unit with hit or miss, to stderr.\n\n\
@@ -405,6 +414,7 @@ fn build(
     deny_outdated: bool,
     opt: OptLevel,
     incremental_flag: bool,
+    sanitize_flag: Option<driver::Sanitizer>,
     freestanding_out: &mut bool,
     print_timings: bool,
 ) -> bool {
@@ -482,6 +492,21 @@ fn build(
     }
     *freestanding_out = loaded.project.target().is_freestanding();
 
+    // The sanitizer: the flag wins over the manifest. Only the C backend can
+    // build one (the LLVM backend links no sanitizer passes), so the default
+    // backend refuses by name and points at the oracle switch.
+    let sanitize = sanitize_flag.or(loaded.project.sanitize());
+    if let Some(kind) = sanitize {
+        if backend == Backend::Llvm {
+            eprintln!(
+                "error: sanitizer '{}' is not available on the LLVM backend, which links no sanitizer passes; build with the C backend instead, which supports address, undefined and thread: KELPC_ORACLE=c {BIN_NAME} build --sanitize={} {path}",
+                kind.name(),
+                kind.name()
+            );
+            return false;
+        }
+    }
+
     // Roadmap A-14 slice 1: the backend's per-unit split. `--incremental` and
     // the manifest's `[build] incremental = true` both turn it on, and the C
     // oracle ignores it, because the C backend's one translation unit is the
@@ -530,6 +555,7 @@ fn build(
                 &library_dirs,
                 &pkg_config_flags,
                 codegen_c::uses_tls(&typed),
+                sanitize,
             ) {
                 eprintln!("error: {}", e.message);
                 return false;
@@ -1286,6 +1312,7 @@ fn real_main() -> ExitCode {
     let mut out: Option<PathBuf> = None;
     let mut deny_outdated = false;
     let mut incremental = false;
+    let mut sanitize: Option<driver::Sanitizer> = None;
     let mut print_timings = false;
     let mut opt = OptLevel::DEFAULT;
     let mut i = 2;
@@ -1319,6 +1346,20 @@ fn real_main() -> ExitCode {
             // Roadmap A-14 slice 2: per-phase and per-unit wall times on stderr.
             print_timings = true;
             i += 1;
+        } else if let Some(value) = arg.strip_prefix("--sanitize=") {
+            match driver::Sanitizer::parse(value) {
+                Some(kind) => sanitize = Some(kind),
+                None => {
+                    eprintln!(
+                        "error: '--sanitize={value}' is not a sanitizer; expected address, undefined or thread"
+                    );
+                    return ExitCode::FAILURE;
+                }
+            }
+            i += 1;
+        } else if arg == "--sanitize" {
+            eprintln!("error: '--sanitize' takes its value as '--sanitize=address|undefined|thread'");
+            return ExitCode::FAILURE;
         } else if arg == "--incremental" {
             // Roadmap A-14 slice 1: the backend's per-unit split. Refused for
             // `check`/`fmt`/`lint` by the same "unknown flag" path, since this
@@ -1391,6 +1432,7 @@ fn real_main() -> ExitCode {
         deny_outdated,
         opt,
         incremental,
+        sanitize,
         &mut freestanding,
         print_timings,
     ) {
