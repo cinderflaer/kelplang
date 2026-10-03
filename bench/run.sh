@@ -4,7 +4,7 @@
 #
 #   nix-shell overnight/dev.nix --run 'sh bench/run.sh'
 #
-# What it does (see bench/README.md for the design):
+# What it does:
 #   1. builds kelpc (release) unless $KELPC names a prebuilt one;
 #   2. builds every bench/suite/<name>/<name>.{c,rs,kp} with each toolchain, 3 builds each, and
 #      records the median build time;
