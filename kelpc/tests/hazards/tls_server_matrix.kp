@@ -352,7 +352,7 @@ fun https_mode(dir: &str) {
     val server = http.listen(0)
     server.set_accept_timeout(10000)
     val port = server.port()
-    val job = HttpJob(fd = server.fd, dir = String.from_str(dir))
+    val job = HttpJob(fd = server.fd, dir = String.from_str(dir), mtls = false)
     val h = thread.spawn(https_server, job)
     val pt = fmt.uint(port.to_u64())
     val url = join3("https://localhost:", pt.as_str(), "/hello?x=1")
@@ -397,7 +397,65 @@ fun https_mode(dir: &str) {
     server.close()
 }
 
-datac HttpJob(val fd: i32, val dir: String)
+// HTTPS with client certificates: the server requires one, a GET that offers
+// none is refused, a GET with the client certificate is answered.
+fun https_mtls_mode(dir: &str) {
+    val ca = path(dir, "ca.pem")
+    val cert = path(dir, "client.pem")
+    val key = path(dir, "client.key")
+    val server = http.listen(0)
+    server.set_accept_timeout(10000)
+    val port = server.port()
+    val job = HttpJob(fd = server.fd, dir = String.from_str(dir), mtls = true)
+    val h = thread.spawn(https_server, job)
+    val pt = fmt.uint(port.to_u64())
+    val url = join3("https://localhost:", pt.as_str(), "/hello")
+    val bare = tls.client_options().with_ca_file(ca.as_str()).with_timeout_ms(10000)
+    val none = http.try_get_tls(url.as_str(), &bare)
+    when none {
+        Ok(_) -> {
+            say("https mtls without a certificate succeeded (wrong)")
+        }
+        Err(_) -> {
+            say("https mtls without a certificate refused")
+        }
+    }
+    val with = bare.client_cert(cert.as_str(), key.as_str())
+    when with {
+        Ok(o) -> {
+            val got = http.try_get_tls(url.as_str(), &o)
+            when got {
+                Ok(resp) -> {
+                    val st = fmt.int(resp.status.to_i64())
+                    val sl = join3("https mtls status ", st.as_str(), "")
+                    say(sl.as_str())
+                }
+                Err(e) -> {
+                    val et = http.http_error_text(&e)
+                    val el = join3("https mtls failed ", et.as_str(), "")
+                    say(el.as_str())
+                }
+            }
+        }
+        Err(_) -> {
+            say("client certificate options failed")
+        }
+    }
+    val joined = thread.join(h)
+    when joined {
+        Ok(n) -> {
+            val nt = fmt.uint(n)
+            val sl = join3("served ", nt.as_str(), "")
+            say(sl.as_str())
+        }
+        Err(_) -> {
+            say("server thread failed")
+        }
+    }
+    server.close()
+}
+
+datac HttpJob(val fd: i32, val dir: String, val mtls: bool)
 
 fun hello(req: &http.ServerRequest).R: http.ServerResponse {
     if str.eq(req.path.as_str(), "/hello") {
@@ -407,10 +465,26 @@ fun hello(req: &http.ServerRequest).R: http.ServerResponse {
 }
 
 fun https_server(job: move HttpJob).R: u64 {
+    return when https_options(&job) {
+        Ok(o) -> https_with_options(&o, &job)
+        Err(_) -> 0
+    }
+}
+
+fun https_options(job: &HttpJob).R: result.Result<tls.ServerOptions, tls.TlsError> {
+    val o = tls.server_options()
+    if job.mtls {
+        val ca = path(job.dir.as_str(), "ca.pem")
+        return o.require_client_cert(ca.as_str())
+    }
+    return result.Result.Ok(value = o)
+}
+
+fun https_with_options(o: &tls.ServerOptions, job: &HttpJob).R: u64 {
     val cert = path(job.dir.as_str(), "server.pem")
     val key = path(job.dir.as_str(), "server.key")
-    return when tls.server_config(cert.as_str(), key.as_str()) {
-        Ok(c) -> https_serve(c, &job)
+    return when tls.server_config_with(cert.as_str(), key.as_str(), o) {
+        Ok(c) -> https_serve(c, job)
         Err(_) -> 0
     }
 }
@@ -429,6 +503,10 @@ fun main() {
     val dir = args.get(2).clone()
     if str.eq(mode.as_str(), "config_errors") {
         config_errors(dir.as_str())
+        return
+    }
+    if str.eq(mode.as_str(), "https_mtls") {
+        https_mtls_mode(dir.as_str())
         return
     }
     if str.eq(mode.as_str(), "https") {
