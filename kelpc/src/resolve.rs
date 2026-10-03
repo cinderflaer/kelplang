@@ -109,9 +109,17 @@ pub struct Project {
     /// default, which is the whole-program single module the compiler has
     /// always emitted.
     incremental: bool,
+    /// `coral.toml`'s `[build] sanitize = "address"`: the sanitizer the C
+    /// backend builds the program with. `--sanitize=` on the command line wins.
+    sanitize: Option<crate::driver::Sanitizer>,
 }
 
 impl Project {
+    /// The manifest's `[build] sanitize`, if it names one.
+    pub fn sanitize(&self) -> Option<crate::driver::Sanitizer> {
+        self.sanitize
+    }
+
     /// The native library and symbol allowlist a `[extern."<module id>"]`
     /// section declared for `module`, if it has one. `infer.rs` checks a
     /// declared `extern fun`'s bare name against `symbols`;
@@ -499,6 +507,7 @@ pub fn load(
         manifest_unsafe,
         manifest_target,
         manifest_incremental,
+        manifest_sanitize,
     ) = if given.is_dir() {
             let manifest_path = given.join(MANIFEST_NAME);
             let text = fs::read_to_string(&manifest_path).map_err(|_| {
@@ -536,6 +545,7 @@ pub fn load(
                 manifest.unsafe_modules,
                 manifest.target,
                 manifest.incremental,
+                manifest.sanitize,
             )
         } else {
             match find_manifest_root(&given) {
@@ -567,6 +577,7 @@ pub fn load(
                         manifest.unsafe_modules,
                         manifest.target,
                         manifest.incremental,
+                        manifest.sanitize,
                     )
                 }
                 None => {
@@ -586,6 +597,7 @@ pub fn load(
                         Vec::new(),
                         TargetDecl::hosted(),
                         false,
+                        None,
                     )
                 }
             }
@@ -1178,6 +1190,7 @@ pub fn load(
         unsafe_fns,
         target: manifest_target,
         incremental: manifest_incremental,
+        sanitize: manifest_sanitize,
     };
     if let Some(sink) = &mut timings {
         sink.resolve = resolve_start.elapsed();
@@ -1605,6 +1618,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         target_mode_set: false,
         target_cpus_set: false,
         incremental: false,
+        sanitize: None,
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -1936,6 +1950,8 @@ struct Manifest {
     /// (or `false`) is the whole-program default, which is what every project
     /// written before this section existed gets.
     incremental: bool,
+    /// `[build] sanitize = "address"|"undefined"|"thread"`.
+    sanitize: Option<crate::driver::Sanitizer>,
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
@@ -2072,15 +2088,32 @@ fn parse_unsafe_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
 fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
     let Some((key, value)) = line.split_once('=') else {
         return Err(Diagnostic::new(
-            format!("expected 'incremental = true|false' in {MANIFEST_NAME}'s [build] section, found '{line}'"),
+            format!("expected 'incremental = true|false' or 'sanitize = \"address\"' in {MANIFEST_NAME}'s [build] section, found '{line}'"),
             at,
             "",
         ));
     };
+    if key.trim() == "sanitize" {
+        let value = value.trim();
+        let name = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .unwrap_or("");
+        manifest.sanitize = Some(crate::driver::Sanitizer::parse(name).ok_or_else(|| {
+            Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME} value for '[build] sanitize' must be \"address\", \"undefined\" or \"thread\" (double-quoted), found '{value}'"
+                ),
+                at,
+                "",
+            )
+        })?);
+        return Ok(());
+    }
     if key.trim() != "incremental" {
         return Err(Diagnostic::new(
             format!(
-                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: the section has one key, 'incremental'",
+                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: the section has one key, 'incremental' (besides 'sanitize')",
                 key.trim()
             ),
             at,
@@ -3498,6 +3531,18 @@ mod tests {
         assert!(!manifest("name = \"x\"\n").incremental);
         assert!(manifest("name = \"x\"\n[build]\nincremental = true\n").incremental);
         assert!(!manifest("name = \"x\"\n[build]\nincremental = false\n").incremental);
+    }
+
+    #[test]
+    fn the_build_section_names_a_sanitizer() {
+        use crate::driver::Sanitizer;
+        assert_eq!(manifest("name = \"x\"\n").sanitize, None);
+        assert_eq!(
+            manifest("name = \"x\"\n[build]\nsanitize = \"address\"\n").sanitize,
+            Some(Sanitizer::Address)
+        );
+        let err = manifest_err("name = \"x\"\n[build]\nsanitize = \"memory\"\n");
+        assert!(err.message.contains("must be \"address\""), "{}", err.message);
     }
 
     #[test]

@@ -16,6 +16,35 @@ static RUNTIME_OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kelp_rt
 /// write the same path.
 static RUNTIME_TMP: AtomicU64 = AtomicU64::new(0);
 
+/// A sanitizer the C backend can build a program with (`--sanitize=` or
+/// `[build] sanitize`). The LLVM backend links no sanitizer passes, so the flag
+/// is refused there and the C oracle is the way to sanitize.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sanitizer {
+    Address,
+    Undefined,
+    Thread,
+}
+
+impl Sanitizer {
+    pub fn parse(name: &str) -> Option<Sanitizer> {
+        match name {
+            "address" => Some(Sanitizer::Address),
+            "undefined" => Some(Sanitizer::Undefined),
+            "thread" => Some(Sanitizer::Thread),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Sanitizer::Address => "address",
+            Sanitizer::Undefined => "undefined",
+            Sanitizer::Thread => "thread",
+        }
+    }
+}
+
 pub struct CompileError {
     pub message: String,
 }
@@ -43,6 +72,7 @@ pub fn compile_c(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     tls: bool,
+    sanitize: Option<Sanitizer>,
 ) -> Result<(), CompileError> {
     let c_path = out_path.with_extension("c");
     std::fs::write(&c_path, c_source).map_err(|e| CompileError {
@@ -63,6 +93,22 @@ pub fn compile_c(
         .arg("-fwrapv")
         .arg("-pthread")
         .arg("-lm");
+    // `-fsanitize=<kind>` both instruments the translation unit and makes `cc`
+    // link the sanitizer runtime. `-g` and the frame pointer are what make a
+    // report name a line instead of an address. `-fwrapv` stays, so signed
+    // overflow is defined (and UBSan does not report it) exactly as in a normal
+    // build of the same program.
+    if let Some(kind) = sanitize {
+        command
+            .arg(format!("-fsanitize={}", kind.name()))
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g");
+        // UBSan's default is to print and carry on, which a test cannot tell
+        // from success; make a finding stop the program with a nonzero status.
+        if kind == Sanitizer::Undefined {
+            command.arg("-fno-sanitize-recover=undefined");
+        }
+    }
     for flag in dir_flags(include_dirs, library_dirs) {
         command.arg(flag);
     }

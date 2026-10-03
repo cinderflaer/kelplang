@@ -1,0 +1,10 @@
+fun main() {
+    var buf: [u8; 4] = [1, 2, 3, 4]
+    val bp: Ptr<[u8; 4]> = Ptr.from_ref(&buf)
+    val p: Ptr<u8> = bp.cast<u8>()
+    unsafe {
+        p.offset(6).write(9)
+        print(p.offset(6).read())
+    }
+    unsafe { print(p.read()) }
+}
