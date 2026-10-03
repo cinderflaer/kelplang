@@ -747,6 +747,14 @@ struct Ctx {
     /// else an empty container with no type to take its element from is a
     /// declaration-time error, exactly as it always was.
     defer_empty_container: bool,
+    /// Expressions already checked once with no (or a hint-only) expectation to
+    /// learn a type (a method call's receiver, a generic call's arguments),
+    /// kept for the `check_call_arg` that follows so they are not checked a
+    /// second time: nested calls would otherwise double their work at every
+    /// level. Keyed by the expression's address and span; an entry is used
+    /// only when its type is exactly the one the argument is then expected to
+    /// have, and is dropped when used.
+    probes: Vec<(*const ast::Expr, Span, tir::Expr)>,
     /// How many `unsafe { ... }` blocks enclose the expression being checked
     /// (MK9-S2 stage 1). Non-zero means the unsafe-only operations are legal;
     /// the body of an `unsafe fun` starts at 1.
@@ -904,6 +912,22 @@ impl PdWiring {
 }
 
 impl Ctx {
+    /// Remembers `done`, the result of checking `expr`, for the `check_call_arg`
+    /// that will check the same expression (see `probes`).
+    fn keep_probe(&mut self, expr: &ast::Expr, done: tir::Expr) {
+        if self.probes.len() >= 4096 {
+            self.probes.clear();
+        }
+        self.probes.push((expr as *const ast::Expr, expr.span(), done));
+    }
+
+    fn take_probe(&mut self, expr: &ast::Expr) -> Option<tir::Expr> {
+        let at = expr as *const ast::Expr;
+        let span = expr.span();
+        let i = self.probes.iter().rposition(|(p, s, _)| *p == at && *s == span)?;
+        Some(self.probes.swap_remove(i).2)
+    }
+
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
@@ -9714,6 +9738,7 @@ fn base_ctx(
         loop_depth: 0,
         tuple_temps: 0,
         defer_empty_container: false,
+        probes: Vec::new(),
         unsafe_depth: 0,
         unsafe_fns: project.unsafe_fns().clone(),
         freestanding: project.target().is_freestanding(),
@@ -11530,10 +11555,14 @@ fn check_fn_literal(
             let st = ctx.fns.instances.borrow();
             (st.literals.len(), st.literal_count)
         };
+        let probes_mark = ctx.probes.len();
         let result = check_fn_literal_pass(
             params_ast, infer_params, return_type, body, span, ctx, expected, &excl,
         );
         ctx.excl_needed = saved_needed.clone();
+        if result.is_err() {
+            ctx.probes.truncate(probes_mark);
+        }
         match result {
             Ok(e) => return Ok(e),
             Err(err) => {
@@ -11963,7 +11992,16 @@ fn check_fn_literal_pass(
 /// alternative shape (coerce at each site) is the same behaviour with N
 /// chances to forget one.
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
-    let value = check_expr_inner(expr, ctx, expected)?;
+    // A failed check can be retried with other state by a caller that swallows
+    // the error, so what it left in `probes` must not outlive it.
+    let mark = ctx.probes.len();
+    let value = match check_expr_inner(expr, ctx, expected) {
+        Ok(v) => v,
+        Err(e) => {
+            ctx.probes.truncate(mark);
+            return Err(e);
+        }
+    };
     let value = coerce_str_to_string(value, expected);
     Ok(coerce_handle_upcast(value, expected, &ctx.env.handle_parents))
 }
@@ -13473,6 +13511,7 @@ fn check_generic_datac_construction(
             let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
             let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
             bind_type_params(&ctx.env, &tmpl.prefix, &tmpl.aliases, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
+            ctx.keep_probe(&args[slots[i]].value, probed);
         }
         finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?
     } else {
@@ -13552,6 +13591,7 @@ fn check_generic_enum_construction(
             let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
             let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
             bind_type_params(&ctx.env, &tmpl.prefix, &tmpl.aliases, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
+            ctx.keep_probe(&args[slots[i]].value, probed);
         }
         finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?
     } else {
@@ -15239,10 +15279,26 @@ fn require_place_for_borrowed_arg(
     Ok(())
 }
 
+/// `check_expr(arg, Some(expected))`, except that a receiver a method call
+/// already checked with no expectation is reused when its type is exactly the
+/// expected one (the expectation then changes nothing about the result).
+fn check_expr_or_memo(
+    memo: Option<tir::Expr>,
+    arg_expr: &ast::Expr,
+    ctx: &mut Ctx,
+    expected: &Ty,
+) -> Result<tir::Expr> {
+    match memo {
+        Some(done) if done.ty == *expected => Ok(done),
+        _ => check_expr(arg_expr, ctx, Some(expected)),
+    }
+}
+
 /// `pname` is how the argument is named in a diagnostic — `'b'` for a
 /// declared parameter, `1` for the position in a call through a function value
 /// (a function *type* has no parameter names).
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
+    let memo = ctx.take_probe(arg_expr);
     // A `scoped fun(...)` parameter accepts only a `fun` literal or a trailing
     // block written at this call site (`plan/scoped-blocks.md`), never a
     // stored value. The one exception is forwarding a scoped value that is
@@ -15273,7 +15329,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         return Ok(checked);
     }
     let Ty::Ref { mutable, inner } = pty else {
-        let checked = check_expr(arg_expr, ctx, Some(pty))?;
+        let checked = check_expr_or_memo(memo, arg_expr, ctx, pty)?;
         refuse_open_arg(&checked.ty, arg_expr)?;
         // A `&str` view and a `str` are the same value (both are the flat
         // borrowed view type), so a view satisfies a `str` parameter
@@ -15315,7 +15371,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         return Ok(checked);
     };
 
-    let checked = check_expr(arg_expr, ctx, Some(inner))?;
+    let checked = check_expr_or_memo(memo, arg_expr, ctx, inner)?;
     refuse_open_arg(&checked.ty, arg_expr)?;
     match &checked.ty {
         t if t == inner.as_ref() => {
@@ -17084,6 +17140,7 @@ fn instantiate_function(
                 let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &p.ty, &bindings);
                 let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
                 bind_type_params(&ctx.env, &tmpl.prefix, &tmpl.aliases, &p.ty, &probed.ty, &tmpl.params, &mut bindings);
+                ctx.keep_probe(&args[slots[i]].value, probed);
             }
         }
     }
@@ -18279,6 +18336,7 @@ fn check_method_call(
         });
     }
     let mut checked_args = Vec::with_capacity(sig.params.len());
+    ctx.keep_probe(receiver, probe);
     checked_args.push(check_call_arg("'self'", &sig.params[0].1, receiver, ctx)?);
     checked_args.extend(match_args(&format!("method '{owner}.{method}'"), &sig.params[1..], args, span, ctx)?);
     // A method whose result borrows from its receiver (`s.as_str()`) has the

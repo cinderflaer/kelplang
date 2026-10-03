@@ -6232,11 +6232,22 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let array_ty = self.g.cty(ty)?;
         let elem_ty = self.lty(elem)?;
         let arr_ty = self.g.ctx.array_type(elem_ty, *len);
-        let mut arr = self.g.ctx.undef(arr_ty);
-        for (index, e) in elems.iter().enumerate() {
-            let v = self.value_of(e)?;
-            arr = self.g.builder.build_insert_value(arr, v, index as u32, "elem");
+        let mut values = Vec::with_capacity(elems.len());
+        for e in elems {
+            values.push(self.value_of(e)?);
         }
+        // An all-constant literal is one constant array: folding a chain of
+        // `insertvalue`s into a constant aggregate copies the whole aggregate
+        // at every step, which is quadratic in the length.
+        let arr = if elems.len() == *len as usize && values.iter().all(|v| v.is_constant()) {
+            self.g.ctx.const_array(elem_ty, &values)
+        } else {
+            let mut arr = self.g.ctx.undef(arr_ty);
+            for (index, v) in values.into_iter().enumerate() {
+                arr = self.g.builder.build_insert_value(arr, v, index as u32, "elem");
+            }
+            arr
+        };
         let mut agg = self.g.ctx.undef(array_ty);
         agg = self.g.builder.build_insert_value(agg, arr, 0, "v");
         Ok(agg)
