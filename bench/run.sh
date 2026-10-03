@@ -16,6 +16,9 @@
 #      (machine, tool versions, one table per metric, then bench/notes.md and, when present, the
 #      bench/baseline-tables.md of the first recorded run).
 #
+# REPORT_ONLY=1 skips building and running and only regenerates bench/RESULTS.md from the existing
+# bench/results.csv and bench/build/header.md (used after editing bench/notes.md).
+#
 # Knobs (environment): BENCHES="fib nbody" (subset), RUNS=7, BUILD_RUNS=3, KELPC=/path/to/kelpc,
 # OUT_DIR (where results.csv/RESULTS.md go, default bench/), SIZE_ARG="" (a first argument handed to
 # every benchmark; empty = the full default size, which is what RESULTS.md must be made with).
@@ -52,12 +55,15 @@ load1() { cut -d' ' -f1 /proc/loadavg; }
 secs_between() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.4f", (b - a) / 1e9 }'; }
 
 # ---------------------------------------------------------------- compiler
-if [ -z "${KELPC:-}" ]; then
+REPORT_ONLY=${REPORT_ONLY:-}
+if [ -n "$REPORT_ONLY" ]; then
+    KELPC=${KELPC:-/nonexistent}
+elif [ -z "${KELPC:-}" ]; then
     echo "building kelpc (release, not counted)..." >&2
     ( cd "$ROOT" && cargo build -q --release -p kelpc ) || { echo "run.sh: cargo build failed" >&2; exit 1; }
     KELPC="${CARGO_TARGET_DIR:-$ROOT/target}/release/kelpc"
 fi
-[ -x "$KELPC" ] || { echo "run.sh: no kelpc at $KELPC" >&2; exit 1; }
+[ -n "$REPORT_ONLY" ] || [ -x "$KELPC" ] || { echo "run.sh: no kelpc at $KELPC" >&2; exit 1; }
 # kelpc's object cache is opt-in (--incremental), so a plain `build` never reuses an earlier object
 # and the three builds are three real builds.
 
@@ -68,7 +74,7 @@ VARIANTS="c-gcc"
 [ "$HAVE_CLANG" = 1 ] && VARIANTS="$VARIANTS c-clang"
 VARIANTS="$VARIANTS rust kelp-llvm kelp-c"
 
-: > "$CSV"
+[ -n "$REPORT_ONLY" ] || : > "$CSV"
 csv() { printf '%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$4" "$5" >> "$CSV"; }
 
 # build_cmd VARIANT SRCDIR NAME BIN
@@ -96,6 +102,7 @@ run_one() {
     [ -n "$RUN_RSS" ] || RUN_RSS=0
 }
 
+if [ -z "$REPORT_ONLY" ]; then
 # ------------------------------------------------------------ machine info
 {
     echo "# Kelp benchmark results"
@@ -201,6 +208,8 @@ for n in $BENCHES; do
         echo "  $n/$v: $status  load $l0 -> $l1" >&2
     done
 done
+
+fi
 
 # ------------------------------------------------------------ the tables
 awk -F, -v runs="$RUNS" -v bruns="$BUILD_RUNS" -v variants="$VARIANTS" -v benches="$BENCHES" '
