@@ -9035,7 +9035,7 @@ impl<'a> Gen<'a> {
         }
     }
 
-    /// As `heap_dealloc`, for a size and align that are only known at runtime —
+    /// As `heap_dealloc`, for a size and align that are only known at runtime:
     /// an owned trait object reads them out of its vtable (A-12 slice 7). A
     /// project with its own allocator needs both, and libc's `free` needs
     /// neither.

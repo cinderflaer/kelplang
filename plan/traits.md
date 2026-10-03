@@ -881,7 +881,7 @@ coercion is **implicit at every position that knows an expected type**, which is
   the drop points the plan already records (block end, before a `return`, reassignment of an owned
   `var`, a container's element drop, an `atexit` pd drop).
 - A **thread** may move a `Box<dyn Name>` because the existing crossing rule admits an owned value
-  with no reachable borrow (MK9 section 5, rule 4). A `&dyn Name` — a borrow — is refused by rule 2
+  with no reachable borrow (MK9 section 5, rule 4). A `&dyn Name`, a borrow, is refused by rule 2
   exactly as any other borrow of a frame local is. This is the whole of the `Send`-shaped story in
   v1: there is still no `Send` marker to implement.
 - The vtable is emitted per `(trait, type)` pair and the concrete type's drop is reached through it,

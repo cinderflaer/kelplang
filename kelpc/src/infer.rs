@@ -17404,7 +17404,7 @@ fn dyn_method_slot<'a>(
         let names: Vec<&str> = flat.iter().map(|m| m.name.as_str()).collect();
         return Err(TypeError {
             message: format!(
-                "'dyn {trait_name}' has no method '{method}' — its methods are {}",
+                "'dyn {trait_name}' has no method '{method}'; its methods are {}",
                 names.join(", ")
             ),
             span,
