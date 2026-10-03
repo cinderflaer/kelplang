@@ -25,7 +25,8 @@
 # through the `View` work). They are ignored by name so that a build produced by
 # an older `kelpc` cannot re-add one; a *new* stray name still shows up as `??`
 # in `git status` rather than vanishing into a blanket rule.
-/build/
+/build/*
+!/build/*.sh
 /bitwise
 /borrow_provenance_and_arms
 /lit
@@ -41,3 +42,5 @@
 # A release writes the entry from this file, then wipes it back to its header.
 /CHANGELOG.pending.md
 !kelpc/src/externs/*.c
+/dist/
+/target-*/
