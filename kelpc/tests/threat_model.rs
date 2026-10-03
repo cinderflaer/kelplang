@@ -1551,3 +1551,278 @@ fn m05_offset_arithmetic_leaves_the_granted_window() {
     );
     lab.check_refused(&["outside"]);
 }
+
+// ---------------------------------------------------------------------------
+// indirect use
+// ---------------------------------------------------------------------------
+
+const NEEDS_FS: &str = "needs the 'fs' capability, which module 'evil' was not granted";
+
+/// Runs a three-module project: `main` grants `util` the `data/**` window and
+/// leaves `evil` ungranted; `evil` is the attacker.
+fn indirect(name: &str, util: &str, evil: &str) -> Lab {
+    let lab = Lab::new(name);
+    lab.src(
+        "main.kp",
+        "impl \"util\" caps(fs = [\"__T__/data/**\"])\nimpl \"evil\"\n\nfun main() {\n    evil.go()\n}\n",
+    );
+    lab.src("util.kp", util);
+    lab.src("evil.kp", evil);
+    lab
+}
+
+/// I1: a function value or closure made by a granted module and handed to an
+/// ungranted one is still checked against the *maker's* grant when called.
+#[test]
+fn i01_a_closure_from_a_granted_module_keeps_its_makers_grant() {
+    let lab = Lab::new("i01");
+    lab.src(
+        "main.kp",
+        "impl \"util\" caps(fs = [\"__T__/data/**\"])\nimpl \"evil\"\n\nfun main() {\n    evil.go(util.reader())\n}\n",
+    );
+    lab.src(
+        "util.kp",
+        "impl \"std/fs\"\n\npub fun reader().R: fun(&str).R: String = fun(p: &str).R: String = fs.read_text(p)\n",
+    );
+    lab.src("evil.kp", "pub fun go(f: fun(&str).R: String) {\n    print(f(\"__T__/secret/s.txt\"))\n}\n");
+    lab.denied("granted to module 'util'");
+}
+
+/// I2: a generic function in a granted module is checked against that module's
+/// grant whatever type the caller instantiates it with; a generic function in
+/// an ungranted module cannot name `fs` at all.
+#[test]
+fn i02_generics_do_not_change_whose_grant_applies() {
+    let lab = indirect(
+        "i02a",
+        "impl \"std/fs\"\n\npub fun get<T>(p: &str, x: T).R: String = fs.read_text(p)\n",
+        "impl \"util\"\n\npub fun go() {\n    print(util.get(\"__T__/secret/s.txt\", 1))\n}\n",
+    );
+    lab.denied("granted to module 'util'");
+    let lab = indirect(
+        "i02b",
+        "pub fun x() {\n}\n",
+        "impl \"std/fs\"\n\nfun get<T>(p: &str, x: T).R: String = fs.read_text(p)\n\npub fun go() {\n    print(get(\"__T__/secret/s.txt\", 1))\n}\n",
+    );
+    lab.refused(&[NEEDS_FS]);
+}
+
+/// I3: an ungranted module cannot reach `fs` through a trait impl, a trait
+/// default body supplied by a granted module, a `Drop` impl, a `defer`, a
+/// scoped block or a module-level initializer: each is code of the module that
+/// writes it (or of the impl's module), and is checked as such.
+#[test]
+fn i03_traits_drop_defer_scoped_and_initializers_do_not_launder_a_grant() {
+    let util = "impl \"std/fs\"\n\npub trait Loader {\n    fun Self.path().R: String\n    fun Self.load().R: String {\n        return fs.read_text(self.path().as_str())\n    }\n}\n\npub fun with(cb: scoped fun().R: i32).R: i32 = cb()\n";
+    for (what, evil) in [
+        (
+            "trait_default",
+            "impl \"util\"\n\npub datac L(val p: String)\n\nimpl util.Loader for L {\n    fun Self.path().R: String = String.from_str(p.as_str())\n}\n\npub fun go() {\n    val l = L(p = String.from_str(\"__T__/secret/s.txt\"))\n    print(l.load())\n}\n",
+        ),
+        (
+            "trait_impl",
+            "impl \"std/fs\"\nimpl \"util\"\n\npub datac L(val p: String)\n\nimpl util.Loader for L {\n    fun Self.path().R: String = fs.read_text(\"__T__/secret/s.txt\")\n}\n\npub fun go() {\n}\n",
+        ),
+        (
+            "drop",
+            "impl \"std/fs\"\n\ndatac Guard(val n: i32)\n\nfun mut Guard.drop() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n\npub fun go() {\n    val g = Guard(n = 1)\n}\n",
+        ),
+        (
+            "defer",
+            "impl \"std/fs\"\n\npub fun go() {\n    defer print(fs.read_text(\"__T__/secret/s.txt\"))\n    print(1)\n}\n",
+        ),
+        (
+            "scoped",
+            "impl \"util\"\nimpl \"std/fs\"\n\npub fun go() {\n    print(util.with(fun().R: i32 = fs.read_text(\"__T__/secret/s.txt\").len()))\n}\n",
+        ),
+        (
+            "pd_initializer",
+            "impl \"std/fs\"\n\npd val S: String = fs.read_text(\"__T__/secret/s.txt\")\n\npub fun go() {\n    print(S.len())\n}\n",
+        ),
+    ] {
+        let lab = indirect(&format!("i03_{what}"), util, evil);
+        lab.refused(&["capability"]);
+    }
+}
+
+/// I4: re-export tricks: an ungranted module cannot reach `fs` through the
+/// import of a module that holds it (`util.fs.read_text`), and cannot delegate
+/// itself a grant on its own `impl` line.
+#[test]
+fn i04_importing_a_granted_module_does_not_import_its_grant() {
+    let lab = indirect(
+        "i04a",
+        "impl \"std/fs\"\n\npub fun x() {\n}\n",
+        "impl \"util\"\n\npub fun go() {\n    print(util.fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+    );
+    lab.refused(&["util"]);
+    let lab = indirect(
+        "i04b",
+        "pub fun x() {\n}\n",
+        "impl \"std/fs\" caps(fs = [\"/**\"])\n\npub fun go() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+    );
+    lab.refused(&["cannot grant"]);
+}
+
+/// I5: a user `extern fun` has no body unless the manifest binds it, so an
+/// ungranted module cannot declare the library's own raw primitive or libc's
+/// `system` and call it.
+#[test]
+fn i05_a_user_extern_needs_a_manifest_entry() {
+    for decl in [
+        "extern fun read_raw(path: &str).R: Bytes",
+        "extern fun system(cmd: &str).R: i32",
+    ] {
+        let lab = indirect(
+            "i05",
+            "pub fun x() {\n}\n",
+            &format!("{decl}\n\npub fun go() {{\n}}\n"),
+        );
+        lab.refused(&["has no compiler-supplied body"]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// delegation and the manifest
+// ---------------------------------------------------------------------------
+
+/// D1: a module cannot hand out more than it holds: a wider pattern, a parent
+/// directory, the whole-resource wildcard, in any domain.
+#[test]
+fn d01_a_module_cannot_delegate_more_than_it_holds() {
+    for (grant_line, domain_import) in [
+        ("fs = [\"/**\"]", "std/fs"),
+        ("fs = [\"__T__/**\"]", "std/fs"),
+        ("fs = [\"__T__/data/../**\"]", "std/fs"),
+        ("net = [\"*\"]", "std/net"),
+        ("env = [\"*\"]", "std/env"),
+        ("process = [\"/**\"]", "std/process"),
+    ] {
+        let lab = Lab::new("d01");
+        lab.src(
+            "main.kp",
+            "impl \"util\" caps(fs = [\"__T__/data/**\"], net = [\"127.0.0.1:1\"], env = [\"A\"], process = [\"/bin/true\"])\n\nfun main() {\n    util.go()\n}\n",
+        );
+        lab.src(
+            "util.kp",
+            &format!("impl \"{domain_import}\" caps({grant_line})\n\npub fun go() {{\n}}\n"),
+        );
+        lab.refused(&[]);
+    }
+}
+
+/// D2: `caps(*)` is the whole resource and only a module that holds the whole
+/// resource may hand it over: from a narrow importer it is refused.
+#[test]
+fn d02_the_wildcard_delegation_is_bounded_by_the_importer() {
+    let lab = Lab::new("d02");
+    lab.src(
+        "main.kp",
+        "impl \"mid\" caps(fs = [\"__T__/data/**\"])\n\nfun main() {\n    mid.go()\n}\n",
+    );
+    lab.src("mid.kp", "impl \"leaf\" caps(*)\n\npub fun go() {\n    leaf.go()\n}\n");
+    lab.src(
+        "leaf.kp",
+        "impl \"std/fs\"\n\npub fun go() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+    );
+    lab.refused(&["whole-resource wildcard"]);
+}
+
+/// D3: the manifest's `[caps]` narrows the entry module itself: it cannot read
+/// outside its own window, and cannot grant an import more than the manifest
+/// gave it.
+#[test]
+fn d03_the_manifest_narrows_the_entry_module() {
+    let lab = Lab::new("d03a");
+    lab.manifest_project(
+        "name = \"d\"\n\n[caps]\nfs = [\"__T__/data/**\"]\n",
+        &[(
+            "main.kp",
+            "impl \"std/fs\"\n\nfun main() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+        )],
+    );
+    lab.denied("granted to module 'main'");
+    let lab = Lab::new("d03b");
+    lab.manifest_project(
+        "name = \"d\"\n\n[caps]\nfs = [\"__T__/data/**\"]\n",
+        &[
+            ("main.kp", "impl \"util\" caps(fs = [\"__T__/**\"])\n\nfun main() {\n    util.go()\n}\n"),
+            ("util.kp", "impl \"std/fs\"\n\npub fun go() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n"),
+        ],
+    );
+    lab.refused(&["cannot grant"]);
+}
+
+/// D4: module ids cannot escape `src/` or shadow the library: `..`, absolute
+/// and backslash paths are refused, and a project file named like a shipped
+/// module (`src/std/rt.kp`, whose `glob_match` says yes to everything) is
+/// never read in place of the shipped one, so the matcher cannot be replaced.
+#[test]
+fn d04_module_ids_cannot_escape_or_shadow_the_library() {
+    for id in ["../outside", "/etc/passwd", "a\\\\b", "std/../std/fs", "util/../util"] {
+        let lab = Lab::new("d04a");
+        lab.src("main.kp", &format!("impl \"{id}\"\n\nfun main() {{\n}}\n"));
+        let out = lab.build(false);
+        assert!(!out.status.success(), "the module id '{id}' was accepted");
+    }
+    let lab = Lab::new("d04b");
+    lab.manifest_project(
+        "name = \"d\"\n",
+        &[
+            (
+                "main.kp",
+                "impl \"util\" caps(fs = [\"__T__/data/**\"])\n\nfun main() {\n    util.go()\n}\n",
+            ),
+            (
+                "util.kp",
+                "impl \"std/fs\"\n\npub fun go() {\n    print(fs.read_text(\"__T__/secret/s.txt\"))\n}\n",
+            ),
+        ],
+    );
+    fs::create_dir_all(lab.root.join("src/std")).unwrap();
+    let real = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/std/rt.kp")).unwrap();
+    let evil = real.replacen(
+        "fun glob_match(pat: &str, path: &str).R: bool {",
+        "fun glob_match(pat: &str, path: &str).R: bool {\n    return true",
+        1,
+    );
+    fs::write(lab.root.join("src/std/rt.kp"), evil).unwrap();
+    lab.denied("granted to module 'util'");
+}
+
+/// D5: a user extern section is the manifest author's decision, but within it
+/// the allowlist holds: a symbol that is not listed is refused, and a module
+/// the manifest does not name cannot bind the symbol of one it does.
+#[test]
+fn d05_the_extern_allowlist_is_per_module_and_per_symbol() {
+    let manifest = "name = \"x\"\n\n[extern.\"sys\"]\ndomain = \"process\"\nlibrary = \"c\"\nsymbols = [\"getpid\"]\n";
+    let lab = Lab::new("d05a");
+    lab.manifest_project(
+        manifest,
+        &[
+            ("main.kp", "impl \"sys\" caps(process = [\"/**\"])\n\nfun main() {\n    print(sys.getppid() > 0)\n}\n"),
+            ("sys.kp", "pub extern fun getppid().R: i32\n"),
+        ],
+    );
+    lab.refused(&["getppid"]);
+    let lab = Lab::new("d05b");
+    lab.manifest_project(
+        manifest,
+        &[
+            ("main.kp", "impl \"evil\"\n\nfun main() {\n    print(evil.getpid() > 0)\n}\n"),
+            ("evil.kp", "pub extern fun getpid().R: i32\n"),
+        ],
+    );
+    lab.refused(&["has no compiler-supplied body"]);
+    // And the manifest's domain gate applies to the module that does bind it.
+    let lab = Lab::new("d05c");
+    lab.manifest_project(
+        manifest,
+        &[
+            ("main.kp", "impl \"util\"\n\nfun main() {\n    print(util.pid() > 0)\n}\n"),
+            ("util.kp", "impl \"sys\"\n\npub fun pid().R: i32 = sys.getpid()\n"),
+            ("sys.kp", "pub extern fun getpid().R: i32\n"),
+        ],
+    );
+    lab.refused(&["needs the 'process' capability"]);
+}
