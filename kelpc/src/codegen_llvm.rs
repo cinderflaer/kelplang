@@ -14859,6 +14859,9 @@ fn program_c_source(program: &Program) -> Option<String> {
          const char* kelp_env_lookup(const char* name);\n\
          int kelp_env_set(const char* name, const char* value);\n\
          int kelp_env_unset(const char* name);\n\
+         void kelp_child_add(int pid);\n\
+         bool kelp_child_has(int pid);\n\
+         void kelp_child_remove(int pid);\n\
          extern int kelp_argc;\n\
          extern char** kelp_argv;\n",
     );

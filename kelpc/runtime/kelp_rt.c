@@ -383,6 +383,57 @@ static int kelp_env_unset(const char* name) {
     return rc;
 }
 
+/* The children `process.spawn` started and nobody has reaped. `process.kill`
+   and `process.wait` accept only these pids: a `process` grant names programs
+   to *start*, and without this table `kill` took any pid, so a module holding
+   a grant for one harmless program could signal every process of the user
+   (threat model P8). A pid leaves the table when it is reaped, so a pid the
+   kernel hands to a stranger later is not signalable either. */
+static pthread_mutex_t kelp_child_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int* kelp_child_pids = NULL;
+static size_t kelp_child_len = 0;
+static size_t kelp_child_cap = 0;
+
+static void kelp_child_add(int pid) {
+    pthread_mutex_lock(&kelp_child_mutex);
+    if (kelp_child_len == kelp_child_cap) {
+        size_t cap = kelp_child_cap == 0 ? 16 : kelp_child_cap * 2;
+        int* grown = (int*)realloc(kelp_child_pids, cap * sizeof(int));
+        if (grown == NULL) {
+            pthread_mutex_unlock(&kelp_child_mutex);
+            return;
+        }
+        kelp_child_pids = grown;
+        kelp_child_cap = cap;
+    }
+    kelp_child_pids[kelp_child_len++] = pid;
+    pthread_mutex_unlock(&kelp_child_mutex);
+}
+
+static bool kelp_child_has(int pid) {
+    bool found = false;
+    pthread_mutex_lock(&kelp_child_mutex);
+    for (size_t i = 0; i < kelp_child_len; i++) {
+        if (kelp_child_pids[i] == pid) {
+            found = true;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&kelp_child_mutex);
+    return found;
+}
+
+static void kelp_child_remove(int pid) {
+    pthread_mutex_lock(&kelp_child_mutex);
+    for (size_t i = 0; i < kelp_child_len; i++) {
+        if (kelp_child_pids[i] == pid) {
+            kelp_child_pids[i] = kelp_child_pids[--kelp_child_len];
+            break;
+        }
+    }
+    pthread_mutex_unlock(&kelp_child_mutex);
+}
+
 /* `NULL` if `name` is not set, otherwise a pointer to its value inside
    `environ` (not a copy). Entries are compared up to their `=` byte, exactly
    like `getenv` compares up to it, so a name that is a prefix of a longer one
