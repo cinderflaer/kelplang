@@ -22,7 +22,7 @@ one heap record from several threads, and v1 has no `Arc`/`Rc` to spell that. A 
 record with the runtime doing the reference counting is the same answer `Thread<T>` and
 `Mutex<T>` already took.
 
-## 1. `RwLock<T>` — `std/sync`
+## 1. `RwLock<T>` (`std/sync`)
 
 ```
 fun RwLock.new(value: move T).R: RwLock<T>
@@ -52,7 +52,7 @@ so the writer-preference rule holds. `try_*` never poison.
 `T` is `is_rwlock_element`, the same `Send`-shaped predicate `Mutex<T>` uses. `RwLock<T>`
 is `Sync` exactly as `Mutex<T>` is: `reachable_mut_path` answers `false` for it.
 
-## 2. `Condvar` — `std/sync`
+## 2. `Condvar` (`std/sync`)
 
 ```
 fun Condvar.new().R: Condvar
@@ -72,7 +72,10 @@ runs the block with the lock held. There is no bare `wait`.
 `try_*`'s `Option<R>` shape: `None` means the deadline passed with the predicate still
 true and the block did not run, `Some(v)` is the block's value.
 
-## 3. Channels — `std/sync`
+## 3. Channels (`std/sync`)
+
+**Design only; not implemented yet. `plan/st1-status.md` is the status and
+`TASK_NOTES.md` the entry points.**
 
 ```
 fun chan.bounded<T>(cap: i64).R: (Sender<T>, Receiver<T>)
@@ -97,7 +100,10 @@ work.
 a builtin `Iterator` implementation, which is the one piece this stage does not finish;
 see `plan/st1-status.md`.
 
-## 4. Thread pool — `std/thread`
+## 4. Thread pool (`std/thread`)
+
+**Design only; not implemented yet. `plan/st1-status.md` is the status and
+`TASK_NOTES.md` the entry points.**
 
 ```
 fun pool.new(workers: i32).R: Pool
