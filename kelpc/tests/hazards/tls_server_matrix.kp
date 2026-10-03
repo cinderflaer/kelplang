@@ -197,9 +197,21 @@ fun server_with_config(cfg: tls.ServerConfig, job: &Job).R: String {
     return line
 }
 
+fun ca_bytes(path: &str).R: Bytes {
+    when tlsfile.ca_pem(path) {
+        Ok(b) -> {
+            return b
+        }
+        Err(e) -> {
+            panic("cannot read the CA")
+        }
+    }
+    return Bytes.empty()
+}
+
 fun client_opts(mode: &str, dir: &str).R: result.Result<tls.TlsClientOptions, tls.TlsError> {
     val ca = path(dir, "ca.pem")
-    var o = tls.client_options().with_ca_pem(result.expect(r = tlsfile.ca_pem(ca.as_str()), message = "cannot read the CA")).with_timeout_ms(10000)
+    var o = tls.client_options().with_ca_pem(ca_bytes(ca.as_str())).with_timeout_ms(10000)
     if str.eq(mode, "alpn_h2") {
         o = o.alpn(list_of("http/1.1", "h2"))
     }
@@ -405,7 +417,7 @@ fun https_mode(dir: &str) {
             say("untrusted get refused")
         }
     }
-    val opts = tls.client_options().with_ca_pem(result.expect(r = tlsfile.ca_pem(ca.as_str()), message = "cannot read the CA")).with_timeout_ms(10000)
+    val opts = tls.client_options().with_ca_pem(ca_bytes(ca.as_str())).with_timeout_ms(10000)
     val got = http.try_get_tls(url.as_str(), &opts)
     when got {
         Ok(resp) -> {
@@ -448,7 +460,7 @@ fun https_mtls_mode(dir: &str) {
     val h = thread.spawn(https_server, job)
     val pt = fmt.uint(port.to_u64())
     val url = join3("https://localhost:", pt.as_str(), "/hello")
-    val bare = tls.client_options().with_ca_pem(result.expect(r = tlsfile.ca_pem(ca.as_str()), message = "cannot read the CA")).with_timeout_ms(10000)
+    val bare = tls.client_options().with_ca_pem(ca_bytes(ca.as_str())).with_timeout_ms(10000)
     val none = http.try_get_tls(url.as_str(), &bare)
     when none {
         Ok(_) -> {

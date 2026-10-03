@@ -1548,7 +1548,8 @@ fn m01_a_module_without_an_mmio_grant_cannot_take_an_address() {
 /// 64 or more folds to 0 in the compiler's 128-bit arithmetic but is a shift
 /// by `n mod 64` on the target, so `0x10000000 + (0x100000 << 70)` looked like
 /// the in-range `0x10000000` and addressed `0x14000000`. A shift that wide is
-/// now "cannot fold", which a range grant refuses.
+/// now refused where it is written (a constant shift by the width or more is a
+/// compile error; before tl7 it was "cannot fold", which a range grant refused).
 #[test]
 fn m02_an_oversized_shift_does_not_fold_into_the_granted_range() {
     for expr in [
@@ -1562,7 +1563,7 @@ fn m02_an_oversized_shift_does_not_fold_into_the_granted_range() {
             "[caps]\nmmio = [\"0x10000000+0x100\"]\n",
             &[("main.kp", KMAIN_DEV), ("dev.kp", &poke_at(expr))],
         );
-        lab.check_refused(&["cannot fold"]);
+        lab.check_refused(&["a shift by", "is not defined for a 'usize'"]);
     }
 }
 
