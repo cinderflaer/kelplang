@@ -1,3 +1,4 @@
+//! `Option<T>`: a value that may be absent, with its helpers.
 /* std/option — `Option<T>`, and the helpers the language can express (MK5-S6-M1).
 
    The enum is the point. `Some`/`None` is one of the two shapes the `?`
@@ -34,8 +35,11 @@
      is a borrow, so it stays `Copy`-only: an owned payload has to come out of
      an owned option, which is `unwrap_or`. */
 
+/// A value that may be absent: `Some` holds it, `None` does not.
 enum Option<T> {
+    /// The value is present.
     Some(val value: T)
+    /// There is no value.
     None
 }
 

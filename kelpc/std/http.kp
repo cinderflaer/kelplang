@@ -1,3 +1,4 @@
+//! An HTTP/1.1 client and server over `std/net` and `std/tls`.
 impl "std/mem"
 impl "std/net"
 impl "std/tls"
@@ -60,9 +61,13 @@ impl "std/thread"
    Not here, deliberately: gzip, HTTP/2, cookies, proxies, `Expect:
    100-continue` on the client and idle reaping. */
 
+/// The port for `http` URLs.
 const DEFAULT_PORT: u16 = 80
+/// The port for `https` URLs.
 const DEFAULT_HTTPS_PORT: u16 = 443
+/// The default connect and read timeout, in milliseconds.
 const DEFAULT_TIMEOUT_MS: u64 = 30000
+/// How many redirects a client follows by default.
 const DEFAULT_MAX_REDIRECTS: i32 = 5
 
 /// The project's connection ceiling, from `coral.toml`'s `http_pool` key. The
@@ -71,10 +76,13 @@ const DEFAULT_MAX_REDIRECTS: i32 = 5
 /// every exchange gets a fresh connection and nothing is kept.
 const pool_size: usize = __KELP_HTTP_POOL__
 
+/// A parsed URL.
 datac Url(val scheme: String, val host: String, val port: u16, val path: String)
 
+/// One HTTP header.
 datac Header(val name: String, val value: String)
 
+/// A received HTTP response.
 datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val reusable: bool)
 
 /// The `X-RateLimit-*` bucket headers, bundled (MISSING-p5Xtr). Discord is the
@@ -95,13 +103,19 @@ datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val 
 /// them with fractional seconds (`"X-RateLimit-Reset-After": "0.253"`), and a
 /// caller that only wants whole seconds can round.
 datac RateLimit(
+    /// The quota for the window.
     val limit: option.Option<u64>,
+    /// Requests left in the window.
     val remaining: option.Option<u64>,
+    /// When the window resets, as a Unix time.
     val reset: option.Option<f64>,
+    /// Seconds until the window resets.
     val reset_after: option.Option<f64>,
+    /// The server's name for the bucket.
     val bucket: option.Option<String>,
 )
 
+/// An HTTP request to send.
 datac Request(val method: String, val url: String, val headers: List<Header>, val body: Bytes)
 
 /// `timeout_ms = 0` is "no timeout" (that is what `SO_RCVTIMEO` of zero means),
@@ -125,11 +139,15 @@ datac Client(val timeout_ms: u64, val max_redirects: i32, val follow_redirects: 
 /// Every `reason` is the text the panicking form panics with, so a caller that
 /// logs it prints what `send` would have printed on stderr.
 enum HttpErr {
+    /// The connection could not be made.
     Dial(val reason: String)
+    /// The request or response failed on the wire.
     Exchange(val reason: String)
+    /// Too many redirects.
     Redirects(val reason: String)
 }
 
+/// The reason text inside an `HttpErr`.
 fun http_err_reason(e: move HttpErr).R: String = when e {
     Dial(reason) -> reason
     Exchange(reason) -> reason
@@ -143,6 +161,7 @@ fun fail_http<T>(e: move HttpErr).R: T {
     panic(reason.as_str())
 }
 
+/// An `Exchange` error carrying `text`.
 fun exchange_failed<T>(text: &str).R: result.Result<T, HttpErr> {
     return result.Result.Err(error = HttpErr.Exchange(reason = String.from_str(text)))
 }
@@ -160,10 +179,15 @@ fun exchange_failed<T>(text: &str).R: result.Result<T, HttpErr> {
 /// never fails because its pool was small, which is worth more than a strict
 /// ceiling.
 datac Pool(
+    /// The host the pool connects to.
     val host: String,
+    /// The port the pool connects to.
     val port: u16,
+    /// How many idle connections the pool keeps.
     val size: usize,
+    /// The timeout for each exchange, in milliseconds.
     val timeout_ms: u64,
+    /// The idle connections ready for reuse.
     var idle: List<Conn>,
 )
 
@@ -188,6 +212,7 @@ datac Lease(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, val reuse
 /// the one place that dispatches on it.
 datac Conn(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>)
 
+/// Whether the connection is encrypted.
 fun Conn.is_tls().R: bool = when tls_handle {
     Some(_) -> true
     None -> false
@@ -242,6 +267,7 @@ fun conn_send_all_try(c: Conn, data: Bytes).R: result.Result<usize, HttpErr> {
     }
 }
 
+/// Reads up to `max` bytes, or the error.
 fun conn_recv_try(c: Conn, max: usize).R: result.Result<Bytes, HttpErr> {
     if c.is_tls() {
         return when tls.try_read(c.tls(), max) {
@@ -255,6 +281,7 @@ fun conn_recv_try(c: Conn, max: usize).R: result.Result<Bytes, HttpErr> {
     }
 }
 
+/// Reads into `buf` at `at`, returning the byte count or the error.
 fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: usize).R: result.Result<usize, HttpErr> {
     if c.is_tls() {
         return when tls.try_read_into(c.tls(), buf, at) {
@@ -309,6 +336,7 @@ fun connect_configured_try(host: &str, port: u16, timeout_ms: u64, use_tls: bool
     }
 }
 
+/// Finishes a dialed socket into a connection, with TLS when asked.
 fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool).R: result.Result<Conn, HttpErr> {
     var s = net.Socket(fd = sock.fd)
     if timeout_ms > 0 {
@@ -339,6 +367,7 @@ fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool).R:
 /// costs nothing and needs no move.
 datac Cursor(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, var buf: Bytes, var start: usize)
 
+/// The connection a cursor reads.
 fun Cursor.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 
 // ----- URLs -----
@@ -393,6 +422,7 @@ fun split_authority(rest: &str, scheme: &str).R: Url {
     return make_url(whole, "/", scheme)
 }
 
+/// Builds a `Url` from an authority, a path and a scheme.
 fun make_url(authority: String, path: &str, scheme: &str).R: Url {
     if str.is_empty(authority.as_str()) {
         panic("http.parse_url: URL has no host")
@@ -420,6 +450,7 @@ fun make_url(authority: String, path: &str, scheme: &str).R: Url {
     )
 }
 
+/// Parses a port number, panicking when it is invalid.
 fun parse_port(text: &str).R: u16 {
     if str.is_empty(text) {
         panic("http.parse_url: URL has an empty port")
@@ -449,11 +480,13 @@ fun name_eq(a: &str, b: &str).R: bool {
     return str.eq(la.as_str(), lb.as_str())
 }
 
+/// An empty header list.
 fun empty_headers().R: List<Header> {
     var hs: List<Header> = List.empty()
     return hs
 }
 
+/// Whether the response has a header called `name`.
 fun Response.has_header(name: &str).R: bool {
     var i: usize = 0
     while i < headers.len() {
@@ -490,6 +523,7 @@ fun Response.header(name: &str).R: String {
     return String.empty()
 }
 
+/// Whether the status is 2xx.
 fun Response.is_ok().R: bool = status >= 200 && status < 300
 
 /// The body as owned text. Panics: if the bytes are not valid utf-8
@@ -892,6 +926,7 @@ fun parse_status_line(line: &str).R: i32 {
     return code
 }
 
+/// The status code of a status line, or the error.
 fun status_code_try(text: &str).R: result.Result<i32, HttpErr> {
     val parsed = str.parse_u64(text)
     if let Ok(p) = parsed {
@@ -903,6 +938,7 @@ fun status_code_try(text: &str).R: result.Result<i32, HttpErr> {
     return exchange_failed("http: the status code is not a number")
 }
 
+/// The status code of a status line.
 fun status_code(text: &str).R: i32 {
     val code = when status_code_try(text) {
         Ok(c) -> c
@@ -932,6 +968,7 @@ fun parse_headers(lines: List<String>).R: List<Header> {
     return hs
 }
 
+/// The value of header `name`, or an empty string.
 fun header_value(hs: List<Header>, name: &str).R: String {
     var i: usize = 0
     while i < hs.len() {
@@ -1012,12 +1049,14 @@ fun content_length_of(hs: List<Header>).R: i64 {
     return n
 }
 
+/// Whether the headers announce a chunked body.
 fun is_chunked(hs: List<Header>).R: bool {
     val raw = header_value(hs, "transfer-encoding")
     val text = str.to_lower(raw.as_str())
     return str.contains(text.as_str(), "chunked")
 }
 
+/// Whether the headers ask to close the connection.
 fun wants_close(hs: List<Header>).R: bool {
     val raw = header_value(hs, "connection")
     val text = str.to_lower(raw.as_str())
@@ -1118,6 +1157,7 @@ fun one_exchange(c: Conn, method: &str, u: Url, headers: List<Header>, body: Byt
 /// were standardized.
 fun keep_body_on(status: i32).R: bool = status == 307 || status == 308
 
+/// Whether `status` is a redirect.
 fun is_redirect(status: i32).R: bool {
     return status == 301 || status == 302 || status == 303 || status == 307 || status == 308
 }
@@ -1187,6 +1227,7 @@ fun follow_url_try(client: Client, base: Url, resp: Response, hops: i32).R: resu
     return result.Result.Ok(value = absolute_url(base, loc.as_str()))
 }
 
+/// A client with the default timeout and redirect limit.
 fun default_client().R: Client = Client(
     timeout_ms = DEFAULT_TIMEOUT_MS,
     max_redirects = DEFAULT_MAX_REDIRECTS,
@@ -1224,6 +1265,7 @@ fun Client.try_send(req: Request).R: result.Result<Response, HttpErr> = send_fre
     self.max_redirects,
 )
 
+/// Sends a request over a new connection.
 fun send_fresh(
     client: Client,
     method: String,
@@ -1239,6 +1281,7 @@ fun send_fresh(
     return r
 }
 
+/// Sends a request over a new connection, returning the error instead of panicking.
 fun send_fresh_try(
     client: Client,
     method: String,
@@ -1297,16 +1340,19 @@ fun pool(host: &str, port: u16).R: Pool = Pool(
     idle = empty_idle(),
 )
 
+/// An empty idle-connection list.
 fun empty_idle().R: List<Conn> {
     var l: List<Conn> = List.empty()
     return l
 }
 
+/// How many idle connections the pool keeps.
 fun Pool.size().R: usize = size
 
 /// How many connections the pool is keeping right now.
 fun Pool.len().R: usize = idle.len()
 
+/// The connection a lease holds.
 fun Lease.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 
 /// Opens up to `size` connections now, so the first request does not pay for
@@ -1401,6 +1447,7 @@ fun mut Pool.close_all() {
     }
 }
 
+/// Whether a pool serves the host and port of `u`.
 fun pool_matches(p: Pool, u: Url).R: bool {
     if p.size == 0 {
         return false
@@ -1408,6 +1455,7 @@ fun pool_matches(p: Pool, u: Url).R: bool {
     return str.eq(p.host.as_str(), u.host.as_str()) && p.port == u.port
 }
 
+/// Sends a request, reusing an idle connection when one is free.
 fun mut Pool.send(req: Request).R: Response {
     val r = when self.try_send(req) {
         Ok(v) -> v
@@ -1438,6 +1486,7 @@ fun mut Pool.try_send(req: Request).R: result.Result<Response, HttpErr> {
     )
 }
 
+/// Sends one hop of a request through the pool.
 fun pooled_hop(
     p: mut Pool,
     client: Client,
@@ -1454,6 +1503,7 @@ fun pooled_hop(
     return r
 }
 
+/// Sends one hop through the pool, returning the error.
 fun pooled_hop_try(
     p: mut Pool,
     client: Client,
@@ -1527,6 +1577,7 @@ fun connect_tls_try(host: &str, port: u16, timeout_ms: u64, opts: &tls.TlsClient
     }
 }
 
+/// Finishes a dialed socket into a connection using the given TLS options.
 fun finish_dial_opts(sock: net.Socket, host: &str, timeout_ms: u64, opts: &tls.TlsClientOptions).R: result.Result<Conn, HttpErr> {
     var s = net.Socket(fd = sock.fd)
     if timeout_ms > 0 {
@@ -1554,6 +1605,7 @@ fun Client.try_send_tls(req: Request, opts: &tls.TlsClientOptions).R: result.Res
     self.max_redirects,
 )
 
+/// Opens a connection for `u`.
 fun dial_for(u: Url, timeout_ms: u64, opts: &tls.TlsClientOptions).R: result.Result<Conn, HttpErr> {
     if url_is_https(u) {
         return connect_tls_try(u.host.as_str(), u.port, timeout_ms, opts)
@@ -1561,6 +1613,7 @@ fun dial_for(u: Url, timeout_ms: u64, opts: &tls.TlsClientOptions).R: result.Res
     return connect_configured_try(u.host.as_str(), u.port, timeout_ms, false)
 }
 
+/// Sends a request over TLS, returning the error.
 fun send_tls_try(
     client: Client,
     opts: &tls.TlsClientOptions,
@@ -1620,6 +1673,7 @@ fun try_get(url: &str).R: result.Result<Response, HttpErr> {
     return c.try_send(make_get(url))
 }
 
+/// A GET request for `url`.
 fun make_get(url: &str).R: Request = Request(
     method = String.from_str("GET"),
     url = String.from_str(url),
@@ -1661,13 +1715,21 @@ fun post_text(url: &str, body: &str, content_type: &str).R: Response {
 /// client that trickles its request one byte at a time is cut off when the head
 /// deadline passes, which a per-`recv` timeout would never do.
 datac Limits(
+    /// The longest request line accepted.
     val max_request_line: usize,
+    /// The most header bytes accepted.
     val max_header_bytes: usize,
+    /// The most headers accepted.
     val max_headers: usize,
+    /// The largest body accepted.
     val max_body: usize,
+    /// How long to wait for a request head, in milliseconds.
     val head_timeout_ms: u64,
+    /// How long to wait for a body, in milliseconds.
     val body_timeout_ms: u64,
+    /// How long a kept-alive connection may idle, in milliseconds.
     val idle_timeout_ms: u64,
+    /// The most requests served on one connection.
     val max_requests_per_conn: usize,
 )
 
@@ -1698,6 +1760,7 @@ fun Limits.with_timeouts(head_ms: u64, body_ms: u64, idle_ms: u64).R: Limits = L
     max_requests_per_conn = max_requests_per_conn,
 )
 
+/// A copy of the limits.
 fun Limits.dup().R: Limits = self.with_timeouts(head_timeout_ms, body_timeout_ms, idle_timeout_ms)
 
 // ----- requests and responses -----
@@ -1706,11 +1769,17 @@ fun Limits.dup().R: Limits = self.with_timeouts(head_timeout_ms, body_timeout_ms
 /// the first `?`, both still percent-encoded; `query_param` and `path_segments`
 /// decode. A header name keeps the case the client wrote; lookups ignore case.
 datac ServerRequest(
+    /// The request method.
     val method: String,
+    /// The raw request target.
     val target: String,
+    /// The decoded path.
     val path: String,
+    /// The query string.
     val query: String,
+    /// The request headers.
     val headers: List<Header>,
+    /// The request body.
     val body: Bytes,
 )
 
@@ -1718,6 +1787,7 @@ datac ServerRequest(
 /// a header of either name set here is dropped when the response is written.
 datac ServerResponse(val status: i32, val headers: List<Header>, val body: Bytes)
 
+/// Whether the list has a header called `name`.
 fun headers_have(hs: List<Header>, name: &str).R: bool {
     var i: usize = 0
     while i < hs.len() {
@@ -1729,8 +1799,10 @@ fun headers_have(hs: List<Header>, name: &str).R: bool {
     return false
 }
 
+/// The value of header `name`, or an empty string.
 fun ServerRequest.header(name: &str).R: String = header_value(headers, name)
 
+/// Whether the request has a header called `name`.
 fun ServerRequest.has_header(name: &str).R: bool = headers_have(headers, name)
 
 /// The body as owned text. Panics: if the bytes are not valid utf-8.
@@ -1746,6 +1818,7 @@ fun srv_decode_form(raw: &str).R: String {
     }
 }
 
+/// Percent-decodes a request path.
 fun srv_decode_path(raw: &str).R: String {
     return when encoding.percent_decode(raw) {
         Ok(s) -> s
@@ -1796,6 +1869,7 @@ fun ServerRequest.path_segments().R: List<String> {
     return out
 }
 
+/// The reason phrase for a status code.
 fun srv_reason(code: i32).R: String {
     if code == 100 {
         return String.from_str("Continue")
@@ -1902,6 +1976,7 @@ fun srv_reason(code: i32).R: String {
     return String.from_str("Unknown")
 }
 
+/// A response with a status, a content type and a body.
 fun srv_response(code: i32, content_type: &str, body: move Bytes).R: ServerResponse {
     var hs: List<Header> = List.empty()
     if !str.is_empty(content_type) {
@@ -1922,6 +1997,7 @@ fun html(text: &str).R: ServerResponse = srv_response(200, "text/html; charset=u
 /// An empty response with this status.
 fun status(code: i32).R: ServerResponse = srv_response(code, "", Bytes.empty())
 
+/// A 404 response.
 fun not_found().R: ServerResponse = srv_response(404, "text/plain; charset=utf-8", Bytes.from_str("not found\n"))
 
 /// `400` whose body is `message`.
@@ -1941,6 +2017,7 @@ fun ServerResponse.with_header(name: &str, value: &str).R: ServerResponse {
     return ServerResponse(status = status, headers = hs, body = body.clone())
 }
 
+/// Adds a header to the response.
 fun mut ServerResponse.add_header(name: &str, value: &str) {
     headers.push(Header(name = String.from_str(name), value = String.from_str(value)))
 }
@@ -1958,6 +2035,7 @@ fun listen(port: u16).R: Server {
     return Server(fd = l.fd)
 }
 
+/// The port the server listens on.
 fun Server.port().R: u16 {
     val l = net.Listener(fd = fd)
     return l.port()
@@ -1971,6 +2049,7 @@ fun Server.set_accept_timeout(ms: u64) {
     l.set_timeout(ms)
 }
 
+/// Stops listening.
 fun Server.close() {
     val l = net.Listener(fd = fd)
     l.close()
@@ -1980,16 +2059,25 @@ fun Server.close() {
 /// being parsed (pipelined requests wait here), and what the last request asked
 /// of the response.
 datac ServerConn(
+    /// The socket descriptor.
     val fd: i32,
+    /// Bytes read but not yet consumed.
     var buf: Bytes,
+    /// Where unconsumed bytes start in `buf`.
     var start: usize,
+    /// Requests served so far.
     var served: usize,
+    /// Whether to close after this response.
     var close_after: bool,
+    /// Whether the current request is a HEAD.
     var head_only: bool,
+    /// Whether to send a keep-alive header.
     var keep_alive_header: bool,
+    /// The TLS session, when encrypted.
     val tls_handle: option.Option<tls.TlsHandle>,
 )
 
+/// A fresh server connection state for `fd`.
 fun new_conn(fd: i32).R: ServerConn = ServerConn(
     fd = fd,
     buf = Bytes.empty(),
@@ -2014,6 +2102,7 @@ fun new_conn_tls(t: tls.TlsStream).R: ServerConn = ServerConn(
     tls_handle = option.Option.Some(value = t.handle),
 )
 
+/// The connection a server connection reads.
 fun ServerConn.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 
 /// Decrypted bytes OpenSSL already holds for this connection (always 0 for a
@@ -2057,10 +2146,12 @@ fun srv_err<T>(code: i32, text: &str).R: result.Result<T, HttpErr> {
     return result.Result.Err(error = HttpErr.Exchange(reason = r))
 }
 
+/// An error that sends no response.
 fun srv_silent<T>(text: &str).R: result.Result<T, HttpErr> {
     return result.Result.Err(error = HttpErr.Exchange(reason = String.from_str(text)))
 }
 
+/// The status code that matches a failure reason.
 fun srv_reason_status(reason: &str).R: i32 {
     if str.len(reason) < 4 {
         return 0
@@ -2091,6 +2182,7 @@ fun http_error_status(e: &HttpErr).R: i32 {
     }
 }
 
+/// The message text of an `HttpErr`.
 fun http_error_text(e: &HttpErr).R: String {
     return when e {
         Dial(reason) -> String.from_str(reason.as_str())
@@ -2139,6 +2231,7 @@ fun mut ServerConn.compact() {
     start = 0
 }
 
+/// The bytes from `from` up to `to`.
 fun srv_bytes_range(b: Bytes, from: usize, to: usize).R: Bytes {
     var out = Bytes.empty()
     var i = from
@@ -2214,6 +2307,7 @@ fun srv_tchar(c: u8).R: bool {
     return c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 46 || c == 94 || c == 95 || c == 96 || c == 124 || c == 126
 }
 
+/// Whether `s` is a valid HTTP token.
 fun srv_is_token(s: &str).R: bool {
     val n = str.len(s)
     if n == 0 {
@@ -2229,6 +2323,7 @@ fun srv_is_token(s: &str).R: bool {
     return true
 }
 
+/// How many headers are called `name`.
 fun srv_count_headers(hs: List<Header>, name: &str).R: usize {
     var n: usize = 0
     var i: usize = 0
@@ -2307,6 +2402,7 @@ fun srv_header_token(hs: List<Header>, name: &str).R: String {
     return str.to_lower(trimmed.as_str())
 }
 
+/// Whether a method must carry a body length.
 fun srv_method_needs_length(m: &str).R: bool {
     return str.eq(m, "POST") || str.eq(m, "PUT") || str.eq(m, "PATCH")
 }
@@ -2367,6 +2463,7 @@ fun mut ServerConn.need(n: usize, deadline: i64).R: result.Result<usize, HttpErr
     return result.Result.Ok(value = 0)
 }
 
+/// Parses a chunk-size line, refusing sizes over `max_body`.
 fun srv_hex_size(text: &str, max_body: usize).R: result.Result<usize, HttpErr> {
     val n = str.len(text)
     var value: usize = 0
@@ -2658,8 +2755,10 @@ fun mut ServerConn.mark_close() {
     close_after = true
 }
 
+/// Whether the connection closes after this response.
 fun ServerConn.wants_close().R: bool = close_after
 
+/// Whether a header is safe to send.
 fun srv_clean_header(h: Header).R: bool {
     val n = str.len(h.name.as_str())
     val v = str.len(h.value.as_str())
@@ -2958,6 +3057,7 @@ fun serve_tls_n(port: u16, config: &tls.ServerConfig, handler: fun(&ServerReques
 /// borrowed crosses the thread boundary.
 datac Worker(val fd: i32, val handler: fun(&ServerRequest).R: ServerResponse, val limits: Limits)
 
+/// The loop one server worker thread runs.
 fun worker_main(w: move Worker).R: u64 {
     val s = Server(fd = w.fd)
     return serve_on(&s, w.handler, &w.limits, 0)

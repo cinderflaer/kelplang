@@ -1,3 +1,4 @@
+//! Callback-shaped operations on `List<T>`: `map`, `filter`, `each`, `any`, `all` and friends.
 /* std/list — the callback-shaped operations on the builtin `List<T>` (A-4).
 
    The element-wise API (`len`, `get`, `push`, `sort`, …) is built into the

@@ -1,3 +1,4 @@
+//! Text: `&str` and `String` helpers, searching, trimming, splitting and number parsing.
 impl "std/mem"
 impl "std/option"
 impl "std/result"
@@ -30,6 +31,7 @@ fun byte(s: &str, i: usize).R: u8 = byte_at_raw(s, i)
 /// identity.
 fun ptr(s: &str).R: Ptr<u8> = byte_ptr_raw(s)
 
+/// Whether `s` has no bytes.
 fun is_empty(s: &str).R: bool = len(s) == 0
 
 /// The tail of `s` starting at byte `from` — a view, not a copy, which is
@@ -95,6 +97,7 @@ fun starts_with_at(s: &str, needle: &str, at: usize).R: bool {
     return true
 }
 
+/// Whether `s` begins with `prefix`.
 fun starts_with(s: &str, prefix: &str).R: bool {
     if len(prefix) > len(s) {
         return false
@@ -102,6 +105,7 @@ fun starts_with(s: &str, prefix: &str).R: bool {
     return starts_with_at(s, prefix, 0)
 }
 
+/// Whether `s` ends with `suffix`.
 fun ends_with(s: &str, suffix: &str).R: bool {
     val ls = len(s)
     val lf = len(suffix)
@@ -111,6 +115,7 @@ fun ends_with(s: &str, suffix: &str).R: bool {
     return starts_with_at(s, suffix, ls - lf)
 }
 
+/// Whether `needle` occurs in `s`.
 fun contains(s: &str, needle: &str).R: bool {
     return option.is_some(o = index_of(s, needle))
 }
@@ -150,6 +155,7 @@ fun less(a: &str, b: &str).R: bool {
     return na < nb
 }
 
+/// Whether the byte `c` is a space, tab, newline or carriage return.
 fun is_space(c: u8).R: bool = c == 32 || c == 9 || c == 10 || c == 13
 
 /// The decimal-digit predicate that pairs with `is_space`.
@@ -206,6 +212,7 @@ fun prefix(s: &str, n: usize).R: String {
     return String.from_bytes(out)
 }
 
+/// `s` without leading and trailing whitespace.
 fun trim(s: &str).R: String = trim_end(trim_start(s))
 
 /// Non-ASCII bytes are copied through unchanged: upper-casing arbitrary
@@ -227,6 +234,7 @@ fun to_upper(s: &str).R: String {
     return String.from_bytes(out)
 }
 
+/// `s` with ASCII letters lowercased.
 fun to_lower(s: &str).R: String {
     val sv = s.view()
     val n = sv.len()
@@ -418,6 +426,7 @@ fun from_i64(n: i64).R: String {
 // `decimals` is not clamped: it is what the caller asked for.
 extern fun from_f64_raw(x: f64, decimals: i32).R: String
 
+/// `x` written with `decimals` digits after the point.
 fun from_f64(x: f64, decimals: i32).R: String = from_f64_raw(x, decimals)
 
 /// Why a parse failed (MK5-S6-M1). `Invalid` covers everything the C
@@ -426,7 +435,9 @@ fun from_f64(x: f64, decimals: i32).R: String = from_f64_raw(x, decimals)
 /// A payload-less variant is still a variant, which is what lets the failure
 /// ride in a `Result` and be matched by name.
 enum ParseErr {
+    /// The text was empty.
     Empty
+    /// The text is not a number.
     Invalid
 }
 
@@ -437,6 +448,7 @@ extern fun parse_i64_raw(s: &str, out: mut i64).R: bool
 extern fun parse_u64_raw(s: &str, out: mut u64).R: bool
 extern fun parse_f64_raw(s: &str, out: mut f64).R: bool
 
+/// Parses `s` as a signed 64-bit integer.
 fun parse_i64(s: &str).R: result.Result<i64, ParseErr> {
     var v: i64 = 0
     val ok = parse_i64_raw(s, out = v)
@@ -446,6 +458,7 @@ fun parse_i64(s: &str).R: result.Result<i64, ParseErr> {
     return result.Result.Ok(value = v)
 }
 
+/// Parses `s` as an unsigned 64-bit integer.
 fun parse_u64(s: &str).R: result.Result<u64, ParseErr> {
     var v: u64 = 0
     val ok = parse_u64_raw(s, out = v)

@@ -1,3 +1,4 @@
+//! Arithmetic and the C library's transcendental functions.
 /* std/math — arithmetic and the C library's transcendentals (M6.3).
 
    Two things here exist because the plan needed them: `const` (PI/E/TAU are
@@ -9,8 +10,11 @@
    The library functions are one-line externs: `sqrt` in C is already the
    function `sqrt`, and writing it in Kelp would mean reimplementing it. */
 
+/// The ratio of a circle's circumference to its diameter.
 const PI: f64 = 3.141592653589793
+/// Euler's number.
 const E: f64 = 2.718281828459045
+/// The full turn in radians, `2 * PI`.
 const TAU: f64 = 6.283185307179586
 
 extern fun sqrt_raw(x: f64).R: f64
@@ -30,21 +34,37 @@ extern fun atan2_raw(y: f64, x: f64).R: f64
 extern fun is_nan_raw(x: f64).R: bool
 extern fun is_finite_raw(x: f64).R: bool
 
+/// The square root of `x`.
 fun sqrt(x: f64).R: f64 = sqrt_raw(x)
+/// `base` raised to `exp`.
 fun pow(base: f64, exp: f64).R: f64 = pow_raw(base, exp)
+/// The largest whole number not above `x`.
 fun floor(x: f64).R: f64 = floor_raw(x)
+/// The smallest whole number not below `x`.
 fun ceil(x: f64).R: f64 = ceil_raw(x)
+/// `x` rounded to the nearest whole number, halves away from zero.
 fun round(x: f64).R: f64 = round_raw(x)
+/// `x` with its fractional part removed.
 fun trunc(x: f64).R: f64 = trunc_raw(x)
+/// `E` raised to `x`.
 fun exp(x: f64).R: f64 = exp_raw(x)
+/// The natural logarithm of `x`.
 fun ln(x: f64).R: f64 = ln_raw(x)
+/// The base-2 logarithm of `x`.
 fun log2(x: f64).R: f64 = log2_raw(x)
+/// The base-10 logarithm of `x`.
 fun log10(x: f64).R: f64 = log10_raw(x)
+/// The sine of `x` radians.
 fun sin(x: f64).R: f64 = sin_raw(x)
+/// The cosine of `x` radians.
 fun cos(x: f64).R: f64 = cos_raw(x)
+/// The tangent of `x` radians.
 fun tan(x: f64).R: f64 = tan_raw(x)
+/// The angle in radians of the point (`x`, `y`).
 fun atan2(y: f64, x: f64).R: f64 = atan2_raw(y, x)
+/// Whether `x` is not a number.
 fun is_nan(x: f64).R: bool = is_nan_raw(x)
+/// Whether `x` is neither infinite nor not a number.
 fun is_finite(x: f64).R: bool = is_finite_raw(x)
 
 /// `sign` is f64-only: an integer `sign` would return an integer, which is a
@@ -57,18 +77,30 @@ fun sign(x: f64).R: f64 = if x < 0.0 { -1.0 } else { if x > 0.0 { 1.0 } else { 0
 // gated to compiler-shipped modules (`is_std_module`), so it is invisible to
 // user code and implies no user-defined overloading.
 
+/// The absolute value of `x`.
 fun abs(x: i32).R: i32 = if x < 0 { -x } else { x }
+/// The absolute value of `x`.
 fun abs(x: i64).R: i64 = if x < 0 { -x } else { x }
+/// The absolute value of `x`.
 fun abs(x: f64).R: f64 = if x < 0.0 { -x } else { x }
 
+/// The smaller of `a` and `b`.
 fun min(a: i32, b: i32).R: i32 = if a < b { a } else { b }
+/// The smaller of `a` and `b`.
 fun min(a: i64, b: i64).R: i64 = if a < b { a } else { b }
+/// The smaller of `a` and `b`.
 fun min(a: f64, b: f64).R: f64 = if a < b { a } else { b }
 
+/// The larger of `a` and `b`.
 fun max(a: i32, b: i32).R: i32 = if a > b { a } else { b }
+/// The larger of `a` and `b`.
 fun max(a: i64, b: i64).R: i64 = if a > b { a } else { b }
+/// The larger of `a` and `b`.
 fun max(a: f64, b: f64).R: f64 = if a > b { a } else { b }
 
+/// `x` limited to the range `lo` to `hi`.
 fun clamp(x: i32, lo: i32, hi: i32).R: i32 = if x < lo { lo } else { if x > hi { hi } else { x } }
+/// `x` limited to the range `lo` to `hi`.
 fun clamp(x: i64, lo: i64, hi: i64).R: i64 = if x < lo { lo } else { if x > hi { hi } else { x } }
+/// `x` limited to the range `lo` to `hi`.
 fun clamp(x: f64, lo: f64, hi: f64).R: f64 = if x < lo { lo } else { if x > hi { hi } else { x } }

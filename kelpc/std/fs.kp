@@ -1,3 +1,4 @@
+//! Filesystem access, gated by the `fs` capability.
 impl "std/str"
 impl "std/path"
 impl "std/io"
@@ -128,8 +129,11 @@ fun write_text(path: &str, text: String) {
 /// Panics: if the kernel cannot report it.
 fun cwd().R: String = cwd_raw()
 
+/// Whether `path` exists.
 fun exists(path: &str).R: bool = exists_raw(path)
+/// Whether `path` is a regular file.
 fun is_file(path: &str).R: bool = is_file_raw(path)
+/// Whether `path` is a directory.
 fun is_dir(path: &str).R: bool = is_dir_raw(path)
 
 /// Whether `path` is itself a symlink. `is_file`/`is_dir` follow a link and

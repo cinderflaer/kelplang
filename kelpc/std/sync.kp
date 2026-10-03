@@ -1,3 +1,4 @@
+//! Mutexes, condition variables and channels between threads.
 /* std/sync: the mutex surface (B-5). `Mutex<T>` itself is a compiler builtin,
    in the shape `Atomic<T>`/`Thread<T>` have: a monomorphized per-element-type
    representation, not `Copy`, with its method set lowered to the C runtime's
@@ -106,12 +107,15 @@ impl "std/result"
 
 /// Why `recv` has no value: every sender is gone and the queue is empty.
 enum RecvErr {
+    /// Every sender is gone and the queue is empty.
     Closed
 }
 
 /// Why `recv_timeout` has no value.
 enum RecvTimeout {
+    /// No value arrived in time.
     Timeout
+    /// Every sender is gone and the queue is empty.
     Closed
 }
 
@@ -123,12 +127,16 @@ datac ChanMeta(var count: usize, var senders: i64, var rx_alive: bool, val cap: 
 /// channel when the last one goes.
 datac SendEnd(val live: bool, val meta: Mutex<ChanMeta>, val ne: Condvar, val nf: Condvar)
 
+/// The receiving half's shared state; it closes the channel when dropped.
 datac RecvEnd(val live: bool, val meta: Mutex<ChanMeta>, val ne: Condvar, val nf: Condvar)
 
+/// The sending half of a channel.
 datac Sender<T>(val q: Mutex<List<T>>, val end: SendEnd)
 
+/// The receiving half of a channel.
 datac Receiver<T>(val q: Mutex<List<T>>, val end: RecvEnd)
 
+/// Counts this sender out and wakes a waiting receiver.
 fun mut SendEnd.drop() {
     if !live {
         return
@@ -142,6 +150,7 @@ fun mut SendEnd.drop() {
     }
 }
 
+/// Marks the receiver gone and wakes blocked senders.
 fun mut RecvEnd.drop() {
     if !live {
         return
@@ -150,6 +159,7 @@ fun mut RecvEnd.drop() {
     nf.notify_all()
 }
 
+/// Builds a channel with capacity `cap`, bounded or not.
 fun make_channel<T>(cap: usize, bounded: bool).R: (Sender<T>, Receiver<T>) {
     val meta = Mutex.new(ChanMeta(count = 0, senders = 1, rx_alive = true, cap = cap, bounded = bounded))
     val q: Mutex<List<T>> = Mutex.new(List.empty())

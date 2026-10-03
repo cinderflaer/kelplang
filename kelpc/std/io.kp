@@ -1,3 +1,4 @@
+//! Files, descriptors, standard streams and printing.
 impl "std/mem"
 impl "std/str"
 impl "std/option"
@@ -157,7 +158,9 @@ fun File.wait_writable(timeout_ms: u64).R: bool = wait_writable_raw(fd, timeout_
 /// The three standard descriptors. They are ordinary `File`s, so everything
 /// above applies to them, and they are never closed by the runtime.
 fun stdin().R: File = File(fd = 0)
+/// The standard output stream.
 fun stdout().R: File = File(fd = 1)
+/// The standard error stream.
 fun stderr().R: File = File(fd = 2)
 
 // One owned line of text, or `None` at end of file. The `Line(ok, text)`
@@ -298,20 +301,24 @@ fun read_all().R: Bytes = File(fd = 0).read_all()
 // like every other `File` write, and the primitive flushes stderr's stdio
 // buffer first so it stays in call order with `panic`.
 
+/// Writes `s` and a newline to standard output.
 fun print(s: &str) {
     print(s)
 }
 
+/// Writes `s` to standard output with no newline.
 fun print_bare(s: &str) {
     print!(s)
 }
 
+/// Writes `s` and a newline to standard error.
 fun eprint(s: &str) {
     val f = File(fd = 2)
     f.write_str(s)
     f.write_str("\n")
 }
 
+/// Writes `s` to standard error with no newline.
 fun eprint_bare(s: &str) {
     val f = File(fd = 2)
     f.write_str(s)

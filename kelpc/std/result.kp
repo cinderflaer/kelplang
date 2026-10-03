@@ -1,3 +1,4 @@
+//! `Result<T, E>`: the outcome of a fallible step, with its helpers.
 /* std/result — `Result<T, E>`, and the helpers the language can express
    (MK5-S6-M1).
 
@@ -27,8 +28,11 @@
      type and the enclosing function's to be identical, so `From`-style lifting
      of one error into another is where a trait would go (A-12). */
 
+/// The outcome of a fallible step: `Ok` holds the value, `Err` the error.
 enum Result<T, E> {
+    /// The step succeeded with a value.
     Ok(val value: T)
+    /// The step failed with an error.
     Err(val error: E)
 }
 
