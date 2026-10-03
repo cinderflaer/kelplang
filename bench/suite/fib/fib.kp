@@ -1,0 +1,29 @@
+// fib: naive recursive Fibonacci. Size = n (default 38).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun fib(n: i32).R: i64 {
+    if n < 2 {
+        return n.to_i64()
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fun main() {
+    val n = size_arg(38).to_i32()
+    val r = fib(n)
+    print("fib $n $r")
+}
