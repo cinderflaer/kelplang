@@ -17,7 +17,7 @@ work=${1:-$(mktemp -d)}
 mkdir -p "$work"
 commit=$(cd "$root" && git rev-parse HEAD)
 epoch=$(cd "$root" && git log -1 --format=%ct)
-export KELPC_COMMIT="$commit" SOURCE_DATE_EPOCH="$epoch"
+export KELPC_COMMIT="$commit" RELEASE_SOURCE_DATE_EPOCH="$epoch"
 
 hashes=""
 for name in alpha beta-longer-path; do

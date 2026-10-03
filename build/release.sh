@@ -10,7 +10,7 @@
 # See plan/reproducible-builds.md for what is pinned and why.
 #
 # Environment (all optional):
-#   SOURCE_DATE_EPOCH   build timestamp; default: the last commit's time
+#   RELEASE_SOURCE_DATE_EPOCH  build timestamp; default: the last commit's time
 #   KELPC_COMMIT        commit hash to bake in; default: git rev-parse HEAD
 #   CARGO_TARGET_DIR    where cargo builds; default: <repo>/target-release
 #   DIST_DIR            where the artifacts go; default: <repo>/dist
@@ -20,11 +20,17 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 cd "$root"
 
-if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
-    SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) || {
-        echo "release.sh: no git history and SOURCE_DATE_EPOCH is not set" >&2
-        exit 1
-    }
+# The commit time wins over an ambient SOURCE_DATE_EPOCH (nix-shell sets it to a
+# fixed 1980 value, which would make every release claim the same build date).
+# Without git history, RELEASE_SOURCE_DATE_EPOCH (or, last, SOURCE_DATE_EPOCH)
+# supplies it.
+if [ -n "${RELEASE_SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH=$RELEASE_SOURCE_DATE_EPOCH
+elif epoch=$(git log -1 --format=%ct 2>/dev/null) && [ -n "$epoch" ]; then
+    SOURCE_DATE_EPOCH=$epoch
+elif [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    echo "release.sh: no git history and RELEASE_SOURCE_DATE_EPOCH is not set" >&2
+    exit 1
 fi
 if [ -z "${KELPC_COMMIT:-}" ]; then
     KELPC_COMMIT=$(git rev-parse HEAD) || {
