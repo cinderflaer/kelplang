@@ -380,25 +380,26 @@ fun concat(a: &str, b: &str).R: String {
 }
 
 /// Decimal text for an unsigned value. Digits are produced least-significant
-/// first into a scratch buffer and copied back out in reverse: `%`/`/` on
-/// `u64` and one checked `to_u8` per digit is the whole algorithm.
+/// first into a 20-byte scratch array on the stack and pushed back out in
+/// reverse: `%`/`/` on `u64` and one checked `to_u8` per digit is the whole
+/// algorithm, and the only allocation is the result.
 fun from_u64(n: u64).R: String {
     if n == 0 {
         return String.from_str("0")
     }
-    var rev = String.with_capacity(20)
+    var rev: [u8; 20] = [0; 20]
+    var count: usize = 0
     var v = n
     while v > 0 {
-        rev.push((v % 10 + 48).to_u8())
+        rev.set(count, (v % 10 + 48).to_u8())
+        count = count + 1
         v = v / 10
     }
-    val digits = rev.as_str()
-    val dv = digits.view()
-    var out = String.with_capacity(rev.len())
-    var i = dv.len()
+    var out = String.with_capacity(count)
+    var i = count
     while i > 0 {
         i = i - 1
-        out.push(dv.get(i))
+        out.push(rev.get(i))
     }
     return out
 }
@@ -406,7 +407,9 @@ fun from_u64(n: u64).R: String {
 /// Decimal text for a signed value. The digits are taken in `i64`, with each
 /// remainder made positive before it is narrowed, so `i64`'s minimum needs no
 /// special case — converting it to `u64` first would panic (it is negative),
-/// and negating it in `i64` would overflow.
+/// and negating it in `i64` would overflow. Like `from_u64` it collects the
+/// digits in a stack array (at most 19 for an `i64`), so the result is the
+/// only allocation.
 fun from_i64(n: i64).R: String {
     if n == 0 {
         return String.from_str("0")
@@ -416,25 +419,25 @@ fun from_i64(n: i64).R: String {
     if v < 0 {
         neg = true
     }
-    var rev = String.with_capacity(20)
+    var rev: [u8; 20] = [0; 20]
+    var count: usize = 0
     while v != 0 {
         var d = v % 10
         if d < 0 {
             d = 0 - d
         }
-        rev.push((d + 48).to_u8())
+        rev.set(count, (d + 48).to_u8())
+        count = count + 1
         v = v / 10
     }
-    val digits = rev.as_str()
-    val dv = digits.view()
     var out = String.with_capacity(21)
     if neg {
         out.push(45)
     }
-    var i = dv.len()
+    var i = count
     while i > 0 {
         i = i - 1
-        out.push(dv.get(i))
+        out.push(rev.get(i))
     }
     return out
 }
