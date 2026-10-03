@@ -124,8 +124,9 @@ pub(crate) const C_HEADERS: &str = "\
 /// reaches `std/tls` (see [`uses_tls`]). `std/tls`'s externs are the only
 /// OpenSSL-touching code in the compiler, and a program without them must build
 /// on a host that has no OpenSSL development files (BUG-x7Qmd).
-pub(crate) const OPENSSL_HEADERS: &str = "\
+pub(crate) const OPENSSL_HEADERS: &str = concat!("\
 #include <openssl/err.h>\n\
+#include <openssl/pem.h>\n\
 #include <openssl/ssl.h>\n\
 #include <openssl/x509v3.h>\n\
 // SIGPIPE: OpenSSL writes to its socket with a plain `write()`, so a write to a\n\
@@ -232,7 +233,9 @@ static inline int kelp_tls_classify_error(SSL* ssl, int err, char* text, size_t 
     }\n\
     snprintf(text, text_len, \"TLS operation failed (SSL_get_error returned %d)\", err);\n\
     return 8;\n\
-}\n\n";
+}\n\n",
+    include_str!("externs/tls_helpers.c")
+);
 
 /// The `#include <...>` lines a project's `[extern.*] header` keys ask for,
 /// written after `C_HEADERS`. Empty when no section names a header, so a

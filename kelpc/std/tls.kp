@@ -1,11 +1,15 @@
 impl "std/net"
+impl "std/option"
+impl "std/list"
 impl "std/result"
 impl "std/str"
 
 /* std/tls: TLS for `https` (MK5-S4b-M1, open item 37, decided 2026-09-26:
    link the system OpenSSL rather than vendor one). Client side only in v1:
    this module wraps an outbound connection after it is already open: it
-   never dials one itself. Serving TLS is a later question.
+   never dials one itself. Serving TLS (`server_config`, `accept`), client
+   certificates and ALPN are the second half of the file; `plan/tls-server.md`
+   is their design note.
 
    Gated on `net`, the existing domain, not a new one. `https` is still
    network access, so a program that already writes
@@ -75,7 +79,13 @@ const ERR_PEER_CLOSED: i32 = 6
 const ERR_TIMEOUT: i32 = 7
 const ERR_IO: i32 = 8
 
-extern fun handshake_try_raw(fd: i32, host: &str, ca_file: &str, ca_dir: &str, timeout_ms: u64, err_code: mut i32, reason: mut String).R: TlsHandle
+extern fun handshake_try_raw(fd: i32, host: &str, ca_file: &str, ca_dir: &str, timeout_ms: u64, alpn: Bytes, cert_pem: Bytes, key_pem: Bytes, err_code: mut i32, reason: mut String).R: TlsHandle
+extern fun server_ctx_try_raw(cert: Bytes, key: Bytes, ca: Bytes, alpn: Bytes, min13: i32, err_code: mut i32, reason: mut String).R: TlsCtx
+extern fun accept_try_raw(ctx: TlsCtx, fd: i32, timeout_ms: u64, err_code: mut i32, reason: mut String).R: TlsHandle
+extern fun ctx_free_raw(ctx: TlsCtx)
+extern fun alpn_raw(handle: TlsHandle, out: mut String).R: bool
+extern fun peer_subject_raw(handle: TlsHandle, out: mut String).R: bool
+extern fun pending_raw(handle: TlsHandle).R: usize
 extern fun set_timeout_raw(handle: TlsHandle, ms: u64)
 extern fun write_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String).R: usize
 extern fun write_all_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String).R: usize
@@ -88,6 +98,10 @@ extern fun shutdown_try_raw(handle: TlsHandle, err_code: mut i32, reason: mut St
 // passing one around is a borrow and there is never a silent second free of
 // the `SSL*`.
 pub extern type TlsHandle
+
+// A server's `SSL_CTX*`: certificate chain, key, protocol floor, ALPN list and
+// (for mTLS) the client CAs. Opaque for the same reason `TlsHandle` is.
+pub extern type TlsCtx
 
 datac TlsStream(val fd: i32, val handle: TlsHandle)
 
@@ -181,6 +195,9 @@ fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions).R: result.Re
         opts.ca_file.as_str(),
         opts.ca_dir.as_str(),
         opts.timeout_ms,
+        Bytes.empty(),
+        Bytes.empty(),
+        Bytes.empty(),
         &mut code,
         &mut reason,
     )
@@ -402,4 +419,289 @@ fun shutdown(t: TlsStream) {
             panic(text.as_str())
         }
     }
+}
+
+// ===== ALPN, client certificates and serving (st3) =====
+//
+// `plan/tls-server.md` is the design note. This module takes certificates and
+// keys as PEM *bytes*: it must not import `std/fs`, because a module that names
+// `fs.try_read` needs the `fs` grant from every program that imports it, and
+// every `https` client does. `std/tlsfile` is the thin layer that reads the
+// files through the `fs` gate and calls the `_pem` functions here; the C side
+// only ever sees PEM bytes. A private key is never put in an
+// error text. The library does not check the key file's permissions: keep it
+// `0600`, owned by the serving user.
+
+// The lowest protocol version a server accepts. TLS 1.2 is the default and the
+// floor of the client too; there is no way to go lower.
+pub enum TlsVersion {
+    Tls12
+    Tls13
+}
+
+// What a server needs besides its certificate. A value, built with the methods
+// below and handed to `server_config_with`, so a `ServerConfig` itself has
+// nothing left to change once it exists.
+pub datac ServerOptions(val floor: i32, val alpn_list: Bytes, val ca_pem: Bytes, val timeout_ms: u64)
+
+// A built server configuration. Immutable; one `SSL_CTX*` that OpenSSL lets
+// every thread make sessions from, so a config is shared by reference or by
+// copying its handle into a worker. `free` ends it; like every handle here,
+// nothing is freed on drop.
+pub datac ServerConfig(val ctx: TlsCtx, val handshake_timeout_ms: u64)
+
+// The options of `server_config`: TLS 1.2 or newer, no ALPN, no client
+// certificates, a 10 s handshake.
+fun server_options().R: ServerOptions = ServerOptions(
+    floor = 12,
+    alpn_list = Bytes.empty(),
+    ca_pem = Bytes.empty(),
+    timeout_ms = 10000,
+)
+
+fun TlsVersion.floor_code().R: i32 = when self {
+    Tls12 -> 12
+    Tls13 -> 13
+}
+
+fun ServerOptions.min_version(v: TlsVersion).R: ServerOptions = ServerOptions(
+    floor = v.floor_code(),
+    alpn_list = alpn_list.clone(),
+    ca_pem = ca_pem.clone(),
+    timeout_ms = timeout_ms,
+)
+
+// The protocols this server speaks, in order of preference (`"h2"`,
+// `"http/1.1"`). The first one the client also offers is chosen; no overlap
+// fails the handshake. A name that is empty or longer than 255 bytes is not a
+// protocol: it makes `server_config_with` return an error.
+fun ServerOptions.alpn(protocols: &List<String>).R: ServerOptions = ServerOptions(
+    floor = floor,
+    alpn_list = alpn_wire(protocols),
+    ca_pem = ca_pem.clone(),
+    timeout_ms = timeout_ms,
+)
+
+// Verify client certificates against the CA(s) in this PEM text, and refuse a
+// connection that has none. Text with no certificate in it is rejected when
+// the configuration is built. `tlsfile.require_client_cert` reads a file.
+fun ServerOptions.require_client_cert_pem(ca_pem: Bytes).R: ServerOptions = ServerOptions(
+    floor = floor,
+    alpn_list = alpn_list.clone(),
+    ca_pem = ca_pem.clone(),
+    timeout_ms = timeout_ms,
+)
+
+// The handshake deadline `accept` applies; 0 waits forever.
+fun ServerOptions.handshake_timeout_ms(ms: u64).R: ServerOptions = ServerOptions(
+    floor = floor,
+    alpn_list = alpn_list.clone(),
+    ca_pem = ca_pem.clone(),
+    timeout_ms = ms,
+)
+
+// The wire form of an ALPN list: each name behind its length byte. A name that
+// cannot be sent leaves a zero length, which the C side refuses.
+fun alpn_wire(protocols: &List<String>).R: Bytes {
+    var out = Bytes.empty()
+    var i: usize = 0
+    while i < protocols.len() {
+        val name = protocols.get(i)
+        val n = str.len(name.as_str())
+        if n == 0 || n > 255 {
+            out.push(0)
+        } else {
+            out.push(n.to_u8())
+            var k: usize = 0
+            while k < n {
+                out.push(str.byte(name.as_str(), k))
+                k = k + 1
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// A server configuration from a certificate chain (leaf first) and its private
+// key, both PEM text, with the default options. A malformed PEM or a key that
+// does not belong to the certificate is `HandshakeFailed` with a fixed
+// sentence. Never a panic, and never the key in the text. `tlsfile.server_config`
+// is the same from two file paths.
+fun server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes).R: result.Result<ServerConfig, TlsError> {
+    return server_config_pem_with(cert_chain_pem, key_pem, server_options())
+}
+
+// `server_config_pem` with options: a TLS floor, ALPN, required client
+// certificates, the handshake deadline.
+fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions).R: result.Result<ServerConfig, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val min13 = if opts.floor == 13 { 1 } else { 0 }
+    val ctx = server_ctx_try_raw(
+        cert,
+        key,
+        opts.ca_pem.clone(),
+        opts.alpn_list.clone(),
+        min13,
+        &mut code,
+        &mut reason,
+    )
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = ServerConfig(ctx = ctx, handshake_timeout_ms = opts.timeout_ms))
+}
+
+// Ends the configuration. Sessions already made from it keep working until
+// they end; OpenSSL counts the references.
+fun ServerConfig.free() {
+    ctx_free_raw(ctx)
+}
+
+// The server handshake over a socket `net.accept` returned, within the
+// configuration's deadline. The descriptor lives on in the returned
+// `TlsStream`, as for `try_handshake`. Failures are values: a client
+// certificate from another CA is `Untrusted`, an expired one `Expired`, a
+// missing one, no common ALPN protocol or a version below the floor is
+// `HandshakeFailed`, a silent client is `Timeout`.
+fun accept(config: &ServerConfig, s: net.Socket).R: result.Result<TlsStream, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val handle = accept_try_raw(config.ctx, s.fd, config.handshake_timeout_ms, &mut code, &mut reason)
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = TlsStream(fd = s.fd, handle = handle))
+}
+
+// The protocol ALPN settled on, on a server or a client stream; `None` when
+// nothing was negotiated.
+fun TlsStream.alpn().R: option.Option<String> {
+    var out = String.empty()
+    if alpn_raw(handle, &mut out) {
+        return option.Option.Some(value = out)
+    }
+    return option.Option.None
+}
+
+// The subject of the peer's certificate in RFC 2253 form (`CN=client`): the
+// authenticated client on a server stream that required a client certificate.
+// `None` when the peer presented none.
+fun TlsStream.peer_cert_subject().R: option.Option<String> {
+    var out = String.empty()
+    if peer_subject_raw(handle, &mut out) {
+        return option.Option.Some(value = out)
+    }
+    return option.Option.None
+}
+
+// Decrypted bytes OpenSSL is holding that a `read` would return at once, which
+// a caller that waits for socket readability first has to check (`std/http`'s
+// server does).
+fun TlsStream.pending().R: usize = pending_raw(handle)
+
+// The client's options with ALPN and a client certificate: `TlsOptions` keeps
+// its three fields (fixtures build it positionally), so these live here.
+pub datac TlsClientOptions(
+    val ca_file: String,
+    val ca_dir: String,
+    val timeout_ms: u64,
+    val alpn_list: Bytes,
+    val cert_pem: Bytes,
+    val key_pem: Bytes,
+)
+
+fun client_options().R: TlsClientOptions = TlsClientOptions(
+    ca_file = String.empty(),
+    ca_dir = String.empty(),
+    timeout_ms = 0,
+    alpn_list = Bytes.empty(),
+    cert_pem = Bytes.empty(),
+    key_pem = Bytes.empty(),
+)
+
+fun TlsOptions.to_client().R: TlsClientOptions = TlsClientOptions(
+    ca_file = String.from_str(ca_file.as_str()),
+    ca_dir = String.from_str(ca_dir.as_str()),
+    timeout_ms = timeout_ms,
+    alpn_list = Bytes.empty(),
+    cert_pem = Bytes.empty(),
+    key_pem = Bytes.empty(),
+)
+
+// The protocols to offer, in order of preference. The server picks; `alpn()`
+// on the stream says which.
+fun TlsOptions.alpn(protocols: &List<String>).R: TlsClientOptions {
+    val c = self.to_client()
+    return c.alpn(protocols)
+}
+
+// Present this certificate chain and key (PEM text) when a server asks for a
+// client certificate. A key that does not match is found when the handshake
+// starts. `tlsfile.client_cert` reads the two files.
+fun TlsOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).R: TlsClientOptions {
+    val c = self.to_client()
+    return c.client_cert_pem(cert_pem, key_pem)
+}
+
+fun TlsClientOptions.alpn(protocols: &List<String>).R: TlsClientOptions = TlsClientOptions(
+    ca_file = String.from_str(ca_file.as_str()),
+    ca_dir = String.from_str(ca_dir.as_str()),
+    timeout_ms = timeout_ms,
+    alpn_list = alpn_wire(protocols),
+    cert_pem = cert_pem.clone(),
+    key_pem = key_pem.clone(),
+)
+
+fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).R: TlsClientOptions = TlsClientOptions(
+    ca_file = String.from_str(ca_file.as_str()),
+    ca_dir = String.from_str(ca_dir.as_str()),
+    timeout_ms = timeout_ms,
+    alpn_list = alpn_list.clone(),
+    cert_pem = cert_pem.clone(),
+    key_pem = key_pem.clone(),
+)
+
+// Adds a private CA file to the roots, as `TlsOptions.ca_file` does.
+fun TlsClientOptions.with_ca_file(path: &str).R: TlsClientOptions = TlsClientOptions(
+    ca_file = String.from_str(path),
+    ca_dir = String.from_str(ca_dir.as_str()),
+    timeout_ms = timeout_ms,
+    alpn_list = alpn_list.clone(),
+    cert_pem = cert_pem.clone(),
+    key_pem = key_pem.clone(),
+)
+
+fun TlsClientOptions.with_timeout_ms(ms: u64).R: TlsClientOptions = TlsClientOptions(
+    ca_file = String.from_str(ca_file.as_str()),
+    ca_dir = String.from_str(ca_dir.as_str()),
+    timeout_ms = ms,
+    alpn_list = alpn_list.clone(),
+    cert_pem = cert_pem.clone(),
+    key_pem = key_pem.clone(),
+)
+
+// The client handshake with every option, `try_handshake_with`'s superset:
+// the same verification, hostname check and TLS 1.2 floor, plus ALPN and a
+// client certificate when the options carry them.
+fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions).R: result.Result<TlsStream, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val handle = handshake_try_raw(
+        s.fd,
+        host,
+        opts.ca_file.as_str(),
+        opts.ca_dir.as_str(),
+        opts.timeout_ms,
+        opts.alpn_list.clone(),
+        opts.cert_pem.clone(),
+        opts.key_pem.clone(),
+        &mut code,
+        &mut reason,
+    )
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = TlsStream(fd = s.fd, handle = handle))
 }

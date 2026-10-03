@@ -1,0 +1,568 @@
+// st3: server-side TLS, client certificates and ALPN, one scenario per run.
+// A hazard, not a fixture: it needs the PEM files `tests/tls_server.rs` makes
+// with the openssl CLI (argv[2] is their directory) and it waits on sockets,
+// though every wait is bounded (accept 10 s, handshake 10 s, client 10 s). The
+// server runs on a second thread of the same program, on 127.0.0.1 and an
+// ephemeral port; each side returns one line and main prints both, so the
+// output does not depend on thread timing. argv[1] is the scenario.
+impl "std/mem"
+impl "std/net"
+impl "std/process"
+impl "std/str"
+impl "std/fmt"
+impl "std/result"
+impl "std/option"
+impl "std/thread"
+impl "std/tls"
+impl "std/tlsfile" caps(fs = ["/**"])
+impl "std/http" caps(net = ["*"])
+
+datac Job(val mode: String, val dir: String, val fd: i32)
+
+// The file-reading layer: `std/tlsfile` reads, `std/tls` configures.
+fun server_config(cert_path: &str, key_path: &str).R: result.Result<tls.ServerConfig, tls.TlsError> {
+    val o = tls.server_options()
+    return server_config_with(cert_path, key_path, &o)
+}
+
+fun server_config_with(cert_path: &str, key_path: &str, opts: &tls.ServerOptions).R: result.Result<tls.ServerConfig, tls.TlsError> {
+    val cert = tlsfile.read_pem(cert_path, "certificate chain")?
+    val key = tlsfile.read_pem(key_path, "private key")?
+    return tls.server_config_pem_with(cert, key, opts)
+}
+
+fun require_client_cert(opts: &tls.ServerOptions, ca_path: &str).R: result.Result<tls.ServerOptions, tls.TlsError> {
+    val pem = tlsfile.read_pem(ca_path, "client CA")?
+    return result.Result.Ok(value = opts.require_client_cert_pem(pem))
+}
+
+fun client_cert(opts: &tls.TlsClientOptions, cert_path: &str, key_path: &str).R: result.Result<tls.TlsClientOptions, tls.TlsError> {
+    val cert = tlsfile.read_pem(cert_path, "client certificate")?
+    val key = tlsfile.read_pem(key_path, "client private key")?
+    return result.Result.Ok(value = opts.client_cert_pem(cert, key))
+}
+
+fun join3(a: &str, b: &str, c: &str).R: String {
+    var s = String.with_capacity(64)
+    s.push_str(a)
+    s.push_str(b)
+    s.push_str(c)
+    return s
+}
+
+fun path(dir: &str, name: &str).R: String = join3(dir, "/", name)
+
+fun err_tag(e: &tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(_) -> String.from_str("handshake_failed")
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(_) -> String.from_str("io")
+}
+
+// "<who>: <what> <tag>" for a failure; the text is not part of the line (it is
+// OpenSSL's and varies by version), except where a scenario checks it.
+fun err_line(who: &str, what: &str, e: move tls.TlsError).R: String {
+    val tag = err_tag(&e)
+    val text = tls.error_text(e)
+    var s = String.with_capacity(64)
+    s.push_str(who)
+    s.push_str(": ")
+    s.push_str(what)
+    s.push_str(" ")
+    s.push_str(tag.as_str())
+    return s
+}
+
+fun opt_text(o: move option.Option<String>).R: String = when o {
+    Some(v) -> v
+    None -> String.from_str("-")
+}
+
+fun list_of(a: &str, b: &str).R: List<String> {
+    var l: List<String> = List.empty()
+    if str.len(a) > 0 {
+        l.push(String.from_str(a))
+    }
+    if str.len(b) > 0 {
+        l.push(String.from_str(b))
+    }
+    return l
+}
+
+// The server's options for a scenario.
+fun server_opts(mode: &str, dir: &str).R: result.Result<tls.ServerOptions, tls.TlsError> {
+    var o = tls.server_options()
+    if str.eq(mode, "alpn_none") || str.eq(mode, "alpn_h1") || str.eq(mode, "alpn_h2") {
+        val protos = list_of("h2", "http/1.1")
+        if str.eq(mode, "alpn_none") {
+            o = o.alpn(list_of("h2", ""))
+        } else {
+            o = o.alpn(protos)
+        }
+    }
+    if str.eq(mode, "min13") {
+        o = o.min_version(tls.TlsVersion.Tls13)
+    }
+    if str.starts_with(mode, "mtls") {
+        val ca = path(dir, "ca.pem")
+        val r = require_client_cert(&o, ca.as_str())?
+        return result.Result.Ok(value = r)
+    }
+    return result.Result.Ok(value = o)
+}
+
+fun server_cert(mode: &str).R: &str {
+    if str.eq(mode, "expired") {
+        return "expired.pem"
+    }
+    return "server.pem"
+}
+
+fun serve_one(t: tls.TlsStream, sock: net.Socket, mode: &str).R: String {
+    val alpn = opt_text(t.alpn())
+    val peer = opt_text(t.peer_cert_subject())
+    if str.eq(mode, "unclean") {
+        // Read the request first: closing with it unread would reset the
+        // connection and the client would never see "partial".
+        val req = tls.try_read(t, 64)
+        val w = tls.try_write_all(t, Bytes.from_str("partial"))
+        net.close(sock)
+        return join3("server: unclean sent ", "alpn=", alpn.as_str())
+    }
+    var line = String.with_capacity(96)
+    val got = tls.try_read(t, 64)
+    when got {
+        Ok(b) -> {
+            val n = b.len()
+            val w = tls.try_write_all(t, b)
+            line.push_str("server: ok alpn=")
+            line.push_str(alpn.as_str())
+            line.push_str(" peer=")
+            line.push_str(peer.as_str())
+            line.push_str(" echoed=")
+            val nt = fmt.uint(n.to_u64())
+            line.push_str(nt.as_str())
+        }
+        Err(e) -> {
+            line = err_line("server", "read", e)
+        }
+    }
+    val sd = tls.try_shutdown(t)
+    net.close(sock)
+    return line
+}
+
+fun server_main(job: move Job).R: String {
+    return when server_opts(job.mode.as_str(), job.dir.as_str()) {
+        Ok(o) -> server_with_opts(&o, &job)
+        Err(e) -> err_line("server", "options", e)
+    }
+}
+
+fun server_with_opts(opts: &tls.ServerOptions, job: &Job).R: String {
+    val cert = path(job.dir.as_str(), server_cert(job.mode.as_str()))
+    val key = path(job.dir.as_str(), "server.key")
+    return when server_config_with(cert.as_str(), key.as_str(), opts) {
+        Ok(c) -> server_with_config(c, job)
+        Err(e) -> err_line("server", "config", e)
+    }
+}
+
+fun server_with_config(cfg: tls.ServerConfig, job: &Job).R: String {
+    val l = net.Listener(fd = job.fd)
+    val acc = net.try_accept(l)
+    var line = String.empty()
+    when acc {
+        Ok(sock) -> {
+            val hs = tls.accept(cfg, sock)
+            when hs {
+                Ok(t) -> {
+                    line = serve_one(t, sock, job.mode.as_str())
+                }
+                Err(e) -> {
+                    net.close(sock)
+                    line = err_line("server", "accept", e)
+                }
+            }
+        }
+        Err(e) -> {
+            line = String.from_str("server: no client")
+        }
+    }
+    cfg.free()
+    return line
+}
+
+fun client_opts(mode: &str, dir: &str).R: result.Result<tls.TlsClientOptions, tls.TlsError> {
+    val ca = path(dir, "ca.pem")
+    var o = tls.client_options().with_ca_file(ca.as_str()).with_timeout_ms(10000)
+    if str.eq(mode, "alpn_h2") {
+        o = o.alpn(list_of("http/1.1", "h2"))
+    }
+    if str.eq(mode, "alpn_h1") || str.eq(mode, "alpn_none") || str.eq(mode, "alpn_client_only") {
+        o = o.alpn(list_of("http/1.1", ""))
+    }
+    if str.eq(mode, "mtls_ok") {
+        val c = path(dir, "client.pem")
+        val k = path(dir, "client.key")
+        o = client_cert(&o, c.as_str(), k.as_str())?
+    }
+    if str.eq(mode, "mtls_otherca") {
+        val c = path(dir, "other_client.pem")
+        val k = path(dir, "other_client.key")
+        o = client_cert(&o, c.as_str(), k.as_str())?
+    }
+    return result.Result.Ok(value = o)
+}
+
+fun client_main(mode: &str, dir: &str, port: u16).R: String {
+    return when client_opts(mode, dir) {
+        Ok(o) -> client_with_opts(&o, mode, port)
+        Err(e) -> err_line("client", "options", e)
+    }
+}
+
+fun client_with_opts(opts: &tls.TlsClientOptions, mode: &str, port: u16).R: String {
+    var host = "localhost"
+    if str.eq(mode, "wronghost") {
+        host = "127.0.0.1"
+    }
+    val s = net.connect("127.0.0.1", port)
+    val hs = tls.try_handshake_opts(s, host, opts)
+    var line = String.empty()
+    when hs {
+        Ok(t) -> {
+            line = client_talk(t, mode)
+        }
+        Err(e) -> {
+            line = err_line("client", "handshake", e)
+        }
+    }
+    net.close(s)
+    return line
+}
+
+fun client_talk(t: tls.TlsStream, mode: &str).R: String {
+    val alpn = opt_text(t.alpn())
+    var line = String.with_capacity(96)
+    val w = tls.try_write_all(t, Bytes.from_str("hello"))
+    val r = tls.try_read(t, 64)
+    when r {
+        Ok(b) -> {
+            if str.eq(mode, "unclean") {
+                // "partial" arrived; the next read must be a truncation, not a clean end.
+                val again = tls.try_read(t, 64)
+                when again {
+                    Ok(_) -> {
+                        line = String.from_str("client: unclean read ok (wrong)")
+                    }
+                    Err(e) -> {
+                        line = err_line("client", "second read", e)
+                    }
+                }
+            } else {
+                val text = String.from_bytes(b)
+                line.push_str("client: ok alpn=")
+                line.push_str(alpn.as_str())
+                line.push_str(" echo=")
+                line.push_str(text.as_str())
+            }
+        }
+        Err(e) -> {
+            line = err_line("client", "read", e)
+        }
+    }
+    val sd = tls.try_shutdown(t)
+    return line
+}
+
+fun say(s: &str) {
+    print(s)
+}
+
+fun sayl(s: String) {
+    print(s.as_str())
+}
+
+fun config_errors(dir: &str) {
+    val cert = path(dir, "server.pem")
+    val key = path(dir, "server.key")
+    val other = path(dir, "other_server.key")
+    val missing = path(dir, "no_such_file.pem")
+    val junk = path(dir, "junk.pem")
+    val ok = server_config(cert.as_str(), key.as_str())
+    when ok {
+        Ok(c) -> {
+            say("config ok")
+            c.free()
+        }
+        Err(e) -> {
+            sayl(err_line("config", "valid", e))
+        }
+    }
+    val mism = server_config(cert.as_str(), other.as_str())
+    when mism {
+        Ok(c) -> {
+            say("mismatch accepted (wrong)")
+            c.free()
+        }
+        Err(e) -> {
+            sayl(err_line("config", "mismatch", e))
+        }
+    }
+    val gone = server_config(missing.as_str(), key.as_str())
+    when gone {
+        Ok(c) -> {
+            say("missing accepted (wrong)")
+            c.free()
+        }
+        Err(e) -> {
+            sayl(err_line("config", "missing", e))
+        }
+    }
+    val bad = server_config(junk.as_str(), key.as_str())
+    when bad {
+        Ok(c) -> {
+            say("junk accepted (wrong)")
+            c.free()
+        }
+        Err(e) -> {
+            sayl(err_line("config", "junk cert", e))
+        }
+    }
+    val badkey = server_config(cert.as_str(), junk.as_str())
+    when badkey {
+        Ok(c) -> {
+            say("junk key accepted (wrong)")
+            c.free()
+        }
+        Err(e) -> {
+            val tag = err_tag(&e)
+            val text = tls.error_text(e)
+            val jk = join3("config junk key ", tag.as_str(), "")
+            say(jk.as_str())
+            // The key's text never reaches the error.
+            if str.contains(text.as_str(), "PRIVATE KEY") {
+                say("key text leaked (wrong)")
+            }
+        }
+    }
+    var empty_name: List<String> = List.empty()
+    empty_name.push(String.from_str(""))
+    val bad_alpn = tls.server_options().alpn(&empty_name)
+    val ba = server_config_with(cert.as_str(), key.as_str(), &bad_alpn)
+    when ba {
+        Ok(c) -> {
+            say("empty ALPN name accepted (wrong)")
+            c.free()
+        }
+        Err(e) -> {
+            sayl(err_line("config", "bad alpn", e))
+        }
+    }
+    val base_opts = tls.server_options()
+    val noca = require_client_cert(&base_opts, junk.as_str())
+    when noca {
+        Ok(o) -> {
+            val c2 = server_config_with(cert.as_str(), key.as_str(), &o)
+            when c2 {
+                Ok(c) -> {
+                    say("junk CA accepted (wrong)")
+                    c.free()
+                }
+                Err(e) -> {
+                    sayl(err_line("config", "junk ca", e))
+                }
+            }
+        }
+        Err(e) -> {
+            sayl(err_line("config", "ca options", e))
+        }
+    }
+}
+
+fun https_mode(dir: &str) {
+    val ca = path(dir, "ca.pem")
+    val server = http.listen(0)
+    server.set_accept_timeout(10000)
+    val port = server.port()
+    val job = HttpJob(fd = server.fd, dir = String.from_str(dir), mtls = false)
+    val h = thread.spawn(https_server, job)
+    val pt = fmt.uint(port.to_u64())
+    val url = join3("https://localhost:", pt.as_str(), "/hello?x=1")
+    // A GET without the private CA first: the default store does not know it,
+    // so the client refuses and the server goes on to the next connection.
+    val plain = http.try_get(url.as_str())
+    when plain {
+        Ok(_) -> {
+            say("untrusted get succeeded (wrong)")
+        }
+        Err(_) -> {
+            say("untrusted get refused")
+        }
+    }
+    val opts = tls.client_options().with_ca_file(ca.as_str()).with_timeout_ms(10000)
+    val got = http.try_get_tls(url.as_str(), &opts)
+    when got {
+        Ok(resp) -> {
+            val st = fmt.int(resp.status.to_i64())
+            val sl = join3("https status ", st.as_str(), "")
+            say(sl.as_str())
+            val body = String.from_bytes(resp.body.clone())
+            say(body.as_str())
+        }
+        Err(e) -> {
+            val et = http.http_error_text(&e)
+            val el = join3("https failed ", et.as_str(), "")
+            say(el.as_str())
+        }
+    }
+    val joined = thread.join(h)
+    when joined {
+        Ok(n) -> {
+            val nt = fmt.uint(n)
+            val sl = join3("served ", nt.as_str(), "")
+            say(sl.as_str())
+        }
+        Err(_) -> {
+            say("server thread failed")
+        }
+    }
+    server.close()
+}
+
+// HTTPS with client certificates: the server requires one, a GET that offers
+// none is refused, a GET with the client certificate is answered.
+fun https_mtls_mode(dir: &str) {
+    val ca = path(dir, "ca.pem")
+    val cert = path(dir, "client.pem")
+    val key = path(dir, "client.key")
+    val server = http.listen(0)
+    server.set_accept_timeout(10000)
+    val port = server.port()
+    val job = HttpJob(fd = server.fd, dir = String.from_str(dir), mtls = true)
+    val h = thread.spawn(https_server, job)
+    val pt = fmt.uint(port.to_u64())
+    val url = join3("https://localhost:", pt.as_str(), "/hello")
+    val bare = tls.client_options().with_ca_file(ca.as_str()).with_timeout_ms(10000)
+    val none = http.try_get_tls(url.as_str(), &bare)
+    when none {
+        Ok(_) -> {
+            say("https mtls without a certificate succeeded (wrong)")
+        }
+        Err(_) -> {
+            say("https mtls without a certificate refused")
+        }
+    }
+    val with = client_cert(&bare, cert.as_str(), key.as_str())
+    when with {
+        Ok(o) -> {
+            val got = http.try_get_tls(url.as_str(), &o)
+            when got {
+                Ok(resp) -> {
+                    val st = fmt.int(resp.status.to_i64())
+                    val sl = join3("https mtls status ", st.as_str(), "")
+                    say(sl.as_str())
+                }
+                Err(e) -> {
+                    val et = http.http_error_text(&e)
+                    val el = join3("https mtls failed ", et.as_str(), "")
+                    say(el.as_str())
+                }
+            }
+        }
+        Err(_) -> {
+            say("client certificate options failed")
+        }
+    }
+    val joined = thread.join(h)
+    when joined {
+        Ok(n) -> {
+            val nt = fmt.uint(n)
+            val sl = join3("served ", nt.as_str(), "")
+            say(sl.as_str())
+        }
+        Err(_) -> {
+            say("server thread failed")
+        }
+    }
+    server.close()
+}
+
+datac HttpJob(val fd: i32, val dir: String, val mtls: bool)
+
+fun hello(req: &http.ServerRequest).R: http.ServerResponse {
+    if str.eq(req.path.as_str(), "/hello") {
+        return http.ok_text("hello over tls")
+    }
+    return http.not_found()
+}
+
+fun https_server(job: move HttpJob).R: u64 {
+    return when https_options(&job) {
+        Ok(o) -> https_with_options(&o, &job)
+        Err(_) -> 0
+    }
+}
+
+fun https_options(job: &HttpJob).R: result.Result<tls.ServerOptions, tls.TlsError> {
+    val o = tls.server_options()
+    if job.mtls {
+        val ca = path(job.dir.as_str(), "ca.pem")
+        return require_client_cert(&o, ca.as_str())
+    }
+    return result.Result.Ok(value = o)
+}
+
+fun https_with_options(o: &tls.ServerOptions, job: &HttpJob).R: u64 {
+    val cert = path(job.dir.as_str(), "server.pem")
+    val key = path(job.dir.as_str(), "server.key")
+    return when server_config_with(cert.as_str(), key.as_str(), o) {
+        Ok(c) -> https_serve(c, job)
+        Err(_) -> 0
+    }
+}
+
+fun https_serve(cfg: tls.ServerConfig, job: &HttpJob).R: u64 {
+    val server = http.Server(fd = job.fd)
+    val limits = http.default_limits()
+    val n = http.serve_tls_on(&server, cfg, hello, &limits, 1)
+    cfg.free()
+    return n
+}
+
+fun main() {
+    val args = process.args()
+    val mode = args.get(1).clone()
+    val dir = args.get(2).clone()
+    if str.eq(mode.as_str(), "config_errors") {
+        config_errors(dir.as_str())
+        return
+    }
+    if str.eq(mode.as_str(), "https_mtls") {
+        https_mtls_mode(dir.as_str())
+        return
+    }
+    if str.eq(mode.as_str(), "https") {
+        https_mode(dir.as_str())
+        return
+    }
+    val l = net.listen(0)
+    var lm = net.Listener(fd = l.fd)
+    lm.set_timeout(10000)
+    val port = l.port()
+    val job = Job(mode = mode.clone(), dir = dir.clone(), fd = l.fd)
+    val h = thread.spawn(server_main, job)
+    val client_line = client_main(mode.as_str(), dir.as_str(), port)
+    val server_line = when thread.join(h) {
+        Ok(s) -> s
+        Err(_) -> String.from_str("server: thread failed")
+    }
+    say(client_line.as_str())
+    say(server_line.as_str())
+    l.close()
+}
