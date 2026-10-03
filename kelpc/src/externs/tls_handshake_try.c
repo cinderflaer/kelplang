@@ -9,16 +9,20 @@
         SSL_CTX_free(ctx);
         kelp_panic("tls.handshake: cannot load the system trust store");
     }
-    /* A CA file or directory is *added* to the roots the line above loaded,
-       never a replacement for verifying: nothing on this path lowers
-       SSL_VERIFY_PEER, and the hostname check and TLS 1.2 floor below run
-       exactly as they do when no CA is named. */
-    if (kelp_ca_file[0] != 0 || kelp_ca_dir[0] != 0) {
-        if (SSL_CTX_load_verify_locations(ctx,
-                kelp_ca_file[0] != 0 ? kelp_ca_file : NULL,
-                kelp_ca_dir[0] != 0 ? kelp_ca_dir : NULL) != 1) {
+    /* Private CA certificates arrive as PEM *bytes* the caller read through
+       the `fs` gate (`std/tlsfile`); this body never opens a path. They are
+       *added* to the roots the call above loaded, never a replacement for
+       verifying: nothing on this path lowers SSL_VERIFY_PEER, and the
+       hostname check and TLS 1.2 floor below run exactly as they do when no
+       CA is given. */
+    if (kelp_ca_pem->len > 0) {
+        char text[128];
+        if (kelp_tls_add_roots(ctx, kelp_ca_pem->data, kelp_ca_pem->len, text, sizeof text) != 0) {
             SSL_CTX_free(ctx);
-            kelp_panic("tls.handshake: cannot load the CA file or directory");
+            *kelp_err_code = 5;
+            free(kelp_reason->data);
+            *kelp_reason = kelp_String__from_str(text);
+            return NULL;
         }
     }
     /* ALPN and a client certificate are the two additions of the extended

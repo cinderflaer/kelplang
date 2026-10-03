@@ -14,6 +14,7 @@
 
 use crate::ast::{BinOp, UnOp};
 use crate::tir;
+use crate::types::Ty;
 
 /// The compiler's own runtime module (MK7 §8). It is not a library a program is
 /// meant to import: the resolver injects it for a program that imports a gated
@@ -439,16 +440,28 @@ pub fn range_covers(domain: &str, patterns: &[String], value: u128) -> bool {
 /// those. Anything else - a local, a parameter, a `static`, a call, an `asm`
 /// result - is not a constant, and the caller says so.
 ///
-/// A value is cut to 64 bits after every step, which is what `usize`
-/// arithmetic does on the target, so a folded expression means what the
-/// emitted code would compute rather than what unbounded `i128` arithmetic
-/// would. Shared by `Ptr.from_addr`'s `mmio` check and the `irq`/`frames`
-/// claim checks, so the three domains fold an argument the same way.
+/// A value is cut to its own operand type's width after every step (a `u32`
+/// sum wraps at 32 bits, a `usize` one at 64), which is exactly what the
+/// emitted code computes, so a folded expression means what the program would
+/// do rather than what unbounded `i128` arithmetic would. A signed operand is
+/// read as two's complement for `/`, `%` and `>>`. A shift by the width or more
+/// (or a negative amount) is not a constant: the program panics there. Shared
+/// by `Ptr.from_addr`'s `mmio` check and the `irq`/`frames` claim checks, so
+/// the three domains fold an argument the same way.
 pub fn const_int(expr: &tir::Expr) -> Option<u128> {
-    const MASK: u128 = u64::MAX as u128;
+    let bits = crate::tir::shift_width(&expr.ty).unwrap_or(64);
+    let mask: u128 = if bits >= 128 { u128::MAX } else { (1u128 << bits) - 1 };
+    let signed = matches!(expr.ty, Ty::I32 | Ty::I64 | Ty::Isize);
+    let sext = |v: u128| -> i128 {
+        if signed && v & (1u128 << (bits - 1)) != 0 {
+            (v | !mask) as i128
+        } else {
+            v as i128
+        }
+    };
     match &expr.kind {
-        tir::ExprKind::IntLit(v) if *v >= 0 => Some(*v as u128),
-        tir::ExprKind::CharLit(c) => Some(*c as u128),
+        tir::ExprKind::IntLit(v) if *v >= 0 => Some(*v as u128 & mask),
+        tir::ExprKind::CharLit(c) => Some(*c as u128 & mask),
         tir::ExprKind::Unary { op, expr } => {
             let value = const_int(expr)?;
             let folded = match op {
@@ -456,7 +469,7 @@ pub fn const_int(expr: &tir::Expr) -> Option<u128> {
                 UnOp::BitNot => !value,
                 UnOp::Not => return None,
             };
-            Some(folded & MASK)
+            Some(folded & mask)
         }
         tir::ExprKind::Binary { op, lhs, rhs } => {
             let a = const_int(lhs)?;
@@ -465,20 +478,16 @@ pub fn const_int(expr: &tir::Expr) -> Option<u128> {
                 BinOp::Add => a.wrapping_add(b),
                 BinOp::Sub => a.wrapping_sub(b),
                 BinOp::Mul => a.wrapping_mul(b),
-                BinOp::Div if b != 0 => a / b,
-                BinOp::Mod if b != 0 => a % b,
+                BinOp::Div if b != 0 => (sext(a).wrapping_div(sext(b))) as u128,
+                BinOp::Mod if b != 0 => (sext(a).wrapping_rem(sext(b))) as u128,
                 BinOp::BitAnd => a & b,
                 BinOp::BitOr => a | b,
                 BinOp::BitXor => a ^ b,
-                // A shift by 64 or more is not a constant: the compiler's
-                // 128-bit arithmetic would fold it to 0 while the target
-                // shifts by `n mod 64`, so the folded address and the real one
-                // would differ (threat model M2).
-                BinOp::Shl if b < 64 => a << b,
-                BinOp::Shr if b < 64 => a >> b,
+                BinOp::Shl if b < bits as u128 => a << b,
+                BinOp::Shr if b < bits as u128 => (sext(a) >> b) as u128,
                 _ => return None,
             };
-            Some(folded & MASK)
+            Some(folded & mask)
         }
         _ => None,
     }

@@ -1162,6 +1162,65 @@ fn n08_ws_and_tls_are_behind_the_net_gate() {
     lab.denied("is outside the net capability");
 }
 
+/// N9: TLS trust roots never come from a path the runtime opens. The old
+/// `ca_file`/`ca_dir` options let a module with only a `net` grant make the
+/// handshake open any readable path (and trust whatever it held). They are gone:
+/// the options take PEM bytes (`with_ca_pem`), and the only way to turn a path
+/// into bytes is `std/tlsfile`, which needs an `fs` grant.
+#[test]
+fn n09_a_net_only_module_cannot_name_a_ca_path() {
+    for body in [
+        "    val o = tls.client_options().with_ca_file(\"__T__/secret/s.txt\")",
+        "    val o = tls.TlsOptions(ca_file = String.from_str(\"__T__/secret/s.txt\"), ca_dir = String.empty(), timeout_ms = 0)",
+        "    val o = tls.TlsOptions(ca_pem = Bytes.empty(), ca_dir = String.from_str(\"__T__/secret\"), timeout_ms = 0)",
+    ] {
+        let lab = Lab::new("n09a");
+        lab.simple("net = [\"127.0.0.1:9\"]", &["std/net", "std/tls"], body);
+        let out = lab.build(false);
+        assert!(!out.status.success(), "a CA path option compiled: {body}");
+        lab.assert_untouched();
+    }
+}
+
+/// N9b: reading a CA file is an `fs` read: a module with a `net` grant and no
+/// `fs` grant cannot use `std/tlsfile`, and the refusal names `fs`.
+#[test]
+fn n09b_reading_a_ca_file_needs_the_fs_capability() {
+    let lab = Lab::new("n09b");
+    lab.simple(
+        "net = [\"127.0.0.1:9\"]",
+        &["std/net", "std/tls", "std/tlsfile"],
+        "    when tlsfile.ca_pem(\"__T__/secret/s.txt\") {\n        Ok(_) -> print(\"read\")\n        Err(_) -> print(\"denied\")\n    }",
+    );
+    lab.refused(&["needs the 'fs' capability"]);
+}
+
+/// N9c: with an `fs` grant the CA path is checked by the `fs` matcher (same
+/// normalisation and link rules as `fs.read`): a path outside the grant,
+/// existing, missing or reached through `..`, is the standard `fs` denial and
+/// the file is never opened; one inside is read.
+#[test]
+fn n09c_a_ca_path_outside_the_fs_grant_is_denied_like_fs_read() {
+    for path in ["__T__/secret/s.txt", "__T__/secret/missing.pem", "__T__/data/../secret/s.txt"] {
+        let lab = Lab::new("n09c");
+        let grant = format!("fs = [\"{}/data/**\"]", lab.root.display());
+        lab.src("main.kp", &format!("impl \"util\" caps({grant})\n\nfun main() {{\n    util.go()\n}}\n"));
+        lab.src(
+            "util.kp",
+            &format!("impl \"std/tls\"\nimpl \"std/tlsfile\" caps({grant})\n\npub fun go() {{\n    when tlsfile.ca_pem(\"{path}\") {{\n        Ok(b) -> print(b.len())\n        Err(e) -> print(\"typed error\")\n    }}\n}}\n"),
+        );
+        lab.denied("is outside the fs capability");
+    }
+    let lab = Lab::new("n09c_in");
+    let grant = format!("fs = [\"{}/data/**\"]", lab.root.display());
+    lab.src("main.kp", &format!("impl \"util\" caps({grant})\n\nfun main() {{\n    util.go()\n}}\n"));
+    lab.src(
+        "util.kp",
+        &format!("impl \"std/tls\"\nimpl \"std/tlsfile\" caps({grant})\n\npub fun go() {{\n    when tlsfile.ca_pem(\"__T__/data/ok.txt\") {{\n        Ok(b) -> print(b.len())\n        Err(e) -> print(\"typed error\")\n    }}\n}}\n"),
+    );
+    lab.prints("5\n");
+}
+
 // ---------------------------------------------------------------------------
 // handles
 // ---------------------------------------------------------------------------
@@ -1489,7 +1548,8 @@ fn m01_a_module_without_an_mmio_grant_cannot_take_an_address() {
 /// 64 or more folds to 0 in the compiler's 128-bit arithmetic but is a shift
 /// by `n mod 64` on the target, so `0x10000000 + (0x100000 << 70)` looked like
 /// the in-range `0x10000000` and addressed `0x14000000`. A shift that wide is
-/// now "cannot fold", which a range grant refuses.
+/// now refused where it is written (a constant shift by the width or more is a
+/// compile error; before tl7 it was "cannot fold", which a range grant refused).
 #[test]
 fn m02_an_oversized_shift_does_not_fold_into_the_granted_range() {
     for expr in [
@@ -1503,7 +1563,7 @@ fn m02_an_oversized_shift_does_not_fold_into_the_granted_range() {
             "[caps]\nmmio = [\"0x10000000+0x100\"]\n",
             &[("main.kp", KMAIN_DEV), ("dev.kp", &poke_at(expr))],
         );
-        lab.check_refused(&["cannot fold"]);
+        lab.check_refused(&["a shift by", "is not defined for a 'usize'"]);
     }
 }
 

@@ -1,0 +1,6 @@
+// A shift by a constant amount that is already out of range is a compile error
+// naming the type and the amount.
+fun main() {
+    val x: u32 = 1
+    print(x << 33)
+}

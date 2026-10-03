@@ -79,7 +79,7 @@ const ERR_PEER_CLOSED: i32 = 6
 const ERR_TIMEOUT: i32 = 7
 const ERR_IO: i32 = 8
 
-extern fun handshake_try_raw(fd: i32, host: &str, ca_file: &str, ca_dir: &str, timeout_ms: u64, alpn: Bytes, cert_pem: Bytes, key_pem: Bytes, err_code: mut i32, reason: mut String).R: TlsHandle
+extern fun handshake_try_raw(fd: i32, host: &str, ca_pem: Bytes, timeout_ms: u64, alpn: Bytes, cert_pem: Bytes, key_pem: Bytes, err_code: mut i32, reason: mut String).R: TlsHandle
 extern fun server_ctx_try_raw(cert: Bytes, key: Bytes, ca: Bytes, alpn: Bytes, min13: i32, err_code: mut i32, reason: mut String).R: TlsCtx
 extern fun accept_try_raw(ctx: TlsCtx, fd: i32, timeout_ms: u64, err_code: mut i32, reason: mut String).R: TlsHandle
 extern fun ctx_free_raw(ctx: TlsCtx)
@@ -123,16 +123,18 @@ pub enum TlsError {
     Io(val reason: String)
 }
 
-// How to trust and how long to wait for one handshake. An empty `ca_file`
-// and `ca_dir` mean "only the system store"; a non-empty one *adds* that
-// file or directory to the roots and cannot weaken verification. A
-// `timeout_ms` of 0 is "no timeout", which is `SO_RCVTIMEO`'s own meaning.
-pub datac TlsOptions(val ca_file: String, val ca_dir: String, val timeout_ms: u64)
+// How to trust and how long to wait for one handshake. An empty `ca_pem`
+// means "only the system store"; non-empty PEM text of one or more CA
+// certificates *adds* them to the roots and cannot weaken verification. The
+// runtime never opens a path for this: the PEM comes in as bytes, so a file
+// is read by the caller through `std/tlsfile` and the `fs` grant
+// (`tlsfile.read_pem`). A `timeout_ms` of 0 is "no timeout", which is
+// `SO_RCVTIMEO`'s own meaning.
+pub datac TlsOptions(val ca_pem: Bytes, val timeout_ms: u64)
 
 // The options `handshake` uses: the system store, no extra CA, no timeout.
 fun default_options().R: TlsOptions = TlsOptions(
-    ca_file = String.empty(),
-    ca_dir = String.empty(),
+    ca_pem = Bytes.empty(),
     timeout_ms = 0,
 )
 
@@ -192,8 +194,7 @@ fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions).R: result.Re
     val handle = handshake_try_raw(
         s.fd,
         host,
-        opts.ca_file.as_str(),
-        opts.ca_dir.as_str(),
+        opts.ca_pem.clone(),
         opts.timeout_ms,
         Bytes.empty(),
         Bytes.empty(),
@@ -222,7 +223,7 @@ fun try_handshake(s: net.Socket, host: &str).R: result.Result<TlsStream, TlsErro
 fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64).R: result.Result<TlsStream, TlsError> = try_handshake_with(
     s,
     host,
-    TlsOptions(ca_file = String.empty(), ca_dir = String.empty(), timeout_ms = ms),
+    TlsOptions(ca_pem = Bytes.empty(), timeout_ms = ms),
 )
 
 fun fail_stream(e: move TlsError).R: TlsStream {
@@ -604,8 +605,7 @@ fun TlsStream.pending().R: usize = pending_raw(handle)
 // The client's options with ALPN and a client certificate: `TlsOptions` keeps
 // its three fields (fixtures build it positionally), so these live here.
 pub datac TlsClientOptions(
-    val ca_file: String,
-    val ca_dir: String,
+    val ca_pem: Bytes,
     val timeout_ms: u64,
     val alpn_list: Bytes,
     val cert_pem: Bytes,
@@ -613,8 +613,7 @@ pub datac TlsClientOptions(
 )
 
 fun client_options().R: TlsClientOptions = TlsClientOptions(
-    ca_file = String.empty(),
-    ca_dir = String.empty(),
+    ca_pem = Bytes.empty(),
     timeout_ms = 0,
     alpn_list = Bytes.empty(),
     cert_pem = Bytes.empty(),
@@ -622,8 +621,7 @@ fun client_options().R: TlsClientOptions = TlsClientOptions(
 )
 
 fun TlsOptions.to_client().R: TlsClientOptions = TlsClientOptions(
-    ca_file = String.from_str(ca_file.as_str()),
-    ca_dir = String.from_str(ca_dir.as_str()),
+    ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = Bytes.empty(),
     cert_pem = Bytes.empty(),
@@ -646,8 +644,7 @@ fun TlsOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).R: TlsClientOpti
 }
 
 fun TlsClientOptions.alpn(protocols: &List<String>).R: TlsClientOptions = TlsClientOptions(
-    ca_file = String.from_str(ca_file.as_str()),
-    ca_dir = String.from_str(ca_dir.as_str()),
+    ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = alpn_wire(protocols),
     cert_pem = cert_pem.clone(),
@@ -655,18 +652,17 @@ fun TlsClientOptions.alpn(protocols: &List<String>).R: TlsClientOptions = TlsCli
 )
 
 fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).R: TlsClientOptions = TlsClientOptions(
-    ca_file = String.from_str(ca_file.as_str()),
-    ca_dir = String.from_str(ca_dir.as_str()),
+    ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = alpn_list.clone(),
     cert_pem = cert_pem.clone(),
     key_pem = key_pem.clone(),
 )
 
-// Adds a private CA file to the roots, as `TlsOptions.ca_file` does.
-fun TlsClientOptions.with_ca_file(path: &str).R: TlsClientOptions = TlsClientOptions(
-    ca_file = String.from_str(path),
-    ca_dir = String.from_str(ca_dir.as_str()),
+// Adds private CA certificates (PEM text) to the roots, as `TlsOptions.ca_pem`
+// does. Read a file's bytes with `tlsfile.read_pem`, which is gated on `fs`.
+fun TlsClientOptions.with_ca_pem(pem: Bytes).R: TlsClientOptions = TlsClientOptions(
+    ca_pem = pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = alpn_list.clone(),
     cert_pem = cert_pem.clone(),
@@ -674,8 +670,7 @@ fun TlsClientOptions.with_ca_file(path: &str).R: TlsClientOptions = TlsClientOpt
 )
 
 fun TlsClientOptions.with_timeout_ms(ms: u64).R: TlsClientOptions = TlsClientOptions(
-    ca_file = String.from_str(ca_file.as_str()),
-    ca_dir = String.from_str(ca_dir.as_str()),
+    ca_pem = ca_pem.clone(),
     timeout_ms = ms,
     alpn_list = alpn_list.clone(),
     cert_pem = cert_pem.clone(),
@@ -691,8 +686,7 @@ fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions).R: re
     val handle = handshake_try_raw(
         s.fd,
         host,
-        opts.ca_file.as_str(),
-        opts.ca_dir.as_str(),
+        opts.ca_pem.clone(),
         opts.timeout_ms,
         opts.alpn_list.clone(),
         opts.cert_pem.clone(),

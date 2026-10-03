@@ -49,3 +49,15 @@ fun read_pem(path: &str, what: &str).R: result.Result<Bytes, tls.TlsError> {
 //
 // (This module only reads; it cannot call into `std/tls`, whose functions are
 // `net`-gated and would need that grant here too.)
+
+// The private CA certificates in `path`, read through the `fs` gate: the
+// module's grant decides which paths are readable, exactly as for `fs.read`,
+// and a path outside it is a typed `TlsError.Io` (the file is never opened).
+// Hand the bytes to `TlsClientOptions.with_ca_pem`:
+//
+//     val ca = tlsfile.ca_pem(ca_path)?
+//     val opts = tls.client_options().with_ca_pem(ca)
+//
+// A program with no `fs` grant cannot import this module, so it cannot make
+// the TLS runtime read a path at all.
+fun ca_pem(path: &str).R: result.Result<Bytes, tls.TlsError> = read_pem(path, "CA certificate")

@@ -18659,3 +18659,130 @@ fn matrix_ord_never_decides_map_key_identity() {
         "2\nfalse\ntrue\n",
     );
 }
+
+/// Builds `fixture` with the named backend (`"c"` for the oracle, anything
+/// else for the default) and returns the build and the run, so a test can pin
+/// both backends in one go regardless of which one the suite is pointed at.
+fn build_and_run_on(fixture_name: &str, oracle: bool) -> (std::process::Output, Option<std::process::Output>) {
+    let tag = if oracle { "c" } else { "llvm" };
+    let bin = out_path(&format!("{fixture_name}_{tag}"));
+    let mut cmd = Command::new(kelpc_bin());
+    cmd.env_remove("KELPC_BACKEND");
+    if oracle {
+        cmd.env("KELPC_ORACLE", "c");
+    } else {
+        cmd.env_remove("KELPC_ORACLE");
+    }
+    let build = cmd
+        .arg("build")
+        .arg(fixture(&format!("tests/fixtures/{fixture_name}.kp")))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    if !build.status.success() {
+        return (build, None);
+    }
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    (build, Some(run))
+}
+
+/// Shifts (`tl7`): an in-range shift and the `wrapping_shl`/`wrapping_shr`
+/// escapes print the same on both backends.
+#[test]
+fn shifts_in_range_and_wrapping_shifts_agree_on_both_backends() {
+    let expected = "128\n1\n240\n32768\n1\n2147483648\n1\n-2147483648\n-1\n-4\n9223372036854775808\n1\n4611686018427387904\n-1\n48\n5\n2\n1\n2147483648\n268435456\n2\n2\n-8\n-2147483648\n";
+    for oracle in [false, true] {
+        let (build, run) = build_and_run_on("shift_checked", oracle);
+        let run = run.unwrap_or_else(|| {
+            panic!("shift_checked failed to build:\n{}", String::from_utf8_lossy(&build.stderr))
+        });
+        assert!(run.status.success(), "shift_checked (oracle={oracle}) failed:\n{}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout), expected, "oracle={oracle}");
+    }
+}
+
+/// Shifts (`tl7`): a shift by the width or more, or a negative amount, panics
+/// with the same message on both backends, at every width, and the legal shift
+/// printed before it still appears.
+#[test]
+fn a_shift_by_the_width_or_more_panics_on_both_backends() {
+    for (name, first) in [
+        ("shift_panic_u32", "2147483648\n"),
+        ("shift_panic_u8_right", "1\n"),
+        ("shift_panic_negative", "-8\n"),
+        ("shift_panic_u64", "9223372036854775808\n"),
+    ] {
+        for oracle in [false, true] {
+            let (build, run) = build_and_run_on(name, oracle);
+            let run = run.unwrap_or_else(|| {
+                panic!("{name} failed to build:\n{}", String::from_utf8_lossy(&build.stderr))
+            });
+            assert!(!run.status.success(), "{name} (oracle={oracle}) should panic");
+            assert_eq!(String::from_utf8_lossy(&run.stdout), first, "{name} oracle={oracle}");
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                stderr.contains("shift amount out of range"),
+                "{name} (oracle={oracle}) panicked with:\n{stderr}"
+            );
+        }
+    }
+}
+
+/// Shifts (`tl7`): a shift by a constant amount at or past the width is a
+/// compile error that names the type and the amount, on both backends.
+#[test]
+fn a_shift_by_a_constant_at_or_past_the_width_is_a_compile_error() {
+    for oracle in [false, true] {
+        for (name, needle) in [
+            ("shift_const_too_wide", "a shift by 33 is not defined for a 'u32'"),
+            ("shift_const_named_too_wide", "a shift by 8 is not defined for a 'u8'"),
+        ] {
+            let (build, run) = build_and_run_on(name, oracle);
+            assert!(run.is_none(), "{name} (oracle={oracle}) should be rejected");
+            let stderr = String::from_utf8_lossy(&build.stderr);
+            assert!(stderr.contains(needle), "{name}: expected '{needle}', got:\n{stderr}");
+        }
+    }
+}
+
+/// Shifts (`tl7`): the freestanding half. The check reaches the project's own
+/// panic handler, the image has no undefined symbol, and it boots to the
+/// message. Needs the `dev-kernel.nix` tools; a shell without them skips.
+#[test]
+fn a_freestanding_shift_out_of_range_reaches_the_projects_panic_handler() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding shift boot: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_shift");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_shift"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding shift build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let symbols = tool("llvm-nm", &[bin.to_str().expect("the artifact path is utf-8")]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(undefined.is_empty(), "undefined symbols:\n{}", undefined.join("\n"));
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_shift",
+        &project("freestanding_shift"),
+        &["8", "panic: shift amount out of range"],
+    );
+}

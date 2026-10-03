@@ -4354,6 +4354,29 @@ impl<'a> Gen<'a> {
                 };
                 let l = self.expr_value(lhs);
                 let r = self.expr_value(rhs);
+                if let (BinOp::Shl | BinOp::Shr, Some(bits)) = (op, shift_width(&lhs.ty)) {
+                    // A shift is defined for an amount in `0..bits` only; any
+                    // other amount panics, as an out-of-bounds index does. A
+                    // left shift runs on the unsigned twin so a set sign bit
+                    // is not signed overflow.
+                    let ty = expr.ty.c_type();
+                    let uty = format!("uint{bits}_t");
+                    let body = |l: &str, r: &str| {
+                        if *op == BinOp::Shl {
+                            format!("(({ty})(({uty}){l} << {r}))")
+                        } else {
+                            format!("(({ty})({l} >> {r}))")
+                        }
+                    };
+                    if shift_amount_in_range(rhs, bits) {
+                        return body(&l, &r);
+                    }
+                    let (lt, rt) = (fresh_temp(), fresh_temp());
+                    return format!(
+                        "({{ {ty} {lt} = {l}; {ty} {rt} = {r}; if (({uty}){rt} >= {bits}) {{ kelp_panic(\"shift amount out of range\"); }} {}; }})",
+                        body(&lt, &rt)
+                    );
+                }
                 let raw = format!("({l} {sym} {r})");
                 // A `u8`/`u16` value promotes to C's `int`, so an arithmetic or
                 // bitwise result wider than its declared type leaks (a `u8 +

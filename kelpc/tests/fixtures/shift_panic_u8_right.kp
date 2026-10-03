@@ -1,0 +1,8 @@
+// `>>` panics the same way, at the narrowest width.
+fun shift(x: u8, n: u8).R: u8 = x >> n
+
+fun main() {
+    print(shift(200, 7))
+    print(shift(200, 8))
+    print("unreachable")
+}

@@ -556,3 +556,32 @@ fun main() {
     refused(&dir, "would take the line 11");
     refused(&dir, "module 'ungranted'");
 }
+
+/// Constant folding is at the operand's own width, as the emitted code
+/// computes: a `u32` line wraps at 32 bits, so `0xFFFFFFFF + 11` is line 10
+/// (what the program really claims), not the 64-bit 4294967306 the folder used
+/// to see. A shift by the width or more is not a constant at all.
+#[test]
+fn a_line_folds_at_its_own_width() {
+    let caps = "[caps]\nirq = [\"10\"]\n";
+    let dir = project(
+        "line_wraps_u32",
+        caps,
+        &[("main.kp", &main_line("0xFFFFFFFF + 11"))],
+    );
+    runs(&dir, "10\n");
+
+    let wide = project(
+        "line_wide_shift",
+        caps,
+        &[("main.kp", &main_line("10 + (1 << 31) + (1 << 31)"))],
+    );
+    runs(&wide, "10\n");
+
+    let outside = project(
+        "line_wraps_outside",
+        caps,
+        &[("main.kp", &main_line("0xFFFFFFFF + 12"))],
+    );
+    refused(&outside, "would take the line 11");
+}

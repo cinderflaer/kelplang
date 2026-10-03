@@ -1,0 +1,16 @@
+name = "freestandingshift"
+
+# A shift by the width or more panics through `kp_panic`, like the compiler's
+# other run-time checks.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["uart"]
+
+[caps]
+mmio = ["0x10000000+0x100"]

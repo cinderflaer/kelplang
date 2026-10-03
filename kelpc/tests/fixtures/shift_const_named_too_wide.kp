@@ -1,0 +1,7 @@
+// Also when the amount is a named constant.
+const AMOUNT: u8 = 8
+
+fun main() {
+    val x: u8 = 1
+    print(x >> AMOUNT)
+}

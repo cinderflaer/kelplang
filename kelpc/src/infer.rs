@@ -15057,6 +15057,22 @@ fn check_binary(
                     span,
                 });
             }
+            // A shift by an amount already known to be out of range is a
+            // compile error; any other amount is checked at run time by both
+            // backends (`shift amount out of range`).
+            if matches!(op, Shl | Shr) {
+                if let (tir::ExprKind::IntLit(v), Some(bits)) = (&r.kind, int_bits(&l.ty)) {
+                    if *v < 0 || *v >= bits as i128 {
+                        return Err(TypeError {
+                            message: format!(
+                                "a shift by {v} is not defined for a '{}', whose width is {bits} bits: the amount has to be in 0..{bits} (use wrapping_shl/wrapping_shr to mask it)",
+                                l.ty.display()
+                            ),
+                            span,
+                        });
+                    }
+                }
+            }
             let ty = l.ty.clone();
             Ok(tir::Expr {
                 kind: tir::ExprKind::Binary {
@@ -18136,6 +18152,55 @@ fn check_method_call(
     // bound once, the range test, and one arm per `Option` variant. It is
     // resolved before the method tables because an integer has no table to
     // search and no declaration ever names this method.
+    // `x.wrapping_shl(n)` / `x.wrapping_shr(n)`: the shift with the amount
+    // masked to the width (`n & (bits - 1)`), the escape from the run-time
+    // range check a plain `<<`/`>>` makes. Lowered here to the ordinary
+    // shift, so both backends and a freestanding build need nothing new.
+    if matches!(method, "wrapping_shl" | "wrapping_shr") {
+        if let Some(bits) = int_bits(&probe.ty) {
+            let ty = probe.ty.clone();
+            let value = check_call_arg("'self'", &ty, receiver, ctx)?;
+            let amount = match_args(
+                &format!("method '{}.{method}'", ty.display()),
+                &[("n".to_string(), ty.clone())],
+                args,
+                span,
+                ctx,
+            )?
+            .remove(0);
+            let mask = (bits - 1) as i128;
+            let masked = match &amount.kind {
+                tir::ExprKind::IntLit(v) => tir::Expr {
+                    kind: tir::ExprKind::IntLit(*v & mask),
+                    ty: ty.clone(),
+                    span,
+                },
+                _ => tir::Expr {
+                    kind: tir::ExprKind::Binary {
+                        op: ast::BinOp::BitAnd,
+                        lhs: Box::new(amount),
+                        rhs: Box::new(tir::Expr {
+                            kind: tir::ExprKind::IntLit(mask),
+                            ty: ty.clone(),
+                            span,
+                        }),
+                    },
+                    ty: ty.clone(),
+                    span,
+                },
+            };
+            let op = if method == "wrapping_shl" { ast::BinOp::Shl } else { ast::BinOp::Shr };
+            return Ok(tir::Expr {
+                kind: tir::ExprKind::Binary {
+                    op,
+                    lhs: Box::new(value),
+                    rhs: Box::new(masked),
+                },
+                ty,
+                span,
+            });
+        }
+    }
     if let Some((src, dst)) = try_to_pair(&probe.ty, method) {
         let value = check_call_arg("'self'", &src, receiver, ctx)?;
         return lower_try_to(&src, &dst, value, span, ctx);
@@ -18294,7 +18359,7 @@ fn check_method_call(
                     }
                 }
                 (None, _) if probe.ty.is_integer() => format!(
-                    "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64, to_f32, swap_bytes, to_be and to_le, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
+                    "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64, to_f32, swap_bytes, to_be and to_le, wrapping_shl and wrapping_shr, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
                     probe.ty.display()
                 ),
                 // An `enum` and a `datac` miss the same way, and an enum
