@@ -3873,6 +3873,10 @@ struct FnGen<'g, 'a> {
     /// branches to (the loop's exit). `plan/iterators.md` adds the two loop
     /// control statements, and this is what gives them somewhere to go.
     loops: Vec<(BasicBlock<'a>, BasicBlock<'a>)>,
+    /// How many `break` statements have been emitted so far in this function;
+    /// `emit_while` compares it before and after a `while true` body to know
+    /// whether the loop has an exit edge at all.
+    breaks_emitted: usize,
 }
 
 impl<'g, 'a> FnGen<'g, 'a> {
@@ -3913,6 +3917,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             alloca_after: None,
             naked: f.naked,
             loops: Vec::new(),
+            breaks_emitted: 0,
         })
     }
 
@@ -3954,6 +3959,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             alloca_after: None,
             naked: false,
             loops: Vec::new(),
+            breaks_emitted: 0,
         })
     }
 
@@ -4097,7 +4103,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // here. A declared type with no zero value (`String`, `Bytes`, a
             // container) has nothing to `ret`, which is the case that made
             // this a refusal rather than an unreachable block.
-            if self.naked || ends_in_an_endless_loop(body) {
+            if self.naked {
                 self.g.builder.build_unreachable();
                 self.terminated = true;
             } else {
@@ -4307,6 +4313,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             Stmt::Break { span } => {
                 let drops = self.drops_at_break(*span);
                 self.emit_drops(&drops)?;
+                self.breaks_emitted += 1;
                 if !self.terminated {
                     let (_, exit) = *self
                         .loops
@@ -4425,6 +4432,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // A `continue` branches to the condition and a `break` to the exit;
         // both run their loop's own drops first (see `emit_stmt`).
         self.loops.push((header, exit_bb));
+        let breaks_before = self.breaks_emitted;
         let body = self.emit_block_value(body);
         self.loops.pop();
         body?;
@@ -4441,6 +4449,15 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.builder.position_at_end(exit_bb);
         self.cur = exit_bb;
         self.terminated = false;
+        // `while true` with no `break` in its body has no exit edge: the only
+        // ways out are a `return` or a `panic`, so the exit block is
+        // unreachable and nothing after the loop (including a function's
+        // fallthrough return, which a type with no zero value cannot have) is
+        // emitted. A loop that does `break` keeps its exit block live.
+        if matches!(cond.kind, ExprKind::BoolLit(true)) && self.breaks_emitted == breaks_before {
+            self.g.builder.build_unreachable();
+            self.terminated = true;
+        }
         Ok(())
     }
 
@@ -15400,14 +15417,6 @@ fn is_str_ref(ty: &Ty) -> bool {
 /// a `panic` asks the unit-typed call for a value and reports an internal error.
 fn is_diverging_tail(tail: &Expr) -> bool {
     matches!(&tail.kind, ExprKind::Call { callee, .. } if callee == "panic")
-}
-
-/// Whether a block's last statement is a loop that can never be left at all:
-/// `while true { ... }`. Every way out of such a loop is a `return` or a
-/// `panic`, so the code after it is unreachable and the function needs no
-/// fallthrough `ret` for a return type that has no zero value.
-fn ends_in_an_endless_loop(block: &Block) -> bool {
-    matches!(block.stmts.last(), Some(Stmt::While { cond, .. }) if matches!(cond.kind, ExprKind::BoolLit(true)))
 }
 
 /// Whether an expression has stable storage, mirroring the subset of

@@ -18429,3 +18429,8 @@ fn polyp_bench_prints_a_bounded_table() {
         }
     }
 }
+
+#[test]
+fn a_while_true_loop_that_breaks_continues_after_the_loop() {
+    assert_compiles_and_runs("tests/fixtures/while_true_break.kp", "4\n5\n30\nxxx\n");
+}

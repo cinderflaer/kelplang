@@ -1,0 +1,43 @@
+// A `while true` loop that leaves through a `break` has an exit edge: the code
+// after it runs, and a function whose tail follows the loop returns normally.
+// A loop with no `break` (only `return`) has none and needs no fallthrough.
+fun first_over(limit: i32).R: i32 {
+    var i = 0
+    while true {
+        i += 1
+        if i > limit { return i }
+    }
+}
+
+fun count_to(limit: i32).R: i32 {
+    var i = 0
+    while true {
+        i += 1
+        if i > limit { break }
+    }
+    return i * 10
+}
+
+fun label(n: i32).R: String {
+    var s = String.empty()
+    var i = 0
+    while true {
+        s.push('x')
+        i += 1
+        if i >= n { break }
+    }
+    return s
+}
+
+fun main() {
+    var i = 0
+    while true {
+        i += 1
+        if i > 3 { break }
+    }
+    print(i)
+    print(first_over(4))
+    print(count_to(2))
+    val l = label(3)
+    print(l.as_str())
+}
