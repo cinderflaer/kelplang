@@ -1,0 +1,103 @@
+// sort: n pseudo-random non-negative i32 (64-bit LCG, high bits), sorted by a hand-written quicksort
+// (median-of-three pivot, Lomuto partition, recurse on the smaller side, insertion sort below 17
+// elements), identical in Kelp, C and Rust. Prints the sorted flag and a hash of the sorted data.
+// Size = n (default 5000000).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun insertion(a: mut List<i32>, lo: usize, hi: usize) {
+    var i: usize = lo + 1
+    while i < hi {
+        val x = a.get(i)
+        var j: usize = i
+        while j > lo && a.get(j - 1) > x {
+            a.set(j, a.get(j - 1))
+            j = j - 1
+        }
+        a.set(j, x)
+        i = i + 1
+    }
+}
+
+fun swap(a: mut List<i32>, i: usize, j: usize) {
+    val t = a.get(i)
+    a.set(i, a.get(j))
+    a.set(j, t)
+}
+
+fun quicksort(a: mut List<i32>, lo0: usize, hi0: usize) {
+    var lo = lo0
+    var hi = hi0
+    while hi - lo > 16 {
+        val mid = lo + (hi - lo) / 2
+        val x = a.get(lo)
+        val y = a.get(mid)
+        val z = a.get(hi - 1)
+        var m = mid
+        if (x < y && y < z) || (z < y && y < x) {
+            m = mid
+        } else if (y < x && x < z) || (z < x && x < y) {
+            m = lo
+        } else {
+            m = hi - 1
+        }
+        swap(a, m, hi - 1)
+        val p = a.get(hi - 1)
+        var store = lo
+        var i = lo
+        while i < hi - 1 {
+            if a.get(i) < p {
+                swap(a, i, store)
+                store = store + 1
+            }
+            i = i + 1
+        }
+        swap(a, store, hi - 1)
+        if store - lo < hi - (store + 1) {
+            quicksort(a, lo, store)
+            lo = store + 1
+        } else {
+            quicksort(a, store + 1, hi)
+            hi = store
+        }
+    }
+    insertion(a, lo, hi)
+}
+
+fun main() {
+    val n = size_arg(5000000)
+    var a: List<i32> = List.empty()
+    var x: u64 = 12345
+    var i: i64 = 0
+    while i < n {
+        x = x * 6364136223846793005 + 1442695040888963407
+        a.push((x >> 33).to_i32())
+        i = i + 1
+    }
+    val len = a.len()
+    quicksort(a, 0, len)
+    var ok = true
+    var h: u64 = 0
+    var k: usize = 0
+    while k < a.len() {
+        if k > 0 && a.get(k - 1) > a.get(k) {
+            ok = false
+        }
+        h = h * 31 + a.get(k).to_u64()
+        k = k + 1
+    }
+    print("sort $n $ok $h")
+}
