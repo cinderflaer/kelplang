@@ -758,8 +758,11 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
                 })
                 .collect();
             // The three appended entries: the drop, then the size and the
-            // align of the concrete type. Nothing reads the last two, so the two
-            // backends agree about them without a layout query anywhere.
+            // align of the concrete type. A hosted build never reads the last
+            // two (libc's `free` needs no size); they are there so the table
+            // describes the concrete type completely and so the LLVM backend's
+            // freestanding allocator hook can free an erased value, whose size
+            // it cannot know otherwise.
             fields.push(crate::types::dyn_drop_thunk_symbol(
                 &vtable.trait_name,
                 &vtable.type_name,

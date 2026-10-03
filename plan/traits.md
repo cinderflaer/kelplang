@@ -949,9 +949,10 @@ And the spelling itself:
 - `borrowck.rs` sees `BoxDynCoerce` as a move of its operand, exactly as a `&x`-based `DynCoerce`
   is seen as the borrow inside it.
 - `codegen_c.rs` and `codegen_llvm.rs` emit the appended vtable entries, the per-trait
-  `kelp_box_dyn_drop__<Trait>`, and lower `BoxDynCoerce`. The LLVM table keeps its `[N x ptr]` shape
-  with three extra entries after the slots, its drop entry a real function pointer, so the two
-  backends' tables agree on the slot the drop lives in.
+  `kelp_box_dyn_drop__<Trait>`, and lower `BoxDynCoerce`. The LLVM table becomes the literal struct
+  `{ [N x ptr], ptr, i64, i64 }` (the method array first, so the call site's slot index is
+  unchanged, then the drop, the size and the align), and the C struct puts the same three entries
+  after the same method slots, so the two backends' tables agree field for field.
 - `plan/kernel-ub-notes.md` carries this feature's note.
 
 ### 12.10 Tests
