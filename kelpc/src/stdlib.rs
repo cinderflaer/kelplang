@@ -470,8 +470,12 @@ pub fn const_int(expr: &tir::Expr) -> Option<u128> {
                 BinOp::BitAnd => a & b,
                 BinOp::BitOr => a | b,
                 BinOp::BitXor => a ^ b,
-                BinOp::Shl if b < 128 => a << b,
-                BinOp::Shr if b < 128 => a >> b,
+                // A shift by 64 or more is not a constant: the compiler's
+                // 128-bit arithmetic would fold it to 0 while the target
+                // shifts by `n mod 64`, so the folded address and the real one
+                // would differ (threat model M2).
+                BinOp::Shl if b < 64 => a << b,
+                BinOp::Shr if b < 64 => a >> b,
                 _ => return None,
             };
             Some(folded & MASK)

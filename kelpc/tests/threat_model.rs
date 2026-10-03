@@ -90,7 +90,12 @@ impl Lab {
         } else {
             cmd.env_remove("KELPC_ORACLE");
         }
-        cmd.arg(self.root.join("main.kp"))
+        let entry = if self.root.join("coral.toml").exists() {
+            self.root.clone()
+        } else {
+            self.root.join("main.kp")
+        };
+        cmd.arg(entry)
             .arg("-o")
             .arg(self.root.join(if oracle { "prog_c" } else { "prog_llvm" }))
             .current_dir(&self.root)
@@ -191,6 +196,32 @@ impl Lab {
             TOKEN,
             "secret/s.txt was changed"
         );
+    }
+
+    /// A project with a manifest: `coral.toml` is `manifest`, and each of
+    /// `files` goes under `src/`.
+    fn manifest_project(&self, manifest: &str, files: &[(&str, &str)]) {
+        fs::write(self.root.join("coral.toml"), manifest.replace("__T__", &self.root.to_string_lossy()))
+            .expect("write the manifest");
+        fs::create_dir_all(self.root.join("src")).unwrap();
+        for (file, text) in files {
+            let text = text.replace("__T__", &self.root.to_string_lossy());
+            fs::write(self.root.join("src").join(file), text).expect("write a source file");
+        }
+    }
+
+    /// `kelpc check` over the project directory: the front end only.
+    fn check(&self) -> Output {
+        kelpc().arg("check").arg(&self.root).output().expect("spawn kelpc")
+    }
+
+    fn check_refused(&self, needles: &[&str]) {
+        let out = self.check();
+        let text = String::from_utf8_lossy(&out.stderr).to_string();
+        assert!(!out.status.success(), "expected a refusal, but the project checks");
+        for n in needles {
+            assert!(text.contains(n), "refusal lacks '{n}':\n{text}");
+        }
     }
 
     fn symlink(&self, target: &str, link: &str) {
@@ -1238,4 +1269,285 @@ fn h03_a_granted_module_can_read_a_descriptor_another_module_opened() {
             "the secret leaked through a forged descriptor"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// unsafe audit list
+// ---------------------------------------------------------------------------
+
+const UNSAFE_MANIFEST: &str = "name = \"u\"\n\n[unsafe]\nmodules = [\"main\", \"listed\"]\n";
+const NOT_LISTED: &str = "is not listed in coral.toml [unsafe] modules";
+
+/// Builds a project whose `evil` module (not on the audit list) holds `evil`,
+/// and asserts the build is refused with `needle`.
+fn unsafe_attack(name: &str, evil: &str, needle: &str) {
+    let lab = Lab::new(name);
+    lab.manifest_project(
+        UNSAFE_MANIFEST,
+        &[
+            ("main.kp", "impl \"evil\"\n\nfun main() {\n    evil.go()\n}\n"),
+            ("evil.kp", evil),
+        ],
+    );
+    lab.refused(&[needle]);
+}
+
+/// U1: an `unsafe` block or an `unsafe fun` in a module that is not listed.
+#[test]
+fn u01_unsafe_in_an_unlisted_module_is_refused() {
+    unsafe_attack(
+        "u01a",
+        "pub fun go() {\n    var x: i32 = 1\n    val p: Ptr<i32> = Ptr.from_mut(x)\n    print(unsafe { p.read() })\n}\n",
+        NOT_LISTED,
+    );
+    unsafe_attack(
+        "u01b",
+        "unsafe fun poke(p: Ptr<i32>).R: i32 = p.read()\n\npub fun go() {\n}\n",
+        NOT_LISTED,
+    );
+}
+
+/// U2: the same operation hidden in a position the audit walk has to reach:
+/// a closure, a generic function, a `when` arm, an `if`/`else` branch, a
+/// template, a call argument, a tuple, an array, a loop condition, a `for`
+/// iterable, a `defer`.
+#[test]
+fn u02_unsafe_hidden_in_an_expression_position_is_still_found() {
+    let head = "pub fun go() {\n    var x: i32 = 1\n    val p: Ptr<i32> = Ptr.from_mut(x)\n";
+    for (what, body) in [
+        ("closure", "    val f = fun().R: i32 = unsafe { p.read() }\n    print(f())"),
+        ("if_cond", "    if unsafe { p.read() } == 1 {\n        print(1)\n    }"),
+        ("else_branch", "    if x == 2 {\n        print(0)\n    } else {\n        print(unsafe { p.read() })\n    }"),
+        ("when_arm", "    val o: i32 = 1\n    val v = when o {\n        _ -> unsafe { p.read() }\n    }"),
+        ("template", "    print(\"v={unsafe { p.read() }}\")"),
+        ("call_arg", "    print(abs_of(unsafe { p.read() }))"),
+        ("tuple", "    val t = (1, unsafe { p.read() })"),
+        ("array", "    val a = [1, unsafe { p.read() }]"),
+        ("while_cond", "    while unsafe { p.read() } == 0 {\n        print(1)\n    }"),
+        ("for_iterable", "    for i in unsafe { make_list(p) } {\n        print(i)\n    }"),
+        ("defer", "    defer print(unsafe { p.read() })\n    print(2)"),
+        ("assign", "    var y: i32 = 0\n    y = unsafe { p.read() }"),
+        ("return", "    print(helper(p))"),
+    ] {
+        let evil = format!(
+            "fun abs_of(n: i32).R: i32 = n\nfun make_list(p: Ptr<i32>).R: List<i32> {{\n    var l: List<i32> = List.empty()\n    return l\n}}\nfun helper(p: Ptr<i32>).R: i32 {{\n    return unsafe {{ p.read() }}\n}}\n{head}{body}\n}}\n"
+        );
+        unsafe_attack(&format!("u02_{what}"), &evil, NOT_LISTED);
+    }
+}
+
+/// U3: a trait's default method lives in the declaration and not in the
+/// module's function list, and the audit walk used to skip it, so a module
+/// outside the list could keep an `unsafe` body that every impl inherited.
+#[test]
+fn u03_unsafe_in_a_trait_default_method_is_found() {
+    unsafe_attack(
+        "u03",
+        "pub trait Poke {\n    fun Self.addr().R: usize\n    fun Self.poke().R: i32 {\n        val p: Ptr<i32> = Ptr.from_addr(self.addr())\n        return unsafe { p.read() }\n    }\n}\n\npub datac A(val a: usize)\n\nimpl Poke for A {\n    fun Self.addr().R: usize = a\n}\n\npub fun go() {\n    var x: i32 = 7\n    val p: Ptr<i32> = Ptr.from_mut(x)\n    val a = A(a = p.addr())\n    print(a.poke())\n}\n",
+        NOT_LISTED,
+    );
+}
+
+/// U4: an impl method and a generic function with an `unsafe` body.
+#[test]
+fn u04_unsafe_in_an_impl_method_or_a_generic_is_found() {
+    unsafe_attack(
+        "u04a",
+        "pub trait Get {\n    fun Self.get().R: i32\n}\n\npub datac A(val p: Ptr<i32>)\n\nimpl Get for A {\n    fun Self.get().R: i32 = unsafe { p.read() }\n}\n\npub fun go() {\n}\n",
+        NOT_LISTED,
+    );
+    unsafe_attack(
+        "u04b",
+        "fun peek<T>(p: Ptr<i32>, x: T).R: i32 = unsafe { p.read() }\n\npub fun go() {\n    var x: i32 = 1\n    print(peek(Ptr.from_mut(x), 1))\n}\n",
+        NOT_LISTED,
+    );
+}
+
+/// U5: `asm` and `naked fun` are unsafe operations: an unlisted module cannot
+/// contain either.
+#[test]
+fn u05_asm_and_naked_fun_need_the_audit_list() {
+    unsafe_attack(
+        "u05a",
+        "pub fun go() {\n    unsafe { asm(\"nop\") }\n}\n",
+        NOT_LISTED,
+    );
+    unsafe_attack(
+        "u05b",
+        "naked fun forty_two().R: i64 {\n    asm(\"mov rax, 42\\nret\")\n}\n\npub fun go() {\n    print(forty_two())\n}\n",
+        NOT_LISTED,
+    );
+    unsafe_attack(
+        "u05c",
+        "pub fun go() {\n    asm(\"nop\")\n}\n",
+        NOT_LISTED,
+    );
+}
+
+/// U6: an `unsafe` initializer of a `const`, `static` or `pd` is found too.
+#[test]
+fn u06_unsafe_in_a_module_level_initializer_is_found() {
+    unsafe_attack(
+        "u06a",
+        "static mut N: i32 = 0\n\npub fun go() {\n    unsafe { N = 1 }\n}\n",
+        NOT_LISTED,
+    );
+    unsafe_attack(
+        "u06b",
+        "pd val V: i32 = unsafe { read_it() }\n\nunsafe fun read_it().R: i32 = 1\n\npub fun go() {\n    print(V)\n}\n",
+        NOT_LISTED,
+    );
+}
+
+/// U7: an unlisted module cannot call a listed module's `unsafe fun`, with or
+/// without an `unsafe` block of its own, and a `static mut` it does not own is
+/// out of reach the same way. The listed module's *safe* wrapper is the audit
+/// design working: it is callable and does its job (the positive control).
+#[test]
+fn u07_an_unlisted_module_reaches_unsafe_only_through_listed_wrappers() {
+    let listed = "pub unsafe fun raw(p: Ptr<i32>).R: i32 = p.read()\n\npub fun safe_read(x: i32).R: i32 {\n    var y: i32 = x\n    val p: Ptr<i32> = Ptr.from_mut(y)\n    return unsafe { raw(p) }\n}\n";
+    for (what, evil, needle) in [
+        (
+            "no_block",
+            "impl \"listed\"\n\npub fun go() {\n    var x: i32 = 1\n    print(listed.raw(Ptr.from_mut(x)))\n}\n",
+            "is an 'unsafe fun'",
+        ),
+        (
+            "with_block",
+            "impl \"listed\"\n\npub fun go() {\n    var x: i32 = 1\n    print(unsafe { listed.raw(Ptr.from_mut(x)) })\n}\n",
+            NOT_LISTED,
+        ),
+    ] {
+        let lab = Lab::new(&format!("u07_{what}"));
+        lab.manifest_project(
+            UNSAFE_MANIFEST,
+            &[
+                ("main.kp", "impl \"evil\"\n\nfun main() {\n    evil.go()\n}\n"),
+                ("listed.kp", listed),
+                ("evil.kp", evil),
+            ],
+        );
+        lab.refused(&[needle]);
+    }
+    let lab = Lab::new("u07_wrapper");
+    lab.manifest_project(
+        UNSAFE_MANIFEST,
+        &[
+            ("main.kp", "impl \"evil\"\n\nfun main() {\n    evil.go()\n}\n"),
+            ("listed.kp", listed),
+            ("evil.kp", "impl \"listed\"\n\npub fun go() {\n    print(listed.safe_read(41))\n}\n"),
+        ],
+    );
+    lab.prints("41\n");
+}
+
+// ---------------------------------------------------------------------------
+// mmio (freestanding)
+// ---------------------------------------------------------------------------
+
+const MMIO_LINKER: &str = "ENTRY(_start)\nSECTIONS\n{\n    . = 0x80000000;\n    .text : { *(.text.boot) *(.text .text.*) }\n}\n";
+
+fn mmio_lab(name: &str, caps: &str, files: &[(&str, &str)]) -> Lab {
+    let lab = Lab::new(name);
+    lab.manifest_project(
+        &format!(
+            "name = \"mmio_attack\"\n\n[target]\nmode = \"freestanding\"\ntriple = \"riscv64-unknown-none-elf\"\nentry = \"kmain\"\nlinker_script = \"kernel.ld\"\n\n[unsafe]\nmodules = [\"main\", \"dev\"]\n\n{caps}"
+        ),
+        files,
+    );
+    fs::write(lab.root.join("kernel.ld"), MMIO_LINKER).unwrap();
+    lab
+}
+
+fn poke_at(expr: &str) -> String {
+    format!(
+        "pub fun poke() {{\n    val p: Ptr<u8> = unsafe {{ Ptr.from_addr({expr}) }}\n    unsafe {{ p.write_volatile(65) }}\n}}\n"
+    )
+}
+
+const KMAIN_DEV: &str = "impl \"dev\" caps(mmio = [\"0x10000000+0x100\"])\n\nsection(\".text.boot\") fun kmain() {\n    dev.poke()\n    while true { unsafe { asm(\"wfi\") } }\n}\n";
+
+/// M1: a driver module with no `mmio` grant cannot make a pointer from an
+/// address, constant or not.
+#[test]
+fn m01_a_module_without_an_mmio_grant_cannot_take_an_address() {
+    let lab = mmio_lab(
+        "m01",
+        "[caps]\nmmio = [\"0x10000000+0x100\"]\n",
+        &[
+            (
+                "main.kp",
+                "impl \"dev\"\n\nsection(\".text.boot\") fun kmain() {\n    dev.poke()\n    while true { unsafe { asm(\"wfi\") } }\n}\n",
+            ),
+            ("dev.kp", &poke_at("0x10000000")),
+        ],
+    );
+    lab.check_refused(&["needs an 'mmio' grant", "module 'dev' holds none"]);
+}
+
+/// M2: constant folding must mean what the emitted code computes. A shift by
+/// 64 or more folds to 0 in the compiler's 128-bit arithmetic but is a shift
+/// by `n mod 64` on the target, so `0x10000000 + (0x100000 << 70)` looked like
+/// the in-range `0x10000000` and addressed `0x14000000`. A shift that wide is
+/// now "cannot fold", which a range grant refuses.
+#[test]
+fn m02_an_oversized_shift_does_not_fold_into_the_granted_range() {
+    for expr in [
+        "0x10000000 + (0x100000 << 70)",
+        "0x10000000 + (0x100000 << 64)",
+        "0x10000000 | (0x4000000 << 128)",
+        "0x10000000 + (0x1 >> 70)",
+    ] {
+        let lab = mmio_lab(
+            "m02",
+            "[caps]\nmmio = [\"0x10000000+0x100\"]\n",
+            &[("main.kp", KMAIN_DEV), ("dev.kp", &poke_at(expr))],
+        );
+        lab.check_refused(&["cannot fold"]);
+    }
+}
+
+/// M3: an address computed from another pointer, a parameter or a runtime
+/// value is not a constant, so only the whole-address-space grant admits it.
+#[test]
+fn m03_a_computed_address_is_refused_under_a_range_grant() {
+    let dev = "pub fun poke(base: usize) {\n    val p: Ptr<u8> = unsafe { Ptr.from_addr(base + 4) }\n    unsafe { p.write_volatile(65) }\n}\n";
+    let main = "impl \"dev\" caps(mmio = [\"0x10000000+0x100\"])\n\nsection(\".text.boot\") fun kmain() {\n    dev.poke(0x10000000)\n    while true { unsafe { asm(\"wfi\") } }\n}\n";
+    let lab = mmio_lab("m03", "[caps]\nmmio = [\"0x10000000+0x100\"]\n", &[("main.kp", main), ("dev.kp", dev)]);
+    lab.check_refused(&["cannot fold"]);
+}
+
+/// M4: a module cannot delegate a bigger window than it holds, nor the whole
+/// address space from a range.
+#[test]
+fn m04_a_range_cannot_be_widened_by_delegation() {
+    for wider in ["0x10000000+0x1000", "0x0F000000+0x100", "*"] {
+        let main = format!(
+            "impl \"mid\" caps(mmio = [\"0x10000000+0x100\"])\n\nsection(\".text.boot\") fun kmain() {{\n    mid.go()\n    while true {{ unsafe {{ asm(\"wfi\") }} }}\n}}\n"
+        );
+        let mid = format!("impl \"dev\" caps(mmio = [\"{wider}\"])\n\npub fun go() {{\n    dev.poke()\n}}\n");
+        let lab = mmio_lab(
+            "m04",
+            "[caps]\nmmio = [\"0x10000000+0x1000\"]\n",
+            &[("main.kp", &main), ("mid.kp", &mid), ("dev.kp", &poke_at("0x10000000"))],
+        );
+        lab.check_refused(&["cannot grant"]);
+    }
+}
+
+/// M5 (known gap): the range is checked where a pointer is *born*. Arithmetic
+/// on the pointer afterwards reaches any address, so a granted window is not a
+/// fence. The design is provenance (roadmap D-1): a pointer born from a range
+/// carries it, and `offset`/`byte_offset`/`cast` keep it. The honest record is
+/// in `plan/device-caps.md` ("Born-at only"); this is its reproduction.
+#[test]
+#[ignore = "known gap: mmio ranges are checked at the pointer's birth, not after offset arithmetic (plan/device-caps.md, plan/threat-model.md M5)"]
+fn m05_offset_arithmetic_leaves_the_granted_window() {
+    let dev = "pub fun poke() {\n    val base: Ptr<u8> = unsafe { Ptr.from_addr(0x10000000) }\n    val far: Ptr<u8> = base.byte_offset(0x10000000)\n    unsafe { far.write_volatile(65) }\n}\n";
+    let lab = mmio_lab(
+        "m05",
+        "[caps]\nmmio = [\"0x10000000+0x100\"]\n",
+        &[("main.kp", KMAIN_DEV), ("dev.kp", dev)],
+    );
+    lab.check_refused(&["outside"]);
 }
