@@ -36,9 +36,11 @@ SIZE_ARG=${SIZE_ARG:-}
 ALL_BENCHES="fib nbody spectral-norm mandelbrot binary-trees fannkuch-redux sieve matmul strings hashmap sort sort-builtin json-tokenizer"
 BENCHES=${BENCHES:-$ALL_BENCHES}
 
-TIME_BIN=$(command -v time 2>/dev/null || true)
-[ -x "$TIME_BIN" ] || TIME_BIN=/usr/bin/time
-if [ ! -x "$TIME_BIN" ]; then
+TIME_BIN=""
+for t in /usr/bin/time /run/current-system/sw/bin/time $(IFS=:; for p in $PATH; do echo "$p/time"; done); do
+    if [ -x "$t" ] && [ ! -d "$t" ]; then TIME_BIN=$t; break; fi
+done
+if [ -z "$TIME_BIN" ]; then
     echo "run.sh: GNU time not found" >&2
     exit 1
 fi
