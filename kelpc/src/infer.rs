@@ -11763,6 +11763,14 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             match op {
                 UnOp::Neg => {
                     if !sub_t.ty.is_numeric() {
+                        // `-a` on a user type that implements `std/ops.Neg` is
+                        // `a.neg()` (`plan/traits.md` 13.2), with the operand
+                        // borrowed rather than moved.
+                        if let Some(owner) =
+                            unary_operator_owner(&sub_t, crate::types::NEG_TRAIT, ctx)
+                        {
+                            return Ok(lower_operator_call(&owner, "neg", &[&sub_t], *span, ctx)?);
+                        }
                         return Err(TypeError {
                             message: format!("cannot negate a value of type '{}'", sub_t.ty.display()),
                             span: *span,
@@ -13929,7 +13937,232 @@ fn lower_equality(
         };
         return Ok(Some(negate_comparison(op, call, span)));
     }
+    // `Ord` says nothing about equality, so a type that implements only the
+    // order trait is refused `==`/`!=` with a message that says which
+    // declaration the operator actually needs (`plan/traits.md` 13.3).
+    if let (Some(a), Some(b)) = (equality_owner(&l.ty), equality_owner(&r.ty)) {
+        if a == b && implements_trait(&ctx.env, crate::types::ORD_TRAIT, a) {
+            return Err(TypeError {
+                message: format!(
+                    "cannot compare '{}' values with '{}': '==' and '!=' come from a declared 'eq' method, and 'Ord' does not supply one; write 'fun {}.eq(other: &{}).R: bool'",
+                    a,
+                    bin_op_symbol(op),
+                    a,
+                    a
+                ),
+                span,
+            });
+        }
+    }
     Ok(None)
+}
+
+/// The symbol one binary operator is written with, for a diagnostic.
+fn bin_op_symbol(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::Mod => "%",
+        BinOp::Eq => "==",
+        BinOp::NotEq => "!=",
+        BinOp::Lt => "<",
+        BinOp::LtEq => "<=",
+        BinOp::Gt => ">",
+        BinOp::GtEq => ">=",
+        BinOp::And => "&&",
+        BinOp::Or => "||",
+        BinOp::BitAnd => "&",
+        BinOp::BitOr => "|",
+        BinOp::BitXor => "^",
+        BinOp::Shl => "<<",
+        BinOp::Shr => ">>",
+    }
+}
+
+/// The `datac`/`enum` an operator applies to, when both operands name the same
+/// user type (a borrow of one counts, exactly as an `==` operand may be `&T`)
+/// and that type implements the shipped operator trait `trait_key`. `None`
+/// means the operator's ordinary rule applies, which is what keeps a builtin
+/// numeric pair and a genuine type mismatch on their original paths.
+fn operator_owner(l: &tir::Expr, r: &tir::Expr, trait_key: &str, ctx: &Ctx) -> Option<String> {
+    let a = equality_owner(&l.ty)?;
+    let b = equality_owner(&r.ty)?;
+    if a != b || !implements_trait(&ctx.env, trait_key, a) {
+        return None;
+    }
+    Some(a.to_string())
+}
+
+/// The `datac`/`enum` a unary operator applies to, when the operand names a
+/// user type that implements `trait_key`.
+fn unary_operator_owner(operand: &tir::Expr, trait_key: &str, ctx: &Ctx) -> Option<String> {
+    let name = equality_owner(&operand.ty)?;
+    if !implements_trait(&ctx.env, trait_key, name) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// The trait, the trait's bare name and the method one arithmetic operator
+/// lowers through (`plan/traits.md` 13.2).
+fn arithmetic_operator(op: BinOp) -> Option<(&'static str, &'static str, &'static str)> {
+    Some(match op {
+        BinOp::Add => (crate::types::ADD_TRAIT, "Add", "add"),
+        BinOp::Sub => (crate::types::SUB_TRAIT, "Sub", "sub"),
+        BinOp::Mul => (crate::types::MUL_TRAIT, "Mul", "mul"),
+        BinOp::Div => (crate::types::DIV_TRAIT, "Div", "div"),
+        BinOp::Mod => (crate::types::REM_TRAIT, "Rem", "rem"),
+        _ => return None,
+    })
+}
+
+/// Lowers one operator into the `std/ops` method call it means: the operands
+/// are borrowed (never moved) exactly as `==`'s are, and each was already
+/// checked, so it is evaluated once and left to right. The result is an
+/// ordinary `Call`, so `borrowck.rs` and both backends need no new shape.
+fn lower_operator_call(
+    owner: &str,
+    method: &str,
+    operands: &[&tir::Expr],
+    span: Span,
+    ctx: &Ctx,
+) -> Result<tir::Expr> {
+    let key = crate::types::key_pair_method_key(owner, method);
+    let sig = ctx.sig_of(&key).ok_or_else(|| TypeError {
+        message: format!(
+            "'{owner}' implements the operator trait, but its '{method}' method is missing"
+        ),
+        span,
+    })?;
+    if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
+        return Err(TypeError {
+            message: format!(
+                "'{}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'",
+                display_callee(&key)
+            ),
+            span,
+        });
+    }
+    let mut args = Vec::with_capacity(operands.len());
+    for (i, operand) in operands.iter().enumerate() {
+        match sig.params.get(i) {
+            Some((_, want)) => args.push(equality_borrow(operand, want)),
+            None => args.push((*operand).clone()),
+        }
+    }
+    args.extend(hidden_args(&key, span, ctx)?);
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: key, args },
+        ty: sig.ret,
+        span,
+    })
+}
+
+/// Lowers `a OP b` for a user type that implements the shipped operator trait,
+/// or `None` when the operand types are not one user type with the impl.
+fn lower_arithmetic_operator(
+    op: BinOp,
+    l: &tir::Expr,
+    r: &tir::Expr,
+    span: Span,
+    ctx: &Ctx,
+) -> Result<Option<tir::Expr>> {
+    let Some((trait_key, _, method)) = arithmetic_operator(op) else {
+        return Ok(None);
+    };
+    let Some(owner) = operator_owner(l, r, trait_key, ctx) else {
+        return Ok(None);
+    };
+    Ok(Some(lower_operator_call(&owner, method, &[l, r], span, ctx)?))
+}
+
+/// Lowers `a OP b` for a user type that implements `std/ops.Ord`: the `cmp`
+/// call's `i32` against zero (`plan/traits.md` 13.3).
+fn lower_order_operator(
+    op: BinOp,
+    l: &tir::Expr,
+    r: &tir::Expr,
+    span: Span,
+    ctx: &Ctx,
+) -> Result<Option<tir::Expr>> {
+    let Some(owner) = operator_owner(l, r, crate::types::ORD_TRAIT, ctx) else {
+        return Ok(None);
+    };
+    let call = lower_operator_call(&owner, "cmp", &[l, r], span, ctx)?;
+    let zero = tir::Expr {
+        kind: tir::ExprKind::IntLit(0),
+        ty: Ty::I32,
+        span,
+    };
+    Ok(Some(tir::Expr {
+        kind: tir::ExprKind::Binary {
+            op,
+            lhs: Box::new(call),
+            rhs: Box::new(zero),
+        },
+        ty: Ty::Bool,
+        span,
+    }))
+}
+
+/// Lowers a `Display` value in `"${x}"` or `print(x)` to `x.to_text()`
+/// (`plan/traits.md` 13.4). `None` when the type does not implement `Display`,
+/// which leaves the existing refusal in place.
+fn lower_display(value: &tir::Expr, span: Span, ctx: &Ctx) -> Result<Option<tir::Expr>> {
+    let Some(owner) = unary_operator_owner(value, crate::types::DISPLAY_TRAIT, ctx) else {
+        return Ok(None);
+    };
+    Ok(Some(lower_operator_call(&owner, "to_text", &[value], span, ctx)?))
+}
+
+/// The refusal for an arithmetic operator whose operands are not a matching
+/// numeric pair. When both name the same `datac`/`enum`, the operator traits
+/// are the answer, so the message names the trait and the impl to write
+/// (`plan/traits.md` 13.2).
+fn arithmetic_error(op: BinOp, l: &tir::Expr, r: &tir::Expr) -> String {
+    if let (Some(a), Some(b)) = (equality_owner(&l.ty), equality_owner(&r.ty)) {
+        if a == b {
+            if let Some((_, simple, method)) = arithmetic_operator(op) {
+                return format!(
+                    "cannot use '{}' on '{}': it does not implement '{}' from 'std/ops' (write 'impl {} for {} {{ fun Self.{}(rhs: &Self).R: {} }}', importing 'std/ops')",
+                    bin_op_symbol(op),
+                    a,
+                    simple,
+                    simple,
+                    a,
+                    method,
+                    a
+                );
+            }
+        }
+        return format!(
+            "cannot use '{}' on '{}' and '{}': the operands must have the same type",
+            bin_op_symbol(op),
+            a,
+            b
+        );
+    }
+    format!(
+        "operator requires matching numeric operands, found '{}' and '{}'{}",
+        l.ty.display(),
+        r.ty.display(),
+        exclusive_borrow_hint(l, r),
+    )
+}
+
+/// The refusal for a value `print` cannot format. A `datac`/`enum` names
+/// `Display`, which is what it has to implement (`plan/traits.md` 13.4).
+fn print_error(callee: &str, ty: &Ty) -> String {
+    match ty {
+        Ty::Struct(_) => format!(
+            "cannot pass a value of type '{}' to '{callee}': it does not implement 'Display' (write 'impl fmt.Display for {} {{ fun Self.to_text().R: String }}', importing 'std/fmt')",
+            ty.display(),
+            ty.display()
+        ),
+        other => format!("cannot pass a value of type '{}' to '{callee}'", other.display()),
+    }
 }
 
 /// Whether the expression is a bare numeric or character literal — a value
@@ -14026,13 +14259,15 @@ fn check_binary(
             let numeric_expected = expected.filter(|t| t.is_numeric());
             let (l, r) = check_binary_operands(lhs, rhs, ctx, numeric_expected)?;
             if !l.ty.is_numeric() || l.ty != r.ty {
+                // A `datac`/`enum` that implements `std/ops`'s trait for this
+                // operator is lowered into the trait method here
+                // (`plan/traits.md` 13.2); a builtin numeric pair never reaches
+                // this point, so the builtin operators are untouched.
+                if let Some(expr) = lower_arithmetic_operator(op, &l, &r, span, ctx)? {
+                    return Ok(expr);
+                }
                 return Err(TypeError {
-                    message: format!(
-                        "operator requires matching numeric operands, found '{}' and '{}'{}",
-                        l.ty.display(),
-                        r.ty.display(),
-                        exclusive_borrow_hint(&l, &r),
-                    ),
+                    message: arithmetic_error(op, &l, &r),
                     span,
                 });
             }
@@ -14097,6 +14332,11 @@ fn check_binary(
             // `View` against a `str` are two different spellings of one
             // comparison.
             if let Some(expr) = lower_equality(&l, &r, op, span, ctx)? {
+                return Ok(expr);
+            }
+            // `Ord` gives the four order operators, through `cmp`
+            // (`plan/traits.md` 13.3). Equality already returned above.
+            if let Some(expr) = lower_order_operator(op, &l, &r, span, ctx)? {
                 return Ok(expr);
             }
             if l.ty != r.ty && !handle_pair {
@@ -15353,8 +15593,21 @@ fn check_call(
             || is_str_like(&arg.ty)
             || is_printable_buffer(&arg.ty);
         if !printable {
+            // A `datac`/`enum` that implements `Display` prints through
+            // `x.to_text()`, which yields the owned `String` the ordinary
+            // print path already formats (`plan/traits.md` 13.4).
+            if let Some(text) = lower_display(&arg, span, ctx)? {
+                return Ok(tir::Expr {
+                    kind: tir::ExprKind::Call {
+                        callee: callee.to_string(),
+                        args: vec![text],
+                    },
+                    ty: Ty::Unit,
+                    span,
+                });
+            }
             return Err(TypeError {
-                message: format!("cannot pass a value of type '{}' to '{callee}'", arg.ty.display()),
+                message: print_error(callee, &arg.ty),
                 span,
             });
         }
@@ -16339,11 +16592,24 @@ fn check_template(
                     || is_str_like(&value.ty)
                     || is_printable_buffer(&value.ty);
                 if !printable {
+                    // A `datac`/`enum` that implements `Display` interpolates
+                    // through `x.to_text()` (`plan/traits.md` 13.4).
+                    if let Some(text) = lower_display(&value, e.span(), ctx)? {
+                        pieces.push(tir::TemplatePiece::Value(text));
+                        continue;
+                    }
                     return Err(TypeError {
-                        message: format!(
-                            "cannot interpolate a value of type '{}' into a string template",
-                            value.ty.display()
-                        ),
+                        message: match &value.ty {
+                            Ty::Struct(_) => format!(
+                                "cannot interpolate a value of type '{}' into a string template: it does not implement 'Display' (write 'impl fmt.Display for {} {{ fun Self.to_text().R: String }}', importing 'std/fmt')",
+                                value.ty.display(),
+                                value.ty.display()
+                            ),
+                            other => format!(
+                                "cannot interpolate a value of type '{}' into a string template",
+                                other.display()
+                            ),
+                        },
                         span: e.span(),
                     });
                 }

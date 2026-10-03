@@ -146,7 +146,7 @@ pub fn std_admission(module: &str) -> StdAdmission {
         // and `std/frame` are a `datac` and two methods each, so they carry
         // their capability by construction and their numbers come from the
         // caller's grant, not from a runtime.
-        "std/atomic" | "std/arena" | "std/irq" | "std/frame" | "std/convert" => {
+        "std/atomic" | "std/arena" | "std/irq" | "std/frame" | "std/convert" | "std/ops" => {
             StdAdmission::Pure
         }
         // `std/list` exists only to carry function values over a `List<T>`: all
@@ -1179,6 +1179,7 @@ mod tests {
                 "std/list",
                 "std/math",
                 "std/mem",
+                "std/ops",
                 "std/option",
                 "std/result",
                 "std/str",
@@ -1186,7 +1187,7 @@ mod tests {
         );
         assert_eq!(
             allowed_modules(),
-            "std/arena, std/atomic, std/convert, std/frame, std/irq, std/iter, std/list, std/math, std/option, std/result, std/str"
+            "std/arena, std/atomic, std/convert, std/frame, std/irq, std/iter, std/list, std/math, std/ops, std/option, std/result, std/str"
         );
         // The injected runtime is not a library a program may write in an
         // `impl`, so it is present and absent from the allowed list.

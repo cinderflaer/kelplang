@@ -9,6 +9,14 @@ impl "std/str"
    or macros, and neither exists in v1 (see plan.md's non-goals). Callers
    concatenate with `str.concat` or push into a `String`. */
 
+/* The trait a value implements to appear in `"${x}"` and as the argument of
+   `print`/`print!` (language-completeness 5, `plan/traits.md` 13). The front
+   end lowers those two to `x.to_text()` before either sees the value, so the
+   call returns an owned `String` the ordinary print path already formats. */
+pub trait Display {
+    fun Self.to_text().R: String
+}
+
 fun int(n: i64).R: String = str.from_i64(n)
 
 fun uint(n: u64).R: String = str.from_u64(n)

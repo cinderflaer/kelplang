@@ -969,6 +969,22 @@ pub fn drop_method_key(type_name: &str) -> String {
     format!("{}#{}", type_name, DROP_METHOD)
 }
 
+/// The canonical names of the shipped operator traits (`std/ops`, language-
+/// completeness 5). `infer.rs` lowers `+`/`-`/`*`/`/`/`%`, unary `-` and the
+/// order operators through these, so the name is a fixed spelling rather than
+/// "whatever trait declares a method called `add`".
+pub const ADD_TRAIT: &str = "std.ops.Add";
+pub const SUB_TRAIT: &str = "std.ops.Sub";
+pub const MUL_TRAIT: &str = "std.ops.Mul";
+pub const DIV_TRAIT: &str = "std.ops.Div";
+pub const REM_TRAIT: &str = "std.ops.Rem";
+pub const NEG_TRAIT: &str = "std.ops.Neg";
+pub const ORD_TRAIT: &str = "std.ops.Ord";
+
+/// The canonical name of `std/fmt`'s `Display`, the trait a value implements
+/// to appear in `"${x}"` and as the argument of `print`/`print!`.
+pub const DISPLAY_TRAIT: &str = "std.fmt.Display";
+
 /// The emitted symbol of a type's declared destructor, the same spelling on
 /// both backends (`codegen_c.rs::write_signature` and
 /// `codegen_llvm.rs::symbol_name` both mangle the `Type#name` key the same
