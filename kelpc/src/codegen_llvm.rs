@@ -344,7 +344,7 @@ use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::opt::OptLevel;
 use crate::timings::{Timings, UnitTiming};
-use crate::tir::{Block, Expr, ExprKind, Function, Pd, Program, Stmt, TemplatePiece};
+use crate::tir::{shift_amount_in_range, shift_width, Block, Expr, ExprKind, Function, Pd, Program, Stmt, TemplatePiece};
 use crate::types::{
     box_c_type, capture_field, clone_fn_name, closure_c_type, closure_mangle, cmp_fn_name,
     drop_fn_name, eq_fn_name, hash_fn_name, list_c_type, map_c_type,
@@ -6011,6 +6011,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let l = self.value_of(lhs)?;
         let r = self.value_of(rhs)?;
         let ot = &lhs.ty;
+        // A shift by the width or more (or a negative amount) is a panic, as
+        // an out-of-bounds index is; an amount known to be in range needs no
+        // check. An LLVM shift by >= width would be poison.
+        if let (BinOp::Shl | BinOp::Shr, Some(bits)) = (op, shift_width(ot)) {
+            if !shift_amount_in_range(rhs, bits) {
+                let lty = self.lty(ot)?;
+                let width = self.g.ctx.const_int(lty, bits as u64, false);
+                let bad = self.g.builder.build_icmp(IntCmp::Uge, r, width, "shift.bad");
+                self.guard_or_panic(bad, "shift amount out of range")?;
+            }
+        }
         let float = ot.is_float();
         let signed = is_signed(ot);
         let b = &self.g.builder;

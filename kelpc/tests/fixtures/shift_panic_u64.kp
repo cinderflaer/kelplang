@@ -1,0 +1,8 @@
+// The 64-bit types are checked as well: LLVM would make this poison.
+fun shift(x: u64, n: u64).R: u64 = x << n
+
+fun main() {
+    print(shift(1, 63))
+    print(shift(1, 64))
+    print("unreachable")
+}

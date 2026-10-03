@@ -630,3 +630,34 @@ pub enum TemplatePiece {
     Text(String),
     Value(Expr),
 }
+
+/// The bit width of an integer type, as a shift sees it.
+pub fn shift_width(ty: &Ty) -> Option<u32> {
+    Some(match ty {
+        Ty::U8 => 8,
+        Ty::U16 => 16,
+        Ty::I32 | Ty::U32 => 32,
+        Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => 64,
+        _ => return None,
+    })
+}
+
+/// Whether a shift amount is known to be in `0..bits` without a run-time
+/// check: a literal in range, or `x & MASK` with a literal `MASK < bits`
+/// (what `wrapping_shl`/`wrapping_shr` lower to). Both backends skip the
+/// "shift amount out of range" guard for exactly these.
+pub fn shift_amount_in_range(rhs: &Expr, bits: u32) -> bool {
+    use crate::ast::BinOp;
+    match &rhs.kind {
+        ExprKind::IntLit(v) => *v >= 0 && *v < bits as i128,
+        ExprKind::Binary { op: BinOp::BitAnd, lhs, rhs } => {
+            let lit = |e: &Expr| match &e.kind {
+                ExprKind::IntLit(v) => Some(*v),
+                _ => None,
+            };
+            matches!(lit(rhs), Some(m) if m >= 0 && m < bits as i128)
+                || matches!(lit(lhs), Some(m) if m >= 0 && m < bits as i128)
+        }
+        _ => false,
+    }
+}

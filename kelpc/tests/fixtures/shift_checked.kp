@@ -1,0 +1,55 @@
+// A shift of an N-bit integer by an amount in 0..N is the ordinary shift, at
+// every width and both signednesses; the widest legal amount (N - 1) is
+// included, and a left shift into the sign bit wraps like every other
+// arithmetic step. `wrapping_shl`/`wrapping_shr` mask the amount to the
+// width instead of panicking.
+fun shl8(x: u8, n: u8).R: u8 = x << n
+fun shr8(x: u8, n: u8).R: u8 = x >> n
+fun shl16(x: u16, n: u16).R: u16 = x << n
+fun shr16(x: u16, n: u16).R: u16 = x >> n
+fun shl32(x: u32, n: u32).R: u32 = x << n
+fun shr32(x: u32, n: u32).R: u32 = x >> n
+fun shli32(x: i32, n: i32).R: i32 = x << n
+fun shri32(x: i32, n: i32).R: i32 = x >> n
+fun shl64(x: u64, n: u64).R: u64 = x << n
+fun shr64(x: u64, n: u64).R: u64 = x >> n
+fun shli64(x: i64, n: i64).R: i64 = x << n
+fun shri64(x: i64, n: i64).R: i64 = x >> n
+fun shlz(x: usize, n: usize).R: usize = x << n
+
+fun main() {
+    print(shl8(1, 7))
+    print(shr8(128, 7))
+    print(shl8(255, 4))
+    print(shl16(1, 15))
+    print(shr16(65535, 15))
+    print(shl32(1, 31))
+    print(shr32(4294967295, 31))
+    print(shli32(1, 31))
+    print(shri32(0 - 8, 31))
+    print(shri32(0 - 8, 1))
+    print(shl64(1, 63))
+    print(shr64(18446744073709551615, 63))
+    print(shli64(1, 62))
+    print(shri64(0 - 8, 63))
+    print(shlz(3, 4))
+    print(shl32(5, 0))
+
+    // The masking escapes: the amount is taken modulo the width.
+    val one: u32 = 1
+    print(one.wrapping_shl(33))
+    print(one.wrapping_shl(32))
+    print(one.wrapping_shl(31))
+    val big: u32 = 0x80000000
+    print(big.wrapping_shr(35))
+    val byte: u8 = 1
+    print(byte.wrapping_shl(9))
+    val w: u64 = 1
+    val n: u64 = 65
+    print(w.wrapping_shl(n))
+    val neg: i32 = 0 - 16
+    val k: i32 = 33
+    print(neg.wrapping_shr(k))
+    val m: i32 = 0 - 1
+    print(one.to_i32().wrapping_shl(m))
+}

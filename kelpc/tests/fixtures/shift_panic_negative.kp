@@ -1,0 +1,8 @@
+// A negative amount on a signed type is out of range too.
+fun shift(x: i32, n: i32).R: i32 = x >> n
+
+fun main() {
+    print(shift(0 - 64, 3))
+    print(shift(0 - 64, 0 - 1))
+    print("unreachable")
+}

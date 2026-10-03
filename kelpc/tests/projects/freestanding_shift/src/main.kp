@@ -1,0 +1,23 @@
+// Run-time shift checks in a bare-metal image: a shift by an in-range amount
+// works, and one by the width or more reaches the project's own panic handler
+// with "shift amount out of range". Nothing calls libc.
+impl "std/str"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+
+fun shift(x: u32, n: u32).R: u32 = x << n
+
+section(".text.boot") fun kmain() {
+    uart.putc(b'0' + shift(1, 3).to_u8())
+    uart.putc(b'\n')
+    val n = shift(1, 5)
+    uart.putc(b'0' + shift(1, n).to_u8())
+    uart.putc(b'\n')
+    uart.halt()
+}
+
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}
