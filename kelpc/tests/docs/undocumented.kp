@@ -1,0 +1,6 @@
+/// Documented.
+pub fun good() {
+}
+
+pub fun bad() {
+}

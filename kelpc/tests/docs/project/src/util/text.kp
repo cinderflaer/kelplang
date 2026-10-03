@@ -1,0 +1,7 @@
+//! Text helpers.
+
+/// Upper-cases `s`.
+pub fun shout(s: &str).R: String = s.to_upper()
+
+/// Whether `s` is short.
+pub fun short(s: &str).R: bool = s.len() < 4

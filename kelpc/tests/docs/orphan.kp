@@ -1,0 +1,6 @@
+/// This documents nothing.
+
+fun f() {
+    /// Neither does this.
+    val x = 1
+}

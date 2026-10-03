@@ -1,0 +1,5 @@
+impl "util/text"
+
+fun main() {
+    print(text.shout("hi"))
+}
