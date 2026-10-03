@@ -91,7 +91,7 @@ use llvm_sys::core::{
     LLVMSetAlignment, LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer,
     LLVMSetLinkage, LLVMSetMetadata, LLVMSetOrdering, LLVMSetSection, LLVMSetTarget,
     LLVMSetVolatile,
-    LLVMConstArray2,
+    LLVMConstArray2, LLVMIsConstant,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVectorType,
     LLVMVoidTypeInContext,
 };
@@ -830,6 +830,13 @@ pub struct Value<'ctx> {
 }
 
 impl<'ctx> Value<'ctx> {
+    /// Whether this value is a constant (`LLVMIsConstant`), which is what lets
+    /// an aggregate of such values be built in one step.
+    pub fn is_constant(&self) -> bool {
+        // SAFETY: the value handle is live and LLVM reads only its own kind.
+        unsafe { LLVMIsConstant(self.raw) != 0 }
+    }
+
     /// The underlying `LLVMValueRef`, for a C API call this wrapper lacks.
     pub fn as_raw(self) -> LLVMValueRef {
         self.raw
