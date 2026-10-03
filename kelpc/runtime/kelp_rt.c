@@ -383,6 +383,14 @@ static int kelp_env_unset(const char* name) {
     return rc;
 }
 
+/* The verdict `kelp_cap_check_port` leaves for the `net.listen` call that
+   follows it on the same thread: nonzero when the module's `net` grant names
+   no host that admits every interface, so the listener binds `127.0.0.1` only
+   (threat model N5). `listen_raw` reads it and puts it back to zero; zero is
+   also what a call that ran no check sees, which is the old all-interfaces
+   behaviour. */
+static _Thread_local int kelp_listen_loopback = 0;
+
 /* The children `process.spawn` started and nobody has reaped. `process.kill`
    and `process.wait` accept only these pids: a `process` grant names programs
    to *start*, and without this table `kill` took any pid, so a module holding

@@ -874,3 +874,259 @@ fn e06_a_child_only_sees_variables_the_module_could_name() {
     );
     lab.denied("is outside the env capability");
 }
+
+// ---------------------------------------------------------------------------
+// net
+// ---------------------------------------------------------------------------
+
+const NET: &[&str] = &["std/net"];
+
+fn connect_prog(host: &str, port: u16) -> String {
+    format!("    val s = net.connect(\"{host}\", {port})\n    print(\"connected\")\n    net.close(s)")
+}
+
+/// N1: a host the grant does not name is denied before any dial: another
+/// loopback address, a name that is the same machine, a numeric spelling of the
+/// same address, a suffix trick, and an injected `:port` in the host text.
+#[test]
+fn n01_a_host_outside_the_grant_is_denied_before_the_dial() {
+    for host in [
+        "127.0.0.2",
+        "localhost",
+        "127.1",
+        "0x7f.0.0.1",
+        "2130706433",
+        "127.0.0.1.invalid",
+        "127.0.0.1:9",
+        " 127.0.0.1",
+        "127.0.0.1 ",
+        "LOCALHOST",
+    ] {
+        let lab = Lab::new("n01");
+        lab.simple("net = [\"127.0.0.1:9\"]", NET, &connect_prog(host, 9));
+        lab.denied("is outside the net capability");
+    }
+}
+
+/// N2: a grant on a *name* does not cover that name's address: matching is on
+/// the string the code wrote, so `localhost:*` does not admit `127.0.0.1`.
+#[test]
+fn n02_a_name_grant_does_not_cover_the_address() {
+    let lab = Lab::new("n02");
+    lab.simple("net = [\"localhost:9\"]", NET, &connect_prog("127.0.0.1", 9));
+    lab.denied("is outside the net capability");
+}
+
+/// N3: the port is part of the grant: another port on the granted host is
+/// outside it, and the port cannot be smuggled through the host text.
+#[test]
+fn n03_a_port_outside_the_grant_is_denied() {
+    for (host, port) in [("127.0.0.1", 10u16), ("127.0.0.1:9", 9u16), ("127.0.0.1:9:", 9u16)] {
+        let lab = Lab::new("n03");
+        lab.simple("net = [\"127.0.0.1:9\"]", NET, &connect_prog(host, port));
+        lab.denied("is outside the net capability");
+    }
+}
+
+/// N4: a numeric-looking host pattern is a statement about addresses, and a
+/// host *name* that fits it is not one: `127.0.0.*` must not admit
+/// `127.0.0.zzz`, which is a DNS name its owner can point anywhere. The
+/// matcher's verdict (`host_match`) is `true` for it, so the refusal is the
+/// capability check's own rule that a numeric pattern admits only an IPv4
+/// literal. Run through `net.connect` (denied before any lookup).
+#[test]
+fn n04_a_numeric_pattern_admits_only_ip_literals() {
+    for host in ["127.0.0.zzz", "127.0.0.1x", "127.0.0.example"] {
+        let lab = Lab::new("n04");
+        lab.simple("net = [\"127.0.0.*:9\"]", NET, &connect_prog(host, 9));
+        lab.denied("is outside the net capability");
+    }
+}
+
+/// N4b: `net.resolve` is held to the same rule, since resolving a name the
+/// numeric pattern should not admit is already a lookup of an attacker-chosen
+/// name.
+#[test]
+fn n04b_resolve_applies_the_same_numeric_rule() {
+    let lab = Lab::new("n04b");
+    lab.simple(
+        "net = [\"127.0.0.*\"]",
+        NET,
+        "    print(net.resolve(\"127.0.0.zzz\").len())",
+    );
+    lab.denied("is outside the net capability");
+}
+
+/// The text of `/proc/net/tcp` lines for `port`, as `local_address st` pairs.
+fn listener_line(stdout: &str, port: u16) -> Option<String> {
+    let want = format!(":{port:04X}");
+    stdout.lines().find_map(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        if f.len() > 3 && f[1].ends_with(&want) && f[3] == "0A" {
+            Some(f[1].to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// N5: a loopback-only grant gives a loopback-only listener. `net.listen`
+/// has no host argument and used to bind `0.0.0.0` whatever the grant said, so
+/// a module granted `127.0.0.1:*` could serve the whole network. The program
+/// reads its own `/proc/net/tcp` to see the address it is really bound to.
+#[test]
+fn n05_a_loopback_grant_binds_loopback_only() {
+    for (grant, want) in [
+        ("127.0.0.1:*", "0100007F"),
+        ("localhost:*", "0100007F"),
+        ("127.0.0.1:0", "0100007F"),
+        ("*", "00000000"),
+    ] {
+        let lab = Lab::new("n05");
+        lab.simple(
+            &format!("net = [\"{grant}\"], fs = [\"/proc/*/net/tcp\"]"),
+            &["std/net", "std/fs", "std/io"],
+            "    val l = net.listen(0)\n    print(l.port())\n    val f = fs.open(\"/proc/net/tcp\", \"r\")\n    print(String.from_bytes(f.read_all()))\n    l.close()",
+        );
+        for (oracle, out) in lab.runs(&[]) {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            let port: u16 = stdout.lines().next().unwrap().trim().parse().unwrap();
+            let line = listener_line(&stdout, port)
+                .unwrap_or_else(|| panic!("no LISTEN line for port {port}:\n{stdout}"));
+            assert_eq!(
+                line.split(':').next().unwrap(),
+                want,
+                "grant '{grant}' bound {line} (oracle={oracle})"
+            );
+        }
+    }
+}
+
+/// N5b: the HTTP server goes through the same `net.listen`, so the same
+/// loopback grant gives a loopback server.
+#[test]
+fn n05b_the_http_server_binds_loopback_under_a_loopback_grant() {
+    let lab = Lab::new("n05b");
+    lab.src(
+        "main.kp",
+        "impl \"std/http\" caps(net = [\"127.0.0.1:*\"])\nimpl \"probe\" caps(fs = [\"/proc/*/net/tcp\"])\n\nfun main() {\n    val s = http.listen(0)\n    print(s.port())\n    print(probe.table())\n    s.close()\n}\n",
+    );
+    lab.src(
+        "probe.kp",
+        "impl \"std/fs\"\nimpl \"std/io\"\n\npub fun table().R: String {\n    val f = fs.open(\"/proc/net/tcp\", \"r\")\n    return String.from_bytes(f.read_all())\n}\n",
+    );
+    for (oracle, out) in lab.runs(&[]) {
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let port: u16 = stdout.lines().next().unwrap().trim().parse().unwrap();
+        let line = listener_line(&stdout, port).expect("a LISTEN line");
+        assert_eq!(line.split(':').next().unwrap(), "0100007F", "oracle={oracle}: {line}");
+    }
+}
+
+/// N6: the listen port is checked against the grant's port: another port, and
+/// the "any port" request `0` under a one-port grant, are denied.
+#[test]
+fn n06_a_listen_port_outside_the_grant_is_denied() {
+    for port in [0u16, 8081, 80] {
+        let lab = Lab::new("n06");
+        lab.simple(
+            "net = [\"127.0.0.1:8080\"]",
+            NET,
+            &format!("    val l = net.listen({port})\n    print(\"bound\")\n    l.close()"),
+        );
+        lab.denied("is outside the net capability");
+    }
+}
+
+/// A one-shot loopback HTTP server: answers the first request with a 302 to
+/// `location` (`PORT` is replaced by the server's own port), and reports how
+/// many connections it took in the following second.
+fn redirect_server(location: &str) -> (u16, std::thread::JoinHandle<usize>) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let port = listener.local_addr().unwrap().port();
+    let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        location.replace("PORT", &port.to_string())
+    );
+    let handle = std::thread::spawn(move || {
+        let mut taken = 0;
+        let (mut c, _) = listener.accept().expect("accept");
+        taken += 1;
+        let mut buf = [0u8; 2048];
+        let mut seen = Vec::new();
+        while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = c.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            seen.extend_from_slice(&buf[..n]);
+        }
+        let _ = c.write_all(response.as_bytes());
+        drop(c);
+        listener.set_nonblocking(true).unwrap();
+        for _ in 0..10 {
+            if listener.accept().is_ok() {
+                taken += 1;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        taken
+    });
+    (port, handle)
+}
+
+/// N7: a redirect cannot lead an `http` client to a host its grant does not
+/// name: the follow-up request is a fresh `net.connect` under the same grant.
+/// Another loopback address and a name for this machine are both refused, and
+/// the server saw exactly the one connection.
+#[test]
+fn n07_a_redirect_to_an_unlisted_host_is_refused() {
+    for location in ["http://127.0.0.2:PORT/loot", "http://localhost:PORT/loot"] {
+        let lab = Lab::new("n07");
+        lab.src(
+            "main.kp",
+            "impl \"std/http\" caps(net = [\"127.0.0.1:*\"])\nimpl \"std/process\"\n\nfun main() {\n    val args = process.args()\n    val r = http.get(args.get(1).as_str())\n    print(r.status)\n}\n",
+        );
+        let (port, server) = redirect_server(location);
+        let url = format!("http://127.0.0.1:{port}/start");
+        let b = lab.build(false);
+        assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+        let out = lab.run(false, &[&url]);
+        let taken = server.join().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains("is outside the net capability"),
+            "redirect to {location} was not refused: {stderr}"
+        );
+        assert_eq!(taken, 1, "a second connection reached the server");
+    }
+}
+
+/// N8: `std/ws` and `std/tls` are in the `net` domain: a module without the
+/// grant cannot name `ws.connect`, `tls.handshake` or `tls.accept`, and with a
+/// narrow grant `ws.connect` to another host is denied by the same check.
+#[test]
+fn n08_ws_and_tls_are_behind_the_net_gate() {
+    for (import, body) in [
+        ("std/ws", "    val c = ws.connect(\"127.0.0.1\", 9, \"/\")"),
+        ("std/tls", "    print(tls.server_options().floor)"),
+    ] {
+        let lab = Lab::new("n08a");
+        lab.simple("", &[import], body);
+        lab.refused(&["needs the 'net' capability"]);
+    }
+    let lab = Lab::new("n08b");
+    lab.src(
+        "main.kp",
+        "impl \"util\" caps(net = [\"127.0.0.1:9\"], rand = [])\n\nfun main() {\n    util.go()\n}\n",
+    );
+    lab.src(
+        "util.kp",
+        "impl \"std/ws\" caps(net = [\"127.0.0.1:9\"], rand = [])\n\npub fun go() {\n    val c = ws.connect(\"127.0.0.1\", 10, \"/\")\n}\n",
+    );
+    lab.denied("is outside the net capability");
+}

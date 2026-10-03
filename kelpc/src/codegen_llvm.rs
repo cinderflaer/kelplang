@@ -14862,6 +14862,7 @@ fn program_c_source(program: &Program) -> Option<String> {
          void kelp_child_add(int pid);\n\
          bool kelp_child_has(int pid);\n\
          void kelp_child_remove(int pid);\n\
+         extern _Thread_local int kelp_listen_loopback;\n\
          extern int kelp_argc;\n\
          extern char** kelp_argv;\n",
     );

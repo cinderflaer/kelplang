@@ -214,6 +214,41 @@ static void kelp_cap_check_name(const char* domain, const char* name, const char
     return kelp_cap_deny(domain, name, patterns, count, module, at);
 }
 
+/* Whether a pattern's host part is *numeric-shaped*: only digits, dots and
+   `*`, with at least one digit (`127.0.0.1`, `10.0.0.*`). Such a pattern is a
+   statement about IPv4 addresses, and a host *name* that happens to match it
+   (`10.0.0.xyz` against `10.0.0.*`) is a different thing: it is resolved by
+   DNS and can be anything the owner of that name says (threat model N4). */
+static bool kelp_host_pattern_is_numeric(const char* pat, size_t host_len) {
+    bool digit = false;
+    for (size_t i = 0; i < host_len; i++) {
+        char c = pat[i];
+        if (c >= '0' && c <= '9') {
+            digit = true;
+        } else if (c != '.' && c != '*') {
+            return false;
+        }
+    }
+    return digit;
+}
+
+/* The length of a pattern's host part: everything before its last `:`. */
+static size_t kelp_pattern_host_len(const char* pat) {
+    const char* colon = strrchr(pat, ':');
+    return colon == NULL ? strlen(pat) : (size_t)(colon - pat);
+}
+
+/* A host that a numeric-shaped pattern admitted must itself be a dotted-quad
+   IPv4 literal: what `inet_pton` accepts is exactly what `getaddrinfo` will
+   take without asking DNS. */
+static bool kelp_numeric_pattern_admits(const char* pat, const char* host) {
+    if (!kelp_host_pattern_is_numeric(pat, kelp_pattern_host_len(pat))) {
+        return true;
+    }
+    struct in_addr addr;
+    return inet_pton(AF_INET, host, &addr) == 1;
+}
+
 /* A host on its own (`net.resolve`): resolution is not port-specific, so a
    pattern's port, if it has one, is ignored. */
 static void kelp_cap_check_host(const char* domain, const char* host, const char* const* patterns,
@@ -223,7 +258,7 @@ static void kelp_cap_check_host(const char* domain, const char* host, const char
         if (strcmp(pat, "*") == 0) {
             return;
         }
-        if (kelp_std__rt__host_glob(pat, host)) {
+        if (kelp_std__rt__host_glob(pat, host) && kelp_numeric_pattern_admits(pat, host)) {
             return;
         }
         const char* colon = strrchr(pat, ':');
@@ -235,7 +270,7 @@ static void kelp_cap_check_host(const char* domain, const char* host, const char
             }
             memcpy(head, pat, n);
             head[n] = 0;
-            if (kelp_std__rt__host_glob(head, host)) {
+            if (kelp_std__rt__host_glob(head, host) && kelp_numeric_pattern_admits(head, host)) {
                 return;
             }
         }
@@ -251,7 +286,7 @@ static void kelp_cap_check_hostport(const char* domain, const char* host, uint16
     char hostport[PATH_MAX];
     snprintf(hostport, sizeof hostport, "%s:%u", host, (unsigned)port);
     for (size_t i = 0; i < count; i++) {
-        if (kelp_std__rt__host_match(patterns[i], hostport)) {
+        if (kelp_std__rt__host_match(patterns[i], hostport) && kelp_numeric_pattern_admits(patterns[i], host)) {
             return;
         }
     }
@@ -259,27 +294,55 @@ static void kelp_cap_check_hostport(const char* domain, const char* host, uint16
 }
 
 /* A port on its own (`net.listen`). The grant's port is what governs a
-   listener: `net.listen` binds every interface (there is no
-   `net.listen(host, port)` in v1), so the port is the resource, and a pattern
-   with no port at all constrains none. See `std/net.kp` for why. */
+   listener, and its *host* decides which interfaces the listener may bind:
+   `net.listen` has no host argument, so the check leaves a verdict in
+   `kelp_listen_loopback` for the `listen_raw` that follows. A pattern whose host
+   part admits `0.0.0.0` (`*`, `0.0.0.0`, `0.0.0.*`...) or that names no host at
+   all admits every interface; a grant of only loopback or named hosts
+   (`127.0.0.1:*`) gets a listener on `127.0.0.1` alone, so a loopback-only grant
+   cannot be turned into a public server (threat model N5). */
 static void kelp_cap_check_port(const char* domain, uint16_t port, const char* const* patterns,
                              size_t count, const char* module, const char* at) {
     char text[32];
     char number[16];
     snprintf(number, sizeof number, "%u", (unsigned)port);
     snprintf(text, sizeof text, "*:%s", number);
+    bool port_ok = false;
+    bool every_interface = false;
     for (size_t i = 0; i < count; i++) {
         const char* pat = patterns[i];
         if (strcmp(pat, "*") == 0) {
-            return;
+            port_ok = true;
+            every_interface = true;
+            continue;
         }
         const char* colon = strrchr(pat, ':');
         if (colon == NULL) {
-            return;   /* a host-only pattern constrains no port */
+            /* a host-only pattern constrains no port, and names no interface */
+            port_ok = true;
+            char head[PATH_MAX];
+            snprintf(head, sizeof head, "%s", pat);
+            if (strcmp(head, "*") == 0 || kelp_std__rt__host_glob(head, "0.0.0.0")) {
+                every_interface = true;
+            }
+            continue;
         }
         if (kelp_std__rt__host_glob(colon + 1, number)) {
-            return;
+            port_ok = true;
+            char head[PATH_MAX];
+            size_t n = (size_t)(colon - pat);
+            if (n >= sizeof head) {
+                n = sizeof head - 1;
+            }
+            memcpy(head, pat, n);
+            head[n] = 0;
+            if (strcmp(head, "*") == 0 || kelp_std__rt__host_glob(head, "0.0.0.0")) {
+                every_interface = true;
+            }
         }
     }
-    return kelp_cap_deny(domain, text, patterns, count, module, at);
+    if (!port_ok) {
+        return kelp_cap_deny(domain, text, patterns, count, module, at);
+    }
+    kelp_listen_loopback = every_interface ? 0 : 1;
 }
