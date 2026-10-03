@@ -1,0 +1,42 @@
+// A job that panics is counted and its worker carries on: with two workers and
+// every third job panicking (four of ten), the other six still all run, and a
+// second pool whose every job panics still shuts down.
+impl "std/pool"
+impl "std/atomic"
+
+pd val total: AtomicI64 = AtomicI64.new(0)
+
+fun add(n: i64) {
+    total.fetch_add(value = n, order = atomic.Ordering.SeqCst)
+}
+
+fun boom() {
+    panic("job exploded")
+}
+
+fun main() {
+    var p = pool.new(2)
+    var i: i64 = 0
+    while i < 10 {
+        val k = i
+        p.spawn(fun() {
+            if k % 3 == 0 {
+                boom()
+            }
+            add(k)
+        })
+        i += 1
+    }
+    p.join()
+    print(total.load(order = atomic.Ordering.SeqCst))
+    print(p.panicked())
+
+    var all = pool.new(1)
+    var j = 0
+    while j < 5 {
+        all.spawn(fun() { boom() })
+        j += 1
+    }
+    all.join()
+    print(all.panicked())
+}

@@ -57,6 +57,11 @@
    the lock held. There is no bare `wait`. The timed form is `None` when the
    deadline passed with the predicate still true, `Some` otherwise.
 
+   `m.share()` and `cv.share()` return another owned handle to the same
+   runtime record (a reference count; the last handle's drop frees it), and
+   `m.swap(value)` exchanges the guarded value in one locked step. Channels,
+   below, and `std/pool` are built from them.
+
    Every record here is a pthread object, so a freestanding manifest refuses
    each by name (`plan/sync.md`). */
 
@@ -98,7 +103,6 @@
    `Mutex` and `Condvar` are refused there by name. */
 impl "std/option"
 impl "std/result"
-impl "std/thread"
 
 // Why `recv` has no value: every sender is gone and the queue is empty.
 enum RecvErr {

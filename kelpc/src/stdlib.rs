@@ -168,7 +168,9 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/frame" => include_str!("../std/frame.kp"),
         "std/atomic" => include_str!("../std/atomic.kp"),
         "std/thread" => include_str!("../std/thread.kp"),
-        "std/sync" => include_str!("../std/sync.kp"),        "std/option" => include_str!("../std/option.kp"),
+        "std/sync" => include_str!("../std/sync.kp"),
+        "std/pool" => include_str!("../std/pool.kp"),
+        "std/option" => include_str!("../std/option.kp"),
         "std/result" => include_str!("../std/result.kp"),
         "std/iter" => include_str!("../std/iter.kp"),
         "std/convert" => include_str!("../std/convert.kp"),
@@ -193,7 +195,7 @@ pub fn shipped() -> &'static [&'static str] {
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/http", "std/ws",
         "std/encoding", "std/list", "std/option", "std/result", "std/iter", "std/convert", "std/ops", "std/atomic",
-        "std/thread", "std/arena", SYNC_MODULE, "std/irq", "std/frame", "std/regex", "std/tz",
+        "std/thread", "std/pool", "std/arena", SYNC_MODULE, "std/irq", "std/frame", "std/regex", "std/tz",
     ]
 }
 

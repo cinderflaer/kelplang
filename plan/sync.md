@@ -74,61 +74,58 @@ true and the block did not run, `Some(v)` is the block's value.
 
 ## 3. Channels (`std/sync`)
 
-**Design only; not implemented yet. `plan/st1-status.md` is the status and
-`TASK_NOTES.md` the entry points.**
+**Implemented, in pure Kelp. `plan/st1-status.md` records how the built shape
+differs from the first design (no new builtin type).**
 
 ```
-fun chan.bounded<T>(cap: i64).R: (Sender<T>, Receiver<T>)
-fun chan.unbounded<T>().R: (Sender<T>, Receiver<T>)
-fun Sender<T>.send(value: move T).R: Result<(), SendErr<T>>
+fun sync.bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>)
+fun sync.unbounded<T>().R: (Sender<T>, Receiver<T>)
+fun Sender<T>.send(value: move T).R: option.Option<T>
 fun Sender<T>.clone().R: Sender<T>
-fun Receiver<T>.recv().R: Result<T, RecvErr>
-fun Receiver<T>.try_recv().R: Option<T>
-fun Receiver<T>.recv_timeout(millis: i64).R: Result<T, RecvTimeout>
+fun Receiver<T>.recv().R: result.Result<T, RecvErr>
+fun Receiver<T>.try_recv().R: option.Option<T>
+fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout>
+for v in rx { ... }
 ```
 
-The two ends are the same runtime record (`kelp_Channel`): one mutex, two condition
-variables kind (not-empty, not-full), a ring buffer, the sender count, and a
-`receiver_alive` flag, with the record's own reference count. `send` returns the value
-back in `SendErr<T>` when the receiver is gone. `Sender.clone` bumps the sender count;
-`Drop` of the last sender closes the buffer and wakes every receiver, and `Drop` of the
-receiver marks it gone and wakes every blocked sender. The `Drop` is the user-`Drop`
-feature (`plan/drop.md`), declared on the builtin's drop path, and the runtime does the
-work.
+Two tiny builtin operations carry everything: `Mutex.share()`/`Condvar.share()`
+(another owned handle to the same runtime record; the record has a reference count
+and the last handle's drop frees it) and `Mutex.swap(value)` (exchange the guarded
+value in one locked step). With them a channel is ordinary Kelp: a `ChanMeta`
+mutex (queue length, sender count, receiver flag, capacity) with two condition
+variables is the lock every wait uses, and the queue is a `Mutex<List<T>>` only
+touched while the meta mutex is held. `send` returns `None` when the value was
+queued and `Some(value)` when the receiver is gone, so the value comes back and
+the result is must-use. Closing is the `Drop` of two non-generic ends
+(`SendEnd`, `RecvEnd`) that each handle owns, because a destructor cannot be
+declared on a generic type. `for v in rx` is the compiler's `for` desugar over a
+`next` method declared on the generic `Receiver<T>` template.
 
-`Receiver` is iterable: `for v in rx` yields `T` until every sender is gone. This needs
-a builtin `Iterator` implementation, which is the one piece this stage does not finish;
-see `plan/st1-status.md`.
+## 4. Thread pool (`std/pool`)
 
-## 4. Thread pool (`std/thread`)
-
-**Design only; not implemented yet. `plan/st1-status.md` is the status and
-`TASK_NOTES.md` the entry points.**
+**Implemented, in pure Kelp.**
 
 ```
 fun pool.new(workers: i32).R: Pool
-fun Pool.spawn(job: move closure().R: unit)
+fun Pool.spawn(job: move closure())
 fun Pool.join()
 fun Pool.panicked().R: i32
 ```
 
-`Pool` owns a runtime record: a mutex, a condition variable, a FIFO of type-erased jobs
-(each a `(body, code, env, drop)` tuple, the same shape a `thread.spawn` worker record
-already carries), a worker count and a panic counter. `spawn` enqueues and wakes one
-worker; `join` waits for the queue to drain, sets the stop flag, wakes everyone and
-waits for the workers to end; `Drop` joins. A panicking job runs the panic path inside
-the worker; the runtime catches it with a thread-local `jmp_buf`, records it and lets
-the **same worker** run the next job, which is what "does not kill the worker" means.
-`join` is `Drop`'s body, so a pool that goes out of scope stops its workers.
-
-`Pool` is a builtin for the same sharing reason as the channel. It is a **later slice**
-of this stage: `plan/st1-status.md` says what is missing if it is not finished.
+`Pool` holds shared handles to a state mutex, a `Mutex<List<Job>>` FIFO and two
+condition variables. `new` starts the workers with `thread.spawn`; `spawn` queues a
+job and wakes one; `join` sets the stop flag, wakes everyone, and waits until every
+worker has drained the queue and exited; `Drop` calls `join`. A panicking job is
+counted in `panicked()` and does not kill its worker: the worker runs each job on a
+thread of its own and joins it (see `plan/st1-status.md` for why that replaces the
+thread-local `jmp_buf`). The module is `std/pool` rather than a part of `std/thread`
+because a module cannot call its own builtins (`thread.spawn`) by name.
 
 ## Hosted only, and the two backends
 
-The four records are pthread-backed, so `freestanding.rs` refuses each kind by name with
+`RwLock`, `Condvar` and `Mutex` are pthread-backed, so `freestanding.rs` refuses each kind by name with
 a message naming the future alternative (a spin lock over an `Atomic<T>`, a kernel
-wait queue). The C backend and the LLVM backend call the same `kelp_rt.c` functions, so
+wait queue); `std/sync` and `std/pool` are hosted modules, refused by module name. The C backend and the LLVM backend call the same `kelp_rt.c` functions, so
 the observable behaviour is identical; every run-test passes on both, and the fixtures
 live in `tests/fixtures/` (bounded, terminating) with a freestanding refusal project per
 kind.

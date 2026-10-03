@@ -1,0 +1,147 @@
+/* std/pool: a thread pool (`plan/sync.md` section 4, `plan/st1-status.md`), in
+   Kelp over `Mutex`/`Condvar` and `thread.spawn`. It is its own module because a
+   module cannot call its own builtins by name (`thread.spawn` is reached through
+   `impl "std/thread"`):
+
+       fun pool.new(workers: i32).R: Pool
+       fun Pool.spawn(job: move closure())
+       fun Pool.join()
+       fun Pool.panicked().R: i32
+
+   `pool.new(n)` starts `n` worker threads that pull jobs from one FIFO queue.
+   `spawn` queues a job (a closure that may capture values it owns: they move
+   into the job), `join` stops accepting work, waits until every queued job has
+   run and every worker has exited, and `Drop` calls it, so a pool that goes out
+   of scope shuts down cleanly. A job that panics is counted in `panicked()` and
+   does not take its worker with it.
+
+   How a panic is survived: a Kelp panic ends the thread it happens in
+   (`pthread_exit`, which runs the mutex cleanup handlers), and there is no
+   unwinding to resume a frame. So the worker runs each job on a thread of its
+   own and joins it; `Err` from that join is the panic, the worker counts it and
+   takes the next job. The worker slot survives, and a poisoned lock or an
+   abandoned frame is exactly what a panic in a plain `thread.spawn` leaves. A
+   thread-local `jmp_buf` that `kelp_panic` could jump to was rejected: a
+   `longjmp` out of a job would skip the cleanup handlers a `Mutex.lock` block
+   pushed, leaving the mutex locked and unpoisoned.
+
+   The job queue is a `Mutex<List<Job>>` that is only touched while the
+   state mutex is held; a job reaches it through `Mutex.swap` for the reason the
+   channel does (a scoped block cannot capture an owned value by move). */
+impl "std/option"
+impl "std/result"
+impl "std/sync"
+impl "std/thread"
+
+
+datac PoolMeta(var queued: usize, var running: usize, var stop: bool, var panicked: i32, var alive: i32)
+
+// A queued job. A closure cannot be a list element, a one-field `datac` can.
+datac Job(val run: closure())
+
+datac PoolShared(val meta: Mutex<PoolMeta>, val jobs: Mutex<List<Job>>, val work: Condvar, val done: Condvar)
+
+// A handle to the same pool state, for one more worker.
+fun PoolShared.dup().R: PoolShared {
+    return PoolShared(meta = self.meta.share(), jobs = self.jobs.share(), work = self.work.share(), done = self.done.share())
+}
+
+datac Pool(val shared: PoolShared)
+
+fun run_job(job: move Job) {
+    val f = job.run
+    f()
+}
+
+fun pool_worker(sh: move PoolShared) {
+    var running = true
+    while running {
+        val job = sh.meta.wait_while(&sh.work, fun(s: &PoolMeta).R: bool = s.queued == 0 && !s.stop) { s ->
+            if s.queued > 0 {
+                s.queued -= 1
+                s.running += 1
+                var jobs = sh.jobs.swap(List.empty())
+                val first = jobs.remove(0)
+                val none = sh.jobs.swap(jobs)
+                option.Option.Some(value = first)
+            } else {
+                val nothing: option.Option<Job> = option.Option.None
+                nothing
+            }
+        }
+        when job {
+            Some(f) -> {
+                val h = thread.spawn(run_job, f)
+                var failed = false
+                when thread.join(h) {
+                    Ok(_) -> {}
+                    Err(_) -> failed = true
+                }
+                sh.meta.lock { s ->
+                    s.running -= 1
+                    if failed {
+                        s.panicked += 1
+                    }
+                }
+                sh.done.notify_all()
+            }
+            None -> running = false
+        }
+    }
+    sh.meta.lock { s -> s.alive -= 1 }
+    sh.done.notify_all()
+}
+
+// Start a pool of `workers` threads (at least one).
+fun new(workers: i32).R: Pool {
+    if workers < 1 {
+        panic("pool.new: a pool needs at least one worker")
+    }
+    val meta = Mutex.new(PoolMeta(queued = 0, running = 0, stop = false, panicked = 0, alive = workers))
+    val jobs: Mutex<List<Job>> = Mutex.new(List.empty())
+    val shared = PoolShared(meta = meta, jobs = jobs, work = Condvar.new(), done = Condvar.new())
+    var i: i32 = 0
+    while i < workers {
+        val h = thread.spawn(pool_worker, shared.dup())
+        i += 1
+    }
+    return Pool(shared = shared)
+}
+
+// Queue `job`. It runs on some worker in FIFO order.
+fun Pool.spawn(job: move closure()) {
+    val staged: Mutex<List<Job>> = Mutex.new(List.of(Job(run = job)))
+    val open = self.shared.meta.lock { s ->
+        if s.stop {
+            false
+        } else {
+            s.queued += 1
+            var mine = staged.swap(List.empty())
+            var jobs = self.shared.jobs.swap(List.empty())
+            jobs.push(mine.remove(0))
+            val none = self.shared.jobs.swap(jobs)
+            true
+        }
+    }
+    if !open {
+        panic("Pool.spawn: the pool has been joined")
+    }
+    self.shared.work.notify_one()
+}
+
+// Stop taking work, run everything still queued, and wait for every worker to
+// exit. Safe to call twice; `Drop` calls it.
+fun Pool.join() {
+    self.shared.meta.lock { s -> s.stop = true }
+    self.shared.work.notify_all()
+    self.shared.meta.wait_while(&self.shared.done, fun(s: &PoolMeta).R: bool = s.alive > 0) { s -> 0 }
+}
+
+// How many jobs have panicked so far.
+fun Pool.panicked().R: i32 {
+    return self.shared.meta.lock { s -> s.panicked }
+}
+
+fun mut Pool.drop() {
+    self.join()
+}

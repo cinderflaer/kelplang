@@ -1,0 +1,24 @@
+// A pool of four workers runs 1000 queued jobs; `join` returns only after every
+// one has run, so the atomic sum is complete the moment it returns, and no job
+// panicked.
+impl "std/pool"
+impl "std/atomic"
+
+pd val total: AtomicI64 = AtomicI64.new(0)
+
+fun add(n: i64) {
+    total.fetch_add(value = n, order = atomic.Ordering.SeqCst)
+}
+
+fun main() {
+    var p = pool.new(4)
+    var i: i64 = 0
+    while i < 1000 {
+        val k = i
+        p.spawn(fun() { add(k) })
+        i += 1
+    }
+    p.join()
+    print(total.load(order = atomic.Ordering.SeqCst))
+    print(p.panicked())
+}

@@ -11244,6 +11244,41 @@ fn a_freestanding_channel_is_refused() {
     );
 }
 
+/// The thread pool (`std/pool`): 1000 jobs on four workers with a sum check.
+#[test]
+fn a_pool_runs_a_thousand_jobs() {
+    assert_compiles_and_runs("tests/fixtures/pool_sum.kp", "499500\n0\n");
+}
+
+/// A panicking job is counted and its worker survives to run the rest.
+#[test]
+fn a_pool_counts_a_panicking_job_and_keeps_its_worker() {
+    assert_compiles_and_runs("tests/fixtures/pool_panics.kp", "27\n4\n5\n");
+}
+
+/// Dropping a pool joins it, an idle or twice-joined pool shuts down, and jobs
+/// own what they capture (here a channel's sender).
+#[test]
+fn a_pool_shuts_down_without_deadlock() {
+    assert_compiles_and_runs("tests/fixtures/pool_drop_joins.kp", "50\nidle\n2870\n");
+}
+
+/// Queueing on a joined pool and an empty pool are named panics.
+#[test]
+fn a_pool_refuses_work_after_join_and_zero_workers() {
+    assert_fixture_panics("pool_spawn_after_join", "Pool.spawn: the pool has been joined");
+    assert_fixture_panics("pool_zero_workers", "pool.new: a pool needs at least one worker");
+}
+
+/// A freestanding build refuses the pool module by name.
+#[test]
+fn a_freestanding_pool_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_pool",
+        "the module 'std/pool' is unavailable in a freestanding build",
+    );
+}
+
 /// The panic gate (MK9 section 7): a worker panics, its joiner sees `Err`
 /// carrying the panic text, a second worker's work is intact, and the process
 /// exits 0. A panic ends the thread it happened in; `main` still decides what to

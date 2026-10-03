@@ -1,0 +1,9 @@
+// Work cannot be queued on a pool that has been joined: the call panics and
+// names itself instead of queueing a job nothing will run.
+impl "std/pool"
+
+fun main() {
+    val p = pool.new(1)
+    p.join()
+    p.spawn(fun() { })
+}
