@@ -7,24 +7,30 @@ by `externs.rs`) and the shared C helpers in `kelpc/src/externs/tls_helpers.c` (
 ## API
 
 ```
-tls.server_config(cert_chain_pem_path: &str, key_pem_path: &str).R: Result<ServerConfig, TlsError>
-tls.server_config_with(cert_chain_pem_path, key_pem_path, opts: &ServerOptions).R: Result<ServerConfig, TlsError>
+// std/tls (PEM bytes; no std/fs, see "Files" below)
+tls.server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes).R: Result<ServerConfig, TlsError>
+tls.server_config_pem_with(cert, key, opts: &ServerOptions).R: Result<ServerConfig, TlsError>
 
 tls.server_options().R: ServerOptions                       // TLS 1.2 floor, no ALPN, no client certs, 10 s handshake
-ServerOptions.min_version(v: TlsVersion)    -> ServerOptions    // TlsVersion.Tls12 (default) | Tls13
+ServerOptions.min_version(v: TlsVersion)     -> ServerOptions   // TlsVersion.Tls12 (default) | Tls13
 ServerOptions.alpn(protocols: &List<String>) -> ServerOptions   // the server's preference order
-ServerOptions.require_client_cert(ca_pem_path: &str).R: Result<ServerOptions, TlsError>   // mTLS
+ServerOptions.require_client_cert_pem(ca_pem: Bytes) -> ServerOptions   // mTLS
 ServerOptions.handshake_timeout_ms(ms: u64) -> ServerOptions
+ServerConfig.free()
 
 tls.accept(config: &ServerConfig, s: net.Socket).R: Result<TlsStream, TlsError>
-
 TlsStream.peer_cert_subject().R: Option<String>             // RFC 2253 subject of the peer's certificate (mTLS server side)
 TlsStream.alpn().R: Option<String>                          // negotiated protocol, server and client streams
 
 tls.client_options().R: TlsClientOptions                    // system store, no timeout, no ALPN, no client cert
-TlsOptions.alpn(&List<String>) / TlsOptions.client_cert(cert_path, key_path)    -> TlsClientOptions
-TlsClientOptions.alpn / .client_cert / .ca_file / .timeout_ms
+TlsOptions.alpn(&List<String>) / TlsOptions.client_cert_pem(cert, key)   -> TlsClientOptions
+TlsClientOptions.alpn / .client_cert_pem / .with_ca_file / .with_timeout_ms
 tls.try_handshake_opts(s, host, &TlsClientOptions).R: Result<TlsStream, TlsError>
+
+// std/tlsfile (reads through the fs gate)
+tlsfile.read_pem(path: &str, what: &str).R: Result<Bytes, TlsError>
+
+// std/http
 http.serve_tls(port, config, handler) / serve_tls_n / serve_tls_on     // HTTPS with the same limits as `serve`
 http.try_get_tls(url, &TlsClientOptions) / http.get_tls / Client.try_send_tls(req, &opts)   // private CA, mTLS, ALPN
 ```
@@ -45,9 +51,13 @@ Choices the spec left open:
 - **`net.Socket`, not `net.Stream`**: `std/net` has no `Stream` type; `accept` takes the `Socket` `net.accept` returns.
 - **`serve_tls` takes a port, not an address**: `net.listen` binds `0.0.0.0` and takes only a port (open item 55).
   The listener is therefore on every interface; the tests use `127.0.0.1` connections only.
-- **Files are read through the `fs` capability.** `server_config`, `require_client_cert` and `client_cert` call
-  `fs.try_read`, so the program grants it on the `std/tls` line: `impl "std/tls" caps(fs = ["/etc/certs/**"])`. The C
-  side only ever sees PEM bytes.
+- **Files (`std/tlsfile`).** The spec asks for `tls.server_config(cert_path, key_path)` reading through `fs`. A
+  module that names `fs.try_read` needs the `fs` grant from every program that imports it, and every `https` client
+  imports `std/tls`; the first attempt (an `fs` import in `std/tls`) broke every existing TLS and HTTP program at
+  compile time. So `std/tls` takes PEM *bytes* (`server_config_pem`) and `std/tlsfile` holds the one gated read,
+  `tlsfile.read_pem(path, what)`, which a program grants on its own line: `impl "std/tlsfile" caps(fs = [...])`.
+  `std/tlsfile` cannot call `std/tls` functions itself (they are `net`-gated and would need that grant too), so the
+  program composes: `tls.server_config_pem(tlsfile.read_pem(c, "certificate chain")?, tlsfile.read_pem(k, "private key")?)`.
 
 ## Rules (same as the client)
 

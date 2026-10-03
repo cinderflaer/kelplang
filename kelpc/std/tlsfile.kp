@@ -1,0 +1,51 @@
+impl "std/fs"
+impl "std/tls"
+impl "std/result"
+
+/* std/tlsfile: the file-reading layer over `std/tls`'s PEM-bytes functions
+   (st3, `plan/tls-server.md`).
+
+   Why a module of its own: reading a file is the `fs` capability, and a
+   module that names `fs.try_read` needs the `fs` grant from every program that
+   imports it. `std/tls` is imported by every `https` client through
+   `std/http`, so it cannot hold `std/fs`; this module can, because only a
+   program that wants to load certificates from disk imports it, and it grants
+   exactly the directory it means:
+
+       impl "std/tlsfile" caps(fs = ["/etc/myapp/certs/..."])
+
+   (a path pattern ending in the usual double-star wildcard)
+
+   A file that cannot be read is `TlsError.Io` with the path and the system's
+   reason; everything else is `std/tls`'s own typed error. A private key is
+   never put in an error text. The library does not check the key file's
+   permissions: keep it `0600`, owned by the serving user. */
+
+// A file read through the `fs` gate, or `Io` with the path and the system's
+// reason. `what` names the file's role for the sentence ("private key").
+fun read_pem(path: &str, what: &str).R: result.Result<Bytes, tls.TlsError> {
+    return when fs.try_read(path) {
+        Ok(b) -> result.Result.Ok(value = b)
+        Err(e) -> {
+            var text = String.with_capacity(96)
+            text.push_str("tls: cannot read the ")
+            text.push_str(what)
+            text.push_str(" file ")
+            text.push_str(path)
+            text.push_str(": ")
+            text.push_str(e.message.as_str())
+            result.Result.Err(error = tls.TlsError.Io(reason = text))
+        }
+    }
+}
+
+// The three reads a TLS setup needs, named for their role in the error text.
+// The bytes go to `tls.server_config_pem`, `ServerOptions.require_client_cert_pem`
+// and `TlsClientOptions.client_cert_pem`:
+//
+//     val cert = tlsfile.read_pem(cert_path, "certificate chain")?
+//     val key = tlsfile.read_pem(key_path, "private key")?
+//     val cfg = tls.server_config_pem(cert, key)?
+//
+// (This module only reads; it cannot call into `std/tls`, whose functions are
+// `net`-gated and would need that grant here too.)

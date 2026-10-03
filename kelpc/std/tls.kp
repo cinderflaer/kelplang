@@ -1,5 +1,4 @@
 impl "std/net"
-impl "std/fs"
 impl "std/option"
 impl "std/list"
 impl "std/result"
@@ -424,9 +423,12 @@ fun shutdown(t: TlsStream) {
 
 // ===== ALPN, client certificates and serving (st3) =====
 //
-// `plan/tls-server.md` is the design note. Certificate and key files are read
-// here through the `fs` gate (the program grants it on its `impl "std/tls"`
-// line); the C side only ever sees PEM bytes. A private key is never put in an
+// `plan/tls-server.md` is the design note. This module takes certificates and
+// keys as PEM *bytes*: it must not import `std/fs`, because a module that names
+// `fs.try_read` needs the `fs` grant from every program that imports it, and
+// every `https` client does. `std/tlsfile` is the thin layer that reads the
+// files through the `fs` gate and calls the `_pem` functions here; the C side
+// only ever sees PEM bytes. A private key is never put in an
 // error text. The library does not check the key file's permissions: keep it
 // `0600`, owned by the serving user.
 
@@ -480,18 +482,15 @@ fun ServerOptions.alpn(protocols: &List<String>).R: ServerOptions = ServerOption
     timeout_ms = timeout_ms,
 )
 
-// Verify client certificates against the CA(s) in this PEM file, and refuse a
-// connection that has none. An unreadable file is `Err(Io)`; one with no
-// certificate in it is rejected when the configuration is built.
-fun ServerOptions.require_client_cert(ca_pem_path: &str).R: result.Result<ServerOptions, TlsError> {
-    val pem = read_pem(ca_pem_path, "client CA")?
-    return result.Result.Ok(value = ServerOptions(
-        floor = floor,
-        alpn_list = alpn_list.clone(),
-        ca_pem = pem,
-        timeout_ms = timeout_ms,
-    ))
-}
+// Verify client certificates against the CA(s) in this PEM text, and refuse a
+// connection that has none. Text with no certificate in it is rejected when
+// the configuration is built. `tlsfile.require_client_cert` reads a file.
+fun ServerOptions.require_client_cert_pem(ca_pem: Bytes).R: ServerOptions = ServerOptions(
+    floor = floor,
+    alpn_list = alpn_list.clone(),
+    ca_pem = ca_pem.clone(),
+    timeout_ms = timeout_ms,
+)
 
 // The handshake deadline `accept` applies; 0 waits forever.
 fun ServerOptions.handshake_timeout_ms(ms: u64).R: ServerOptions = ServerOptions(
@@ -524,38 +523,18 @@ fun alpn_wire(protocols: &List<String>).R: Bytes {
     return out
 }
 
-// A file read through the `fs` gate, or `Io` with the path and the system's
-// reason. `what` names the file's role for the sentence ("private key").
-fun read_pem(path: &str, what: &str).R: result.Result<Bytes, TlsError> {
-    return when fs.try_read(path) {
-        Ok(b) -> result.Result.Ok(value = b)
-        Err(e) -> {
-            var text = String.with_capacity(96)
-            text.push_str("tls: cannot read the ")
-            text.push_str(what)
-            text.push_str(" file ")
-            text.push_str(path)
-            text.push_str(": ")
-            text.push_str(e.message.as_str())
-            result.Result.Err(error = TlsError.Io(reason = text))
-        }
-    }
-}
-
 // A server configuration from a certificate chain (leaf first) and its private
-// key, both PEM files, with the default options. A file that cannot be read is
-// `Io`; a malformed PEM or a key that does not belong to the certificate is
-// `HandshakeFailed` with a fixed sentence. Never a panic, and never the key in
-// the text.
-fun server_config(cert_chain_pem_path: &str, key_pem_path: &str).R: result.Result<ServerConfig, TlsError> {
-    return server_config_with(cert_chain_pem_path, key_pem_path, server_options())
+// key, both PEM text, with the default options. A malformed PEM or a key that
+// does not belong to the certificate is `HandshakeFailed` with a fixed
+// sentence. Never a panic, and never the key in the text. `tlsfile.server_config`
+// is the same from two file paths.
+fun server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes).R: result.Result<ServerConfig, TlsError> {
+    return server_config_pem_with(cert_chain_pem, key_pem, server_options())
 }
 
-// `server_config` with options: a TLS floor, ALPN, required client
+// `server_config_pem` with options: a TLS floor, ALPN, required client
 // certificates, the handshake deadline.
-fun server_config_with(cert_chain_pem_path: &str, key_pem_path: &str, opts: &ServerOptions).R: result.Result<ServerConfig, TlsError> {
-    val cert = read_pem(cert_chain_pem_path, "certificate chain")?
-    val key = read_pem(key_pem_path, "private key")?
+fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions).R: result.Result<ServerConfig, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val min13 = if opts.floor == 13 { 1 } else { 0 }
@@ -658,12 +637,12 @@ fun TlsOptions.alpn(protocols: &List<String>).R: TlsClientOptions {
     return c.alpn(protocols)
 }
 
-// Present this certificate chain and key (PEM files) when a server asks for a
-// client certificate. Read now, through the `fs` gate: an unreadable file is
-// `Err(Io)`. A key that does not match is found when the handshake starts.
-fun TlsOptions.client_cert(cert_pem_path: &str, key_pem_path: &str).R: result.Result<TlsClientOptions, TlsError> {
+// Present this certificate chain and key (PEM text) when a server asks for a
+// client certificate. A key that does not match is found when the handshake
+// starts. `tlsfile.client_cert` reads the two files.
+fun TlsOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).R: TlsClientOptions {
     val c = self.to_client()
-    return c.client_cert(cert_pem_path, key_pem_path)
+    return c.client_cert_pem(cert_pem, key_pem)
 }
 
 fun TlsClientOptions.alpn(protocols: &List<String>).R: TlsClientOptions = TlsClientOptions(
@@ -675,18 +654,14 @@ fun TlsClientOptions.alpn(protocols: &List<String>).R: TlsClientOptions = TlsCli
     key_pem = key_pem.clone(),
 )
 
-fun TlsClientOptions.client_cert(cert_pem_path: &str, key_pem_path: &str).R: result.Result<TlsClientOptions, TlsError> {
-    val cert = read_pem(cert_pem_path, "client certificate")?
-    val key = read_pem(key_pem_path, "client private key")?
-    return result.Result.Ok(value = TlsClientOptions(
-        ca_file = String.from_str(ca_file.as_str()),
-        ca_dir = String.from_str(ca_dir.as_str()),
-        timeout_ms = timeout_ms,
-        alpn_list = alpn_list.clone(),
-        cert_pem = cert,
-        key_pem = key,
-    ))
-}
+fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).R: TlsClientOptions = TlsClientOptions(
+    ca_file = String.from_str(ca_file.as_str()),
+    ca_dir = String.from_str(ca_dir.as_str()),
+    timeout_ms = timeout_ms,
+    alpn_list = alpn_list.clone(),
+    cert_pem = cert_pem.clone(),
+    key_pem = key_pem.clone(),
+)
 
 // Adds a private CA file to the roots, as `TlsOptions.ca_file` does.
 fun TlsClientOptions.with_ca_file(path: &str).R: TlsClientOptions = TlsClientOptions(

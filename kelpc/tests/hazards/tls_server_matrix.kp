@@ -13,10 +13,34 @@ impl "std/fmt"
 impl "std/result"
 impl "std/option"
 impl "std/thread"
-impl "std/tls" caps(fs = ["/**"])
+impl "std/tls"
+impl "std/tlsfile" caps(fs = ["/**"])
 impl "std/http" caps(net = ["*"])
 
 datac Job(val mode: String, val dir: String, val fd: i32)
+
+// The file-reading layer: `std/tlsfile` reads, `std/tls` configures.
+fun server_config(cert_path: &str, key_path: &str).R: result.Result<tls.ServerConfig, tls.TlsError> {
+    val o = tls.server_options()
+    return server_config_with(cert_path, key_path, &o)
+}
+
+fun server_config_with(cert_path: &str, key_path: &str, opts: &tls.ServerOptions).R: result.Result<tls.ServerConfig, tls.TlsError> {
+    val cert = tlsfile.read_pem(cert_path, "certificate chain")?
+    val key = tlsfile.read_pem(key_path, "private key")?
+    return tls.server_config_pem_with(cert, key, opts)
+}
+
+fun require_client_cert(opts: &tls.ServerOptions, ca_path: &str).R: result.Result<tls.ServerOptions, tls.TlsError> {
+    val pem = tlsfile.read_pem(ca_path, "client CA")?
+    return result.Result.Ok(value = opts.require_client_cert_pem(pem))
+}
+
+fun client_cert(opts: &tls.TlsClientOptions, cert_path: &str, key_path: &str).R: result.Result<tls.TlsClientOptions, tls.TlsError> {
+    val cert = tlsfile.read_pem(cert_path, "client certificate")?
+    val key = tlsfile.read_pem(key_path, "client private key")?
+    return result.Result.Ok(value = opts.client_cert_pem(cert, key))
+}
 
 fun join3(a: &str, b: &str, c: &str).R: String {
     var s = String.with_capacity(64)
@@ -85,7 +109,7 @@ fun server_opts(mode: &str, dir: &str).R: result.Result<tls.ServerOptions, tls.T
     }
     if str.starts_with(mode, "mtls") {
         val ca = path(dir, "ca.pem")
-        val r = o.require_client_cert(ca.as_str())?
+        val r = require_client_cert(&o, ca.as_str())?
         return result.Result.Ok(value = r)
     }
     return result.Result.Ok(value = o)
@@ -142,7 +166,7 @@ fun server_main(job: move Job).R: String {
 fun server_with_opts(opts: &tls.ServerOptions, job: &Job).R: String {
     val cert = path(job.dir.as_str(), server_cert(job.mode.as_str()))
     val key = path(job.dir.as_str(), "server.key")
-    return when tls.server_config_with(cert.as_str(), key.as_str(), opts) {
+    return when server_config_with(cert.as_str(), key.as_str(), opts) {
         Ok(c) -> server_with_config(c, job)
         Err(e) -> err_line("server", "config", e)
     }
@@ -185,12 +209,12 @@ fun client_opts(mode: &str, dir: &str).R: result.Result<tls.TlsClientOptions, tl
     if str.eq(mode, "mtls_ok") {
         val c = path(dir, "client.pem")
         val k = path(dir, "client.key")
-        o = o.client_cert(c.as_str(), k.as_str())?
+        o = client_cert(&o, c.as_str(), k.as_str())?
     }
     if str.eq(mode, "mtls_otherca") {
         val c = path(dir, "other_client.pem")
         val k = path(dir, "other_client.key")
-        o = o.client_cert(c.as_str(), k.as_str())?
+        o = client_cert(&o, c.as_str(), k.as_str())?
     }
     return result.Result.Ok(value = o)
 }
@@ -270,7 +294,7 @@ fun config_errors(dir: &str) {
     val other = path(dir, "other_server.key")
     val missing = path(dir, "no_such_file.pem")
     val junk = path(dir, "junk.pem")
-    val ok = tls.server_config(cert.as_str(), key.as_str())
+    val ok = server_config(cert.as_str(), key.as_str())
     when ok {
         Ok(c) -> {
             say("config ok")
@@ -280,7 +304,7 @@ fun config_errors(dir: &str) {
             sayl(err_line("config", "valid", e))
         }
     }
-    val mism = tls.server_config(cert.as_str(), other.as_str())
+    val mism = server_config(cert.as_str(), other.as_str())
     when mism {
         Ok(c) -> {
             say("mismatch accepted (wrong)")
@@ -290,7 +314,7 @@ fun config_errors(dir: &str) {
             sayl(err_line("config", "mismatch", e))
         }
     }
-    val gone = tls.server_config(missing.as_str(), key.as_str())
+    val gone = server_config(missing.as_str(), key.as_str())
     when gone {
         Ok(c) -> {
             say("missing accepted (wrong)")
@@ -300,7 +324,7 @@ fun config_errors(dir: &str) {
             sayl(err_line("config", "missing", e))
         }
     }
-    val bad = tls.server_config(junk.as_str(), key.as_str())
+    val bad = server_config(junk.as_str(), key.as_str())
     when bad {
         Ok(c) -> {
             say("junk accepted (wrong)")
@@ -310,7 +334,7 @@ fun config_errors(dir: &str) {
             sayl(err_line("config", "junk cert", e))
         }
     }
-    val badkey = tls.server_config(cert.as_str(), junk.as_str())
+    val badkey = server_config(cert.as_str(), junk.as_str())
     when badkey {
         Ok(c) -> {
             say("junk key accepted (wrong)")
@@ -327,10 +351,24 @@ fun config_errors(dir: &str) {
             }
         }
     }
-    val noca = tls.server_options().require_client_cert(junk.as_str())
+    var empty_name: List<String> = List.empty()
+    empty_name.push(String.from_str(""))
+    val bad_alpn = tls.server_options().alpn(&empty_name)
+    val ba = server_config_with(cert.as_str(), key.as_str(), &bad_alpn)
+    when ba {
+        Ok(c) -> {
+            say("empty ALPN name accepted (wrong)")
+            c.free()
+        }
+        Err(e) -> {
+            sayl(err_line("config", "bad alpn", e))
+        }
+    }
+    val base_opts = tls.server_options()
+    val noca = require_client_cert(&base_opts, junk.as_str())
     when noca {
         Ok(o) -> {
-            val c2 = tls.server_config_with(cert.as_str(), key.as_str(), &o)
+            val c2 = server_config_with(cert.as_str(), key.as_str(), &o)
             when c2 {
                 Ok(c) -> {
                     say("junk CA accepted (wrong)")
@@ -420,7 +458,7 @@ fun https_mtls_mode(dir: &str) {
             say("https mtls without a certificate refused")
         }
     }
-    val with = bare.client_cert(cert.as_str(), key.as_str())
+    val with = client_cert(&bare, cert.as_str(), key.as_str())
     when with {
         Ok(o) -> {
             val got = http.try_get_tls(url.as_str(), &o)
@@ -475,7 +513,7 @@ fun https_options(job: &HttpJob).R: result.Result<tls.ServerOptions, tls.TlsErro
     val o = tls.server_options()
     if job.mtls {
         val ca = path(job.dir.as_str(), "ca.pem")
-        return o.require_client_cert(ca.as_str())
+        return require_client_cert(&o, ca.as_str())
     }
     return result.Result.Ok(value = o)
 }
@@ -483,7 +521,7 @@ fun https_options(job: &HttpJob).R: result.Result<tls.ServerOptions, tls.TlsErro
 fun https_with_options(o: &tls.ServerOptions, job: &HttpJob).R: u64 {
     val cert = path(job.dir.as_str(), "server.pem")
     val key = path(job.dir.as_str(), "server.key")
-    return when tls.server_config_with(cert.as_str(), key.as_str(), o) {
+    return when server_config_with(cert.as_str(), key.as_str(), o) {
         Ok(c) -> https_serve(c, job)
         Err(_) -> 0
     }

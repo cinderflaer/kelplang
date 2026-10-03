@@ -350,6 +350,7 @@ fn a_bad_server_configuration_is_a_typed_error_never_a_panic() {
             "config: missing io",
             "config: junk cert handshake_failed",
             "config junk key handshake_failed",
+            "config: bad alpn handshake_failed",
             "config: junk ca handshake_failed",
         ],
     );
