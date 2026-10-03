@@ -358,3 +358,15 @@ a freestanding image, so a wrapper type around a native handle can compare
 itself without the hosted runtime. The binding mechanism itself is unchanged: a
 freestanding `extern fun` still has no trampoline, and `library`/`header`/
 `pkg_config` still have no effect in that mode.
+
+## What stage st1 (`RwLock`, `Condvar`) changed for this list
+
+Nothing is closed and none is newly blocked. `RwLock<T>` and `Condvar` are
+builtin runtime records like `Mutex<T>`, reached through scoped blocks and
+lowered by both backends; neither introduces an `extern fun` or an opaque
+handle, so a binding is unaffected. The one shape worth recording for a future
+binding is the same restriction a scoped block already had: a `fun` literal
+(including a scoped block) cannot read a `pd` global by name, so shared state a
+callback touches travels as a borrow of a `pd` `datac` and is captured, not read
+from the passdown directly. That is a language rule the sync fixtures had to
+follow, not an FFI one.

@@ -1,0 +1,7 @@
+// An rwlock's runtime half is pthread condition variables, so a freestanding
+// build refuses the construct by name and points at the spin lock a kernel
+// would use instead. The type is reachable without an `impl`, so the refusal
+// is on the builtin.
+fun kmain() {
+    val rw: RwLock<i64> = RwLock.new(0)
+}

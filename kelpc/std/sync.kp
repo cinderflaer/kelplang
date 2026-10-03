@@ -26,4 +26,36 @@
    documents the atomic methods it declares nowhere: the compiler builds their
    signatures at the call site and the C runtime lowers them. This module exists
    so a program can name the surface it is using (`impl "std/sync"`), and so the
-   module list in `plan/` has the one id the mutex belongs to. */
+   module list in `plan/` has the one id the mutex belongs to.
+
+   The rest of the family lives here too, all builtin in the same shape:
+
+       fun RwLock.new(value: move T).R: RwLock<T>
+       fun RwLock<T>.read(block: scoped fun(&T).R: R).R: R
+       fun RwLock<T>.write(block: scoped fun(mut T).R: R).R: R
+       fun RwLock<T>.try_read(block: scoped fun(&T).R: R).R: Option<R>
+       fun RwLock<T>.try_write(block: scoped fun(mut T).R: R).R: Option<R>
+       fun RwLock<T>.into_inner().R: T
+
+   `RwLock<T>` is writer-preferring: many readers at once, one writer alone,
+   and a waiting writer blocks new readers so a stream of readers cannot starve
+   it. A panic inside `write` poisons it; a panic inside `read` releases the
+   read without poisoning, because a reader never writes the value. The `try_*`
+   forms run their block only when the lock was free and hand the value back in
+   `Option` (`None` when it was busy).
+
+       fun Condvar.new().R: Condvar
+       fun Condvar.notify_one()
+       fun Condvar.notify_all()
+       fun Mutex<T>.wait_while(cv: &Condvar, pred: fun(&T).R: bool, block: scoped fun(mut T).R: R).R: R
+       fun Mutex<T>.wait_while_timeout(cv: &Condvar, pred: fun(&T).R: bool, millis: i64, block: scoped fun(mut T).R: R).R: Option<R>
+
+   A wait has to release the mutex's own lock atomically around the sleep,
+   which a scoped guard cannot express, so the wait lives on the mutex:
+   `m.wait_while(cv, pred) { v -> ... }` re-tests `pred(&v)` after every wakeup
+   (spurious wakeups are the library's problem) and then runs the block with
+   the lock held. There is no bare `wait`. The timed form is `None` when the
+   deadline passed with the predicate still true, `Some` otherwise.
+
+   Every record here is a pthread object, so a freestanding manifest refuses
+   each by name (`plan/sync.md`). */

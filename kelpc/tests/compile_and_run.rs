@@ -10484,6 +10484,85 @@ fn a_freestanding_mutex_is_refused() {
     );
 }
 
+/// `RwLock`: read/write blocks, `try_*` returning `Option`, and `into_inner`.
+#[test]
+fn an_rwlock_returns_block_values_and_takes_try_and_into_inner() {
+    assert_compiles_and_runs("tests/fixtures/rwlock_basic.kp", "8\n10\n10\n");
+    assert_compiles_and_runs("tests/fixtures/rwlock_try.kp", "1\ntrue\n1\ntrue\n5\n");
+}
+
+/// A `&RwLock<T>` of a `pd` global crosses to a worker, the `Sync` half of the
+/// crossing rule.
+#[test]
+fn a_shared_pd_rwlock_crosses_to_a_worker() {
+    assert_compiles_and_runs("tests/fixtures/rwlock_spawn_borrow.kp", "1\n");
+}
+
+/// Two readers hold the lock at once, and a writer already waiting goes before
+/// a reader that arrives afterwards. The ordering is recorded with atomics, so
+/// no sleep is used as proof.
+#[test]
+fn readers_overlap_and_a_waiting_writer_goes_first() {
+    assert_compiles_and_runs("tests/fixtures/rwlock_concurrent.kp", "true\n1\n");
+}
+
+/// A worker's panic inside `write` poisons the rwlock; a later `write` panics.
+#[test]
+fn a_panic_inside_a_write_poisons_the_rwlock() {
+    assert_fixture_panics("rwlock_poison", "rwlock poisoned");
+}
+
+/// A worker's panic inside `read` releases the read without poisoning, so a
+/// later `read` succeeds and the value is unchanged.
+#[test]
+fn a_panic_inside_a_read_releases_without_poisoning() {
+    assert_compiles_and_runs(
+        "tests/fixtures/rwlock_read_releases.kp",
+        "worker failed\n7\n",
+    );
+}
+
+/// The rwlock block's borrow cannot escape: returning it is a type mismatch,
+/// capturing it into a closure is refused by the borrow rule.
+#[test]
+fn an_rwlock_block_borrow_cannot_escape() {
+    assert_rejected_with(
+        "tests/fixtures/rwlock_read_borrow_returned.kp",
+        "expected 'unit', found '&i64'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/rwlock_read_borrow_stored.kp",
+        "cannot capture 'v': it is a borrow",
+    );
+}
+
+/// A freestanding build refuses `RwLock` and names the spin lock a kernel would
+/// use instead.
+#[test]
+fn a_freestanding_rwlock_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_rwlock",
+        "a freestanding program has no threads and no libc",
+    );
+}
+
+/// `Condvar`: a handshake wakes a waiter, and the timed wait returns `None` at
+/// the deadline and `Some` once the predicate is false.
+#[test]
+fn a_condvar_handshake_wakes_a_waiter() {
+    assert_compiles_and_runs("tests/fixtures/condvar_handshake.kp", "42\n");
+    assert_compiles_and_runs("tests/fixtures/condvar_timeout.kp", "true\n7\n");
+}
+
+/// A freestanding build refuses `Condvar`.
+#[test]
+fn a_freestanding_condvar_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_condvar",
+        "a freestanding program has no threads and no libc",
+    );
+}
+
 /// The panic gate (MK9 section 7): a worker panics, its joiner sees `Err`
 /// carrying the panic text, a second worker's work is intact, and the process
 /// exits 0. A panic ends the thread it happened in; `main` still decides what to

@@ -745,6 +745,11 @@ fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
             let _ = inner;
             Some("Mutex")
         }
+        Ty::RwLock(inner) => {
+            let _ = inner;
+            Some("RwLock")
+        }
+        Ty::Condvar => Some("Condvar"),
         Ty::List(inner) => {
             if heap_ok {
                 heap_refusal(inner, true)
@@ -782,6 +787,12 @@ fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
 fn heap_message(kind: &'static str, heap_ok: bool) -> String {
     if kind == "Mutex" {
         return "'Mutex', whose runtime half is a pthread mutex: a freestanding program has no threads and no libc, so a kernel would use a spin lock over an `Atomic<T>` instead".to_string();
+    }
+    if kind == "RwLock" {
+        return "'RwLock', whose runtime half is pthread condition variables: a freestanding program has no threads and no libc, so a kernel would use a spin lock over an `Atomic<T>` instead".to_string();
+    }
+    if kind == "Condvar" {
+        return "'Condvar', whose runtime half is a pthread condition variable: a freestanding program has no threads and no libc, so a kernel would use a wait queue over an `Atomic<T>` instead".to_string();
     }
     if !heap_ok && matches!(kind, "Box" | "List" | "Map") {
         format!(

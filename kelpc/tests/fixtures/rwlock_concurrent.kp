@@ -1,0 +1,83 @@
+// Two readers hold the lock at once (the first reader holds its read until the
+// main thread's `try_read` block has run), and a writer that is already
+// waiting goes before a reader that arrives afterwards. The ordering is
+// recorded with atomics: `try_read` runs its block only when no writer is
+// waiting, so the first success proves two concurrent readers and the first
+// `None` proves a queued writer. A scoped block cannot read a `pd` by name, so
+// every shared cell travels as one borrow of a `pd` `State`.
+impl "std/thread"
+impl "std/result"
+impl "std/atomic"
+impl "std/option"
+
+pd val state: State = State(
+    rw = RwLock.new(0),
+    seq = AtomicI64.new(0),
+    r1_in = AtomicBool.new(false),
+    overlap = AtomicBool.new(false),
+    w_go = AtomicBool.new(false),
+    main_seen = AtomicBool.new(false),
+)
+
+datac State(
+    val rw: RwLock<i64>,
+    val seq: AtomicI64,
+    val r1_in: AtomicBool,
+    val overlap: AtomicBool,
+    val w_go: AtomicBool,
+    val main_seen: AtomicBool,
+)
+
+fun reader1(s: &State).R: i64 {
+    s.rw.read { v ->
+        s.r1_in.store(value = true, order = atomic.Ordering.SeqCst)
+        // Hold the read until the main thread's own read block has overlapped
+        // it, then until the writer is queued and main has seen it.
+        while !s.overlap.load(order = atomic.Ordering.SeqCst) {
+        }
+        while !s.main_seen.load(order = atomic.Ordering.SeqCst) {
+        }
+        *v
+    }
+}
+
+fun writer(s: &State).R: i64 {
+    while !s.w_go.load(order = atomic.Ordering.SeqCst) {
+    }
+    s.rw.write { v ->
+        *v = s.seq.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+        *v
+    }
+}
+
+fun main() {
+    val tr = thread.spawn(reader1, &state)
+    val tw = thread.spawn(writer, &state)
+    val s = &state
+    while !s.r1_in.load(order = atomic.Ordering.SeqCst) {
+    }
+    val first = s.rw.try_read { v ->
+        s.overlap.store(value = true, order = atomic.Ordering.SeqCst)
+        *v
+    }
+    print(option.is_some(o = first))
+    s.w_go.store(value = true, order = atomic.Ordering.SeqCst)
+    var queued = false
+    while !queued {
+        val got = s.rw.try_read { v -> *v }
+        if option.is_none(o = got) {
+            queued = true
+        }
+    }
+    s.main_seen.store(value = true, order = atomic.Ordering.SeqCst)
+    val mine = s.rw.read { v -> s.seq.fetch_add(value = 1, order = atomic.Ordering.SeqCst) }
+    print(mine)
+    when thread.join(tr) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    when thread.join(tw) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+}

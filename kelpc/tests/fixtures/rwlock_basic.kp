@@ -1,0 +1,9 @@
+// `RwLock.new`/`read`/`write`/`into_inner`: the block's value comes back from a
+// read and a write, and `into_inner` consumes the lock.
+fun main() {
+    val rw: RwLock<i64> = RwLock.new(7)
+    print(rw.read { v -> *v + 1 })
+    rw.write { v -> *v = 10 }
+    print(rw.read { v -> *v })
+    print(rw.into_inner())
+}
