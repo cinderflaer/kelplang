@@ -1,0 +1,22 @@
+// Interaction: associated types x `Box<dyn>`. A trait that declares an
+// associated type is not object safe (`plan/traits.md` 10.3), so boxing it as a
+// trait object is refused by name; the generic function is the workaround.
+trait Source {
+    type Item
+    fun mut Self.pull().R: Self::Item
+}
+
+datac Counter(var n: i32)
+
+impl Source for Counter {
+    type Item = i32
+    fun mut Self.pull().R: i32 {
+        n += 1
+        return n
+    }
+}
+
+fun main() {
+    val b: Box<dyn Source> = Box.of(Counter(n = 0))
+    print(1)
+}

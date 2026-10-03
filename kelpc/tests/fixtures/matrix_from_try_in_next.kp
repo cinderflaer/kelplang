@@ -1,0 +1,42 @@
+// Interaction: `From` x `?` inside an iterator's `next`. `next` returns an
+// `Option`, so `?` inside it propagates only `None`; an `Err` cannot be lifted
+// through the `Option` shape and is refused by name.
+impl "std/iter"
+impl "std/option"
+impl "std/result"
+impl "std/convert"
+
+enum LowErr {
+    Bad
+}
+
+enum HighErr {
+    Low
+}
+
+impl convert.From<LowErr> for HighErr {
+    fun from(value: LowErr).R: HighErr = HighErr.Low
+}
+
+fun read(n: i32).R: result.Result<i32, LowErr> {
+    if n > 2 {
+        return result.Result.Err(error = LowErr.Bad)
+    }
+    return result.Result.Ok(value = n)
+}
+
+datac Reader(var n: i32)
+
+impl iter.Iterator for Reader {
+    type Item = i32
+    fun mut Self.next().R: option.Option<i32> {
+        n += 1
+        val v = read(n)?
+        return option.Option.Some(value = v)
+    }
+}
+
+fun main() {
+    var r = Reader(n = 0)
+    print(option.is_some(o = &r.next()))
+}

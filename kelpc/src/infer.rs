@@ -3320,6 +3320,21 @@ fn check_trait_impl_names(
         // A-12 slice 6: the impl names the trait instance, so it has to supply
         // exactly the arguments the trait declares, and each one has to satisfy
         // the bound the trait writes on that parameter.
+        if info.type_params.is_empty() && !imp.trait_arg_names.is_empty() {
+            return Err(Diagnostic::new(
+                format!(
+                    "trait '{}' takes no type arguments, and 'impl {} for {}' writes {}: write 'impl {} for {}' (an operator trait's right-hand side is always '&Self', so there is no 'Add<Other>')",
+                    info.name,
+                    imp.trait_name,
+                    imp.type_name,
+                    imp.trait_arg_names.len(),
+                    imp.trait_name,
+                    imp.type_name
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        }
         if imp.trait_arg_names.len() != info.type_params.len() {
             return Err(Diagnostic::new(
                 format!(
@@ -6121,6 +6136,11 @@ fn is_str_like(ty: &Ty) -> bool {
 /// nothing to ask, it is `char`. Every such mismatch gets the same sentence
 /// saying what to write instead.
 fn char_integer_hint(found: &Ty, expected: &Ty) -> String {
+    if let (Ty::Array(fe, fl), Ty::Array(ee, el)) = (found, expected) {
+        if fe == ee && fl != el {
+            return " — an array's length is part of its type; pass an array of the expected length, or declare the parameter over any length (`fun f<const N: usize>(a: &[T; N])`)".to_string();
+        }
+    }
     if matches!(found, Ty::Char) && expected.is_integer() {
         " — a character literal takes the type its context asks for, so with nothing to ask it is 'char'; give it the type you mean (`val c: u8 = '\"'`) or write the value as an integer".to_string()
     } else {
@@ -13732,7 +13752,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     if shape.err_has_payload != rshape.err_has_payload {
         return Err(TypeError {
             message: format!(
-                "'?' here propagates {} failure, but the enclosing function returns '{}' — the two have to be the same shape",
+                "'?' here propagates {} failure, but the enclosing function returns '{}' — the two have to be the same shape; match the value instead (`when r {{ Ok(v) -> ..., Err(e) -> return <your failure> }}`), or make the function return the same kind of enum",
                 if shape.err_has_payload { "a carrying" } else { "a payload-less" },
                 ret.display()
             ),

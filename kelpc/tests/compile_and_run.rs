@@ -18500,3 +18500,68 @@ fn polyp_bench_prints_a_bounded_table() {
         }
     }
 }
+
+// Language-completeness 8: the interaction matrix of the traits, iterators, const
+// generics, operator and conversion features (`plan/traits.md` 14). Each cell is a
+// fixture; a refused cell pins its message, an accepted one its output.
+#[test]
+fn matrix_associated_types_cannot_be_boxed_as_a_trait_object() {
+    assert_rejected_with(
+        "tests/fixtures/matrix_assoc_boxdyn.kp",
+        "'Box<dyn Source>' is not allowed: the trait declares the associated type 'Item'",
+    );
+}
+
+#[test]
+fn matrix_an_operator_trait_takes_no_type_argument() {
+    assert_rejected_with(
+        "tests/fixtures/matrix_generic_trait_operator.kp",
+        "takes no type arguments",
+    );
+}
+
+#[test]
+fn matrix_a_user_iterator_runs_defers_per_iteration_and_on_return() {
+    assert_compiles_and_runs(
+        "tests/fixtures/matrix_iter_defer_return.kp",
+        "iter\niter\nleave\n4\niter\nleave\n-1\n",
+    );
+}
+
+#[test]
+fn matrix_a_const_generic_type_is_not_an_iterator_but_a_cursor_walks_it() {
+    assert_rejected_with(
+        "tests/fixtures/matrix_iter_const_generic.kp",
+        "wrap the instantiation in a non-generic 'datac'",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/matrix_iter_const_generic_ok.kp",
+        "15\n30\n4\n5\n6\n",
+    );
+}
+
+#[test]
+fn matrix_question_mark_inside_next_must_match_the_option_shape() {
+    assert_rejected_with(
+        "tests/fixtures/matrix_from_try_in_next.kp",
+        "match the value instead",
+    );
+    assert_compiles_and_runs("tests/fixtures/matrix_from_try_ok.kp", "11\n21\n");
+}
+
+#[test]
+fn matrix_display_works_through_a_generic_bound_and_a_template() {
+    assert_compiles_and_runs(
+        "tests/fixtures/matrix_display_generic.kp",
+        "<1,2>\n#9\n<1,2> <1,2>\n",
+    );
+}
+
+#[test]
+fn matrix_ord_never_decides_map_key_identity() {
+    assert_compiles_and_runs("tests/fixtures/matrix_ord_map_key.kp", "2\n11\ntrue\n");
+    assert_compiles_and_runs(
+        "tests/fixtures/matrix_ord_only_key.kp",
+        "2\nfalse\ntrue\n",
+    );
+}

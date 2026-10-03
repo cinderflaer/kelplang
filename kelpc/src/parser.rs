@@ -973,7 +973,7 @@ impl Parser {
         }
         if self.check(&TokenKind::Lt) {
             return Err(ParseError {
-                message: "implementing a trait for a generic instantiation is not in this slice: a trait is implemented for a declared 'datac' or 'enum' name, or for a builtin type that already carries methods"
+                message: "implementing a trait for a generic instantiation is not in this slice: a trait is implemented for a declared 'datac' or 'enum' name, or for a builtin type that already carries methods; wrap the instantiation in a non-generic 'datac' and implement the trait for that, or give the generic type an inherent method instead"
                     .to_string(),
                 span: self.peek().span,
             });

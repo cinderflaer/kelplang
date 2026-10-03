@@ -2527,3 +2527,22 @@ is required to believe the flip, and saying so is part of the flip's notes.
   IR's size and node kinds (`kelpc/src/tir.rs`); the ASAN gate's own limits
   (`kelpc/tests/memory_gate.rs`). The LLVM version on this machine is 21.1.8
   (`clang --version`, `libLLVM-21.so` under `/nix/store`).
+
+## Language completeness 7 and 8: exclusive captures, the interaction matrix, the tour (DONE)
+
+- **Exclusive captures** (`plan/exclusive-captures.md`). A scoped trailing block may write what it
+  captures: `s.count += n`, `xs.push(n)`, a `Copy` `var` counter, a `mut` parameter. The capture is
+  an exclusive borrow of the owner for the call the block is written in, inferred from the body
+  (a bounded retry in `check_fn_literal`), registered in `borrowck.rs::take_call_arguments` beside
+  the call's other borrows. A write through a capture used to be an internal compiler error; it is
+  now this rule or a named refusal. Found and **not** fixed: two reborrows of one `mut` parameter
+  in one call (`g(s, s)`) are unchecked (recorded under A-11). 9 accepted and 12 refused
+  `excl_*` fixtures; nested blocks that use an exclusively captured name are refused in v1.
+- **Interaction matrix** (`plan/traits.md` 14): eight cells, each a fixture on both backends; no
+  behaviour bug found, four message improvements (message text only), one documented limit (a
+  const-generic type cannot implement a trait), and one documented non-bug (`Ord` does not decide
+  `Map` key identity).
+- **Tooling**: `fmt`, `lint` and `check --json` tested over every new construct
+  (`tests/new_constructs_tooling.rs`).
+- **The tour** (`plan/language-tour-2026-10.md`): every example built and run on both backends,
+  with the real output, as the source for the wiki pages.

@@ -1,0 +1,14 @@
+// Interaction: generic traits x operator traits. `ops.Add` is not a generic
+// trait, so `impl ops.Add<Vec2> for Vec2` (a right-hand side of another type) is
+// refused; the operator's right-hand side is always `&Self`.
+impl "std/ops"
+
+datac Vec2(val x: i64, val y: i64)
+
+impl ops.Add<Vec2> for Vec2 {
+    fun Self.add(rhs: &Vec2).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+}
+
+fun main() {
+    print((Vec2(x = 1, y = 2) + Vec2(x = 3, y = 4)).x)
+}

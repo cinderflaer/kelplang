@@ -1,0 +1,41 @@
+// Interaction: iterators x const generics, the way that works. The const-generic
+// buffer keeps its length in its type; a small non-generic cursor implements
+// `Iterator` over indexes, and a generic function walks any `Ring<N>` with it.
+impl "std/iter"
+impl "std/option"
+
+datac Ring<const N: usize>(var data: [i32; N])
+
+datac Cursor(var at: usize, val len: usize)
+
+impl iter.Iterator for Cursor {
+    type Item = usize
+    fun mut Self.next().R: option.Option<usize> {
+        if at >= len {
+            return option.Option.None
+        }
+        val v = at
+        at += 1
+        return option.Option.Some(value = v)
+    }
+}
+
+fun Ring<const N: usize>.cursor().R: Cursor = Cursor(at = 0, len = N)
+
+fun total<const N: usize>(r: &Ring<N>).R: i32 {
+    var sum: i32 = 0
+    for i in r.cursor() {
+        sum += r.data.get(i = i)
+    }
+    return sum
+}
+
+fun main() {
+    val a: Ring<3> = Ring(data = [4, 5, 6])
+    val b: Ring<2> = Ring(data = [10, 20])
+    print(total(r = &a))
+    print(total(r = &b))
+    for i in a.cursor() {
+        print(a.data.get(i = i))
+    }
+}

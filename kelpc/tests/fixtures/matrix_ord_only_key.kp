@@ -1,0 +1,19 @@
+// Interaction: `Ord` x `Map` keys. A `Map` key's equality comes from its
+// declared `eq` or, with none, the derived field-wise one; `Ord` is never
+// consulted. This `cmp` calls every pair equal and the map still holds both keys.
+impl "std/ops"
+
+datac Version(val major: i32)
+
+impl ops.Ord for Version {
+    fun Self.cmp(other: &Self).R: i32 = 0
+}
+
+fun main() {
+    var m: Map<Version, i32> = Map.empty()
+    m.insert(Version(major = 1), 10)
+    m.insert(Version(major = 2), 20)
+    print(m.len())
+    print(Version(major = 1) < Version(major = 2))
+    print(Version(major = 1) >= Version(major = 2))
+}
