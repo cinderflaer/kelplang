@@ -1,0 +1,85 @@
+// spectral-norm: the Benchmarks Game spectral norm, 10 power iterations. Size = n (default 1000).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+impl "std/math"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun eval_a(i: i64, j: i64).R: f64 {
+    return 1.0 / ((i + j) * (i + j + 1) / 2 + i + 1).to_f64()
+}
+
+fun mul_av(v: &List<f64>, out: mut List<f64>, n: i64) {
+    var i: i64 = 0
+    while i < n {
+        var s: f64 = 0.0
+        var j: i64 = 0
+        while j < n {
+            s = s + eval_a(i, j) * v.get(j.to_usize())
+            j = j + 1
+        }
+        out.set(i.to_usize(), s)
+        i = i + 1
+    }
+}
+
+fun mul_atv(v: &List<f64>, out: mut List<f64>, n: i64) {
+    var i: i64 = 0
+    while i < n {
+        var s: f64 = 0.0
+        var j: i64 = 0
+        while j < n {
+            s = s + eval_a(j, i) * v.get(j.to_usize())
+            j = j + 1
+        }
+        out.set(i.to_usize(), s)
+        i = i + 1
+    }
+}
+
+fun mul_atav(v: &List<f64>, out: mut List<f64>, tmp: mut List<f64>, n: i64) {
+    mul_av(v, tmp, n)
+    mul_atv(tmp, out, n)
+}
+
+fun main() {
+    val n = size_arg(1000)
+    var u: List<f64> = List.empty()
+    var v: List<f64> = List.empty()
+    var tmp: List<f64> = List.empty()
+    var i: i64 = 0
+    while i < n {
+        u.push(1.0)
+        v.push(0.0)
+        tmp.push(0.0)
+        i = i + 1
+    }
+    var it = 0
+    while it < 10 {
+        mul_atav(u, v, tmp, n)
+        mul_atav(v, u, tmp, n)
+        it = it + 1
+    }
+    var vbv: f64 = 0.0
+    var vv: f64 = 0.0
+    i = 0
+    while i < n {
+        val k = i.to_usize()
+        vbv = vbv + u.get(k) * v.get(k)
+        vv = vv + v.get(k) * v.get(k)
+        i = i + 1
+    }
+    val r = str.from_f64(math.sqrt(vbv / vv), 9)
+    print("spectral-norm $n $r")
+}

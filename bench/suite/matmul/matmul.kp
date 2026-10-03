@@ -1,0 +1,66 @@
+// matmul: C = A * B for n x n f64 matrices, naive i-j-k loops over row-major flat storage.
+// Prints the sum of all elements of C and its trace. Size = n (default 400).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun main() {
+    val n = size_arg(400)
+    val nu = n.to_usize()
+    var a: List<f64> = List.empty()
+    var b: List<f64> = List.empty()
+    var c: List<f64> = List.empty()
+    var i: usize = 0
+    while i < nu {
+        var j: usize = 0
+        while j < nu {
+            a.push(((i + j) % 7).to_f64() * 0.25)
+            b.push(((i * 3 + j) % 5).to_f64() * 0.5)
+            c.push(0.0)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < nu {
+        var j: usize = 0
+        while j < nu {
+            var s: f64 = 0.0
+            var k: usize = 0
+            while k < nu {
+                s = s + a.get(i * nu + k) * b.get(k * nu + j)
+                k = k + 1
+            }
+            c.set(i * nu + j, s)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    var sum: f64 = 0.0
+    var trace: f64 = 0.0
+    i = 0
+    while i < nu {
+        var j: usize = 0
+        while j < nu {
+            sum = sum + c.get(i * nu + j)
+            j = j + 1
+        }
+        trace = trace + c.get(i * nu + i)
+        i = i + 1
+    }
+    val s1 = str.from_f64(sum, 3)
+    val s2 = str.from_f64(trace, 3)
+    print("matmul $n $s1 $s2")
+}
