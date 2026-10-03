@@ -971,3 +971,206 @@ C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the coverage
 - the rejections: a coercion of a type that does not implement the trait, an object-unsafe trait,
   `Box<dyn A + B>`, a partial move out of a box, and a use after move;
 - `kelpc fmt` round-trips the `Box<dyn>` spelling.
+
+## 13. Operator traits, ordering and `Display` (language-completeness task 5)
+
+*Design note. Slice 2 through slice 7 gave a trait methods, defaults, supertraits, builtin impls,
+`&dyn`, associated types, generic traits and `Box<dyn>`. Slice 2's H-5 half already lowered one
+operator, `==`/`!=`, into a declared `eq` method in the front end. This slice extends the same trick
+to the arithmetic operators, the order operators and string interpolation: a `std/ops` module
+declares the operator traits, and `std/fmt` gains `Display`. Every operator is a **desugar in the
+front end** into an ordinary method call, so neither backend learns a new lowering and a freestanding
+image may use one. The decision was made in full before the work started; nothing here is left
+open.*
+
+### 13.1 The operator traits
+
+`std/ops` declares one trait per operator, all `pub`, each with exactly the receiver form and
+signature the lowering calls:
+
+```
+// std/ops
+pub trait Add {
+    fun Self.add(rhs: &Self).R: Self
+}
+
+pub trait Sub {
+    fun Self.sub(rhs: &Self).R: Self
+}
+
+pub trait Mul {
+    fun Self.mul(rhs: &Self).R: Self
+}
+
+pub trait Div {
+    fun Self.div(rhs: &Self).R: Self
+}
+
+pub trait Rem {
+    fun Self.rem(rhs: &Self).R: Self
+}
+
+pub trait Neg {
+    fun Self.neg().R: Self
+}
+
+pub trait Ord {
+    fun Self.cmp(other: &Self).R: i32
+}
+```
+
+- An operator trait takes no type parameters and declares exactly one method, so a type either
+  implements the operator or does not. `Add`, `Sub`, `Mul`, `Div` and `Rem` all have the shape
+  `fun Self.name(rhs: &Self).R: Self`; `Neg` is `fun Self.neg().R: Self`; `Ord` is
+  `fun Self.cmp(other: &Self).R: i32`.
+- `cmp` returns the sign of the order: negative for less, zero for equal, positive for greater,
+  exactly as `memcmp` does. The lowering never calls `cmp` for equality (13.3).
+- The trait module is an ordinary shipped module: a program writes `impl "std/ops"` and reaches the
+  traits as `ops.Add`, `ops.Ord` and so on, or writes `impl Add`, `impl Ord` after importing. It is
+  pure language with no body and no allocator, so it is admitted to the freestanding set
+  (`plan/freestanding-std.md`) and a kernel may use it.
+
+### 13.2 Arithmetic operators
+
+For a `datac`/`enum` operand type `T` that implements `Add` (and `Sub`, `Mul`, `Div`, `Rem` for
+their operators), `a + b` means `a.add(&b)` and the others follow one-for-one. `-a` on a `T` that
+implements `Neg` means `a.neg()`.
+
+- The desugar is in `infer.rs`, at the operator's own check, so both operands are checked **once**,
+  left to right, and each is only **borrowed**, never moved. `a + b` leaves both `a` and `b` owned
+  and valid; the result is a fresh `Self` the method returns. That is why the operands are `&Self`:
+  the operator reads both and the method decides what the result is.
+- The call is the ordinary direct method call `T#add`, so `borrowck.rs` and both backends need no
+  new shape. Both the operands' types have to name the **same** `T` (a borrow of `T` counts, exactly
+  as an `==` operand may be `&T`), which is the ordinary "matching operands" rule: `a + b` of two
+  different user types is refused, and mixing a user type with a number is refused.
+- **Builtin numeric types are unaffected.** `i32 + i32` keeps the builtin operator it always had,
+  and a builtin with no operator trait in this slice (`f64`, `bool`, a `String`, a container) keeps
+  its own rule. The desugar runs only where the builtin arithmetic check would already have failed,
+  so nothing that compiled before changes meaning.
+- A `datac`/`enum` with no `impl Add` is refused by name, and the message names the trait and the
+  impl to write. A user `impl Add for i32` is refused by the ordinary orphan rule (slice 3): a
+  builtin has no module, so its impl must sit in the trait's module, and `std/ops` is the trait's.
+- **Compound assignment.** `a += b` keeps the parser's long-standing desugar `a = a + b`, so for a
+  user type it becomes `a = a.add(&b)`. `a` is a `var` place (an identifier, a field path or a
+  dereference), and a place expression has no side effect, so writing it twice evaluates the same
+  place; the `+` itself still evaluates each operand of the *addition* once, left to right. `-=`,
+  `*=`, `/=`, `%=` follow their operators, and there is no `Neg` compound form because there is no
+  `-a` assignment.
+
+### 13.3 Order operators
+
+For a `datac`/`enum` operand type `T` that implements `Ord` (the `cmp`-shaped trait above), `a < b`
+means `a.cmp(&b) < 0`, `a <= b` means `a.cmp(&b) <= 0`, `a > b` means `a.cmp(&b) > 0` and
+`a >= b` means `a.cmp(&b) >= 0`.
+
+- The desugar is again in `infer.rs`, at the comparison's own check, and the result is the
+  ordinary integer comparison of the `i32` the `cmp` call returns. Both operands are checked once,
+  left to right, and only borrowed. `cmp` says nothing about equality, so `==`/`!=` are unchanged:
+  they still lower to a declared `eq` (13.4), and a type that implements `Ord` but not `eq` gets no
+  `==` at all.
+- **A type that implements only `eq` keeps the old `<`/`>` refusal** (slice 2), and the message
+  stays the same. **A type that implements only `Ord` and no `eq`** is refused `==`/`!=` with a
+  message that says so: the order trait does not supply equality, so `eq` is what the operator
+  needs. The two rules are separate declarations and neither implies the other.
+- Builtin types are unaffected, exactly as in 13.2: `i32 < i32` keeps the builtin comparison, and a
+  type with neither trait keeps the existing "cannot compare" refusal.
+
+### 13.4 `Display`
+
+`std/fmt` gains one trait:
+
+```
+// std/fmt
+pub trait Display {
+    fun Self.to_text().R: String
+}
+```
+
+A value whose type implements `Display` may appear in `"${x}"` and as the argument of `print`/
+`print!`, lowered to `x.to_text()` before the template or the print call sees it, exactly as
+`==`/`!=` lower to `eq`. The call returns an owned `String`, which is printable under the existing
+rule, so neither the template lowering nor either backend learns a new value shape and the ordinary
+temporary handling frees the text after it is printed.
+
+- The receiver is a shared borrow (`Self`), so the value is only read, never moved, and
+  `"${v}"`/`print(v)` leave `v` owned and valid.
+- **Builtin types are unaffected**: a number, `bool`, `char`, `str`, `String`, `Bytes` and `View`
+  keep the formatting they always had, and a `datac`/`enum` that implements `Display` reaches the
+  template only through `to_text`.
+- A `datac`/`enum` **without** `Display` in `${}` and in `print` keeps the existing refusal, and the
+  message now **names `Display`** and shows the impl to write. Opaque handles keep their own
+  "no printable value" message, and a function value, a closure, a tuple, a container and a borrow
+  keep theirs.
+- `x.to_text()` may be called explicitly wherever the method is declared, like any other trait
+  method; the interpolation and `print` desugars are the convenience, not a new method surface.
+
+### 13.5 What is deliberately not in this slice
+
+Each refused where it is written, with the message naming the follow-up:
+
+- **Derive-like helpers.** There is no macro and no `derive`; a type writes its `impl` by hand, and
+  no impl is generated for it. A `datac`/`enum` still has no `==`, `<` or `Display` unless it
+  declares one.
+- **Bitwise operators, `&&`/`||`, `!`, `~`, shifts and `?` through a trait.** Only the arithmetic
+  operators, the order operators and the unary minus are overloaded. `&&`/`||` stay `bool`, and the
+  bitwise set stays integral.
+- **A user trait that supplies an operator.** The lowering names the shipped `std/ops` traits by
+  their canonical names, not "any trait with a method named `add`", so a program cannot introduce a
+  second operator trait (and does not need to: it implements `std/ops`'s).
+- **A blanket impl.** Nothing derives `Add` for a numeric type or `Display` for a `String`, and
+  `std/ops`/`std/fmt` declare the traits only.
+- **`Display` used to build a string.** A template is still not a value: `to_text` is what to call
+  when the text is wanted as a `String` (`str.concat`, `fmt.*` and `String` are the other ways).
+
+An operator on a **generic type parameter** is deliberately *not* on that list: a generic
+function's body is checked once per instantiation, so `T` is a concrete `datac`/`enum` by the time
+the operator is lowered. `fun sum<T: ops.Add>(a: T, b: T).R: T = a + b` compiles for every `T` that
+implements `Add`, and `Display` in a template behaves the same way.
+
+### 13.6 What the compiler does not check
+
+- The `std/ops` and `std/fmt` method shapes are trusted as declared, exactly as an ordinary trait
+  method is: the impl is checked against the trait signature (slice 2's exact match), so `add` takes
+  `&Self` and returns `Self`, but nothing requires a body to be "an addition" or a `cmp` to be
+  consistent with an `eq` on the same type.
+- The lowering is one call site, so an operand a method call would have borrowed implicitly is
+  borrowed explicitly here; nothing else changes about the borrow checker's view.
+- An operator on a `T` whose impl is written but never reached from an operator is an ordinary
+  method call: nothing checks that a type's `Add` is ever used, and an unused impl is emitted like
+  any other method (or pruned in a freestanding build).
+- `Display` is not a formatting mini-language: `to_text` returns the whole text, and nothing checks
+  that it does not panic or allocate.
+
+### 13.7 How it is implemented
+
+- `kelpc/std/ops.kp` is the new shipped module; `stdlib.rs` adds it to the source table and to the
+  freestanding allowed set (it is pure), and `std/fmt.kp` gains the `Display` trait.
+- `types.rs` names the canonical trait keys (`std.ops.Add` ... `std.ops.Ord`, `std.fmt.Display`)
+  beside the existing key-pair and destructor constants.
+- `infer.rs` does the whole feature: the arithmetic branch of `check_binary` lowers through
+  `Add`/`Sub`/`Mul`/`Div`/`Rem`, the unary branch lowers `-` through `Neg`, the comparison branch
+  lowers `<`/`<=`/`>`/`>=` through `Ord`, `lower_equality` gains the `Ord`-without-`eq` message, and
+  `check_template` plus the `print`/`print!` argument check lower a `Display` value through
+  `to_text`. Each lowering is the ordinary `Type#method` call with both operands borrowed, exactly
+  as H-5's `eq` lowering is, so `borrowck.rs` and both backends are unchanged.
+- `std/ops` and `std/fmt` need no parser, resolver or backend change: they are ordinary trait
+  declarations in ordinary shipped modules.
+- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+
+### 13.8 Tests
+
+`kelpc/tests/compile_and_run.rs` runs each of these on the backend under test (LLVM by default,
+the C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the coverage sweep as well:
+
+- a `Vec2` `datac` with `Add`, `Sub`, `Neg` and `Mul`, used in arithmetic expressions and a chain
+  `a + b - c`;
+- `Ord` on a `Version` `datac`, used in `<`, `>=` and a hand-written `while` sort;
+- a `Display` impl used in `"${v}"`, in `print(v)` and nested in another type's `to_text`;
+- `+=` on a `var` of a user type;
+- a side-effect counter proving each operand is evaluated exactly once, left to right;
+- the builtin arithmetic fixtures, untouched, proving the desugar does not change a builtin;
+- the rejections: `+` on a type without `Add`, `<` on a type with only `eq`, `${x}` without
+  `Display` (the message names it), `impl Add for i32` in user code (the orphan rule), and `a + b`
+  of two different user types;
+- a freestanding riscv64 project that uses `Add` and `Ord`, built with `llvm-nm -u` clean.

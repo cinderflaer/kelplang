@@ -331,7 +331,7 @@ print("area = ${c.area()}")
 print("r = $c.r")            // $name names an identifier, nothing more
 ```
 
-`$name` interpolates one identifier; `${...}` interpolates any expression, and the expression may contain a nested template or span several lines. A template is not a value: the only place it may appear is as the single argument of `print` or `print!`. To build a string with the same content, use `str.concat`, `fmt.*`, or a `String`.
+`$name` interpolates one identifier; `${...}` interpolates any expression, and the expression may contain a nested template or span several lines. An interpolated value must be printable: a scalar, `bool`, `char`, `str`, `String`, `Bytes`, `View`, or a type that implements `Display` (5, 9.5.4), which is lowered to `x.to_text()`. A template is not a value: the only place it may appear is as the single argument of `print` or `print!`. To build a string with the same content, use `str.concat`, `fmt.*`, `x.to_text()`, or a `String`.
 
 ### 2.6 Operators
 
@@ -565,6 +565,8 @@ Facts worth knowing:
 - `print` is the one builtin call that accepts a template; see 12.
 
 **Equality by declaration (H-5).** `==` and `!=` are defined on a `datac`/`enum` `T` when `T` declares `fun T.eq(other: &T).R: bool`, the same `eq` method name A-12 already gives a declared `Map` key. `a == b` means `a.eq(&b)` and `a != b` means `!a.eq(&b)`: the front end rewrites the operator into that method call *before* borrow checking and code generation, so both are ordinary calls of the declared body and no backend gains an operator. `eq` alone is enough for `==` (a `Map` key still needs the pair, `hash` and `eq`; a lone `hash` is still refused). Each operand is evaluated exactly once, left to right, and is only borrowed, never moved, so an owned binding, a `&T`/`mut T` borrow, or a mix of the two all compare. `View` against `View`, and `View` against `str`, lower the same way through the builtin `View.eq`. Nothing is *derived*: a type without a declared `eq` keeps the old `cannot compare` refusal, and so does `<`/`<=`/`>`/`>=` on any such type.
+
+**Operators by trait (language-completeness 5).** The arithmetic operators, the order operators and unary minus are defined on a `datac`/`enum` through the shipped traits in `std/ops` (9.5.4): with `impl Add for T`, `a + b` means `a.add(&b)`; with `impl Sub`, `a - b` is `a.sub(&b)`; likewise `Mul`, `Div` and `Rem`; `-a` with `impl Neg` is `a.neg()`; and with `impl Ord`, `a < b` means `a.cmp(&b) < 0` (and `<=`, `>`, `>=` the matching comparison of the `i32` `cmp` returns). Each lowering is the same front-end desugar `==` gets, done at the operator's own check, so each operand is evaluated exactly once, left to right, and is only borrowed, never moved. Builtin numeric types keep their builtin operators and are unaffected: the desugar runs only where the builtin arithmetic or comparison would already have been a type error, and mixing types is still the ordinary mismatch. A type with a declared `eq` but no `Ord` keeps the old `<`/`>` refusal, and a type with `Ord` but no `eq` gets no `==`/`!=`: the `Ord`-only message says the operator needs `eq`. Compound assignment keeps the parser's `a = a + b` desugar, so `a += b` is `a = a.add(&b)` when `a` is a `var` place. `fmt.Display` (9.5.4) is what a type implements to appear in `"${x}"` and in `print(x)`/`print!(x)`.
 
 #### 5.0 Numeric conversion, in full
 
@@ -1370,9 +1372,10 @@ Not in this slice, each refused where it is written: a bare `dyn Name` (an owned
 upcast from `&dyn B` to `&dyn A` when `B: A`; a trait object over an object-unsafe trait; a trait
 object over a trait that declares an associated type or takes a type parameter (9.5); an associated
 const; `impl Trait` in argument position; a `where` clause; an equality constraint on a trait's
-associated type; an impl for a generic instantiation; a blanket impl of any trait (including
-`Into`); and any operator overloading through a trait (`==`/`!=` still come from a declared `eq`,
-5). `plan/traits.md` 5, 9.6, 10.3 and 11.6 are the lists with the reasons and the workarounds.
+associated type; an impl for a generic instantiation; and a blanket impl of any trait (including
+`Into`). Operator overloading is through the shipped `std/ops` traits only (9.5.4): a program
+implements those, not a trait of its own. `plan/traits.md` 5, 9.6, 10.3, 11.6 and 13 are the lists
+with the reasons and the workarounds.
 
 ### 9.5.3 Owned trait objects, `Box<dyn Name>`
 
@@ -1420,6 +1423,76 @@ fun main() {
   a frame local does not.
 - **Not in this slice:** upcasting between trait objects, a bare `dyn Name`, and `take`/`set` on
   an owned trait object are each refused by name. `plan/traits.md` 12 is the design.
+
+### 9.5.4 Operator traits and `Display`
+
+Four operators and text interpolation are traits the shipped standard library declares, and a
+`datac`/`enum` implements one to get the operator. Every one of them is a **front-end desugar** into
+the method it names, so the call is an ordinary direct method call and nothing downstream learns an
+operator.
+
+```kelp
+impl "std/ops"
+impl "std/fmt"
+
+datac Vec2(val x: f64, val y: f64)
+
+impl ops.Add for Vec2 {
+    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+}
+
+impl ops.Ord for Vec2 {
+    fun Self.cmp(other: &Self).R: i32 {
+        if x < other.x { return -1 }
+        if x > other.x { return 1 }
+        return 0
+    }
+}
+
+impl fmt.Display for Vec2 {
+    fun Self.to_text().R: String {
+        return str.concat("(", str.concat(fmt.float(x, 1), ")"))
+    }
+}
+
+fun main() {
+    val a = Vec2(x = 1.0, y = 2.0)
+    val b = Vec2(x = 3.0, y = 4.0)
+    val c = a + b                 // a.add(&b)
+    print(c)                      // c.to_text()
+    print("sum = ${c}")           // c.to_text()
+    print(a < b)                  // a.cmp(&b) < 0
+    var v = a
+    v += b                        // v = v.add(&b)
+}
+```
+
+- `std/ops` declares one trait per operator: `Add`, `Sub`, `Mul`, `Div`, `Rem` (each
+  `fun Self.name(rhs: &Self).R: Self`), `Neg` (`fun Self.neg().R: Self`) and `Ord`
+  (`fun Self.cmp(other: &Self).R: i32`). `std/fmt` declares `Display`
+  (`fun Self.to_text().R: String`). The trait names are ordinary trait names: import the module and
+  write `ops.Add`, or write `impl Add` after the import.
+- `a + b` means `a.add(&b)`, `a - b` means `a.sub(&b)`, and `*`, `/`, `%` follow the same method
+  names (`mul`, `div`, `rem`); `-a` means `a.neg()`. For `Ord`, `a < b` means `a.cmp(&b) < 0`,
+  `a <= b` is `<= 0`, `a > b` is `> 0` and `a >= b` is `>= 0`. A value of a type that implements
+  `Display` may appear in `"${x}"` and as the argument of `print`/`print!`, lowered to `x.to_text()`.
+- Each operand is evaluated **exactly once, left to right**, and is only **borrowed**, never moved,
+  so `a + b` leaves `a` and `b` owned and valid. Both operands must name the same `T`: `a + b` of
+  two different user types is the ordinary mismatch.
+- **Builtin numeric types are unaffected.** `i32 + i32` and `i32 < i32` keep the builtin operators,
+  and so does every scalar, `bool`, `String` and container. The desugar runs only where the builtin
+  arithmetic or comparison would already have been a type error.
+- `==`/`!=` are separate: they come from a declared `eq` (5), never from `Ord`. A type that
+  implements only `Ord` still has no `==`, and the refusal says so; a type that declares only `eq`
+  keeps the old `<`/`>` refusal.
+- Compound assignment keeps its historical `a = a + b` desugar, so `a += b` on a user type is
+  `a = a.add(&b)` when `a` is a `var` place.
+- An operator on a **generic type parameter** works, because a generic function's body is checked
+  once per instantiation and `T` is a concrete `datac`/`enum` by then: `fun sum<T: ops.Add>(a: T,
+  b: T).R: T = a + b` compiles for every `T` that implements `Add`.
+- Not in this slice, each refused by name: a user trait that supplies an operator (only the shipped
+  `std/ops` traits are named by the lowering), a bitwise/shift/logical operator through a trait,
+  and any derive or macro helper. `plan/traits.md` 13 is the design.
 
 ## 10. Ownership, moves and borrowing
 
@@ -1540,7 +1613,7 @@ print(owned_bytes)       // a Bytes buffer
 print(c.area())          // the result of a call
 ```
 
-`print` takes exactly one positional argument. It accepts scalars, `str`, `String`, `Bytes` and a template. It does not accept a `datac`, a `List`, a `Map` or a `Box`, and it takes no named arguments. Integers print in decimal, floats print with six decimals (`print(1.5)` prints `1.500000`), and `bool` prints `true` or `false`. Formatting with a width or a chosen number of decimals goes through `fmt` (11.4).
+`print` takes exactly one positional argument. It accepts scalars, `str`, `String`, `Bytes`, a type that implements `Display` (9.5.4, lowered to `x.to_text()`), and a template. It does not accept a `datac`/`enum` without `Display`, a `List`, a `Map` or a `Box`, and it takes no named arguments. Integers print in decimal, floats print with six decimals (`print(1.5)` prints `1.500000`), and `bool` prints `true` or `false`. Formatting with a width or a chosen number of decimals goes through `fmt` (11.4).
 
 `std/io` adds `print_bare`, `eprint` and `eprint_bare` for the same job with control over the newline and the stream, plus `File` writes for anything else.
 
@@ -2162,6 +2235,7 @@ Nineteen modules ship inside the compiler binary. Import them with `impl "std/<n
 | `std/http` | none (holds `net`) | HTTP client, request and response types, connection pool |
 | `std/encoding` | none | base64, base32, base58, hex and percent encoding |
 | `std/list` | none | the callback-shaped operations on `List<T>` (`map`, `filter`, `each`, …) |
+| `std/ops` | none | the operator traits `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg` and `Ord` (9.5.4) |
 | `std/option` | none | `Option<T>` and its helpers |
 | `std/result` | none | `Result<T, E>` and its helpers |
 | `std/atomic` | none | `Ordering`, the ordering argument of the `Atomic<T>` builtins (12.5) |

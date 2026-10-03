@@ -1696,3 +1696,22 @@ moved (not copied) into the trait object, and that a `mut Self` method is called
 writable place. It does not check that the vtable of one trait agrees with another (one flattening
 routine computes every pair's slot order), does not track whether a box is empty (an empty box
 panics at the point of use), and does not read the size/align entries it emits.
+
+## Language-completeness 5: operator traits and `Display` (`plan/traits.md` 13)
+
+**New ways to reach undefined behaviour.** None. Every operator is a front-end desugar into an
+ordinary method call (`a + b` is `a.add(&b)`, `a < b` is `a.cmp(&b) < 0`, `-a` is `a.neg()`, and a
+`Display` value in `"${x}"` or `print(x)` is `x.to_text()`), so the code both backends emit is the
+direct `Type#method` call they already emitted for an `==` over a declared `eq`. The operands are
+checked once, left to right, and are only borrowed, never moved, exactly as H-5's `==` operands
+are, so no new borrow, drop or allocation is introduced. `std/ops` and `std/fmt` are ordinary
+shipped module declarations with no body, so a freestanding image that imports `std/ops` links no
+runtime symbol.
+
+**What the compiler does and does not check.** It checks that both operands name the same
+`datac`/`enum` and that the type implements the shipped trait before lowering (a type without `Add`
+is refused by name, and the message names the trait and the impl to write); that an operator on a
+generic type parameter, a user-declared operator trait, and a bitwise/shift/logical operator
+through a trait are refused where they are written; and that a type with only `Ord` is still refused
+`==`/`!=` with a message naming `eq`. It does not check that an `add` body adds or a `cmp` body
+orders, does not relate a type's `Ord` to its `eq`, and does not check an unused impl.

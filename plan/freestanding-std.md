@@ -42,6 +42,7 @@ does not ship.
 | Module | Verdict | Evidence |
 | --- | --- | --- |
 | `std/atomic` | works as-is | `Atomic<u32>.new`/`load`/`store`/`compare_exchange` build into a riscv64 image with no undefined symbol. `Ordering` is a plain `enum`. |
+| `std/ops` | works as-is | The module is trait declarations with no body: `impl Add`/`impl Ord` for a `datac` and a `+`/`<` over it build into a riscv64 image with no undefined symbol (`tests/projects/freestanding_ops`). The operators are front-end desugars into ordinary direct calls, so a bare-metal image grows no vtable and no witness. |
 | `std/option` | works as-is for `is_some`, `is_none`, `unwrap_or`, `unwrap`, `expect`; `map`, `and_then`, `or_else`, `each` work with an allocator | `option.is_some`/`unwrap` link. A callback call links with an undefined `free` (through `kelp_coerce_drop__Closure__...`) without an allocator, and links clean with one, for a declared `fun` and for a capturing literal alike. |
 | `std/result` | the same split as `std/option`: value helpers as-is, and `map`, `map_err`, `and_then`, `or_else`, `each` with an allocator | `result.is_ok`/`unwrap` link; `result.map` leaves `free` undefined without an allocator. |
 | `std/bits` | not shipped on this branch | No `kelpc/std/bits.kp` and no `stdlib::shipped()` entry, so the stage that uses it names `option`/`result`/`arena` instead. |
@@ -74,11 +75,12 @@ does not ship.
 Every refusal of a whole module says "needs a hosted runtime" and then names
 the modules a freestanding project may implement, derived from the table (so it
 cannot drift): `std/arena, std/atomic, std/convert, std/frame, std/irq,
-std/list, std/math, std/option, std/result, std/str`. `std/list` needs the
+std/iter, std/list, std/math, std/ops, std/option, std/result, std/str`.
+`std/list` needs the
 allocator pair, and several functions inside the `Subset` rows are refused by
 name; both are said in the message of the construct that needs them, not in the
-list. `std/convert` is pure language (two traits and no runtime), so a kernel
-may use `From` exactly as a hosted program does.
+list. `std/convert` and `std/ops` are pure language (traits and no runtime), so
+a kernel may use `From`, `Add` and `Ord` exactly as a hosted program does.
 
 ## Tests
 
