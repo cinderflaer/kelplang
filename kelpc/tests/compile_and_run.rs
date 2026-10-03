@@ -11190,6 +11190,60 @@ fn a_freestanding_condvar_is_refused() {
     );
 }
 
+/// `Mutex.share`/`Condvar.share` make another handle to the same record, and
+/// `Mutex.swap` exchanges the guarded value, which is how an owned value gets
+/// into a mutex from inside a scoped block.
+#[test]
+fn a_shared_mutex_handle_and_a_swap() {
+    assert_compiles_and_runs("tests/fixtures/mutex_share_swap.kp", "6\n6\n40\na\n0\n");
+}
+
+/// Channels (`std/sync`): four producers feed one consumer through a bounded
+/// channel, and the receiver's `for` ends by itself when the last sender drops.
+#[test]
+fn a_bounded_channel_carries_four_producers_to_one_consumer() {
+    assert_compiles_and_runs("tests/fixtures/chan_bounded_mpsc.kp", "1000\n124500\n");
+}
+
+/// Closing in both directions: every sender gone drains then fails, a clone
+/// keeps the channel open, and a send to a dropped receiver gets the value back.
+#[test]
+fn a_channel_closes_when_its_senders_or_its_receiver_drop() {
+    assert_compiles_and_runs(
+        "tests/fixtures/chan_close.kp",
+        "6\n1\n2\n3\n-1\nopen\nclosed\nback\n",
+    );
+}
+
+/// `recv_timeout` times out, takes a late value, and reports a closed channel.
+#[test]
+fn a_channel_recv_timeout_times_out_and_then_receives() {
+    assert_compiles_and_runs("tests/fixtures/chan_recv_timeout.kp", "timeout\n99\nclosed\n");
+}
+
+/// A zero-capacity bounded channel is a named panic.
+#[test]
+fn a_zero_capacity_channel_panics() {
+    assert_fixture_panics("chan_zero_capacity", "sync.bounded: the capacity must be at least 1");
+}
+
+/// A channel carries owned, movable values: a borrowed `str` and a lock are
+/// both refused.
+#[test]
+fn a_channel_refuses_a_borrowed_or_a_lock_element() {
+    assert_rejected_with("tests/fixtures/chan_non_sendable.kp", "'str' is a borrowed view");
+    assert_rejected_with("tests/fixtures/chan_send_a_lock.kp", "'Mutex<i64>' cannot be a 'List' element");
+}
+
+/// A freestanding build refuses the channel module by name.
+#[test]
+fn a_freestanding_channel_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_channel",
+        "the module 'std/sync' is unavailable in a freestanding build",
+    );
+}
+
 /// The panic gate (MK9 section 7): a worker panics, its joiner sees `Err`
 /// carrying the panic text, a second worker's work is intact, and the process
 /// exits 0. A panic ends the thread it happened in; `main` still decides what to

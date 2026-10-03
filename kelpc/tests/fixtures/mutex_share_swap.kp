@@ -1,0 +1,26 @@
+// `share()` makes a second handle to the same mutex (and condition variable),
+// so the record is freed only when the last handle drops; `swap` exchanges the
+// guarded value in one locked step. The first handle is dropped inside a
+// function, and the second still reads the value.
+impl "std/sync"
+
+fun bump(m: move Mutex<i64>) {
+    m.lock { v -> *v = *v + 1 }
+}
+
+fun main() {
+    val m: Mutex<i64> = Mutex.new(5)
+    val other = m.share()
+    bump(m.share())
+    print(other.lock { v -> *v })
+    val old = other.swap(40)
+    print(old)
+    print(m.lock { v -> *v })
+    val cv = Condvar.new()
+    val cv2 = cv.share()
+    cv2.notify_all()
+    val names: Mutex<List<String>> = Mutex.new(List.of(String.from_str("a")))
+    var taken = names.swap(List.empty())
+    print(taken.remove(0))
+    print(names.lock { l -> l.len() })
+}

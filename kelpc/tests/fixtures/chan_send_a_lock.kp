@@ -1,0 +1,8 @@
+// A lock is shared by borrowing it, never by moving it through a queue: a
+// container's own routines would copy and drop it like a plain location, so a
+// channel of mutexes is refused.
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.bounded<Mutex<i64>>(2)
+}

@@ -1052,6 +1052,7 @@ static void kelp_thread_drop(kelp_Thread** slot) {
 typedef struct {
     pthread_mutex_t lock;
     int poisoned;
+    int refs;
     size_t size;
     void* value;
     void (*drop)(void*);
@@ -1066,6 +1067,7 @@ static kelp_Mutex* kelp_mutex_new(const void* value, size_t size, void (*drop)(v
         kelp_panic("Mutex.new: pthread_mutex_init failed");
     }
     m->poisoned = 0;
+    m->refs = 1;
     m->size = size;
     m->drop = drop;
     m->value = malloc(size == 0 ? 1 : size);
@@ -1104,7 +1106,34 @@ static void kelp_mutex_run(kelp_Mutex* m, void (*body)(void*, void*, void*, void
     pthread_mutex_unlock(&m->lock);
 }
 
+/* `m.share()`: another handle to the same record. A channel's two ends and a
+   pool's workers all reach one record from several threads, and v1 has no
+   `Arc`, so the mutex itself carries the reference count: every handle's drop
+   releases one, and the last one runs the element's drop and frees the record. */
+static kelp_Mutex* kelp_mutex_share(kelp_Mutex* m) {
+    __atomic_add_fetch(&m->refs, 1, __ATOMIC_SEQ_CST);
+    return m;
+}
+
+/* `m.swap(value)`: replace the guarded value with `value` (moved in) and hand
+   the old one back, under the lock and without a block. It is how an owned
+   value is moved into a mutex from inside a scoped block, which can capture
+   nothing by move. */
+static void kelp_mutex_swap(kelp_Mutex* m, const void* in, void* out) {
+    pthread_mutex_lock(&m->lock);
+    if (m->poisoned) {
+        pthread_mutex_unlock(&m->lock);
+        kelp_panic("mutex poisoned");
+    }
+    memcpy(out, m->value, m->size);
+    memcpy(m->value, in, m->size);
+    pthread_mutex_unlock(&m->lock);
+}
+
 static void kelp_mutex_into(kelp_Mutex* m, void* out) {
+    if (__atomic_load_n(&m->refs, __ATOMIC_SEQ_CST) != 1) {
+        kelp_panic("Mutex.into_inner: the mutex is shared with another handle");
+    }
     memcpy(out, m->value, m->size);
     pthread_mutex_destroy(&m->lock);
     free(m->value);
@@ -1117,6 +1146,10 @@ static void kelp_mutex_into(kelp_Mutex* m, void* out) {
 static void kelp_mutex_drop(kelp_Mutex** slot) {
     kelp_Mutex* m = *slot;
     if (m == NULL) {
+        return;
+    }
+    *slot = NULL;
+    if (__atomic_sub_fetch(&m->refs, 1, __ATOMIC_SEQ_CST) != 0) {
         return;
     }
     if (m->drop != NULL) {
@@ -1312,6 +1345,7 @@ static void kelp_rwlock_drop(kelp_RwLock** slot) {
 // release the mutex's lock atomically and a scoped guard cannot express that.
 typedef struct {
     pthread_cond_t cond;
+    int refs;
 } kelp_Condvar;
 
 static kelp_Condvar* kelp_condvar_new(void) {
@@ -1322,6 +1356,14 @@ static kelp_Condvar* kelp_condvar_new(void) {
     if (pthread_cond_init(&cv->cond, NULL) != 0) {
         kelp_panic("Condvar.new: pthread_cond_init failed");
     }
+    cv->refs = 1;
+    return cv;
+}
+
+/* `cv.share()`: another handle to the same condition variable, counted like
+   `kelp_mutex_share`. */
+static kelp_Condvar* kelp_condvar_share(kelp_Condvar* cv) {
+    __atomic_add_fetch(&cv->refs, 1, __ATOMIC_SEQ_CST);
     return cv;
 }
 
@@ -1336,6 +1378,10 @@ static void kelp_condvar_notify_all(kelp_Condvar* cv) {
 static void kelp_condvar_drop(kelp_Condvar** slot) {
     kelp_Condvar* cv = *slot;
     if (cv == NULL) {
+        return;
+    }
+    *slot = NULL;
+    if (__atomic_sub_fetch(&cv->refs, 1, __ATOMIC_SEQ_CST) != 0) {
         return;
     }
     pthread_cond_destroy(&cv->cond);

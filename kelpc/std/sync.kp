@@ -59,3 +59,207 @@
 
    Every record here is a pthread object, so a freestanding manifest refuses
    each by name (`plan/sync.md`). */
+
+/* Channels, in pure Kelp over the builtins above (`plan/sync.md` section 3,
+   `plan/st1-status.md` for the shape that was chosen):
+
+       fun sync.bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>)
+       fun sync.unbounded<T>().R: (Sender<T>, Receiver<T>)
+       fun Sender<T>.send(value: move T).R: option.Option<T>
+       fun Sender<T>.clone().R: Sender<T>
+       fun Receiver<T>.recv().R: result.Result<T, RecvErr>
+       fun Receiver<T>.try_recv().R: option.Option<T>
+       fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout>
+       for v in rx { ... }
+
+   There is no new runtime record. The two ends share one queue and one state
+   record through `Mutex.share()` and `Condvar.share()` (a handle to the same
+   runtime record, freed when the last handle drops). The queue is a
+   `Mutex<List<T>>` that is only ever locked while the `ChanMeta` mutex is
+   held, so the meta mutex is the real lock and the queue mutex is the typed
+   cell the generic element needs; every wait is a `wait_while` on the meta
+   mutex over plain counters, which keeps the predicates non-generic.
+
+   `send` gives the value back as `Some(value)` when the receiver is gone and
+   answers `None` when it was queued (so the result is must-use, and `Option`
+   is the one payload shape that needs no `unit` value). A bounded send waits
+   while the queue is full. `recv` waits while the queue is empty and a sender
+   is alive; once the queue is empty and every sender is gone it answers
+   `Err(RecvErr.Closed)`. Closing is done by two non-generic `Drop` types
+   (`SendEnd`, `RecvEnd`) each end owns: a type parameter cannot carry a
+   destructor, so the destructor lives on the part that has none. Their `live`
+   field is `false` for the zeroed value a partial move leaves behind, which
+   is what lets `val (tx, rx) = sync.bounded(4)` take the pair apart.
+
+   `for v in rx` works because `Receiver<T>` declares `next` on its template;
+   the compiler walks any generic `datac` of that shape like an `Iterator`
+   (a trait impl cannot name a generic instantiation yet). Everything here is
+   hosted only: the module is not in the freestanding admission table, and its
+   `Mutex` and `Condvar` are refused there by name. */
+impl "std/option"
+impl "std/result"
+impl "std/thread"
+
+// Why `recv` has no value: every sender is gone and the queue is empty.
+enum RecvErr {
+    Closed
+}
+
+// Why `recv_timeout` has no value.
+enum RecvTimeout {
+    Timeout
+    Closed
+}
+
+// Everything the two ends agree on, guarded by one mutex. `count` mirrors the
+// queue's length, so the waits never need to look inside the generic queue.
+datac ChanMeta(var count: usize, var senders: i64, var rx_alive: bool, val cap: usize, val bounded: bool)
+
+// What a sender owns besides the queue, and the destructor that closes the
+// channel when the last one goes.
+datac SendEnd(val live: bool, val meta: Mutex<ChanMeta>, val ne: Condvar, val nf: Condvar)
+
+datac RecvEnd(val live: bool, val meta: Mutex<ChanMeta>, val ne: Condvar, val nf: Condvar)
+
+datac Sender<T>(val q: Mutex<List<T>>, val end: SendEnd)
+
+datac Receiver<T>(val q: Mutex<List<T>>, val end: RecvEnd)
+
+fun mut SendEnd.drop() {
+    if !live {
+        return
+    }
+    val last = meta.lock { s ->
+        s.senders -= 1
+        s.senders == 0
+    }
+    if last {
+        ne.notify_all()
+    }
+}
+
+fun mut RecvEnd.drop() {
+    if !live {
+        return
+    }
+    meta.lock { s -> s.rx_alive = false }
+    nf.notify_all()
+}
+
+fun make_channel<T>(cap: usize, bounded: bool).R: (Sender<T>, Receiver<T>) {
+    val meta = Mutex.new(ChanMeta(count = 0, senders = 1, rx_alive = true, cap = cap, bounded = bounded))
+    val q: Mutex<List<T>> = Mutex.new(List.empty())
+    val ne = Condvar.new()
+    val nf = Condvar.new()
+    val rx = Receiver<T>(q = q.share(), end = RecvEnd(live = true, meta = meta.share(), ne = ne.share(), nf = nf.share()))
+    val tx = Sender<T>(q = q, end = SendEnd(live = true, meta = meta, ne = ne, nf = nf))
+    return (tx, rx)
+}
+
+// A channel that holds at most `cap` values: `send` waits while it is full.
+fun bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>) {
+    if cap == 0 {
+        panic("sync.bounded: the capacity must be at least 1")
+    }
+    return make_channel<T>(cap, true)
+}
+
+// A channel with no limit: `send` never waits.
+fun unbounded<T>().R: (Sender<T>, Receiver<T>) {
+    return make_channel<T>(0, false)
+}
+
+// Queue `value`. `None` means it was queued; `Some(value)` hands it back because
+// the receiver is gone. A scoped block cannot capture an owned value by move, so
+// the value waits in a private one-element mutex and the block swaps it across.
+fun Sender<T>.send(value: move T).R: option.Option<T> {
+    val staged: Mutex<List<T>> = Mutex.new(List.of(value))
+    val r = self.end.meta.wait_while(&self.end.nf, fun(s: &ChanMeta).R: bool = s.bounded && s.count >= s.cap && s.rx_alive) { s ->
+        var mine = staged.swap(List.empty())
+        if s.rx_alive {
+            s.count += 1
+            var queue = self.q.swap(List.empty())
+            queue.push(mine.remove(0))
+            val none = self.q.swap(queue)
+            val sent: option.Option<T> = option.Option.None
+            sent
+        } else {
+            option.Option.Some(value = mine.remove(0))
+        }
+    }
+    self.end.ne.notify_one()
+    return r
+}
+
+// Another sender on the same channel; the channel closes when the last one drops.
+fun Sender<T>.clone().R: Sender<T> {
+    self.end.meta.lock { s -> s.senders += 1 }
+    return Sender<T>(q = self.q.share(), end = SendEnd(live = true, meta = self.end.meta.share(), ne = self.end.ne.share(), nf = self.end.nf.share()))
+}
+
+// Take the oldest value, waiting while the queue is empty and a sender is alive.
+fun Receiver<T>.recv().R: result.Result<T, RecvErr> {
+    val r = self.end.meta.wait_while(&self.end.ne, fun(s: &ChanMeta).R: bool = s.count == 0 && s.senders > 0) { s ->
+        if s.count > 0 {
+            s.count -= 1
+            val item = self.q.lock { l -> l.remove(0) }
+            val got: result.Result<T, RecvErr> = result.Result.Ok(value = item)
+            got
+        } else {
+            val closed: result.Result<T, RecvErr> = result.Result.Err(error = RecvErr.Closed)
+            closed
+        }
+    }
+    self.end.nf.notify_one()
+    return r
+}
+
+// The oldest value if there is one now; never waits.
+fun Receiver<T>.try_recv().R: option.Option<T> {
+    val r = self.end.meta.lock { s ->
+        if s.count > 0 {
+            s.count -= 1
+            val item = self.q.lock { l -> l.remove(0) }
+            option.Option.Some(value = item)
+        } else {
+            val none: option.Option<T> = option.Option.None
+            none
+        }
+    }
+    self.end.nf.notify_one()
+    return r
+}
+
+// Like `recv`, but gives up after `millis` milliseconds with `Err(Timeout)`.
+fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout> {
+    val r = self.end.meta.wait_while_timeout(&self.end.ne, fun(s: &ChanMeta).R: bool = s.count == 0 && s.senders > 0, millis) { s ->
+        if s.count > 0 {
+            s.count -= 1
+            val item = self.q.lock { l -> l.remove(0) }
+            val got: result.Result<T, RecvTimeout> = result.Result.Ok(value = item)
+            got
+        } else {
+            val closed: result.Result<T, RecvTimeout> = result.Result.Err(error = RecvTimeout.Closed)
+            closed
+        }
+    }
+    self.end.nf.notify_one()
+    return when r {
+        Some(v) -> v
+        None -> {
+            val late: result.Result<T, RecvTimeout> = result.Result.Err(error = RecvTimeout.Timeout)
+            late
+        }
+    }
+}
+
+// `for v in rx`: one value per pass until every sender is gone.
+fun mut Receiver<T>.next().R: option.Option<T> {
+    return when self.recv() {
+        Ok(v) -> option.Option.Some(value = v)
+        Err(_) -> {
+            val done: option.Option<T> = option.Option.None
+            done
+        }
+    }
+}

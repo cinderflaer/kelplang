@@ -5597,6 +5597,17 @@ impl<'a> Gen<'a> {
             "new" => self.mutex_new_value(&args[0], ret),
             "lock" => self.mutex_lock_value(&args[0], &args[1], ret),
             "into_inner" => self.mutex_into_value(&args[0], ret),
+            "share" => format!("kelp_mutex_share(*({}))", self.expr_value(&args[0])),
+            "swap" => {
+                let incoming = fresh_temp();
+                let outgoing = fresh_temp();
+                format!(
+                    "({{ {c} {incoming} = {value}; {c} {outgoing}; kelp_mutex_swap(*({cell}), &{incoming}, &{outgoing}); {outgoing}; }})",
+                    c = ret.c_type(),
+                    value = self.expr_value(&args[1]),
+                    cell = self.expr_value(&args[0]),
+                )
+            }
             other => unreachable!("no C lowering for 'Mutex#{other}'"),
         }
     }
@@ -5724,6 +5735,7 @@ impl<'a> Gen<'a> {
     fn condvar_call(&self, op: &str, args: &[Expr], _ret: &Ty) -> String {
         match op {
             "new" => "kelp_condvar_new()".to_string(),
+            "share" => format!("kelp_condvar_share(*({}))", self.expr_value(&args[0])),
             "notify_one" => {
                 format!("kelp_condvar_notify_one(*({}))", self.expr_value(&args[0]))
             }

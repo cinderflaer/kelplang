@@ -1,0 +1,52 @@
+// Four producers send 250 numbers each through a bounded channel of capacity
+// four to one consumer, which walks the receiver with `for`. The loop ends by
+// itself when the last sender is dropped (the three clones inside the workers
+// and the original moved into the fourth), and the sum proves nothing was lost
+// or doubled while the producers kept blocking on the full queue.
+impl "std/thread"
+impl "std/result"
+impl "std/sync"
+impl "std/option"
+
+fun producer(tx: move sync.Sender<i64>) {
+    var i: i64 = 0
+    while i < 250 {
+        val back = tx.send(i)
+        if option.is_some(o = back) {
+            panic("the receiver is alive, so nothing may come back")
+        }
+        i += 1
+    }
+}
+
+fun main() {
+    var (tx, rx) = sync.bounded<i64>(4)
+    val h1 = thread.spawn(producer, tx.clone())
+    val h2 = thread.spawn(producer, tx.clone())
+    val h3 = thread.spawn(producer, tx.clone())
+    val h4 = thread.spawn(producer, tx)
+    var sum: i64 = 0
+    var count: i64 = 0
+    for v in rx {
+        sum += v
+        count += 1
+    }
+    print(count)
+    print(sum)
+    when thread.join(h1) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    when thread.join(h2) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    when thread.join(h3) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    when thread.join(h4) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+}
