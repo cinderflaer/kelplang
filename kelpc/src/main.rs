@@ -91,7 +91,7 @@ fn usage() {
          {BIN_NAME} doc <file.{EXT}|project dir>... [-o <dir>] [--format md|html] [--private] [--check]\n       \
          {BIN_NAME} doc --std [-o <dir>] [--format md|html] [--private] [--check]\n       \
          {BIN_NAME} cache stats|clear [--dir <dir>]\n       \
-         {BIN_NAME} version\n\n\
+         {BIN_NAME} version [--verbose]\n\n\
          The optimization level is -O0, -O1, -O2, -O3 or -Os, and -O2 is the\n\
          default. One level is one level for the whole build: it selects the\n\
          LLVM pass pipeline and the target machine's codegen level, and it is\n\
@@ -1468,6 +1468,12 @@ fn real_main() -> ExitCode {
         // the two commands that do.
         Some("version") => {
             println!("{BIN_NAME} {}", release_name(VERSION));
+            if args[2..].iter().any(|a| a == "--verbose") {
+                println!("commit: {}", env!("KELPC_COMMIT"));
+                println!("build date: {}", env!("KELPC_BUILD_DATE"));
+                println!("rustc: {}", env!("KELPC_RUSTC_VERSION"));
+                println!("llvm: {}", env!("KELPC_LLVM_VERSION"));
+            }
             return ExitCode::SUCCESS;
         }
         Some("fmt") => return fmt_command(&args[2..]),

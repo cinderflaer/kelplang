@@ -20,7 +20,69 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+/// `YYYY-MM-DD` (UTC) for a Unix timestamp, by the civil-from-days algorithm, so
+/// the build date is a pure function of `SOURCE_DATE_EPOCH` and needs no clock.
+fn date_from_epoch(secs: i64) -> String {
+    let z = secs.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn first_line(out: Option<std::process::Output>) -> Option<String> {
+    let out = out.filter(|o| o.status.success())?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+/// Bakes the version-report fields into the binary as `KELPC_*` env vars. Only
+/// data that is fixed for a given commit goes in: the commit hash (`KELPC_COMMIT`
+/// if set, else `git rev-parse HEAD`), the date from `SOURCE_DATE_EPOCH`, the
+/// compiler's `rustc -V` and the LLVM version from `llvm-config`. No wall clock.
+fn bake_build_info() {
+    for var in ["KELPC_COMMIT", "SOURCE_DATE_EPOCH", "LLVM_SYS_211_PREFIX"] {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
+    let commit = std::env::var("KELPC_COMMIT")
+        .ok()
+        .filter(|c| !c.is_empty())
+        .or_else(|| {
+            first_line(
+                Command::new("git")
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .ok(),
+            )
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let date = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .map(date_from_epoch)
+        .unwrap_or_else(|| "unknown".to_string());
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let rustc_version = first_line(Command::new(rustc).arg("-V").output().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    let llvm_config = std::env::var("LLVM_SYS_211_PREFIX")
+        .map(|p| format!("{p}/bin/llvm-config"))
+        .unwrap_or_else(|_| "llvm-config".to_string());
+    let llvm = first_line(Command::new(llvm_config).arg("--version").output().ok())
+        .or_else(|| first_line(Command::new("llvm-config").arg("--version").output().ok()))
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=KELPC_COMMIT={commit}");
+    println!("cargo:rustc-env=KELPC_BUILD_DATE={date}");
+    println!("cargo:rustc-env=KELPC_RUSTC_VERSION={rustc_version}");
+    println!("cargo:rustc-env=KELPC_LLVM_VERSION={llvm}");
+}
+
 fn main() {
+    bake_build_info();
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"),
     );
@@ -95,6 +157,10 @@ fn main() {
     // does not carry them.
     let status = Command::new("cc")
         .args(["-c", "-O2", "-fPIC", "-fwrapv", "-pthread"])
+        // Keep the build directory out of the object's file symbol and any
+        // `__FILE__`, so the same commit builds the same bytes anywhere.
+        .arg(format!("-ffile-prefix-map={}=.", out_dir.display()))
+        .arg(format!("-ffile-prefix-map={}=.", manifest_dir.display()))
         .arg("-o")
         .arg(&object)
         .arg(&wrapper)
