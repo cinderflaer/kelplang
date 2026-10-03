@@ -1,10 +1,12 @@
 // Release goal 1: a private CA file, added to the verification roots with no
 // insecure switch. The harness removes `SSL_CERT_FILE` and passes the server's
 // certificate path as `argv[2]`, so the only reason this handshake succeeds is
-// `handshake_with`'s `TlsOptions.ca_file`; verification, the hostname check and
+// `handshake_with`'s `TlsOptions.ca_pem` (the PEM bytes read through
+// `std/tlsfile` and the `fs` grant, never a path the runtime opens); verification, the hostname check and
 // the TLS 1.2 floor all stay on.
 impl "std/net"
 impl "std/tls"
+impl "std/tlsfile" caps(fs = ["/**"])
 impl "std/process"
 impl "std/str"
 impl "std/result"
@@ -29,11 +31,8 @@ fun main() {
     val ca = args.get(2)
     var s = net.connect("127.0.0.1", parsed.to_u16())
     s.set_timeout(5000)
-    val opts = tls.TlsOptions(
-        ca_file = String.from_str(ca.as_str()),
-        ca_dir = String.empty(),
-        timeout_ms = 0,
-    )
+    val pem = result.expect(r = tlsfile.ca_pem(ca.as_str()), message = "tls_ca_file: cannot read the CA")
+    val opts = tls.TlsOptions(ca_pem = pem, timeout_ms = 0)
     val hs = tls.try_handshake_with(s, "127.0.0.1", opts)
     when hs {
         Ok(t) -> {

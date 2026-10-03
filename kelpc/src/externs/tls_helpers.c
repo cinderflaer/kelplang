@@ -137,6 +137,39 @@ static inline int kelp_tls_load_client_ca(SSL_CTX* ctx, const unsigned char* pem
     return 0;
 }
 
+// Adds the certificates in `pem` to a client context's trust roots (only
+// added: verification stays on). 0, or 5 with a fixed sentence.
+static inline int kelp_tls_add_roots(SSL_CTX* ctx, const unsigned char* pem, size_t len, char* text, size_t text_len) {
+    if (len == 0 || len > 0x7fffffff) {
+        return kelp_tls_fail(text, text_len, "the CA file is empty");
+    }
+    BIO* bio = BIO_new_mem_buf(pem, (int)len);
+    if (bio == NULL) {
+        return kelp_tls_fail(text, text_len, "cannot read the CA file");
+    }
+    X509_STORE* store = SSL_CTX_get_cert_store(ctx);
+    int count = 0;
+    for (;;) {
+        X509* ca = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+        if (ca == NULL) {
+            break;
+        }
+        if (X509_STORE_add_cert(store, ca) != 1) {
+            X509_free(ca);
+            BIO_free(bio);
+            return kelp_tls_fail(text, text_len, "a CA certificate cannot be used");
+        }
+        X509_free(ca);
+        count++;
+    }
+    ERR_clear_error();
+    BIO_free(bio);
+    if (count == 0) {
+        return kelp_tls_fail(text, text_len, "the CA file holds no PEM certificate");
+    }
+    return 0;
+}
+
 // ALPN on the server: the protocols (already in the wire format, length-
 // prefixed) belong to the `SSL_CTX` through ex_data, so freeing the context
 // frees them and nothing outlives it.
