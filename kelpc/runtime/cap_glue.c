@@ -28,39 +28,121 @@
 // (`stdio.h`, `stdlib.h`, `string.h`, `limits.h`, and the rest).
 // ---- end emission note ------------------------------------------------------
 
+/* Collapses `//`, `.` and `..` segments of an absolute path in place, with
+   `..` at the root staying at the root (what the kernel does). Used only on
+   the text a symlink's target is spliced into, which has not been through the
+   normalizer. */
+static void kelp_collapse(char* p) {
+    char o[PATH_MAX];
+    size_t ol = 0;
+    const char* s = p;
+    while (*s) {
+        while (*s == '/') {
+            s++;
+        }
+        if (!*s) {
+            break;
+        }
+        const char* e = s;
+        while (*e && *e != '/') {
+            e++;
+        }
+        size_t l = (size_t)(e - s);
+        if (l == 1 && s[0] == '.') {
+        } else if (l == 2 && s[0] == '.' && s[1] == '.') {
+            while (ol > 0 && o[ol - 1] != '/') {
+                ol--;
+            }
+            if (ol > 0) {
+                ol--;
+            }
+        } else if (ol + 1 + l < sizeof o) {
+            o[ol++] = '/';
+            memcpy(o + ol, s, l);
+            ol += l;
+        }
+        s = e;
+    }
+    if (ol == 0) {
+        o[ol++] = '/';
+    }
+    o[ol] = 0;
+    memcpy(p, o, ol + 1);
+}
+
 /* Symlinks are resolved *before* matching, which is the whole reason this
    exists: a link inside the grant that points outside it must be denied.
    `realpath` fails for a path that does not exist yet (a write or an
    mkdir), so the deepest existing ancestor is resolved and the rest is
-   appended verbatim. */
+   appended verbatim, **except** that the first missing component may itself be
+   a dangling symlink: `open(O_CREAT)` follows it and creates the file at the
+   link's target, which can be outside the grant (threat model F10). So that
+   component is `readlink`ed, the target spliced in, and the walk restarts,
+   at most 40 times like the kernel's own limit. It is a loop and not a
+   recursion for the same reason the cut below is: the depth is the caller's. */
 static bool kelp_resolve_path(const char* path, char* out, size_t cap) {
-    char real[PATH_MAX];
-    if (realpath(path, real) != NULL) {
-        snprintf(out, cap, "%s", real);
-        return true;
-    }
-    /* One loop rather than one recursive call per cut. The call this replaces
-       went a frame deep per path segment, so a path of about a thousand
-       segments overran an 8 MiB stack and died with SIGSEGV instead of failing
-       to resolve and letting the match deny. The depth is the caller's, and a
-       caller can name any path.
-
-       `tail` is an offset into `path`, not a pointer into `buf`: cutting an
-       earlier slash writes a NUL over a later one, and `buf` is a truncated
-       copy of `path` whose first `sizeof buf - 1` bytes are `path`'s. */
-    char buf[PATH_MAX];
-    snprintf(buf, sizeof buf, "%s", path);
-    char* slash = strrchr(buf, '/');
-    while (slash != NULL && slash != buf) {
-        size_t tail = (size_t)(slash - buf);
-        *slash = 0;
-        if (realpath(buf, real) != NULL) {
-            snprintf(out, cap, "%s%s", real, path + tail);
+    char work[PATH_MAX];
+    snprintf(work, sizeof work, "%s", path);
+    for (int hops = 0; hops <= 40; hops++) {
+        char real[PATH_MAX];
+        if (realpath(work, real) != NULL) {
+            snprintf(out, cap, "%s", real);
             return true;
         }
-        slash = strrchr(buf, '/');
+        /* One loop rather than one recursive call per cut. The call this
+           replaces went a frame deep per path segment, so a path of about a
+           thousand segments overran an 8 MiB stack and died with SIGSEGV
+           instead of failing to resolve and letting the match deny.
+
+           `tail` is an offset into `work`, not a pointer into `buf`: cutting an
+           earlier slash writes a NUL over a later one, and `buf` is a
+           truncated copy of `work` whose first `sizeof buf - 1` bytes are
+           `work`'s. */
+        char buf[PATH_MAX];
+        snprintf(buf, sizeof buf, "%s", work);
+        char* slash = strrchr(buf, '/');
+        size_t tail = 0;
+        bool found = false;
+        while (slash != NULL && slash != buf) {
+            tail = (size_t)(slash - buf);
+            *slash = 0;
+            if (realpath(buf, real) != NULL) {
+                found = true;
+                break;
+            }
+            slash = strrchr(buf, '/');
+        }
+        if (!found) {
+            return false;
+        }
+        const char* rest = work + tail;          /* "/first/more/..." */
+        const char* end = strchr(rest + 1, '/');  /* the end of "first" */
+        size_t first_len = end != NULL ? (size_t)(end - rest) : strlen(rest);
+        char cand[PATH_MAX];
+        snprintf(cand, sizeof cand, "%s%.*s", strcmp(real, "/") == 0 ? "" : real, (int)first_len, rest);
+        char link[PATH_MAX];
+        ssize_t n = readlink(cand, link, sizeof link - 1);
+        if (n < 0) {
+            /* Not a link: the component is really absent, and so is all of
+               what follows it. */
+            snprintf(out, cap, "%s%s", strcmp(real, "/") == 0 ? "" : real, rest);
+            return true;
+        }
+        link[n] = 0;
+        const char* after = end != NULL ? end : "";
+        char next[PATH_MAX];
+        if (link[0] == '/') {
+            snprintf(next, sizeof next, "%s%s", link, after);
+        } else {
+            snprintf(next, sizeof next, "%s/%s%s", strcmp(real, "/") == 0 ? "" : real, link, after);
+        }
+        kelp_collapse(next);
+        snprintf(work, sizeof work, "%s", next);
     }
-    return false;
+    /* A chain of more than 40 links: the kernel refuses it too (ELOOP), so what
+       is matched is the path as far as it got. */
+    snprintf(out, cap, "%s", work);
+    return true;
 }
 
 static void kelp_cap_deny(const char* domain, const char* path, const char* const* patterns,
