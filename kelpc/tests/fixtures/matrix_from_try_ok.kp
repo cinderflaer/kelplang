@@ -1,0 +1,52 @@
+// Interaction: `From` x `?` x an iterator. `next` returns an `Option`, so the
+// failure is turned into `None` by a `when` (the shape the refusal in
+// `matrix_from_try_in_next` asks for), while a helper that returns a `Result` uses
+// `?` with the `From` conversion and the iterator calls it.
+impl "std/iter"
+impl "std/option"
+impl "std/result"
+impl "std/convert"
+
+enum LowErr {
+    Bad
+}
+
+enum HighErr {
+    Low
+}
+
+impl convert.From<LowErr> for HighErr {
+    fun from(value: LowErr).R: HighErr = HighErr.Low
+}
+
+fun read(n: i32).R: result.Result<i32, LowErr> {
+    if n > 2 {
+        return result.Result.Err(error = LowErr.Bad)
+    }
+    return result.Result.Ok(value = n * 10)
+}
+
+fun read_high(n: i32).R: result.Result<i32, HighErr> {
+    val v = read(n)?
+    return result.Result.Ok(value = v + 1)
+}
+
+datac Reader(var n: i32)
+
+impl iter.Iterator for Reader {
+    type Item = i32
+    fun mut Self.next().R: option.Option<i32> {
+        n += 1
+        val r = read_high(n)
+        return when r {
+            Ok(v) -> option.Option.Some(value = v)
+            Err(e) -> option.Option.None
+        }
+    }
+}
+
+fun main() {
+    for x in Reader(n = 0) {
+        print(x)
+    }
+}

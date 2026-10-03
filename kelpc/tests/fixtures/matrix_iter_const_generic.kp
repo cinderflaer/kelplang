@@ -1,0 +1,27 @@
+// Interaction: iterators x const generics. A trait cannot be implemented for a
+// generic instantiation (`impl Iterator for Ring<3>`), so `Ring<N>` cannot be an
+// iterator itself: refused by name, with the wrapper as the way out
+// (`matrix_iter_const_generic_ok`; `plan/traits.md` 14).
+impl "std/iter"
+impl "std/option"
+
+datac Ring<const N: usize>(var data: [i32; N], var at: usize)
+
+impl iter.Iterator for Ring<3> {
+    type Item = i32
+    fun mut Self.next().R: option.Option<i32> {
+        if at >= 3 {
+            return option.Option.None
+        }
+        val v = data.get(i = at)
+        at += 1
+        return option.Option.Some(value = v)
+    }
+}
+
+fun main() {
+    val r: Ring<3> = Ring(data = [4, 5, 6], at = 0)
+    for x in r {
+        print(x)
+    }
+}

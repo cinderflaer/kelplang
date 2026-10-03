@@ -1,0 +1,45 @@
+// Interaction: `Display` x a generic function. `<T: fmt.Display>` lets the body
+// call `to_text`, and the same body prints through a template.
+impl "std/fmt"
+
+datac Vec2(val x: i64, val y: i64)
+
+impl fmt.Display for Vec2 {
+    fun Self.to_text().R: String {
+        var out = String.empty()
+        val xs = fmt.int(x)
+        val ys = fmt.int(y)
+        out.push_str("<")
+        out.push_str(xs.as_str())
+        out.push_str(",")
+        out.push_str(ys.as_str())
+        out.push_str(">")
+        return out
+    }
+}
+
+datac Tag(val id: i64)
+
+impl fmt.Display for Tag {
+    fun Self.to_text().R: String {
+        var out = String.empty()
+        val s = fmt.int(id)
+        out.push_str("#")
+        out.push_str(s.as_str())
+        return out
+    }
+}
+
+fun show<T: fmt.Display>(x: &T).R: String = x.to_text()
+
+fun twice<T: fmt.Display>(x: &T) {
+    print("${x} ${x}")
+}
+
+fun main() {
+    val v = Vec2(x = 1, y = 2)
+    val t = Tag(id = 9)
+    print(show<Vec2>(x = &v))
+    print(show<Tag>(x = &t))
+    twice<Vec2>(x = &v)
+}

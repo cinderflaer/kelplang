@@ -1,0 +1,43 @@
+// The Polyp-shaped view: a block tallies while it builds children, and a block inside it
+// reads the loop's binding. One level writes (`done`), the inner one only reads.
+impl "std/str"
+datac Item(val title: String, val done: bool)
+datac Model(var items: List<Item>)
+datac Kids(var n: i32, var progress: i32)
+
+fun mut Kids.keyed(f: scoped fun(mut Kids)) { f(self) }
+fun mut Kids.text(t: str) { n += 1 }
+fun mut Kids.progress(p: i32) { progress = p }
+
+fun column(block: scoped fun(mut Kids)).R: Kids {
+    var k = Kids(n = 0, progress = 0)
+    block(k)
+    return k
+}
+
+fun view(s: Model).R: Kids {
+    var done = 0
+    return column { k ->
+        var i: usize = 0
+        while i < s.items.len() {
+            val item = s.items.get(i)
+            if item.done {
+                done += 1
+            }
+            k.keyed { r ->
+                r.text(item.title.as_str())
+            }
+            i += 1
+        }
+        k.progress(done * 1000 / s.items.len().to_i32())
+    }
+}
+
+fun main() {
+    var m = Model(items = List.empty())
+    m.items.push(Item(title = String.from_str("a"), done = true))
+    m.items.push(Item(title = String.from_str("b"), done = false))
+    val k = view(m)
+    print(k.n)
+    print(k.progress)
+}

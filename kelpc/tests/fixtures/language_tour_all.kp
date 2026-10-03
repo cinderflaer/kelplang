@@ -1,0 +1,105 @@
+// One program that uses every construct the 2026-10 language rounds added, so the
+// tooling tests (`tests/new_constructs_tooling.rs`) and the tour have one source.
+impl "std/ops"
+impl "std/fmt"
+impl "std/iter"
+impl "std/option"
+impl "std/result"
+impl "std/convert"
+
+trait Shape {
+    type Unit
+    fun Self.area().R: i32
+    fun Self.name().R: str { return "shape" }
+}
+
+datac Square(val side: i32)
+
+impl Shape for Square {
+    type Unit = i32
+    fun Self.area().R: i32 = side * side
+}
+
+trait Speak {
+    fun Self.say().R: i32
+}
+
+impl Speak for Square {
+    fun Self.say().R: i32 = side
+}
+
+datac Vec2(val x: i64, val y: i64)
+
+impl ops.Add for Vec2 {
+    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+}
+
+impl fmt.Display for Vec2 {
+    fun Self.to_text().R: String = String.from_str("v")
+}
+
+datac Buf<const N: usize>(var data: [i32; N])
+
+fun Buf<const N: usize>.size().R: usize = N
+
+enum LowErr {
+    Bad
+}
+
+enum HighErr {
+    Low
+}
+
+impl convert.From<LowErr> for HighErr {
+    fun from(value: LowErr).R: HighErr = HighErr.Low
+}
+
+fun low().R: result.Result<i32, LowErr> = result.Result.Ok(value = 1)
+
+fun high().R: result.Result<i32, HighErr> {
+    val v = low()?
+    return result.Result.Ok(value = v)
+}
+
+fun first<I: iter.Iterator>(it: mut I).R: option.Option<I::Item> {
+    return it.next()
+}
+
+fun loud(s: &dyn Speak).R: i32 = s.say()
+
+fun boxed(b: Box<dyn Speak>).R: i32 = b.say()
+
+fun each(f: scoped fun(i32)) {
+    f(1)
+    f(2)
+}
+
+fun main() {
+    val sq = Square(side = 3)
+    print(sq.area())
+    print(loud(&sq))
+    print(boxed(Box.of(Square(side = 2))))
+    val v = Vec2(x = 1, y = 2) + Vec2(x = 3, y = 4)
+    print("${v}")
+    val b: Buf<4> = Buf(data = [0; 4])
+    print(b.size())
+    var total = 0
+    each { n ->
+        total += n
+    }
+    print(total)
+    var r = iter.range(0, 10)
+    for i in r {
+        if i == 2 {
+            continue
+        }
+        if i > 4 {
+            break
+        }
+        print(i)
+    }
+    print(result.is_ok(r = high()))
+    var r2 = iter.range(5, 8)
+    val got = first(r2)
+    print(option.is_some(o = got))
+}

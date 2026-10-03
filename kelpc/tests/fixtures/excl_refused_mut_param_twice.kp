@@ -1,0 +1,19 @@
+// A `mut` parameter handed to the call *and* captured by the block.
+datac State(var count: i32)
+
+fun two(s: mut State, f: scoped fun(i32)) {
+    f(1)
+    s.count += 100
+}
+
+fun run(s: mut State) {
+    two(s) { n ->
+        s.count += n
+    }
+}
+
+fun main() {
+    var s = State(count = 0)
+    run(s)
+    print(s.count)
+}

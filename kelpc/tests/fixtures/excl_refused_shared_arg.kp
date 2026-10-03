@@ -1,0 +1,15 @@
+// The callee reads the owner (a shared borrow) while the block writes it.
+datac State(var count: i32)
+
+fun show_each(view: State, f: scoped fun(i32)) {
+    print(view.count)
+    f(1)
+    print(view.count)
+}
+
+fun main() {
+    var s = State(count = 0)
+    show_each(s) { n ->
+        s.count += n
+    }
+}

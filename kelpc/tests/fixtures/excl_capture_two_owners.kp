@@ -1,0 +1,24 @@
+// One block may write two different owners and read a third; the callee's own
+// arguments are other owners. Shared and exclusive captures live in one call.
+datac Sink(var total: i32)
+
+fun feed(base: i32, f: scoped fun(i32)) {
+    f(base)
+    f(base + 1)
+}
+
+fun main() {
+    var a = Sink(total = 0)
+    var b = Sink(total = 0)
+    val scale = Sink(total = 3)
+    feed(10) { n ->
+        a.total += n * scale.total
+        b.total += 1
+    }
+    print(a.total)
+    print(b.total)
+    // The block's borrows are gone: both owners are free again.
+    a.total = 0
+    b.total += a.total
+    print(b.total)
+}

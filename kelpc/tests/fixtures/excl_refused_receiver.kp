@@ -1,0 +1,16 @@
+// The call's receiver is the owner the block writes.
+datac State(var count: i32)
+
+fun mut State.each(f: scoped fun(i32)) {
+    f(1)
+    count += 1
+    f(2)
+}
+
+fun main() {
+    var s = State(count = 0)
+    s.each { n ->
+        s.count += n
+    }
+    print(s.count)
+}

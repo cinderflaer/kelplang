@@ -1,0 +1,35 @@
+// Interaction: a user iterator x `defer`. A `defer` in the loop body runs once
+// per iteration, including the iteration a `return` leaves, and a `defer` in the
+// function runs after the loop is done.
+impl "std/iter"
+impl "std/option"
+
+datac Countdown(var n: i32)
+
+impl iter.Iterator for Countdown {
+    type Item = i32
+    fun mut Self.next().R: option.Option<i32> {
+        if n <= 0 {
+            return option.Option.None
+        }
+        val v = n
+        n -= 1
+        return option.Option.Some(value = v)
+    }
+}
+
+fun first_even(limit: i32).R: i32 {
+    defer print("leave")
+    for x in Countdown(n = limit) {
+        defer print("iter")
+        if x % 2 == 0 {
+            return x
+        }
+    }
+    return -1
+}
+
+fun main() {
+    print(first_even(5))
+    print(first_even(1))
+}

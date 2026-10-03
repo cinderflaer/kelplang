@@ -1,0 +1,18 @@
+// A shared-borrow parameter cannot be written through, captured or not.
+datac State(var count: i32)
+
+fun each(f: scoped fun(i32)) {
+    f(1)
+}
+
+fun bump_all(s: State) {
+    each { n ->
+        s.count += n
+    }
+}
+
+fun main() {
+    var s = State(count = 0)
+    bump_all(s)
+    print(s.count)
+}

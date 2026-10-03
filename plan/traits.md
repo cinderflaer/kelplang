@@ -1174,3 +1174,45 @@ the C oracle under `KELPC_ORACLE=c`), and `tests/fixtures/` is built by the cove
   `Display` (the message names it), `impl Add for i32` in user code (the orphan rule), and `a + b`
   of two different user types;
 - a freestanding riscv64 project that uses `Add` and `Ord`, built with `llvm-nm -u` clean.
+
+## 14. The interaction matrix (language-completeness 8)
+
+Every pair of the features the 2026-10 rounds added that nobody had tested together is a
+fixture (`kelpc/tests/fixtures/matrix_*.kp`), run on the LLVM backend and the C oracle. Each cell is
+either behaviour that works (output pinned) or a refusal with a message that says what to do next.
+
+| Cell | Result | Fixture |
+|---|---|---|
+| associated types x `Box<dyn>` | **refused by name**: "'Box<dyn Source>' is not allowed: the trait declares the associated type 'Item' ... use a bounded type parameter ('<T: Source>') instead" | `matrix_assoc_boxdyn` |
+| generic traits x operator traits | **refused by name**: `ops.Add` takes no type argument, so there is no `impl Add<Vec2> for Vec2`; the right-hand side of an operator is always `&Self` | `matrix_generic_trait_operator` |
+| iterators x `defer` | works: a `defer` in the loop body runs once per iteration, including the iteration a `return` leaves; a function-level `defer` runs last | `matrix_iter_defer_return` (and `for_iter_defer`) |
+| iterators x const generics | **documented limit**: `impl Iterator for Ring<3>` is a trait for a generic instantiation (section 5), refused with the wrapper as the way out; a non-generic cursor walks a `Ring<N>` through a generic function | `matrix_iter_const_generic`, `matrix_iter_const_generic_ok` |
+| `From` x `?` inside an iterator `next` | **refused** where the shapes differ (`next` returns an `Option`, so `?` there can only propagate `None`); the working shape converts with `?` in a helper returning `Result` and turns the failure into `None` with a `when` | `matrix_from_try_in_next`, `matrix_from_try_ok` |
+| `Display` x a generic function | works: `<T: fmt.Display>` calls `to_text`, and the same value interpolates in a template | `matrix_display_generic` |
+| `Ord` x `Map` keys | works, and `Ord` is never consulted: a declared `hash`/`eq` (or, with none, the derived field-wise pair) decides key identity, so an `Ord` that calls every pair equal still leaves two keys in the map. Not a bug; documented | `matrix_ord_map_key`, `matrix_ord_only_key` |
+| operator traits in freestanding | works: `std/ops` is in the freestanding allowed set, and the existing project boots under QEMU with no undefined symbol | `tests/projects/freestanding_ops` (kernel test) |
+
+### 14.1 The ten messages a user is most likely to meet
+
+Each names what to do next. Three were improved in this pass (message text only, no behaviour):
+the `?`-shape message now says to `match` instead, the operator-with-a-type-argument message says
+there is no `Add<Other>`, the trait-for-instantiation message names the wrapper, and an array
+length mismatch now says the length is part of the type and shows the const-generic spelling.
+
+1. Missing method in an impl: "trait 'Shape' declares 'fun Self.name().R: str', and 'impl Shape for Circle' does not implement it: add ... to the block".
+2. Missing `type`: "trait 'Src' declares 'type Out', and 'impl Src for A' does not bind it: add 'type Out = <concrete type>' to the block".
+3. `for` over a non-iterator: "'for' walks a 'List<T>' or a type that implements 'Iterator' ... implement 'std.iter.Iterator' for it (...), or walk a 'List' by index".
+4. `?` with no `From`: "'?' cannot convert a failure: ... write 'impl From<IoErr> for AppErr { ... }' so the operator has a conversion to call".
+5. Array length / const mismatch: "argument 'a' has type '[i32; 3]', expected '[i32; 4]' - an array's length is part of its type; pass an array of the expected length, or declare the parameter over any length (`fun f<const N: usize>(a: &[T; N])`)" (improved).
+6. Object-unsafe trait: "'&dyn Cloneable' is not allowed: method 'dup' returns 'Self', and a trait object does not know the concrete type it would build".
+7. Unmet bound: "the call to 'area_of' needs 'Point' to implement the trait 'Shape', and it does not: write 'impl Shape for Point { ... }' in the trait's module or in the type's".
+8. Operator with no impl: "cannot use '+' on 'P': it does not implement 'Add' from 'std/ops' (write 'impl Add for P { fun Self.add(rhs: &Self).R: P }', importing 'std/ops')".
+9. `Display` missing: "cannot interpolate a value of type 'P' into a string template: it does not implement 'Display' (write 'impl fmt.Display for P { fun Self.to_text().R: String }', importing 'std/fmt')".
+10. `?` shape mismatch, and a trait for a generic instantiation (both improved, texts in the tour).
+
+### 14.2 Tooling
+
+`tests/new_constructs_tooling.rs` runs `kelpc fmt` (ragged input, idempotence, program still
+checks), `kelpc lint` and `kelpc check --json` over `tests/fixtures/language_tour_all.kp`, which
+uses every construct, and runs `check --json` over seventeen refusal fixtures to prove the editor
+JSON is a finding and never a crash.

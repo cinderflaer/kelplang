@@ -1,0 +1,21 @@
+// A `mut` parameter of the enclosing function is already exclusive, so the
+// block writes through it; the function passes nothing else of it to the call.
+datac Counter(var hits: i32)
+
+fun each(f: scoped fun(i32)) {
+    f(1)
+    f(2)
+}
+
+fun tally(c: mut Counter) {
+    each { n ->
+        c.hits += n
+    }
+    c.hits += 100
+}
+
+fun main() {
+    var c = Counter(hits = 0)
+    tally(c)
+    print(c.hits)
+}

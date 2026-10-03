@@ -1,0 +1,17 @@
+// The callee takes the owner exclusively and the block writes it too: two
+// exclusive borrows of `s` in one call.
+datac State(var count: i32)
+
+fun two(s: mut State, f: scoped fun(i32)) {
+    f(1)
+    s.count += 100
+    f(2)
+}
+
+fun main() {
+    var s = State(count = 0)
+    two(s) { n ->
+        s.count += n
+    }
+    print(s.count)
+}

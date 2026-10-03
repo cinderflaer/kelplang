@@ -2959,6 +2959,37 @@ fn take_call_arguments(
                             ctx.start_borrow(&root, *mutable, c.span)?;
                             taken.push(root);
                         }
+                    } else if let (tir::ExprKind::Ident(_), Ty::Ref { mutable: true, .. }) = (&c.kind, &c.ty) {
+                        // An exclusive borrow the enclosing function holds
+                        // (a `mut` parameter, a `var` of `&mut` type) copied
+                        // into the environment is a reborrow for the call: it
+                        // is exclusive against every other use of its roots
+                        // exactly as a captured `&mut place` is
+                        // (`plan/exclusive-captures.md`).
+                        for root in place_roots(c, ctx) {
+                            if root == STATIC_ROOT {
+                                continue;
+                            }
+                            // An argument that is itself such a pointer is not
+                            // a `Ref` node, so `start_borrow` never saw it:
+                            // look at every other argument (and every earlier
+                            // exclusive capture) of this call directly.
+                            let twice = taken.contains(&root)
+                                || args.iter().enumerate().any(|(j, other)| {
+                                    j != i && arg_roots(other, ctx).contains(&root)
+                                });
+                            if twice {
+                                return Err(BorrowError {
+                                    message: format!(
+                                        "cannot borrow {} as exclusive: this call also uses it, and a block that writes through a captured exclusive borrow needs the call's other arguments to leave it alone",
+                                        display_root(&root)
+                                    ),
+                                    span: c.span,
+                                });
+                            }
+                            ctx.start_borrow(&root, true, c.span)?;
+                            taken.push(root);
+                        }
                     }
                 }
             }

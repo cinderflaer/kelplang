@@ -699,6 +699,19 @@ struct Ctx {
     /// rather than moved, so `note_capture` records `&T` and the body reads
     /// the capture through it.
     borrowed_captures: bool,
+    /// The enclosing owned `var` bindings a scoped literal may capture by
+    /// *exclusive* borrow (`plan/exclusive-captures.md`): names that are
+    /// mutable, owned and not `Copy`.
+    outer_mut: std::collections::HashSet<String>,
+    /// This pass's upgrades: the captures `note_capture` types `&mut T`
+    /// instead of `&T`. Grown by `check_fn_literal`'s retry loop.
+    excl_captures: std::collections::HashSet<String>,
+    /// The names an *enclosing* scoped literal already captures exclusively:
+    /// a block inside that block cannot hold them (v1, `plan/exclusive-captures.md`).
+    outer_excl: std::collections::HashSet<String>,
+    /// The captures this pass wrote through (or passed as `mut`) while typed
+    /// as a shared borrow: what the retry loop upgrades. One cell per pass.
+    excl_needed: std::rc::Rc<std::cell::RefCell<std::collections::BTreeSet<String>>>,
     /// The `datac` whose body the literal was written in, when the literal is
     /// inside a receiver-form method (A-4 phase E). Its fields are names the
     /// literal can *see* but cannot capture: reading one out of a borrowed
@@ -982,11 +995,11 @@ impl Ctx {
         // call through the capture type-check, and what makes a write through
         // it a borrow error.
         let ty = if self.borrowed_captures
-            && !ty.is_copy()
+            && (!ty.is_copy() || self.excl_captures.contains(name))
             && !crate::types::is_borrowed_field_ty(&ty)
         {
             Ty::Ref {
-                mutable: false,
+                mutable: self.excl_captures.contains(name),
                 inner: Box::new(ty),
             }
         } else {
@@ -3307,6 +3320,21 @@ fn check_trait_impl_names(
         // A-12 slice 6: the impl names the trait instance, so it has to supply
         // exactly the arguments the trait declares, and each one has to satisfy
         // the bound the trait writes on that parameter.
+        if info.type_params.is_empty() && !imp.trait_arg_names.is_empty() {
+            return Err(Diagnostic::new(
+                format!(
+                    "trait '{}' takes no type arguments, and 'impl {} for {}' writes {}: write 'impl {} for {}' (an operator trait's right-hand side is always '&Self', so there is no 'Add<Other>')",
+                    info.name,
+                    imp.trait_name,
+                    imp.type_name,
+                    imp.trait_arg_names.len(),
+                    imp.trait_name,
+                    imp.type_name
+                ),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        }
         if imp.trait_arg_names.len() != info.type_params.len() {
             return Err(Diagnostic::new(
                 format!(
@@ -6108,6 +6136,11 @@ fn is_str_like(ty: &Ty) -> bool {
 /// nothing to ask, it is `char`. Every such mismatch gets the same sentence
 /// saying what to write instead.
 fn char_integer_hint(found: &Ty, expected: &Ty) -> String {
+    if let (Ty::Array(fe, fl), Ty::Array(ee, el)) = (found, expected) {
+        if fe == ee && fl != el {
+            return " — an array's length is part of its type; pass an array of the expected length, or declare the parameter over any length (`fun f<const N: usize>(a: &[T; N])`)".to_string();
+        }
+    }
     if matches!(found, Ty::Char) && expected.is_integer() {
         " — a character literal takes the type its context asks for, so with nothing to ask it is 'char'; give it the type you mean (`val c: u8 = '\"'`) or write the value as an integer".to_string()
     } else {
@@ -9668,6 +9701,10 @@ fn base_ctx(
         pd_probe: None,
         in_fn_literal: false,
         borrowed_captures: false,
+        outer_mut: Default::default(),
+        excl_captures: Default::default(),
+        outer_excl: Default::default(),
+        excl_needed: Default::default(),
         outer_bindings: HashMap::new(),
         captures: Vec::new(),
         outer_receiver: None,
@@ -10196,7 +10233,92 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
             }
             _ => unreachable!("a Deref's operand is always Ref-typed, guaranteed by check_expr"),
         },
+        // A write through a captured binding (`plan/exclusive-captures.md`).
+        // A scoped block's capture of an owned `var` is typed `&T` until a
+        // write (or a `mut` argument) shows it needs `&mut T`;
+        // `check_fn_literal` retries the literal with the capture upgraded,
+        // so reaching here with a shared type means the capture could not be
+        // (or is being probed), and the message says which.
+        tir::ExprKind::Capture { index } => {
+            let name = ctx.captures.get(*index).map(|(n, _)| n.clone()).unwrap_or_default();
+            if ctx.outer_excl.contains(&name) {
+                return Err(TypeError {
+                    message: nested_exclusive_message(&name),
+                    span: target.span,
+                });
+            }
+            match &target.ty {
+                Ty::Ref { mutable: true, .. } => Ok(()),
+                Ty::Ref { mutable: false, .. } => {
+                    note_excl_need(target, ctx);
+                    let outer_borrow = ctx
+                        .outer_bindings
+                        .get(&name)
+                        .is_some_and(crate::types::is_borrowed_field_ty);
+                    let message = if outer_borrow {
+                        format!("cannot write to captured '{name}': it is a shared borrow in the enclosing function, so a block cannot write through it; take it as a 'mut' parameter there")
+                    } else if ctx.outer_mut.contains(&name) {
+                        format!("cannot write to captured '{name}': it is captured by shared borrow here")
+                    } else {
+                        format!("cannot write to captured '{name}': it is not declared 'var' in the enclosing function; declare it 'var' so a scoped block can write it")
+                    };
+                    Err(TypeError { message, span: target.span })
+                }
+                _ => {
+                    note_excl_need(target, ctx);
+                    Err(TypeError {
+                    message: if ctx.borrowed_captures && ctx.outer_mut.contains(&name) {
+                        format!("cannot write to captured '{name}': it is copied in by value here")
+                    } else if ctx.borrowed_captures {
+                        format!("cannot write to captured '{name}': it is not declared 'var' in the enclosing function; declare it 'var' so a scoped block can write it")
+                    } else {
+                        format!("cannot write to captured '{name}': a closure owns its own copy of it, so a write would change only that copy; return the new value, or use a scoped block over a 'var'")
+                    },
+                    span: target.span,
+                    })
+                }
+            }
+        }
         other => unreachable!("not a place expression: {other:?}"),
+    }
+}
+
+fn nested_exclusive_message(name: &str) -> String {
+    format!(
+        "cannot capture '{name}' into this nested block: it is an exclusive capture of the enclosing block, and a block inside a block cannot hold it; pass '{name}' to the inner call as an ordinary argument, or capture it in the outer function"
+    )
+}
+
+/// The enclosing bindings a scoped literal may capture exclusively: writable
+/// (`var`), not a borrow, not a function value.
+fn writable_outer(ctx: &Ctx) -> std::collections::HashSet<String> {
+    let mut m = std::collections::HashSet::new();
+    for scope in ctx.scopes.iter() {
+        for (k, v) in scope.iter() {
+            if v.mutable
+                && !crate::types::is_borrowed_field_ty(&v.ty)
+                && !matches!(v.ty, Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. })
+            {
+                m.insert(k.clone());
+            } else {
+                m.remove(k);
+            }
+        }
+    }
+    m
+}
+
+/// Records that the place `e`, a capture of the scoped literal being checked,
+/// was used where an exclusive borrow is needed, if the capture is one the
+/// literal may upgrade (`plan/exclusive-captures.md`). `check_fn_literal`'s
+/// retry loop reads the set.
+fn note_excl_need(e: &tir::Expr, ctx: &Ctx) {
+    if let tir::ExprKind::Capture { index } = &e.kind {
+        if let Some((name, _)) = ctx.captures.get(*index) {
+            if ctx.borrowed_captures && ctx.outer_bindings.contains_key(name) {
+                ctx.excl_needed.borrow_mut().insert(name.clone());
+            }
+        }
     }
 }
 
@@ -11376,6 +11498,13 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
 /// the two things that make it a *literal*: its body is checked in a scope of
 /// its own (no captures yet), and the checked body is stored where codegen
 /// will emit it.
+///
+/// A *scoped* literal is checked by a retry loop (`plan/exclusive-captures.md`):
+/// every owned `var` capture starts as a shared borrow, a write through one
+/// (or passing it as a `mut` argument) records the name instead of being final,
+/// and the literal is checked again with exactly those captures typed `&mut T`.
+/// The set only grows and is bounded by the number of captures, so the loop
+/// ends; a refusal that names no upgradable capture is returned as it is.
 fn check_fn_literal(
     params_ast: &[ast::Param],
     infer_params: bool,
@@ -11384,6 +11513,65 @@ fn check_fn_literal(
     span: Span,
     ctx: &mut Ctx,
     expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if !matches!(expected, Some(Ty::ScopedFn { .. })) {
+        return check_fn_literal_pass(
+            params_ast, infer_params, return_type, body, span, ctx, expected,
+            &std::collections::HashSet::new(),
+        );
+    }
+    let mut excl: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let saved_needed = ctx.excl_needed.clone();
+    loop {
+        let fresh: std::rc::Rc<std::cell::RefCell<std::collections::BTreeSet<String>>> =
+            Default::default();
+        ctx.excl_needed = fresh.clone();
+        let (lits, count) = {
+            let st = ctx.fns.instances.borrow();
+            (st.literals.len(), st.literal_count)
+        };
+        let result = check_fn_literal_pass(
+            params_ast, infer_params, return_type, body, span, ctx, expected, &excl,
+        );
+        ctx.excl_needed = saved_needed.clone();
+        match result {
+            Ok(e) => return Ok(e),
+            Err(err) => {
+                let writable = writable_outer(ctx);
+                // A need this level cannot meet (the name belongs to a frame
+                // further out) is the enclosing literal's to upgrade.
+                for n in fresh.borrow().iter().filter(|n| !writable.contains(*n)) {
+                    saved_needed.borrow_mut().insert(n.clone());
+                }
+                let fresh_needs: Vec<String> = fresh
+                    .borrow()
+                    .iter()
+                    .filter(|n| writable.contains(*n) && !excl.contains(*n))
+                    .cloned()
+                    .collect();
+                if fresh_needs.is_empty() {
+                    return Err(err);
+                }
+                excl.extend(fresh_needs);
+                // The failed pass may have emitted nested literals; the next
+                // pass writes them again under the same keys.
+                let mut st = ctx.fns.instances.borrow_mut();
+                st.literals.truncate(lits);
+                st.literal_count = count;
+            }
+        }
+    }
+}
+
+fn check_fn_literal_pass(
+    params_ast: &[ast::Param],
+    infer_params: bool,
+    return_type: &Option<ast::TypeExpr>,
+    body: &ast::FunctionBody,
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+    excl: &std::collections::HashSet<String>,
 ) -> Result<tir::Expr> {
     // A literal written at a `scoped fun(...)` parameter is the non-escaping
     // kind: its captures may be borrows, its environment is stack, and the
@@ -11539,6 +11727,9 @@ fn check_fn_literal(
     // surrounding `Mutex.lock` block's inference.
     inner.infer_scoped_ret = false;
     inner.borrowed_captures = scoped;
+    inner.excl_captures = excl.clone();
+    inner.outer_mut = writable_outer(ctx);
+    inner.outer_excl = ctx.excl_captures.union(&ctx.outer_excl).cloned().collect();
     let mut tir_params = Vec::with_capacity(params.len());
     for (name, ty) in &params {
         inner.define(name, ty.clone(), false);
@@ -11600,6 +11791,18 @@ fn check_fn_literal(
                 span,
             });
         }
+        // An exclusive capture is a borrow that lives for the call, so the
+        // block's own result must not be derived from it
+        // (`plan/exclusive-captures.md`).
+        if scoped && matches!(ty, Ty::Ref { mutable: true, .. }) && crate::types::is_borrowed_field_ty(&ret) {
+            return Err(TypeError {
+                message: format!(
+                    "this block writes through '{name}' (an exclusive capture) and returns a borrow ('{}'): the borrow would outlive the call that holds '{name}' exclusively; return an owned value (a copy or a 'String.from_str(...)') instead",
+                    ret.display()
+                ),
+                span,
+            });
+        }
         // A borrow cannot be captured by an ordinary closure (its environment
         // outlives the frame), but a scoped literal's environment is stack and
         // lives only for the call, so a borrowed *value* (a `&T` parameter, a
@@ -11622,7 +11825,10 @@ fn check_fn_literal(
         let outer_owned = ctx
             .lookup(name)
             .map(|i| i.ty.clone())
-            .filter(|t| !crate::types::is_borrowed_field_ty(t) && !t.is_copy());
+            .filter(|t| {
+                !crate::types::is_borrowed_field_ty(t)
+                    && (!t.is_copy() || matches!(&ty, Ty::Ref { mutable: true, .. }))
+            });
         let field_ty = ty.clone();
         let init = if ctx.lookup(name).is_some() {
             if scoped && outer_owned.is_some() {
@@ -11633,7 +11839,7 @@ fn check_fn_literal(
                 };
                 tir::Expr {
                     kind: tir::ExprKind::Ref {
-                        mutable: false,
+                        mutable: matches!(&field_ty, Ty::Ref { mutable: true, .. }),
                         expr: Box::new(place),
                     },
                     ty: field_ty.clone(),
@@ -11655,6 +11861,12 @@ fn check_fn_literal(
             // this literal copies it out of that environment. Moving it out
             // instead would be a partial move (A-11), which is why only a
             // `Copy` capture can be nested this way.
+            if matches!(ty, Ty::Ref { mutable: true, .. }) {
+                return Err(TypeError {
+                    message: nested_exclusive_message(name),
+                    span,
+                });
+            }
             if !ty.is_copy() {
                 return Err(TypeError {
                     message: format!(
@@ -12133,6 +12345,26 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         .iter()
                         .position(|(n, _)| n == name)
                         .expect("note_capture records the name");
+                    // A `Copy` binding the literal writes is captured by
+                    // exclusive borrow (`plan/exclusive-captures.md`), and its
+                    // reads and writes go through the pointer, so the name is
+                    // the place the pointer addresses.
+                    if let Ty::Ref { mutable: true, inner } = &ty {
+                        if ctx.excl_captures.contains(name) && inner.is_copy() {
+                            let place_ty = (**inner).clone();
+                            return Ok(tir::Expr {
+                                kind: tir::ExprKind::Deref {
+                                    expr: Box::new(tir::Expr {
+                                        kind: tir::ExprKind::Capture { index },
+                                        ty: ty.clone(),
+                                        span: *span,
+                                    }),
+                                },
+                                ty: place_ty,
+                                span: *span,
+                            });
+                        }
+                    }
                     return Ok(tir::Expr {
                         kind: tir::ExprKind::Capture { index },
                         ty,
@@ -13533,7 +13765,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     if shape.err_has_payload != rshape.err_has_payload {
         return Err(TypeError {
             message: format!(
-                "'?' here propagates {} failure, but the enclosing function returns '{}' — the two have to be the same shape",
+                "'?' here propagates {} failure, but the enclosing function returns '{}' — the two have to be the same shape; match the value instead (`when r {{ Ok(v) -> ..., Err(e) -> return <your failure> }}`), or make the function return the same kind of enum",
                 if shape.err_has_payload { "a carrying" } else { "a payload-less" },
                 ret.display()
             ),
@@ -15113,6 +15345,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         }
         Ty::Ref { mutable: a_mut, inner: a_inner } if a_inner == inner => {
             if *mutable && !a_mut {
+                note_excl_need(&checked, ctx);
                 return Err(TypeError {
                     message: format!("argument {pname} requires an exclusive borrow, found a shared one"),
                     span: arg_expr.span(),

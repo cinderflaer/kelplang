@@ -1,0 +1,28 @@
+// A block that writes a capture may still return an owned value, and `return`
+// inside it leaves only the block.
+fun map_all(xs: List<i32>, f: scoped fun(i32).R: i32).R: i32 {
+    var acc = 0
+    var i: usize = 0
+    while i < xs.len() {
+        acc += f(xs.get(i))
+        i += 1
+    }
+    return acc
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    var visited = 0
+    val r = map_all(xs) { x ->
+        visited += 1
+        if x == 2 {
+            return 0
+        }
+        x * 10
+    }
+    print(r)
+    print(visited)
+}

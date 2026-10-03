@@ -1,0 +1,38 @@
+// Interaction: `Ord` x `Map` keys. A type with a declared `hash`/`eq` and an
+// `Ord` impl is a working key: the declared pair decides identity, `Ord` only
+// gives `<` and friends.
+impl "std/ops"
+
+datac Version(val major: i32, val minor: i32)
+
+fun Version.hash().R: u64 = self.major.to_u64() * 31 + self.minor.to_u64()
+
+fun Version.eq(other: &Version).R: bool = self.major == other.major && self.minor == other.minor
+
+impl ops.Ord for Version {
+    fun Self.cmp(other: &Self).R: i32 {
+        if major != other.major {
+            if major < other.major {
+                return -1
+            }
+            return 1
+        }
+        if minor < other.minor {
+            return -1
+        }
+        if minor > other.minor {
+            return 1
+        }
+        return 0
+    }
+}
+
+fun main() {
+    var m: Map<Version, i32> = Map.empty()
+    m.insert(Version(major = 1, minor = 2), 10)
+    m.insert(Version(major = 2, minor = 0), 20)
+    m.insert(Version(major = 1, minor = 2), 11)
+    print(m.len())
+    print(m.get_or(Version(major = 1, minor = 2), 0))
+    print(Version(major = 1, minor = 2) < Version(major = 2, minor = 0))
+}

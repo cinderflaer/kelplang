@@ -1,0 +1,54 @@
+// The Elm-style drain loop without threading the model through the callback:
+// `pump` captures its `mut` parameter, `main` a local `var`, and both pass the
+// capture on to `update`/`mark` as an ordinary `mut` argument.
+datac Model(var count: i32, var marks: List<i32>)
+enum Msg {
+    Inc
+    Add(val n: i32)
+}
+datac Queue(var pending: List<i32>)
+
+fun mut Queue.drain(f: scoped fun(Msg)) {
+    var i: usize = 0
+    while i < pending.len() {
+        val n = pending.get(i)
+        if n == 0 { f(Msg.Inc) } else { f(Msg.Add(n = n)) }
+        i += 1
+    }
+    pending = List.empty()
+}
+
+fun update(state: mut Model, msg: Msg) {
+    when msg {
+        Inc -> { state.count += 1 }
+        Add(n) -> { state.count += n }
+    }
+}
+
+fun mark(state: mut Model) { state.marks.push(state.count) }
+
+fun pump(state: mut Model, q: mut Queue) {
+    q.drain { msg ->
+        update(state, msg)
+        mark(state)
+    }
+}
+
+fun main() {
+    var m = Model(count = 0, marks = List.empty())
+    var q = Queue(pending = List.empty())
+    q.pending.push(0)
+    q.pending.push(5)
+    pump(m, q)
+    q.pending.push(2)
+    q.drain { msg ->
+        update(m, msg)
+        mark(m)
+    }
+    var i: usize = 0
+    while i < m.marks.len() {
+        print(m.marks.get(i))
+        i += 1
+    }
+    print(m.count)
+}

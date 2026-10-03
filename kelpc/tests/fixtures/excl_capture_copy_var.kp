@@ -1,0 +1,22 @@
+// A `Copy` `var` the block writes is captured by exclusive borrow too, so a
+// plain counter works: the writes are visible after the call, and a read of the
+// same name inside the block sees the running value.
+fun each(f: scoped fun(i32)) {
+    f(1)
+    f(2)
+    f(3)
+}
+
+fun main() {
+    var total = 0
+    var calls = 0
+    each { n ->
+        total += n
+        calls += 1
+        if total > 3 {
+            total += 1000
+        }
+    }
+    print(total)
+    print(calls)
+}
