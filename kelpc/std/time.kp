@@ -1,3 +1,4 @@
+//! Wall-clock and monotonic time, and sleeping, gated by the `time` capability.
 /* std/time — the gated clock namespace (M7). Reading a clock is a
    capability, the same classification WASI uses for `wasi:clocks`, so a
    program that cannot observe time gets reproducibility for free.
@@ -10,12 +11,13 @@ extern fun now_unix_raw().R: i64
 extern fun now_mono_ns_raw().R: i64
 extern fun sleep_ms_raw(ms: u64)
 
-// Seconds since the Unix epoch.
+/// Seconds since the Unix epoch.
 fun now_unix().R: i64 = now_unix_raw()
 
-// Nanoseconds on the monotonic clock: the one to measure elapsed time with.
+/// Nanoseconds on the monotonic clock: the one to measure elapsed time with.
 fun now_mono_ns().R: i64 = now_mono_ns_raw()
 
+/// Blocks the calling thread for `ms` milliseconds.
 fun sleep_ms(ms: u64) {
     sleep_ms_raw(ms)
 }

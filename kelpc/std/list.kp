@@ -1,3 +1,4 @@
+//! Callback-shaped operations on `List<T>`: `map`, `filter`, `each`, `any`, `all` and friends.
 /* std/list — the callback-shaped operations on the builtin `List<T>` (A-4).
 
    The element-wise API (`len`, `get`, `push`, `sort`, …) is built into the
@@ -20,8 +21,8 @@
    of a list is not expressible. */
 impl "std/option"
 
-// The list of `f(x)` for every `x`. Works for any element type: the result is
-// built from what `f` returns, and nothing is taken out of `xs`.
+/// The list of `f(x)` for every `x`. Works for any element type: the result is
+/// built from what `f` returns, and nothing is taken out of `xs`.
 fun map<T, U>(xs: &List<T>, f: closure(&T).R: U).R: List<U> {
     var out: List<U> = List.empty()
     var i: usize = 0
@@ -32,8 +33,8 @@ fun map<T, U>(xs: &List<T>, f: closure(&T).R: U).R: List<U> {
     return out
 }
 
-// The elements `f` accepts, in order. `T` must be `Copy`: an accepted element
-// is read out of `xs` by value.
+/// The elements `f` accepts, in order. `T` must be `Copy`: an accepted element
+/// is read out of `xs` by value.
 fun filter<T>(xs: &List<T>, f: closure(&T).R: bool).R: List<T> {
     var out: List<T> = List.empty()
     var i: usize = 0
@@ -46,8 +47,8 @@ fun filter<T>(xs: &List<T>, f: closure(&T).R: bool).R: List<T> {
     return out
 }
 
-// Run `f` over every element, in order, for its effect. Works for any element
-// type.
+/// Run `f` over every element, in order, for its effect. Works for any element
+/// type.
 fun each<T>(xs: &List<T>, f: closure(&T)) {
     var i: usize = 0
     while i < xs.len() {
@@ -56,8 +57,8 @@ fun each<T>(xs: &List<T>, f: closure(&T)) {
     }
 }
 
-// The index of the first element `f` accepts, or `None`. Works for any element
-// type — the index is the value, and no element is read out.
+/// The index of the first element `f` accepts, or `None`. Works for any element
+/// type — the index is the value, and no element is read out.
 fun find_index<T>(xs: &List<T>, f: closure(&T).R: bool).R: option.Option<usize> {
     var i: usize = 0
     while i < xs.len() {
@@ -69,8 +70,8 @@ fun find_index<T>(xs: &List<T>, f: closure(&T).R: bool).R: option.Option<usize> 
     return option.Option.None
 }
 
-// Whether `f` accepts any element — the predicate form of `find_index`, for a
-// caller that does not care which one. Works for any element type.
+/// Whether `f` accepts any element — the predicate form of `find_index`, for a
+/// caller that does not care which one. Works for any element type.
 fun any<T>(xs: &List<T>, f: closure(&T).R: bool).R: bool {
     var i: usize = 0
     while i < xs.len() {
@@ -82,7 +83,7 @@ fun any<T>(xs: &List<T>, f: closure(&T).R: bool).R: bool {
     return false
 }
 
-// Whether `f` accepts every element. Works for any element type.
+/// Whether `f` accepts every element. Works for any element type.
 fun all<T>(xs: &List<T>, f: closure(&T).R: bool).R: bool {
     var i: usize = 0
     while i < xs.len() {

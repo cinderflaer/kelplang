@@ -1,3 +1,4 @@
+//! TCP and UDP sockets and DNS, gated by the `net` capability.
 impl "std/io"
 impl "std/str"
 impl "std/result"
@@ -50,50 +51,50 @@ extern fun local_port_raw(fd: i32).R: u16
 extern fun peer_addr_raw(fd: i32).R: String
 extern fun resolve_raw(host: &str).R: String
 
-// A connected socket. Not `Copy` (no `datac` is), so passing one to a
-// function is a borrow and there is never a silent second close.
+/// A connected socket. Not `Copy` (no `datac` is), so passing one to a
+/// function is a borrow and there is never a silent second close.
 datac Socket(val fd: i32)
 
-// A bound, listening socket. Distinct from `Socket` so that `accept` cannot be
-// handed a connected one by mistake — there is no `Copy` in v1 to blur the two,
-// only the type name, which is exactly what a type name is for.
+/// A bound, listening socket. Distinct from `Socket` so that `accept` cannot be
+/// handed a connected one by mistake — there is no `Copy` in v1 to blur the two,
+/// only the type name, which is exactly what a type name is for.
 datac Listener(val fd: i32)
 
-// Connects to `host:port`.
-//
-// `host` is resolved by `getaddrinfo` and every address in the list is tried
-// in order, so `localhost` works whether it resolves to `::1` or `127.0.0.1`.
-// DNS is blocking and has no timeout in v1; a name that hangs hangs here.
-//
-// Panics: if `host:port` is outside the granted capability, the host does not
-// resolve, or every address refuses the connection. `try_connect` is the same
-// call with those last two as a value.
+/// Connects to `host:port`.
+///
+/// `host` is resolved by `getaddrinfo` and every address in the list is tried
+/// in order, so `localhost` works whether it resolves to `::1` or `127.0.0.1`.
+/// DNS is blocking and has no timeout in v1; a name that hangs hangs here.
+///
+/// Panics: if `host:port` is outside the granted capability, the host does not
+/// resolve, or every address refuses the connection. `try_connect` is the same
+/// call with those last two as a value.
 fun connect(host: &str, port: u16).R: Socket = Socket(fd = connect_raw(host, port))
 
-// Why a fallible dial failed, as a value a caller can show or match on.
-//
-// `reason` is the text `connect` panics with, its message line and the detail
-// line below it, so a caller that logs it prints exactly what the panicking
-// form would have printed on stderr. One `String` rather than an `errno`,
-// because a name that does not resolve reports a `getaddrinfo` code and no
-// `errno` at all: `io.IoErr`'s `errno` field would have to be 0 for half the
-// failures.
+/// Why a fallible dial failed, as a value a caller can show or match on.
+///
+/// `reason` is the text `connect` panics with, its message line and the detail
+/// line below it, so a caller that logs it prints exactly what the panicking
+/// form would have printed on stderr. One `String` rather than an `errno`,
+/// because a name that does not resolve reports a `getaddrinfo` code and no
+/// `errno` at all: `io.IoErr`'s `errno` field would have to be 0 for half the
+/// failures.
 datac ConnectErr(val reason: String)
 
-// Connects to `host:port`, or returns why it could not: the fallible twin of
-// `connect`, for the caller that has somewhere to go on a failure. A program
-// that reconnects is the case this exists for (MISSING-w9Kda): a refused dial
-// is an `Err` to retry, not the end of the process.
-//
-// The failure `connect` panics on is the `Err` here, carrying the same text
-// (`ConnectErr.reason`), so the two forms cannot report a different cause.
-// `connect` stays as the convenience wrapper for a caller for whom the dial
-// failing really is fatal. The shape is `std/process`'s: `run` beside
-// `try_run`, with the reason as a named type (`ProcErr`).
-//
-// Panics: if `host:port` is outside the granted capability. That check is
-// compiled into the caller and runs before the dial, exactly as `connect`'s
-// does, and it has no value-returning form.
+/// Connects to `host:port`, or returns why it could not: the fallible twin of
+/// `connect`, for the caller that has somewhere to go on a failure. A program
+/// that reconnects is the case this exists for (MISSING-w9Kda): a refused dial
+/// is an `Err` to retry, not the end of the process.
+///
+/// The failure `connect` panics on is the `Err` here, carrying the same text
+/// (`ConnectErr.reason`), so the two forms cannot report a different cause.
+/// `connect` stays as the convenience wrapper for a caller for whom the dial
+/// failing really is fatal. The shape is `std/process`'s: `run` beside
+/// `try_run`, with the reason as a named type (`ProcErr`).
+///
+/// Panics: if `host:port` is outside the granted capability. That check is
+/// compiled into the caller and runs before the dial, exactly as `connect`'s
+/// does, and it has no value-returning form.
 fun try_connect(host: &str, port: u16).R: result.Result<Socket, ConnectErr> {
     var reason = String.empty()
     val fd = connect_try_raw(host, port, &mut reason)
@@ -103,14 +104,14 @@ fun try_connect(host: &str, port: u16).R: result.Result<Socket, ConnectErr> {
     return result.Result.Ok(value = Socket(fd = fd))
 }
 
-// Why a fallible send or receive failed: `reason` is the text the panicking
-// form would have panicked with (the message line and the `errno` detail
-// line, or `net.recv: timed out` for a read that hit the socket's timeout).
+/// Why a fallible send or receive failed: `reason` is the text the panicking
+/// form would have panicked with (the message line and the `errno` detail
+/// line, or `net.recv: timed out` for a read that hit the socket's timeout).
 datac NetErr(val reason: String)
 
-// `send_all`, with a failed send (a reset, a closed peer) as an `Err` instead
-// of a panic. The `usize` is the count written, always the whole buffer on
-// success.
+/// `send_all`, with a failed send (a reset, a closed peer) as an `Err` instead
+/// of a panic. The `usize` is the count written, always the whole buffer on
+/// success.
 fun try_send_all(s: Socket, data: Bytes).R: result.Result<usize, NetErr> {
     var reason = String.empty()
     val rc = send_all_try_raw(s.fd, data, &mut reason)
@@ -120,8 +121,8 @@ fun try_send_all(s: Socket, data: Bytes).R: result.Result<usize, NetErr> {
     return result.Result.Ok(value = data.len())
 }
 
-// `recv`, with a failed read (a reset, a timeout) as an `Err`. An empty `Ok`
-// is still the peer's clean end of stream.
+/// `recv`, with a failed read (a reset, a timeout) as an `Err`. An empty `Ok`
+/// is still the peer's clean end of stream.
 fun try_recv(s: Socket, max: usize).R: result.Result<Bytes, NetErr> {
     var reason = String.empty()
     val b = recv_try_raw(s.fd, max, &mut reason)
@@ -131,7 +132,7 @@ fun try_recv(s: Socket, max: usize).R: result.Result<Bytes, NetErr> {
     return result.Result.Ok(value = b)
 }
 
-// `recv_into`, with a failed read as an `Err`. `Ok(0)` is end of stream.
+/// `recv_into`, with a failed read as an `Err`. `Ok(0)` is end of stream.
 fun try_recv_into(s: Socket, buf: mut Bytes, at: usize).R: result.Result<usize, NetErr> {
     var reason = String.empty()
     val n = recv_into_try_raw(s.fd, buf, at, &mut reason)
@@ -141,32 +142,32 @@ fun try_recv_into(s: Socket, buf: mut Bytes, at: usize).R: result.Result<usize, 
     return result.Result.Ok(value = n)
 }
 
-// Binds `port` on every interface and listens, leaving the backlog to the
-// kernel. Port 0 asks the kernel for a free port, which `Listener.port` then
-// reports — the loopback test's way of needing no fixed port.
-//
-// The check for this call matches the *port* only: a listener binds the
-// machine, not a named host, so the port is the resource a `net` grant governs
-// for listening, and a pattern with no port (`api.example.com`) constrains
-// none. That is deliberately different from `connect`, which matches the host
-// as written — a listener has no host to name, and v1 has no
-// `net.listen(host, port)`.
-//
-// Panics: if the port is outside the granted capability, or the bind fails
-// (including "address already in use").
+/// Binds `port` on every interface and listens, leaving the backlog to the
+/// kernel. Port 0 asks the kernel for a free port, which `Listener.port` then
+/// reports — the loopback test's way of needing no fixed port.
+///
+/// The check for this call matches the *port* only: a listener binds the
+/// machine, not a named host, so the port is the resource a `net` grant governs
+/// for listening, and a pattern with no port (`api.example.com`) constrains
+/// none. That is deliberately different from `connect`, which matches the host
+/// as written — a listener has no host to name, and v1 has no
+/// `net.listen(host, port)`.
+///
+/// Panics: if the port is outside the granted capability, or the bind fails
+/// (including "address already in use").
 fun listen(port: u16).R: Listener = Listener(fd = listen_raw(port))
 
-// Blocks until a peer connects, then returns a socket for it. One thread can
-// serve many sockets by asking `wait_readable` first instead.
-//
-// Panics: if `accept` fails.
+/// Blocks until a peer connects, then returns a socket for it. One thread can
+/// serve many sockets by asking `wait_readable` first instead.
+///
+/// Panics: if `accept` fails.
 fun accept(l: Listener).R: Socket = Socket(fd = accept_raw(l.fd))
 
-// `accept`, with a failed accept as an `Err` instead of a panic. After
-// `Listener.set_timeout(ms)` a call that sees no peer for that long is the
-// `Err` whose reason is `net.accept: timed out`, which is how a server loop
-// stops waiting without a second thread. Several threads may call this on one
-// listener: the kernel hands each connection to exactly one of them.
+/// `accept`, with a failed accept as an `Err` instead of a panic. After
+/// `Listener.set_timeout(ms)` a call that sees no peer for that long is the
+/// `Err` whose reason is `net.accept: timed out`, which is how a server loop
+/// stops waiting without a second thread. Several threads may call this on one
+/// listener: the kernel hands each connection to exactly one of them.
 fun try_accept(l: Listener).R: result.Result<Socket, NetErr> {
     var reason = String.empty()
     val fd = accept_try_raw(l.fd, &mut reason)
@@ -176,136 +177,136 @@ fun try_accept(l: Listener).R: result.Result<Socket, NetErr> {
     return result.Result.Ok(value = Socket(fd = fd))
 }
 
-// Milliseconds on the monotonic clock, from an arbitrary start: only the
-// difference of two readings means anything. It exists for connection
-// deadlines (a server cutting off a client that trickles its request), and it
-// sits in `net` rather than `time` so that a module holding `net` can keep a
-// deadline without also being handed the `time` capability; it reads nothing
-// but elapsed time.
+/// Milliseconds on the monotonic clock, from an arbitrary start: only the
+/// difference of two readings means anything. It exists for connection
+/// deadlines (a server cutting off a client that trickles its request), and it
+/// sits in `net` rather than `time` so that a module holding `net` can keep a
+/// deadline without also being handed the `time` capability; it reads nothing
+/// but elapsed time.
 fun mono_ms().R: i64 = mono_ms_raw()
 
-// Panics: if the descriptor cannot be closed.
+/// Panics: if the descriptor cannot be closed.
 fun close(s: Socket) {
     close_raw(s.fd)
 }
 
-// The listener's own close. A listener holds a descriptor like anything else
-// and nothing closes on drop, so it needs the matching close — the sketch in
-// `plan.md` had only `net.close(s: Socket)`, and separate types with separate
-// closes is what keeps `accept` from being handed a connected socket.
-//
-// Panics: if the descriptor cannot be closed.
+/// The listener's own close. A listener holds a descriptor like anything else
+/// and nothing closes on drop, so it needs the matching close — the sketch in
+/// `plan.md` had only `net.close(s: Socket)`, and separate types with separate
+/// closes is what keeps `accept` from being handed a connected socket.
+///
+/// Panics: if the descriptor cannot be closed.
 fun Listener.close() {
     close_raw(fd)
 }
 
-// Closes only the writing half: the peer sees end of file, and this end can
-// still read whatever is in flight. This is what an HTTP client does when it
-// stops sending but has a response to read.
-//
-// Panics: if the shutdown fails.
+/// Closes only the writing half: the peer sees end of file, and this end can
+/// still read whatever is in flight. This is what an HTTP client does when it
+/// stops sending but has a response to read.
+///
+/// Panics: if the shutdown fails.
 fun shutdown_write(s: Socket) {
     shutdown_write_raw(s.fd)
 }
 
-// `shutdown_write`, with a socket that is no longer connected (the peer reset
-// it) as `false` instead of a panic. A server ending a connection it does not
-// know the state of is the case this exists for.
+/// `shutdown_write`, with a socket that is no longer connected (the peer reset
+/// it) as `false` instead of a panic. A server ending a connection it does not
+/// know the state of is the case this exists for.
 fun try_shutdown_write(s: Socket).R: bool = shutdown_write_try_raw(s.fd)
 
-// One `send(2)`: it may write fewer bytes than it was given, and it does not
-// block until they are all out. `send_all` is the one most callers want. A
-// peer that has closed its end turns into a panic here rather than a `SIGPIPE`
-// that kills the process.
-//
-// Panics: if the send fails or the peer has closed.
+/// One `send(2)`: it may write fewer bytes than it was given, and it does not
+/// block until they are all out. `send_all` is the one most callers want. A
+/// peer that has closed its end turns into a panic here rather than a `SIGPIPE`
+/// that kills the process.
+///
+/// Panics: if the send fails or the peer has closed.
 fun send(s: Socket, data: Bytes).R: usize = send_raw(s.fd, data)
 
-// The whole buffer, looping over short writes in the same primitive that
-// `io.File.write` uses — a pipe or socket may take fewer bytes than it was
-// offered, so one `send` is not a write.
-//
-// Panics: as `send`.
+/// The whole buffer, looping over short writes in the same primitive that
+/// `io.File.write` uses — a pipe or socket may take fewer bytes than it was
+/// offered, so one `send` is not a write.
+///
+/// Panics: as `send`.
 fun send_all(s: Socket, data: Bytes).R: usize = send_all_raw(s.fd, data)
 
-// The `&str` form, for a literal or a view. Allocates one `Bytes` copy of the
-// text, because `send` takes bytes and v1 has no byte view (open item 44).
-//
-// Panics: as `send`.
+/// The `&str` form, for a literal or a view. Allocates one `Bytes` copy of the
+/// text, because `send` takes bytes and v1 has no byte view (open item 44).
+///
+/// Panics: as `send`.
 fun send_text(s: Socket, text: &str) {
     send_all(s, Bytes.from_str(text))
 }
 
-// One `recv(2)`: up to `max` bytes, whatever is available. Empty means the peer
-// closed, or that `max` was zero: a zero length returns empty at once rather
-// than blocking, the way `recv_into` with an empty buffer returns 0. Use
-// `recv_into` when the length is known: a fresh fixed-size buffer cannot
-// express "read exactly `Content-Length`" without growth.
-//
-// Panics: if the receive fails.
+/// One `recv(2)`: up to `max` bytes, whatever is available. Empty means the peer
+/// closed, or that `max` was zero: a zero length returns empty at once rather
+/// than blocking, the way `recv_into` with an empty buffer returns 0. Use
+/// `recv_into` when the length is known: a fresh fixed-size buffer cannot
+/// express "read exactly `Content-Length`" without growth.
+///
+/// Panics: if the receive fails.
 fun recv(s: Socket, max: usize).R: Bytes = recv_raw(s.fd, max)
 
-// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 when
-// the peer has closed). The buffer is written in place and its length is not
-// changed, so this is the form for a message of a known size — the
-// `Content-Length` case the HTTP client needs.
-//
-// Panics: if the receive fails.
+/// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 when
+/// the peer has closed). The buffer is written in place and its length is not
+/// changed, so this is the form for a message of a known size — the
+/// `Content-Length` case the HTTP client needs.
+///
+/// Panics: if the receive fails.
 fun recv_into(s: Socket, buf: mut Bytes, at: usize).R: usize = recv_into_raw(s.fd, buf, at)
 
-// Waits up to `timeout_ms` for the socket to become readable, then returns
-// whether it did. This is `poll(2)`, the same primitive `io.File` exposes, and
-// it is what makes one thread enough for many sockets. A timeout above
-// `INT_MAX` milliseconds means "forever".
-//
-// Panics: if `poll` fails.
+/// Waits up to `timeout_ms` for the socket to become readable, then returns
+/// whether it did. This is `poll(2)`, the same primitive `io.File` exposes, and
+/// it is what makes one thread enough for many sockets. A timeout above
+/// `INT_MAX` milliseconds means "forever".
+///
+/// Panics: if `poll` fails.
 fun Socket.wait_readable(timeout_ms: u64).R: bool {
     val f = io.File(fd = fd)
     return f.wait_readable(timeout_ms)
 }
 
-// As `wait_readable`, for writability.
-//
-// Panics: if `poll` fails.
+/// As `wait_readable`, for writability.
+///
+/// Panics: if `poll` fails.
 fun Socket.wait_writable(timeout_ms: u64).R: bool {
     val f = io.File(fd = fd)
     return f.wait_writable(timeout_ms)
 }
 
-// Sets the receive and send timeouts, so a blocking `recv` on a silent peer
-// gives up instead of hanging forever.
-//
-// Panics: if the socket options cannot be set.
+/// Sets the receive and send timeouts, so a blocking `recv` on a silent peer
+/// gives up instead of hanging forever.
+///
+/// Panics: if the socket options cannot be set.
 fun mut Socket.set_timeout(ms: u64) {
     set_timeout_raw(fd, ms)
 }
 
-// Sets the receive timeout on a listening socket, which `accept` honours: a
-// `try_accept` that waits this long with no peer returns a timeout `Err`. `0`
-// is "wait forever", as on a connected socket.
-//
-// Panics: if the socket option cannot be set.
+/// Sets the receive timeout on a listening socket, which `accept` honours: a
+/// `try_accept` that waits this long with no peer returns a timeout `Err`. `0`
+/// is "wait forever", as on a connected socket.
+///
+/// Panics: if the socket option cannot be set.
 fun mut Listener.set_timeout(ms: u64) {
     set_timeout_raw(fd, ms)
 }
 
-// The port this listener is bound to, from `getsockname`. With
-// `net.listen(0)` this is how the kernel-assigned port is learned.
-//
-// Panics: if the socket has no local address.
+/// The port this listener is bound to, from `getsockname`. With
+/// `net.listen(0)` this is how the kernel-assigned port is learned.
+///
+/// Panics: if the socket has no local address.
 fun Listener.port().R: u16 = local_port_raw(fd)
 
-// The peer's address as `ip:port`, from `getpeername`.
-//
-// Panics: if the socket has no peer.
+/// The peer's address as `ip:port`, from `getpeername`.
+///
+/// Panics: if the socket has no peer.
 fun Socket.peer_addr().R: String = peer_addr_raw(fd)
 
-// The addresses `host` resolves to, as strings (`getaddrinfo`, formatted with
-// `inet_ntop`) — not a `getaddrinfo` blob, and deduplicated. An address
-// literal resolves to itself, which makes this the honest way to see what
-// `connect` would try.
-//
-// Panics: if the host is outside the granted capability, or does not resolve.
+/// The addresses `host` resolves to, as strings (`getaddrinfo`, formatted with
+/// `inet_ntop`) — not a `getaddrinfo` blob, and deduplicated. An address
+/// literal resolves to itself, which makes this the honest way to see what
+/// `connect` would try.
+///
+/// Panics: if the host is outside the granted capability, or does not resolve.
 fun resolve(host: &str).R: List<String> {
     val raw = resolve_raw(host)
     return str.split(raw.as_str(), "\n")

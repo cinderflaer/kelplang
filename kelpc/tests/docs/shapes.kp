@@ -1,0 +1,62 @@
+//! Shapes: a small module that shows every kind of documented item.
+//!
+//! See `Shape` for the trait and `Circle` for a type that implements it.
+impl "std/fs" caps(fs = ["/tmp/**"])
+impl "std/str"
+
+/// Pi, roughly.
+pub const PI2: f64 = 6.28
+
+const SECRET: i32 = 7
+
+/// A counter shared by every shape.
+pub static mut COUNT: i32 = 0
+
+/// A passdown nobody outside can see.
+pd val scale = 2
+
+/// A circle.
+///
+/// - the radius is in `r`
+/// - `Kind` says what sort of shape it is
+pub datac Circle(
+    /// The radius.
+    val r: f64,
+    /// A free tag.
+    var tag: i32
+)
+
+/// Kinds of shape.
+pub enum Kind {
+    /// A round one.
+    Round(val r: f64)
+    /// A flat one.
+    Flat
+}
+
+/// Something with an area.
+pub trait Shape {
+    /// The area.
+    fun Self.area().R: f64
+    type Item
+}
+
+impl Shape for Circle {
+    fun Self.area().R: f64 = self.r * self.r
+}
+
+/// Reads a file named by `path`.
+pub fun load(path: &str).R: String {
+    return fs.read_text(path)
+}
+
+/// Makes a circle from a radius.
+pub unsafe fun make(r: f64).R: Circle = Circle(r = r, tag = 0)
+
+/// The diameter.
+fun Circle.diameter().R: f64 = self.r * 2.0
+
+fun hidden() {
+}
+
+datac Private(val a: i32)

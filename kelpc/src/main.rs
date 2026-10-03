@@ -7,6 +7,7 @@ mod codegen_llvm;
 mod deprecated;
 mod defer;
 mod diag;
+mod doc;
 mod driver;
 mod externs;
 mod fmt;
@@ -87,6 +88,8 @@ fn usage() {
          {BIN_NAME} fmt -w <path>...\n       \
          {BIN_NAME} fmt --check <path>...\n       \
          {BIN_NAME} lint <path>...\n       \
+         {BIN_NAME} doc <file.{EXT}|project dir>... [-o <dir>] [--format md|html] [--private] [--check]\n       \
+         {BIN_NAME} doc --std [-o <dir>] [--format md|html] [--private] [--check]\n       \
          {BIN_NAME} cache stats|clear [--dir <dir>]\n       \
          {BIN_NAME} version\n\n\
          The optimization level is -O0, -O1, -O2, -O3 or -Os, and -O2 is the\n\
@@ -152,7 +155,20 @@ fn usage() {
          recursing a directory, with a symbolic link inside a directory\n\
          skipped and reported). A warning is not a failure: lint exits zero\n\
          with warnings on stderr, and nonzero only for a path it could not\n\
-         read or a file it could not lex. It never writes to a file.",
+         read or a file it could not lex. It never writes to a file. It also\n\
+         warns about a '///' or '//!' comment attached to nothing.\n\n\
+         doc writes one page per module plus an index into -o <dir> (default\n\
+         'doc'), Markdown unless --format html (one self-contained page, no\n\
+         external assets). A '///' block directly above a fun, datac, enum,\n\
+         trait, pd, const, static, extern type, enum variant, field or trait\n\
+         method documents it, and a '//!' block at the top of a file\n\
+         documents the module. Only pub items are listed (--private lists\n\
+         all); a shipped std module has no pub, so --std lists all of its\n\
+         functions but not its extern ones. The argument is a .{EXT} file or\n\
+         a project directory (every module under src/); --std documents the\n\
+         compiler's own std modules. --check writes nothing and exits nonzero\n\
+         when a listed item has no doc comment. The output has no\n\
+         timestamps, so it can be checked in and diffed.",
         EXT = resolve::EXT
     );
 }
@@ -1237,6 +1253,168 @@ fn collect_kp_into(
     Ok(())
 }
 
+/// `kelpc doc`: the documentation generator (`plan/doc-tool.md`). The pages
+/// are built by `doc.rs`; this reads the sources, writes the files, and runs
+/// the `--check` gate.
+fn doc_command(args: &[String]) -> ExitCode {
+    let mut out_dir = PathBuf::from("doc");
+    let mut format = doc::Format::Markdown;
+    let mut private = false;
+    let mut check = false;
+    let mut std_mode = false;
+    let mut paths: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => {
+                i += 1;
+                match args.get(i) {
+                    Some(dir) => out_dir = PathBuf::from(dir),
+                    None => {
+                        eprintln!("error: '-o' needs a directory");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            "--format" => {
+                i += 1;
+                match args.get(i).map(String::as_str) {
+                    Some("md") => format = doc::Format::Markdown,
+                    Some("html") => format = doc::Format::Html,
+                    other => {
+                        eprintln!(
+                            "error: '--format' takes 'md' or 'html', found '{}'",
+                            other.unwrap_or("nothing")
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            "--private" => private = true,
+            "--check" => check = true,
+            "--std" => std_mode = true,
+            other if other.starts_with('-') && other.len() > 1 => {
+                eprintln!(
+                    "error: unknown flag '{other}'; expected one of: -o, --format, --private, --check, --std"
+                );
+                return ExitCode::FAILURE;
+            }
+            other => paths.push(other.to_string()),
+        }
+        i += 1;
+    }
+    if !std_mode && paths.is_empty() {
+        eprintln!(
+            "error: 'doc' needs a '.{}' file, a project directory, or '--std'",
+            resolve::EXT
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let mut sources = SourceMap::new();
+    let mut modules: Vec<doc::Module> = Vec::new();
+    let mut failed = false;
+    let mut add = |id: String, shown: String, path: Option<&Path>, text: String, all_public: bool| -> bool {
+        let name = path.map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| shown.clone());
+        match doc::scan(&text) {
+            Ok(scan) => {
+                modules.push(doc::Module { id, path: shown, scan, all_public });
+                true
+            }
+            Err(e) => {
+                sources.insert(&name, path.unwrap_or(Path::new(&name)), text);
+                sources.report(&Diagnostic::new(e.message, e.span, name));
+                false
+            }
+        }
+    };
+    if std_mode {
+        for id in stdlib::shipped() {
+            if let Some(text) = stdlib::source(id) {
+                failed |= !add(id.to_string(), format!("{id}.{}", resolve::EXT), None, text, true);
+            }
+        }
+    }
+    for path in &paths {
+        let p = Path::new(path);
+        // A project directory documents its `src/`; any other directory, itself.
+        let (files, base) = if p.is_dir() && p.join("coral.toml").is_file() {
+            let src = p.join("src");
+            match collect_kp(&src, "doc") {
+                Ok((found, _)) => (found, src),
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if p.is_dir() {
+            match collect_kp(p, "doc") {
+                Ok((found, _)) => (found, p.to_path_buf()),
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else {
+            let base = match resolve::find_manifest_root(p) {
+                Some(root) => root.join("src"),
+                None => p.parent().map(Path::to_path_buf).unwrap_or_default(),
+            };
+            (vec![p.to_path_buf()], base)
+        };
+        let mut files = files;
+        files.sort();
+        files.dedup();
+        for file in files {
+            let text = match read_source(&file) {
+                Ok(text) => text,
+                Err(()) => {
+                    failed = true;
+                    continue;
+                }
+            };
+            let rel = file.strip_prefix(&base).unwrap_or(&file).with_extension("");
+            let id = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join("/");
+            failed |= !add(id, file.to_string_lossy().to_string(), Some(&file), text, false);
+        }
+    }
+    if failed {
+        return ExitCode::FAILURE;
+    }
+    if modules.is_empty() {
+        eprintln!("error: no '.{}' files found", resolve::EXT);
+        return ExitCode::FAILURE;
+    }
+    let opts = doc::Options { format, private };
+    if check {
+        let missing = doc::missing_docs(&modules, &opts);
+        for (file, line, message) in &missing {
+            eprintln!("{file}:{line}: {message}");
+        }
+        return if missing.is_empty() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if let Err(e) = fs::create_dir_all(&out_dir) {
+        eprintln!("error: cannot create '{}': {e}", out_dir.display());
+        return ExitCode::FAILURE;
+    }
+    for (name, text) in doc::render(&modules, &opts) {
+        let target = out_dir.join(&name);
+        if let Err(e) = fs::write(&target, text) {
+            eprintln!("error: cannot write '{}': {e}", target.display());
+            return ExitCode::FAILURE;
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let command = match args.get(1).map(String::as_str) {
@@ -1248,6 +1426,7 @@ fn main() -> ExitCode {
         }
         Some("fmt") => return fmt_command(&args[2..]),
         Some("lint") => return lint_command(&args[2..]),
+        Some("doc") => return doc_command(&args[2..]),
         Some("check") => return check_command(&args[2..]),
         Some("cache") => return cache_command(&args[2..]),
         Some(c @ ("build" | "run")) => {

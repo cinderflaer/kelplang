@@ -158,6 +158,7 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
         })
         .collect();
     all.extend(else_if_links_in(&tokens));
+    all.extend(crate::doc::orphan_findings(src, &tokens));
     if let Some(naming) = naming {
         all.extend(naming_findings_in(&tokens, naming));
     }

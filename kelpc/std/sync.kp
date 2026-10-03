@@ -1,3 +1,4 @@
+//! Mutexes, condition variables and channels between threads.
 /* std/sync: the mutex surface (B-5). `Mutex<T>` itself is a compiler builtin,
    in the shape `Atomic<T>`/`Thread<T>` have: a monomorphized per-element-type
    representation, not `Copy`, with its method set lowered to the C runtime's
@@ -104,31 +105,38 @@
 impl "std/option"
 impl "std/result"
 
-// Why `recv` has no value: every sender is gone and the queue is empty.
+/// Why `recv` has no value: every sender is gone and the queue is empty.
 enum RecvErr {
+    /// Every sender is gone and the queue is empty.
     Closed
 }
 
-// Why `recv_timeout` has no value.
+/// Why `recv_timeout` has no value.
 enum RecvTimeout {
+    /// No value arrived in time.
     Timeout
+    /// Every sender is gone and the queue is empty.
     Closed
 }
 
-// Everything the two ends agree on, guarded by one mutex. `count` mirrors the
-// queue's length, so the waits never need to look inside the generic queue.
+/// Everything the two ends agree on, guarded by one mutex. `count` mirrors the
+/// queue's length, so the waits never need to look inside the generic queue.
 datac ChanMeta(var count: usize, var senders: i64, var rx_alive: bool, val cap: usize, val bounded: bool)
 
-// What a sender owns besides the queue, and the destructor that closes the
-// channel when the last one goes.
+/// What a sender owns besides the queue, and the destructor that closes the
+/// channel when the last one goes.
 datac SendEnd(val live: bool, val meta: Mutex<ChanMeta>, val ne: Condvar, val nf: Condvar)
 
+/// The receiving half's shared state; it closes the channel when dropped.
 datac RecvEnd(val live: bool, val meta: Mutex<ChanMeta>, val ne: Condvar, val nf: Condvar)
 
+/// The sending half of a channel.
 datac Sender<T>(val q: Mutex<List<T>>, val end: SendEnd)
 
+/// The receiving half of a channel.
 datac Receiver<T>(val q: Mutex<List<T>>, val end: RecvEnd)
 
+/// Counts this sender out and wakes a waiting receiver.
 fun mut SendEnd.drop() {
     if !live {
         return
@@ -142,6 +150,7 @@ fun mut SendEnd.drop() {
     }
 }
 
+/// Marks the receiver gone and wakes blocked senders.
 fun mut RecvEnd.drop() {
     if !live {
         return
@@ -150,6 +159,7 @@ fun mut RecvEnd.drop() {
     nf.notify_all()
 }
 
+/// Builds a channel with capacity `cap`, bounded or not.
 fun make_channel<T>(cap: usize, bounded: bool).R: (Sender<T>, Receiver<T>) {
     val meta = Mutex.new(ChanMeta(count = 0, senders = 1, rx_alive = true, cap = cap, bounded = bounded))
     val q: Mutex<List<T>> = Mutex.new(List.empty())
@@ -160,7 +170,7 @@ fun make_channel<T>(cap: usize, bounded: bool).R: (Sender<T>, Receiver<T>) {
     return (tx, rx)
 }
 
-// A channel that holds at most `cap` values: `send` waits while it is full.
+/// A channel that holds at most `cap` values: `send` waits while it is full.
 fun bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>) {
     if cap == 0 {
         panic("sync.bounded: the capacity must be at least 1")
@@ -168,14 +178,14 @@ fun bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>) {
     return make_channel<T>(cap, true)
 }
 
-// A channel with no limit: `send` never waits.
+/// A channel with no limit: `send` never waits.
 fun unbounded<T>().R: (Sender<T>, Receiver<T>) {
     return make_channel<T>(0, false)
 }
 
-// Queue `value`. `None` means it was queued; `Some(value)` hands it back because
-// the receiver is gone. A scoped block cannot capture an owned value by move, so
-// the value waits in a private one-element mutex and the block swaps it across.
+/// Queue `value`. `None` means it was queued; `Some(value)` hands it back because
+/// the receiver is gone. A scoped block cannot capture an owned value by move, so
+/// the value waits in a private one-element mutex and the block swaps it across.
 fun Sender<T>.send(value: move T).R: option.Option<T> {
     val staged: Mutex<List<T>> = Mutex.new(List.of(value))
     val r = self.end.meta.wait_while(&self.end.nf, fun(s: &ChanMeta).R: bool = s.bounded && s.count >= s.cap && s.rx_alive) { s ->
@@ -195,13 +205,13 @@ fun Sender<T>.send(value: move T).R: option.Option<T> {
     return r
 }
 
-// Another sender on the same channel; the channel closes when the last one drops.
+/// Another sender on the same channel; the channel closes when the last one drops.
 fun Sender<T>.clone().R: Sender<T> {
     self.end.meta.lock { s -> s.senders += 1 }
     return Sender<T>(q = self.q.share(), end = SendEnd(live = true, meta = self.end.meta.share(), ne = self.end.ne.share(), nf = self.end.nf.share()))
 }
 
-// Take the oldest value, waiting while the queue is empty and a sender is alive.
+/// Take the oldest value, waiting while the queue is empty and a sender is alive.
 fun Receiver<T>.recv().R: result.Result<T, RecvErr> {
     val r = self.end.meta.wait_while(&self.end.ne, fun(s: &ChanMeta).R: bool = s.count == 0 && s.senders > 0) { s ->
         if s.count > 0 {
@@ -218,7 +228,7 @@ fun Receiver<T>.recv().R: result.Result<T, RecvErr> {
     return r
 }
 
-// The oldest value if there is one now; never waits.
+/// The oldest value if there is one now; never waits.
 fun Receiver<T>.try_recv().R: option.Option<T> {
     val r = self.end.meta.lock { s ->
         if s.count > 0 {
@@ -234,7 +244,7 @@ fun Receiver<T>.try_recv().R: option.Option<T> {
     return r
 }
 
-// Like `recv`, but gives up after `millis` milliseconds with `Err(Timeout)`.
+/// Like `recv`, but gives up after `millis` milliseconds with `Err(Timeout)`.
 fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout> {
     val r = self.end.meta.wait_while_timeout(&self.end.ne, fun(s: &ChanMeta).R: bool = s.count == 0 && s.senders > 0, millis) { s ->
         if s.count > 0 {
@@ -257,7 +267,7 @@ fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout> {
     }
 }
 
-// `for v in rx`: one value per pass until every sender is gone.
+/// `for v in rx`: one value per pass until every sender is gone.
 fun mut Receiver<T>.next().R: option.Option<T> {
     return when self.recv() {
         Ok(v) -> option.Option.Some(value = v)

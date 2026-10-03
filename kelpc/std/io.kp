@@ -1,3 +1,4 @@
+//! Files, descriptors, standard streams and printing.
 impl "std/mem"
 impl "std/str"
 impl "std/option"
@@ -41,56 +42,56 @@ extern fun wait_readable_raw(fd: i32, timeout_ms: u64).R: bool
 extern fun wait_writable_raw(fd: i32, timeout_ms: u64).R: bool
 extern fun errno_text_raw(errno: i32).R: String
 
-// A failed syscall, as a value: the POSIX `errno` and its text. This is what a
-// fallible call hands back instead of panicking, so a caller can branch on the
-// cause (`errno`) or show it (`message`). `errno` is 0 when the failure is not a
-// syscall at all, and `message` is then the whole story.
+/// A failed syscall, as a value: the POSIX `errno` and its text. This is what a
+/// fallible call hands back instead of panicking, so a caller can branch on the
+/// cause (`errno`) or show it (`message`). `errno` is 0 when the failure is not a
+/// syscall at all, and `message` is then the whole story.
 datac IoErr(val errno: i32, val message: String)
 
-// The text of a POSIX `errno`: `errno_text(13)` is `"Permission denied"`. Any
-// number is accepted; an unknown one gives the libc fallback text, never a
-// panic.
+/// The text of a POSIX `errno`: `errno_text(13)` is `"Permission denied"`. Any
+/// number is accepted; an unknown one gives the libc fallback text, never a
+/// panic.
 fun errno_text(errno: i32).R: String = errno_text_raw(errno)
 
-// A descriptor. Not `Copy` (no `datac` is), so handing one to a function is a
-// borrow and there is never a silent second close.
-//
-// Closing is explicit — `File.close` — and nothing closes on drop, so a
-// `File` that goes out of scope leaks its descriptor. That is the v1 answer
-// for a type with no owned field to hang a destructor on; `Child` in
-// `std/process` has the same rule.
-//
-// A write goes straight to the descriptor with `write(2)`, while the builtin
-// `print` and templates go through stdio's buffer. The write primitives flush
-// the matching stdio stream first (see `kelp_io_flush_stdio`), so the two APIs
-// are observed in the order they were called even when stdout is a pipe.
+/// A descriptor. Not `Copy` (no `datac` is), so handing one to a function is a
+/// borrow and there is never a silent second close.
+///
+/// Closing is explicit — `File.close` — and nothing closes on drop, so a
+/// `File` that goes out of scope leaks its descriptor. That is the v1 answer
+/// for a type with no owned field to hang a destructor on; `Child` in
+/// `std/process` has the same rule.
+///
+/// A write goes straight to the descriptor with `write(2)`, while the builtin
+/// `print` and templates go through stdio's buffer. The write primitives flush
+/// the matching stdio stream first (see `kelp_io_flush_stdio`), so the two APIs
+/// are observed in the order they were called even when stdout is a pipe.
 datac File(val fd: i32)
 
-// Asks the kernel whether the descriptor is still open — `fcntl(F_GETFD)`, so
-// it is true for a `File` nobody has closed and false after `close`, without
-// the type needing to carry a "closed" flag (`close` therefore takes only a
-// shared borrow). The usual descriptor caveat applies: if the number has been
-// reused by a later `open`, this cannot tell you that.
+/// Asks the kernel whether the descriptor is still open — `fcntl(F_GETFD)`, so
+/// it is true for a `File` nobody has closed and false after `close`, without
+/// the type needing to carry a "closed" flag (`close` therefore takes only a
+/// shared borrow). The usual descriptor caveat applies: if the number has been
+/// reused by a later `open`, this cannot tell you that.
 fun File.is_open().R: bool = is_open_raw(fd)
 
-// One `read(2)`: whatever is available, up to `max` bytes. An empty `Bytes`
-// means end of file — there is no `Option` in v1 to say it another way.
-// Panics: if the read fails.
+/// One `read(2)`: whatever is available, up to `max` bytes. An empty `Bytes`
+/// means end of file — there is no `Option` in v1 to say it another way.
+/// Panics: if the read fails.
 fun File.read(max: usize).R: Bytes = read_raw(fd, max)
 
-// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 at
-// end of file). The buffer is written in place and its length is not changed,
-// so this is the form for "I already know how much I am reading" — the
-// `Content-Length` case S4 needs. For an unknown length use `read_all`.
-//
-// Panics: if the read fails.
+/// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 at
+/// end of file). The buffer is written in place and its length is not changed,
+/// so this is the form for "I already know how much I am reading" — the
+/// `Content-Length` case S4 needs. For an unknown length use `read_all`.
+///
+/// Panics: if the read fails.
 fun File.read_into(buf: mut Bytes, at: usize).R: usize = read_into_raw(fd, buf, at)
 
-// Everything until end of file, growing a buffer as it goes. The unbuffered
-// `read` loop is one syscall per chunk rather than one per byte, which is
-// only possible because `Bytes` grows in place (S1).
-//
-// Panics: if the read fails.
+/// Everything until end of file, growing a buffer as it goes. The unbuffered
+/// `read` loop is one syscall per chunk rather than one per byte, which is
+/// only possible because `Bytes` grows in place (S1).
+///
+/// Panics: if the read fails.
 fun File.read_all().R: Bytes {
     var out = Bytes.empty()
     var going = true
@@ -105,59 +106,61 @@ fun File.read_all().R: Bytes {
     return out
 }
 
-// Writes the whole buffer, looping over short writes, and returns the byte
-// count. Taking `data` and `text` by value in the signature is borrow-taking
-// sugar (every parameter is a borrow) — the caller keeps its buffer.
-//
-// Panics: if the write fails.
+/// Writes the whole buffer, looping over short writes, and returns the byte
+/// count. Taking `data` and `text` by value in the signature is borrow-taking
+/// sugar (every parameter is a borrow) — the caller keeps its buffer.
+///
+/// Panics: if the write fails.
 fun File.write(data: Bytes).R: usize = write_bytes_raw(fd, data)
 
-// Panics: if the write fails.
+/// Panics: if the write fails.
 fun File.write_text(text: String).R: usize = write_text_raw(fd, text)
 
-// The `&str` form, for a borrowed view. A `str` is NUL-terminated, so this
-// one stops at an embedded NUL; `write_text` on a `String` does not.
-//
-// Panics: if the write fails.
+/// The `&str` form, for a borrowed view. A `str` is NUL-terminated, so this
+/// one stops at an embedded NUL; `write_text` on a `String` does not.
+///
+/// Panics: if the write fails.
 fun File.write_str(text: &str).R: usize = write_str_raw(fd, text)
 
-// There is no userspace buffer behind a `File` — every write above is already
-// a syscall — so this is a no-op that exists to keep the stream contract
-// complete. It is what a caller writes when it does not know whether the
-// writer it holds is a `File`.
+/// There is no userspace buffer behind a `File` — every write above is already
+/// a syscall — so this is a no-op that exists to keep the stream contract
+/// complete. It is what a caller writes when it does not know whether the
+/// writer it holds is a `File`.
 fun File.flush() {
 }
 
-// Panics: if the descriptor cannot be closed.
+/// Panics: if the descriptor cannot be closed.
 fun File.close() {
     close_raw(fd)
 }
 
-// Whether reads block. `poll` readiness (`wait_readable`/`wait_writable`) is
-// what an event loop answers with, and it works on a blocking descriptor too.
-//
-// Panics: if `fcntl` fails.
+/// Whether reads block. `poll` readiness (`wait_readable`/`wait_writable`) is
+/// what an event loop answers with, and it works on a blocking descriptor too.
+///
+/// Panics: if `fcntl` fails.
 fun mut File.set_nonblocking(on: bool) {
     set_nonblocking_raw(fd, on)
 }
 
-// Waits up to `timeout_ms` for the descriptor to become readable. A timeout
-// of `u64`'s maximum means "forever" — anything above `INT_MAX` milliseconds
-// is passed to `poll` as `-1`, since 24 days and infinity are the same
-// practical answer. False means the timeout expired.
-//
-// Panics: if `poll` fails.
+/// Waits up to `timeout_ms` for the descriptor to become readable. A timeout
+/// of `u64`'s maximum means "forever" — anything above `INT_MAX` milliseconds
+/// is passed to `poll` as `-1`, since 24 days and infinity are the same
+/// practical answer. False means the timeout expired.
+///
+/// Panics: if `poll` fails.
 fun File.wait_readable(timeout_ms: u64).R: bool = wait_readable_raw(fd, timeout_ms)
 
-// As `wait_readable`, for writability.
-//
-// Panics: if `poll` fails.
+/// As `wait_readable`, for writability.
+///
+/// Panics: if `poll` fails.
 fun File.wait_writable(timeout_ms: u64).R: bool = wait_writable_raw(fd, timeout_ms)
 
-// The three standard descriptors. They are ordinary `File`s, so everything
-// above applies to them, and they are never closed by the runtime.
+/// The three standard descriptors. They are ordinary `File`s, so everything
+/// above applies to them, and they are never closed by the runtime.
 fun stdin().R: File = File(fd = 0)
+/// The standard output stream.
 fun stdout().R: File = File(fd = 1)
+/// The standard error stream.
 fun stderr().R: File = File(fd = 2)
 
 // One owned line of text, or `None` at end of file. The `Line(ok, text)`
@@ -166,21 +169,21 @@ fun stderr().R: File = File(fd = 2)
 // `if let Some(line) = io.read_line()`. `BufReader.read_line_into` remains the
 // form that reuses one buffer.
 
-// An owned read buffer over one `File`: the "no generics" answer to buffered
-// input (open item 49). Unbuffered `read_line` over a pipe is one syscall per
-// byte, so every line reader holds one of these; `io.read_line` and
-// `io.read_lines` are the conveniences that hide it.
-//
-// `buf` is the chunk and must not be empty: `read_into` reports 0 for a full
-// buffer, which the reader reads as end of file. Construct it with
-// `io.buf_reader` rather than by hand.
+/// An owned read buffer over one `File`: the "no generics" answer to buffered
+/// input (open item 49). Unbuffered `read_line` over a pipe is one syscall per
+/// byte, so every line reader holds one of these; `io.read_line` and
+/// `io.read_lines` are the conveniences that hide it.
+///
+/// `buf` is the chunk and must not be empty: `read_into` reports 0 for a full
+/// buffer, which the reader reads as end of file. Construct it with
+/// `io.buf_reader` rather than by hand.
 datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize)
 
-// Wraps a `File`. The chunk is 8 KiB — one page pair, and large enough that
-// a line reader is not syscall-bound. The `File` is rebuilt around the same
-// descriptor because a `datac` is never `Copy` (v1 has no `Copy` user types),
-// so a handle has to be re-made rather than copied; two `File`s over one
-// descriptor are the same stream, and only one of them should be closed.
+/// Wraps a `File`. The chunk is 8 KiB — one page pair, and large enough that
+/// a line reader is not syscall-bound. The `File` is rebuilt around the same
+/// descriptor because a `datac` is never `Copy` (v1 has no `Copy` user types),
+/// so a handle has to be re-made rather than copied; two `File`s over one
+/// descriptor are the same stream, and only one of them should be closed.
 fun buf_reader(f: File).R: BufReader = BufReader(
     file = File(fd = f.fd),
     buf = mem.alloc(8192),
@@ -188,11 +191,11 @@ fun buf_reader(f: File).R: BufReader = BufReader(
     end = 0,
 )
 
-// Reads one line into `out`, replacing whatever it held, and returns false
-// only at end of file. A final line with no trailing newline is still a line.
-// The newline itself is consumed but not stored.
-//
-// Panics: if the read fails.
+/// Reads one line into `out`, replacing whatever it held, and returns false
+/// only at end of file. A final line with no trailing newline is still a line.
+/// The newline itself is consumed but not stored.
+///
+/// Panics: if the read fails.
 fun mut BufReader.read_line_into(out: mut String).R: bool {
     out.clear()
     var got = false
@@ -221,12 +224,12 @@ fun mut BufReader.read_line_into(out: mut String).R: bool {
     return got
 }
 
-// As `read_line_into`, wrapped in an owned `String` — `None` at end of file,
-// and no allocation in that case. This allocates one `String` per line,
-// because `read_line_into` needs a buffer it can overwrite and the returned
-// line has to own its text.
-//
-// Panics: if the read fails.
+/// As `read_line_into`, wrapped in an owned `String` — `None` at end of file,
+/// and no allocation in that case. This allocates one `String` per line,
+/// because `read_line_into` needs a buffer it can overwrite and the returned
+/// line has to own its text.
+///
+/// Panics: if the read fails.
 fun mut BufReader.read_line().R: option.Option<String> {
     var text = String.empty()
     val got = self.read_line_into(text)
@@ -236,10 +239,10 @@ fun mut BufReader.read_line().R: option.Option<String> {
     return option.Option.Some(value = text)
 }
 
-// Everything until end of file: whatever the line buffer already holds,
-// then the rest of the descriptor.
-//
-// Panics: if the read fails.
+/// Everything until end of file: whatever the line buffer already holds,
+/// then the rest of the descriptor.
+///
+/// Panics: if the read fails.
 fun mut BufReader.read_all().R: Bytes {
     var out = Bytes.empty()
     if start < end {
@@ -263,14 +266,14 @@ fun mut BufReader.read_all().R: Bytes {
     return out
 }
 
-// One line from stdin, `None` at end of file.
-//
-// Panics: if the read fails.
+/// One line from stdin, `None` at end of file.
+///
+/// Panics: if the read fails.
 fun read_line().R: option.Option<String> = stdin_reader.read_line()
 
-// Every line from stdin, to end of file.
-//
-// Panics: if the read fails.
+/// Every line from stdin, to end of file.
+///
+/// Panics: if the read fails.
 fun read_lines().R: List<String> {
     var out: List<String> = List.empty()
     var text = String.empty()
@@ -285,10 +288,10 @@ fun read_lines().R: List<String> {
     return out
 }
 
-// Everything on stdin, to end of file. This reads the descriptor directly, so
-// it does not share `stdin_reader`'s buffer — do not mix it with `read_line`.
-//
-// Panics: if the read fails.
+/// Everything on stdin, to end of file. This reads the descriptor directly, so
+/// it does not share `stdin_reader`'s buffer — do not mix it with `read_line`.
+///
+/// Panics: if the read fails.
 fun read_all().R: Bytes = File(fd = 0).read_all()
 
 // ----- output -----
@@ -298,20 +301,24 @@ fun read_all().R: Bytes = File(fd = 0).read_all()
 // like every other `File` write, and the primitive flushes stderr's stdio
 // buffer first so it stays in call order with `panic`.
 
+/// Writes `s` and a newline to standard output.
 fun print(s: &str) {
     print(s)
 }
 
+/// Writes `s` to standard output with no newline.
 fun print_bare(s: &str) {
     print!(s)
 }
 
+/// Writes `s` and a newline to standard error.
 fun eprint(s: &str) {
     val f = File(fd = 2)
     f.write_str(s)
     f.write_str("\n")
 }
 
+/// Writes `s` to standard error with no newline.
 fun eprint_bare(s: &str) {
     val f = File(fd = 2)
     f.write_str(s)

@@ -1,3 +1,4 @@
+//! `Option<T>`: a value that may be absent, with its helpers.
 /* std/option — `Option<T>`, and the helpers the language can express (MK5-S6-M1).
 
    The enum is the point. `Some`/`None` is one of the two shapes the `?`
@@ -34,33 +35,36 @@
      is a borrow, so it stays `Copy`-only: an owned payload has to come out of
      an owned option, which is `unwrap_or`. */
 
+/// A value that may be absent: `Some` holds it, `None` does not.
 enum Option<T> {
+    /// The value is present.
     Some(val value: T)
+    /// There is no value.
     None
 }
 
-// Whether the option holds a value.
+/// Whether the option holds a value.
 fun is_some<T>(o: &Option<T>).R: bool = when o {
     Some(_) -> true
     None -> false
 }
 
-// Whether the option is empty.
+/// Whether the option is empty.
 fun is_none<T>(o: &Option<T>).R: bool = when o {
     Some(_) -> false
     None -> true
 }
 
-// The payload, or `fallback`. The option is taken with `move`, because either
-// answer is the caller's value: an owned payload is moved out and `fallback` is
-// handed on as it was given.
+/// The payload, or `fallback`. The option is taken with `move`, because either
+/// answer is the caller's value: an owned payload is moved out and `fallback` is
+/// handed on as it was given.
 fun unwrap_or<T>(o: move Option<T>, fallback: move T).R: T = when o {
     Some(v) -> v
     None -> fallback
 }
 
-// The payload, or a panic naming the call. The option is taken with `move`,
-// for the same reason `unwrap_or`'s is.
+/// The payload, or a panic naming the call. The option is taken with `move`,
+/// for the same reason `unwrap_or`'s is.
 fun unwrap<T>(o: move Option<T>).R: T {
     if let Some(v) = o {
         return v
@@ -68,9 +72,9 @@ fun unwrap<T>(o: move Option<T>).R: T {
     panic("Option.unwrap: value is None")
 }
 
-// The payload, or a panic carrying `message` — the form the stdlib uses, where
-// the message names the operation that failed rather than the accessor. The
-// option is taken with `move`, for the same reason `unwrap_or`'s is.
+/// The payload, or a panic carrying `message` — the form the stdlib uses, where
+/// the message names the operation that failed rather than the accessor. The
+/// option is taken with `move`, for the same reason `unwrap_or`'s is.
 fun expect<T>(o: move Option<T>, message: &str).R: T {
     if let Some(v) = o {
         return v
@@ -78,33 +82,33 @@ fun expect<T>(o: move Option<T>, message: &str).R: T {
     panic(message)
 }
 
-// Transform the payload through `f`, or pass `None` through. The callback
-// borrows the payload, so this works for any `T`: the result is a fresh `U`.
+/// Transform the payload through `f`, or pass `None` through. The callback
+/// borrows the payload, so this works for any `T`: the result is a fresh `U`.
 fun map<T, U>(o: &Option<T>, f: closure(&T).R: U).R: Option<U> = when o {
     Some(v) -> Option.Some(value = f(v))
     None -> Option.None
 }
 
-// Chain a second fallible step: `and_then`'s callback returns an `Option`
-// itself, which is what makes a sequence of fallible steps readable without
-// nesting `if let`. Works for any `T`, for the same reason `map` does.
+/// Chain a second fallible step: `and_then`'s callback returns an `Option`
+/// itself, which is what makes a sequence of fallible steps readable without
+/// nesting `if let`. Works for any `T`, for the same reason `map` does.
 fun and_then<T, U>(o: &Option<T>, f: closure(&T).R: Option<U>).R: Option<U> = when o {
     Some(v) -> f(v)
     None -> Option.None
 }
 
-// The option, or `f()` when it is empty. `T` must be `Copy`: the receiver is a
-// borrow and the `Some` arm rebuilds the payload out of it, which is a copy;
-// an owned payload comes out with `unwrap_or`, which takes the option with
-// `move`.
+/// The option, or `f()` when it is empty. `T` must be `Copy`: the receiver is a
+/// borrow and the `Some` arm rebuilds the payload out of it, which is a copy;
+/// an owned payload comes out with `unwrap_or`, which takes the option with
+/// `move`.
 fun or_else<T>(o: &Option<T>, f: closure().R: Option<T>).R: Option<T> = when o {
     Some(v) -> Option.Some(value = v)
     None -> f()
 }
 
-// Run `f` over the payload, if there is one, and discard the result — the
-// `Unit` case of `map`, written as its own call so a side effect reads like
-// one. Works for any `T`.
+/// Run `f` over the payload, if there is one, and discard the result — the
+/// `Unit` case of `map`, written as its own call so a side effect reads like
+/// one. Works for any `T`.
 fun each<T>(o: &Option<T>, f: closure(&T)) {
     when o {
         Some(v) -> f(v)

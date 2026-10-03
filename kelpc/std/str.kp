@@ -1,3 +1,4 @@
+//! Text: `&str` and `String` helpers, searching, trimming, splitting and number parsing.
 impl "std/mem"
 impl "std/option"
 impl "std/result"
@@ -15,26 +16,27 @@ extern fun byte_at_raw(s: &str, i: usize).R: u8
 extern fun slice_from_raw(s: &str, from: usize).R: &str
 extern fun byte_ptr_raw(s: &str).R: Ptr<u8>
 
-// Byte length, not character count — see `char_count`, which counts
-// continuation bytes as parts of the same character.
+/// Byte length, not character count — see `char_count`, which counts
+/// continuation bytes as parts of the same character.
 fun len(s: &str).R: usize = byte_len_raw(s)
 
-// The byte at `i`.
-// Panics: if `i` is out of bounds.
+/// The byte at `i`.
+/// Panics: if `i` is out of bounds.
 fun byte(s: &str, i: usize).R: u8 = byte_at_raw(s, i)
 
-// The address of the first byte of `s`, which is the NUL-terminated literal
-// itself. Reading through the pointer needs `unsafe`, like any other `Ptr`;
-// taking it does not. This is what a driver that has to hand text to a device
-// walks with `len`/`byte`, and the one `str` operation whose whole body is the
-// identity.
+/// The address of the first byte of `s`, which is the NUL-terminated literal
+/// itself. Reading through the pointer needs `unsafe`, like any other `Ptr`;
+/// taking it does not. This is what a driver that has to hand text to a device
+/// walks with `len`/`byte`, and the one `str` operation whose whole body is the
+/// identity.
 fun ptr(s: &str).R: Ptr<u8> = byte_ptr_raw(s)
 
+/// Whether `s` has no bytes.
 fun is_empty(s: &str).R: bool = len(s) == 0
 
-// The tail of `s` starting at byte `from` — a view, not a copy, which is
-// what `&str` return elision makes possible: the result borrows `s`.
-// Panics: if `from` is past the end.
+/// The tail of `s` starting at byte `from` — a view, not a copy, which is
+/// what `&str` return elision makes possible: the result borrows `s`.
+/// Panics: if `from` is past the end.
 fun substring(s: &str, from: usize).R: &str = slice_from_raw(s, from)
 
 /// How many characters a `&str` has: bytes that do not continue a UTF-8
@@ -56,10 +58,10 @@ fun char_count(s: &str).R: usize {
     return count
 }
 
-// The index of `needle` in `s`, or `None`. The old `Match(ok, at)` datac is
-// gone: a failure that carries no reason is an `Option`, which is what makes
-// `if let Some(at) = ...` and `?` usable at the call site instead of an `ok`
-// flag (MK5-S6-M1).
+/// The index of `needle` in `s`, or `None`. The old `Match(ok, at)` datac is
+/// gone: a failure that carries no reason is an `Option`, which is what makes
+/// `if let Some(at) = ...` and `?` usable at the call site instead of an `ok`
+/// flag (MK5-S6-M1).
 fun index_of(s: &str, needle: &str).R: option.Option<usize> {
     val ls = len(s)
     val ln = len(needle)
@@ -79,8 +81,8 @@ fun index_of(s: &str, needle: &str).R: option.Option<usize> {
     return option.Option.None
 }
 
-// Whether `needle` occurs in `s` starting exactly at byte `at`. Private to
-// the module in practice (nothing outside needs the offset form).
+/// Whether `needle` occurs in `s` starting exactly at byte `at`. Private to
+/// the module in practice (nothing outside needs the offset form).
 fun starts_with_at(s: &str, needle: &str, at: usize).R: bool {
     val sv = s.view()
     val nv = needle.view()
@@ -95,6 +97,7 @@ fun starts_with_at(s: &str, needle: &str, at: usize).R: bool {
     return true
 }
 
+/// Whether `s` begins with `prefix`.
 fun starts_with(s: &str, prefix: &str).R: bool {
     if len(prefix) > len(s) {
         return false
@@ -102,6 +105,7 @@ fun starts_with(s: &str, prefix: &str).R: bool {
     return starts_with_at(s, prefix, 0)
 }
 
+/// Whether `s` ends with `suffix`.
 fun ends_with(s: &str, suffix: &str).R: bool {
     val ls = len(s)
     val lf = len(suffix)
@@ -111,27 +115,28 @@ fun ends_with(s: &str, suffix: &str).R: bool {
     return starts_with_at(s, suffix, ls - lf)
 }
 
+/// Whether `needle` occurs in `s`.
 fun contains(s: &str, needle: &str).R: bool {
     return option.is_some(o = index_of(s, needle))
 }
 
-// Text equality, which `==` deliberately does not provide for `str` (it
-// would compare addresses — see `infer.rs::comparable`).
+/// Text equality, which `==` deliberately does not provide for `str` (it
+/// would compare addresses — see `infer.rs::comparable`).
 fun eq(a: &str, b: &str).R: bool = a.view().eq(b.view())
 
-// Byte-wise ordering, the `<` that `str` deliberately does not have: `eq` above
-// explains why `==` compares addresses rather than bytes, and the same argument
-// applies to every other operator, so a caller that has to *order* text has to
-// say which order it means. This is the answer that matches `List<T>.sort` on a
-// `List<u8>`: compare at the first byte that differs, and when one text is a
-// prefix of the other the shorter one is less.
-//
-// It is here rather than in each caller because the catalogue already wrote it
-// once: `fpl/json` has a private `str_less` with this exact rule in its doc
-// comment, used by `write_sorted` to order keys. A consumer that sorts a
-// `List<String>` had no way to help it, because a library cannot import a
-// sibling library and std had no comparison to offer. Bytes, not codepoints, so
-// the answer is stable for any UTF-8 input and costs no allocation.
+/// Byte-wise ordering, the `<` that `str` deliberately does not have: `eq` above
+/// explains why `==` compares addresses rather than bytes, and the same argument
+/// applies to every other operator, so a caller that has to *order* text has to
+/// say which order it means. This is the answer that matches `List<T>.sort` on a
+/// `List<u8>`: compare at the first byte that differs, and when one text is a
+/// prefix of the other the shorter one is less.
+///
+/// It is here rather than in each caller because the catalogue already wrote it
+/// once: `fpl/json` has a private `str_less` with this exact rule in its doc
+/// comment, used by `write_sorted` to order keys. A consumer that sorts a
+/// `List<String>` had no way to help it, because a library cannot import a
+/// sibling library and std had no comparison to offer. Bytes, not codepoints, so
+/// the answer is stable for any UTF-8 input and costs no allocation.
 fun less(a: &str, b: &str).R: bool {
     val av = a.view()
     val bv = b.view()
@@ -150,22 +155,23 @@ fun less(a: &str, b: &str).R: bool {
     return na < nb
 }
 
+/// Whether the byte `c` is a space, tab, newline or carriage return.
 fun is_space(c: u8).R: bool = c == 32 || c == 9 || c == 10 || c == 13
 
-// The decimal-digit predicate that pairs with `is_space`.
-//
-// The catalogue wrote it seven times before std had it. Two libraries with a
-// private copy: `fpl/json` (line 1444, beside a second inline check at 1790) and
-// `fpl/decimal`. Two spelling it as two magic numbers instead of two literals:
-// `fpl/encoding` (three times: the `0`-`9` arm of a base64 value, of an
-// unreserved-URL test, and of `hex_value`) and `fpl/httpx` (once, in the same URL
-// test). One implementation is one place to be right about the endpoints, and
-// `c >= '0' && c <= '9'` is the spelling that can be read. ASCII only, like
-// `to_upper` and `is_space`.
+/// The decimal-digit predicate that pairs with `is_space`.
+///
+/// The catalogue wrote it seven times before std had it. Two libraries with a
+/// private copy: `fpl/json` (line 1444, beside a second inline check at 1790) and
+/// `fpl/decimal`. Two spelling it as two magic numbers instead of two literals:
+/// `fpl/encoding` (three times: the `0`-`9` arm of a base64 value, of an
+/// unreserved-URL test, and of `hex_value`) and `fpl/httpx` (once, in the same URL
+/// test). One implementation is one place to be right about the endpoints, and
+/// `c >= '0' && c <= '9'` is the spelling that can be read. ASCII only, like
+/// `to_upper` and `is_space`.
 fun is_digit(c: u8).R: bool = c >= '0' && c <= '9'
 
-// Leading whitespace is skipped by advancing the pointer, so this is a view
-// of `s` rather than a copy.
+/// Leading whitespace is skipped by advancing the pointer, so this is a view
+/// of `s` rather than a copy.
 fun trim_start(s: &str).R: &str {
     val sv = s.view()
     val n = sv.len()
@@ -176,11 +182,11 @@ fun trim_start(s: &str).R: &str {
     return slice_from_raw(s, i)
 }
 
-// Trailing whitespace is *truncation*, which a `&str` (a NUL-terminated C
-// string) cannot represent — there is nowhere to put the terminator. So the
-// end-trimming functions return an owned `String` and allocate, while the
-// start-trimming ones stay views. This is the one place M6.3 diverges from
-// the plan's `str` sketch.
+/// Trailing whitespace is *truncation*, which a `&str` (a NUL-terminated C
+/// string) cannot represent — there is nowhere to put the terminator. So the
+/// end-trimming functions return an owned `String` and allocate, while the
+/// start-trimming ones stay views. This is the one place M6.3 diverges from
+/// the plan's `str` sketch.
 fun trim_end(s: &str).R: String {
     val sv = s.view()
     val n = sv.len()
@@ -191,10 +197,10 @@ fun trim_end(s: &str).R: String {
     return prefix(s, end)
 }
 
-// The first `n` bytes of `s`, as an owned copy. Truncation cannot be a view:
-// a `&str` is a NUL-terminated C string, and there is nowhere in the original
-// buffer to put a terminator.
-// Panics: if `n` is past the end of `s`.
+/// The first `n` bytes of `s`, as an owned copy. Truncation cannot be a view:
+/// a `&str` is a NUL-terminated C string, and there is nowhere in the original
+/// buffer to put a terminator.
+/// Panics: if `n` is past the end of `s`.
 fun prefix(s: &str, n: usize).R: String {
     val sv = s.view()
     var out = mem.alloc(n)
@@ -206,10 +212,11 @@ fun prefix(s: &str, n: usize).R: String {
     return String.from_bytes(out)
 }
 
+/// `s` without leading and trailing whitespace.
 fun trim(s: &str).R: String = trim_end(trim_start(s))
 
-// Non-ASCII bytes are copied through unchanged: upper-casing arbitrary
-// Unicode needs a character table, which v1 has no place to put.
+/// Non-ASCII bytes are copied through unchanged: upper-casing arbitrary
+/// Unicode needs a character table, which v1 has no place to put.
 fun to_upper(s: &str).R: String {
     val sv = s.view()
     val n = sv.len()
@@ -227,6 +234,7 @@ fun to_upper(s: &str).R: String {
     return String.from_bytes(out)
 }
 
+/// `s` with ASCII letters lowercased.
 fun to_lower(s: &str).R: String {
     val sv = s.view()
     val n = sv.len()
@@ -244,7 +252,7 @@ fun to_lower(s: &str).R: String {
     return String.from_bytes(out)
 }
 
-// `s` repeated `n` times.
+/// `s` repeated `n` times.
 fun repeat(s: &str, n: usize).R: String {
     val sv = s.view()
     val ls = sv.len()
@@ -261,10 +269,10 @@ fun repeat(s: &str, n: usize).R: String {
     return String.from_bytes(out)
 }
 
-// Copies bytes [from, to) of `s` into a fresh owned `String`. A range that
-// is neither a prefix nor a suffix cannot be a view (a `&str` is a
-// NUL-terminated C string), so it is copied — the same reason `prefix`
-// allocates.
+/// Copies bytes [from, to) of `s` into a fresh owned `String`. A range that
+/// is neither a prefix nor a suffix cannot be a view (a `&str` is a
+/// NUL-terminated C string), so it is copied — the same reason `prefix`
+/// allocates.
 fun copy_range(s: &str, from: usize, to: usize).R: String {
     val sv = s.view()
     var out = mem.alloc(to - from)
@@ -276,11 +284,11 @@ fun copy_range(s: &str, from: usize, to: usize).R: String {
     return String.from_bytes(out)
 }
 
-// Splits `s` on every occurrence of `sep`. An empty `sep` yields one piece
-// (the whole string) rather than an infinite number of empty ones.
-//
-// The last piece is always returned, including the empty one after a
-// trailing separator: "a," splits into ["a", ""].
+/// Splits `s` on every occurrence of `sep`. An empty `sep` yields one piece
+/// (the whole string) rather than an infinite number of empty ones.
+///
+/// The last piece is always returned, including the empty one after a
+/// trailing separator: "a," splits into ["a", ""].
 fun split(s: &str, sep: &str).R: List<String> {
     var out: List<String> = List.empty()
     val ls = len(s)
@@ -304,9 +312,9 @@ fun split(s: &str, sep: &str).R: List<String> {
     return out
 }
 
-// Copies `src` into `dst` at byte offset `at` and returns the offset just
-// past the end. The pieces of `join` cannot be written with one `String`
-// operation, so this is the byte-level form it is built from.
+/// Copies `src` into `dst` at byte offset `at` and returns the offset just
+/// past the end. The pieces of `join` cannot be written with one `String`
+/// operation, so this is the byte-level form it is built from.
 fun copy_into(dst: mut Bytes, at: usize, src: &str).R: usize {
     val sv = src.view()
     val n = sv.len()
@@ -318,9 +326,9 @@ fun copy_into(dst: mut Bytes, at: usize, src: &str).R: usize {
     return at + n
 }
 
-// `parts` joined with `sep` between them. A growable `String` (S1) means the
-// pieces can simply be appended: C1 sized the result first and copied once,
-// because buffers were fixed-size then.
+/// `parts` joined with `sep` between them. A growable `String` (S1) means the
+/// pieces can simply be appended: C1 sized the result first and copied once,
+/// because buffers were fixed-size then.
 fun join(parts: List<String>, sep: &str).R: String {
     val count = parts.len()
     val lsep = len(sep)
@@ -345,8 +353,8 @@ fun join(parts: List<String>, sep: &str).R: String {
 // parsing. There is no `+` operator for `str` (open item 40): concatenation
 // is the function below.
 
-// `a` followed by `b`. The allocation is visible in the signature, which is
-// the reason this is not an operator.
+/// `a` followed by `b`. The allocation is visible in the signature, which is
+/// the reason this is not an operator.
 fun concat(a: &str, b: &str).R: String {
     var out = String.with_capacity(len(a) + len(b))
     out.push_str(a)
@@ -354,9 +362,9 @@ fun concat(a: &str, b: &str).R: String {
     return out
 }
 
-// Decimal text for an unsigned value. Digits are produced least-significant
-// first into a scratch buffer and copied back out in reverse: `%`/`/` on
-// `u64` and one checked `to_u8` per digit is the whole algorithm.
+/// Decimal text for an unsigned value. Digits are produced least-significant
+/// first into a scratch buffer and copied back out in reverse: `%`/`/` on
+/// `u64` and one checked `to_u8` per digit is the whole algorithm.
 fun from_u64(n: u64).R: String {
     if n == 0 {
         return String.from_str("0")
@@ -378,10 +386,10 @@ fun from_u64(n: u64).R: String {
     return out
 }
 
-// Decimal text for a signed value. The digits are taken in `i64`, with each
-// remainder made positive before it is narrowed, so `i64`'s minimum needs no
-// special case — converting it to `u64` first would panic (it is negative),
-// and negating it in `i64` would overflow.
+/// Decimal text for a signed value. The digits are taken in `i64`, with each
+/// remainder made positive before it is narrowed, so `i64`'s minimum needs no
+/// special case — converting it to `u64` first would panic (it is negative),
+/// and negating it in `i64` would overflow.
 fun from_i64(n: i64).R: String {
     if n == 0 {
         return String.from_str("0")
@@ -418,15 +426,18 @@ fun from_i64(n: i64).R: String {
 // `decimals` is not clamped: it is what the caller asked for.
 extern fun from_f64_raw(x: f64, decimals: i32).R: String
 
+/// `x` written with `decimals` digits after the point.
 fun from_f64(x: f64, decimals: i32).R: String = from_f64_raw(x, decimals)
 
-// Why a parse failed (MK5-S6-M1). `Invalid` covers everything the C
-// conversion refused, including a value that does not fit the type: the
-// primitives report one bit, so a finer reason would have to come from them.
-// A payload-less variant is still a variant, which is what lets the failure
-// ride in a `Result` and be matched by name.
+/// Why a parse failed (MK5-S6-M1). `Invalid` covers everything the C
+/// conversion refused, including a value that does not fit the type: the
+/// primitives report one bit, so a finer reason would have to come from them.
+/// A payload-less variant is still a variant, which is what lets the failure
+/// ride in a `Result` and be matched by name.
 enum ParseErr {
+    /// The text was empty.
     Empty
+    /// The text is not a number.
     Invalid
 }
 
@@ -437,6 +448,7 @@ extern fun parse_i64_raw(s: &str, out: mut i64).R: bool
 extern fun parse_u64_raw(s: &str, out: mut u64).R: bool
 extern fun parse_f64_raw(s: &str, out: mut f64).R: bool
 
+/// Parses `s` as a signed 64-bit integer.
 fun parse_i64(s: &str).R: result.Result<i64, ParseErr> {
     var v: i64 = 0
     val ok = parse_i64_raw(s, out = v)
@@ -446,6 +458,7 @@ fun parse_i64(s: &str).R: result.Result<i64, ParseErr> {
     return result.Result.Ok(value = v)
 }
 
+/// Parses `s` as an unsigned 64-bit integer.
 fun parse_u64(s: &str).R: result.Result<u64, ParseErr> {
     var v: u64 = 0
     val ok = parse_u64_raw(s, out = v)
@@ -455,8 +468,8 @@ fun parse_u64(s: &str).R: result.Result<u64, ParseErr> {
     return result.Result.Ok(value = v)
 }
 
-// Accepts what `strtod` accepts, minus leading whitespace: decimal and
-// exponent forms, and `inf`/`nan`.
+/// Accepts what `strtod` accepts, minus leading whitespace: decimal and
+/// exponent forms, and `inf`/`nan`.
 fun parse_f64(s: &str).R: result.Result<f64, ParseErr> {
     var v: f64 = 0.0
     val ok = parse_f64_raw(s, out = v)
@@ -466,8 +479,8 @@ fun parse_f64(s: &str).R: result.Result<f64, ParseErr> {
     return result.Result.Ok(value = v)
 }
 
-// The one distinction the primitives leave visible: an empty string is not a
-// malformed one.
+/// The one distinction the primitives leave visible: an empty string is not a
+/// malformed one.
 fun parse_err(s: &str).R: ParseErr {
     if len(s) == 0 {
         return ParseErr.Empty
@@ -475,9 +488,9 @@ fun parse_err(s: &str).R: ParseErr {
     return ParseErr.Invalid
 }
 
-// Every non-overlapping occurrence of `from` replaced by `to`. An empty
-// `from` matches nothing (rather than every position), so the result is a
-// copy of `s`.
+/// Every non-overlapping occurrence of `from` replaced by `to`. An empty
+/// `from` matches nothing (rather than every position), so the result is a
+/// copy of `s`.
 fun replace(s: &str, from: &str, to: &str).R: String {
     val lf = len(from)
     if lf == 0 {
@@ -499,9 +512,9 @@ fun replace(s: &str, from: &str, to: &str).R: String {
     return out
 }
 
-// The byte offset of character `i`, or `len(s)` when there is no such
-// character. A byte that does not continue a UTF-8 sequence starts a
-// character (the same rule `char_count` uses).
+/// The byte offset of character `i`, or `len(s)` when there is no such
+/// character. A byte that does not continue a UTF-8 sequence starts a
+/// character (the same rule `char_count` uses).
 fun byte_index(s: &str, i: usize).R: usize {
     val sv = s.view()
     val n = sv.len()
@@ -520,9 +533,9 @@ fun byte_index(s: &str, i: usize).R: usize {
     return n
 }
 
-// The codepoint starting at byte `at`, decoded with arithmetic only — v1 has
-// no bitwise operators, so the UTF-8 lead-byte masks are subtractions.
-// A truncated sequence returns 0, the same value past-the-end returns.
+/// The codepoint starting at byte `at`, decoded with arithmetic only — v1 has
+/// no bitwise operators, so the UTF-8 lead-byte masks are subtractions.
+/// A truncated sequence returns 0, the same value past-the-end returns.
 fun decode_at(s: &str, at: usize).R: u32 {
     val sv = s.view()
     val n = sv.len()
@@ -553,7 +566,7 @@ fun decode_at(s: &str, at: usize).R: u32 {
     return cp
 }
 
-// The codepoint at character index `i`, or 0 when `i` is past the end.
+/// The codepoint at character index `i`, or 0 when `i` is past the end.
 fun char_at(s: &str, i: usize).R: u32 {
     val at = byte_index(s, i)
     if at >= len(s) {
