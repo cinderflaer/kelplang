@@ -291,8 +291,12 @@ fun copy_range(s: &str, from: usize, to: usize).R: String {
 /// trailing separator: "a," splits into ["a", ""].
 fun split(s: &str, sep: &str).R: List<String> {
     var out: List<String> = List.empty()
-    val ls = len(s)
-    val lsep = len(sep)
+    // One `strlen` for each of the two arguments, up front: `starts_with_at` and `copy_range`
+    // each take a `str` and re-derive its length, which made a split O(n) per position.
+    val sv = s.view()
+    val nv = sep.view()
+    val ls = sv.len()
+    val lsep = nv.len()
     if lsep == 0 {
         out.push(String.from_str(s))
         return out
@@ -300,16 +304,29 @@ fun split(s: &str, sep: &str).R: List<String> {
     var start: usize = 0
     var i: usize = 0
     while i + lsep <= ls {
-        if starts_with_at(s, sep, i) {
-            out.push(copy_range(s, start, i))
+        if view_starts_with_at(sv, nv, i) {
+            out.push(sv.slice(start, i).to_string())
             i = i + lsep
             start = i
         } else {
             i = i + 1
         }
     }
-    out.push(copy_range(s, start, ls))
+    out.push(sv.slice(start, ls).to_string())
     return out
+}
+
+/// `starts_with_at` on views whose lengths are already known.
+fun view_starts_with_at(sv: View, nv: View, at: usize).R: bool {
+    val ln = nv.len()
+    var i: usize = 0
+    while i < ln {
+        if sv.get(at + i) != nv.get(i) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
 }
 
 /// Copies `src` into `dst` at byte offset `at` and returns the offset just

@@ -1,0 +1,252 @@
+## Summary: wall time relative to C (gcc -O2), median of 7 runs
+
+| benchmark | c-gcc | rust | kelp-llvm | kelp-c |
+| --- | ---: | ---: | ---: | ---: |
+| fib | 1.00 | 1.51 | 1.37 | 1.03 |
+| nbody | 1.00 | 0.58 | 0.89 | 1.14 |
+| spectral-norm | 1.00 | 0.96 | 0.96 | 1.67 |
+| mandelbrot | 1.00 | 0.98 | 1.00 | 1.02 |
+| binary-trees | 1.00 | 1.15 | 1.07 | 1.09 |
+| fannkuch-redux | 1.00 | 1.04 | 1.31 | 0.99 |
+| sieve | 1.00 | 1.07 | 1.10 | 1.08 |
+| matmul | 1.00 | 1.27 | 1.05 | 1.05 |
+| strings | 1.00 | 1.25 | TIMEOUT(300s limit) | TIMEOUT(300s limit) |
+| hashmap | 1.00 | 2.94 | 1.92 | 2.29 |
+| sort | 1.00 | 1.06 | 1.33 | 1.51 |
+| sort-builtin | 1.00 | 0.18 | 0.36 | 0.43 |
+| json-tokenizer | 1.00 | 0.89 | 1.59 | 1.59 |
+
+Every ratio above 1.5 is explained in the analysis section below.
+
+Measurement wrapper overhead (`timeout`+`time`+`nice` around /bin/true): median 7.3 ms, included in every wall time.
+
+## Detailed tables
+
+### Wall time
+
+| benchmark | variant | median (s) | min | max | ratio to C (gcc) | checksum | load |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| fib | c-gcc | 0.113 | 0.113 | 0.113 | 1.00 | ok | load 2.60 to 2.60 |
+| fib | rust | 0.171 | 0.170 | 0.173 | 1.51 | ok | load 2.60 to 2.55 |
+| fib | kelp-llvm | 0.154 | 0.154 | 0.155 | 1.37 | ok | load 2.55 to 2.51 |
+| fib | kelp-c | 0.116 | 0.114 | 0.118 | 1.03 | ok | load 2.51 to 2.71 |
+| nbody | c-gcc | 0.440 | 0.439 | 0.441 | 1.00 | ok | load 2.71 to 2.71 |
+| nbody | rust | 0.256 | 0.255 | 0.257 | 0.58 | ok | load 2.73 to 2.73 |
+| nbody | kelp-llvm | 0.392 | 0.391 | 0.398 | 0.89 | ok | load 2.75 to 2.77 |
+| nbody | kelp-c | 0.502 | 0.501 | 0.515 | 1.14 | ok | load 2.77 to 2.79 |
+| spectral-norm | c-gcc | 0.083 | 0.082 | 0.083 | 1.00 | ok | load 2.79 to 2.73 |
+| spectral-norm | rust | 0.080 | 0.079 | 0.080 | 0.96 | ok | load 2.73 to 2.73 |
+| spectral-norm | kelp-llvm | 0.079 | 0.079 | 0.080 | 0.96 | ok | load 2.75 to 2.75 |
+| spectral-norm | kelp-c | 0.138 | 0.138 | 0.140 | 1.67 | ok | load 2.69 to 2.69 |
+| mandelbrot | c-gcc | 0.115 | 0.114 | 0.115 | 1.00 | ok | load 2.69 to 2.69 |
+| mandelbrot | rust | 0.113 | 0.113 | 0.114 | 0.98 | ok | load 2.69 to 2.71 |
+| mandelbrot | kelp-llvm | 0.115 | 0.114 | 0.116 | 1.00 | ok | load 2.71 to 2.74 |
+| mandelbrot | kelp-c | 0.117 | 0.116 | 0.118 | 1.02 | ok | load 2.74 to 2.74 |
+| binary-trees | c-gcc | 0.372 | 0.361 | 0.382 | 1.00 | ok | load 2.76 to 2.76 |
+| binary-trees | rust | 0.428 | 0.419 | 0.432 | 1.15 | ok | load 2.78 to 2.78 |
+| binary-trees | kelp-llvm | 0.397 | 0.392 | 0.408 | 1.07 | ok | load 2.80 to 2.89 |
+| binary-trees | kelp-c | 0.405 | 0.399 | 0.411 | 1.09 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | c-gcc | 0.259 | 0.258 | 0.261 | 1.00 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | rust | 0.271 | 0.268 | 0.272 | 1.04 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | kelp-llvm | 0.340 | 0.339 | 0.358 | 1.31 | ok | load 3.07 to 3.06 |
+| fannkuch-redux | kelp-c | 0.256 | 0.254 | 0.257 | 0.99 | ok | load 2.97 to 2.97 |
+| sieve | c-gcc | 0.398 | 0.395 | 0.407 | 1.00 | ok | load 2.97 to 2.90 |
+| sieve | rust | 0.426 | 0.422 | 0.431 | 1.07 | ok | load 2.90 to 2.82 |
+| sieve | kelp-llvm | 0.437 | 0.432 | 0.438 | 1.10 | ok | load 2.82 to 2.76 |
+| sieve | kelp-c | 0.431 | 0.429 | 0.434 | 1.08 | ok | load 2.70 to 2.70 |
+| matmul | c-gcc | 0.098 | 0.097 | 0.106 | 1.00 | ok | load 2.64 to 2.64 |
+| matmul | rust | 0.124 | 0.124 | 0.126 | 1.27 | ok | load 2.64 to 2.64 |
+| matmul | kelp-llvm | 0.103 | 0.103 | 0.105 | 1.05 | ok | load 2.59 to 2.59 |
+| matmul | kelp-c | 0.103 | 0.102 | 0.108 | 1.05 | ok | load 2.54 to 2.54 |
+| strings | c-gcc | 0.116 | 0.115 | 0.117 | 1.00 | ok | load 2.54 to 2.54 |
+| strings | rust | 0.144 | 0.143 | 0.145 | 1.25 | ok | load 2.50 to 2.50 |
+| strings | kelp-llvm | - | - | - | - | TIMEOUT(300s limit) | |
+| strings | kelp-c | - | - | - | - | TIMEOUT(300s limit) | |
+| hashmap | c-gcc | 0.182 | 0.177 | 0.183 | 1.00 | ok | load 3.18 to 3.17 |
+| hashmap | rust | 0.535 | 0.513 | 0.550 | 2.94 | ok | load 3.17 to 3.15 |
+| hashmap | kelp-llvm | 0.349 | 0.319 | 0.360 | 1.92 | ok | load 3.15 to 3.14 |
+| hashmap | kelp-c | 0.416 | 0.410 | 0.422 | 2.29 | ok | load 3.53 to 3.57 |
+| sort | c-gcc | 0.526 | 0.525 | 0.531 | 1.00 | ok | load 3.57 to 3.60 |
+| sort | rust | 0.559 | 0.556 | 0.567 | 1.06 | ok | load 3.60 to 3.55 |
+| sort | kelp-llvm | 0.699 | 0.694 | 0.705 | 1.33 | ok | load 3.55 to 3.62 |
+| sort | kelp-c | 0.794 | 0.787 | 0.801 | 1.51 | ok | load 3.62 to 3.69 |
+| sort-builtin | c-gcc | 0.885 | 0.878 | 0.893 | 1.00 | ok | load 3.69 to 3.63 |
+| sort-builtin | rust | 0.162 | 0.159 | 0.163 | 0.18 | ok | load 3.66 to 3.66 |
+| sort-builtin | kelp-llvm | 0.318 | 0.315 | 0.323 | 0.36 | ok | load 3.69 to 3.69 |
+| sort-builtin | kelp-c | 0.377 | 0.371 | 0.384 | 0.43 | ok | load 3.63 to 3.58 |
+| json-tokenizer | c-gcc | 0.079 | 0.078 | 0.081 | 1.00 | ok | load 3.58 to 3.58 |
+| json-tokenizer | rust | 0.071 | 0.070 | 0.073 | 0.89 | ok | load 3.58 to 3.58 |
+| json-tokenizer | kelp-llvm | 0.126 | 0.125 | 0.128 | 1.59 | ok | load 3.54 to 3.54 |
+| json-tokenizer | kelp-c | 0.126 | 0.125 | 0.128 | 1.59 | ok | load 3.49 to 3.49 |
+
+### Peak resident set size
+
+| benchmark | variant | median (MB) | min | max | ratio to C (gcc) | checksum | load |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| fib | c-gcc | 2.9 | 2.9 | 3.0 | 1.00 | ok | load 2.60 to 2.60 |
+| fib | rust | 2.9 | 2.9 | 3.0 | 0.99 | ok | load 2.60 to 2.55 |
+| fib | kelp-llvm | 2.9 | 2.9 | 3.0 | 1.00 | ok | load 2.55 to 2.51 |
+| fib | kelp-c | 2.9 | 2.9 | 3.0 | 1.01 | ok | load 2.51 to 2.71 |
+| nbody | c-gcc | 2.9 | 2.9 | 3.0 | 1.00 | ok | load 2.71 to 2.71 |
+| nbody | rust | 3.0 | 2.9 | 3.0 | 1.03 | ok | load 2.73 to 2.73 |
+| nbody | kelp-llvm | 2.9 | 2.8 | 3.0 | 1.00 | ok | load 2.75 to 2.77 |
+| nbody | kelp-c | 2.9 | 2.9 | 3.0 | 1.00 | ok | load 2.77 to 2.79 |
+| spectral-norm | c-gcc | 3.0 | 2.9 | 3.0 | 1.00 | ok | load 2.79 to 2.73 |
+| spectral-norm | rust | 2.9 | 2.9 | 3.0 | 0.98 | ok | load 2.73 to 2.73 |
+| spectral-norm | kelp-llvm | 2.9 | 2.9 | 3.0 | 0.98 | ok | load 2.75 to 2.75 |
+| spectral-norm | kelp-c | 2.9 | 2.9 | 3.0 | 0.99 | ok | load 2.69 to 2.69 |
+| mandelbrot | c-gcc | 2.9 | 2.9 | 3.0 | 1.00 | ok | load 2.69 to 2.69 |
+| mandelbrot | rust | 2.9 | 2.9 | 2.9 | 1.00 | ok | load 2.69 to 2.71 |
+| mandelbrot | kelp-llvm | 2.9 | 2.8 | 3.0 | 1.00 | ok | load 2.71 to 2.74 |
+| mandelbrot | kelp-c | 2.9 | 2.9 | 3.0 | 0.99 | ok | load 2.74 to 2.74 |
+| binary-trees | c-gcc | 10.0 | 9.9 | 10.1 | 1.00 | ok | load 2.76 to 2.76 |
+| binary-trees | rust | 10.3 | 10.1 | 10.3 | 1.02 | ok | load 2.78 to 2.78 |
+| binary-trees | kelp-llvm | 18.2 | 18.1 | 18.3 | 1.81 | ok | load 2.80 to 2.89 |
+| binary-trees | kelp-c | 18.2 | 18.2 | 18.3 | 1.81 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | c-gcc | 2.9 | 2.8 | 3.0 | 1.00 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | rust | 2.9 | 2.9 | 3.0 | 1.02 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | kelp-llvm | 2.9 | 2.9 | 3.0 | 1.01 | ok | load 3.07 to 3.06 |
+| fannkuch-redux | kelp-c | 2.9 | 2.8 | 3.0 | 1.00 | ok | load 2.97 to 2.97 |
+| sieve | c-gcc | 49.6 | 49.6 | 49.7 | 1.00 | ok | load 2.97 to 2.90 |
+| sieve | rust | 49.8 | 49.7 | 49.8 | 1.00 | ok | load 2.90 to 2.82 |
+| sieve | kelp-llvm | 49.7 | 49.7 | 49.7 | 1.00 | ok | load 2.82 to 2.76 |
+| sieve | kelp-c | 49.7 | 49.7 | 49.7 | 1.00 | ok | load 2.70 to 2.70 |
+| matmul | c-gcc | 5.6 | 5.6 | 5.7 | 1.00 | ok | load 2.64 to 2.64 |
+| matmul | rust | 5.8 | 5.8 | 5.9 | 1.03 | ok | load 2.64 to 2.64 |
+| matmul | kelp-llvm | 5.8 | 5.8 | 5.9 | 1.04 | ok | load 2.59 to 2.59 |
+| matmul | kelp-c | 5.8 | 5.8 | 5.8 | 1.03 | ok | load 2.54 to 2.54 |
+| strings | c-gcc | 47.6 | 47.6 | 47.7 | 1.00 | ok | load 2.54 to 2.54 |
+| strings | rust | 63.0 | 63.0 | 63.1 | 1.32 | ok | load 2.50 to 2.50 |
+| strings | kelp-llvm | - | - | - | - | TIMEOUT(300s limit) | |
+| strings | kelp-c | - | - | - | - | TIMEOUT(300s limit) | |
+| hashmap | c-gcc | 66.0 | 65.9 | 66.1 | 1.00 | ok | load 3.18 to 3.17 |
+| hashmap | rust | 104.3 | 104.2 | 104.4 | 1.58 | ok | load 3.17 to 3.15 |
+| hashmap | kelp-llvm | 80.0 | 79.9 | 80.0 | 1.21 | ok | load 3.15 to 3.14 |
+| hashmap | kelp-c | 79.9 | 79.9 | 80.0 | 1.21 | ok | load 3.53 to 3.57 |
+| sort | c-gcc | 21.0 | 21.0 | 21.1 | 1.00 | ok | load 3.57 to 3.60 |
+| sort | rust | 21.3 | 21.2 | 21.3 | 1.01 | ok | load 3.60 to 3.55 |
+| sort | kelp-llvm | 21.2 | 21.2 | 21.2 | 1.01 | ok | load 3.55 to 3.62 |
+| sort | kelp-c | 21.2 | 21.2 | 21.2 | 1.01 | ok | load 3.62 to 3.69 |
+| sort-builtin | c-gcc | 39.9 | 39.8 | 39.9 | 1.00 | ok | load 3.69 to 3.63 |
+| sort-builtin | rust | 21.3 | 21.2 | 21.3 | 0.53 | ok | load 3.66 to 3.66 |
+| sort-builtin | kelp-llvm | 21.2 | 21.2 | 21.2 | 0.53 | ok | load 3.69 to 3.69 |
+| sort-builtin | kelp-c | 21.2 | 21.2 | 21.2 | 0.53 | ok | load 3.63 to 3.58 |
+| json-tokenizer | c-gcc | 21.2 | 21.1 | 21.2 | 1.00 | ok | load 3.58 to 3.58 |
+| json-tokenizer | rust | 21.2 | 21.2 | 21.3 | 1.00 | ok | load 3.58 to 3.58 |
+| json-tokenizer | kelp-llvm | 21.2 | 21.2 | 21.2 | 1.00 | ok | load 3.54 to 3.54 |
+| json-tokenizer | kelp-c | 21.2 | 21.2 | 21.2 | 1.00 | ok | load 3.49 to 3.49 |
+
+### Binary size, stripped
+
+| benchmark | variant | (KB) | ratio to C (gcc) | checksum |
+| --- | --- | ---: | ---: | --- |
+| fib | c-gcc | 14.0 | 1.00 | ok |
+| fib | rust | 388.8 | 27.74 | ok |
+| fib | kelp-llvm | 66.2 | 4.73 | ok |
+| fib | kelp-c | 42.0 | 3.00 | ok |
+| nbody | c-gcc | 14.3 | 1.00 | ok |
+| nbody | rust | 416.8 | 29.14 | ok |
+| nbody | kelp-llvm | 82.2 | 5.75 | ok |
+| nbody | kelp-c | 46.0 | 3.22 | ok |
+| spectral-norm | c-gcc | 14.0 | 1.00 | ok |
+| spectral-norm | rust | 416.8 | 29.74 | ok |
+| spectral-norm | kelp-llvm | 78.2 | 5.58 | ok |
+| spectral-norm | kelp-c | 46.0 | 3.28 | ok |
+| mandelbrot | c-gcc | 14.0 | 1.00 | ok |
+| mandelbrot | rust | 388.8 | 27.74 | ok |
+| mandelbrot | kelp-llvm | 66.2 | 4.73 | ok |
+| mandelbrot | kelp-c | 42.0 | 3.00 | ok |
+| binary-trees | c-gcc | 18.0 | 1.00 | ok |
+| binary-trees | rust | 392.8 | 21.80 | ok |
+| binary-trees | kelp-llvm | 66.2 | 3.68 | ok |
+| binary-trees | kelp-c | 54.0 | 3.00 | ok |
+| fannkuch-redux | c-gcc | 14.0 | 1.00 | ok |
+| fannkuch-redux | rust | 392.8 | 28.03 | ok |
+| fannkuch-redux | kelp-llvm | 66.2 | 4.73 | ok |
+| fannkuch-redux | kelp-c | 42.0 | 3.00 | ok |
+| sieve | c-gcc | 14.0 | 1.00 | ok |
+| sieve | rust | 388.8 | 27.74 | ok |
+| sieve | kelp-llvm | 66.2 | 4.73 | ok |
+| sieve | kelp-c | 42.0 | 3.00 | ok |
+| matmul | c-gcc | 14.0 | 1.00 | ok |
+| matmul | rust | 416.8 | 29.74 | ok |
+| matmul | kelp-llvm | 70.2 | 5.01 | ok |
+| matmul | kelp-c | 42.0 | 3.00 | ok |
+| strings | c-gcc | 14.0 | 1.00 | ok |
+| strings | rust | 396.8 | 28.31 | ok |
+| strings | kelp-llvm | 66.2 | 4.73 | TIMEOUT(300s limit) |
+| strings | kelp-c | 42.0 | 3.00 | TIMEOUT(300s limit) |
+| hashmap | c-gcc | 14.0 | 1.00 | ok |
+| hashmap | rust | 400.8 | 28.60 | ok |
+| hashmap | kelp-llvm | 66.2 | 4.73 | ok |
+| hashmap | kelp-c | 42.0 | 3.00 | ok |
+| sort | c-gcc | 14.0 | 1.00 | ok |
+| sort | rust | 392.8 | 28.03 | ok |
+| sort | kelp-llvm | 66.2 | 4.73 | ok |
+| sort | kelp-c | 46.0 | 3.28 | ok |
+| sort-builtin | c-gcc | 14.0 | 1.00 | ok |
+| sort-builtin | rust | 396.8 | 28.31 | ok |
+| sort-builtin | kelp-llvm | 70.2 | 5.01 | ok |
+| sort-builtin | kelp-c | 46.0 | 3.28 | ok |
+| json-tokenizer | c-gcc | 14.0 | 1.00 | ok |
+| json-tokenizer | rust | 396.8 | 28.31 | ok |
+| json-tokenizer | kelp-llvm | 70.2 | 5.01 | ok |
+| json-tokenizer | kelp-c | 46.0 | 3.28 | ok |
+
+### Build time (3 builds each, kelpc incremental cache off)
+
+| benchmark | variant | median (s) | min | max | ratio to C (gcc) | checksum | load |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| fib | c-gcc | 0.21 | 0.20 | 0.21 | 1.00 | ok | load 2.60 to 2.60 |
+| fib | rust | 0.34 | 0.34 | 0.35 | 1.66 | ok | load 2.60 to 2.55 |
+| fib | kelp-llvm | 1.12 | 1.11 | 1.12 | 5.40 | ok | load 2.55 to 2.51 |
+| fib | kelp-c | 1.33 | 1.30 | 1.40 | 6.42 | ok | load 2.51 to 2.71 |
+| nbody | c-gcc | 0.23 | 0.23 | 0.24 | 1.00 | ok | load 2.71 to 2.71 |
+| nbody | rust | 0.45 | 0.44 | 0.45 | 1.93 | ok | load 2.73 to 2.73 |
+| nbody | kelp-llvm | 1.26 | 1.26 | 1.28 | 5.49 | ok | load 2.75 to 2.77 |
+| nbody | kelp-c | 1.41 | 1.40 | 1.42 | 6.14 | ok | load 2.77 to 2.79 |
+| spectral-norm | c-gcc | 0.22 | 0.22 | 0.22 | 1.00 | ok | load 2.79 to 2.73 |
+| spectral-norm | rust | 0.42 | 0.42 | 0.43 | 1.94 | ok | load 2.73 to 2.73 |
+| spectral-norm | kelp-llvm | 1.22 | 1.21 | 1.22 | 5.58 | ok | load 2.75 to 2.75 |
+| spectral-norm | kelp-c | 1.40 | 1.39 | 1.40 | 6.41 | ok | load 2.69 to 2.69 |
+| mandelbrot | c-gcc | 0.17 | 0.17 | 0.17 | 1.00 | ok | load 2.69 to 2.69 |
+| mandelbrot | rust | 0.35 | 0.35 | 0.35 | 2.03 | ok | load 2.69 to 2.71 |
+| mandelbrot | kelp-llvm | 1.13 | 1.11 | 1.15 | 6.52 | ok | load 2.71 to 2.74 |
+| mandelbrot | kelp-c | 1.25 | 1.25 | 1.25 | 7.23 | ok | load 2.74 to 2.74 |
+| binary-trees | c-gcc | 0.36 | 0.36 | 0.36 | 1.00 | ok | load 2.76 to 2.76 |
+| binary-trees | rust | 0.38 | 0.38 | 0.39 | 1.07 | ok | load 2.78 to 2.78 |
+| binary-trees | kelp-llvm | 1.14 | 1.13 | 1.14 | 3.18 | ok | load 2.80 to 2.89 |
+| binary-trees | kelp-c | 1.49 | 1.49 | 1.49 | 4.16 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | c-gcc | 0.20 | 0.20 | 0.21 | 1.00 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | rust | 0.46 | 0.46 | 0.46 | 2.28 | ok | load 2.98 to 2.98 |
+| fannkuch-redux | kelp-llvm | 1.14 | 1.11 | 1.15 | 5.72 | ok | load 3.07 to 3.06 |
+| fannkuch-redux | kelp-c | 1.26 | 1.23 | 1.29 | 6.31 | ok | load 2.97 to 2.97 |
+| sieve | c-gcc | 0.17 | 0.17 | 0.17 | 1.00 | ok | load 2.97 to 2.90 |
+| sieve | rust | 0.34 | 0.33 | 0.34 | 1.96 | ok | load 2.90 to 2.82 |
+| sieve | kelp-llvm | 1.04 | 1.04 | 1.05 | 6.08 | ok | load 2.82 to 2.76 |
+| sieve | kelp-c | 1.17 | 1.17 | 1.18 | 6.84 | ok | load 2.70 to 2.70 |
+| matmul | c-gcc | 0.19 | 0.18 | 0.19 | 1.00 | ok | load 2.64 to 2.64 |
+| matmul | rust | 0.38 | 0.38 | 0.38 | 2.07 | ok | load 2.64 to 2.64 |
+| matmul | kelp-llvm | 1.06 | 1.06 | 1.06 | 5.70 | ok | load 2.59 to 2.59 |
+| matmul | kelp-c | 1.22 | 1.21 | 1.22 | 6.56 | ok | load 2.54 to 2.54 |
+| strings | c-gcc | 0.21 | 0.21 | 0.21 | 1.00 | ok | load 2.54 to 2.54 |
+| strings | rust | 0.46 | 0.46 | 0.46 | 2.16 | ok | load 2.50 to 2.50 |
+| strings | kelp-llvm | 1.04 | 1.04 | 1.07 | 4.92 | TIMEOUT(300s limit) | load 2.50 to 2.70 |
+| strings | kelp-c | 1.16 | 1.14 | 1.16 | 5.49 | TIMEOUT(300s limit) | load 2.65 to 3.18 |
+| hashmap | c-gcc | 0.25 | 0.24 | 0.25 | 1.00 | ok | load 3.18 to 3.17 |
+| hashmap | rust | 0.56 | 0.55 | 0.59 | 2.28 | ok | load 3.17 to 3.15 |
+| hashmap | kelp-llvm | 1.14 | 1.14 | 1.15 | 4.62 | ok | load 3.15 to 3.14 |
+| hashmap | kelp-c | 1.37 | 1.34 | 1.38 | 5.53 | ok | load 3.53 to 3.57 |
+| sort | c-gcc | 0.23 | 0.22 | 0.23 | 1.00 | ok | load 3.57 to 3.60 |
+| sort | rust | 0.43 | 0.42 | 0.45 | 1.87 | ok | load 3.60 to 3.55 |
+| sort | kelp-llvm | 1.21 | 1.19 | 1.22 | 5.24 | ok | load 3.55 to 3.62 |
+| sort | kelp-c | 1.31 | 1.30 | 1.32 | 5.70 | ok | load 3.62 to 3.69 |
+| sort-builtin | c-gcc | 0.19 | 0.19 | 0.19 | 1.00 | ok | load 3.69 to 3.63 |
+| sort-builtin | rust | 0.48 | 0.47 | 0.48 | 2.46 | ok | load 3.66 to 3.66 |
+| sort-builtin | kelp-llvm | 1.17 | 1.16 | 1.18 | 6.03 | ok | load 3.69 to 3.69 |
+| sort-builtin | kelp-c | 1.40 | 1.39 | 1.41 | 7.19 | ok | load 3.63 to 3.58 |
+| json-tokenizer | c-gcc | 0.23 | 0.23 | 0.23 | 1.00 | ok | load 3.58 to 3.58 |
+| json-tokenizer | rust | 0.43 | 0.42 | 0.43 | 1.83 | ok | load 3.58 to 3.58 |
+| json-tokenizer | kelp-llvm | 1.13 | 1.13 | 1.13 | 4.84 | ok | load 3.54 to 3.54 |
+| json-tokenizer | kelp-c | 1.32 | 1.30 | 1.32 | 5.67 | ok | load 3.49 to 3.49 |
+
