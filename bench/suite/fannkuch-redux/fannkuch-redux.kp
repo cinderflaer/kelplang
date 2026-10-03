@@ -1,0 +1,94 @@
+// fannkuch-redux: the Benchmarks Game pancake-flipping benchmark. Prints the checksum and max flips.
+// Size = n (default 10).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun main() {
+    val n = size_arg(10).to_i32()
+    var perm1: List<i32> = List.empty()
+    var perm: List<i32> = List.empty()
+    var count: List<i32> = List.empty()
+    var i: i32 = 0
+    while i < n {
+        perm1.push(i)
+        perm.push(0)
+        count.push(0)
+        i = i + 1
+    }
+    var r: i32 = n
+    var perm_count: i64 = 0
+    var checksum: i64 = 0
+    var max_flips: i32 = 0
+    var done = false
+    while !done {
+        while r != 1 {
+            count.set((r - 1).to_usize(), r)
+            r = r - 1
+        }
+        i = 0
+        while i < n {
+            perm.set(i.to_usize(), perm1.get(i.to_usize()))
+            i = i + 1
+        }
+        var flips: i32 = 0
+        var k = perm.get(0)
+        while k != 0 {
+            var lo: i32 = 0
+            var hi: i32 = k
+            while lo < hi {
+                val t = perm.get(lo.to_usize())
+                perm.set(lo.to_usize(), perm.get(hi.to_usize()))
+                perm.set(hi.to_usize(), t)
+                lo = lo + 1
+                hi = hi - 1
+            }
+            flips = flips + 1
+            k = perm.get(0)
+        }
+        if flips > max_flips {
+            max_flips = flips
+        }
+        if perm_count % 2 == 0 {
+            checksum = checksum + flips.to_i64()
+        } else {
+            checksum = checksum - flips.to_i64()
+        }
+        var more = true
+        while more {
+            if r == n {
+                done = true
+                more = false
+            } else {
+                val p0 = perm1.get(0)
+                i = 0
+                while i < r {
+                    perm1.set(i.to_usize(), perm1.get((i + 1).to_usize()))
+                    i = i + 1
+                }
+                perm1.set(r.to_usize(), p0)
+                val c = count.get(r.to_usize()) - 1
+                count.set(r.to_usize(), c)
+                if c > 0 {
+                    more = false
+                } else {
+                    r = r + 1
+                }
+            }
+        }
+        perm_count = perm_count + 1
+    }
+    print("fannkuch-redux $n $checksum $max_flips")
+}

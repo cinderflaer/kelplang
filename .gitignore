@@ -44,3 +44,12 @@
 !kelpc/src/externs/*.c
 /dist/
 /target-*/
+
+# Benchmark suite sources (bench/suite/<name>/<name>.c is the C version of the
+# benchmark, not build output). Binaries and raw outputs stay ignored; only
+# bench/RESULTS.md and bench/results.csv are committed.
+!bench/suite/
+!bench/suite/**/
+!bench/suite/**/*.c
+/bench/build/
+/bench/out/

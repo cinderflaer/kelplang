@@ -1,0 +1,42 @@
+// sort-builtin: the same n values as the sort benchmark, sorted by each language's standard sort:
+// Kelp's List.sort (introsort), C's qsort, Rust's slice::sort_unstable. Same checksum line shape.
+// Size = n (default 5000000).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun main() {
+    val n = size_arg(5000000)
+    var a: List<i32> = List.empty()
+    var x: u64 = 12345
+    var i: i64 = 0
+    while i < n {
+        x = x * 6364136223846793005 + 1442695040888963407
+        a.push((x >> 33).to_i32())
+        i = i + 1
+    }
+    a.sort()
+    var ok = true
+    var h: u64 = 0
+    var k: usize = 0
+    while k < a.len() {
+        if k > 0 && a.get(k - 1) > a.get(k) {
+            ok = false
+        }
+        h = h * 31 + a.get(k).to_u64()
+        k = k + 1
+    }
+    print("sort-builtin $n $ok $h")
+}

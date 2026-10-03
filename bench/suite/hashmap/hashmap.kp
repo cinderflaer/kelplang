@@ -1,0 +1,47 @@
+// hashmap: insert n u64 keys (key_i = i * 0x9E3779B97F4A7C15, i = 1..n, value i), look every key up
+// and sum the values, then look up n absent keys and count hits. Kelp's builtin Map<u64, u64>.
+// Size = n keys (default 2000000).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+const MUL: u64 = 11400714819323198485
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun main() {
+    val n = size_arg(2000000)
+    var m: Map<u64, u64> = Map.new()
+    var i: i64 = 1
+    while i <= n {
+        val u = i.to_u64()
+        m.insert(u * MUL, u)
+        i = i + 1
+    }
+    var sum: u64 = 0
+    i = 1
+    while i <= n {
+        sum = sum + m.get(i.to_u64() * MUL)
+        i = i + 1
+    }
+    var hits: i64 = 0
+    i = n + 1
+    while i <= 2 * n {
+        if m.has(i.to_u64() * MUL) {
+            hits = hits + 1
+        }
+        i = i + 1
+    }
+    val len = m.len()
+    print("hashmap $n $len $sum $hits")
+}

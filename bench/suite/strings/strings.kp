@@ -1,0 +1,51 @@
+// strings: build one string of n comma-separated pieces ("p<i>,"), split it into n owned strings,
+// then fold every byte of every piece into a hash. Size = n pieces (default 1000000).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun main() {
+    val n = size_arg(1000000)
+    var s = String.empty()
+    var i: i64 = 0
+    while i < n {
+        s.push_str("p")
+        val num = str.from_i64(i)
+        s.push_str(num.as_str())
+        s.push_str(",")
+        i = i + 1
+    }
+    val text_len = s.len()
+    val pieces = str.split(s.as_str(), ",")
+    var count: i64 = 0
+    var total_len: i64 = 0
+    var h: u64 = 0
+    var k: usize = 0
+    while k < pieces.len() {
+        val p = pieces.get(k).as_str()
+        val len = str.len(p)
+        if len > 0 {
+            count = count + 1
+            total_len = total_len + len.to_i64()
+            var b: usize = 0
+            while b < len {
+                h = h * 31 + str.byte(p, b).to_u64()
+                b = b + 1
+            }
+        }
+        k = k + 1
+    }
+    print("strings $n $text_len $count $total_len $h")
+}

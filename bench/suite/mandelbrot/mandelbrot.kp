@@ -1,0 +1,48 @@
+// mandelbrot: escape-time count over an n x n grid of [-1.5,0.5] x [-1,1], 50 iterations max.
+// Prints the number of points that never escape and the total iteration count. Size = n (default 1000).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).R: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun main() {
+    val n = size_arg(1000)
+    val nf = n.to_f64()
+    var inside: i64 = 0
+    var total: i64 = 0
+    var py: i64 = 0
+    while py < n {
+        val ci = 2.0 * py.to_f64() / nf - 1.0
+        var px: i64 = 0
+        while px < n {
+            val cr = 2.0 * px.to_f64() / nf - 1.5
+            var zr: f64 = 0.0
+            var zi: f64 = 0.0
+            var it: i64 = 0
+            while it < 50 && zr * zr + zi * zi <= 4.0 {
+                val t = zr * zr - zi * zi + cr
+                zi = 2.0 * zr * zi + ci
+                zr = t
+                it = it + 1
+            }
+            total = total + it
+            if it == 50 {
+                inside = inside + 1
+            }
+            px = px + 1
+        }
+        py = py + 1
+    }
+    print("mandelbrot $n $inside $total")
+}
