@@ -52,9 +52,13 @@ impl "std/thread"
    framing helpers and is held on `net` the same way. `plan/http-server.md`
    is its design note.
 
+   **HTTPS serving and client certificates (st3)**: `serve_tls`/`serve_tls_n`/
+   `serve_tls_on` serve over a `tls.ServerConfig`, and `try_get_tls`/`get_tls`/
+   `Client.try_send_tls` take `tls.TlsClientOptions` (private CA, mTLS, ALPN);
+   `plan/tls-server.md`.
+
    Not here, deliberately: gzip, HTTP/2, cookies, proxies, `Expect:
-   100-continue` on the client, idle reaping, and serving TLS (the server speaks
-   plain HTTP; the client speaks both). */
+   100-continue` on the client and idle reaping. */
 
 const DEFAULT_PORT: u16 = 80
 const DEFAULT_HTTPS_PORT: u16 = 443
@@ -1509,6 +1513,93 @@ fun pooled_hop_try(
     )
 }
 
+// ----- https with a private CA, a client certificate or ALPN -----
+
+// The plain client's dial, with `tls.TlsClientOptions` for the handshake: a
+// private CA file, a client certificate (mTLS), ALPN. Verification stays
+// mandatory, as in `connect_configured_try`. A failed handshake is
+// `HttpErr.Dial`. Panics: if the capability denies the host.
+fun connect_tls_try(host: &str, port: u16, timeout_ms: u64, opts: &tls.TlsClientOptions).R: result.Result<Conn, HttpErr> {
+    val dialed = net.try_connect(host, port)
+    return when dialed {
+        Ok(sock) -> finish_dial_opts(sock, host, timeout_ms, opts)
+        Err(e) -> result.Result.Err(error = HttpErr.Dial(reason = e.reason))
+    }
+}
+
+fun finish_dial_opts(sock: net.Socket, host: &str, timeout_ms: u64, opts: &tls.TlsClientOptions).R: result.Result<Conn, HttpErr> {
+    var s = net.Socket(fd = sock.fd)
+    if timeout_ms > 0 {
+        s.set_timeout(timeout_ms)
+    }
+    return when tls.try_handshake_opts(s, host, opts) {
+        Ok(t) -> result.Result.Ok(value = Conn(fd = t.fd, tls_handle = option.Option.Some(value = t.handle)))
+        Err(e) -> {
+            net.close(s)
+            result.Result.Err(error = HttpErr.Dial(reason = tls.error_text(e)))
+        }
+    }
+}
+
+// `Client.try_send` for a URL that may be `https`, with the TLS options above
+// applied to every `https` hop (a plain `http` hop ignores them). Every hop is
+// a fresh connection, as in `Client.try_send`.
+fun Client.try_send_tls(req: Request, opts: &tls.TlsClientOptions).R: result.Result<Response, HttpErr> = send_tls_try(
+    self,
+    opts,
+    req.method.clone(),
+    req.url.clone(),
+    req.headers,
+    req.body.clone(),
+    self.max_redirects,
+)
+
+fun dial_for(u: Url, timeout_ms: u64, opts: &tls.TlsClientOptions).R: result.Result<Conn, HttpErr> {
+    if url_is_https(u) {
+        return connect_tls_try(u.host.as_str(), u.port, timeout_ms, opts)
+    }
+    return connect_configured_try(u.host.as_str(), u.port, timeout_ms, false)
+}
+
+fun send_tls_try(
+    client: Client,
+    opts: &tls.TlsClientOptions,
+    method: String,
+    url_text: String,
+    headers: List<Header>,
+    body: Bytes,
+    hops: i32,
+).R: result.Result<Response, HttpErr> {
+    val u = parse_url(url_text.as_str())
+    val s = dial_for(u, client.timeout_ms, opts)?
+    val got = one_exchange_try(s, method.as_str(), u, headers, body)
+    conn_close(s)
+    val resp = got?
+    val next = follow_url_try(client, u, resp, hops)?
+    if str.is_empty(next.as_str()) {
+        return result.Result.Ok(value = resp)
+    }
+    if keep_body_on(resp.status) {
+        return send_tls_try(client, opts, method, next, headers, body, hops - 1)
+    }
+    return send_tls_try(client, opts, String.from_str("GET"), next, headers, Bytes.empty(), hops - 1)
+}
+
+// A `GET` with the TLS options: `try_get` for a private CA and mTLS.
+fun try_get_tls(url: &str, opts: &tls.TlsClientOptions).R: result.Result<Response, HttpErr> {
+    val c = default_client()
+    return c.try_send_tls(make_get(url), opts)
+}
+
+// Panics: as `get`, and if the TLS handshake fails.
+fun get_tls(url: &str, opts: &tls.TlsClientOptions).R: Response {
+    val r = when try_get_tls(url, opts) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return r
+}
+
 // ----- the one-liners -----
 
 // A `GET` on a fresh connection, no pool. Pooling is opt-in through an
@@ -1896,6 +1987,7 @@ datac ServerConn(
     var close_after: bool,
     var head_only: bool,
     var keep_alive_header: bool,
+    val tls_handle: option.Option<tls.TlsHandle>,
 )
 
 fun new_conn(fd: i32).R: ServerConn = ServerConn(
@@ -1906,7 +1998,34 @@ fun new_conn(fd: i32).R: ServerConn = ServerConn(
     close_after = false,
     head_only = false,
     keep_alive_header = false,
+    tls_handle = option.Option.None,
 )
+
+// A connection whose TLS handshake (`tls.accept`) is done: every read, write
+// and the close go through the same `Conn` dispatch the client uses.
+fun new_conn_tls(t: tls.TlsStream).R: ServerConn = ServerConn(
+    fd = t.fd,
+    buf = Bytes.empty(),
+    start = 0,
+    served = 0,
+    close_after = false,
+    head_only = false,
+    keep_alive_header = false,
+    tls_handle = option.Option.Some(value = t.handle),
+)
+
+fun ServerConn.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
+
+// Decrypted bytes OpenSSL already holds for this connection (always 0 for a
+// plain one): the socket shows nothing readable while a whole record waits
+// there, so `fill` has to ask before it waits.
+fun ServerConn.pending().R: usize {
+    if let Some(h) = tls_handle {
+        val t = tls.TlsStream(fd = fd, handle = h)
+        return t.pending()
+    }
+    return 0
+}
 
 // Blocks for the next client. Panics: if `accept` fails.
 fun Server.accept().R: ServerConn {
@@ -1989,16 +2108,19 @@ fun mut ServerConn.fill(deadline: i64).R: result.Result<usize, HttpErr> {
         return srv_err(408, "the request did not arrive in time")
     }
     val sock = net.Socket(fd = fd)
-    if !sock.wait_readable((deadline - now).to_u64()) {
+    if self.pending() == 0 && !sock.wait_readable((deadline - now).to_u64()) {
         return srv_err(408, "the request did not arrive in time")
     }
-    return when net.try_recv(sock, 4096) {
+    return when conn_recv_try(self.conn(), 4096) {
         Ok(b) -> {
             val n = b.len()
             buf.append(b)
             result.Result.Ok(value = n)
         }
-        Err(e) -> srv_silent(e.reason.as_str())
+        Err(e) -> {
+            val text = http_error_text(&e)
+            srv_silent(text.as_str())
+        }
     }
 }
 
@@ -2474,9 +2596,10 @@ fun mut ServerConn.read_request(limits: &Limits).R: result.Result<ServerRequest,
             return srv_err(417, "unsupported Expect")
         }
         if http11 && has_body && buf.len() == start {
-            val sent = net.try_send_all(net.Socket(fd = fd), Bytes.from_str("HTTP/1.1 100 Continue\r\n\r\n"))
+            val sent = conn_send_all_try(self.conn(), Bytes.from_str("HTTP/1.1 100 Continue\r\n\r\n"))
             if let Err(e) = sent {
-                return srv_silent(e.reason.as_str())
+                val text = http_error_text(&e)
+                return srv_silent(text.as_str())
             }
         }
     }
@@ -2608,10 +2731,7 @@ fun mut ServerConn.write_response(resp: &ServerResponse).R: result.Result<usize,
     if !bodyless && !head_only {
         wire.append(resp.body.clone())
     }
-    return when net.try_send_all(net.Socket(fd = fd), wire) {
-        Ok(n) -> result.Result.Ok(value = n)
-        Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
-    }
+    return conn_send_all_try(self.conn(), wire)
 }
 
 // Answers a failed `read_request` with its status and the reason as text, and
@@ -2638,6 +2758,12 @@ fun mut ServerConn.write_error(e: &HttpErr).R: result.Result<usize, HttpErr> {
 // connection, which can destroy a response the client has not read yet), then
 // closes the descriptor.
 fun ServerConn.close() {
+    // A TLS connection ends its session first (`close_notify`), then goes
+    // through the same half-close and drain: what is drained afterwards is
+    // raw bytes, which is all it needs to be.
+    if let Some(h) = tls_handle {
+        val ended = tls.try_shutdown(tls.TlsStream(fd = fd, handle = h))
+    }
     val sock = net.Socket(fd = fd)
     if net.try_shutdown_write(sock) {
         val until = net.mono_ms() + 250
@@ -2756,6 +2882,73 @@ fun serve_n(port: u16, handler: fun(&ServerRequest).R: ServerResponse, max_reque
     val s = listen(port)
     val limits = default_limits()
     val n = serve_on(&s, handler, &limits, max_requests)
+    s.close()
+    return n
+}
+
+// ----- serving HTTPS -----
+
+// As `serve_on`, with every accepted connection put through the TLS server
+// handshake first (`tls.accept`, under the config's deadline). A client whose
+// handshake fails (no certificate where one is required, no common protocol, a
+// reset) costs that socket and nothing else: it is closed and the loop goes on.
+// The limits, statuses and per-connection rules are `serve_on`'s. `config` is
+// shared and never changed, so threads may serve from the same one.
+fun serve_tls_on(server: &Server, config: &tls.ServerConfig, handler: fun(&ServerRequest).R: ServerResponse, limits: &Limits, max_requests: u64).R: u64 {
+    var total: u64 = 0
+    var going = true
+    while going {
+        if max_requests > 0 && total >= max_requests {
+            going = false
+        } else {
+            val l = net.Listener(fd = server.fd)
+            val acc = net.try_accept(l)
+            when acc {
+                Ok(sock) -> {
+                    val hs = tls.accept(config, sock)
+                    when hs {
+                        Ok(t) -> {
+                            var conn = new_conn_tls(t)
+                            var budget: u64 = 0
+                            if max_requests > 0 {
+                                budget = max_requests - total
+                            }
+                            total = total + conn.serve(handler, limits, budget)
+                        }
+                        Err(_) -> {
+                            net.close(sock)
+                        }
+                    }
+                }
+                Err(e) -> {
+                    if str.contains(e.reason.as_str(), "timed out") {
+                        going = false
+                    } else {
+                        thread.sleep_ms(5)
+                    }
+                }
+            }
+        }
+    }
+    return total
+}
+
+// Listens on `port` and serves HTTPS forever, one connection at a time, with
+// the default limits. `net.listen` takes a port, not an address, and binds
+// every interface.
+fun serve_tls(port: u16, config: &tls.ServerConfig, handler: fun(&ServerRequest).R: ServerResponse) {
+    val s = listen(port)
+    val limits = default_limits()
+    val n = serve_tls_on(&s, config, handler, &limits, 0)
+}
+
+// As `serve_tls`, returning once `max_requests` requests have been answered
+// (or, with an accept timeout set on the listener, nobody came): what makes an
+// HTTPS server testable.
+fun serve_tls_n(port: u16, config: &tls.ServerConfig, handler: fun(&ServerRequest).R: ServerResponse, max_requests: u64).R: u64 {
+    val s = listen(port)
+    val limits = default_limits()
+    val n = serve_tls_on(&s, config, handler, &limits, max_requests)
     s.close()
     return n
 }

@@ -598,7 +598,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/tls",
         "handshake_try_raw",
-        "    *kelp_err_code = 0;\n    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());\n    if (ctx == NULL) {\n        kelp_panic(\"tls.handshake: cannot create an SSL context\");\n    }\n    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);\n    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);\n    if (SSL_CTX_set_default_verify_paths(ctx) != 1) {\n        SSL_CTX_free(ctx);\n        kelp_panic(\"tls.handshake: cannot load the system trust store\");\n    }\n    /* A CA file or directory is *added* to the roots the line above loaded,\n       never a replacement for verifying: nothing on this path lowers\n       SSL_VERIFY_PEER, and the hostname check and TLS 1.2 floor below run\n       exactly as they do when no CA is named. */\n    if (kelp_ca_file[0] != 0 || kelp_ca_dir[0] != 0) {\n        if (SSL_CTX_load_verify_locations(ctx,\n                kelp_ca_file[0] != 0 ? kelp_ca_file : NULL,\n                kelp_ca_dir[0] != 0 ? kelp_ca_dir : NULL) != 1) {\n            SSL_CTX_free(ctx);\n            kelp_panic(\"tls.handshake: cannot load the CA file or directory\");\n        }\n    }\n    SSL* ssl = SSL_new(ctx);\n    /* `ssl` keeps its own reference to `ctx`, so freeing this reference now\n       leaves exactly one object (`ssl`) for every failure path below to\n       free. */\n    SSL_CTX_free(ctx);\n    if (ssl == NULL) {\n        kelp_panic(\"tls.handshake: cannot create an SSL handle\");\n    }\n    if (SSL_set_fd(ssl, kelp_fd) != 1) {\n        SSL_free(ssl);\n        kelp_panic(\"tls.handshake: cannot bind the socket to the TLS handle\");\n    }\n    /* SO_RCVTIMEO/SO_SNDTIMEO make the blocking SSL_connect give up, which is\n       what turns a silent peer into `TlsError.Timeout` instead of a hang. A\n       `timeout_ms` of 0 is the socket's own \"wait forever\", so it is not\n       set. */\n    if (kelp_timeout_ms > 0) {\n        struct timeval tv;\n        tv.tv_sec = (time_t)(kelp_timeout_ms / 1000);\n        tv.tv_usec = (suseconds_t)((kelp_timeout_ms % 1000) * 1000);\n        setsockopt(kelp_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);\n        setsockopt(kelp_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);\n    }\n    /* SNI and the certificate's hostname check both use the name the caller\n       wrote: the same name `std/http.kp`'s capability check ran against,\n       not whatever the socket resolved to. */\n    SSL_set_tlsext_host_name(ssl, kelp_host);\n    if (SSL_set1_host(ssl, kelp_host) != 1) {\n        SSL_free(ssl);\n        kelp_panic(\"tls.handshake: cannot set the verification hostname\");\n    }\n    for (;;) {\n        int rc = KELP_NO_SIGPIPE(SSL_connect(ssl));\n        if (rc == 1) {\n            break;\n        }\n        int err = SSL_get_error(ssl, rc);\n        if ((err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)\n                && errno != EAGAIN && errno != EWOULDBLOCK) {\n            continue;\n        }\n        char text[256];\n        /* A refused certificate arrives as an SSL error whose text only says\n           verification failed; the X509 code is what says whether it was an\n           unknown issuer, an expiry or a name mismatch. */\n        long v = SSL_get_verify_result(ssl);\n        int code = v != X509_V_OK\n            ? kelp_tls_classify_verify(v, text, sizeof text)\n            : kelp_tls_classify_error(ssl, err, text, sizeof text);\n        SSL_free(ssl);\n        *kelp_err_code = code;\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return NULL;\n    }\n    long verify = SSL_get_verify_result(ssl);\n    if (verify != X509_V_OK) {\n        char text[256];\n        int code = kelp_tls_classify_verify(verify, text, sizeof text);\n        SSL_free(ssl);\n        *kelp_err_code = code;\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return NULL;\n    }\n    return ssl;\n",
+        include_str!("externs/tls_handshake_try.c"),
     ),
     (
         "std/tls",
@@ -629,6 +629,36 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "std/tls",
         "shutdown_try_raw",
         "    /* One `SSL_shutdown` (a return of 0 means `close_notify` went out but\n       the peer's set has not arrived yet, which is not a failure), then the\n       handle is always freed: the caller has no second chance to end the\n       session and the socket close follows either way. */\n    SSL* ssl = (SSL*)kelp_handle;\n    int rc = KELP_NO_SIGPIPE(SSL_shutdown(ssl));\n    *kelp_err_code = 0;\n    if (rc < 0) {\n        int err = SSL_get_error(ssl, rc);\n        char text[256];\n        int code = kelp_tls_classify_error(ssl, err, text, sizeof text);\n        *kelp_err_code = code;\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    SSL_free(ssl);\n",
+    ),
+    (
+        "std/tls",
+        "server_ctx_try_raw",
+        include_str!("externs/tls_server_ctx_try.c"),
+    ),
+    (
+        "std/tls",
+        "accept_try_raw",
+        include_str!("externs/tls_accept_try.c"),
+    ),
+    (
+        "std/tls",
+        "ctx_free_raw",
+        include_str!("externs/tls_ctx_free.c"),
+    ),
+    (
+        "std/tls",
+        "alpn_raw",
+        include_str!("externs/tls_alpn.c"),
+    ),
+    (
+        "std/tls",
+        "peer_subject_raw",
+        include_str!("externs/tls_peer_subject.c"),
+    ),
+    (
+        "std/tls",
+        "pending_raw",
+        include_str!("externs/tls_pending.c"),
     ),
 ];
 
