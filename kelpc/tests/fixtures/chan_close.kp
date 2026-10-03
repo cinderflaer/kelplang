@@ -1,0 +1,70 @@
+// Closing, in both directions, on one thread so nothing waits on a clock.
+// Dropping every sender lets `recv` drain what is queued and then answer
+// `Err`; a clone keeps the channel open until it goes too; dropping the
+// receiver makes `send` hand the value back.
+impl "std/result"
+impl "std/option"
+impl "std/sync"
+
+// Sends 1, 2 and 3 and drops its sender when it returns.
+fun fill(tx: move sync.Sender<i64>) {
+    val a = tx.send(1)
+    val b = tx.send(2)
+    val c = tx.send(3)
+}
+
+fun give_up(tx: move sync.Sender<i64>) {
+}
+
+fun hang_up(rx: move sync.Receiver<String>) {
+}
+
+fun show(o: move option.Option<i64>).R: i64 = when o {
+    Some(v) -> v
+    None -> -1
+}
+
+fun state(rx: &sync.Receiver<i64>).R: str {
+    return when rx.recv_timeout(0) {
+        Ok(_) -> "value"
+        Err(e) -> when e {
+            Timeout -> "open"
+            Closed -> "closed"
+        }
+    }
+}
+
+fun main() {
+    // The only sender goes: the three queued values still come out, then Err.
+    val (tx, rx) = sync.unbounded<i64>()
+    fill(tx)
+    var total: i64 = 0
+    var open = true
+    while open {
+        when rx.recv() {
+            Ok(v) -> total += v
+            Err(_) -> open = false
+        }
+    }
+    print(total)
+
+    // A clone keeps the channel open after the first sender is gone.
+    val (tx2, rx2) = sync.unbounded<i64>()
+    val keep = tx2.clone()
+    fill(tx2)
+    print(show(rx2.try_recv()))
+    print(show(rx2.try_recv()))
+    print(show(rx2.try_recv()))
+    print(show(rx2.try_recv()))
+    print(state(&rx2))
+    give_up(keep)
+    print(state(&rx2))
+
+    // The receiver goes: the value comes back to the sender.
+    val (tx3, rx3) = sync.bounded<String>(1)
+    hang_up(rx3)
+    when tx3.send(String.from_str("back")) {
+        Some(s) -> print(s)
+        None -> print("lost")
+    }
+}

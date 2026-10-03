@@ -1,0 +1,6 @@
+// A pool needs at least one worker.
+impl "std/pool"
+
+fun main() {
+    val p = pool.new(0)
+}

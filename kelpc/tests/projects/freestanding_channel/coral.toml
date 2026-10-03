@@ -1,0 +1,11 @@
+name = "freestandingchannel"
+
+# Kernel stage 4 (MK9-S4-M1/M2, roadmap B-6): a program that targets bare
+# metal. The entry `fun` is not `main`: it is what the compiler's `_start` stub
+# calls, and it takes nothing and returns nothing because a bare-metal entry
+# point has no caller to return to.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

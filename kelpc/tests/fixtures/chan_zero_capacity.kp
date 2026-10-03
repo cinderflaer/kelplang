@@ -1,0 +1,7 @@
+// A bounded channel needs room for at least one value; zero is a panic that
+// names the call rather than a channel nobody can send on.
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(0)
+}

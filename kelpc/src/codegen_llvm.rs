@@ -7248,6 +7248,27 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.g.builder.build_call(rt.func, rt.ty, &[mutex, out], "");
                 Ok(Some(self.g.builder.build_load(out_ty, out, "inner")))
             }
+            "swap" => {
+                let cell = self.value_of(&args[0])?;
+                let mutex = self.g.builder.build_load(ptr, cell, "mutex");
+                let value = self.value_of(&args[1])?;
+                let elem_ty = self.lty(ret)?;
+                let incoming = self.temp_alloca(elem_ty, "mutex.in");
+                self.g.builder.build_store(value, incoming);
+                let outgoing = self.temp_alloca(elem_ty, "mutex.out");
+                let rt = self.g.rt("kelp_mutex_swap")?;
+                self.g.builder.build_call(rt.func, rt.ty, &[mutex, incoming, outgoing], "");
+                Ok(Some(self.g.builder.build_load(elem_ty, outgoing, "swapped")))
+            }
+            "share" => {
+                // The receiver is `&Mutex<T>`: the address of the slot that
+                // holds the record pointer. The runtime bumps the count and
+                // hands the same pointer back as the new owned handle.
+                let cell = self.value_of(&args[0])?;
+                let mutex = self.g.builder.build_load(ptr, cell, "mutex");
+                let rt = self.g.rt("kelp_mutex_share")?;
+                Ok(Some(self.g.call(rt.func, rt.ty, &[mutex], "mutex.share")))
+            }
             other => Err(no_value(&format!("the mutex operation '{other}'"))),
         }
     }
@@ -7423,6 +7444,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let cv = self.g.call(rt.func, rt.ty, &[], "condvar");
                 self.cur = self.g.check_alloc(cv, self.cur_fn)?;
                 Ok(Some(cv))
+            }
+            "share" => {
+                let cell = self.value_of(&args[0])?;
+                let cv = self.g.builder.build_load(ptr, cell, "condvar");
+                let rt = self.g.rt("kelp_condvar_share")?;
+                Ok(Some(self.g.call(rt.func, rt.ty, &[cv], "condvar.share")))
             }
             "notify_one" | "notify_all" => {
                 let cell = self.value_of(&args[0])?;
@@ -15071,6 +15098,9 @@ fn declare_runtime<'a>(
     decl(&mut out, "kelp_mutex_run", void, &[ptr, ptr, ptr, ptr, ptr], false, false);
     decl(&mut out, "kelp_mutex_into", void, &[ptr, ptr], false, false);
     decl(&mut out, "kelp_mutex_drop", void, &[ptr], false, false);
+    decl(&mut out, "kelp_mutex_share", ptr, &[ptr], false, false);
+    decl(&mut out, "kelp_mutex_swap", void, &[ptr, ptr, ptr], false, false);
+    decl(&mut out, "kelp_condvar_share", ptr, &[ptr], false, false);
     // The reader/writer lock and condition variable runtime (`std/sync`).
     decl(&mut out, "kelp_rwlock_new", ptr, &[ptr, i64, ptr], true, false);
     decl(&mut out, "kelp_rwlock_read", void, &[ptr, ptr, ptr, ptr, ptr], false, false);

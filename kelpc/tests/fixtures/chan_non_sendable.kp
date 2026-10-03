@@ -1,0 +1,7 @@
+// A channel carries owned values only: a borrowed `str` in the slot would be
+// a thread reading text some other frame owns, so the element type is refused.
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.bounded<str>(2)
+}

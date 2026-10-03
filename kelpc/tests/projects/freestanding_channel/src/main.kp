@@ -1,0 +1,8 @@
+// Channels are built on the mutex and condition-variable records, which are
+// pthread objects, so a freestanding build refuses the module by name. The
+// `impl` line is what names it.
+impl "std/sync"
+
+fun kmain() {
+    val (tx, rx) = sync.bounded<i64>(1)
+}

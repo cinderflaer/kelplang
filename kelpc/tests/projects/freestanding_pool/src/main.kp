@@ -1,0 +1,7 @@
+// A thread pool is built on threads, mutexes and condition variables, so a
+// freestanding build refuses the module by name.
+impl "std/pool"
+
+fun kmain() {
+    val p = pool.new(1)
+}

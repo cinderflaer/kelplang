@@ -11025,7 +11025,20 @@ fn implements_iterator(ctx: &Ctx, ty: &Ty) -> bool {
     let name = struct_name_of(ty)
         .map(|s| s.to_string())
         .or_else(|| builtin_type_name(ty).map(|s| s.to_string()));
-    name.map_or(false, |n| implements_trait(&ctx.env, ITERATOR_TRAIT_KEY, &n))
+    if name.as_ref().map_or(false, |n| implements_trait(&ctx.env, ITERATOR_TRAIT_KEY, n)) {
+        return true;
+    }
+    // A generic instantiation cannot take a trait impl (the parser reads the
+    // `for` type as a bare name), so a shipped generic `datac` such as the
+    // channel's `Receiver<T>` is walkable through a method it declares on its
+    // template: `fun mut Receiver<T>.next().R: option.Option<T>`. The `for`
+    // desugar is an ordinary `next()` call either way, so a wrong shape is
+    // the ordinary type error of that call.
+    let Some(name) = name else { return false };
+    let origin = ctx.env.instances.borrow().origin.get(&name).cloned();
+    origin.map_or(false, |(template, _)| {
+        ctx.fns.templates.contains_key(&format!("{template}#next"))
+    })
 }
 
 /// The index desugar a `for x in <List<T>|[T; N]>` becomes (`plan/syntax.md`
@@ -19028,6 +19041,59 @@ fn check_mutex_method(
         "wait_while_timeout" => {
             check_mutex_wait(receiver, elem, args, span, ctx, expected, true)
         }
+        // `m.share()`: another owned handle to the same runtime record, so a
+        // channel's two ends or a pool's workers can each own one. The
+        // record is freed when the last handle drops.
+        "share" => {
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'Mutex.share' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            let self_arg = check_call_arg(
+                "'self'",
+                &Ty::Ref { mutable: false, inner: Box::new(cell.clone()) },
+                receiver,
+                ctx,
+            )?;
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call {
+                    callee: "Mutex#share".to_string(),
+                    args: vec![self_arg],
+                },
+                ty: cell,
+                span,
+            })
+        }
+        // `m.swap(value)`: put `value` in as the guarded value and take the old
+        // one out, in one locked step. A scoped block cannot capture an owned
+        // value by move, so this is how one is handed to a mutex from inside
+        // a block (a channel's `send` stages the value in a private mutex and
+        // swaps it across).
+        "swap" => {
+            if args.len() != 1 {
+                return Err(TypeError {
+                    message: format!("'Mutex.swap' takes exactly 1 argument, found {}", args.len()),
+                    span,
+                });
+            }
+            let self_arg = check_call_arg(
+                "'self'",
+                &Ty::Ref { mutable: false, inner: Box::new(cell.clone()) },
+                receiver,
+                ctx,
+            )?;
+            let value = check_call_arg("'value'", elem, &args[0].value, ctx)?;
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call {
+                    callee: "Mutex#swap".to_string(),
+                    args: vec![self_arg, value],
+                },
+                ty: elem.clone(),
+                span,
+            })
+        }
         "into_inner" => {
             if !args.is_empty() {
                 return Err(TypeError {
@@ -19049,7 +19115,7 @@ fn check_mutex_method(
         }
         other => Err(TypeError {
             message: format!(
-                "'Mutex.{other}' is not a mutex operation: write 'm.lock {{ v -> ... }}' to reach the value while the lock is held, or 'm.into_inner()' to consume the mutex and take the value out"
+                "'Mutex.{other}' is not a mutex operation: write 'm.lock {{ v -> ... }}' to reach the value while the lock is held, 'm.share()' for another handle to the same mutex, 'm.swap(value)' to exchange the guarded value, or 'm.into_inner()' to consume the mutex and take the value out"
             ),
             span,
         }),
@@ -19374,6 +19440,20 @@ fn check_condvar_method(
     ctx: &mut Ctx,
 ) -> Result<tir::Expr> {
     let _ = probe;
+    if method == "share" {
+        if !args.is_empty() {
+            return Err(TypeError {
+                message: format!("'Condvar.share' takes no arguments, found {}", args.len()),
+                span,
+            });
+        }
+        let self_arg = check_call_arg("'self'", &Ty::Ref { mutable: false, inner: Box::new(Ty::Condvar) }, receiver, ctx)?;
+        return Ok(tir::Expr {
+            kind: tir::ExprKind::Call { callee: "Condvar#share".to_string(), args: vec![self_arg] },
+            ty: Ty::Condvar,
+            span,
+        });
+    }
     if method != "notify_one" && method != "notify_all" {
         return Err(TypeError {
             message: format!(

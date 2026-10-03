@@ -1,0 +1,37 @@
+// `recv_timeout` gives up on an empty channel whose sender is still alive,
+// takes a value that arrives while it waits, and reports `Closed` (not
+// `Timeout`) once every sender is gone. The long wait is only an upper bound:
+// the value arrives at once, so the test never sleeps for it.
+impl "std/thread"
+impl "std/result"
+impl "std/sync"
+
+fun send_once(tx: move sync.Sender<i64>) {
+    val back = tx.send(99)
+}
+
+fun give_up(tx: move sync.Sender<i64>) {
+}
+
+fun describe(r: move result.Result<i64, sync.RecvTimeout>) {
+    when r {
+        Ok(v) -> print(v)
+        Err(e) -> when e {
+            Timeout -> print("timeout")
+            Closed -> print("closed")
+        }
+    }
+}
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(2)
+    describe(rx.recv_timeout(30))
+    val h = thread.spawn(send_once, tx.clone())
+    describe(rx.recv_timeout(20000))
+    when thread.join(h) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    give_up(tx)
+    describe(rx.recv_timeout(20000))
+}

@@ -1,0 +1,62 @@
+// A pool that goes out of scope joins: when `run` returns, every queued job has
+// finished, with no explicit `join`. Joining twice is fine, an idle pool shuts
+// down at once, and a job owns what it captured (a `Sender` moved into each job
+// carries the results home, and the channel closes when the last job is gone).
+impl "std/pool"
+impl "std/sync"
+impl "std/atomic"
+impl "std/option"
+
+pd val ran: AtomicI64 = AtomicI64.new(0)
+
+fun count_one() {
+    ran.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+}
+
+fun run() {
+    val p = pool.new(3)
+    var i = 0
+    while i < 50 {
+        p.spawn(fun() { count_one() })
+        i += 1
+    }
+}
+
+fun idle() {
+    val p = pool.new(2)
+    p.join()
+    p.join()
+}
+
+fun results() {
+    val (tx, rx) = sync.bounded<i64>(3)
+    var rxm = rx
+    val p = pool.new(2)
+    var i: i64 = 1
+    while i <= 20 {
+        val mine = tx.clone()
+        val n = i
+        p.spawn(fun() {
+            val back = mine.send(n * n)
+        })
+        i += 1
+    }
+    var sum: i64 = 0
+    var got = 0
+    while got < 20 {
+        when rxm.recv() {
+            Ok(v) -> sum += v
+            Err(_) -> {}
+        }
+        got += 1
+    }
+    print(sum)
+}
+
+fun main() {
+    run()
+    print(ran.load(order = atomic.Ordering.SeqCst))
+    idle()
+    print("idle")
+    results()
+}
