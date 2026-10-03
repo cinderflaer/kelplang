@@ -60,7 +60,7 @@ P9 forged `Child`.
 env: E1 every operation outside the grant; E2 another module's variable; E3
 wildcard names; E4 no listing; E5 `LD_PRELOAD`/`PATH`; E6 `env` + `process`.
 
-net: N1 hosts outside the grant (aliases, numeric spellings, suffix, injected
+net: N9 TLS CA paths; N1 hosts outside the grant (aliases, numeric spellings, suffix, injected
 port, whitespace); N2 name vs address; N3 ports; N4/N4b numeric pattern vs a
 DNS name; N5/N5b loopback grant and the bound interface (raw and http); N6
 listen ports; N7 redirect to an unlisted host; N8 `ws`/`tls` behind the gate.
@@ -114,6 +114,22 @@ sealed, ungranted, outside the range); `[extern]` header/library injection and
    70)` folded to the granted address while the target shifts by `n mod 64`.
    Shifts of 64 or more bits are no longer constants (also used by `irq` and
    `frames`).
+8. **Narrow-type shifts** (`tl7`). A shift by the width or more was poison on
+   LLVM and 0 or garbage in C. It is now one rule on both backends, hosted and
+   freestanding: an amount outside `0..width` (negative included) panics with
+   `shift amount out of range`; a constant amount out of range is a compile error
+   naming the type and the amount; `x.wrapping_shl(n)`/`wrapping_shr(n)` mask the
+   amount. The `mmio`/`irq`/`frames` constant folder now folds at the operand's
+   own width (a `u32` line wraps at 32 bits, as the program does) instead of 64.
+   Tests: `shift_*` fixtures in `compile_and_run.rs` (both backends, freestanding
+   boot) and `a_line_folds_at_its_own_width` in `irq_frames.rs`.
+9. **TLS `ca_file`/`ca_dir`** (`tl7`, N9). The handshake opened these paths with
+   no `fs` check. They are removed: `TlsOptions`/`TlsClientOptions` take PEM
+   bytes (`ca_pem`, `with_ca_pem`), the runtime never opens a path, and a file
+   is read with `tlsfile.ca_pem(path)`, which is the `fs` gate: a module with no
+   `fs` grant is refused at compile time ("needs the 'fs' capability"), a path
+   outside the grant is the ordinary `fs` denial and is never opened. `ca_dir`
+   has no bytes form and is gone. Tests: `n09`, `n09b`, `n09c`.
 
 ## Known gaps
 
@@ -127,16 +143,6 @@ sealed, ungranted, outside the range); `[extern]` header/library injection and
 - **M5 pointer offsets after birth** (`m05`, ignored): the mmio check is on the
   address a pointer is born at. Design: provenance, roadmap D-1
   (`plan/device-caps.md` "Born-at only").
-- **Narrow-type shifts.** A shift by the type's width or more on `u32` and
-  smaller is undefined and differs per backend (LLVM prints garbage, C prints 0:
-  `1u32 << 33`), and constant folding for `irq`/`frames` masks to 64 bits, not
-  the operand's width. Design: define shifts as `n mod width` (or trap) in both
-  backends and fold with the operand type's width. No reproduction attack on the
-  grant is known; not fixed here.
-- **TLS `ca_file`/`ca_dir`** are read by the handshake without an `fs` check. A
-  `net`-granted module can make the client read a PEM path; the only output is
-  whether verification succeeds. Design: route the two paths through the `fs`
-  check or accept PEM bytes only.
 - **Confused deputies and unions** are by design: a module that reads any path
   with a broad grant serves any caller; grants made to one module by several
   importers are unioned, each bounded by what its importer holds.
@@ -149,9 +155,9 @@ sealed, ungranted, outside the range); `[extern]` header/library injection and
 | fs | resolution gate + `kelp_cap_check_path` (normalize, resolve links, glob) | 21 / ~60 | all but 1 | 1 (F10) | 0 |
 | process | gate + program path check + child table | 9 / 17 | all but 1 | 1 (P8) | 0 (P7 is documented breadth) |
 | env | gate + `kelp_cap_check_name` | 6 / 17 | all | 0 | 0 |
-| net | gate + host/port/hostport checks + bind verdict | 9 / 30 | all but 2 | 2 (N4, N5) | 1 (ca_file, untested) |
+| net | gate + host/port/hostport checks + bind verdict; TLS CA bytes only via `fs` | 12 / 33 | all but 2 | 3 (N4, N5, N9) | 0 |
 | handles | constructor rule | 3 / 7 | 7 of 8 shapes refused | 1 (H1) | 1 (H3) |
 | unsafe/asm | `[unsafe] modules` audit walk, `unsafe` blocks | 7 / 24 | all but 1 | 1 (U3) | 0 |
-| mmio/irq/frames | `Ptr.from_addr` fold + range check, sealed constructors | 5 / 12 (+ `irq_frames.rs`) | all but 1 | 1 (M2) | 2 (M5, narrow shifts) |
+| mmio/irq/frames | `Ptr.from_addr` fold + range check, sealed constructors | 5 / 12 (+ `irq_frames.rs`) | all but 1 | 2 (M2, narrow shifts) | 1 (M5) |
 | indirect use | lexical module of the call site | 5 / 17 | all | 0 | 0 |
 | delegation/manifest | `pattern_covered`, validators, shipped-only `std/` ids | 5 / 20 | all | 0 | 0 |
