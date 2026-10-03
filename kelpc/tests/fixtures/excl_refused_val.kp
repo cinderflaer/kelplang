@@ -1,0 +1,14 @@
+// Writing a captured `val`: the binding must be declared `var`.
+datac State(var count: i32)
+
+fun each(f: scoped fun(i32)) {
+    f(1)
+}
+
+fun main() {
+    val s = State(count = 0)
+    each { n ->
+        s.count += n
+    }
+    print(s.count)
+}

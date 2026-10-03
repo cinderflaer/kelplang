@@ -1,0 +1,14 @@
+// Exclusive capture does not let a callback outlive its call: a scoped value
+// still cannot be stored.
+datac State(var count: i32)
+datac Handler(val f: fun(i32))
+
+fun keep(f: scoped fun(i32)).R: Handler {
+    return Handler(f = f)
+}
+
+fun main() {
+    var s = State(count = 0)
+    val h = keep { n -> s.count += n }
+    print(s.count)
+}

@@ -1,0 +1,22 @@
+// `defer` inside the block runs when the block returns (once per call), and a
+// `defer` in the enclosing function that reads the owner runs after the call,
+// when the capture is long released. The callee calls the block in a loop.
+datac State(var count: i32, var log: List<i32>)
+
+fun repeat(times: i32, f: scoped fun(i32)) {
+    var i = 0
+    while i < times {
+        f(i)
+        i += 1
+    }
+}
+
+fun main() {
+    var s = State(count = 0, log = List.empty())
+    defer print(s.count)
+    repeat(3) { i ->
+        defer s.log.push(i)
+        s.count += i * 10
+    }
+    print(s.log.len())
+}

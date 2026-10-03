@@ -1,0 +1,18 @@
+// A block that writes a capture cannot hand back a borrow of it: the borrow
+// would outlive the call that holds the capture exclusively.
+impl "std/str"
+
+datac State(var count: i32, var label: String)
+
+fun pick(f: scoped fun(i32).R: str).R: i32 {
+    return 0
+}
+
+fun main() {
+    var s = State(count = 0, label = String.from_str("x"))
+    val r = pick { n ->
+        s.count += n
+        s.label.as_str()
+    }
+    print(r)
+}

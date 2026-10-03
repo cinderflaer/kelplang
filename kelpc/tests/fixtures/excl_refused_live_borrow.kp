@@ -1,0 +1,19 @@
+// A borrow of the owner is still used after the call, so the block's exclusive
+// capture conflicts with it (the borrow ends at its last use, and this is it).
+impl "std/str"
+
+datac State(var items: List<String>)
+
+fun each(f: scoped fun(i32)) {
+    f(1)
+}
+
+fun main() {
+    var s = State(items = List.empty())
+    s.items.push(String.from_str("a"))
+    val first = s.items.get(0)
+    each { n ->
+        s.items.push(String.from_str("b"))
+    }
+    print(first)
+}

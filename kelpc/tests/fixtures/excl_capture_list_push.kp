@@ -1,0 +1,26 @@
+// A mutating method call through a capture is a write: the list is pushed to
+// from inside the block, and read normally afterwards.
+impl "std/str"
+
+fun each(f: scoped fun(i32)) {
+    var i = 0
+    while i < 3 {
+        f(i)
+        i += 1
+    }
+}
+
+fun main() {
+    var seen: List<i32> = List.empty()
+    var names: List<String> = List.empty()
+    each { n ->
+        seen.push(n * 10)
+        names.push(String.from_str("n"))
+    }
+    var i: usize = 0
+    while i < seen.len() {
+        print(seen.get(i))
+        i += 1
+    }
+    print(names.len())
+}

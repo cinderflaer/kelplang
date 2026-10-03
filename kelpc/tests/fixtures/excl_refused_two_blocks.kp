@@ -1,0 +1,13 @@
+// Two blocks in one call that both write the same owner.
+datac State(var count: i32)
+
+fun both(a: scoped fun(i32), b: scoped fun(i32)) {
+    a(1)
+    b(2)
+}
+
+fun main() {
+    var s = State(count = 0)
+    both(fun(n: i32) { s.count += n }, fun(n: i32) { s.count += n * 2 })
+    print(s.count)
+}

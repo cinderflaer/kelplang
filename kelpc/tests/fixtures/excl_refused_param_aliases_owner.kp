@@ -1,0 +1,17 @@
+// The receiver is a field of the owner the block writes: borrow roots are whole
+// variables, so `s.bag` and `s.count` are both borrows of `s` and conflict.
+datac Bag(var n: i32)
+datac State(var count: i32, var bag: Bag)
+
+fun mut Bag.each(f: scoped fun(i32)) {
+    f(1)
+    n += 1
+}
+
+fun main() {
+    var s = State(count = 0, bag = Bag(n = 0))
+    s.bag.each { x ->
+        s.count += x
+    }
+    print(s.count)
+}
