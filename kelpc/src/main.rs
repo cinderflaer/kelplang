@@ -1237,7 +1237,27 @@ fn collect_kp_into(
     Ok(())
 }
 
+/// The compiler's passes recurse over the syntax tree, and the parser's depth
+/// limits (`parser::MAX_NESTING`) bound how deep that tree can be, but a debug
+/// build's frames are large enough that the 8 MiB main-thread stack is not
+/// enough for a tree at the limit. The work runs on a thread with a stack sized
+/// for it instead; the memory is address space until it is touched.
+const COMPILER_STACK_BYTES: usize = 512 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    let worker = std::thread::Builder::new()
+        .name("kelpc".to_string())
+        .stack_size(COMPILER_STACK_BYTES)
+        .spawn(real_main);
+    match worker {
+        Ok(handle) => handle.join().unwrap_or(ExitCode::FAILURE),
+        // No such stack to be had (a tight address-space limit): run on the
+        // main thread's own, which is what every build did before.
+        Err(_) => real_main(),
+    }
+}
+
+fn real_main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let command = match args.get(1).map(String::as_str) {
         // `kelpc version` needs no further arguments, so it is answered before

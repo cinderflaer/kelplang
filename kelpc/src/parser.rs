@@ -11,7 +11,17 @@ pub struct Parser {
     /// a `{` after an expression opens the body and not a trailing block
     /// (`plan/trailing-closure.md`). A call's argument list and a block reset it.
     no_trailing_block: bool,
+    /// How many nesting constructs (expression, type, block, pattern) the parser
+    /// is inside right now; `nest` refuses to go past `MAX_NESTING`.
+    depth: usize,
 }
+
+/// How deep source text may nest (parenthesized or prefix-chained expressions,
+/// blocks, type arguments, patterns) before the parser refuses it. Every later
+/// pass walks the tree recursively, so an unbounded depth is a stack overflow
+/// (an abort, not a diagnostic) on a few thousand `(` characters. Written Kelp
+/// stays far below this: the deepest fixture nests under 30.
+const MAX_NESTING: usize = 200;
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -145,7 +155,39 @@ impl Parser {
             pos: 0,
             if_lets: 0,
             no_trailing_block: false,
+            depth: 0,
         }
+    }
+
+    /// Refuses a left-leaning chain (`a < b < c ...`, `x.f.g.h ...`, `e???`)
+    /// longer than `MAX_NESTING`: the loop that builds it does not recurse, but
+    /// the tree it leaves is as deep as the chain is long.
+    fn chain_limit(&self, links: usize) -> PResult<()> {
+        if links > MAX_NESTING * 4 {
+            return Err(ParseError {
+                message: format!(
+                    "this chain of operators or accesses is longer than {} links; split it into smaller pieces",
+                    MAX_NESTING * 4
+                ),
+                span: self.peek().span,
+            });
+        }
+        Ok(())
+    }
+
+    /// Enters one nesting level, or reports the depth limit. The caller undoes
+    /// it with `self.depth -= 1` on every path out (the wrappers below do).
+    fn nest(&mut self) -> PResult<()> {
+        if self.depth >= MAX_NESTING {
+            return Err(ParseError {
+                message: format!(
+                    "this nests more than {MAX_NESTING} levels deep (expressions, blocks, types and patterns inside one another); split it into smaller pieces"
+                ),
+                span: self.peek().span,
+            });
+        }
+        self.depth += 1;
+        Ok(())
     }
 
     /// Parses the expression in an `if`/`while`/`for`/`when` head, where a
@@ -1954,6 +1996,13 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> PResult<TypeExpr> {
+        self.nest()?;
+        let r = self.parse_type_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_type_inner(&mut self) -> PResult<TypeExpr> {
         // A trait object is `&dyn Name` (A-12 slice 4) or `Box<dyn Name>`
         // (slice 7). `dyn` is not a keyword, so a bare `dyn Name` is recognized
         // here, where two names in a row can only mean this, and *marked* on
@@ -2481,6 +2530,13 @@ impl Parser {
     /// here and settled for good where the declaration's parameter list says
     /// which one it takes.
     fn parse_type_arg(&mut self) -> PResult<TypeExpr> {
+        self.nest()?;
+        let r = self.parse_type_arg_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_type_arg_inner(&mut self) -> PResult<TypeExpr> {
         if self.starts_const_arg() {
             let start = self.peek().span;
             let e = self.parse_const_arg_expr()?;
@@ -2568,6 +2624,13 @@ impl Parser {
     /// The statements and closing `}` of a block whose `{` (and, for a block
     /// with parameters, whose `{ x, y ->` header) the caller has consumed.
     fn parse_block_body(&mut self, start: Span) -> PResult<Block> {
+        self.nest()?;
+        let r = self.parse_block_body_inner(start);
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_block_body_inner(&mut self, start: Span) -> PResult<Block> {
         let saved = std::mem::replace(&mut self.no_trailing_block, false);
         self.skip_newlines();
         let mut stmts = Vec::new();
@@ -2687,6 +2750,13 @@ impl Parser {
     /// `(x)` is not a pattern but the parenthesized name `x`, exactly as `(T)`
     /// is not a tuple type.
     fn parse_binding_pattern(&mut self) -> PResult<BindingPattern> {
+        self.nest()?;
+        let r = self.parse_binding_pattern_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_binding_pattern_inner(&mut self) -> PResult<BindingPattern> {
         let open = self
             .expect(TokenKind::LParen, "'(' to open a destructuring pattern")?
             .span;
@@ -2826,6 +2896,13 @@ impl Parser {
     // ---- expressions (Pratt parsing) ----
 
     fn parse_expr(&mut self) -> PResult<Expr> {
+        self.nest()?;
+        let r = self.parse_expr_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_expr_inner(&mut self) -> PResult<Expr> {
         self.parse_assignment()
     }
 
@@ -2941,6 +3018,7 @@ impl Parser {
 
     fn parse_binary_filtered(&mut self, min_bp: u8, comparisons: bool) -> PResult<Expr> {
         let mut lhs = self.parse_unary()?;
+        let mut chain = 0usize;
         loop {
             // Shifts first: they are two tokens wide, so the table above
             // cannot describe them.
@@ -2970,6 +3048,8 @@ impl Parser {
             if bp < min_bp {
                 break;
             }
+            chain += 1;
+            self.chain_limit(chain)?;
             for _ in 0..width {
                 self.advance();
             }
@@ -2986,6 +3066,13 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> PResult<Expr> {
+        self.nest()?;
+        let r = self.parse_unary_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_unary_inner(&mut self) -> PResult<Expr> {
         match self.peek_kind() {
             TokenKind::Minus => {
                 let start = self.advance().span;
@@ -3053,7 +3140,10 @@ impl Parser {
 
     fn parse_postfix(&mut self) -> PResult<Expr> {
         let mut expr = self.parse_primary()?;
+        let mut chain = 0usize;
         loop {
+            chain += 1;
+            self.chain_limit(chain)?;
             // `expr?` — the propagation operator (MK5-S6-M1). It is postfix,
             // so it binds tighter than any binary operator and chains with the
             // accesses below (`f()?.x`).
