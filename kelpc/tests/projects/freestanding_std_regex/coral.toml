@@ -1,0 +1,16 @@
+name = "freestandingstdregex"
+
+# Kernel stage 23: `std/regex` is a freestanding-capable module once the
+# allocator is configured. The parser, the program and the Pike VM are pure
+# Kelp over `List<u8>`/`List<i32>`, and the `String`-field equality and the
+# `View` surface its types need are emitted into the module.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+alloc = "alloc"
+dealloc = "dealloc"
+
+[unsafe]
+modules = ["main"]

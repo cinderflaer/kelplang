@@ -161,6 +161,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/result" => include_str!("../std/result.kp"),
         "std/arena" => include_str!("../std/arena.kp"),
         "std/regex" => include_str!("../std/regex.kp"),
+        "std/tz" => include_str!("../std/tz.kp"),
         _ => return None,
     })
 }
@@ -178,7 +179,7 @@ pub fn shipped() -> &'static [&'static str] {
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/http", "std/ws",
         "std/encoding", "std/list", "std/option", "std/result", "std/atomic", "std/thread",
-        "std/arena", SYNC_MODULE, "std/irq", "std/frame", "std/regex",
+        "std/arena", SYNC_MODULE, "std/irq", "std/frame", "std/regex", "std/tz",
     ]
 }
 

@@ -72,8 +72,8 @@ refused by name with the two manifest keys.
 `assert` (the runtime's `kelp_assert`), a defined `main` (the hosted entry point
 and its `argc`/`argv` globals), `Ptr.alloc`/`Ptr.free` (the hosted
 `malloc`/`free`), passdowns (`pd`, whose initializers run through the generated
-`kelp_init_pds` that only the hosted entry point calls), `View` and `Thread`
-(which reach the hosted runtime whatever the manifest says), `String` and
+`kelp_init_pds` that only the hosted entry point calls), `Thread` (which reaches
+the hosted runtime whatever the manifest says), `String` and
 `Bytes` when no allocator is configured, and `Box`, `List` and `Map` when no
 `[target] alloc`/`dealloc` pair is configured. Any `std/*` module whose row in
 `freestanding::std_admission` is `Hosted` is refused by name with "needs a
@@ -98,7 +98,10 @@ would instantiate never exist either. The hosted `std/str` is unchanged.
 The list is deliberately a *closure over reachability*, not the language's
 surface: `print` is refused as a call, `String`/`Bytes` as a type wherever they
 appear without an allocator (a local, a parameter, a field, a return),
-`View`/`Thread` always, and a `std/*` module as both. A shape not on the allowed
+`Thread` always, and a `std/*` module as both. `View` is a borrowed two-word
+value with no storage, so it is admitted with the allocator-using
+`View.to_string` held back (kernel stage 23, `plan/freestanding-std.md`). A shape
+not on the allowed
 list is refused rather than lowered, so a program that compiles freestanding
 cannot reference a symbol the link would miss.
 
@@ -287,7 +290,8 @@ definitions. Without a `realloc`, growth is alloc + copy + dealloc. The
 generated object still references no libc symbol, which the acceptance test
 checks with `llvm-nm -u`. With no pair configured the containers and
 `String`/`Bytes` are refused exactly as before, with a message that names the
-`alloc`/`dealloc` keys; `View` and `Thread` are refused either way.
+`alloc`/`dealloc` keys; `Thread` is refused either way, while `View` is admitted
+with `View.to_string` joining that same allocator set.
 
 `Ptr.alloc`/`Ptr.free` stay refused: they are the hosted `malloc`/`free` and
 this stage does not reroute them. A failed allocation (the project's `alloc`

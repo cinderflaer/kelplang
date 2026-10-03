@@ -131,18 +131,39 @@ reports the count.
 
 ## Freestanding
 
-`std/regex` is hosted-only. It was built into a riscv64 image with the allocator
-pair to see whether the allocator subset (`plan/freestanding-std.md`) was enough.
-The parser, the program and the VM link clean: they are `List` and integer code.
-Two things do not: `Match`, `RegexErr` and `Option<String>` each carry a `String`,
-and the derived equality the compiler emits for such a `datac`/`enum` calls the
-hosted `kelp_map_key_eq`; and `View.slice`/`View.to_string` are runtime calls that
-a freestanding build does not define. Both are compiler work outside this task,
-so the module is `Hosted` in `freestanding::std_admission` and a freestanding
-project that imports it is refused by name with the allowed-module list
-(`tests/projects/freestanding_std_refused_regex`). A future stage that gives
-freestanding a `String`-free result type (spans only) or the two runtime pieces
-can admit the engine without changing it.
+`std/regex` is freestanding-capable with the allocator pair (kernel stage 23;
+rows in `plan/freestanding-std.md`). It was built into a riscv64 image with the
+allocator pair to see whether the allocator subset was enough. The parser, the
+program and the VM link clean: they are `List` and integer code. Two things did
+not, and both were compiler work this stage did:
+
+- `Match`, `RegexErr` and `Option<String>` each carry a `String`, and the
+derived key equality the compiler emits for such a `datac`/`enum` (every
+type whose fields are all keyable, whether or not it is ever a `Map` key) called
+the hosted `kelp_map_key_eq`. The LLVM backend now emits that helper into a
+freestanding image as the same length-aware byte loop `View.eq` uses, so a
+`String`-field `datac` compares and hashes with nothing for `ld.lld` to
+resolve.
+- `View.slice` and `View.to_string` had no freestanding lowering, and the
+`View` type itself was refused. `View` is a borrowed `{ptr, len}` pair with no
+storage of its own, so all five of its operations are now admitted; `slice` is
+pointer arithmetic with the same bounds panic the hosted body has, and
+`to_string` allocates through the project's own allocator like every other
+`String` builder.
+
+The acceptance is `examples/kernel0-eq` (riscv64) and
+`examples/kernel0-eq-x86_64`: a `String`-field `datac` with a declared `eq` and
+a `Map<Pair, i32>` that resolves through the derived pair, a `Bytes`-field
+`datac` whose declared `eq` walks the bytes, a `View.slice` and
+`View.to_string`, and `regex.compile("[a-z]+(\\d+)")` matched against
+`"xx hello42"`, with the match text and capture group printed over the UART
+under QEMU; both images link with no undefined symbol but the linker script's
+weak `__bss_*`. The tests are `kernel0_eq_builds_with_no_undefined_symbols`,
+`kernel0_eq_boots_and_prints_the_equality_and_regex_lines` and
+`kernel0_eq_x86_64_builds_and_boots_the_same_lines`, plus
+the
+`freestanding_std_regex` build project and the new `std/regex` row in the
+`freestanding::std_admission` unit test.
 
 ## Tests
 

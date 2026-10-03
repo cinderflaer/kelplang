@@ -1,0 +1,25 @@
+name = "kernel0-eq"
+
+# Kernel stage 23: a `datac` with a `String` field compares and hashes in a
+# freestanding image. The manifest is `kernel0-string`'s allocator hook with a
+# naming `realloc`, because a `String`-carrying value is only legal once the
+# project owns the allocator; `main` is on the audit list for the arena it
+# writes through `Ptr<u8>`.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+realloc = "realloc"
+
+[unsafe]
+modules = ["main", "uart"]
+
+# The NS16550's register window, held by the entry module and delegated to
+# `uart`, the one module that builds a pointer from the device's address
+# (`plan/device-caps.md`).
+[caps]
+mmio = ["0x10000000+0x100"]

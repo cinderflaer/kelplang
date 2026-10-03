@@ -1,0 +1,10 @@
+name = "freestandingstdrefusedtz"
+
+# `std/tz` is hosted-only: it reads TZif files and `$TZDIR`, which a bare-metal
+# image has no form of, and its `Result` payloads carry `String`. The module is
+# refused by name (plan/tz.md, Freestanding).
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

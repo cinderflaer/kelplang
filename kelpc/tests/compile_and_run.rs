@@ -1885,6 +1885,60 @@ fn regex_is_match_panics_on_a_bad_pattern() {
     assert_fixture_panics("stdlib_regex_panic", "regex.is_match: unclosed group");
 }
 
+// A body that ends in `while true { ... }` never falls through, so a function
+// returning an owned type needs no fallthrough `ret` — which it could not build
+// one for anyway, a `String` having no zero value. Both backends agree here now;
+// before, the LLVM one refused the shape as a compiler defect.
+#[test]
+fn a_function_whose_body_ends_in_an_endless_loop_returns_an_owned_value() {
+    assert_compiles_and_runs(
+        "tests/fixtures/owned_return_endless_loop.kp",
+        "xxx\n\n4\n9\n",
+    );
+}
+
+// `std/tz`: time zones over the system TZif database. The synthetic fixture
+// builds its own TZif byte arrays, so it pins the parser, the footer rule and
+// the corrupt-data refusals on a machine with no database at all; the zone
+// fixture needs one and prints a single skip line when there is none, which the
+// test expects instead of the table (the same probe, `zoneinfo_has_the_test_zones`).
+#[test]
+fn the_tz_conformance_table_passes() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_tz_synthetic.kp",
+        "gap: gap\nambiguous: ambiguous 1730611800 1730615400\none: one 1710052200\ncases: 116, failed: 0\n",
+    );
+}
+
+#[test]
+fn the_tz_module_reads_the_system_zoneinfo_database() {
+    let expected = if zoneinfo_has_the_test_zones() {
+        "cases: 57, failed: 0\n"
+    } else {
+        "tz: no zoneinfo database\n"
+    };
+    assert_compiles_and_runs("tests/fixtures/stdlib_tz_zones.kp", expected);
+}
+
+/// Whether the host carries every zone `stdlib_tz_zones.kp` reads, in `$TZDIR`
+/// or in `/usr/share/zoneinfo` — the same probe the fixture makes, so the two
+/// agree about whether the database is there.
+fn zoneinfo_has_the_test_zones() -> bool {
+    let tzdir = std::env::var("TZDIR").unwrap_or_default();
+    let dirs = [tzdir, "/usr/share/zoneinfo".to_string()];
+    [
+        "America/New_York",
+        "Europe/Berlin",
+        "Asia/Kolkata",
+        "Australia/Lord_Howe",
+    ]
+    .iter()
+    .all(|zone| {
+        dirs.iter()
+            .any(|dir| !dir.is_empty() && Path::new(dir).join(zone).is_file())
+    })
+}
+
 #[test]
 fn an_extern_without_a_compiler_supplied_body_is_rejected() {
     assert_rejected("tests/fixtures/extern_no_body.kp");
@@ -4292,6 +4346,13 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "mutex_lock_value",
         "mutex_lock_return",
         "mutex_into_inner",
+        // `std/tz`: a parsed zone owns five `List`s and a `String` table per
+        // time type, the formatter builds a `String` per call, and the
+        // synthetic fixture builds and drops a dozen `Bytes`. Under
+        // AddressSanitizer a double free or a leak in any of them fails here.
+        "stdlib_tz_synthetic",
+        "stdlib_tz_zones",
+        "owned_return_endless_loop",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -11659,7 +11720,9 @@ fn every_admitted_std_module_builds_with_no_undefined_symbols() {
         "freestanding_std_str",
         "freestanding_std_math",
         "freestanding_std_alloc",
+        "freestanding_std_regex",
         "freestanding_std_kernel",
+        "freestanding_view",
     ] {
         let bin = out_path(dir);
         let build = Command::new(kelpc_bin())
@@ -11721,12 +11784,12 @@ fn freestanding_std_kernel_boots_with_option_result_and_arena() {
 #[test]
 fn a_hosted_std_module_is_refused_by_name_with_the_allowed_list() {
     let allowed = "std/arena, std/atomic, std/frame, std/irq, std/list, \
-                   std/math, std/option, std/result, std/str";
+                   std/math, std/option, std/regex, std/result, std/str";
     for (dir, module) in [
         ("freestanding_std_refused_time", "std/time"),
         ("freestanding_std_refused_thread", "std/thread"),
         ("freestanding_std_refused_env", "std/env"),
-        ("freestanding_std_refused_regex", "std/regex"),
+        ("freestanding_std_refused_tz", "std/tz"),
     ] {
         let bin = out_path(dir);
         let build = Command::new(kelpc_bin())
@@ -13111,6 +13174,108 @@ fn kernel0_string_boots_and_prints_its_text_over_the_uart() {
     );
 }
 
+/// Kernel stage 23's acceptance build: `examples/kernel0-eq` compares a
+/// `String`-field `datac` (a declared `eq` for `==`, and the derived key pair a
+/// `Map<Pair, i32>` resolves through), slices a `str` view and copies the slice
+/// with `View.to_string`, and runs a `std/regex` match. The `llvm-nm` line is
+/// the claim that all of it is freestanding: `kelp_map_key_eq` and the two
+/// `View` bodies are emitted into the module instead of being left for the
+/// hosted runtime object, and no libc byte routine or allocator is called.
+///
+/// It needs `ld.lld` and `llvm-nm` from `dev-kernel.nix`.
+#[test]
+fn kernel0_eq_builds_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the kernel0-eq build test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("kernel0_eq");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("../examples/kernel0-eq"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the kernel0-eq build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let symbols = tool("llvm-nm", &[bin.to_str().expect("the artifact path is utf-8")]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the kernel0-eq image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+
+    let ir = std::fs::read_to_string(bin.with_extension("ll"))
+        .expect("the LLVM backend writes textual IR beside the object");
+    for symbol in ["kelp_map_key_eq", "kelp_View__slice", "kelp_View__to_string"] {
+        let defined = ir
+            .lines()
+            .any(|line| line.starts_with("define ") && line.contains(&format!("@{symbol}(")));
+        assert!(
+            defined,
+            "a freestanding build should emit '@{symbol}' into the module"
+        );
+    }
+    for symbol in [
+        "call ptr @malloc",
+        "call ptr @realloc",
+        "call void @free",
+        "call i64 @strlen",
+    ] {
+        assert!(
+            !ir.contains(symbol),
+            "a freestanding build must not call libc's '{symbol}'"
+        );
+    }
+}
+
+/// Kernel stage 23's acceptance boot: `examples/kernel0-eq` prints the
+/// equality, `View` and `std/regex` results over the NS16550 UART, and prints
+/// `balanced` only when every allocation reached a matching free. The lines are
+/// QEMU's own stdout, not the source's.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_eq_boots_and_prints_the_equality_and_regex_lines() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-eq boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "kernel0_eq",
+        &fixture("../examples/kernel0-eq"),
+        &[
+            "eq same: yes",
+            "eq differ: yes",
+            "map keys: 2",
+            "map hit: yes",
+            "bytes eq: yes",
+            "view slice: kelp",
+            "view eq: yes",
+            "regex match: hello42",
+            "regex group: 42",
+            "balanced",
+        ],
+    );
+}
+
 /// `List` with no `[target] alloc`/`dealloc` is refused exactly as before, with
 /// a message that names the two keys whose absence is why.
 #[test]
@@ -13151,10 +13316,39 @@ fn a_freestanding_float_format_is_refused_by_name() {
     );
 }
 
-/// `View` stays refused in a freestanding build, with or without an allocator.
+/// The `View` surface is a borrowed `{ptr, len}` pair with no storage of its
+/// own, so `len`/`get`/`slice`/`eq` build in a freestanding image with no
+/// allocator; only `View.to_string` copies into an owned `String` and so needs
+/// the pair.
 #[test]
-fn a_freestanding_view_is_refused() {
-    assert_rejected_with("tests/projects/freestanding_view", "'View'");
+fn a_freestanding_view_slice_and_eq_build_without_an_allocator() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding view test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_view");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_view"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding build of 'freestanding_view' failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let undefined = tool("llvm-nm", &["-u", bin.to_str().unwrap()]);
+    assert!(
+        undefined.trim().is_empty(),
+        "the freestanding view image has undefined symbols:\n{undefined}"
+    );
 }
 
 /// `alloc` and `dealloc` are required together: naming one alone is a manifest
@@ -13816,6 +14010,60 @@ fn kernel0_x86_64_boots_and_prints_its_greeting_over_the_uart() {
         "kernel0_x86_64_boot",
         &fixture("../examples/kernel0-x86_64"),
         &["hello from kelp (x86_64)"],
+    );
+}
+
+/// Kernel stage 23 on x86-64: the same `String`-field equality, `View` slice
+/// and `std/regex` match as `examples/kernel0-eq`, built for
+/// `x86_64-unknown-none` and booted through the Xen PVH note. Both halves of
+/// the pair matter: the three bodies the compiler emits have to be
+/// architecture-independent byte loops, not a riscv64-only lowering.
+///
+/// It needs `ld.lld` and `qemu-system-x86_64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_eq_x86_64_builds_and_boots_the_same_lines() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the kernel0-eq x86-64 build test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = build_freestanding("kernel0_eq_x86_64", &fixture("../examples/kernel0-eq-x86_64"));
+    let symbols = tool("llvm-nm", &[bin.to_str().unwrap()]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the kernel0-eq x86-64 image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+
+    if !have_qemu(&X86_64_QEMU) {
+        println!(
+            "skipping the kernel0-eq x86-64 boot: 'qemu-system-x86_64' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &X86_64_QEMU,
+        "kernel0_eq_x86_64_boot",
+        &fixture("../examples/kernel0-eq-x86_64"),
+        &[
+            "eq same: yes",
+            "eq differ: yes",
+            "map keys: 2",
+            "map hit: yes",
+            "bytes eq: yes",
+            "view slice: kelp",
+            "view eq: yes",
+            "regex match: hello42",
+            "regex group: 42",
+            "balanced",
+        ],
     );
 }
 

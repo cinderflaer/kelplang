@@ -1,0 +1,459 @@
+// std/tz over hand-built TZif byte arrays: the parser, both data-block widths,
+// the footer POSIX rule, the wall-clock resolution, the formatter, and every
+// refusal. No zoneinfo database is needed, so this fixture is the same on every
+// machine.
+//
+// The bytes are built here rather than loaded from a file, which is what makes
+// the corrupt cases expressible: a truncated header, a bad magic, an empty time
+// type table and a transition block that runs past the end of the file are all
+// one small array each. The files are the EST/EDT pair with the footer
+// `EST5EDT,M3.2.0,M11.1.0`, the same rule `America/New_York` carries, so the
+// instants below are the ones the real file produces.
+impl "std/tz" caps(fs = ["/**"], env = ["TZDIR"])
+impl "std/str"
+impl "std/option"
+impl "std/result"
+
+datac Stats(var run: i32, var bad: i32)
+
+fun t(st: mut Stats, name: &str, ok: bool) {
+    st.run += 1
+    if !ok {
+        st.bad += 1
+        print("FAIL")
+        print(name)
+    }
+}
+
+fun digits(n: i64).R: String = str.from_i64(n)
+
+// One `str.eq` comparison. `value` arrives as an owned `String` so the
+// temporary is bound by the call itself: `str.eq` needs a `&str` that outlives
+// the call, which a `.as_str()` on a call's result cannot be.
+fun same(st: mut Stats, name: &str, value: String, expect: &str) {
+    t(st, name, str.eq(value.as_str(), expect))
+}
+
+fun label(r: &tz.Resolved).R: String {
+    var out = String.empty()
+    if let One(u) = r {
+        out.push_str("one ")
+        val d = digits(u)
+        out.push_str(d.as_str())
+    } elif let Ambiguous(a, b) = r {
+        out.push_str("ambiguous ")
+        val da = digits(a)
+        val db = digits(b)
+        out.push_str(da.as_str())
+        out.push(' ')
+        out.push_str(db.as_str())
+    } else {
+        out.push_str("gap")
+    }
+    return out
+}
+
+// ---- building the files -----------------------------------------------------
+
+fun push_lit(out: mut Bytes, text: &str) {
+    var i: usize = 0
+    while i < str.len(text) {
+        out.push(str.byte(text, i))
+        i += 1
+    }
+}
+
+fun push_be32(out: mut Bytes, value: i32) {
+    var shift: i32 = 24
+    while shift >= 0 {
+        out.push(((value >> shift) & 255).to_u8())
+        shift = shift - 8
+    }
+}
+
+fun push_be64(out: mut Bytes, value: i64) {
+    var shift: i64 = 56
+    while shift >= 0 {
+        out.push(((value >> shift) & 255).to_u8())
+        shift = shift - 8
+    }
+}
+
+// The 44-byte header: magic, version byte, 15 reserved bytes, and the six
+// counts. `isutcnt`, `isstdcnt` and `leapcnt` are zero in every file here.
+fun push_header(out: mut Bytes, version: u8, timecnt: i32, typecnt: i32, charcnt: i32) {
+    push_lit(out, "TZif")
+    out.push(version)
+    var i: i32 = 0
+    while i < 15 {
+        out.push(0)
+        i = i + 1
+    }
+    push_be32(out, 0)
+    push_be32(out, 0)
+    push_be32(out, 0)
+    push_be32(out, timecnt)
+    push_be32(out, typecnt)
+    push_be32(out, charcnt)
+}
+
+// One time type: offset, DST flag, abbreviation index.
+fun push_type(out: mut Bytes, offset: i32, is_dst: u8, desig: u8) {
+    push_be32(out, offset)
+    out.push(is_dst)
+    out.push(desig)
+}
+
+// `EST\0EDT\0`: the abbreviation block the two time types index into.
+fun push_abbrevs(out: mut Bytes) {
+    push_lit(out, "EST")
+    out.push(0)
+    push_lit(out, "EDT")
+    out.push(0)
+}
+
+fun push_types(out: mut Bytes) {
+    push_type(out, -18000, 0, 0)
+    push_type(out, -14400, 1, 4)
+}
+
+// A version 2 file with `timecnt` transitions (64-bit in the second block,
+// 32-bit in the first) and the footer `footer` when one is given. The first
+// header and block are the version 1 form every version 2 file carries ahead of
+// its own.
+fun build(version: u8, timecnt: i32, footer: &str, have_footer: bool).R: Bytes {
+    var out = Bytes.empty()
+    push_header(out, version, timecnt, 2, 8)
+    if timecnt > 0 {
+        push_be32(out, 0)
+        out.push(1)
+    }
+    push_types(out)
+    push_abbrevs(out)
+    if version != 0 {
+        push_header(out, version, timecnt, 2, 8)
+        if timecnt > 0 {
+            push_be64(out, 0)
+            out.push(1)
+        }
+        push_types(out)
+        push_abbrevs(out)
+        if have_footer {
+            out.push(10)
+            push_lit(out, footer)
+            out.push(10)
+        }
+    }
+    return out
+}
+
+// The five refusals a name has to pass before it becomes a path, plus the empty
+// name, which names nothing at all.
+fun name_refusals(st: mut Stats) {
+    var denied: List<String> = List.of("..")
+    denied.push("../etc/passwd")
+    denied.push("/etc/passwd")
+    denied.push("America/../etc/passwd")
+    denied.push("America/New_York/../../etc/passwd")
+    var i: usize = 0
+    while i < denied.len() {
+        val name = denied.get(i)
+        val got = tz.load(name.as_str())
+        t(st, name.as_str(), result.is_err(r = got))
+        if let Err(e) = got {
+            if let Denied = e {
+            } else {
+                t(st, "refused name is Denied", false)
+            }
+        }
+        i = i + 1
+    }
+    val empty = tz.load("")
+    t(st, "empty name", result.is_err(r = empty))
+    if let Err(e) = empty {
+        if let NotFound = e {
+        } else {
+            t(st, "empty name is NotFound", false)
+        }
+    }
+    val missing = tz.load("No/Such_Zone")
+    t(st, "missing zone", result.is_err(r = missing))
+    if let Err(e) = missing {
+        if let NotFound = e {
+        } else {
+            t(st, "missing zone is NotFound", false)
+        }
+    }
+    val bad_dir = tz.load_in("relative", "UTC")
+    t(st, "relative directory", result.is_err(r = bad_dir))
+    val bad_inner = tz.load_in("/etc", "../passwd")
+    t(st, "escaping name in load_in", result.is_err(r = bad_inner))
+}
+
+// Every corrupt file answers `Corrupt` with a message that says what is wrong.
+fun corrupt_cases(st: mut Stats) {
+    var short = Bytes.empty()
+    short.push(84)
+    var bad_magic = build(0, 0, "", false)
+    bad_magic.set(0, 65)
+    var bad_version = build(0, 0, "", false)
+    bad_version.set(4, 57)
+    var no_types = build(0, 0, "", false)
+    // typecnt is the fifth count, at offset 36
+    no_types.set(36, 0)
+    no_types.set(37, 0)
+    no_types.set(38, 0)
+    no_types.set(39, 0)
+    // the header claims three transitions where the file holds one
+    var truncated_block = build(0, 3, "", false)
+    var unterminated = build('2', 0, "EST5EDT,M3.2.0,M11.1.0", true)
+    // drop the footer's closing newline
+    var cut = Bytes.empty()
+    var i: usize = 0
+    while i + 1 < unterminated.len() {
+        cut.push(unterminated.get(i))
+        i = i + 1
+    }
+    // a version 2 header whose second header is past the end of the file
+    var short_second = build(0, 1, "", false)
+    short_second.set(4, 50)
+    // an abbreviation block with no NUL in it: the char block of a version 1
+    // file with one transition starts at 61 and is eight bytes long
+    var not_terminated = build(0, 1, "", false)
+    var a: usize = 61
+    while a < 69 {
+        not_terminated.set(a, 88)
+        a = a + 1
+    }
+    // a second header with a mangled magic: a file with no transitions has a
+    // 20-byte first block, so its second header starts at 64
+    var bad_second = build('2', 0, "UTC0", true)
+    bad_second.set(64, 65)
+    var cases: List<Bytes> = List.empty()
+    cases.push(short)
+    cases.push(short_second)
+    cases.push(not_terminated)
+    cases.push(bad_second)
+    cases.push(bad_magic)
+    cases.push(bad_version)
+    cases.push(no_types)
+    cases.push(truncated_block)
+    cases.push(cut)
+    var k: usize = 0
+    while k < cases.len() {
+        val data = cases.get(k)
+        val got = tz.parse(data.clone())
+        t(st, "corrupt case", result.is_err(r = got))
+        if let Err(e) = got {
+            if let Corrupt(message) = e {
+                t(st, "corrupt message is non-empty", message.len() > 0)
+            } else {
+                t(st, "corrupt case is Corrupt", false)
+            }
+        }
+        k = k + 1
+    }
+}
+
+fun main() {
+    var st = Stats(run = 0, bad = 0)
+
+    // utc and fixed
+    val u = tz.utc()
+    t(st, "utc offset", u.offset_at(0).seconds == 0)
+    same(st, "utc name", u.offset_at(0).abbrev.clone(), "UTC")
+    t(st, "utc not dst", !u.offset_at(0).is_dst)
+    same(st, "utc epoch", u.format(0, "%Y-%m-%d %H:%M:%S"), "1970-01-01 00:00:00")
+    val f = tz.fixed(19800)
+    t(st, "fixed offset", f.offset_at(0).seconds == 19800)
+    same(st, "fixed name", f.offset_at(0).abbrev.clone(), "+05:30")
+    same(st, "fixed z", f.format(0, "%z"), "+0530")
+    same(st, "fixed east", f.format(0, "%Y-%m-%d %H:%M:%S"), "1970-01-01 05:30:00")
+    val g = tz.fixed(-12600)
+    same(st, "fixed west name", g.offset_at(0).abbrev.clone(), "-03:30")
+    same(st, "fixed zero is utc", tz.fixed(0).offset_at(0).abbrev.clone(), "UTC")
+
+    // a version 2 file with a footer and no transitions
+    var data = build('2', 0, "EST5EDT,M3.2.0,M11.1.0", true)
+    t(st, "the fixture file is 152 bytes", data.len() == 152)
+    val parsed = tz.parse(data.clone())
+    t(st, "parses", result.is_ok(r = parsed))
+    if let Ok(z) = parsed {
+        t(st, "est in march", z.offset_at(1710000000).seconds == -18000)
+        same(st, "est abbrev", z.offset_at(1710000000).abbrev.clone(), "EST")
+        t(st, "edt in july", z.offset_at(1720000000).seconds == -14400)
+        t(st, "edt is dst", z.offset_at(1720000000).is_dst)
+        t(st, "footer start", z.offset_at(1710053999).seconds == -18000)
+        t(st, "footer started", z.offset_at(1710054000).seconds == -14400)
+        t(st, "footer end", z.offset_at(1730613600).seconds == -18000)
+
+        val lp = z.local_parts(1710000000)
+        t(st, "local year", lp.year == 2024)
+        t(st, "local month", lp.month == 3)
+        t(st, "local day", lp.day == 9)
+        t(st, "local hour", lp.hour == 11)
+        t(st, "local minute", lp.minute == 0)
+        t(st, "local second", lp.second == 0)
+        t(st, "local weekday", lp.weekday == 6)
+        t(st, "local yday", lp.yday == 69)
+        t(st, "local offset", lp.offset.seconds == -18000)
+
+        val gap = z.to_unix(2024, 3, 10, 2, 30, 0)
+        val amb = z.to_unix(2024, 11, 3, 1, 30, 0)
+        val one = z.to_unix(2024, 3, 10, 1, 30, 0)
+        val gap_text = label(gap)
+        val amb_text = label(amb)
+        val one_text = label(one)
+        print(str.concat("gap: ", gap_text.as_str()))
+        print(str.concat("ambiguous: ", amb_text.as_str()))
+        print(str.concat("one: ", one_text.as_str()))
+        same(st, "gap is gap", label(gap), "gap")
+        same(st, "ambiguous instants", label(amb), "ambiguous 1730611800 1730615400")
+        same(st, "one instant", label(one), "one 1710052200")
+        if let Gap = gap {
+            t(st, "gap pattern", true)
+        } else {
+            t(st, "gap pattern", false)
+        }
+        if let Ambiguous(a, b) = amb {
+            t(st, "ambiguous first", a == 1730611800)
+            t(st, "ambiguous second", b == 1730615400)
+        }
+        if let One(v) = one {
+            t(st, "one value", v == 1710052200)
+        }
+
+        // a pre-1970 wall clock, which no transition covers: the footer rule
+        // runs backwards as happily as forwards
+        val early = z.to_unix(1969, 12, 31, 23, 59, 59)
+        same(st, "pre-1970", label(early), "one 17999")
+        val epoch = z.to_unix(1970, 1, 1, 0, 0, 0)
+        same(st, "epoch", label(epoch), "one 18000")
+
+        // the formatter
+        same(st, "percent Y", z.format(1710000000, "%Y"), "2024")
+        same(st, "percent m", z.format(1710000000, "%m"), "03")
+        same(st, "percent d", z.format(1710000000, "%d"), "09")
+        same(st, "percent H", z.format(1710000000, "%H"), "11")
+        same(st, "percent M", z.format(1710000000, "%M"), "00")
+        same(st, "percent S", z.format(1710000000, "%S"), "00")
+        same(st, "percent z", z.format(1710000000, "%z"), "-0500")
+        same(st, "percent Z", z.format(1710000000, "%Z"), "EST")
+        same(st, "percent a", z.format(1710000000, "%a"), "Sat")
+        same(st, "percent b", z.format(1710000000, "%b"), "Mar")
+        same(st, "percent j", z.format(1710000000, "%j"), "069")
+        same(st, "percent percent", z.format(1710000000, "%%"), "%")
+        same(st, "unknown percent", z.format(1710000000, "%q"), "%q")
+        same(st, "trailing percent", z.format(1710000000, "100%"), "100%")
+        same(st, "dst z", z.format(1720000000, "%z"), "-0400")
+        same(st, "dst Z", z.format(1720000000, "%Z"), "EDT")
+    }
+
+    // the same file with a fixed-offset footer
+    var ist = build('2', 0, "IST-5:30", true)
+    val istz = tz.parse(ist.clone())
+    if let Ok(z) = istz {
+        t(st, "half-hour offset", z.offset_at(0).seconds == 19800)
+        same(st, "half-hour name", z.offset_at(0).abbrev.clone(), "IST")
+        same(st, "half-hour z", z.format(0, "%z"), "+0530")
+    } else {
+        t(st, "ist parses", false)
+    }
+
+    // a version 1 file: one 32-bit transition, no second block, no footer
+    var v1 = build(0, 1, "", false)
+    t(st, "version 1 is 69 bytes", v1.len() == 69)
+    val v1z = tz.parse(v1.clone())
+    if let Ok(z) = v1z {
+        t(st, "v1 before", z.offset_at(-1).seconds == -18000)
+        t(st, "v1 at", z.offset_at(0).seconds == -14400)
+        t(st, "v1 after", z.offset_at(1000000000).seconds == -14400)
+    } else {
+        t(st, "v1 parses", false)
+    }
+
+    // a version 2 file with a 64-bit transition and no footer at all
+    var v2 = build('2', 1, "", false)
+    val v2z = tz.parse(v2.clone())
+    if let Ok(z) = v2z {
+        t(st, "v2 no footer before", z.offset_at(-1).seconds == -18000)
+        t(st, "v2 no footer at", z.offset_at(0).seconds == -14400)
+        t(st, "v2 no footer after", z.offset_at(4102444800).seconds == -14400)
+    } else {
+        t(st, "v2 no footer parses", false)
+    }
+
+    // a fixed offset with seconds in it, and a quoted name
+    var secs = build('2', 0, "ABC-1:02:03", true)
+    val secs_z = tz.parse(secs.clone())
+    if let Ok(z) = secs_z {
+        t(st, "fractional offset", z.offset_at(0).seconds == 3723)
+        same(st, "fractional name", z.offset_at(0).abbrev.clone(), "ABC")
+        same(st, "fractional z", z.format(0, "%z"), "+0102")
+        same(st, "fractional stamp", z.format(0, "%Y-%m-%d %H:%M:%S %Z"), "1970-01-01 01:02:03 ABC")
+        same(st, "fractional epoch", label(z.to_unix(1970, 1, 1, 0, 0, 0)), "one -3723")
+    } else {
+        t(st, "fractional offset parses", false)
+    }
+
+    // a footer that names the southern shape: quoted abbreviations and a window
+    // that crosses New Year, which is `Australia/Lord_Howe`'s own string
+    var lh = build('2', 0, "<+1030>-10:30<+11>-11,M10.1.0,M4.1.0", true)
+    val lh_z = tz.parse(lh.clone())
+    if let Ok(z) = lh_z {
+        t(st, "quoted january is dst", z.offset_at(4103658000).seconds == 39600)
+        t(st, "quoted january is dst flag", z.offset_at(4103658000).is_dst)
+        t(st, "quoted july is standard", z.offset_at(4119298200).seconds == 37800)
+        same(st, "quoted january name and z", z.format(4103658000, "%Z %z"), "+11 +1100")
+        same(st, "quoted july name and z", z.format(4119298200, "%Z %z"), "+1030 +1030")
+        same(st, "quoted january instant", label(z.to_unix(2100, 1, 15, 12, 0, 0)), "one 4103658000")
+        same(st, "quoted july instant", label(z.to_unix(2100, 7, 15, 12, 0, 0)), "one 4119298200")
+    } else {
+        t(st, "quoted footer parses", false)
+    }
+
+    // `J<n>`: a day of the year with February 29 never counted
+    var jr = build('2', 0, "AAA3BBB,J60/0,J300/0", true)
+    val jr_z = tz.parse(jr.clone())
+    if let Ok(z) = jr_z {
+        t(st, "j rule january", z.offset_at(1704067200).seconds == -10800)
+        t(st, "j rule march", z.offset_at(1709258400).seconds == -7200)
+        t(st, "j rule december", z.offset_at(1735614000).seconds == -10800)
+        same(st, "j rule name", z.offset_at(1709258400).abbrev.clone(), "BBB")
+        same(st, "j rule start instant", label(z.to_unix(2024, 3, 1, 0, 0, 0)), "one 1709258400")
+        same(st, "j rule end instant", label(z.to_unix(2024, 10, 27, 0, 0, 0)), "one 1729998000")
+        same(st, "j rule june instant", label(z.to_unix(2024, 6, 1, 12, 0, 0)), "one 1717250400")
+    } else {
+        t(st, "j rule parses", false)
+    }
+
+    // a bare `n`: the same days, but counting February 29, so day 365 is
+    // December 31 in a leap year and January 1 of the next one otherwise
+    var nr = build('2', 0, "AAA3BBB,0/0,365/0", true)
+    val nr_z = tz.parse(nr.clone())
+    if let Ok(z) = nr_z {
+        t(st, "n rule before midnight", z.offset_at(1704067200).seconds == -7200)
+        t(st, "n rule at the end", z.offset_at(1735614000).seconds == -10800)
+        same(st, "n rule first hour is a gap", label(z.to_unix(2024, 1, 1, 0, 0, 0)), "gap")
+        same(st, "n rule late december", label(z.to_unix(2024, 12, 31, 12, 0, 0)), "one 1735657200")
+    } else {
+        t(st, "n rule parses", false)
+    }
+
+    // a footer whose rule time is past anything a TZ string may name: the
+    // footer is treated as unreadable and the type table answers instead, which
+    // is the documented leniency rather than a corrupt-file refusal
+    var bad_time = build('2', 0, "EST5EDT,M3.2.0,M11.1.0/999999", true)
+    val bad_z = tz.parse(bad_time.clone())
+    if let Ok(z) = bad_z {
+        t(st, "unreadable footer falls back", z.offset_at(1720000000).seconds == -18000)
+        same(st, "unreadable footer name", z.offset_at(1720000000).abbrev.clone(), "EST")
+        same(st, "unreadable footer instant", label(z.to_unix(2024, 7, 1, 12, 0, 0)), "one 1719853200")
+    } else {
+        t(st, "unreadable footer parses", false)
+    }
+
+    name_refusals(st)
+    corrupt_cases(st)
+    print("cases: ${st.run}, failed: ${st.bad}")
+}

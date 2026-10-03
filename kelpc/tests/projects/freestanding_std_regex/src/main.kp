@@ -1,0 +1,50 @@
+impl "std/regex"
+impl "std/option"
+impl "std/result"
+impl "std/str"
+
+static mut ARENA: [u8; 262144] = [0; 262144]
+static mut USED: usize = 0
+
+fun align_up(value: usize, align: usize).R: usize {
+    return ((value + align - 1) / align) * align
+}
+
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    val out: Ptr<u8> = unsafe {
+        val start: usize = align_up(USED, align)
+        if start + size > 262144 {
+            Ptr.null()
+        } else {
+            USED = start + size
+            val arena: Ptr<[u8; 262144]> = Ptr.from_mut(ARENA)
+            arena.cast<u8>().byte_offset(start.to_isize())
+        }
+    }
+    return out
+}
+
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            USED = USED
+        }
+    }
+}
+
+section(".text.boot") fun kmain() {
+    var n: usize = 0
+    val compiled = regex.compile("[a-z]+(\\d+)")
+    if let Ok(re) = compiled {
+        var rx = re
+        val m = rx.find("xx hello42")
+        if let Some(mm) = m {
+            n = n + mm.text.len() + mm.start + mm.end
+        }
+        val groups = rx.captures("xx hello42")
+        if let Some(cc) = groups {
+            n = n + cc.len()
+        }
+    }
+    while true { n = n + 1 }
+}

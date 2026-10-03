@@ -1,7 +1,10 @@
-// `View` is a borrowed slice the hosted runtime carries; a freestanding build
-// refuses it by name.
+// The `View` operations the compiler lowers as byte loops: a slice of a `str`
+// view, a byte read, and a length-aware comparison, all with no allocator.
 fun kmain() {
     val v = "kelp".view()
-    if v.len() == 4 {
+    var n: usize = v.len() + v.get(0).to_usize()
+    if v.slice(1, 3).eq("el".view()) {
+        n = n + 1
     }
+    while true { n = n + 1 }
 }

@@ -346,3 +346,15 @@ still has no trampoline, `library`/`header`/`pkg_config` still have no effect in
   - A `mut` parameter of a `Copy` array (`[i64; N]`) is passed by value, not borrowed, so a helper
     that sorts a caller's samples cannot write back. The benchmark sorts a local copy inside the
     reporting function, the same workaround the stage-2 note records for mutable scratch images.
+## What kernel stage 23 (`st7`) changed for this list
+
+Nothing is closed, and one shape a binding could use is now reachable. A
+freestanding program may hold a `View` and take `len`/`get`/`slice`/`eq` on it,
+so a native side that hands back a `const char*` and a length can be sliced and
+compared in the kernel without an `unsafe` byte walk, and `View.to_string` (with
+the allocator pair) turns a slice into an owned `String`. The other half is that
+a `datac` whose fields include a `String` now has a working derived equality in
+a freestanding image, so a wrapper type around a native handle can compare
+itself without the hosted runtime. The binding mechanism itself is unchanged: a
+freestanding `extern fun` still has no trampoline, and `library`/`header`/
+`pkg_config` still have no effect in that mode.

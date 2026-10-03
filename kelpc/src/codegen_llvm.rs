@@ -4048,7 +4048,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if !self.terminated {
             // A naked function's asm is what returns; a `return` of the
             // declared type would be an instruction the attribute forbids.
-            if self.naked {
+            //
+            // A body ending in `while true { ... }` never falls through
+            // either: the loop has no exit edge, so the block this point is
+            // emitted into has no predecessor and no value is ever returned
+            // here. A declared type with no zero value (`String`, `Bytes`, a
+            // container) has nothing to `ret`, which is the case that made
+            // this a refusal rather than an unreachable block.
+            if self.naked || ends_in_an_endless_loop(body) {
                 self.g.builder.build_unreachable();
                 self.terminated = true;
             } else {
@@ -12051,37 +12058,109 @@ impl<'a> Gen<'a> {
             let lb = self.builder.build_extract_value(b, 1, "lb");
             let pa = self.builder.build_extract_value(a, 0, "pa");
             let pb = self.builder.build_extract_value(b, 0, "pb");
-            let same_len = self.builder.build_icmp(IntCmp::Eq, la, lb, "same.len");
-            let scan = self.block(f, "eq.scan");
-            let no = self.block(f, "eq.false");
-            self.builder.build_cond_br(same_len, scan, no);
-            self.builder.position_at_end(no);
-            self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 0, false));
-
-            self.builder.position_at_end(scan);
-            let i_slot = self.builder.build_alloca(i64t, "i");
-            self.st(self.v_i64(0), i_slot);
-            let header = self.loop_header(f, "eq.cond");
-            let i = self.ld(i64t, i_slot, "i");
-            let more = self.builder.build_icmp(IntCmp::Ult, i, la, "more");
-            let next = self.block(f, "eq.next");
-            let yes = self.block(f, "eq.true");
-            self.builder.build_cond_br(more, next, yes);
-            self.builder.position_at_end(yes);
-            self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 1, false));
-            self.builder.position_at_end(next);
-            let x = self.ld(i8t, self.gep(i8t, pa, i, "xa"), "x");
-            let y = self.ld(i8t, self.gep(i8t, pb, i, "yb"), "y");
-            let differs = self.builder.build_icmp(IntCmp::Ne, x, y, "differs");
-            let step = self.block(f, "eq.step");
-            let diff = self.block(f, "eq.diff");
-            self.builder.build_cond_br(differs, diff, step);
-            self.builder.position_at_end(diff);
-            self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 0, false));
-            self.builder.position_at_end(step);
-            self.st(self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1"), i_slot);
-            self.builder.build_br(header);
+            self.emit_length_byte_eq(f, pa, la, pb, lb)?;
         }
+
+        // --- View.slice ---
+        // The hosted body is a pointer and a subtraction plus a bounds panic;
+        // `std/str`'s trimming and searching and `std/regex`'s match text are
+        // written on it, so a freestanding build needs the same function.
+        {
+            let f = body("kelp_View__slice")?;
+            let self_v = f.get_param(0);
+            let from = f.get_param(1);
+            let to = f.get_param(2);
+            let len = self.builder.build_extract_value(self_v, 1, "len");
+            let ptr = self.builder.build_extract_value(self_v, 0, "ptr");
+            let from_gt_to = self.builder.build_icmp(IntCmp::Ugt, from, to, "bad.from");
+            let to_gt_len = self.builder.build_icmp(IntCmp::Ugt, to, len, "bad.to");
+            let bad = self
+                .builder
+                .build_int_binop(IntBinOp::Or, from_gt_to, to_gt_len, "bad");
+            let out = self.block(f, "panic");
+            let ok = self.block(f, "in.bounds");
+            self.builder.build_cond_br(bad, out, ok);
+            self.builder.position_at_end(out);
+            self.emit_panic("View.slice: index out of bounds")?;
+            self.builder.position_at_end(ok);
+            let at = self.gep(i8t, ptr, from, "at");
+            let n = self
+                .builder
+                .build_int_binop(IntBinOp::Sub, to, from, "slice.len");
+            let slot = self.builder.build_alloca(view, "view");
+            self.st(at, self.fld(view, slot, 0, "ptr"));
+            self.st(n, self.fld(view, slot, 1, "len"));
+            let v = self.ld(view, slot, "view");
+            self.builder.build_ret(v);
+        }
+
+        // --- kelp_map_key_eq ---
+        // The derived key equality of a `datac`/`enum` with a `String` field
+        // compares the stored field through this helper (`emit_field_eq`), and
+        // the hosted body is `memcmp` in the runtime object, which a
+        // freestanding image does not have. The lengths are compared first for
+        // the same reason `View.eq` compares them: `memcmp` over the shorter
+        // prefix would call "ab" and "abc" equal.
+        if self.runtime.contains_key("kelp_map_key_eq") {
+            let f = body("kelp_map_key_eq")?;
+            let key = f.get_param(0);
+            let data = f.get_param(1);
+            let len = f.get_param(2);
+            let string = *self
+                .structs
+                .get("String")
+                .ok_or_else(|| no_value("the builtin 'String' layout"))?;
+            let key_len = self.ld(i64t, self.fld(string, key, 1, "key.len"), "key.len");
+            let key_data = self.ld(self.pty(), self.fld(string, key, 0, "key.data"), "key.data");
+            self.emit_length_byte_eq(f, key_data, key_len, data, len)?;
+        }
+        Ok(())
+    }
+
+    /// The body `View.eq` and the `String`-field arm of `kelp_map_key_eq`
+    /// share: compare the two lengths, then the bytes, and return `true` or
+    /// `false`. Emits the whole function body, terminators included, because
+    /// both callers are just the two pointer/length pairs.
+    fn emit_length_byte_eq(
+        &self,
+        f: LlvmFunction<'a>,
+        pa: Value<'a>,
+        la: Value<'a>,
+        pb: Value<'a>,
+        lb: Value<'a>,
+    ) -> Result<(), String> {
+        let i8t = self.ctx.i8();
+        let i64t = self.ctx.i64();
+        let same_len = self.builder.build_icmp(IntCmp::Eq, la, lb, "same.len");
+        let scan = self.block(f, "eq.scan");
+        let no = self.block(f, "eq.false");
+        self.builder.build_cond_br(same_len, scan, no);
+        self.builder.position_at_end(no);
+        self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 0, false));
+
+        self.builder.position_at_end(scan);
+        let i_slot = self.builder.build_alloca(i64t, "i");
+        self.st(self.v_i64(0), i_slot);
+        let header = self.loop_header(f, "eq.cond");
+        let i = self.ld(i64t, i_slot, "i");
+        let more = self.builder.build_icmp(IntCmp::Ult, i, la, "more");
+        let next = self.block(f, "eq.next");
+        let yes = self.block(f, "eq.true");
+        self.builder.build_cond_br(more, next, yes);
+        self.builder.position_at_end(yes);
+        self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 1, false));
+        self.builder.position_at_end(next);
+        let x = self.ld(i8t, self.gep(i8t, pa, i, "xa"), "x");
+        let y = self.ld(i8t, self.gep(i8t, pb, i, "yb"), "y");
+        let differs = self.builder.build_icmp(IntCmp::Ne, x, y, "differs");
+        let step = self.block(f, "eq.step");
+        let diff = self.block(f, "eq.diff");
+        self.builder.build_cond_br(differs, diff, step);
+        self.builder.position_at_end(diff);
+        self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 0, false));
+        self.builder.position_at_end(step);
+        self.st(self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1"), i_slot);
+        self.builder.build_br(header);
         Ok(())
     }
 
@@ -12404,6 +12483,32 @@ impl<'a> Gen<'a> {
             self.st(self.v_i8(0), d);
             self.builder.build_br(done);
             self.builder.position_at_end(done);
+            self.builder.build_ret_void();
+        }
+
+        // --- View.to_string ---
+        // The one safe conversion from a slice to an owned `String`: copy the
+        // bytes and terminate the copy. Only emitted with an allocator, which
+        // is when the front end admits `String` at all and when this body's
+        // `heap_alloc` has the project's own function behind it.
+        {
+            let f = body("kelp_View__to_string")?;
+            let dst = f.get_param(0);
+            let self_v = f.get_param(1);
+            let n = self.builder.build_extract_value(self_v, 1, "len");
+            let src = self.builder.build_extract_value(self_v, 0, "ptr");
+            let n1 = self
+                .builder
+                .build_int_binop(IntBinOp::Add, n, self.v_i64(1), "n1");
+            let p = self.heap_alloc(n1, 1)?;
+            self.check_alloc(p, f)?;
+            let (memcpy, mty) = self.mem_fn("memcpy")?;
+            self.call(memcpy, mty, &[p, src, n], "");
+            let term = self.gep(i8t, p, n, "term");
+            self.st(self.v_i8(0), term);
+            self.st(p, self.fld(string, dst, L_DATA, "data"));
+            self.st(n, self.fld(string, dst, L_LEN, "len"));
+            self.st(n, self.fld(string, dst, L_CAP, "cap"));
             self.builder.build_ret_void();
         }
 
@@ -14600,6 +14705,14 @@ fn is_str_ref(ty: &Ty) -> bool {
 /// a `panic` asks the unit-typed call for a value and reports an internal error.
 fn is_diverging_tail(tail: &Expr) -> bool {
     matches!(&tail.kind, ExprKind::Call { callee, .. } if callee == "panic")
+}
+
+/// Whether a block's last statement is a loop that can never be left at all:
+/// `while true { ... }`. Every way out of such a loop is a `return` or a
+/// `panic`, so the code after it is unreachable and the function needs no
+/// fallthrough `ret` for a return type that has no zero value.
+fn ends_in_an_endless_loop(block: &Block) -> bool {
+    matches!(block.stmts.last(), Some(Stmt::While { cond, .. }) if matches!(cond.kind, ExprKind::BoolLit(true)))
 }
 
 /// Whether an expression has stable storage, mirroring the subset of

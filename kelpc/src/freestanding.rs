@@ -21,7 +21,9 @@
 //!   `std/irq` and `std/frame`, which are the same;
 //! - the `str` operations the compiler lowers as byte loops with no libc call:
 //!   `std/str`'s `len`, `byte`, `eq`, `starts_with` and `ptr`, and nothing else
-//!   in that module;
+//!   in that module; the `View` operations the shipped modules reach (`len`,
+//!   `is_empty`, `get`, `slice`, `eq`), and `View.to_string` once an allocator
+//!   is configured, the same way;
 //! - `std/math`'s integer `abs`, `min`, `max` and `clamp`, which are plain
 //!   Kelp comparisons, and `std/list`, whose callback combinators go through
 //!   the project allocator with the rest of the heap types;
@@ -47,8 +49,8 @@
 //! And what is refused, each naming the construct:
 //!
 //! - `print`/`print!` (a `Template`), which is `printf`;
-//! - `View` and `Thread`, whose storage is the hosted C runtime's, so they stay
-//!   refused whatever the manifest says; `String`/`Bytes` without an allocator,
+//! - `Thread`, whose storage is the hosted C runtime's, so it stays refused
+//!   whatever the manifest says; `String`/`Bytes` without an allocator,
 //!   and `List`, `Map` and `Box` when no `[target] alloc`/`dealloc` pair is
 //!   configured, since their storage is the runtime allocator's; and therefore
 //!   any `std/*` module not admitted by `std_admission` below, and every
@@ -149,8 +151,10 @@ pub fn std_admission(module: &str) -> StdAdmission {
         "std/atomic" | "std/arena" | "std/irq" | "std/frame" => StdAdmission::Pure,
         // `std/list` exists only to carry function values over a `List<T>`: all
         // six bodies take a closure, whose environment and result list are the
-        // allocator's.
-        "std/list" => StdAdmission::Allocator,
+        // allocator's. `std/regex` is a pure-Kelp engine whose one allocation
+        // is the compiled program and its scratch (`List`/`String`), so it is
+        // the same shape: every item is callable once the pair is configured.
+        "std/list" | "std/regex" => StdAdmission::Allocator,
         STD_STR => StdAdmission::Subset {
             callable: STR_CALLABLE,
             with_allocator: STR_WITH_ALLOCATOR,
@@ -174,6 +178,10 @@ pub fn std_admission(module: &str) -> StdAdmission {
         // `std/mem`'s one extern is libc `malloc`, and `std/rt` is injected for a
         // capability domain; both may be present and neither is callable.
         "std/mem" | crate::stdlib::RT_MODULE => StdAdmission::Present,
+        // `std/tz` reads TZif files and `$TZDIR`: a bare-metal image has no
+        // filesystem and no environment for it to read, and its `Result`
+        // payloads carry `String` (plan/tz.md, Freestanding).
+        "std/tz" => StdAdmission::Hosted,
         _ => StdAdmission::Hosted,
     }
 }
@@ -245,6 +253,7 @@ pub const ALLOWED_STRING_METHODS: &[&str] = &[
     "len",
     "is_empty",
     "as_str",
+    "view",
     "clone",
     "push",
     "push_str",
@@ -252,6 +261,17 @@ pub const ALLOWED_STRING_METHODS: &[&str] = &[
     "with_capacity",
     "clear",
 ];
+
+/// The `View` methods a freestanding build lowers itself (kernel stage 23).
+/// `len`/`is_empty` read the length word, `get`/`slice`/`eq` are byte loops and
+/// pointer arithmetic with a bounds panic, and `to_string` is the one that
+/// allocates, so it lives in `ALLOWED_VIEW_WITH_ALLOCATOR` like every other
+/// `String` builder.
+pub const ALLOWED_VIEW_METHODS: &[&str] = &["len", "is_empty", "get", "slice", "eq"];
+
+/// The one `View` method whose body allocates a `String`, and therefore needs
+/// the manifest's `[target] alloc`/`dealloc` pair.
+pub const ALLOWED_VIEW_WITH_ALLOCATOR: &[&str] = &["to_string"];
 
 /// The `Bytes` methods a freestanding build lowers itself. Same rule as the
 /// `String` list: anything that has no libc-free body (the endian accessors are
@@ -699,7 +719,10 @@ fn unavailable(message: String, span: Span, module: impl Into<String>) -> Diagno
 /// `heap_ok` is whether the manifest configured an `alloc`/`dealloc` pair: with
 /// one, `Box`, `List`, `Map`, `String` and `Bytes` are allowed and the walk
 /// descends into their element types, because a `List<String>` still reaches the
-/// hosted runtime. `View` and `Thread` are refused whatever `heap_ok` is.
+/// hosted runtime. `View` is a borrowed two-word value with no allocation, and
+/// every operation on it the shipped modules reach is a byte loop the backend
+/// emits (`emit_freestanding_str_bodies`), so it is allowed with or without the
+/// pair; `Thread` stays refused whatever `heap_ok` is.
 fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
     match ty {
         Ty::String => {
@@ -716,7 +739,7 @@ fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
                 Some("Bytes")
             }
         }
-        Ty::View => Some("View"),
+        Ty::View => None,
         Ty::Thread(_) => Some("Thread"),
         Ty::Mutex(inner) => {
             let _ = inner;
@@ -907,6 +930,10 @@ impl Checker<'_> {
                     let allowed = match owner {
                         "String" => ALLOWED_STRING_METHODS.contains(&method),
                         "Bytes" => ALLOWED_BYTES_METHODS.contains(&method),
+                        "View" => {
+                            ALLOWED_VIEW_METHODS.contains(&method)
+                                || (self.heap_ok && ALLOWED_VIEW_WITH_ALLOCATOR.contains(&method))
+                        }
                         _ => true,
                     };
                     if !allowed {
@@ -1154,13 +1181,14 @@ mod tests {
                 "std/math",
                 "std/mem",
                 "std/option",
+                "std/regex",
                 "std/result",
                 "std/str",
             ]
         );
         assert_eq!(
             allowed_modules(),
-            "std/arena, std/atomic, std/frame, std/irq, std/list, std/math, std/option, std/result, std/str"
+            "std/arena, std/atomic, std/frame, std/irq, std/list, std/math, std/option, std/regex, std/result, std/str"
         );
         // The injected runtime is not a library a program may write in an
         // `impl`, so it is present and absent from the allowed list.
@@ -1221,6 +1249,10 @@ mod tests {
         assert!(item_needs_allocator("std/list", "map"));
         assert!(!item_is_callable("std/list", "map", false));
         assert!(item_is_callable("std/list", "map", true));
+        assert!(matches!(std_admission("std/regex"), StdAdmission::Allocator));
+        assert!(item_needs_allocator("std/regex", "compile"));
+        assert!(!item_is_callable("std/regex", "compile", false));
+        assert!(item_is_callable("std/regex", "compile", true));
         // A `Pure` module's items never need the pair, and an overloaded name
         // is matched through `bare_name`.
         assert!(!item_needs_allocator("std/math", "abs@i32"));

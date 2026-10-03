@@ -150,7 +150,9 @@ manifest may name `alloc`, `dealloc` and an optional `realloc` in `[target]`, an
 `Box<T>`, `List<T>` and `Map<V>` of allowed element types then allocate and free
 through them instead of libc, on the LLVM backend that freestanding mode is.
 Without the pair the three containers are refused exactly as before, with a
-message that names the keys; `View`/`Thread` stay refused either way. A failed
+message that names the keys; `Thread` stays refused either way, and `View` is
+admitted later (kernel stage 23) with `View.to_string` in the allocator set. A
+failed
 allocation reaches the project's panic handler with "out of memory".
 `examples/kernel0-heap` is the idiom: a bump allocator over a `static mut`
 arena, a `List<i32>` of 1..=10, and a counting wrapper that prints `balanced`
@@ -169,8 +171,8 @@ hosted runtime" (including `str.from_f64`), so nothing is left for the linker to
 report. `examples/kernel0-string` is the acceptance: it concatenates, formats
 an integer, grows a `Bytes` past several doublings, prints four lines through
 the UART under QEMU and proves `ALLOCS == DEALLOCS`; `llvm-nm -u` stays clean.
-Without an allocator `String`/`Bytes` stay refused, and `View`/`Thread` stay
-refused either way.
+Without an allocator `String`/`Bytes` stay refused, and `Thread` stays
+refused either way; `View` is admitted in stage 23.
 
 **Row 7's arena and fallible-allocation halves are done too** (MK9-S5-M3,
 `plan/arena.md`): `Ptr.try_alloc<T>(count)` is `Ptr.alloc`'s non-panicking twin,
@@ -267,13 +269,27 @@ freestanding project may implement. Newly admitted: `std/math`'s integer
 `abs`/`min`/`max`/`clamp`, and, with the `[target] alloc`/`dealloc` pair,
 `std/list` and the `std/option`/`std/result` callback combinators. The
 admitted list is `std/arena`, `std/atomic`, `std/frame`, `std/irq`,
-`std/list`, `std/math`, `std/option`, `std/result`, `std/str`; every other
-module is refused by name with "needs a hosted runtime". `std/math`'s libm
+`std/list`, `std/math`, `std/option`, `std/regex`, `std/result`, `std/str`; every
+other module is refused by name with "needs a hosted runtime". `std/math`'s libm
 externs and `f64` overloads and the rest of `std/str` are refused by name
 inside the admitted module, and `std/mem` stays refused because its
-`alloc_raw` is libc `malloc`. Ten `tests/projects/freestanding_std_*`
+`alloc_raw` is libc `malloc`. The `tests/projects/freestanding_std_*`
 fixtures build with zero undefined symbols, and `freestanding_std_kernel`
 boots under QEMU printing `option`/`result`/`arena` results over the UART.
+
+**Kernel stage 23 closed the two gaps `plan/regex.md` recorded.** A `datac`
+whose fields include a `String` now compares and hashes in a freestanding image:
+the derived key equality the compiler emits for every keyable type called the
+hosted `kelp_map_key_eq`, and the LLVM backend now writes that helper into the
+module as the same length-aware byte loop `View.eq` uses. `View` itself is a
+borrowed two-word value with no storage, so `len`/`is_empty`/`get`/`slice`/`eq`
+are admitted (with `View.to_string` in the allocator-only set) and the two
+missing bodies are emitted. With both in place `std/regex` moved from the
+hosted-only list to the allocator row of the table: `examples/kernel0-eq` and
+`examples/kernel0-eq-x86_64` compare a `String`-field and a `Bytes`-field
+`datac`, look the first up in a `Map`, slice a view, and match `[a-z]+(\d+)`
+under QEMU on riscv64 and x86-64.
+`plan/freestanding-std.md` and `plan/regex.md` carry the detail.
 
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
 arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall

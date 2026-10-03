@@ -1,9 +1,10 @@
 name = "freestandingview"
 
-# Kernel stage 12's rejection fixture: `View` stays refused in a freestanding
-# build, with or without an allocator, because its accessors are only the
-# compiler's lowering for the five `str` operations and not a surface a program
-# holds.
+# Kernel stage 23: the `View` surface in a freestanding build with no
+# allocator. A view is a borrowed `{ptr, len}` pair with no storage of its own,
+# so `len`/`get`/`slice`/`eq` are legal as soon as the compiler lowers their
+# bodies; `View.to_string` is the one that allocates and still needs the
+# `[target] alloc`/`dealloc` pair.
 [target]
 mode = "freestanding"
 triple = "riscv64-unknown-none-elf"

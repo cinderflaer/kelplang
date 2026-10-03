@@ -1,0 +1,41 @@
+// A function that returns an owned type and whose body ends in `while true`:
+// every way out of the loop is a `return`, so the code after the loop is
+// unreachable and there is no fallthrough `ret` to build. The LLVM backend used
+// to try to build one anyway, and a `String` has no zero value for it, so this
+// shape was refused as a compiler defect; the C backend falls off the end of
+// the same function harmlessly, which is what made the two backends disagree.
+// `collect` is the shape `std/tz`'s abbreviation reader has.
+impl "std/str"
+
+fun collect(n: i32).R: String {
+    var out = String.empty()
+    var i = 0
+    while true {
+        if i >= n {
+            return out
+        }
+        out.push('x')
+        i = i + 1
+    }
+}
+
+// The same shape with a `List`, whose zero value is no more buildable.
+fun collect_numbers(n: i32).R: List<i64> {
+    var out: List<i64> = List.empty()
+    var i: i64 = 0
+    while true {
+        if i >= n.to_i64() {
+            return out
+        }
+        out.push(i * i)
+        i = i + 1
+    }
+}
+
+fun main() {
+    print(collect(3))
+    print(collect(0))
+    val squares = collect_numbers(4)
+    print(squares.len())
+    print(squares.get(3))
+}
