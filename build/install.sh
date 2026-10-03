@@ -76,7 +76,7 @@ if [ "$uninstall" = 1 ]; then
     done < "$manifest"
     rm -f -- "$manifest"
     rmdir "$sharedir" 2>/dev/null || true
-    rmdir "$bindir" 2>/dev/null || true
+    rmdir "$bindir" "$prefix/share" 2>/dev/null || true
     echo "kelpc uninstalled from $prefix"
     exit 0
 fi
