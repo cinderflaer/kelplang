@@ -1,0 +1,48 @@
+// Language-completeness 5: a type that implements `Display` may appear in
+// `"${x}"` and as the argument of `print`, lowered to `x.to_text()`. The
+// receiver is a shared borrow, so the value is only read, and a `to_text` may
+// call another type's `to_text` to nest.
+impl "std/fmt"
+
+datac Vec2(val x: i64, val y: i64)
+
+impl fmt.Display for Vec2 {
+    fun Self.to_text().R: String {
+        var out = String.empty()
+        val xs = fmt.int(x)
+        val ys = fmt.int(y)
+        out.push_str("(")
+        out.push_str(xs.as_str())
+        out.push_str(", ")
+        out.push_str(ys.as_str())
+        out.push_str(")")
+        return out
+    }
+}
+
+datac Line(val a: Vec2, val b: Vec2)
+
+impl fmt.Display for Line {
+    fun Self.to_text().R: String {
+        var out = String.empty()
+        val at = a.to_text()
+        val bt = b.to_text()
+        out.push_str(at.as_str())
+        out.push_str(" -> ")
+        out.push_str(bt.as_str())
+        return out
+    }
+}
+
+fun main() {
+    val v = Vec2(x = 3, y = 4)
+    print("v = ${v}")
+    print(v)
+    // Still owned after both: the desugar only borrows it.
+    print(v.x)
+
+    val l = Line(a = v, b = Vec2(x = 5, y = 6))
+    print("line = ${l}")
+    print(l)
+    print(l.to_text())
+}

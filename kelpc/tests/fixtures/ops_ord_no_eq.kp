@@ -1,0 +1,24 @@
+// Language-completeness 5: `Ord` supplies `<`, `<=`, `>` and `>=` and not
+// equality. A type that declares only `Ord` is still refused `==`, and the
+// message says the operator needs a declared `eq`.
+impl "std/ops"
+
+datac P(val x: i32)
+
+impl ops.Ord for P {
+    fun Self.cmp(other: &Self).R: i32 {
+        if x < other.x {
+            return -1
+        }
+        if x > other.x {
+            return 1
+        }
+        return 0
+    }
+}
+
+fun main() {
+    val a = P(x = 1)
+    val b = P(x = 2)
+    print(a == b)
+}

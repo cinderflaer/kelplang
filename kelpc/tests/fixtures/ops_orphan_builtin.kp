@@ -1,0 +1,12 @@
+// Language-completeness 5: `Add` is declared in `std/ops`, and a builtin type
+// has no module of its own, so an impl in user code is refused by the orphan
+// rule. `i32` keeps its builtin `+` regardless.
+impl "std/ops"
+
+impl ops.Add for i32 {
+    fun Self.add(rhs: &Self).R: i32 = self + rhs
+}
+
+fun main() {
+    print(1 + 2)
+}

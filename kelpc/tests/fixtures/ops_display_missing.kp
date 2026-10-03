@@ -1,0 +1,8 @@
+// Language-completeness 5: a `datac` without `Display` cannot appear in a
+// template, and the refusal names `Display`.
+datac P(val x: i32)
+
+fun main() {
+    val a = P(x = 1)
+    print("p = ${a}")
+}

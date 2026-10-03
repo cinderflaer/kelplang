@@ -1,0 +1,43 @@
+// Language-completeness 5: each operand of an overloaded operator is evaluated
+// exactly once, left to right, and is only borrowed. The side-effecting `mk`
+// proves the evaluation count and the order.
+impl "std/ops"
+
+datac Vec2(val x: i32, val y: i32)
+
+impl ops.Add for Vec2 {
+    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+}
+
+impl ops.Sub for Vec2 {
+    fun Self.sub(rhs: &Self).R: Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
+}
+
+impl ops.Ord for Vec2 {
+    fun Self.cmp(other: &Self).R: i32 {
+        if x < other.x {
+            return -1
+        }
+        if x > other.x {
+            return 1
+        }
+        return 0
+    }
+}
+
+// Prints its tag when called, so a doubled evaluation shows up as a repeated
+// line and a swapped order shows up as a swapped pair.
+fun mk(tag: i32).R: Vec2 {
+    print(tag)
+    return Vec2(x = tag, y = 0)
+}
+
+fun main() {
+    val sum = mk(tag = 1) + mk(tag = 2)
+    print(sum.x)
+    print(mk(tag = 3) < mk(tag = 4))
+
+    // Left to right in a chain: `a + b - c` evaluates a, b, c once each.
+    val chain = mk(tag = 5) + mk(tag = 6) - mk(tag = 7)
+    print(chain.x)
+}

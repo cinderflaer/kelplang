@@ -5329,6 +5329,88 @@ fn the_equality_operator_is_refused_without_a_declared_eq() {
 }
 
 // ---------------------------------------------------------------------------
+// Language-completeness 5: operator traits and `Display` (`plan/traits.md` 13).
+// `std/ops` declares `Add`/`Sub`/`Mul`/`Div`/`Rem`/`Neg`/`Ord` and `std/fmt`
+// declares `Display`, and the front end lowers each operator and each
+// interpolation into the method it names, so both backends run the ordinary
+// direct call.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_arithmetic_operators_lower_to_std_ops_methods() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_arithmetic.kp",
+        "4\n6\n-1\n0\n-1\n-2\n3\n8\n4\n0\n1\n3\n",
+    );
+}
+
+#[test]
+fn ord_gives_the_order_operators_and_a_hand_written_sort_works() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_ord.kp",
+        "true\nfalse\nfalse\ntrue\n1\n9\n2\n0\n2\n1\n",
+    );
+}
+
+#[test]
+fn display_lets_a_value_into_a_template_and_print_and_nests() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_display.kp",
+        "v = (3, 4)\n(3, 4)\n3\nline = (3, 4) -> (5, 6)\n(3, 4) -> (5, 6)\n(3, 4) -> (5, 6)\n",
+    );
+}
+
+#[test]
+fn compound_assignment_on_a_user_type_is_the_add_then_assign_desugar() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_compound_assign.kp",
+        "4\n6\n1\n2\n3\n8\n4\n5\n",
+    );
+}
+
+#[test]
+fn every_operand_of_an_overloaded_operator_is_evaluated_once_left_to_right() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_operands_once.kp",
+        "1\n2\n3\n3\n4\ntrue\n5\n6\n7\n4\n",
+    );
+}
+
+#[test]
+fn an_operator_resolves_on_a_bounded_generic_type_parameter() {
+    // A generic body is checked once per instantiation, so `T` is the concrete
+    // `Vec2` when `a + b` and `a < b` are lowered.
+    assert_compiles_and_runs(
+        "tests/fixtures/ops_generic.kp",
+        "4\n7\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn an_operator_needs_its_trait_and_the_order_trait_is_not_equality() {
+    assert_rejected_with(
+        "tests/fixtures/ops_arith_no_add.kp",
+        "it does not implement 'Add' from 'std/ops'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/ops_ord_no_eq.kp",
+        "'==' and '!=' come from a declared 'eq' method, and 'Ord' does not supply one",
+    );
+    assert_rejected_with(
+        "tests/fixtures/ops_display_missing.kp",
+        "it does not implement 'Display'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/ops_orphan_builtin.kp",
+        "'i32' is a builtin type, which has no module",
+    );
+    assert_rejected_with(
+        "tests/fixtures/ops_mixed_types.kp",
+        "the operands must have the same type",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // A-12 slice 2: traits with static dispatch. A trait is a named set of method
 // signatures, an `impl` gives them to a `datac`/`enum`, and a generic function
 // bounds its type parameter on one. Every call below is the concrete type's own
@@ -11584,6 +11666,52 @@ fn a_freestanding_project_can_walk_a_range() {
     );
 }
 
+/// Language-completeness 5's freestanding half: a `datac` with `Add` and `Ord`
+/// from `std/ops`, used by `+` and `<`. The traits are pure language, so the
+/// image links with no undefined symbol, exactly as the iterator one does.
+/// Needs `dev-kernel.nix` tools.
+#[test]
+fn a_freestanding_project_can_use_the_operator_traits() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding operator-trait test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_ops");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_ops"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding operator-trait build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding operator-trait image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Kernel stage 5 (MK9-S7-M1/M3, roadmap B-9/B-16): inline `asm` and `naked
 // fun`. The templates in these fixtures are x86-64 assembly in Intel syntax,
@@ -12093,7 +12221,7 @@ fn freestanding_std_kernel_boots_with_option_result_and_arena() {
 #[test]
 fn a_hosted_std_module_is_refused_by_name_with_the_allowed_list() {
     let allowed = "std/arena, std/atomic, std/convert, std/frame, std/irq, std/iter, std/list, \
-                   std/math, std/option, std/result, std/str";
+                   std/math, std/ops, std/option, std/result, std/str";
     for (dir, module) in [
         ("freestanding_std_refused_time", "std/time"),
         ("freestanding_std_refused_thread", "std/thread"),

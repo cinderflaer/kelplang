@@ -1,0 +1,10 @@
+name = "freestandingops"
+
+# Language-completeness 5 in a bare-metal image: `std/ops` is pure language with
+# no body and no allocator, so declaring `Add` and `Ord` for a `datac` and using
+# `+` and `<` adds no libc symbol and no runtime helper to the linked ELF.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
