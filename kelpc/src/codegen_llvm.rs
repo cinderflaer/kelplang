@@ -4837,12 +4837,19 @@ impl<'g, 'a> FnGen<'g, 'a> {
             Some(Projection::Field(moved)) if moved == field => {
                 self.g.builder.build_store(self.g.ctx.const_null(lty), field_ptr);
             }
+            Some(Projection::NestedField(path)) if path.last().is_some_and(|moved| moved == field) => {
+                self.g.builder.build_store(self.g.ctx.const_null(lty), field_ptr);
+            }
             // A projection the backend has no clear for. Zeroing a slot that
             // still holds its value, or skipping the zero of one that does
             // not, frees the same buffer twice, so an arm per variant is what
             // has to be filled in rather than passed over.
             Some(Projection::Field(moved)) => panic!(
                 "codegen_llvm: a move of field '{moved}' was recorded at a read of '{field}'"
+            ),
+            Some(Projection::NestedField(path)) => panic!(
+                "codegen_llvm: a move of nested field '{}' was recorded at a read of '{field}'",
+                path.join(".")
             ),
             Some(Projection::EnumPayload { name, .. }) => panic!(
                 "codegen_llvm: a move of payload '{name}' was recorded at a read of field '{field}'"
@@ -5246,6 +5253,10 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // be filled in rather than passed over.
             Some(Projection::Field(moved)) => panic!(
                 "codegen_llvm: a move of field '{moved}' was recorded at a read of payload {variant}.{field}"
+            ),
+            Some(Projection::NestedField(path)) => panic!(
+                "codegen_llvm: a move of nested field '{}' was recorded at a read of payload {variant}.{field}",
+                path.join(".")
             ),
             Some(Projection::EnumPayload {
                 variant: moved_variant,

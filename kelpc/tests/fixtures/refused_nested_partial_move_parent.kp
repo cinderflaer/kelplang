@@ -1,0 +1,12 @@
+// A parent field cannot be read as a whole after one of its owned nested
+// fields moved out: its drop would otherwise reach the cleared child slot.
+datac Name(val text: String, val id: i32)
+datac Person(val name: Name)
+
+fun main() {
+    val p = Person(name = Name(text = String.from_str("Ada"), id = 7))
+    val text = p.name.text
+    val name = p.name
+    print(text)
+    print(name.id)
+}
