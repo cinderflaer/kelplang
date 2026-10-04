@@ -18590,6 +18590,184 @@ fn polyp_bench_prints_a_bounded_table() {
     }
 }
 
+/// Build one Polyp v4 example project, run it bounded and return its stdout. Every v4 test below is
+/// a project in `examples/` that prints a deterministic transcript; the file under
+/// `tests/polyp_v4/` is the pinned copy, so a changed number is a visible diff.
+fn polyp_v4_transcript(project: &str, tag: &str, envs: &[(&str, &str)]) -> String {
+    let bin = out_path(tag);
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture(&format!("../examples/{project}")))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected {project} to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, envs);
+    assert!(
+        run.status.success(),
+        "expected {project} to exit successfully, got:\n{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    String::from_utf8_lossy(&run.stdout).into_owned()
+}
+
+/// Polyp v4 stage 1: timers and animation on the headless soft backend, driven by the test clock.
+///
+/// `examples/polyp-anim-test` pins the integer easings, a progress bar animating 0..1000 permille over
+/// 500 ms (exact values at exact ticks, damage only over the bar, `wants_frames` true while it moves
+/// and false after), a restart on a changed `Anim`, a spacer animation that re-lays-out what is below
+/// it, opacity and offset animations, a repeating timer that skips the periods it missed, a one-shot
+/// that fires once and re-arms when the state asks again, and a UI at rest.
+#[test]
+fn polyp_v4_timers_and_animation_are_exact_on_the_test_clock() {
+    let got = polyp_v4_transcript("polyp-anim-test", "polyp_anim_test", &[]);
+    assert_eq!(got, include_str!("polyp_v4/anim.expected"), "unexpected output from the animation test");
+}
+
+/// Polyp v4 stage 2: UTF-8 text in the soft backend.
+///
+/// `examples/polyp-text-test` pins the decoder (well-formed 1- to 4-byte sequences, stray and
+/// truncated bytes, overlong forms, surrogates, values above U+10FFFF: each malformed run is one
+/// unit), measure by code point ("héllo" is 5 cells), which blocks have drawings, that a missing
+/// glyph and a malformed run draw the same single box and a truncated tail reads nothing out of
+/// bounds, and entry editing by code point (caret moves, backspace on `é`, delete on a 3-byte
+/// scalar, a malformed byte, a caret stranded inside a sequence, an invalid scalar).
+#[test]
+fn polyp_v4_text_is_utf8_by_code_point() {
+    let got = polyp_v4_transcript("polyp-text-test", "polyp_text_test", &[]);
+    assert_eq!(got, include_str!("polyp_v4/text.expected"), "unexpected output from the text test");
+}
+
+/// Polyp v4 stage 3: the accessibility tree.
+///
+/// `examples/polyp-a11y-test` pins the todo app's tree dump, that pressing "add" by node id ends in the
+/// same model and focus as a click at its bounds, focus by id, `set_value` on an entry, a checkbox
+/// toggled by id (named after the label beside it), and that a disabled button and entry reject every
+/// action, ignore clicks and are skipped by Tab.
+#[test]
+fn polyp_v4_a11y_tree_drives_the_ui() {
+    let got = polyp_v4_transcript("polyp-a11y-test", "polyp_a11y_test", &[]);
+    assert_eq!(got, include_str!("polyp_v4/a11y.expected"), "unexpected output from the a11y test");
+}
+
+/// Polyp v4 stage 4: memoised subtrees.
+///
+/// `examples/polyp-memo-test` runs a scrolled list of memoised rows beside the same list built with
+/// plain keyed rows and requires the same framebuffer checksum after every change; it pins the
+/// counters: 200 rows are 200 misses the first time, one changed row is 1 view call and 199 hits,
+/// no change is 200 hits and nothing painted, a deps change rebuilds exactly that row, a reorder
+/// keeps every memo a hit, a removed row's record is dropped and its key built again when it comes
+/// back, a nested memo hits when only the outer deps changed, a press inside a memo row reaches the
+/// model, and the plain loop with no store draws the same screen.
+#[test]
+fn polyp_v4_memo_skips_unchanged_subtrees_and_never_changes_a_pixel() {
+    let got = polyp_v4_transcript("polyp-memo-test", "polyp_memo_test", &[]);
+    assert_eq!(got, include_str!("polyp_v4/memo.expected"), "unexpected output from the memo test");
+}
+
+/// Polyp v4 stage 4: the memoisation benchmark builds and its counters are exact. The times
+/// (columns 7 to 9) are the host's; `POLYP_BENCH_QUICK` shortens each run to 3 frames.
+#[test]
+fn polyp_v4_memo_bench_counts_view_calls_and_hits() {
+    let got = polyp_v4_transcript("polyp-memo-bench", "polyp_memo_bench", &[("POLYP_BENCH_QUICK", "1")]);
+    let lines: Vec<&str> = got.lines().collect();
+    // Four runs, nine lines each: label, rows, frames, view calls, hits, pixels, median, view, diff.
+    assert_eq!(lines.len(), 36, "the memo benchmark's shape changed:\n{got}");
+    let expect = [("plain", 200, 0, 0), ("memo", 200, 3, 3 * 199), ("plain", 1000, 0, 0), ("memo", 1000, 3, 3 * 999)];
+    for (i, (label, rows, calls, hits)) in expect.iter().enumerate() {
+        let b = i * 9;
+        assert_eq!(lines[b], *label);
+        assert_eq!(lines[b + 1], rows.to_string(), "{label} rows");
+        assert_eq!(lines[b + 2], "3", "{label} frames");
+        assert_eq!(lines[b + 3], calls.to_string(), "{label} view calls");
+        assert_eq!(lines[b + 4], hits.to_string(), "{label} hits");
+        for k in 6..9 {
+            lines[b + k].parse::<i64>().unwrap_or_else(|_| panic!("{label}: column {k} is not a number"));
+        }
+    }
+    // Memo and plain write the same pixels.
+    assert_eq!(lines[5], lines[9 + 5], "200 rows: pixels written");
+    assert_eq!(lines[18 + 5], lines[27 + 5], "1000 rows: pixels written");
+}
+
+/// The lines of one Polyp v4 demo run: from the first `step ` line to the first `end` line, without
+/// the hosted entry's `-- demo --` separator. Used on the hosted transcript and on a kernel's serial
+/// output alike, so the two are sliced identically and only the run itself can differ.
+fn v4_run_slice(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with("step "))
+        .unwrap_or_else(|| panic!("no step line in the run's output:\n{text}"));
+    let end = lines
+        .iter()
+        .position(|line| *line == "end")
+        .unwrap_or_else(|| panic!("no `end` line in the run's output:\n{text}"));
+    lines[start..=end]
+        .iter()
+        .filter(|line| **line != "-- demo --")
+        .map(|line| line.to_string())
+        .collect()
+}
+
+/// Polyp v4: the demo program on the riscv64 kernel prints the hosted run's own transcript.
+///
+/// `examples/polyp-v4-riscv64` is the same `app.kp`/`scenario.kp` as `examples/polyp-v4-demo`, with a
+/// platform clock the kernel advances and a `Tick` event it queues for it: every step line (clock,
+/// framebuffer checksum, rectangles presented, `wants_frames`, timer count) and the report must equal
+/// the hosted line. Skipped under `dev.nix`; run it in `dev-kernel.nix`.
+#[test]
+fn polyp_v4_riscv64_prints_the_hosted_transcript() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        eprintln!("skipping the riscv64 Polyp v4 kernel: 'ld.lld' or 'qemu-system-riscv64' is not on PATH");
+        return;
+    }
+    let expected = v4_run_slice(&polyp_v4_transcript("polyp-v4-demo", "polyp_v4_demo_hosted_rv", &[]));
+    let name = "polyp_v4_riscv64";
+    let captured = boot_and_capture(&RISCV64_QEMU, name, &fixture("../examples/polyp-v4-riscv64"), &|got| {
+        got.lines().any(|line| line == "end")
+    });
+    let undefined = undefined_symbols(&out_path(name));
+    assert!(
+        undefined.trim().is_empty(),
+        "the riscv64 Polyp v4 image names undefined symbols:\n{undefined}"
+    );
+    assert_eq!(v4_run_slice(&captured), expected, "the riscv64 kernel differs from the hosted run; captured:\n{captured}");
+}
+
+/// The same on the x86-64 kernel (`examples/polyp-v4-x86_64`).
+#[test]
+fn polyp_v4_x86_64_prints_the_hosted_transcript() {
+    if !have_ld_lld() || !have_qemu(&X86_64_QEMU) {
+        eprintln!("skipping the x86-64 Polyp v4 kernel: 'ld.lld' or 'qemu-system-x86_64' is not on PATH");
+        return;
+    }
+    let expected = v4_run_slice(&polyp_v4_transcript("polyp-v4-demo", "polyp_v4_demo_hosted_x86", &[]));
+    let name = "polyp_v4_x86_64";
+    let captured = boot_and_capture(&X86_64_QEMU, name, &fixture("../examples/polyp-v4-x86_64"), &|got| {
+        got.lines().any(|line| line == "end")
+    });
+    let undefined = undefined_symbols(&out_path(name));
+    assert!(
+        undefined.trim().is_empty(),
+        "the x86-64 Polyp v4 image names undefined symbols:\n{undefined}"
+    );
+    assert_eq!(v4_run_slice(&captured), expected, "the x86-64 kernel differs from the hosted run; captured:\n{captured}");
+}
+
+/// Polyp v4: the hosted demo transcript is pinned, so a changed number is a visible diff.
+#[test]
+fn polyp_v4_demo_prints_its_pinned_transcript() {
+    let got = polyp_v4_transcript("polyp-v4-demo", "polyp_v4_demo", &[]);
+    assert_eq!(got, include_str!("polyp_v4/demo.expected"), "unexpected output from the v4 demo");
+}
+
 #[test]
 fn a_while_true_loop_that_breaks_continues_after_the_loop() {
     assert_compiles_and_runs("tests/fixtures/while_true_break.kp", "4\n5\n30\nxxx\n");

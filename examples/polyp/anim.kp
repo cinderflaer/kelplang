@@ -1,0 +1,108 @@
+// Integer animation values (Polyp v4 stage 1).
+//
+// An `Anim` is plain data: a start value, an end value, a duration in milliseconds and an easing.
+// It carries no clock. A widget that carries one (`Children.anim` and friends in `core.kp`) is
+// *started* by the soft backend the first time it sees that exact value on that widget, and the
+// backend then reads the platform's clock (the `Tick` events, `soft/event.kp`) to know how far along
+// it is. Because the value is a pure function of the elapsed time, a test that drives the clock
+// gets exact intermediate values.
+//
+// Everything is integer math: the progress fraction is a permille (`0..=1000`) and the value is
+// `from + (to - from) * eased(t) / 1000` in `i64`, so a bare-metal image with no FPU runs it and
+// both backends agree to the last unit. `eased` is monotonic for the four easings below and maps
+// 0 to 0 and 1000 to 1000, so an animation starts exactly at `from` and ends exactly at `to`.
+
+pub const EASE_LINEAR: i32 = 0
+pub const EASE_IN: i32 = 1
+pub const EASE_OUT: i32 = 2
+pub const EASE_IN_OUT: i32 = 3
+
+pub enum Easing {
+    Linear
+    EaseIn
+    EaseOut
+    EaseInOut
+}
+
+fun easing_code(e: Easing).R: i32 = when e {
+    Linear -> EASE_LINEAR
+    EaseIn -> EASE_IN
+    EaseOut -> EASE_OUT
+    EaseInOut -> EASE_IN_OUT
+}
+
+// `ms < 0` is "no animation": a widget whose `Anim` is `none()` shows its plain static value.
+// `ms == 0` is an animation that is already finished: the value is `to` from the first frame.
+pub datac Anim(val from: i32, val to: i32, val ms: i32, val ease: i32)
+
+// `anim.lerp(from, to, ms, easing)`: the value moves from `from` to `to` over `ms` milliseconds.
+pub fun lerp(from: i32, to: i32, ms: i32, easing: Easing).R: Anim {
+    var duration = ms
+    if duration < 0 {
+        duration = 0
+    }
+    return Anim(from = from, to = to, ms = duration, ease = easing_code(easing))
+}
+
+pub fun none().R: Anim = Anim(from = 0, to = 0, ms = -1, ease = EASE_LINEAR)
+
+pub fun is_none(a: &Anim).R: bool = a.ms < 0
+
+pub fun copy(a: &Anim).R: Anim = Anim(from = a.from, to = a.to, ms = a.ms, ease = a.ease)
+
+pub fun same(a: &Anim, b: &Anim).R: bool = a.from == b.from && a.to == b.to && a.ms == b.ms && a.ease == b.ease
+
+fun Anim.eq(other: &Anim).R: bool = same(self, other)
+
+// The eased fraction: both the input and the result are permille, `0..=1000`.
+//   linear      t
+//   ease_in     t^2            (slow start)
+//   ease_out    1 - (1 - t)^2  (slow end)
+//   ease_in_out the two halves joined at t = 500
+pub fun eased(ease: i32, t: i64).R: i64 {
+    var x = t
+    if x < 0 {
+        x = 0
+    }
+    if x > 1000 {
+        x = 1000
+    }
+    if ease == EASE_IN {
+        return x * x / 1000
+    }
+    if ease == EASE_OUT {
+        val r = 1000 - x
+        return 1000 - r * r / 1000
+    }
+    if ease == EASE_IN_OUT {
+        if x < 500 {
+            return 2 * x * x / 1000
+        }
+        val r = 1000 - x
+        return 1000 - 2 * r * r / 1000
+    }
+    return x
+}
+
+// How long the animation runs, in microseconds, which is the unit the platform's clock reads in.
+pub fun duration_us(a: &Anim).R: u64 {
+    if a.ms <= 0 {
+        return 0
+    }
+    return a.ms.to_u64() * 1000
+}
+
+// Whether an animation that started `elapsed_us` ago has reached its end.
+pub fun finished(a: &Anim, elapsed_us: u64).R: bool = elapsed_us >= duration_us(a)
+
+// The value `elapsed_us` microseconds after the start. At or past the duration it is `to`, exactly.
+pub fun value_at(a: &Anim, elapsed_us: u64).R: i32 {
+    if finished(a, elapsed_us) {
+        return a.to
+    }
+    val total = duration_us(a)
+    val t = (elapsed_us * 1000 / total).to_i64()
+    val e = eased(a.ease, t)
+    val delta = a.to.to_i64() - a.from.to_i64()
+    return (a.from.to_i64() + delta * e / 1000).to_i32()
+}

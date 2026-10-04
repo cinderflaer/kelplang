@@ -1,0 +1,180 @@
+// The accessibility tree the soft backend can build on demand (Polyp v4 stage 3).
+//
+// A screen reader or a test-automation harness asks the backend for `a11y_tree()` and gets plain data:
+// one `Node` per exposed widget with a role, a name, a value, state flags, bounds and the actions it
+// accepts, and then drives the UI by node id (`a11y_act`, `a11y_set_value`). Nothing here is built
+// during a frame: the tree exists only while a caller holds it, so the frame path allocates exactly
+// what it allocated before.
+//
+// Roles: `button`, `checkbox`, `entry`, `label` (a `Text`), `progress`, `list` (a `Scrolled`),
+// `list_item` (a container directly inside a list) and `region` (any other `Column`/`Row`). Spacers
+// and separators are decoration and are not exposed. A checkbox with no label of its own is named
+// after the label next to it (the next sibling `Text`), which is how the todo app's rows read.
+// `value` is the entry's text, `"true"`/`"false"` for a checkbox and the permille for a progress bar.
+// Node ids are the backend's own widget numbers: they are stable for as long as the widget lives.
+// `bounds` are the widget's layout rectangle, without any animated paint offset.
+impl "std/str"
+
+pub const ROLE_BUTTON: i32 = 0
+pub const ROLE_CHECKBOX: i32 = 1
+pub const ROLE_ENTRY: i32 = 2
+pub const ROLE_LABEL: i32 = 3
+pub const ROLE_PROGRESS: i32 = 4
+pub const ROLE_LIST: i32 = 5
+pub const ROLE_LIST_ITEM: i32 = 6
+pub const ROLE_REGION: i32 = 7
+
+pub const STATE_FOCUSED: i32 = 1
+pub const STATE_DISABLED: i32 = 2
+pub const STATE_CHECKED: i32 = 4
+
+pub const ACT_PRESS: i32 = 1
+pub const ACT_FOCUS: i32 = 2
+pub const ACT_SET_VALUE: i32 = 4
+
+pub datac Node(
+    var id: i32,
+    var role: i32,
+    var name: String,
+    var value: String,
+    var state: i32,
+    var x: i32,
+    var y: i32,
+    var w: i32,
+    var h: i32,
+    var actions: i32,
+    var kids: List<Node>,
+)
+
+pub fun role_name(role: i32).R: str {
+    if role == ROLE_BUTTON {
+        return "button"
+    }
+    if role == ROLE_CHECKBOX {
+        return "checkbox"
+    }
+    if role == ROLE_ENTRY {
+        return "entry"
+    }
+    if role == ROLE_LABEL {
+        return "label"
+    }
+    if role == ROLE_PROGRESS {
+        return "progress"
+    }
+    if role == ROLE_LIST {
+        return "list"
+    }
+    if role == ROLE_LIST_ITEM {
+        return "list_item"
+    }
+    return "region"
+}
+
+// Whether the role carries a value the dump prints.
+fun has_value(role: i32).R: bool = role == ROLE_ENTRY || role == ROLE_CHECKBOX || role == ROLE_PROGRESS
+
+fun push_int(out: mut String, n: i32) {
+    val t = str.from_i64(n.to_i64())
+    out.push_str(t.as_str())
+}
+
+fun add_flag(out: mut String, first: mut bool, name: str) {
+    if !*first {
+        out.push_str(",")
+    }
+    out.push_str(name)
+    *first = false
+}
+
+fun dump_node(n: &Node, depth: i32, out: mut String) {
+    var d: i32 = 0
+    while d < depth {
+        out.push_str("  ")
+        d += 1
+    }
+    out.push_str(role_name(n.role))
+    out.push_str(" \"")
+    out.push_str(n.name.as_str())
+    out.push_str("\"")
+    if has_value(n.role) {
+        out.push_str(" value=\"")
+        out.push_str(n.value.as_str())
+        out.push_str("\"")
+    }
+    out.push_str(" state=[")
+    var first = true
+    if (n.state & STATE_FOCUSED) != 0 {
+        add_flag(out, first, "focused")
+    }
+    if (n.state & STATE_DISABLED) != 0 {
+        add_flag(out, first, "disabled")
+    }
+    if (n.state & STATE_CHECKED) != 0 {
+        add_flag(out, first, "checked")
+    }
+    out.push_str("] bounds=")
+    push_int(out, n.x)
+    out.push_str(",")
+    push_int(out, n.y)
+    out.push_str(",")
+    push_int(out, n.w)
+    out.push_str(",")
+    push_int(out, n.h)
+    out.push_str(" actions=[")
+    var firsta = true
+    if (n.actions & ACT_PRESS) != 0 {
+        add_flag(out, firsta, "press")
+    }
+    if (n.actions & ACT_FOCUS) != 0 {
+        add_flag(out, firsta, "focus")
+    }
+    if (n.actions & ACT_SET_VALUE) != 0 {
+        add_flag(out, firsta, "set_value")
+    }
+    out.push_str("] id=")
+    push_int(out, n.id)
+    out.push_str("\n")
+    var i: usize = 0
+    while i < n.kids.len() {
+        dump_node(n.kids.get(i), depth + 1, out)
+        i += 1
+    }
+}
+
+// A stable, indented text form of a tree, one node per line, two spaces per level:
+//   `role "name" [value="v"] state=[flags] bounds=x,y,w,h actions=[acts] id=N`
+// Tests use it as a golden.
+pub fun dump(tree: &Node).R: String {
+    var out = String.from_str("")
+    dump_node(tree, 0, out)
+    return out
+}
+
+// Find a node by id in a built tree; `None`-like as -1 in `id` of the result is not needed, so the
+// caller gets a bool and reads through `find_into`.
+pub fun count(tree: &Node).R: i32 {
+    var c: i32 = 1
+    var i: usize = 0
+    while i < tree.kids.len() {
+        c += count(tree.kids.get(i))
+        i += 1
+    }
+    return c
+}
+
+// The id of the first node (depth first) with this role and name, or -1.
+pub fun find_id(tree: &Node, role: i32, name: &str).R: i32 {
+    if tree.role == role && str.eq(tree.name.as_str(), name) {
+        return tree.id
+    }
+    var i: usize = 0
+    while i < tree.kids.len() {
+        val r = find_id(tree.kids.get(i), role, name)
+        if r >= 0 {
+            return r
+        }
+        i += 1
+    }
+    return -1
+}

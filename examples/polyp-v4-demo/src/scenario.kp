@@ -1,0 +1,129 @@
+// The scripted v4 scenario, shared by the hosted run and the two bare-metal kernels (Polyp v4).
+//
+// `drive` builds the application's first frame, then plays `app.script()`: for every step it advances
+// the platform's clock (through `advance`, the one thing a platform spells differently), queues the
+// press on the backend's programmatic channel and runs `soft_backend.frame_timed`, then emits one line
+// that names the step, the clock, the frame's checksum, how many rectangles it presented, whether the
+// backend still wants frames and the model's tick count. The line is built with integer formatting
+// only, so the hosted `print` and a kernel's UART write the same bytes.
+impl "deps/polyp/core"
+impl "deps/polyp/soft/a11y"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft_backend"
+impl "deps/v4/app"
+impl "std/str"
+
+const DIGITS: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102]
+
+fun hex64(value: u64).R: String {
+    var out: String = String.from_str("0x")
+    var i: i32 = 15
+    while i >= 0 {
+        val nibble = ((value >> (i * 4).to_u64()) & 15).to_usize()
+        out.push(DIGITS.get(nibble))
+        i -= 1
+    }
+    return out
+}
+
+fun num(n: i64).R: String = str.from_i64(n)
+
+// `step <n> t <ms> checksum 0x<hex> dirty <rects> wants <0|1> ticks <n> memo <hits>/<misses>`
+pub fun step_line(step: i32, t_ms: u64, checksum: u64, dirty: i32, wants: bool, ticks: i32, hits: i32, misses: i32).R: String {
+    val a = num(step.to_i64())
+    val b = num(t_ms.to_i64())
+    val c = hex64(checksum)
+    val d = num(dirty.to_i64())
+    val e = num(ticks.to_i64())
+    val h = num(hits.to_i64())
+    val ms = num(misses.to_i64())
+    var w = "0"
+    if wants {
+        w = "1"
+    }
+    var line = String.from_str("step ")
+    line.push_str(a.as_str())
+    line.push_str(" t ")
+    line.push_str(b.as_str())
+    line.push_str(" checksum ")
+    line.push_str(c.as_str())
+    line.push_str(" dirty ")
+    line.push_str(d.as_str())
+    line.push_str(" wants ")
+    line.push_str(w)
+    line.push_str(" ticks ")
+    line.push_str(e.as_str())
+    line.push_str(" memo ")
+    line.push_str(h.as_str())
+    line.push_str("/")
+    line.push_str(ms.as_str())
+    return line
+}
+
+pub fun drive<P: platform.Platform>(
+    backend: mut soft_backend.SoftBackend,
+    platform: mut P,
+    advance: fun (mut P, u64),
+    emit: fun (str),
+).R: app.Model {
+    var state = app.initial()
+    var tree: core.Node<app.Msg> = app.view(state)
+    var timers = core.new_timers()
+    var store: core.MemoStore<app.Msg> = core.new_memo_store()
+    val surface = platform.framebuffer()
+    backend.resize(surface.width, surface.height)
+    backend.apply(core.create_all_memo(&tree, store))
+    backend.layout()
+    val f0 = platform.framebuffer()
+    val d0 = backend.paint(f0)
+    if d0.count() > 0 {
+        platform.present(f0, d0)
+    }
+    val first = step_line(0, 0, fb.checksum(f0), d0.count().to_i32(), backend.wants_frames(), state.ticks, store.hits, store.misses)
+    emit(first.as_str())
+
+    var steps = app.script()
+    var now_ms: u64 = 0
+    var n: i32 = 1
+    var i: usize = 0
+    while i < steps.len() {
+        val ms = steps.get(i).ms
+        val post = steps.get(i).post
+        advance(platform, ms)
+        now_ms += ms
+        if post >= 0 {
+            backend.schedule(core.Event.Post(id = post))
+        }
+        tree = when soft_backend.frame_memo(backend = backend, platform = platform, tree = tree, state = state, view = app.view, update = app.update, subs = app.subscriptions, timers = timers, store = store) {
+            Idle(t) -> t
+            Changed(t) -> t
+            Quit(t) -> t
+        }
+        val line = step_line(n, now_ms, fb.checksum(platform.framebuffer()), backend.last_painted(), backend.wants_frames(), state.ticks, store.hits, store.misses)
+        emit(line.as_str())
+        n += 1
+        i += 1
+    }
+    emit_a11y(backend, emit)
+    return state
+}
+
+// The accessibility tree of the final screen, one `emit` per line of `a11y.dump`.
+fun emit_a11y(backend: mut soft_backend.SoftBackend, emit: fun (str)) {
+    emit("-- a11y --")
+    val tree = backend.a11y_tree()
+    val text = a11y.dump(&tree)
+    var line = String.from_str("")
+    var i: usize = 0
+    while i < text.len() {
+        val b = str.byte(text.as_str(), i)
+        if b == 10 {
+            emit(line.as_str())
+            line = String.from_str("")
+        } else {
+            line.push(b)
+        }
+        i += 1
+    }
+}

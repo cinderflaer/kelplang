@@ -39,6 +39,11 @@ pub datac FbPlatform(
     var time_ms: u64,
     var frames: i32,
     var presented: i32,
+    // Polyp v4: `auto_clock` is the v3 behaviour (a presented frame is 100 ms); a program that drives
+    // the clock itself turns it off and calls `advance_ms`, which also schedules the `Tick` event
+    // the backend's timers and animations read.
+    var auto_clock: bool,
+    var tick_due: bool,
 )
 
 pub fun new().R: FbPlatform {
@@ -52,6 +57,8 @@ pub fun new().R: FbPlatform {
         time_ms = 0,
         frames = 0,
         presented = 0,
+        auto_clock = true,
+        tick_due = false,
     )
 }
 
@@ -65,6 +72,19 @@ fun mut FbPlatform.push_at(at: u64, ev: move event.Event) {
 }
 
 fun FbPlatform.frame_count().R: i32 = frames
+
+// Take the clock over from the per-present auto advance: from now on it moves only through
+// `advance_ms`, which is the clock a Polyp v4 scenario scripts.
+fun mut FbPlatform.set_auto_clock(on: bool) {
+    auto_clock = on
+}
+
+// Advance the clock by `ms` and tell the backend at the next poll: this is what a timer interrupt
+// handler does on a real kernel (record the new time, queue one `Tick`).
+fun mut FbPlatform.advance_ms(ms: u64) {
+    time_ms += ms
+    tick_due = true
+}
 
 // Where the surface is, for the ramfb registration: the display device needs the physical address
 // and the stride, in pixels, of the memory it scans out. The cast is a separate binding because a
@@ -89,7 +109,9 @@ impl platform.Platform for FbPlatform {
         frames += 1
         presented = dirty.count().to_i32()
         // No timer device: one presented frame is 100 ms of this platform's clock.
-        time_ms += 100
+        if auto_clock {
+            time_ms += 100
+        }
     }
 
     fun Self.now_ms().R: u64 = time_ms
@@ -99,6 +121,10 @@ impl platform.Platform for FbPlatform {
     fun mut Self.now_us().R: u64 = time_ms * 1000
 
     fun mut Self.poll_event().R: option.Option<event.Event> {
+        if tick_due {
+            tick_due = false
+            return option.Option.Some(value = event.Event.Tick(now_us = time_ms * 1000))
+        }
         if cursor >= script_len {
             return option.Option.None
         }

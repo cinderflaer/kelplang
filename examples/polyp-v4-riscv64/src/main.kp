@@ -1,0 +1,81 @@
+// Polyp v4 on bare metal, riscv64: timers and animation driven by the platform's clock.
+//
+// The operating system the renderer needs is the same as v3's (a UART, a `static mut` framebuffer, a
+// bump arena behind `[target] alloc`/`dealloc`, a panic handler) plus a clock: `fb_platform.kp` keeps
+// one and delivers a `Tick` event whenever the scenario advances it, which is what a timer interrupt
+// handler would do. The program, `deps/v4/app`, and the driver, `deps/v4/scenario`, are the files the
+// hosted `examples/polyp-v4-demo` runs, so the step lines this prints are compared byte for byte
+// with the hosted transcript.
+impl "deps/polyp/core"
+impl "deps/polyp/soft_backend"
+impl "deps/v4/app"
+impl "deps/v4/scenario"
+impl "fb_platform"
+impl "uart" caps(mmio = ["0x10000000+0x100"])
+impl "std/str"
+
+const ARENA_BYTES: usize = 1048576
+
+// A bump arena for the heap types. `List`, `String` and `Box` allocate and free through `alloc` and
+// `dealloc`, so the image links no libc; the arena is `.bss`, which the `_start` stub zeroes.
+static mut ARENA: [u8; ARENA_BYTES] = [0; ARENA_BYTES]
+static mut USED: usize = 0
+
+// `align` is always a power of two (every type's alignment the compiler asks for is), so the
+// round-up is a divide and multiply rather than a bit mask: v1 has no bitwise operators.
+fun align_up(value: usize, align: usize).R: usize {
+    return ((value + align - 1) / align) * align
+}
+
+// The project's allocator: a block of `ARENA`, aligned for the caller, or the null pointer when the
+// arena is full. `check_alloc` in the compiler turns that null into `kp_panic("out of memory")`, so
+// a failed allocation never dereferences null. A bump allocator never reclaims, which is why the
+// run has to fit in the arena at once; `dealloc` exists only to satisfy the hook.
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    val out: Ptr<u8> = unsafe {
+        val start: usize = align_up(USED, align)
+        if start + size > ARENA_BYTES {
+            Ptr.null()
+        } else {
+            USED = start + size
+            val arena: Ptr<[u8; ARENA_BYTES]> = Ptr.from_mut(ARENA)
+            val base: Ptr<u8> = arena.cast<u8>()
+            base.byte_offset(start.to_isize())
+        }
+    }
+    return out
+}
+
+fun dealloc(_p: Ptr<u8>, _size: usize, _align: usize) {
+}
+
+// One line out: the step lines and the report both come through here, so a kernel line is the same
+// bytes a hosted `print` writes.
+fun emit_line(line: str) {
+    uart.puts(line)
+    uart.putc(10)
+}
+
+// The one thing the scenario does not decide for itself: how this platform's clock moves. A real
+// kernel's timer interrupt handler does exactly this (record the new time, queue one `Tick`).
+fun advance(p: mut fb_platform.FbPlatform, ms: u64) {
+    p.advance_ms(ms)
+}
+
+section(".text.boot") fun kmain() {    var platform = fb_platform.new()
+    platform.set_auto_clock(false)
+    var backend = soft_backend.new()
+    val final = scenario.drive(backend = backend, platform = platform, advance = advance, emit = emit_line)
+    app.report(final, emit_line)
+    uart.puts("done\n")
+    uart.halt()
+}
+
+// The handler `[target] panic` names: every bounds and overflow check, and a failed allocation,
+// calls this with the static message the check was written with.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.putc(10)
+    uart.halt()
+}

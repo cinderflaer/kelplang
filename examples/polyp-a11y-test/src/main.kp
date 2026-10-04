@@ -1,0 +1,276 @@
+// Polyp v4 stage 3's tests: the accessibility tree, in plain Kelp with no display.
+//
+//   dump      the todo app's tree as a golden text dump
+//   press     pressing "add" through the tree ends in the same model and focus as a click at its bounds
+//   focus     focusing an entry by id
+//   set_value setting an entry's text through the tree reaches the model
+//   toggle    a checkbox toggles through its id (and is named after the label next to it)
+//   disabled  a disabled button and entry reject every action, are skipped by Tab and ignore clicks
+impl "deps/polyp/core"
+impl "deps/polyp/soft/a11y"
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft_backend"
+impl "deps/todo/app"
+impl "std/str"
+
+fun tree_of(t: move core.Tick<app.Msg>).R: core.Node<app.Msg> = when t {
+    Idle(x) -> x
+    Changed(x) -> x
+    Quit(x) -> x
+}
+
+fun step(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: move core.Node<app.Msg>, st: mut app.Model).R: core.Node<app.Msg> {
+    return tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = app.view, update = app.update))
+}
+
+fun boot(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: &core.Node<app.Msg>) {
+    val f = p.framebuffer()
+    b.resize(f.width, f.height)
+    b.apply(core.create_all(tree))
+    b.layout()
+    val d = b.paint(f)
+    if d.count() > 0 {
+        p.present(f, d)
+    }
+}
+
+// A todo model with two rows, the second done, and "hi" typed in the entry.
+fun sample().R: app.Model {
+    var m = app.initial()
+    app.update(m, app.Msg.Changed(text = String.from_str("alpha")))
+    app.update(m, app.Msg.Add)
+    app.update(m, app.Msg.Changed(text = String.from_str("beta")))
+    app.update(m, app.Msg.Add)
+    app.update(m, app.Msg.Toggle(id = 2))
+    app.update(m, app.Msg.Changed(text = String.from_str("hi")))
+    return m
+}
+
+fun run_dump() {
+    print("dump")
+    var p = headless_platform.new(width = 320, height = 200)
+    var b = soft_backend.new()
+    var st = sample()
+    var tree = app.view(st)
+    boot(b, p, &tree)
+    val t = b.a11y_tree()
+    val text = a11y.dump(&t)
+    print(text.as_str())
+    print(a11y.count(&t))
+}
+
+
+// One scenario for the press test: type "alpha" through the entry's own channel, then press "add"
+// either with a click at the button's bounds or through the tree, and report the model and focus.
+fun press_case(use_tree: bool) {
+    var p = headless_platform.new(width = 320, height = 200)
+    var b = soft_backend.new()
+    var st = app.initial()
+    var tree = app.view(st)
+    boot(b, p, &tree)
+    b.schedule(core.Event.Edit(index = 0, text = String.from_str("alpha")))
+    tree = step(b, p, tree, st)
+    tree = step(b, p, tree, st)
+    val before = b.a11y_tree()
+    val id = a11y.find_id(&before, a11y.ROLE_BUTTON, "add")
+    if use_tree {
+        if b.a11y_act(id, a11y.ACT_PRESS) {
+            print("acted")
+        }
+    } else {
+        val r = b.rect_of_slot(1)
+        when r {
+            Some(rr) -> {
+                p.push(event.Event.PointerDown(x = rr.x + 2, y = rr.y + 2, button = event.BUTTON_LEFT))
+                p.push(event.Event.PointerUp(x = rr.x + 2, y = rr.y + 2, button = event.BUTTON_LEFT))
+            }
+            None -> {}
+        }
+    }
+    tree = step(b, p, tree, st)
+    tree = step(b, p, tree, st)
+    print(st.items.len())
+    print(st.draft.as_str())
+    print(b.focus_slot())
+    val after = b.a11y_tree()
+    print(a11y.find_id(&after, a11y.ROLE_LABEL, "alpha") >= 0)
+}
+
+fun run_press() {
+    print("press")
+    print("click")
+    press_case(false)
+    print("tree")
+    press_case(true)
+}
+
+fun run_focus() {
+    print("focus")
+    var p = headless_platform.new(width = 320, height = 200)
+    var b = soft_backend.new()
+    var st = sample()
+    var tree = app.view(st)
+    boot(b, p, &tree)
+    print(b.focus_slot())
+    val t = b.a11y_tree()
+    val entry = a11y.find_id(&t, a11y.ROLE_ENTRY, "")
+    print(b.a11y_act(entry, a11y.ACT_FOCUS))
+    print(b.focus_slot())
+    val t2 = b.a11y_tree()
+    print(t2.kids.get(0).kids.get(0).state)
+    // The press action on an entry is refused, and so is any unknown id.
+    print(b.a11y_act(entry, a11y.ACT_PRESS))
+    print(b.a11y_act(9999, a11y.ACT_FOCUS))
+}
+
+fun run_set_value() {
+    print("set_value")
+    var p = headless_platform.new(width = 320, height = 200)
+    var b = soft_backend.new()
+    var st = app.initial()
+    var tree = app.view(st)
+    boot(b, p, &tree)
+    val t = b.a11y_tree()
+    val entry = a11y.find_id(&t, a11y.ROLE_ENTRY, "")
+    print(b.a11y_set_value(entry, "typed by a screen reader"))
+    tree = step(b, p, tree, st)
+    tree = step(b, p, tree, st)
+    print(st.draft.as_str())
+    val add = a11y.find_id(&t, a11y.ROLE_BUTTON, "add")
+    print(b.a11y_set_value(add, "nope"))
+}
+
+fun run_toggle() {
+    print("toggle")
+    var p = headless_platform.new(width = 320, height = 200)
+    var b = soft_backend.new()
+    var st = sample()
+    var tree = app.view(st)
+    boot(b, p, &tree)
+    val t = b.a11y_tree()
+    // The first row's checkbox has no label of its own and is named after the title beside it.
+    val box = a11y.find_id(&t, a11y.ROLE_CHECKBOX, "alpha")
+    print(box >= 0)
+    print(st.items.get(0).done)
+    print(b.a11y_act(box, a11y.ACT_PRESS))
+    tree = step(b, p, tree, st)
+    tree = step(b, p, tree, st)
+    print(st.items.get(0).done)
+    val t2 = b.a11y_tree()
+    val row = t2.kids.get(1).kids.get(0).kids.get(0)
+    print(row.value.as_str())
+    print(row.state)
+}
+
+enum Dm {
+    Go
+    Typed
+}
+
+datac Ds(var goes: i32, var typed: i32)
+
+fun dis_changed(text: String).R: Dm = Dm.Typed
+
+fun dis_view(s: Ds).R: core.Node<Dm> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.button("live", Dm.Go)
+        k.disabled()
+        k.align(core.Align.Start)
+        k.button("dead", Dm.Go)
+        k.disabled()
+        k.align(core.Align.Start)
+        k.entry("x", dis_changed)
+        k.align(core.Align.Start)
+        k.button("live2", Dm.Go)
+    }
+}
+
+fun dis_update(s: mut Ds, m: Dm) {
+    when m {
+        Go -> {
+            s.goes += 1
+        }
+        Typed -> {
+            s.typed += 1
+        }
+    }
+}
+
+fun dis_tree_of(t: move core.Tick<Dm>).R: core.Node<Dm> = when t {
+    Idle(x) -> x
+    Changed(x) -> x
+    Quit(x) -> x
+}
+
+fun run_disabled() {
+    print("disabled")
+    var p = headless_platform.new(width = 200, height = 120)
+    var b = soft_backend.new()
+    var st = Ds(goes = 0, typed = 0)
+    var tree = dis_view(st)
+    val f = p.framebuffer()
+    b.resize(f.width, f.height)
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val d = b.paint(f)
+    if d.count() > 0 {
+        p.present(f, d)
+    }
+    val t = b.a11y_tree()
+    val text = a11y.dump(&t)
+    print(text.as_str())
+    val dead = a11y.find_id(&t, a11y.ROLE_BUTTON, "dead")
+    val ent = a11y.find_id(&t, a11y.ROLE_ENTRY, "")
+    print(b.a11y_act(dead, a11y.ACT_PRESS))
+    print(b.a11y_act(dead, a11y.ACT_FOCUS))
+    print(b.a11y_set_value(ent, "no"))
+    tree = dis_tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = dis_view, update = dis_update))
+    print(st.goes)
+    print(st.typed)
+    // A click on the disabled button does nothing, a click on a live one counts.
+    val rd = b.rect_of_slot(1)
+    when rd {
+        Some(r) -> {
+            p.push(event.Event.PointerDown(x = r.x + 2, y = r.y + 2, button = event.BUTTON_LEFT))
+            p.push(event.Event.PointerUp(x = r.x + 2, y = r.y + 2, button = event.BUTTON_LEFT))
+        }
+        None -> print("no rect")
+    }
+    tree = dis_tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = dis_view, update = dis_update))
+    tree = dis_tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = dis_view, update = dis_update))
+    print(st.goes)
+    print(b.focus_slot())
+    val rl = b.rect_of_slot(0)
+    when rl {
+        Some(r) -> {
+            p.push(event.Event.PointerDown(x = r.x + 2, y = r.y + 2, button = event.BUTTON_LEFT))
+            p.push(event.Event.PointerUp(x = r.x + 2, y = r.y + 2, button = event.BUTTON_LEFT))
+        }
+        None -> print("no rect")
+    }
+    tree = dis_tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = dis_view, update = dis_update))
+    tree = dis_tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = dis_view, update = dis_update))
+    print(st.goes)
+    print(b.focus_slot())
+    // Tab goes live -> live2 -> live: the disabled button (slot 1) and entry (slot 2) are skipped.
+    p.push(event.Event.Key(code = event.KEY_TAB, mods = 0))
+    tree = dis_tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = dis_view, update = dis_update))
+    print(b.focus_slot())
+    p.push(event.Event.Key(code = event.KEY_TAB, mods = 0))
+    tree = dis_tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = dis_view, update = dis_update))
+    print(b.focus_slot())
+}
+
+fun main() {
+    run_dump()
+    run_press()
+    run_focus()
+    run_set_value()
+    run_toggle()
+    run_disabled()
+}

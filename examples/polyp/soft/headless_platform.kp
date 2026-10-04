@@ -26,6 +26,10 @@ pub datac HeadlessPlatform(
     var time_ms: u64,
     var time_us: u64,
     var clock_step_us: u64,
+    // Polyp v4: set when the clock was advanced on purpose (`advance`, `advance_us`, `set_time_us`),
+    // so the next `poll_event` hands the backend a `Tick`. The auto-advance `clock_step_us` models
+    // does not set it, which keeps a deadline test's event stream what it always was.
+    var tick_due: bool,
     var frames: i32,
     var presented: [fb.Rect; MAX_PRESENTED],
     var presented_len: usize,
@@ -56,6 +60,7 @@ pub fun new(width: i32, height: i32).R: HeadlessPlatform {
         time_ms = 0,
         time_us = 0,
         clock_step_us = 0,
+        tick_due = false,
         frames = 0,
         presented = [fb.Rect(x = 0, y = 0, w = 0, h = 0); MAX_PRESENTED],
         presented_len = 0,
@@ -76,12 +81,14 @@ fun mut HeadlessPlatform.push_at(at: u64, ev: move event.Event) {
 fun mut HeadlessPlatform.advance(ms: u64) {
     time_ms += ms
     time_us += ms * 1000
+    tick_due = true
 }
 
 // Advance the microsecond clock the frame deadline reads by `us`. A test that wants a budget
 // smaller than a millisecond uses this; a real platform reads its own clock.
 fun mut HeadlessPlatform.advance_us(us: u64) {
     time_us += us
+    tick_due = true
 }
 
 // A test clock that models a device charging `us` for every damaged rectangle: `now_us` advances
@@ -151,6 +158,12 @@ impl platform.Platform for HeadlessPlatform {
     }
 
     fun mut Self.poll_event().R: option.Option<event.Event> {
+        // The clock moved: the backend hears it first, so the frame's input is handled at the new
+        // time (a widget an input creates starts its animation then).
+        if tick_due {
+            tick_due = false
+            return option.Option.Some(value = event.Event.Tick(now_us = time_us))
+        }
         if cursor >= script.len().to_i32() {
             return option.Option.None
         }

@@ -1,0 +1,497 @@
+// Polyp v4 stage 4's tests: memoised subtrees, in plain Kelp with no display.
+//
+// The program is a scrolled list of rows. `view_memo` builds every row as `k.memo(key, deps, row_view)`;
+// `view_plain` builds the same rows with `k.keyed`. Every scenario applies the same model changes to
+// both and requires the two screens to have the same framebuffer checksum, so memoisation can only
+// ever skip work, never change a pixel.
+//
+//   rows      200 rows, one changes: 1 view call and 199 hits (and the first frame is 200 misses)
+//   deps      a deps change rebuilds exactly that row; a deps value equal to the old one is a hit
+//   reorder   moving a row keeps every memo a hit (identity is the key) and the screen equal
+//   remove    a removed row's record is dropped: bringing the key back builds it again
+//   nested    a memo inside a memo row: the outer misses on a deps change, the inner hits when its own
+//             deps did not change
+//   click     a press on a widget inside a memo row reaches the model
+//   nostore   the plain loop (no store) draws the same screen, just without skipping anything
+impl "deps/polyp/core"
+impl "deps/polyp/soft/a11y"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft_backend"
+impl "std/str"
+
+datac Item(var id: i32, var title: String, var done: bool)
+
+datac Model(var items: List<Item>, var clicks: i32)
+
+enum Msg {
+    Toggle(val id: i32)
+    Remove(val id: i32)
+}
+
+fun find(m: &Model, id: i32).R: i32 {
+    var i: usize = 0
+    while i < m.items.len() {
+        if m.items.get(i).id == id {
+            return i.to_i32()
+        }
+        i += 1
+    }
+    return -1
+}
+
+fun update(m: mut Model, msg: Msg) {
+    when msg {
+        Toggle(id) -> {
+            val at = find(m, id)
+            if at >= 0 {
+                val u = at.to_usize()
+                val t = String.from_str(m.items.get(u).title.as_str())
+                val was = m.items.get(u).done
+                m.items.set(u, Item(id = id, title = t, done = !was))
+            }
+            m.clicks += 1
+        }
+        Remove(id) -> {
+            val at = find(m, id)
+            if at >= 0 {
+                val gone = m.items.remove(at.to_usize())
+            }
+            m.clicks += 1
+        }
+    }
+}
+
+fun make(n: i32).R: Model {
+    var items: List<Item> = List.empty()
+    var i: i32 = 0
+    while i < n {
+        val num = str.from_i64(i.to_i64())
+        val t = str.concat("row ", num.as_str())
+        items.push(Item(id = i, title = t, done = false))
+        i += 1
+    }
+    return Model(items = items, clicks = 0)
+}
+
+fun fill_row(r: mut core.Children<Msg>, id: i32, done: bool, title: &str) {
+    r.spacing(6)
+    r.checkbox("", done, Msg.Toggle(id = id))
+    r.expand()
+    r.text(title)
+    r.button("x", Msg.Remove(id = id))
+}
+
+fun row_view(d: &core.Deps).R: List<core.Child<Msg>> {
+    val id = d.ints.get(0).to_i32()
+    val done = d.ints.get(1) != 0
+    val title = String.from_str(d.strs.get(0).as_str())
+    return core.single { k -> k.row { r -> fill_row(r, id, done, title.as_str()) } }
+}
+
+fun row_deps(it: &Item).R: core.Deps {
+    var d = core.deps()
+    d.push_int(it.id.to_i64())
+    d.push_bool(it.done)
+    d.push_str(it.title.as_str())
+    return d
+}
+
+fun view_memo(m: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(4)
+        k.expand()
+        k.scrolled { sc ->
+            sc.spacing(4)
+            var i: usize = 0
+            while i < m.items.len() {
+                val key = str.from_i64(m.items.get(i).id.to_i64())
+                sc.memo(key.as_str(), row_deps(m.items.get(i)), row_view)
+                i += 1
+            }
+        }
+    }
+}
+
+fun view_plain(m: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(4)
+        k.expand()
+        k.scrolled { sc ->
+            sc.spacing(4)
+            var i: usize = 0
+            while i < m.items.len() {
+                val item = m.items.get(i)
+                val key = str.from_i64(item.id.to_i64())
+                sc.keyed(key.as_str()) { r -> fill_row(r, item.id, item.done, item.title.as_str()) }
+                i += 1
+            }
+        }
+    }
+}
+
+fun no_subs(m: Model).R: List<core.Sub<Msg>> {
+    var out: List<core.Sub<Msg>> = List.empty()
+    return out
+}
+
+// One screen: a backend, its platform and the tree it shows.
+datac Screen(var b: soft_backend.SoftBackend, var p: headless_platform.HeadlessPlatform, var store: Box<core.MemoStore<Msg>>)
+
+fun new_screen().R: Screen = Screen(
+    b = soft_backend.new(),
+    p = headless_platform.new(width = 400, height = 300),
+    store = Box.of(core.new_memo_store()),
+)
+
+fun paint(s: mut Screen) {
+    val f = s.p.framebuffer()
+    s.b.resize(f.width, f.height)
+    s.b.layout()
+    val d = s.b.paint(f)
+    if d.count() > 0 {
+        s.p.present(f, d)
+    }
+}
+
+fun first_memo(s: mut Screen, tree: &core.Node<Msg>) {
+    var st = s.store.take()
+    val patches = core.create_all_memo(tree, st)
+    s.store.set(st)
+    s.b.apply(patches)
+    paint(s)
+}
+
+fun first_plain(s: mut Screen, tree: &core.Node<Msg>) {
+    s.b.apply(core.create_all(tree))
+    paint(s)
+}
+
+fun next_memo(s: mut Screen, old: &core.Node<Msg>, new: &core.Node<Msg>) {
+    var st = s.store.take()
+    soft_backend.apply_diff_memo(backend = s.b, old = old, new = new, store = st)
+    s.store.set(st)
+    paint(s)
+}
+
+fun next_plain(s: mut Screen, old: &core.Node<Msg>, new: &core.Node<Msg>) {
+    soft_backend.apply_diff(backend = s.b, old = old, new = new)
+    paint(s)
+}
+
+fun counters(label: str, s: mut Screen) {
+    val st = s.store.take()
+    print(label)
+    print(st.hits)
+    print(st.misses)
+    print(st.view_calls)
+    s.store.set(st)
+}
+
+fun entries(s: mut Screen).R: usize {
+    val st = s.store.take()
+    val n = st.entries.len()
+    s.store.set(st)
+    return n
+}
+
+fun reset(s: mut Screen) {
+    var st = s.store.take()
+    st.hits = 0
+    st.misses = 0
+    st.view_calls = 0
+    s.store.set(st)
+}
+
+fun same(label: str, a: &Screen, b: &Screen) {
+    val ca = fb.checksum(a.p.framebuffer())
+    val cb = fb.checksum(b.p.framebuffer())
+    if ca == cb {
+        print(label)
+        print("equal")
+    } else {
+        print(label)
+        print("DIFFERENT")
+    }
+}
+
+fun run_rows() {
+    print("rows")
+    var st = make(200)
+    var m = new_screen()
+    var p = new_screen()
+    var t1 = view_memo(st)
+    var p1 = view_plain(st)
+    first_memo(m, &t1)
+    first_plain(p, &p1)
+    counters("first", m)
+    same("first_pixels", m, p)
+    reset(m)
+    // One row's title changes.
+    val t = String.from_str("renamed")
+    st.items.set(7, Item(id = 7, title = t, done = false))
+    val t2 = view_memo(st)
+    val p2 = view_plain(st)
+    next_memo(m, &t1, &t2)
+    next_plain(p, &p1, &p2)
+    counters("one_change", m)
+    same("one_change_pixels", m, p)
+    reset(m)
+    // Nothing changes: every row is a hit.
+    val t3 = view_memo(st)
+    next_memo(m, &t2, &t3)
+    counters("no_change", m)
+    print(m.b.last_painted())
+    t1 = t3
+    p1 = p2
+}
+
+fun run_deps() {
+    print("deps")
+    var st = make(20)
+    var m = new_screen()
+    var p = new_screen()
+    var t1 = view_memo(st)
+    var p1 = view_plain(st)
+    first_memo(m, &t1)
+    first_plain(p, &p1)
+    reset(m)
+    // done flips on two rows: exactly those two are rebuilt.
+    st.items.set(3, Item(id = 3, title = String.from_str("row 3"), done = true))
+    st.items.set(11, Item(id = 11, title = String.from_str("row 11"), done = true))
+    var t2 = view_memo(st)
+    var p2 = view_plain(st)
+    next_memo(m, &t1, &t2)
+    next_plain(p, &p1, &p2)
+    counters("two_flips", m)
+    same("two_flips_pixels", m, p)
+    reset(m)
+    // The same row set back to its old value is a change again (deps differ from the last frame's).
+    st.items.set(3, Item(id = 3, title = String.from_str("row 3"), done = false))
+    val t3 = view_memo(st)
+    val p3 = view_plain(st)
+    next_memo(m, &t2, &t3)
+    next_plain(p, &p2, &p3)
+    counters("flip_back", m)
+    same("flip_back_pixels", m, p)
+}
+
+fun run_reorder() {
+    print("reorder")
+    var st = make(12)
+    var m = new_screen()
+    var p = new_screen()
+    val t1 = view_memo(st)
+    val p1 = view_plain(st)
+    first_memo(m, &t1)
+    first_plain(p, &p1)
+    reset(m)
+    // Move row 5 to the top: keys are stable, so every memo is a hit and the screen is the plain one.
+    val it = st.items.remove(5)
+    st.items.insert(0, it)
+    val t2 = view_memo(st)
+    val p2 = view_plain(st)
+    next_memo(m, &t1, &t2)
+    next_plain(p, &p1, &p2)
+    counters("moved", m)
+    same("moved_pixels", m, p)
+    // Reverse the whole list.
+    reset(m)
+    var rev: List<Item> = List.empty()
+    while !st.items.is_empty() {
+        rev.insert(0, st.items.remove(0))
+    }
+    st.items = rev
+    val t3 = view_memo(st)
+    val p3 = view_plain(st)
+    next_memo(m, &t2, &t3)
+    next_plain(p, &p2, &p3)
+    counters("reversed", m)
+    same("reversed_pixels", m, p)
+}
+
+fun run_remove() {
+    print("remove")
+    var st = make(10)
+    var m = new_screen()
+    var p = new_screen()
+    val t1 = view_memo(st)
+    val p1 = view_plain(st)
+    first_memo(m, &t1)
+    first_plain(p, &p1)
+    print(entries(m))
+    reset(m)
+    val gone = st.items.remove(4)
+    val t2 = view_memo(st)
+    val p2 = view_plain(st)
+    next_memo(m, &t1, &t2)
+    next_plain(p, &p1, &p2)
+    counters("removed", m)
+    print(entries(m))
+    same("removed_pixels", m, p)
+    // The same key comes back: it is created again, which builds it (one view call).
+    reset(m)
+    st.items.insert(4, gone)
+    val t3 = view_memo(st)
+    val p3 = view_plain(st)
+    next_memo(m, &t2, &t3)
+    next_plain(p, &p2, &p3)
+    counters("back", m)
+    print(entries(m))
+    same("back_pixels", m, p)
+}
+
+// Nested: each row is a memo (id, done, title) whose body holds a second memo for the title cell.
+fun cell_view(d: &core.Deps).R: List<core.Child<Msg>> {
+    val title = String.from_str(d.strs.get(0).as_str())
+    return core.single { k -> k.row { r -> r.text(title.as_str()) } }
+}
+
+fun outer_view(d: &core.Deps).R: List<core.Child<Msg>> {
+    val id = d.ints.get(0).to_i32()
+    val done = d.ints.get(1) != 0
+    val title = String.from_str(d.strs.get(0).as_str())
+    return core.single { k ->
+        k.row { r ->
+            r.spacing(6)
+            r.checkbox("", done, Msg.Toggle(id = id))
+            var inner = core.deps()
+            inner.push_str(title.as_str())
+            r.memo("cell", inner, cell_view)
+        }
+    }
+}
+
+fun view_nested(m: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(4)
+        var i: usize = 0
+        while i < m.items.len() {
+            val key = str.from_i64(m.items.get(i).id.to_i64())
+            k.memo(key.as_str(), row_deps(m.items.get(i)), outer_view)
+            i += 1
+        }
+    }
+}
+
+fun view_nested_plain(m: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(4)
+        var i: usize = 0
+        while i < m.items.len() {
+            val item = m.items.get(i)
+            val key = str.from_i64(item.id.to_i64())
+            k.keyed_col(key.as_str()) { c ->
+                c.row { r ->
+                    r.spacing(6)
+                    r.checkbox("", item.done, Msg.Toggle(id = item.id))
+                    r.keyed_col("cell") { w -> w.row { x -> x.text(item.title.as_str()) } }
+                }
+            }
+            i += 1
+        }
+    }
+}
+
+fun run_nested() {
+    print("nested")
+    var st = make(5)
+    var m = new_screen()
+    var p = new_screen()
+    val t1 = view_nested(st)
+    val p1 = view_nested_plain(st)
+    first_memo(m, &t1)
+    first_plain(p, &p1)
+    counters("first", m)
+    same("first_pixels", m, p)
+    reset(m)
+    // done flips: the outer memo of that row misses, its inner (same title) hits.
+    st.items.set(2, Item(id = 2, title = String.from_str("row 2"), done = true))
+    val t2 = view_nested(st)
+    val p2 = view_nested_plain(st)
+    next_memo(m, &t1, &t2)
+    next_plain(p, &p1, &p2)
+    counters("flip", m)
+    same("flip_pixels", m, p)
+    reset(m)
+    // The title changes: both levels miss.
+    st.items.set(2, Item(id = 2, title = String.from_str("two"), done = true))
+    val t3 = view_nested(st)
+    val p3 = view_nested_plain(st)
+    next_memo(m, &t2, &t3)
+    next_plain(p, &p2, &p3)
+    counters("retitle", m)
+    same("retitle_pixels", m, p)
+}
+
+fun tree_of(t: move core.Tick<Msg>).R: core.Node<Msg> = when t {
+    Idle(x) -> x
+    Changed(x) -> x
+    Quit(x) -> x
+}
+
+fun run_click() {
+    print("click")
+    var st = make(6)
+    var b = soft_backend.new()
+    var p = headless_platform.new(width = 400, height = 300)
+    var store: core.MemoStore<Msg> = core.new_memo_store()
+    var timers = core.new_timers()
+    var tree = view_memo(st)
+    val f = p.framebuffer()
+    b.resize(f.width, f.height)
+    b.apply(core.create_all_memo(&tree, store))
+    b.layout()
+    val d0 = b.paint(f)
+    if d0.count() > 0 {
+        p.present(f, d0)
+    }
+    store.hits = 0
+    store.misses = 0
+    store.view_calls = 0
+    val t = b.a11y_tree()
+    // The list is the first child of the root; each row's wrapper column holds the row.
+    val list = t.kids.get(0)
+    val row3 = list.kids.get(3)
+    val box = row3.kids.get(0).kids.get(0).id
+    print(b.a11y_act(box, a11y.ACT_PRESS))
+    tree = tree_of(soft_backend.frame_memo(backend = b, platform = p, tree = tree, state = st, view = view_memo, update = update, subs = no_subs, timers = timers, store = store))
+    print(st.clicks)
+    print(st.items.get(3).done)
+    print(store.hits)
+    print(store.misses)
+    print(store.view_calls)
+    print(core.stats().memo_hits)
+    print(core.stats().memo_misses)
+    print(core.stats().view_calls)
+}
+
+fun run_nostore() {
+    print("nostore")
+    var st = make(30)
+    var m = new_screen()
+    var p = new_screen()
+    var t1 = view_memo(st)
+    var p1 = view_plain(st)
+    // No store anywhere: create_all and diff_into rebuild the memo bodies every time.
+    first_plain(m, &t1)
+    first_plain(p, &p1)
+    same("first_pixels", m, p)
+    st.items.set(9, Item(id = 9, title = String.from_str("changed"), done = true))
+    val t2 = view_memo(st)
+    val p2 = view_plain(st)
+    next_plain(m, &t1, &t2)
+    next_plain(p, &p1, &p2)
+    same("changed_pixels", m, p)
+}
+
+fun main() {
+    run_rows()
+    run_deps()
+    run_reorder()
+    run_remove()
+    run_nested()
+    run_click()
+    run_nostore()
+}

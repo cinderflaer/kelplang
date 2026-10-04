@@ -7,6 +7,7 @@
 //
 // The split is plan/polyp-v3.md. v2's matching rules, keys, builder and counters are unchanged;
 // the GTK calls moved to `gtk_backend.kp` and `lib.kp` is the facade the examples import.
+impl "deps/polyp/anim"
 impl "std/atomic"
 impl "std/option"
 impl "std/str"
@@ -23,6 +24,10 @@ pub const KIND_CHECKBOX: i32 = 6
 pub const KIND_PROGRESS: i32 = 7
 pub const KIND_SEPARATOR: i32 = 8
 pub const KIND_SCROLLED: i32 = 9
+
+// The two timer kinds a `Sub` has (see `Sub`, below).
+const SUB_EVERY: i32 = 0
+const SUB_AFTER: i32 = 1
 
 // The alignment codes `props.align` carries, in the core's own order: a backend maps them to its
 // display's constants.
@@ -43,6 +48,9 @@ static stat_updated: AtomicI32 = AtomicI32.new(0)
 static stat_removed: AtomicI32 = AtomicI32.new(0)
 static stat_live: AtomicI32 = AtomicI32.new(0)
 static stat_entries: AtomicI32 = AtomicI32.new(0)
+static stat_memo_hits: AtomicI32 = AtomicI32.new(0)
+static stat_memo_misses: AtomicI32 = AtomicI32.new(0)
+static stat_view_calls: AtomicI32 = AtomicI32.new(0)
 static focus_seen_flag: AtomicBool = AtomicBool.new(false)
 static focus_lost_flag: AtomicBool = AtomicBool.new(false)
 
@@ -76,11 +84,25 @@ pub enum Key {
 
 // The layout and style options a child carries. `margin < 0` and `align < 0` mean "unset": the
 // widget keeps whatever its platform's default is, and a patch does not touch that property.
+//
+// v4 adds the visual options an animation drives: `opacity` (permille, 1000 = opaque) and an
+// `offset_x`/`offset_y` paint translation, each with an optional `Anim` (`anim.none()` = static),
+// and `anim`, the animation of the widget's own value (a `Progress`'s permille, a `Spacer`'s height).
 pub datac Opts(
     var margin: i32,
     var expand: bool,
     var align: i32,
     var classes: List<String>,
+    var opacity: i32,
+    var offset_x: i32,
+    var offset_y: i32,
+    var anim_main: anim.Anim,
+    var anim_opacity: anim.Anim,
+    var anim_ox: anim.Anim,
+    var anim_oy: anim.Anim,
+    // v4 stage 3: a disabled widget takes no pointer or keyboard input, is skipped by Tab, is drawn
+    // muted by the soft backend and is reported as disabled in the accessibility tree.
+    var disabled: bool,
 )
 
 // The tree `view` returns. `M` is the application's `Msg`; the core never inspects one until a
@@ -100,6 +122,92 @@ pub enum Node<M> {
     Progress(val permille: i32)
     Separator
     Scrolled(val children: List<Child<M>>, val spacing: i32)
+    // A memoised subtree (Polyp v4 stage 4): not built yet. `deps` is everything the subtree is
+    // a function of, `build` turns it into the subtree: it is given the deps and a builder and must
+    // return exactly one node (see `single`). The loop calls `build` only when `deps`
+    // differ from the last frame's for the same key, and otherwise reuses the retained widgets.
+    // The widget a backend sees for it is a transparent `Column` whose single child (index 0) is
+    // the subtree's root.
+    Memo(val deps: Deps, val build: fun (&Deps).R: List<Child<M>>)
+}
+
+// What a memoised subtree is a function of, as a value with a declared `eq` (so `==` works): a list
+// of integers and a list of strings, in the order the application pushes them. Build one from the
+// data the subtree displays, `core.deps()` then `push_int`/`push_str`/`push_bool`, and read the
+// same values back inside the view function: the function is given `&Deps` and must produce the
+// subtree from it alone, which is what makes skipping it sound.
+pub datac Deps(var ints: List<i64>, var strs: List<String>)
+
+pub fun deps().R: Deps = Deps(ints = List.empty(), strs = List.empty())
+
+// Run a memo's view function: the one node it returns is the subtree's root.
+fun run_build<M>(deps: &Deps, build: fun (&Deps).R: List<Child<M>>).R: Node<M> {
+    var items = build(deps)
+    if items.len() != 1 {
+        panic("polyp: a memo view function must return exactly one node")
+    }
+    val child = items.remove(0)
+    return child.node
+}
+
+// What a memo view function returns: the nodes the block pushes (exactly one is required), so
+// `fun row_view(d: &Deps).R: List<Child<Msg>> = core.single { k -> k.row { r -> ... } }`.
+pub fun single<M>(block: scoped fun(mut Children<M>)).R: List<Child<M>> {
+    var c: Children<M> = new_children()
+    block(c)
+    return c.items
+}
+
+fun mut Deps.push_int(n: i64) {
+    ints.push(n)
+}
+
+fun mut Deps.push_bool(b: bool) {
+    if b {
+        ints.push(1)
+    } else {
+        ints.push(0)
+    }
+}
+
+fun mut Deps.push_str(s: str) {
+    strs.push(String.from_str(s))
+}
+
+pub fun copy_deps(d: &Deps).R: Deps {
+    var out = deps()
+    var i: usize = 0
+    while i < d.ints.len() {
+        out.ints.push(d.ints.get(i))
+        i += 1
+    }
+    var j: usize = 0
+    while j < d.strs.len() {
+        out.strs.push(String.from_str(d.strs.get(j).as_str()))
+        j += 1
+    }
+    return out
+}
+
+fun Deps.eq(other: &Deps).R: bool {
+    if ints.len() != other.ints.len() || strs.len() != other.strs.len() {
+        return false
+    }
+    var i: usize = 0
+    while i < ints.len() {
+        if ints.get(i) != other.ints.get(i) {
+            return false
+        }
+        i += 1
+    }
+    var j: usize = 0
+    while j < strs.len() {
+        if !str.eq(strs.get(j).as_str(), other.strs.get(j).as_str()) {
+            return false
+        }
+        j += 1
+    }
+    return true
 }
 
 // One child of a container: its key, its node, and the options that apply to its widget. A key
@@ -121,7 +229,21 @@ pub datac Children<M>(
     var pending_opts: Box<Opts>,
 )
 
-fun default_opts().R: Opts = Opts(margin = -1, expand = false, align = -1, classes = List.empty())
+fun default_opts().R: Opts = Opts(
+    margin = -1,
+    expand = false,
+    align = -1,
+    classes = List.empty(),
+    opacity = 1000,
+    offset_x = 0,
+    offset_y = 0,
+    anim_main = anim.none(),
+    anim_opacity = anim.none(),
+    anim_ox = anim.none(),
+    anim_oy = anim.none(),
+    disabled = false,
+)
+
 fun new_children<M>().R: Children<M> = Children<M>(
     items = List.empty(),
     spacing = 6,
@@ -228,6 +350,12 @@ pub fun kind_of_node<M>(node: &Node<M>).R: i32 = when node {
     Progress(_) -> KIND_PROGRESS
     Separator -> KIND_SEPARATOR
     Scrolled(_, _) -> KIND_SCROLLED
+    Memo(_, _) -> KIND_COLUMN
+}
+
+fun is_memo<M>(node: &Node<M>).R: bool = when node {
+    Memo(_, _) -> true
+    else -> false
 }
 
 // The leaf methods of the builder. `text` and `text_styled` take a `str` view so a borrowed
@@ -343,6 +471,18 @@ fun mut Children<M>.with_key_int(key: i64) {
     pending_key.set(Key.Int(n = key))
 }
 
+// A memoised subtree under a string key (`k.memo("row-7", deps, row_view)`): the key must be unique
+// among the container's children, like any key, and is the subtree's identity across frames.
+// Options (`k.expand()`, `k.margin(..)`) given before the call apply to the transparent wrapper
+// column; the subtree's own root takes none.
+fun mut Children<M>.memo(key: str, deps: move Deps, build: fun (&Deps).R: List<Child<M>>) {
+    self.push_keyed(Key.Str(s = String.from_str(key)), Node.Memo(deps = deps, build = build))
+}
+
+fun mut Children<M>.memo_int(key: i64, deps: move Deps, build: fun (&Deps).R: List<Child<M>>) {
+    self.push_keyed(Key.Int(n = key), Node.Memo(deps = deps, build = build))
+}
+
 // Options. `spacing` is the box being built; the rest apply to the next child pushed, whatever
 // kind it is, so `k.expand() k.column { ... }` expands the column.
 fun mut Children<M>.spacing(n: i32) {
@@ -373,6 +513,54 @@ fun mut Children<M>.class(name: str) {
     pending_opts.set(o)
 }
 
+// Animation and paint options (v4 stage 1). Like the options above they apply to the next child
+// pushed. `anim` animates the child's own value: a `Progress`'s permille or a `Spacer`'s height
+// (the plain value the node carries is what it shows when it has no animation, and what it shows
+// to a backend that ignores animations). `opacity` is a permille; `offset` translates the widget
+// and everything inside it when it is painted, without changing the layout.
+fun mut Children<M>.anim(a: move anim.Anim) {
+    var o = pending_opts.take()
+    o.anim_main = a
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.disabled() {
+    var o = pending_opts.take()
+    o.disabled = true
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.opacity(permille: i32) {
+    var o = pending_opts.take()
+    o.opacity = permille
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.opacity_anim(a: move anim.Anim) {
+    var o = pending_opts.take()
+    o.anim_opacity = a
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.offset(x: i32, y: i32) {
+    var o = pending_opts.take()
+    o.offset_x = x
+    o.offset_y = y
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.offset_x_anim(a: move anim.Anim) {
+    var o = pending_opts.take()
+    o.anim_ox = a
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.offset_y_anim(a: move anim.Anim) {
+    var o = pending_opts.take()
+    o.anim_oy = a
+    pending_opts.set(o)
+}
+
 // Block-taking constructors, so app code reads
 // `polyp.column { k -> k.text(s.title) k.button("+1", Msg.Inc) }`. The block's captures are shared
 // borrows released with this call, which is what lets it read the view's borrowed state.
@@ -400,6 +588,9 @@ fun plain_children<M>(nodes: move List<Node<M>>).R: List<Child<M>> {
     }
     return out
 }
+
+// A memoised root (a whole view that is a function of one `Deps`).
+pub fun memo<M>(deps: move Deps, build: fun (&Deps).R: List<Child<M>>).R: Node<M> = Node.Memo(deps = deps, build = build)
 
 pub fun plain_column<M>(children: move List<Node<M>>).R: Node<M> = Node.Column(children = plain_children(children), spacing = 6)
 pub fun plain_row<M>(children: move List<Node<M>>).R: Node<M> = Node.Row(children = plain_children(children), spacing = 6)
@@ -432,6 +623,14 @@ pub datac Props(
     var expand: bool,
     var align: i32,
     var classes: List<String>,
+    var opacity: i32,
+    var offset_x: i32,
+    var offset_y: i32,
+    var anim_main: anim.Anim,
+    var anim_opacity: anim.Anim,
+    var anim_ox: anim.Anim,
+    var anim_oy: anim.Anim,
+    var disabled: bool,
 )
 
 // What one render decided. `diff` emits only these four, and only when something actually changed:
@@ -444,7 +643,11 @@ pub enum Patch {
 }
 
 // A widget counter set, reported by a backend after it applies a patch list.
-pub datac Stats(val created: i32, val updated: i32, val removed: i32, val live: i32)
+//
+// `memo_hits`, `memo_misses` and `view_calls` are the memoisation counters (Polyp v4 stage 4): a
+// backend leaves them 0, and `core.stats()` fills them from the loop's last memo frame. `view_calls`
+// counts calls of memoised view functions made to build the screen (the same events as the misses).
+pub datac Stats(val created: i32, val updated: i32, val removed: i32, val live: i32, val memo_hits: i32, val memo_misses: i32, val view_calls: i32)
 
 // One thing a display produced, or one thing a program asked the loop to do to it.
 pub enum Event {
@@ -571,6 +774,14 @@ pub fun props_default().R: Props = Props(
     expand = false,
     align = -1,
     classes = List.empty(),
+    opacity = 1000,
+    offset_x = 0,
+    offset_y = 0,
+    anim_main = anim.none(),
+    anim_opacity = anim.none(),
+    anim_ox = anim.none(),
+    anim_oy = anim.none(),
+    disabled = false,
 )
 
 pub fun props_of<M>(node: &Node<M>).R: Props {
@@ -607,6 +818,7 @@ pub fun props_of<M>(node: &Node<M>).R: Props {
         Scrolled(_, spacing) -> {
             p.spacing = spacing
         }
+        Memo(_, _) -> {}
     }
     return p
 }
@@ -615,6 +827,14 @@ fun apply_opts(p: mut Props, o: &Opts) {
     p.margin = o.margin
     p.expand = o.expand
     p.align = o.align
+    p.opacity = o.opacity
+    p.offset_x = o.offset_x
+    p.offset_y = o.offset_y
+    p.anim_main = anim.copy(&o.anim_main)
+    p.anim_opacity = anim.copy(&o.anim_opacity)
+    p.anim_ox = anim.copy(&o.anim_ox)
+    p.anim_oy = anim.copy(&o.anim_oy)
+    p.disabled = o.disabled
     var i: usize = 0
     while i < o.classes.len() {
         p.classes.push(String.from_str(o.classes.get(i).as_str()))
@@ -630,6 +850,15 @@ pub fun child_props<M>(c: &Child<M>).R: Props {
 
 fun opts_eq(a: &Opts, b: &Opts).R: bool {
     if a.margin != b.margin || a.expand != b.expand || a.align != b.align {
+        return false
+    }
+    if a.disabled != b.disabled || a.opacity != b.opacity || a.offset_x != b.offset_x || a.offset_y != b.offset_y {
+        return false
+    }
+    if !anim.same(&a.anim_main, &b.anim_main) || !anim.same(&a.anim_opacity, &b.anim_opacity) {
+        return false
+    }
+    if !anim.same(&a.anim_ox, &b.anim_ox) || !anim.same(&a.anim_oy, &b.anim_oy) {
         return false
     }
     if a.classes.len() != b.classes.len() {
@@ -688,6 +917,10 @@ fun node_props_eq<M>(a: &Node<M>, b: &Node<M>).R: bool = when a {
         Scrolled(_, sb) -> sa == sb
         else -> false
     }
+    Memo(_, _) -> when b {
+        Memo(_, _) -> true
+        else -> false
+    }
 }
 
 // The first unused old index with this key, or -1.
@@ -717,18 +950,170 @@ pub fun diff<M>(old: &Node<M>, new: &Node<M>).R: List<Patch> {
     return out
 }
 
+// `diff_into` knows no memo store, so a `Memo` subtree in either tree is rebuilt every time (correct,
+// just not skipped). `diff_memo_into` is the one that skips: see `MemoStore`.
 pub fun diff_into<M>(old: &Node<M>, new: &Node<M>, out: mut List<Patch>) {
-    out.clear()
-    val root_path = empty_path()
-    diff_node(root_path, old, new, out)
+    var store: MemoStore<M> = new_memo_store()
+    diff_memo_into(old, new, out, store)
 }
 
-fun diff_node<M>(path: &Path, old: &Node<M>, new: &Node<M>, out: mut List<Patch>) {
+pub fun diff_memo_into<M>(old: &Node<M>, new: &Node<M>, out: mut List<Patch>, store: mut MemoStore<M>) {
+    out.clear()
+    val root_path = empty_path()
+    diff_node(root_path, old, new, out, store)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Memoisation (Polyp v4 stage 4).
+//
+// A `Memo` node is a placeholder the view builds cheaply: the deps and the function, not the
+// subtree. The retained tree (`current`, which the loop diffs against) holds placeholders only.
+// What the previous frame's deps and subtree were lives in the loop's `MemoStore`, one entry per
+// memo, keyed by the memo's *identity*: the path to it with the index of every keyed segment left
+// out (a keyed node keeps its identity when a reorder moves it). The diff of a matched pair of
+// memo nodes asks the store: equal deps is a *hit* (nothing is called, nothing is compared, no
+// patch is emitted for the subtree), otherwise a *miss*: the view function runs once, the new
+// subtree is diffed against the stored one at `path + [0]`, and the entry is replaced. A memo
+// created by the diff builds its subtree and records it; a memo removed (or replaced by something
+// else) drops its entry and the entries nested below it.
+//
+// Counters: `hits`, `misses` and `view_calls` (one per call of a memoised view function made to
+// build the screen; `take_message` rebuilds the subtree it needs on a click, which is not counted).
+pub datac MemoEntry<M>(var ident: Path, var deps: Deps, var body: Node<M>)
+
+pub datac MemoStore<M>(var entries: List<MemoEntry<M>>, var hits: i32, var misses: i32, var view_calls: i32, var hint: i32)
+
+pub fun new_memo_store<M>().R: MemoStore<M> = MemoStore<M>(entries = List.empty(), hits = 0, misses = 0, view_calls = 0, hint = 0)
+
+// Two paths name the same memo when they have the same length and each segment agrees: keyed
+// segments by key (ignoring the index), unkeyed ones by index.
+fun ident_eq(a: &Path, b: &Path).R: bool {
+    if a.segs.len() != b.segs.len() {
+        return false
+    }
+    var i: usize = 0
+    while i < a.segs.len() {
+        if !seg_ident_eq(a.segs.get(i), b.segs.get(i)) {
+            return false
+        }
+        i += 1
+    }
+    return true
+}
+
+fun seg_ident_eq(a: &Seg, b: &Seg).R: bool = when a {
+    Index(i) -> when b {
+        Index(j) -> i == j
+        else -> false
+    }
+    Keyed(_, ka) -> when b {
+        Keyed(_, kb) -> key_eq(ka, kb)
+        else -> false
+    }
+}
+
+// Whether `prefix` is `p` or one of its ancestors.
+fun ident_prefix(prefix: &Path, p: &Path).R: bool {
+    if prefix.segs.len() > p.segs.len() {
+        return false
+    }
+    var i: usize = 0
+    while i < prefix.segs.len() {
+        if !seg_ident_eq(prefix.segs.get(i), p.segs.get(i)) {
+            return false
+        }
+        i += 1
+    }
+    return true
+}
+
+fun mut MemoStore<M>.find(path: &Path).R: i32 {
+    val n = entries.len()
+    var k: usize = 0
+    while k < n {
+        val j = (hint.to_usize() + k) % n
+        if ident_eq(entries.get(j).ident, path) {
+            hint = j.to_i32() + 1
+            return j.to_i32()
+        }
+        k += 1
+    }
+    return -1
+}
+
+// Forget the memo at `path` and every memo nested below it.
+fun mut MemoStore<M>.drop_under(path: &Path) {
+    var i: usize = entries.len()
+    while i > 0 {
+        i -= 1
+        val inside = ident_prefix(path, entries.get(i).ident)
+        if inside {
+            val gone = entries.remove(i)
+        }
+    }
+}
+
+// A memo with no stored record at `path`: build its subtree, emit its creation at `path + [0]` and
+// record it. The wrapper column itself is the caller's to create.
+fun memo_build<M>(path: &Path, deps: &Deps, build: fun (&Deps).R: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
+    store.drop_under(path)
+    store.misses += 1
+    store.view_calls += 1
+    val body = run_build(deps, build)
+    val bp = with_seg(path, Seg.Index(i = 0))
+    out.push(Patch.Create(path = copy_path(bp), kind = kind_of_node(&body), props = props_of(&body)))
+    create_subtree(bp, &body, out, store)
+    store.entries.push(MemoEntry(ident = copy_path(path), deps = copy_deps(deps), body = body))
+}
+
+// A matched pair of memo nodes: hit, or miss and diff the subtree against the stored one.
+fun memo_match<M>(path: &Path, deps: &Deps, build: fun (&Deps).R: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
+    val at = store.find(path)
+    if at >= 0 {
+        val same = deps.eq(&store.entries.get(at.to_usize()).deps)
+        if same {
+            store.hits += 1
+            return
+        }
+    }
+    if at < 0 {
+        // The wrapper widget exists but nothing recorded its subtree (it was created through a
+        // diff that had no store): replace the one child.
+        val bp = with_seg(path, Seg.Index(i = 0))
+        out.push(Patch.Remove(path = copy_path(bp)))
+        memo_build(path, deps, build, out, store)
+        return
+    }
+    store.misses += 1
+    store.view_calls += 1
+    val body = run_build(deps, build)
+    val bp = with_seg(path, Seg.Index(i = 0))
+    var e = store.entries.remove(at.to_usize())
+    diff_node(bp, &e.body, &body, out, store)
+    e.body = body
+    e.deps = copy_deps(deps)
+    var back = at.to_usize()
+    if back > store.entries.len() {
+        back = store.entries.len()
+    }
+    store.entries.insert(back, e)
+}
+
+fun diff_node<M>(path: &Path, old: &Node<M>, new: &Node<M>, out: mut List<Patch>, store: mut MemoStore<M>) {
     val ko = kind_of_node(old)
     val kn = kind_of_node(new)
     if ko != kn {
         out.push(Patch.Remove(path = copy_path(path)))
+        store.drop_under(path)
         out.push(Patch.Create(path = copy_path(path), kind = kn, props = props_of(new)))
+        return
+    }
+    if is_memo(old) != is_memo(new) {
+        // A memo and a plain column of the same key and kind: replace the whole widget.
+        out.push(Patch.Remove(path = copy_path(path)))
+        store.drop_under(path)
+        out.push(Patch.Create(path = copy_path(path), kind = kn, props = props_of(new)))
+        create_subtree(path, new, out, store)
         return
     }
     if !node_props_eq(old, new) {
@@ -736,15 +1121,19 @@ fun diff_node<M>(path: &Path, old: &Node<M>, new: &Node<M>, out: mut List<Patch>
     }
     when old {
         Column(oc, _) -> when new {
-            Column(nc, _) -> diff_children(path, oc, nc, out)
+            Column(nc, _) -> diff_children(path, oc, nc, out, store)
             else -> {}
         }
         Row(oc, _) -> when new {
-            Row(nc, _) -> diff_children(path, oc, nc, out)
+            Row(nc, _) -> diff_children(path, oc, nc, out, store)
             else -> {}
         }
         Scrolled(oc, _) -> when new {
-            Scrolled(nc, _) -> diff_children(path, oc, nc, out)
+            Scrolled(nc, _) -> diff_children(path, oc, nc, out, store)
+            else -> {}
+        }
+        Memo(_, _) -> when new {
+            Memo(nd, nb) -> memo_match(path, nd, nb, out, store)
             else -> {}
         }
         else -> {}
@@ -752,21 +1141,25 @@ fun diff_node<M>(path: &Path, old: &Node<M>, new: &Node<M>, out: mut List<Patch>
 }
 
 // A matched child: its own property update, then its subtree.
-fun diff_matched<M>(path: &Path, old: &Child<M>, new: &Child<M>, out: mut List<Patch>) {
+fun diff_matched<M>(path: &Path, old: &Child<M>, new: &Child<M>, out: mut List<Patch>, store: mut MemoStore<M>) {
     if !node_props_eq(old.node, new.node) || !opts_eq(old.opts, new.opts) {
         out.push(Patch.Update(path = copy_path(path), props = child_props(new)))
     }
     when old.node {
         Column(oc, _) -> when new.node {
-            Column(nc, _) -> diff_children(path, oc, nc, out)
+            Column(nc, _) -> diff_children(path, oc, nc, out, store)
             else -> {}
         }
         Row(oc, _) -> when new.node {
-            Row(nc, _) -> diff_children(path, oc, nc, out)
+            Row(nc, _) -> diff_children(path, oc, nc, out, store)
             else -> {}
         }
         Scrolled(oc, _) -> when new.node {
-            Scrolled(nc, _) -> diff_children(path, oc, nc, out)
+            Scrolled(nc, _) -> diff_children(path, oc, nc, out, store)
+            else -> {}
+        }
+        Memo(_, _) -> when new.node {
+            Memo(nd, nb) -> memo_match(path, nd, nb, out, store)
             else -> {}
         }
         else -> {}
@@ -776,8 +1169,8 @@ fun diff_matched<M>(path: &Path, old: &Child<M>, new: &Child<M>, out: mut List<P
 // One container's children, in the four phases plan/polyp-v3.md fixes: updates and their subtrees,
 // then removals from the highest old index down, then creations, then moves. The order is what
 // makes every path valid at the moment its patch is applied.
-fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, out: mut List<Patch>) {
-    check_duplicate_keys(new)
+fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
+    var unmatched_key = false
     var used: List<bool> = List.empty()
     var u: usize = 0
     while u < old.len() {
@@ -789,15 +1182,34 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
     while i < new.len() {
         var m: i32 = -1
         if !key_is_none(new.get(i).key) {
-            m = find_key(old, used, new.get(i).key)
+            // The common case first: the key is where it was, so no scan is needed (keys are
+            // unique within a container, so this finds the same child `find_key` would).
+            if i < old.len() && !used.get(i) && key_eq(old.get(i).key, new.get(i).key) {
+                m = i.to_i32()
+            } else {
+                m = find_key(old, used, new.get(i).key)
+            }
+            // A memo and a plain node under one key are different widgets: no match.
+            if m >= 0 && is_memo(old.get(m.to_usize()).node) != is_memo(new.get(i).node) {
+                m = -1
+            }
         } else if i < old.len() && !used.get(i) && key_is_none(old.get(i).key) && kind_of_node(new.get(i).node) == kind_of_node(old.get(i).node) {
             m = i.to_i32()
         }
         if m >= 0 {
             used.set(m.to_usize(), true)
+        } else if !key_is_none(new.get(i).key) {
+            unmatched_key = true
         }
         matches.push(m)
         i += 1
+    }
+    // Duplicate keys are checked only when some keyed child found no old child: two new children
+    // with one key cannot both match the (unique-keyed) old list, so a duplicate always lands here,
+    // and the common frame, where every key matched, skips an O(n^2) scan. Nothing has been emitted
+    // yet, so the panic still comes before any patch.
+    if unmatched_key {
+        check_duplicate_keys(new)
     }
 
     // Updates, in new order, each followed by its subtree.
@@ -806,7 +1218,7 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
         val m = matches.get(i2)
         if m >= 0 {
             val p = with_seg(parent, seg_for(new.get(i2).key, i2.to_i32()))
-            diff_matched(p, old.get(m.to_usize()), new.get(i2), out)
+            diff_matched(p, old.get(m.to_usize()), new.get(i2), out, store)
         }
         i2 += 1
     }
@@ -815,7 +1227,11 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
     var j: i32 = old.len().to_i32() - 1
     while j >= 0 {
         if !used.get(j.to_usize()) {
-            out.push(Patch.Remove(path = with_seg(parent, seg_for(old.get(j.to_usize()).key, j))))
+            val gone = with_seg(parent, seg_for(old.get(j.to_usize()).key, j))
+            if !store.entries.is_empty() {
+                store.drop_under(gone)
+            }
+            out.push(Patch.Remove(path = gone))
         }
         j -= 1
     }
@@ -826,7 +1242,7 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
         if matches.get(k) < 0 {
             val p = with_seg(parent, seg_for(new.get(k).key, k.to_i32()))
             out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(new.get(k).node), props = child_props(new.get(k))))
-            create_subtree(p, new.get(k).node, out)
+            create_subtree(p, new.get(k).node, out, store)
         }
         k += 1
     }
@@ -859,32 +1275,40 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
 }
 
 // Every child of a node the old tree did not have, depth first.
-fun create_subtree<M>(path: &Path, node: &Node<M>, out: mut List<Patch>) {
+fun create_subtree<M>(path: &Path, node: &Node<M>, out: mut List<Patch>, store: mut MemoStore<M>) {
     when node {
-        Column(children, _) -> create_children(path, children, out)
-        Row(children, _) -> create_children(path, children, out)
-        Scrolled(children, _) -> create_children(path, children, out)
+        Column(children, _) -> create_children(path, children, out, store)
+        Row(children, _) -> create_children(path, children, out, store)
+        Scrolled(children, _) -> create_children(path, children, out, store)
+        Memo(deps, build) -> memo_build(path, deps, build, out, store)
         else -> {}
     }
 }
 
-fun create_children<M>(parent: &Path, children: &List<Child<M>>, out: mut List<Patch>) {
+fun create_children<M>(parent: &Path, children: &List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
     check_duplicate_keys(children)
     var i: usize = 0
     while i < children.len() {
         val p = with_seg(parent, seg_for(children.get(i).key, i.to_i32()))
         out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(children.get(i).node), props = child_props(children.get(i))))
-        create_subtree(p, children.get(i).node, out)
+        create_subtree(p, children.get(i).node, out, store)
         i += 1
     }
 }
 
 // The whole tree as one create list, for the first render and for a test that wants a fresh tree.
 pub fun create_all<M>(node: &Node<M>).R: List<Patch> {
+    var store: MemoStore<M> = new_memo_store()
+    return create_all_memo(node, store)
+}
+
+// The first render of a tree that may hold `Memo` nodes: their subtrees are built and recorded in
+// `store`, which the loop's later frames must be given.
+pub fun create_all_memo<M>(node: &Node<M>, store: mut MemoStore<M>).R: List<Patch> {
     var out: List<Patch> = List.empty()
     val p = empty_path()
     out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(node), props = props_of(node)))
-    create_subtree(p, node, out)
+    create_subtree(p, node, out, store)
     return out
 }
 
@@ -937,8 +1361,25 @@ fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: usize, backen
         Column(children, _) -> take_child(children, path, depth, backend, id)
         Row(children, _) -> take_child(children, path, depth, backend, id)
         Scrolled(children, _) -> take_child(children, path, depth, backend, id)
+        Memo(deps, build) -> take_memo(deps, build, path, depth, backend, id)
         else -> option.Option.None
     }
+}
+
+// A click inside a memoised subtree: the placeholder holds no widgets, so the subtree is built here
+// (not counted, and the store is not touched) and the rest of the path is followed into it. The
+// wrapper column's only child is segment `Index(0)`.
+fun take_memo<B: Backend, M>(deps: &Deps, build: fun (&Deps).R: List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32).R: option.Option<M> {
+    val want = path.segs.get(depth)
+    val ok = when want {
+        Index(i) -> i == 0
+        else -> false
+    }
+    if !ok {
+        return option.Option.None
+    }
+    val body = run_build(deps, build)
+    return take_at(body, path, depth + 1, backend, id)
 }
 
 fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32).R: option.Option<M> {
@@ -970,6 +1411,9 @@ pub fun reset_stats() {
     stat_removed.store(value = 0, order = seq())
     stat_live.store(value = 0, order = seq())
     stat_entries.store(value = 0, order = seq())
+    stat_memo_hits.store(value = 0, order = seq())
+    stat_memo_misses.store(value = 0, order = seq())
+    stat_view_calls.store(value = 0, order = seq())
     focus_seen_flag.store(value = false, order = seq())
     focus_lost_flag.store(value = false, order = seq())
 }
@@ -995,6 +1439,26 @@ pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: 
 // message instead of building a fresh `List<Patch>`, so a driver that keeps one list across frames
 // stops allocating the patch list once it has seen its largest frame (`plan/polyp-v3.md`, stage 5).
 pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>).R: Tick<M> {
+    var store: MemoStore<M> = new_memo_store()
+    return frame_drain(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch, store = store)
+}
+
+// `frame_step_into` for a tree that uses `Memo` nodes: the store (created with `new_memo_store`, and
+// given to `create_all_memo` for the first render) is the caller's and lives as long as the program.
+// The memo counters are published to `core.stats()` after the turn.
+pub fun frame_step_memo<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>, store: mut MemoStore<M>).R: Tick<M> {
+    val t = frame_drain(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch, store = store)
+    publish_memo(store)
+    return t
+}
+
+pub fun publish_memo<M>(store: &MemoStore<M>) {
+    stat_memo_hits.store(value = store.hits, order = seq())
+    stat_memo_misses.store(value = store.misses, order = seq())
+    stat_view_calls.store(value = store.view_calls, order = seq())
+}
+
+fun frame_drain<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>, store: mut MemoStore<M>).R: Tick<M> {
     var current = tree
     var changed = false
     var quitting = false
@@ -1033,7 +1497,7 @@ pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, st
                                 update(state, msg)
                                 val focused = backend.focus()
                                 val next = view(state)
-                                diff_into(current, next, scratch)
+                                diff_memo_into(current, next, scratch, store)
                                 backend.apply(scratch)
                                 current = next
                                 snapshot(backend, focused)
@@ -1047,6 +1511,180 @@ pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, st
             }
         }
     }
+    if quitting {
+        return Tick.Quit(tree = current)
+    }
+    if changed {
+        return Tick.Changed(tree = current)
+    }
+    return Tick.Idle(tree = current)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Timers (Polyp v4 stage 1). An application's `subscriptions(state)` function returns the timers
+// that should be running for that state, Elm's shape: the loop calls it after every turn, so a
+// timer that is no longer in the list stops and one that appears starts. A `Sub` carries its message
+// by value and the loop moves it out when the timer fires, so `M` needs no `clone`: because the list
+// is rebuilt from the state each time, every firing gets a fresh message.
+//
+// A timer's identity is its position in the list, its kind and its period. The same position,
+// kind and period on the next turn is the same timer (its schedule is kept); anything else is a new
+// timer that starts counting from the clock of the turn it first appears in. A `Sub.After` that
+// has fired stays fired for as long as it is still in the list at that position, so it does not
+// fire twice; it re-arms when the list changes shape (the usual case: `update` clears the state
+// that put it there).
+//
+// The clock is the platform's, in microseconds, delivered as `Tick` events (`soft/event.kp`); a
+// platform that never delivers one has a clock stuck at 0 and no timer ever fires.
+pub enum Sub<M> {
+    Every(val ms: i32, val msg: M)
+    After(val ms: i32, val msg: M)
+}
+
+// A repeating timer: `msg` is delivered when the period has elapsed, at most once per turn of the
+// loop, and a turn that finds the timer several periods late fires it once and skips the missed
+// periods (the next firing is the first period boundary after now).
+pub fun every<M>(ms: i32, msg: move M).R: Sub<M> = Sub.Every(ms = ms, msg = msg)
+
+// A one-shot timer: `msg` is delivered once, `ms` milliseconds after the timer first appears.
+pub fun after<M>(ms: i32, msg: move M).R: Sub<M> = Sub.After(ms = ms, msg = msg)
+
+pub datac TimerSlot(var kind: i32, var ms: i32, var due_us: u64, var done: bool)
+
+// The loop's timer table: one slot per entry of the last `subscriptions` list.
+pub datac Timers(var slots: List<TimerSlot>, var fired: i32)
+
+pub fun new_timers().R: Timers = Timers(slots = List.empty(), fired = 0)
+
+// How many timer firings the table has delivered so far, for a test.
+pub fun timers_fired(t: &Timers).R: i32 = t.fired
+
+// The clock value, in microseconds, at which the earliest armed timer is due, or -1 when no timer is
+// armed. An OS that has gone to sleep wakes at this time (or on input) to run the next turn.
+pub fun next_wake_us(t: &Timers).R: i64 {
+    var best: i64 = -1
+    var i: usize = 0
+    while i < t.slots.len() {
+        val sl = t.slots.get(i)
+        if !sl.done {
+            val due = sl.due_us.to_i64()
+            if best < 0 || due < best {
+                best = due
+            }
+        }
+        i += 1
+    }
+    return best
+}
+
+// Reconcile slot `i` with the sub the state now asks for, and say whether it fires at `now`.
+fun mut Timers.step(i: usize, kind: i32, ms: i32, now: u64).R: bool {
+    var period_ms = ms
+    if period_ms < 1 {
+        period_ms = 1
+    }
+    val period: u64 = period_ms.to_u64() * 1000
+    if i >= slots.len() {
+        slots.push(TimerSlot(kind = kind, ms = period_ms, due_us = now + period, done = false))
+        return false
+    }
+    val have_kind = slots.get(i).kind
+    val have_ms = slots.get(i).ms
+    val due = slots.get(i).due_us
+    val done_already = slots.get(i).done
+    if have_kind != kind || have_ms != period_ms {
+        slots.set(i, TimerSlot(kind = kind, ms = period_ms, due_us = now + period, done = false))
+        return false
+    }
+    if done_already || now < due {
+        return false
+    }
+    if kind == SUB_EVERY {
+        // Catch up by skipping: the next due time is the first boundary strictly after `now`.
+        val late = now - due
+        val skipped = late / period + 1
+        slots.set(i, TimerSlot(kind = kind, ms = period_ms, due_us = due + skipped * period, done = false))
+    } else {
+        slots.set(i, TimerSlot(kind = kind, ms = period_ms, due_us = due, done = true))
+    }
+    fired += 1
+    return true
+}
+
+// Take the messages of the timers that are due at `now`, in list order, and leave the table
+// matching the list. A turn delivers a timer's message at most once, however late the turn is.
+pub fun collect_due<M>(timers: mut Timers, subs: move List<Sub<M>>, now: u64).R: List<M> {
+    var out: List<M> = List.empty()
+    var rest = subs
+    var i: usize = 0
+    while !rest.is_empty() {
+        val s = rest.remove(0)
+        when s {
+            Every(ms, msg) -> {
+                if timers.step(i, SUB_EVERY, ms, now) {
+                    out.push(msg)
+                }
+            }
+            After(ms, msg) -> {
+                if timers.step(i, SUB_AFTER, ms, now) {
+                    out.push(msg)
+                }
+            }
+        }
+        i += 1
+    }
+    while timers.slots.len() > i {
+        val last = timers.slots.len() - 1
+        val dropped = timers.slots.remove(last)
+    }
+    return out
+}
+
+// `frame_step_into` with timers. After the queue is drained, `subs(state)` is asked for the timers
+// the state now wants, the table is reconciled with it, and every timer that is due at `now_us`
+// delivers its message to `update`; the view is then rebuilt and diffed once for all of them.
+pub fun frame_step_full<B: Backend, S, M>(
+    backend: mut B,
+    tree: move Node<M>,
+    state: mut S,
+    view: fun (S).R: Node<M>,
+    update: fun (mut S, M),
+    subs: fun (S).R: List<Sub<M>>,
+    scratch: mut List<Patch>,
+    timers: mut Timers,
+    store: mut MemoStore<M>,
+    now_us: u64,
+).R: Tick<M> {
+    val first = frame_drain(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch, store = store)
+    var changed = false
+    var quitting = false
+    var current = when first {
+        Idle(t) -> t
+        Changed(t) -> {
+            changed = true
+            t
+        }
+        Quit(t) -> {
+            quitting = true
+            t
+        }
+    }
+    if !quitting {
+        var due = collect_due(timers, subs(state), now_us)
+        if !due.is_empty() {
+            while !due.is_empty() {
+                update(state, due.remove(0))
+            }
+            val focused = backend.focus()
+            val next = view(state)
+            diff_memo_into(current, next, scratch, store)
+            backend.apply(scratch)
+            current = next
+            snapshot(backend, focused)
+            changed = true
+        }
+    }
+    publish_memo(store)
     if quitting {
         return Tick.Quit(tree = current)
     }
@@ -1139,6 +1777,9 @@ pub fun stats().R: Stats = Stats(
     updated = stat_updated.load(order = seq()),
     removed = stat_removed.load(order = seq()),
     live = stat_live.load(order = seq()),
+    memo_hits = stat_memo_hits.load(order = seq()),
+    memo_misses = stat_memo_misses.load(order = seq()),
+    view_calls = stat_view_calls.load(order = seq()),
 )
 
 // Whether every patch kept the focus widget it found.
