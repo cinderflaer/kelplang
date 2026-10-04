@@ -1,0 +1,250 @@
+// Polyp v4 stage 2's tests: UTF-8 text, in plain Kelp with no display.
+//
+//   decode   the decoder's unit lengths and code points for well-formed and malformed bytes
+//   width    text measure by code point: "héllo" is 5 cells, a 3-byte scalar is one cell
+//   glyphs   which blocks have drawings (has_glyph) and that a missing one is the replacement box
+//   draw     malformed and truncated input draws one box per run and reads nothing out of bounds
+//   edit     an entry's caret moves and backspace/delete act by code point, with 2-, 3- and 4-byte
+//            characters, a malformed byte, and a programmatic text change that strands the caret
+impl "deps/polyp/core"
+impl "deps/polyp/soft/damage"
+impl "deps/polyp/soft/draw"
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/font"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft/utf8"
+impl "deps/polyp/soft_backend"
+impl "std/str"
+
+datac St(var n: i32)
+
+fun nop(s: mut St, m: i32) {}
+
+fun changed(text: String).R: i32 = 0
+
+fun bytes(a: u8, b: u8, c: u8, d: u8, n: i32).R: String {
+    var s = String.from_str("")
+    if n > 0 {
+        s.push(a)
+    }
+    if n > 1 {
+        s.push(b)
+    }
+    if n > 2 {
+        s.push(c)
+    }
+    if n > 3 {
+        s.push(d)
+    }
+    return s
+}
+
+fun show_decode(label: str, a: u8, b: u8, c: u8, d: u8, n: i32) {
+    print(label)
+    val s = bytes(a, b, c, d, n)
+    val r = utf8.decode(s.as_str(), 0)
+    print(utf8.unit_len(r))
+    print(utf8.unit_cp(r))
+    print(utf8.count(s.as_str()))
+}
+
+fun run_decode() {
+    print("decode")
+    show_decode("ascii", 0x41, 0, 0, 0, 1)
+    show_decode("2byte", 0xC3, 0xA9, 0, 0, 2)
+    show_decode("3byte", 0xE2, 0x82, 0xAC, 0, 3)
+    show_decode("4byte", 0xF0, 0x9F, 0x98, 0x80, 4)
+    show_decode("stray", 0x80, 0x41, 0, 0, 2)
+    show_decode("trunc2", 0xE2, 0x82, 0, 0, 2)
+    show_decode("trunc1", 0xF0, 0, 0, 0, 1)
+    show_decode("cutlead", 0xE2, 0x41, 0, 0, 2)
+    show_decode("overlong", 0xC0, 0x80, 0, 0, 2)
+    show_decode("overlong3", 0xE0, 0x80, 0x80, 0, 3)
+    show_decode("surrogate", 0xED, 0xA0, 0x80, 0, 3)
+    show_decode("toobig", 0xF4, 0x90, 0x80, 0x80, 4)
+    show_decode("ff", 0xFF, 0, 0, 0, 1)
+}
+
+fun run_width() {
+    print("width")
+    val hello = bytes(0x68, 0xC3, 0xA9, 0x6C, 4)
+    var h = hello
+    h.push(0x6C)
+    h.push(0x6F)
+    print(utf8.count(h.as_str()))
+    print(font.text_width(h.as_str(), 1))
+    print(font.text_width(h.as_str(), 2))
+    print(h.len())
+    val cjk = bytes(0xE4, 0xB8, 0xAD, 0, 3)
+    print(font.text_width(cjk.as_str(), 1))
+    val emoji = bytes(0xF0, 0x9F, 0x98, 0x80, 4)
+    print(font.text_width(emoji.as_str(), 1))
+    val bad = bytes(0xFF, 0xFE, 0x41, 0, 3)
+    print(font.text_width(bad.as_str(), 1))
+}
+
+fun run_glyphs() {
+    print("glyphs")
+    val cps: [i32; 24] = [65, 0xE9, 0xBC, 0xFF, 0x10D, 0x142, 0x3B1, 0x3A9, 0x416, 0x44F, 0x451, 0x20AC, 0x2022, 0x2192, 0x2500, 0x253C, 0x2026, 0x2014, 0x201C, 0x25CF, 0x4E2D, 0x1F600, 0x10F, 0xFFFD]
+    var i: usize = 0
+    while i < 24 {
+        val cp = cps.get(i)
+        if font.has_glyph(cp) {
+            print(1)
+        } else {
+            print(0)
+        }
+        i += 1
+    }
+}
+
+fun checksum_of_text(p: mut headless_platform.HeadlessPlatform, text: &str).R: u64 {
+    p.clear(0xFF000000)
+    val f = p.framebuffer()
+    val c = draw.clip(f.bounds())
+    val n = font.draw_text(f, c, 2, 2, text, 1, 0xFFFFFFFF)
+    return fb.checksum(f) ^ n.to_u64()
+}
+
+fun run_draw() {
+    print("draw")
+    var p = headless_platform.new(width = 120, height = 20)
+    val box = bytes(0xFF, 0, 0, 0, 1)
+    val cjk = bytes(0xE4, 0xB8, 0xAD, 0, 3)
+    val trunc = bytes(0xE4, 0xB8, 0, 0, 2)
+    val a = checksum_of_text(p, box.as_str())
+    val b = checksum_of_text(p, cjk.as_str())
+    val c = checksum_of_text(p, trunc.as_str())
+    // No glyph and a malformed run are the same box, and each is one cell.
+    if a == b && b == c {
+        print("same box")
+    } else {
+        print("different")
+    }
+    val e = checksum_of_text(p, "e")
+    val ea = bytes(0xC3, 0xA9, 0, 0, 2)
+    val ee = checksum_of_text(p, ea.as_str())
+    if e != ee {
+        print("accent drawn")
+    } else {
+        print("accent missing")
+    }
+    // A string that ends in the middle of a sequence draws without reading past its end.
+    var tail = String.from_str("ab")
+    tail.push(0xE2)
+    tail.push(0x82)
+    val t1 = checksum_of_text(p, tail.as_str())
+    var tail2 = String.from_str("ab")
+    tail2.push(0xF0)
+    val t2 = checksum_of_text(p, tail2.as_str())
+    if t1 != t2 {
+        print("tails differ")
+    } else {
+        print("tails equal")
+    }
+    print(font.text_width(tail.as_str(), 1))
+    print(font.text_width(tail2.as_str(), 1))
+}
+
+fun entry_view(s: St).R: core.Node<i32> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.entry("", changed)
+    }
+}
+
+fun key(p: mut headless_platform.HeadlessPlatform, b: mut soft_backend.SoftBackend, tree: move core.Node<i32>, st: mut St, code: i32).R: core.Node<i32> {
+    p.push(event.Event.Key(code = code, mods = 0))
+    return tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = entry_view, update = nop))
+}
+
+fun ch(p: mut headless_platform.HeadlessPlatform, b: mut soft_backend.SoftBackend, tree: move core.Node<i32>, st: mut St, cp: i32).R: core.Node<i32> {
+    p.push(event.Event.Char(codepoint = cp))
+    return tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = entry_view, update = nop))
+}
+
+fun tree_of(t: move core.Tick<i32>).R: core.Node<i32> = when t {
+    Idle(x) -> x
+    Changed(x) -> x
+    Quit(x) -> x
+}
+
+fun report(label: str, b: &soft_backend.SoftBackend, id: i32) {
+    print(label)
+    print(b.entry_text(id))
+    print(b.caret_of(id))
+    print(b.caret_chars_of(id))
+}
+
+fun run_edit() {
+    print("edit")
+    var p = headless_platform.new(width = 200, height = 60)
+    var b = soft_backend.new()
+    var st = St(n = 0)
+    var tree = entry_view(st)
+    b.resize(200, 60)
+    b.apply(core.create_all(&tree))
+    b.layout()
+    val f0 = p.framebuffer()
+    val d0 = b.paint(f0)
+    if d0.count() > 0 {
+        p.present(f0, d0)
+    }
+    val id = b.entry_ids().get(0)
+    b.set_focus(id)
+    tree = ch(p, b, tree, st, 0x68)
+    tree = ch(p, b, tree, st, 0xE9)
+    tree = ch(p, b, tree, st, 0x20AC)
+    tree = ch(p, b, tree, st, 0x1F600)
+    tree = ch(p, b, tree, st, 0x6C)
+    report("typed", b, id)
+    tree = key(p, b, tree, st, event.KEY_LEFT)
+    report("left", b, id)
+    tree = key(p, b, tree, st, event.KEY_LEFT)
+    report("left4", b, id)
+    tree = key(p, b, tree, st, event.KEY_LEFT)
+    report("left3", b, id)
+    tree = key(p, b, tree, st, event.KEY_BACKSPACE)
+    report("backspace", b, id)
+    tree = key(p, b, tree, st, event.KEY_DELETE)
+    report("delete3", b, id)
+    tree = key(p, b, tree, st, event.KEY_END)
+    tree = key(p, b, tree, st, event.KEY_BACKSPACE)
+    tree = key(p, b, tree, st, event.KEY_BACKSPACE)
+    tree = key(p, b, tree, st, event.KEY_BACKSPACE)
+    tree = key(p, b, tree, st, event.KEY_BACKSPACE)
+    report("emptied", b, id)
+    // A malformed byte is one unit for the caret and for backspace.
+    var raw = String.from_str("a")
+    raw.push(0xFF)
+    raw.push(0x62)
+    b.set_entry_text(id, raw.as_str())
+    tree = key(p, b, tree, st, event.KEY_END)
+    tree = key(p, b, tree, st, event.KEY_LEFT)
+    tree = key(p, b, tree, st, event.KEY_BACKSPACE)
+    report("malformed", b, id)
+    // A caret stranded inside a sequence by a text change snaps back to its start.
+    b.set_entry_text(id, "xy")
+    tree = key(p, b, tree, st, event.KEY_END)
+    var two = String.from_str("A")
+    two.push(0xC3)
+    two.push(0xA9)
+    two.push(0x42)
+    b.set_entry_text(id, two.as_str())
+    tree = ch(p, b, tree, st, 0x7A)
+    report("snapped", b, id)
+    // A scalar that is not valid (a surrogate) inserts the replacement character.
+    tree = ch(p, b, tree, st, 0xD800)
+    report("invalid", b, id)
+}
+
+fun main() {
+    run_decode()
+    run_width()
+    run_glyphs()
+    run_draw()
+    run_edit()
+}

@@ -18630,6 +18630,20 @@ fn polyp_v4_timers_and_animation_are_exact_on_the_test_clock() {
     assert_eq!(got, include_str!("polyp_v4/anim.expected"), "unexpected output from the animation test");
 }
 
+/// Polyp v4 stage 2: UTF-8 text in the soft backend.
+///
+/// `examples/polyp-text-test` pins the decoder (well-formed 1- to 4-byte sequences, stray and
+/// truncated bytes, overlong forms, surrogates, values above U+10FFFF: each malformed run is one
+/// unit), measure by code point ("héllo" is 5 cells), which blocks have drawings, that a missing
+/// glyph and a malformed run draw the same single box and a truncated tail reads nothing out of
+/// bounds, and entry editing by code point (caret moves, backspace on `é`, delete on a 3-byte
+/// scalar, a malformed byte, a caret stranded inside a sequence, an invalid scalar).
+#[test]
+fn polyp_v4_text_is_utf8_by_code_point() {
+    let got = polyp_v4_transcript("polyp-text-test", "polyp_text_test", &[]);
+    assert_eq!(got, include_str!("polyp_v4/text.expected"), "unexpected output from the text test");
+}
+
 /// The lines of one Polyp v4 demo run: from the first `step ` line to the first `end` line, without
 /// the hosted entry's `-- demo --` separator. Used on the hosted transcript and on a kernel's serial
 /// output alike, so the two are sliced identically and only the run itself can differ.

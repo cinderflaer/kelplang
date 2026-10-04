@@ -25,6 +25,7 @@ impl "deps/polyp/soft/event"
 impl "deps/polyp/soft/fb"
 impl "deps/polyp/soft/font"
 impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft/utf8"
 impl "std/option"
 impl "std/str"
 
@@ -912,8 +913,9 @@ fun set_hover_in(kids: mut List<SNode>, id: i32, v: bool, d: mut damage.Damage) 
 }
 
 // ---------------------------------------------------------------------------------------------
-// Entry text editing. A caret is a byte offset, and the font is byte-oriented, so a non-ASCII
-// codepoint occupies one byte per UTF-8 unit and each of those units is one replacement box.
+// Entry text editing. A caret is a byte offset that always sits on a code point boundary: it moves,
+// and backspace and delete remove, one whole code point (a malformed run counts as one), and it is
+// drawn `count_before` cells from the left (Polyp v4 stage 2).
 
 fun utf8_len(cp: i32).R: i32 {
     if cp < 0x80 {
@@ -960,6 +962,12 @@ fun utf8_byte(cp: i32, i: i32).R: u8 {
     return (0x80 | (c & 0x3F)).to_u8()
 }
 
+fun scalar_of(cp: i32).R: i32 = if utf8.is_scalar(cp) {
+    cp
+} else {
+    utf8.REPLACEMENT
+}
+
 fun insert_char(s: &str, at: usize, cp: i32).R: String {
     var out = String.from_str("")
     val n = str.len(s)
@@ -968,10 +976,15 @@ fun insert_char(s: &str, at: usize, cp: i32).R: String {
         out.push(str.byte(s, i))
         i += 1
     }
-    val un = utf8_len(cp)
+    val scalar = if utf8.is_scalar(cp) {
+        cp
+    } else {
+        utf8.REPLACEMENT
+    }
+    val un = utf8_len(scalar)
     var u: i32 = 0
     while u < un {
-        out.push(utf8_byte(cp, u))
+        out.push(utf8_byte(scalar, u))
         u += 1
     }
     while i < n {
@@ -1013,31 +1026,36 @@ fun edit_entry_in(kids: mut List<SNode>, id: i32, op: i32, cp: i32, d: mut damag
             if care < 0 {
                 care = 0
             }
+            // A caret always sits on a code point boundary: one left inside a sequence by a
+            // programmatic text change snaps back to the start of that sequence.
+            care = utf8.snap_boundary(cur.as_str(), care.to_usize()).to_i32()
             var text_changed = false
             var caret_changed = false
             if op == OP_INSERT {
                 n.props.text = insert_char(cur.as_str(), care.to_usize(), cp)
-                care += utf8_len(cp)
+                care += utf8_len(scalar_of(cp))
                 text_changed = true
             } else if op == OP_BACKSPACE {
                 if care > 0 {
-                    n.props.text = remove_range(cur.as_str(), (care - 1).to_usize(), care.to_usize())
-                    care -= 1
+                    val from = utf8.prev_boundary(cur.as_str(), care.to_usize()).to_i32()
+                    n.props.text = remove_range(cur.as_str(), from.to_usize(), care.to_usize())
+                    care = from
                     text_changed = true
                 }
             } else if op == OP_DELETE {
                 if care < n_bytes {
-                    n.props.text = remove_range(cur.as_str(), care.to_usize(), (care + 1).to_usize())
+                    val to = utf8.next_boundary(cur.as_str(), care.to_usize()).to_i32()
+                    n.props.text = remove_range(cur.as_str(), care.to_usize(), to.to_usize())
                     text_changed = true
                 }
             } else if op == OP_LEFT {
                 if care > 0 {
-                    care -= 1
+                    care = utf8.prev_boundary(cur.as_str(), care.to_usize()).to_i32()
                     caret_changed = true
                 }
             } else if op == OP_RIGHT {
                 if care < n_bytes {
-                    care += 1
+                    care = utf8.next_boundary(cur.as_str(), care.to_usize()).to_i32()
                     caret_changed = true
                 }
             } else if op == OP_HOME {
@@ -1445,7 +1463,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
             if care < 0 {
                 care = 0
             }
-            val cx = r.x + st.pad + care * font.ADVANCE * sc
+            val cx = r.x + st.pad + utf8.count_before(n.props.text.as_str(), care.to_usize()) * font.ADVANCE * sc
             px.add(draw.vline(f, cs, cx, r.y + 2, r.h - 4, fade(th.caret, my_op, th.bg)))
         }
     } else if k == core.KIND_CHECKBOX {
@@ -2201,6 +2219,23 @@ fun SoftBackend.caret_of(id: i32).R: i32 {
         return root.get(0).caret
     }
     return find_caret_in(root.get(0).kids, id)
+}
+
+// The caret as a count of code points from the start, which is how far right it is drawn.
+fun SoftBackend.caret_chars_of(id: i32).R: i32 {
+    val c = self.caret_of(id)
+    if c < 0 {
+        return -1
+    }
+    val text = String.from_str("")
+    var t = text
+    if !root.is_empty() {
+        val _ = find_text(root.get(0).kids, id, t)
+        if root.get(0).slot == id {
+            t = String.from_str(root.get(0).props.text.as_str())
+        }
+    }
+    return utf8.count_before(t.as_str(), c.to_usize())
 }
 
 fun mut SoftBackend.reset_counts() {
