@@ -146,3 +146,46 @@ untouched).
   of indent per level.
 
 Test: `examples/polyp-a11y-test` pinned in `kelpc/tests/polyp_v4/a11y.expected`, equal on both backends.
+
+## Stage 4: memoised subtrees
+
+`core.Memo` lets a view leave a large, pure subtree as a cheap placeholder. The application gives a
+memo a sibling-unique key, a `Deps` value and a plain `fun (&Deps).R: List<Child<M>>`; the function
+must return exactly one child through `core.single`. `Deps` is an ordered list of integers and
+strings, built with `core.deps()` and `push_int`, `push_bool` and `push_str`. Its declared equality
+is the cache contract: include every value the memo view reads. `k.memo(key, deps, build)` places a
+memo in a builder, while `core.memo(deps, build)` makes one root node.
+
+The caller owns a `MemoStore<M>` for the life of the displayed tree. First render uses
+`create_all_memo(tree, store)`; later turns use `frame_step_memo` or `soft_backend.frame_memo` (or
+`apply_diff_memo` for a driver that already owns its frame loop). A record is identified by its path,
+with keyed path segments compared by key rather than index, so a keyed reorder is a hit. An equal
+dependency value leaves the retained subtree untouched; a miss calls the view once and diffs the
+replacement body. Removing a memo drops its record and every nested record. A memo nested in a
+changed outer memo still hits when its own dependencies did not change.
+
+The transparent wrapper is a `Column` in every backend. This keeps the ordinary keyed-patch and
+layout rules intact, and gives a memo's options to its wrapper. Event dispatch rebuilds the memo
+body only to recover the message under a posted widget; that reconstruction is not a cache miss and
+is not counted as one.
+
+`MemoStore` exposes `hits`, `misses` and `view_calls`; `core.stats()` publishes those three fields
+after a memo frame. `examples/polyp-memo-test`, pinned in `kelpc/tests/polyp_v4/memo.expected`,
+checks first render, one changed row, no change, dependency changes, reorder, removal and reinsertion,
+nested memoisation, event dispatch, and equality of every memoised framebuffer with its non-memoised
+counterpart. `examples/polyp-memo-bench` runs a 200- and 1,000-row scrolled list. On this development
+host's 40-frame run, the 1,000-row memo case made 40 row-view calls and 39,960 hits, versus rebuilding
+the plain view each frame; both variants wrote 118,517 pixels. Its timings are diagnostic only and
+the fast test pins counters and equal pixels, not timings.
+
+The hosted v4 demo now combines all four stages: animation and timers, UTF-8 labels, the final
+accessibility dump and three memoised rows. The two freestanding v4 kernel tests compare their demo
+run slice against the hosted transcript when `ld.lld` and the corresponding QEMU are available.
+
+### What v4 still does not do
+
+Memo dependency values are explicit data rather than automatically tracked reads; omitting a value
+from `Deps` is an application bug and can leave stale pixels. The store is linear and tuned for
+small, stable keyed lists, not a general-purpose cache. There is no eviction policy beyond removing
+the memo from the tree, and GTK currently accepts the memo wrapper through the shared core path but
+has no performance measurement attached to it.

@@ -536,5 +536,5 @@ impl core.Backend for Headless {
 
     fun Self.entries_built().R: i32 = entry_builds
 
-    fun Self.stats().R: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed)
+    fun Self.stats().R: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed, memo_hits = 0, memo_misses = 0, view_calls = 0)
 }

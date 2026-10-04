@@ -1,16 +1,21 @@
-// The Polyp v4 demo program, with no display: a model, a view, an update and the timers it wants
-// (Polyp v4 stage 1; later stages add to it). `src/main.kp` runs it on the hosted headless platform and
+// The Polyp v4 demo program, with no display: a model, a view, an update and the timers it wants. It
+// uses all four v4 features: a repeating timer, a one-shot and an animated progress bar and toast
+// (stage 1), UTF-8 text (stage 2), an accessibility tree the scenario dumps at the end (stage 3) and
+// three memoised rows (stage 4). `src/main.kp` runs it on the hosted headless platform and
 // prints the transcript, and the two `examples/polyp-v4-*` kernels run the very same file on bare metal,
 // so this module may not print, hold a `pd`, or touch a libc: it reports through a `fun (str)`.
 impl "deps/polyp/anim"
 impl "deps/polyp/core"
 impl "std/str"
 
+pub datac Row(val id: i32, val label: String, val done: bool)
+
 pub datac Model(
     var ticks: i32,
     var started: bool,
     var toast: bool,
     var clicks: i32,
+    var rows: List<Row>,
 )
 
 pub enum Msg {
@@ -18,9 +23,38 @@ pub enum Msg {
     Start
     Toast
     HideToast
+    Toggle(val id: i32)
 }
 
-pub fun initial().R: Model = Model(ticks = 0, started = false, toast = false, clicks = 0)
+pub fun initial().R: Model {
+    var rows: List<Row> = List.empty()
+    rows.push(Row(id = 1, label = String.from_str("alpha"), done = false))
+    rows.push(Row(id = 2, label = String.from_str("βήτα"), done = false))
+    rows.push(Row(id = 3, label = String.from_str("Привет €"), done = false))
+    return Model(ticks = 0, started = false, toast = false, clicks = 0, rows = rows)
+}
+
+// A row's memo view: it sees only its deps (id, done, label), which is what makes skipping it sound.
+fun row_view(d: &core.Deps).R: List<core.Child<Msg>> {
+    val id = d.ints.get(0).to_i32()
+    val done = d.ints.get(1) != 0
+    val label = String.from_str(d.strs.get(0).as_str())
+    return core.single { k ->
+        k.row { r ->
+            r.spacing(8)
+            r.checkbox("", done, Msg.Toggle(id = id))
+            r.text(label.as_str())
+        }
+    }
+}
+
+fun row_deps(r: &Row).R: core.Deps {
+    var d = core.deps()
+    d.push_int(r.id.to_i64())
+    d.push_bool(r.done)
+    d.push_str(r.label.as_str())
+    return d
+}
 
 // The view. The progress bar carries its animation only once `Start` was pressed, so the first thing
 // the backend sees of it is the moment the model changed. `toast` is a line that appears for 300 ms.
@@ -28,7 +62,7 @@ pub fun view(m: Model).R: core.Node<Msg> {
     return core.column { k ->
         k.spacing(6)
         k.margin(8)
-        k.text_styled("polyp v4", 2, true)
+        k.text_styled("Polyp v4 · héllo → ✓", 1, true)
         k.row { r ->
             r.spacing(8)
             r.button("start", Msg.Start)
@@ -41,6 +75,12 @@ pub fun view(m: Model).R: core.Node<Msg> {
             k.anim(anim.lerp(0, 1000, 500, anim.Easing.EaseInOut))
         }
         k.progress(0)
+        var i: usize = 0
+        while i < m.rows.len() {
+            val key = str.from_i64(m.rows.get(i).id.to_i64())
+            k.memo(key.as_str(), row_deps(m.rows.get(i)), row_view)
+            i += 1
+        }
         if m.toast {
             k.opacity_anim(anim.lerp(1000, 200, 300, anim.Easing.Linear))
             k.text("saved")
@@ -64,6 +104,19 @@ pub fun update(m: mut Model, msg: Msg) {
         HideToast -> {
             m.toast = false
         }
+        Toggle(id) -> {
+            var i: usize = 0
+            while i < m.rows.len() {
+                val here = m.rows.get(i).id
+                if here == id {
+                    val label = String.from_str(m.rows.get(i).label.as_str())
+                    val was = m.rows.get(i).done
+                    m.rows.set(i, Row(id = id, label = label, done = !was))
+                }
+                i += 1
+            }
+            m.clicks += 1
+        }
     }
 }
 
@@ -79,7 +132,8 @@ pub fun subscriptions(m: Model).R: List<core.Sub<Msg>> {
 }
 
 // One scripted turn: advance the clock by `ms`, then (when `post >= 0`) press the interactive widget
-// with that id. The ids are creation order: `start` is 0 and `toast` is 1.
+// with that id. The ids are creation order: `start` is 0, `toast` is 1 and the three rows' checkboxes
+// are 2, 3 and 4.
 pub datac Step(val ms: u64, val post: i32)
 
 pub fun script().R: List<Step> {
@@ -93,6 +147,9 @@ pub fun script().R: List<Step> {
     s.push(Step(ms = 150, post = -1))
     s.push(Step(ms = 500, post = -1))
     s.push(Step(ms = 1000, post = -1))
+    s.push(Step(ms = 100, post = 3))
+    s.push(Step(ms = 100, post = 4))
+    s.push(Step(ms = 100, post = 3))
     return s
 }
 

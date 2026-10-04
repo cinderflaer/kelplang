@@ -388,8 +388,14 @@ fun mut SoftBackend.begin_frame() {
 // not allocate the patch list (`plan/polyp-v3.md`, stage 5). This is the shape a per-frame driver
 // wants; `core.run` still uses its own list because it is not backend-specific.
 pub fun apply_diff<M>(backend: mut SoftBackend, old: &core.Node<M>, new: &core.Node<M>) {
+    var store: core.MemoStore<M> = core.new_memo_store()
+    apply_diff_memo(backend, old, new, store)
+}
+
+// `apply_diff` with a memo store, for trees that hold `Memo` nodes.
+pub fun apply_diff_memo<M>(backend: mut SoftBackend, old: &core.Node<M>, new: &core.Node<M>, store: mut core.MemoStore<M>) {
     var buf = backend.patch_buf.take()
-    core.diff_into(old, new, buf)
+    core.diff_memo_into(old, new, buf, store)
     val n = buf.len().to_i32()
     if n > MAX_FRAME_PATCHES {
         panic("polyp: frame patch list exceeds MAX_FRAME_PATCHES")
@@ -1225,15 +1231,34 @@ fun mut SNode.compute_measure(th: &Theme) {
     }
 }
 
+fun subtree_dirty(n: &SNode).R: bool {
+    if n.dirty {
+        return true
+    }
+    var i: usize = 0
+    while i < n.kids.len() {
+        if subtree_dirty(n.kids.get(i)) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
 fun mut SNode.remeasure(c: mut LayoutCount, th: &Theme).R: bool {
     var child_changed = false
     var i: usize = 0
     while i < kids.len() {
-        var child = kids.remove(i)
-        if child.remeasure(c, th) {
-            child_changed = true
+        // Only a child with something dirty below it is taken out of the list, measured and put
+        // back: a clean subtree answers `false` and costs a read-only scan instead of two list moves.
+        val needs = subtree_dirty(kids.get(i))
+        if needs {
+            var child = kids.remove(i)
+            if child.remeasure(c, th) {
+                child_changed = true
+            }
+            kids.insert(i, child)
         }
-        kids.insert(i, child)
         i += 1
     }
     if !dirty && !child_changed {
@@ -2070,7 +2095,34 @@ pub fun frame_timed<P: platform.Platform, S, M>(
     val start = platform.now_us()
     val f = frame_begin(backend, platform)
     var scratch = backend.patch_buf.take()
-    val tick = core.frame_step_full(backend = backend, tree = tree, state = state, view = view, update = update, subs = subs, scratch = scratch, timers = timers, now_us = backend.clock_us)
+    var store: core.MemoStore<M> = core.new_memo_store()
+    val tick = core.frame_step_full(backend = backend, tree = tree, state = state, view = view, update = update, subs = subs, scratch = scratch, timers = timers, store = store, now_us = backend.clock_us)
+    backend.patch_buf.set(scratch)
+    return when frame_end(backend, platform, f, tick, start, 0) {
+        Done(t) -> t
+        Deferred(t) -> t
+    }
+}
+
+// `frame_timed` for a program that uses `core.Memo` subtrees (`k.memo(..)`): the store is the
+// caller's, created with `core.new_memo_store`, used for the first render through
+// `core.create_all_memo`, and kept for as long as the program runs. A program with memo and no timers
+// passes a `subs` that returns an empty list.
+pub fun frame_memo<P: platform.Platform, S, M>(
+    backend: mut SoftBackend,
+    platform: mut P,
+    tree: move core.Node<M>,
+    state: mut S,
+    view: fun (S).R: core.Node<M>,
+    update: fun (mut S, M),
+    subs: fun (S).R: List<core.Sub<M>>,
+    timers: mut core.Timers,
+    store: mut core.MemoStore<M>,
+).R: core.Tick<M> {
+    val start = platform.now_us()
+    val f = frame_begin(backend, platform)
+    var scratch = backend.patch_buf.take()
+    val tick = core.frame_step_full(backend = backend, tree = tree, state = state, view = view, update = update, subs = subs, scratch = scratch, timers = timers, store = store, now_us = backend.clock_us)
     backend.patch_buf.set(scratch)
     return when frame_end(backend, platform, f, tick, start, 0) {
         Done(t) -> t
@@ -2730,5 +2782,5 @@ impl core.Backend for SoftBackend {
 
     fun Self.entries_built().R: i32 = entry_builds
 
-    fun Self.stats().R: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed)
+    fun Self.stats().R: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed, memo_hits = 0, memo_misses = 0, view_calls = 0)
 }

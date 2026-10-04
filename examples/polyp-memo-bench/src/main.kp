@@ -1,0 +1,244 @@
+// The memoisation benchmark (Polyp v4 stage 4), hosted and headless.
+//
+// A scrolled list of rows at 800x600; every frame one row's title changes and the frame runs the
+// whole loop body: view, diff, apply, layout, paint. Two variants: `plain` (every row rebuilt by `view`
+// and compared by the diff) and `memo` (every row is `k.memo(..)`, so 1 row is rebuilt and the rest are
+// hits). It prints, per variant: rows, frames, memoised view calls, hits, pixels written, the median
+// microseconds per frame, and the last run's mean microseconds in `view` and in diff+apply; the times are one
+// development host's at one moment and noisy (`plan/polyp-v4.md` quotes a run).
+//
+// `POLYP_BENCH_QUICK` shortens a run to a handful of frames so a test can bound it.
+impl "deps/polyp/core"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft_backend"
+impl "std/env"
+impl "std/str"
+impl "std/time"
+
+const RUNS: i32 = 5
+
+datac Item(var id: i32, var title: String, var done: bool)
+
+datac Model(var items: List<Item>, var clicks: i32)
+
+enum Msg {
+    Toggle(val id: i32)
+    Remove(val id: i32)
+}
+
+fun find(m: &Model, id: i32).R: i32 {
+    var i: usize = 0
+    while i < m.items.len() {
+        if m.items.get(i).id == id {
+            return i.to_i32()
+        }
+        i += 1
+    }
+    return -1
+}
+
+fun update(m: mut Model, msg: Msg) {
+    when msg {
+        Toggle(id) -> {
+            val at = find(m, id)
+            if at >= 0 {
+                val u = at.to_usize()
+                val t = String.from_str(m.items.get(u).title.as_str())
+                val was = m.items.get(u).done
+                m.items.set(u, Item(id = id, title = t, done = !was))
+            }
+            m.clicks += 1
+        }
+        Remove(id) -> {
+            val at = find(m, id)
+            if at >= 0 {
+                val gone = m.items.remove(at.to_usize())
+            }
+            m.clicks += 1
+        }
+    }
+}
+
+fun make(n: i32).R: Model {
+    var items: List<Item> = List.empty()
+    var i: i32 = 0
+    while i < n {
+        val num = str.from_i64(i.to_i64())
+        val t = str.concat("row ", num.as_str())
+        items.push(Item(id = i, title = t, done = false))
+        i += 1
+    }
+    return Model(items = items, clicks = 0)
+}
+
+fun fill_row(r: mut core.Children<Msg>, id: i32, done: bool, title: &str) {
+    r.spacing(6)
+    r.checkbox("", done, Msg.Toggle(id = id))
+    r.expand()
+    r.text(title)
+    r.button("x", Msg.Remove(id = id))
+}
+
+fun row_view(d: &core.Deps).R: List<core.Child<Msg>> {
+    val id = d.ints.get(0).to_i32()
+    val done = d.ints.get(1) != 0
+    val title = String.from_str(d.strs.get(0).as_str())
+    return core.single { k -> k.row { r -> fill_row(r, id, done, title.as_str()) } }
+}
+
+fun row_deps(it: &Item).R: core.Deps {
+    var d = core.deps()
+    d.push_int(it.id.to_i64())
+    d.push_bool(it.done)
+    d.push_str(it.title.as_str())
+    return d
+}
+
+fun view_memo(m: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(4)
+        k.expand()
+        k.scrolled { sc ->
+            sc.spacing(4)
+            var i: usize = 0
+            while i < m.items.len() {
+                val key = str.from_i64(m.items.get(i).id.to_i64())
+                sc.memo(key.as_str(), row_deps(m.items.get(i)), row_view)
+                i += 1
+            }
+        }
+    }
+}
+
+fun view_plain(m: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(4)
+        k.expand()
+        k.scrolled { sc ->
+            sc.spacing(4)
+            var i: usize = 0
+            while i < m.items.len() {
+                val item = m.items.get(i)
+                val key = str.from_i64(item.id.to_i64())
+                sc.keyed(key.as_str()) { r -> fill_row(r, item.id, item.done, item.title.as_str()) }
+                i += 1
+            }
+        }
+    }
+}
+
+fun no_subs(m: Model).R: List<core.Sub<Msg>> {
+    var out: List<core.Sub<Msg>> = List.empty()
+    return out
+}
+
+
+fun frames().R: i32 {
+    val v = env.get("POLYP_BENCH_QUICK")
+    if !str.is_empty(v.as_str()) {
+        return 3
+    }
+    return 40
+}
+
+// One run: `rows` rows, `frames` frames, each changing one row. Returns the median-of-RUNS of the
+// per-frame microseconds, and prints the counters of the last run.
+fun run(label: str, rows: i32, use_memo: bool) {
+    var samples: [i64; RUNS] = [0; RUNS]
+    var calls: i32 = 0
+    var hits: i32 = 0
+    var pixels: i64 = 0
+    var view_us: i64 = 0
+    var diff_us: i64 = 0
+    var r: i32 = 0
+    while r < RUNS {
+        var st = make(rows)
+        var b = soft_backend.new()
+        var p = headless_platform.new(width = 800, height = 600)
+        var store: core.MemoStore<Msg> = core.new_memo_store()
+        var tree = if use_memo {
+            view_memo(st)
+        } else {
+            view_plain(st)
+        }
+        val f = p.framebuffer()
+        b.resize(f.width, f.height)
+        b.apply(core.create_all_memo(&tree, store))
+        b.layout()
+        val d0 = b.paint(f)
+        if d0.count() > 0 {
+            p.present(f, d0)
+        }
+        store.hits = 0
+        store.misses = 0
+        store.view_calls = 0
+        val n = frames()
+        var total: i64 = 0
+        var view_total: i64 = 0
+        var diff_total: i64 = 0
+        var px: i64 = 0
+        var k: i32 = 0
+        while k < n {
+            val idx = (k * 7) % rows
+            val num = str.from_i64(k.to_i64())
+            val title = str.concat("changed ", num.as_str())
+            st.items.set(idx.to_usize(), Item(id = idx, title = title, done = false))
+            val start = time.now_mono_ns()
+            val next = if use_memo {
+                view_memo(st)
+            } else {
+                view_plain(st)
+            }
+            val mid1 = time.now_mono_ns()
+            view_total += (mid1 - start) / 1000
+            soft_backend.apply_diff_memo(backend = b, old = &tree, new = &next, store = store)
+            tree = next
+            diff_total += (time.now_mono_ns() - mid1) / 1000
+            b.layout()
+            val d = b.paint(f)
+            if d.count() > 0 {
+                p.present(f, d)
+            }
+            total += (time.now_mono_ns() - start) / 1000
+            px += b.pixels_written()
+            k += 1
+        }
+        samples.set(r.to_usize(), total / n.to_i64())
+        view_us = view_total / n.to_i64()
+        diff_us = diff_total / n.to_i64()
+        calls = store.view_calls
+        hits = store.hits
+        pixels = px
+        r += 1
+    }
+    var a = samples
+    var i: i32 = 1
+    while i < RUNS {
+        val key = a.get(i.to_usize())
+        var j = i - 1
+        while j >= 0 && a.get(j.to_usize()) > key {
+            a.set((j + 1).to_usize(), a.get(j.to_usize()))
+            j -= 1
+        }
+        a.set((j + 1).to_usize(), key)
+        i += 1
+    }
+    print(label)
+    print(rows)
+    print(frames())
+    print(calls)
+    print(hits)
+    print(pixels)
+    print(a.get((RUNS / 2).to_usize()))
+    print(view_us)
+    print(diff_us)
+}
+
+fun main() {
+    run("plain", 200, false)
+    run("memo", 200, true)
+    run("plain", 1000, false)
+    run("memo", 1000, true)
+}

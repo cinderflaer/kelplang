@@ -18656,6 +18656,46 @@ fn polyp_v4_a11y_tree_drives_the_ui() {
     assert_eq!(got, include_str!("polyp_v4/a11y.expected"), "unexpected output from the a11y test");
 }
 
+/// Polyp v4 stage 4: memoised subtrees.
+///
+/// `examples/polyp-memo-test` runs a scrolled list of memoised rows beside the same list built with
+/// plain keyed rows and requires the same framebuffer checksum after every change; it pins the
+/// counters: 200 rows are 200 misses the first time, one changed row is 1 view call and 199 hits,
+/// no change is 200 hits and nothing painted, a deps change rebuilds exactly that row, a reorder
+/// keeps every memo a hit, a removed row's record is dropped and its key built again when it comes
+/// back, a nested memo hits when only the outer deps changed, a press inside a memo row reaches the
+/// model, and the plain loop with no store draws the same screen.
+#[test]
+fn polyp_v4_memo_skips_unchanged_subtrees_and_never_changes_a_pixel() {
+    let got = polyp_v4_transcript("polyp-memo-test", "polyp_memo_test", &[]);
+    assert_eq!(got, include_str!("polyp_v4/memo.expected"), "unexpected output from the memo test");
+}
+
+/// Polyp v4 stage 4: the memoisation benchmark builds and its counters are exact. The times
+/// (columns 7 to 9) are the host's; `POLYP_BENCH_QUICK` shortens each run to 3 frames.
+#[test]
+fn polyp_v4_memo_bench_counts_view_calls_and_hits() {
+    let got = polyp_v4_transcript("polyp-memo-bench", "polyp_memo_bench", &[("POLYP_BENCH_QUICK", "1")]);
+    let lines: Vec<&str> = got.lines().collect();
+    // Four runs, nine lines each: label, rows, frames, view calls, hits, pixels, median, view, diff.
+    assert_eq!(lines.len(), 36, "the memo benchmark's shape changed:\n{got}");
+    let expect = [("plain", 200, 0, 0), ("memo", 200, 3, 3 * 199), ("plain", 1000, 0, 0), ("memo", 1000, 3, 3 * 999)];
+    for (i, (label, rows, calls, hits)) in expect.iter().enumerate() {
+        let b = i * 9;
+        assert_eq!(lines[b], *label);
+        assert_eq!(lines[b + 1], rows.to_string(), "{label} rows");
+        assert_eq!(lines[b + 2], "3", "{label} frames");
+        assert_eq!(lines[b + 3], calls.to_string(), "{label} view calls");
+        assert_eq!(lines[b + 4], hits.to_string(), "{label} hits");
+        for k in 6..9 {
+            lines[b + k].parse::<i64>().unwrap_or_else(|_| panic!("{label}: column {k} is not a number"));
+        }
+    }
+    // Memo and plain write the same pixels.
+    assert_eq!(lines[5], lines[9 + 5], "200 rows: pixels written");
+    assert_eq!(lines[18 + 5], lines[27 + 5], "1000 rows: pixels written");
+}
+
 /// The lines of one Polyp v4 demo run: from the first `step ` line to the first `end` line, without
 /// the hosted entry's `-- demo --` separator. Used on the hosted transcript and on a kernel's serial
 /// output alike, so the two are sliced identically and only the run itself can differ.

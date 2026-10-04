@@ -45,6 +45,13 @@ and `examples/polyp-fb-riscv64`/`examples/polyp-fb-x86_64` prove the whole stack
 the hosted run's exact pixels with no libc (`plan/polyp-v3.md` stages 2, 3 and 4, and the
 `## The freestanding proof` section below).
 
+**v4** adds a platform clock with subscriptions and integer animations, UTF-8 soft text and editing,
+an on-demand accessibility tree, and memoised subtrees. A memo is an explicit pure function of a
+`core.Deps` value: `k.memo(key, deps, build)` preserves its retained subtree when the dependencies
+are equal. The caller keeps `core.MemoStore` with the displayed tree and uses the memo-aware first
+render and frame entry points. [`plan/polyp-v4.md`](../../plan/polyp-v4.md) records the contract,
+the test coverage and the remaining limits.
+
 There is no published version number; "v3" is the backend split plus what is
 listed here. `examples/polyp-v0/` and `examples/polyp-counter-v0/` are a frozen
 copy of v0 (see [Versions](#versions)).
@@ -172,7 +179,15 @@ pub enum Node<M> {
     Progress(val permille: i32)
     Separator
     Scrolled(val children: List<Child<M>>, val spacing: i32)
+    Memo(val deps: Deps, val build: fun (&Deps).R: List<Child<M>>)
 }
+
+pub datac Deps(var ints: List<i64>, var strs: List<String>)
+pub fun deps().R: Deps
+fun mut Deps.push_int(n: i64)
+fun mut Deps.push_bool(b: bool)
+fun mut Deps.push_str(s: str)
+pub fun single<M>(block: scoped fun(mut Children<M>)).R: List<Child<M>>
 
 // The builder. `column`/`row` take the trailing block; the methods on
 // `Children` are the leaf and nested constructors the block calls.
@@ -195,6 +210,8 @@ fun mut Children<M>.keyed_int(key: i64, block: scoped fun(mut Children<M>))
 fun mut Children<M>.keyed_int_col(key: i64, block: scoped fun(mut Children<M>))
 fun mut Children<M>.with_key(key: str)
 fun mut Children<M>.with_key_int(key: i64)
+fun mut Children<M>.memo(key: str, deps: move Deps, build: fun (&Deps).R: List<Child<M>>)
+fun mut Children<M>.memo_int(key: i64, deps: move Deps, build: fun (&Deps).R: List<Child<M>>)
 fun mut Children<M>.spacing(n: i32)
 fun mut Children<M>.margin(n: i32)
 fun mut Children<M>.expand()
@@ -213,7 +230,8 @@ pub fun button<M>(label: move String, on_click: move M).R: Node<M>
 pub fun run<S, M>(title: str, width: i32, height: i32, init: move S,
                   view: fun(S).R: Node<M>, update: fun(mut S, M)).R: S
 
-pub datac Stats(val created: i32, val updated: i32, val removed: i32, val live: i32)
+pub datac Stats(val created: i32, val updated: i32, val removed: i32, val live: i32,
+                val memo_hits: i32, val memo_misses: i32, val view_calls: i32)
 pub fun stats().R: Stats
 pub fun focus_present().R: bool
 pub fun focus_survived().R: bool
