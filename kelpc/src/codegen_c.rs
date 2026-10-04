@@ -3879,7 +3879,15 @@ impl<'a> Gen<'a> {
     /// bury the real diagnostic (BUG-3).
     fn cond_text(&self, cond: &Expr) -> String {
         let rendered = self.expr_value(cond);
-        if matches!(&cond.kind, ExprKind::Binary { .. } | ExprKind::EnumTag { .. }) {
+        // A normal binary expression already carries its own parentheses. An
+        // ordered binary, however, is a GNU statement expression (`({ ... })`)
+        // after the C backend stages its left operand. The condition's opening
+        // `(` would otherwise become that expression's opening parenthesis,
+        // leaving `if ({ ... })`, where C sees `{` instead of an expression.
+        // Keep one extra pair around that shape: `if (({ ... }))`.
+        if matches!(&cond.kind, ExprKind::Binary { .. } | ExprKind::EnumTag { .. })
+            && !rendered.starts_with("({")
+        {
             rendered
         } else {
             format!("({rendered})")

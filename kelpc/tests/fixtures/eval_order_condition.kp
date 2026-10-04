@@ -1,0 +1,18 @@
+pd var log = 0
+
+fun step(n: i32).R: i32 {
+    log = log * 10 + n
+    n
+}
+
+fun main() {
+    if step(1) < step(2) {
+        print(log)
+    }
+
+    var pass = 0
+    while step(3) < step(4) && pass == 0 {
+        print(log)
+        pass = 1
+    }
+}
