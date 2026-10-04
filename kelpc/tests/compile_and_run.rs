@@ -18978,6 +18978,14 @@ fn eval_order_template_interpolations_run_left_to_right() {
 }
 
 #[test]
+fn ordered_binary_conditions_are_c_expressions() {
+    // The C backend stages the left operand of an effectful binary operation.
+    // In a condition the resulting GNU statement expression needs its own
+    // parentheses, rather than borrowing `if` or `while`'s opening parenthesis.
+    assert_compiles_and_runs("tests/fixtures/eval_order_condition.kp", "12\n1234\n");
+}
+
+#[test]
 fn eval_order_basic_transcript_is_left_to_right() {
     assert_compiles_and_runs("tests/fixtures/eval_order_basic.kp", "x 1 2 3\ntmpl: 123\n6\ncall: 123\nbinop: 123\nctor: 123\narray: 123\npush: 12\nand: 1\nor: 1\nset: 12\ncompound: 7\n195\nnested: 12345\n7 4\narith: 1234\nrecv: 123\n6\nrecv2: 123\n");
 }
