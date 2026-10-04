@@ -1,0 +1,7 @@
+name = "polyp_v4_demo"
+entry = "src/main.kp"
+
+# The soft backend draws through the raster and the headless platform owns the framebuffer, so those
+# three modules are audited; the application and the scenario touch no pointer.
+[unsafe]
+modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/headless_platform"]

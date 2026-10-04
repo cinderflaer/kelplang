@@ -1,0 +1,452 @@
+// Polyp v4 stage 1's tests: timers and animation, in plain Kelp with no display.
+//
+// Every scenario drives the soft backend on a `HeadlessPlatform` whose clock the test sets, so the
+// numbers are exact and the same on every backend. The Rust test pins the whole output.
+//
+//   easing    the integer easings at known points
+//   progress  a progress bar animating 0..1000 permille over 500 ms: exact values at exact ticks,
+//             damage only over the bar, and `wants_frames` true while it moves and false after
+//   restart   the same `Anim` on the next view keeps running, a different one restarts
+//   spacer    a spacer's height animation re-lays-out what is below it
+//   opacity   an opacity animation blends the widget's colours toward the background
+//   offset    an offset animation damages the old and the new place
+//   every     a repeating timer fires at the right ticks and skips the periods it missed
+//   after     a one-shot fires once, and re-arms when the state removes it and adds it again
+//   idle      a UI at rest has `wants_frames` false and presents nothing
+impl "deps/polyp/anim"
+impl "deps/polyp/core"
+impl "deps/polyp/soft/event"
+impl "deps/polyp/soft/fb"
+impl "deps/polyp/soft/headless_platform"
+impl "deps/polyp/soft/platform"
+impl "deps/polyp/soft_backend"
+impl "std/str"
+
+enum Msg {
+    Beat
+    Done
+    Arm
+}
+
+datac St(var beats: i32, var fired: i32, var armed: bool, var phase: i32)
+
+fun nop(s: mut St, m: Msg) {}
+
+fun update(s: mut St, m: Msg) {
+    when m {
+        Beat -> {
+            s.beats += 1
+        }
+        Done -> {
+            s.fired += 1
+            s.armed = false
+        }
+        Arm -> {
+            s.armed = true
+        }
+    }
+}
+
+fun no_subs(s: St).R: List<core.Sub<Msg>> {
+    var out: List<core.Sub<Msg>> = List.empty()
+    return out
+}
+
+fun beat_subs(s: St).R: List<core.Sub<Msg>> {
+    var out: List<core.Sub<Msg>> = List.empty()
+    out.push(core.every(100, Msg.Beat))
+    return out
+}
+
+// One shot while `armed`: the sub list changes shape when `Done` clears the flag.
+fun after_subs(s: St).R: List<core.Sub<Msg>> {
+    var out: List<core.Sub<Msg>> = List.empty()
+    if s.armed {
+        out.push(core.after(300, Msg.Done))
+    }
+    return out
+}
+
+fun tree_of<M>(t: move core.Tick<M>).R: core.Node<M> = when t {
+    Idle(x) -> x
+    Changed(x) -> x
+    Quit(x) -> x
+}
+
+fun rect4(x: i32, y: i32, w: i32, h: i32).R: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+
+// First frame: apply the whole tree, lay it out and paint it.
+fun boot<M>(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: &core.Node<M>) {
+    val f = p.framebuffer()
+    b.resize(f.width, f.height)
+    b.apply(core.create_all(tree))
+    b.layout()
+    val d = b.paint(f)
+    if d.count() > 0 {
+        p.present(f, d)
+    }
+}
+
+fun say(label: str, n: i64) {
+    val shown = str.from_i64(n)
+    val head = str.concat(label, " ")
+    val line = str.concat(head.as_str(), shown.as_str())
+    print(line.as_str())
+}
+
+fun say_bool(label: str, v: bool) {
+    if v {
+        say(label, 1)
+    } else {
+        say(label, 0)
+    }
+}
+
+fun say_rect(label: str, r: fb.Rect) {
+    print(label)
+    print(r.x)
+    print(r.y)
+    print(r.w)
+    print(r.h)
+}
+
+fun run_easing() {
+    print("easing")
+    print(anim.eased(anim.EASE_LINEAR, 250))
+    print(anim.eased(anim.EASE_IN, 500))
+    print(anim.eased(anim.EASE_OUT, 500))
+    print(anim.eased(anim.EASE_IN_OUT, 250))
+    print(anim.eased(anim.EASE_IN_OUT, 500))
+    print(anim.eased(anim.EASE_IN_OUT, 750))
+    print(anim.eased(anim.EASE_IN, 1000))
+    print(anim.eased(anim.EASE_OUT, 0))
+    val down = anim.lerp(100, -100, 200, anim.Easing.Linear)
+    print(anim.value_at(&down, 0))
+    print(anim.value_at(&down, 50000))
+    print(anim.value_at(&down, 100000))
+    print(anim.value_at(&down, 150000))
+    print(anim.value_at(&down, 200000))
+    print(anim.value_at(&down, 900000))
+    val instant = anim.lerp(3, 9, 0, anim.Easing.EaseIn)
+    print(anim.value_at(&instant, 0))
+}
+
+fun progress_view(s: St).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.text("top")
+        k.anim(anim.lerp(0, 1000, 500, anim.Easing.Linear))
+        k.progress(0)
+        k.align(core.Align.Start)
+        k.text("bot")
+    }
+}
+
+fun run_progress() {
+    print("progress")
+    var p = headless_platform.new(width = 200, height = 100)
+    var b = soft_backend.new()
+    var st = St(beats = 0, fired = 0, armed = false, phase = 0)
+    var tree = progress_view(st)
+    boot(b, p, &tree)
+    say("start", b.shown_progress(0).to_i64())
+    say_bool("wants", b.wants_frames())
+    // The bar's own rectangle: the damage of every frame must be exactly this one.
+    val steps: [u64; 6] = [0, 100, 150, 150, 100, 100]
+    var i: usize = 0
+    while i < 6 {
+        p.advance(steps.get(i))
+        val before = p.frame_count()
+        tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = progress_view, update = nop))
+        say("t_ms", p.now_ms().to_i64())
+        say("value", b.shown_progress(0).to_i64())
+        say("presented", (p.frame_count() - before).to_i64())
+        say("rects", p.presented_count().to_i64())
+        say_rect("rect", p.presented_at(0))
+        say_bool("wants", b.wants_frames())
+        i += 1
+    }
+    // At rest: no frame is presented.
+    p.advance(1000)
+    val before = p.frame_count()
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = progress_view, update = nop))
+    say("rest_presented", (p.frame_count() - before).to_i64())
+    say("rest_value", b.shown_progress(0).to_i64())
+    say_bool("rest_wants", b.wants_frames())
+}
+
+fun restart_view(s: St).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        if s.phase == 0 {
+            k.anim(anim.lerp(0, 1000, 400, anim.Easing.Linear))
+        } else if s.phase == 1 {
+            k.anim(anim.lerp(0, 1000, 400, anim.Easing.Linear))
+        } else {
+            k.anim(anim.lerp(1000, 0, 400, anim.Easing.Linear))
+        }
+        k.progress(0)
+        k.align(core.Align.Start)
+        val shown = str.from_i64(s.phase.to_i64())
+        k.text(shown.as_str())
+    }
+}
+
+fun restart_update(s: mut St, m: Msg) {
+    when m {
+        Beat -> {
+            s.phase += 1
+        }
+        Done -> {}
+        Arm -> {}
+    }
+}
+
+fun run_restart() {
+    print("restart")
+    var p = headless_platform.new(width = 200, height = 100)
+    var b = soft_backend.new()
+    var st = St(beats = 0, fired = 0, armed = false, phase = 0)
+    var tree = restart_view(st)
+    boot(b, p, &tree)
+    p.advance(200)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = restart_view, update = restart_update))
+    say("half", b.shown_progress(0).to_i64())
+    // Phase 1: the view changes (the text) but the animation value is the same: it keeps running.
+    st.phase = 1
+    val t2 = restart_view(st)
+    soft_backend.apply_diff(backend = b, old = &tree, new = &t2)
+    tree = t2
+    p.advance(100)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = restart_view, update = restart_update))
+    say("kept", b.shown_progress(0).to_i64())
+    // Phase 2: a different animation restarts at the current clock (300 ms), from its own start.
+    st.phase = 2
+    val t3 = restart_view(st)
+    soft_backend.apply_diff(backend = b, old = &tree, new = &t3)
+    tree = t3
+    p.advance(100)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = restart_view, update = restart_update))
+    say("restarted", b.shown_progress(0).to_i64())
+    p.advance(300)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = restart_view, update = restart_update))
+    say("end", b.shown_progress(0).to_i64())
+    say_bool("wants", b.wants_frames())
+}
+
+fun spacer_view(s: St).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.button("a", Msg.Beat)
+        k.anim(anim.lerp(0, 40, 200, anim.Easing.Linear))
+        k.spacer(0)
+        k.align(core.Align.Start)
+        k.button("b", Msg.Done)
+    }
+}
+
+fun run_spacer() {
+    print("spacer")
+    var p = headless_platform.new(width = 200, height = 200)
+    var b = soft_backend.new()
+    var st = St(beats = 0, fired = 0, armed = false, phase = 0)
+    var tree = spacer_view(st)
+    boot(b, p, &tree)
+    val steps: [u64; 5] = [0, 50, 50, 100, 100]
+    var i: usize = 0
+    while i < 5 {
+        p.advance(steps.get(i))
+        tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = spacer_view, update = nop))
+        val r = b.rect_of_slot(1)
+        when r {
+            Some(rr) -> say("b_y", rr.y.to_i64())
+            None -> say("b_y", -1)
+        }
+        say_bool("wants", b.wants_frames())
+        i += 1
+    }
+}
+
+fun opacity_view(s: St).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.opacity_anim(anim.lerp(1000, 0, 100, anim.Easing.Linear))
+        k.button("aa", Msg.Beat)
+    }
+}
+
+fun run_opacity() {
+    print("opacity")
+    var p = headless_platform.new(width = 100, height = 60)
+    var b = soft_backend.new()
+    var st = St(beats = 0, fired = 0, armed = false, phase = 0)
+    var tree = opacity_view(st)
+    boot(b, p, &tree)
+    // A pixel inside the button's fill, away from the glyphs and the border.
+    val rr = b.rect_of_slot(0)
+    var px = 0
+    var py = 0
+    when rr {
+        Some(r) -> {
+            px = r.x + 3
+            py = r.y + 3
+        }
+        None -> {}
+    }
+    say("full", p.pixel(px, py).to_i64())
+    p.advance(50)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = opacity_view, update = nop))
+    say("half", p.pixel(px, py).to_i64())
+    p.advance(50)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = opacity_view, update = nop))
+    say("gone", p.pixel(px, py).to_i64())
+    say_bool("wants", b.wants_frames())
+}
+
+fun offset_view(s: St).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        k.offset_x_anim(anim.lerp(0, 20, 100, anim.Easing.Linear))
+        k.text("slide")
+    }
+}
+
+fun run_offset() {
+    print("offset")
+    var p = headless_platform.new(width = 100, height = 40)
+    var b = soft_backend.new()
+    var st = St(beats = 0, fired = 0, armed = false, phase = 0)
+    var tree = offset_view(st)
+    boot(b, p, &tree)
+    p.advance(50)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = offset_view, update = nop))
+    say("rects", p.presented_count().to_i64())
+    say_rect("first", p.presented_at(0))
+    p.advance(50)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = offset_view, update = nop))
+    say_rect("second", p.presented_at(0))
+    say_bool("wants", b.wants_frames())
+}
+
+fun drive_timed<S>(
+    b: mut soft_backend.SoftBackend,
+    p: mut headless_platform.HeadlessPlatform,
+    tree: move core.Node<Msg>,
+    state: mut S,
+    view: fun (S).R: core.Node<Msg>,
+    upd: fun (mut S, Msg),
+    subs: fun (S).R: List<core.Sub<Msg>>,
+    timers: mut core.Timers,
+    ms: u64,
+).R: core.Node<Msg> {
+    p.advance(ms)
+    return tree_of(soft_backend.frame_timed(backend = b, platform = p, tree = tree, state = state, view = view, update = upd, subs = subs, timers = timers))
+}
+
+fun beat_view(s: St).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        val shown = str.from_i64(s.beats.to_i64())
+        k.text(shown.as_str())
+    }
+}
+
+fun run_every() {
+    print("every")
+    var p = headless_platform.new(width = 100, height = 40)
+    var b = soft_backend.new()
+    var st = St(beats = 0, fired = 0, armed = false, phase = 0)
+    var timers = core.new_timers()
+    var tree = beat_view(st)
+    boot(b, p, &tree)
+    // Frame 0 registers the timer at clock 0: due at 100 ms.
+    tree = drive_timed(b, p, tree, st, beat_view, update, beat_subs, timers, 0)
+    say("armed_wake_us", core.next_wake_us(&timers))
+    val steps: [u64; 5] = [50, 60, 350, 40, 1000]
+    var i: usize = 0
+    while i < 5 {
+        tree = drive_timed(b, p, tree, st, beat_view, update, beat_subs, timers, steps.get(i))
+        say("t_ms", p.now_ms().to_i64())
+        say("beats", st.beats.to_i64())
+        say("wake_us", core.next_wake_us(&timers))
+        i += 1
+    }
+    say("fired", core.timers_fired(&timers).to_i64())
+    // A timer between frames: a frame at the same clock fires nothing more.
+    tree = drive_timed(b, p, tree, st, beat_view, update, beat_subs, timers, 0)
+    say("beats_again", st.beats.to_i64())
+    say_bool("wants", b.wants_frames())
+    // The state stops asking for it: the table empties and nothing is armed.
+    tree = drive_timed(b, p, tree, st, beat_view, update, no_subs, timers, 500)
+    say("stopped_wake_us", core.next_wake_us(&timers))
+    say("stopped_beats", st.beats.to_i64())
+}
+
+fun after_view(s: St).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(0)
+        k.align(core.Align.Start)
+        val shown = str.from_i64(s.fired.to_i64())
+        k.text(shown.as_str())
+    }
+}
+
+fun run_after() {
+    print("after")
+    var p = headless_platform.new(width = 100, height = 40)
+    var b = soft_backend.new()
+    var st = St(beats = 0, fired = 0, armed = true, phase = 0)
+    var timers = core.new_timers()
+    var tree = after_view(st)
+    boot(b, p, &tree)
+    tree = drive_timed(b, p, tree, st, after_view, update, after_subs, timers, 0)
+    say("wake_us", core.next_wake_us(&timers))
+    tree = drive_timed(b, p, tree, st, after_view, update, after_subs, timers, 299)
+    say("at_299", st.fired.to_i64())
+    tree = drive_timed(b, p, tree, st, after_view, update, after_subs, timers, 1)
+    say("at_300", st.fired.to_i64())
+    tree = drive_timed(b, p, tree, st, after_view, update, after_subs, timers, 5000)
+    say("much_later", st.fired.to_i64())
+    say("wake_us_after", core.next_wake_us(&timers))
+    // Arm again: the list changed shape in between, so it is a new timer and fires 300 ms later.
+    update(st, Msg.Arm)
+    tree = drive_timed(b, p, tree, st, after_view, update, after_subs, timers, 0)
+    tree = drive_timed(b, p, tree, st, after_view, update, after_subs, timers, 299)
+    say("rearm_299", st.fired.to_i64())
+    tree = drive_timed(b, p, tree, st, after_view, update, after_subs, timers, 1)
+    say("rearm_300", st.fired.to_i64())
+}
+
+fun run_idle() {
+    print("idle")
+    var p = headless_platform.new(width = 100, height = 40)
+    var b = soft_backend.new()
+    var st = St(beats = 0, fired = 0, armed = false, phase = 0)
+    var tree = beat_view(st)
+    boot(b, p, &tree)
+    say_bool("wants", b.wants_frames())
+    val before = p.frame_count()
+    p.advance(250)
+    tree = tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = beat_view, update = nop))
+    say("presented", (p.frame_count() - before).to_i64())
+    say("clock_us", b.clock().to_i64())
+    say_bool("wants_after", b.wants_frames())
+}
+
+fun main() {
+    run_easing()
+    run_progress()
+    run_restart()
+    run_spacer()
+    run_opacity()
+    run_offset()
+    run_every()
+    run_after()
+    run_idle()
+}

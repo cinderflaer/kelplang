@@ -1,0 +1,27 @@
+name = "polyp-v4-riscv64"
+
+# Polyp v4: the same core, software raster, soft backend and todo program as the hosted
+# run, built with no libc for QEMU's riscv64 `virt` machine and drawing into a `static mut`
+# framebuffer. `[target]` is stage 4's freestanding section (`plan/freestanding.md`); `alloc` and
+# `dealloc` name the bump arena in `src/main.kp`, so `List`, `String` and `Box` allocate through
+# the project and the image links no libc.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+
+# The audit list: the UART driver, the framebuffer platform (it takes a pointer to the static
+# surface) and the two raster modules that write pixels. `core`, `soft_backend`, `font`, `damage`,
+# `event`, `platform`, the scenario and the application contain no `unsafe`.
+[unsafe]
+modules = ["main", "uart", "fb_platform", "deps/polyp/soft/fb", "deps/polyp/soft/draw"]
+
+# The NS16550's register window on this machine, held by the entry module and delegated to the one
+# module that names the device (`plan/device-caps.md`), plus the fw_cfg window the ramfb
+# registration writes through. The framebuffer is a static, not MMIO, so it needs no grant.
+[caps]
+mmio = ["0x10000000+0x100"]

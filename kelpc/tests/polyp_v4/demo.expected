@@ -1,0 +1,16 @@
+step 0 t 0 checksum 0x689dbfc99794d72a dirty 1 wants 0 ticks 0
+step 1 t 0 checksum 0x689dbfc99794d72a dirty 0 wants 0 ticks 0
+step 2 t 40 checksum 0x689dbfc99794d72a dirty 1 wants 1 ticks 0
+step 3 t 100 checksum 0xc1e3057d51445700 dirty 2 wants 1 ticks 1
+step 4 t 200 checksum 0x0ecb5cd16e126154 dirty 3 wants 1 ticks 2
+step 5 t 300 checksum 0xfe13fceca8fe2dec dirty 3 wants 1 ticks 3
+step 6 t 550 checksum 0x3a11ed5c37b90308 dirty 3 wants 0 ticks 4
+step 7 t 700 checksum 0xa8b3ce97164965e2 dirty 1 wants 0 ticks 5
+step 8 t 1200 checksum 0xbec2f5ecc79f13ba dirty 1 wants 0 ticks 6
+step 9 t 2200 checksum 0xbcf0ae9ccf27da62 dirty 1 wants 0 ticks 7
+-- demo --
+7
+2
+started
+no toast
+end

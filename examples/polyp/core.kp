@@ -7,6 +7,7 @@
 //
 // The split is plan/polyp-v3.md. v2's matching rules, keys, builder and counters are unchanged;
 // the GTK calls moved to `gtk_backend.kp` and `lib.kp` is the facade the examples import.
+impl "deps/polyp/anim"
 impl "std/atomic"
 impl "std/option"
 impl "std/str"
@@ -23,6 +24,10 @@ pub const KIND_CHECKBOX: i32 = 6
 pub const KIND_PROGRESS: i32 = 7
 pub const KIND_SEPARATOR: i32 = 8
 pub const KIND_SCROLLED: i32 = 9
+
+// The two timer kinds a `Sub` has (see `Sub`, below).
+const SUB_EVERY: i32 = 0
+const SUB_AFTER: i32 = 1
 
 // The alignment codes `props.align` carries, in the core's own order: a backend maps them to its
 // display's constants.
@@ -76,11 +81,22 @@ pub enum Key {
 
 // The layout and style options a child carries. `margin < 0` and `align < 0` mean "unset": the
 // widget keeps whatever its platform's default is, and a patch does not touch that property.
+//
+// v4 adds the visual options an animation drives: `opacity` (permille, 1000 = opaque) and an
+// `offset_x`/`offset_y` paint translation, each with an optional `Anim` (`anim.none()` = static),
+// and `anim`, the animation of the widget's own value (a `Progress`'s permille, a `Spacer`'s height).
 pub datac Opts(
     var margin: i32,
     var expand: bool,
     var align: i32,
     var classes: List<String>,
+    var opacity: i32,
+    var offset_x: i32,
+    var offset_y: i32,
+    var anim_main: anim.Anim,
+    var anim_opacity: anim.Anim,
+    var anim_ox: anim.Anim,
+    var anim_oy: anim.Anim,
 )
 
 // The tree `view` returns. `M` is the application's `Msg`; the core never inspects one until a
@@ -121,7 +137,19 @@ pub datac Children<M>(
     var pending_opts: Box<Opts>,
 )
 
-fun default_opts().R: Opts = Opts(margin = -1, expand = false, align = -1, classes = List.empty())
+fun default_opts().R: Opts = Opts(
+    margin = -1,
+    expand = false,
+    align = -1,
+    classes = List.empty(),
+    opacity = 1000,
+    offset_x = 0,
+    offset_y = 0,
+    anim_main = anim.none(),
+    anim_opacity = anim.none(),
+    anim_ox = anim.none(),
+    anim_oy = anim.none(),
+)
 fun new_children<M>().R: Children<M> = Children<M>(
     items = List.empty(),
     spacing = 6,
@@ -373,6 +401,48 @@ fun mut Children<M>.class(name: str) {
     pending_opts.set(o)
 }
 
+// Animation and paint options (v4 stage 1). Like the options above they apply to the next child
+// pushed. `anim` animates the child's own value: a `Progress`'s permille or a `Spacer`'s height
+// (the plain value the node carries is what it shows when it has no animation, and what it shows
+// to a backend that ignores animations). `opacity` is a permille; `offset` translates the widget
+// and everything inside it when it is painted, without changing the layout.
+fun mut Children<M>.anim(a: move anim.Anim) {
+    var o = pending_opts.take()
+    o.anim_main = a
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.opacity(permille: i32) {
+    var o = pending_opts.take()
+    o.opacity = permille
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.opacity_anim(a: move anim.Anim) {
+    var o = pending_opts.take()
+    o.anim_opacity = a
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.offset(x: i32, y: i32) {
+    var o = pending_opts.take()
+    o.offset_x = x
+    o.offset_y = y
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.offset_x_anim(a: move anim.Anim) {
+    var o = pending_opts.take()
+    o.anim_ox = a
+    pending_opts.set(o)
+}
+
+fun mut Children<M>.offset_y_anim(a: move anim.Anim) {
+    var o = pending_opts.take()
+    o.anim_oy = a
+    pending_opts.set(o)
+}
+
 // Block-taking constructors, so app code reads
 // `polyp.column { k -> k.text(s.title) k.button("+1", Msg.Inc) }`. The block's captures are shared
 // borrows released with this call, which is what lets it read the view's borrowed state.
@@ -432,6 +502,13 @@ pub datac Props(
     var expand: bool,
     var align: i32,
     var classes: List<String>,
+    var opacity: i32,
+    var offset_x: i32,
+    var offset_y: i32,
+    var anim_main: anim.Anim,
+    var anim_opacity: anim.Anim,
+    var anim_ox: anim.Anim,
+    var anim_oy: anim.Anim,
 )
 
 // What one render decided. `diff` emits only these four, and only when something actually changed:
@@ -571,6 +648,13 @@ pub fun props_default().R: Props = Props(
     expand = false,
     align = -1,
     classes = List.empty(),
+    opacity = 1000,
+    offset_x = 0,
+    offset_y = 0,
+    anim_main = anim.none(),
+    anim_opacity = anim.none(),
+    anim_ox = anim.none(),
+    anim_oy = anim.none(),
 )
 
 pub fun props_of<M>(node: &Node<M>).R: Props {
@@ -615,6 +699,13 @@ fun apply_opts(p: mut Props, o: &Opts) {
     p.margin = o.margin
     p.expand = o.expand
     p.align = o.align
+    p.opacity = o.opacity
+    p.offset_x = o.offset_x
+    p.offset_y = o.offset_y
+    p.anim_main = anim.copy(&o.anim_main)
+    p.anim_opacity = anim.copy(&o.anim_opacity)
+    p.anim_ox = anim.copy(&o.anim_ox)
+    p.anim_oy = anim.copy(&o.anim_oy)
     var i: usize = 0
     while i < o.classes.len() {
         p.classes.push(String.from_str(o.classes.get(i).as_str()))
@@ -630,6 +721,15 @@ pub fun child_props<M>(c: &Child<M>).R: Props {
 
 fun opts_eq(a: &Opts, b: &Opts).R: bool {
     if a.margin != b.margin || a.expand != b.expand || a.align != b.align {
+        return false
+    }
+    if a.opacity != b.opacity || a.offset_x != b.offset_x || a.offset_y != b.offset_y {
+        return false
+    }
+    if !anim.same(&a.anim_main, &b.anim_main) || !anim.same(&a.anim_opacity, &b.anim_opacity) {
+        return false
+    }
+    if !anim.same(&a.anim_ox, &b.anim_ox) || !anim.same(&a.anim_oy, &b.anim_oy) {
         return false
     }
     if a.classes.len() != b.classes.len() {
@@ -1045,6 +1145,178 @@ pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, st
                     None -> {}
                 }
             }
+        }
+    }
+    if quitting {
+        return Tick.Quit(tree = current)
+    }
+    if changed {
+        return Tick.Changed(tree = current)
+    }
+    return Tick.Idle(tree = current)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Timers (Polyp v4 stage 1). An application's `subscriptions(state)` function returns the timers
+// that should be running for that state, Elm's shape: the loop calls it after every turn, so a
+// timer that is no longer in the list stops and one that appears starts. A `Sub` carries its message
+// by value and the loop moves it out when the timer fires, so `M` needs no `clone`: because the list
+// is rebuilt from the state each time, every firing gets a fresh message.
+//
+// A timer's identity is its position in the list, its kind and its period. The same position,
+// kind and period on the next turn is the same timer (its schedule is kept); anything else is a new
+// timer that starts counting from the clock of the turn it first appears in. A `Sub.After` that
+// has fired stays fired for as long as it is still in the list at that position, so it does not
+// fire twice; it re-arms when the list changes shape (the usual case: `update` clears the state
+// that put it there).
+//
+// The clock is the platform's, in microseconds, delivered as `Tick` events (`soft/event.kp`); a
+// platform that never delivers one has a clock stuck at 0 and no timer ever fires.
+pub enum Sub<M> {
+    Every(val ms: i32, val msg: M)
+    After(val ms: i32, val msg: M)
+}
+
+// A repeating timer: `msg` is delivered when the period has elapsed, at most once per turn of the
+// loop, and a turn that finds the timer several periods late fires it once and skips the missed
+// periods (the next firing is the first period boundary after now).
+pub fun every<M>(ms: i32, msg: move M).R: Sub<M> = Sub.Every(ms = ms, msg = msg)
+
+// A one-shot timer: `msg` is delivered once, `ms` milliseconds after the timer first appears.
+pub fun after<M>(ms: i32, msg: move M).R: Sub<M> = Sub.After(ms = ms, msg = msg)
+
+pub datac TimerSlot(var kind: i32, var ms: i32, var due_us: u64, var done: bool)
+
+// The loop's timer table: one slot per entry of the last `subscriptions` list.
+pub datac Timers(var slots: List<TimerSlot>, var fired: i32)
+
+pub fun new_timers().R: Timers = Timers(slots = List.empty(), fired = 0)
+
+// How many timer firings the table has delivered so far, for a test.
+pub fun timers_fired(t: &Timers).R: i32 = t.fired
+
+// The clock value, in microseconds, at which the earliest armed timer is due, or -1 when no timer is
+// armed. An OS that has gone to sleep wakes at this time (or on input) to run the next turn.
+pub fun next_wake_us(t: &Timers).R: i64 {
+    var best: i64 = -1
+    var i: usize = 0
+    while i < t.slots.len() {
+        val sl = t.slots.get(i)
+        if !sl.done {
+            val due = sl.due_us.to_i64()
+            if best < 0 || due < best {
+                best = due
+            }
+        }
+        i += 1
+    }
+    return best
+}
+
+// Reconcile slot `i` with the sub the state now asks for, and say whether it fires at `now`.
+fun mut Timers.step(i: usize, kind: i32, ms: i32, now: u64).R: bool {
+    var period_ms = ms
+    if period_ms < 1 {
+        period_ms = 1
+    }
+    val period: u64 = period_ms.to_u64() * 1000
+    if i >= slots.len() {
+        slots.push(TimerSlot(kind = kind, ms = period_ms, due_us = now + period, done = false))
+        return false
+    }
+    val have_kind = slots.get(i).kind
+    val have_ms = slots.get(i).ms
+    val due = slots.get(i).due_us
+    val done_already = slots.get(i).done
+    if have_kind != kind || have_ms != period_ms {
+        slots.set(i, TimerSlot(kind = kind, ms = period_ms, due_us = now + period, done = false))
+        return false
+    }
+    if done_already || now < due {
+        return false
+    }
+    if kind == SUB_EVERY {
+        // Catch up by skipping: the next due time is the first boundary strictly after `now`.
+        val late = now - due
+        val skipped = late / period + 1
+        slots.set(i, TimerSlot(kind = kind, ms = period_ms, due_us = due + skipped * period, done = false))
+    } else {
+        slots.set(i, TimerSlot(kind = kind, ms = period_ms, due_us = due, done = true))
+    }
+    fired += 1
+    return true
+}
+
+// Take the messages of the timers that are due at `now`, in list order, and leave the table
+// matching the list. A turn delivers a timer's message at most once, however late the turn is.
+pub fun collect_due<M>(timers: mut Timers, subs: move List<Sub<M>>, now: u64).R: List<M> {
+    var out: List<M> = List.empty()
+    var rest = subs
+    var i: usize = 0
+    while !rest.is_empty() {
+        val s = rest.remove(0)
+        when s {
+            Every(ms, msg) -> {
+                if timers.step(i, SUB_EVERY, ms, now) {
+                    out.push(msg)
+                }
+            }
+            After(ms, msg) -> {
+                if timers.step(i, SUB_AFTER, ms, now) {
+                    out.push(msg)
+                }
+            }
+        }
+        i += 1
+    }
+    while timers.slots.len() > i {
+        val last = timers.slots.len() - 1
+        val dropped = timers.slots.remove(last)
+    }
+    return out
+}
+
+// `frame_step_into` with timers. After the queue is drained, `subs(state)` is asked for the timers
+// the state now wants, the table is reconciled with it, and every timer that is due at `now_us`
+// delivers its message to `update`; the view is then rebuilt and diffed once for all of them.
+pub fun frame_step_full<B: Backend, S, M>(
+    backend: mut B,
+    tree: move Node<M>,
+    state: mut S,
+    view: fun (S).R: Node<M>,
+    update: fun (mut S, M),
+    subs: fun (S).R: List<Sub<M>>,
+    scratch: mut List<Patch>,
+    timers: mut Timers,
+    now_us: u64,
+).R: Tick<M> {
+    val first = frame_step_into(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch)
+    var changed = false
+    var quitting = false
+    var current = when first {
+        Idle(t) -> t
+        Changed(t) -> {
+            changed = true
+            t
+        }
+        Quit(t) -> {
+            quitting = true
+            t
+        }
+    }
+    if !quitting {
+        var due = collect_due(timers, subs(state), now_us)
+        if !due.is_empty() {
+            while !due.is_empty() {
+                update(state, due.remove(0))
+            }
+            val focused = backend.focus()
+            val next = view(state)
+            diff_into(current, next, scratch)
+            backend.apply(scratch)
+            current = next
+            snapshot(backend, focused)
+            changed = true
         }
     }
     if quitting {

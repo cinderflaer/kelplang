@@ -18590,6 +18590,118 @@ fn polyp_bench_prints_a_bounded_table() {
     }
 }
 
+/// Build one Polyp v4 example project, run it bounded and return its stdout. Every v4 test below is
+/// a project in `examples/` that prints a deterministic transcript; the file under
+/// `tests/polyp_v4/` is the pinned copy, so a changed number is a visible diff.
+fn polyp_v4_transcript(project: &str, tag: &str, envs: &[(&str, &str)]) -> String {
+    let bin = out_path(tag);
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture(&format!("../examples/{project}")))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected {project} to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = run_bounded(&bin, envs);
+    assert!(
+        run.status.success(),
+        "expected {project} to exit successfully, got:\n{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    String::from_utf8_lossy(&run.stdout).into_owned()
+}
+
+/// Polyp v4 stage 1: timers and animation on the headless soft backend, driven by the test clock.
+///
+/// `examples/polyp-anim-test` pins the integer easings, a progress bar animating 0..1000 permille over
+/// 500 ms (exact values at exact ticks, damage only over the bar, `wants_frames` true while it moves
+/// and false after), a restart on a changed `Anim`, a spacer animation that re-lays-out what is below
+/// it, opacity and offset animations, a repeating timer that skips the periods it missed, a one-shot
+/// that fires once and re-arms when the state asks again, and a UI at rest.
+#[test]
+fn polyp_v4_timers_and_animation_are_exact_on_the_test_clock() {
+    let got = polyp_v4_transcript("polyp-anim-test", "polyp_anim_test", &[]);
+    assert_eq!(got, include_str!("polyp_v4/anim.expected"), "unexpected output from the animation test");
+}
+
+/// The lines of one Polyp v4 demo run: from the first `step ` line to the first `end` line, without
+/// the hosted entry's `-- demo --` separator. Used on the hosted transcript and on a kernel's serial
+/// output alike, so the two are sliced identically and only the run itself can differ.
+fn v4_run_slice(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with("step "))
+        .unwrap_or_else(|| panic!("no step line in the run's output:\n{text}"));
+    let end = lines
+        .iter()
+        .position(|line| *line == "end")
+        .unwrap_or_else(|| panic!("no `end` line in the run's output:\n{text}"));
+    lines[start..=end]
+        .iter()
+        .filter(|line| **line != "-- demo --")
+        .map(|line| line.to_string())
+        .collect()
+}
+
+/// Polyp v4: the demo program on the riscv64 kernel prints the hosted run's own transcript.
+///
+/// `examples/polyp-v4-riscv64` is the same `app.kp`/`scenario.kp` as `examples/polyp-v4-demo`, with a
+/// platform clock the kernel advances and a `Tick` event it queues for it: every step line (clock,
+/// framebuffer checksum, rectangles presented, `wants_frames`, timer count) and the report must equal
+/// the hosted line. Skipped under `dev.nix`; run it in `dev-kernel.nix`.
+#[test]
+fn polyp_v4_riscv64_prints_the_hosted_transcript() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        eprintln!("skipping the riscv64 Polyp v4 kernel: 'ld.lld' or 'qemu-system-riscv64' is not on PATH");
+        return;
+    }
+    let expected = v4_run_slice(&polyp_v4_transcript("polyp-v4-demo", "polyp_v4_demo_hosted_rv", &[]));
+    let name = "polyp_v4_riscv64";
+    let captured = boot_and_capture(&RISCV64_QEMU, name, &fixture("../examples/polyp-v4-riscv64"), &|got| {
+        got.lines().any(|line| line == "end")
+    });
+    let undefined = undefined_symbols(&out_path(name));
+    assert!(
+        undefined.trim().is_empty(),
+        "the riscv64 Polyp v4 image names undefined symbols:\n{undefined}"
+    );
+    assert_eq!(v4_run_slice(&captured), expected, "the riscv64 kernel differs from the hosted run; captured:\n{captured}");
+}
+
+/// The same on the x86-64 kernel (`examples/polyp-v4-x86_64`).
+#[test]
+fn polyp_v4_x86_64_prints_the_hosted_transcript() {
+    if !have_ld_lld() || !have_qemu(&X86_64_QEMU) {
+        eprintln!("skipping the x86-64 Polyp v4 kernel: 'ld.lld' or 'qemu-system-x86_64' is not on PATH");
+        return;
+    }
+    let expected = v4_run_slice(&polyp_v4_transcript("polyp-v4-demo", "polyp_v4_demo_hosted_x86", &[]));
+    let name = "polyp_v4_x86_64";
+    let captured = boot_and_capture(&X86_64_QEMU, name, &fixture("../examples/polyp-v4-x86_64"), &|got| {
+        got.lines().any(|line| line == "end")
+    });
+    let undefined = undefined_symbols(&out_path(name));
+    assert!(
+        undefined.trim().is_empty(),
+        "the x86-64 Polyp v4 image names undefined symbols:\n{undefined}"
+    );
+    assert_eq!(v4_run_slice(&captured), expected, "the x86-64 kernel differs from the hosted run; captured:\n{captured}");
+}
+
+/// Polyp v4: the hosted demo transcript is pinned, so a changed number is a visible diff.
+#[test]
+fn polyp_v4_demo_prints_its_pinned_transcript() {
+    let got = polyp_v4_transcript("polyp-v4-demo", "polyp_v4_demo", &[]);
+    assert_eq!(got, include_str!("polyp_v4/demo.expected"), "unexpected output from the v4 demo");
+}
+
 #[test]
 fn a_while_true_loop_that_breaks_continues_after_the_loop() {
     assert_compiles_and_runs("tests/fixtures/while_true_break.kp", "4\n5\n30\nxxx\n");

@@ -1,6 +1,6 @@
 // The input vocabulary a platform feeds the soft backend (Polyp v3 stage 3).
 //
-// A platform decodes its own windowing system into exactly these six events; everything above
+// A platform decodes its own windowing system into exactly these seven events; everything above
 // this file is display-neutral. No pointer is dereferenced and nothing allocates, so the module
 // is off a consumer's `[unsafe]` list.
 //
@@ -41,6 +41,11 @@ pub enum Event {
     Scroll(val dx: i32, val dy: i32)
     Key(val code: i32, val mods: i32)
     Char(val codepoint: i32)
+    // The platform's clock moved (Polyp v4 stage 1): `now_us` is its monotonic clock in
+    // microseconds. A platform sends one when its clock has advanced since the last one it sent,
+    // before the frame's input events, and at most one per frame. Timers and animations read the
+    // backend's copy of this clock; a platform that never sends a `Tick` has a clock stuck at 0.
+    Tick(val now_us: u64)
 }
 
 // A copy, for a caller that holds a list of events and hands one out by value.
@@ -51,4 +56,5 @@ pub fun clone(e: &Event).R: Event = when e {
     Scroll(dx, dy) -> Event.Scroll(dx = dx, dy = dy)
     Key(code, mods) -> Event.Key(code = code, mods = mods)
     Char(codepoint) -> Event.Char(codepoint = codepoint)
+    Tick(now_us) -> Event.Tick(now_us = now_us)
 }

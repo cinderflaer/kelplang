@@ -1,0 +1,116 @@
+// The Polyp v4 demo program, with no display: a model, a view, an update and the timers it wants
+// (Polyp v4 stage 1; later stages add to it). `src/main.kp` runs it on the hosted headless platform and
+// prints the transcript, and the two `examples/polyp-v4-*` kernels run the very same file on bare metal,
+// so this module may not print, hold a `pd`, or touch a libc: it reports through a `fun (str)`.
+impl "deps/polyp/anim"
+impl "deps/polyp/core"
+impl "std/str"
+
+pub datac Model(
+    var ticks: i32,
+    var started: bool,
+    var toast: bool,
+    var clicks: i32,
+)
+
+pub enum Msg {
+    Beat
+    Start
+    Toast
+    HideToast
+}
+
+pub fun initial().R: Model = Model(ticks = 0, started = false, toast = false, clicks = 0)
+
+// The view. The progress bar carries its animation only once `Start` was pressed, so the first thing
+// the backend sees of it is the moment the model changed. `toast` is a line that appears for 300 ms.
+pub fun view(m: Model).R: core.Node<Msg> {
+    return core.column { k ->
+        k.spacing(6)
+        k.margin(8)
+        k.text_styled("polyp v4", 2, true)
+        k.row { r ->
+            r.spacing(8)
+            r.button("start", Msg.Start)
+            r.button("toast", Msg.Toast)
+            val shown = str.from_i64(m.ticks.to_i64())
+            val label = str.concat("ticks ", shown.as_str())
+            r.text(label.as_str())
+        }
+        if m.started {
+            k.anim(anim.lerp(0, 1000, 500, anim.Easing.EaseInOut))
+        }
+        k.progress(0)
+        if m.toast {
+            k.opacity_anim(anim.lerp(1000, 200, 300, anim.Easing.Linear))
+            k.text("saved")
+        }
+    }
+}
+
+pub fun update(m: mut Model, msg: Msg) {
+    when msg {
+        Beat -> {
+            m.ticks += 1
+        }
+        Start -> {
+            m.started = true
+            m.clicks += 1
+        }
+        Toast -> {
+            m.toast = true
+            m.clicks += 1
+        }
+        HideToast -> {
+            m.toast = false
+        }
+    }
+}
+
+// `subscriptions(state)`: the beat runs for as long as the program does; the toast's timeout exists
+// only while the toast is up, so it stops itself when `HideToast` clears the flag.
+pub fun subscriptions(m: Model).R: List<core.Sub<Msg>> {
+    var out: List<core.Sub<Msg>> = List.empty()
+    out.push(core.every(100, Msg.Beat))
+    if m.toast {
+        out.push(core.after(300, Msg.HideToast))
+    }
+    return out
+}
+
+// One scripted turn: advance the clock by `ms`, then (when `post >= 0`) press the interactive widget
+// with that id. The ids are creation order: `start` is 0 and `toast` is 1.
+pub datac Step(val ms: u64, val post: i32)
+
+pub fun script().R: List<Step> {
+    var s: List<Step> = List.empty()
+    s.push(Step(ms = 0, post = -1))
+    s.push(Step(ms = 40, post = 0))
+    s.push(Step(ms = 60, post = -1))
+    s.push(Step(ms = 100, post = 1))
+    s.push(Step(ms = 100, post = -1))
+    s.push(Step(ms = 250, post = -1))
+    s.push(Step(ms = 150, post = -1))
+    s.push(Step(ms = 500, post = -1))
+    s.push(Step(ms = 1000, post = -1))
+    return s
+}
+
+// The final state, one line each, through whatever sink the run supplied.
+pub fun report(m: Model, out: fun (str)) {
+    val a = str.from_i64(m.ticks.to_i64())
+    out(a.as_str())
+    val b = str.from_i64(m.clicks.to_i64())
+    out(b.as_str())
+    if m.started {
+        out("started")
+    } else {
+        out("idle")
+    }
+    if m.toast {
+        out("toast")
+    } else {
+        out("no toast")
+    }
+    out("end")
+}

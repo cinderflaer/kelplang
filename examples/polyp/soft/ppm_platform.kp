@@ -36,6 +36,10 @@ fun mut PpmPlatform.advance(ms: u64) {
     inner.advance(ms)
 }
 
+fun mut PpmPlatform.advance_us(us: u64) {
+    inner.advance_us(us)
+}
+
 fun PpmPlatform.checksum().R: u64 = inner.checksum()
 
 fun PpmPlatform.frame_count().R: i32 = inner.frame_count()
