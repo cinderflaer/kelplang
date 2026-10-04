@@ -512,6 +512,8 @@ exactly as two `val` declarations of one name in one block are.
 
 ## 5. Operators and expressions
 
+**Evaluation order.** Kelp evaluates strictly left to right: the arguments of a call (after its receiver), the interpolations of a string template, the two operands of a binary operator (`&&` and `||` short-circuit as usual), the fields of a `datac`/`enum` constructor and the elements of an array literal. This holds on both backends; the C backend binds order-dependent operands to temporaries because C itself leaves the order of call arguments and operands unspecified. `tests/fixtures/eval_order_*.kp` pin it.
+
 Precedence, loosest first:
 
 | Level | Operators | Associativity |

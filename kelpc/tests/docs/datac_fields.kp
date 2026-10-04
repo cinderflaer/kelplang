@@ -1,0 +1,16 @@
+//! Field documentation: a `///` above a `datac` documents the datac only.
+
+/// A point on the plane.
+pub datac Point(val x: i32, val y: i32)
+
+/// A segment.
+pub datac Segment(
+    /// Where it starts.
+    val from: i32,
+    val to: i32, val len: i32
+)
+
+/// A pair that starts on the opening line.
+pub datac Pair(val a: i32,
+    /// The second.
+    val b: i32)

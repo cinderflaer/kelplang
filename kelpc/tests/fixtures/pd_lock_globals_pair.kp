@@ -1,0 +1,20 @@
+// Two lock-typed `pd val` globals, a Mutex and an RwLock, then two Mutexes,
+// used on the main thread only: the module initialiser must close every
+// global's allocation block before the next global's code.
+impl "std/thread"
+impl "std/result"
+
+pd val hits = Mutex.new(0)
+pd val other = Mutex.new(1)
+pd val gate = RwLock.new(2)
+pd val bell = Condvar.new()
+
+fun main() {
+    hits.lock { v -> *v = *v + 10 }
+    other.lock { v -> *v = *v + 20 }
+    gate.write { v -> *v = *v + 30 }
+    bell.notify_one()
+    print(hits.lock { v -> *v })
+    print(other.lock { v -> *v })
+    print(gate.read { v -> *v })
+}

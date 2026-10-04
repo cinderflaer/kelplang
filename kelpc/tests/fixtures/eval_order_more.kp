@@ -1,0 +1,47 @@
+pd var log = 0
+
+enum Pair {
+    Two(val a: i32, val b: i32)
+}
+
+datac Box2(var a: i32, var b: i32)
+
+fun t(n: i32).R: i32 {
+    log = log * 10 + n
+    n
+}
+
+fun add(x: i32, y: i32).R: i32 { x + y }
+
+fun flush(label: str) {
+    print("${label}: ${log}")
+    log = 0
+}
+
+fun main() {
+    val p = Pair.Two(a = t(1), b = t(2))
+    flush("enum")
+    val b = Box2(b = t(1), a = t(2))
+    flush("ctor_swapped")
+    val f = add
+    val r = f(t(1), t(2))
+    flush("indirect")
+    val g = add
+    val s = g(t(3), t(4)) + t(5)
+    flush("indirect_plus")
+    val c = t(1) == t(2)
+    flush("cmp")
+    val d = t(1) - t(2) - t(3) - t(4)
+    flush("chain")
+    print("${t(1) + log} ${log} ${t(2)}")
+    flush("reads")
+    val e = log + t(5)
+    flush("read_then_call")
+    val h = if t(1) > 0 { t(2) } else { t(3) }
+    flush("if")
+    val w = [t(1) + t(2), t(3) * t(4)]
+    flush("arr_expr")
+    val cl = fun(x: i32).R: i32 = x + t(8)
+    val q = cl(t(1)) + cl(t(2))
+    flush("closure")
+}

@@ -4352,8 +4352,21 @@ impl<'a> Gen<'a> {
                     BinOp::Shl => "<<",
                     BinOp::Shr => ">>",
                 };
-                let l = self.expr_value(lhs);
+                let mut l = self.expr_value(lhs);
                 let r = self.expr_value(rhs);
+                // `a() + b()`: C leaves the operand order unspecified, Kelp
+                // does not, so the left operand is bound first when the pair
+                // is order-dependent. `&&` and `||` are sequenced by C itself.
+                let mut bind = String::new();
+                if !matches!(op, BinOp::And | BinOp::Or)
+                    && needs_eval_order([&**lhs, &**rhs].into_iter())
+                    && !is_order_stable(lhs)
+                {
+                    let tmp = fresh_temp();
+                    bind = format!("{} = {l}; ", lhs.ty.c_decl(&tmp));
+                    l = tmp;
+                }
+                let result: String = 'binary: {
                 if let (BinOp::Shl | BinOp::Shr, Some(bits)) = (op, shift_width(&lhs.ty)) {
                     // A shift is defined for an amount in `0..bits` only; any
                     // other amount panics, as an out-of-bounds index does. A
@@ -4369,10 +4382,10 @@ impl<'a> Gen<'a> {
                         }
                     };
                     if shift_amount_in_range(rhs, bits) {
-                        return body(&l, &r);
+                        break 'binary body(&l, &r);
                     }
                     let (lt, rt) = (fresh_temp(), fresh_temp());
-                    return format!(
+                    break 'binary format!(
                         "({{ {ty} {lt} = {l}; {ty} {rt} = {r}; if (({uty}){rt} >= {bits}) {{ kelp_panic(\"shift amount out of range\"); }} {}; }})",
                         body(&lt, &rt)
                     );
@@ -4400,6 +4413,12 @@ impl<'a> Gen<'a> {
                     format!("(({}){raw})", expr.ty.c_type())
                 } else {
                     raw
+                }
+                };
+                if bind.is_empty() {
+                    result
+                } else {
+                    format!("({{ {bind}{result}; }})")
                 }
             }
             ExprKind::Call { callee, args } => self.call_value(callee, args, expr.span, &expr.ty),
@@ -4539,8 +4558,10 @@ impl<'a> Gen<'a> {
                     unreachable!("an array literal is typed as an array")
                 };
                 let name = crate::types::array_c_type(elem, *len);
-                let values: Vec<String> = elems.iter().map(|e| self.expr_value(e)).collect();
-                format!("(({name}){{ .v = {{ {} }} }})", values.join(", "))
+                let refs: Vec<&Expr> = elems.iter().collect();
+                let (prelude, values) = self.ordered_values(&refs);
+                let lit = format!("(({name}){{ .v = {{ {} }} }})", values.join(", "));
+                if prelude.is_empty() { lit } else { format!("({{ {prelude}{lit}; }})") }
             }
             // `[v; N]`: the generated fill helper, one call per repeat
             // literal, so a 4096-element zero fill is not 4096 initializers in
@@ -4567,6 +4588,10 @@ impl<'a> Gen<'a> {
                 let mut args: Vec<String> = Vec::new();
                 let mut holds: Vec<String> = Vec::new();
                 let mut drops: Vec<String> = Vec::new();
+                let ordered = needs_eval_order(pieces.iter().filter_map(|p| match p {
+                    TemplatePiece::Value(v) => Some(v),
+                    _ => None,
+                }));
                 for piece in pieces {
                     match piece {
                         TemplatePiece::Text(text) => fmt.push_str(&printf_text(text)),
@@ -4597,6 +4622,19 @@ impl<'a> Gen<'a> {
                                 if !drop.is_empty() {
                                     drops.push(drop);
                                 }
+                            } else if ordered && !is_order_stable(value) {
+                                // printf's arguments are evaluated in an
+                                // unspecified order; the holds above are
+                                // sequenced, so this one joins them.
+                                let tmp = fresh_temp();
+                                holds.push(format!(
+                                    "{} = {};",
+                                    value.ty.c_decl(&tmp),
+                                    self.expr_value(value)
+                                ));
+                                let (spec, rendered) = self.printf_piece_with(&tmp, &value.ty);
+                                fmt.push_str(spec);
+                                args.push(rendered);
                             } else {
                                 let (spec, rendered) = self.printf_piece(value);
                                 fmt.push_str(spec);
@@ -4664,8 +4702,10 @@ impl<'a> Gen<'a> {
                 // fields' side effects against each other in practice.
                 let mut discards: Vec<String> = Vec::new();
                 let mut inits: Vec<String> = Vec::new();
+                let refs: Vec<&Expr> = fields.iter().collect();
+                let (enum_prelude, values) = self.ordered_values(&refs);
                 for (i, f) in fields.iter().enumerate() {
-                    let value = self.expr_value(f);
+                    let value = values[i].clone();
                     if f.ty == Ty::Unit {
                         discards.push(format!("(void)({value})"));
                     } else {
@@ -4682,10 +4722,15 @@ impl<'a> Gen<'a> {
                     format!(", .kelp_v = {{ .{member} = {{ {} }} }}", inits.join(", "))
                 };
                 let literal = format!("({}){{ .kelp_tag = {variant}{payload} }}", ty.c_type());
-                if discards.is_empty() {
+                let literal = if discards.is_empty() {
                     literal
                 } else {
                     format!("({}, {literal})", discards.join(", "))
+                };
+                if enum_prelude.is_empty() {
+                    literal
+                } else {
+                    format!("({{ {enum_prelude}{literal}; }})")
                 }
             }
             ExprKind::EnumTag { expr: base, variant } => {
@@ -4904,28 +4949,32 @@ impl<'a> Gen<'a> {
                 let tmp = fresh_temp();
                 let recv = self.expr_value(receiver);
                 let mut argv = format!("{tmp}.data");
-                for a in args {
+                let refs: Vec<&Expr> = args.iter().collect();
+                let (arg_prelude, values) = self.ordered_values(&refs);
+                for (a, v) in args.iter().zip(values) {
                     if a.ty == Ty::Unit {
                         continue;
                     }
-                    argv.push_str(&format!(", {}", self.expr_value(a)));
+                    argv.push_str(&format!(", {v}"));
                 }
                 format!(
-                    "({{ {} = {}; {tmp}.vtable->m{slot}({argv}); }})",
+                    "({{ {} = {}; {arg_prelude}{tmp}.vtable->m{slot}({argv}); }})",
                     receiver.ty.c_decl(&tmp),
                     recv
                 )
             }
             ExprKind::StructLit { name, fields } => {
                 let mut s = format!("(({}){{ ", Ty::Struct(name.clone()).c_type());
-                for (i, (fname, fval)) in fields.iter().enumerate() {
+                let refs: Vec<&Expr> = fields.iter().map(|(_, v)| v).collect();
+                let (prelude, values) = self.ordered_values(&refs);
+                for (i, (fname, _)) in fields.iter().enumerate() {
                     if i > 0 {
                         s.push_str(", ");
                     }
-                    write!(s, ".{} = {}", field_name(fname), self.expr_value(fval)).unwrap();
+                    write!(s, ".{} = {}", field_name(fname), values[i]).unwrap();
                 }
                 s.push_str(" })");
-                s
+                if prelude.is_empty() { s } else { format!("({{ {prelude}{s}; }})") }
             }
             ExprKind::Assign { target, value } => {
                 // A `unit` target stores nothing (it has no C object), so the
@@ -6415,6 +6464,27 @@ impl<'a> Gen<'a> {
         (prelude, format!("&{tmp}"), vec![(tmp, sub.ty.clone())])
     }
 
+    /// Operand texts that a C aggregate or operator would evaluate in an
+    /// unspecified order: when `needs_eval_order` says so, each order-dependent
+    /// operand is bound to a temporary, left to right, and the prelude that
+    /// does so comes back with the texts that name them.
+    fn ordered_values(&self, exprs: &[&Expr]) -> (String, Vec<String>) {
+        let ordered = needs_eval_order(exprs.iter().copied());
+        let mut prelude = String::new();
+        let mut texts = Vec::new();
+        for e in exprs {
+            let value = self.expr_value(e);
+            if ordered && e.ty != Ty::Unit && !is_order_stable(e) {
+                let tmp = fresh_temp();
+                prelude.push_str(&format!("{} = {value}; ", e.ty.c_decl(&tmp)));
+                texts.push(tmp);
+            } else {
+                texts.push(value);
+            }
+        }
+        (prelude, texts)
+    }
+
     /// A call's arguments as C text, with each one's staged storage in the
     /// prelude and its owned temporaries in the third slot; see
     /// `stage_argument`. `hoist` is per argument, `false` for any entry it does
@@ -6427,6 +6497,7 @@ impl<'a> Gen<'a> {
         let mut prelude = String::new();
         let mut texts: Vec<String> = Vec::new();
         let mut staged: Vec<(String, Ty)> = Vec::new();
+        let ordered = needs_eval_order(args.iter());
         for (i, a) in args.iter().enumerate() {
             // A `unit` argument crosses as nothing: the callee's own signature
             // has no parameter for it (`write_params` leaves it out), so the
@@ -6436,7 +6507,8 @@ impl<'a> Gen<'a> {
                 prelude.push_str(&format!("{};\n", self.expr_value(a)));
                 continue;
             }
-            let want = hoist.get(i).copied().unwrap_or(false) && checked_arg_needs_temp(a);
+            let want = (hoist.get(i).copied().unwrap_or(false) && checked_arg_needs_temp(a))
+                || (ordered && !is_order_stable(a));
             let (decls, text, owned) = self.stage_argument(a, want);
             prelude.push_str(&decls);
             texts.push(text);
@@ -6760,6 +6832,72 @@ fn struct_name_of_ty(ty: &Ty) -> Option<&str> {
         Ty::Ref { inner, .. } => struct_name_of_ty(inner),
         _ => None,
     }
+}
+
+/// Whether evaluating `e` can neither change anything nor be affected by
+/// another operand's effects beyond reading places: only literals, reads and
+/// operators over them. Everything else (a call, an assignment, a block, a
+/// literal that builds a value) counts as having an effect.
+fn is_pure_expr(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::StaticRef(_)
+        | ExprKind::FnRef(_)
+        | ExprKind::Capture { .. } => true,
+        ExprKind::Unary { expr, .. }
+        | ExprKind::FieldAccess { base: expr, .. }
+        | ExprKind::Ref { expr, .. }
+        | ExprKind::Deref { expr }
+        | ExprKind::EnumTag { expr, .. }
+        | ExprKind::EnumField { base: expr, .. } => is_pure_expr(expr),
+        ExprKind::Binary { lhs, rhs, .. } => is_pure_expr(lhs) && is_pure_expr(rhs),
+        _ => false,
+    }
+}
+
+/// An operand whose value does not depend on when it is evaluated: a literal,
+/// a function name, or the address of a place.
+fn is_order_stable(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::FnRef(_) => true,
+        ExprKind::Ref { expr: sub, .. } => is_place(sub) && is_pure_expr(sub),
+        _ => false,
+    }
+}
+
+/// Kelp evaluates operands strictly left to right, but C leaves the order of
+/// call arguments, `printf` arguments and operator operands unspecified. This
+/// says whether a list of operands needs each of its order-dependent members
+/// evaluated into a temporary, in sequence, to get Kelp's order: some operand
+/// has an effect and at least two operands depend on the order.
+fn needs_eval_order<'e>(exprs: impl Iterator<Item = &'e Expr>) -> bool {
+    let mut effect = false;
+    let mut dependent = 0;
+    for e in exprs {
+        if e.ty == Ty::Unit {
+            effect = true;
+            dependent += 1;
+            continue;
+        }
+        if is_order_stable(e) {
+            continue;
+        }
+        dependent += 1;
+        if !is_pure_expr(e) {
+            effect = true;
+        }
+    }
+    effect && dependent >= 2
 }
 
 fn is_place(expr: &Expr) -> bool {

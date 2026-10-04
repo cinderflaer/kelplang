@@ -854,7 +854,18 @@ impl<'a> Scanner<'a> {
                 k += 1;
             }
             let name = self.ident_at(k).unwrap_or_default();
-            let doc = self.doc_above(first);
+            // A field written on the same line as the token before it (the
+            // `(` of `datac P(var x: i32, ...`, or an earlier field) has no
+            // line of its own to carry a doc comment, and the comment above
+            // that line belongs to the `datac`.
+            let mut prev = first;
+            while prev > 0 && matches!(self.kind(prev - 1), TokenKind::Newline) {
+                prev -= 1;
+            }
+            let own_line = prev < first
+                || prev == 0
+                || self.line_of(self.start(prev - 1)) != self.line_of(self.start(first));
+            let doc = if own_line { self.doc_above(first) } else { None };
             out.push(Member {
                 kind: MemberKind::Field,
                 name,

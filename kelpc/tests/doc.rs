@@ -240,3 +240,29 @@ fn std_is_documented_from_its_own_sources() {
         assert!(bad.is_empty(), "undocumented in std/{m}: {bad:?}");
     }
 }
+
+/// A `///` above a `datac` documents the datac only: a field has its own doc
+/// comment or none, and fields written on the `datac` line (or sharing a line
+/// with another field) are undocumented.
+#[test]
+fn a_datac_doc_comment_is_not_inherited_by_its_fields() {
+    let out = scratch("datac_fields");
+    let source = docs().join("datac_fields.kp");
+    let result = run(&[source.to_str().unwrap(), "-o", out.to_str().unwrap()]);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let page = read(&out.join("datac_fields.md"));
+    assert_eq!(page.matches("A point on the plane.").count(), 1, "{page}");
+    assert_eq!(page.matches("A segment.").count(), 1, "{page}");
+    assert_eq!(page.matches("A pair that starts on the opening line.").count(), 1, "{page}");
+    assert_eq!(page.matches("Where it starts.").count(), 1, "{page}");
+    assert_eq!(page.matches("The second.").count(), 1, "{page}");
+    // `check` agrees: the undocumented fields are named, the documented ones are not.
+    let check = run(&[source.to_str().unwrap(), "--check"]);
+    let msg = stderr(&check);
+    for undocumented in ["Point.x", "Point.y", "Segment.to", "Segment.len", "Pair.a"] {
+        assert!(msg.contains(undocumented), "{undocumented} should be reported:\n{msg}");
+    }
+    for documented in ["Segment.from", "Pair.b"] {
+        assert!(!msg.contains(documented), "{documented} must not be reported:\n{msg}");
+    }
+}
