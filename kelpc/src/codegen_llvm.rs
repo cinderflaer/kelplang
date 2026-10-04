@@ -3092,13 +3092,19 @@ impl<'a> Gen<'a> {
                 .build_call(atexit, ty, &[drop_fn.as_value()], "");
         }
         let mut diverged = false;
+        // An initializer can end in a different block than it began in (an
+        // allocation's failure branch continues in `alloc.ok`), so the next
+        // passdown continues where the previous one stopped, not in `entry`.
+        let mut current = entry;
         for pd in &self.program.pds {
             let (global, _) = *self
                 .pd_globals
                 .get(&pd.name)
                 .ok_or_else(|| no_value(&format!("the passdown '{}'", pd.qualified)))?;
-            let fg = FnGen::for_pd_init(self, pd, init_fn, entry, global)?;
-            diverged = fg.emit_pd_init()?;
+            let fg = FnGen::for_pd_init(self, pd, init_fn, entry, current, global)?;
+            let (done, block) = fg.emit_pd_init()?;
+            diverged = done;
+            current = block;
             if diverged {
                 break;
             }
@@ -3935,13 +3941,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         pd: &'a Pd,
         cur_fn: LlvmFunction<'a>,
         entry: BasicBlock<'a>,
+        start: BasicBlock<'a>,
         global: Value<'a>,
     ) -> Result<Self, String> {
         Ok(FnGen {
             g,
             cur_fn,
             entry,
-            cur: entry,
+            cur: start,
             terminated: false,
             scopes: Vec::new(),
             bindings: HashMap::new(),
@@ -3997,8 +4004,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// global. Returns whether it diverged, which is what stops the enclosing
     /// `kelp_init_pds` from assigning a later passdown into a block that has
     /// already ended.
-    fn emit_pd_init(mut self) -> Result<bool, String> {
-        self.g.builder.position_at_end(self.entry);
+    fn emit_pd_init(mut self) -> Result<(bool, BasicBlock<'a>), String> {
+        self.g.builder.position_at_end(self.cur);
         // The initializer is a `.kp` expression, so it resolves to its own line
         // even though it is emitted into a generated function (MK7 S4).
         self.locate_entry();
@@ -4014,7 +4021,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 .ok_or_else(|| no_value("the storage of a passdown initializer"))?;
             self.g.builder.build_store(value, global);
         }
-        Ok(self.terminated)
+        Ok((self.terminated, self.cur))
     }
 
     fn emit(mut self) -> Result<(), String> {

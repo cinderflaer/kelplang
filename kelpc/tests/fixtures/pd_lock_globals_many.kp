@@ -1,0 +1,68 @@
+// Several lock-typed `pd val` globals in one program: two Mutexes, two
+// RwLocks, a Condvar and a Mutex<List<i32>>, all built by the module
+// initialiser, then used from four threads at once.
+impl "std/thread"
+impl "std/result"
+
+pd val hits: Mutex<i64> = Mutex.new(0)
+pd val other: Mutex<i64> = Mutex.new(1)
+pd val table: RwLock<i64> = RwLock.new(5)
+pd val table2: RwLock<i64> = RwLock.new(7)
+pd val bell: Condvar = Condvar.new()
+pd val items: Mutex<List<i32>> = Mutex.new(List.empty())
+
+fun bump(c: &Mutex<i64>).R: i64 {
+    var i = 0
+    while i < 10 {
+        c.lock { v -> *v = *v + 1 }
+        i = i + 1
+    }
+    0
+}
+
+fun wbump(c: &RwLock<i64>).R: i64 {
+    var i = 0
+    while i < 10 {
+        c.write { v -> *v = *v + 1 }
+        i = i + 1
+    }
+    0
+}
+
+fun push(c: &Mutex<List<i32>>).R: i64 {
+    var i = 0
+    while i < 10 {
+        c.lock { v -> v.push(1) }
+        i = i + 1
+    }
+    0
+}
+
+fun main() {
+    val a0 = thread.spawn(bump, &hits)
+    val a1 = thread.spawn(bump, &hits)
+    val b0 = thread.spawn(bump, &other)
+    val b1 = thread.spawn(bump, &other)
+    val c0 = thread.spawn(wbump, &table)
+    val c1 = thread.spawn(wbump, &table)
+    val d0 = thread.spawn(wbump, &table2)
+    val d1 = thread.spawn(wbump, &table2)
+    val e0 = thread.spawn(push, &items)
+    val e1 = thread.spawn(push, &items)
+    bell.notify_all()
+    val r0 = thread.join(a0)
+    val r1 = thread.join(a1)
+    val r2 = thread.join(b0)
+    val r3 = thread.join(b1)
+    val r4 = thread.join(c0)
+    val r5 = thread.join(c1)
+    val r6 = thread.join(d0)
+    val r7 = thread.join(d1)
+    val r8 = thread.join(e0)
+    val r9 = thread.join(e1)
+    print(hits.lock { v -> *v })
+    print(other.lock { v -> *v })
+    print(table.read { v -> *v })
+    print(table2.read { v -> *v })
+    print(items.lock { v -> v.len() })
+}

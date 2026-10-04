@@ -18808,3 +18808,22 @@ fn eval_order_basic_transcript_is_left_to_right() {
 fn eval_order_aggregates_operators_and_indirect_calls_are_left_to_right() {
     assert_compiles_and_runs("tests/fixtures/eval_order_more.kp", "enum: 12\nctor_swapped: 21\nindirect: 12\nindirect_plus: 345\ncmp: 12\nchain: 1234\n2 1 2\nreads: 12\nread_then_call: 5\nif: 12\narr_expr: 1234\nclosure: 1828\n");
 }
+
+// ---------------------------------------------------------------------------
+// Several lock-typed `pd val` globals in one program. The LLVM module
+// initialiser used to restart every global in the entry block, leaving the
+// first global's `alloc.ok` block without a terminator.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn two_mutex_a_rwlock_and_a_condvar_global_initialise_together() {
+    assert_compiles_and_runs("tests/fixtures/pd_lock_globals_pair.kp", "10\n21\n32\n");
+}
+
+#[test]
+fn six_lock_globals_are_used_from_several_threads() {
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_lock_globals_many.kp",
+        "20\n21\n25\n27\n20\n",
+    );
+}
