@@ -120,3 +120,29 @@ least one byte long, and no read goes past the end of the string. (`C0 80` is th
 Box-drawing glyphs are 5 columns wide with the 6th (pen) column blank, so a horizontal line is dashed.
 Test: `examples/polyp-text-test`, pinned in `kelpc/tests/polyp_v4/text.expected`, identical on both
 backends. The v3 goldens (ASCII only) did not move.
+
+## Stage 3: the accessibility tree
+
+`soft/a11y.kp` defines `a11y.Node(id, role, name, value, state, x, y, w, h, actions, kids)`, the role,
+state and action constants, and `a11y.dump(&tree)`; `SoftBackend.a11y_tree()` builds a fresh tree from
+the retained widgets when asked (nothing is built in the frame path, so v3's allocation budgets are
+untouched).
+
+- Roles: button, checkbox, entry, label (`Text`), progress, list (`Scrolled`), list_item (a container
+  directly inside a list), region (other `Column`/`Row`). Spacers and separators are not exposed.
+- `name` is the label or text; an unlabeled checkbox takes the next sibling `Text` (the todo rows).
+  `value` is the entry's text, `"true"`/`"false"` for a checkbox, the permille for a progress bar.
+  `state` flags: focused, disabled, checked. `bounds` are layout rectangles (no animated offset).
+  `actions`: press and focus on buttons/checkboxes, focus and set_value on entries, none when disabled.
+- Ids are the backend's widget uids, stable for the life of the widget.
+- `a11y_act(id, ACT_PRESS | ACT_FOCUS)` and `a11y_set_value(id, text)` drive the UI. Press focuses the
+  widget and posts its message exactly as a click does (so model, counters and focus are equal; the
+  hover colour a real pointer leaves is not reproduced). A missing node, a wrong action or a disabled
+  node answers false and changes nothing.
+- New option `k.disabled()` (a `Props`/`Opts` field): the soft backend skips the widget in hit
+  testing, Tab and keyboard handling, draws it muted, and the tree reports it disabled. It applies to
+  interactive widgets only (a disabled container does not disable its children). GTK ignores it.
+- `a11y.dump` format: `role "name" [value="v"] state=[..] bounds=x,y,w,h actions=[..] id=N`, two spaces
+  of indent per level.
+
+Test: `examples/polyp-a11y-test` pinned in `kelpc/tests/polyp_v4/a11y.expected`, equal on both backends.

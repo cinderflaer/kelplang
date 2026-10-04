@@ -97,6 +97,9 @@ pub datac Opts(
     var anim_opacity: anim.Anim,
     var anim_ox: anim.Anim,
     var anim_oy: anim.Anim,
+    // v4 stage 3: a disabled widget takes no pointer or keyboard input, is skipped by Tab, is drawn
+    // muted by the soft backend and is reported as disabled in the accessibility tree.
+    var disabled: bool,
 )
 
 // The tree `view` returns. `M` is the application's `Msg`; the core never inspects one until a
@@ -149,7 +152,9 @@ fun default_opts().R: Opts = Opts(
     anim_opacity = anim.none(),
     anim_ox = anim.none(),
     anim_oy = anim.none(),
+    disabled = false,
 )
+
 fun new_children<M>().R: Children<M> = Children<M>(
     items = List.empty(),
     spacing = 6,
@@ -412,6 +417,12 @@ fun mut Children<M>.anim(a: move anim.Anim) {
     pending_opts.set(o)
 }
 
+fun mut Children<M>.disabled() {
+    var o = pending_opts.take()
+    o.disabled = true
+    pending_opts.set(o)
+}
+
 fun mut Children<M>.opacity(permille: i32) {
     var o = pending_opts.take()
     o.opacity = permille
@@ -509,6 +520,7 @@ pub datac Props(
     var anim_opacity: anim.Anim,
     var anim_ox: anim.Anim,
     var anim_oy: anim.Anim,
+    var disabled: bool,
 )
 
 // What one render decided. `diff` emits only these four, and only when something actually changed:
@@ -655,6 +667,7 @@ pub fun props_default().R: Props = Props(
     anim_opacity = anim.none(),
     anim_ox = anim.none(),
     anim_oy = anim.none(),
+    disabled = false,
 )
 
 pub fun props_of<M>(node: &Node<M>).R: Props {
@@ -706,6 +719,7 @@ fun apply_opts(p: mut Props, o: &Opts) {
     p.anim_opacity = anim.copy(&o.anim_opacity)
     p.anim_ox = anim.copy(&o.anim_ox)
     p.anim_oy = anim.copy(&o.anim_oy)
+    p.disabled = o.disabled
     var i: usize = 0
     while i < o.classes.len() {
         p.classes.push(String.from_str(o.classes.get(i).as_str()))
@@ -723,7 +737,7 @@ fun opts_eq(a: &Opts, b: &Opts).R: bool {
     if a.margin != b.margin || a.expand != b.expand || a.align != b.align {
         return false
     }
-    if a.opacity != b.opacity || a.offset_x != b.offset_x || a.offset_y != b.offset_y {
+    if a.disabled != b.disabled || a.opacity != b.opacity || a.offset_x != b.offset_x || a.offset_y != b.offset_y {
         return false
     }
     if !anim.same(&a.anim_main, &b.anim_main) || !anim.same(&a.anim_opacity, &b.anim_opacity) {

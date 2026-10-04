@@ -18644,6 +18644,18 @@ fn polyp_v4_text_is_utf8_by_code_point() {
     assert_eq!(got, include_str!("polyp_v4/text.expected"), "unexpected output from the text test");
 }
 
+/// Polyp v4 stage 3: the accessibility tree.
+///
+/// `examples/polyp-a11y-test` pins the todo app's tree dump, that pressing "add" by node id ends in the
+/// same model and focus as a click at its bounds, focus by id, `set_value` on an entry, a checkbox
+/// toggled by id (named after the label beside it), and that a disabled button and entry reject every
+/// action, ignore clicks and are skipped by Tab.
+#[test]
+fn polyp_v4_a11y_tree_drives_the_ui() {
+    let got = polyp_v4_transcript("polyp-a11y-test", "polyp_a11y_test", &[]);
+    assert_eq!(got, include_str!("polyp_v4/a11y.expected"), "unexpected output from the a11y test");
+}
+
 /// The lines of one Polyp v4 demo run: from the first `step ` line to the first `end` line, without
 /// the hosted entry's `-- demo --` separator. Used on the hosted transcript and on a kernel's serial
 /// output alike, so the two are sliced identically and only the run itself can differ.

@@ -1,0 +1,6 @@
+name = "polyp_a11y_test"
+entry = "src/main.kp"
+
+# Polyp v4 stage 3's tests: the same raster and headless platform the v3 tests audit.
+[unsafe]
+modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/headless_platform"]

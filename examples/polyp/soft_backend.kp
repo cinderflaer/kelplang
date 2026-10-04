@@ -19,6 +19,7 @@
 // through `update`/`view`/`diff`/`apply`, which is why the counters cannot drift.
 impl "deps/polyp/anim"
 impl "deps/polyp/core"
+impl "deps/polyp/soft/a11y"
 impl "deps/polyp/soft/damage"
 impl "deps/polyp/soft/draw"
 impl "deps/polyp/soft/event"
@@ -435,6 +436,7 @@ fun copy_props(p: &core.Props).R: core.Props {
     out.anim_opacity = anim.copy(&p.anim_opacity)
     out.anim_ox = anim.copy(&p.anim_ox)
     out.anim_oy = anim.copy(&p.anim_oy)
+    out.disabled = p.disabled
     var i: usize = 0
     while i < p.classes.len() {
         out.classes.push(String.from_str(p.classes.get(i).as_str()))
@@ -511,6 +513,22 @@ fun find_rect_in(kids: &List<SNode>, id: i32).R: fb.Rect {
     return fb.empty_rect()
 }
 
+// Whether the widget with interactive id `id` is disabled.
+fun slot_disabled(kids: &List<SNode>, id: i32).R: bool {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        if n.slot == id {
+            return n.props.disabled
+        }
+        if slot_disabled(n.kids, id) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
 fun find_caret_in(kids: &List<SNode>, id: i32).R: i32 {
     if id < 0 {
         return -1
@@ -554,7 +572,7 @@ fun collect_interactive(kids: &List<SNode>, out: mut List<i32>) {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
-        if core.interactive(n.kind) && n.slot >= 0 {
+        if core.interactive(n.kind) && n.slot >= 0 && !n.props.disabled {
             out.push(n.slot)
         }
         collect_interactive(n.kids, out)
@@ -778,6 +796,7 @@ fun set_props_on(n: mut SNode, props: &core.Props, focus: i32, clock: u64).R: bo
     n.props.anim_opacity = anim.copy(&props.anim_opacity)
     n.props.anim_ox = anim.copy(&props.anim_ox)
     n.props.anim_oy = anim.copy(&props.anim_oy)
+    n.props.disabled = props.disabled
     if !same_classes(n.props.classes, props.classes) {
         n.props.classes.clear()
         var i: usize = 0
@@ -1405,6 +1424,8 @@ fun fade(c: u32, op: i32, bg: u32).R: u32 {
     return 0xFF000000 | (r << 16) | (g << 8) | b
 }
 
+fun k_is_filled(k: i32).R: bool = k == core.KIND_BUTTON || k == core.KIND_ENTRY
+
 fun paint_nodes(kids: &List<SNode>, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u32, dx: i32, dy: i32, op: i32, px: mut Px) {
     var i: usize = 0
     while i < kids.len() {
@@ -1421,7 +1442,15 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
         return
     }
     val my_op = op * eff_opacity(n) / 1000
-    val st = style_for(n, fg, th)
+    var st = style_for(n, fg, th)
+    if n.props.disabled {
+        // Disabled widgets are drawn muted: no hover or pressed colour, the muted foreground.
+        st.fg = th.muted
+        st.has_fg = true
+        if k_is_filled(n.kind) {
+            st.bg = th.panel
+        }
+    }
     val cs = draw.clip(clip)
     val k = n.kind
     if k == core.KIND_TEXT {
@@ -1561,7 +1590,7 @@ fun hit_one(n: &SNode, clip: fb.Rect, x: i32, y: i32, th: &Theme).R: i32 {
             return id
         }
     }
-    if core.interactive(n.kind) && n.slot >= 0 {
+    if core.interactive(n.kind) && n.slot >= 0 && !n.props.disabled {
         return n.slot
     }
     return -1
@@ -1609,6 +1638,9 @@ fun SoftBackend.hit(x: i32, y: i32).R: i32 {
 
 fun mut SoftBackend.focus_to(id: i32, d: mut damage.Damage) {
     if id == focus_id {
+        return
+    }
+    if id >= 0 && slot_disabled(root, id) {
         return
     }
     damage_slot_in(root, focus_id, d)
@@ -1797,6 +1829,9 @@ fun mut SoftBackend.handle_key(code: i32, mods: i32, d: mut damage.Damage) {
         return
     }
     val k = kind_of_in(root, focus_id)
+    if focus_id >= 0 && slot_disabled(root, focus_id) {
+        return
+    }
     if k == core.KIND_ENTRY {
         var op = -1
         if code == event.KEY_BACKSPACE {
@@ -2220,6 +2255,187 @@ fun SoftBackend.caret_of(id: i32).R: i32 {
     }
     return find_caret_in(root.get(0).kids, id)
 }
+
+// ---------------------------------------------------------------------------------------------
+// The accessibility tree (Polyp v4 stage 3). Built only when asked, from the retained widgets.
+
+fun a11y_role(n: &SNode, in_list: bool).R: i32 {
+    val k = n.kind
+    if k == core.KIND_BUTTON {
+        return a11y.ROLE_BUTTON
+    }
+    if k == core.KIND_CHECKBOX {
+        return a11y.ROLE_CHECKBOX
+    }
+    if k == core.KIND_ENTRY {
+        return a11y.ROLE_ENTRY
+    }
+    if k == core.KIND_TEXT {
+        return a11y.ROLE_LABEL
+    }
+    if k == core.KIND_PROGRESS {
+        return a11y.ROLE_PROGRESS
+    }
+    if k == core.KIND_SCROLLED {
+        return a11y.ROLE_LIST
+    }
+    if in_list {
+        return a11y.ROLE_LIST_ITEM
+    }
+    return a11y.ROLE_REGION
+}
+
+fun exposed(k: i32).R: bool = k != core.KIND_SPACER && k != core.KIND_SEPARATOR
+
+fun a11y_build(kids: &List<SNode>, i: usize, in_list: bool, focus: i32).R: a11y.Node {
+    val n = kids.get(i)
+    val role = a11y_role(n, in_list)
+    var name = String.from_str("")
+    var value = String.from_str("")
+    var state: i32 = 0
+    var actions: i32 = 0
+    val enabled = !n.props.disabled
+    if n.slot >= 0 && n.slot == focus {
+        state = state | a11y.STATE_FOCUSED
+    }
+    if n.props.disabled {
+        state = state | a11y.STATE_DISABLED
+    }
+    if n.kind == core.KIND_TEXT {
+        name.push_str(n.props.text.as_str())
+    } else if n.kind == core.KIND_BUTTON {
+        name.push_str(n.props.label.as_str())
+        if enabled {
+            actions = a11y.ACT_PRESS | a11y.ACT_FOCUS
+        }
+    } else if n.kind == core.KIND_CHECKBOX {
+        name.push_str(n.props.label.as_str())
+        if name.is_empty() {
+            // Named after the label next to it.
+            var j: usize = i + 1
+            while j < kids.len() && name.is_empty() {
+                if kids.get(j).kind == core.KIND_TEXT {
+                    name.push_str(kids.get(j).props.text.as_str())
+                }
+                j += 1
+            }
+        }
+        if n.props.checked {
+            state = state | a11y.STATE_CHECKED
+            value.push_str("true")
+        } else {
+            value.push_str("false")
+        }
+        if enabled {
+            actions = a11y.ACT_PRESS | a11y.ACT_FOCUS
+        }
+    } else if n.kind == core.KIND_ENTRY {
+        value.push_str(n.props.text.as_str())
+        if enabled {
+            actions = a11y.ACT_FOCUS | a11y.ACT_SET_VALUE
+        }
+    } else if n.kind == core.KIND_PROGRESS {
+        val shown = str.from_i64(eff_main(n, n.props.permille).to_i64())
+        value.push_str(shown.as_str())
+    }
+    var out = a11y.Node(
+        id = n.uid,
+        role = role,
+        name = name,
+        value = value,
+        state = state,
+        x = n.rect.x,
+        y = n.rect.y,
+        w = n.rect.w,
+        h = n.rect.h,
+        actions = actions,
+        kids = List.empty(),
+    )
+    val child_in_list = n.kind == core.KIND_SCROLLED
+    var c: usize = 0
+    while c < n.kids.len() {
+        if exposed(n.kids.get(c).kind) {
+            out.kids.push(a11y_build(n.kids, c, child_in_list, focus))
+        }
+        c += 1
+    }
+    return out
+}
+
+// A fresh accessibility tree of the whole UI, rooted at the top widget. Empty UI: a region with no
+// children.
+fun SoftBackend.a11y_tree().R: a11y.Node {
+    if root.is_empty() {
+        return a11y.Node(id = -1, role = a11y.ROLE_REGION, name = String.from_str(""), value = String.from_str(""), state = 0, x = 0, y = 0, w = 0, h = 0, actions = 0, kids = List.empty())
+    }
+    return a11y_build(root, 0, false, focus_id)
+}
+
+pub datac UidInfo(var found: bool, var slot: i32, var kind: i32, var disabled: bool)
+
+fun find_uid(kids: &List<SNode>, uid: i32, out: mut UidInfo) {
+    var i: usize = 0
+    while i < kids.len() && !out.found {
+        val n = kids.get(i)
+        if n.uid == uid {
+            out.found = true
+            out.slot = n.slot
+            out.kind = n.kind
+            out.disabled = n.props.disabled
+        } else {
+            find_uid(n.kids, uid, out)
+        }
+        i += 1
+    }
+}
+
+fun mut SoftBackend.uid_info(uid: i32).R: UidInfo {
+    var info = UidInfo(found = false, slot = -1, kind = -1, disabled = false)
+    find_uid(root, uid, info)
+    return info
+}
+
+// Drive the UI through the tree: `ACT_PRESS` presses a button or toggles a checkbox exactly as a
+// click on it would (it focuses the widget and posts its message; it does not move the hover
+// state), `ACT_FOCUS` focuses an interactive widget. True when the action was performed; a node that
+// does not exist, does not accept the action or is disabled answers false and changes nothing.
+fun mut SoftBackend.a11y_act(node_id: i32, action: i32).R: bool {
+    val info = self.uid_info(node_id)
+    if !info.found || info.disabled || info.slot < 0 {
+        return false
+    }
+    if action == a11y.ACT_PRESS {
+        if info.kind != core.KIND_BUTTON && info.kind != core.KIND_CHECKBOX {
+            return false
+        }
+        var d = damage.new()
+        self.focus_to(info.slot, d)
+        merge_damage(self.damage, d)
+        self.post_id(info.slot)
+        return true
+    }
+    if action == a11y.ACT_FOCUS {
+        var d = damage.new()
+        self.focus_to(info.slot, d)
+        merge_damage(self.damage, d)
+        return true
+    }
+    return false
+}
+
+// `ACT_SET_VALUE` on an entry: replace its text, as `set_entry_text` does (the entry's change
+// message is posted). False for any other node or a disabled entry.
+fun mut SoftBackend.a11y_set_value(node_id: i32, text: &str).R: bool {
+    val info = self.uid_info(node_id)
+    if !info.found || info.disabled || info.slot < 0 || info.kind != core.KIND_ENTRY {
+        return false
+    }
+    self.set_entry_text(info.slot, text)
+    return true
+}
+
+// The interactive id of the focused widget, or -1.
+fun SoftBackend.focus_slot().R: i32 = focus_id
 
 // The caret as a count of code points from the start, which is how far right it is drawn.
 fun SoftBackend.caret_chars_of(id: i32).R: i32 {
