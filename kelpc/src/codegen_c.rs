@@ -6304,12 +6304,17 @@ impl<'a> Gen<'a> {
             None => return place,
             // The field this read copied out: zero the slot below.
             Some(Projection::Field(moved)) if moved == field => {}
+            Some(Projection::NestedField(path)) if path.last().is_some_and(|moved| moved == field) => {}
             // A projection the backend has no clear for. Zeroing a slot that
             // still holds its value, or skipping the zero of one that does
             // not, frees the same buffer twice, so an arm per variant is what
             // has to be filled in rather than passed over.
             Some(Projection::Field(moved)) => panic!(
                 "codegen_c: a move of field '{moved}' was recorded at a read of '{field}'"
+            ),
+            Some(Projection::NestedField(path)) => panic!(
+                "codegen_c: a move of nested field '{}' was recorded at a read of '{field}'",
+                path.join(".")
             ),
             Some(Projection::EnumPayload { name, .. }) => panic!(
                 "codegen_c: a move of payload '{name}' was recorded at a read of field '{field}'"
@@ -6340,6 +6345,10 @@ impl<'a> Gen<'a> {
             // `clear_moved_field`).
             Some(Projection::Field(moved)) => panic!(
                 "codegen_c: a move of field '{moved}' was recorded at a read of payload {variant}.{field}"
+            ),
+            Some(Projection::NestedField(path)) => panic!(
+                "codegen_c: a move of nested field '{}' was recorded at a read of payload {variant}.{field}",
+                path.join(".")
             ),
             Some(Projection::EnumPayload {
                 variant: moved_variant,

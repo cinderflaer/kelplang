@@ -1,0 +1,15 @@
+// A nested owned field is moved from its final slot. The sibling field and the
+// enclosing record's other fields remain usable.
+datac Name(val text: String, val id: i32)
+datac Person(val name: Name, val city: String)
+
+fun main() {
+    val p = Person(
+        name = Name(text = String.from_str("Ada"), id = 7),
+        city = String.from_str("London")
+    )
+    val text = p.name.text
+    print(text)
+    print(p.name.id)
+    print(p.city)
+}

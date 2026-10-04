@@ -11666,8 +11666,33 @@ fn an_exclusive_capture_conflicts_with_the_rest_of_its_call() {
         "needs the call's other arguments to leave it alone",
     );
     assert_rejected_with(
+        "tests/fixtures/refused_mut_param_reborrow_twice.kp",
+        "cannot borrow 's': already borrowed exclusively",
+    );
+    assert_rejected_with(
         "tests/fixtures/excl_refused_live_borrow.kp",
         "cannot borrow 's' as exclusive: already borrowed as shared",
+    );
+}
+
+#[test]
+fn a_mut_parameter_can_be_reborrowed_shared_twice_for_one_call() {
+    // `borrowck::take_call_arguments` must use the *callee* parameter modes:
+    // `show(s, s)` is two shared reborrows, while `touch(s, s)` is rejected.
+    assert_compiles_and_runs("tests/fixtures/mut_param_shared_reborrow_twice.kp", "4\n4\n5\n");
+}
+
+#[test]
+fn a_nested_owned_field_can_be_partially_moved_and_reinitialised() {
+    assert_compiles_and_runs("tests/fixtures/nested_partial_move_field.kp", "Ada\n7\nLondon\n");
+    assert_compiles_and_runs("tests/fixtures/nested_partial_move_reinit.kp", "old\nnew\n");
+}
+
+#[test]
+fn a_parent_of_a_nested_partial_move_is_not_usable_as_a_whole_value() {
+    assert_rejected_with(
+        "tests/fixtures/refused_nested_partial_move_parent.kp",
+        "use of moved value 'p.name'",
     );
 }
 

@@ -17,13 +17,11 @@ exclusive borrow, found a shared one"). So there was no rule to relax, only a cr
 Fixing the crash is part of this change: a write through a capture is now either an exclusive
 capture (the rule below) or a refusal that names the reason.
 
-A second, older gap showed up while testing the rule and is **not fixed here**: two reborrows of one
-`mut` *parameter* in one call are not checked. `fun h(s: mut State) { g(s, s) }` with
-`fun g(a: mut State, b: mut State)` builds and runs. `take_call_arguments` starts a borrow only for
-an argument that is a `Ref` node, and a `&mut`-typed name passed on is a plain value. The exclusive
-capture rule below closes this for the one place it newly creates (a block capturing a `mut`
-parameter, `excl_refused_mut_param_twice`) but the general `g(s, s)` stays open; it is recorded in
-the A-11 entry of `roadmap.md` and is a candidate for a borrow-checker task of its own.
+A second, older gap showed up while testing the rule: two reborrows of one `mut` *parameter* in one
+call were not checked. It is fixed with the A-11 follow-up: an `&mut`-typed identifier passed as an
+argument is registered as an exclusive reborrow for the call, even though inference represents it
+as a plain `Ident` rather than a fresh `Ref` node. Thus `fun h(s: mut State) { g(s, s) }` is refused
+by the same-call alias check, and `refused_mut_param_reborrow_twice.kp` pins it.
 
 ## 1. The rule
 
@@ -242,7 +240,5 @@ Not done, and why (each is a follow-up, none blocks the rule):
    block as before, and an inner block may read the outer block's own locals. Allowing it needs the borrow checker to give a `Capture` an owner root inside a literal
    body (so the inner call's other arguments can be checked against it); today a capture has none.
    Until then the message names the two ways out.
-2. **The general `g(s, s)` hole** of section 0, which is a borrow-checker bug older than this
-   change.
-3. **Wiki and `fmt`**: `fmt.rs` still has no block-rewrapping rule (open item 75); the wiki pages
+2. **Wiki and `fmt`**: `fmt.rs` still has no block-rewrapping rule (open item 75); the wiki pages
    are written from `plan/language-tour-2026-10.md`.

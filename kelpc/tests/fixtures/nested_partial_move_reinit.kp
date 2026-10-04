@@ -1,0 +1,11 @@
+// Reinitialising a nested slot after its partial move restores that projection.
+datac Name(val text: String)
+datac Person(val name: Name)
+
+fun main() {
+    var p = Person(name = Name(text = String.from_str("old")))
+    val old = p.name.text
+    p.name.text = String.from_str("new")
+    print(old)
+    print(p.name.text)
+}

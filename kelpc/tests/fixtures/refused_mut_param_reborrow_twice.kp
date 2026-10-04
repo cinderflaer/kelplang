@@ -1,0 +1,18 @@
+// A `mut` parameter is an exclusive reference. Handing it to two `mut`
+// parameters of one call would create aliasing mutable references, so the
+// second reborrow must be refused.
+datac State(var count: i32)
+
+fun touch(a: mut State, b: mut State) {
+    a.count += 1
+    b.count += 1
+}
+
+fun run(s: mut State) {
+    touch(s, s)
+}
+
+fun main() {
+    var s = State(count = 0)
+    run(s)
+}

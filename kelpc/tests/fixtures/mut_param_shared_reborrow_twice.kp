@@ -1,0 +1,19 @@
+// Forwarding an exclusive reference to shared parameters is a shared
+// reborrow: both arguments may observe the same value for one call.
+datac State(val count: i32)
+
+fun show(a: State, b: State) {
+    print(a.count)
+    print(b.count)
+}
+
+fun run(s: mut State) {
+    show(s, s)
+    s.count += 1
+}
+
+fun main() {
+    var s = State(count = 4)
+    run(s)
+    print(s.count)
+}

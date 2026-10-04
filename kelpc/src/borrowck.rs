@@ -164,6 +164,9 @@ pub enum Projection {
     /// One field of a `datac`, by name (each backend resolves the name to the
     /// field's index from the owning struct).
     Field(String),
+    /// A field reached through one or more embedded owned records. The path is
+    /// rooted at the local binding and ends at the slot a partial move clears.
+    NestedField(Vec<String>),
     /// One payload field of one variant of an `enum`, by the two indices the
     /// `tir` node carries. The variant is part of the identity because two
     /// variants may name a payload field the same; `name` is the payload
@@ -579,6 +582,11 @@ struct Ctx {
     /// elided lifetime binds to (M6.3). Both `.kp` functions and builtins
     /// follow the same rule, so both are in here.
     fn_borrow_root: HashMap<String, Option<usize>>,
+    /// Whether each parameter of a user-defined callee is an exclusive
+    /// reference. This preserves the callee-side mode for a forwarded `&mut`
+    /// argument, whose expression type alone cannot distinguish a reborrow as
+    /// shared from one as exclusive.
+    fn_mut_params: HashMap<String, Vec<bool>>,
     /// The current function's own return-borrow rule: the name of the
     /// parameter a returned borrow must be rooted at, when the function
     /// declares a borrowed return type. `None` with `ret_is_borrow` set
@@ -872,6 +880,23 @@ impl Ctx {
         false
     }
 
+    /// Whether `proj` is itself moved or contains a nested moved field. A
+    /// whole read of `p.name` must be refused after `p.name.text` moved: the
+    /// outer record would otherwise still own a slot whose inner drop would
+    /// free the value handed to the new binding.
+    fn moved_at_or_below(&self, name: &str, proj: &Projection) -> bool {
+        let requested = projection_field_path(proj);
+        for scope in self.scopes.iter().rev() {
+            if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
+                return owned.moved.iter().any(|moved| {
+                    let path = projection_field_path(moved);
+                    !requested.is_empty() && path.starts_with(&requested)
+                });
+            }
+        }
+        false
+    }
+
     /// The projection the whole-value read of `name` refuses, if any: a field
     /// or payload that was moved out and never put back. The set is ordered, so
     /// a binding with two projections gone always names the same one here.
@@ -891,6 +916,7 @@ impl Ctx {
         let proj = self.partial_move_of(name)?;
         let what = match proj {
             Projection::Field(field) => format!("its field '{field}' was moved out"),
+            Projection::NestedField(path) => format!("its field '{}' was moved out", path.join(".")),
             Projection::EnumPayload { name, .. } => {
                 format!("its payload '{name}' was moved out")
             }
@@ -916,7 +942,7 @@ impl Ctx {
     /// slot is written again the read is a use of a moved value.
     fn move_field_out(&mut self, name: &str, proj: Projection, expr: &tir::Expr) -> Result<()> {
         self.check_iterated_mutation(expr)?;
-        if self.moved_out_of(name, &proj) {
+        if self.moved_at_or_below(name, &proj) {
             return Err(BorrowError {
                 message: format!("use of moved value '{}'", field_display(name, &proj)),
                 span: expr.span,
@@ -935,10 +961,12 @@ impl Ctx {
     /// Whether a place read reaches through the field `field` of an owned
     /// binding that a partial move already emptied.
     fn use_field_place(&self, inner: &tir::Expr, field: &str, span: Span) -> Result<()> {
-        let Some(name) = partial_move_base(inner, self) else {
+        let Some((name, mut path)) = partial_move_target(inner, self) else {
             return Ok(());
         };
-        if self.moved_out_of(name, &Projection::Field(field.to_string())) {
+        path.push(field.to_string());
+        let proj = if path.len() == 1 { Projection::Field(path.remove(0)) } else { Projection::NestedField(path) };
+        if self.moved_at_or_below(name, &proj) {
             return Err(BorrowError {
                 message: format!("use of moved value '{name}.{field}'"),
                 span,
@@ -963,10 +991,11 @@ impl Ctx {
     /// Marks the field `field` of an owned binding as owning again, after an
     /// assignment of a fresh value into it.
     fn reinit_field(&mut self, inner: &tir::Expr, field: &str) {
-        let Some(name) = partial_move_base(inner, self) else {
+        let Some((name, mut path)) = partial_move_target(inner, self) else {
             return;
         };
-        let proj = Projection::Field(field.to_string());
+        path.push(field.to_string());
+        let proj = if path.len() == 1 { Projection::Field(path.remove(0)) } else { Projection::NestedField(path) };
         for scope in self.scopes.iter_mut().rev() {
             if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
                 owned.moved.remove(&proj);
@@ -1559,6 +1588,14 @@ impl Ctx {
         }
     }
 
+    fn callee_param_is_mut(&self, callee: &str, index: usize) -> bool {
+        self.fn_mut_params
+            .get(callee)
+            .and_then(|params| params.get(index))
+            .copied()
+            .unwrap_or(false)
+    }
+
     /// The elided-borrow rule, enforced at every return site of a function
     /// that declares a borrowed return type: the value must be derived from
     /// the first reference parameter (or be a `str` literal, whose storage is
@@ -1690,7 +1727,16 @@ fn display_root(name: &str) -> String {
 fn field_display(name: &str, proj: &Projection) -> String {
     match proj {
         Projection::Field(field) => format!("{name}.{field}"),
+        Projection::NestedField(path) => format!("{name}.{}", path.join(".")),
         Projection::EnumPayload { name: field, .. } => format!("{name}.{field}"),
+    }
+}
+
+fn projection_field_path(proj: &Projection) -> Vec<&str> {
+    match proj {
+        Projection::Field(field) => vec![field],
+        Projection::NestedField(path) => path.iter().map(String::as_str).collect(),
+        Projection::EnumPayload { .. } => Vec::new(),
     }
 }
 
@@ -1709,6 +1755,23 @@ fn partial_move_base<'a>(base: &'a tir::Expr, ctx: &Ctx) -> Option<&'a str> {
         return None;
     }
     ctx.is_owned_binding(name).then_some(name.as_str())
+}
+
+/// The owned local and embedded-field path a partial move reaches. A path is
+/// valid only when every link is an owned field of a local this frame owns;
+/// dereferences, passdowns and borrowed bases never enter this representation.
+fn partial_move_target<'a>(base: &'a tir::Expr, ctx: &Ctx) -> Option<(&'a str, Vec<String>)> {
+    match &base.kind {
+        tir::ExprKind::Ident(name) if !matches!(base.ty, Ty::Ref { .. }) && ctx.is_owned_binding(name) => {
+            Some((name, Vec::new()))
+        }
+        tir::ExprKind::FieldAccess { base: inner, field } => {
+            let (name, mut path) = partial_move_target(inner, ctx)?;
+            path.push(field.clone());
+            Some((name, path))
+        }
+        _ => None,
+    }
 }
 
 /// The drops for a set of owned locals: reverse declaration order, live ones
@@ -1877,10 +1940,18 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
     // lifetime binds to. Builtins (`String.as_str`) join the same table, so
     // `check_call` has one rule for both.
     let mut fn_borrow_root: HashMap<String, Option<usize>> = HashMap::new();
+    let mut fn_mut_params: HashMap<String, Vec<bool>> = HashMap::new();
     for f in &program.functions {
         if crate::infer::is_borrowed_value(&f.ret) {
             fn_borrow_root.insert(f.name.clone(), crate::infer::borrow_root_param(&f.params));
         }
+        fn_mut_params.insert(
+            f.name.clone(),
+            f.params
+                .iter()
+                .map(|(_, ty)| matches!(ty, Ty::Ref { mutable: true, .. }))
+                .collect(),
+        );
     }
     // The passdown globals, as `(hidden name, value type)`: a function that
     // does *not* take one as a hidden parameter (`main`) still reaches the
@@ -1892,7 +1963,7 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
         .map(|p| (p.name.clone(), p.value_ty.clone()))
         .collect();
     for f in &program.functions {
-        let function = check_function(f, &owned, &program.drop_types, &fn_borrow_root, &globals, &enums).map_err(|e| {
+        let function = check_function(f, &owned, &program.drop_types, &fn_borrow_root, &fn_mut_params, &globals, &enums).map_err(|e| {
             Diagnostic::new(e.message, e.span, f.module.clone())
         })?;
         plan.functions.insert(f.name.clone(), function);
@@ -1905,6 +1976,7 @@ fn check_function(
     owned_structs: &std::collections::HashSet<String>,
     drop_types: &std::collections::HashSet<String>,
     fn_borrow_root: &HashMap<String, Option<usize>>,
+    fn_mut_params: &HashMap<String, Vec<bool>>,
     globals: &[(String, Ty)],
     enums: &HashMap<String, EnumDef>,
 ) -> Result<FnDrops> {
@@ -1914,6 +1986,7 @@ fn check_function(
         owned_structs: owned_structs.clone(),
         drop_types: drop_types.clone(),
         fn_borrow_root: fn_borrow_root.clone(),
+        fn_mut_params: fn_mut_params.clone(),
         // A borrowed return type borrows from the first reference
         // parameter — `infer.rs` has already rejected a function that
         // returns one without taking any.
@@ -2365,7 +2438,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             // a buffer the borrowed value still owns, the heap-use-after-free
             // `owned_field_read.kp` pinned, so it stays refused.
             if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
-                let Some(root) = partial_move_base(base, ctx) else {
+                let Some((root, mut path)) = partial_move_target(base, ctx) else {
                     // A tuple position is read by value only by the lowering a
                     // destructuring binding does, whose base is that binding's
                     // own temporary, so the message names the position rather
@@ -2395,7 +2468,12 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                     };
                     return Err(BorrowError { message, span: expr.span });
                 };
-                let proj = Projection::Field(field.clone());
+                path.push(field.clone());
+                let proj = if path.len() == 1 {
+                    Projection::Field(path.remove(0))
+                } else {
+                    Projection::NestedField(path)
+                };
                 if crate::types::is_drop_type(&expr.ty, &ctx.drop_types) {
                     let (what, base_name) = match crate::types::tuple_field_index(field) {
                         Some(index) => (
@@ -2483,7 +2561,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // rule a named call's do.
         tir::ExprKind::IndirectCall { callee, args } => {
             check_place(callee, ctx)?;
-            let taken = take_call_arguments(args, ctx, None)?;
+            let taken = take_call_arguments(args, ctx, None, None)?;
             release_call_borrows(&taken, ctx);
             Ok(())
         }
@@ -2514,7 +2592,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                 check_place(receiver, ctx)?;
                 Vec::new()
             };
-            let taken = take_call_arguments(args, ctx, None)?;
+            let taken = take_call_arguments(args, ctx, None, None)?;
             release_call_borrows(&taken, ctx);
             for root in &roots {
                 if root != STATIC_ROOT {
@@ -2875,7 +2953,7 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             ctx.reserve_exclusive(&root, args[i].span)?;
         }
     }
-    let mut taken = take_call_arguments(args, ctx, receiver)?;
+    let mut taken = take_call_arguments(args, ctx, receiver, Some(callee))?;
     if let Some(i) = receiver {
         for root in arg_roots(&args[i], ctx) {
             ctx.commit_exclusive(&root, args[i].span)?;
@@ -2922,6 +3000,7 @@ fn take_call_arguments(
     args: &[tir::Expr],
     ctx: &mut Ctx,
     receiver: Option<usize>,
+    callee: Option<&str>,
 ) -> Result<Vec<String>> {
     let mut taken = Vec::new();
     for (i, a) in args.iter().enumerate() {
@@ -2942,6 +3021,28 @@ fn take_call_arguments(
                 }
             }
         } else {
+            // A `mut` parameter (or a local carrying an `&mut`) is already a
+            // reference, so inference passes it on as an `Ident` rather than
+            // wrapping it in a fresh `Ref`. It is an exclusive *reborrow*
+            // only when the matched callee parameter is itself `mut`; the
+            // expression's type alone cannot distinguish that from a shared
+            // reborrow. Without registering this case, `g(s, s)` could hand
+            // the same mutable parameter to two `mut` parameters at once and
+            // evade the ordinary same-call aliasing check, which only sees
+            // `Ref` nodes.
+            let reborrowed_exclusive = callee
+                .is_some_and(|name| ctx.callee_param_is_mut(name, i))
+                && matches!(a.ty, Ty::Ref { mutable: true, .. });
+            if reborrowed_exclusive {
+                check_place(a, ctx)?;
+                for root in place_roots(a, ctx) {
+                    if root == STATIC_ROOT {
+                        continue;
+                    }
+                    ctx.start_borrow(&root, true, a.span)?;
+                    taken.push(root);
+                }
+            }
             // A scoped literal captures by borrow (`plan/scoped-blocks.md`),
             // and the borrow lives exactly as long as the call it was written
             // in, so its captured `Ref`s join the same `taken` list a direct
@@ -2993,6 +3094,8 @@ fn take_call_arguments(
                     }
                 }
             }
+            // A reference is Copy, so this has no move effect; keep the
+            // normal value walk for nested expressions and diagnostics.
             check_value(a, ctx)?;
         }
     }
