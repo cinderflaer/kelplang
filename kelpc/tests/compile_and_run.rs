@@ -18786,3 +18786,25 @@ fn a_freestanding_shift_out_of_range_reaches_the_projects_panic_handler() {
         &["8", "panic: shift amount out of range"],
     );
 }
+
+// ---------------------------------------------------------------------------
+// Evaluation order: every call argument, template interpolation, operator
+// operand and aggregate field is evaluated strictly left to right on both
+// backends (`plan/syntax.md`, section 5). The fixtures record the call order
+// into a passdown and print it, so a C compiler's own order shows up as a diff.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn eval_order_template_interpolations_run_left_to_right() {
+    assert_compiles_and_runs("tests/fixtures/eval_order_template.kp", "removed 10, 1 left\n");
+}
+
+#[test]
+fn eval_order_basic_transcript_is_left_to_right() {
+    assert_compiles_and_runs("tests/fixtures/eval_order_basic.kp", "x 1 2 3\ntmpl: 123\n6\ncall: 123\nbinop: 123\nctor: 123\narray: 123\npush: 12\nand: 1\nor: 1\nset: 12\ncompound: 7\n195\nnested: 12345\n7 4\narith: 1234\nrecv: 123\n6\nrecv2: 123\n");
+}
+
+#[test]
+fn eval_order_aggregates_operators_and_indirect_calls_are_left_to_right() {
+    assert_compiles_and_runs("tests/fixtures/eval_order_more.kp", "enum: 12\nctor_swapped: 21\nindirect: 12\nindirect_plus: 345\ncmp: 12\nchain: 1234\n2 1 2\nreads: 12\nread_then_call: 5\nif: 12\narr_expr: 1234\nclosure: 1828\n");
+}
