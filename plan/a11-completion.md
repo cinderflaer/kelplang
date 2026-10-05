@@ -15,11 +15,13 @@ relaxation of moves or aliasing.*
    final owning slot, and makes every prefix unusable as a whole until that
    path is reinitialised. Both backends and ASAN/valgrind must cover a nested
    record, a conditional move and a reinitialisation.
-3. **Implemented:** a temporary that supplies a binding's borrow is promoted to a named compiler
-   temporary whose lifetime is exactly that of the binding receiving the
-   borrow. Escapes, reassignment, branches and `defer` must each be tested.
+3. **Implemented, deliberately narrow:** a direct `as_str()` or `view()` binding
+   whose receiver is a temporary is promoted to a named compiler temporary.
+   The temporary lasts for the binding's scope; escaping through a return,
+   reassignment and branch-result lifetime extension remain out of scope until
+   their distinct owner joins are designed and tested.
 4. **Implemented, deliberately narrow:** stored `str` and `View` values carry an
-   explicit owner-root set in their containing declaration. The checker must
+   explicit owner-root set in their containing declaration. The checker requires an
    owner in an earlier `String`/`Bytes` field of the same aggregate. `&T` and borrowed
    `dyn` remain refused because an inline owner moves with the aggregate; containers,
    returns and unrelated constructor locals remain refused.

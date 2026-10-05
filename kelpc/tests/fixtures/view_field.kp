@@ -1,9 +1,10 @@
-// A-8: a `View` points at text somebody else owns, and v1 has no lifetime
-// syntax to tie a field to its source, so it cannot be stored.
+// A-11: a `View` field needs an owning String/Bytes field earlier in the same
+// datac construction. This constructor has no such owner and is refused.
 impl "std/str"
 
 datac Scanner(val text: View, var pos: usize)
 
 fun main() {
-    print(0)
+    val scanner = Scanner(text = "x".view(), pos = 0)
+    print(scanner.pos)
 }

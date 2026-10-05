@@ -1,7 +1,5 @@
-// The other side of that rule: a call that *returns* a borrow of its
-// argument cannot borrow a temporary, because the borrow would outlive the
-// temporary. Bind the owned value first ("val up = str.to_upper(s = \"x\")")
-// and borrow that.
+// A-11: a binding keeps the owned temporary that supplies its returned borrow
+// alive until the binding leaves scope.
 impl "std/str"
 
 fun main() {

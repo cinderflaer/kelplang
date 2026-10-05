@@ -3713,8 +3713,11 @@ fn a_view_carries_its_length_and_slices_without_allocating() {
 }
 
 #[test]
-fn a_view_cannot_be_stored_in_a_datac() {
-    assert_rejected("tests/fixtures/view_field.kp");
+fn a_view_needs_an_earlier_owner_in_its_datac() {
+    assert_rejected_with(
+        "tests/fixtures/view_field.kp",
+        "construct it from a string literal or from an earlier String/Bytes field",
+    );
 }
 
 #[test]
@@ -11051,7 +11054,7 @@ fn a_shared_borrow_reaching_a_var_field_is_refused() {
 fn a_moved_value_that_carries_a_borrow_is_still_refused() {
     assert_rejected_with(
         "tests/fixtures/thread_spawn_borrowed_value.kp",
-        "field 'text' is a borrowed type ('View')",
+        "construct it from a string literal or from an earlier String/Bytes field",
     );
 }
 

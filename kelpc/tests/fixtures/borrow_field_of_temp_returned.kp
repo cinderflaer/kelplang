@@ -1,11 +1,5 @@
-// The field spelling of `borrow_temp_returned.kp`: `mkName().name` is a field
-// of an *rvalue*, so the temporary it lives in is freed at the end of the
-// statement and a `&str` view of it cannot be handed back. `codegen_c.rs`
-// stages the temporary for the duration of a call that only *reads* the
-// borrow (that is what makes `print(mkName().name.len())` legal), but a call
-// that returns the borrow needs storage that outlives the call, and a
-// temporary has none. The refusal is the same rule stated one projection
-// deeper: bind the owned value, then borrow that.
+// A-11: the owner is staged at the root of the field chain, so the String in
+// `mkName().name` stays alive for the binding's scope.
 datac Named(val name: String)
 
 fun mkName().R: Named = Named(name = String.from_str("x"))

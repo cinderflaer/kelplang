@@ -1,8 +1,8 @@
 // MK9-S3-M1 stage B1, section 5 rule 4: a moved value that contains a borrow
 // stays refused. `thread.spawn` opens no hole here, because the value cannot be
-// constructed in the first place: `is_borrowed_field_ty` refuses a `str`, a
-// `View` or a reference in a `datac` field, an enum payload, a `List` element
-// and a `Map` value, so no moved argument can carry one.
+// constructed in the first place: a View field needs an earlier String/Bytes
+// owner in the same datac, and this constructor supplies none. Lists, Maps,
+// references and enum payloads still refuse borrowed stored values.
 impl "std/thread"
 impl "std/str"
 
