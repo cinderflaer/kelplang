@@ -380,7 +380,7 @@ Rules that follow from the table:
 
 - There is no implicit numeric conversion, not even between two integer widths. `u64 % 10` produces a `u64` and cannot be pushed into a `u8` slot without `to_u8()`. The one widening that goes to a float is explicit too: `n.to_f64()` (5.0).
 - Owned types are not `Copy`: assigning one moves it, and every owned value is dropped at the end of the scope that owns it, including inside `datac` fields, `List` elements and `Map` values.
-- `str` **and `View`** are borrows, so neither can live in a `datac` field, an `enum` payload, a `List` element, a `Map` value, an array element or a `Box`; only owned types can. A borrow in a field would outlive the value it points at, and v1 has no lifetime syntax to say otherwise (17). An owned `String` is what to store instead.
+- `str` and `View` may live in a `datac` field only when that construction moves their `String` or `Bytes` owner into an earlier field of the same `datac`; the view then lives with the record that owns its buffer. A string literal needs no owner. Every other stored position, and every `&T` or `&dyn` field, is refused.
 - A `List` may hold another `List` or a `Box` directly (A-10 slice 1): an element lives in the list's own buffer, so any complete, droppable type works. A `Map` value set is narrower, so a `Map` may not hold a `List`, a `Box` or another `Map`; keep a container value elsewhere and store a key or a `datac` that names it.
 - `[T; N]` holds its elements inline too, and it is the one container that may hold another *array*: `[[u8; 4]; 8]` is a page table. It may not hold a `List`, a `Map` or a `Box` (12.4).
 - A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
@@ -1619,14 +1619,14 @@ Rules the checker enforces:
 - Dereferencing a `&mut` borrow gives write access; dereferencing a `&` does not.
 - A function whose `.R: T` is a borrow must return something derived from its first reference parameter, and **a payload bound by a pattern counts as derived from the scrutinee it came out of**: `if let Str(s) = v { return s.as_str() }` returns a view of `v`, exactly as `v.x.as_str()` does. One caveat, from the same rule: when a whole `when` is the returned value, the arm bindings are out of scope before the merged root is computed, so return *from inside the arm* (`if let S(s) = v { return s.as_str() }`) rather than returning the `when`.
 - Arms that differ only in the `str`/`&str` spelling are one type, so `when v { S(s) -> s.as_str()  N -> "n" }` and `if c { name(v) } else { "none" }` type-check; a branch whose value is a `str` literal has static storage, so it needs no owner pinned either.
-- A borrow cannot be stored: no reference fields in a `datac`, no references as `List` elements or `Map` values.
+- A borrow cannot be stored except for the aggregate-owned `str`/`View` rule above: no reference fields in a `datac`, and no borrowed `List` or `Map` elements.
 - A call that returns a borrow of its receiver needs the receiver to be a variable or a field, not a temporary:
 
 ```kelp
 val text = String.from_str("hi")
 val view = text.as_str()          // ok
 print(str.len(text.as_str()))     // ok: the temporary lives for the call
-val bad = String.from_str("hi").as_str()   // error: borrow of a temporary
+val view = String.from_str("hi").as_str()  // ok: the binding keeps the temporary alive
 ```
 
 The last line is the chained form of the same rule, and the chain is not a second

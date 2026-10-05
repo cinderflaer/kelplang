@@ -397,6 +397,7 @@ pub enum ExprKind {
     StructLit {
         name: String,
         fields: Vec<(String, Expr)>,
+        borrowed_fields: Vec<String>,
     },
     /// Construction of one `enum` variant (A-1): `Shape.Circle(r = 1.0)`.
     /// `variant` is the variant's index within the enum, and `fields` is one

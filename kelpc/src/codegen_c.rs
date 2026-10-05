@@ -4971,7 +4971,7 @@ impl<'a> Gen<'a> {
                     recv
                 )
             }
-            ExprKind::StructLit { name, fields } => {
+            ExprKind::StructLit { name, fields, .. } => {
                 let mut s = format!("(({}){{ ", Ty::Struct(name.clone()).c_type());
                 let refs: Vec<&Expr> = fields.iter().map(|(_, v)| v).collect();
                 let (prelude, values) = self.ordered_values(&refs);

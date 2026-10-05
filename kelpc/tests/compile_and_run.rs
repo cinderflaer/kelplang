@@ -1437,8 +1437,8 @@ fn a_bytes_parameter_is_a_borrow_not_a_move() {
 }
 
 #[test]
-fn a_borrowed_datac_field_is_rejected() {
-    assert_rejected("tests/fixtures/datac_str_field.kp");
+fn a_static_str_datac_field_is_allowed() {
+    assert_compiles_and_runs("tests/fixtures/datac_str_field.kp", "x\n");
 }
 
 #[test]
@@ -3728,8 +3728,8 @@ fn a_returned_view_must_come_from_a_reference_parameter() {
 }
 
 #[test]
-fn a_view_of_a_temporary_is_rejected() {
-    assert_rejected("tests/fixtures/view_of_temporary.kp");
+fn a_view_of_a_temporary_bound_to_a_local_is_allowed() {
+    assert_compiles_and_runs("tests/fixtures/view_of_temporary.kp", "x\n");
 }
 
 #[test]
@@ -6531,8 +6531,22 @@ fn each_borrowed_temporary_gets_a_slot_of_its_own() {
 }
 
 #[test]
-fn a_returned_borrow_cannot_come_from_a_temporary() {
-    assert_rejected("tests/fixtures/borrow_temp_returned.kp");
+fn a_borrow_from_a_temporary_bound_to_a_local_is_allowed() {
+    assert_compiles_and_runs("tests/fixtures/borrow_temp_returned.kp", "x\n");
+}
+
+#[test]
+fn a_binding_keeps_its_temporary_borrow_owner_alive() {
+    assert_compiles_and_runs("tests/fixtures/borrow_temp_binding.kp", "hello\n");
+}
+
+#[test]
+fn a_datac_can_own_the_text_its_view_field_borrows() {
+    assert_compiles_and_runs("tests/fixtures/aggregate_text_borrow.kp", "label\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_aggregate_text_borrow.kp",
+        "not moved into an earlier String/Bytes field",
+    );
 }
 
 /// The field spelling of the same refusal: `mkName().name` is a field of an
@@ -6541,11 +6555,8 @@ fn a_returned_borrow_cannot_come_from_a_temporary() {
 /// build whenever the borrow is only read inside the call. The two have to be
 /// told apart, and this is the one that must not quietly start compiling.
 #[test]
-fn a_returned_borrow_cannot_come_from_a_field_of_a_temporary() {
-    assert_rejected_with(
-        "tests/fixtures/borrow_field_of_temp_returned.kp",
-        "this call returns a borrow of its parameter 'self'",
-    );
+fn a_borrow_from_a_temporary_field_bound_to_a_local_is_allowed() {
+    assert_compiles_and_runs("tests/fixtures/borrow_field_of_temp_returned.kp", "x\n");
 }
 
 /// And the explicit-borrow half: `&<field of a temporary>` is not a place, so

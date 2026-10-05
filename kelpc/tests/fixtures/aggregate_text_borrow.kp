@@ -1,0 +1,7 @@
+datac Label(val text: String, val view: str)
+
+fun main() {
+    val source = String.from_str("label")
+    val label = Label(text = source, view = source.as_str())
+    print(label.view)
+}

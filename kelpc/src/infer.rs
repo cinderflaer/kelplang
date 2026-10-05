@@ -333,6 +333,7 @@ const MAX_FUNCTION_INSTANTIATIONS: usize = 2048;
 /// synthesized name can never collide with one the user wrote: the same trick
 /// `parser::IF_LET_PREFIX` and a hidden passdown parameter use.
 const WHEN_TEMP_PREFIX: &str = "#when";
+const BORROW_TEMP_PREFIX: &str = "#borrow";
 
 /// The name prefix of the local a destructuring binding takes its value apart
 /// from, and of the local a *nested* pattern takes an inner tuple into
@@ -8627,7 +8628,7 @@ fn check_program_pass(
             // An owned field (`Bytes`, `String`, or a `datac` holding one) is
             // allowed from M6.2 on: `codegen_c.rs` generates a drop function
             // per datac, so dropping a struct recurses into its fields.
-            if crate::types::is_borrowed_field_ty(&ty) {
+            if matches!(ty, Ty::Ref { .. } | Ty::Dyn { .. }) {
                 return Err(Diagnostic::new(
                     format!(
                         "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible — an owned 'String' is the way to keep text in one",
@@ -10945,6 +10946,30 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 Some(t) => Some(ctx.type_scope().resolve(t, false)?),
                 None => None,
             };
+            if let Some((root, rebased)) = binding_borrow_temporary(init, ctx.when_temps) {
+                ctx.when_temps += 1;
+                let tmp = format!("{}{}", BORROW_TEMP_PREFIX, ctx.when_temps - 1);
+                let held = check_expr(root, ctx, None)?;
+                let held_ty = held.ty.clone();
+                ctx.define(&tmp, held_ty.clone(), false);
+                let value = check_expr(&rebased, ctx, expected.as_ref())?;
+                let final_ty = expected.unwrap_or_else(|| value.ty.clone());
+                if final_ty != value.ty {
+                    return Err(TypeError {
+                        message: format!(
+                            "cannot assign value of type '{}' to '{name}' declared as '{}'",
+                            value.ty.display(),
+                            final_ty.display()
+                        ),
+                        span: stmt_span(stmt),
+                    });
+                }
+                ctx.define(name, final_ty.clone(), *mutable);
+                return Ok(vec![
+                    tir::Stmt::Let { name: tmp, ty: held_ty, init: held },
+                    tir::Stmt::Let { name: name.clone(), ty: final_ty, init: value },
+                ]);
+            }
             // A `let` with no written type whose initializer *is* a bare
             // `List.empty()`/`Box.empty()`/`Map.new()` is the one place an
             // empty container may leave its element open for a later
@@ -11158,6 +11183,32 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             span: *span,
         }),
     }
+}
+
+/// A binding is the one expression context that may keep an owned temporary
+/// alive for a borrow it receives. The first slice covers the two text views;
+/// other borrow-returning APIs can join this lowering without changing its
+/// lifetime or drop model.
+fn binding_borrow_temporary(init: &ast::Expr, next: usize) -> Option<(&ast::Expr, ast::Expr)> {
+    let ast::Expr::MethodCall { receiver, method, type_args, args, span } = init else {
+        return None;
+    };
+    if !matches!(method.as_str(), "as_str" | "view") {
+        return None;
+    }
+    let root = ast::temporary_root(receiver)?;
+    next.checked_add(1)?;
+    let tmp = format!("{}{}", BORROW_TEMP_PREFIX, next);
+    Some((
+        root,
+        ast::Expr::MethodCall {
+            receiver: Box::new(ast::rebase_root(receiver, &ast::Expr::Ident(tmp, root.span()))),
+            method: method.clone(),
+            type_args: type_args.clone(),
+            args: args.clone(),
+            span: *span,
+        },
+    ))
 }
 
 /// The canonical key of `std.iter.Iterator`, the one trait a `for` accepts
@@ -12983,7 +13034,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 .map(|(i, v)| (crate::types::tuple_field_name(i), v))
                 .collect();
             Ok(tir::Expr {
-                kind: tir::ExprKind::StructLit { name, fields },
+                kind: tir::ExprKind::StructLit { name, fields, borrowed_fields: Vec::new() },
                 ty,
                 span: *span,
             })
@@ -13537,6 +13588,7 @@ fn check_generic_datac_construction(
                 .map(|f| f.name.clone())
                 .zip(checked)
                 .collect(),
+            borrowed_fields: Vec::new(),
         },
         ty: Ty::Struct(sdef.name.clone()),
         span,
@@ -16527,6 +16579,7 @@ fn check_call(
         }
         let params: Vec<(String, Ty)> = sdef.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
         let checked = match_args(&format!("datac '{}'", sdef.name), &params, args, span, ctx)?;
+        let borrowed_fields = aggregate_borrowed_fields(&sdef.fields, &checked, span)?;
         let fields = sdef
             .fields
             .iter()
@@ -16537,6 +16590,7 @@ fn check_call(
             kind: tir::ExprKind::StructLit {
                 name: sdef.name.clone(),
                 fields,
+                borrowed_fields,
             },
             ty: Ty::Struct(sdef.name.clone()),
             span,
@@ -16708,6 +16762,41 @@ fn check_call(
         ty: sig.ret,
         span,
     })
+}
+
+fn aggregate_borrowed_fields(
+    fields: &[FieldDef],
+    values: &[tir::Expr],
+    span: Span,
+) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for (i, (field, value)) in fields.iter().zip(values).enumerate() {
+        if !matches!(field.ty, Ty::Str | Ty::View) {
+            continue;
+        }
+        if matches!(value.kind, tir::ExprKind::StringLit(_)) {
+            continue;
+        }
+        let Some(source) = aggregate_borrow_source(value) else {
+            return Err(TypeError { message: format!("field '{}' stores a borrowed '{}', so construct it from a string literal or from an earlier String/Bytes field in this datac", field.name, field.ty.display()), span });
+        };
+        let owns_source = fields[..i].iter().zip(&values[..i]).any(|(owner, value)| {
+            matches!(owner.ty, Ty::String | Ty::Bytes)
+                && matches!(&value.kind, tir::ExprKind::Ident(name) if name == source)
+        });
+        if !owns_source {
+            return Err(TypeError { message: format!("field '{}' borrows '{source}', but that value is not moved into an earlier String/Bytes field of this datac", field.name), span });
+        }
+        out.push(field.name.clone());
+    }
+    Ok(out)
+}
+
+fn aggregate_borrow_source(value: &tir::Expr) -> Option<&str> {
+    let tir::ExprKind::Call { args, .. } = &value.kind else { return None; };
+    let tir::ExprKind::Ref { expr, .. } = &args.first()?.kind else { return None; };
+    let tir::ExprKind::Ident(name) = &expr.kind else { return None; };
+    Some(name)
 }
 
 /// The gated resource constructors (`irq.claim`, `frame.claim`, kernel stage

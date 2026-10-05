@@ -2657,9 +2657,11 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
-        tir::ExprKind::StructLit { fields, .. } => {
-            for (_, v) in fields {
-                check_value(v, ctx)?;
+        tir::ExprKind::StructLit { fields, borrowed_fields, .. } => {
+            for (name, v) in fields {
+                if !borrowed_fields.contains(name) {
+                    check_value(v, ctx)?;
+                }
             }
             Ok(())
         }
