@@ -1413,6 +1413,19 @@ impl Ctx {
         spot
     }
 
+    fn holds_exclusive_roots(&self, name: &str, roots: &[String]) -> bool {
+        roots.iter().all(|root| {
+            root == STATIC_ROOT
+                || self.scopes.iter().any(|scope| {
+                    scope.scope_borrows.iter().any(|entry| {
+                        entry.root == *root
+                            && entry.holder.as_deref() == Some(name)
+                            && entry.mutable
+                    })
+                })
+        })
+    }
+
     /// Moves the untagged borrow entries a statement just created (from `at` in
     /// the current scope) into `target`, the scope that declared the binding
     /// being reassigned, and tags them with `holder`. An entry the value created
@@ -2591,7 +2604,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // rule a named call's do.
         tir::ExprKind::IndirectCall { callee, args } => {
             check_place(callee, ctx)?;
-            let taken = take_call_arguments(args, ctx, None, None)?;
+            let taken = take_call_arguments(args, ctx, None, false, None)?;
             release_call_borrows(&taken, ctx);
             Ok(())
         }
@@ -2622,7 +2635,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                 check_place(receiver, ctx)?;
                 Vec::new()
             };
-            let taken = take_call_arguments(args, ctx, None, None)?;
+            let taken = take_call_arguments(args, ctx, None, false, None)?;
             release_call_borrows(&taken, ctx);
             for root in &roots {
                 if root != STATIC_ROOT {
@@ -2980,8 +2993,9 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     // `counts.insert(k, counts.get_or(..) + 1)`, and committing the
     // reservation afterwards still catches a shared borrow that outlives the
     // arguments (`f(&mut c, &c)`).
-    let receiver = method_receiver_index(callee, args);
-    if let Some(i) = receiver {
+    let receiver = method_receiver_index(callee, args, ctx);
+    let receiver_is_held = receiver.is_some_and(|i| receiver_is_held_mut_ref(&args[i], ctx));
+    if let Some(i) = receiver.filter(|_| !receiver_is_held) {
         if let tir::ExprKind::Ref { expr: inner, .. } = &args[i].kind {
             ctx.check_iterated_mutation(inner)?;
         }
@@ -2989,8 +3003,8 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             ctx.reserve_exclusive(&root, args[i].span)?;
         }
     }
-    let mut taken = take_call_arguments(args, ctx, receiver, Some(callee))?;
-    if let Some(i) = receiver {
+    let mut taken = take_call_arguments(args, ctx, receiver, receiver_is_held, Some(callee))?;
+    if let Some(i) = receiver.filter(|_| !receiver_is_held) {
         for root in arg_roots(&args[i], ctx) {
             ctx.commit_exclusive(&root, args[i].span)?;
         }
@@ -3013,14 +3027,29 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 /// The argument index of a method call's own receiver, when that receiver is
 /// borrowed exclusively and so needs the two-phase treatment. Keyed on the
 /// `#` in a method's callee key (`Map#insert`), which nothing else has.
-fn method_receiver_index(callee: &str, args: &[tir::Expr]) -> Option<usize> {
+fn method_receiver_index(callee: &str, args: &[tir::Expr], ctx: &Ctx) -> Option<usize> {
     if !callee.contains('#') {
         return None;
     }
-    match args.first().map(|a| &a.kind) {
-        Some(tir::ExprKind::Ref { mutable: true, .. }) => Some(0),
-        _ => None,
-    }
+    let Some(receiver) = args.first() else {
+        return None;
+    };
+    (matches!(receiver.kind, tir::ExprKind::Ref { mutable: true, .. })
+        || (ctx.callee_param_is_mut(callee, 0)
+            && matches!(receiver.ty, Ty::Ref { mutable: true, .. })))
+    .then_some(0)
+}
+
+fn receiver_is_held_mut_ref(receiver: &tir::Expr, ctx: &Ctx) -> bool {
+    let inner = match &receiver.kind {
+        tir::ExprKind::Ref { mutable: true, expr } => expr.as_ref(),
+        tir::ExprKind::Ident(_) if matches!(receiver.ty, Ty::Ref { mutable: true, .. }) => receiver,
+        _ => return false,
+    };
+    let tir::ExprKind::Ident(name) = &inner.kind else {
+        return false;
+    };
+    ctx.holds_exclusive_roots(name, &place_roots(inner, ctx))
 }
 
 /// One argument list, borrowed for the duration of a call: a `Ref` argument's
@@ -3036,9 +3065,11 @@ fn take_call_arguments(
     args: &[tir::Expr],
     ctx: &mut Ctx,
     receiver: Option<usize>,
+    receiver_is_held: bool,
     callee: Option<&str>,
 ) -> Result<Vec<String>> {
     let mut taken = Vec::new();
+    let mut held_reborrows = std::collections::BTreeSet::new();
     for (i, a) in args.iter().enumerate() {
         if let Some((mutable, inner)) = borrowed_node(a) {
             if *mutable && receiver != Some(i) {
@@ -3049,7 +3080,9 @@ fn take_call_arguments(
                 if root == STATIC_ROOT {
                     continue;
                 }
-                if receiver == Some(i) {
+                if receiver == Some(i) && receiver_is_held {
+                    continue;
+                } else if receiver == Some(i) {
                     taken.push(root);
                 } else {
                     ctx.start_borrow(&root, *mutable, a.span)?;
@@ -3071,8 +3104,30 @@ fn take_call_arguments(
                 && matches!(a.ty, Ty::Ref { mutable: true, .. });
             if reborrowed_exclusive {
                 check_place(a, ctx)?;
-                for root in place_roots(a, ctx) {
+                let roots = place_roots(a, ctx);
+                let holder = match &a.kind {
+                    tir::ExprKind::Ident(name) => Some(name.as_str()),
+                    _ => None,
+                };
+                let already_held = holder.is_some_and(|name| ctx.holds_exclusive_roots(name, &roots));
+                for root in roots {
                     if root == STATIC_ROOT {
+                        continue;
+                    }
+                    if receiver == Some(i) && !receiver_is_held {
+                        taken.push(root);
+                        continue;
+                    }
+                    if already_held {
+                        if !held_reborrows.insert(root.clone()) {
+                            return Err(BorrowError {
+                                message: format!(
+                                    "cannot borrow {}: already borrowed exclusively",
+                                    display_root(&root)
+                                ),
+                                span: a.span,
+                            });
+                        }
                         continue;
                     }
                     ctx.start_borrow(&root, true, a.span)?;
