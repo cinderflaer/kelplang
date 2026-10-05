@@ -33,6 +33,16 @@ the first slice of MK9-S1-M1 is in the tree.
 | 8 | **Test coverage is one scalar fixture.** `ffi_getpid` takes no arguments and returns `i32`; `ffi_handle` now passes a pointer-shaped opaque handle. | `tests/projects/` | No test passes a string or a callback, and I found no fixture that exercises a user extern on the LLVM backend specifically (C is covered). |
 | 9 | ~~**Layout (B-2).** No `repr(C)`.~~ **Closed (kernel stage 2).** `repr(c)` (the default, now guaranteed), `repr(packed)` and `repr(align(N))` on a `datac`, the compile-time queries `size_of`/`align_of`/`offset_of`, and explicit discriminants on a field-less enum now work on both backends. A `datac` in an `extern fun` signature still has to be reached by name a header can spell: a user type's C name is the module-mangled `struct_<...>`, so `ffi_layout` passes the address as `Ptr<Packed>` and the header takes it as `const void*`. `plan/layout-control.md` is the design. | roadmap B-2 | A struct crossing by value (`GdkRGBA`, `GtkAllocation`) now has a defined layout; the remaining work is the header spelling above, which is gap 3's generated prototype, still deliberately not planned. |
 
+## Plain function-pointer signatures
+
+**Closed (2026-10-05).** A user `extern fun` may take and return the existing
+`fun(...)` type. It is a typed plain C function pointer, so it is appropriate
+for a native API that borrows a callback for the duration of one call. The
+`ffi_fn_pointer` fixture passes `fun(i32).R: i32` to a native helper and receives
+one back; it runs on both backends. A callback a native API retains is still
+`move closure(...)`, whose thunk, environment and destructor give the native
+side an owned value with an explicit lifetime.
+
 ## Two consequences for Polyp
 
 - **Callback ownership.** A closure owns its environment and captures by move or copy, never by

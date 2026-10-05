@@ -3135,6 +3135,41 @@ fn an_llvm_ffi_variadic_extern_accepts_extra_arguments() {
 }
 
 #[test]
+fn an_ffi_extern_accepts_function_pointers() {
+    assert_project_runs("ffi_fn_pointer", &project("ffi_fn_pointer"), "41\n42\n");
+}
+
+#[test]
+fn an_llvm_ffi_extern_accepts_function_pointers() {
+    let target = project("ffi_fn_pointer");
+    let bin = out_path("ffi_fn_pointer_llvm");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'ffi_fn_pointer' to compile on the default backend, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run compiled binary");
+    assert!(
+        run.status.success(),
+        "expected the llvm 'ffi_fn_pointer' binary to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "41\n42\n",
+        "the llvm build must print what the C build prints"
+    );
+}
+
+#[test]
 fn an_ffi_variadic_marker_that_is_not_last_is_rejected() {
     // A fixture, not a project: `...` followed by another parameter is a
     // syntax error, and the fixtures are where the suite keeps programs that

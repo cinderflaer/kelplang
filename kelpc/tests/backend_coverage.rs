@@ -291,7 +291,9 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// now builds) are compared by both backends. The four new refusal fixtures
 /// (`eq_operator_no_eq`, `eq_operator_order`, `eq_operator_bad_signature`,
 /// `eq_operator_type_mismatch`) stay outside the corpus, so they do not move the count.
-const LLVM_BUILT_BASELINE: usize = 403;
+/// Raised from 403 by `ffi_fn_pointer`: a user extern passes a typed plain
+/// `fun(i32).R: i32` callback to C and receives one back, on both backends.
+const LLVM_BUILT_BASELINE: usize = 404;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.
