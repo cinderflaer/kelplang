@@ -30,17 +30,17 @@ relaxation of moves or aliasing.*
 
 ## Order
 
-1. **Call reborrows** — completed first because it is a soundness hole and
+1. **Call reborrows**: completed first because it is a soundness hole and
    local to `borrowck.rs`.
-2. **Projection paths** — extend `Projection`, the move state and both backend
+2. **Projection paths**: extend `Projection`, the move state and both backend
    clear operations before accepting any nested move in inference.
-3. **Temporary promotion** — model the compiler-generated owner as a normal
+3. **Temporary promotion**: model the compiler-generated owner as a normal
    binding and reuse last-use releases; no special scope exception.
-4. **Aggregate borrows** — add owner annotations to TIR declarations, then
+4. **Aggregate borrows**: add owner annotations to TIR declarations, then
    allow only intra-aggregate borrows whose owner is a stable field or
    parameter. No self-referential aggregate, heap relocation or implicit
    lifetime inference is admitted.
-5. **Audit** — update `syntax.md`, roadmap A-11/H rows, and all refusal tests;
+5. **Audit**: update `syntax.md`, roadmap A-11/H rows, and all refusal tests;
    run the full LLVM and C-oracle, sanitizer and differential gates.
 
 ## Non-goals

@@ -870,16 +870,6 @@ impl Ctx {
             .any(|s| s.owned.iter().any(|o| o.name == name))
     }
 
-    /// Whether the projection `proj` was already moved out of `name`.
-    fn moved_out_of(&self, name: &str, proj: &Projection) -> bool {
-        for scope in self.scopes.iter().rev() {
-            if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
-                return owned.moved.contains(proj);
-            }
-        }
-        false
-    }
-
     /// Whether `proj` is itself moved or contains a nested moved field. A
     /// whole read of `p.name` must be refused after `p.name.text` moved: the
     /// outer record would otherwise still own a slot whose inner drop would
@@ -891,6 +881,23 @@ impl Ctx {
                 return owned.moved.iter().any(|moved| {
                     let path = projection_field_path(moved);
                     !requested.is_empty() && path.starts_with(&requested)
+                });
+            }
+        }
+        false
+    }
+
+    /// Whether `proj` is itself moved or sits inside a moved projection. This
+    /// is the inverse of `moved_at_or_below`: walking through `p.name` to read
+    /// `p.name.id` remains valid after `p.name.text` moved, while walking
+    /// through a field that itself moved does not.
+    fn moved_at_or_above(&self, name: &str, proj: &Projection) -> bool {
+        let requested = projection_field_path(proj);
+        for scope in self.scopes.iter().rev() {
+            if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
+                return owned.moved.iter().any(|moved| {
+                    let path = projection_field_path(moved);
+                    !path.is_empty() && requested.starts_with(&path)
                 });
             }
         }
@@ -965,10 +972,33 @@ impl Ctx {
             return Ok(());
         };
         path.push(field.to_string());
-        let proj = if path.len() == 1 { Projection::Field(path.remove(0)) } else { Projection::NestedField(path) };
+        let proj = if path.len() == 1 {
+            Projection::Field(path.remove(0))
+        } else {
+            Projection::NestedField(path)
+        };
         if self.moved_at_or_below(name, &proj) {
             return Err(BorrowError {
                 message: format!("use of moved value '{name}.{field}'"),
+                span,
+            });
+        }
+        Ok(())
+    }
+
+    /// Checks a projection only as the base of a deeper place. A nested move
+    /// leaves its siblings usable, so this accepts `p.name.id` after
+    /// `p.name.text` moved, but it still rejects a path through the moved
+    /// field itself.
+    fn use_field_through(&self, inner: &tir::Expr, field: &str, span: Span) -> Result<()> {
+        let Some((name, mut path)) = partial_move_target(inner, self) else {
+            return Ok(());
+        };
+        path.push(field.to_string());
+        let proj = if path.len() == 1 { Projection::Field(path.remove(0)) } else { Projection::NestedField(path) };
+        if self.moved_at_or_above(name, &proj) {
+            return Err(BorrowError {
+                message: format!("use of moved value '{}'", field_display(name, &proj)),
                 span,
             });
         }
@@ -2904,6 +2934,10 @@ fn check_place(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 fn check_place_through(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &base.kind {
         tir::ExprKind::Ident(name) => ctx.use_place(name, base.span),
+        tir::ExprKind::FieldAccess { base: inner, field } => {
+            check_place_through(inner, ctx)?;
+            ctx.use_field_through(inner, field, base.span)
+        }
         _ => check_place(base, ctx),
     }
 }

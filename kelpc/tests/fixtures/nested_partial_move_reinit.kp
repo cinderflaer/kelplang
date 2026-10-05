@@ -1,5 +1,5 @@
 // Reinitialising a nested slot after its partial move restores that projection.
-datac Name(val text: String)
+datac Name(var text: String)
 datac Person(val name: Name)
 
 fun main() {
