@@ -380,7 +380,7 @@ Rules that follow from the table:
 
 - There is no implicit numeric conversion, not even between two integer widths. `u64 % 10` produces a `u64` and cannot be pushed into a `u8` slot without `to_u8()`. The one widening that goes to a float is explicit too: `n.to_f64()` (5.0).
 - Owned types are not `Copy`: assigning one moves it, and every owned value is dropped at the end of the scope that owns it, including inside `datac` fields, `List` elements and `Map` values.
-- `str` **and `View`** are borrows, so neither can live in a `datac` field, an `enum` payload, a `List` element, a `Map` value, an array element or a `Box`; only owned types can. A borrow in a field would outlive the value it points at, and v1 has no lifetime syntax to say otherwise (17). An owned `String` is what to store instead.
+- `str` and `View` may live in a `datac` field only when that construction moves their `String` or `Bytes` owner into an earlier field of the same `datac`; the view then lives with the record that owns its buffer. A string literal needs no owner. Every other stored position, and every `&T` or `&dyn` field, is refused.
 - A `List` may hold another `List` or a `Box` directly (A-10 slice 1): an element lives in the list's own buffer, so any complete, droppable type works. A `Map` value set is narrower, so a `Map` may not hold a `List`, a `Box` or another `Map`; keep a container value elsewhere and store a key or a `datac` that names it.
 - `[T; N]` holds its elements inline too, and it is the one container that may hold another *array*: `[[u8; 4]; 8]` is a page table. It may not hold a `List`, a `Map` or a `Box` (12.4).
 - A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
@@ -1619,23 +1619,22 @@ Rules the checker enforces:
 - Dereferencing a `&mut` borrow gives write access; dereferencing a `&` does not.
 - A function whose `.R: T` is a borrow must return something derived from its first reference parameter, and **a payload bound by a pattern counts as derived from the scrutinee it came out of**: `if let Str(s) = v { return s.as_str() }` returns a view of `v`, exactly as `v.x.as_str()` does. One caveat, from the same rule: when a whole `when` is the returned value, the arm bindings are out of scope before the merged root is computed, so return *from inside the arm* (`if let S(s) = v { return s.as_str() }`) rather than returning the `when`.
 - Arms that differ only in the `str`/`&str` spelling are one type, so `when v { S(s) -> s.as_str()  N -> "n" }` and `if c { name(v) } else { "none" }` type-check; a branch whose value is a `str` literal has static storage, so it needs no owner pinned either.
-- A borrow cannot be stored: no reference fields in a `datac`, no references as `List` elements or `Map` values.
-- A call that returns a borrow of its receiver needs the receiver to be a variable or a field, not a temporary:
+- A borrow cannot be stored except for the aggregate-owned `str`/`View` rule above: no reference fields in a `datac`, and no borrowed `List` or `Map` elements.
+- A direct `as_str()` or `view()` binding promotes a temporary receiver into a
+  compiler-owned local for the binding's scope:
 
 ```kelp
 val text = String.from_str("hi")
 val view = text.as_str()          // ok
 print(str.len(text.as_str()))     // ok: the temporary lives for the call
-val bad = String.from_str("hi").as_str()   // error: borrow of a temporary
+val view = String.from_str("hi").as_str()  // ok: the binding keeps the temporary alive
 ```
 
-The last line is the chained form of the same rule, and the chain is not a second
-case: a call result is one temporary for the whole expression, so
-`fmt.int(n).as_str()` and `t.labels_text().as_str()` are refused exactly as
-`String.from_str("hi").as_str()` is, and the error names the borrow rather than
-the chain. Binding the call to a `val` first is the fix, or leaving the
-`.as_str()` inside the enclosing call (`print(str.len(...))`), where the
-temporary lives for that call.
+The last line is the chained form of the same rule: the root temporary becomes
+the compiler-owned local, so `fmt.int(n).as_str()` and
+`t.labels_text().as_str()` are valid direct bindings too. This does not make a
+borrow returnable from the frame, or extend a temporary through an assignment
+or a branch result.
 
 A **field of a temporary is the same case one projection deeper**: `mkName().name`
 is a field of an rvalue, so it has no storage of its own and the temporary it
@@ -1649,7 +1648,7 @@ print(mkName().name.len())      // ok: staged for the call, freed after it
 take(mkName().name)             // ok: the parameter borrows, for the call
 val n = mkName().name.len()     // ok: the borrow ends with the call
 val r = &mkName().name          // error: cannot borrow a temporary value
-val v = mkName().name.as_str()  // error: the returned borrow outlives it
+val v = mkName().name.as_str()  // ok: the root owner is promoted for `v`
 ```
 
 A chain that steps through a borrow is not a temporary case at all:
@@ -1799,7 +1798,9 @@ What is refused, and the reason each time:
 - **A `View` field in a `datac` or an `enum` payload.** A view points at text somebody else owns, and the field outlives the borrow; v1 has no lifetime syntax to tie the two (17). Store an owned `String` and take a view when you need one.
 - **`List<View>` / `Box<View>` / a `Map` key.** The container owns its elements and outlives the text; same reason as the field.
 - **Returning a view of a local.** A function's declared return type borrows from its first reference parameter (the elision rule, 7.1) — `R: View` means "a view of one of my parameters", and anything else is refused by name.
-- **A view of a temporary.** `String.from_str("x").view()` is refused: the temporary is freed before the view could be used. Bind it first (`val s = String.from_str("x")`), or take a view of the literal itself (`"x".view()`, whose storage is static).
+- **A view that escapes its owner.** A direct binding such as `val v =
+  String.from_str("x").view()` promotes the owner for `v`'s scope. Returning
+  that view is still refused because the promoted owner ends with the frame.
 - **Capturing a `View` in a closure.** The environment outlives the frame the borrow points into. Move an owned `String` in instead.
 - ~~**`==` on two views.**~~ Allowed since H-5: `==`/`!=` lower to `View.eq`, which compares the bytes and the lengths. (`view.eq(other)` is still the spelling outside the operator.)
 
@@ -2897,10 +2898,10 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `operator requires matching integer operands, found 'u8' and 'bool'` | `&` `\|` `^` `<<` `>>` `~` are integer-only (`bool` has `&&`/`\|\|`), and both operands must be the *same* type |
 | `cannot compare 'View' values with '<'` | a `View` has byte equality (`==`/`!=`, or `v.eq(other)`) and no order |
 | `argument 'x' has type 'View', expected 'str'` | a slice has no NUL after it, so a view is not a `str`; take `v.to_string()` (11.5) |
-| `field 'text' is a borrowed type ('View')` | a view cannot be stored: a field outlives the borrow, and v1 has no lifetime syntax (11.5, 17). Store a `String` |
+| `field 'text' stores a borrowed 'View'` | a view field needs an earlier String/Bytes owner moved into the same `datac`; otherwise store a `String` |
 | `'View' is a borrowed view` (as a `List` element) | a container owns its elements; store `String`s and view them at the point of use |
 | `cannot return this value as 'View': ... only a 'str' literal can be returned` | a returned view has to be derived from a reference parameter (the elision rule). Return an owned `String`, or take the view as a parameter |
-| `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` (on `.view()`) | a view of a temporary: bind the `String` first, or view the literal itself |
+| a returned borrow of a temporary | a direct `.view()` or `.as_str()` binding promotes its owner; return an owned `String` when the borrow would escape |
 | `unknown escape '\q' in a string literal` | the escapes are `\n`, `\t`, `\r`, `\"`, `\\` |
 | `unknown escape '\q' in a character literal` | the escapes are `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, `\u{...}` |
 | `a character literal holds exactly one character` / `cannot be empty` / `cannot span lines` | `'ab'`, `''` and a raw newline are not character literals; write `'a'` or `'\n'` |
@@ -2939,7 +2940,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `function 'f' is defined more than once for the same parameter types` | user code cannot overload; rename one |
 | `cannot tell what 'List.empty()' holds` | write the element type on the binding (`var xs: List<i32> = List.empty()`), or let the first `push` decide it |
 | `'str' is a borrowed view` | an owned field, element or value is needed; use `String` |
-| `'View' is a borrowed view` | same: a `View` points at text somebody else owns, so it cannot be stored or be an element (11.5) |
+| `'View' is a borrowed view` | a `View` can be a `datac` field only with an earlier String/Bytes owner in that same value; it cannot be a container element (11.5) |
 | `cannot find module 'x': expected '<path>'` | the `impl` path is wrong, or the file is missing |
 | `import cycle: a -> b -> a` | remove the cycle |
 | `unknown key 'x' in <path>` | the manifest is flat and its keys are `name`, `version`, `entry`, `http_pool` (1.4); a typo is an error rather than a default |
@@ -3307,7 +3308,9 @@ fun parse_all(text: &str).R: result.Result<Thing, ParseError> {
 - Building owned text: `String.empty()`, then `push(c: u8)`, `push_str(s: &str)`, `concat`, or `fmt.*` for a number. `str.concat(a, b)` allocates a new `String`.
 - Formatting a number: `fmt.int(n)`, `fmt.uint(n)`, `fmt.float(x, decimals)`, `fmt.hex(n)`. All return `String`.
 - `print(x)` handles every scalar, `str`, `String`, `Bytes` and `View`; a template (`"$x"`) is the only way to print a mixture, and a template is not a value.
-- **`.as_str()` on a temporary is refused** (`String.from_str("x").as_str()`): bind the `String` first. The same applies to `.view()`.
+- **A direct temporary text-view binding is promoted**: `val s =
+  String.from_str("x").as_str()` and `.view()` keep their owner for the
+  binding's scope. Returning that borrow remains refused.
 - UTF-8 by hand is expressible directly now: `0xE0 | (cp >> 12)`, `0x80 | ((cp >> 6) & 0x3F)`, `0x80 | (cp & 0x3F)` (5, and 2.4 for the literal). `%` and `/` are no longer the only arithmetic available for it.
 
 ### 22.5 Records and tags

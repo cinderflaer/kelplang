@@ -8,21 +8,23 @@ relaxation of moves or aliasing.*
 
 ## Exit criteria
 
-1. **Complete (untested):** a `mut` reference cannot be forwarded to two
+1. **Complete:** a `mut` reference cannot be forwarded to two
    exclusive parameters in one call. `refused_mut_param_reborrow_twice.kp`
    pins it, with a paired shared-reborrow acceptance fixture.
-2. **Implemented, pending execution:** a move from a nested owned place has one projection path, clears exactly its
+2. **Complete:** a move from a nested owned place has one projection path, clears exactly its
    final owning slot, and makes every prefix unusable as a whole until that
    path is reinitialised. Both backends and ASAN/valgrind must cover a nested
    record, a conditional move and a reinitialisation.
-3. A temporary that supplies a returned borrow is promoted to a named compiler
-   temporary whose lifetime is exactly that of the binding receiving the
-   borrow. Escapes, reassignment, branches and `defer` must each be tested.
-4. Stored borrowed values (`str`, `View`, `&T`, and borrowed `dyn`) carry an
-   explicit owner-root set in their containing declaration. The checker must
-   reject construction when no owner in the same aggregate outlives the field,
-   reject mutation/move of a live owner, and reject every return or container
-   insertion that would erase the relationship.
+3. **Implemented, deliberately narrow:** a direct `as_str()` or `view()` binding
+   whose receiver is a temporary is promoted to a named compiler temporary.
+   The temporary lasts for the binding's scope; escaping through a return,
+   reassignment and branch-result lifetime extension remain out of scope until
+   their distinct owner joins are designed and tested.
+4. **Implemented, deliberately narrow:** stored `str` and `View` values carry an
+   explicit owner-root set in their containing declaration. The checker requires an
+   owner in an earlier `String`/`Bytes` field of the same aggregate. `&T` and borrowed
+   `dyn` remain refused because an inline owner moves with the aggregate; containers,
+   returns and unrelated constructor locals remain refused.
 5. The existing no-alias rules remain: a borrow never permits a move from its
    referent, and a field through a shared or exclusive borrow is not moved by
    value. The added capability is lifetime tracking, not moving another

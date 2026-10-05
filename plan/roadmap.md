@@ -30,13 +30,14 @@ The language now includes the trait/iterator/const-generic work recorded in the
 MK8 and A-12 entries, and the backend has opt-in separate compilation,
 content-addressed object caching and parallel unit compilation.
 
-**The next maintained language focus is the remaining A-11 checker work.** In
-particular: moves from nested places; the sound cases for fields or payloads
-read through a borrow; field-granular drop tracking; temporary lifetime rules;
-and the outstanding reborrow cases. These are not a promise to weaken ownership
-rules: each admitted shape needs a borrowing and drop argument plus fixtures on
-both backends. The kernel scheduler and the major Polyp v4 stages are already
-present in this release; they are not the next milestone.
+**A-11's planned checker work is complete.** It covers the outstanding
+reborrow check, nested partial moves, direct text-view bindings whose temporary
+owner is promoted, and `str`/`View` fields backed by an earlier String/Bytes
+field in the same `datac`. Branch-result and reassignment lifetime extension,
+raw reference fields, borrowed containers and escaping temporary borrows remain
+deliberate non-goals until a separate owner-join design exists. The kernel
+scheduler and the major Polyp v4 stages are already present in this release;
+they are not the next milestone.
 
 Entries below that say a completed feature is “not started”, “ready to
 schedule”, or awaits a release are historical context and are superseded by

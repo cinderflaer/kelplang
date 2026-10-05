@@ -4526,7 +4526,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::FieldAccess { base, field } => {
                 Ok(Some(self.emit_field_read(e, base, field, &e.ty)?))
             }
-            ExprKind::StructLit { name, fields } => Ok(Some(self.emit_struct_lit(name, fields)?)),
+            ExprKind::StructLit { name, fields, .. } => Ok(Some(self.emit_struct_lit(name, fields)?)),
             // `Enum.Variant(payload = ...)`: the tag, then each payload field
             // into the variant's union member.
             ExprKind::EnumLit {
@@ -15757,13 +15757,7 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // (kernel stage 13) is the same one-pointer layout: the arena's own
         // `datac` stores its base this way.
         Ty::Handle(_) | Ty::Ptr(_) => Ok(()),
-        // A borrowed field never reaches codegen at all: the frontend refuses
-        // one first (`types::is_borrowed_field_ty`, which names `&str`, `View`
-        // and a reference). These three rows are therefore unreachable, and are
-        // refused here rather than mis-lowered if one ever appears.
-        // `refuse_field` has to stay total over `Ty`, so the rows remain.
-        Ty::Str => Err(refuse("'a 'str' field'", "S2F")),
-        Ty::View => Err(refuse("'a 'View' field'", "S2F")),
+        Ty::Str | Ty::View => Ok(()),
         Ty::Ref { .. } => Err(refuse("'a reference field'", "S2F")),
         // A function value is a `ptr` field and a closure is the fat pointer's
         // struct, laid out by the container pass before this one (S2E).
