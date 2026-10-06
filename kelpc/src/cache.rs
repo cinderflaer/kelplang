@@ -100,9 +100,19 @@ pub struct CacheStats {
     hits: AtomicU64,
     misses: AtomicU64,
     stored: AtomicU64,
+    interface_hits: AtomicU64,
+    interface_misses: AtomicU64,
 }
 
 impl CacheStats {
+    /// Generated interface artifacts found complete and current.
+    pub fn interface_hits(&self) -> u64 {
+        self.interface_hits.load(Ordering::Relaxed)
+    }
+    /// Generated interface artifacts missing, malformed or stale, and rewritten.
+    pub fn interface_misses(&self) -> u64 {
+        self.interface_misses.load(Ordering::Relaxed)
+    }
     pub fn hits(&self) -> u64 {
         self.hits.load(Ordering::Relaxed)
     }
@@ -166,7 +176,6 @@ impl Cache {
         &self.dir
     }
 
-    #[cfg(test)]
     pub fn stats(&self) -> &CacheStats {
         &self.stats
     }
@@ -198,16 +207,26 @@ impl Cache {
             )
         })?;
         for interface in interfaces {
-            let mut text = format!(
-                "kelpc-front-end-interface-1\nmodule={}\napi={}\nhash={}\n",
-                interface.module, interface.api_hash, interface.hash
-            );
-            for (module, hash) in &interface.dependencies {
-                text.push_str(&format!("dependency={module}:{hash}\n"));
+            if self.interface_is_fresh(interface) {
+                self.stats.interface_hits.fetch_add(1, Ordering::Relaxed);
+                continue;
             }
+            self.stats.interface_misses.fetch_add(1, Ordering::Relaxed);
+            let text = interface_text(interface);
             self.store_bytes(&self.interface_path(&interface.module), text.as_bytes())?;
         }
         Ok(())
+    }
+
+    /// Whether the stored artifact for `interface.module` is complete, current
+    /// and for this exact interface. A missing, unreadable, truncated,
+    /// old-format or differing artifact is a miss, never an error: the caller
+    /// rewrites it atomically.
+    fn interface_is_fresh(&self, interface: &crate::resolve::ModuleInterface) -> bool {
+        let Ok(stored) = std::fs::read(self.interface_path(&interface.module)) else {
+            return false;
+        };
+        stored == interface_text(interface).as_bytes()
     }
 
     /// Look `key` up: `Some(path)` when a usable entry exists, `None` when the
@@ -604,6 +623,35 @@ mod tests {
     }
 
     #[test]
+    fn a_corrupt_or_stale_interface_is_a_miss_and_is_replaced() {
+        let dir = std::env::temp_dir().join(format!("kelpc_interface_fresh_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = Cache::with_dir(dir.clone());
+        let iface = |hash: &str| crate::resolve::ModuleInterface {
+            module: "p/a".into(),
+            api_hash: "api".into(),
+            hash: hash.into(),
+            dependencies: vec![],
+        };
+        let counts = |c: &Cache| (c.stats().interface_hits(), c.stats().interface_misses());
+        cache.store_interfaces(&[iface("one")]).unwrap();
+        assert_eq!(counts(&cache), (0, 1));
+        cache.store_interfaces(&[iface("one")]).unwrap();
+        assert_eq!(counts(&cache), (1, 1));
+        cache.store_interfaces(&[iface("two")]).unwrap();
+        assert_eq!(counts(&cache), (1, 2));
+        let path = cache.entries()[0].path.clone();
+        std::fs::write(&path, b"kelpc-front-end-interface-1\nmod").unwrap();
+        cache.store_interfaces(&[iface("two")]).unwrap();
+        assert_eq!(counts(&cache), (1, 3));
+        assert_eq!(std::fs::read(&path).unwrap(), interface_text(&iface("two")).as_bytes());
+        std::fs::write(&path, b"kelpc-front-end-interface-0\nold").unwrap();
+        cache.store_interfaces(&[iface("two")]).unwrap();
+        assert_eq!(counts(&cache), (1, 4));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn interfaces_are_atomically_written_as_generated_cache_entries() {
         let dir = std::env::temp_dir().join(format!("kelpc_interface_cache_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -648,4 +696,16 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// The canonical text of one generated interface artifact.
+fn interface_text(interface: &crate::resolve::ModuleInterface) -> String {
+    let mut text = format!(
+        "kelpc-front-end-interface-1\nmodule={}\napi={}\nhash={}\n",
+        interface.module, interface.api_hash, interface.hash
+    );
+    for (module, hash) in &interface.dependencies {
+        text.push_str(&format!("dependency={module}:{hash}\n"));
+    }
+    text
 }

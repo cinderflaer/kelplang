@@ -544,6 +544,7 @@ fn build(
             eprintln!("error: {message}");
             return false;
         }
+        timing.interfaces = Some((cache.stats().interface_hits(), cache.stats().interface_misses()));
     }
 
     // One `pkg-config` invocation for every package the manifest's `[extern.*]`

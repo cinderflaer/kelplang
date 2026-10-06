@@ -1306,7 +1306,31 @@ fn interface_api_hash(module: &str, text: &str) -> String {
             surface.push_str(&format!("impl_member={:?}:{}:{}\n", member.kind, member.name, member.sig));
         }
     }
+    // A dependency's body can reach an importer's checked result through four
+    // routes the signature text does not show (`plan/front-end-incremental.md`,
+    // design pass): generic templates, passdown modes, folded constants and the
+    // drop set. The scan keeps no bodies, so a module that declares or touches
+    // any of them contributes its whole text. That is conservative: it can only
+    // invalidate more, never reuse wrongly.
+    if leaks_body(text, &scan) {
+        surface.push_str(&format!("body={}\n", crate::sha256::sha256_hex(text.as_bytes())));
+    }
     crate::sha256::sha256_hex(surface.as_bytes())
+}
+
+/// Whether a private edit in `text` could change what an importer checks to:
+/// the module declares a generic item, a `const`, a `static`, a `pd`, or a
+/// destructor. Word matching over the source, so a false positive only costs a
+/// cache miss.
+fn leaks_body(text: &str, scan: &crate::doc::Scan) -> bool {
+    let generic = scan.items.iter().any(|item| {
+        let head = item.sig.split('(').next().unwrap_or("");
+        head.contains('<')
+    });
+    generic
+        || text
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| matches!(word, "const" | "static" | "pd" | "drop"))
 }
 
 struct Loader<'a> {
@@ -3336,6 +3360,27 @@ mod tests {
             interface_api_hash("main", first),
             interface_api_hash("main", public_signature_changed)
         );
+    }
+
+    #[test]
+    fn an_interface_hash_tracks_bodies_that_leak_into_importers() {
+        let edits = [
+            // a generic template body
+            ("pub fun id<T>(x: T).R: T = x\n", "pub fun id<T>(x: T).R: T = x\n\nfun hidden().R: i32 = 2\n"),
+            // a folded constant
+            ("const N: i32 = 1\npub fun f().R: i32 = N\n", "const N: i32 = 2\npub fun f().R: i32 = N\n"),
+            // a passdown's initializer
+            ("pd val depth: i32 = 1\npub fun f().R: i32 = depth\n", "pd val depth: i32 = 2\npub fun f().R: i32 = depth\n"),
+            // a destructor body
+            ("datac B { v: i32 }\nfun mut B.drop() { }\n", "datac B { v: i32 }\nfun mut B.drop() { val x = 1 }\n"),
+        ];
+        for (before, after) in edits {
+            assert_ne!(
+                interface_api_hash("main", before),
+                interface_api_hash("main", after),
+                "an edit that reaches importers did not change the hash: {before}"
+            );
+        }
     }
 
     fn manifest(text: &str) -> Manifest {

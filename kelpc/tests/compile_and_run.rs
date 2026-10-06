@@ -16481,6 +16481,31 @@ fn incremental_builds_write_generated_module_interfaces() {
 }
 
 #[test]
+fn timings_report_front_end_interface_hits_and_misses() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("iface_timings");
+    let cache = out_path("cache_iface_timings");
+    let _ = std::fs::remove_dir_all(&cache);
+    let bin = out_path("cache_iface_timings_bin");
+    let line = |stderr: &str| {
+        stderr
+            .lines()
+            .find(|l| l.contains("front-end interfaces:"))
+            .map(|l| l.trim().to_string())
+            .unwrap_or_default()
+    };
+    let first = cache_build(&dir, &bin, &cache, &[], &[]);
+    assert!(first.ok, "{}", first.stderr);
+    assert!(line(&first.stderr).contains(" 0 hit,"), "{}", first.stderr);
+    let second = cache_build(&dir, &bin, &cache, &[], &[]);
+    assert!(second.ok, "{}", second.stderr);
+    assert!(line(&second.stderr).contains(" 0 miss"), "{}", second.stderr);
+}
+
+#[test]
 fn an_unchanged_project_is_all_hits_on_the_second_build() {
     if backend() == "c" {
         println!("skipping: the C oracle ignores --incremental");
@@ -16859,10 +16884,11 @@ fn the_cache_command_reports_and_clears() {
         .expect("failed to spawn kelpc cache stats");
     assert!(stats.status.success());
     let stats_text = String::from_utf8_lossy(&stats.stdout);
+    // The cache holds unit objects and generated interface artifacts.
+    let total = entries.len() + interface_entries(&cache).len();
     assert!(
-        stats_text.contains(&format!("{} entries", entries.len())),
-        "kelpc cache stats did not report {} entries: {stats_text}",
-        entries.len()
+        stats_text.contains(&format!("{total} entries")),
+        "kelpc cache stats did not report {total} entries: {stats_text}",
     );
     let clear = kelpc()
         .arg("cache")
@@ -16873,7 +16899,7 @@ fn the_cache_command_reports_and_clears() {
         .expect("failed to spawn kelpc cache clear");
     assert!(clear.status.success());
     assert!(
-        cache_entries(&cache).is_empty(),
+        cache_entries(&cache).is_empty() && interface_entries(&cache).is_empty(),
         "kelpc cache clear left entries behind"
     );
     let second = cache_build(&dir, &out_path("cache_command_2"), &cache, &[], &[]);

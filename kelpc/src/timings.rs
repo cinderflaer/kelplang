@@ -41,6 +41,10 @@ pub struct Timings {
     pub link: Duration,
     /// Per-unit times, in the units' own order.
     pub units: Vec<UnitTiming>,
+    /// Generated front-end interface artifacts found current and rewritten, as
+    /// `(hits, misses)`. `None` when the build keeps no interfaces. These are
+    /// validated, not yet reused: the front end still runs over every module.
+    pub interfaces: Option<(u64, u64)>,
 }
 
 impl Timings {
@@ -64,6 +68,9 @@ impl Timings {
         ];
         for (label, elapsed) in phases {
             eprintln!("  {label}: {}", millis(elapsed));
+        }
+        if let Some((hits, misses)) = self.interfaces {
+            eprintln!("  front-end interfaces: {hits} hit, {misses} miss (validated, not reused)");
         }
         for unit in &self.units {
             let verdict = if unit.hit { "hit" } else { "miss" };
