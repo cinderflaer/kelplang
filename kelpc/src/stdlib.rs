@@ -668,7 +668,7 @@ fn first_str_arg(arg_is_str: &[bool]) -> Option<usize> {
 /// the program itself unchecked.
 fn process_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
     let program_at = match callee {
-        "spawn_in" | "run_in" | "try_run_in" | "spawn_raw" => 1,
+        "spawn_in" | "run_in" | "try_run_in" | "spawn_raw" | "spawn_inherit_raw" | "run_inherit_in" => 1,
         _ => 0,
     };
     match arg_is_str.get(program_at) {

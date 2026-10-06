@@ -6820,6 +6820,17 @@ fn a_signal_killed_child_is_told_apart_from_one_that_exited_with_that_code() {
 }
 
 #[test]
+fn run_inherit_leaves_the_child_on_the_parents_descriptors() {
+    // The child's `echo` lands between the parent's own prints, in order,
+    // because the parent flushes before the fork and nothing is captured.
+    assert_project_runs(
+        "process_inherit",
+        &project("process_inherit").join("main.kp"),
+        "before\nfrom the child\nafter\n3\n0\n0\n15\n",
+    );
+}
+
+#[test]
 fn reading_argv_needs_the_gate_but_no_program_grant() {
     // An empty pattern list is a real grant: `runner` may name `std/process`
     // (so `process.args`/`process.exit` resolve) and may not execute anything.

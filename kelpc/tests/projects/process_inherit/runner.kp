@@ -1,0 +1,8 @@
+impl "std/process"
+
+pub fun run_inherit_sh(script: &str).R: process.RunResult {
+    var args: List<String> = List.empty()
+    args.push(String.from_str("-c"))
+    args.push(String.from_str(script))
+    return process.run_inherit("/bin/sh", args)
+}

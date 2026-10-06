@@ -32,6 +32,7 @@ impl "std/str"
 extern fun arg_count_raw().R: usize
 extern fun arg_at_raw(i: usize).R: String
 extern fun spawn_raw(dir: &str, program: &str, args: List<String>, pid: mut i32, stdin_fd: mut i32, stdout_fd: mut i32, stderr_fd: mut i32)
+extern fun spawn_inherit_raw(dir: &str, program: &str, args: List<String>, pid: mut i32)
 extern fun reap_raw(pid: i32, block: bool, signal: mut i32).R: i32
 extern fun kill_raw(pid: i32, signal: i32)
 extern fun exit_raw(code: i32)
@@ -209,6 +210,25 @@ fun run_in(dir: &str, program: &str, args: List<String>).R: RunResult {
 
 // As `run_in` with the parent's working directory.
 fun run(program: &str, args: List<String>).R: RunResult = run_in("", program, args)
+
+// As `run_in`, but the child inherits this process's stdin, stdout and stderr
+// instead of getting pipes: its output appears as it is written, its two
+// streams interleave in the order it wrote them, and a child that asks
+// `isatty` sees what the parent sees. Nothing is captured, so the returned
+// `out` and `err` are empty; `code` and `signal` are the child's, as for `run`.
+// The parent's buffered output is flushed before the fork.
+//
+// Panics: as `run_in`.
+fun run_inherit_in(dir: &str, program: &str, args: List<String>).R: RunResult {
+    var pid: i32 = 0
+    spawn_inherit_raw(dir, program, args, pid = pid)
+    var sig: i32 = 0
+    val code = reap_raw(pid, true, &mut sig)
+    return RunResult(code = code, signal = sig, out = Bytes.empty(), err = Bytes.empty())
+}
+
+// As `run_inherit_in` with the parent's working directory.
+fun run_inherit(program: &str, args: List<String>).R: RunResult = run_inherit_in("", program, args)
 
 // Whether `program` is a regular file that could be executed: it exists, it is
 // not a directory or a dangling link, and it carries an execute bit for this

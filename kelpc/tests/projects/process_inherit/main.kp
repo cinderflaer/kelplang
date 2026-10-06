@@ -1,0 +1,15 @@
+// `run_inherit` leaves the child on this process's descriptors: its stdout is
+// this program's stdout, written live and in order with the parent's own
+// output, and nothing is captured.
+impl "runner" caps(process = ["/bin/**", "/nix/store/**"])
+
+fun main() {
+    print("before")
+    val r = runner.run_inherit_sh("echo from the child; exit 3")
+    print("after")
+    print(r.code)
+    print(r.signal)
+    print(r.out.len())
+    val k = runner.run_inherit_sh("kill -TERM $$")
+    print(k.signal)
+}
