@@ -18,6 +18,16 @@
 /// indented one level, ending in a newline).
 static EXTERNS: &[(&str, &str, &str)] = &[
     (
+        "std/sys",
+        "os",
+        "#if defined(__linux__)\n    return \"linux\";\n#elif defined(__APPLE__)\n    return \"macos\";\n#elif defined(_WIN32)\n    return \"windows\";\n#elif defined(__FreeBSD__)\n    return \"freebsd\";\n#else\n    return \"unknown\";\n#endif\n",
+    ),
+    (
+        "std/sys",
+        "arch",
+        "#if defined(__x86_64__) || defined(_M_X64)\n    return \"x86_64\";\n#elif defined(__aarch64__) || defined(_M_ARM64)\n    return \"aarch64\";\n#elif defined(__riscv) && __riscv_xlen == 64\n    return \"riscv64\";\n#elif defined(__arm__)\n    return \"arm\";\n#elif defined(__i386__) || defined(_M_IX86)\n    return \"x86\";\n#else\n    return \"unknown\";\n#endif\n",
+    ),
+    (
         "std/source",
         "file",
         "    return \"<source>\";\n",

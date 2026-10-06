@@ -1,0 +1,11 @@
+impl "std/sys"
+impl "std/str"
+
+// `sys.os()` and `sys.arch()` name the build target. The test host is a
+// Linux x86_64 or aarch64 machine, so the OS is pinned and the architecture
+// is checked to be one of the known names.
+fun main() {
+    print(sys.os())
+    val a = sys.arch()
+    print(str.eq(a, "x86_64") || str.eq(a, "aarch64"))
+}

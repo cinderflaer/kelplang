@@ -2296,6 +2296,7 @@ The compiler ships its standard-library modules inside the binary. Import them w
 | `std/fs` | `fs` | files, directories, metadata, temp files |
 | `std/time` | `time` | wall clock, monotonic clock, sleep |
 | `std/source` | none | call-site source file and line |
+| `std/sys` | none | the build target's operating system and architecture names |
 | `std/trace` | `time` | opt-in trace events and duration spans on stderr |
 | `std/rand` | `rand` | `u64`, bounded values, random bytes |
 | `std/env` | `env` | read and write environment variables |
@@ -2492,6 +2493,17 @@ fun source.line().R: usize
 Both functions resolve where the call is written. `file()` is the path Kelp
 compiled, and `line()` is 1-based. The module is ungated and is intended for
 test reports and diagnostics.
+
+### 16.9.0 `std/sys`
+
+```kelp
+fun sys.os().R: str      // "linux", "macos", "windows", "freebsd" or "unknown"
+fun sys.arch().R: str    // "x86_64", "aarch64", "riscv64", "arm", "x86" or "unknown"
+```
+
+Both names are fixed when the program is built: they describe the target, not
+the machine the binary happens to run on. The module is ungated. A program that
+picks a release asset by platform compares them with `str.eq`.
 
 ### 16.9.1 `std/trace` (domain `time`)
 

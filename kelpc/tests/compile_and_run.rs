@@ -9596,6 +9596,11 @@ fn a_backslash_dollar_escape_writes_a_literal_dollar_sign() {
 }
 
 #[test]
+fn sys_reports_the_build_target() {
+    assert_compiles_and_runs("tests/fixtures/sys_target.kp", "linux\ntrue\n");
+}
+
+#[test]
 fn an_unknown_string_escape_is_rejected_by_name() {
     // The old fallback made `"\q"` mean `"q"`: a typo was silently a different
     // string. It is now a diagnostic that names the supported set.
