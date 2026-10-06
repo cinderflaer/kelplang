@@ -9502,6 +9502,11 @@ fn a_documentation_comment_is_a_comment_to_the_compiler() {
 }
 
 #[test]
+fn source_location_is_the_kelp_call_site() {
+    assert_compiles_and_runs("tests/fixtures/source_location.kp", "5\ntrue\n");
+}
+
+#[test]
 fn a_documentation_comment_after_code_is_rejected() {
     assert_rejected_with(
         "tests/fixtures/doc_comment_trailing.kp",

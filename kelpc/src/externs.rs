@@ -18,6 +18,16 @@
 /// indented one level, ending in a newline).
 static EXTERNS: &[(&str, &str, &str)] = &[
     (
+        "std/source",
+        "file",
+        "    return \"<source>\";\n",
+    ),
+    (
+        "std/source",
+        "line",
+        "    return 0;\n",
+    ),
+    (
         "std/mem",
         "alloc_raw",
         "    return kelp_bytes_alloc_raw(kelp_n);\n",

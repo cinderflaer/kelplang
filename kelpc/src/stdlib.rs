@@ -154,6 +154,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/math" => include_str!("../std/math.kp"),
         "std/fs" => include_str!("../std/fs.kp"),
         "std/time" => include_str!("../std/time.kp"),
+        "std/source" => include_str!("../std/source.kp"),
         "std/rand" => include_str!("../std/rand.kp"),
         "std/env" => include_str!("../std/env.kp"),
         "std/fmt" => include_str!("../std/fmt.kp"),
@@ -194,7 +195,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
 /// directly), but nothing should be told it is a library to reach for.
 pub fn shipped() -> &'static [&'static str] {
     &[
-        "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
+        "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/source", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/tlsfile", "std/http", "std/ws",
         "std/encoding", "std/list", "std/option", "std/result", "std/iter", "std/convert", "std/ops", "std/atomic",
         "std/thread", "std/pool", "std/arena", SYNC_MODULE, "std/irq", "std/frame", "std/regex", "std/tz",

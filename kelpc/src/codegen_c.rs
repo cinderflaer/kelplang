@@ -5967,6 +5967,22 @@ impl<'a> Gen<'a> {
     }
 
     fn call_value(&self, callee: &str, args: &[Expr], span: Span, ret: &Ty) -> String {
+        if callee == "std.source.file" {
+            let path = self
+                .sources
+                .path_line_col(&self.module, span)
+                .map(|(path, _, _)| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.module.clone());
+            return c_string_literal(&path);
+        }
+        if callee == "std.source.line" {
+            let line = self
+                .sources
+                .path_line_col(&self.module, span)
+                .map(|(_, line, _)| line)
+                .unwrap_or(0);
+            return line.to_string();
+        }
         // `Handle.null()` and `w.is_null()` (gap 1): the C typedef is `void*`,
         // so the null handle is `NULL` cast to it and the test is a pointer
         // comparison. Both keys are synthetic (see `types::HANDLE_NULL_KEY`),

@@ -7760,6 +7760,24 @@ impl<'g, 'a> FnGen<'g, 'a> {
         ret: &Ty,
         span: Span,
     ) -> Result<Option<Value<'a>>, String> {
+        if callee == "std.source.file" {
+            let path = self
+                .g
+                .sources
+                .path_line_col(&self.module, span)
+                .map(|(path, _, _)| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.module.clone());
+            return Ok(Some(self.string_global(&path)?));
+        }
+        if callee == "std.source.line" {
+            let line = self
+                .g
+                .sources
+                .path_line_col(&self.module, span)
+                .map(|(_, line, _)| line)
+                .unwrap_or(0);
+            return Ok(Some(self.int_const(ret, line as i128)?));
+        }
         // `cpu_index()` (kernel stage 8): the register the kernel set at boot,
         // read with one inline-asm instruction. `cpu_count()` is folded to a
         // literal in `infer.rs`, so it never reaches here.

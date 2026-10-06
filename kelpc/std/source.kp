@@ -1,0 +1,7 @@
+//! Call-site source locations for diagnostics and test reports.
+
+/// The source file containing this call.
+extern fun file().R: str
+
+/// The 1-based source line containing this call.
+extern fun line().R: usize

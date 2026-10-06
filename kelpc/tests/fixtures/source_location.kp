@@ -1,0 +1,7 @@
+impl "std/source"
+impl "std/str"
+
+fun main() {
+    print(source.line())
+    print(str.len(source.file()) > 0)
+}

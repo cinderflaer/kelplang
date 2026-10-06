@@ -720,7 +720,7 @@ if let Circle(r) = shape {
 ### 6.2 `for` and `while`
 
 `for` walks a `List` front to back, or any type that implements the iterator
-protocol (`std/iter`, 16.18):
+protocol (`std/iter`, 16.21):
 
 ```kelp
 for x in xs {
@@ -1882,7 +1882,7 @@ A `datac`/`enum` element takes a **derived deep copy and a derived order from it
 The element-wise methods above are builtin. The callback-shaped operations
 (`map`, `filter`, `each`, `find_index`, `any`, `all`) live in `std/list`,
 because a callback's result type cannot be generated per element type: see
-16.15.
+16.16.
 
 ### 12.2 `Map<K, V>`
 
@@ -2024,10 +2024,10 @@ when r {
 - **Every receiver is shared, `store`'s included.** An atomic mutates *through* a shared borrow, which is the whole point of the type: it is left with no `&mut` path at all, so a `&Atomic<T>` is something that can be shared rather than moved. It is also why a `pd val` counter is the declaration a shared counter wants: a `val` passdown hands a function a shared borrow, which is the borrow stage C1's thread argument needs, since §5's second rule refuses an *exclusive* one. A `pd var` counter works as well, including a store followed by a load in one function, because an atomic's operations are shared borrows reborrowed from the passdown's hidden reference; what `var` costs is that a function which assigns to the passdown itself holds it exclusively, and that is the borrow a thread argument may not take.
 - **Not `Copy`, and needs no drop.** A copy would be a second handle to one location; there is nothing to free. A `pd val Atomic<i64>` therefore needs neither a `mut` binding nor the `atexit` story an owned passdown has.
 - **The named instantiations** are `AtomicBool`, `AtomicU8`, `AtomicU16`, `AtomicU32`, `AtomicU64`, `AtomicUsize`, `AtomicI32`, `AtomicI64` and `AtomicIsize`; each is the same type as the `Atomic<T>` spelling. There is no `AtomicI8`/`AtomicI16` (v1 has no `i8`/`i16`).
-- **What is not here.** No `Atomic<f64>`: there is no atomic float arithmetic, and a compare-and-swap loop would pretend there is one. No `AtomicPtr`: raw pointers need `unsafe`, which is not in v1. No `Relaxed`/`Acquire`/`Release`: `Ordering` has exactly one variant, `SeqCst` (16.16).
+- **What is not here.** No `Atomic<f64>`: there is no atomic float arithmetic, and a compare-and-swap loop would pretend there is one. No `AtomicPtr`: raw pointers need `unsafe`, which is not in v1. No `Relaxed`/`Acquire`/`Release`: `Ordering` has exactly one variant, `SeqCst` (16.17).
 - **An atomic is not a container element.** It cannot be a `List`/`Map`/`Box` element or an array element: an element is read and written as a plain location by the container's own routines, and every access to an atomic has to be one atomic operation. Keep it in a place of its own (`val c = AtomicI64.new(0)`, or a `pd`). A `datac` field of atomic type *is* accepted, because a field is reached by field access, which is where the atomic's own methods sit. A-10 slice 1 closed this question; `plan/mk9-memory-model.md` §9 carries the decision.
 
-Every operation takes the ordering last even though v1 has exactly one value for it, so the argument position is reserved in the API: adding `Relaxed`/`Acquire`/`Release` later is a new variant of `Ordering` and a change to no signature, and naming one that does not exist yet is the ordinary unknown-variant error (16.16).
+Every operation takes the ordering last even though v1 has exactly one value for it, so the argument position is reserved in the API: adding `Relaxed`/`Acquire`/`Release` later is a new variant of `Ordering` and a change to no signature, and naming one that does not exist yet is the ordinary unknown-variant error (16.17).
 
 `Ordering` is an ordinary `enum` in `std/atomic`, so a program writes `atomic.Ordering.SeqCst` behind an `impl "std/atomic"` line, and the exhaustiveness check applies to a `when` over it.
 
@@ -2046,7 +2046,7 @@ thread.fence(order = atomic.Ordering.SeqCst)
 | --- | --- | --- |
 | `thread.fence(order)` | the ordering | `Unit` |
 
-**`SeqCst` means what C11, C++11 and LLVM `seq_cst` mean:** one total order over every sequentially consistent operation, with each operation ordered consistently with that total order and with program order, and with no data race among the atomic operations themselves. Every operation of 12.5 and the fence take the ordering as an argument, and v1 has exactly one ordering, `SeqCst` (16.16). The argument is what reserves the position for the others: a second ordering is a widening of that enum and a change to no signature.
+**`SeqCst` means what C11, C++11 and LLVM `seq_cst` mean:** one total order over every sequentially consistent operation, with each operation ordered consistently with that total order and with program order, and with no data race among the atomic operations themselves. Every operation of 12.5 and the fence take the ordering as an argument, and v1 has exactly one ordering, `SeqCst` (16.17). The argument is what reserves the position for the others: a second ordering is a widening of that enum and a change to no signature.
 
 Until MK9-S3-M2 states it as the language's own, the definition of the model this section states is the one `plan/mk9-memory-model.md` section 3 records; MK9-S3-M2 is the stage that publishes it rather than borrowing it by reference.
 
@@ -2054,7 +2054,7 @@ A fence changes nothing a single-threaded program can observe, and it is one ins
 
 ### 12.7 Threads
 
-`thread.spawn` starts a real OS thread and `thread.join` waits for it. Both are compiler builtins in `std/thread` (16.17), beside the fence, and neither is in the builtin signature table: what crosses the boundary decides their types, so the checker builds the signature at the call site.
+`thread.spawn` starts a real OS thread and `thread.join` waits for it. Both are compiler builtins in `std/thread` (16.18), beside the fence, and neither is in the builtin signature table: what crosses the boundary decides their types, so the checker builds the signature at the call site.
 
 ```kelp
 impl "std/thread"
@@ -2282,7 +2282,7 @@ A relative path is not covered by a path pattern, because patterns are absolute:
 
 ## 16. Standard library
 
-Nineteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
+Twenty modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
 
 | Module | Domain | Contents |
 | --- | --- | --- |
@@ -2294,6 +2294,7 @@ Nineteen modules ship inside the compiler binary. Import them with `impl "std/<n
 | `std/io` | none | `File`, `BufReader`, stdio, `print`/`eprint` variants |
 | `std/fs` | `fs` | files, directories, metadata, temp files |
 | `std/time` | `time` | wall clock, monotonic clock, sleep |
+| `std/source` | none | call-site source file and line |
 | `std/rand` | `rand` | `u64`, bounded values, random bytes |
 | `std/env` | `env` | read and write environment variables |
 | `std/process` | `process` | argv, spawn, wait, kill, exit |
@@ -2479,7 +2480,18 @@ fun rand.below(n: u64).R: u64          // 0 .. n-1
 fun rand.bytes(n: usize).R: Bytes
 ```
 
-### 16.9 `std/env` (domain `env`)
+### 16.9 `std/source`
+
+```kelp
+fun source.file().R: str
+fun source.line().R: usize
+```
+
+Both functions resolve where the call is written. `file()` is the path Kelp
+compiled, and `line()` is 1-based. The module is ungated and is intended for
+test reports and diagnostics.
+
+### 16.10 `std/env` (domain `env`)
 
 ```kelp
 fun has(name: &str).R: bool
@@ -2488,7 +2500,7 @@ fun set(name: &str, value: &str)
 fun unset(name: &str)
 ```
 
-### 16.10 `std/process` (domain `process`)
+### 16.11 `std/process` (domain `process`)
 
 ```kelp
 fun args().R: List<String>
@@ -2508,7 +2520,7 @@ datac RunResult(val code: i32, val out: Bytes, val err: Bytes)
 
 The grant names the program path itself, so `process = ["/bin/sh"]` is one path checked before the fork. `run` buffers both output streams whole; use `spawn` for a child whose output is unbounded.
 
-### 16.11 `std/net` (domain `net`)
+### 16.12 `std/net` (domain `net`)
 
 ```kelp
 fun connect(host: &str, port: u16).R: Socket
@@ -2537,7 +2549,7 @@ datac ConnectErr(val reason: String)
 
 The panicking form stays, and it is the convenience wrapper: `connect` is what a caller uses when a refused dial really is fatal, and `try_connect` is the same call with the failure as a value. `ConnectErr.reason` is the text `connect` panics with, so a caller that logs a failure prints what the panicking form would have printed. The shape is `std/process`'s: `run` beside `try_run`, with the error as a named type (`ProcErr`), decided before the call rather than by inspecting `errno` afterwards.
 
-### 16.12 `std/http` (ungated, holds `net`)
+### 16.13 `std/http` (ungated, holds `net`)
 
 ```kelp
 fun get(url: &str).R: Response
@@ -2561,7 +2573,7 @@ fun Response.text().R: String
 
 Responses frame their body by `Content-Length`, chunked encoding, a bodyless rule or end-of-file, and a reusable connection returns to the per-`host:port` pool sized by `http_pool` in `coral.toml`. `http.get` panics on a URL it cannot parse, a connection failure, or a capability denial; a response with a non-2xx status is not a panic, it is a `Response`.
 
-### 16.13 `std/option`
+### 16.14 `std/option`
 
 ```kelp
 enum Option<T> {
@@ -2593,7 +2605,7 @@ val shout = option.map(o = text, f = fun(s: &String).R = str.to_upper(s.as_str()
 
 What hands the payload *out by value* takes the option with **`move`**: `unwrap`, `expect` and `unwrap_or` read the payload of the owned option, which is a partial move of the local the caller gave up, so `Option<String>.unwrap()` works. The move form is the caller's contract too: the option is consumed, so a caller that wants it afterwards passes a fresh expression, or matches it for a tag test only (a pattern that binds an owned payload takes it out just as `unwrap` does, while a `Copy` payload is copied). `or_else` rebuilds `Some` from a payload it was handed through a borrow, so it stays `Copy`-only.
 
-### 16.14 `std/result`
+### 16.15 `std/result`
 
 ```kelp
 enum Result<T, E> {
@@ -2618,7 +2630,7 @@ fun each<T, E>(r: &Result<T, E>, f: closure(&T))
 
 The `Copy` requirements left here are on the side a helper has to **rebuild** through a borrow: `unwrap_or`/`unwrap`/`unwrap_err` hand a payload out of a borrowed result, and `and_then`/`or_else` rebuild the other variant out of one. `map` and `map_err` take the result with **`move`** instead, so the side they rebuild may be owned: `result.map` over a `Result<T, MyErr>` moves the error payload into the fresh `Err` (17's partial moves).
 
-### 16.15 `std/list`
+### 16.16 `std/list`
 
 The element-wise API of `List<T>` (`len`, `get`, `push`, `sort`, …) is builtin, because a list is monomorphized and its methods are generated C per element type (12.1). The operations that need a **callback** cannot be generated without knowing what the callback returns, so they are free functions in a module — `list.map(xs, f)` — the same shape `str.*` and `math.*` have.
 
@@ -2642,7 +2654,7 @@ print(names.len())                       // still owned here
 
 `filter` is the exception, and for the same reason `or_else` is: an accepted element is read *out* of the borrowed list by value, which is a move out of a borrow, refused (17). `list.filter` over `List<String>` is a compile error saying so; `find_index`/`any`/`all` cover the predicates that only need to know *which* one, and a `Copy` element type filters directly.
 
-### 16.16 `std/atomic`
+### 16.17 `std/atomic`
 
 The atomic cell itself is a compiler builtin (12.5); what this module carries is the **ordering annotation** its operations take.
 
@@ -2656,7 +2668,7 @@ enum Ordering {
 
 `Ordering` is a plain `enum` in a shipped module rather than a name the compiler knows, so naming one costs an `impl "std/atomic"` line and the module qualifier: `atomic.Ordering.SeqCst`. That is the same cost `std/option`'s `Option` and `std/result`'s `Result` carry, and it buys the ordinary exhaustiveness check: a `when` over an ordering is re-checked the day a second variant exists, and the compiler names the missing arms rather than falling into a default.
 
-### 16.17 `std/thread`
+### 16.18 `std/thread`
 
 ```kelp
 fun fence(order: Ordering)
@@ -2669,7 +2681,7 @@ datac ThreadErr(val message: String)
 
 The fence, `spawn`, `join` and the failure type a join hands back. `fence` is a free function rather than an `Atomic<T>` method because a standalone fence orders no location (12.6), and the thread surface is one module rather than two.
 
-`fence` takes the ordering of 16.16 and returns `Unit`. It has no `.kp` body: a fence cannot be written in Kelp, so the compiler lowers it to one instruction per backend (`__atomic_thread_fence(__ATOMIC_SEQ_CST)`, `fence seq_cst`), and this module's source documents the surface rather than declaring it, the way `std/atomic` documents the atomic methods it declares nowhere.
+`fence` takes the ordering of 16.17 and returns `Unit`. It has no `.kp` body: a fence cannot be written in Kelp, so the compiler lowers it to one instruction per backend (`__atomic_thread_fence(__ATOMIC_SEQ_CST)`, `fence seq_cst`), and this module's source documents the surface rather than declaring it, the way `std/atomic` documents the atomic methods it declares nowhere.
 
 Reaching the ordering costs what every atomic call site pays, one `impl "std/atomic"` line and the `atomic.` qualifier:
 
@@ -2691,9 +2703,9 @@ when thread.join(h) {
 }
 ```
 
-A join hands back `Result<T, ThreadErr>`, so a program that writes one also needs `impl "std/result"`, exactly as `Atomic.compare_exchange`'s `Result<T, T>` does (16.14).
+A join hands back `Result<T, ThreadErr>`, so a program that writes one also needs `impl "std/result"`, exactly as `Atomic.compare_exchange`'s `Result<T, T>` does (16.15).
 
-### 16.18 `std/ws` (ungated, holds `net` and `rand`)
+### 16.19 `std/ws` (ungated, holds `net` and `rand`)
 
 ```kelp
 fun parse_url(s: &str).R: Url
@@ -2726,7 +2738,7 @@ enum Msg {
 
 A WebSocket **client** (RFC 6455), over `ws://` only, shipped in the same style as every other MK5 module: it is `.kp` source over `std/net` and `std/encoding`, with no compiler change and no dependency. `parse_url` splits `ws://host[:port][/path]` (port 80 when it is absent) and `connect` performs the HTTP/1.1 upgrade: a `GET` carrying `Upgrade: websocket`, `Connection: Upgrade`, `Sec-WebSocket-Version: 13` and a `Sec-WebSocket-Key` of sixteen random bytes, then the `101` response, whose `Sec-WebSocket-Accept` must equal the base64 of the SHA-1 of that key plus `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`. A non-`101`, a missing accept header and a value computed from another key are each refused with their own message, and `std/encoding`'s `sha1` is what the check is built on.
 
-**Two capabilities, because the module has two needs, and neither is a domain of its own.** There is no `caps(ws = ...)`: the two domains this module uses are the ones an importer delegates to it, which is the shape 16.12 already has for `std/http` and `net`. The grant line is
+**Two capabilities, because the module has two needs, and neither is a domain of its own.** There is no `caps(ws = ...)`: the two domains this module uses are the ones an importer delegates to it, which is the shape 16.13 already has for `std/http` and `net`. The grant line is
 
 ```kelp
 impl "std/ws" caps(net = ["gateway.example.com:80"], rand = [])
@@ -2757,12 +2769,12 @@ fun main() {
 }
 ```
 
-### 16.19 `std/sync`
+### 16.20 `std/sync`
 
 The mutex surface (B-5, `plan/mutex.md`): `Mutex<T>` is a compiler builtin in the
 shape `Atomic<T>`/`Thread<T>` have, and this module is the id a program names in
 its `impl` list. The two calls and the constructor are documented here rather
-than declared, for the reason 16.17's `spawn`/`join` are: what the lock carries
+than declared, for the reason 16.18's `spawn`/`join` are: what the lock carries
 decides the signature, so the compiler builds it at the call site.
 
 ```kelp
@@ -2789,7 +2801,7 @@ print(m.into_inner())
 The surface is hosted only: a freestanding manifest refuses `Mutex<T>` and names
 the spin lock over an `Atomic<T>` a kernel would use instead.
 
-### 16.20 `std/iter`
+### 16.21 `std/iter`
 
 The iterator protocol (`plan/iterators.md`): what a `for` walks when it is not a
 `List`/array, plus the range and the drain helpers that ship with it. The trait
@@ -2839,7 +2851,7 @@ rest.
 These are deliberate, and each one has a workaround in this document:
 
 - A tuple is a record with positional fields, so it is read by destructuring and nothing else: there is no positional access on a value (`t.0`), no tuple pattern in `when` (6.3), no destructuring `for` binding (6.2), and no tuple value in a `const` initializer (3.1, 14.1). Bind the whole tuple to a `val` when the positions need to be visible separately, and print its positions rather than the tuple (`print` takes a scalar, a `str` or a `String`).
-- Iteration is a `for` over a `List` (6.2), a `[T; N]`, or an `Iterator` (16.18), or a `while` plus an index when the loop is not a front-to-back walk. `break`/`continue` control either loop.
+- Iteration is a `for` over a `List` (6.2), a `[T; N]`, or an `Iterator` (16.21), or a `while` plus an index when the loop is not a front-to-back walk. `break`/`continue` control either loop.
 - `?` propagates an identical failure type directly and a different one through a declared `impl From<Source> for Target`; there is no `Into` in the operator, no blanket impl, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, `From`/`Into` in `std/convert`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
 - A trait (9.5) is a set of method signatures and a bound on a type parameter. An object-safe trait may also be used behind a borrow as a trait object (`&dyn Shape`, 9.5.1) or owned as `Box<dyn Shape>` (9.5.3), a fat pair and a vtable in both spellings; there is no bare `dyn Name`, no upcast between trait objects, no associated type, and no way to implement a trait for a generic instantiation. A trait's methods reached through a type parameter are still dispatched statically, so a call on a `T` is the call the concrete type declares.
