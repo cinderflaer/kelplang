@@ -1,0 +1,11 @@
+impl "std/str"
+
+// `\$` is a literal dollar sign, so text that would start a template
+// (`$name`, `${...}`) can be a plain string value. Without the escape the
+// literal below would be a template, which is not a value.
+fun main() {
+    val s: str = "\$KELPC is unset, \${x}"
+    print(str.byte(s, 0))
+    print(str.len(s))
+    print(s)
+}

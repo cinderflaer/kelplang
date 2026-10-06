@@ -9579,6 +9579,14 @@ fn a_documentation_comment_after_code_is_rejected() {
 }
 
 #[test]
+fn a_backslash_dollar_escape_writes_a_literal_dollar_sign() {
+    assert_compiles_and_runs(
+        "tests/fixtures/escape_dollar.kp",
+        "36\n21\n$KELPC is unset, ${x}\n",
+    );
+}
+
+#[test]
 fn an_unknown_string_escape_is_rejected_by_name() {
     // The old fallback made `"\q"` mean `"q"`: a typo was silently a different
     // string. It is now a diagnostic that names the supported set.

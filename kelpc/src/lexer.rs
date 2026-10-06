@@ -1127,6 +1127,9 @@ impl<'a> Lexer<'a> {
                     Some(b'r') => text.push('\r'),
                     Some(b'"') => text.push('"'),
                     Some(b'\\') => text.push('\\'),
+                    // `\$` is a literal dollar sign, the way to write one in
+                    // front of a name or a brace without starting a template.
+                    Some(b'$') => text.push('$'),
                     // `\xNN`, exactly two hex digits (open item 64). A `str`
                     // is NUL-terminated UTF-8, so only the ASCII range and
                     // everything but NUL can be written this way; anything
@@ -1157,7 +1160,7 @@ impl<'a> Lexer<'a> {
                     Some(c) => {
                         return Err(LexError {
                             message: format!(
-                                "unknown escape '\\{}' in a string literal: the escapes are \\n, \\t, \\r, \\\", \\\\ and \\xNN",
+                                "unknown escape '\\{}' in a string literal: the escapes are \\n, \\t, \\r, \\\", \\\\, \\$ and \\xNN",
                                 c as char
                             ),
                             span: Span::new(start, self.pos),
