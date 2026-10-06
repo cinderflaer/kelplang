@@ -417,103 +417,165 @@ Mark-level edges, and the reason for each. Item-level edges are in the open item
 - **Block E restated.** Block E calls A-7/B-7 (allocators), B-6 (freestanding) and B-4 (concurrency model) "decisions to make, not tasks to schedule". **MK9-S3, MK9-S4 and MK9-S5 are those items.** Promoting them to numbered Marks does not remove the decision; it records that the decision is to be made inside a tracked Mark rather than left in the backlog.
 - **Coral and the regulated-domain question have no edges into MK5-MK11.** They are open items 71 and 72. See the Backlog part below.
 
-### Release schedule after 26.10.0 (proposed, 2026-10-06)
-Drafted 2026-10-06 from `plan/ISSUES.md`, `plan/roadmap.md` (open items, "also possible"),
-`plan/CHANGELOG.pending.md` (33 commits since `v26.10.0`) and `plan/release-goals.md`.
-Proposed by the working session, not yet approved by the maintainer. Versions are `YY.MM.N`.
+### Release schedule after 26.10.0 (decided 2026-10-06, proposed by the working session)
 
-Ordering rules used:
+Drafted 2026-10-06 from `plan/ISSUES.md`, this file's open items and Backlog, `plan/CHANGELOG.pending.md`
+(33 commits since `v26.10.0`) and `plan/release-goals.md`. The maintainer asked the working session to
+decide every open question, so the decisions below are made, not pending; each can be overridden by
+editing this section. The end state is **27.06.0**: `plan/ISSUES.md` holds no entry, every unstruck open
+item above is closed or recorded as a permanent decision, and every Backlog block is either shipped or
+closed by a written decision. Version numbers are targets: an unreleased number may be renumbered when a
+release slips, a released one never (see `AGENTS.md`, "Version scheme").
+
+Ordering rules:
 1. Soundness holes before features (BUG-q4Vn2, MISSING-Sw9Hd).
-2. Stdlib and runtime work (own files, parallel lanes) before language-shape work, which
-   collides in `ast.rs`/`parser.rs`/`infer.rs`/`borrowck.rs` and must run one lane at a time.
-3. A dependency ships before what needs it (`Ve8Nc` before iterator adapters; `n6Bsc` before
-   `Result<unit, E>` APIs).
-4. Every XL item is parked until the maintainer decides (AGENTS.md: not started without them).
-5. Coral and lighthouse are separate repos with their own `YY.MM.N`; they can ship beside any
-   kelp release, so they get their own slot instead of blocking the compiler.
+2. Stdlib and runtime work (own files, parallel lanes) before language-shape work, which collides in
+   `ast.rs`/`parser.rs`/`infer.rs`/`borrowck.rs` and runs one lane at a time.
+3. A dependency ships before what needs it (`Ve8Nc` before the iterator adapters, lifetime syntax before
+   borrows in containers, the capability design note before capability narrowing).
+4. Every XL item gets a design note in `plan/` one release before its implementation, and no XL
+   implementation merges without it.
+5. Coral and lighthouse are separate repositories with their own `YY.MM.N`; their slots below ship
+   beside the compiler release of the same name.
+6. Every release: full suite, the ignored differential sweep once, docs on the wiki `unreleased` branch
+   for every pending line, the resolved entries deleted from `ISSUES.md` and written to the pending
+   changelog, then the release procedure.
 
-#### 26.10.1: patch release (cut soon)
+#### Decisions made
 
-What is already merged since 26.10.0 (see the pending changelog): fallible `std/http`, `std/net`,
-`std/tls`; `wss://`; `process.run_inherit` and `signal`; `sys.os/arch`; `fs.set_mode`;
-`source.file/line`; `std/trace`; `List.with_capacity`; A-11 lifetime owners and nested partial
-moves; user `extern fun` callbacks; no OpenSSL link unless `std/tls` is reached.
+- **`try_*` mutators keep `Option<io.IoErr>` permanently** (None is success). `Result<unit, E>` still ships
+  as a language feature in 26.11.1, but a released signature does not change.
+- **`loop`, labelled `break`/`continue` and `break` with a value in `loop` are accepted** (MISSING-Lk9Xs).
+  `break`/`continue` inside a `defer` body stays refused.
+- **Generic trait impls, `where` clauses and blanket impls are accepted** (MISSING-Ve8Nc), after a design
+  note in 26.11.0.
+- **No unwinding, permanently** (MISSING-Jy7Df). A panic ends the process, which keeps "no exceptions".
+  What ships instead is a panic hook (`std/panic`) that runs once before exit, so a program can flush and
+  release by hand, and a documented list of what a panic does not run.
+- **No `async`/`await` and no stackful coroutines** (MISSING-Ra5Wn, closed by decision in 27.06.0 after the
+  KelpScript gate). The concurrency answer is threads, channels with `select`, a reusable worker pool and
+  multi-fd `poll`. Weaker atomic orderings ship as library surface.
+- **Coral version ranges** are exact `=`, `>=` and `~YY.MM` (same month, any release number). Nothing else.
+- **A grant denial stays a panic and is not a value** (open item 73), a denial being a program bug.
+- **Unicode** ships as a generated-table `std/unicode`, not locale-aware; no collation, no normalization
+  beyond NFC/NFD.
+- **HTTP/2 client** ships over ALPN `h2`; HTTP/3 and QUIC are permanent non-goals, recorded in
+  `wiki/language/limits.md`.
+- **User-code overloading stays refused** (H-14), recorded as policy; traits are the answer.
+- **Regulated and financial domains are not a Mark** (open item 71): `std/decimal` and checked arithmetic
+  ship, nothing else from the old MK12 sketch.
+- **KelpScript is gated, not scheduled**: 27.03.0 ships the cheaper ownership tools first (`Rc`/`Arc`,
+  arenas, borrows in containers); 27.06.0 writes `plan/kelpscript.md` and decides with that evidence.
+- **Passdowns stay module-scoped and a `datac` still names earlier types by value** (open items 10, 12),
+  recorded as design.
 
-Add before cutting, nothing else:
-- **BUG-q4Vn2** double move of an enum payload accepted (M). A borrow-check hole with a failing
-  test on `main`, so it blocks a release.
-- **MISSING-k7Rwq** `std/fs` fallible mutators (M). Seven `try_*` done in `wt-fs-fallible`;
-  `remove_all` needs a fallible `list` first, finish that or leave the entry half-finished.
+#### 26.10.1: patch (cut soon)
 
-Gate: full suite, differential sweep once, wiki `unreleased` docs for every pending line.
+Everything already merged (see the pending changelog), plus:
+- **BUG-q4Vn2** double move of an enum payload accepted (M).
+- **MISSING-k7Rwq** `std/fs` fallible mutators (M): the seven `try_*` are done; add a fallible `list`
+  and `try_remove_all`, then delete the entry.
 
 #### 26.10.2: network, TLS and small stdlib
 
-- **MISSING-Uc6Kj** TLS gaps: encrypted keys, key-file permission check, config reload,
-  `serve_tls` host binding (M). Closes the "stable TLS" goal honestly.
-- **MISSING-j2Wka** multipart/form-data builder (M), a `std/http` helper, no language change.
-- **MISSING-Nf3Rb** array literal as private global plus copy (M). Changes the IR of every array
-  literal, so it needs the differential sweep; ship it here because nothing else in the release
-  touches codegen.
-- **MISSING-Cn2Ym** only the `must_use` piece (fixes dropped `send` results and leaked thread
-  handles). `select` and zero-capacity channels wait.
-- **MISSING-Hd4Lr** only the part that needs no new trait machinery: `Map` iterator and
-  `List.iter()`.
+- **MISSING-Uc6Kj** encrypted keys, key-file permission check, config reload (M); with open item 55,
+  `net.listen` takes a host so `serve_tls` stops binding every interface.
+- **MISSING-j2Wka** multipart/form-data builder (M).
+- **MISSING-Nf3Rb** array literal as a private global plus a copy (M); needs the differential sweep.
+- **MISSING-Cn2Ym** `must_use` only; `select` waits for 26.12.1.
+- **MISSING-Hd4Lr** `Map` iterator and `List.iter()` only.
+- Open items 45 (`time.sleep_ms` ungated for library modules) and 56 (pool idle timeout and reaper).
 
-#### 26.11.0: language ergonomics and the last checker hole (one lane at a time)
+#### 26.11.0: language ergonomics I (one lane at a time)
 
 Order inside the release, each lane merged before the next starts:
-1. **MISSING-Sw9Hd** disjoint-field captures in scoped blocks, and `g(s, s)` with two `mut`
-   params being unchecked (L). The second half is a soundness gap, so it goes first.
-2. **MISSING-Gt6Qc** tuple patterns in `when` and destructuring `for (k, v)` (M); useful now
-   that the `Map` iterator exists.
-3. **MISSING-Lk9Xs** `loop`, labelled `break`, `break` with a value (M). Needs the maintainer's
-   yes/no first: the entry says no decision is recorded either way.
+1. **MISSING-Sw9Hd** disjoint-field captures, and the unchecked `g(s, s)` with two `mut` params (L).
+2. **MISSING-Gt6Qc** tuple patterns in `when`, destructuring `for (k, v)`, `t.0` access (M).
+3. **MISSING-Lk9Xs** `loop`, labelled `break`/`continue`, `break` with a value (M).
 4. **MISSING-Pw3Fz** methods with their own type parameters (L).
+5. Open item 75, trailing closures; open item 11, trailing-operator line continuation in the lexer;
+   H-12, a numeric literal adapts to its expected type; open item 7, `f32` overloads in `std/math`.
+6. Design notes only: `plan/generic-trait-impls.md` (Ve8Nc) and `plan/capability-narrowing.md`
+   (Iq2Tz, t9Qmz).
 
-#### 26.11.1: generics depth and iterator adapters
+#### 26.11.1: generics and traits
 
-- **MISSING-n6Bsc** `Result<unit, E>` success value (L, design call: zero-size payload or
-  sugar). Decide this early; see the risk below.
+- **MISSING-n6Bsc** `Result<unit, E>` with a success value (L): a zero-size payload, so `Ok(())` works.
 - **MISSING-Ey4Mt** const generics beyond integer and `bool` (L).
-- **MISSING-Ve8Nc** generic trait impls, `where` clauses, blanket impls (XL). Needs the
-  maintainer's go-ahead and a design note; the release is conditional on it.
-- Then the rest of **MISSING-Hd4Lr**: `map`, `filter`, `take`, `skip`, `enumerate`, `zip`,
-  `chain`. If Ve8Nc slips, this release ships Pw3Fz leftovers and Ey4Mt only.
+- **MISSING-Ve8Nc** generic trait impls, `where` clauses, blanket impls (XL, per the 26.11.0 note).
+- **MISSING-Hd4Lr** iterator adapters `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain`.
+- Open item 24, extension methods through trait impls on builtin and imported types; open items 8 and 25,
+  the `String` API gaps (`as_bytes`, `slice`); open item 35, `print` of a `datac`/`List` through a derived
+  Display.
 
-#### 26.12.0: tooling (Coral and lighthouse, own version numbers)
+#### 26.12.0: tooling (Coral and lighthouse)
 
-- **MISSING-vT4Kd** `.ckp` archive: tar or zip, manifest, `coral run app.ckp` unpacking to a
-  cache. No `kelpc` change (M).
-- **MISSING-oH9AB** the open half: `coral bench`, workspaces, publishing and CI recipes,
-  version ranges (L; version ranges need a decision at MK13-S3-M3).
-- **MISSING-Mta7v** the remaining half of user `extern fun` (L), since Coral's `[extern]`
-  section is how it is configured.
+- **MISSING-vT4Kd** `.ckp` archive: tar, manifest, `coral run app.ckp` through a cache directory (M).
+- **MISSING-oH9AB** `coral bench`, workspaces, publishing and CI recipes, version ranges as decided (L);
+  open items 67 and 70 (porting Coral to Kelp and its own authority) closed by the port plus a written
+  grant list.
+- **MISSING-Mta7v** the remaining half of user `extern fun` (L).
+- `std/testkit` discovery half with `coral test`; lighthouse (language server) brought to the 26.12
+  syntax and diagnostics.
 
-#### 26.12.1: runtime semantics and platform reach
+#### 26.12.1: concurrency and runtime semantics
 
-- **MISSING-Jy7Df** `Drop` on the panic path (L), a design call on unwinding versus abort.
-- **MISSING-Xo5Ga** Unicode case mapping and codepoint-aware `str` slicing (L).
-- **MISSING-Zq1Pe** `std/ws` server side, and HTTP/2 or leave the limit documented (L).
-- **MISSING-Tb8Vh** hosted thread-local storage (M, needs Jy7Df's decision for destructors).
+- **MISSING-Cn2Ym** channel `select`, zero-capacity channels, a reusable worker pool (M).
+- **MISSING-Tb8Vh** hosted thread-local storage (M).
+- **MISSING-Jy7Df** the panic hook and the documented list, as decided (L, now mostly docs).
+- **MISSING-Ra5Wn** weaker atomic orderings (acquire, release, relaxed) as library surface; multi-fd
+  `poll` (MK5-S4c).
+- **MISSING-Xo5Ga** `std/unicode`: case mapping and codepoint-aware slicing (L).
 
-#### Parked (XL, no release until the maintainer decides)
+#### 27.01.0: numeric correctness and data formats
 
-Ra5Wn async and weaker atomic orderings; Bm8Wk named nested functions, lifetime syntax,
-borrows in containers; Iq2Tz and t9Qmz capability narrowing and forwarding; Dl7Ps verification
-duty. Iq2Tz and t9Qmz are the most on-brand for Kelp (capability security) and the best first
-candidates for a 27.01 headline once the design question is settled.
+- H-18 checked arithmetic under a build profile with wrapping as the opt-in (MK12-S1); `std/decimal`.
+- The wider alphabet family in `std/encoding` (Encodings and alphabets, below), in `fpl` where it fits.
+- Open item 71 closed as decided.
 
-#### Risks and decisions needed
+#### 27.02.0: capability model II (the headline release)
 
-- **`Option<io.IoErr>` versus a future `Result<unit, IoErr>`.** The `try_*` mutators return
-  `Option<IoErr>` because `Result<unit, E>` cannot be written (n6Bsc). If n6Bsc lands in
-  26.11.1 the `try_*` mutators either keep the odd shape forever or change a released
-  signature. Decide before 26.10.1 ships: accept `Option` permanently, or bring n6Bsc forward.
-- Lk9Xs, Ve8Nc, n6Bsc and the Coral version-range question each need a maintainer decision
-  before their slot starts; an unmade decision moves the item, not the release.
-- The standing 26.10.0 release order is fulfilled (tag exists), so the memory note
-  `kelp-next-release` is stale and should be rewritten around this plan once approved.
+- **MISSING-Iq2Tz** a library in the middle narrows a capability; runtime attenuation and revocation (C-4).
+- **MISSING-t9Qmz** a module in the middle forwards a narrowed grant.
+- C-1 runtime-derived authority (MK10-S2) and C-2, restricting the entry module (open item 18).
+- Open item 73 recorded; `plan/threat-model.md` and the capability threat review brought up to date.
+
+#### 27.03.0: lifetimes and shared ownership
+
+- **MISSING-Bm8Wk** named nested functions, lifetime syntax, borrows in containers (XL, with a design
+  note in 27.02.0): lifts the A-11 non-goals (branch-result lifetime extension, raw reference fields,
+  borrowed containers, escaping temporary borrows).
+- A-7 `Rc`/`Arc`, arenas as a first-class surface.
+- H-2, H-3, H-4, H-16 and open items 21, 22, 28, 29 close with it.
+
+#### 27.04.0: network II
+
+- **MISSING-Zq1Pe** `std/ws` server side and the HTTP/2 client over ALPN (L); HTTP/3 recorded as a
+  non-goal.
+- TLS session resumption and client certificates if not already covered by the 26.10 release record.
+
+#### 27.05.0: verification and semantics
+
+- **MISSING-Dl7Ps** (XL): D-1 operational semantics and an aliasing model for `&mut`, D-2 the UB
+  catalogue, D-3 a dynamic checker for the move/borrow rules, so soundness becomes a test result.
+- Panic provenance (`plan/panic-provenance.md`), differential testing as a language feature
+  (`plan/differential-testing.md`), B-17 a test story for freestanding targets, D-4 conformance corpus.
+
+#### 27.06.0: closing release
+
+- KelpScript gate: write `plan/kelpscript.md` (the semantic-difference list and a shared-module proof)
+  and decide with the 27.03.0 evidence; **MISSING-Ra5Wn** closed by the decision above.
+- H-14 and every remaining H row recorded or shipped; the `Pitfalls` page needs no Workarounds paragraph.
+- Audit: `ISSUES.md` empty, this section replaced by a "completed" record in `done.md`.
+
+#### Coverage
+
+Every `ISSUES.md` entry is in a release above: q4Vn2 26.10.1; k7Rwq 26.10.1; Uc6Kj, j2Wka, Nf3Rb 26.10.2;
+Sw9Hd, Gt6Qc, Lk9Xs, Pw3Fz 26.11.0; n6Bsc, Ey4Mt, Ve8Nc, Hd4Lr 26.11.1; vT4Kd, oH9AB, Mta7v 26.12.0;
+Cn2Ym, Tb8Vh, Jy7Df, Xo5Ga 26.12.1; Iq2Tz, t9Qmz 27.02.0; Bm8Wk 27.03.0; Zq1Pe 27.04.0; Dl7Ps 27.05.0;
+Ra5Wn 27.06.0 (weaker orderings 26.12.1). Open items 58, 59, 62, 63, 64 and 65 are records of shipped
+behaviour and need no release. Anything found later goes into `ISSUES.md` and is slotted at the next
+release whose theme it matches.
 
 ## Open items
 
