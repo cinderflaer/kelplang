@@ -9,6 +9,7 @@ fun probe().R: bool {
         stderr = io.File(fd = 2),
         exited = false,
         code = 0,
+        signal = 0,
     )
     c.kill(signal = 0)
     return true

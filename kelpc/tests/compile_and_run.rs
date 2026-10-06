@@ -6811,6 +6811,15 @@ fn a_granted_module_runs_a_program_and_reads_its_own_argv() {
 }
 
 #[test]
+fn a_signal_killed_child_is_told_apart_from_one_that_exited_with_that_code() {
+    assert_project_runs(
+        "process_signal",
+        &project("process_signal").join("main.kp"),
+        "143\n15\n143\n0\n9\n",
+    );
+}
+
+#[test]
 fn reading_argv_needs_the_gate_but_no_program_grant() {
     // An empty pattern list is a real grant: `runner` may name `std/process`
     // (so `process.args`/`process.exit` resolve) and may not execute anything.

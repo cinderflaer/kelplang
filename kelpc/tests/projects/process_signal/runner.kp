@@ -1,0 +1,18 @@
+impl "std/process"
+
+fun sh(script: &str).R: List<String> {
+    var args: List<String> = List.empty()
+    args.push(String.from_str("-c"))
+    args.push(String.from_str(script))
+    return args
+}
+
+pub fun run_sh(script: &str).R: process.RunResult = process.run("/bin/sh", sh(script))
+
+// A spawned child killed from outside reports the signal after `wait`.
+pub fun spawn_killed().R: i32 {
+    var c = process.spawn("/bin/sh", sh("sleep 30"))
+    c.kill(9)
+    c.wait()
+    return c.signal
+}

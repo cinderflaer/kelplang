@@ -2543,11 +2543,11 @@ fun exit(code: i32)
 fun getpid().R: i64
 
 datac Child(val pid: i32, val stdin: io.File, val stdout: io.File, val stderr: io.File,
-            var exited: bool, var code: i32)
-datac RunResult(val code: i32, val out: Bytes, val err: Bytes)
+            var exited: bool, var code: i32, var signal: i32)
+datac RunResult(val code: i32, val signal: i32, val out: Bytes, val err: Bytes)
 ```
 
-The grant names the program path itself, so `process = ["/bin/sh"]` is one path checked before the fork. `run` buffers both output streams whole; use `spawn` for a child whose output is unbounded.
+The grant names the program path itself, so `process = ["/bin/sh"]` is one path checked before the fork. `signal` is the signal that killed the child, 0 when it exited by itself; `code` is `128 + signal` for a killed child, so a child's own `exit 143` and a SIGTERM share a `code` and differ in `signal`. `run` buffers both output streams whole; use `spawn` for a child whose output is unbounded.
 
 ### 16.12 `std/net` (domain `net`)
 

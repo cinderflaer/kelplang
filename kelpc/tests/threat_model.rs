@@ -797,7 +797,7 @@ fn p09_a_forged_child_handle_cannot_signal_a_foreign_pid() {
     lab.simple(
         &format!("process = [\"{}/tools/ok.sh\"]", lab.root.display()),
         &["std/process", "std/io", "std/str", "std/result"],
-        "    val args = process.args()\n    val pid = result.expect(r = str.parse_u64(args.get(1).as_str()), message = \"pid\")\n    val c = process.Child(pid = pid.to_i32(), stdin = io.File(fd = -1), stdout = io.File(fd = -1), stderr = io.File(fd = -1), exited = false, code = 0)\n    c.kill(0)\n    print(\"signalled a process that is not a child\")",
+        "    val args = process.args()\n    val pid = result.expect(r = str.parse_u64(args.get(1).as_str()), message = \"pid\")\n    val c = process.Child(pid = pid.to_i32(), stdin = io.File(fd = -1), stdout = io.File(fd = -1), stderr = io.File(fd = -1), exited = false, code = 0, signal = 0)\n    c.kill(0)\n    print(\"signalled a process that is not a child\")",
     );
     let pid = std::process::id().to_string();
     for oracle in [false, true] {
@@ -1254,7 +1254,7 @@ fn h01_a_module_without_a_grant_cannot_forge_a_descriptor_handle() {
         (
             "child",
             &["std/process", "std/io"][..],
-            "    val c = process.Child(pid = 1, stdin = io.File(fd = 0), stdout = io.File(fd = 1), stderr = io.File(fd = 2), exited = false, code = 0)\n    c.kill(9)",
+            "    val c = process.Child(pid = 1, stdin = io.File(fd = 0), stdout = io.File(fd = 1), stderr = io.File(fd = 2), exited = false, code = 0, signal = 0)\n    c.kill(9)",
             "wraps an operating-system descriptor",
         ),
     ] {
@@ -1288,7 +1288,7 @@ fn h02_a_domain_mints_only_its_own_handles() {
         (
             "net = [\"*\"]",
             &["std/net", "std/process", "std/io"][..],
-            "    val c = process.Child(pid = 1, stdin = io.File(fd = 0), stdout = io.File(fd = 1), stderr = io.File(fd = 2), exited = false, code = 0)",
+            "    val c = process.Child(pid = 1, stdin = io.File(fd = 0), stdout = io.File(fd = 1), stderr = io.File(fd = 2), exited = false, code = 0, signal = 0)",
         ),
     ] {
         let lab = Lab::new("h02");

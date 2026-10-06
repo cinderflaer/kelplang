@@ -32,7 +32,7 @@ impl "std/str"
 extern fun arg_count_raw().R: usize
 extern fun arg_at_raw(i: usize).R: String
 extern fun spawn_raw(dir: &str, program: &str, args: List<String>, pid: mut i32, stdin_fd: mut i32, stdout_fd: mut i32, stderr_fd: mut i32)
-extern fun reap_raw(pid: i32, block: bool).R: i32
+extern fun reap_raw(pid: i32, block: bool, signal: mut i32).R: i32
 extern fun kill_raw(pid: i32, signal: i32)
 extern fun exit_raw(code: i32)
 extern fun getpid_raw().R: i64
@@ -48,6 +48,9 @@ extern fun is_dir_raw(path: &str).R: bool
 //
 // `exited`/`code` are the wait state, so `is_running` and `wait` agree with
 // each other and a second `wait` is not a second `waitpid` on a reaped pid.
+// `signal` is the signal that killed the child, or 0 when it exited by itself;
+// `code` is then `128 + signal`, which a child's own `exit(143)` shares, so
+// `signal` is the field that tells the two apart.
 datac Child(
     val pid: i32,
     val stdin: io.File,
@@ -55,6 +58,7 @@ datac Child(
     val stderr: io.File,
     var exited: bool,
     var code: i32,
+    var signal: i32,
 )
 
 // A finished child: its exit code, and everything it wrote to each stream,
@@ -62,7 +66,7 @@ datac Child(
 // fills its stderr pipe and blocks would deadlock a reader that drained only
 // stdout. The memory cost is the sum of the two streams; a program with
 // unbounded output should use `spawn` and read incrementally.
-datac RunResult(val code: i32, val out: Bytes, val err: Bytes)
+datac RunResult(val code: i32, val signal: i32, val out: Bytes, val err: Bytes)
 
 // Why a fallible start refused to run a program (MK5-S2-M2) — the same conditions
 // the panicking forms report, as values a caller can branch on.
@@ -148,6 +152,7 @@ fun spawn_in(dir: &str, program: &str, args: List<String>).R: Child {
         stderr = io.File(fd = err_fd),
         exited = false,
         code = 0,
+        signal = 0,
     )
 }
 
@@ -199,7 +204,7 @@ fun run_in(dir: &str, program: &str, args: List<String>).R: RunResult {
         }
     }
     val code = child.wait()
-    return RunResult(code = code, out = out, err = err)
+    return RunResult(code = code, signal = child.signal, out = out, err = err)
 }
 
 // As `run_in` with the parent's working directory.
@@ -239,7 +244,7 @@ fun try_run_in(dir: &str, program: &str, args: List<String>).R: result.Result<Ru
 fun try_run(program: &str, args: List<String>).R: result.Result<RunResult, ProcErr> = try_run_in("", program, args)
 
 // Blocks until the child exits and returns its code: the exit status, or
-// `128 + signal` when it was killed. A second call returns the first result
+// `128 + signal` when it was killed (`signal` then holds the signal number). A second call returns the first result
 // rather than waiting again.
 //
 // Panics: if `waitpid` fails.
@@ -247,7 +252,9 @@ fun mut Child.wait().R: i32 {
     if exited {
         return code
     }
-    code = reap_raw(pid, true)
+    var sig: i32 = 0
+    code = reap_raw(pid, true, &mut sig)
+    signal = sig
     exited = true
     return code
 }
@@ -261,11 +268,13 @@ fun mut Child.is_running().R: bool {
     if exited {
         return false
     }
-    val r = reap_raw(pid, false)
+    var sig: i32 = 0
+    val r = reap_raw(pid, false, &mut sig)
     if r == -1 {
         return true
     }
     code = r
+    signal = sig
     exited = true
     return false
 }

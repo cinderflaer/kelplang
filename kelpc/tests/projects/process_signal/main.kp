@@ -1,0 +1,17 @@
+// `RunResult.signal` is the signal that killed the child, 0 for a child that
+// exited by itself. `code` is `128 + signal` for a killed child, which a
+// child's own `exit 143` shares, so `signal` is what tells the two apart.
+impl "runner" caps(process = ["/bin/**", "/nix/store/**"])
+
+fun main() {
+    val killed = runner.run_sh("kill -TERM $$")
+    print(killed.code)
+    print(killed.signal)
+
+    val exited = runner.run_sh("exit 143")
+    print(exited.code)
+    print(exited.signal)
+
+    val spawned = runner.spawn_killed()
+    print(spawned)
+}

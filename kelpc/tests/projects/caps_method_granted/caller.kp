@@ -9,6 +9,7 @@ pub fun probe().R: bool {
         stderr = io.File(fd = 2),
         exited = true,
         code = 7,
+        signal = 0,
     )
     return c.wait() == 7 && !c.is_running()
 }
