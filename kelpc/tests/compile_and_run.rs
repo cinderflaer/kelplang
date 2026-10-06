@@ -989,6 +989,20 @@ fn unshipped_stdlib_module_is_rejected() {
 }
 
 #[test]
+fn the_compiler_internal_std_namespace_is_unavailable_to_projects() {
+    assert_project_rejected(
+        "std_internal_import",
+        &project("std_internal_import").join("main.kp"),
+        "compiler-reserved std/internal namespace",
+    );
+    assert_project_rejected(
+        "std_internal_entry",
+        &project("std_internal_entry"),
+        "below the compiler-reserved std/internal namespace",
+    );
+}
+
+#[test]
 fn a_local_that_shadows_a_module_names_the_shadowing() {
     // The local wins, so the call is not the module's. The message says that
     // much, and names the module only when that module really has the method

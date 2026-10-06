@@ -42,6 +42,10 @@ pub const EXT: &str = "kp";
 /// not the language: the manifest is Coral's, the sources are Kelp's.
 pub const MANIFEST_NAME: &str = "coral.toml";
 
+/// Compiler-owned implementation modules live below this root. They are not a
+/// second public standard library: a project may neither declare nor import one.
+pub const INTERNAL_STDLIB_PREFIX: &str = "std/internal/";
+
 /// One loaded module, as seen by the rest of the compiler.
 #[derive(Debug, Clone)]
 pub struct ModuleInfo {
@@ -2857,6 +2861,13 @@ fn module_id_of(file: &Path, src_dir: &Path) -> Result<String, Diagnostic> {
             "",
         ));
     }
+    if id.starts_with(INTERNAL_STDLIB_PREFIX) {
+        return Err(Diagnostic::new(
+            format!("module '{id}' is below the compiler-reserved std/internal namespace"),
+            Span::new(0, 0),
+            "",
+        ));
+    }
     Ok(id)
 }
 
@@ -3117,6 +3128,11 @@ fn validate_impl_path(path: &str, span: Span, module: &str) -> Result<(), Diagno
     }
     if path.contains('\\') {
         return err("use '/' as the separator in 'impl' paths".to_string());
+    }
+    if path.starts_with(INTERNAL_STDLIB_PREFIX) {
+        return err(format!(
+            "'impl \"{path}\"' names the compiler-reserved std/internal namespace"
+        ));
     }
     if path == "std" || path.starts_with("std/") {
         // `std/mem` and friends ship with the compiler (M6.2). A `std/...`
