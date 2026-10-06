@@ -1,15 +1,16 @@
-# Incremental compilation: compilation units, slices 1, 2 and 3
+# Incremental compilation: compilation units and front-end interfaces
 
-*Roadmap A-14. Slice 1 is separate compilation, slice 2 is the content-addressed
-object cache over the units it produces, and slice 3 compiles those units in
-parallel. The measured numbers for all three are at the end of this file.*
+*Roadmap A-14. Slices 1 to 3 are separate compilation, the content-addressed
+object cache over its units, and parallel unit compilation. Slice 4 is the
+chosen generated-interface design for front-end incrementality. The measured
+numbers for the shipped backend slices are at the end of this file.*
 
 ## The decision
 
 The measured cost of `kelpc build` is almost all backend: LLVM optimization,
 code generation and the `cc` link. The front end (parse, check, borrow-check) is
-3 to 4 ms on the whole corpus. So the front end stays **whole-program** and the
-backend stops being one translation unit:
+3 to 4 ms on the whole corpus. Slices 1 to 3 therefore keep the front end
+**whole-program** and split the backend into units:
 
 - the program is partitioned into **units**, one per source module id, plus one
   unit named `_support`;
@@ -24,6 +25,16 @@ so an incremental build today costs *more* than a whole-program one (the same
 work plus a second module's worth of declarations). The point is the shape the
 next two slices need, and the equivalence it must preserve: the same program must
 produce the same stdout and exit status either way.
+
+## Slice 4: generated front-end interfaces
+
+The next slice changes that boundary. Its design is in
+`plan/front-end-incremental.md`: an interface is compiler-generated from a
+module's checked public surface, never checked in or edited by a user; an import
+depends on that interface hash, not on another module's private implementation;
+and `std/internal/...` is a compiler-reserved root that user `impl` lines cannot
+name. This slice is deliberately module-granular. It does not introduce
+cross-unit inlining or a query engine.
 
 ## The flag
 
