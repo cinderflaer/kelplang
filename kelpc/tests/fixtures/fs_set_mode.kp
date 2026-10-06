@@ -1,0 +1,13 @@
+// `fs.set_mode` writes the permission bits `Metadata.mode` reads: a file is made
+// executable and the new bits are read back, then restored.
+impl "std/fs"
+
+fun main() {
+    val path = "/tmp/kelp_fs_set_mode.txt"
+    fs.write_text(path, String.from_str("x"))
+    fs.set_mode(path, 420)
+    print(fs.metadata(path).mode)
+    fs.set_mode(path, 493)
+    print(fs.metadata(path).mode)
+    fs.remove(path)
+}

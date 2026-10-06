@@ -254,6 +254,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/fs",
+        "set_mode_raw",
+        "    if (chmod(kelp_path, (mode_t)(kelp_mode & 07777)) != 0) {\n        kelp_panic_errno(\"fs.set_mode: cannot change mode\");\n    }\n",
+    ),
+    (
+        "std/fs",
         "temp_path_raw",
         "    char tmpl[PATH_MAX];\n    int written = snprintf(tmpl, sizeof tmpl, \"%sXXXXXX\", kelp_prefix);\n    if (written < 0 || (size_t)written >= sizeof tmpl) {\n        kelp_panic(\"fs.temp_path: prefix is too long\");\n    }\n    int fd = mkstemp(tmpl);\n    if (fd < 0) {\n        kelp_panic_errno(\"fs.temp_path: cannot create temporary file\");\n    }\n    close(fd);\n    return kelp_String__from_str(tmpl);\n",
     ),

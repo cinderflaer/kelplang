@@ -6706,6 +6706,13 @@ fn the_fs_path_family_reads_writes_and_walks() {
     let _ = std::fs::remove_dir_all("/tmp/kelp_fs_path_family");
 }
 
+#[test]
+fn fs_set_mode_changes_the_bits_metadata_reports() {
+    // 420 is octal 644 and 493 is octal 755.
+    let _ = std::fs::remove_file("/tmp/kelp_fs_set_mode.txt");
+    assert_compiles_and_runs("tests/fixtures/fs_set_mode.kp", "420\n493\n");
+}
+
 // ---------------------------------------------------------------------------
 // S2: `io` (the standard descriptors as streams, buffered line reading) and
 // `process` (argv, running a program, spawning one).

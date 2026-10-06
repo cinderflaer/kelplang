@@ -48,6 +48,7 @@ extern fun touch_raw(path: &str)
 extern fun temp_path_raw(prefix: &str).R: String
 extern fun mtime_raw(path: &str).R: i64
 extern fun mode_raw(path: &str).R: u32
+extern fun set_mode_raw(path: &str, mode: u32)
 // `stat` once, into out-parameters: an `extern` returns one value and a
 // `datac`-returning body would have to name the generated C struct.
 extern fun metadata_raw(path: &str, size: mut u64, mtime: mut i64, mode: mut u32, is_dir: mut bool, is_file: mut bool)
@@ -322,6 +323,15 @@ fun symlink(target: &str, link: &str) {
 /// Panics: if the file cannot be created or its timestamp cannot be set.
 fun touch(path: &str) {
     touch_raw(path)
+}
+
+/// Sets the permission bits of `path` to the low 12 bits of `mode` (the same
+/// bits `Metadata.mode` reports), so `fs.set_mode(p, 493)` (octal 755) makes a downloaded
+/// file executable.
+///
+/// Panics: if `path` is outside the grant or its mode cannot be changed.
+fun set_mode(path: &str, mode: u32) {
+    set_mode_raw(path, mode)
 }
 
 /// A `File` over `path`. `mode` is one of `"r"`, `"w"`, `"a"`, `"rw"`; the
