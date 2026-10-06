@@ -41,9 +41,10 @@ findings".
   The wiki's `/meta/known-issues` page was retired on 2026-09-20 for this reason,
   and its one live finding moved here as BUG-11.
 
-This file is **not** in any git repository, and neither is `KelpLANG/AGENTS.md`:
-`KelpLANG/` is a loose working directory. A fixed finding lives in that
-repository's `CHANGELOG.pending.md` and, at release, in its wiki changelog page.
+This file is tracked in the `kelp` repository (moved here from the `KelpLANG/`
+root on 2026-10-06; `KelpLANG/AGENTS.md` is still outside any repository). A fixed
+finding lives in that repository's `CHANGELOG.pending.md` and, at release, in its
+wiki changelog page.
 
 ## Missing features
 
