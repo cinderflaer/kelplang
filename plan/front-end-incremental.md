@@ -139,3 +139,23 @@ interface must hold.
 
 Hotspot note: steps 1 and 4 touch `tir.rs` and `infer.rs`; run one lane at a
 time while they are in flight.
+
+### Measurement and a second blocker (same day)
+
+`kelpc build --timings` on the 6,117-line Kelp port of Coral (release build,
+LLVM backend, cold): parse 29 ms, resolve 5 ms, **infer 203 ms**, borrowck 35 ms,
+codegen 2279 ms, link 51 ms. The whole front end is about 270 ms of about 2.6 s,
+so perfect front-end reuse saves at most roughly 10% of a cold build on the
+largest program available, and codegen (not the front end) is the cost. The
+backend-unit cache already covers that side.
+
+Splicing cached per-module functions is also less contained than finding 1
+suggests: closure keys (`#funlit<N>`) come from one program-wide counter, and a
+generic instance is emitted by whichever module first instantiates it, so a
+module's checked output depends on the order and content of the modules checked
+before it. A sound splice needs those allocations made module-local first.
+
+Recommendation recorded here: do not build steps 1 and 4 until a measured
+program shows the front end above about 25% of a build. Steps 2, 3 and 5 are
+independently useful (a correct interface hash and validated artifacts) and
+carry no splice risk.
