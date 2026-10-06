@@ -502,12 +502,3 @@ aliasing model for `&mut`, no catalogue of defined behaviour (overflow is
 `-fwrapv` from the toolchain, not a language rule), and no dynamic checker for the
 move/borrow rules, so soundness is a reading of `infer.rs`/`borrowck.rs` rather
 than a test result. Matters more now that `unsafe` and raw pointers have shipped.
-
-### BUG-q4Vn2 kelp: a double move of an enum payload is accepted
-
-repo: kelp | found: 2026-10-06 | effort: M
-
-source: `cargo test -p kelpc --test compile_and_run -- an_enum_payload_cannot_be_moved_out_twice`
-fails on `main` at `e428cb7`: `tests/fixtures/partial_move_enum_payload_double.kp`
-is expected to be rejected and builds successfully. It fails on both a clean
-`main` checkout and the `frontend-reuse` lane, so it predates both.

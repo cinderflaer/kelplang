@@ -36,6 +36,7 @@ empty on release.
 
 ## Compiler and runtime
 
+- Moving the same enum payload out of an owned value twice is now refused (`use of moved value 'h.text'`); the checker had no path for a payload, so the second `when h { Two(text, _) -> text }` was accepted and freed the string twice.
 - A-11 lifetime owners: direct `as_str()` and `view()` bindings keep their
   temporary owner for the binding's scope, and a `datac` may keep a `str` or
   `View` when its String/Bytes owner is moved into an earlier field of the same
