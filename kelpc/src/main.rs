@@ -538,6 +538,13 @@ fn build(
         return false;
     }
     let incremental = incremental && backend == Backend::Llvm;
+    if incremental {
+        let cache = cache::Cache::for_build(out_path);
+        if let Err(message) = cache.store_interfaces(&loaded.interfaces) {
+            eprintln!("error: {message}");
+            return false;
+        }
+    }
 
     // One `pkg-config` invocation for every package the manifest's `[extern.*]`
     // sections named (MK9-S1-M1), shared by both backends. It runs before the

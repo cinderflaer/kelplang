@@ -1,5 +1,5 @@
-//! The content-addressed object cache for compilation units (roadmap A-14
-//! slice 2, `plan/incremental-compilation.md`).
+//! The compiler cache for incremental compilation (roadmap A-14,
+//! `plan/incremental-compilation.md`).
 //!
 //! A unit's object file is a pure function of the LLVM IR text the unit's
 //! module lowers to and of the machine it is compiled for: the target triple,
@@ -16,6 +16,11 @@
 //! entry. A missing, unreadable, empty or visibly truncated entry is a miss; an
 //! entry that survives the lookup but fails to link is deleted by the caller so
 //! the next build recovers (see `codegen_llvm::compile_units`).
+//!
+//! The same directory holds generated `.kpi` front-end interface artifacts.
+//! Their names are stable hashes of module identities, while their contents
+//! carry the public API and dependency hashes a later front-end reuse slice
+//! will validate before it skips a module.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -38,6 +43,8 @@ pub const STATS_ENV: &str = "KELPC_CACHE_STATS";
 
 /// The size cap in mebibytes (`KELPC_CACHE_MAX_MB`), 1024 by default.
 pub const MAX_MB_ENV: &str = "KELPC_CACHE_MAX_MB";
+
+const INTERFACE_EXT: &str = "kpi";
 
 /// The default size cap: 1 GiB, large enough that a project of ordinary size
 /// never evicts and small enough that a long-lived cache cannot fill a disk.
@@ -169,6 +176,40 @@ impl Cache {
         self.dir.join(format!("{key}.o"))
     }
 
+    fn interface_path(&self, module: &str) -> PathBuf {
+        let key = sha256_hex(format!("kelpc-front-end-interface-path-1\n{module}").as_bytes());
+        self.dir.join(format!("{key}.{INTERFACE_EXT}"))
+    }
+
+    /// Persist generated public contracts after a successful front-end pass.
+    /// These are compiler-owned artifacts, not source files a project may
+    /// check in or import.
+    pub fn store_interfaces(
+        &self,
+        interfaces: &[crate::resolve::ModuleInterface],
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.dir).map_err(|e| {
+            format!(
+                "could not create the cache directory '{}': {e}",
+                self.dir.display()
+            )
+        })?;
+        for interface in interfaces {
+            let mut text = format!(
+                "kelpc-front-end-interface-1\nmodule={}\napi={}\nhash={}\n",
+                interface.module, interface.api_hash, interface.hash
+            );
+            for (module, hash) in &interface.dependencies {
+                text.push_str(&format!("dependency={module}:{hash}\n"));
+            }
+            self.store_bytes(&self.interface_path(&interface.module), text.as_bytes())?;
+        }
+        Ok(())
+    }
+
     /// Look `key` up: `Some(path)` when a usable entry exists, `None` when the
     /// entry is missing, unreadable, empty or visibly incomplete. A hit and a
     /// miss are counted here, because every lookup is one or the other.
@@ -204,26 +245,33 @@ impl Cache {
                 object.display()
             )
         })?;
+        self.store_bytes(&self.entry_path(key), &bytes)?;
+        self.stats.stored.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Install one complete cache artifact with one atomic rename.
+    fn store_bytes(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
         let tmp = self.dir.join(format!(
-            ".{key}.o.tmp-{}-{}",
+            ".{name}.tmp-{}-{}",
             std::process::id(),
             ENTRY_TMP.fetch_add(1, Ordering::Relaxed)
         ));
-        if let Err(e) = std::fs::write(&tmp, &bytes) {
+        if let Err(e) = std::fs::write(&tmp, bytes) {
             let _ = std::fs::remove_file(&tmp);
             return Err(format!(
                 "could not write the cache entry '{}': {e}",
                 tmp.display()
             ));
         }
-        if let Err(e) = std::fs::rename(&tmp, self.entry_path(key)) {
+        if let Err(e) = std::fs::rename(&tmp, path) {
             let _ = std::fs::remove_file(&tmp);
             return Err(format!(
                 "could not install the cache entry '{}': {e}",
-                self.entry_path(key).display()
+                path.display()
             ));
         }
-        self.stats.stored.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -234,7 +282,7 @@ impl Cache {
         let _ = std::fs::remove_file(self.entry_path(key));
     }
 
-    /// Every `<key>.o` entry, with the metadata eviction sorts by.
+    /// Every object or interface entry, with the metadata eviction sorts by.
     fn entries(&self) -> Vec<Entry> {
         let mut out = Vec::new();
         let Ok(read) = std::fs::read_dir(&self.dir) else {
@@ -359,14 +407,14 @@ impl Cache {
     }
 }
 
-/// Whether `name` is a cache entry: `<64 hex>.o`. The prefix check on the temp
-/// files and the length check on the stem keep a half-written or foreign file
-/// from being counted.
+/// Whether `name` is a cache entry: `<64 hex>.o` or `<64 hex>.kpi`.
 fn is_entry_name(name: &str) -> bool {
-    let Some(stem) = name.strip_suffix(".o") else {
+    let Some((stem, ext)) = name.rsplit_once('.') else {
         return false;
     };
-    stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    matches!(ext, "o" | INTERFACE_EXT)
+        && stem.len() == 64
+        && stem.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// Whether `path` holds a complete object file.
@@ -493,7 +541,9 @@ mod tests {
     #[test]
     fn only_hex_object_names_are_entries() {
         assert!(is_entry_name(&format!("{}.o", "a".repeat(64))));
+        assert!(is_entry_name(&format!("{}.kpi", "a".repeat(64))));
         assert!(!is_entry_name(&format!("{}.o", "A".repeat(64))));
+        assert!(!is_entry_name(&format!("{}.kpi", "A".repeat(64))));
         assert!(!is_entry_name(&format!("{}.o", "a".repeat(63))));
         assert!(!is_entry_name("main.o"));
         assert!(!is_entry_name(&format!(".{}.o.tmp-1-2", "a".repeat(64))));
@@ -550,6 +600,25 @@ mod tests {
         write(&dir, &format!("{key}.o"), &elf(None));
         assert!(cache.lookup(&key).is_some());
         assert_eq!((cache.stats().hits(), cache.stats().misses()), (1, 1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn interfaces_are_atomically_written_as_generated_cache_entries() {
+        let dir = std::env::temp_dir().join(format!("kelpc_interface_cache_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = Cache::with_dir(dir.clone());
+        cache.store_interfaces(&[crate::resolve::ModuleInterface {
+            module: "cacheproj/alpha".into(),
+            api_hash: "api".into(),
+            hash: "full".into(),
+            dependencies: vec![("std/io".into(), "std-hash".into())],
+        }]).expect("store interface");
+        let entries = cache.entries();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].name.ends_with(".kpi"));
+        let text = std::fs::read_to_string(&entries[0].path).expect("read interface");
+        assert_eq!(text, "kelpc-front-end-interface-1\nmodule=cacheproj/alpha\napi=api\nhash=full\ndependency=std/io:std-hash\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

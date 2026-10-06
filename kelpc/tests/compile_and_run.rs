@@ -16410,13 +16410,27 @@ fn cache_entries(cache: &Path) -> Vec<PathBuf> {
     let mut names: Vec<String> = read
         .flatten()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| !name.starts_with('.'))
+        .filter(|name| name.ends_with(".o"))
         .collect();
     names.sort();
     names
         .into_iter()
         .map(|name| cache.join(name))
         .collect()
+}
+
+/// The generated compiler-owned module contracts in a cache directory.
+fn interface_entries(cache: &Path) -> Vec<PathBuf> {
+    let Ok(read) = std::fs::read_dir(cache) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = read
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".kpi"))
+        .collect();
+    names.sort();
+    names.into_iter().map(|name| cache.join(name)).collect()
 }
 
 /// Whether `path` holds a complete ELF object, the property a partial cache
@@ -16445,6 +16459,25 @@ fn is_complete_elf(path: &Path) -> bool {
     let shentsize = half(0x3a);
     let shnum = half(0x3c);
     shoff != 0 && shentsize != 0 && shnum != 0 && bytes.len() as u64 >= shoff + shentsize * shnum
+}
+
+#[test]
+fn incremental_builds_write_generated_module_interfaces() {
+    if backend() == "c" {
+        println!("skipping: the C oracle ignores --incremental");
+        return;
+    }
+    let dir = cache_project("interfaces");
+    let cache = out_path("cache_interfaces");
+    let bin = out_path("cache_interfaces_bin");
+    let build = cache_build(&dir, &bin, &cache, &[], &[]);
+    assert!(build.ok, "the incremental build failed:\n{}", build.stderr);
+    let entries = interface_entries(&cache);
+    assert!(!entries.is_empty(), "the build wrote no interface artifacts");
+    for entry in entries {
+        let text = std::fs::read_to_string(&entry).expect("read interface artifact");
+        assert!(text.starts_with("kelpc-front-end-interface-1\nmodule="), "bad interface artifact '{}': {text}", entry.display());
+    }
 }
 
 #[test]
