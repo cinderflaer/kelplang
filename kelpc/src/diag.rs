@@ -120,6 +120,13 @@ impl SourceMap {
         );
     }
 
+    /// The source text registered for one module. The front-end interface
+    /// builder consumes declaration signatures from this exact loaded text, so
+    /// an unsaved `check --text` buffer and an on-disk build cannot disagree.
+    pub fn text(&self, module: &str) -> Option<&str> {
+        self.files.get(module).map(|file| file.text.as_str())
+    }
+
     /// `file:line:col` for a span in a module, when the module's text is
     /// known. Used by `codegen_c.rs` for capability denials, whose message has
     /// to name the `.kp` call site at runtime (M7). The generated C does carry

@@ -474,6 +474,20 @@ pub struct Loaded {
     /// formatter ignores them, because a formatter that printed warnings would
     /// mix them into the text it writes to stdout.
     pub deprecations: Vec<Diagnostic>,
+    /// Compiler-generated public contracts in dependency order. Slice 4 uses
+    /// these hashes to decide which modules a future front-end cache may reuse.
+    #[allow(dead_code)] // The next cache slice consumes this after artifact I/O lands.
+    pub interfaces: Vec<ModuleInterface>,
+}
+
+/// One module's generated front-end contract. `api_hash` is its own public
+/// surface; `hash` additionally commits to the direct contracts it imports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleInterface {
+    pub module: String,
+    pub api_hash: String,
+    pub hash: String,
+    pub dependencies: Vec<(String, String)>,
 }
 
 /// Loads the entry file, follows every `impl` transitively, rejects import
@@ -1179,6 +1193,11 @@ pub fn load(
         }
     }
 
+    let interfaces = {
+        let source_map: &SourceMap = &*loader.sources;
+        build_interfaces(&loader.modules, source_map)
+    };
+
     let project = Project {
         root,
         src_dir,
@@ -1203,7 +1222,91 @@ pub fn load(
         program,
         project,
         deprecations: loader.deprecations,
+        interfaces,
     })
+}
+
+/// Builds module contracts after discovery, whose post-order guarantees every
+/// imported module's interface hash is available before its importer needs it.
+fn build_interfaces(modules: &[ModuleInfo], sources: &SourceMap) -> Vec<ModuleInterface> {
+    let mut hashes: HashMap<String, String> = HashMap::new();
+    let mut interfaces = Vec::with_capacity(modules.len());
+    for module in modules {
+        let text = sources
+            .text(&module.id)
+            .expect("every loaded module has registered source text");
+        let api_hash = interface_api_hash(&module.id, text);
+        let mut dependencies: Vec<String> = module
+            .aliases
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        dependencies.sort();
+        dependencies.dedup();
+        let dependencies: Vec<(String, String)> = dependencies
+            .into_iter()
+            .map(|id| {
+                let hash = hashes
+                    .get(&id)
+                    .expect("module loading visits imports before importers")
+                    .clone();
+                (id, hash)
+            })
+            .collect();
+        let mut input = format!("kelpc-front-end-interface-1\nmodule={}\napi={}\n", module.id, api_hash);
+        for (id, hash) in &dependencies {
+            input.push_str(&format!("dependency={id}:{hash}\n"));
+        }
+        let hash = crate::sha256::sha256_hex(input.as_bytes());
+        hashes.insert(module.id.clone(), hash.clone());
+        interfaces.push(ModuleInterface {
+            module: module.id.clone(),
+            api_hash,
+            hash,
+            dependencies,
+        });
+    }
+    interfaces
+}
+
+/// The stable public surface of one module, intentionally excluding function
+/// bodies and doc comments. `doc::scan` already knows how to isolate formatted
+/// declaration headers while balancing arbitrary bodies, so reusing it keeps
+/// this cache boundary aligned with the documentation tool instead of creating
+/// a second partial parser.
+fn interface_api_hash(module: &str, text: &str) -> String {
+    let scan = crate::doc::scan(text).expect("a loaded module was already lexed successfully");
+    let public_types: HashSet<String> = scan
+        .items
+        .iter()
+        .filter(|item| item.is_pub && matches!(item.kind, crate::doc::Kind::Datac | crate::doc::Kind::Enum | crate::doc::Kind::Trait | crate::doc::Kind::ExternType))
+        .map(|item| item.name.clone())
+        .collect();
+    let mut surface = format!("module={module}\n");
+    for import in &scan.imports {
+        surface.push_str(&format!("import={}\n", import.text));
+    }
+    for item in &scan.items {
+        let public_method = item
+            .receiver
+            .as_ref()
+            .map(|receiver| public_types.contains(receiver))
+            .unwrap_or(false);
+        if !item.is_pub && !public_method {
+            continue;
+        }
+        surface.push_str(&format!("item={:?}:{}:{}:{}:{}:{}\n", item.kind, item.name, item.sig, item.unsafe_, item.extern_, item.body_domains.iter().cloned().collect::<Vec<_>>().join(",")));
+        for member in &item.members {
+            surface.push_str(&format!("member={:?}:{}:{}\n", member.kind, member.name, member.sig));
+        }
+    }
+    for imp in &scan.impls {
+        surface.push_str(&format!("trait_impl={}:{}\n", imp.trait_name, imp.ty));
+        for member in &imp.members {
+            surface.push_str(&format!("impl_member={:?}:{}:{}\n", member.kind, member.name, member.sig));
+        }
+    }
+    crate::sha256::sha256_hex(surface.as_bytes())
 }
 
 struct Loader<'a> {
@@ -3217,6 +3320,23 @@ pub(crate) fn is_keyword(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_interface_hash_ignores_private_bodies_but_tracks_public_signatures() {
+        let first = "pub fun api(x: i32).R: i32 = x\n\nfun hidden().R: i32 = 1\n";
+        let private_body_changed =
+            "pub fun api(x: i32).R: i32 = x\n\nfun hidden().R: i32 = 999\n";
+        let public_signature_changed =
+            "pub fun api(x: i64).R: i64 = x\n\nfun hidden().R: i32 = 1\n";
+        assert_eq!(
+            interface_api_hash("main", first),
+            interface_api_hash("main", private_body_changed)
+        );
+        assert_ne!(
+            interface_api_hash("main", first),
+            interface_api_hash("main", public_signature_changed)
+        );
+    }
 
     fn manifest(text: &str) -> Manifest {
         parse_manifest(text, Path::new("coral.toml")).expect("manifest should parse")
