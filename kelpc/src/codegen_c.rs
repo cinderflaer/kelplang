@@ -2954,6 +2954,8 @@ fn write_list(
     out.push_str("    if (p == NULL) {\n        kelp_panic(\"out of memory\");\n    }\n");
     out.push_str("    self->data = p;\n    self->cap = cap;\n}\n\n");
 
+    writeln!(out, "static {list} {list}__with_capacity(size_t cap) {{\n    {list} l = {list}__empty();\n    {list}__reserve(&l, cap);\n    return l;\n}}\n").unwrap();
+
     writeln!(out, "static {list} {list}__of({elem_c} v) {{").unwrap();
     writeln!(out, "    {list} l = {list}__empty();").unwrap();
     writeln!(out, "    {list}__reserve(&l, 1);\n    l.data[0] = v;\n    l.len = 1;\n    return l;\n}}\n").unwrap();
@@ -6182,7 +6184,7 @@ impl<'a> Gen<'a> {
             };
             let elem = if op == "of" {
                 args.first().map(|a| a.ty.clone())
-            } else if op == "empty" || op == "new" {
+            } else if op == "empty" || op == "new" || op == "with_capacity" {
                 elem_of(ret).cloned()
             } else {
                 args.first().and_then(|a| elem_of(&a.ty)).cloned()

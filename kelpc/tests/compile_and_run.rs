@@ -6485,6 +6485,15 @@ fn a_map_sized_with_with_capacity_grows_and_behaves_like_a_new_one() {
 }
 
 #[test]
+fn a_list_sized_with_with_capacity_grows_like_an_empty_one() {
+    assert_compiles_and_runs(
+        "tests/fixtures/list_with_capacity.kp",
+        "0\n100\n0\n198\ntrue\n7\n2\nb\n",
+    );
+    assert_rejected("tests/fixtures/list_with_capacity_arity.kp");
+}
+
+#[test]
 fn a_map_probe_steps_over_a_tombstone_and_still_finds_the_live_key() {
     // "k0", "k8" and "k13" share one probe chain, so the tombstone `remove`
     // leaves at the chain's head is what a probe has to step past.

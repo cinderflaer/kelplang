@@ -1859,6 +1859,7 @@ while !xs.is_empty() {
 | Method | Takes | Returns |
 | --- | --- | --- |
 | `List.empty()` | nothing | empty list, element type from the context or from the first `push`/`insert`/`set` |
+| `List.with_capacity(n)` | `usize` or `i64` | an empty list with room for at least `n` elements, element type from the binding; a hint, not a fence |
 | `List.of(x)` | one value | list holding that value |
 | `len()` / `is_empty()` | shared | `usize` / `bool` |
 | `get(i)` | shared, `usize` | the element, or a borrow of it |

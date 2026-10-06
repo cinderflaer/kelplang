@@ -10481,6 +10481,7 @@ impl<'a> Gen<'a> {
         let mut out = vec![
             spec(&format!("{base}__empty"), list, &[]),
             spec(&format!("{base}__reserve"), void, &[ptr, i64t]),
+            spec(&format!("{base}__with_capacity"), list, &[i64t]),
             spec(&format!("{base}__of"), list, &[elem_ty]),
             spec(&format!("{base}__len"), i64t, &[ptr]),
             spec(&format!("{base}__is_empty"), i1t, &[ptr]),
@@ -11427,6 +11428,18 @@ impl<'a> Gen<'a> {
             self.builder.build_br(done);
             self.builder.position_at_end(done);
             self.builder.build_ret_void();
+        }
+
+        // --- with_capacity(n): `empty` then `reserve(n)`, so the buffer is
+        // sized once and the list grows past it like any other ---
+        {
+            let (f, _) = self.start(&format!("{base}__with_capacity"), "entry")?;
+            let l = self.builder.build_alloca(list_ty, "l");
+            self.st(self.ctx.const_null(list_ty), l);
+            let (reserve, rty) = self.cfn(&format!("{base}__reserve"))?;
+            self.call(reserve, rty, &[l, f.get_param(0)], "");
+            let out = self.ld(list_ty, l, "wc");
+            self.builder.build_ret(out);
         }
 
         // --- of(v) ---
@@ -15621,7 +15634,7 @@ fn container_symbol(callee: &str, args: &[Expr], ret: &Ty) -> Option<String> {
         };
         let elem = if op == "of" {
             args.first().map(|a| a.ty.clone())
-        } else if op == "empty" || op == "new" {
+        } else if op == "empty" || op == "new" || op == "with_capacity" {
             elem_of(ret).cloned()
         } else {
             args.first().and_then(|a| elem_of(&a.ty)).cloned()

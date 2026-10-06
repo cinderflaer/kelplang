@@ -1,0 +1,5 @@
+// `List.with_capacity` takes exactly one element count.
+fun main() {
+    var xs: List<i32> = List.with_capacity(2, 3)
+    print(xs.len())
+}

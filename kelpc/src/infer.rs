@@ -19229,11 +19229,12 @@ fn check_container_associated(
         // map that fills three million entries otherwise rebuilds its index a
         // dozen times on the way there. The count is a hint, never a fence:
         // the map grows past it like any other.
-        "with_capacity" if container == "Map" => {
+        "with_capacity" if container == "Map" || container == "List" => {
             if args.len() != 1 {
                 return Err(TypeError {
                     message: format!(
-                        "'Map.with_capacity' takes exactly 1 argument (the entry count), found {}",
+                        "'{container}.with_capacity' takes exactly 1 argument (the {}), found {}",
+                        if container == "Map" { "entry count" } else { "element count" },
                         args.len()
                     ),
                     span,
@@ -19243,7 +19244,7 @@ fn check_container_associated(
             if !matches!(cap.ty, Ty::Usize | Ty::I64) {
                 return Err(TypeError {
                     message: format!(
-                        "'Map.with_capacity' needs a 'usize' or 'i64' entry count, found '{}'",
+                        "'{container}.with_capacity' needs a 'usize' or 'i64' count, found '{}'",
                         cap.ty.display()
                     ),
                     span: args[0].value.span(),
@@ -19258,7 +19259,10 @@ fn check_container_associated(
                     });
                 }
                 return Err(TypeError {
-                    message: "cannot tell what 'Map.with_capacity(n)' holds, write the type on the binding ('var m: Map<String, i32> = Map.with_capacity(n)')".to_string(),
+                    message: match container {
+                        "Map" => "cannot tell what 'Map.with_capacity(n)' holds, write the type on the binding ('var m: Map<String, i32> = Map.with_capacity(n)')".to_string(),
+                        _ => "cannot tell what 'List.with_capacity(n)' holds, write the element type on the binding ('var xs: List<i32> = List.with_capacity(n)')".to_string(),
+                    },
                     span,
                 });
             };
@@ -19341,7 +19345,7 @@ fn check_container_associated(
             message: format!(
                 "'{container}.{other}' is not a {container} operation — {}",
                 if container == "List" {
-                    "write 'List.of(x)' for a one-element list, 'List.empty()' with the element type on the binding, or call a method on a value ('xs.push(x)', 'xs.get(i)', 'xs.len()')"
+                    "write 'List.of(x)' for a one-element list, 'List.empty()' or 'List.with_capacity(n)' with the element type on the binding, or call a method on a value ('xs.push(x)', 'xs.get(i)', 'xs.len()')"
                 } else if container == "Map" {
                     "a map starts empty — write 'Map.new()' with the type on the binding ('var m: Map<String, i32> = Map.new()'), then call a method on the value ('m.insert(k, v)', 'm.get(k)', 'm.len()')"
                 } else {
