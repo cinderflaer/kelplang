@@ -83,3 +83,59 @@ adding a second package root or changing existing `std/...` imports.
 The first implementation may expose only `--timings` hit/miss lines. A cache
 inspection CLI and remote cache sharing are later work; neither changes the
 correctness rule that an interface is derived from checked inputs.
+
+## Design pass 2026-10-06: what the code forces
+
+Read against `resolve.rs`, `infer.rs::check_program` and `borrowck.rs::check_program`.
+The decision above stands; these findings change how it is built and what an
+interface must hold.
+
+### Findings
+
+1. **The front end is flat, not modular.** `resolve::load` merges every module
+   into one `ast::Program` with prefixed names, and `infer::check_program`
+   returns one `tir::Program` (`structs`, `enums`, `pds`, `functions`, `caps`,
+   `gated`, `declared_keys`, `drop_types`, ...). There is no per-module result
+   to retain today. The unit of reuse has to be a *function group per module*
+   spliced into a rebuilt program, not a module-shaped checker.
+2. **`tir` has no serializer, and `kelpc` has no dependencies.** A restored
+   checked body needs a canonical binary form of `tir::Function` (about 37
+   `ExprKind`/`Stmt` shapes plus `types::Ty`). That is the largest single piece
+   of work and must land first, with a round-trip test over every fixture.
+3. **A body edit can leak across a module boundary through four channels the
+   current `api_hash` does not see.** The hash is built from `doc::scan`
+   headers, so it covers signatures only:
+   - generic templates: an importer holds *instances* of a dependency's generic
+     function, so the template body is part of the importer's checked output;
+   - passdown modes: `check_program` runs a probe pass and a second pass with
+     `close_pd_modes`, a whole-program fixpoint over which functions write a
+     passdown. A dependency body that starts writing one changes its callers'
+     borrow checking;
+   - `const` initializers, which are folded into importers;
+   - drop and destructor sets (`drop_types`, `owned_types`), which are
+     program-wide and feed `borrowck`.
+   An interface therefore carries, beside signatures: the body hash of every
+   generic template, the final passdown mode of every public function, folded
+   const values, and the module's contribution to the drop set. Without these a
+   reuse hit can be wrong, which breaks the cold/warm identity rule.
+4. **Borrowck consumes the whole `tir::Program`** (`fn_borrow_root`,
+   `fn_mut_params`, enums by name). Its per-function results (the drop plan)
+   must be cached with the body, keyed the same way, or borrowck stays
+   whole-program and only inference is reused. Slice it that way first.
+
+### Revised order
+
+1. `tir` binary codec with round-trip tests (no behaviour change).
+2. Extend the interface hash with the four channels in finding 3, each with a
+   test that a body edit which should leak does invalidate the importer.
+3. Interface validation on load: format version, source and configuration
+   identity, direct dependency hashes; failure is a miss, replaced atomically.
+4. Per-module function-group cache for `infer`, keyed by module source hash,
+   configuration and the dependency interface hashes; splice into the program;
+   `borrowck` stays whole-program.
+5. `--timings` front-end hit/miss lines; cold/warm identity test over the whole
+   fixture suite (diagnostics, output, unit IR).
+6. Only then consider caching `borrowck` per function.
+
+Hotspot note: steps 1 and 4 touch `tir.rs` and `infer.rs`; run one lane at a
+time while they are in flight.
