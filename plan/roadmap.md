@@ -417,6 +417,104 @@ Mark-level edges, and the reason for each. Item-level edges are in the open item
 - **Block E restated.** Block E calls A-7/B-7 (allocators), B-6 (freestanding) and B-4 (concurrency model) "decisions to make, not tasks to schedule". **MK9-S3, MK9-S4 and MK9-S5 are those items.** Promoting them to numbered Marks does not remove the decision; it records that the decision is to be made inside a tracked Mark rather than left in the backlog.
 - **Coral and the regulated-domain question have no edges into MK5-MK11.** They are open items 71 and 72. See the Backlog part below.
 
+### Release schedule after 26.10.0 (proposed, 2026-10-06)
+Drafted 2026-10-06 from `plan/ISSUES.md`, `plan/roadmap.md` (open items, "also possible"),
+`plan/CHANGELOG.pending.md` (33 commits since `v26.10.0`) and `plan/release-goals.md`.
+Proposed by the working session, not yet approved by the maintainer. Versions are `YY.MM.N`.
+
+Ordering rules used:
+1. Soundness holes before features (BUG-q4Vn2, MISSING-Sw9Hd).
+2. Stdlib and runtime work (own files, parallel lanes) before language-shape work, which
+   collides in `ast.rs`/`parser.rs`/`infer.rs`/`borrowck.rs` and must run one lane at a time.
+3. A dependency ships before what needs it (`Ve8Nc` before iterator adapters; `n6Bsc` before
+   `Result<unit, E>` APIs).
+4. Every XL item is parked until the maintainer decides (AGENTS.md: not started without them).
+5. Coral and lighthouse are separate repos with their own `YY.MM.N`; they can ship beside any
+   kelp release, so they get their own slot instead of blocking the compiler.
+
+#### 26.10.1: patch release (cut soon)
+
+What is already merged since 26.10.0 (see the pending changelog): fallible `std/http`, `std/net`,
+`std/tls`; `wss://`; `process.run_inherit` and `signal`; `sys.os/arch`; `fs.set_mode`;
+`source.file/line`; `std/trace`; `List.with_capacity`; A-11 lifetime owners and nested partial
+moves; user `extern fun` callbacks; no OpenSSL link unless `std/tls` is reached.
+
+Add before cutting, nothing else:
+- **BUG-q4Vn2** double move of an enum payload accepted (M). A borrow-check hole with a failing
+  test on `main`, so it blocks a release.
+- **MISSING-k7Rwq** `std/fs` fallible mutators (M). Seven `try_*` done in `wt-fs-fallible`;
+  `remove_all` needs a fallible `list` first, finish that or leave the entry half-finished.
+
+Gate: full suite, differential sweep once, wiki `unreleased` docs for every pending line.
+
+#### 26.10.2: network, TLS and small stdlib
+
+- **MISSING-Uc6Kj** TLS gaps: encrypted keys, key-file permission check, config reload,
+  `serve_tls` host binding (M). Closes the "stable TLS" goal honestly.
+- **MISSING-j2Wka** multipart/form-data builder (M), a `std/http` helper, no language change.
+- **MISSING-Nf3Rb** array literal as private global plus copy (M). Changes the IR of every array
+  literal, so it needs the differential sweep; ship it here because nothing else in the release
+  touches codegen.
+- **MISSING-Cn2Ym** only the `must_use` piece (fixes dropped `send` results and leaked thread
+  handles). `select` and zero-capacity channels wait.
+- **MISSING-Hd4Lr** only the part that needs no new trait machinery: `Map` iterator and
+  `List.iter()`.
+
+#### 26.11.0: language ergonomics and the last checker hole (one lane at a time)
+
+Order inside the release, each lane merged before the next starts:
+1. **MISSING-Sw9Hd** disjoint-field captures in scoped blocks, and `g(s, s)` with two `mut`
+   params being unchecked (L). The second half is a soundness gap, so it goes first.
+2. **MISSING-Gt6Qc** tuple patterns in `when` and destructuring `for (k, v)` (M); useful now
+   that the `Map` iterator exists.
+3. **MISSING-Lk9Xs** `loop`, labelled `break`, `break` with a value (M). Needs the maintainer's
+   yes/no first: the entry says no decision is recorded either way.
+4. **MISSING-Pw3Fz** methods with their own type parameters (L).
+
+#### 26.11.1: generics depth and iterator adapters
+
+- **MISSING-n6Bsc** `Result<unit, E>` success value (L, design call: zero-size payload or
+  sugar). Decide this early; see the risk below.
+- **MISSING-Ey4Mt** const generics beyond integer and `bool` (L).
+- **MISSING-Ve8Nc** generic trait impls, `where` clauses, blanket impls (XL). Needs the
+  maintainer's go-ahead and a design note; the release is conditional on it.
+- Then the rest of **MISSING-Hd4Lr**: `map`, `filter`, `take`, `skip`, `enumerate`, `zip`,
+  `chain`. If Ve8Nc slips, this release ships Pw3Fz leftovers and Ey4Mt only.
+
+#### 26.12.0: tooling (Coral and lighthouse, own version numbers)
+
+- **MISSING-vT4Kd** `.ckp` archive: tar or zip, manifest, `coral run app.ckp` unpacking to a
+  cache. No `kelpc` change (M).
+- **MISSING-oH9AB** the open half: `coral bench`, workspaces, publishing and CI recipes,
+  version ranges (L; version ranges need a decision at MK13-S3-M3).
+- **MISSING-Mta7v** the remaining half of user `extern fun` (L), since Coral's `[extern]`
+  section is how it is configured.
+
+#### 26.12.1: runtime semantics and platform reach
+
+- **MISSING-Jy7Df** `Drop` on the panic path (L), a design call on unwinding versus abort.
+- **MISSING-Xo5Ga** Unicode case mapping and codepoint-aware `str` slicing (L).
+- **MISSING-Zq1Pe** `std/ws` server side, and HTTP/2 or leave the limit documented (L).
+- **MISSING-Tb8Vh** hosted thread-local storage (M, needs Jy7Df's decision for destructors).
+
+#### Parked (XL, no release until the maintainer decides)
+
+Ra5Wn async and weaker atomic orderings; Bm8Wk named nested functions, lifetime syntax,
+borrows in containers; Iq2Tz and t9Qmz capability narrowing and forwarding; Dl7Ps verification
+duty. Iq2Tz and t9Qmz are the most on-brand for Kelp (capability security) and the best first
+candidates for a 27.01 headline once the design question is settled.
+
+#### Risks and decisions needed
+
+- **`Option<io.IoErr>` versus a future `Result<unit, IoErr>`.** The `try_*` mutators return
+  `Option<IoErr>` because `Result<unit, E>` cannot be written (n6Bsc). If n6Bsc lands in
+  26.11.1 the `try_*` mutators either keep the odd shape forever or change a released
+  signature. Decide before 26.10.1 ships: accept `Option` permanently, or bring n6Bsc forward.
+- Lk9Xs, Ve8Nc, n6Bsc and the Coral version-range question each need a maintainer decision
+  before their slot starts; an unmade decision moves the item, not the release.
+- The standing 26.10.0 release order is fulfilled (tag exists), so the memory note
+  `kelp-next-release` is stale and should be rewritten around this plan once approved.
+
 ## Open items
 
 1. ~~**Move-taking parameters have no spelling.**~~ Resolved twice, in opposite directions, which is worth reading in order. **MK1-S4-M1** settled it as "no move-taking parameters in v1, by design": a `datac`-typed parameter is always a borrow (shared, or exclusive via `mut T`), and a value moves only by local rebinding. **MK8-S1-M2 phase A reverses that**: `name: move T` takes ownership, the call site moves the argument in exactly as `val b = a` does, and the callee frees it when its scope ends. `mut` and `move` are mutually exclusive; `move` on a `str`/`&T` is refused (a borrow has no owner to transfer) and so is `move` on a receiver (a method that consumed its receiver would destroy the caller's value at a call that reads like one). The type-level change is one line — the parameter resolves to the bare `T` instead of `Ty::Ref` — which is why the borrow checker and codegen needed no new rule.
