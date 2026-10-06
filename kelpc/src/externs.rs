@@ -314,6 +314,46 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/fs",
+        "try_write_raw",
+        "    *kelp_err = 0;\n    FILE* f = fopen(kelp_path, \"wb\");\n    if (f == NULL) {\n        *kelp_err = errno;\n        return;\n    }\n    if (kelp_data->len > 0 && fwrite(kelp_data->data, 1, kelp_data->len, f) != kelp_data->len) {\n        int e = errno != 0 ? errno : EIO;\n        fclose(f);\n        *kelp_err = e;\n        return;\n    }\n    if (fclose(f) != 0) {\n        *kelp_err = errno;\n    }\n",
+    ),
+    (
+        "std/fs",
+        "try_write_text_raw",
+        "    *kelp_err = 0;\n    FILE* f = fopen(kelp_path, \"wb\");\n    if (f == NULL) {\n        *kelp_err = errno;\n        return;\n    }\n    if (kelp_text->len > 0 && fwrite(kelp_text->data, 1, kelp_text->len, f) != kelp_text->len) {\n        int e = errno != 0 ? errno : EIO;\n        fclose(f);\n        *kelp_err = e;\n        return;\n    }\n    if (fclose(f) != 0) {\n        *kelp_err = errno;\n    }\n",
+    ),
+    (
+        "std/fs",
+        "try_append_raw",
+        "    *kelp_err = 0;\n    FILE* f = fopen(kelp_path, \"ab\");\n    if (f == NULL) {\n        *kelp_err = errno;\n        return;\n    }\n    if (kelp_data->len > 0 && fwrite(kelp_data->data, 1, kelp_data->len, f) != kelp_data->len) {\n        int e = errno != 0 ? errno : EIO;\n        fclose(f);\n        *kelp_err = e;\n        return;\n    }\n    if (fclose(f) != 0) {\n        *kelp_err = errno;\n    }\n",
+    ),
+    (
+        "std/fs",
+        "try_remove_raw",
+        "    *kelp_err = remove(kelp_path) != 0 ? errno : 0;\n",
+    ),
+    (
+        "std/fs",
+        "try_rename_raw",
+        "    *kelp_err = rename(kelp_from, kelp_to) != 0 ? errno : 0;\n",
+    ),
+    (
+        "std/fs",
+        "try_symlink_raw",
+        "    *kelp_err = symlink(kelp_target, kelp_link) != 0 ? errno : 0;\n",
+    ),
+    (
+        "std/fs",
+        "try_mkdir_all_raw",
+        "    *kelp_err = 0;\n    char buf[PATH_MAX];\n    size_t n = strlen(kelp_path);\n    if (n == 0 || n >= sizeof buf) {\n        *kelp_err = n == 0 ? EINVAL : ENAMETOOLONG;\n        return;\n    }\n    memcpy(buf, kelp_path, n + 1);\n    for (size_t i = 1; i <= n; i++) {\n        if (buf[i] == '/' || buf[i] == 0) {\n            char saved = buf[i];\n            buf[i] = 0;\n            if (mkdir(buf, 0777) != 0 && errno != EEXIST) {\n                *kelp_err = errno;\n                return;\n            }\n            buf[i] = saved;\n        }\n    }\n",
+    ),
+    (
+        "std/fs",
+        "try_list_raw",
+        "*kelp_err = 0;\n    struct dirent** names;\n    int n = scandir(kelp_path, &names, NULL, alphasort);\n    if (n < 0) {\n        *kelp_err = errno;\n        return kelp_String__from_str(\"\");\n    }\n    size_t total = 0;\n    for (int i = 0; i < n; i++) {\n        if (strcmp(names[i]->d_name, \".\") == 0 || strcmp(names[i]->d_name, \"..\") == 0) {\n            continue;\n        }\n        total += strlen(names[i]->d_name) + 1;\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw(total);\n    size_t at = 0;\n    for (int i = 0; i < n; i++) {\n        if (strcmp(names[i]->d_name, \".\") == 0 || strcmp(names[i]->d_name, \"..\") == 0) {\n            free(names[i]);\n            continue;\n        }\n        size_t len = strlen(names[i]->d_name);\n        memcpy(b.data + at, names[i]->d_name, len);\n        at += len;\n        b.data[at++] = '\\n';\n        free(names[i]);\n    }\n    free(names);\n    if (at > 0) {\n        at--;\n    }\n    b.data[at] = 0;\n    b.len = at;\n    return kelp_String__from_bytes(b);\n",
+    ),
+    (
+        "std/fs",
         "utf8_valid_raw",
         "    return kelp_utf8_valid(kelp_data->data, kelp_data->len);\n",
     ),

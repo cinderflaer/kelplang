@@ -50,32 +50,6 @@ wiki changelog page.
 
 Sorted easiest first. `effort:` is S (a stdlib function or one small diagnostic), M (one subsystem, one lane), L (touches a hotspot file or needs a design call inside a lane), XL (mark-sized, or blocked on a decision). Within a tier the order is a rough guess; dependencies are named in the entries.
 
-### MISSING-k7Rwq kelp: no fallible form of the `std/fs` mutators, so a failure cannot be reported as a value
-
-repo: kelp | found: 2026-09-25 | effort: M
-
-source: `kelp/kelpc/std/fs.kp`: `write`, `write_text`, `mkdir_all`, `remove`,
-`remove_all`, `rename`, `symlink` and `append` are documented as "Panics: if
-...", while the fallible twins that do exist cover only reading (`try_read`,
-`try_read_text`, `try_open`).
-
-A tool that reports what it could not do cannot answer its own `Result` for
-these calls. Found while porting `coral` to Kelp (`coral/kelp/src/init.kp`,
-`coral/kelp/src/test.kp`, `coral/kelp/src/toolchain.kp`).
-
-Repro: `fs.write_text("/proc/nope", String.from_str("x"))` panics with no value
-to branch on. The visible consequence in the port: with a build directory that
-cannot be written, `mkdir -p /tmp/p/build && chmod 500 /tmp/p/build` then
-`coral test ok` prints
-
-    panic: fs.mkdir_all: cannot create directory / errno 13: Permission denied
-
-and ends the run, where the Rust `coral` prints one failing fixture and still
-prints its summary line:
-
-    FAIL  tests/ok.kp: could not create '/tmp/p/build/test/ok/src': Permission denied (os error 13)
-    coral: 1 fixtures, 0 passed, 1 failed
-
 ### MISSING-j2Wka kelp: no multipart/form-data body, which an attachment upload needs
 
 repo: kelp | found: 2026-09-24 | effort: M

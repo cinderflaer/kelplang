@@ -1,0 +1,52 @@
+// MISSING-k7Rwq: the fallible twins of the `std/fs` mutators. `None` is success;
+// a failure is an `io.IoErr` carrying the errno and its text, not a panic.
+impl "std/fs"
+impl "std/io"
+impl "std/mem"
+impl "std/option"
+impl "std/result"
+
+fun report(label: &str, r: option.Option<io.IoErr>) {
+    if let Some(e) = r {
+        print(label)
+        print(e.errno.to_i64())
+    } else {
+        print(label)
+        print(0)
+    }
+}
+
+fun main() {
+    val dir = "/tmp/kelp_fs_try_mut"
+    if fs.exists(dir) {
+        fs.remove_all(dir)
+    }
+    report("mkdir_all", fs.try_mkdir_all("/tmp/kelp_fs_try_mut/a/b"))
+    report("write_text", fs.try_write_text("/tmp/kelp_fs_try_mut/a/f.txt", "one"))
+    report("append", fs.try_append("/tmp/kelp_fs_try_mut/a/f.txt", mem.alloc(0)))
+    report("write", fs.try_write("/tmp/kelp_fs_try_mut/a/g.bin", mem.alloc(2)))
+    report("rename", fs.try_rename("/tmp/kelp_fs_try_mut/a/g.bin", "/tmp/kelp_fs_try_mut/a/h.bin"))
+    report("symlink", fs.try_symlink("/tmp/kelp_fs_try_mut/a/f.txt", "/tmp/kelp_fs_try_mut/a/l"))
+    report("remove", fs.try_remove("/tmp/kelp_fs_try_mut/a/h.bin"))
+
+    // Every one of these fails, and the run goes on.
+    report("write_text_missing_dir", fs.try_write_text("/tmp/kelp_fs_try_mut/nope/f.txt", "x"))
+    report("write_missing_dir", fs.try_write("/tmp/kelp_fs_try_mut/nope/f.bin", mem.alloc(1)))
+    report("append_missing_dir", fs.try_append("/tmp/kelp_fs_try_mut/nope/f.bin", mem.alloc(1)))
+    report("remove_missing", fs.try_remove("/tmp/kelp_fs_try_mut/a/h.bin"))
+    report("rename_missing", fs.try_rename("/tmp/kelp_fs_try_mut/a/h.bin", "/tmp/kelp_fs_try_mut/a/i.bin"))
+    report("symlink_exists", fs.try_symlink("/tmp/kelp_fs_try_mut/a/f.txt", "/tmp/kelp_fs_try_mut/a/l"))
+    report("mkdir_all_under_file", fs.try_mkdir_all("/tmp/kelp_fs_try_mut/a/f.txt/x"))
+    val listed = fs.try_list("/tmp/kelp_fs_try_mut/a")
+    if let Ok(names) = listed {
+        print(names.len())
+    }
+    val unlisted = fs.try_list("/tmp/kelp_fs_try_mut/nope")
+    if let Err(e) = unlisted {
+        print(e.errno.to_i64())
+    }
+    report("remove_all", fs.try_remove_all(dir))
+    print(fs.exists(dir))
+    report("remove_all_missing", fs.try_remove_all(dir))
+    print("done")
+}

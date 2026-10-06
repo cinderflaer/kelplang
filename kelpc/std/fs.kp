@@ -3,6 +3,7 @@ impl "std/str"
 impl "std/path"
 impl "std/io"
 impl "std/result"
+impl "std/option"
 
 /* std/fs: the gated filesystem namespace (M7).
 
@@ -63,6 +64,17 @@ extern fun cwd_raw().R: String
 extern fun try_read_raw(path: &str, err: mut i32).R: Bytes
 extern fun try_open_raw(path: &str, mode: &str, err: mut i32).R: i32
 
+// The fallible twins of the mutators. Each writes the `errno` through `err` (0
+// on success) instead of panicking.
+extern fun try_write_raw(path: &str, data: Bytes, err: mut i32)
+extern fun try_write_text_raw(path: &str, text: String, err: mut i32)
+extern fun try_append_raw(path: &str, data: Bytes, err: mut i32)
+extern fun try_remove_raw(path: &str, err: mut i32)
+extern fun try_rename_raw(from: &str, to: &str, err: mut i32)
+extern fun try_symlink_raw(target: &str, link: &str, err: mut i32)
+extern fun try_mkdir_all_raw(path: &str, err: mut i32)
+extern fun try_list_raw(path: &str, err: mut i32).R: String
+
 // Whether `data` is valid UTF-8. The same check `String.from_bytes` runs (and
 // panics on), exposed so a fallible reader can ask before it copies.
 extern fun utf8_valid_raw(data: &Bytes).R: bool
@@ -116,9 +128,35 @@ fun write(path: &str, data: Bytes) {
     write_raw(path, data)
 }
 
+/// The fallible twin of `write`: `None` on success, or the reason it failed (the
+/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
+/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
+/// success.
+fun try_write(path: &str, data: Bytes).R: option.Option<io.IoErr> {
+    var err: i32 = 0
+    try_write_raw(path, data, &mut err)
+    if err == 0 {
+        return option.Option.None
+    }
+    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
 /// Panics: if the file cannot be written.
 fun write_text(path: &str, text: String) {
     write_text_raw(path, text)
+}
+
+/// The fallible twin of `write_text`: `None` on success, or the reason it failed (the
+/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
+/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
+/// success.
+fun try_write_text(path: &str, text: String).R: option.Option<io.IoErr> {
+    var err: i32 = 0
+    try_write_text_raw(path, text, &mut err)
+    if err == 0 {
+        return option.Option.None
+    }
+    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
 /// The process's current working directory, absolute and free of `.`/`..`.
@@ -158,12 +196,38 @@ fun remove(path: &str) {
     remove_raw(path)
 }
 
+/// The fallible twin of `remove`: `None` on success, or the reason it failed (the
+/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
+/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
+/// success.
+fun try_remove(path: &str).R: option.Option<io.IoErr> {
+    var err: i32 = 0
+    try_remove_raw(path, &mut err)
+    if err == 0 {
+        return option.Option.None
+    }
+    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
 /// Both paths are checked against the grant: `rename` is the one call with
 /// two resource arguments.
 /// Panics: if either path is outside the granted capability, or the rename
 /// fails.
 fun rename(from: &str, to: &str) {
     rename_raw(from, to)
+}
+
+/// The fallible twin of `rename`: `None` on success, or the reason it failed (the
+/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
+/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
+/// success.
+fun try_rename(from: &str, to: &str).R: option.Option<io.IoErr> {
+    var err: i32 = 0
+    try_rename_raw(from, to, &mut err)
+    if err == 0 {
+        return option.Option.None
+    }
+    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
 /// One directory. `fs.mkdir_all` needs to walk prefixes of its path and is
@@ -180,6 +244,19 @@ fun mkdir(path: &str) {
 /// Panics: if the file cannot be opened or written.
 fun append(path: &str, data: Bytes) {
     append_raw(path, data)
+}
+
+/// The fallible twin of `append`: `None` on success, or the reason it failed (the
+/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
+/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
+/// success.
+fun try_append(path: &str, data: Bytes).R: option.Option<io.IoErr> {
+    var err: i32 = 0
+    try_append_raw(path, data, &mut err)
+    if err == 0 {
+        return option.Option.None
+    }
+    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
 /// Forces everything written to the file so far out to storage. Without this a
@@ -207,6 +284,21 @@ fun list(path: &str).R: List<String> {
     return str.split(raw.as_str(), "\n")
 }
 
+/// The fallible twin of `list`: the entry names, or the reason the directory
+/// cannot be read (`errno` and its text, as `try_read` reports it).
+fun try_list(path: &str).R: result.Result<List<String>, io.IoErr> {
+    var err: i32 = 0
+    val raw = try_list_raw(path, &mut err)
+    if err != 0 {
+        return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    }
+    if str.len(raw.as_str()) == 0 {
+        var empty: List<String> = List.empty()
+        return result.Result.Ok(value = empty)
+    }
+    return result.Result.Ok(value = str.split(raw.as_str(), "\n"))
+}
+
 // --- MK5-S5: breadth --------------------------------------------------------
 //
 // Everything below is ordinary Kelp over the primitives above, except the five
@@ -225,6 +317,19 @@ fun list(path: &str).R: List<String> {
 /// Panics: if any directory along the way cannot be created.
 fun mkdir_all(path: &str) {
     mkdir_all_raw(path)
+}
+
+/// The fallible twin of `mkdir_all`: `None` on success, or the reason it failed (the
+/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
+/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
+/// success.
+fun try_mkdir_all(path: &str).R: option.Option<io.IoErr> {
+    var err: i32 = 0
+    try_mkdir_all_raw(path, &mut err)
+    if err == 0 {
+        return option.Option.None
+    }
+    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
 /// Removes `path`, recursively when it is a directory. A symlink is removed and
@@ -256,6 +361,34 @@ fun remove_all(target: &str) {
         }
     }
     remove_raw(target)
+}
+
+/// The fallible twin of `remove_all`: `None` when everything under `target` is
+/// gone, or the first failure (`errno` and its text) with the rest left in
+/// place. A link out of the grant that the walk reaches is still a capability
+/// panic, not a value (open item 73).
+fun try_remove_all(target: &str).R: option.Option<io.IoErr> {
+    if is_symlink(target) {
+        return try_remove(target)
+    }
+    if is_dir(target) {
+        val listed = try_list(target)
+        if let Err(e) = listed {
+            return option.Option.Some(value = e)
+        }
+        if let Ok(entries) = listed {
+            var i: usize = 0
+            while i < entries.len() {
+                val child = path.join(target, entries.get(i).as_str())
+                val failed = try_remove_all(child.as_str())
+                if let Some(e) = failed {
+                    return option.Option.Some(value = e)
+                }
+                i = i + 1
+            }
+        }
+    }
+    return try_remove(target)
 }
 
 /// Every name under `dir`, recursively, each joined to its parent. A
@@ -316,6 +449,19 @@ fun copy(from: &str, to: &str) {
 /// the link cannot be created.
 fun symlink(target: &str, link: &str) {
     symlink_raw(target, link)
+}
+
+/// The fallible twin of `symlink`: `None` on success, or the reason it failed (the
+/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
+/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
+/// success.
+fun try_symlink(target: &str, link: &str).R: option.Option<io.IoErr> {
+    var err: i32 = 0
+    try_symlink_raw(target, link, &mut err)
+    if err == 0 {
+        return option.Option.None
+    }
+    return option.Option.Some(value = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
 /// Creates `path` when it is missing and sets its modification time to now

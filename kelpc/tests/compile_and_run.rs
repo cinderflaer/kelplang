@@ -1775,6 +1775,17 @@ fn fs_has_fallible_read_and_open() {
 }
 
 #[test]
+fn fs_mutators_have_fallible_twins() {
+    // MISSING-k7Rwq: `None` is success, a failure is an `io.IoErr`, and the run
+    // goes on after each one (ENOENT 2, EEXIST 17, ENOTDIR 20).
+    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_try_mut");
+    assert_compiles_and_runs(
+        "tests/fixtures/fs_try_mutators.kp",
+        "mkdir_all\n0\nwrite_text\n0\nappend\n0\nwrite\n0\nrename\n0\nsymlink\n0\nremove\n0\nwrite_text_missing_dir\n2\nwrite_missing_dir\n2\nappend_missing_dir\n2\nremove_missing\n2\nrename_missing\n2\nsymlink_exists\n17\nmkdir_all_under_file\n20\n3\n2\nremove_all\n0\nfalse\nremove_all_missing\n2\ndone\n",
+    );
+}
+
+#[test]
 fn owned_datac_fields_are_dropped_with_the_struct() {
     assert_compiles_and_runs(
         "tests/fixtures/string_field.kp",
