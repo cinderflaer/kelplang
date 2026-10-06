@@ -9507,6 +9507,49 @@ fn source_location_is_the_kelp_call_site() {
 }
 
 #[test]
+fn trace_records_events_and_spans_on_stderr() {
+    let bin = out_path("trace");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/trace.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected trace fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .output()
+        .expect("failed to run trace fixture");
+    assert!(
+        run.status.success(),
+        "trace fixture failed:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "done\n");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("trace\tevent\t"),
+        "missing event record:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("trace\tbegin\t"),
+        "missing begin record:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("trace\tend\t"),
+        "missing end record:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ready\\tset"),
+        "text field was not escaped:\n{stderr}"
+    );
+}
+
+#[test]
 fn a_documentation_comment_after_code_is_rejected() {
     assert_rejected_with(
         "tests/fixtures/doc_comment_trailing.kp",

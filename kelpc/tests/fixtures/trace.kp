@@ -1,0 +1,9 @@
+impl "std/source"
+impl "std/trace" caps(time = [])
+
+fun main() {
+    trace.event(source.file(), source.line(), "ready\tset")
+    val work = trace.begin(source.file(), source.line(), "work")
+    trace.end(source.file(), source.line(), work)
+    print("done")
+}

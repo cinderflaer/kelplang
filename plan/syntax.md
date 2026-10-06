@@ -2282,7 +2282,7 @@ A relative path is not covered by a path pattern, because patterns are absolute:
 
 ## 16. Standard library
 
-Twenty modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
+The compiler ships its standard-library modules inside the binary. Import them with `impl "std/<name>"`; the namespace is the module name.
 
 | Module | Domain | Contents |
 | --- | --- | --- |
@@ -2295,6 +2295,7 @@ Twenty modules ship inside the compiler binary. Import them with `impl "std/<nam
 | `std/fs` | `fs` | files, directories, metadata, temp files |
 | `std/time` | `time` | wall clock, monotonic clock, sleep |
 | `std/source` | none | call-site source file and line |
+| `std/trace` | `time` | opt-in trace events and duration spans on stderr |
 | `std/rand` | `rand` | `u64`, bounded values, random bytes |
 | `std/env` | `env` | read and write environment variables |
 | `std/process` | `process` | argv, spawn, wait, kill, exit |
@@ -2490,6 +2491,21 @@ fun source.line().R: usize
 Both functions resolve where the call is written. `file()` is the path Kelp
 compiled, and `line()` is 1-based. The module is ungated and is intended for
 test reports and diagnostics.
+
+### 16.9.1 `std/trace` (domain `time`)
+
+```kelp
+fun trace.event(file: &str, line: usize, name: &str)
+fun trace.begin(file: &str, line: usize, name: &str).R: trace.Span
+fun trace.end(file: &str, line: usize, span: trace.Span)
+```
+
+Tracing is opt-in: `impl "std/trace" caps(time = [])`. Pass `source.file()`
+and `source.line()` at each call site; a library cannot recover the location of
+its caller. Events and span boundaries write tab-separated, escaped records to
+stderr with a monotonic timestamp; `end` includes the span duration in
+nanoseconds. `plan/tracing.md` fixes the format and the deliberately excluded
+features.
 
 ### 16.10 `std/env` (domain `env`)
 

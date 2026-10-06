@@ -1,0 +1,57 @@
+//! Opt-in trace events and duration spans, gated by the `time` capability.
+impl "std/io"
+impl "std/time"
+impl "std/str"
+impl "std/fmt"
+
+/// A started duration span. Finish it with `trace.end` at its end location.
+datac Span(val name: String, val start_ns: i64)
+
+/// Emits one trace event. Pass `source.file()` and `source.line()` so the
+/// record names this call site rather than the implementation in `std/trace`.
+fun event(file: &str, line: usize, name: &str) {
+    emit(kind = "event", file = file, line = line, name = name, elapsed_ns = -1)
+}
+
+/// Starts a duration span and emits its `begin` record.
+fun begin(file: &str, line: usize, name: &str).R: Span {
+    val start = time.now_mono_ns()
+    emit(kind = "begin", file = file, line = line, name = name, elapsed_ns = -1)
+    return Span(name = String.from_str(name), start_ns = start)
+}
+
+/// Ends `span` and emits its duration in nanoseconds at this call site.
+fun end(file: &str, line: usize, span: Span) {
+    val elapsed = time.now_mono_ns() - span.start_ns
+    emit(kind = "end", file = file, line = line, name = span.name.as_str(), elapsed_ns = elapsed)
+}
+
+fun emit(kind: &str, file: &str, line: usize, name: &str, elapsed_ns: i64) {
+    val at = fmt.uint(line.to_u64())
+    val time_ns = fmt.int(time.now_mono_ns())
+    val safe_file = escape(file)
+    val safe_name = escape(name)
+    val out0 = str.concat("trace\t", kind)
+    val out1 = str.concat(out0.as_str(), "\t")
+    val out2 = str.concat(out1.as_str(), time_ns.as_str())
+    val out3 = str.concat(out2.as_str(), "\t")
+    val out4 = str.concat(out3.as_str(), safe_file.as_str())
+    val out5 = str.concat(out4.as_str(), ":")
+    val out6 = str.concat(out5.as_str(), at.as_str())
+    val out7 = str.concat(out6.as_str(), "\t")
+    val out = str.concat(out7.as_str(), safe_name.as_str())
+    if elapsed_ns >= 0 {
+        val elapsed = fmt.int(elapsed_ns)
+        val with_separator = str.concat(out.as_str(), "\t")
+        val completed = str.concat(with_separator.as_str(), elapsed.as_str())
+        io.eprint(completed.as_str())
+    } else {
+        io.eprint(out.as_str())
+    }
+}
+
+fun escape(text: &str).R: String {
+    val slashes = str.replace(text, "\\", "\\\\")
+    val tabs = str.replace(slashes.as_str(), "\t", "\\t")
+    return str.replace(tabs.as_str(), "\n", "\\n")
+}
