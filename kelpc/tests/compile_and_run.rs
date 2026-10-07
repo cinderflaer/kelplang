@@ -11855,6 +11855,21 @@ fn a_mut_parameter_can_be_reborrowed_shared_twice_for_one_call() {
 }
 
 #[test]
+fn a_mut_parameter_cannot_go_to_a_mut_and_a_shared_parameter_of_one_call() {
+    // The shared reborrow of a `mut` parameter is an `Ident`, not a `Ref`,
+    // so only the exclusive reborrow used to be tracked: `f(s, s)` with one
+    // `mut` and one `&` parameter was accepted in either order.
+    assert_rejected_with(
+        "tests/fixtures/refused_mut_param_with_shared_reborrow.kp",
+        "cannot borrow 's': already borrowed exclusively",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_shared_then_mut_param_reborrow.kp",
+        "cannot borrow 's': already borrowed exclusively",
+    );
+}
+
+#[test]
 fn a_nested_owned_field_can_be_partially_moved_and_reinitialised() {
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_field.kp", "Ada\n7\nLondon\n");
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_reinit.kp", "old\nnew\n");

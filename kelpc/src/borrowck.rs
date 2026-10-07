@@ -3075,6 +3075,11 @@ fn take_call_arguments(
 ) -> Result<Vec<String>> {
     let mut taken = Vec::new();
     let mut held_reborrows = std::collections::BTreeSet::new();
+    // Roots an exclusive holder (a `mut` parameter, a `&mut` local) was
+    // passed on as a *shared* reborrow, with the argument's span: the same
+    // call may not also hand that holder to a `mut` parameter.
+    let mut exclusive_reborrows = std::collections::BTreeSet::new();
+    let mut shared_reborrows: std::collections::BTreeMap<String, Span> = std::collections::BTreeMap::new();
     for (i, a) in args.iter().enumerate() {
         if let Some((mutable, inner)) = borrowed_node(a) {
             if *mutable && receiver != Some(i) {
@@ -3107,6 +3112,15 @@ fn take_call_arguments(
             let reborrowed_exclusive = callee
                 .is_some_and(|name| ctx.callee_param_is_mut(name, i))
                 && matches!(a.ty, Ty::Ref { mutable: true, .. });
+            if !reborrowed_exclusive && matches!(a.ty, Ty::Ref { mutable: true, .. }) {
+                if let tir::ExprKind::Ident(_) = &a.kind {
+                    for root in place_roots(a, ctx) {
+                        if root != STATIC_ROOT {
+                            shared_reborrows.entry(root).or_insert(a.span);
+                        }
+                    }
+                }
+            }
             if reborrowed_exclusive {
                 check_place(a, ctx)?;
                 let roots = place_roots(a, ctx);
@@ -3119,6 +3133,7 @@ fn take_call_arguments(
                     if root == STATIC_ROOT {
                         continue;
                     }
+                    exclusive_reborrows.insert(root.clone());
                     if receiver == Some(i) && !receiver_is_held {
                         taken.push(root);
                         continue;
@@ -3193,6 +3208,17 @@ fn take_call_arguments(
             // A reference is Copy, so this has no move effect; keep the
             // normal value walk for nested expressions and diagnostics.
             check_value(a, ctx)?;
+        }
+    }
+    for (root, span) in shared_reborrows {
+        if exclusive_reborrows.contains(&root) {
+            return Err(BorrowError {
+                message: format!(
+                    "cannot borrow {}: already borrowed exclusively",
+                    display_root(&root)
+                ),
+                span,
+            });
         }
     }
     Ok(taken)

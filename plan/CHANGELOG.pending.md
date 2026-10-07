@@ -13,3 +13,7 @@ back to this header. No need to ask first.
 Keep each line short and factual: what changed, and why it matters to someone
 writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
+
+## Fixed
+
+- Borrow check: one call can no longer pass the same `mut` parameter to a `mut` parameter and a `&` parameter (`f(s, s)`); the shared reborrow was not tracked, so the aliasing was accepted in either order.
