@@ -2759,19 +2759,28 @@ impl Parser {
             // `break()` stay expressions.
             TokenKind::Ident(name)
                 if (name == "break" || name == "continue")
-                    && (self.statement_ends_here() || matches!(self.peek2_kind(), TokenKind::Label(_))) =>
+                    && (self.statement_ends_here()
+                        || matches!(self.peek2_kind(), TokenKind::Label(_))
+                        || (name == "break" && self.break_value_at(1))) =>
             {
                 let is_break = name == "break";
                 let span = self.advance().span;
-                if let TokenKind::Label(label) = self.peek_kind().clone() {
+                let label = if let TokenKind::Label(label) = self.peek_kind().clone() {
                     let lspan = self.advance().span;
-                    return self.parse_labelled_exit(is_break, &label, span.to(lspan));
-                }
-                Ok(if is_break {
-                    Stmt::Break { span }
+                    Some((label, span.to(lspan)))
                 } else {
-                    Stmt::Continue { span }
-                })
+                    None
+                };
+                // `break value`: the value of the `loop` it leaves.
+                let value = if is_break && self.break_value_at(0) {
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
+                if let Some((label, lspan)) = label {
+                    return self.parse_labelled_exit(is_break, &label, lspan, value);
+                }
+                self.parse_exit(is_break, span, value)
             }
             // `pub` leads a declaration, and a declaration is not a statement,
             // so the message names the forms it can lead (A-13) rather than
@@ -2906,7 +2915,18 @@ impl Parser {
     /// step is an ordinary `break`, `continue`, `if` and `var`, so borrow
     /// checking, drops and both backends see nothing new.
     fn parse_loop_construct(&mut self, label: Option<String>) -> PResult<Stmt> {
-        self.loop_stack.push(LoopCtx { label, flag: None, exits: Vec::new() });
+        self.parse_loop_construct_with(label, None).map(|(stmt, _)| stmt)
+    }
+
+    /// `parse_loop_construct`, optionally for a `loop` used as a value, whose
+    /// `break value`s push to `value_slot`. Also returns how many valued
+    /// breaks the loop had.
+    fn parse_loop_construct_with(
+        &mut self,
+        label: Option<String>,
+        value_slot: Option<String>,
+    ) -> PResult<(Stmt, usize)> {
+        self.loop_stack.push(LoopCtx { label, flag: None, exits: Vec::new(), value_slot, valued_breaks: 0 });
         let parsed = match self.peek_kind() {
             TokenKind::While => self.parse_while_stmt(),
             TokenKind::For => self.parse_for_stmt(),
@@ -2914,8 +2934,9 @@ impl Parser {
         };
         let ctx = self.loop_stack.pop().expect("the loop pushed above");
         let stmt = parsed?;
+        let valued = ctx.valued_breaks;
         if ctx.flag.is_none() && ctx.exits.is_empty() {
-            return Ok(stmt);
+            return Ok((stmt, valued));
         }
         let span = match &stmt {
             Stmt::While { span, .. } | Stmt::For { span, .. } => *span,
@@ -2972,14 +2993,58 @@ impl Parser {
                 stmts.push(when(test(&flag, BinOp::NotEq, 0), vec![Stmt::Break { span }]));
             }
         }
-        Ok(Stmt::Expr { expr: Expr::Block(Block { stmts, span }), span })
+        Ok((Stmt::Expr { expr: Expr::Block(Block { stmts, span }), span }, valued))
+    }
+
+    /// `loop { ... break value ... }` used as a value: `val x = loop { ... }`.
+    /// The value travels in a hidden one-element list the loop's `break value`s
+    /// push to (a bare `List.empty()` takes its element type from the first
+    /// push), and the loop's value is what is popped out of it afterwards, so
+    /// nothing below the parser knows about it.
+    fn parse_loop_value(&mut self, label: Option<String>) -> PResult<Expr> {
+        let start = self.peek().span;
+        self.label_flags += 1;
+        let slot = format!("#loopres{}", self.label_flags - 1);
+        let (stmt, valued) = self.parse_loop_construct_with(label, Some(slot.clone()))?;
+        let span = start.to(match &stmt {
+            Stmt::Expr { span, .. } | Stmt::While { span, .. } | Stmt::For { span, .. } => *span,
+            _ => start,
+        });
+        if valued == 0 {
+            return Err(ParseError {
+                message: "a 'loop' used as a value needs a 'break value' to produce one".to_string(),
+                span,
+            });
+        }
+        let ident = |name: &str| Expr::Ident(name.to_string(), span);
+        let call = |receiver: &str, method: &str, args: Vec<CallArg>| Expr::MethodCall {
+            receiver: Box::new(ident(receiver)),
+            method: method.to_string(),
+            type_args: Vec::new(),
+            args,
+            span,
+        };
+        Ok(Expr::Block(Block {
+            stmts: vec![
+                Stmt::Let {
+                    name: slot.clone(),
+                    mutable: true,
+                    ty: None,
+                    init: call("List", "empty", Vec::new()),
+                    span,
+                },
+                stmt,
+                Stmt::Expr { expr: call(&slot, "pop", Vec::new()), span },
+            ],
+            span,
+        }))
     }
 
     /// `break 'outer` / `continue 'outer`. The innermost loop is a plain
     /// `break`/`continue`; an outer one sets the target's flag (1 for break,
     /// 2 for continue) and breaks, and `parse_loop_construct` adds the
     /// re-checks after each loop in between.
-    fn parse_labelled_exit(&mut self, is_break: bool, label: &str, span: Span) -> PResult<Stmt> {
+    fn parse_labelled_exit(&mut self, is_break: bool, label: &str, span: Span, value: Option<Expr>) -> PResult<Stmt> {
         let Some(target) = self.loop_stack.iter().rposition(|l| l.label.as_deref() == Some(label)) else {
             return Err(ParseError {
                 message: format!("no enclosing loop is labelled '{label}; a label is written before a loop ('{label}: for ...') and does not cross a function or a block passed to a call"),
@@ -2987,8 +3052,9 @@ impl Parser {
             });
         };
         let top = self.loop_stack.len() - 1;
+        let push = self.valued_exit(target, is_break, span, value)?;
         if target == top {
-            return Ok(if is_break { Stmt::Break { span } } else { Stmt::Continue { span } });
+            return Ok(Self::with_push(push, if is_break { Stmt::Break { span } } else { Stmt::Continue { span } }, span));
         }
         let flag = match self.loop_stack[target].flag.clone() {
             Some(f) => f,
@@ -3004,23 +3070,80 @@ impl Parser {
                 self.loop_stack[between].exits.push(target);
             }
         }
-        Ok(Stmt::Expr {
-            expr: Expr::Block(Block {
-                stmts: vec![
-                    Stmt::Expr {
-                        expr: Expr::Assign {
-                            target: Box::new(Expr::Ident(flag, span)),
-                            value: Box::new(Expr::IntLit(if is_break { 1 } else { 2 }, span)),
-                            span,
-                        },
+        let mut stmts = Vec::new();
+        stmts.extend(push);
+        stmts.push(Stmt::Expr {
+            expr: Expr::Assign {
+                target: Box::new(Expr::Ident(flag, span)),
+                value: Box::new(Expr::IntLit(if is_break { 1 } else { 2 }, span)),
+                span,
+            },
+            span,
+        });
+        stmts.push(Stmt::Break { span });
+        Ok(Stmt::Expr { expr: Expr::Block(Block { stmts, span }), span })
+    }
+
+    /// An unlabelled `break`/`continue` (with `break value`'s value, if any).
+    fn parse_exit(&mut self, is_break: bool, span: Span, value: Option<Expr>) -> PResult<Stmt> {
+        let Some(target) = self.loop_stack.len().checked_sub(1) else {
+            // No loop encloses it: the type checker says so, with its own wording.
+            return Ok(if is_break { Stmt::Break { span } } else { Stmt::Continue { span } });
+        };
+        let push = self.valued_exit(target, is_break, span, value)?;
+        Ok(Self::with_push(push, if is_break { Stmt::Break { span } } else { Stmt::Continue { span } }, span))
+    }
+
+    /// The `slot.push(value)` of a `break value` out of loop `target`, after
+    /// checking that the loop is one that produces a value and the exit is
+    /// one that gives it: `Ok(None)` for an exit that carries no value.
+    fn valued_exit(&mut self, target: usize, is_break: bool, span: Span, value: Option<Expr>) -> PResult<Option<Stmt>> {
+        let slot = self.loop_stack[target].value_slot.clone();
+        match (slot, value) {
+            (Some(slot), Some(v)) => {
+                self.loop_stack[target].valued_breaks += 1;
+                Ok(Some(Stmt::Expr {
+                    expr: Expr::MethodCall {
+                        receiver: Box::new(Expr::Ident(slot, span)),
+                        method: "push".to_string(),
+                        type_args: Vec::new(),
+                        args: vec![CallArg { name: None, value: v }],
                         span,
                     },
-                    Stmt::Break { span },
-                ],
+                    span,
+                }))
+            }
+            (None, Some(_)) => Err(ParseError {
+                message: "only a 'loop' used as a value can 'break' with one: write 'val x = loop { ... break value ... }'".to_string(),
                 span,
             }),
-            span,
-        })
+            (Some(_), None) if is_break => Err(ParseError {
+                message: "this 'loop' produces a value, so every 'break' out of it carries one: 'break value'".to_string(),
+                span,
+            }),
+            _ => Ok(None),
+        }
+    }
+
+    /// Whether the token `offset` past the current one starts a `break` value:
+    /// see `starts_break_value`, plus a negative number (`break -1`).
+    fn break_value_at(&self, offset: usize) -> bool {
+        let kind = |i: usize| self.tokens.get(self.pos + i).map(|t| &t.kind);
+        match kind(offset) {
+            Some(TokenKind::Minus) => {
+                matches!(kind(offset + 1), Some(TokenKind::IntLit(_)) | Some(TokenKind::FloatLit(_)))
+            }
+            Some(k) => starts_break_value(k),
+            None => false,
+        }
+    }
+
+    /// `push` (if any) followed by the exit itself, as one statement.
+    fn with_push(push: Option<Stmt>, exit: Stmt, span: Span) -> Stmt {
+        match push {
+            None => exit,
+            Some(p) => Stmt::Expr { expr: Expr::Block(Block { stmts: vec![p, exit], span }), span },
+        }
     }
 
     fn parse_while_stmt(&mut self) -> PResult<Stmt> {
@@ -3671,6 +3794,20 @@ impl Parser {
                 Ok(Expr::StringLit(s, tok.span))
             }
             TokenKind::TemplateStart => self.parse_template(),
+            // `loop { ... break value ... }` as a value (contextual: `loop`
+            // followed by `{`), optionally labelled (`'a: loop { ... }`).
+            TokenKind::Ident(ref name) if name == "loop" && matches!(self.peek2_kind(), TokenKind::LBrace) => {
+                self.parse_loop_value(None)
+            }
+            TokenKind::Label(ref label)
+                if matches!(self.peek2_kind(), TokenKind::Colon)
+                    && matches!(self.tokens.get(self.pos + 2).map(|t| &t.kind), Some(TokenKind::Ident(n)) if n == "loop") =>
+            {
+                let label = label.clone();
+                self.advance();
+                self.advance();
+                self.parse_loop_value(Some(label))
+            }
             TokenKind::True => {
                 self.advance();
                 Ok(Expr::BoolLit(true, tok.span))
@@ -4688,12 +4825,35 @@ fn is_place_chain(e: &Expr) -> bool {
     }
 }
 
+/// Whether a token starts the value of `break value`: a name, a literal, a
+/// list or a template. Anything else (`break + 1`, `break(x)`) is not a value,
+/// so `break` stays an ordinary name there; wrap other values in a `val`.
+fn starts_break_value(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::IntLit(_)
+            | TokenKind::FloatLit(_)
+            | TokenKind::StringLit(_)
+            | TokenKind::CharLit(_)
+            | TokenKind::ByteLit(_)
+            | TokenKind::TemplateStart
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::LBracket
+            | TokenKind::Ident(_)
+    )
+}
+
 /// A loop being parsed: its label, the hidden flag a labelled exit to it uses,
 /// and the outer loops whose flags a `break`/`continue` inside it sets.
 struct LoopCtx {
     label: Option<String>,
     flag: Option<String>,
     exits: Vec<usize>,
+    /// For a `loop` used as a value: the hidden list its `break value`s push
+    /// to, and how many of them there are.
+    value_slot: Option<String>,
+    valued_breaks: usize,
 }
 
 /// One position of a tuple pattern in a `when` arm.

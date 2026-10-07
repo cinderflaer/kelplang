@@ -500,7 +500,7 @@ Order inside the release, each lane merged before the next starts:
 1. ~~**MISSING-Sw9Hd**~~ disjoint-field captures and the `g(s, s)` hole **shipped** (borrow roots are field paths; nested-block capture and the fmt rewrap stay open). Original text: **MISSING-Sw9Hd** disjoint-field captures, and the unchecked `g(s, s)` with two `mut` params (L).
 2. ~~**MISSING-Gt6Qc**~~ `t.0`, `for (a, b)` and variant/name tuple patterns in `when` **shipped** (literal and nested positions, and `const` tuples, stay open); the `Map` iterator needs a tuple element that can be a borrow and is not shipped. Original text: tuple patterns in `when`, destructuring `for (k, v)`, `t.0` access (M); with it the `Map`
    iterator and `List.iter()` of MISSING-Hd4Lr (moved from 26.10.2, see there).
-3. **MISSING-Lk9Xs** `loop`, labelled `break`/`continue`, `break` with a value (M).
+3. ~~**MISSING-Lk9Xs**~~ `loop`, labelled `break`/`continue` and `break value` **shipped**. Original text: **MISSING-Lk9Xs** `loop`, labelled `break`/`continue`, `break` with a value (M).
 4. ~~**MISSING-Pw3Fz** methods with their own type parameters (L)~~ shipped, with methods on generic enums.
 5. Open item 75, trailing closures; open item 11, trailing-operator line continuation in the lexer;
    H-12, a numeric literal adapts to its expected type; open item 7, `f32` overloads in `std/math`.

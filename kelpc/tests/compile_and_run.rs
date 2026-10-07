@@ -11908,6 +11908,20 @@ fn loop_and_labelled_break_and_continue_leave_nested_loops() {
     assert_compiles_and_runs("tests/fixtures/loop_and_labels.kp", "4\n4\n51\n");
     // Each exit frees the owned locals of every loop it leaves.
     assert_compiles_and_runs("tests/fixtures/loop_labels_free_owned_locals.kp", "9\n9\n7\n");
+    // `loop` as a value and `break value` (the rest of MISSING-Lk9Xs).
+    assert_compiles_and_runs("tests/fixtures/loop_value.kp", "9\n8\n4\n23\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_break_value_in_statement_loop.kp",
+        "only a 'loop' used as a value can 'break' with one",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_plain_break_in_value_loop.kp",
+        "every 'break' out of it carries one",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_value_loop_without_break_value.kp",
+        "needs a 'break value' to produce one",
+    );
     assert_rejected_with(
         "tests/fixtures/refused_unknown_loop_label.kp",
         "no enclosing loop is labelled 'nope",

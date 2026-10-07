@@ -1,0 +1,10 @@
+fun main() {
+    var n = 0
+    val x = loop {
+        n += 1
+        if n > 3 {
+            return
+        }
+    }
+    print(x)
+}

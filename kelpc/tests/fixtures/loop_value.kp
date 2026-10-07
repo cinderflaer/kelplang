@@ -1,0 +1,46 @@
+fun find_first_big(xs: List<i32>).return: i32 {
+    var i: usize = 0
+    return loop {
+        if i >= xs.len() {
+            break -1
+        }
+        if xs.get(i) > 5 {
+            break xs.get(i)
+        }
+        i += 1
+    }
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(9)
+    xs.push(2)
+    print(find_first_big(xs))
+
+    var n = 0
+    val doubled = loop {
+        n += 1
+        if n == 4 {
+            break n * 2
+        }
+    }
+    print(doubled)
+
+    val name = loop {
+        break String.from_str(s = "done")
+    }
+    print(name.len())
+
+    val found = 'outer: loop {
+        for a in [1, 2, 3] {
+            for b in [1, 2, 3] {
+                if a * b == 6 {
+                    break 'outer a * 10 + b
+                }
+            }
+        }
+        break 0
+    }
+    print(found)
+}
