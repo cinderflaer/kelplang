@@ -13,3 +13,4 @@ back to this header. No need to ask first.
 Keep each line short and factual: what changed, and why it matters to someone
 writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
+- `std/http`: `http.multipart(boundary)` builds a multipart/form-data body (`add_field`, `add_file`, `finish`, `content_type`), and `http.multipart_request(url, form)` makes the POST.
