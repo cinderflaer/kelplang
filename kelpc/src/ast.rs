@@ -393,6 +393,10 @@ pub struct FunctionDecl {
     /// an `unsafe { ... }` block or from another `unsafe fun`. It is legal only
     /// in a module the project's `coral.toml` lists under `[unsafe] modules`.
     pub unsafe_: bool,
+    /// `must_use fun ...` (MISSING-Cn2Ym): a call used as a statement, with its
+    /// result thrown away, is a compile error. `val _r = f()` is the explicit
+    /// discard.
+    pub must_use: bool,
     /// `extern fun g(a: T, ...)` — a *user* extern whose last parameter is the
     /// `...` variadic marker (gap 7). A call passes the fixed arguments and
     /// then any number of extra arguments, each of a scalar, `bool`, `str` or

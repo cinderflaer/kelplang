@@ -501,8 +501,9 @@ impl Parser {
                 // stage 5). Both are contextual words everywhere, so they are
                 // identifier tokens and the lookahead is what makes them
                 // declaration markers here.
-                let (unsafe_, naked) = self.check_function_markers();
-                let f = self.parse_function(is_pub, unsafe_, naked, section, align, false)?;
+                let (unsafe_, naked, must_use) = self.check_function_markers();
+                let mut f = self.parse_function(is_pub, unsafe_, naked, section, align, false)?;
+                f.must_use = must_use;
                 // `Self` is a receiver only inside a `trait` or an `impl`
                 // (A-12 slice 2): at the top level it names nothing.
                 if let Some(r) = &f.receiver {
@@ -550,14 +551,16 @@ impl Parser {
     /// stage 1, kernel stage 5). Neither is a keyword, so each is only a marker
     /// when `fun` is what follows the run of them, and nothing is consumed
     /// otherwise.
-    fn check_function_markers(&mut self) -> (bool, bool) {
+    fn check_function_markers(&mut self) -> (bool, bool, bool) {
         let mut unsafe_ = false;
         let mut naked = false;
+        let mut must_use = false;
         let mut i = 0;
         loop {
             match self.tokens.get(self.pos + i).map(|t| &t.kind) {
                 Some(TokenKind::Ident(n)) if n == "unsafe" => unsafe_ = true,
                 Some(TokenKind::Ident(n)) if n == "naked" => naked = true,
+                Some(TokenKind::Ident(n)) if n == "must_use" => must_use = true,
                 _ => break,
             }
             i += 1;
@@ -566,12 +569,12 @@ impl Parser {
             self.tokens.get(self.pos + i).map(|t| &t.kind),
             Some(TokenKind::Fun)
         ) {
-            return (false, false);
+            return (false, false, false);
         }
         for _ in 0..i {
             self.advance();
         }
-        (unsafe_, naked)
+        (unsafe_, naked, must_use)
     }
 
     /// The item a leading `pub` must be followed by (A-13). `pub` on anything
@@ -592,9 +595,9 @@ impl Parser {
             // are contextual words, so each is only a marker when `fun` follows
             // the run of them.
             TokenKind::Ident(n)
-                if (n == "unsafe" || n == "naked")
+                if (n == "unsafe" || n == "naked" || n == "must_use")
                     && (matches!(self.peek2_kind(), TokenKind::Fun)
-                        || matches!(self.peek2_kind(), TokenKind::Ident(m) if m == "unsafe" || m == "naked")) =>
+                        || matches!(self.peek2_kind(), TokenKind::Ident(m) if m == "unsafe" || m == "naked" || m == "must_use")) =>
             {
                 Ok(())
             }
@@ -1334,7 +1337,7 @@ impl Parser {
         matches!(self.peek_kind(), TokenKind::Fun)
             || (matches!(self.peek_kind(), TokenKind::Extern)
                 && matches!(self.peek2_kind(), TokenKind::Fun))
-            || (matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe" || n == "naked")
+            || (matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe" || n == "naked" || n == "must_use")
                 && matches!(self.peek2_kind(), TokenKind::Fun))
     }
 
@@ -1981,6 +1984,7 @@ impl Parser {
             trait_impl: None,
             extern_,
             unsafe_,
+            must_use: false,
             variadic,
             naked,
             receiver,

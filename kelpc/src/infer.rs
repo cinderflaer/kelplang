@@ -763,6 +763,9 @@ struct Ctx {
     /// The functions declared `unsafe fun`, by canonical key. Calling one
     /// requires `unsafe_depth > 0`.
     unsafe_fns: std::collections::HashSet<String>,
+    /// The functions declared `must_use fun`, by canonical key: a statement
+    /// that is a call to one, with its result unread, is refused.
+    must_use_fns: std::collections::HashSet<String>,
     /// Whether the project is a freestanding build (kernel stage 8). The
     /// `percpu` storage class and its two intrinsics exist only there.
     freestanding: bool,
@@ -9742,6 +9745,7 @@ fn base_ctx(
         probes: Vec::new(),
         unsafe_depth: 0,
         unsafe_fns: project.unsafe_fns().clone(),
+        must_use_fns: project.must_use_fns().clone(),
         freestanding: project.target().is_freestanding(),
         cpus: project.target().cpus(),
         infer_scoped_ret: false,
@@ -10805,6 +10809,24 @@ fn check_function(
     })
 }
 
+/// A call to a `must_use fun` whose result goes nowhere (MISSING-Cn2Ym).
+fn refuse_dropped_must_use(checked: &tir::Expr, ctx: &Ctx, span: Span) -> Result<()> {
+    if let tir::ExprKind::Call { callee, .. } = &checked.kind {
+        // A generic instance's key carries its type arguments (`Sender#send<i64>`).
+        let plain = callee.split('<').next().unwrap_or(callee);
+        if ctx.must_use_fns.contains(plain) {
+            return Err(TypeError {
+                message: format!(
+                    "the result of '{}' must be used: it reports a failure or hands a value back. Branch on it, or write 'val _r = ...' to discard it on purpose",
+                    display_callee(plain)
+                ),
+                span,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) -> Result<tir::Block> {
     ctx.push_scope();
     let mut stmts = Vec::new();
@@ -10825,7 +10847,13 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
 
         if is_tail {
             if let ast::Stmt::Expr { expr, .. } = stmt {
-                tail = Some(Box::new(check_expr(expr, ctx, expected_tail)?));
+                let checked = check_expr(expr, ctx, expected_tail)?;
+                // A unit block throws its tail value away, so a `must_use`
+                // call there is a dropped result like any statement's.
+                if matches!(expected_tail, Some(Ty::Unit)) {
+                    refuse_dropped_must_use(&checked, ctx, expr.span())?;
+                }
+                tail = Some(Box::new(checked));
             }
         } else {
             let checked = check_stmt(stmt, ctx)?;
@@ -11161,6 +11189,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
         }
         ast::Stmt::Expr { expr, .. } => {
             let checked = check_expr(expr, ctx, None)?;
+            refuse_dropped_must_use(&checked, ctx, stmt_span(stmt))?;
             // A non-tail expression statement discards its value, and nothing
             // owns an owned value afterwards — v1 has no drop point for a
             // temporary, so this would leak. Reject it instead.

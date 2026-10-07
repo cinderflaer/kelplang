@@ -14,3 +14,4 @@ Keep each line short and factual: what changed, and why it matters to someone
 writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
 - `std/http`: `http.multipart(boundary)` builds a multipart/form-data body (`add_field`, `add_file`, `finish`, `content_type`), and `http.multipart_request(url, form)` makes the POST.
+- `must_use fun`: a call used as a statement with its result dropped is a compile error. `Sender.send` and the `fs.try_*` mutators carry it; `val _r = ...` is the explicit discard.
