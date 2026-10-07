@@ -1786,6 +1786,18 @@ fn fs_mutators_have_fallible_twins() {
 }
 
 #[test]
+fn a_long_constant_array_literal_is_a_global_plus_a_copy() {
+    // MISSING-Nf3Rb: 300 elements is past the threshold. The binding gets its own
+    // copy (the mutation of `copy` does not reach `table`), a literal with a
+    // non-constant element keeps the aggregate form, and a literal passed
+    // straight to a call still works.
+    assert_compiles_and_runs(
+        "tests/fixtures/array_literal_big.kp",
+        "36344\n99\n0\n36443\n50100\n36344\n",
+    );
+}
+
+#[test]
 fn a_pool_closes_connections_that_idled_too_long() {
     // Open item 56: `close_idle(after_ms)` and `set_idle_timeout(ms)`.
     assert_compiles_and_runs(

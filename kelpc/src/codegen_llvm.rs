@@ -740,6 +740,10 @@ fn lower_to_object(
 /// The debug-info setting a cached object was built with. DWARF is always on
 /// (MK7 S4, `compile`), so this is a constant that exists to make the key name
 /// the setting rather than to choose one.
+/// An all-constant array literal of at least this many elements is emitted as a
+/// private global plus a copy instead of an aggregate value (MISSING-Nf3Rb).
+const BIG_ARRAY_LITERAL: usize = 256;
+
 const DEBUG_INFO_SETTING: &str = "dwarf";
 
 /// The compiler's identity for the cache key: this `kelpc`'s version and the
@@ -4254,6 +4258,52 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     self.g.call(func, fty, &[slot, v], "");
                     return Ok(());
                 }
+                // A long all-constant array literal is a private constant global
+                // plus one `memcpy` into the local (MISSING-Nf3Rb). Handing
+                // LLVM the literal as one `[N x T]` aggregate value makes its
+                // optimizer quadratic in N (about 3 s at `-O2` for 5,000
+                // elements). Short literals keep the aggregate form: their IR
+                // is what every other array literal in the corpus looks like.
+                if let (Ty::Array(elem, len), ExprKind::ArrayLit(elems)) = (ty, &init.kind) {
+                    if elems.len() >= BIG_ARRAY_LITERAL && elems.len() == *len as usize {
+                        let mut values = Vec::with_capacity(elems.len());
+                        for e in elems {
+                            values.push(self.value_of(e)?);
+                        }
+                        if self.terminated {
+                            return Ok(());
+                        }
+                        let elem_ty = self.lty(elem)?;
+                        if values.iter().all(|v| v.is_constant()) {
+                            let arr_ty = self.g.ctx.array_type(elem_ty, *len);
+                            let table = self.g.ctx.const_array(elem_ty, &values);
+                            let global = self.g.module.add_global("kelp.array.lit", arr_ty);
+                            global.set_initializer(table);
+                            global.set_constant(true);
+                            global.set_internal_linkage();
+                            let slot = self.alloca(ty, name)?;
+                            self.scopes
+                                .last_mut()
+                                .expect("a scope is always open")
+                                .insert(name.clone(), slot);
+                            self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
+                            let bytes = self.g.layout.abi_size_of(arr_ty);
+                            let (memcpy, mty) = self.g.mem_fn("memcpy")?;
+                            let size = self.g.v_i64(bytes);
+                            self.g.call(memcpy, mty, &[slot, global, size], "");
+                            return Ok(());
+                        }
+                        let agg = self.array_lit_from_values(values, ty)?;
+                        let slot = self.alloca(ty, name)?;
+                        self.scopes
+                            .last_mut()
+                            .expect("a scope is always open")
+                            .insert(name.clone(), slot);
+                        self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
+                        self.g.builder.build_store(agg, slot);
+                        return Ok(());
+                    }
+                }
                 let value = self.emit_expr(init)?;
                 // An initializer that diverged leaves the binding dead: emitting
                 // its store would put an instruction after the block's terminator.
@@ -6258,17 +6308,31 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let Ty::Array(elem, len) = ty else {
             return Err(no_value("an array literal's type"));
         };
-        let array_ty = self.g.cty(ty)?;
-        let elem_ty = self.lty(elem)?;
-        let arr_ty = self.g.ctx.array_type(elem_ty, *len);
         let mut values = Vec::with_capacity(elems.len());
         for e in elems {
             values.push(self.value_of(e)?);
         }
+        let _ = (elem, len);
+        self.array_lit_from_values(values, ty)
+    }
+
+    /// The aggregate value of an array literal whose elements are already
+    /// emitted.
+    fn array_lit_from_values(
+        &mut self,
+        values: Vec<Value<'a>>,
+        ty: &Ty,
+    ) -> Result<Value<'a>, String> {
+        let Ty::Array(elem, len) = ty else {
+            return Err(no_value("an array literal's type"));
+        };
+        let array_ty = self.g.cty(ty)?;
+        let elem_ty = self.lty(elem)?;
+        let arr_ty = self.g.ctx.array_type(elem_ty, *len);
         // An all-constant literal is one constant array: folding a chain of
         // `insertvalue`s into a constant aggregate copies the whole aggregate
         // at every step, which is quadratic in the length.
-        let arr = if elems.len() == *len as usize && values.iter().all(|v| v.is_constant()) {
+        let arr = if values.len() == *len as usize && values.iter().all(|v| v.is_constant()) {
             self.g.ctx.const_array(elem_ty, &values)
         } else {
             let mut arr = self.g.ctx.undef(arr_ty);
