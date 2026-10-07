@@ -115,3 +115,30 @@ fun each<T>(o: &Option<T>, f: closure(&T)) {
         None -> {}
     }
 }
+
+// ---- method forms ----
+//
+// The borrowing helpers above, also callable on a value: `o.map(f)` is
+// `option.map(o, f)`. The ones that take the option with `move`
+// (`unwrap_or`, `unwrap`, `expect`) stay free functions: a method always
+// borrows its receiver.
+
+/// `o.is_some()`.
+fun Option<T>.is_some().return: bool = is_some(self)
+
+/// `o.is_none()`.
+fun Option<T>.is_none().return: bool = is_none(self)
+
+/// `o.map(f)`: see `map`.
+fun Option<T>.map<U>(f: closure(&T).return: U).return: Option<U> = map(self, f)
+
+/// `o.and_then(f)`: see `and_then`.
+fun Option<T>.and_then<U>(f: closure(&T).return: Option<U>).return: Option<U> = and_then(self, f)
+
+/// `o.or_else(f)`: see `or_else`.
+fun Option<T>.or_else(f: closure().return: Option<T>).return: Option<T> = or_else(self, f)
+
+/// `o.each(f)`: see `each`.
+fun Option<T>.each(f: closure(&T)) {
+    each(self, f)
+}
