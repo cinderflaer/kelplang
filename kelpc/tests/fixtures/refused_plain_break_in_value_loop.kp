@@ -1,0 +1,6 @@
+fun main() {
+    val x = loop {
+        break
+    }
+    print(x)
+}

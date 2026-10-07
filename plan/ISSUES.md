@@ -73,19 +73,6 @@ Shipped in 26.10.3: `t.0`, `for (a, b) in pairs`, and tuple patterns in `when`
 with variant, literal, name, `_` and nested positions. Still open: a tuple value
 in a `const` initializer.
 
-### MISSING-Lk9Xs kelp: `break` cannot carry a value
-
-repo: kelp | found: 2026-10-06 | effort: S
-
-source: wiki `language/limits.md` (unreleased), "Control flow". Also: a
-`defer` body cannot contain `break` or `continue`.
-
-`loop`, `'label:` and `break 'label`/`continue 'label` shipped in 26.10.3 as a
-parser rewrite onto `while true`, a hidden flag and plain `break`s. Still open:
-`loop` as an expression with `break value` (it needs a result slot the type
-checker infers from the `break`s, so it is not a rewrite). Decided and accepted
-in the schedule.
-
 ### MISSING-Cn2Ym kelp: channels have no `select` and no zero-capacity form
 
 repo: kelp | found: 2026-10-06 | effort: M
