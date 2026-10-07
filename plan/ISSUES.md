@@ -84,8 +84,10 @@ protocol shipped, the adapters did not"; `kelp/plan/iterators-status.md`.
 `filter`, `take`, `skip`, `enumerate`, `zip` or `chain`, no `List.iter()` /
 `into_iter()`, and a `Map` has no iterator (callers iterate `keys()` and look
 each one up). The adapters need `impl<I: Iterator> Iterator for Take<I>`, which
-is MISSING-Ve8Nc, so this entry waits on that one; the `Map` iterator and
-`List.iter()` do not and could ship first.
+is MISSING-Ve8Nc, so this entry waits on that one. The `Map` iterator and
+`List.iter()` do not need Ve8Nc but do need a compiler `for` desugar (a library
+`MapIter<K, V>` would need the same generic impl) and, for `for (k, v)`, the
+tuple destructuring of MISSING-Gt6Qc, so they ship with Gt6Qc in 26.11.0.
 
 ### MISSING-Gt6Qc kelp: tuples are destructure-only
 

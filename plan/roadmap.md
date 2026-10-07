@@ -483,14 +483,17 @@ Everything already merged (see the pending changelog), plus:
 - **MISSING-j2Wka** multipart/form-data builder (M).
 - **MISSING-Nf3Rb** array literal as a private global plus a copy (M); needs the differential sweep.
 - **MISSING-Cn2Ym** `must_use` only; `select` waits for 26.12.1.
-- **MISSING-Hd4Lr** `Map` iterator and `List.iter()` only.
+- ~~**MISSING-Hd4Lr** `Map` iterator and `List.iter()`~~ moved to 26.11.0 (decided 2026-10-07): `ListIter<T>`/`MapIter<K, V>`
+  cannot implement `Iterator` without generic trait impls (Ve8Nc, `impl<T> Iterator for Wrap<T>` is a parse
+  error today), and a `for (k, v) in map` desugar needs the tuple destructuring of Gt6Qc. They ship with Gt6Qc as one compiler desugar.
 - Open items 45 (`time.sleep_ms` ungated for library modules) and 56 (pool idle timeout and reaper).
 
 #### 26.11.0: language ergonomics I (one lane at a time)
 
 Order inside the release, each lane merged before the next starts:
 1. **MISSING-Sw9Hd** disjoint-field captures, and the unchecked `g(s, s)` with two `mut` params (L).
-2. **MISSING-Gt6Qc** tuple patterns in `when`, destructuring `for (k, v)`, `t.0` access (M).
+2. **MISSING-Gt6Qc** tuple patterns in `when`, destructuring `for (k, v)`, `t.0` access (M); with it the `Map`
+   iterator and `List.iter()` of MISSING-Hd4Lr (moved from 26.10.2, see there).
 3. **MISSING-Lk9Xs** `loop`, labelled `break`/`continue`, `break` with a value (M).
 4. **MISSING-Pw3Fz** methods with their own type parameters (L).
 5. Open item 75, trailing closures; open item 11, trailing-operator line continuation in the lexer;
