@@ -1,5 +1,6 @@
-// The receiver is a field of the owner the block writes: borrow roots are whole
-// variables, so `s.bag` and `s.count` are both borrows of `s` and conflict.
+// The receiver is a field of the owner and the block writes another field of it:
+// `s.bag` and `s.count` are different places, so they do not conflict (this was
+// refused while borrow roots were whole variables, MISSING-Sw9Hd).
 datac Bag(var n: i32)
 datac State(var count: i32, var bag: Bag)
 

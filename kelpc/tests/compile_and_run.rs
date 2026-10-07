@@ -11827,10 +11827,8 @@ fn an_exclusive_capture_conflicts_with_the_rest_of_its_call() {
         "tests/fixtures/excl_refused_receiver.kp",
         "cannot borrow 's.count' as exclusive: already borrowed exclusively",
     );
-    assert_rejected_with(
-        "tests/fixtures/excl_refused_param_aliases_owner.kp",
-        "cannot borrow 's' as exclusive: already borrowed exclusively",
-    );
+    // The receiver `s.bag` and the block's `s.count` are different fields of `s`.
+    assert_compiles_and_runs("tests/fixtures/excl_capture_disjoint_receiver.kp", "1\n");
     assert_rejected_with(
         "tests/fixtures/excl_refused_mut_param_twice.kp",
         "needs the call's other arguments to leave it alone",
@@ -11841,7 +11839,7 @@ fn an_exclusive_capture_conflicts_with_the_rest_of_its_call() {
     );
     assert_rejected_with(
         "tests/fixtures/excl_refused_live_borrow.kp",
-        "cannot borrow 's' as exclusive: already borrowed as shared",
+        "cannot borrow 's.items' as exclusive: already borrowed as shared",
     );
 }
 
