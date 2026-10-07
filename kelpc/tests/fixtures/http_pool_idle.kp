@@ -1,0 +1,34 @@
+// Open item 56: a pool can close the connections that have idled too long.
+// The program listens on a loopback port of its own (the kernel completes the
+// handshakes without an `accept`), warms a pool against it, and checks
+// `close_idle` and `set_idle_timeout`.
+impl "std/http" caps(net = ["127.0.0.1:*"])
+impl "std/net"
+impl "std/thread"
+
+fun show(label: &str, n: usize) {
+    print("${label} ${n}")
+}
+
+fun main() {
+    val l = net.listen(0)
+    val port = l.port()
+    var p = http.pool("127.0.0.1", port)
+    p.warm(false)
+    show("warm", p.len())
+    show("closed fresh", p.close_idle(60000))
+    show("kept", p.len())
+    show("closed all", p.close_idle(0))
+    show("left", p.len())
+
+    p.warm(false)
+    p.set_idle_timeout(1)
+    thread.sleep_ms(30)
+    val lease = p.checkout(false)
+    print(lease.reused)
+    show("after stale checkout", p.len())
+    p.release(lease, false)
+    p.close_all()
+    l.close()
+    print("done")
+}

@@ -17,3 +17,4 @@ empty on release.
 - `must_use fun`: a call used as a statement with its result dropped is a compile error. `Sender.send` and the `fs.try_*` mutators carry it; `val _r = ...` is the explicit discard.
 - `std/tls`: `ServerOptions.key_password(phrase)` loads an encrypted private key; `ServerConfig.reload_pem(cert, key, &opts)` swaps the certificate for new handshakes and keeps the old one when the new material is bad; `tlsfile.read_key(path)` refuses a key file that group or others can read.
 - `std/net`, `std/http`: `net.listen_on(host, port)` and `http.listen_on(host, port)` bind one host, checked on `host:port` against the `net` grant.
+- `std/http`: `Pool.set_idle_timeout(ms)` and `Pool.close_idle(after_ms)` close kept connections that have idled too long (no `time` grant needed).
