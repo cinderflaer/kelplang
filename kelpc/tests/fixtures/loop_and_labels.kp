@@ -1,0 +1,42 @@
+fun main() {
+    var n = 0
+    loop {
+        n += 1
+        if n > 3 {
+            break
+        }
+    }
+    print(n)
+
+    var hits = 0
+    'outer: for i in [1, 2, 3, 4] {
+        for j in [1, 2, 3, 4] {
+            if j == 3 {
+                continue 'outer
+            }
+            if i == 3 {
+                break 'outer
+            }
+            hits += 1
+        }
+    }
+    print(hits)
+
+    var total = 0
+    'a: while total < 100 {
+        'b: loop {
+            var k = 0
+            while true {
+                k += 1
+                total += k
+                if k == 4 {
+                    break 'b
+                }
+                if total > 50 {
+                    break 'a
+                }
+            }
+        }
+    }
+    print(total)
+}

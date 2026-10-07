@@ -79,16 +79,18 @@ tuple pattern nested in a tuple pattern, and a tuple value in a `const`
 initializer. `for (k, v)` over a `Map` still waits for the `Map` iterator of
 MISSING-Hd4Lr, which needs a tuple element that can be a borrow.
 
-### MISSING-Lk9Xs kelp: no `loop`, labelled `break`, or `break` with a value
+### MISSING-Lk9Xs kelp: `break` cannot carry a value
 
-repo: kelp | found: 2026-10-06 | effort: M
+repo: kelp | found: 2026-10-06 | effort: S
 
 source: wiki `language/limits.md` (unreleased), "Control flow". Also: a
 `defer` body cannot contain `break` or `continue`.
 
-`break`/`continue` act on the innermost loop only, so leaving a nested loop
-needs a flag variable or a helper function. Unlike `elif` (decided and shipped)
-this one has no decision recorded either way.
+`loop`, `'label:` and `break 'label`/`continue 'label` shipped in 26.10.3 as a
+parser rewrite onto `while true`, a hidden flag and plain `break`s. Still open:
+`loop` as an expression with `break value` (it needs a result slot the type
+checker infers from the `break`s, so it is not a rewrite). Decided and accepted
+in the schedule.
 
 ### MISSING-Cn2Ym kelp: channels have no `select` and no zero-capacity form
 

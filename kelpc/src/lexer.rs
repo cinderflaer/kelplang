@@ -40,6 +40,10 @@ pub enum TokenKind {
     /// literal takes the integer type its context asks for, which is what
     /// makes `c == '"'` work when `c` is a `u8` byte.
     CharLit(u32),
+    /// `'outer`: a loop label, written before a loop (`'outer: for ...`) and
+    /// after `break`/`continue`. It is a `'` and a name with no closing `'`,
+    /// which is what tells it from the character literal `'o'`.
+    Label(String),
     /// `b'x'`, `b'\n'`, `b'\xff'`: one byte, and a `u8` by construction
     /// (H-11). Distinct from `CharLit` because the two differ in exactly the
     /// places a byte-level program cares about: a byte literal never needs
@@ -681,6 +685,14 @@ impl<'a> Lexer<'a> {
                 // byte-level algorithm in the shipped stdlib is written with
                 // decimal codes (`str.char_at(c, i) == 34`) and why the JSON
                 // reader spells its punctuation as hex.
+                b'\'' if self.label_ahead() => {
+                    self.advance();
+                    let name_start = self.pos;
+                    while matches!(self.peek(), Some(c) if c == b'_' || c.is_ascii_alphanumeric()) {
+                        self.pos += 1;
+                    }
+                    TokenKind::Label(self.src[name_start..self.pos].to_string())
+                }
                 b'\'' => {
                     self.advance();
                     let cp = self.lex_char(start)?;
@@ -903,6 +915,21 @@ impl<'a> Lexer<'a> {
     /// Escapes are the string escapes minus what only makes sense in a
     /// longer literal, plus `\0` and `\'`: a character literal is not
     /// NUL-terminated and `'` has to be escapable somewhere.
+    /// Whether the `'` at the cursor starts a loop label: a name right after
+    /// it with no closing `'` (`'outer`), not a character literal (`'o'`,
+    /// `'\n'`).
+    fn label_ahead(&self) -> bool {
+        let first = self.peek_at(1);
+        if !matches!(first, Some(c) if c == b'_' || c.is_ascii_alphabetic()) {
+            return false;
+        }
+        let mut i = self.pos + 1;
+        while i < self.bytes.len() && (self.bytes[i] == b'_' || self.bytes[i].is_ascii_alphanumeric()) {
+            i += 1;
+        }
+        self.bytes.get(i) != Some(&b'\'')
+    }
+
     fn lex_char(&mut self, start: usize) -> Result<u32, LexError> {
         // A macro rather than a closure: every diagnostic needs the *current*
         // `self.pos`, and a closure that read it would hold a borrow across
