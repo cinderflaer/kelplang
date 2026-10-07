@@ -1695,6 +1695,121 @@ fun post_text(url: &str, body: &str, content_type: &str).R: Response {
     return c.send(req)
 }
 
+// ===== multipart/form-data bodies (MISSING-j2Wka) =====
+//
+// A `Multipart` is a body under construction: `multipart(boundary)` starts one,
+// `add_field`/`add_file` append a part each, and `finish` closes it and hands
+// back the bytes. `content_type` is the header line value that must travel
+// with that body. The boundary is the caller's, because this module has no
+// randomness and a test wants a stable body; it must not occur inside any
+// part, which `add_file` cannot check cheaply for arbitrary bytes, so pick a
+// long one (RFC 2046: 1 to 70 characters from a small set).
+
+/// A multipart/form-data body being built.
+datac Multipart(val boundary: String, var out: Bytes, var parts: usize)
+
+/// A boundary byte RFC 2046 allows: letters, digits and `'()+_,-./:=?`.
+fun boundary_ok(c: u8).R: bool {
+    if str.is_digit(c) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) {
+        return true
+    }
+    return c == 39 || c == 40 || c == 41 || c == 43 || c == 95 || c == 44 || c == 45 || c == 46 || c == 47 || c == 58 || c == 61 || c == 63
+}
+
+/// A new multipart body. Panics: if `boundary` is empty, longer than 70 bytes
+/// or holds a byte RFC 2046 does not allow in one.
+fun multipart(boundary: &str).R: Multipart {
+    val n = str.len(boundary)
+    if n == 0 || n > 70 {
+        panic("http.multipart: the boundary must be 1 to 70 bytes")
+    }
+    var i: usize = 0
+    while i < n {
+        if !boundary_ok(str.byte(boundary, i)) {
+            panic("http.multipart: the boundary holds a byte that is not allowed")
+        }
+        i = i + 1
+    }
+    return Multipart(boundary = String.from_str(boundary), out = Bytes.empty(), parts = 0)
+}
+
+/// A header parameter value in quotes: `"` becomes `%22`, CR `%0D` and LF `%0A`,
+/// which is what browsers send, so a name cannot end the parameter or the line.
+fun multipart_quote(s: &str).R: String {
+    val a = str.replace(s, "%", "%25")
+    val b = str.replace(a.as_str(), "\"", "%22")
+    val c = str.replace(b.as_str(), "\r", "%0D")
+    return str.replace(c.as_str(), "\n", "%0A")
+}
+
+/// The opening of a part: the delimiter line and the `Content-Disposition`.
+fun mut Multipart.begin_part(name: &str, filename: option.Option<String>) {
+    var head = String.from_str("--")
+    head.push_str(boundary.as_str())
+    head.push_str("\r\nContent-Disposition: form-data; name=\"")
+    val qn = multipart_quote(name)
+    head.push_str(qn.as_str())
+    head.push_str("\"")
+    if let Some(f) = filename {
+        head.push_str("; filename=\"")
+        val qf = multipart_quote(f.as_str())
+        head.push_str(qf.as_str())
+        head.push_str("\"")
+    }
+    head.push_str("\r\n")
+    out.append(Bytes.from_str(head.as_str()))
+    parts = parts + 1
+}
+
+/// A text field.
+fun mut Multipart.add_field(name: &str, value: &str) {
+    self.begin_part(name, option.Option.None)
+    out.append(Bytes.from_str("\r\n"))
+    out.append(Bytes.from_str(value))
+    out.append(Bytes.from_str("\r\n"))
+}
+
+/// A file part with its own `Content-Type`.
+fun mut Multipart.add_file(name: &str, filename: &str, content_type: &str, data: Bytes) {
+    self.begin_part(name, option.Option.Some(value = String.from_str(filename)))
+    var ct = String.from_str("Content-Type: ")
+    ct.push_str(content_type)
+    ct.push_str("\r\n\r\n")
+    out.append(Bytes.from_str(ct.as_str()))
+    out.append(data)
+    out.append(Bytes.from_str("\r\n"))
+}
+
+/// The `Content-Type` header value for this body.
+fun Multipart.content_type().R: String {
+    var ct = String.from_str("multipart/form-data; boundary=")
+    ct.push_str(boundary.as_str())
+    return ct
+}
+
+/// The finished body: every part, then the closing delimiter. Call it once,
+/// after the last part.
+fun mut Multipart.finish().R: Bytes {
+    var tail = String.from_str("--")
+    tail.push_str(boundary.as_str())
+    tail.push_str("--\r\n")
+    out.append(Bytes.from_str(tail.as_str()))
+    return out.clone()
+}
+
+/// A POST of a finished multipart body to `url`, with the matching
+/// `Content-Type`.
+fun multipart_request(url: &str, form: mut Multipart).R: Request {
+    var hs: List<Header> = List.empty()
+    hs.push(Header(name = String.from_str("Content-Type"), value = form.content_type()))
+    return Request(
+        method = String.from_str("POST"),
+        url = String.from_str(url),
+        headers = hs,
+        body = form.finish(),
+    )
+}
+
 // ===== the server (st2) =====
 //
 // An HTTP/1.1 server over `std/net`, in this module because it shares the
