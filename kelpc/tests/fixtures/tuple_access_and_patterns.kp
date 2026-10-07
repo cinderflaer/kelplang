@@ -1,0 +1,40 @@
+impl "std/option"
+
+enum Shape {
+    Circle(val r: i32)
+    Square(val s: i32)
+    Dot
+}
+
+fun pair().R: (i32, i32) { return (1, 2) }
+
+fun describe(a: Shape, b: option.Option<i32>).R: i32 {
+    return when (a, b) {
+        (Circle(r), Some(n)) -> r + n
+        (Circle(r), None) -> r
+        (Square(s), _) -> s * 10
+        (Dot, n) -> 0
+    }
+}
+
+fun main() {
+    val t = pair()
+    print(t.0)
+    print(t.1)
+    val (x, y) = t
+    print(x + y)
+    val ps = [(1, 2), (3, 4)]
+    for (a, b) in ps {
+        print(a * b)
+    }
+    print(describe(Shape.Circle(r = 5), option.Option.Some(value = 3)))
+    print(describe(Shape.Circle(r = 5), option.Option.None))
+    print(describe(Shape.Square(s = 4), option.Option.None))
+    print(describe(Shape.Dot, option.Option.None))
+    val t2 = pair()
+    val r = when t2 {
+        (k, v) -> k + v
+        else -> 0
+    }
+    print(r)
+}

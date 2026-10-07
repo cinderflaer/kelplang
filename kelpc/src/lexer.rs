@@ -763,7 +763,14 @@ impl<'a> Lexer<'a> {
                             self.pos += 1;
                         }
                         let mut is_float = false;
-                        if self.peek() == Some(b'.') && matches!(self.peek_at(1), Some(b'0'..=b'9'))
+                        // A number right after a single `.` is a tuple
+                        // position (`t.0.1`), never the start of a float.
+                        let after_dot = start > 0
+                            && self.bytes[start - 1] == b'.'
+                            && !(start > 1 && self.bytes[start - 2] == b'.');
+                        if !after_dot
+                            && self.peek() == Some(b'.')
+                            && matches!(self.peek_at(1), Some(b'0'..=b'9'))
                         {
                             is_float = true;
                             self.pos += 1;

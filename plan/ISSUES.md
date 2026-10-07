@@ -64,19 +64,20 @@ each one up). The adapters need `impl<I: Iterator> Iterator for Take<I>`, which
 is MISSING-Ve8Nc, so this entry waits on that one. The `Map` iterator and
 `List.iter()` do not need Ve8Nc but do need a compiler `for` desugar (a library
 `MapIter<K, V>` would need the same generic impl) and, for `for (k, v)`, the
-tuple destructuring of MISSING-Gt6Qc, so they ship with Gt6Qc in 26.11.0.
+tuple destructuring of MISSING-Gt6Qc (shipped), and a `(K, V)` element that is a
+borrow, which a tuple cannot hold today: a tuple holds owned data only.
 
-### MISSING-Gt6Qc kelp: tuples are destructure-only
+### MISSING-Gt6Qc kelp: tuple patterns cannot hold a literal or a nested pattern
 
-repo: kelp | found: 2026-10-06 | effort: M
+repo: kelp | found: 2026-10-06 | effort: S
 
 source: wiki `language/limits.md` (unreleased), "Data and generics".
 
-No `t.0`, no tuple pattern in `when`, no destructuring `for` binding, no tuple
-value in a `const` initializer. Cheapest and most asked-for: a tuple pattern in
-`when` (it is what makes a multi-return function pleasant to branch on) and a
-destructuring `for (k, v) in ...`, which also needs the `Map` iterator of
-MISSING-Hd4Lr to be useful.
+Shipped in 26.10.3: `t.0`, `for (a, b) in pairs`, and tuple patterns in `when`
+(variant, name or `_` positions). Still open: a literal position (`(1, v)`), a
+tuple pattern nested in a tuple pattern, and a tuple value in a `const`
+initializer. `for (k, v)` over a `Map` still waits for the `Map` iterator of
+MISSING-Hd4Lr, which needs a tuple element that can be a borrow.
 
 ### MISSING-Lk9Xs kelp: no `loop`, labelled `break`, or `break` with a value
 

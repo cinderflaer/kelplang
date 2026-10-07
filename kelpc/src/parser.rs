@@ -7,6 +7,12 @@ pub struct Parser {
     /// How many `if let`s have been desugared, so each one's synthesized
     /// scrutinee binding has a name of its own (`parser::IF_LET_PREFIX`).
     if_lets: usize,
+    /// How many `for (a, b) in ...` heads have been desugared, so each one's
+    /// hidden element binding has a name of its own (`FOR_PATTERN_PREFIX`).
+    for_patterns: usize,
+    /// How many tuple `when`s and variant levels have been rewritten, so each
+    /// hidden name is its own (`WHEN_TUPLE_PREFIX`).
+    when_temps: usize,
     /// True while parsing the head of an `if`/`elif`/`while`/`for`/`when`, where
     /// a `{` after an expression opens the body and not a trailing block
     /// (`plan/trailing-closure.md`). A call's argument list and a block reset it.
@@ -22,6 +28,14 @@ pub struct Parser {
 /// (an abort, not a diagnostic) on a few thousand `(` characters. Written Kelp
 /// stays far below this: the deepest fixture nests under 30.
 const MAX_NESTING: usize = 200;
+
+/// The hidden element name of a `for` with a destructuring pattern. No source
+/// text can spell it, so it cannot collide with a program's own name.
+const FOR_PATTERN_PREFIX: &str = "#for";
+
+/// The hidden names a `when` over a tuple binds: the tuple itself and each
+/// variant level's payload.
+const WHEN_TUPLE_PREFIX: &str = "#wt";
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -154,6 +168,8 @@ impl Parser {
             tokens,
             pos: 0,
             if_lets: 0,
+            for_patterns: 0,
+            when_temps: 0,
             no_trailing_block: false,
             depth: 0,
         }
@@ -2829,18 +2845,21 @@ impl Parser {
     /// tail expression stays the tail of a block.
     fn parse_for_stmt(&mut self) -> PResult<Stmt> {
         let start = self.expect(TokenKind::For, "'for'")?.span;
-        // The loop binds one name, and a destructuring pattern is not one: a
-        // `val`/`var` takes a tuple apart (4), and a loop body that wants the
-        // positions writes that binding itself. Saying so beats the
-        // "expected identifier" a `(` would get.
-        if self.check(&TokenKind::LParen) {
-            return Err(ParseError {
-                message: "a 'for' binding is one name ('for x in xs'), not a destructuring pattern; bind the element and take it apart in the body ('val (a, b) = x')"
-                    .to_string(),
-                span: self.peek().span,
-            });
-        }
-        let (binding, binding_span) = self.expect_ident()?;
+        // `for (k, v) in xs`: the element is bound to a hidden name and the
+        // body starts with the ordinary destructuring `val (k, v) = <hidden>`
+        // (`plan/syntax.md` 4), so a pattern costs no pass anything.
+        let pattern = if self.check(&TokenKind::LParen) {
+            Some((self.peek().span, self.parse_binding_pattern()?))
+        } else {
+            None
+        };
+        let (binding, binding_span) = match &pattern {
+            Some((span, _)) => {
+                self.for_patterns += 1;
+                (format!("{}{}", FOR_PATTERN_PREFIX, self.for_patterns - 1), *span)
+            }
+            None => self.expect_ident()?,
+        };
         // `in` is an ordinary identifier (2.3): it is the separator only in
         // this position, the way `let` is a pattern only after `if` (6.1).
         let (word, word_span) = self.expect_ident()?;
@@ -2853,8 +2872,19 @@ impl Parser {
             });
         }
         let iterable = self.parse_head_expr()?;
-        let body = self.parse_block()?;
+        let mut body = self.parse_block()?;
         let span = start.to(body.span);
+        if let Some((pspan, pattern)) = pattern {
+            body.stmts.insert(
+                0,
+                Stmt::LetTuple {
+                    pattern,
+                    mutable: false,
+                    init: Expr::Ident(binding.clone(), pspan),
+                    span: pspan,
+                },
+            );
+        }
         // The type of the iterable decides the desugar (`plan/iterators.md`),
         // and only `infer.rs` knows it, so the statement is kept as written.
         Ok(Stmt::For {
@@ -3162,6 +3192,18 @@ impl Parser {
             }
             if self.check(&TokenKind::Dot) {
                 self.advance();
+                // `t.0`: a tuple position, the field a derived record names
+                // `f0` (`plan/syntax.md` 4).
+                if let TokenKind::IntLit(n) = self.peek_kind().clone() {
+                    let nspan = self.advance().span;
+                    let span = expr.span().to(nspan);
+                    expr = Expr::FieldAccess {
+                        base: Box::new(expr),
+                        field: crate::types::tuple_field_name(n as usize),
+                        span,
+                    };
+                    continue;
+                }
                 let (name, nspan) = self.expect_ident()?;
                 // `Option.Some<i32>(v = 1)` — an explicit instantiation on a
                 // generic `enum`'s variant (A-2). Recognized only in the
@@ -3880,6 +3922,9 @@ impl Parser {
         self.expect(TokenKind::LBrace, "'{'")?;
         self.skip_newlines();
 
+        if self.check(&TokenKind::LParen) {
+            return self.parse_when_tuple_arms(start, scrutinee);
+        }
         let mut arms: Vec<WhenArm> = Vec::new();
         while !self.check(&TokenKind::RBrace) {
             let pattern = if self.check(&TokenKind::Else) {
@@ -3944,6 +3989,278 @@ impl Parser {
             span: start.to(end),
         })
     }
+
+    /// `when (a, b) { (Some(x), _) -> ... (n, None) -> ... else -> ... }`: arms
+    /// whose heads are tuple patterns (`plan/syntax.md` 4). A position is a
+    /// name, `_`, or a variant pattern (a capitalized name, with a bind list in
+    /// parentheses when it has a payload). Nothing below the parser learns
+    /// about it: the scrutinee is bound once and the arms are rewritten into
+    /// nested single-column `when`s, one level per refutable position, so the
+    /// existing checks (every variant covered, the payload arity, the moves)
+    /// apply to each level. A row is tried in order and a position that
+    /// matches everything is bound by name wherever it is reached.
+    fn parse_when_tuple_arms(&mut self, start: Span, scrutinee: Expr) -> PResult<Expr> {
+        let mut rows: Vec<TupleRow> = Vec::new();
+        let mut width: Option<usize> = None;
+        while !self.check(&TokenKind::RBrace) {
+            let mut pats: Vec<TuplePat> = Vec::new();
+            let head = self.peek().span;
+            if self.check(&TokenKind::Else) {
+                self.advance();
+            } else {
+                if !self.check(&TokenKind::LParen) {
+                    return Err(ParseError {
+                        message: "every arm of a 'when' over a tuple is a tuple pattern '(a, b)' or 'else'".to_string(),
+                        span: head,
+                    });
+                }
+                self.advance();
+                loop {
+                    pats.push(self.parse_tuple_position()?);
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                        continue;
+                    }
+                    break;
+                }
+                self.expect(TokenKind::RParen, "')' to close the tuple pattern")?;
+                if pats.len() < 2 {
+                    return Err(ParseError {
+                        message: "a tuple pattern needs two or more positions".to_string(),
+                        span: head,
+                    });
+                }
+                match width {
+                    None => width = Some(pats.len()),
+                    Some(w) if w != pats.len() => {
+                        return Err(ParseError {
+                            message: format!("this tuple pattern has {} positions and the first arm has {w}", pats.len()),
+                            span: head,
+                        })
+                    }
+                    Some(_) => {}
+                }
+            }
+            self.expect(TokenKind::Arrow, "'->'")?;
+            let body = self.parse_expr()?;
+            rows.push(TupleRow { pats, binds: Vec::new(), body, span: head });
+            if !self.check(&TokenKind::RBrace) {
+                self.skip_newlines();
+            }
+        }
+        let end = self.expect(TokenKind::RBrace, "'}'")?.span;
+        let span = start.to(end);
+        let Some(width) = width else {
+            return Err(ParseError {
+                message: "a 'when' over a tuple needs at least one tuple pattern arm".to_string(),
+                span,
+            });
+        };
+        for row in rows.iter_mut() {
+            if row.pats.is_empty() {
+                row.pats = vec![TuplePat::Any(None); width];
+            }
+        }
+        // A scrutinee written as a tuple literal is never built: its elements
+        // are the positions, so a borrowed element (a parameter, a field) is
+        // matched where it lives, which a tuple value could not hold. Anything
+        // else that is not already a place is bound once first.
+        let mut stmts: Vec<Stmt> = Vec::new();
+        let stage = |this: &mut Parser, e: Expr, stmts: &mut Vec<Stmt>| -> Expr {
+            if is_place_chain(&e) {
+                return e;
+            }
+            this.when_temps += 1;
+            let name = format!("{}{}", WHEN_TUPLE_PREFIX, this.when_temps - 1);
+            let espan = e.span();
+            stmts.push(Stmt::Let { name: name.clone(), mutable: false, ty: None, init: e, span: espan });
+            Expr::Ident(name, espan)
+        };
+        let cols: Vec<Expr> = match scrutinee {
+            Expr::TupleLit { elems, .. } if elems.len() == width => {
+                let mut cols = Vec::new();
+                for e in elems {
+                    cols.push(stage(self, e, &mut stmts));
+                }
+                cols
+            }
+            other => {
+                let whole = stage(self, other, &mut stmts);
+                (0..width)
+                    .map(|i| Expr::FieldAccess {
+                        base: Box::new(whole.clone()),
+                        field: crate::types::tuple_field_name(i),
+                        span,
+                    })
+                    .collect()
+            }
+        };
+        let inner = self.compile_tuple_rows(rows, &cols, span)?;
+        stmts.push(Stmt::Expr { expr: inner, span });
+        Ok(Expr::Block(Block { stmts, span }))
+    }
+
+    /// One position of a tuple pattern: `_`, a lowercase name, or a variant
+    /// (`None`, `Some(x)`, `Rect(w, _)`).
+    fn parse_tuple_position(&mut self) -> PResult<TuplePat> {
+        let (name, span) = self.expect_ident()?;
+        if name == "_" {
+            return Ok(TuplePat::Any(None));
+        }
+        let variant = name.chars().next().is_some_and(|c| c.is_ascii_uppercase());
+        if !variant {
+            return Ok(TuplePat::Any(Some(name)));
+        }
+        let mut binds = Vec::new();
+        if self.check(&TokenKind::LParen) {
+            self.advance();
+            while !self.check(&TokenKind::RParen) {
+                let (bind, _) = self.expect_ident()?;
+                binds.push(if bind == "_" { None } else { Some(bind) });
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen, "')'")?;
+        }
+        Ok(TuplePat::Variant { name, binds, span })
+    }
+
+    /// The rows left to try, as one expression, over the tuple positions
+    /// `cols`. The first row decides the shape: when it has no variant pattern
+    /// left it wins (its names are bound, then its body runs); otherwise the
+    /// first variant position is matched with a `when` of its own, one arm per
+    /// variant the rows name, each arm holding the rows that can still match
+    /// there, and an `else` arm holding the rows that match anything.
+    fn compile_tuple_rows(&mut self, rows: Vec<TupleRow>, cols: &[Expr], span: Span) -> PResult<Expr> {
+        self.nest()?;
+        let r = self.compile_tuple_rows_inner(rows, cols, span);
+        self.depth -= 1;
+        r
+    }
+
+    fn compile_tuple_rows_inner(&mut self, rows: Vec<TupleRow>, cols: &[Expr], span: Span) -> PResult<Expr> {
+        let first = &rows[0];
+        let Some(c) = first.pats.iter().position(|p| matches!(p, TuplePat::Variant { .. })) else {
+            let mut stmts = Vec::new();
+            for (name, value) in &first.binds {
+                stmts.push(Stmt::Let { name: name.clone(), mutable: false, ty: None, init: value.clone(), span });
+            }
+            for (i, p) in first.pats.iter().enumerate() {
+                if let TuplePat::Any(Some(name)) = p {
+                    stmts.push(Stmt::Let { name: name.clone(), mutable: false, ty: None, init: cols[i].clone(), span });
+                }
+            }
+            let body = first.body.clone();
+            let body_span = body.span();
+            stmts.push(Stmt::Expr { expr: body, span: body_span });
+            return Ok(Expr::Block(Block { stmts, span: first.span }));
+        };
+        // The variants named in column `c`, in order of first appearance.
+        let mut variants: Vec<(String, usize, Span)> = Vec::new();
+        for row in &rows {
+            if let TuplePat::Variant { name, binds, span } = &row.pats[c] {
+                match variants.iter().find(|(n, _, _)| n == name) {
+                    None => variants.push((name.clone(), binds.len(), *span)),
+                    Some((_, arity, _)) if *arity != binds.len() => {
+                        return Err(ParseError {
+                            message: format!("'{name}' is bound with {} name(s) here and {arity} in an earlier arm", binds.len()),
+                            span: *span,
+                        })
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        let mut arms: Vec<WhenArm> = Vec::new();
+        for (vname, arity, vspan) in &variants {
+            self.when_temps += 1;
+            let payload: Vec<String> = (0..*arity).map(|j| format!("{}{}_{j}", WHEN_TUPLE_PREFIX, self.when_temps - 1)).collect();
+            let mut group: Vec<TupleRow> = Vec::new();
+            for row in &rows {
+                let mut next = row.clone();
+                match &row.pats[c] {
+                    TuplePat::Variant { name, binds, .. } if name == vname => {
+                        for (j, b) in binds.iter().enumerate() {
+                            if let Some(b) = b {
+                                next.binds.push((b.clone(), Expr::Ident(payload[j].clone(), *vspan)));
+                            }
+                        }
+                    }
+                    TuplePat::Variant { .. } => continue,
+                    TuplePat::Any(name) => {
+                        if let Some(n) = name {
+                            next.binds.push((n.clone(), cols[c].clone()));
+                        }
+                    }
+                }
+                next.pats[c] = TuplePat::Any(None);
+                group.push(next);
+            }
+            let body = self.compile_tuple_rows(group, cols, span)?;
+            let bspan = body.span();
+            arms.push(WhenArm {
+                pattern: Some(VariantPattern {
+                    variant: vname.clone(),
+                    binds: payload.into_iter().map(Some).collect(),
+                    span: *vspan,
+                }),
+                body,
+                span: vspan.to(bspan),
+            });
+        }
+        let mut rest: Vec<TupleRow> = Vec::new();
+        for row in &rows {
+            if let TuplePat::Any(name) = &row.pats[c] {
+                let mut next = row.clone();
+                if let Some(n) = name {
+                    next.binds.push((n.clone(), cols[c].clone()));
+                }
+                next.pats[c] = TuplePat::Any(None);
+                rest.push(next);
+            }
+        }
+        if !rest.is_empty() {
+            let body = self.compile_tuple_rows(rest, cols, span)?;
+            let bspan = body.span();
+            arms.push(WhenArm { pattern: None, body, span: bspan });
+        }
+        Ok(Expr::When {
+            scrutinee: Box::new(cols[c].clone()),
+            arms,
+            span,
+        })
+    }
+}
+
+/// Whether an expression is a place a `when` can match in place: a name, or a
+/// field chain over one.
+fn is_place_chain(e: &Expr) -> bool {
+    match e {
+        Expr::Ident(..) => true,
+        Expr::FieldAccess { base, .. } => is_place_chain(base),
+        _ => false,
+    }
+}
+
+/// One position of a tuple pattern in a `when` arm.
+#[derive(Debug, Clone)]
+enum TuplePat {
+    /// `_` (no name) or a name: matches anything.
+    Any(Option<String>),
+    /// `Some(x)` / `None`: a variant and the names of its payload.
+    Variant { name: String, binds: Vec<Option<String>>, span: Span },
+}
+
+/// One arm of a tuple `when`, with the names already bound on the way to it.
+#[derive(Debug, Clone)]
+struct TupleRow {
+    pats: Vec<TuplePat>,
+    binds: Vec<(String, Expr)>,
+    body: Expr,
+    span: Span,
 }
 
 #[cfg(test)]

@@ -11870,6 +11870,29 @@ fn a_mut_parameter_cannot_go_to_a_mut_and_a_shared_parameter_of_one_call() {
 }
 
 #[test]
+fn a_tuple_has_positions_patterns_in_when_and_a_destructuring_for() {
+    // `t.0`, `for (a, b) in xs`, and `when (a, b) { (Some(x), _) -> ... }`
+    // (MISSING-Gt6Qc), on both backends.
+    assert_compiles_and_runs("tests/fixtures/tuple_access_and_patterns.kp", "1\n2\n3\n2\n12\n8\n5\n40\n0\n3\n");
+    assert_compiles_and_runs("tests/fixtures/tuple_when_owned_payloads.kp", "5\n300\n");
+    assert_compiles_and_runs("tests/fixtures/tuple_index_nested.kp", "7\n9\n2\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_tuple_when_not_exhaustive.kp",
+        "this 'when' is not exhaustive: 'None' of enum",
+    );
+}
+
+#[test]
+fn assigning_to_something_that_is_not_a_place_is_an_error_not_a_crash() {
+    // Found by the front-end fuzzer: `str.starts_with -= (...)` reached an
+    // `unreachable!` in `check_target_writable`.
+    assert_rejected_with(
+        "tests/fixtures/refused_assign_to_a_function.kp",
+        "cannot assign to this expression",
+    );
+}
+
+#[test]
 fn a_nested_owned_field_can_be_partially_moved_and_reinitialised() {
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_field.kp", "Ada\n7\nLondon\n");
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_reinit.kp", "old\nnew\n");

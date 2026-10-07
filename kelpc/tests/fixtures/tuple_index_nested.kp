@@ -1,0 +1,10 @@
+fun mk().R: (i32, (String, i32)) {
+    return (7, (String.from_str(s = "hi"), 9))
+}
+fun main() {
+    val t = mk()
+    print(t.0)
+    print(t.1.1)
+    val s = t.1.0
+    print(s.len())
+}
