@@ -1,0 +1,11 @@
+trait Named { fun Self.name().return: i32 }
+datac Dog(val id: i32)
+impl Named for Dog { fun Self.name().return: i32 = id }
+datac Bag(var total: i32)
+fun mut Bag.add_named<T: Named>(x: &T) { total += x.name() }
+fun main() {
+    var b = Bag(total = 0)
+    b.add_named(Dog(id = 5))
+    b.add_named(Dog(id = 6))
+    print(b.total)
+}

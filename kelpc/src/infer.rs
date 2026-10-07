@@ -343,10 +343,12 @@ const TUPLE_TEMP_PREFIX: &str = "#tuple";
 
 /// The type parameters a function declaration introduces: its own for a free
 /// function, the receiver's for a method on a generic type.
-fn decl_type_params(f: &ast::FunctionDecl) -> &[String] {
+fn decl_type_params(f: &ast::FunctionDecl) -> Vec<String> {
     match &f.receiver {
-        Some(r) => &r.type_args,
-        None => &f.type_params,
+        // The type's own parameters first, then the method's (`fun
+        // Pair<A, B>.map_first<C>`).
+        Some(r) => r.type_args.iter().chain(f.type_params.iter()).cloned().collect(),
+        None => f.type_params.clone(),
     }
 }
 
@@ -8089,7 +8091,7 @@ fn collect_func_templates(
 ) -> std::result::Result<HashMap<String, FuncTemplate>, Diagnostic> {
     let mut out: HashMap<String, FuncTemplate> = HashMap::new();
     for (i, f) in program.functions.iter().enumerate() {
-        let params = decl_type_params(f).to_vec();
+        let params = decl_type_params(f);
         if params.is_empty() {
             continue;
         }
@@ -8124,35 +8126,45 @@ fn collect_func_templates(
             // (A-2). A receiver that names a non-generic type has nothing to
             // parameterize, and one that writes the wrong names or order
             // would make the body's `T` mean something the type does not.
-            let Some(type_tmpl) = generics.get(&r.type_name) else {
+            let type_tmpl = generics.get(&r.type_name);
+            if type_tmpl.is_none() && (!r.type_args.is_empty() || f.type_params.is_empty()) {
                 return Err(Diagnostic::new(
                     format!(
-                        "'{}' is not a generic type — only a receiver on a generic type may declare type parameters",
-                        r.type_name
-                    ),
-                    f.span,
-                    f.module.clone(),
-                ));
-            };
-            if matches!(type_tmpl.kind, GenericKind::Sum(_)) {
-                return Err(Diagnostic::new(
-                    format!(
-                        "'{}' is a generic enum: a method cannot be declared on the enum template; declare it on a concrete enum, or write a free function over the instantiation instead",
-                        r.type_name
+                        "'{}' is not a generic type — only a receiver on a generic type may declare type parameters of the type; a method of a plain type may declare its own ('fun {}.{}<U>(...)')",
+                        r.type_name, r.type_name, f.name
                     ),
                     f.span,
                     f.module.clone(),
                 ));
             }
-            if type_tmpl.params != params {
+            if let Some(type_tmpl) = type_tmpl {
+                if matches!(type_tmpl.kind, GenericKind::Sum(_)) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'{}' is a generic enum: a method cannot be declared on the enum template; declare it on a concrete enum, or write a free function over the instantiation instead",
+                            r.type_name
+                        ),
+                        f.span,
+                        f.module.clone(),
+                    ));
+                }
+                if type_tmpl.params != r.type_args {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "receiver '{}' must write the type's own type parameters, in order: 'fun {}<{}>.{}(...)'",
+                            r.type_name,
+                            r.type_name,
+                            type_tmpl.params.join(", "),
+                            f.name
+                        ),
+                        f.span,
+                        f.module.clone(),
+                    ));
+                }
+            }
+            if let Some(own) = f.type_params.iter().find(|p| r.type_args.contains(p)) {
                 return Err(Diagnostic::new(
-                    format!(
-                        "receiver '{}' must write the type's own type parameters, in order: 'fun {}<{}>.{}(...)'",
-                        r.type_name,
-                        r.type_name,
-                        type_tmpl.params.join(", "),
-                        f.name
-                    ),
+                    format!("the method's type parameter '{own}' has the name of one of the receiver type's: pick another name"),
                     f.span,
                     f.module.clone(),
                 ));
@@ -8178,7 +8190,15 @@ fn collect_func_templates(
                 key,
                 params,
                 const_params,
-                bounds: f.type_param_bounds.clone(),
+                bounds: {
+                    let mut b: Vec<Vec<ast::TypeExpr>> = f
+                        .receiver
+                        .as_ref()
+                        .map(|r| vec![Vec::new(); r.type_args.len()])
+                        .unwrap_or_default();
+                    b.extend(f.type_param_bounds.iter().cloned());
+                    b
+                },
                 receiver: f
                     .receiver
                     .as_ref()
@@ -17176,6 +17196,12 @@ fn check_trait_bounds(
 /// the receiver's *instance* key (`Pair<i32, String>`), and the template is
 /// declared under the type template's own name (`Pair#first`).
 fn method_template_key(ctx: &Ctx, owner: &str, method: &str) -> Option<String> {
+    // A method with type parameters of its own on a plain type is a template
+    // under the type's own name.
+    let plain = format!("{owner}#{method}");
+    if ctx.fns.templates.contains_key(&plain) {
+        return Some(plain);
+    }
     let type_tmpl = ctx
         .env
         .instances

@@ -202,17 +202,16 @@ to want any of the above; it does not depend on this entry.
 signature could not name a Kelp `enum` or `datac` on the default backend, and
 the prelude now emits those typedefs from the C backend's own layout writers.
 
-### MISSING-Pw3Fz kelp: a method cannot declare type parameters of its own
+### MISSING-Pw3Fz kelp: a generic `enum` carries no method
 
-repo: kelp | found: 2026-10-06 | effort: L
+repo: kelp | found: 2026-10-06 | effort: M
 
-source: wiki `language/limits.md` (unreleased), "Data and generics": a receiver
-on a generic type must write the type's own parameters in order, and a method
-cannot add more. A generic `enum`'s template also carries no method, so every
-`Option`/`Result` combinator is a free function.
+source: wiki `language/limits.md` (unreleased), "Data and generics".
 
-So `opt.map(f)` cannot be written as a method; it stays `option.map(opt, f)`.
-Repro shape: `fun Pair<A, B>.map_first<C>(f: fun(A).return: C).Pair<C, B>`.
+A method may declare type parameters of its own as of 26.10.3
+(`fun Pair<A, B>.map_first<C>(f: fun(A).return: C).return: Pair<C, B>`). Still
+open: a method on a *generic enum* template, so every `Option`/`Result`
+combinator is a free function (`option.map(opt, f)`) rather than `opt.map(f)`.
 
 ### MISSING-Ey4Mt kelp: const generics stop at plain integer and `bool` parameters
 

@@ -1792,7 +1792,17 @@ impl Parser {
         let (receiver, name, type_params, type_param_bounds, const_params) =
             if self.check(&TokenKind::Dot) {
             self.advance();
-            let (method, _) = self.expect_ident()?;
+            let (method, method_span) = self.expect_ident()?;
+            // `fun Pair<A, B>.map_first<C>(...)`: the method's own type
+            // parameters, after its name. They are separate from the
+            // receiver's (which are the type's) and inferred at a call.
+            let own_params = self.parse_type_params()?;
+            if let Some(p) = own_params.iter().find(|p| p.const_ty.is_some()) {
+                return Err(ParseError {
+                    message: format!("a method cannot take the const parameter '{}' of its own yet: only type parameters", p.name),
+                    span: method_span,
+                });
+            }
             // A receiver's parameters are its type's, so there is nowhere for a
             // bound to go (A-12 slice 2): the type's own parameters are bound
             // by whoever declares the generic type.
@@ -1825,8 +1835,8 @@ impl Parser {
                     span: first_span,
                 }),
                 method,
-                Vec::new(),
-                Vec::new(),
+                own_params.iter().map(|p| p.name.clone()).collect(),
+                own_params.iter().map(|p| p.bounds.clone()).collect(),
                 Vec::new(),
             )
         } else {
