@@ -13,13 +13,13 @@ impl "std/option"
 impl "std/result"
 impl "std/str"
 
-fun inc(x: i32).R: i32 = x + 1
+fun inc(x: i32).return: i32 = x + 1
 
-fun pick(which: bool).R: fun(i32).R: i32 {
+fun pick(which: bool).return: fun(i32).return: i32 {
     if which {
         return inc
     }
-    return fun(x: i32).R: i32 = x * 10
+    return fun(x: i32).return: i32 = x * 10
 }
 
 fun main() {
@@ -31,14 +31,14 @@ fun main() {
     // A capturing callback: the environment carries `factor`, so `map` needs no
     // argument passed twice.
     val factor = 3
-    val scaled = list.map(xs, fun(x: &i32).R: i32 = x * factor)
+    val scaled = list.map(xs, fun(x: &i32).return: i32 = x * factor)
     print(scaled.get(0))
     print(scaled.get(2))
 
     // A capturing predicate, a capturing action, and one that captures an
     // *owned* value — the environment owns it and frees it with the closure.
     val limit = 1
-    print(list.any(xs, fun(x: &i32).R: bool = x > limit))
+    print(list.any(xs, fun(x: &i32).return: bool = x > limit))
     val tag = String.from_str("v")
     list.each(xs, fun(x: &i32) {
         print!(str.concat(tag.as_str(), "="))
@@ -49,7 +49,7 @@ fun main() {
     // A declared function and a non-capturing literal are widened too — the
     // named one through a generated shim, so this allocates nothing.
     print(list.map(xs, inc).get(0))
-    print(list.all(xs, fun(x: &i32).R: bool = x > 0))
+    print(list.all(xs, fun(x: &i32).return: bool = x > 0))
 
     // A function value whose identity is known only at the call: the wrapper
     // is a heap environment holding the pointer plus a thunk.
@@ -59,9 +59,9 @@ fun main() {
     // The same widening through `option` and `result`.
     val some = option.Option.Some(value = 7)
     val add = 100
-    print(option.expect(o = option.map(o = some, f = fun(x: &i32).R: i32 = x + add), message = "none"))
+    print(option.expect(o = option.map(o = some, f = fun(x: &i32).return: i32 = x + add), message = "none"))
     val ok: result.Result<i32, i32> = result.Result.Ok(value = 4)
     val err: result.Result<i32, i32> = result.Result.Err(error = 5)
-    print(result.unwrap_err(r = result.map_err(r = err, f = fun(e: &i32).R: i32 = e * limit)))
-    print(result.expect(r = result.map(r = ok, f = fun(x: &i32).R: i32 = x * factor), message = "unreachable"))
+    print(result.unwrap_err(r = result.map_err(r = err, f = fun(e: &i32).return: i32 = e * limit)))
+    print(result.expect(r = result.map(r = ok, f = fun(x: &i32).return: i32 = x * factor), message = "unreachable"))
 }

@@ -1,7 +1,7 @@
 // A `while true` loop that leaves through a `break` has an exit edge: the code
 // after it runs, and a function whose tail follows the loop returns normally.
 // A loop with no `break` (only `return`) has none and needs no fallthrough.
-fun first_over(limit: i32).R: i32 {
+fun first_over(limit: i32).return: i32 {
     var i = 0
     while true {
         i += 1
@@ -9,7 +9,7 @@ fun first_over(limit: i32).R: i32 {
     }
 }
 
-fun count_to(limit: i32).R: i32 {
+fun count_to(limit: i32).return: i32 {
     var i = 0
     while true {
         i += 1
@@ -18,7 +18,7 @@ fun count_to(limit: i32).R: i32 {
     return i * 10
 }
 
-fun label(n: i32).R: String {
+fun label(n: i32).return: String {
     var s = String.empty()
     var i = 0
     while true {

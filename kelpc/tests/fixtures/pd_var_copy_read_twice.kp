@@ -3,7 +3,7 @@
 // that is refused).
 pd var counter = 1
 
-fun add(a: i32, b: i32).R: i32 = a + b
+fun add(a: i32, b: i32).return: i32 = a + b
 
 fun main() {
     print(add(counter, counter))

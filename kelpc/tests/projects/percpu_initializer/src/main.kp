@@ -1,6 +1,6 @@
 percpu static mut SLOT: usize = seed()
 
-fun seed().R: usize = 7
+fun seed().return: usize = 7
 
 section(".text.boot") fun kmain() {
     while true {

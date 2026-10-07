@@ -73,9 +73,9 @@ enum Msg {
 }
 
 // A plain `fun` value, not a closure: the entry hands it the new text.
-fun changed(text: String).R: Msg = Msg.Changed(text = String.from_str(text.as_str()))
+fun changed(text: String).return: Msg = Msg.Changed(text = String.from_str(text.as_str()))
 
-fun view(s: Counter).R: core.Node<Msg> {
+fun view(s: Counter).return: core.Node<Msg> {
     return polyp.column { k ->
         k.text_styled("a counter", 0, true)
         val shown = fmt.int(s.count.to_i64())
@@ -173,31 +173,31 @@ pub enum Node<M> {
     Row(val children: List<Child<M>>, val spacing: i32)
     Text(val text: String, val size: i32, val bold: bool)
     Spacer(val height: i32)
-    Entry(val text: String, val on_change: fun (String).R: M)
+    Entry(val text: String, val on_change: fun (String).return: M)
     Button(val label: String, val on_click: M)
     Checkbox(val label: String, val checked: bool, val on_toggle: M)
     Progress(val permille: i32)
     Separator
     Scrolled(val children: List<Child<M>>, val spacing: i32)
-    Memo(val deps: Deps, val build: fun (&Deps).R: List<Child<M>>)
+    Memo(val deps: Deps, val build: fun (&Deps).return: List<Child<M>>)
 }
 
 pub datac Deps(var ints: List<i64>, var strs: List<String>)
-pub fun deps().R: Deps
+pub fun deps().return: Deps
 fun mut Deps.push_int(n: i64)
 fun mut Deps.push_bool(b: bool)
 fun mut Deps.push_str(s: str)
-pub fun single<M>(block: scoped fun(mut Children<M>)).R: List<Child<M>>
+pub fun single<M>(block: scoped fun(mut Children<M>)).return: List<Child<M>>
 
 // The builder. `column`/`row` take the trailing block; the methods on
 // `Children` are the leaf and nested constructors the block calls.
-pub fun column<M>(block: scoped fun(mut Children<M>)).R: Node<M>
-pub fun row<M>(block: scoped fun(mut Children<M>)).R: Node<M>
+pub fun column<M>(block: scoped fun(mut Children<M>)).return: Node<M>
+pub fun row<M>(block: scoped fun(mut Children<M>)).return: Node<M>
 fun mut Children<M>.text(t: str)
 fun mut Children<M>.text_styled(t: str, size: i32, bold: bool)
 fun mut Children<M>.spacer(height: i32)
 fun mut Children<M>.button(label: str, on_click: move M)
-fun mut Children<M>.entry(value: str, on_change: fun (String).R: M)
+fun mut Children<M>.entry(value: str, on_change: fun (String).return: M)
 fun mut Children<M>.checkbox(label: str, checked: bool, on_toggle: move M)
 fun mut Children<M>.progress(permille: i32)
 fun mut Children<M>.separator()
@@ -210,8 +210,8 @@ fun mut Children<M>.keyed_int(key: i64, block: scoped fun(mut Children<M>))
 fun mut Children<M>.keyed_int_col(key: i64, block: scoped fun(mut Children<M>))
 fun mut Children<M>.with_key(key: str)
 fun mut Children<M>.with_key_int(key: i64)
-fun mut Children<M>.memo(key: str, deps: move Deps, build: fun (&Deps).R: List<Child<M>>)
-fun mut Children<M>.memo_int(key: i64, deps: move Deps, build: fun (&Deps).R: List<Child<M>>)
+fun mut Children<M>.memo(key: str, deps: move Deps, build: fun (&Deps).return: List<Child<M>>)
+fun mut Children<M>.memo_int(key: i64, deps: move Deps, build: fun (&Deps).return: List<Child<M>>)
 fun mut Children<M>.spacing(n: i32)
 fun mut Children<M>.margin(n: i32)
 fun mut Children<M>.expand()
@@ -222,21 +222,21 @@ fun mut Children<M>.class(name: str)
 // their builder twins are methods (a separate namespace); `column`/`row` are
 // the builder's free functions, and Kelp has no overloading, so the plain pair
 // carries a `plain_` prefix.
-pub fun plain_column<M>(children: move List<Node<M>>).R: Node<M>
-pub fun plain_row<M>(children: move List<Node<M>>).R: Node<M>
-pub fun text<M>(text: move String).R: Node<M>
-pub fun button<M>(label: move String, on_click: move M).R: Node<M>
+pub fun plain_column<M>(children: move List<Node<M>>).return: Node<M>
+pub fun plain_row<M>(children: move List<Node<M>>).return: Node<M>
+pub fun text<M>(text: move String).return: Node<M>
+pub fun button<M>(label: move String, on_click: move M).return: Node<M>
 
 pub fun run<S, M>(title: str, width: i32, height: i32, init: move S,
-                  view: fun(S).R: Node<M>, update: fun(mut S, M)).R: S
+                  view: fun(S).return: Node<M>, update: fun(mut S, M)).return: S
 
 pub datac Stats(val created: i32, val updated: i32, val removed: i32, val live: i32,
                 val memo_hits: i32, val memo_misses: i32, val view_calls: i32)
-pub fun stats().R: Stats
-pub fun focus_present().R: bool
-pub fun focus_survived().R: bool
-pub fun entries_built().R: i32
-pub fun entry_text(index: i32).R: String
+pub fun stats().return: Stats
+pub fun focus_present().return: bool
+pub fun focus_survived().return: bool
+pub fun entries_built().return: i32
+pub fun entry_text(index: i32).return: String
 pub fun css(text: str)
 pub const QUIT_ID: i32
 pub fun schedule_post(delay_ms: u32, id: i32)
@@ -251,7 +251,7 @@ pub fun schedule_focus_entry(delay_ms: u32, index: i32)
   how a caller reads what the run left behind).
 - `fun(S)` in `view`'s type is the "view borrows the state" shape: a parameter of
   an owned type is a shared borrow (`plan/syntax.md` 7.1), so an application
-  writes `fun view(state: Counter).R: Node<Msg>` with no `&` anywhere. `update`
+  writes `fun view(state: Counter).return: Node<Msg>` with no `&` anywhere. `update`
   is written `fun update(state: mut Counter, msg: Msg)` and matches
   `fun(mut S, M)`.
 - `text` is a label. `text_styled(text, size, bold)` sets Pango markup after
@@ -260,7 +260,7 @@ pub fun schedule_focus_entry(delay_ms: u32, index: i32)
 - `entry(value, on_change)` is a text field. `value` seeds the text the first
   time the widget is built; a patch rewrites it only when the model's text
   differs **and** the entry is not where the focus is, so a user's cursor and
-  selection are not fought. `on_change` is a plain `fun(String).R: M` (called
+  selection are not fought. `on_change` is a plain `fun(String).return: M` (called
   with a borrowed `String`) that turns the live text into the app's `Msg`.
 - `checkbox(label, checked, msg)` posts `msg` on `toggled`; the application reads
   the new state from its own model, exactly as a button does. `progress(permille)`

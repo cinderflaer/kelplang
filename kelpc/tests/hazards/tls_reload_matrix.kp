@@ -14,7 +14,7 @@ impl "std/tlsfile" caps(fs = ["/**"])
 
 datac Job(val fd: i32, val cfg: tls.ServerConfig, val rounds: i32)
 
-fun join3(a: &str, b: &str, c: &str).R: String {
+fun join3(a: &str, b: &str, c: &str).return: String {
     var s = String.with_capacity(64)
     s.push_str(a)
     s.push_str(b)
@@ -22,13 +22,13 @@ fun join3(a: &str, b: &str, c: &str).R: String {
     return s
 }
 
-fun path(dir: &str, name: &str).R: String = join3(dir, "/", name)
+fun path(dir: &str, name: &str).return: String = join3(dir, "/", name)
 
 fun say(s: &str) {
     print(s)
 }
 
-fun err_tag(e: &tls.TlsError).R: String = when e {
+fun err_tag(e: &tls.TlsError).return: String = when e {
     Untrusted -> String.from_str("untrusted")
     Expired -> String.from_str("expired")
     HostMismatch -> String.from_str("host_mismatch")
@@ -39,7 +39,7 @@ fun err_tag(e: &tls.TlsError).R: String = when e {
     Io(_) -> String.from_str("io")
 }
 
-fun pem(dir: &str, name: &str).R: Bytes {
+fun pem(dir: &str, name: &str).return: Bytes {
     val p = path(dir, name)
     return when tlsfile.read_pem(p.as_str(), "file") {
         Ok(b) -> b
@@ -47,11 +47,11 @@ fun pem(dir: &str, name: &str).R: Bytes {
     }
 }
 
-fun ca_bytes(dir: &str).R: Bytes = pem(dir, "ca.pem")
+fun ca_bytes(dir: &str).return: Bytes = pem(dir, "ca.pem")
 
 // A configuration, as one line: "ok" or the error tag, plus "leak" when the
 // pass phrase or the key text reached the error text.
-fun config_line(label: &str, dir: &str, cert: &str, key: &str, phrase: &str).R: String {
+fun config_line(label: &str, dir: &str, cert: &str, key: &str, phrase: &str).return: String {
     var opts = tls.server_options()
     if str.len(phrase) > 0 {
         opts = opts.key_password(phrase)
@@ -88,7 +88,7 @@ fun encrypted_keys(dir: &str) {
     say(line4.as_str())
 }
 
-fun key_line(name: &str, p: &str).R: String {
+fun key_line(name: &str, p: &str).return: String {
     val r = tlsfile.read_key(p)
     var line = String.with_capacity(64)
     line.push_str("key ")
@@ -124,7 +124,7 @@ fun key_perms(dir: &str) {
 
 // Accepts `rounds` connections on one shared configuration and answers each
 // with an echo. The line says how many handshakes the server completed.
-fun server_main(job: move Job).R: String {
+fun server_main(job: move Job).return: String {
     val l = net.Listener(fd = job.fd)
     var done: u64 = 0
     var seen: u64 = 0
@@ -169,7 +169,7 @@ fun server_main(job: move Job).R: String {
     return line
 }
 
-fun client_round(label: &str, dir: &str, port: u16).R: String {
+fun client_round(label: &str, dir: &str, port: u16).return: String {
     val opts = tls.client_options().with_ca_pem(ca_bytes(dir)).with_timeout_ms(10000)
     val s = net.connect("127.0.0.1", port)
     val hs = tls.try_handshake_opts(s, "localhost", &opts)
@@ -203,7 +203,7 @@ fun client_round(label: &str, dir: &str, port: u16).R: String {
     return line
 }
 
-fun reload_line(label: &str, r: move option.Option<tls.TlsError>).R: String {
+fun reload_line(label: &str, r: move option.Option<tls.TlsError>).return: String {
     var line = String.with_capacity(48)
     line.push_str(label)
     line.push_str(" ")

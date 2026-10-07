@@ -9,7 +9,7 @@ fun noise() {
     print("1")
 }
 
-fun id<T>(v: T).R: T = v
+fun id<T>(v: T).return: T = v
 
 fun sink(u: unit) {
     print("2")

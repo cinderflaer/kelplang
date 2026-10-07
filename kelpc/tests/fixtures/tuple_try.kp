@@ -6,14 +6,14 @@ enum Res<T, E> {
     Err(val e: E)
 }
 
-fun mk(n: i32).R: Res<(i32, i32), String> {
+fun mk(n: i32).return: Res<(i32, i32), String> {
     if n < 0 {
         return Res.Err(e = String.from_str("negative"))
     }
     return Res.Ok(v = (n, n + 1))
 }
 
-fun go(n: i32).R: Res<(i32, i32), String> {
+fun go(n: i32).return: Res<(i32, i32), String> {
     val (a, b) = mk(n)?
     return Res.Ok(v = (a + b, a * b))
 }

@@ -1,4 +1,4 @@
-fun f(a: i32).R: i32 {
+fun f(a: i32).return: i32 {
     return a
 }
 

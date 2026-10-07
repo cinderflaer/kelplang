@@ -2011,7 +2011,7 @@ fn write_coerce_thunk(out: &mut String, ty: &Ty) {
 /// E): a shim that takes the environment a closure's `fn` member is called
 /// with and ignores it, then calls the function it wraps with the arguments.
 /// So the common widening — `list.map(xs, double)`, `Holder(cb = fun(x: i32)
-/// .R: i32 = x)` — costs no allocation and no indirection a `fun` value would
+/// .return: i32 = x)` — costs no allocation and no indirection a `fun` value would
 /// not have had, and only a widening of a function value whose identity is not
 /// statically known needs the heap wrapper.
 fn write_shim(out: &mut String, key: &str, ty: &Ty) {
@@ -4502,7 +4502,7 @@ impl<'a> Gen<'a> {
             ExprKind::Capture { index } => {
                 format!("env->{}", crate::types::capture_field(*index))
             }
-            // `val f: closure(i32).R: i32 = double` (A-4 phase E): a plain
+            // `val f: closure(i32).return: i32 = double` (A-4 phase E): a plain
             // function value widened into a closure by giving it a one-field
             // environment and a thunk to call through. A value that *names* a
             // function needs neither the environment nor the indirection: the

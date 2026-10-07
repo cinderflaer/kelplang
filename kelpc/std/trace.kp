@@ -14,7 +14,7 @@ fun event(file: &str, line: usize, name: &str) {
 }
 
 /// Starts a duration span and emits its `begin` record.
-fun begin(file: &str, line: usize, name: &str).R: Span {
+fun begin(file: &str, line: usize, name: &str).return: Span {
     val start = time.now_mono_ns()
     emit(kind = "begin", file = file, line = line, name = name, elapsed_ns = -1)
     return Span(name = String.from_str(name), start_ns = start)
@@ -50,7 +50,7 @@ fun emit(kind: &str, file: &str, line: usize, name: &str, elapsed_ns: i64) {
     }
 }
 
-fun escape(text: &str).R: String {
+fun escape(text: &str).return: String {
     val slashes = str.replace(text, "\\", "\\\\")
     val tabs = str.replace(slashes.as_str(), "\t", "\\t")
     return str.replace(tabs.as_str(), "\n", "\\n")

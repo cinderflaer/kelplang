@@ -1,11 +1,11 @@
 // A supertrait cycle is an error (A-12 slice 3).
 
 trait A: B {
-    fun Self.a().R: i32
+    fun Self.a().return: i32
 }
 
 trait B: A {
-    fun Self.b().R: i32
+    fun Self.b().return: i32
 }
 
 fun main() { }

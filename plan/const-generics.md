@@ -9,7 +9,7 @@ Two spellings that remove a reason to write a converter:
 
 1. **Const type parameters.** A parameter of a `datac`, an `enum` or a `fun` may be a compile-time
    *value* rather than a type: `datac Buf<const N: usize>(var data: [i32; N], var len: usize)`,
-   `fun sum<const N: usize>(a: &[i32; N]).R: i32`, `fun Buf<const N: usize>.push(...)`. The value
+   `fun sum<const N: usize>(a: &[i32; N]).return: i32`, `fun Buf<const N: usize>.push(...)`. The value
    is one of `usize`, `u8`, `u16`, `u32`, `u64`, `i32`, `i64` and `bool`.
 2. **`impl Trait` in argument position.** `fun f(x: impl Shape, y: &impl Shape)` is sugar for two
    fresh bounded type parameters, one per `impl` occurrence.
@@ -74,7 +74,7 @@ trait as its bound. Every later pass sees an ordinary generic function, so the b
 monomorphization and both backends need no new case.
 
 **Refused by name:** a return position (the parser refuses it where it is written, naming
-`fun f<T: Trait>(...).R: T` and `Box<dyn Trait>` as the alternatives), a `let`, a field, an enum
+`fun f<T: Trait>(...).return: T` and `Box<dyn Trait>` as the alternatives), a `let`, a field, an enum
 payload, a container element, a nested position (`List<impl Shape>`), a receiver method's
 parameter, and a trait method's signature.
 

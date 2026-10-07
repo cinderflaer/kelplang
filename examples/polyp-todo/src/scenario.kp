@@ -21,7 +21,7 @@ const DIGITS: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 10
 
 // A `u64` as `0x` plus sixteen lowercase hex digits, fixed width so every step line is the same
 // shape and a human can line them up.
-fun hex64(value: u64).R: String {
+fun hex64(value: u64).return: String {
     var out: String = String.from_str("0x")
     var i: i32 = 15
     while i >= 0 {
@@ -34,7 +34,7 @@ fun hex64(value: u64).R: String {
 
 // `step <n> checksum 0x<16 hex digits> dirty <rectangles>`: the shape the framebuffer equivalence
 // test compares between the hosted run and the two kernels.
-pub fun step_line(step: i32, checksum: u64, dirty: i32).R: String {
+pub fun step_line(step: i32, checksum: u64, dirty: i32).return: String {
     // Every borrow of a temporary has to be bound to a local first (a call that returns a borrow of
     // its own argument cannot take a value built in the same expression), so the pieces are named.
     val shown_step = str.from_i64(step.to_i64())
@@ -57,7 +57,7 @@ pub fun report(emit: fun (str), step: i32, checksum: u64, dirty: i32) {
 // The colour-only checksum of the frame the run finished with, as one line. It is what a display
 // device shows: `checksum` hashes the alpha byte, which carries glyph coverage, and a screen has
 // no alpha. Stage 4's `ramfb` case compares this line with the pixels QEMU captured from a display.
-pub fun display_line(checksum: u64).R: String {
+pub fun display_line(checksum: u64).return: String {
     val shown = hex64(checksum)
     return str.concat("display ", shown.as_str())
 }
@@ -68,7 +68,7 @@ pub fun drive<P: platform.Platform>(
     backend: mut soft_backend.SoftBackend,
     platform: mut P,
     emit: fun (str),
-).R: app.Model {
+).return: app.Model {
     var state = app.initial()
     var tree: core.Node<app.Msg> = app.view(state)
     val surface = platform.framebuffer()

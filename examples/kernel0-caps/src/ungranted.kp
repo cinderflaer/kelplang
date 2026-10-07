@@ -5,4 +5,4 @@
 // copies into a scratch project and asserts.
 impl "std/irq"
 
-pub fun claim_an_ungranted_line().R: irq.Line = irq.claim(11)
+pub fun claim_an_ungranted_line().return: irq.Line = irq.claim(11)

@@ -9,11 +9,11 @@ impl "std/ops"
 datac V(val x: u64)
 
 impl ops.Add for V {
-    fun Self.add(rhs: &Self).R: V = V(x = x + rhs.x)
+    fun Self.add(rhs: &Self).return: V = V(x = x + rhs.x)
 }
 
 impl ops.Ord for V {
-    fun Self.cmp(other: &Self).R: i32 {
+    fun Self.cmp(other: &Self).return: i32 {
         if x < other.x {
             return -1
         }

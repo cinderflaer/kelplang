@@ -2,22 +2,22 @@
 // `OnlyNamed` satisfies `Named` but not `Doubled`, so the inner call is refused
 // where `bad` is instantiated (A-12 slice 2).
 trait Named {
-    fun Self.name_length().R: i32
+    fun Self.name_length().return: i32
 }
 
 trait Doubled {
-    fun Self.doubled().R: i32
+    fun Self.doubled().return: i32
 }
 
 datac OnlyNamed(val n: i32)
 
 impl Named for OnlyNamed {
-    fun Self.name_length().R: i32 = n
+    fun Self.name_length().return: i32 = n
 }
 
-fun needs_doubled<T: Doubled>(x: &T).R: i32 = x.doubled()
+fun needs_doubled<T: Doubled>(x: &T).return: i32 = x.doubled()
 
-fun bad<T: Named>(x: &T).R: i32 = needs_doubled(x)
+fun bad<T: Named>(x: &T).return: i32 = needs_doubled(x)
 
 fun main() {
     print(bad(OnlyNamed(n = 1)))

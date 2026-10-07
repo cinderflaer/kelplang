@@ -1,2 +1,2 @@
-pub extern fun kelp_apply(callback: fun(i32).R: i32, value: i32).R: i32
-pub extern fun kelp_callback().R: fun(i32).R: i32
+pub extern fun kelp_apply(callback: fun(i32).return: i32, value: i32).return: i32
+pub extern fun kelp_callback().return: fun(i32).return: i32

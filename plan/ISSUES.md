@@ -210,7 +210,7 @@ cannot add more. A generic `enum`'s template also carries no method, so every
 `Option`/`Result` combinator is a free function.
 
 So `opt.map(f)` cannot be written as a method; it stays `option.map(opt, f)`.
-Repro shape: `fun Pair<A, B>.map_first<C>(f: fun(A).R: C).Pair<C, B>`.
+Repro shape: `fun Pair<A, B>.map_first<C>(f: fun(A).return: C).Pair<C, B>`.
 
 ### MISSING-Ey4Mt kelp: const generics stop at plain integer and `bool` parameters
 
@@ -277,7 +277,7 @@ repo: kelp | found: 2026-09-25 | effort: L
 source: `kelp/plan/syntax.md` 6.4 and 7: `unit` is the absent value's type, and
 no expression writes that value.
 
-Repro: `fun f().R: result.Result<unit, String> { return result.Result.Ok(value = ()) }`
+Repro: `fun f().return: result.Result<unit, String> { return result.Result.Ok(value = ()) }`
 is refused. `()`, `Result<(), String>` and `Result<unit, String>` type-check (the
 type is accepted), but writing the success payload is not:
 

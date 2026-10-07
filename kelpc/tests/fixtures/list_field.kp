@@ -6,7 +6,7 @@ pd val primes = List.of(2)
 
 datac Bag(val label: String, val xs: List<i32>)
 
-fun checksum(xs: List<i32>).R: i32 {
+fun checksum(xs: List<i32>).return: i32 {
     var total = 0
     var i: usize = 0
     while i < xs.len() {

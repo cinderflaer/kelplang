@@ -42,17 +42,17 @@ pub fun set_buffer(frame: usize) {
     }
 }
 
-fun buffer().R: usize {
+fun buffer().return: usize {
     unsafe { BUFFER }
 }
 
 // The syscall layer's whole address vocabulary: a byte at a physical address.
 // Everything it reads was named by a page-table walk, never by a user pointer.
-fun byte(addr: usize).R: Ptr<u8> {
+fun byte(addr: usize).return: Ptr<u8> {
     Ptr.from_addr(addr)
 }
 
-pub fun is_exit(num: usize).R: bool {
+pub fun is_exit(num: usize).return: bool {
     num == SYS_EXIT
 }
 
@@ -67,7 +67,7 @@ pub fun exit(code: usize) {
 // The calls that answer in `a0`. An unknown number is `ENOSYS`, not a fault;
 // the ABI names six argument registers, so the three calls no call uses are
 // passed and ignored rather than read at the call site.
-pub fun handle(root: usize, num: usize, a0: usize, a1: usize, a2: usize, _a3: usize, _a4: usize, _a5: usize).R: u64 {
+pub fun handle(root: usize, num: usize, a0: usize, a1: usize, a2: usize, _a3: usize, _a4: usize, _a5: usize).return: u64 {
     if num == SYS_WRITE {
         return write(root, a0, a1, a2)
     }
@@ -76,7 +76,7 @@ pub fun handle(root: usize, num: usize, a0: usize, a1: usize, a2: usize, _a3: us
 
 // Print the demo's own line and answer `EFAULT`. The line is the acceptance
 // signal: it is what says the kernel saw the bad pointer instead of dying on it.
-fun efault().R: u64 {
+fun efault().return: u64 {
     uart.puts("user: efault ok")
     uart.putc(10)
     return EFAULT
@@ -84,7 +84,7 @@ fun efault().R: u64 {
 
 // `write(fd, ptr, len)`: only stdout, at most one page, and only inside pages
 // the walk says a user may read.
-fun write(root: usize, fd: usize, ptr: usize, len: usize).R: u64 {
+fun write(root: usize, fd: usize, ptr: usize, len: usize).return: u64 {
     if fd != STDOUT {
         return EBADF
     }

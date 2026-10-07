@@ -2,7 +2,7 @@ impl "lib"
 
 // A parameter type is the position the plain `datac` gate has to cover: the
 // item is named, never called, so no expression path reaches it (A-13).
-fun describe(h: lib.Hidden).R: i32 = h.n
+fun describe(h: lib.Hidden).return: i32 = h.n
 
 fun main() {
     print(1)

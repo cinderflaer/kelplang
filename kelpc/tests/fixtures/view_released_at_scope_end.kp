@@ -1,6 +1,6 @@
 // M6.3: the view's borrow ends with its scope, so the owner is movable
 // again afterwards (and freed exactly once).
-fun view(s: &String).R: &str = s.as_str()
+fun view(s: &String).return: &str = s.as_str()
 
 fun main() {
     val s = String.from_str("hi")

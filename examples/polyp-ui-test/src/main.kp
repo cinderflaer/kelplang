@@ -27,13 +27,13 @@ impl "std/str"
 const WINDOW_W: i32 = 400
 const WINDOW_H: i32 = 300
 
-fun changed(text: String).R: i32 = 0
+fun changed(text: String).return: i32 = 0
 
 // The state is an owned `datac`, as every Polyp program's `Model` is, because `frame` reads the
 // state through a `mut` parameter.
 datac St(var n: i32)
 
-fun rect4(x: i32, y: i32, w: i32, h: i32).R: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+fun rect4(x: i32, y: i32, w: i32, h: i32).return: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
 
 fun nop(s: mut St, m: i32) {}
 
@@ -41,7 +41,7 @@ fun nop(s: mut St, m: i32) {}
 // press, so Space and a click can be told apart from a no-op.
 datac Cb(var checked: bool, var presses: i32)
 
-fun cb_view(s: Cb).R: core.Node<i32> {
+fun cb_view(s: Cb).return: core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -62,7 +62,7 @@ fun cb_update(s: mut Cb, m: i32) {
 
 // A tree with one of every interactive widget, so hit-testing and focus order have something to
 // walk: a text, a row of two buttons, an entry and a checkbox.
-fun ui(s: St).R: core.Node<i32> {
+fun ui(s: St).return: core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.text("title")
@@ -77,7 +77,7 @@ fun ui(s: St).R: core.Node<i32> {
 }
 
 // Two texts whose rectangles are their own measured size, for the damage and layout sections.
-fun two_texts(a: str, c: str).R: core.Node<i32> {
+fun two_texts(a: str, c: str).return: core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -87,10 +87,10 @@ fun two_texts(a: str, c: str).R: core.Node<i32> {
     }
 }
 
-fun fnv_byte(h: u64, b: u8).R: u64 = (h ^ b.to_u64()) * 1099511628211
+fun fnv_byte(h: u64, b: u8).return: u64 = (h ^ b.to_u64()) * 1099511628211
 
 // FNV-1a over every pixel outside `r`, which is the "outside is bit-identical" check.
-fun digest_outside(p: &headless_platform.HeadlessPlatform, r: fb.Rect).R: u64 {
+fun digest_outside(p: &headless_platform.HeadlessPlatform, r: fb.Rect).return: u64 {
     var h: u64 = 14695981039346656037
     var y: i32 = 0
     while y < p.height() {
@@ -113,7 +113,7 @@ fun digest_outside(p: &headless_platform.HeadlessPlatform, r: fb.Rect).R: u64 {
 // Push one event and run one frame, returning the tree the loop keeps. The state is a local,
 // because `frame` reads it through a `mut` parameter and a `mut` parameter of a `Copy` scalar
 // state hits a language limit the design note records.
-fun step(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: move core.Node<i32>, ev: move event.Event).R: core.Node<i32> {
+fun step(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: move core.Node<i32>, ev: move event.Event).return: core.Node<i32> {
     var st = St(n = 0)
     p.push(ev)
     return when soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = ui, update = nop) {
@@ -352,7 +352,7 @@ fun run_checkbox() {
 }
 
 // A scroll area with far more content than the window, so the wheel moves and then clamps.
-fun scroll_view(s: St).R: core.Node<i32> {
+fun scroll_view(s: St).return: core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.expand()

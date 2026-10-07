@@ -3,6 +3,6 @@
 pd val base = 3
 
 fun main() {
-    val f = fun(x: i32).R: i32 = x + base
+    val f = fun(x: i32).return: i32 = x + base
     print(f(1))
 }

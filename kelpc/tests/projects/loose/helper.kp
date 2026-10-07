@@ -1,1 +1,1 @@
-pub fun double(v: i32).R: i32 = v * 2
+pub fun double(v: i32).return: i32 = v * 2

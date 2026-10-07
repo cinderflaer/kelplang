@@ -5,11 +5,11 @@ const SIZE: usize = 3
 
 const WIDTH: usize = twice(n = 3)
 
-fun twice(n: usize).R: usize = n * 2
+fun twice(n: usize).return: usize = n * 2
 
 datac Buf<const N: usize>(var data: [i32; N], var len: usize)
 
-fun capacity<const N: usize>().R: usize = N
+fun capacity<const N: usize>().return: usize = N
 
 fun main() {
     val a: Buf<SIZE * 2> = Buf(data = [0; 6], len = 0)

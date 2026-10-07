@@ -23,9 +23,9 @@ pub datac Model(
 
 // The other half of the declared key pair the note above `hash_str` explains: `Todo` and `Msg` both
 // hold a `String`, so the derived pair would compare it through the hosted `kelp_map_key_eq`.
-fun Todo.hash().R: u64 = core.hash_str(title.as_str()) ^ id.to_u64()
+fun Todo.hash().return: u64 = core.hash_str(title.as_str()) ^ id.to_u64()
 
-fun Todo.eq(other: &Todo).R: bool = id == other.id && done == other.done && str.eq(title.as_str(), other.title.as_str())
+fun Todo.eq(other: &Todo).return: bool = id == other.id && done == other.done && str.eq(title.as_str(), other.title.as_str())
 
 // Every action names an item by id, not by position, for the same reason the view keys by id.
 pub enum Msg {
@@ -36,7 +36,7 @@ pub enum Msg {
     Remove(val id: i32)
 }
 
-fun Msg.hash().R: u64 = when self {
+fun Msg.hash().return: u64 = when self {
     Changed(text) -> core.hash_str("changed") ^ core.hash_str(text.as_str())
     Add -> 4
     Toggle(id) -> core.hash_str("toggle") ^ id.to_u64()
@@ -44,7 +44,7 @@ fun Msg.hash().R: u64 = when self {
     Remove(id) -> core.hash_str("remove") ^ id.to_u64()
 }
 
-fun Msg.eq(other: &Msg).R: bool = when self {
+fun Msg.eq(other: &Msg).return: bool = when self {
     Changed(text) -> when other {
         Changed(other_text) -> str.eq(text.as_str(), other_text.as_str())
         else -> false
@@ -67,7 +67,7 @@ fun Msg.eq(other: &Msg).R: bool = when self {
     }
 }
 
-pub fun initial().R: Model = Model(
+pub fun initial().return: Model = Model(
     draft = String.from_str(""),
     items = List.empty(),
     next_id = 1,
@@ -75,10 +75,10 @@ pub fun initial().R: Model = Model(
 )
 
 // The constructor the entry's `on_change` is: a top-level `fun`, so nothing is captured and the
-// type is exactly `fun(String).R: Msg`.
-fun changed(text: String).R: Msg = Msg.Changed(text = String.from_str(text.as_str()))
+// type is exactly `fun(String).return: Msg`.
+fun changed(text: String).return: Msg = Msg.Changed(text = String.from_str(text.as_str()))
 
-fun find_index(s: Model, id: i32).R: i32 {
+fun find_index(s: Model, id: i32).return: i32 {
     var i: usize = 0
     while i < s.items.len() {
         if s.items.get(i).id == id {
@@ -89,7 +89,7 @@ fun find_index(s: Model, id: i32).R: i32 {
     return -1
 }
 
-fun done_count(s: Model).R: i32 {
+fun done_count(s: Model).return: i32 {
     var n: i32 = 0
     var i: usize = 0
     while i < s.items.len() {
@@ -104,7 +104,7 @@ fun done_count(s: Model).R: i32 {
 // The progress fraction as an integer permille, the way the core carries it: a float division here
 // would be a soft-float call on a bare-metal riscv64 image, which has no FPU (`plan/polyp-v3.md`,
 // stage 4). `frac.of` and `frac.from_permille` used to convert; the core is integer now.
-fun permille(s: Model).R: i32 {
+fun permille(s: Model).return: i32 {
     val total = s.items.len()
     if total == 0 {
         return 0
@@ -115,7 +115,7 @@ fun permille(s: Model).R: i32 {
 // One keyed row per item: the checkbox, the title and the two buttons are the row's children, and
 // the key is the item's id. The class depends on the item's state, which is the one thing the
 // stylesheet is used for.
-pub fun view(s: Model).R: core.Node<Msg> {
+pub fun view(s: Model).return: core.Node<Msg> {
     return core.column { k ->
         k.spacing(8)
         k.margin(12)
@@ -212,7 +212,7 @@ pub datac Step(val delay_ms: u32, val event: core.Event)
 // row up, remove the row that is now the middle one, and quit. The ids are the interactive widget
 // ids: the entry and the add button are 0 and 1, and each row takes three more in creation order
 // (checkbox, move, remove), so the first row is 2/3/4, the second 5/6/7 and the third 8/9/10.
-pub fun script().R: List<Step> {
+pub fun script().return: List<Step> {
     var steps: List<Step> = List.empty()
     steps.push(Step(delay_ms = 100, event = core.Event.Focus(index = 0)))
     steps.push(Step(delay_ms = 150, event = core.Event.Edit(index = 0, text = String.from_str("alpha"))))
@@ -229,7 +229,7 @@ pub fun script().R: List<Step> {
 }
 
 // Just the events, which is what the headless backend takes.
-pub fun events().R: List<core.Event> {
+pub fun events().return: List<core.Event> {
     var out: List<core.Event> = List.empty()
     var steps = script()
     var i: usize = 0

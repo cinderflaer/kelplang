@@ -3,8 +3,8 @@
    lowered the two on both backends.
 
        fun fence(order: Ordering)
-       fun spawn<t, r>(entry: closure(move t).R: r, arg: move t).R: Thread<r>
-       fun join<t>(handle: move Thread<t>).R: Result<t, ThreadErr>
+       fun spawn<t, r>(entry: closure(move t).return: r, arg: move t).return: Thread<r>
+       fun join<t>(handle: move Thread<t>).return: Result<t, ThreadErr>
 
    `spawn` and `join` are *checker* builtins: the compiler builds their
    signatures at each call site, because what crosses the boundary decides the
@@ -106,7 +106,7 @@ datac ThreadErr(val message: String)
    importing a namespace named for the wall clock it never reads. */
 
 extern fun sleep_ms_raw(ms: u64)
-extern fun current_id_raw().R: u64
+extern fun current_id_raw().return: u64
 
 fun sleep_ms(ms: u64) {
     sleep_ms_raw(ms)
@@ -118,4 +118,4 @@ fun sleep_ms(ms: u64) {
 // worker did I spawn" a detached, unjoined handle's worker still has an id,
 // and nothing in v1 hands out sequential pool slots. Backed by `pthread_self`,
 // which is one instruction and needs no syscall.
-fun current_id().R: u64 = current_id_raw()
+fun current_id().return: u64 = current_id_raw()

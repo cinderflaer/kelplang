@@ -18,7 +18,7 @@ ui.column { ui.text("x") }    // ui.column(fun() { ui.text("x") })
 ## What the prototype does (`kelpc/src/parser.rs`)
 
 - After a call's `)` (or after a bare name / `.method`), a same-line `{` is parsed as a block and
-  appended as an unnamed `CallArg` holding a zero-parameter `fun` literal with no `.R:`.
+  appended as an unnamed `CallArg` holding a zero-parameter `fun` literal with no `.return:`.
 - The `(` is optional when the block is the only argument: `column { ... }`, `ui.column { ... }`.
 - It is **off** in the head of `if`, `elif`, `if let`, `while`, `for` and `when`, where a `{` after
   an expression already means "the body". A call's argument list and a block turn it back on, so
@@ -60,7 +60,7 @@ last parameter takes the parenthesised form, as it does today.
 5. **Formatting of long chains.** `fmt.rs` copies tokens and rewrites the whitespace between them;
    the tested cases are single-line. Nested multi-line trailing blocks were not stress-tested.
 6. ~~**Shared mutable state.**~~ **Addressed for call-scoped callbacks** (`plan/scoped-blocks.md`
-   part 2): a parameter written `scoped fun(T).R: U` accepts only a literal or trailing block
+   part 2): a parameter written `scoped fun(T).return: U` accepts only a literal or trailing block
    written at the call site, and such a literal captures an enclosing binding **by shared
    borrow** into a stack environment. So `polyp.column { k -> k.text(s.title) }` reads a borrowed
    `s` that the view still owns, and the borrow is released when the call returns. Mutation

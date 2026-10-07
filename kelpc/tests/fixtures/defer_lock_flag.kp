@@ -4,7 +4,7 @@ impl "std/atomic"
 
 pd val flag: AtomicBool = AtomicBool.new(false)
 
-fun locked().R: bool {
+fun locked().return: bool {
     defer flag.store(value = false, order = atomic.Ordering.SeqCst)
     flag.store(value = true, order = atomic.Ordering.SeqCst)
     print(flag.load(order = atomic.Ordering.SeqCst))

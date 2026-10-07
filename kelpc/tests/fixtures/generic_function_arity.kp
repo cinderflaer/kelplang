@@ -1,5 +1,5 @@
 // A-2: the instantiated signature is checked like any other.
-fun pair_of<T, U>(a: T, b: U).R: i32 = 1
+fun pair_of<T, U>(a: T, b: U).return: i32 = 1
 
 fun main() {
     print(pair_of(a = 1))

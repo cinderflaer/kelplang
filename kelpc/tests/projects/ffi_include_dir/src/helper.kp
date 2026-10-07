@@ -2,4 +2,4 @@
 // native symbol through this project's coral.toml '[extern."helper"]'
 // section. The symbol is defined in the project's own header, which the
 // manifest's `include_dirs` key makes findable through a relative path.
-pub extern fun kelp_test_double(x: i32).R: i32
+pub extern fun kelp_test_double(x: i32).return: i32

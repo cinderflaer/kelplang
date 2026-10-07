@@ -2,7 +2,7 @@
 
 trait Shape {
     type Item<T>
-    fun Self.area().R: i32
+    fun Self.area().return: i32
 }
 
 fun main() { }

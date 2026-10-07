@@ -7,7 +7,7 @@ impl "std/result"
 
 pd val items: Mutex<List<i32>> = Mutex.new(List.empty())
 
-fun add(c: &Mutex<List<i32>>).R: i64 {
+fun add(c: &Mutex<List<i32>>).return: i64 {
     var i = 0
     while i < 10 {
         c.lock { v ->

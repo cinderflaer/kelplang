@@ -1,7 +1,7 @@
 // A bare `dyn Name` is not a type: a trait object has to be borrowed
 // (`&dyn Name`, A-12 slice 4), and an owned one would be `Box<dyn Name>`.
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
 }
 
 fun take(s: dyn Shape) { }

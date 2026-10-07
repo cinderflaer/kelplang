@@ -4,18 +4,18 @@ impl "std/option"
 // The entry module's own exported type, named by an exported item.
 pub datac Tag(val n: i32)
 
-pub fun retag(t: Tag).R: Tag = Tag(n = t.n + 1)
+pub fun retag(t: Tag).return: Tag = Tag(n = t.n + 1)
 
 // Another module's exported type, written through its alias.
-pub fun shift(p: lib.Point).R: lib.Point = lib.Point(x = p.x + 1, y = p.y + 1)
+pub fun shift(p: lib.Point).return: lib.Point = lib.Point(x = p.x + 1, y = p.y + 1)
 
 // The generic instantiation on the far side of the boundary: `lib.Pair` is
 // exported, so naming it with its arguments is naming an exported type.
-pub fun first(p: lib.Pair<i32, i32>).R: i32 = p.a
+pub fun first(p: lib.Pair<i32, i32>).return: i32 = p.a
 
 // A compiler-shipped module exports every item (the transitional rule), so
 // an exported signature may name one of its types.
-pub fun count(o: option.Option<i32>).R: i32 {
+pub fun count(o: option.Option<i32>).return: i32 {
     if let Some(v) = o {
         return v
     }

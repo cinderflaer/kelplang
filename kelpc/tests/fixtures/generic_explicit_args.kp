@@ -8,9 +8,9 @@ enum Option<T> {
     None
 }
 
-fun identity<T>(x: T).R: T = x
+fun identity<T>(x: T).return: T = x
 
-fun unwrap_or(o: &Option<i64>, fallback: i64).R: i64 = when o {
+fun unwrap_or(o: &Option<i64>, fallback: i64).return: i64 = when o {
     Some(v) -> v
     None -> fallback
 }

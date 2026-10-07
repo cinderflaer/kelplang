@@ -3,5 +3,5 @@ impl "shape"
 pub datac Circle(val r: i32)
 
 impl shape.Shape for Circle {
-    fun Self.area().R: i32 = r * r
+    fun Self.area().return: i32 = r * r
 }

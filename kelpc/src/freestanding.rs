@@ -855,7 +855,7 @@ fn check_allocator_signature(
         .map(|p| p.display())
         .collect::<Vec<_>>()
         .join(", ");
-    let expected_ret = if returns_ptr { ".R: Ptr<u8>" } else { "" };
+    let expected_ret = if returns_ptr { ".return: Ptr<u8>" } else { "" };
     let shape_ok = f.env.is_none()
         && f.params.len() == params.len()
         && f.params.iter().zip(params).all(|((_, ty), want)| ty == want)

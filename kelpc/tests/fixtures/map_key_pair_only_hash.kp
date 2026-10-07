@@ -3,7 +3,7 @@
 // rather than ignored; the message names the half that is missing.
 datac Half(val x: i32)
 
-fun Half.hash().R: u64 = self.x.to_u64()
+fun Half.hash().return: u64 = self.x.to_u64()
 
 fun main() {
     val h: u64 = Half(x = 1).hash()

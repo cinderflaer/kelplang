@@ -4,13 +4,13 @@
 // end drops a nested list at scope exit. All of it is walked by valgrind.
 impl "std/str"
 
-fun words(a: str).R: List<String> {
+fun words(a: str).return: List<String> {
     var xs: List<String> = List.empty()
     xs.push(String.from_str(a))
     xs
 }
 
-fun total(rows: List<List<String>>).R: usize {
+fun total(rows: List<List<String>>).return: usize {
     var n: usize = 0
     var i: usize = 0
     while i < rows.len() {

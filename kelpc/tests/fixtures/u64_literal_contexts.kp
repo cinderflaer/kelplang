@@ -7,9 +7,9 @@
 // minimum was unwritable too and is the signed half of the same rule.
 const MASK: u64 = 0xFFFFFFFFFFFFFFFF
 
-fun take(x: u64).R: u64 = x
+fun take(x: u64).return: u64 = x
 
-fun give().R: u64 = 18446744073709551615
+fun give().return: u64 = 18446744073709551615
 
 fun main() {
     print(MASK)

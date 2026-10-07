@@ -105,16 +105,16 @@ the time either backend sees it.
 ```kelp
 pub trait Iterator {
     type Item
-    fun mut Self.next().R: option.Option<Self::Item>
+    fun mut Self.next().return: option.Option<Self::Item>
 }
 
 pub datac Range(var lo: i64, val hi: i64, val step: i64)
-fun range(a: i64, b: i64).R: Range
-fun range_step(a: i64, b: i64, step: i64).R: Range
+fun range(a: i64, b: i64).return: Range
+fun range_step(a: i64, b: i64, step: i64).return: Range
 
-fun count<I: Iterator>(it: move I).R: usize
-fun sum_i64<I: Iterator>(it: move I).R: i64
-fun collect_list<I: Iterator>(it: move I).R: List<I::Item>
+fun count<I: Iterator>(it: move I).return: usize
+fun sum_i64<I: Iterator>(it: move I).return: i64
+fun collect_list<I: Iterator>(it: move I).return: List<I::Item>
 ```
 
 - `Range` is half-open (`[lo, hi)`) and steps by one or by an explicit `step`,
@@ -135,7 +135,7 @@ strictness `Shape` has for `area`.
 ## 5. What is deliberately absent, and what blocks it
 
 - **`map`, `filter`, and every closure-taking adapter.** The task marks these
-  optional: they would store a `closure(T).R: U` whose `U` is the inner
+  optional: they would store a `closure(T).return: U` whose `U` is the inner
   iterator's `Item`, and a `datac` field type cannot name a projection from its
   own type parameter. The two are refused today because the parser refuses a
   bound on a type declaration's parameter (`datac Take<I: Iterator>` is

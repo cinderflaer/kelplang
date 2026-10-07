@@ -21,14 +21,14 @@ enum Opt {
     None
 }
 
-fun ok(n: i64).R: Res = Res.Ok(value = n)
+fun ok(n: i64).return: Res = Res.Ok(value = n)
 
-fun fail(n: i64).R: Res = Res.Err(why = n)
+fun fail(n: i64).return: Res = Res.Err(why = n)
 
-fun some_or(n: i64).R: Opt = if n < 0 { Opt.None } else { Opt.Some(value = n) }
+fun some_or(n: i64).return: Opt = if n < 0 { Opt.None } else { Opt.Some(value = n) }
 
 // One owned local, live at two `?` sites — one per branch of an `if`.
-fun one(good: bool).R: Res {
+fun one(good: bool).return: Res {
     var scratch = String.from_str(s = "scratch")
     scratch.push_str(s = "!")
     val v = if good { ok(n = 1)? } else { fail(n = 1)? }
@@ -36,7 +36,7 @@ fun one(good: bool).R: Res {
 }
 
 // The operand is a named local, several of them live at once.
-fun via_local(good: bool).R: Res {
+fun via_local(good: bool).return: Res {
     var pad = String.from_str(s = "pad")
     pad.push_str(s = "!")
     val r = if good { ok(n = 2) } else { fail(n = 2) }
@@ -46,7 +46,7 @@ fun via_local(good: bool).R: Res {
 
 // Two live scopes: the `?` sits inside an inner block, and both the inner and
 // the outer owned local die on its failure arm, innermost first.
-fun nested(good: bool).R: Res {
+fun nested(good: bool).return: Res {
     var outer = String.from_str(s = "outer")
     val v = {
         var inner = String.from_str(s = "inner")
@@ -59,7 +59,7 @@ fun nested(good: bool).R: Res {
 }
 
 // `?` on a payload-less failure: the frame's locals are still the frame's.
-fun option_frame(n: i64).R: Opt {
+fun option_frame(n: i64).return: Opt {
     var held = String.from_str(s = "held")
     held.push_str(s = "!")
     val w = some_or(n = n)?
@@ -69,7 +69,7 @@ fun option_frame(n: i64).R: Opt {
 // `?` inside a loop body: the body's own local and the function's are both live
 // at the `?`, and the loop-body drop points must not run a second time after
 // the early return leaves the function.
-fun loop_frame(bad_at: i64).R: Res {
+fun loop_frame(bad_at: i64).return: Res {
     var i: i64 = 0
     var total = String.from_str(s = "t")
     while i < 3 {
@@ -85,12 +85,12 @@ fun loop_frame(bad_at: i64).R: Res {
     return Res.Ok(value = total.len().to_i64())
 }
 
-fun res_value(r: &Res).R: i64 = when r {
+fun res_value(r: &Res).return: i64 = when r {
     Ok(v) -> v
     Err(_e) -> -1
 }
 
-fun opt_value(o: &Opt).R: i64 = when o {
+fun opt_value(o: &Opt).return: i64 = when o {
     Some(v) -> v
     None -> -1
 }

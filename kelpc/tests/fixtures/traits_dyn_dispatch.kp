@@ -1,24 +1,24 @@
 // A-12 slice 4: two types implementing one trait, called through `&dyn` in a
 // loop over borrowed bindings.
 trait Shape {
-    fun Self.area().R: f64
-    fun Self.kind().R: str
+    fun Self.area().return: f64
+    fun Self.kind().return: str
 }
 
 datac Circle(val r: f64)
 datac Square(val s: f64)
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
-    fun Self.kind().R: str = "circle"
+    fun Self.area().return: f64 = r * r * 3.0
+    fun Self.kind().return: str = "circle"
 }
 
 impl Shape for Square {
-    fun Self.area().R: f64 = s * s
-    fun Self.kind().R: str = "square"
+    fun Self.area().return: f64 = s * s
+    fun Self.kind().return: str = "square"
 }
 
-fun report(s: &dyn Shape).R: f64 {
+fun report(s: &dyn Shape).return: f64 {
     print(s.kind())
     return s.area()
 }

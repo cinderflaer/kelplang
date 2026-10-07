@@ -1,7 +1,7 @@
 // A-20: a length mismatch inside a const-generic instantiation names both
 // lengths, so the diagnostic says which lengths disagreed rather than only
 // that they did.
-fun take(a: [i32; 4]).R: i32 = a.get(i = 0)
+fun take(a: [i32; 4]).return: i32 = a.get(i = 0)
 
 fun main() {
     val a: [i32; 3] = [1, 2, 3]

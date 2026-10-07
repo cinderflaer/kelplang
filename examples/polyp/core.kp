@@ -55,7 +55,7 @@ static focus_seen_flag: AtomicBool = AtomicBool.new(false)
 static focus_lost_flag: AtomicBool = AtomicBool.new(false)
 
 // The kinds a user can activate, so the kinds a backend gives a widget id and a signal handler.
-pub fun interactive(kind: i32).R: bool = kind == KIND_ENTRY || kind == KIND_BUTTON || kind == KIND_CHECKBOX
+pub fun interactive(kind: i32).return: bool = kind == KIND_ENTRY || kind == KIND_BUTTON || kind == KIND_CHECKBOX
 
 // The alignment names an application writes. `props.align` carries one of the `ALIGN_*` codes (or
 // -1 for unset); which number a display's own alignment constant has is the backend's business.
@@ -66,7 +66,7 @@ pub enum Align {
     End
 }
 
-fun align_code(a: Align).R: i32 = when a {
+fun align_code(a: Align).return: i32 = when a {
     Fill -> ALIGN_FILL
     Start -> ALIGN_START
     Center -> ALIGN_CENTER
@@ -116,7 +116,7 @@ pub enum Node<M> {
     Row(val children: List<Child<M>>, val spacing: i32)
     Text(val text: String, val size: i32, val bold: bool)
     Spacer(val height: i32)
-    Entry(val text: String, val on_change: fun (String).R: M)
+    Entry(val text: String, val on_change: fun (String).return: M)
     Button(val label: String, val on_click: M)
     Checkbox(val label: String, val checked: bool, val on_toggle: M)
     Progress(val permille: i32)
@@ -128,7 +128,7 @@ pub enum Node<M> {
     // differ from the last frame's for the same key, and otherwise reuses the retained widgets.
     // The widget a backend sees for it is a transparent `Column` whose single child (index 0) is
     // the subtree's root.
-    Memo(val deps: Deps, val build: fun (&Deps).R: List<Child<M>>)
+    Memo(val deps: Deps, val build: fun (&Deps).return: List<Child<M>>)
 }
 
 // What a memoised subtree is a function of, as a value with a declared `eq` (so `==` works): a list
@@ -138,10 +138,10 @@ pub enum Node<M> {
 // subtree from it alone, which is what makes skipping it sound.
 pub datac Deps(var ints: List<i64>, var strs: List<String>)
 
-pub fun deps().R: Deps = Deps(ints = List.empty(), strs = List.empty())
+pub fun deps().return: Deps = Deps(ints = List.empty(), strs = List.empty())
 
 // Run a memo's view function: the one node it returns is the subtree's root.
-fun run_build<M>(deps: &Deps, build: fun (&Deps).R: List<Child<M>>).R: Node<M> {
+fun run_build<M>(deps: &Deps, build: fun (&Deps).return: List<Child<M>>).return: Node<M> {
     var items = build(deps)
     if items.len() != 1 {
         panic("polyp: a memo view function must return exactly one node")
@@ -151,8 +151,8 @@ fun run_build<M>(deps: &Deps, build: fun (&Deps).R: List<Child<M>>).R: Node<M> {
 }
 
 // What a memo view function returns: the nodes the block pushes (exactly one is required), so
-// `fun row_view(d: &Deps).R: List<Child<Msg>> = core.single { k -> k.row { r -> ... } }`.
-pub fun single<M>(block: scoped fun(mut Children<M>)).R: List<Child<M>> {
+// `fun row_view(d: &Deps).return: List<Child<Msg>> = core.single { k -> k.row { r -> ... } }`.
+pub fun single<M>(block: scoped fun(mut Children<M>)).return: List<Child<M>> {
     var c: Children<M> = new_children()
     block(c)
     return c.items
@@ -174,7 +174,7 @@ fun mut Deps.push_str(s: str) {
     strs.push(String.from_str(s))
 }
 
-pub fun copy_deps(d: &Deps).R: Deps {
+pub fun copy_deps(d: &Deps).return: Deps {
     var out = deps()
     var i: usize = 0
     while i < d.ints.len() {
@@ -189,7 +189,7 @@ pub fun copy_deps(d: &Deps).R: Deps {
     return out
 }
 
-fun Deps.eq(other: &Deps).R: bool {
+fun Deps.eq(other: &Deps).return: bool {
     if ints.len() != other.ints.len() || strs.len() != other.strs.len() {
         return false
     }
@@ -229,7 +229,7 @@ pub datac Children<M>(
     var pending_opts: Box<Opts>,
 )
 
-fun default_opts().R: Opts = Opts(
+fun default_opts().return: Opts = Opts(
     margin = -1,
     expand = false,
     align = -1,
@@ -244,7 +244,7 @@ fun default_opts().R: Opts = Opts(
     disabled = false,
 )
 
-fun new_children<M>().R: Children<M> = Children<M>(
+fun new_children<M>().return: Children<M> = Children<M>(
     items = List.empty(),
     spacing = 6,
     pending_key = Box.of(Key.None),
@@ -253,7 +253,7 @@ fun new_children<M>().R: Children<M> = Children<M>(
 
 // Key equality: a declared `eq` would give `==`, but a lone comparison is all this needs, and it is
 // the one place the "one key type per list" rule is enforced (a Str key never equals an Int key).
-pub fun key_eq(a: &Key, b: &Key).R: bool = when a {
+pub fun key_eq(a: &Key, b: &Key).return: bool = when a {
     None -> when b {
         None -> true
         else -> false
@@ -268,7 +268,7 @@ pub fun key_eq(a: &Key, b: &Key).R: bool = when a {
     }
 }
 
-pub fun key_is_none(k: &Key).R: bool = when k {
+pub fun key_is_none(k: &Key).return: bool = when k {
     None -> true
     else -> false
 }
@@ -283,7 +283,7 @@ pub fun key_is_none(k: &Key).R: bool = when k {
 
 // FNV-1a over a string's bytes, built from the two `str` operations a freestanding image lowers
 // itself. Equal strings hash equal, which is the whole contract a key's hash owes.
-pub fun hash_str(s: str).R: u64 {
+pub fun hash_str(s: str).return: u64 {
     var h: u64 = 14695981039346656037
     val n = str.len(s)
     var i: usize = 0
@@ -294,21 +294,21 @@ pub fun hash_str(s: str).R: u64 {
     return h
 }
 
-fun Key.hash().R: u64 = when self {
+fun Key.hash().return: u64 = when self {
     None -> 3
     Str(s) -> hash_str(s.as_str())
     Int(n) -> hash_str("int") ^ n.to_u64()
 }
 
-fun Key.eq(other: &Key).R: bool = key_eq(self, other)
+fun Key.eq(other: &Key).return: bool = key_eq(self, other)
 
-pub fun clone_key(k: &Key).R: Key = when k {
+pub fun clone_key(k: &Key).return: Key = when k {
     None -> Key.None
     Str(s) -> Key.Str(s = String.from_str(s.as_str()))
     Int(n) -> Key.Int(n = n)
 }
 
-fun duplicate_message(k: &Key).R: String = when k {
+fun duplicate_message(k: &Key).return: String = when k {
     None -> String.from_str("polyp: duplicate key among the children of one container")
     Str(s) -> {
         val head = str.concat("polyp: duplicate key '", s.as_str())
@@ -339,7 +339,7 @@ fun check_duplicate_keys<M>(children: &List<Child<M>>) {
     }
 }
 
-pub fun kind_of_node<M>(node: &Node<M>).R: i32 = when node {
+pub fun kind_of_node<M>(node: &Node<M>).return: i32 = when node {
     Column(_, _) -> KIND_COLUMN
     Row(_, _) -> KIND_ROW
     Text(_, _, _) -> KIND_TEXT
@@ -353,7 +353,7 @@ pub fun kind_of_node<M>(node: &Node<M>).R: i32 = when node {
     Memo(_, _) -> KIND_COLUMN
 }
 
-fun is_memo<M>(node: &Node<M>).R: bool = when node {
+fun is_memo<M>(node: &Node<M>).return: bool = when node {
     Memo(_, _) -> true
     else -> false
 }
@@ -394,7 +394,7 @@ fun mut Children<M>.button(label: str, on_click: move M) {
 
 // `on_change` is a plain `fun` value, not a closure capturing state: the loop calls it with the
 // entry's new text, and the app writes the constructor that turns that text into its own `Msg`.
-fun mut Children<M>.entry(value: str, on_change: fun (String).R: M) {
+fun mut Children<M>.entry(value: str, on_change: fun (String).return: M) {
     self.push_node(Node.Entry(text = String.from_str(value), on_change = on_change))
 }
 
@@ -475,11 +475,11 @@ fun mut Children<M>.with_key_int(key: i64) {
 // among the container's children, like any key, and is the subtree's identity across frames.
 // Options (`k.expand()`, `k.margin(..)`) given before the call apply to the transparent wrapper
 // column; the subtree's own root takes none.
-fun mut Children<M>.memo(key: str, deps: move Deps, build: fun (&Deps).R: List<Child<M>>) {
+fun mut Children<M>.memo(key: str, deps: move Deps, build: fun (&Deps).return: List<Child<M>>) {
     self.push_keyed(Key.Str(s = String.from_str(key)), Node.Memo(deps = deps, build = build))
 }
 
-fun mut Children<M>.memo_int(key: i64, deps: move Deps, build: fun (&Deps).R: List<Child<M>>) {
+fun mut Children<M>.memo_int(key: i64, deps: move Deps, build: fun (&Deps).return: List<Child<M>>) {
     self.push_keyed(Key.Int(n = key), Node.Memo(deps = deps, build = build))
 }
 
@@ -564,13 +564,13 @@ fun mut Children<M>.offset_y_anim(a: move anim.Anim) {
 // Block-taking constructors, so app code reads
 // `polyp.column { k -> k.text(s.title) k.button("+1", Msg.Inc) }`. The block's captures are shared
 // borrows released with this call, which is what lets it read the view's borrowed state.
-pub fun column<M>(block: scoped fun(mut Children<M>)).R: Node<M> {
+pub fun column<M>(block: scoped fun(mut Children<M>)).return: Node<M> {
     var c: Children<M> = new_children()
     block(c)
     return Node.Column(children = c.items, spacing = c.spacing)
 }
 
-pub fun row<M>(block: scoped fun(mut Children<M>)).R: Node<M> {
+pub fun row<M>(block: scoped fun(mut Children<M>)).return: Node<M> {
     var c: Children<M> = new_children()
     block(c)
     return Node.Row(children = c.items, spacing = c.spacing)
@@ -580,7 +580,7 @@ pub fun row<M>(block: scoped fun(mut Children<M>)).R: Node<M> {
 // items are methods, a separate namespace; `column` and `row` cannot keep them because the
 // block-taking constructors above are free functions of the same name and Kelp has no overloading,
 // so the plain spelling carries a `plain_` prefix. Both spellings compile.
-fun plain_children<M>(nodes: move List<Node<M>>).R: List<Child<M>> {
+fun plain_children<M>(nodes: move List<Node<M>>).return: List<Child<M>> {
     var out: List<Child<M>> = List.empty()
     var rest = nodes
     while !rest.is_empty() {
@@ -590,12 +590,12 @@ fun plain_children<M>(nodes: move List<Node<M>>).R: List<Child<M>> {
 }
 
 // A memoised root (a whole view that is a function of one `Deps`).
-pub fun memo<M>(deps: move Deps, build: fun (&Deps).R: List<Child<M>>).R: Node<M> = Node.Memo(deps = deps, build = build)
+pub fun memo<M>(deps: move Deps, build: fun (&Deps).return: List<Child<M>>).return: Node<M> = Node.Memo(deps = deps, build = build)
 
-pub fun plain_column<M>(children: move List<Node<M>>).R: Node<M> = Node.Column(children = plain_children(children), spacing = 6)
-pub fun plain_row<M>(children: move List<Node<M>>).R: Node<M> = Node.Row(children = plain_children(children), spacing = 6)
-pub fun text<M>(text: move String).R: Node<M> = Node.Text(text = text, size = 0, bold = false)
-pub fun button<M>(label: move String, on_click: move M).R: Node<M> = Node.Button(label = label, on_click = on_click)
+pub fun plain_column<M>(children: move List<Node<M>>).return: Node<M> = Node.Column(children = plain_children(children), spacing = 6)
+pub fun plain_row<M>(children: move List<Node<M>>).return: Node<M> = Node.Row(children = plain_children(children), spacing = 6)
+pub fun text<M>(text: move String).return: Node<M> = Node.Text(text = text, size = 0, bold = false)
+pub fun button<M>(label: move String, on_click: move M).return: Node<M> = Node.Button(label = label, on_click = on_click)
 
 // A node's address in the tree. The root is the empty path; a segment names a child by its key
 // when it has one (`Keyed`) and by its position otherwise (`Index`). Identity is the key for a
@@ -659,7 +659,7 @@ pub enum Event {
 }
 
 // A copy of an event, for a caller that holds a list of them and has to hand one out by value.
-pub fun clone_event(e: &Event).R: Event = when e {
+pub fun clone_event(e: &Event).return: Event = when e {
     Idle -> Event.Idle
     Post(id) -> Event.Post(id = id)
     Edit(index, text) -> Event.Edit(index = index, text = String.from_str(text.as_str()))
@@ -668,7 +668,7 @@ pub fun clone_event(e: &Event).R: Event = when e {
 }
 
 // The other half of the declared key pair the note above the `Key` one explains.
-fun Event.hash().R: u64 = when self {
+fun Event.hash().return: u64 = when self {
     Idle -> 1
     Post(id) -> hash_str("post") ^ id.to_u64()
     Edit(index, text) -> ((hash_str("edit") ^ index.to_u64()) * 31) ^ hash_str(text.as_str())
@@ -676,7 +676,7 @@ fun Event.hash().R: u64 = when self {
     Quit -> 2
 }
 
-fun Event.eq(other: &Event).R: bool = when self {
+fun Event.eq(other: &Event).return: bool = when self {
     Idle -> when other {
         Idle -> true
         else -> false
@@ -711,20 +711,20 @@ pub trait Backend {
     fun mut Self.drop_widget(path: &Path)
     fun mut Self.place_widget(path: &Path, to_index: i32)
     fun mut Self.pump()
-    fun mut Self.poll().R: Event
-    fun Self.path_of(id: i32).R: option.Option<Path>
-    fun Self.focus().R: option.Option<i32>
+    fun mut Self.poll().return: Event
+    fun Self.path_of(id: i32).return: option.Option<Path>
+    fun Self.focus().return: option.Option<i32>
     fun mut Self.set_focus(id: i32)
     fun mut Self.set_entry_text(id: i32, text: &str)
-    fun Self.entry_text(id: i32).R: String
-    fun Self.entry_ids().R: List<i32>
-    fun Self.entries_built().R: i32
-    fun Self.stats().R: Stats
+    fun Self.entry_text(id: i32).return: String
+    fun Self.entry_ids().return: List<i32>
+    fun Self.entries_built().return: i32
+    fun Self.stats().return: Stats
 }
 
-fun empty_path().R: Path = Path(segs = List.empty())
+fun empty_path().return: Path = Path(segs = List.empty())
 
-pub fun copy_path(p: &Path).R: Path {
+pub fun copy_path(p: &Path).return: Path {
     var segs: List<Seg> = List.empty()
     var i: usize = 0
     while i < p.segs.len() {
@@ -734,23 +734,23 @@ pub fun copy_path(p: &Path).R: Path {
     return Path(segs = segs)
 }
 
-pub fun clone_seg(s: &Seg).R: Seg = when s {
+pub fun clone_seg(s: &Seg).return: Seg = when s {
     Index(i) -> Seg.Index(i = i)
     Keyed(i, key) -> Seg.Keyed(i = i, key = clone_key(key))
 }
 
-pub fun seg_for(key: &Key, i: i32).R: Seg = if key_is_none(key) {
+pub fun seg_for(key: &Key, i: i32).return: Seg = if key_is_none(key) {
     Seg.Index(i = i)
 } else {
     Seg.Keyed(i = i, key = clone_key(key))
 }
 
-pub fun seg_index(s: &Seg).R: i32 = when s {
+pub fun seg_index(s: &Seg).return: i32 = when s {
     Index(i) -> i
     Keyed(i, _) -> i
 }
 
-pub fun with_seg(parent: &Path, s: move Seg).R: Path {
+pub fun with_seg(parent: &Path, s: move Seg).return: Path {
     var segs: List<Seg> = List.empty()
     var i: usize = 0
     while i < parent.segs.len() {
@@ -761,7 +761,7 @@ pub fun with_seg(parent: &Path, s: move Seg).R: Path {
     return Path(segs = segs)
 }
 
-pub fun props_default().R: Props = Props(
+pub fun props_default().return: Props = Props(
     text = String.from_str(""),
     size = 0,
     bold = false,
@@ -784,7 +784,7 @@ pub fun props_default().R: Props = Props(
     disabled = false,
 )
 
-pub fun props_of<M>(node: &Node<M>).R: Props {
+pub fun props_of<M>(node: &Node<M>).return: Props {
     var p = props_default()
     when node {
         Column(_, spacing) -> {
@@ -842,13 +842,13 @@ fun apply_opts(p: mut Props, o: &Opts) {
     }
 }
 
-pub fun child_props<M>(c: &Child<M>).R: Props {
+pub fun child_props<M>(c: &Child<M>).return: Props {
     var p = props_of(c.node)
     apply_opts(p, &c.opts)
     return p
 }
 
-fun opts_eq(a: &Opts, b: &Opts).R: bool {
+fun opts_eq(a: &Opts, b: &Opts).return: bool {
     if a.margin != b.margin || a.expand != b.expand || a.align != b.align {
         return false
     }
@@ -876,7 +876,7 @@ fun opts_eq(a: &Opts, b: &Opts).R: bool {
 
 // Whether two nodes of the same kind carry the same properties. The kind is checked first, so a
 // call with two different kinds is `false` without reading a field that is not there.
-fun node_props_eq<M>(a: &Node<M>, b: &Node<M>).R: bool = when a {
+fun node_props_eq<M>(a: &Node<M>, b: &Node<M>).return: bool = when a {
     Column(_, sa) -> when b {
         Column(_, sb) -> sa == sb
         else -> false
@@ -924,7 +924,7 @@ fun node_props_eq<M>(a: &Node<M>, b: &Node<M>).R: bool = when a {
 }
 
 // The first unused old index with this key, or -1.
-fun find_key<M>(old: &List<Child<M>>, used: &List<bool>, key: &Key).R: i32 {
+fun find_key<M>(old: &List<Child<M>>, used: &List<bool>, key: &Key).return: i32 {
     var j: usize = 0
     while j < old.len() {
         if !used.get(j) && key_eq(old.get(j).key, key) {
@@ -944,7 +944,7 @@ fun find_key<M>(old: &List<Child<M>>, used: &List<bool>, key: &Key).R: i32 {
 // engine clears and refills it, so after the largest frame the list's capacity stays put and no
 // frame allocates the patch list again (`plan/polyp-v3.md`, stage 5). `diff` is the one-shot
 // convenience the pure tests use; both go through the same engine, so they cannot disagree.
-pub fun diff<M>(old: &Node<M>, new: &Node<M>).R: List<Patch> {
+pub fun diff<M>(old: &Node<M>, new: &Node<M>).return: List<Patch> {
     var out: List<Patch> = List.empty()
     diff_into(old, new, out)
     return out
@@ -983,11 +983,11 @@ pub datac MemoEntry<M>(var ident: Path, var deps: Deps, var body: Node<M>)
 
 pub datac MemoStore<M>(var entries: List<MemoEntry<M>>, var hits: i32, var misses: i32, var view_calls: i32, var hint: i32)
 
-pub fun new_memo_store<M>().R: MemoStore<M> = MemoStore<M>(entries = List.empty(), hits = 0, misses = 0, view_calls = 0, hint = 0)
+pub fun new_memo_store<M>().return: MemoStore<M> = MemoStore<M>(entries = List.empty(), hits = 0, misses = 0, view_calls = 0, hint = 0)
 
 // Two paths name the same memo when they have the same length and each segment agrees: keyed
 // segments by key (ignoring the index), unkeyed ones by index.
-fun ident_eq(a: &Path, b: &Path).R: bool {
+fun ident_eq(a: &Path, b: &Path).return: bool {
     if a.segs.len() != b.segs.len() {
         return false
     }
@@ -1001,7 +1001,7 @@ fun ident_eq(a: &Path, b: &Path).R: bool {
     return true
 }
 
-fun seg_ident_eq(a: &Seg, b: &Seg).R: bool = when a {
+fun seg_ident_eq(a: &Seg, b: &Seg).return: bool = when a {
     Index(i) -> when b {
         Index(j) -> i == j
         else -> false
@@ -1013,7 +1013,7 @@ fun seg_ident_eq(a: &Seg, b: &Seg).R: bool = when a {
 }
 
 // Whether `prefix` is `p` or one of its ancestors.
-fun ident_prefix(prefix: &Path, p: &Path).R: bool {
+fun ident_prefix(prefix: &Path, p: &Path).return: bool {
     if prefix.segs.len() > p.segs.len() {
         return false
     }
@@ -1027,7 +1027,7 @@ fun ident_prefix(prefix: &Path, p: &Path).R: bool {
     return true
 }
 
-fun mut MemoStore<M>.find(path: &Path).R: i32 {
+fun mut MemoStore<M>.find(path: &Path).return: i32 {
     val n = entries.len()
     var k: usize = 0
     while k < n {
@@ -1055,7 +1055,7 @@ fun mut MemoStore<M>.drop_under(path: &Path) {
 
 // A memo with no stored record at `path`: build its subtree, emit its creation at `path + [0]` and
 // record it. The wrapper column itself is the caller's to create.
-fun memo_build<M>(path: &Path, deps: &Deps, build: fun (&Deps).R: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
+fun memo_build<M>(path: &Path, deps: &Deps, build: fun (&Deps).return: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
     store.drop_under(path)
     store.misses += 1
     store.view_calls += 1
@@ -1067,7 +1067,7 @@ fun memo_build<M>(path: &Path, deps: &Deps, build: fun (&Deps).R: List<Child<M>>
 }
 
 // A matched pair of memo nodes: hit, or miss and diff the subtree against the stored one.
-fun memo_match<M>(path: &Path, deps: &Deps, build: fun (&Deps).R: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
+fun memo_match<M>(path: &Path, deps: &Deps, build: fun (&Deps).return: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
     val at = store.find(path)
     if at >= 0 {
         val same = deps.eq(&store.entries.get(at.to_usize()).deps)
@@ -1297,14 +1297,14 @@ fun create_children<M>(parent: &Path, children: &List<Child<M>>, out: mut List<P
 }
 
 // The whole tree as one create list, for the first render and for a test that wants a fresh tree.
-pub fun create_all<M>(node: &Node<M>).R: List<Patch> {
+pub fun create_all<M>(node: &Node<M>).return: List<Patch> {
     var store: MemoStore<M> = new_memo_store()
     return create_all_memo(node, store)
 }
 
 // The first render of a tree that may hold `Memo` nodes: their subtrees are built and recorded in
 // `store`, which the loop's later frames must be given.
-pub fun create_all_memo<M>(node: &Node<M>, store: mut MemoStore<M>).R: List<Patch> {
+pub fun create_all_memo<M>(node: &Node<M>, store: mut MemoStore<M>).return: List<Patch> {
     var out: List<Patch> = List.empty()
     val p = empty_path()
     out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(node), props = props_of(node)))
@@ -1344,11 +1344,11 @@ pub fun apply_patches<B: Backend>(backend: mut B, patches: &List<Patch>) {
 // The message a widget at `path` would post, taken out of a tree the caller owns. `view` is pure,
 // so the loop rebuilds it and moves the message out of that copy: the tree the loop is diffing
 // against has to stay whole, and a message cannot be moved out of a borrow.
-pub fun take_message<B: Backend, M>(root: move Node<M>, path: &Path, backend: &B, id: i32).R: option.Option<M> {
+pub fun take_message<B: Backend, M>(root: move Node<M>, path: &Path, backend: &B, id: i32).return: option.Option<M> {
     return take_at(root, path, 0, backend, id)
 }
 
-fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: usize, backend: &B, id: i32).R: option.Option<M> {
+fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: usize, backend: &B, id: i32).return: option.Option<M> {
     if depth >= path.segs.len() {
         return when node {
             Button(_, msg) -> option.Option.Some(value = msg)
@@ -1369,7 +1369,7 @@ fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: usize, backen
 // A click inside a memoised subtree: the placeholder holds no widgets, so the subtree is built here
 // (not counted, and the store is not touched) and the rest of the path is followed into it. The
 // wrapper column's only child is segment `Index(0)`.
-fun take_memo<B: Backend, M>(deps: &Deps, build: fun (&Deps).R: List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32).R: option.Option<M> {
+fun take_memo<B: Backend, M>(deps: &Deps, build: fun (&Deps).return: List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32).return: option.Option<M> {
     val want = path.segs.get(depth)
     val ok = when want {
         Index(i) -> i == 0
@@ -1382,7 +1382,7 @@ fun take_memo<B: Backend, M>(deps: &Deps, build: fun (&Deps).R: List<Child<M>>, 
     return take_at(body, path, depth + 1, backend, id)
 }
 
-fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32).R: option.Option<M> {
+fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth: usize, backend: &B, id: i32).return: option.Option<M> {
     val want = path.segs.get(depth)
     var rest = children
     var i: usize = 0
@@ -1396,12 +1396,12 @@ fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth:
     return option.Option.None
 }
 
-pub fun child_at(seg: &Seg, key: &Key, index: usize).R: bool = when seg {
+pub fun child_at(seg: &Seg, key: &Key, index: usize).return: bool = when seg {
     Index(i) -> key_is_none(key) && index.to_i32() == i
     Keyed(_, k) -> key_eq(k, key)
 }
 
-fun seq().R: atomic.Ordering = atomic.Ordering.SeqCst
+fun seq().return: atomic.Ordering = atomic.Ordering.SeqCst
 
 // Zero the loop's counters before a run. A platform that drives its own frame clock resets them
 // itself; `run` does it here so both entries agree.
@@ -1430,7 +1430,7 @@ pub enum Tick<M> {
 
 // One turn: pump the display once, then drain its queue, running `update`/`view`/`diff`/`apply`
 // for every message. `Quit` ends the program; `Changed` means at least one patch was applied.
-pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M)).R: Tick<M> {
+pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).return: Node<M>, update: fun (mut S, M)).return: Tick<M> {
     var scratch: List<Patch> = List.empty()
     return frame_step_into(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch)
 }
@@ -1438,7 +1438,7 @@ pub fun frame_step<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: 
 // `frame_step` with a caller-owned patch list: the loop clears and refills `scratch` for every
 // message instead of building a fresh `List<Patch>`, so a driver that keeps one list across frames
 // stops allocating the patch list once it has seen its largest frame (`plan/polyp-v3.md`, stage 5).
-pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>).R: Tick<M> {
+pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).return: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>).return: Tick<M> {
     var store: MemoStore<M> = new_memo_store()
     return frame_drain(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch, store = store)
 }
@@ -1446,7 +1446,7 @@ pub fun frame_step_into<B: Backend, S, M>(backend: mut B, tree: move Node<M>, st
 // `frame_step_into` for a tree that uses `Memo` nodes: the store (created with `new_memo_store`, and
 // given to `create_all_memo` for the first render) is the caller's and lives as long as the program.
 // The memo counters are published to `core.stats()` after the turn.
-pub fun frame_step_memo<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>, store: mut MemoStore<M>).R: Tick<M> {
+pub fun frame_step_memo<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).return: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>, store: mut MemoStore<M>).return: Tick<M> {
     val t = frame_drain(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch, store = store)
     publish_memo(store)
     return t
@@ -1458,7 +1458,7 @@ pub fun publish_memo<M>(store: &MemoStore<M>) {
     stat_view_calls.store(value = store.view_calls, order = seq())
 }
 
-fun frame_drain<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).R: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>, store: mut MemoStore<M>).R: Tick<M> {
+fun frame_drain<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut S, view: fun (S).return: Node<M>, update: fun (mut S, M), scratch: mut List<Patch>, store: mut MemoStore<M>).return: Tick<M> {
     var current = tree
     var changed = false
     var quitting = false
@@ -1544,24 +1544,24 @@ pub enum Sub<M> {
 // A repeating timer: `msg` is delivered when the period has elapsed, at most once per turn of the
 // loop, and a turn that finds the timer several periods late fires it once and skips the missed
 // periods (the next firing is the first period boundary after now).
-pub fun every<M>(ms: i32, msg: move M).R: Sub<M> = Sub.Every(ms = ms, msg = msg)
+pub fun every<M>(ms: i32, msg: move M).return: Sub<M> = Sub.Every(ms = ms, msg = msg)
 
 // A one-shot timer: `msg` is delivered once, `ms` milliseconds after the timer first appears.
-pub fun after<M>(ms: i32, msg: move M).R: Sub<M> = Sub.After(ms = ms, msg = msg)
+pub fun after<M>(ms: i32, msg: move M).return: Sub<M> = Sub.After(ms = ms, msg = msg)
 
 pub datac TimerSlot(var kind: i32, var ms: i32, var due_us: u64, var done: bool)
 
 // The loop's timer table: one slot per entry of the last `subscriptions` list.
 pub datac Timers(var slots: List<TimerSlot>, var fired: i32)
 
-pub fun new_timers().R: Timers = Timers(slots = List.empty(), fired = 0)
+pub fun new_timers().return: Timers = Timers(slots = List.empty(), fired = 0)
 
 // How many timer firings the table has delivered so far, for a test.
-pub fun timers_fired(t: &Timers).R: i32 = t.fired
+pub fun timers_fired(t: &Timers).return: i32 = t.fired
 
 // The clock value, in microseconds, at which the earliest armed timer is due, or -1 when no timer is
 // armed. An OS that has gone to sleep wakes at this time (or on input) to run the next turn.
-pub fun next_wake_us(t: &Timers).R: i64 {
+pub fun next_wake_us(t: &Timers).return: i64 {
     var best: i64 = -1
     var i: usize = 0
     while i < t.slots.len() {
@@ -1578,7 +1578,7 @@ pub fun next_wake_us(t: &Timers).R: i64 {
 }
 
 // Reconcile slot `i` with the sub the state now asks for, and say whether it fires at `now`.
-fun mut Timers.step(i: usize, kind: i32, ms: i32, now: u64).R: bool {
+fun mut Timers.step(i: usize, kind: i32, ms: i32, now: u64).return: bool {
     var period_ms = ms
     if period_ms < 1 {
         period_ms = 1
@@ -1613,7 +1613,7 @@ fun mut Timers.step(i: usize, kind: i32, ms: i32, now: u64).R: bool {
 
 // Take the messages of the timers that are due at `now`, in list order, and leave the table
 // matching the list. A turn delivers a timer's message at most once, however late the turn is.
-pub fun collect_due<M>(timers: mut Timers, subs: move List<Sub<M>>, now: u64).R: List<M> {
+pub fun collect_due<M>(timers: mut Timers, subs: move List<Sub<M>>, now: u64).return: List<M> {
     var out: List<M> = List.empty()
     var rest = subs
     var i: usize = 0
@@ -1647,14 +1647,14 @@ pub fun frame_step_full<B: Backend, S, M>(
     backend: mut B,
     tree: move Node<M>,
     state: mut S,
-    view: fun (S).R: Node<M>,
+    view: fun (S).return: Node<M>,
     update: fun (mut S, M),
-    subs: fun (S).R: List<Sub<M>>,
+    subs: fun (S).return: List<Sub<M>>,
     scratch: mut List<Patch>,
     timers: mut Timers,
     store: mut MemoStore<M>,
     now_us: u64,
-).R: Tick<M> {
+).return: Tick<M> {
     val first = frame_drain(backend = backend, tree = tree, state = state, view = view, update = update, scratch = scratch, store = store)
     var changed = false
     var quitting = false
@@ -1709,7 +1709,7 @@ pub fun publish<B: Backend>(backend: &B) {
 
 // What the loop runs on: the state, the tree it last showed, the patches between them, and the
 // check that a patch kept the focused widget.
-pub fun run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Node<M>, update: fun (mut S, M)).R: S {
+pub fun run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).return: Node<M>, update: fun (mut S, M)).return: S {
     reset_stats()
 
     var state = init
@@ -1761,7 +1761,7 @@ fun snapshot<B: Backend>(backend: &B, before: option.Option<i32>) {
 
 // The id of the index-th entry widget, in tree order, for the programmatic edit and focus
 // channels. The `-1` the GTK queue answers with means "none pending", which is the `None` here.
-fun entry_at<B: Backend>(backend: &B, index: i32).R: option.Option<i32> {
+fun entry_at<B: Backend>(backend: &B, index: i32).return: option.Option<i32> {
     if index < 0 {
         return option.Option.None
     }
@@ -1772,7 +1772,7 @@ fun entry_at<B: Backend>(backend: &B, index: i32).R: option.Option<i32> {
     return option.Option.Some(value = ids.get(index.to_usize()))
 }
 
-pub fun stats().R: Stats = Stats(
+pub fun stats().return: Stats = Stats(
     created = stat_created.load(order = seq()),
     updated = stat_updated.load(order = seq()),
     removed = stat_removed.load(order = seq()),
@@ -1783,10 +1783,10 @@ pub fun stats().R: Stats = Stats(
 )
 
 // Whether every patch kept the focus widget it found.
-pub fun focus_survived().R: bool = !focus_lost_flag.load(order = seq())
+pub fun focus_survived().return: bool = !focus_lost_flag.load(order = seq())
 
 // Whether a patch ever found a focus widget, so a run can tell "the focus stayed" from "there was
 // no focus to keep".
-pub fun focus_present().R: bool = focus_seen_flag.load(order = seq())
+pub fun focus_present().return: bool = focus_seen_flag.load(order = seq())
 
-pub fun entries_built().R: i32 = stat_entries.load(order = seq())
+pub fun entries_built().return: i32 = stat_entries.load(order = seq())

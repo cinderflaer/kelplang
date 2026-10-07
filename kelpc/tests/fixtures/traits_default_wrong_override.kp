@@ -2,13 +2,13 @@
 // slice 3).
 
 trait Shape {
-    fun Self.describe().R: i32 { return 100 }
+    fun Self.describe().return: i32 { return 100 }
 }
 
 datac C(val r: i32)
 
 impl Shape for C {
-    fun Self.describe().R: i64 = 0
+    fun Self.describe().return: i64 = 0
 }
 
 fun main() { }

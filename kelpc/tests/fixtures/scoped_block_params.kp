@@ -10,7 +10,7 @@ fun each(xs: List<i32>, f: scoped fun(i32)) {
     }
 }
 
-fun sum(xs: List<i32>, f: scoped fun(i32).R: i32).R: i32 {
+fun sum(xs: List<i32>, f: scoped fun(i32).return: i32).return: i32 {
     var total = 0
     var i: usize = 0
     while i < xs.len() {

@@ -9,7 +9,7 @@ enum Held {
     Empty
 }
 
-fun take(h: move Held).R: String {
+fun take(h: move Held).return: String {
     val s = when h {
         Two(text, _) -> text
         Empty -> String.from_str(s = "none")

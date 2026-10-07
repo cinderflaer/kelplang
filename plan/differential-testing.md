@@ -17,7 +17,7 @@ same, and have the compiler generate cases and check it.
 
 ```kelp
 [equivalent_to(slow_but_obviously_correct_sort)]
-fun fast_sort(xs: List<i32>).R: List<i32> {
+fun fast_sort(xs: List<i32>).return: List<i32> {
     ...
 }
 ```

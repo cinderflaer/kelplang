@@ -7,7 +7,7 @@ enum IntList {
     Cons(val head: i64, val tail: Box<IntList>)
 }
 
-fun sum(xs: &IntList).R: i64 = when xs {
+fun sum(xs: &IntList).return: i64 = when xs {
     Nil -> 0
     Cons(head, tail) -> head + sum(tail.get())
 }

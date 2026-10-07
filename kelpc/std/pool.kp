@@ -3,10 +3,10 @@
    module cannot call its own builtins by name (`thread.spawn` is reached through
    `impl "std/thread"`):
 
-       fun pool.new(workers: i32).R: Pool
+       fun pool.new(workers: i32).return: Pool
        fun Pool.spawn(job: move closure())
        fun Pool.join()
-       fun Pool.panicked().R: i32
+       fun Pool.panicked().return: i32
 
    `pool.new(n)` starts `n` worker threads that pull jobs from one FIFO queue.
    `spawn` queues a job (a closure that may capture values it owns: they move
@@ -42,7 +42,7 @@ datac Job(val run: closure())
 datac PoolShared(val meta: Mutex<PoolMeta>, val jobs: Mutex<List<Job>>, val work: Condvar, val done: Condvar)
 
 // A handle to the same pool state, for one more worker.
-fun PoolShared.dup().R: PoolShared {
+fun PoolShared.dup().return: PoolShared {
     return PoolShared(meta = self.meta.share(), jobs = self.jobs.share(), work = self.work.share(), done = self.done.share())
 }
 
@@ -56,7 +56,7 @@ fun run_job(job: move Job) {
 fun pool_worker(sh: move PoolShared) {
     var running = true
     while running {
-        val job = sh.meta.wait_while(&sh.work, fun(s: &PoolMeta).R: bool = s.queued == 0 && !s.stop) { s ->
+        val job = sh.meta.wait_while(&sh.work, fun(s: &PoolMeta).return: bool = s.queued == 0 && !s.stop) { s ->
             if s.queued > 0 {
                 s.queued -= 1
                 s.running += 1
@@ -93,7 +93,7 @@ fun pool_worker(sh: move PoolShared) {
 }
 
 // Start a pool of `workers` threads (at least one).
-fun new(workers: i32).R: Pool {
+fun new(workers: i32).return: Pool {
     if workers < 1 {
         panic("pool.new: a pool needs at least one worker")
     }
@@ -134,11 +134,11 @@ fun Pool.spawn(job: move closure()) {
 fun Pool.join() {
     self.shared.meta.lock { s -> s.stop = true }
     self.shared.work.notify_all()
-    self.shared.meta.wait_while(&self.shared.done, fun(s: &PoolMeta).R: bool = s.alive > 0) { s -> 0 }
+    self.shared.meta.wait_while(&self.shared.done, fun(s: &PoolMeta).return: bool = s.alive > 0) { s -> 0 }
 }
 
 // How many jobs have panicked so far.
-fun Pool.panicked().R: i32 {
+fun Pool.panicked().return: i32 {
     return self.shared.meta.lock { s -> s.panicked }
 }
 

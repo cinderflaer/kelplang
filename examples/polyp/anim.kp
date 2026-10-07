@@ -24,7 +24,7 @@ pub enum Easing {
     EaseInOut
 }
 
-fun easing_code(e: Easing).R: i32 = when e {
+fun easing_code(e: Easing).return: i32 = when e {
     Linear -> EASE_LINEAR
     EaseIn -> EASE_IN
     EaseOut -> EASE_OUT
@@ -36,7 +36,7 @@ fun easing_code(e: Easing).R: i32 = when e {
 pub datac Anim(val from: i32, val to: i32, val ms: i32, val ease: i32)
 
 // `anim.lerp(from, to, ms, easing)`: the value moves from `from` to `to` over `ms` milliseconds.
-pub fun lerp(from: i32, to: i32, ms: i32, easing: Easing).R: Anim {
+pub fun lerp(from: i32, to: i32, ms: i32, easing: Easing).return: Anim {
     var duration = ms
     if duration < 0 {
         duration = 0
@@ -44,22 +44,22 @@ pub fun lerp(from: i32, to: i32, ms: i32, easing: Easing).R: Anim {
     return Anim(from = from, to = to, ms = duration, ease = easing_code(easing))
 }
 
-pub fun none().R: Anim = Anim(from = 0, to = 0, ms = -1, ease = EASE_LINEAR)
+pub fun none().return: Anim = Anim(from = 0, to = 0, ms = -1, ease = EASE_LINEAR)
 
-pub fun is_none(a: &Anim).R: bool = a.ms < 0
+pub fun is_none(a: &Anim).return: bool = a.ms < 0
 
-pub fun copy(a: &Anim).R: Anim = Anim(from = a.from, to = a.to, ms = a.ms, ease = a.ease)
+pub fun copy(a: &Anim).return: Anim = Anim(from = a.from, to = a.to, ms = a.ms, ease = a.ease)
 
-pub fun same(a: &Anim, b: &Anim).R: bool = a.from == b.from && a.to == b.to && a.ms == b.ms && a.ease == b.ease
+pub fun same(a: &Anim, b: &Anim).return: bool = a.from == b.from && a.to == b.to && a.ms == b.ms && a.ease == b.ease
 
-fun Anim.eq(other: &Anim).R: bool = same(self, other)
+fun Anim.eq(other: &Anim).return: bool = same(self, other)
 
 // The eased fraction: both the input and the result are permille, `0..=1000`.
 //   linear      t
 //   ease_in     t^2            (slow start)
 //   ease_out    1 - (1 - t)^2  (slow end)
 //   ease_in_out the two halves joined at t = 500
-pub fun eased(ease: i32, t: i64).R: i64 {
+pub fun eased(ease: i32, t: i64).return: i64 {
     var x = t
     if x < 0 {
         x = 0
@@ -85,7 +85,7 @@ pub fun eased(ease: i32, t: i64).R: i64 {
 }
 
 // How long the animation runs, in microseconds, which is the unit the platform's clock reads in.
-pub fun duration_us(a: &Anim).R: u64 {
+pub fun duration_us(a: &Anim).return: u64 {
     if a.ms <= 0 {
         return 0
     }
@@ -93,10 +93,10 @@ pub fun duration_us(a: &Anim).R: u64 {
 }
 
 // Whether an animation that started `elapsed_us` ago has reached its end.
-pub fun finished(a: &Anim, elapsed_us: u64).R: bool = elapsed_us >= duration_us(a)
+pub fun finished(a: &Anim, elapsed_us: u64).return: bool = elapsed_us >= duration_us(a)
 
 // The value `elapsed_us` microseconds after the start. At or past the duration it is `to`, exactly.
-pub fun value_at(a: &Anim, elapsed_us: u64).R: i32 {
+pub fun value_at(a: &Anim, elapsed_us: u64).return: i32 {
     if finished(a, elapsed_us) {
         return a.to
     }

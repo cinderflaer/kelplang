@@ -8,7 +8,7 @@ impl "std/result"
 
 fun main() {
     val base: i64 = 40
-    val h = thread.spawn(fun(x: move i64).R: i64 = x + base, 2)
+    val h = thread.spawn(fun(x: move i64).return: i64 = x + base, 2)
     when thread.join(h) {
         Ok(v) -> print(v)
         Err(e) -> print(e.message)

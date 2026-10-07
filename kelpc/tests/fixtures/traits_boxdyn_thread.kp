@@ -5,7 +5,7 @@ impl "std/thread"
 impl "std/result"
 
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
 }
 
 datac Circle(val r: f64)
@@ -15,12 +15,12 @@ fun mut Circle.drop() {
 }
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
+    fun Self.area().return: f64 = r * r * 3.0
 }
 
-fun area_of(s: move Box<dyn Shape>).R: f64 = s.area()
+fun area_of(s: move Box<dyn Shape>).return: f64 = s.area()
 
-fun make().R: Box<dyn Shape> = Box.of(Circle(r = 2.0))
+fun make().return: Box<dyn Shape> = Box.of(Circle(r = 2.0))
 
 fun main() {
     val h = thread.spawn(area_of, make())

@@ -1,6 +1,6 @@
 datac Point(var x: i32, var y: i32)
 
-fun dist_sq(p: Point).R: i32 {
+fun dist_sq(p: Point).return: i32 {
     return p.x * p.x + p.y * p.y
 }
 

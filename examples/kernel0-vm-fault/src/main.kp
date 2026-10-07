@@ -25,7 +25,7 @@ const MAGIC: u64 = 0xC0FFEE
 
 static mut ROOT: usize = 0
 
-fun root_table().R: usize {
+fun root_table().return: usize {
     unsafe { ROOT }
 }
 

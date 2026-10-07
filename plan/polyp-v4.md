@@ -150,7 +150,7 @@ Test: `examples/polyp-a11y-test` pinned in `kelpc/tests/polyp_v4/a11y.expected`,
 ## Stage 4: memoised subtrees
 
 `core.Memo` lets a view leave a large, pure subtree as a cheap placeholder. The application gives a
-memo a sibling-unique key, a `Deps` value and a plain `fun (&Deps).R: List<Child<M>>`; the function
+memo a sibling-unique key, a `Deps` value and a plain `fun (&Deps).return: List<Child<M>>`; the function
 must return exactly one child through `core.single`. `Deps` is an ordered list of integers and
 strings, built with `core.deps()` and `push_int`, `push_bool` and `push_str`. Its declared equality
 is the cache contract: include every value the memo view reads. `k.memo(key, deps, build)` places a

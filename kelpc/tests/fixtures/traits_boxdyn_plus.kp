@@ -2,11 +2,11 @@
 // trait, and the trait that combines them is a declared trait with `A` and `B`
 // as supertraits.
 trait A {
-    fun Self.a().R: i32
+    fun Self.a().return: i32
 }
 
 trait B {
-    fun Self.b().R: i32
+    fun Self.b().return: i32
 }
 
 fun take(s: Box<dyn A + B>) { }

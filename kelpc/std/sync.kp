@@ -4,9 +4,9 @@
    representation, not `Copy`, with its method set lowered to the C runtime's
    pthread mutex rather than written in Kelp. Its surface is
 
-       fun Mutex.new(value: move T).R: Mutex<T>
-       fun Mutex<T>.lock(block: scoped fun(mut T).R: R).R: R
-       fun Mutex<T>.into_inner().R: T
+       fun Mutex.new(value: move T).return: Mutex<T>
+       fun Mutex<T>.lock(block: scoped fun(mut T).return: R).return: R
+       fun Mutex<T>.into_inner().return: T
 
    `Mutex.new` takes the guarded value by move. `lock` runs a scoped block while
    the mutex is held: the block receives `v: mut T`, a mutable borrow that is
@@ -31,12 +31,12 @@
 
    The rest of the family lives here too, all builtin in the same shape:
 
-       fun RwLock.new(value: move T).R: RwLock<T>
-       fun RwLock<T>.read(block: scoped fun(&T).R: R).R: R
-       fun RwLock<T>.write(block: scoped fun(mut T).R: R).R: R
-       fun RwLock<T>.try_read(block: scoped fun(&T).R: R).R: Option<R>
-       fun RwLock<T>.try_write(block: scoped fun(mut T).R: R).R: Option<R>
-       fun RwLock<T>.into_inner().R: T
+       fun RwLock.new(value: move T).return: RwLock<T>
+       fun RwLock<T>.read(block: scoped fun(&T).return: R).return: R
+       fun RwLock<T>.write(block: scoped fun(mut T).return: R).return: R
+       fun RwLock<T>.try_read(block: scoped fun(&T).return: R).return: Option<R>
+       fun RwLock<T>.try_write(block: scoped fun(mut T).return: R).return: Option<R>
+       fun RwLock<T>.into_inner().return: T
 
    `RwLock<T>` is writer-preferring: many readers at once, one writer alone,
    and a waiting writer blocks new readers so a stream of readers cannot starve
@@ -45,11 +45,11 @@
    forms run their block only when the lock was free and hand the value back in
    `Option` (`None` when it was busy).
 
-       fun Condvar.new().R: Condvar
+       fun Condvar.new().return: Condvar
        fun Condvar.notify_one()
        fun Condvar.notify_all()
-       fun Mutex<T>.wait_while(cv: &Condvar, pred: fun(&T).R: bool, block: scoped fun(mut T).R: R).R: R
-       fun Mutex<T>.wait_while_timeout(cv: &Condvar, pred: fun(&T).R: bool, millis: i64, block: scoped fun(mut T).R: R).R: Option<R>
+       fun Mutex<T>.wait_while(cv: &Condvar, pred: fun(&T).return: bool, block: scoped fun(mut T).return: R).return: R
+       fun Mutex<T>.wait_while_timeout(cv: &Condvar, pred: fun(&T).return: bool, millis: i64, block: scoped fun(mut T).return: R).return: Option<R>
 
    A wait has to release the mutex's own lock atomically around the sleep,
    which a scoped guard cannot express, so the wait lives on the mutex:
@@ -69,13 +69,13 @@
 /* Channels, in pure Kelp over the builtins above (`plan/sync.md` section 3,
    `plan/st1-status.md` for the shape that was chosen):
 
-       fun sync.bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>)
-       fun sync.unbounded<T>().R: (Sender<T>, Receiver<T>)
-       fun Sender<T>.send(value: move T).R: option.Option<T>
-       fun Sender<T>.clone().R: Sender<T>
-       fun Receiver<T>.recv().R: result.Result<T, RecvErr>
-       fun Receiver<T>.try_recv().R: option.Option<T>
-       fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout>
+       fun sync.bounded<T>(cap: usize).return: (Sender<T>, Receiver<T>)
+       fun sync.unbounded<T>().return: (Sender<T>, Receiver<T>)
+       fun Sender<T>.send(value: move T).return: option.Option<T>
+       fun Sender<T>.clone().return: Sender<T>
+       fun Receiver<T>.recv().return: result.Result<T, RecvErr>
+       fun Receiver<T>.try_recv().return: option.Option<T>
+       fun Receiver<T>.recv_timeout(millis: i64).return: result.Result<T, RecvTimeout>
        for v in rx { ... }
 
    There is no new runtime record. The two ends share one queue and one state
@@ -160,7 +160,7 @@ fun mut RecvEnd.drop() {
 }
 
 /// Builds a channel with capacity `cap`, bounded or not.
-fun make_channel<T>(cap: usize, bounded: bool).R: (Sender<T>, Receiver<T>) {
+fun make_channel<T>(cap: usize, bounded: bool).return: (Sender<T>, Receiver<T>) {
     val meta = Mutex.new(ChanMeta(count = 0, senders = 1, rx_alive = true, cap = cap, bounded = bounded))
     val q: Mutex<List<T>> = Mutex.new(List.empty())
     val ne = Condvar.new()
@@ -171,7 +171,7 @@ fun make_channel<T>(cap: usize, bounded: bool).R: (Sender<T>, Receiver<T>) {
 }
 
 /// A channel that holds at most `cap` values: `send` waits while it is full.
-fun bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>) {
+fun bounded<T>(cap: usize).return: (Sender<T>, Receiver<T>) {
     if cap == 0 {
         panic("sync.bounded: the capacity must be at least 1")
     }
@@ -179,16 +179,16 @@ fun bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>) {
 }
 
 /// A channel with no limit: `send` never waits.
-fun unbounded<T>().R: (Sender<T>, Receiver<T>) {
+fun unbounded<T>().return: (Sender<T>, Receiver<T>) {
     return make_channel<T>(0, false)
 }
 
 /// Queue `value`. `None` means it was queued; `Some(value)` hands it back because
 /// the receiver is gone. A scoped block cannot capture an owned value by move, so
 /// the value waits in a private one-element mutex and the block swaps it across.
-must_use fun Sender<T>.send(value: move T).R: option.Option<T> {
+must_use fun Sender<T>.send(value: move T).return: option.Option<T> {
     val staged: Mutex<List<T>> = Mutex.new(List.of(value))
-    val r = self.end.meta.wait_while(&self.end.nf, fun(s: &ChanMeta).R: bool = s.bounded && s.count >= s.cap && s.rx_alive) { s ->
+    val r = self.end.meta.wait_while(&self.end.nf, fun(s: &ChanMeta).return: bool = s.bounded && s.count >= s.cap && s.rx_alive) { s ->
         var mine = staged.swap(List.empty())
         if s.rx_alive {
             s.count += 1
@@ -206,14 +206,14 @@ must_use fun Sender<T>.send(value: move T).R: option.Option<T> {
 }
 
 /// Another sender on the same channel; the channel closes when the last one drops.
-fun Sender<T>.clone().R: Sender<T> {
+fun Sender<T>.clone().return: Sender<T> {
     self.end.meta.lock { s -> s.senders += 1 }
     return Sender<T>(q = self.q.share(), end = SendEnd(live = true, meta = self.end.meta.share(), ne = self.end.ne.share(), nf = self.end.nf.share()))
 }
 
 /// Take the oldest value, waiting while the queue is empty and a sender is alive.
-fun Receiver<T>.recv().R: result.Result<T, RecvErr> {
-    val r = self.end.meta.wait_while(&self.end.ne, fun(s: &ChanMeta).R: bool = s.count == 0 && s.senders > 0) { s ->
+fun Receiver<T>.recv().return: result.Result<T, RecvErr> {
+    val r = self.end.meta.wait_while(&self.end.ne, fun(s: &ChanMeta).return: bool = s.count == 0 && s.senders > 0) { s ->
         if s.count > 0 {
             s.count -= 1
             val item = self.q.lock { l -> l.remove(0) }
@@ -229,7 +229,7 @@ fun Receiver<T>.recv().R: result.Result<T, RecvErr> {
 }
 
 /// The oldest value if there is one now; never waits.
-fun Receiver<T>.try_recv().R: option.Option<T> {
+fun Receiver<T>.try_recv().return: option.Option<T> {
     val r = self.end.meta.lock { s ->
         if s.count > 0 {
             s.count -= 1
@@ -245,8 +245,8 @@ fun Receiver<T>.try_recv().R: option.Option<T> {
 }
 
 /// Like `recv`, but gives up after `millis` milliseconds with `Err(Timeout)`.
-fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout> {
-    val r = self.end.meta.wait_while_timeout(&self.end.ne, fun(s: &ChanMeta).R: bool = s.count == 0 && s.senders > 0, millis) { s ->
+fun Receiver<T>.recv_timeout(millis: i64).return: result.Result<T, RecvTimeout> {
+    val r = self.end.meta.wait_while_timeout(&self.end.ne, fun(s: &ChanMeta).return: bool = s.count == 0 && s.senders > 0, millis) { s ->
         if s.count > 0 {
             s.count -= 1
             val item = self.q.lock { l -> l.remove(0) }
@@ -268,7 +268,7 @@ fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout> {
 }
 
 /// `for v in rx`: one value per pass until every sender is gone.
-fun mut Receiver<T>.next().R: option.Option<T> {
+fun mut Receiver<T>.next().return: option.Option<T> {
     return when self.recv() {
         Ok(v) -> option.Option.Some(value = v)
         Err(_) -> {

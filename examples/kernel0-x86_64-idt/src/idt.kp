@@ -110,7 +110,7 @@ pub repr(c) datac TrapFrame(
 // One frame word at a byte offset, through the raw pointer the naked gate
 // handed the dispatcher. Every word in the frame is a `u64`, so an aligned
 // volatile load or store is the whole access.
-fun get(frame: Ptr<TrapFrame>, offset: usize).R: u64 {
+fun get(frame: Ptr<TrapFrame>, offset: usize).return: u64 {
     unsafe {
         frame.cast<u8>().byte_offset(offset.to_isize()).cast<u64>().read_volatile()
     }
@@ -122,7 +122,7 @@ fun set(frame: Ptr<TrapFrame>, offset: usize, value: u64) {
     }
 }
 
-fun entry_for(target: usize).R: IdtEntry {
+fun entry_for(target: usize).return: IdtEntry {
     return IdtEntry(
         offset_low = (target & 0xFFFF).to_u16(),
         selector = KERNEL_CS,
@@ -184,7 +184,7 @@ fun set_gs_base(addr: usize) {
 // 16-byte descriptor with its offset in three pieces, the frame is 160 bytes,
 // and the fields the gates and the dispatcher address by number are where the
 // templates pushed them.
-pub fun layout_ok().R: bool {
+pub fun layout_ok().return: bool {
     if size_of<IdtEntry>() != ENTRY_BYTES {
         return false
     }
@@ -521,7 +521,7 @@ fun report(frame: Ptr<TrapFrame>, vector: usize) {
 
 // CR2 holds the linear address a #PF faulted on. It means nothing outside a
 // #PF handler, because the next fault overwrites it.
-pub fun read_cr2().R: u64 {
+pub fun read_cr2().return: u64 {
     val v: u64 = unsafe {
         asm("mov {0}, cr2", out("r") _)
     }

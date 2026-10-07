@@ -3,7 +3,7 @@
 // does not run; a second call with the predicate already false returns `Some`.
 impl "std/option"
 
-fun is_zero(v: &i64).R: bool = v == 0
+fun is_zero(v: &i64).return: bool = v == 0
 
 fun main() {
     val m: Mutex<i64> = Mutex.new(0)

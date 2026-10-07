@@ -1,4 +1,4 @@
-fun fib(n: i32).R: i32 {
+fun fib(n: i32).return: i32 {
     if n < 2 {
         return n
     }

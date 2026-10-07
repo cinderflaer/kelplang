@@ -2,7 +2,7 @@
 // type arguments of its own.
 datac Pair<A, B>(val first: A, val second: B)
 
-fun Pair<A, B>.first_of().R: A = first
+fun Pair<A, B>.first_of().return: A = first
 
 fun main() {
     val p = Pair(first = 1, second = 2)

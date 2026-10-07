@@ -1,7 +1,7 @@
 // A-8: a returned view has to be derived from a reference parameter (the
 // elision rule `&str` returns already follow) — a view of a local would
 // dangle the moment this frame returns.
-fun bad().R: View {
+fun bad().return: View {
     val s = String.from_str("temp")
     return s.view()
 }

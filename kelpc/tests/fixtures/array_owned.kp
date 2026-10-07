@@ -8,7 +8,7 @@ datac Gate(val lo: u64, val hi: u64)
 datac Idt(var entries: [Gate; 4])
 datac Names(val items: [String; 2])
 
-fun sum(xs: [i32; 3]).R: i32 {
+fun sum(xs: [i32; 3]).return: i32 {
     var total: i32 = 0
     var i: usize = 0
     while i < xs.len() {
@@ -18,15 +18,15 @@ fun sum(xs: [i32; 3]).R: i32 {
     total
 }
 
-fun make().R: [i32; 3] = [1, 2, 3]
+fun make().return: [i32; 3] = [1, 2, 3]
 
-fun first_of(names: [String; 2]).R: usize = names.get(i = 0).len()
+fun first_of(names: [String; 2]).return: usize = names.get(i = 0).len()
 
 fun bump(buf: mut [u8; 2]) {
     buf.set(i = 0, v = 9)
 }
 
-fun take(buf: move [u8; 2]).R: u8 = buf.get(i = 1)
+fun take(buf: move [u8; 2]).return: u8 = buf.get(i = 1)
 
 fun main() {
     // A `datac` element array is filled by writing it out or by `set`: a

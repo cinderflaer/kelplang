@@ -10,14 +10,14 @@ pd val counter: AtomicI64 = AtomicI64.new(0)
 
 // The panicking worker: it does its increment first, so the total proves this
 // worker's write landed before it died.
-fun boom(c: &AtomicI64).R: i64 {
+fun boom(c: &AtomicI64).return: i64 {
     c.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
     panic("worker exploded")
 }
 
 // The other worker: forty-one increments and a value, so the join's `Ok` has
 // something to carry and the total is neither worker's alone.
-fun work(c: &AtomicI64).R: i64 {
+fun work(c: &AtomicI64).return: i64 {
     c.fetch_add(value = 41, order = atomic.Ordering.SeqCst)
     0
 }

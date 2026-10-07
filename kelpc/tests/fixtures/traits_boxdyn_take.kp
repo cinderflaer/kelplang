@@ -2,15 +2,15 @@
 // name. `Box.take`/`Box.set` need a sized element, and an owned trait object
 // has none; `get` borrows the trait back out instead.
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
 }
 
 datac Circle(val r: f64)
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
+    fun Self.area().return: f64 = r * r * 3.0
 }
 
-fun make().R: Box<dyn Shape> = Box.of(Circle(r = 1.0))
+fun make().return: Box<dyn Shape> = Box.of(Circle(r = 1.0))
 
 fun main() {
     var b = make()

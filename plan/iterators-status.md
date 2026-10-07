@@ -4,7 +4,7 @@ The shipped half is the protocol itself, and every fixture and test named in
 `plan/iterators.md` 8 passes on both backends:
 
 - `std/iter` declares `pub trait Iterator { type Item  fun mut
-  Self.next().R: option.Option<Self::Item> }`, ships `Range` with `range`/
+  Self.next().return: option.Option<Self::Item> }`, ships `Range` with `range`/
   `range_step`, and the drain helpers `count`/`sum_i64`/`collect_list`;
 - `for x in <expr>` keeps the index walk for a `List`/`[T; N]` and becomes a
   `next()` loop for an `Iterator`; anything else is refused naming the trait;
@@ -28,7 +28,7 @@ datac Take<I>(val inner: I, val remaining: usize)
 
 impl<I: Iterator> Iterator for Take<I> {
     type Item = I::Item
-    fun mut Self.next().R: option.Option<I::Item> { ... }
+    fun mut Self.next().return: option.Option<I::Item> { ... }
 }
 ```
 

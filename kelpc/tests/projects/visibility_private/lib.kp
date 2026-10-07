@@ -1,3 +1,3 @@
 // `hidden` carries no `pub`, so it is private to this module and the entry
 // module cannot name it (A-13).
-fun hidden(n: i32).R: i32 = n * 2
+fun hidden(n: i32).return: i32 = n * 2

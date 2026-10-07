@@ -19,7 +19,7 @@
      tie the two together, so the owned `List.into_iter()` (below) is the list
      iterator and it needs an element the language can move.
    - `map`/`filter` and every other closure-taking adapter. They would have to
-     store a `closure(T).R: U` whose `U` is the inner iterator's `Item`, which
+     store a `closure(T).return: U` whose `U` is the inner iterator's `Item`, which
      needs `Item` to be nameable in a `datac`'s field type. The language can
      name it in a *generic function* (`I::Item`) but not in a generic type
      declaration, so these wait on that. */
@@ -34,7 +34,7 @@ impl "std/option"
 pub trait Iterator {
     // What one `next()` yields.
     type Item
-    fun mut Self.next().R: option.Option<Self::Item>
+    fun mut Self.next().return: option.Option<Self::Item>
 }
 
 /* A half-open integer range, `[lo, hi)` stepping by `step`. The fields are
@@ -43,7 +43,7 @@ pub datac Range(var lo: i64, val hi: i64, val step: i64)
 
 impl Iterator for Range {
     type Item = i64
-    fun mut Self.next().R: option.Option<i64> {
+    fun mut Self.next().return: option.Option<i64> {
         // The emptiness test follows the step's direction, so a descending
         // range (`step < 0`) stops at `hi` from above rather than running on.
         if self.step > 0 {
@@ -63,13 +63,13 @@ impl Iterator for Range {
 
 // `lo` to `hi`, one step at a time, half-open: `iter.range(0, 3)` yields 0, 1,
 // 2, and an empty range yields nothing.
-pub fun range(a: i64, b: i64).R: Range = Range(lo = a, hi = b, step = 1)
+pub fun range(a: i64, b: i64).return: Range = Range(lo = a, hi = b, step = 1)
 
 // The same with an explicit step; a negative one walks down from `a` to `b`.
-pub fun range_step(a: i64, b: i64, step: i64).R: Range = Range(lo = a, hi = b, step = step)
+pub fun range_step(a: i64, b: i64, step: i64).return: Range = Range(lo = a, hi = b, step = step)
 
 /* How many items an iterator still holds, measured by draining it. */
-pub fun count<I: Iterator>(it: move I).R: usize {
+pub fun count<I: Iterator>(it: move I).return: usize {
     var total: usize = 0
     // A parameter is an immutable binding, and `for` borrows the iterator it
     // walks, so an owned one is bound to a `var` first. (A `var` local or a
@@ -85,7 +85,7 @@ pub fun count<I: Iterator>(it: move I).R: usize {
    accumulator. `I::Item` is any type; an instantiation whose item is not an
    `i64` is a type error at the addition, which is the honest edge of an
    associated type with no equality constraint. */
-pub fun sum_i64<I: Iterator>(it: move I).R: i64 {
+pub fun sum_i64<I: Iterator>(it: move I).return: i64 {
     var total: i64 = 0
     var cursor = it
     for x in cursor {
@@ -95,7 +95,7 @@ pub fun sum_i64<I: Iterator>(it: move I).R: i64 {
 }
 
 /* Drain an iterator into a fresh list, in order. */
-pub fun collect_list<I: Iterator>(it: move I).R: List<I::Item> {
+pub fun collect_list<I: Iterator>(it: move I).return: List<I::Item> {
     var out: List<I::Item> = List.empty()
     var cursor = it
     for x in cursor {

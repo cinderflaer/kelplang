@@ -1,11 +1,11 @@
 impl "errors"
 impl "std/result"
 
-fun failing().R: result.Result<i32, errors.IoErr> {
+fun failing().return: result.Result<i32, errors.IoErr> {
     return result.Result.Err(error = errors.IoErr.Bad(code = 13))
 }
 
-fun outer().R: result.Result<i32, errors.AppErr> {
+fun outer().return: result.Result<i32, errors.AppErr> {
     val v = failing()?
     return result.Result.Ok(value = v)
 }

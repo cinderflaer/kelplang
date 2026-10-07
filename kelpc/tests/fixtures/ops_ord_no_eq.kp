@@ -6,7 +6,7 @@ impl "std/ops"
 datac P(val x: i32)
 
 impl ops.Ord for P {
-    fun Self.cmp(other: &Self).R: i32 {
+    fun Self.cmp(other: &Self).return: i32 {
         if x < other.x {
             return -1
         }

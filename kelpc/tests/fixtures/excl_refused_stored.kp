@@ -3,7 +3,7 @@
 datac State(var count: i32)
 datac Handler(val f: fun(i32))
 
-fun keep(f: scoped fun(i32)).R: Handler {
+fun keep(f: scoped fun(i32)).return: Handler {
     return Handler(f = f)
 }
 

@@ -3,8 +3,8 @@
 // a borrow, so the read is refused; the message names the two ways round it.
 datac Counter(val n: i32)
 
-fun Counter.bump().R: i32 {
-    val f = fun() .R: i32 = n + 1
+fun Counter.bump().return: i32 {
+    val f = fun() .return: i32 = n + 1
     return f()
 }
 

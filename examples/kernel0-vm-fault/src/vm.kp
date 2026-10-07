@@ -38,17 +38,17 @@ const TOP_LEVEL: usize = 2
 // stub reaches `__stack_top`.
 static mut FRAME_CURSOR: usize = 0
 
-pub fun frames_start().R: usize = unsafe {
+pub fun frames_start().return: usize = unsafe {
     asm("la {0}, __frames_start", out("r") _)
 }
 
-pub fun frames_end().R: usize = unsafe {
+pub fun frames_end().return: usize = unsafe {
     asm("la {0}, __frames_end", out("r") _)
 }
 
 // The next free frame, or 0 when the region is exhausted. Zero is never a
 // frame, so the caller reads it as failure and every other return as success.
-pub fun alloc_frame().R: usize {
+pub fun alloc_frame().return: usize {
     unsafe {
         val next: usize = frames_start() + FRAME_CURSOR
         if next + PAGE_SIZE > frames_end() {
@@ -66,7 +66,7 @@ pub fun alloc_frame().R: usize {
     }
 }
 
-fun read_pte(table: usize, index: usize).R: u64 {
+fun read_pte(table: usize, index: usize).return: u64 {
     unsafe {
         val p: Ptr<u64> = Ptr.from_addr(table)
         p.offset(index.to_isize()).read_volatile()
@@ -81,33 +81,33 @@ fun write_pte(table: usize, index: usize, value: u64) {
 }
 
 // The VPN index for `level`, bits 12+9*level through 20+9*level of the address.
-fun vpn(va: usize, level: usize).R: usize {
+fun vpn(va: usize, level: usize).return: usize {
     (va >> (12 + 9 * level)) & (ENTRIES - 1)
 }
 
-pub fun page_offset(va: usize).R: usize {
+pub fun page_offset(va: usize).return: usize {
     va & (PAGE_SIZE - 1)
 }
 
 // The VPN split, named the way the spec names the three fields.
-pub fun vpn0(va: usize).R: usize = vpn(va, 0)
-pub fun vpn1(va: usize).R: usize = vpn(va, 1)
-pub fun vpn2(va: usize).R: usize = vpn(va, 2)
+pub fun vpn0(va: usize).return: usize = vpn(va, 0)
+pub fun vpn1(va: usize).return: usize = vpn(va, 1)
+pub fun vpn2(va: usize).return: usize = vpn(va, 2)
 
 // The physical page number a PTE names, as a byte address.
-pub fun pte_ppn(entry: u64).R: usize {
+pub fun pte_ppn(entry: u64).return: usize {
     ((entry >> 10) << 12).to_usize()
 }
 
-pub fun pte_flags(entry: u64).R: u64 {
+pub fun pte_flags(entry: u64).return: u64 {
     entry & 1023
 }
 
-pub fun pte_valid(entry: u64).R: bool {
+pub fun pte_valid(entry: u64).return: bool {
     entry & PTE_V != 0
 }
 
-pub fun pte_is_leaf(entry: u64).R: bool {
+pub fun pte_is_leaf(entry: u64).return: bool {
     entry & PTE_LEAF != 0
 }
 
@@ -115,25 +115,25 @@ pub fun pte_is_leaf(entry: u64).R: bool {
 // permission bits and nothing else. The caller sets A and D for a leaf,
 // because a kernel with no fault-driven access tracking can only make them
 // true up front.
-pub fun pte_encode(pa: usize, flags: u64).R: u64 {
+pub fun pte_encode(pa: usize, flags: u64).return: u64 {
     ((pa >> 12).to_u64() << 10) | flags
 }
 
 // `satp` for Sv39: mode 8 in bits 63:60, ASID 0 in bits 59:44, the root
 // table's PPN in bits 43:0 (`plan/address-spaces.md`).
-pub fun satp_encode(root: usize).R: usize {
+pub fun satp_encode(root: usize).return: usize {
     (SATP_MODE_SV39 << 60) | (root >> 12)
 }
 
-pub fun satp_mode(satp: usize).R: usize {
+pub fun satp_mode(satp: usize).return: usize {
     satp >> 60
 }
 
-pub fun satp_asid(satp: usize).R: usize {
+pub fun satp_asid(satp: usize).return: usize {
     (satp >> 44) & 0xFFFF
 }
 
-pub fun satp_ppn(satp: usize).R: usize {
+pub fun satp_ppn(satp: usize).return: usize {
     satp & 0xFFFFFFFFFFF
 }
 
@@ -141,7 +141,7 @@ pub fun satp_ppn(satp: usize).R: usize {
 // every absent non-leaf entry. Zero answers "no", either because a frame ran
 // out or because a superpage already covers the address: this walker never
 // splits one, so a caller that meets one has made a layout mistake.
-fun walk(root: usize, va: usize).R: usize {
+fun walk(root: usize, va: usize).return: usize {
     var table: usize = root
     var level: usize = TOP_LEVEL
     while level > 0 {
@@ -166,7 +166,7 @@ fun walk(root: usize, va: usize).R: usize {
 
 // Map one 4 KiB page. `flags` are the R/W/X/U/G bits; V, A and D are added
 // here. False means no frame was available or a superpage was in the way.
-pub fun map_page(root: usize, va: usize, pa: usize, flags: u64).R: bool {
+pub fun map_page(root: usize, va: usize, pa: usize, flags: u64).return: bool {
     val table: usize = walk(root, va)
     if table == 0 {
         return false
@@ -175,7 +175,7 @@ pub fun map_page(root: usize, va: usize, pa: usize, flags: u64).R: bool {
     return true
 }
 
-pub fun map_range(root: usize, va: usize, pa: usize, len: usize, flags: u64).R: bool {
+pub fun map_range(root: usize, va: usize, pa: usize, len: usize, flags: u64).return: bool {
     var offset: usize = 0
     while offset < len {
         if map_page(root, va + offset, pa + offset, flags) == false {
@@ -188,7 +188,7 @@ pub fun map_range(root: usize, va: usize, pa: usize, len: usize, flags: u64).R: 
 
 // Clear the leaf for `va`, answering true only when a valid leaf was there.
 // A cleared entry needs `flush_tlb` before the walker's view is trustworthy.
-pub fun unmap_page(root: usize, va: usize).R: bool {
+pub fun unmap_page(root: usize, va: usize).return: bool {
     var table: usize = root
     var level: usize = TOP_LEVEL
     while level > 0 {
@@ -209,7 +209,7 @@ pub fun unmap_page(root: usize, va: usize).R: bool {
 // The physical address `va` currently names, or `None`. A leaf at any level is
 // honoured, so a 2 MiB or 1 GiB superpage translates as the spec says, with the
 // bits the superpage ignores taken from `va`.
-pub fun translate(root: usize, va: usize).R: option.Option<usize> {
+pub fun translate(root: usize, va: usize).return: option.Option<usize> {
     var table: usize = root
     var level: usize = TOP_LEVEL
     while true {

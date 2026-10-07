@@ -5,7 +5,7 @@ impl "std/str"
 // its importer's `caps(*)`. The two files are in unrelated trees, so no single
 // narrow `fs` pattern could have covered both; reading both is what proves the
 // whole-resource wildcard, not one pattern, was delegated.
-pub fun read_two().R: String {
+pub fun read_two().return: String {
     val first = fs.read_text("__KELP_SCRATCH__/kelp_caps_star/first.txt")
     val second = fs.read_text("__KELP_SCRATCH__/kelp_caps_star_elsewhere/second.txt")
     return str.concat(first.as_str(), second.as_str())

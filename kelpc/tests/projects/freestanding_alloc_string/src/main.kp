@@ -3,7 +3,7 @@
 // them, so the call is refused by name with "needs the hosted runtime".
 static mut ARENA: [u8; 128] = [0; 128]
 
-fun alloc(_size: usize, _align: usize).R: Ptr<u8> {
+fun alloc(_size: usize, _align: usize).return: Ptr<u8> {
     val arena: Ptr<[u8; 128]> = unsafe { Ptr.from_mut(ARENA) }
     val out: Ptr<u8> = arena.cast<u8>()
     return out

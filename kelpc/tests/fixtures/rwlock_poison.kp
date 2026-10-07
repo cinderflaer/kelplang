@@ -8,7 +8,7 @@ impl "std/result"
 
 pd val rw: RwLock<i64> = RwLock.new(0)
 
-fun boom(r: &RwLock<i64>).R: i64 {
+fun boom(r: &RwLock<i64>).return: i64 {
     r.write { v ->
         *v = 99
         panic("writer exploded")

@@ -12,7 +12,7 @@ fun mut LockGuard.drop() {
     LOCK.store(value = false, order = atomic.Ordering.SeqCst)
 }
 
-fun with_lock().R: bool {
+fun with_lock().return: bool {
     LOCK.store(value = true, order = atomic.Ordering.SeqCst)
     val g = LockGuard(held = true)
     return LOCK.load(order = atomic.Ordering.SeqCst)

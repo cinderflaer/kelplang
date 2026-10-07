@@ -3,4 +3,4 @@
 // actual content.
 impl "std/env"
 
-pub fun probe().R: bool = env.has("PATH") || true
+pub fun probe().return: bool = env.has("PATH") || true

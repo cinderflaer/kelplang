@@ -12,7 +12,7 @@
 impl "std/str"
 impl "std/result"
 
-fun divide(dividend: i64, divisor: i64).R: i64 {
+fun divide(dividend: i64, divisor: i64).return: i64 {
     return dividend / divisor
 }
 

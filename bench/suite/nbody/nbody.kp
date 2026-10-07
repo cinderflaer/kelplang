@@ -8,7 +8,7 @@ const PI: f64 = 3.141592653589793
 const SOLAR_MASS: f64 = 4.0 * PI * PI
 const DAYS: f64 = 365.24
 
-fun size_arg(default: i64).R: i64 {
+fun size_arg(default: i64).return: i64 {
     if process.arg_count() < 2 {
         return default
     }
@@ -22,7 +22,7 @@ fun size_arg(default: i64).R: i64 {
 
 datac Body(val x: f64, val y: f64, val z: f64, val vx: f64, val vy: f64, val vz: f64, val mass: f64)
 
-fun initial().R: [Body; 5] {
+fun initial().return: [Body; 5] {
     var b: [Body; 5] = [Body(x = 0.0, y = 0.0, z = 0.0, vx = 0.0, vy = 0.0, vz = 0.0, mass = 0.0); 5]
     b.set(0, Body(x = 0.0, y = 0.0, z = 0.0, vx = 0.0, vy = 0.0, vz = 0.0, mass = SOLAR_MASS))
     b.set(1, Body(x = 4.84143144246472090, y = -1.16032004402742839, z = -0.103622044471123109,
@@ -86,7 +86,7 @@ fun advance(b: mut [Body; 5], dt: f64) {
     }
 }
 
-fun energy(b: &[Body; 5]).R: f64 {
+fun energy(b: &[Body; 5]).return: f64 {
     var e: f64 = 0.0
     var i: usize = 0
     while i < 5 {

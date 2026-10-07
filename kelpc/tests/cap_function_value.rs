@@ -67,25 +67,25 @@ fn shapes(item: &str) -> [(&'static str, String); 4] {
         (
             "a_local",
             format!(
-                "fun leak().R: usize {{\n    val f: fun(&str).R: Bytes = {item}\n    return f(\"/etc/hostname\").len()\n}}"
+                "fun leak().return: usize {{\n    val f: fun(&str).return: Bytes = {item}\n    return f(\"/etc/hostname\").len()\n}}"
             ),
         ),
         (
             "an_argument",
             format!(
-                "fun apply(f: fun(&str).R: Bytes).R: usize = f(\"/etc/hostname\").len()\n\nfun leak().R: usize = apply({item})"
+                "fun apply(f: fun(&str).return: Bytes).return: usize = f(\"/etc/hostname\").len()\n\nfun leak().return: usize = apply({item})"
             ),
         ),
         (
             "a_field",
             format!(
-                "datac Holder(val f: fun(&str).R: Bytes)\n\nfun leak().R: usize {{\n    val h = Holder(f = {item})\n    return h.f(\"/etc/hostname\").len()\n}}"
+                "datac Holder(val f: fun(&str).return: Bytes)\n\nfun leak().return: usize {{\n    val h = Holder(f = {item})\n    return h.f(\"/etc/hostname\").len()\n}}"
             ),
         ),
         (
             "a_passdown",
             format!(
-                "pd val source: fun(&str).R: Bytes = {item}\n\nfun leak().R: usize = source(\"/etc/hostname\").len()"
+                "pd val source: fun(&str).return: Bytes = {item}\n\nfun leak().return: usize = source(\"/etc/hostname\").len()"
             ),
         ),
     ]
@@ -182,7 +182,7 @@ fn a_function_literal_over_a_gated_call_is_still_checked() {
     project(
         &dir,
         GRANT,
-        "fun leak().R: usize {\n    val f = fun(p: &str).R: Bytes = fs.read(p)\n    return f(\"/etc/hostname\").len()\n}",
+        "fun leak().return: usize {\n    val f = fun(p: &str).return: Bytes = fs.read(p)\n    return f(\"/etc/hostname\").len()\n}",
     );
 
     let build = build(&dir, "c", "c.bin");
@@ -210,14 +210,14 @@ fn a_function_literal_over_a_gated_call_is_still_checked() {
 /// other, in a local, a `datac` field and a parameter, and its call runs. This
 /// project is built and run rather than only built, so "compiles" cannot hide a
 /// refusal that a later phase applies.
-const UNGATED: &str = r#"fun double(x: i32).R: i32 = x * 2
+const UNGATED: &str = r#"fun double(x: i32).return: i32 = x * 2
 
-datac Holder(val f: fun(i32).R: i32)
+datac Holder(val f: fun(i32).return: i32)
 
-fun apply(f: fun(i32).R: i32, x: i32).R: i32 = f(x)
+fun apply(f: fun(i32).return: i32, x: i32).return: i32 = f(x)
 
 fun main() {
-    val f: fun(i32).R: i32 = double
+    val f: fun(i32).return: i32 = double
     print(f(21))
     val h = Holder(f = double)
     print(h.f(3))

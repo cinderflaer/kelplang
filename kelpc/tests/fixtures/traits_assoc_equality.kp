@@ -3,9 +3,9 @@
 
 trait Src {
     type Out
-    fun Self.produce().R: Self::Out
+    fun Self.produce().return: Self::Out
 }
 
-fun pick<I: Src<Out = i32>>(x: &I).R: i32 = 0
+fun pick<I: Src<Out = i32>>(x: &I).return: i32 = 0
 
 fun main() { }

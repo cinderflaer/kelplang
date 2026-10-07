@@ -2,4 +2,4 @@
 // can show exactly one check; `run.sh` rewrites this file in a scratch copy
 // and boots the project once per phase. The tracked value is a default so
 // `kelpc build` alone produces a valid image.
-pub fun which().R: u32 = 1
+pub fun which().return: u32 = 1

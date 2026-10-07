@@ -7,7 +7,7 @@
 // count that is wrong by an element stops the buffer being owned exactly
 // once, which only the memory gate can see. `list_basic.kp` never grows past
 // four elements.
-fun total_of(xs: List<i32>).R: i32 {
+fun total_of(xs: List<i32>).return: i32 {
     var total = 0
     var i: usize = 0
     while i < xs.len() {

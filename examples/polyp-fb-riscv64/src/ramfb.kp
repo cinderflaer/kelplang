@@ -53,21 +53,21 @@ datac Config(var addr: u64, var fourcc: u32, var flags: u32, var width: u32, var
 
 // A pointer to one field of a static, at a byte offset: `Ptr.from_mut(T).cast<U>()` cannot be
 // written as one chained expression, so the pointer is bound first (`plan/user-ffi-gap-analysis.md`).
-fun dma_u32(at: usize).R: Ptr<u32> {
+fun dma_u32(at: usize).return: Ptr<u32> {
     val whole: Ptr<Dma> = unsafe { Ptr.from_mut(DMA) }
     val bytes: Ptr<u8> = whole.cast<u8>()
     val here: Ptr<u8> = bytes.byte_offset(at.to_isize())
     return here.cast<u32>()
 }
 
-fun dma_u64(at: usize).R: Ptr<u64> {
+fun dma_u64(at: usize).return: Ptr<u64> {
     val whole: Ptr<Dma> = unsafe { Ptr.from_mut(DMA) }
     val bytes: Ptr<u8> = whole.cast<u8>()
     val here: Ptr<u8> = bytes.byte_offset(at.to_isize())
     return here.cast<u64>()
 }
 
-fun dma_address().R: u64 {
+fun dma_address().return: u64 {
     val whole: Ptr<Dma> = unsafe { Ptr.from_mut(DMA) }
     val bytes: Ptr<u8> = whole.cast<u8>()
     return bytes.addr().to_u64()
@@ -75,7 +75,7 @@ fun dma_address().R: u64 {
 
 // Start one transfer: write the descriptor, then its own address to the DMA register, then wait for
 // the device to clear the control word.
-fun run(control: u32, length: u32, address: u64).R: u32 {
+fun run(control: u32, length: u32, address: u64).return: u32 {
     unsafe {
         dma_u32(0).write_volatile(control.to_be())
         dma_u32(4).write_volatile(length.to_be())
@@ -98,7 +98,7 @@ fun run(control: u32, length: u32, address: u64).R: u32 {
 }
 
 // Read the whole file directory into `DIR`, which makes the entry scan a memory walk.
-fun load_directory().R: u32 {
+fun load_directory().return: u32 {
     val base: Ptr<[u8; DIR_BYTES]> = unsafe { Ptr.from_mut(DIR) }
     val bytes: Ptr<u8> = base.cast<u8>()
     return run(
@@ -108,22 +108,22 @@ fun load_directory().R: u32 {
     )
 }
 
-fun dir_byte(at: usize).R: u8 = unsafe { DIR.get(i = at) }
+fun dir_byte(at: usize).return: u8 = unsafe { DIR.get(i = at) }
 
 
 // The directory's own fields are big-endian, and the buffer holds a packed record rather than an
 // aligned array of integers, so they are assembled a byte at a time.
-fun dir_u16(at: usize).R: u16 {
+fun dir_u16(at: usize).return: u16 {
     return (dir_byte(at).to_u16() * 256) + dir_byte(at + 1).to_u16()
 }
 
-fun dir_u32(at: usize).R: u32 {
+fun dir_u32(at: usize).return: u32 {
     return ((dir_byte(at).to_u32() * 256 + dir_byte(at + 1).to_u32()) * 256 + dir_byte(at + 2).to_u32()) * 256 + dir_byte(at + 3).to_u32()
 }
 
 // Whether the entry at `entry` names `want`: the name starts eight bytes in and is NUL-padded, so a
 // match needs every byte of `want` and a NUL after them.
-fun dir_names(at: usize, want: str).R: bool {
+fun dir_names(at: usize, want: str).return: bool {
     val n = str.len(want)
     if n > 55 {
         return false
@@ -139,7 +139,7 @@ fun dir_names(at: usize, want: str).R: bool {
 }
 
 // The selector of the file `want`, or 0 when the directory does not have it.
-fun find_file(want: str).R: u16 {
+fun find_file(want: str).return: u16 {
     var count: u32 = dir_u32(0)
     if count > DIR_ENTRIES {
         count = DIR_ENTRIES
@@ -158,7 +158,7 @@ fun find_file(want: str).R: u16 {
 // Register `pixels` as the display surface. `stride_px` is in pixels, the device's `stride` in
 // bytes. The return value is 0 on success, 1 when the directory read failed, 2 when `etc/ramfb` is
 // not there, and 3 when the device refused the write; `main.kp` prints the one digit.
-pub fun setup(pixels: usize, width: i32, height: i32, stride_px: i32).R: u32 {
+pub fun setup(pixels: usize, width: i32, height: i32, stride_px: i32).return: u32 {
     val failed: u32 = load_directory()
     if (failed & FW_CFG_CTL_ERROR) != 0 {
         return 1

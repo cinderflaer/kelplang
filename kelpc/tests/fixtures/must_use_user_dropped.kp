@@ -1,5 +1,5 @@
 // MISSING-Cn2Ym: a bare call to a `must_use fun` is refused.
-must_use fun check(n: i32).R: bool = n > 0
+must_use fun check(n: i32).return: bool = n > 0
 
 fun main() {
     check(1)

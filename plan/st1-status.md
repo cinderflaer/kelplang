@@ -55,7 +55,7 @@ Every program above passes on the default LLVM backend and under
 - **`for v in rx`**: a trait impl cannot name a generic instantiation
   (`impl Iterator for Receiver<T>` is a parse refusal), so `implements_iterator`
   in `infer.rs` now also accepts a generic `datac` whose template declares
-  `fun mut X<T>.next().R: option.Option<..>`; the desugar is an ordinary `next()`
+  `fun mut X<T>.next().return: option.Option<..>`; the desugar is an ordinary `next()`
   call, so a wrong shape is that call's type error.
 - **The pool's panic survival does not use a thread-local `jmp_buf`.** A
   `longjmp` out of a job would skip the `pthread_cleanup` handlers a

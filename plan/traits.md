@@ -9,25 +9,25 @@ monomorphization is unchanged and neither backend learns a new lowering.*
 
 ```
 trait Shape {
-    fun Self.area().R: f64
-    fun Self.describe().R: String {
+    fun Self.area().return: f64
+    fun Self.describe().return: String {
         return "a shape"
     }
     fun mut Self.scale(f: f64)
 }
 
 trait Named: Shape {
-    fun Self.name().R: str
+    fun Self.name().return: str
 }
 ```
 
 - A trait is a top-level declaration. Its body is one or more methods, in the same receiver form a
   method is written in (`plan/syntax.md` 8), with `Self` in the receiver's type position standing
   for the implementing type. `Self` is also legal in the other types a method names
-  (`fun Self.smaller_than(other: &Self).R: bool`).
-- A method with **no body** is a **signature**: `fun [mut] Self.name([param, ...])[.R: T]`, no `=`
+  (`fun Self.smaller_than(other: &Self).return: bool`).
+- A method with **no body** is a **signature**: `fun [mut] Self.name([param, ...])[.return: T]`, no `=`
   and no `{ ... }`. `mut` on the receiver is part of the signature.
-- A method **with a body** is a **default method**: `fun Self.describe().R: String { ... }`,
+- A method **with a body** is a **default method**: `fun Self.describe().return: String { ... }`,
   written exactly like an ordinary method, with `Self` standing for the implementing type. A
   default body may call the trait's other methods through `self` (`self.area()`), read no field it
   did not get from a method, and use the trait's own module's types. It is checked once per
@@ -51,13 +51,13 @@ trait Named: Shape {
 datac Circle(val r: f64)
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.14159
+    fun Self.area().return: f64 = r * r * 3.14159
     fun mut Self.scale(f: f64) { r = r * f }
     // `describe` is omitted: it comes from the trait's default.
 }
 
 trait Counts {
-    fun Self.count().R: i32 { return 0 }
+    fun Self.count().return: i32 { return 0 }
 }
 
 // A trait whose methods are all defaulted is implemented by an empty block.
@@ -99,11 +99,11 @@ through the same generated `kelp_drop_<T>`.
 ## 3. Bounds, supertraits and how dispatch stays static
 
 ```
-fun area_of<T: Shape>(s: &T).R: f64 = s.area()
-fun describe<T: Shape + Named>(s: &T).R: String = ...
+fun area_of<T: Shape>(s: &T).return: f64 = s.area()
+fun describe<T: Shape + Named>(s: &T).return: String = ...
 
 // `name_of` may call `Shape`'s methods on its argument because `Named: Shape`.
-fun name_then_area<T: Named>(s: &T).R: f64 {
+fun name_then_area<T: Named>(s: &T).return: f64 {
     print(s.name())
     return s.area()
 }
@@ -131,14 +131,14 @@ fun name_then_area<T: Named>(s: &T).R: f64 {
 
 ```
 trait Doubler {
-    fun Self.double().R: i32
+    fun Self.double().return: i32
 }
 
 impl Doubler for i32 {
-    fun Self.double().R: i32 = self * 2
+    fun Self.double().return: i32 = self * 2
 }
 
-fun twice<T: Doubler>(x: T).R: i32 = x.double() + x.double()
+fun twice<T: Doubler>(x: T).return: i32 = x.double() + x.double()
 ```
 
 - A trait may be implemented **for a builtin type that already carries methods**, which is exactly
@@ -250,17 +250,17 @@ runtime vtable. The value is still a borrow: the compiler never owns a trait obj
 
 ```
 trait Shape {
-    fun Self.area().R: f64
-    fun Self.describe().R: String { return "a shape" }
+    fun Self.area().return: f64
+    fun Self.describe().return: String { return "a shape" }
     fun mut Self.scale(f: f64)
 }
 
-trait Named: Shape { fun Self.name().R: str }
+trait Named: Shape { fun Self.name().return: str }
 
 datac Circle(val r: f64)
-impl Shape for Circle { fun Self.area().R: f64 = r * r * 3.14159 }
+impl Shape for Circle { fun Self.area().return: f64 = r * r * 3.14159 }
 
-fun describe(s: &dyn Shape).R: String = s.describe()
+fun describe(s: &dyn Shape).return: String = s.describe()
 fun grow(s: &mut dyn Shape) { s.scale(2.0) }
 
 fun main() {
@@ -279,7 +279,7 @@ fun main() {
   with nowhere to live.
 - A trait object is legal **as a parameter type and as a local binding type** (`val`/`var`). A
   parameter includes a `fun` literal's parameter and the parameter of a function *type*, which is
-  a parameter position too. It is refused everywhere else by name: as a `.R:` return type, as a
+  a parameter position too. It is refused everywhere else by name: as a `.return:` return type, as a
   `datac`/`enum` field or payload, as a `List`/`Box`/`Map`/`Atomic`/array element or argument, as
   a tuple element, and as a `static`'s type. A function type cannot return one either, which is
   the same borrow-return rule. A bare `dyn Name` is refused by name; `Box<dyn Name>` is slice 7
@@ -448,21 +448,21 @@ changes and a freestanding image may use one.
 ```
 trait Iterator {
     type Item
-    fun mut Self.next().R: Option<Self::Item>
+    fun mut Self.next().return: Option<Self::Item>
 }
 
 datac Counter(val n: i32)
 
 impl Iterator for Counter {
     type Item = i32
-    fun mut Self.next().R: Option<i32> {
+    fun mut Self.next().return: Option<i32> {
         n += 1
         return Option.Some(value = n)
     }
 }
 
 // `I::Item` is usable in a parameter, a return and a local type.
-fun first_of<I: Iterator>(it: mut I).R: Option<I::Item> {
+fun first_of<I: Iterator>(it: mut I).return: Option<I::Item> {
     return it.next()
 }
 ```
@@ -479,7 +479,7 @@ fun first_of<I: Iterator>(it: mut I).R: Option<I::Item> {
   `Self` stands for the implementing type. The impl's own methods may write `Self::Item` too, and
   it means the type the impl bound.
 - `T::Item` is legal wherever `T` is a type parameter in scope: a generic function's parameter,
-  return, local and field-adjacent types, `fun f<I: Iterator>(it: mut I).R: Option<I::Item>`. It
+  return, local and field-adjacent types, `fun f<I: Iterator>(it: mut I).return: Option<I::Item>`. It
   is resolved at every instantiation, from the impl the concrete argument names.
 - An associated type is **projected from a bound**, so `I::Item` needs `I` to carry a bound whose
   trait declares `Item`. A projection through a type that has no such bound is refused where it is
@@ -549,15 +549,15 @@ lowering and a freestanding image may use one. On top of it, `?` converts its fa
 
 ```
 pub trait From<T> {
-    fun from(value: T).R: Self
+    fun from(value: T).return: Self
 }
 
 pub trait Into<T> {
-    fun Self.into().R: T
+    fun Self.into().return: T
 }
 
 trait Store<K, V: Named> {
-    fun Self.get(key: K).R: V
+    fun Self.get(key: K).return: V
 }
 ```
 
@@ -593,13 +593,13 @@ has no `self` at all is **static**, and is written with no receiver:
 
 ```
 pub trait From<T> {
-    fun from(value: T).R: Self
+    fun from(value: T).return: Self
 }
 
 datac AppErr(val code: i32, val note: String)
 
 impl From<i32> for AppErr {
-    fun from(value: i32).R: AppErr = AppErr(code = value, note = "int")
+    fun from(value: i32).return: AppErr = AppErr(code = value, note = "int")
 }
 
 fun main() {
@@ -610,7 +610,7 @@ fun main() {
 
 - A static method is a trait signature with no body, or an impl method with no `Self` receiver and
   exactly the declared signature. It is called on the **type**: `AppErr.from(7)`, and through a
-  **bounded type parameter**: `X.from(7)` for `fun f<X: From<i32>>(v: i32).R: X`. The return type
+  **bounded type parameter**: `X.from(7)` for `fun f<X: From<i32>>(v: i32).return: X`. The return type
   `Self` is the implementing type, so the call's type is `AppErr` (or `X`).
 - `AppErr.from(7)` is resolved against the impls of every trait the type has: the compiler finds
   the impl whose trait declares a static `from` and whose substituted parameter types match the
@@ -651,11 +651,11 @@ The shipped `std/convert` declares the two conversion traits and nothing else:
 ```
 // `std/convert`
 pub trait From<T> {
-    fun from(value: T).R: Self
+    fun from(value: T).return: Self
 }
 
 pub trait Into<T> {
-    fun Self.into().R: T
+    fun Self.into().return: T
 }
 ```
 
@@ -680,7 +680,7 @@ is new is only the `Ok`/`Err` failure payload:
   The signature is checked: the impl's `from` has to take exactly `E1` and return exactly `E2`, so
   the call is the ordinary static call of section 11.2.
 - When no such impl exists, the error names both failure types and names `From`, and says to write
-  `impl From<E1> for E2 { fun from(value: E1).R: E2 { ... } }`.
+  `impl From<E1> for E2 { fun from(value: E1).return: E2 { ... } }`.
 - `Some`/`None` has no payload to convert, so `Option` to `Option` is unchanged: the two have to
   be the same shape and there is nothing else to check.
 - The two enums may be different declarations (`Result` propagated out of a function that returns
@@ -765,24 +765,24 @@ container already has.
 
 ```
 trait Shape {
-    fun Self.area().R: f64
-    fun Self.kind().R: str
+    fun Self.area().return: f64
+    fun Self.kind().return: str
     fun mut Self.scale(f: f64)
 }
 
 datac Circle(val r: f64)
-impl Shape for Circle { fun Self.area().R: f64 = r * r * 3.14159 }
+impl Shape for Circle { fun Self.area().return: f64 = r * r * 3.14159 }
 
 datac Holder(val shape: Box<dyn Shape>)
 
-fun make(big: bool).R: Box<dyn Shape> {
+fun make(big: bool).return: Box<dyn Shape> {
     if big {
         return Box.of(Circle(r = 2.0))   // the coercion happens here
     }
     return Box.of(Circle(r = 1.0))
 }
 
-fun describe(s: &dyn Shape).R: str = s.kind()
+fun describe(s: &dyn Shape).return: str = s.kind()
 
 fun main() {
     var shapes: List<Box<dyn Shape>> = List.empty()
@@ -991,38 +991,38 @@ signature the lowering calls:
 ```
 // std/ops
 pub trait Add {
-    fun Self.add(rhs: &Self).R: Self
+    fun Self.add(rhs: &Self).return: Self
 }
 
 pub trait Sub {
-    fun Self.sub(rhs: &Self).R: Self
+    fun Self.sub(rhs: &Self).return: Self
 }
 
 pub trait Mul {
-    fun Self.mul(rhs: &Self).R: Self
+    fun Self.mul(rhs: &Self).return: Self
 }
 
 pub trait Div {
-    fun Self.div(rhs: &Self).R: Self
+    fun Self.div(rhs: &Self).return: Self
 }
 
 pub trait Rem {
-    fun Self.rem(rhs: &Self).R: Self
+    fun Self.rem(rhs: &Self).return: Self
 }
 
 pub trait Neg {
-    fun Self.neg().R: Self
+    fun Self.neg().return: Self
 }
 
 pub trait Ord {
-    fun Self.cmp(other: &Self).R: i32
+    fun Self.cmp(other: &Self).return: i32
 }
 ```
 
 - An operator trait takes no type parameters and declares exactly one method, so a type either
   implements the operator or does not. `Add`, `Sub`, `Mul`, `Div` and `Rem` all have the shape
-  `fun Self.name(rhs: &Self).R: Self`; `Neg` is `fun Self.neg().R: Self`; `Ord` is
-  `fun Self.cmp(other: &Self).R: i32`.
+  `fun Self.name(rhs: &Self).return: Self`; `Neg` is `fun Self.neg().return: Self`; `Ord` is
+  `fun Self.cmp(other: &Self).return: i32`.
 - `cmp` returns the sign of the order: negative for less, zero for equal, positive for greater,
   exactly as `memcmp` does. The lowering never calls `cmp` for equality (13.3).
 - The trait module is an ordinary shipped module: a program writes `impl "std/ops"` and reaches the
@@ -1083,7 +1083,7 @@ means `a.cmp(&b) < 0`, `a <= b` means `a.cmp(&b) <= 0`, `a > b` means `a.cmp(&b)
 ```
 // std/fmt
 pub trait Display {
-    fun Self.to_text().R: String
+    fun Self.to_text().return: String
 }
 ```
 
@@ -1125,7 +1125,7 @@ Each refused where it is written, with the message naming the follow-up:
 
 An operator on a **generic type parameter** is deliberately *not* on that list: a generic
 function's body is checked once per instantiation, so `T` is a concrete `datac`/`enum` by the time
-the operator is lowered. `fun sum<T: ops.Add>(a: T, b: T).R: T = a + b` compiles for every `T` that
+the operator is lowered. `fun sum<T: ops.Add>(a: T, b: T).return: T = a + b` compiles for every `T` that
 implements `Add`, and `Display` in a template behaves the same way.
 
 ### 13.6 What the compiler does not check
@@ -1199,15 +1199,15 @@ the `?`-shape message now says to `match` instead, the operator-with-a-type-argu
 there is no `Add<Other>`, the trait-for-instantiation message names the wrapper, and an array
 length mismatch now says the length is part of the type and shows the const-generic spelling.
 
-1. Missing method in an impl: "trait 'Shape' declares 'fun Self.name().R: str', and 'impl Shape for Circle' does not implement it: add ... to the block".
+1. Missing method in an impl: "trait 'Shape' declares 'fun Self.name().return: str', and 'impl Shape for Circle' does not implement it: add ... to the block".
 2. Missing `type`: "trait 'Src' declares 'type Out', and 'impl Src for A' does not bind it: add 'type Out = <concrete type>' to the block".
 3. `for` over a non-iterator: "'for' walks a 'List<T>' or a type that implements 'Iterator' ... implement 'std.iter.Iterator' for it (...), or walk a 'List' by index".
 4. `?` with no `From`: "'?' cannot convert a failure: ... write 'impl From<IoErr> for AppErr { ... }' so the operator has a conversion to call".
 5. Array length / const mismatch: "argument 'a' has type '[i32; 3]', expected '[i32; 4]' - an array's length is part of its type; pass an array of the expected length, or declare the parameter over any length (`fun f<const N: usize>(a: &[T; N])`)" (improved).
 6. Object-unsafe trait: "'&dyn Cloneable' is not allowed: method 'dup' returns 'Self', and a trait object does not know the concrete type it would build".
 7. Unmet bound: "the call to 'area_of' needs 'Point' to implement the trait 'Shape', and it does not: write 'impl Shape for Point { ... }' in the trait's module or in the type's".
-8. Operator with no impl: "cannot use '+' on 'P': it does not implement 'Add' from 'std/ops' (write 'impl Add for P { fun Self.add(rhs: &Self).R: P }', importing 'std/ops')".
-9. `Display` missing: "cannot interpolate a value of type 'P' into a string template: it does not implement 'Display' (write 'impl fmt.Display for P { fun Self.to_text().R: String }', importing 'std/fmt')".
+8. Operator with no impl: "cannot use '+' on 'P': it does not implement 'Add' from 'std/ops' (write 'impl Add for P { fun Self.add(rhs: &Self).return: P }', importing 'std/ops')".
+9. `Display` missing: "cannot interpolate a value of type 'P' into a string template: it does not implement 'Display' (write 'impl fmt.Display for P { fun Self.to_text().return: String }', importing 'std/fmt')".
 10. `?` shape mismatch, and a trait for a generic instantiation (both improved, texts in the tour).
 
 ### 14.2 Tooling

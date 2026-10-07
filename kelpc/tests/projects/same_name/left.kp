@@ -1,5 +1,5 @@
 pub datac Item(val n: i32)
 
-pub fun twice(i: Item).R: i32 = i.n * 2
+pub fun twice(i: Item).return: i32 = i.n * 2
 
-pub fun describe(i: Item).R: i32 = i.n + 1
+pub fun describe(i: Item).return: i32 = i.n + 1

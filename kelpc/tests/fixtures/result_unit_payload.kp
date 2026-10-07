@@ -7,7 +7,7 @@ impl "std/result"
 
 pd var calls: i64 = 0
 
-fun noop().R: unit {
+fun noop().return: unit {
     calls = calls + 1
 }
 

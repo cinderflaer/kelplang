@@ -1,14 +1,14 @@
 // An impl binds an associated type the trait does not declare: refused.
 
 trait Src {
-    fun Self.produce().R: i32
+    fun Self.produce().return: i32
 }
 
 datac A(val n: i32)
 
 impl Src for A {
     type Out = i32
-    fun Self.produce().R: i32 = n
+    fun Self.produce().return: i32 = n
 }
 
 fun main() { }

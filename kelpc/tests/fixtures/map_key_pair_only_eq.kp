@@ -5,7 +5,7 @@
 // declared `eq` reaching only the operator.
 datac Half(val x: i32)
 
-fun Half.eq(other: &Half).R: bool = self.x == other.x
+fun Half.eq(other: &Half).return: bool = self.x == other.x
 
 fun main() {
     print(Half(x = 1).eq(other = Half(x = 1)))

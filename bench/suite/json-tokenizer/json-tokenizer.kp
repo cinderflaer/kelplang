@@ -9,7 +9,7 @@ impl "std/process"
 impl "std/str"
 impl "std/result"
 
-fun size_arg(default: i64).R: i64 {
+fun size_arg(default: i64).return: i64 {
     if process.arg_count() < 2 {
         return default
     }
@@ -21,13 +21,13 @@ fun size_arg(default: i64).R: i64 {
     }
 }
 
-fun is_digit(c: u8).R: bool = c >= 48 && c <= 57
+fun is_digit(c: u8).return: bool = c >= 48 && c <= 57
 
-fun is_num_char(c: u8).R: bool {
+fun is_num_char(c: u8).return: bool {
     return (c >= 48 && c <= 57) || c == 46 || c == 101 || c == 69 || c == 43 || c == 45
 }
 
-fun is_alpha(c: u8).R: bool = c >= 97 && c <= 122
+fun is_alpha(c: u8).return: bool = c >= 97 && c <= 122
 
 fun main() {
     val target = size_arg(20000000).to_usize()

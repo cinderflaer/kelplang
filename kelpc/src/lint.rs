@@ -408,7 +408,7 @@ fn ident_at(tokens: &[Token], i: usize) -> Option<(String, Span)> {
 ///   identifier after that `.`.
 /// - a parameter or a field is an identifier that a `(` or a `,` introduces
 ///   and a `:` follows: `fun f(a: i32)`, `datac P(val x: i32)`,
-///   `fun(mut Counter)`. A function *type*'s `.R: i64` cannot be mistaken for
+///   `fun(mut Counter)`. A function *type*'s `.return: i64` cannot be mistaken for
 ///   one, because its `R` follows a `.`.
 /// - a pattern binding is an identifier in a variant's payload list: the list
 ///   after the variant name of an `if let`, or the list an arm head's `->`
@@ -848,7 +848,7 @@ mod tests {
 
     #[test]
     fn camel_case_reports_every_kind_of_declaration() {
-        let src = "datac Point(val x_axis: i32)\n\nfun read_text(first_arg: i32).R: i32 {\n    val line_count = 1\n    val f = fun(inner_arg: i32) = inner_arg\n    for each_item in 0 {\n        print(each_item)\n    }\n    return f(first_arg) + line_count + x_axis\n}\n";
+        let src = "datac Point(val x_axis: i32)\n\nfun read_text(first_arg: i32).return: i32 {\n    val line_count = 1\n    val f = fun(inner_arg: i32) = inner_arg\n    for each_item in 0 {\n        print(each_item)\n    }\n    return f(first_arg) + line_count + x_axis\n}\n";
         assert_eq!(
             named(src, NamingCase::Camel),
             strings(&[
@@ -876,7 +876,7 @@ mod tests {
         // `val (lo_index, _) = ...` declares `lo_index` and ignores the other
         // position; a nested pattern declares its own names too, so the rule
         // reaches every name a tuple taken apart binds.
-        let src = "fun f(p: (i32, i32)).R: i32 {\n    val (lo_index, _) = p\n    val ((first_val, second_val), last_val) = ((1, 2), 3)\n    return lo_index + first_val + second_val + last_val\n}\n";
+        let src = "fun f(p: (i32, i32)).return: i32 {\n    val (lo_index, _) = p\n    val ((first_val, second_val), last_val) = ((1, 2), 3)\n    return lo_index + first_val + second_val + last_val\n}\n";
         assert_eq!(
             named(src, NamingCase::Camel),
             strings(&["lo_index", "first_val", "second_val", "last_val"])
@@ -888,13 +888,13 @@ mod tests {
         // `(i32, i32)` puts identifiers where a parameter list would, and a
         // type name is `PascalCase` whatever the option says, so no position
         // of a tuple type is this rule's business.
-        let src = "fun f(lo_axis: (i32, DeviceInfo)).R: (i32, i32) = (1, 2)\n";
+        let src = "fun f(lo_axis: (i32, DeviceInfo)).return: (i32, i32) = (1, 2)\n";
         assert_eq!(named(src, NamingCase::Camel), strings(&["lo_axis"]));
     }
 
     #[test]
     fn a_pattern_binding_is_checked_in_both_of_its_homes() {
-        let src = "enum Shape { Circle(val r: f64) Empty }\n\nfun f(s: Shape).R: f64 {\n    if let Circle(one_r) = s {\n        return one_r\n    }\n    when s {\n        Circle(two_r) -> return two_r\n        Empty -> return 0.0\n    }\n}\n";
+        let src = "enum Shape { Circle(val r: f64) Empty }\n\nfun f(s: Shape).return: f64 {\n    if let Circle(one_r) = s {\n        return one_r\n    }\n    when s {\n        Circle(two_r) -> return two_r\n        Empty -> return 0.0\n    }\n}\n";
         assert_eq!(
             named(src, NamingCase::Camel),
             strings(&["one_r", "two_r"])
@@ -906,16 +906,16 @@ mod tests {
         // The stdlib's locked `snake_case` is the reason this matters: a
         // project that asks for `camelCase` calls `str.is_empty` and is not
         // warned about a name it did not write and cannot change.
-        let src = "fun f(s: &str).R: bool {\n    val empty = str.is_empty(s)\n    return empty\n}\n";
+        let src = "fun f(s: &str).return: bool {\n    val empty = str.is_empty(s)\n    return empty\n}\n";
         assert!(case_findings(src, NamingCase::Camel).is_empty());
     }
 
     #[test]
     fn a_function_type_return_clause_is_not_a_binding() {
-        // `fun(i32).R: i32` puts an identifier right before a `:`. It is the
+        // `fun(i32).return: i32` puts an identifier right before a `:`. It is the
         // return clause of a function *type*, not a parameter, and the `.` in
         // front of the `R` is what says so.
-        let src = "fun apply(f: fun(i32).R: i32).R: i32 = f(1)\n";
+        let src = "fun apply(f: fun(i32).return: i32).return: i32 = f(1)\n";
         assert!(case_findings(src, NamingCase::Camel).is_empty());
     }
 
@@ -923,7 +923,7 @@ mod tests {
     fn a_const_name_is_not_this_rules_business() {
         // `const LIMIT` is `UPPER_SNAKE` by convention (`syntax.md` 19), which
         // is neither of the option's two cases.
-        let src = "const LIMIT: i32 = 10\n\nfun f().R: i32 = LIMIT\n";
+        let src = "const LIMIT: i32 = 10\n\nfun f().return: i32 = LIMIT\n";
         assert!(case_findings(src, NamingCase::Camel).is_empty());
         assert!(case_findings(src, NamingCase::Snake).is_empty());
     }
@@ -933,7 +933,7 @@ mod tests {
         // The receiver's type name is `PascalCase` whatever the option says,
         // and the name after the `.` is a function name like any other; the
         // parameter is a binding.
-        let src = "fun Circle.surface_area(scale_factor: f64).R: f64 = scale_factor\n";
+        let src = "fun Circle.surface_area(scale_factor: f64).return: f64 = scale_factor\n";
         assert_eq!(
             named(src, NamingCase::Camel),
             strings(&["surface_area", "scale_factor"])
@@ -945,18 +945,18 @@ mod tests {
     fn a_function_literal_names_the_parameters_it_declares() {
         // A `fun` literal declares no name of its own, and its parameters are
         // bindings like any other.
-        let src = "fun f().R: i32 {\n    val g = fun(an_arg: i32) = an_arg\n    return g(1)\n}\n";
+        let src = "fun f().return: i32 {\n    val g = fun(an_arg: i32) = an_arg\n    return g(1)\n}\n";
         assert_eq!(named(src, NamingCase::Camel), strings(&["an_arg"]));
     }
 
     #[test]
     fn a_leading_underscore_is_not_part_of_either_case() {
-        let src = "fun f().R: i32 {\n    val _unused = 1\n    return _unused\n}\n";
+        let src = "fun f().return: i32 {\n    val _unused = 1\n    return _unused\n}\n";
         assert!(case_findings(src, NamingCase::Camel).is_empty());
         assert!(case_findings(src, NamingCase::Snake).is_empty());
         // The underscore is kept in the suggestion, and the words after it
         // are what changes.
-        let src = "fun f().R: i32 {\n    val _unused_name = 1\n    return _unused_name\n}\n";
+        let src = "fun f().return: i32 {\n    val _unused_name = 1\n    return _unused_name\n}\n";
         assert!(case_findings(src, NamingCase::Camel)[0]
             .1
             .contains("write '_unusedName'"));
@@ -964,7 +964,7 @@ mod tests {
 
     #[test]
     fn snake_case_asks_for_the_mirror_image() {
-        let src = "fun readText().R: i32 {\n    val lineCount = 1\n    return lineCount\n}\n";
+        let src = "fun readText().return: i32 {\n    val lineCount = 1\n    return lineCount\n}\n";
         assert_eq!(
             named(src, NamingCase::Snake),
             strings(&["readText", "lineCount"])
@@ -976,15 +976,15 @@ mod tests {
 
     #[test]
     fn a_name_in_the_projects_case_is_left_alone() {
-        let camel = "fun readText(lineCount: i32).R: i32 = lineCount\n";
+        let camel = "fun readText(lineCount: i32).return: i32 = lineCount\n";
         assert!(case_findings(camel, NamingCase::Camel).is_empty());
-        let snake = "fun read_text(line_count: i32).R: i32 = line_count\n";
+        let snake = "fun read_text(line_count: i32).return: i32 = line_count\n";
         assert!(case_findings(snake, NamingCase::Snake).is_empty());
     }
 
     #[test]
     fn a_warning_that_came_from_a_manifest_says_so() {
-        let src = "fun read_text().R: i32 = 1\n";
+        let src = "fun read_text().return: i32 = 1\n";
         let from_manifest = case_findings(src, NamingCase::Camel)[0].1.clone();
         assert!(from_manifest.contains("coral.toml 'naming_case = 0'"), "{from_manifest}");
         let default = findings(src, Some(&Naming::default_without_manifest()))
@@ -1008,7 +1008,7 @@ mod tests {
     fn a_file_with_no_naming_setting_gets_no_naming_findings() {
         // What `src/deps/` gets: the comment rule still applies, the case rule
         // does not.
-        let src = "// one\n// two\n\nfun read_text().R: i32 = 1\n";
+        let src = "// one\n// two\n\nfun read_text().return: i32 = 1\n";
         let found = findings(src, None).expect("lexes");
         assert_eq!(found.len(), 1);
         assert!(found[0].message.contains("consecutive '//' lines"));
@@ -1020,7 +1020,7 @@ mod tests {
         // `for` loop does, and only the loop binds a name: the contextual `in`
         // is what tells them apart, so a PascalCase `for` type is not read as a
         // mis-cased loop variable.
-        let src = "trait Shape {\n    fun Self.area().R: i32\n}\n\ndatac Circle(val r: i32)\n\nimpl Shape for Circle {\n    fun Self.area().R: i32 = r\n}\n";
+        let src = "trait Shape {\n    fun Self.area().return: i32\n}\n\ndatac Circle(val r: i32)\n\nimpl Shape for Circle {\n    fun Self.area().return: i32 = r\n}\n";
         let found = findings(
             src,
             Some(&Naming {
@@ -1034,7 +1034,7 @@ mod tests {
 
     #[test]
     fn the_findings_of_one_file_come_out_in_source_order() {
-        let src = "fun read_text().R: i32 {\n    // one\n    // two\n    if read_text() > 1 {\n        return 1\n    } else if read_text() > 0 {\n        return 2\n    }\n    return 3\n}\n";
+        let src = "fun read_text().return: i32 {\n    // one\n    // two\n    if read_text() > 1 {\n        return 1\n    } else if read_text() > 0 {\n        return 2\n    }\n    return 3\n}\n";
         let found = findings(
             src,
             Some(&Naming {

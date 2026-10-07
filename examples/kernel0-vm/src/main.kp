@@ -28,7 +28,7 @@ const MAGIC: u64 = 0xC0FFEE
 // S-mode entry reads rather than at a parameter S-mode cannot receive.
 static mut ROOT: usize = 0
 
-fun root_table().R: usize {
+fun root_table().return: usize {
     unsafe { ROOT }
 }
 

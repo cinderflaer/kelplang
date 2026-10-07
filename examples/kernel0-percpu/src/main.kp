@@ -14,7 +14,7 @@ impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 percpu static mut SLOT: usize = 7
 
-fun digit(v: usize).R: u8 = 48 + v.to_u8()
+fun digit(v: usize).return: u8 = 48 + v.to_u8()
 
 section(".text.boot") fun kmain() {
     // The register is the kernel's to set: the compiler never writes it.

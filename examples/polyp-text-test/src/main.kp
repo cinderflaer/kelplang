@@ -22,9 +22,9 @@ datac St(var n: i32)
 
 fun nop(s: mut St, m: i32) {}
 
-fun changed(text: String).R: i32 = 0
+fun changed(text: String).return: i32 = 0
 
-fun bytes(a: u8, b: u8, c: u8, d: u8, n: i32).R: String {
+fun bytes(a: u8, b: u8, c: u8, d: u8, n: i32).return: String {
     var s = String.from_str("")
     if n > 0 {
         s.push(a)
@@ -100,7 +100,7 @@ fun run_glyphs() {
     }
 }
 
-fun checksum_of_text(p: mut headless_platform.HeadlessPlatform, text: &str).R: u64 {
+fun checksum_of_text(p: mut headless_platform.HeadlessPlatform, text: &str).return: u64 {
     p.clear(0xFF000000)
     val f = p.framebuffer()
     val c = draw.clip(f.bounds())
@@ -148,7 +148,7 @@ fun run_draw() {
     print(font.text_width(tail2.as_str(), 1))
 }
 
-fun entry_view(s: St).R: core.Node<i32> {
+fun entry_view(s: St).return: core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -156,17 +156,17 @@ fun entry_view(s: St).R: core.Node<i32> {
     }
 }
 
-fun key(p: mut headless_platform.HeadlessPlatform, b: mut soft_backend.SoftBackend, tree: move core.Node<i32>, st: mut St, code: i32).R: core.Node<i32> {
+fun key(p: mut headless_platform.HeadlessPlatform, b: mut soft_backend.SoftBackend, tree: move core.Node<i32>, st: mut St, code: i32).return: core.Node<i32> {
     p.push(event.Event.Key(code = code, mods = 0))
     return tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = entry_view, update = nop))
 }
 
-fun ch(p: mut headless_platform.HeadlessPlatform, b: mut soft_backend.SoftBackend, tree: move core.Node<i32>, st: mut St, cp: i32).R: core.Node<i32> {
+fun ch(p: mut headless_platform.HeadlessPlatform, b: mut soft_backend.SoftBackend, tree: move core.Node<i32>, st: mut St, cp: i32).return: core.Node<i32> {
     p.push(event.Event.Char(codepoint = cp))
     return tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = entry_view, update = nop))
 }
 
-fun tree_of(t: move core.Tick<i32>).R: core.Node<i32> = when t {
+fun tree_of(t: move core.Tick<i32>).return: core.Node<i32> = when t {
     Idle(x) -> x
     Changed(x) -> x
     Quit(x) -> x

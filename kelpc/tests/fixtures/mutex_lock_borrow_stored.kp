@@ -3,7 +3,7 @@
 // a scoped block's borrow from escaping keeps `v` from being stored.
 fun bad(m: &Mutex<i64>) {
     m.lock { v ->
-        val f = fun().R: i64 = *v
+        val f = fun().return: i64 = *v
         print(f())
     }
 }

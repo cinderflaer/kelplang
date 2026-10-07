@@ -1,6 +1,6 @@
 // Kernel stage 5: a naked function's body has to be exactly one `asm`, because
 // nothing else can be emitted around it.
-naked fun bad().R: i64 {
+naked fun bad().return: i64 {
     asm("mov rax, 1\nret")
     asm("ret")
 }

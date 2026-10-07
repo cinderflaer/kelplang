@@ -14,7 +14,7 @@ fun push_num(out: mut String, n: usize) {
     out.push_str(s.as_str())
 }
 
-fun render(pat: &str, text: &str).R: String {
+fun render(pat: &str, text: &str).return: String {
     val r = regex.compile(pat)
     var out = String.empty()
     if let Ok(re0) = r {

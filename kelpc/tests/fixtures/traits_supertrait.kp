@@ -3,24 +3,24 @@
 // `T: Named` satisfies a `T: Shape` bound transitively.
 
 trait Shape {
-    fun Self.area().R: i32
+    fun Self.area().return: i32
 }
 
 trait Named: Shape {
-    fun Self.name().R: i32 { return 3 }
+    fun Self.name().return: i32 { return 3 }
 }
 
 datac Circle(val r: i32)
 
 impl Shape for Circle {
-    fun Self.area().R: i32 = r * r
+    fun Self.area().return: i32 = r * r
 }
 
 impl Named for Circle {}
 
-fun area_of<T: Shape>(x: &T).R: i32 = x.area()
-fun describe<T: Named>(x: &T).R: i32 = x.area() + x.name()
-fun chained<T: Named>(x: &T).R: i32 = area_of(x) + describe(x)
+fun area_of<T: Shape>(x: &T).return: i32 = x.area()
+fun describe<T: Named>(x: &T).return: i32 = x.area() + x.name()
+fun chained<T: Named>(x: &T).return: i32 = area_of(x) + describe(x)
 
 fun main() {
     val c = Circle(r = 3)

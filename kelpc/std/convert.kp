@@ -2,7 +2,7 @@
 
    `From<T>` is the conversion `?` calls when an operand's failure payload type
    differs from the enclosing function's: `impl From<IoErr> for AppErr { fun
-   from(value: IoErr).R: AppErr { ... } }` makes `Result<_, IoErr>?` usable in
+   from(value: IoErr).return: AppErr { ... } }` makes `Result<_, IoErr>?` usable in
    a function returning `Result<_, AppErr>`.
 
    There are deliberately **no blanket impls**. `impl<T> Into<U> for T where
@@ -15,9 +15,9 @@
    not derived for anything. */
 
 pub trait From<T> {
-    fun from(value: T).R: Self
+    fun from(value: T).return: Self
 }
 
 pub trait Into<T> {
-    fun Self.into().R: T
+    fun Self.into().return: T
 }

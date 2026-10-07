@@ -11,20 +11,20 @@
 //
 // In the AddressSanitizer list: the thunk's environment is heap, so a missed
 // drop is a leak and a second one a double free, and neither prints anything.
-fun inc(x: i32).R: i32 = x + 1
+fun inc(x: i32).return: i32 = x + 1
 
-fun dec(x: i32).R: i32 = x - 1
+fun dec(x: i32).return: i32 = x - 1
 
 // A function value whose identity is not static: the caller cannot tell which
 // one this returns, so the widening cannot be a shim.
-fun pick(which: bool).R: fun(i32).R: i32 {
+fun pick(which: bool).return: fun(i32).return: i32 {
     if which {
         return inc
     }
     return dec
 }
 
-fun apply(f: closure(i32).R: i32, x: i32).R: i32 = f(x)
+fun apply(f: closure(i32).return: i32, x: i32).return: i32 = f(x)
 
 fun main() {
     // A known function: the shim, and nothing on the heap.
@@ -42,4 +42,4 @@ fun main() {
     print(h.fn(100))
 }
 
-datac Holder(val fn: fun(i32).R: i32)
+datac Holder(val fn: fun(i32).return: i32)

@@ -8,7 +8,7 @@ pd var n: i32 = 0
 // was evaluated once. Inside the grant the first time, `/etc/passwd` the second:
 // the two evaluations a check-then-call pair would make differ, and the second
 // is out of the grant.
-fun mk().R: str {
+fun mk().return: str {
     print("SIDE")
     n = n + 1
     if n == 1 {
@@ -17,7 +17,7 @@ fun mk().R: str {
     return "/etc/passwd"
 }
 
-pub fun inside_once().R: String = fs.read_text(mk())
+pub fun inside_once().return: String = fs.read_text(mk())
 
 // The control: a path out of the grant, the same on every evaluation.
-pub fun outside().R: String = fs.read_text("/etc/passwd")
+pub fun outside().return: String = fs.read_text("/etc/passwd")

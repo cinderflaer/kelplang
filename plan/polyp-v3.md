@@ -128,7 +128,7 @@ trait Backend {
 walk that turns a path into a widget call, and the id rule, live in one place and cannot drift
 between backends. What each backend writes is the widget operations on *its own* retained tree (a
 live `Mount` for GTK, an `HNode` for the headless one) plus the events its display produces. The
-loop `run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).R: Node<M>,
+loop `run<B: Backend, S, M>(backend: mut B, init: move S, view: fun (S).return: Node<M>,
 update: fun (mut S, M)) -> S` owns the state, the path-to-id table, the focus check and the
 counters, and it names no backend.
 
@@ -309,10 +309,10 @@ pixel count.
 
 ```text
 datac ClipStack(var rects: [Rect; 8], var depth: usize)
-fun clip(rect: Rect).R: ClipStack
+fun clip(rect: Rect).return: ClipStack
 fun mut ClipStack.push(rect: Rect)
 fun mut ClipStack.pop()
-fun ClipStack.top().R: Rect
+fun ClipStack.top().return: Rect
 ```
 
 A push intersects the new rectangle with the current top, so the stack is monotone; `depth`
@@ -342,12 +342,12 @@ last panic fixture.
 ```text
 const MAX_DAMAGE: usize = 16
 datac Damage(var rects: [Rect; 16], var len: usize)
-fun new().R: Damage
+fun new().return: Damage
 fun mut Damage.add(rect: Rect)
 fun mut Damage.clear()
-fun Damage.count().R: usize
-fun Damage.at(i: usize).R: Rect
-fun Damage.bounds().R: Rect
+fun Damage.count().return: usize
+fun Damage.at(i: usize).return: Rect
+fun Damage.bounds().return: Rect
 ```
 
 The policy, in order, and it never allocates and never lets `len` exceed 16:
@@ -579,9 +579,9 @@ scenario drives the same `Focus`/`Edit`/`Post` sequence the GTK and headless run
 ```text
 trait Platform {
     fun mut Self.present(fb: fb.Fb, dirty: &damage.Damage)
-    fun Self.now_ms().R: u64
-    fun mut Self.poll_event().R: option.Option<Event>
-    fun Self.framebuffer().R: fb.Fb
+    fun Self.now_ms().return: u64
+    fun mut Self.poll_event().return: option.Option<Event>
+    fun Self.framebuffer().return: fb.Fb
 }
 ```
 
@@ -596,8 +596,8 @@ and the backend writes only inside `width x height`.
 pub fun frame<P: Platform, S, M>(
     backend: mut SoftBackend, platform: mut P,
     tree: move core.Node<M>, state: mut S,
-    view: fun (S).R: core.Node<M>, update: fun (mut S, M),
-).R: core.Tick<M>
+    view: fun (S).return: core.Node<M>, update: fun (mut S, M),
+).return: core.Tick<M>
 ```
 
 `frame` is the one function an OS calls per tick. It takes the platform's framebuffer, resizes

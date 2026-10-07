@@ -8,7 +8,7 @@ datac Countdown(var n: i32)
 
 impl iter.Iterator for Countdown {
     type Item = i32
-    fun mut Self.next().R: option.Option<i32> {
+    fun mut Self.next().return: option.Option<i32> {
         if n <= 0 {
             return option.Option.None
         }
@@ -18,7 +18,7 @@ impl iter.Iterator for Countdown {
     }
 }
 
-fun first_even(limit: i32).R: i32 {
+fun first_even(limit: i32).return: i32 {
     defer print("leave")
     for x in Countdown(n = limit) {
         defer print("iter")

@@ -4,7 +4,7 @@ impl "std/str"
 
 datac State(var count: i32, var label: String)
 
-fun pick(f: scoped fun(i32).R: str).R: i32 {
+fun pick(f: scoped fun(i32).return: str).return: i32 {
     return 0
 }
 

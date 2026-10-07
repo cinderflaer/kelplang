@@ -1,6 +1,6 @@
 impl "helper" caps(env = ["*"])
 
-fun double(value: i32).R: i32 = value * 2
+fun double(value: i32).return: i32 = value * 2
 
 fun main() {
     print(helper.kelp_apply(double, 20))

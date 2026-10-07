@@ -7,15 +7,15 @@
    shared. It lives here anyway because there is nowhere else for it yet, and
    a module holding `time` can always sleep. */
 
-extern fun now_unix_raw().R: i64
-extern fun now_mono_ns_raw().R: i64
+extern fun now_unix_raw().return: i64
+extern fun now_mono_ns_raw().return: i64
 extern fun sleep_ms_raw(ms: u64)
 
 /// Seconds since the Unix epoch.
-fun now_unix().R: i64 = now_unix_raw()
+fun now_unix().return: i64 = now_unix_raw()
 
 /// Nanoseconds on the monotonic clock: the one to measure elapsed time with.
-fun now_mono_ns().R: i64 = now_mono_ns_raw()
+fun now_mono_ns().return: i64 = now_mono_ns_raw()
 
 /// Blocks the calling thread for `ms` milliseconds.
 fun sleep_ms(ms: u64) {

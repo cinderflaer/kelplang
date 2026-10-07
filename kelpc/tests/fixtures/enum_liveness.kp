@@ -38,7 +38,7 @@ enum Res {
     Err(val why: i64)
 }
 
-fun literal(a: i64, b: i64).R: i64 {
+fun literal(a: i64, b: i64).return: i64 {
     val s = Slot.Full(n = a * 2)
     a + b * 3 + when s {
         Full(v) -> v
@@ -46,23 +46,23 @@ fun literal(a: i64, b: i64).R: i64 {
     }
 }
 
-fun tagged(a: i64, b: i64, s: &Slot).R: i64 = when s {
+fun tagged(a: i64, b: i64, s: &Slot).return: i64 = when s {
     Full(v) -> v + a * 5 + b * 7
     Empty -> a * 5 - b * 7
 }
 
-fun propagated(a: i64, b: i64, have: bool).R: Res {
+fun propagated(a: i64, b: i64, have: bool).return: Res {
     val r = if have { Res.Ok(value = 5) } else { Res.Err(why = 0) }
     val v = r?
     return Res.Ok(value = a * 11 + b * 13 + v)
 }
 
-fun res_value(r: &Res).R: i64 = when r {
+fun res_value(r: &Res).return: i64 = when r {
     Ok(v) -> v
     Err(_e) -> -1
 }
 
-fun nested(a: i64, b: i64, s: &Slot).R: i64 {
+fun nested(a: i64, b: i64, s: &Slot).return: i64 {
     val inner = Slot.Full(n = b)
     val outer = when s {
         Full(v) -> Slot.Full(n = v + a)
@@ -71,7 +71,7 @@ fun nested(a: i64, b: i64, s: &Slot).R: i64 {
     return tagged(a = a, b = b, s = outer)
 }
 
-fun if_let(a: i64, b: i64, s: &Slot).R: i64 {
+fun if_let(a: i64, b: i64, s: &Slot).return: i64 {
     var acc = a * 2 + b
     if let Full(v) = s {
         acc = acc + v * 3
@@ -79,7 +79,7 @@ fun if_let(a: i64, b: i64, s: &Slot).R: i64 {
     return acc + a * 5 - b * 7
 }
 
-fun held(a: i64, b: i64, s: &Slot).R: i64 {
+fun held(a: i64, b: i64, s: &Slot).return: i64 {
     val hold = Slot.Full(n = b)
     val extra = tagged(a = a, b = b, s = s)
     val back = when hold {

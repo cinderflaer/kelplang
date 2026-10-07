@@ -2,7 +2,7 @@
 // variant's payload drops through the vtable when the enum value dies, so the
 // concrete type's user `drop` prints from inside the generated enum drop.
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
 }
 
 datac Circle(val r: f64)
@@ -12,7 +12,7 @@ fun mut Circle.drop() {
 }
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
+    fun Self.area().return: f64 = r * r * 3.0
 }
 
 enum Slot {

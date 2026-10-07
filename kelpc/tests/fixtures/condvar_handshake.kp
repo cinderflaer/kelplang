@@ -16,12 +16,12 @@ pd val state: State = State(
 datac Gate(val waiting: AtomicBool, var value: i64)
 datac State(val m: Mutex<Gate>, val cv: Condvar)
 
-fun is_zero(v: &Gate).R: bool {
+fun is_zero(v: &Gate).return: bool {
     v.waiting.store(value = true, order = atomic.Ordering.SeqCst)
     v.value == 0
 }
 
-fun waiter(s: &State).R: i64 {
+fun waiter(s: &State).return: i64 {
     s.m.wait_while(&s.cv, is_zero) { v ->
         v.value
     }

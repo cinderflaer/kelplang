@@ -15,10 +15,10 @@ enum HighErr {
 }
 
 impl convert.From<LowErr> for HighErr {
-    fun from(value: LowErr).R: HighErr = HighErr.Low
+    fun from(value: LowErr).return: HighErr = HighErr.Low
 }
 
-fun read(n: i32).R: result.Result<i32, LowErr> {
+fun read(n: i32).return: result.Result<i32, LowErr> {
     if n > 2 {
         return result.Result.Err(error = LowErr.Bad)
     }
@@ -29,7 +29,7 @@ datac Reader(var n: i32)
 
 impl iter.Iterator for Reader {
     type Item = i32
-    fun mut Self.next().R: option.Option<i32> {
+    fun mut Self.next().return: option.Option<i32> {
         n += 1
         val v = read(n)?
         return option.Option.Some(value = v)

@@ -32,9 +32,12 @@ pub struct Program {
     /// coherence and the exact-signature match against.
     pub trait_impls: Vec<TraitImplDecl>,
     pub functions: Vec<FunctionDecl>,
+    /// The span of each `.return:` return marker in the file: outdated for
+    /// `.return:` (`deprecated::RETURN_R`), still accepted.
+    pub outdated_returns: Vec<Span>,
 }
 
-/// One `trait Name { fun Self.m(args).R: T ... }` declaration (A-12 slice 2).
+/// One `trait Name { fun Self.m(args).return: T ... }` declaration (A-12 slice 2).
 #[derive(Debug, Clone)]
 pub struct TraitDecl {
     pub name: String,
@@ -410,7 +413,7 @@ pub struct FunctionDecl {
     /// keeps it outside the parens.
     pub receiver: Option<Receiver>,
     pub params: Vec<Param>,
-    /// The `.R: T` clause. `None` means `Unit`.
+    /// The `.return: T` clause. `None` means `Unit`.
     pub return_type: Option<TypeExpr>,
     pub body: FunctionBody,
     /// See `DatacDecl::module`.
@@ -470,8 +473,8 @@ pub struct ConstParamDecl {
 #[derive(Debug, Clone)]
 pub enum FunctionBody {
     Block(Block),
-    /// `fun f(...).R: T = expr` — sugar checked/lowered as if it were
-    /// `fun f(...).R: T { return expr }`.
+    /// `fun f(...).return: T = expr` — sugar checked/lowered as if it were
+    /// `fun f(...).return: T { return expr }`.
     Expr(Expr),
     /// `extern fun f(...)` — no body in `.kp` at all; `codegen_c.rs` writes
     /// the compiler-supplied C body instead. Never reaches `check_function`'s
@@ -584,7 +587,7 @@ pub struct TypeExpr {
     /// `None` for every ordinary type; the parser only sets it after a leading
     /// `&` (with or without `mut`).
     pub dyn_trait: Option<String>,
-    /// `scoped fun(T).R: U` — a *contextual* modifier (`scoped` is not a
+    /// `scoped fun(T).return: U` — a *contextual* modifier (`scoped` is not a
     /// keyword, and is only a modifier when the next token is `fun`). A
     /// scoped function value may only be written at a call site and may not
     /// outlive the call (`plan/scoped-blocks.md`). Legal only on a top-level
@@ -592,13 +595,13 @@ pub struct TypeExpr {
     /// another function type it could be stored as that type, which is the
     /// one thing the modifier forbids.
     pub scoped: bool,
-    /// `fun(i32, String).R: bool` — the parameters, when this is a function
+    /// `fun(i32, String).return: bool` — the parameters, when this is a function
     /// type (A-4). `Some`, even when empty (`fun()`), is what marks it as one;
     /// `None` for every ordinary type. `name` is `"fun"` in that case, or
     /// `"closure"` for the owned, environment-carrying form (A-4 phase E);
     /// neither can collide with a real name because both are keywords.
     pub fn_params: Option<Vec<FnTypeParam>>,
-    /// The `.R: T` of a function type. `None` means `Unit`, exactly as it
+    /// The `.return: T` of a function type. `None` means `Unit`, exactly as it
     /// does on a declaration.
     pub fn_ret: Option<Box<TypeExpr>>,
     /// A **const argument** (A-20): the expression `N` of `Buf<16>` or
@@ -662,13 +665,13 @@ impl TypeExpr {
         }
     }
 
-    /// Whether this is a closure type (`closure(i32).R: i32`) — the owned,
+    /// Whether this is a closure type (`closure(i32).return: i32`) — the owned,
     /// environment-carrying form of a function type (A-4 phase E).
     pub fn is_closure(&self) -> bool {
         self.fn_params.is_some() && self.name == "closure"
     }
 
-    /// Whether this is a plain function type (`fun(i32).R: i32`).
+    /// Whether this is a plain function type (`fun(i32).return: i32`).
     pub fn is_fn(&self) -> bool {
         self.fn_params.is_some()
     }
@@ -721,7 +724,7 @@ impl TypeExpr {
             format!("{}<{}>", self.name, args.join(", "))
         };
         if let Some(ret) = &self.fn_ret {
-            s.push_str(&format!(".R: {}", ret.display()));
+            s.push_str(&format!(".return: {}", ret.display()));
         }
         s
     }
@@ -1059,7 +1062,7 @@ pub enum Expr {
         args: Vec<CallArg>,
         span: Span,
     },
-    /// `fun(x: i32).R: i32 = x * 2` — an anonymous function (A-4), written
+    /// `fun(x: i32).return: i32 = x * 2` — an anonymous function (A-4), written
     /// where an expression is expected. `infer.rs` synthesizes one top-level
     /// function per literal; the expression's value is a function value when
     /// the body captured nothing, and a *closure* (a function value plus an
@@ -1073,7 +1076,7 @@ pub enum Expr {
         /// typed by hand. A literal with this set and no expected function
         /// type is refused rather than guessed at.
         infer_params: bool,
-        /// The `.R: T`. `None` means `Unit`, exactly as on a declaration —
+        /// The `.return: T`. `None` means `Unit`, exactly as on a declaration —
         /// there is no return-type inference, because a literal's type *is*
         /// its signature. A block literal with `infer_params` takes the return
         /// from the expected type instead: a non-unit expected return makes

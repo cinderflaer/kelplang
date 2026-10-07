@@ -6,9 +6,9 @@
 // In the AddressSanitizer list: a missed drop is a leak here, and a second one
 // is a double free, so this fixture is what makes "the closure owns its
 // environment" a verified claim rather than an argument.
-fun early(stop: bool).R: i32 {
+fun early(stop: bool).return: i32 {
     val payload = String.from_str("payload")
-    val size = fun() .R: usize = payload.len()
+    val size = fun() .return: usize = payload.len()
     if stop {
         return size().to_i32()
     }
@@ -19,7 +19,7 @@ fun main() {
     // End of the block: the closure and its environment are dropped at `}`.
     {
         val first = String.from_str("first")
-        val f = fun() .R: usize = first.len()
+        val f = fun() .return: usize = first.len()
         print(f())
     }
 
@@ -34,7 +34,7 @@ fun main() {
     var i = 0
     while i < 3 {
         val n = i + 10
-        val f = fun(x: i32).R: i32 = x + n
+        val f = fun(x: i32).return: i32 = x + n
         print(f(0))
         i = i + 1
     }

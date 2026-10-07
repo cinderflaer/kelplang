@@ -4,8 +4,8 @@
 
 trait Tagged {
     type Tag
-    fun Self.tag().R: Self::Tag
-    fun Self.show().R: Self::Tag {
+    fun Self.tag().return: Self::Tag
+    fun Self.show().return: Self::Tag {
         return self.tag()
     }
 }
@@ -14,7 +14,7 @@ datac One(val n: i32)
 
 impl Tagged for One {
     type Tag = i32
-    fun Self.tag().R: i32 = n + 100
+    fun Self.tag().return: i32 = n + 100
 }
 
 fun main() {

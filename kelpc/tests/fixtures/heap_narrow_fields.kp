@@ -30,19 +30,19 @@ datac O7(val pad: u8, val n: I7)
 datac O8(val pad: u8, val n: I8)
 datac Z3(val n: I3)
 
-fun whole1(v: move I1).R: i64 = v.a.to_i64()
-fun whole2(v: move I2).R: i64 = v.a.to_i64() + v.b.to_i64() * 100
-fun whole3(v: move I3).R: i64 = v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000
-fun whole4(v: move I4).R: i64 {
+fun whole1(v: move I1).return: i64 = v.a.to_i64()
+fun whole2(v: move I2).return: i64 = v.a.to_i64() + v.b.to_i64() * 100
+fun whole3(v: move I3).return: i64 = v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000
+fun whole4(v: move I4).return: i64 {
     return v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000 + v.d.to_i64() * 1000000
 }
-fun whole5(v: move I5).R: i64 {
+fun whole5(v: move I5).return: i64 {
     return v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000 + v.d.to_i64() * 1000000 + v.e.to_i64() * 100000000
 }
-fun whole7(v: move I7).R: i64 {
+fun whole7(v: move I7).return: i64 {
     return v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000 + v.d.to_i64() * 1000000 + v.e.to_i64() * 100000000 + v.f.to_i64() * 10000000000 + v.g.to_i64() * 1000000000000
 }
-fun whole8(v: move I8).R: i64 = v.a.to_i64()
+fun whole8(v: move I8).return: i64 = v.a.to_i64()
 
 fun main() {
     // Offset 1, six sizes: the whole-value read is the defective load, and the

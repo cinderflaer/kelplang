@@ -6,7 +6,7 @@ impl "std/atomic"
 
 static LOCK: Atomic<bool> = Atomic.new(false)
 
-fun with_lock().R: bool {
+fun with_lock().return: bool {
     defer LOCK.store(value = false, order = atomic.Ordering.SeqCst)
     LOCK.store(value = true, order = atomic.Ordering.SeqCst)
     return LOCK.load(order = atomic.Ordering.SeqCst)

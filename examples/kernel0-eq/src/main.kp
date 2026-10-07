@@ -31,11 +31,11 @@ const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]
 
 // `align` is always a power of two, so the round-up is a divide and multiply:
 // v1 has no bitwise operators.
-fun align_up(value: usize, align: usize).R: usize {
+fun align_up(value: usize, align: usize).return: usize {
     return ((value + align - 1) / align) * align
 }
 
-fun alloc(size: usize, align: usize).R: Ptr<u8> {
+fun alloc(size: usize, align: usize).return: Ptr<u8> {
     val out: Ptr<u8> = unsafe {
         val start: usize = align_up(USED, align)
         if start + size > 262144 {
@@ -61,7 +61,7 @@ fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
     }
 }
 
-fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).R: Ptr<u8> {
+fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).return: Ptr<u8> {
     val fresh: Ptr<u8> = alloc(new, align)
     if fresh.is_null() {
         return Ptr.null()
@@ -86,7 +86,7 @@ fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).R: Ptr<u8> {
 // it compares the two fields without moving either operand.
 datac Pair(val name: String, val id: i32)
 
-fun Pair.eq(other: &Pair).R: bool {
+fun Pair.eq(other: &Pair).return: bool {
     return str.eq(self.name.as_str(), other.name.as_str()) && self.id == other.id
 }
 
@@ -95,7 +95,7 @@ fun Pair.eq(other: &Pair).R: bool {
 // the two byte slices through the bounds-checked accessor.
 datac Blob(val data: Bytes, val tag: i32)
 
-fun Blob.eq(other: &Blob).R: bool {
+fun Blob.eq(other: &Blob).return: bool {
     if self.tag != other.tag || self.data.len() != other.data.len() {
         return false
     }
@@ -123,7 +123,7 @@ fun line(label: &str, text: &str) {
     newline()
 }
 
-fun copy(text: &str).R: String {
+fun copy(text: &str).return: String {
     return str.concat(text, "")
 }
 

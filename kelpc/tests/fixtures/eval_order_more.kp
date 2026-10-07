@@ -6,12 +6,12 @@ enum Pair {
 
 datac Box2(var a: i32, var b: i32)
 
-fun t(n: i32).R: i32 {
+fun t(n: i32).return: i32 {
     log = log * 10 + n
     n
 }
 
-fun add(x: i32, y: i32).R: i32 { x + y }
+fun add(x: i32, y: i32).return: i32 { x + y }
 
 fun flush(label: str) {
     print("${label}: ${log}")
@@ -41,7 +41,7 @@ fun main() {
     flush("if")
     val w = [t(1) + t(2), t(3) * t(4)]
     flush("arr_expr")
-    val cl = fun(x: i32).R: i32 = x + t(8)
+    val cl = fun(x: i32).return: i32 = x + t(8)
     val q = cl(t(1)) + cl(t(2))
     flush("closure")
 }

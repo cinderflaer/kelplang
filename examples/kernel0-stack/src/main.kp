@@ -33,11 +33,11 @@ static mut SINK: u64 = 0
 
 static mut ROOT: usize = 0
 
-fun root_table().R: usize {
+fun root_table().return: usize {
     unsafe { ROOT }
 }
 
-fun current_limit().R: u64 {
+fun current_limit().return: u64 {
     unsafe {
         val p: Ptr<u64> = Ptr.from_mut(LIMIT)
         p.read_volatile()
@@ -75,7 +75,7 @@ fun enter_supervisor(entry: usize) {
 // Deep recursion with a small frame: about two hundred and fifty calls fill the
 // 8 KiB kernel stack, and the frame that crosses `__stack_bottom` stores its
 // saved `ra` into the guard page.
-fun recurse_small(depth: u64, limit: u64).R: u64 {
+fun recurse_small(depth: u64, limit: u64).return: u64 {
     var pad: u64 = depth
     if depth >= limit {
         return pad
@@ -89,7 +89,7 @@ fun recurse_small(depth: u64, limit: u64).R: u64 {
 // byte and read at a runtime index, so the frame cannot be shrunk away; the
 // probe the `probe-stack` attribute emits is what walks the frame down one page
 // at a time and faults at the guard.
-fun recurse_big(depth: u64, limit: u64).R: u64 {
+fun recurse_big(depth: u64, limit: u64).return: u64 {
     var buf: [u8; 16384] = [(depth % 256).to_u8(); 16384]
     var pad: u64 = buf.get((depth % 16384).to_usize()).to_u64()
     if depth >= limit {

@@ -3,13 +3,13 @@
 
 trait Src {
     type Out
-    fun Self.produce().R: i32
+    fun Self.produce().return: i32
 }
 
 datac A(val n: i32)
 
 impl Src for A {
-    fun Self.produce().R: i32 = n
+    fun Self.produce().return: i32 = n
 }
 
 fun main() { }

@@ -3,9 +3,9 @@
 // pointer.
 datac Point(val x: i32)
 
-fun origin().R: Point = Point(x = 1)
+fun origin().return: Point = Point(x = 1)
 
 fun main() {
-    val f: fun().R: &Point = origin
+    val f: fun().return: &Point = origin
     print(f().x)
 }

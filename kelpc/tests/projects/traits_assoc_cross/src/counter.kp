@@ -7,7 +7,7 @@ pub datac Counter(var n: i32)
 // type; the trait's method signature names `Self::Item` and this is the answer.
 impl iter.Iter for Counter {
     type Item = i32
-    fun mut Self.next().R: option.Option<i32> {
+    fun mut Self.next().return: option.Option<i32> {
         n += 1
         return option.Option.Some(value = n)
     }

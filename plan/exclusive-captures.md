@@ -135,7 +135,7 @@ Refused (exact text from the compiler; the span is the capture or the argument i
 - **R9 `excl_refused_mut_param_twice`** (`fun run(s: mut State) { two(s) { n -> s.count += n } }`):
   `error: cannot borrow 's' as exclusive: this call also uses it, and a block that writes through a
   captured exclusive borrow needs the call's other arguments to leave it alone`.
-- **R10 `excl_refused_stored`** (`fun keep(f: scoped fun(i32)).R: Handler { return Handler(f = f)
+- **R10 `excl_refused_stored`** (`fun keep(f: scoped fun(i32)).return: Handler { return Handler(f = f)
   }`): the scoped-value escape check, unchanged: `this is a scoped function value: it may only be
   passed to another 'scoped fun(...)' parameter ...`. Exclusivity did not touch it.
 
@@ -163,7 +163,7 @@ Polyp shapes:
    this shape, with a stand-in builder, on both backends):
 
    ```kelp
-   pub fun view(s: Model).R: core.Node<Msg> {
+   pub fun view(s: Model).return: core.Node<Msg> {
        var done = 0
        return core.column { k ->
            var i: usize = 0

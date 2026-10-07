@@ -1,31 +1,31 @@
 // A-4 phase B: function values. A declared `fun` is a value of type
-// `fun(T).R: U`, a plain C function pointer with no environment, and a local,
+// `fun(T).return: U`, a plain C function pointer with no environment, and a local,
 // a `datac` field, a passdown or a parameter holding one is called with the
 // same syntax as any other call.
 //
 // The parameter types of the written type are the parameter types of the
 // declaration — `fun(String)` is a borrow, `fun(mut Counter)` an exclusive
 // borrow, `fun(move String)` ownership — which is what makes `double` fit
-// `fun(i32).R: i32` with no conversion anywhere. This fixture is in the
+// `fun(i32).return: i32` with no conversion anywhere. This fixture is in the
 // AddressSanitizer list: the `move` case below hands a buffer to a callee that
 // frees it, and the passdown case reads a global.
 impl "std/math"
 
-pd val doubler: fun(i32).R: i32 = double
+pd val doubler: fun(i32).return: i32 = double
 
-fun double(x: i32).R: i32 = x * 2
+fun double(x: i32).return: i32 = x * 2
 
-fun triple(x: i32).R: i32 = x * 3
+fun triple(x: i32).return: i32 = x * 3
 
 // A function type as a parameter: the callback every future `map`/`filter`
 // takes.
-fun apply(f: fun(i32).R: i32, x: i32).R: i32 = f(x)
+fun apply(f: fun(i32).return: i32, x: i32).return: i32 = f(x)
 
-fun apply_twice(f: fun(i32).R: i32, x: i32).R: i32 = f(f(x))
+fun apply_twice(f: fun(i32).return: i32, x: i32).return: i32 = f(f(x))
 
 // ... and as a return type. A function *type* may not return a function type
 // (`infer.rs` refuses that declarator), but a function may return one.
-fun pick(which: bool).R: fun(i32).R: i32 {
+fun pick(which: bool).return: fun(i32).return: i32 {
     if which {
         return double
     }
@@ -33,13 +33,13 @@ fun pick(which: bool).R: fun(i32).R: i32 {
 }
 
 // A `datac` field holding one, read through a borrowed receiver.
-datac Handlers(val on_i32: fun(i32).R: i32)
+datac Handlers(val on_i32: fun(i32).return: i32)
 
-fun call_through(h: Handlers, x: i32).R: i32 = h.on_i32(x)
+fun call_through(h: Handlers, x: i32).return: i32 = h.on_i32(x)
 
 // A moved parameter's type is the bare type, so a function value for it says
 // `move` — the same word the declaration says.
-fun consume(s: move String).R: usize = s.len()
+fun consume(s: move String).return: usize = s.len()
 
 datac Counter(var n: i32)
 
@@ -56,7 +56,7 @@ fun main() {
     print(apply_twice(double, 3))
 
     // Ownership is part of the type.
-    val g: fun(move String).R: usize = consume
+    val g: fun(move String).return: usize = consume
     print(g(String.from_str("abcd")))
 
     // An exclusive borrow too.

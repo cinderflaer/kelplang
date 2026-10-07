@@ -6,20 +6,20 @@ impl "lib"
 // element (A-13).
 datac Holder(val p: lib.Point)
 
-fun shift(p: &lib.Point).R: lib.Point = lib.Point(x = p.x + 1, y = p.y + 1)
+fun shift(p: &lib.Point).return: lib.Point = lib.Point(x = p.x + 1, y = p.y + 1)
 
-fun first(xs: List<lib.Point>).R: i32 = xs.get(0).x
+fun first(xs: List<lib.Point>).return: i32 = xs.get(0).x
 
-fun height(b: Box<lib.Point>).R: i32 = b.get().y
+fun height(b: Box<lib.Point>).return: i32 = b.get().y
 
-fun grid(ps: [lib.Point; 2]).R: i32 = ps.get(0).x + ps.get(1).y
+fun grid(ps: [lib.Point; 2]).return: i32 = ps.get(0).x + ps.get(1).y
 
-fun swapped(p: lib.Pair<lib.Point>).R: lib.Pair<lib.Point> = lib.Pair(a = p.b, b = p.a)
+fun swapped(p: lib.Pair<lib.Point>).return: lib.Pair<lib.Point> = lib.Pair(a = p.b, b = p.a)
 
-fun score(c: &lib.Colour).R: i32 = 1
+fun score(c: &lib.Colour).return: i32 = 1
 
 // The entry module's own private item, named bare from inside it.
-fun local(n: i32).R: i32 = n + 1
+fun local(n: i32).return: i32 = n + 1
 
 fun main() {
     val origin: lib.Point = lib.Point(x = 0, y = 0)

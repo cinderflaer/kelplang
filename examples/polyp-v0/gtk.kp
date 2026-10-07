@@ -22,17 +22,17 @@ pub extern type BoxWidget: Widget
 pub extern type MainContext
 
 pub extern fun gtk_init()
-pub extern fun gtk_window_new().R: Window
+pub extern fun gtk_window_new().return: Window
 pub extern fun gtk_window_set_title(win: Window, title: str)
 pub extern fun gtk_window_set_default_size(win: Window, width: i32, height: i32)
 pub extern fun gtk_window_set_child(win: Window, child: Widget)
 pub extern fun gtk_window_present(win: Window)
 
-pub extern fun gtk_box_new(orientation: i32, spacing: i32).R: BoxWidget
+pub extern fun gtk_box_new(orientation: i32, spacing: i32).return: BoxWidget
 pub extern fun gtk_box_append(box: BoxWidget, child: Widget)
 
-pub extern fun gtk_label_new(text: str).R: Widget
-pub extern fun gtk_button_new_with_label(label: str).R: Widget
+pub extern fun gtk_label_new(text: str).return: Widget
+pub extern fun gtk_button_new_with_label(label: str).return: Widget
 
 // `g_object_unref` takes a `gpointer`, so the one binding takes the base
 // `Object` and every widget converts up to it.
@@ -42,8 +42,8 @@ pub extern fun g_object_unref(obj: Object)
 // the default context, and `null_main_context` is how this module spells that
 // null handle (`MainContext.null()` is legal only here, where the extern
 // section is).
-pub extern fun g_main_context_iteration(context: MainContext, may_block: i32).R: i32
-pub fun null_main_context().R: MainContext = MainContext.null()
+pub extern fun g_main_context_iteration(context: MainContext, may_block: i32).return: i32
+pub fun null_main_context().return: MainContext = MainContext.null()
 
 // `g_signal_connect_data(instance, signal, c_handler, data, destroy, flags)`.
 // The closure parameter expands in place into `(c_handler, data, destroy)`,
@@ -54,10 +54,10 @@ pub fun null_main_context().R: MainContext = MainContext.null()
 // Two bindings because the handler's return is part of the closure's type:
 // `clicked` wants a `unit` handler, `close-request` a `gboolean`. Both reach
 // the same C symbol.
-pub extern fun connect(instance: Widget, signal: str, handler: move closure(Widget), flags: i32).R: u64
-pub extern fun connect_ret(instance: Widget, signal: str, handler: move closure(Window).R: i32, flags: i32).R: u64
+pub extern fun connect(instance: Widget, signal: str, handler: move closure(Widget), flags: i32).return: u64
+pub extern fun connect_ret(instance: Widget, signal: str, handler: move closure(Window).return: i32, flags: i32).return: u64
 
 // `g_timeout_add_full(priority, interval, function, data, notify)`: the closure
 // expands into `(function, data, notify)` and the declaration has no argument
 // after it. The handler returns `G_SOURCE_REMOVE` (0) to fire once.
-pub extern fun g_timeout_add_full(priority: i32, interval: u32, handler: move closure().R: i32).R: u32
+pub extern fun g_timeout_add_full(priority: i32, interval: u32, handler: move closure().return: i32).return: u32

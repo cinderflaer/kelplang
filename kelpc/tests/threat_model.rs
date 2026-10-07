@@ -1045,7 +1045,7 @@ fn n05b_the_http_server_binds_loopback_under_a_loopback_grant() {
     );
     lab.src(
         "probe.kp",
-        "impl \"std/fs\"\nimpl \"std/io\"\n\npub fun table().R: String {\n    val f = fs.open(\"/proc/net/tcp\", \"r\")\n    return String.from_bytes(f.read_all())\n}\n",
+        "impl \"std/fs\"\nimpl \"std/io\"\n\npub fun table().return: String {\n    val f = fs.open(\"/proc/net/tcp\", \"r\")\n    return String.from_bytes(f.read_all())\n}\n",
     );
     for (oracle, out) in lab.runs(&[]) {
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -1377,7 +1377,7 @@ fn u01_unsafe_in_an_unlisted_module_is_refused() {
     );
     unsafe_attack(
         "u01b",
-        "unsafe fun poke(p: Ptr<i32>).R: i32 = p.read()\n\npub fun go() {\n}\n",
+        "unsafe fun poke(p: Ptr<i32>).return: i32 = p.read()\n\npub fun go() {\n}\n",
         NOT_LISTED,
     );
 }
@@ -1390,7 +1390,7 @@ fn u01_unsafe_in_an_unlisted_module_is_refused() {
 fn u02_unsafe_hidden_in_an_expression_position_is_still_found() {
     let head = "pub fun go() {\n    var x: i32 = 1\n    val p: Ptr<i32> = Ptr.from_mut(x)\n";
     for (what, body) in [
-        ("closure", "    val f = fun().R: i32 = unsafe { p.read() }\n    print(f())"),
+        ("closure", "    val f = fun().return: i32 = unsafe { p.read() }\n    print(f())"),
         ("if_cond", "    if unsafe { p.read() } == 1 {\n        print(1)\n    }"),
         ("else_branch", "    if x == 2 {\n        print(0)\n    } else {\n        print(unsafe { p.read() })\n    }"),
         ("when_arm", "    val o: i32 = 1\n    val v = when o {\n        _ -> unsafe { p.read() }\n    }"),
@@ -1405,7 +1405,7 @@ fn u02_unsafe_hidden_in_an_expression_position_is_still_found() {
         ("return", "    print(helper(p))"),
     ] {
         let evil = format!(
-            "fun abs_of(n: i32).R: i32 = n\nfun make_list(p: Ptr<i32>).R: List<i32> {{\n    var l: List<i32> = List.empty()\n    return l\n}}\nfun helper(p: Ptr<i32>).R: i32 {{\n    return unsafe {{ p.read() }}\n}}\n{head}{body}\n}}\n"
+            "fun abs_of(n: i32).return: i32 = n\nfun make_list(p: Ptr<i32>).return: List<i32> {{\n    var l: List<i32> = List.empty()\n    return l\n}}\nfun helper(p: Ptr<i32>).return: i32 {{\n    return unsafe {{ p.read() }}\n}}\n{head}{body}\n}}\n"
         );
         unsafe_attack(&format!("u02_{what}"), &evil, NOT_LISTED);
     }
@@ -1418,7 +1418,7 @@ fn u02_unsafe_hidden_in_an_expression_position_is_still_found() {
 fn u03_unsafe_in_a_trait_default_method_is_found() {
     unsafe_attack(
         "u03",
-        "pub trait Poke {\n    fun Self.addr().R: usize\n    fun Self.poke().R: i32 {\n        val p: Ptr<i32> = Ptr.from_addr(self.addr())\n        return unsafe { p.read() }\n    }\n}\n\npub datac A(val a: usize)\n\nimpl Poke for A {\n    fun Self.addr().R: usize = a\n}\n\npub fun go() {\n    var x: i32 = 7\n    val p: Ptr<i32> = Ptr.from_mut(x)\n    val a = A(a = p.addr())\n    print(a.poke())\n}\n",
+        "pub trait Poke {\n    fun Self.addr().return: usize\n    fun Self.poke().return: i32 {\n        val p: Ptr<i32> = Ptr.from_addr(self.addr())\n        return unsafe { p.read() }\n    }\n}\n\npub datac A(val a: usize)\n\nimpl Poke for A {\n    fun Self.addr().return: usize = a\n}\n\npub fun go() {\n    var x: i32 = 7\n    val p: Ptr<i32> = Ptr.from_mut(x)\n    val a = A(a = p.addr())\n    print(a.poke())\n}\n",
         NOT_LISTED,
     );
 }
@@ -1428,12 +1428,12 @@ fn u03_unsafe_in_a_trait_default_method_is_found() {
 fn u04_unsafe_in_an_impl_method_or_a_generic_is_found() {
     unsafe_attack(
         "u04a",
-        "pub trait Get {\n    fun Self.get().R: i32\n}\n\npub datac A(val p: Ptr<i32>)\n\nimpl Get for A {\n    fun Self.get().R: i32 = unsafe { p.read() }\n}\n\npub fun go() {\n}\n",
+        "pub trait Get {\n    fun Self.get().return: i32\n}\n\npub datac A(val p: Ptr<i32>)\n\nimpl Get for A {\n    fun Self.get().return: i32 = unsafe { p.read() }\n}\n\npub fun go() {\n}\n",
         NOT_LISTED,
     );
     unsafe_attack(
         "u04b",
-        "fun peek<T>(p: Ptr<i32>, x: T).R: i32 = unsafe { p.read() }\n\npub fun go() {\n    var x: i32 = 1\n    print(peek(Ptr.from_mut(x), 1))\n}\n",
+        "fun peek<T>(p: Ptr<i32>, x: T).return: i32 = unsafe { p.read() }\n\npub fun go() {\n    var x: i32 = 1\n    print(peek(Ptr.from_mut(x), 1))\n}\n",
         NOT_LISTED,
     );
 }
@@ -1449,7 +1449,7 @@ fn u05_asm_and_naked_fun_need_the_audit_list() {
     );
     unsafe_attack(
         "u05b",
-        "naked fun forty_two().R: i64 {\n    asm(\"mov rax, 42\\nret\")\n}\n\npub fun go() {\n    print(forty_two())\n}\n",
+        "naked fun forty_two().return: i64 {\n    asm(\"mov rax, 42\\nret\")\n}\n\npub fun go() {\n    print(forty_two())\n}\n",
         NOT_LISTED,
     );
     unsafe_attack(
@@ -1469,7 +1469,7 @@ fn u06_unsafe_in_a_module_level_initializer_is_found() {
     );
     unsafe_attack(
         "u06b",
-        "pd val V: i32 = unsafe { read_it() }\n\nunsafe fun read_it().R: i32 = 1\n\npub fun go() {\n    print(V)\n}\n",
+        "pd val V: i32 = unsafe { read_it() }\n\nunsafe fun read_it().return: i32 = 1\n\npub fun go() {\n    print(V)\n}\n",
         NOT_LISTED,
     );
 }
@@ -1480,7 +1480,7 @@ fn u06_unsafe_in_a_module_level_initializer_is_found() {
 /// design working: it is callable and does its job (the positive control).
 #[test]
 fn u07_an_unlisted_module_reaches_unsafe_only_through_listed_wrappers() {
-    let listed = "pub unsafe fun raw(p: Ptr<i32>).R: i32 = p.read()\n\npub fun safe_read(x: i32).R: i32 {\n    var y: i32 = x\n    val p: Ptr<i32> = Ptr.from_mut(y)\n    return unsafe { raw(p) }\n}\n";
+    let listed = "pub unsafe fun raw(p: Ptr<i32>).return: i32 = p.read()\n\npub fun safe_read(x: i32).return: i32 {\n    var y: i32 = x\n    val p: Ptr<i32> = Ptr.from_mut(y)\n    return unsafe { raw(p) }\n}\n";
     for (what, evil, needle) in [
         (
             "no_block",
@@ -1658,9 +1658,9 @@ fn i01_a_closure_from_a_granted_module_keeps_its_makers_grant() {
     );
     lab.src(
         "util.kp",
-        "impl \"std/fs\"\n\npub fun reader().R: fun(&str).R: String = fun(p: &str).R: String = fs.read_text(p)\n",
+        "impl \"std/fs\"\n\npub fun reader().return: fun(&str).return: String = fun(p: &str).return: String = fs.read_text(p)\n",
     );
-    lab.src("evil.kp", "pub fun go(f: fun(&str).R: String) {\n    print(f(\"__T__/secret/s.txt\"))\n}\n");
+    lab.src("evil.kp", "pub fun go(f: fun(&str).return: String) {\n    print(f(\"__T__/secret/s.txt\"))\n}\n");
     lab.denied("granted to module 'util'");
 }
 
@@ -1671,14 +1671,14 @@ fn i01_a_closure_from_a_granted_module_keeps_its_makers_grant() {
 fn i02_generics_do_not_change_whose_grant_applies() {
     let lab = indirect(
         "i02a",
-        "impl \"std/fs\"\n\npub fun get<T>(p: &str, x: T).R: String = fs.read_text(p)\n",
+        "impl \"std/fs\"\n\npub fun get<T>(p: &str, x: T).return: String = fs.read_text(p)\n",
         "impl \"util\"\n\npub fun go() {\n    print(util.get(\"__T__/secret/s.txt\", 1))\n}\n",
     );
     lab.denied("granted to module 'util'");
     let lab = indirect(
         "i02b",
         "pub fun x() {\n}\n",
-        "impl \"std/fs\"\n\nfun get<T>(p: &str, x: T).R: String = fs.read_text(p)\n\npub fun go() {\n    print(get(\"__T__/secret/s.txt\", 1))\n}\n",
+        "impl \"std/fs\"\n\nfun get<T>(p: &str, x: T).return: String = fs.read_text(p)\n\npub fun go() {\n    print(get(\"__T__/secret/s.txt\", 1))\n}\n",
     );
     lab.refused(&[NEEDS_FS]);
 }
@@ -1689,15 +1689,15 @@ fn i02_generics_do_not_change_whose_grant_applies() {
 /// writes it (or of the impl's module), and is checked as such.
 #[test]
 fn i03_traits_drop_defer_scoped_and_initializers_do_not_launder_a_grant() {
-    let util = "impl \"std/fs\"\n\npub trait Loader {\n    fun Self.path().R: String\n    fun Self.load().R: String {\n        return fs.read_text(self.path().as_str())\n    }\n}\n\npub fun with(cb: scoped fun().R: i32).R: i32 = cb()\n";
+    let util = "impl \"std/fs\"\n\npub trait Loader {\n    fun Self.path().return: String\n    fun Self.load().return: String {\n        return fs.read_text(self.path().as_str())\n    }\n}\n\npub fun with(cb: scoped fun().return: i32).return: i32 = cb()\n";
     for (what, evil) in [
         (
             "trait_default",
-            "impl \"util\"\n\npub datac L(val p: String)\n\nimpl util.Loader for L {\n    fun Self.path().R: String = String.from_str(p.as_str())\n}\n\npub fun go() {\n    val l = L(p = String.from_str(\"__T__/secret/s.txt\"))\n    print(l.load())\n}\n",
+            "impl \"util\"\n\npub datac L(val p: String)\n\nimpl util.Loader for L {\n    fun Self.path().return: String = String.from_str(p.as_str())\n}\n\npub fun go() {\n    val l = L(p = String.from_str(\"__T__/secret/s.txt\"))\n    print(l.load())\n}\n",
         ),
         (
             "trait_impl",
-            "impl \"std/fs\"\nimpl \"util\"\n\npub datac L(val p: String)\n\nimpl util.Loader for L {\n    fun Self.path().R: String = fs.read_text(\"__T__/secret/s.txt\")\n}\n\npub fun go() {\n}\n",
+            "impl \"std/fs\"\nimpl \"util\"\n\npub datac L(val p: String)\n\nimpl util.Loader for L {\n    fun Self.path().return: String = fs.read_text(\"__T__/secret/s.txt\")\n}\n\npub fun go() {\n}\n",
         ),
         (
             "drop",
@@ -1709,7 +1709,7 @@ fn i03_traits_drop_defer_scoped_and_initializers_do_not_launder_a_grant() {
         ),
         (
             "scoped",
-            "impl \"util\"\nimpl \"std/fs\"\n\npub fun go() {\n    print(util.with(fun().R: i32 = fs.read_text(\"__T__/secret/s.txt\").len()))\n}\n",
+            "impl \"util\"\nimpl \"std/fs\"\n\npub fun go() {\n    print(util.with(fun().return: i32 = fs.read_text(\"__T__/secret/s.txt\").len()))\n}\n",
         ),
         (
             "pd_initializer",
@@ -1746,8 +1746,8 @@ fn i04_importing_a_granted_module_does_not_import_its_grant() {
 #[test]
 fn i05_a_user_extern_needs_a_manifest_entry() {
     for decl in [
-        "extern fun read_raw(path: &str).R: Bytes",
-        "extern fun system(cmd: &str).R: i32",
+        "extern fun read_raw(path: &str).return: Bytes",
+        "extern fun system(cmd: &str).return: i32",
     ] {
         let lab = indirect(
             "i05",
@@ -1858,8 +1858,8 @@ fn d04_module_ids_cannot_escape_or_shadow_the_library() {
     fs::create_dir_all(lab.root.join("src/std")).unwrap();
     let real = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/std/rt.kp")).unwrap();
     let evil = real.replacen(
-        "fun glob_match(pat: &str, path: &str).R: bool {",
-        "fun glob_match(pat: &str, path: &str).R: bool {\n    return true",
+        "fun glob_match(pat: &str, path: &str).return: bool {",
+        "fun glob_match(pat: &str, path: &str).return: bool {\n    return true",
         1,
     );
     fs::write(lab.root.join("src/std/rt.kp"), evil).unwrap();
@@ -1877,7 +1877,7 @@ fn d05_the_extern_allowlist_is_per_module_and_per_symbol() {
         manifest,
         &[
             ("main.kp", "impl \"sys\" caps(process = [\"/**\"])\n\nfun main() {\n    print(sys.getppid() > 0)\n}\n"),
-            ("sys.kp", "pub extern fun getppid().R: i32\n"),
+            ("sys.kp", "pub extern fun getppid().return: i32\n"),
         ],
     );
     lab.refused(&["getppid"]);
@@ -1886,7 +1886,7 @@ fn d05_the_extern_allowlist_is_per_module_and_per_symbol() {
         manifest,
         &[
             ("main.kp", "impl \"evil\"\n\nfun main() {\n    print(evil.getpid() > 0)\n}\n"),
-            ("evil.kp", "pub extern fun getpid().R: i32\n"),
+            ("evil.kp", "pub extern fun getpid().return: i32\n"),
         ],
     );
     lab.refused(&["has no compiler-supplied body"]);
@@ -1896,8 +1896,8 @@ fn d05_the_extern_allowlist_is_per_module_and_per_symbol() {
         manifest,
         &[
             ("main.kp", "impl \"util\"\n\nfun main() {\n    print(util.pid() > 0)\n}\n"),
-            ("util.kp", "impl \"sys\"\n\npub fun pid().R: i32 = sys.getpid()\n"),
-            ("sys.kp", "pub extern fun getpid().R: i32\n"),
+            ("util.kp", "impl \"sys\"\n\npub fun pid().return: i32 = sys.getpid()\n"),
+            ("sys.kp", "pub extern fun getpid().return: i32\n"),
         ],
     );
     lab.refused(&["needs the 'process' capability"]);

@@ -76,25 +76,25 @@ the empty string at the start.
 ## API
 
 ```
-regex.compile(pattern: &str).R: result.Result<Regex, RegexErr>
+regex.compile(pattern: &str).return: result.Result<Regex, RegexErr>
 datac RegexErr(message: String, offset: usize)
 datac Match(start: usize, end: usize, text: String)     // [start, end)
 
-Regex.is_match(&str).R: bool
-Regex.find(&str).R: option.Option<Match>
-Regex.find_at(&str, start: usize).R: option.Option<Match>
-Regex.captures(&str).R: option.Option<Captures>
-Regex.find_all(&str).R: List<Match>
-Regex.replace(&str, replacement: &str).R: String
-Regex.replace_all(&str, replacement: &str).R: String
-Regex.split(&str).R: List<String>
-Regex.steps().R: i64        // VM steps since compile / reset_steps()
+Regex.is_match(&str).return: bool
+Regex.find(&str).return: option.Option<Match>
+Regex.find_at(&str, start: usize).return: option.Option<Match>
+Regex.captures(&str).return: option.Option<Captures>
+Regex.find_all(&str).return: List<Match>
+Regex.replace(&str, replacement: &str).return: String
+Regex.replace_all(&str, replacement: &str).return: String
+Regex.split(&str).return: List<String>
+Regex.steps().return: i64        // VM steps since compile / reset_steps()
 Regex.reset_steps()
-Regex.group_count().R: usize
-Captures.get(i: usize).R: option.Option<String>
-Captures.span(i: usize).R: option.Option<Match>
-Captures.len().R: usize     // groups including group 0
-regex.is_match(pattern: &str, text: &str).R: bool   // panics on a bad pattern
+Regex.group_count().return: usize
+Captures.get(i: usize).return: option.Option<String>
+Captures.span(i: usize).return: option.Option<Match>
+Captures.len().return: usize     // groups including group 0
+regex.is_match(pattern: &str, text: &str).return: bool   // panics on a bad pattern
 ```
 
 Decisions the design left open:

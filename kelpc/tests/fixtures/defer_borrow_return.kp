@@ -9,7 +9,7 @@ enum J {
     N
 }
 
-fun as_str(v: &J).R: &str {
+fun as_str(v: &J).return: &str {
     defer print("as_str-out")
     if let S(s) = v {
         return s.as_str()
