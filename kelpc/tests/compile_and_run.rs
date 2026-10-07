@@ -11910,6 +11910,15 @@ fn loop_and_labelled_break_and_continue_leave_nested_loops() {
 }
 
 #[test]
+fn a_method_can_declare_type_parameters_of_its_own() {
+    // MISSING-Pw3Fz: `fun Box2.map<U>(...)` on a plain type and
+    // `fun Pair<A, B>.map_first<C>(...)` on a generic one, inferred at the
+    // call, with a `mut` receiver and a trait bound.
+    assert_compiles_and_runs("tests/fixtures/method_own_type_params.kp", "3\ntrue\ntrue\n2\n2\n7\n");
+    assert_compiles_and_runs("tests/fixtures/method_own_type_params_bound.kp", "11\n");
+}
+
+#[test]
 fn a_nested_owned_field_can_be_partially_moved_and_reinitialised() {
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_field.kp", "Ada\n7\nLondon\n");
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_reinit.kp", "old\nnew\n");
