@@ -9,9 +9,9 @@ impl "std/str"
 
 datac Sample(val ratio: f64, val tag: i32, val label: String)
 
-fun Sample.hash().R: u64 = self.tag.to_u64() + self.label.len().to_u64()
+fun Sample.hash().return: u64 = self.tag.to_u64() + self.label.len().to_u64()
 
-fun Sample.eq(other: &Sample).R: bool {
+fun Sample.eq(other: &Sample).return: bool {
     if self.tag != other.tag {
         return false
     }

@@ -4,7 +4,7 @@
 // dangle the moment the frame pops.
 impl "std/str"
 
-fun first(xs: &String).R: &str {
+fun first(xs: &String).return: &str {
     val local = String.from_str("x")
     val p = local.as_str()
     return p

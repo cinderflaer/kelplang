@@ -5,8 +5,8 @@
 // `Ptr<Packed>`.
 pub repr(packed) datac Packed(val kind: u8, val length: u32, val flags: u16)
 
-pub extern fun kelp_layout_size().R: u64
-pub extern fun kelp_layout_align().R: u64
-pub extern fun kelp_layout_offset_length().R: u64
-pub extern fun kelp_layout_offset_flags().R: u64
-pub extern fun kelp_layout_read(raw: Ptr<Packed>).R: u64
+pub extern fun kelp_layout_size().return: u64
+pub extern fun kelp_layout_align().return: u64
+pub extern fun kelp_layout_offset_length().return: u64
+pub extern fun kelp_layout_offset_flags().return: u64
+pub extern fun kelp_layout_read(raw: Ptr<Packed>).return: u64

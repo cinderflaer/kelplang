@@ -11,7 +11,7 @@ static mut NULL_IDT: [u64; 2] = [0, 0]
 
 // CR0 bit 31 is PG (paging on) and bit 0 is PE (protected mode). Reading a
 // control register into a general one is `mov r64, crN`.
-pub fun read_cr0().R: u64 {
+pub fun read_cr0().return: u64 {
     val v: u64 = unsafe {
         asm("mov {0}, cr0", out("r") _)
     }
@@ -19,7 +19,7 @@ pub fun read_cr0().R: u64 {
 }
 
 // CR4 bit 5 is PAE, which long mode requires.
-pub fun read_cr4().R: u64 {
+pub fun read_cr4().return: u64 {
     val v: u64 = unsafe {
         asm("mov {0}, cr4", out("r") _)
     }
@@ -30,7 +30,7 @@ pub fun read_cr4().R: u64 {
 // EDX:EAX; bit 10 of the low half is LMA (long mode active). The compiler's
 // constraint vocabulary has no fixed-register form, so the template loads ECX
 // and copies EAX out itself and declares all three clobbered.
-pub fun read_efer_lo().R: u32 {
+pub fun read_efer_lo().return: u32 {
     val msr: u32 = 0xC0000080
     val lo: u32 = unsafe {
         asm(
@@ -45,7 +45,7 @@ pub fun read_efer_lo().R: u32 {
     return lo
 }
 
-pub fun long_mode_on().R: bool {
+pub fun long_mode_on().return: bool {
     val cr0 = read_cr0()
     val cr4 = read_cr4()
     val efer = read_efer_lo()

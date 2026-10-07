@@ -17,7 +17,7 @@ impl "std/str"
 
 datac Counts(var create: i32, var update: i32, var remove: i32, var moved: i32)
 
-fun count(patches: &List<core.Patch>).R: Counts {
+fun count(patches: &List<core.Patch>).return: Counts {
     var c = Counts(create = 0, update = 0, remove = 0, moved = 0)
     var i: usize = 0
     while i < patches.len() {
@@ -50,37 +50,37 @@ fun show(label: str, old: core.Node<i32>, new: core.Node<i32>) {
     print(c.moved)
 }
 
-fun rows_reversed().R: core.Node<i32> = core.column { k ->
+fun rows_reversed().return: core.Node<i32> = core.column { k ->
     k.keyed("b") { r -> r.text("two") }
     k.keyed("a") { r -> r.text("one") }
 }
 
-fun rows().R: core.Node<i32> = core.column { k ->
+fun rows().return: core.Node<i32> = core.column { k ->
     k.keyed("a") { r -> r.text("one") }
     k.keyed("b") { r -> r.text("two") }
 }
 
-fun rows_with_new().R: core.Node<i32> = core.column { k ->
+fun rows_with_new().return: core.Node<i32> = core.column { k ->
     k.keyed("a") { r -> r.text("one") }
     k.keyed("x") { r -> r.text("inserted") }
     k.keyed("b") { r -> r.text("two") }
 }
 
-fun rows_one().R: core.Node<i32> = core.column { k ->
+fun rows_one().return: core.Node<i32> = core.column { k ->
     k.keyed("a") { r -> r.text("one") }
 }
 
-fun one_text(t: str).R: core.Node<i32> {
+fun one_text(t: str).return: core.Node<i32> {
     val n: core.Node<i32> = core.text(String.from_str(t))
     return n
 }
 
-fun empty_column().R: core.Node<i32> {
+fun empty_column().return: core.Node<i32> {
     val out: core.Node<i32> = core.plain_column(List.empty())
     return out
 }
 
-fun empty_row().R: core.Node<i32> {
+fun empty_row().return: core.Node<i32> {
     val out: core.Node<i32> = core.plain_row(List.empty())
     return out
 }

@@ -7,7 +7,7 @@ impl "std/result"
 
 const MUL: u64 = 11400714819323198485
 
-fun size_arg(default: i64).R: i64 {
+fun size_arg(default: i64).return: i64 {
     if process.arg_count() < 2 {
         return default
     }

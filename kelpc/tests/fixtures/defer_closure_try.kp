@@ -3,11 +3,11 @@
 // block's `defer` is untouched by it.
 impl "std/option"
 
-fun g(x: i32).R: option.Option<i32> = option.Option.Some(value = x)
+fun g(x: i32).return: option.Option<i32> = option.Option.Some(value = x)
 
 fun main() {
     defer print("out")
-    val c = fun(x: i32).R: option.Option<i32> = {
+    val c = fun(x: i32).return: option.Option<i32> = {
         val v = g(x = x)?
         option.Option.Some(value = v + 1)
     }

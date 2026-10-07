@@ -4,4 +4,4 @@
 // must be all by-value scalars, and the parameter is `move` because the native
 // side takes ownership (its `destroy` notify is the only thing that frees the
 // environment).
-pub extern fun kelp_call_twice(f: move closure(i32), x: i32).R: i32
+pub extern fun kelp_call_twice(f: move closure(i32), x: i32).return: i32

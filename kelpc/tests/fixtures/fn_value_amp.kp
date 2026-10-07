@@ -1,7 +1,7 @@
 // A-4: the `&` spelling of the same mistake, in a return position.
-fun double(x: i32).R: i32 = x * 2
+fun double(x: i32).return: i32 = x * 2
 
-fun away().R: &fun(i32).R: i32 {
+fun away().return: &fun(i32).return: i32 {
     return double
 }
 

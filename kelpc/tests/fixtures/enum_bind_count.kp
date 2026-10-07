@@ -3,7 +3,7 @@ enum Shape {
     Rect(val w: f64, val h: f64)
 }
 
-fun area(s: &Shape).R: f64 = when s {
+fun area(s: &Shape).return: f64 = when s {
     Circle(r, x) -> r
     Rect(w, h) -> w * h
 }

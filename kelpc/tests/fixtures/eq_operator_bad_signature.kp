@@ -2,7 +2,7 @@
 // `==` can call: one parameter, a shared borrow of the receiver's own type.
 datac P(val x: i32)
 
-fun P.eq(a: &P, b: &P).R: bool = a.x == b.x
+fun P.eq(a: &P, b: &P).return: bool = a.x == b.x
 
 fun main() {
     print(P(x = 1) == P(x = 1))

@@ -372,8 +372,8 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `datac` name | owned | record with per-field `val`/`var`, optionally with type parameters (9.3) |
 | `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2), optionally with type parameters (9.3) |
 | `(A, B)` | owned | a tuple: two or more element types held in **position order** (3.1). Not `Copy`, and it takes the derived deep copy and the derived order a `datac` takes, position by position |
-| `fun(T, U).R: V` | Copy | a function value: a function pointer, with the parameters it takes and what it returns (7.4) |
-| `closure(T, U).R: V` | owned | a *closure*: a function value plus the environment its captures were moved into (7.4). What a `fun` literal becomes when it names a binding from the enclosing scope |
+| `fun(T, U).return: V` | Copy | a function value: a function pointer, with the parameters it takes and what it returns (7.4) |
+| `closure(T, U).return: V` | owned | a *closure*: a function value plus the environment its captures were moved into (7.4). What a `fun` literal becomes when it names a binding from the enclosing scope |
 | `Unit` | Copy | absent value, the implicit return type |
 
 Rules that follow from the table:
@@ -396,7 +396,7 @@ A tuple is two or more values held in **position order**, and it is a type:
 `(i32, i32)` is a pair of `i32`s, and it is written wherever a type is written.
 
 ```kelp
-fun min_max(xs: &List<i32>).R: (i32, i32) {
+fun min_max(xs: &List<i32>).return: (i32, i32) {
     // ...
     return (lo, hi)
 }
@@ -560,13 +560,13 @@ Facts worth knowing:
 - Integer `+`, `-` and `*` overflow is not checked.
 - Bitwise `& | ^ << >> ~` require two integers **of the same type** (or one, for `~`) and produce that type. `bool` is not a bitwise domain: `a & b` on two booleans reads as a non-short-circuiting `and`, and `&&` is right there. A shift count is the same type as the value, as every other binary operator requires; a shift by an amount outside `0..width` (or a negative one, on a signed type) is checked at run time like an out-of-bounds index and panics with `shift amount out of range` on both backends, hosted and freestanding (the project's panic handler), and a shift by a *constant* amount already known to be out of range is a compile error naming the type and the amount. `x.wrapping_shl(n)` / `x.wrapping_shr(n)` are the escapes that mask the amount to `n & (width - 1)` (lowered to an ordinary shift, so neither backend needs anything new); a shift whose amount is a literal in range, or a literal-masked value, carries no check. `>>` on a signed type is arithmetic (sign-propagating), and `~x` is `0 - x - 1`, so on a `u32` it flips all 32 bits — mask it (`~x & 255`) when you wanted a byte.
 - Float arithmetic is IEEE, so `nan`, `inf` and `-0.0` behave as usual. `math.is_nan` and `math.is_finite` exist.
-- `==` and `!=` work for scalars, for two `View` values (byte-wise and length-aware, exactly like `view.eq`), and for a `View` against a `str` (the `str` is viewed first). Comparing two `str` values is refused (it would compare addresses); use `str.eq`. A `datac`/`enum` that declares `fun T.eq(other: &T).R: bool` gets `==`/`!=` from that method; every other owned type still has no structural equality.
+- `==` and `!=` work for scalars, for two `View` values (byte-wise and length-aware, exactly like `view.eq`), and for a `View` against a `str` (the `str` is viewed first). Comparing two `str` values is refused (it would compare addresses); use `str.eq`. A `datac`/`enum` that declares `fun T.eq(other: &T).return: bool` gets `==`/`!=` from that method; every other owned type still has no structural equality.
 - `if` and `when` are expressions (see 7), so they can appear on the right of `=` and inside a call.
 - A block `{ ... }` is an expression whose value is its last expression when used where a value is expected.
 - Every integer type has `to_<type>()` for every other integer type, and `to_f64()`/`to_f32()` to the float types. Widening is exact; narrowing panics when the value does not fit, naming the call: `panic: i32.to_u64: value out of range`. `to_f32` rounds (it is the one conversion allowed to lose value without a check, because C defines it for every input). A float does **not** have `to_i64`: that conversion loses the fraction, so write `math.trunc`/`math.floor` first.
 - `print` is the one builtin call that accepts a template; see 12.
 
-**Equality by declaration (H-5).** `==` and `!=` are defined on a `datac`/`enum` `T` when `T` declares `fun T.eq(other: &T).R: bool`, the same `eq` method name A-12 already gives a declared `Map` key. `a == b` means `a.eq(&b)` and `a != b` means `!a.eq(&b)`: the front end rewrites the operator into that method call *before* borrow checking and code generation, so both are ordinary calls of the declared body and no backend gains an operator. `eq` alone is enough for `==` (a `Map` key still needs the pair, `hash` and `eq`; a lone `hash` is still refused). Each operand is evaluated exactly once, left to right, and is only borrowed, never moved, so an owned binding, a `&T`/`mut T` borrow, or a mix of the two all compare. `View` against `View`, and `View` against `str`, lower the same way through the builtin `View.eq`. Nothing is *derived*: a type without a declared `eq` keeps the old `cannot compare` refusal, and so does `<`/`<=`/`>`/`>=` on any such type.
+**Equality by declaration (H-5).** `==` and `!=` are defined on a `datac`/`enum` `T` when `T` declares `fun T.eq(other: &T).return: bool`, the same `eq` method name A-12 already gives a declared `Map` key. `a == b` means `a.eq(&b)` and `a != b` means `!a.eq(&b)`: the front end rewrites the operator into that method call *before* borrow checking and code generation, so both are ordinary calls of the declared body and no backend gains an operator. `eq` alone is enough for `==` (a `Map` key still needs the pair, `hash` and `eq`; a lone `hash` is still refused). Each operand is evaluated exactly once, left to right, and is only borrowed, never moved, so an owned binding, a `&T`/`mut T` borrow, or a mix of the two all compare. `View` against `View`, and `View` against `str`, lower the same way through the builtin `View.eq`. Nothing is *derived*: a type without a declared `eq` keeps the old `cannot compare` refusal, and so does `<`/`<=`/`>`/`>=` on any such type.
 
 **Operators by trait (language-completeness 5).** The arithmetic operators, the order operators and unary minus are defined on a `datac`/`enum` through the shipped traits in `std/ops` (9.5.4): with `impl Add for T`, `a + b` means `a.add(&b)`; with `impl Sub`, `a - b` is `a.sub(&b)`; likewise `Mul`, `Div` and `Rem`; `-a` with `impl Neg` is `a.neg()`; and with `impl Ord`, `a < b` means `a.cmp(&b) < 0` (and `<=`, `>`, `>=` the matching comparison of the `i32` `cmp` returns). Each lowering is the same front-end desugar `==` gets, done at the operator's own check, so each operand is evaluated exactly once, left to right, and is only borrowed, never moved. Builtin numeric types keep their builtin operators and are unaffected: the desugar runs only where the builtin arithmetic or comparison would already have been a type error, and mixing types is still the ordinary mismatch. A type with a declared `eq` but no `Ord` keeps the old `<`/`>` refusal, and a type with `Ord` but no `eq` gets no `==`/`!=`: the `Ord`-only message says the operator needs `eq`. Compound assignment keeps the parser's `a = a + b` desugar, so `a += b` is `a = a.add(&b)` when `a` is a `var` place. `fmt.Display` (9.5.4) is what a type implements to appear in `"${x}"` and in `print(x)`/`print!(x)`.
 
@@ -599,7 +599,7 @@ val s: String = "a literal"                      // the written type converts it
 var acc = String.empty()
 acc = "assigned"                                 // an assignment converts it
 
-fun shout(s: String).R: String = s               // a return converts it
+fun shout(s: String).return: String = s               // a return converts it
 var xs: List<String> = List.empty()
 xs.push("pushed")                                // an element converts it
 var m: Map<String, String> = Map.new()
@@ -621,12 +621,12 @@ What *does* convert, and what does not:
 `expr?` evaluates `expr` and, if it carries a failure, returns that failure out of the enclosing function. Otherwise the expression's value is the success payload.
 
 ```kelp
-fun quarter(n: i64).R: Result<i64, String> {
+fun quarter(n: i64).return: Result<i64, String> {
     val h = half(n = n)?          // `half` returns Result<i64, String>
     return Result.Ok(value = h / 2)
 }
 
-fun loud(n: i64).R: Option<String> {
+fun loud(n: i64).return: Option<String> {
     val w = maybe_word(n = n)?    // `maybe_word` returns Option<String>
     return Option.Some(value = String.from_str(s = w.as_str()))
 }
@@ -798,7 +798,7 @@ an iterator `for`. `str.split`, `Map.keys()` and `Map.values()` hand back
 `when` is a chain of conditions that reads as a value:
 
 ```kelp
-fun classify(n: i32).R: &str = when {
+fun classify(n: i32).return: &str = when {
     n > 0 -> "pos"
     n < 0 -> "neg"
     else -> "zero"
@@ -810,7 +810,7 @@ Each arm is `condition -> value` and `->` appears nowhere else in the language. 
 With a scrutinee, `when` becomes pattern matching over an `enum`, and `->` is the same arrow:
 
 ```kelp
-fun area(s: &Shape).R: f64 = when s {
+fun area(s: &Shape).return: f64 = when s {
     Circle(r) -> math.PI * r * r
     Rect(w, h) -> w * h
     Empty -> 0.0
@@ -828,7 +828,7 @@ fun area(s: &Shape).R: f64 = when s {
 In a block-bodied function, `return expr` delivers the value the signature promises:
 
 ```kelp
-fun sum_to(n: i32).R: i32 {
+fun sum_to(n: i32).return: i32 {
     var acc = 0
     var i = 1
     while i <= n {
@@ -839,19 +839,19 @@ fun sum_to(n: i32).R: i32 {
 }
 ```
 
-`return` with no value is allowed in a function with no `.R: T`. An expression-bodied function (see 7.1) does not use `return`.
+`return` with no value is allowed in a function with no `.return: T`. An expression-bodied function (see 7.1) does not use `return`.
 
 A block whose **last statement is `panic(...)`** diverges, so it satisfies any declared return type — including a borrowed one, where it matters twice over: the `panic` is not the returned value, so the elision rule has nothing to say about it.
 
 ```kelp
-fun unwrap<T>(o: &Option<T>).R: T {
+fun unwrap<T>(o: &Option<T>).return: T {
     if let Some(v) = o {
         return v
     }
     panic("Option.unwrap: value is None")
 }
 
-fun as_str(v: &Json).R: &str {
+fun as_str(v: &Json).return: &str {
     if let Str(s) = v {
         return s.as_str()
     }
@@ -870,13 +870,13 @@ That is the whole of the divergence rule: it applies to a function body's tail a
 ### 7.1 Declaration
 
 ```kelp
-fun add(a: i32, b: i32).R: i32 = a + b        // expression body, requires .R
+fun add(a: i32, b: i32).return: i32 = a + b        // expression body, requires .return
 
-fun greet(name: &str) {                       // no .R: returns Unit
+fun greet(name: &str) {                       // no .return: returns Unit
     print(str.concat("hello, ", name))
 }
 
-fun abs_diff(a: i32, b: i32).R: i32 {         // block body
+fun abs_diff(a: i32, b: i32).return: i32 {         // block body
     if a > b {
         return a - b
     }
@@ -885,9 +885,9 @@ fun abs_diff(a: i32, b: i32).R: i32 {         // block body
 ```
 
 - The keyword is `fun`.
-- The return type is written `.R: T` after the parameter list. `.R` marks "this returns"; there is no `->` return marker, no trailing type, and no inferred return type for block bodies.
-- No `.R` means `Unit`.
-- An expression body (`= expr`) requires `.R: T`; a block body may end with `return expr`.
+- The return type is written `.return: T` after the parameter list. `.return` marks "this returns"; there is no `->` return marker, no trailing type, and no inferred return type for block bodies.
+- No `.return` means `Unit`.
+- An expression body (`= expr`) requires `.return: T`; a block body may end with `return expr`.
 - Parameters are `name: T`. A parameter is a shared borrow of its argument. `name: mut T` is an exclusive borrow, which is the only spelling for mutation in parameter position: `&mut T` there is a parse error. `name: move T` takes ownership: the call site moves the argument in, and the callee frees it when its scope ends (10.1). `mut` and `move` are mutually exclusive, `move` is refused on a `str` or a `&T`, and a receiver is always borrowed — there is no `fun move Type.name()`.
 - Named arguments are allowed at any call site when there is more than one parameter, and are matched by name first, then positionally:
 
@@ -904,7 +904,7 @@ A name that the function does not declare is an error; so is naming an argument 
 - A user program cannot overload a name. Two `fun pick(a: i32)` and `fun pick(a: f64)` collide: `function 'pick' is defined more than once for the same parameter types`. Overloading exists only inside the shipped standard library, and only for `abs`, `min`, `max` and `clamp`, which is how `math.min` accepts `i32`, `i64` and `f64`.
 - Recursion is unrestricted, including mutual recursion.
 - A function name *is* a value: see 7.4. A `fun` literal is an anonymous function, and a literal that names a binding from the enclosing scope is a **closure** — a function value that carries the environment it captured. There is still no way to write a named nested function, and no `dyn`-style boxing of one.
-- A function may take type parameters: `fun first<T>(xs: List<T>).R: T`. A receiver method on a generic type takes the *type's* parameters instead: `fun Pair<A, B>.first().R: A`. Each call site is instantiated for the types it uses (9.3).
+- A function may take type parameters: `fun first<T>(xs: List<T>).return: T`. A receiver method on a generic type takes the *type's* parameters instead: `fun Pair<A, B>.first().return: A`. Each call site is instantiated for the types it uses (9.3).
 
 ### 7.3 `main`
 
@@ -916,12 +916,12 @@ fun main() { ... }
 
 ### 7.4 Function values
 
-A bare name of a declared `fun` is a value, and its type is written `fun(T, U).R: V` — the `fun` keyword, the parameter types, and the same `.R:` return clause a declaration uses. No `.R` means `Unit`.
+A bare name of a declared `fun` is a value, and its type is written `fun(T, U).return: V` — the `fun` keyword, the parameter types, and the same `.return:` return clause a declaration uses. No `.return` means `Unit`.
 
 ```kelp
-fun double(x: i32).R: i32 = x * 2
+fun double(x: i32).return: i32 = x * 2
 
-fun apply(f: fun(i32).R: i32, x: i32).R: i32 = f(x)     // takes a callback
+fun apply(f: fun(i32).return: i32, x: i32).return: i32 = f(x)     // takes a callback
 
 val f = double                     // a function value
 print(f(21))                       // ...called through the binding
@@ -932,20 +932,20 @@ print(apply(f, 6))
 The parameter types of a function type follow the same rule a declaration's do, so a written type and a signature are the same type when they spell the same thing: `fun(String)` is a parameter that borrows, `fun(mut Counter)` one that borrows exclusively, `fun(move String)` one that takes ownership (7.1).
 
 ```kelp
-fun consume(s: move String).R: usize = s.len()
+fun consume(s: move String).return: usize = s.len()
 
-val g: fun(move String).R: usize = consume
+val g: fun(move String).return: usize = consume
 print(g(String.from_str("abcd")))
 ```
 
 A function value can live anywhere a `Copy` value can, and is called with ordinary call syntax wherever it is held:
 
 ```kelp
-datac Handlers(val on_i32: fun(i32).R: i32)
+datac Handlers(val on_i32: fun(i32).return: i32)
 
-fun call_through(h: Handlers, x: i32).R: i32 = h.on_i32(x)   // a field, called
+fun call_through(h: Handlers, x: i32).return: i32 = h.on_i32(x)   // a field, called
 
-fun pick(which: bool).R: fun(i32).R: i32 {                   // returned
+fun pick(which: bool).return: fun(i32).return: i32 {                   // returned
     if which {
         return double
     }
@@ -959,24 +959,24 @@ print(p(9))
 An **anonymous function** is written where an expression is expected, with the same header a declaration has and no name. It is a function value like any other:
 
 ```kelp
-val f = fun(x: i32).R: i32 = x * 2
+val f = fun(x: i32).return: i32 = x * 2
 print(f(21))
-print(apply(fun(x: i32).R: i32 = x + 1, 5))
+print(apply(fun(x: i32).return: i32 = x + 1, 5))
 
-val g = fun(x: i32) {              // no `.R` means Unit
+val g = fun(x: i32) {              // no `.return` means Unit
     print(x)
 }
 ```
 
-A body is required (`= expr` or `{ ... }`), and everything else is a declaration's: the same parameter list with the same `mut`/`move` qualifiers, the same optional `.R: T`, the same tail-versus-return check, and `?` propagates against the literal's own `.R`. Each literal becomes one function, so a literal inside a literal's body is just another one.
+A body is required (`= expr` or `{ ... }`), and everything else is a declaration's: the same parameter list with the same `mut`/`move` qualifiers, the same optional `.return: T`, the same tail-versus-return check, and `?` propagates against the literal's own `.return`. Each literal becomes one function, so a literal inside a literal's body is just another one.
 
 ### Captures, and the closure type
 
-A literal that names a binding from the enclosing scope **captures** it, and that makes the literal a *closure*: a function value plus the environment those captures were moved into. Its type is written `closure(T, U).R: V` — the function type under the `closure` keyword, called exactly the same way.
+A literal that names a binding from the enclosing scope **captures** it, and that makes the literal a *closure*: a function value plus the environment those captures were moved into. Its type is written `closure(T, U).return: V` — the function type under the `closure` keyword, called exactly the same way.
 
 ```kelp
-fun make(step: i32).R: closure(i32).R: i32 {
-    return fun(x: i32).R: i32 = x * step
+fun make(step: i32).return: closure(i32).return: i32 {
+    return fun(x: i32).return: i32 = x * step
 }
 
 val f = make(3)
@@ -987,7 +987,7 @@ A capture is **move-only**, and `Copy` is what decides what that means:
 
 - A `Copy` binding (a number, `bool`, a function value) is *copied* into the environment; the enclosing binding stays usable.
 - An owned binding (`String`, `Bytes`, `List`, `Box`, `Map`, a `datac`/`enum`, another closure) is *moved* into the environment; the enclosing binding is gone from that point on, exactly as after `val b = a`.
-- A borrow (`str`, `&T`) **cannot** be captured: the environment outlives the frame the borrow points into, and there is no lifetime syntax to say otherwise. Pass it as a parameter of the literal instead. The one exception is a **scoped** literal: a parameter written `scoped fun(T).R: U` takes only a `fun` literal or a trailing block written at the call site, whose environment is the enclosing *stack* with a no-op drop, so an owned capture is a shared borrow that lives exactly as long as the call (`plan/scoped-blocks.md`).
+- A borrow (`str`, `&T`) **cannot** be captured: the environment outlives the frame the borrow points into, and there is no lifetime syntax to say otherwise. Pass it as a parameter of the literal instead. The one exception is a **scoped** literal: a parameter written `scoped fun(T).return: U` takes only a `fun` literal or a trailing block written at the call site, whose environment is the enclosing *stack* with a no-op drop, so an owned capture is a shared borrow that lives exactly as long as the call (`plan/scoped-blocks.md`).
 
 Inside the body a capture is read *through a borrow of the environment*, so an owned capture can be used in place — a method called on it, a field read, passed to a parameter — but cannot be handed out by value. That is a move out of a place this frame does not own, which 9 refuses, and the message says so.
 
@@ -995,14 +995,14 @@ A closure **owns** its environment and frees it where the closure dies: the end 
 
 ```kelp
 val k = 10
-val add_k = fun(x: i32).R: i32 = x + k     // Copy capture: `k` is still usable
+val add_k = fun(x: i32).return: i32 = x + k     // Copy capture: `k` is still usable
 print(add_k(1))
 print(k)
 ```
 
 A literal whose body captures nothing is *not* a closure: it stays a plain `fun` value — `Copy`, no environment, no drop — so nothing about the phase before this one changes. The two types are separate, and one widening connects them:
 
-- A plain **function value used where a closure is expected** (`val f: closure(i32).R: i32 = double`, `Holder(cb = fun(x: i32).R: i32 = x)`, `list.map(xs, inc)`) is wrapped in a one-field environment holding the pointer, with a generated thunk calling through it. When the value *names* a function — a declared `fun`, or a literal that captured nothing — the wrapper needs no environment at all, so the compiler generates a shim with the ignored hidden parameter and the conversion allocates nothing; only a function value whose identity is known at the call (`val g = pick(true)` then `list.map(xs, g)`) pays for the heap wrapper. The signatures must match, and there is no conversion in the other direction, because a closure carries an environment a `fun` value has no room for.
+- A plain **function value used where a closure is expected** (`val f: closure(i32).return: i32 = double`, `Holder(cb = fun(x: i32).return: i32 = x)`, `list.map(xs, inc)`) is wrapped in a one-field environment holding the pointer, with a generated thunk calling through it. When the value *names* a function — a declared `fun`, or a literal that captured nothing — the wrapper needs no environment at all, so the compiler generates a shim with the ignored hidden parameter and the conversion allocates nothing; only a function value whose identity is known at the call (`val g = pick(true)` then `list.map(xs, g)`) pays for the heap wrapper. The signatures must match, and there is no conversion in the other direction, because a closure carries an environment a `fun` value has no room for.
 
 What a literal still cannot do:
 
@@ -1030,7 +1030,7 @@ A method is a function whose first parameter is a receiver, written as `Type.nam
 ```kelp
 datac Counter(val id: i32, var count: i32)
 
-fun Counter.total().R: i32 = id + count          // shared receiver
+fun Counter.total().return: i32 = id + count          // shared receiver
 fun mut Counter.bump() {                          // exclusive receiver
     count += 1
 }
@@ -1120,13 +1120,13 @@ enum Shape {
 - Matching reads the live variant (6.3):
 
 ```kelp
-fun area(s: &Shape).R: f64 = when s {
+fun area(s: &Shape).return: f64 = when s {
     Circle(r) -> 3.14159 * r * r
     Rect(w, h) -> w * h
     Empty -> 0.0
 }
 
-fun label(s: &Shape).R: &str = when s {
+fun label(s: &Shape).return: &str = when s {
     Circle(_) -> "circle"
     Rect(_, _) -> "rect"
     Empty -> "empty"
@@ -1182,13 +1182,13 @@ A receiver method on a generic type writes the type's own parameters, in order, 
 ```kelp
 datac Pair<A, B>(val first: A, var second: B)
 
-fun Pair<A, B>.first_of().R: A = first
+fun Pair<A, B>.first_of().return: A = first
 fun mut Pair<A, B>.replace_second(v: B) { second = v }
 ```
 
 - The parameters must be exactly the type's, in order — a rename would make the body's `T` mean something the declaration does not say, and is refused with the spelling to write.
 - The type arguments are the receiver's own instantiation, so `p.first_of()` on a `Pair<i32, String>` is instantiated once for `A = i32, B = String`. There is no inference to do, and no way to call a method on the template itself.
-- A method on a generic `enum`'s template is refused: `'Option' is a generic enum: a method cannot be declared on the enum template`. A concrete `enum` may declare one, and a call on a value of it resolves it (9.2); the workaround here is a free function over the instantiation (`fun is_some<T>(o: &Option<T>).R: bool`).
+- A method on a generic `enum`'s template is refused: `'Option' is a generic enum: a method cannot be declared on the enum template`. A concrete `enum` may declare one, and a call on a value of it resolves it (9.2); the workaround here is a free function over the instantiation (`fun is_some<T>(o: &Option<T>).return: bool`).
 - A method's declared parameters are its own declared list; a receiver method cannot add type parameters of its own beyond the type's.
 
 #### Generic functions
@@ -1196,9 +1196,9 @@ fun mut Pair<A, B>.replace_second(v: B) { second = v }
 A `fun` may take type parameters after its name, and each call site instantiates them:
 
 ```kelp
-fun identity<T>(x: T).R: T = x
-fun repeat<T>(x: T, n: i32).R: T = if n <= 0 { x } else { repeat(x = x, n = n - 1) }
-fun empty_of<T>().R: List<T> = List.empty()
+fun identity<T>(x: T).return: T = x
+fun repeat<T>(x: T, n: i32).return: T = if n <= 0 { x } else { repeat(x = x, n = n - 1) }
+fun empty_of<T>().return: List<T> = List.empty()
 
 identity(x = 5)
 identity(x = "text")
@@ -1210,7 +1210,7 @@ var xs: List<String> = empty_of()
 - The arguments are inferred from the argument types, and the return type from the expected type — that is the only thing `empty_of()` has to go on. A parameter neither determines is an error that names it.
 - The body is checked once per instantiation, because `T` is a concrete type inside it. A generic function that is never called is never checked.
 - `main` may not take type parameters.
-- A parameter of a non-`Copy` type is a shared borrow (10.2), exactly as it is in a non-generic function, so `fun first<T>(xs: List<T>).R: T` cannot return an owned element — `xs.get(i = 0)` borrows it. Only a `Copy` type can be returned from a borrow.
+- A parameter of a non-`Copy` type is a shared borrow (10.2), exactly as it is in a non-generic function, so `fun first<T>(xs: List<T>).return: T` cannot return an owned element — `xs.get(i = 0)` borrows it. Only a `Copy` type can be returned from a borrow.
 
 #### Explicit type arguments
 
@@ -1237,15 +1237,15 @@ const SIZE: usize = 2
 
 datac Buf<const N: usize>(var data: [i32; N], var len: usize)
 
-fun Buf<const N: usize>.total().R: i32 {
+fun Buf<const N: usize>.total().return: i32 {
     var sum: i32 = 0
     var i: usize = 0
     while i < N { sum = sum + data.get(i = i); i = i + 1 }
     return sum
 }
 
-fun sum<const N: usize>(a: &[i32; N]).R: i32 { ... }
-fun zeros<const N: usize>().R: [i32; N] = [0; N]
+fun sum<const N: usize>(a: &[i32; N]).return: i32 { ... }
+fun zeros<const N: usize>().return: [i32; N] = [0; N]
 ```
 
 - A const parameter is listed with the type parameters, in declaration order, and its name is in
@@ -1274,15 +1274,15 @@ A parameter written `impl Name` is sugar for a fresh type parameter bounded by `
 saves declaring and naming one:
 
 ```kelp
-fun describe(s: impl Shape).R: str = s.name()
-fun pair_area(a: impl Shape, b: &impl Shape).R: f64 = a.area() + b.area()
+fun describe(s: impl Shape).return: str = s.name()
+fun pair_area(a: impl Shape, b: &impl Shape).return: f64 = a.area() + b.area()
 ```
 
 - Each `impl` occurrence is its **own** parameter, so one call may pass two different shapes, and
   the bound is checked at the call exactly as an explicit `fun f<T: Shape>(x: T)` call is. Dispatch
   inside the body is static, exactly as 9.5's is.
 - `impl Trait` is only legal as a whole parameter type of a declared `fun`. A return position
-  (`fun f().R: impl Shape`), a `let`, a field, an enum payload, a container element and a nested
+  (`fun f().return: impl Shape`), a `let`, a field, an enum payload, a container element and a nested
   position (`List<impl Shape>`) are each refused by name.
 - A receiver method's parameter cannot write it (a method's type parameters come from its receiver),
   and neither can a trait method's signature. The bound must be a declared trait; `&impl Name` is
@@ -1297,30 +1297,30 @@ concrete type declares, resolved once per instantiation, exactly as 9.3 resolves
 
 ```kelp
 pub trait Shape {
-    fun Self.area().R: f64
-    fun Self.describe().R: String { return "a shape" }
+    fun Self.area().return: f64
+    fun Self.describe().return: String { return "a shape" }
     fun mut Self.scale(f: f64)
 }
 
 trait Named: Shape {
-    fun Self.name().R: str
+    fun Self.name().return: str
 }
 
 trait Iterator {
     type Item
-    fun mut Self.next().R: Option<Self::Item>
+    fun mut Self.next().return: Option<Self::Item>
 }
 
 datac Circle(val r: f64)
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.14159
+    fun Self.area().return: f64 = r * r * 3.14159
     fun mut Self.scale(f: f64) { r = r * f }
     // `describe` is left out: the trait's default is used.
 }
 
-fun area_of<T: Shape>(s: &T).R: f64 = s.area()
-fun describe<T: Shape + Named>(s: &T).R: f64 = s.area() + s.name_length()
+fun area_of<T: Shape>(s: &T).return: f64 = s.area()
+fun describe<T: Shape + Named>(s: &T).return: f64 = s.area() + s.name_length()
 
 val c = Circle(r = 2.0)
 print(area_of(c))
@@ -1328,14 +1328,14 @@ print(area_of(c))
 
 - A trait body is one or more **methods**, each in the receiver form of 8 with `Self` where the
   method's type would be. `Self` names the implementing type, and it is also legal in the
-  signature's other types (`fun Self.smaller_than(other: &Self).R: bool`). A method with **no**
+  signature's other types (`fun Self.smaller_than(other: &Self).return: bool`). A method with **no**
   body (no `= expr` and no `{ ... }`) is a signature; a method **with** a body is a **default
   method**, written exactly like an ordinary method. A default body may call the trait's other
   methods through `self` and is checked once per implementing type.
 - A trait body may also declare an **associated type**, `type Name`, optionally bounded:
   `type Item: Named` or `type Item: Named + Other`. Each impl binds it with `type Name = Type`,
   and `Self::Item` names it in the trait's signatures (and in a default body); a bounded type
-  parameter names it as `I::Item` (`fun first<I: Iterator>(it: mut I).R: Option<I::Item>`). The
+  parameter names it as `I::Item` (`fun first<I: Iterator>(it: mut I).return: Option<I::Item>`). The
   impl must bind every declared associated type and may add none, and a declared bound is checked
   against the impl's type. Missing, extra, duplicate, a projection through a type with no such
   bound, and a bound the impl's type does not satisfy are each refused by name. Default associated
@@ -1343,7 +1343,7 @@ print(area_of(c))
   constraints (`I: Iterator<Item = i32>`) are not in this slice and are refused by name;
   `plan/traits.md` 10 is the design.
 - A trait may take **type parameters** of its own: `pub trait From<T> { ... }`, written exactly like a `datac`/`fun` parameter list (with bounds: `trait Store<K, V: Named>`). The parameters are in scope in every method signature and default body, and the trait name plus its arguments (*trait instance*, `From<IoErr>`) is what an impl and a bound name. A trait method may take `mut` on its receiver, and the impl has to match it. A trait method may not take type parameters of its own (a generic method is still refused). A generic trait's argument is a named type or a builtin; a container, tuple, array, borrow, function type or handle is refused by name. A generic trait may not declare an associated type and may not be used behind `&dyn` (both follow-ups).
-- A trait method written with **no receiver** is a **static method**: `fun from(value: T).R: Self`, and an impl writes it without a receiver too (`fun from(value: IoErr).R: AppErr { ... }`). It is called on the type name (`AppErr.from(7)`) or through a bounded parameter (`X.from(7)` for `<X: From<i32>>`); `Self` in its return type is the implementing type. A type may implement `From<A>` and `From<B>` at once, and the call picks by argument type; a trait-name call (`From.from(7)`) is allowed only when `Self` and the trait's arguments are inferable. `std/convert` ships `From<T>` and `Into<T>` with **no blanket impls**. `plan/traits.md` 11 is the design.
+- A trait method written with **no receiver** is a **static method**: `fun from(value: T).return: Self`, and an impl writes it without a receiver too (`fun from(value: IoErr).return: AppErr { ... }`). It is called on the type name (`AppErr.from(7)`) or through a bounded parameter (`X.from(7)` for `<X: From<i32>>`); `Self` in its return type is the implementing type. A type may implement `From<A>` and `From<B>` at once, and the call picks by argument type; a trait-name call (`From.from(7)`) is allowed only when `Self` and the trait's arguments are inferable. `std/convert` ships `From<T>` and `Into<T>` with **no blanket impls**. `plan/traits.md` 11 is the design.
 - A trait may name **supertraits** after a `:`, separated by `+`: `trait B: A + C { ... }`. An
   `impl B for X` requires an `impl A for X` and an `impl C for X`; a `<T: B>` may call `A`'s
   methods on a `T`; a `T: B` satisfies a `T: A` bound; and a cycle is an error.
@@ -1383,8 +1383,8 @@ An **object-safe** trait (9.5.2) may be used behind a borrow as a trait object, 
 `&dyn Name` (shared) or `&mut dyn Name` (exclusive):
 
 ```kelp
-fun area_of<T: Shape>(s: &T).R: f64 = s.area()
-fun describe(s: &dyn Shape).R: String = s.describe()
+fun area_of<T: Shape>(s: &T).return: f64 = s.area()
+fun describe(s: &dyn Shape).return: String = s.describe()
 fun grow(s: &mut dyn Shape) { s.scale(2.0) }
 
 val c = Circle(r = 2.0)
@@ -1394,7 +1394,7 @@ print(describe(d))           // and a `&dyn` forwards on to another function
 ```
 
 - A borrowed trait object is legal **as a parameter type and as a local binding type** only. A
-  bare `dyn Name`, a `.R: &dyn Name` return, a `datac`/`enum` field or payload named `&dyn`, a
+  bare `dyn Name`, a `.return: &dyn Name` return, a `datac`/`enum` field or payload named `&dyn`, a
   container element or argument, a tuple element and a `static`'s type are each refused by name.
   The **owned** spelling `Box<dyn Name>` (9.5.3) *is* a stored type: a field, a payload, a
   container element, a parameter, a return and a local all take one.
@@ -1445,7 +1445,7 @@ list: 9.3 is its reference.)
 ### 9.5.3 Owned trait objects, `Box<dyn Name>`
 
 ```
-fun make(big: bool).R: Box<dyn Shape> {
+fun make(big: bool).return: Box<dyn Shape> {
     if big {
         return Box.of(Circle(r = 2.0))    // `Box<Circle>` coerces here
     }
@@ -1503,11 +1503,11 @@ impl "std/fmt"
 datac Vec2(val x: f64, val y: f64)
 
 impl ops.Add for Vec2 {
-    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+    fun Self.add(rhs: &Self).return: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
 }
 
 impl ops.Ord for Vec2 {
-    fun Self.cmp(other: &Self).R: i32 {
+    fun Self.cmp(other: &Self).return: i32 {
         if x < other.x { return -1 }
         if x > other.x { return 1 }
         return 0
@@ -1515,7 +1515,7 @@ impl ops.Ord for Vec2 {
 }
 
 impl fmt.Display for Vec2 {
-    fun Self.to_text().R: String {
+    fun Self.to_text().return: String {
         return str.concat("(", str.concat(fmt.float(x, 1), ")"))
     }
 }
@@ -1533,9 +1533,9 @@ fun main() {
 ```
 
 - `std/ops` declares one trait per operator: `Add`, `Sub`, `Mul`, `Div`, `Rem` (each
-  `fun Self.name(rhs: &Self).R: Self`), `Neg` (`fun Self.neg().R: Self`) and `Ord`
-  (`fun Self.cmp(other: &Self).R: i32`). `std/fmt` declares `Display`
-  (`fun Self.to_text().R: String`). The trait names are ordinary trait names: import the module and
+  `fun Self.name(rhs: &Self).return: Self`), `Neg` (`fun Self.neg().return: Self`) and `Ord`
+  (`fun Self.cmp(other: &Self).return: i32`). `std/fmt` declares `Display`
+  (`fun Self.to_text().return: String`). The trait names are ordinary trait names: import the module and
   write `ops.Add`, or write `impl Add` after the import.
 - `a + b` means `a.add(&b)`, `a - b` means `a.sub(&b)`, and `*`, `/`, `%` follow the same method
   names (`mul`, `div`, `rem`); `-a` means `a.neg()`. For `Ord`, `a < b` means `a.cmp(&b) < 0`,
@@ -1554,7 +1554,7 @@ fun main() {
   `a = a.add(&b)` when `a` is a `var` place.
 - An operator on a **generic type parameter** works, because a generic function's body is checked
   once per instantiation and `T` is a concrete `datac`/`enum` by then: `fun sum<T: ops.Add>(a: T,
-  b: T).R: T = a + b` compiles for every `T` that implements `Add`.
+  b: T).return: T = a + b` compiles for every `T` that implements `Add`.
 - Not in this slice, each refused by name: a user trait that supplies an operator (only the shipped
   `std/ops` traits are named by the lowering), a bitwise/shift/logical operator through a trait,
   and any derive or macro helper. `plan/traits.md` 13 is the design.
@@ -1585,14 +1585,14 @@ print(name)               // still owned here
 `move T` is the parameter form that *does* take the value (A-4). The call site moves the argument in, exactly as `val b = a` does, and the callee owns it from then on: it may move it again, return it, or drop it at the end of its scope.
 
 ```kelp
-fun consume(s: move String).R: usize = s.len()
+fun consume(s: move String).return: usize = s.len()
 
 val a = String.from_str("bob")
 print(consume(a))
 print(a)                  // error: use of moved value 'a'
 ```
 
-A temporary is already an owner, so `consume(String.from_str("bob"))` needs no binding. A *borrow* cannot be moved out of — `fun forward(s: String).R: usize = consume(s)` is a compile error, because `s` belongs to the caller — and an owned field cannot be moved out of a borrowed structure either (9.1). The way out of a value that is behind a borrow is `Box.take()`.
+A temporary is already an owner, so `consume(String.from_str("bob"))` needs no binding. A *borrow* cannot be moved out of — `fun forward(s: String).return: usize = consume(s)` is a compile error, because `s` belongs to the caller — and an owned field cannot be moved out of a borrowed structure either (9.1). The way out of a value that is behind a borrow is `Box.take()`.
 
 An assignment to an existing `var` moves the new value in and frees the old value, which is how a loop can rebuild a recursive structure:
 
@@ -1617,7 +1617,7 @@ Rules the checker enforces:
 - While a value is borrowed shared, it cannot be borrowed exclusively, and it cannot be assigned or moved — but a **`Copy`** value can always be read, because reading one is a copy rather than a move. `self` inside `fun mut T.m()` is a `&mut T`: a pointer, and `Copy`, so naming a field and then calling another method on `self` is legal.
 - A method call's receiver is the one borrow that starts **after** its own arguments are checked, so an argument may read the place the receiver is about to borrow exclusively: `counts.insert(key = k, v = counts.get_or(key = k, fallback = 0) + 1)` is one statement, and was two with a temporary (MISSING-n4Bz7). The deferral permits reading and shared-borrowing the receiver. Moving it, borrowing it exclusively again inside the argument list, or holding a shared borrow of it that is still live when the receiver's own borrow begins (`p.copy_from(p)`) is still refused.
 - Dereferencing a `&mut` borrow gives write access; dereferencing a `&` does not.
-- A function whose `.R: T` is a borrow must return something derived from its first reference parameter, and **a payload bound by a pattern counts as derived from the scrutinee it came out of**: `if let Str(s) = v { return s.as_str() }` returns a view of `v`, exactly as `v.x.as_str()` does. One caveat, from the same rule: when a whole `when` is the returned value, the arm bindings are out of scope before the merged root is computed, so return *from inside the arm* (`if let S(s) = v { return s.as_str() }`) rather than returning the `when`.
+- A function whose `.return: T` is a borrow must return something derived from its first reference parameter, and **a payload bound by a pattern counts as derived from the scrutinee it came out of**: `if let Str(s) = v { return s.as_str() }` returns a view of `v`, exactly as `v.x.as_str()` does. One caveat, from the same rule: when a whole `when` is the returned value, the arm bindings are out of scope before the merged root is computed, so return *from inside the arm* (`if let S(s) = v { return s.as_str() }`) rather than returning the `when`.
 - Arms that differ only in the `str`/`&str` spelling are one type, so `when v { S(s) -> s.as_str()  N -> "n" }` and `if c { name(v) } else { "none" }` type-check; a branch whose value is a `str` literal has static storage, so it needs no owner pinned either.
 - A borrow cannot be stored except for the aggregate-owned `str`/`View` rule above: no reference fields in a `datac`, and no borrowed `List` or `Map` elements.
 - A direct `as_str()` or `view()` binding promotes a temporary receiver into a
@@ -1744,7 +1744,7 @@ val x: f64 = big.to_f64()           // 3.0 — the only integer->float widening
 `str` is a bare `const char*`. It has no length, which is cheap for a whole string and expensive for anything that walks one:
 
 - every scan re-derives a length with `str.len` (a `strlen`, once — but the length is then yours to thread through every function);
-- every slice allocates (`str.copy_range(s, from, to).R: String`), even when the caller only wants to look at the bytes;
+- every slice allocates (`str.copy_range(s, from, to).return: String`), even when the caller only wants to look at the bytes;
 - a `datac` cannot hold a `str` at all, so text you are part-way through cannot be carried in your own type.
 
 A `View` is the same borrowed text **with its length attached**: a pointer and a count, 16 bytes, `Copy`.
@@ -1784,8 +1784,8 @@ A `View` **borrows**, so it obeys `str`'s rules exactly:
 ```kelp
 // A `View` parameter is a reference parameter, so a function may return a
 // view derived from one — the same elision rule an `&str` return follows.
-fun head(text: View, n: usize).R: View = text.slice(0, n)
-fun tail(text: View).R: View = text.slice(1, text.len())
+fun head(text: View, n: usize).return: View = text.slice(0, n)
+fun tail(text: View).return: View = text.slice(1, text.len())
 
 // A view pins its owner: `v` borrows `text`, so `text` cannot be moved or
 // freed while `v` lives.
@@ -1808,7 +1808,7 @@ Using a `View` for a scan looks like this — no `strlen`, no allocation per ste
 
 ```kelp
 // Count the bytes equal to `want`, without threading a length parameter.
-fun count_byte(text: View, want: u8).R: usize {
+fun count_byte(text: View, want: u8).return: usize {
     var i: usize = 0
     var n: usize = 0
     while i < text.len() {
@@ -1824,7 +1824,7 @@ fun count_byte(text: View, want: u8).R: usize {
 When a whole `str` really is what the caller has, take the `&str` at the boundary and call `.view()` once inside:
 
 ```kelp
-fun parse(text: &str).R: Result<Json, ParseError> {
+fun parse(text: &str).return: Result<Json, ParseError> {
     var pos: usize = 0
     val src = text.view()           // the only strlen
     return parse_value(text = src, pos = pos)   // `src` travels, not a copy
@@ -1910,7 +1910,7 @@ big.insert(key = 1, v = 1)
 
 - **`Map<V>` written with one argument means `Map<String, V>`.** That is the shorthand every program written before keys were generic uses, and the two spellings are the same type.
 - **A key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, payload or position is itself one of those.** The compiler derives the key's hash and its equality from the type, the same way it derives a `datac`'s order and its deep copy, so nothing here is a trait or a comparator. A float is refused because `nan != nan` would make an inserted key unfindable, and a `List`, `Map`, `Box`, view or borrow is refused because there is no derived equality for it (17).
-- **A `datac` or `enum` that declares both `fun T.hash().R: u64` and `fun T.eq(other: &T).R: bool` is a key**, which is the escape hatch for a type the derived set refuses: a float field, or a comparison the derived rules do not express for the field shape the type has. The two method names are the whole declaration, so there is no trait and no new syntax, and the two signatures are fixed: the receiver is a shared borrow with no type parameters, `hash` takes no parameter and returns `u64`, and `eq` takes exactly one parameter, `&T`, and returns `bool`. That parameter is a shared borrow because a lookup compares the caller's key against an entry the caller does not own, so an owned `other: T` is refused. The map calls the declared pair *instead of* a derived one, never alongside it, and the key is still cloned into the entry, so the type has to be deep-copyable as well (`String`, `Bytes`, a scalar, or a `datac`/`enum` of those). A lone `hash`, or a signature the map cannot call, is refused where it is declared, with the missing or wrong half named; a lone `eq` is not, because it declares the type's `==`/`!=` (5, H-5) without making it a key. `hash` may hash whatever it can reach and `eq` may compare whatever it likes; `==`/`!=` lower to the declared `eq` (see 5), so one body serves both `Map` and the operator. A type that declares its pair is keyable by that declaration and not by derivation, so a field of such a type is not keyable either: the pair belongs to the type that made it, and another type reaches a `Map` by declaring its own.
+- **A `datac` or `enum` that declares both `fun T.hash().return: u64` and `fun T.eq(other: &T).return: bool` is a key**, which is the escape hatch for a type the derived set refuses: a float field, or a comparison the derived rules do not express for the field shape the type has. The two method names are the whole declaration, so there is no trait and no new syntax, and the two signatures are fixed: the receiver is a shared borrow with no type parameters, `hash` takes no parameter and returns `u64`, and `eq` takes exactly one parameter, `&T`, and returns `bool`. That parameter is a shared borrow because a lookup compares the caller's key against an entry the caller does not own, so an owned `other: T` is refused. The map calls the declared pair *instead of* a derived one, never alongside it, and the key is still cloned into the entry, so the type has to be deep-copyable as well (`String`, `Bytes`, a scalar, or a `datac`/`enum` of those). A lone `hash`, or a signature the map cannot call, is refused where it is declared, with the missing or wrong half named; a lone `eq` is not, because it declares the type's `==`/`!=` (5, H-5) without making it a key. `hash` may hash whatever it can reach and `eq` may compare whatever it likes; `==`/`!=` lower to the declared `eq` (see 5), so one body serves both `Map` and the operator. A type that declares its pair is keyable by that declaration and not by derivation, so a field of such a type is not keyable either: the pair belongs to the type that made it, and another type reaches a `Map` by declaring its own.
 - `Map<K, V>` is not a list element (the `List` element set takes a `List` and a `Box` since A-10 slice 1, but not a `Map`) and not a map value, so `Map<String, Map<i32>>` and `List<Map<i32>>` stay impossible.
 
 | Method | Takes | Returns |
@@ -2064,7 +2064,7 @@ impl "std/result"
 
 pd val counter: AtomicI64 = AtomicI64.new(0)
 
-fun bump(c: &AtomicI64).R: i64 {
+fun bump(c: &AtomicI64).return: i64 {
     c.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
     0
 }
@@ -2144,8 +2144,8 @@ Every top-level item is **private to its own module** (A-13). A module that impo
 pub const LIMIT: i32 = 10
 pub datac Point(val x: i32, val y: i32)
 pub enum Shape { Circle(val r: f64) Empty }
-pub fun scale(v: f64, k: f64).R: f64 = v * k
-pub extern fun clock_ticks().R: u64
+pub fun scale(v: f64, k: f64).return: f64 = v * k
+pub extern fun clock_ticks().return: u64
 ```
 
 - `pub` is accepted only on a top-level `fun`, `extern fun`, `datac`, `enum` or `const`. Written anywhere else it is a parse error, and the message names the item forms it applies to.
@@ -2169,7 +2169,7 @@ const PAGE_SIZE: usize = 4096
 const ENTRY_SIZE: usize = 8
 const ENTRIES_PER_PAGE: usize = PAGE_SIZE / ENTRY_SIZE
 
-fun entries_for(pages: usize).R: usize {
+fun entries_for(pages: usize).return: usize {
     var total: usize = 0
     var i: usize = 0
     while i < pages {
@@ -2316,38 +2316,38 @@ The compiler ships its standard-library modules inside the binary. Import them w
 ### 16.1 `std/str`
 
 ```kelp
-fun len(s: &str).R: usize
-fun byte(s: &str, i: usize).R: u8
-fun byte_index(s: &str, i: usize).R: usize
-fun is_empty(s: &str).R: bool
-fun char_count(s: &str).R: usize
-fun char_at(s: &str, i: usize).R: u32
-fun substring(s: &str, from: usize).R: &str
-fun index_of(s: &str, needle: &str).R: Option<usize>   // None when absent
-fun starts_with(s: &str, prefix: &str).R: bool
-fun starts_with_at(s: &str, needle: &str, at: usize).R: bool
-fun ends_with(s: &str, suffix: &str).R: bool
-fun contains(s: &str, needle: &str).R: bool
-fun eq(a: &str, b: &str).R: bool
-fun is_space(c: u8).R: bool
-fun trim(s: &str).R: String
-fun trim_start(s: &str).R: &str
-fun trim_end(s: &str).R: String
-fun prefix(s: &str, n: usize).R: String
-fun copy_range(s: &str, from: usize, to: usize).R: String
-fun to_upper(s: &str).R: String
-fun to_lower(s: &str).R: String
-fun repeat(s: &str, n: usize).R: String
-fun replace(s: &str, from: &str, to: &str).R: String
-fun split(s: &str, sep: &str).R: List<String>
-fun join(parts: List<String>, sep: &str).R: String
-fun concat(a: &str, b: &str).R: String
-fun from_i64(n: i64).R: String
-fun from_u64(n: u64).R: String
-fun from_f64(x: f64, decimals: i32).R: String
-fun parse_i64(s: &str).R: Result<i64, ParseErr>   // enum ParseErr { Empty Invalid }
-fun parse_u64(s: &str).R: Result<u64, ParseErr>
-fun parse_f64(s: &str).R: Result<f64, ParseErr>
+fun len(s: &str).return: usize
+fun byte(s: &str, i: usize).return: u8
+fun byte_index(s: &str, i: usize).return: usize
+fun is_empty(s: &str).return: bool
+fun char_count(s: &str).return: usize
+fun char_at(s: &str, i: usize).return: u32
+fun substring(s: &str, from: usize).return: &str
+fun index_of(s: &str, needle: &str).return: Option<usize>   // None when absent
+fun starts_with(s: &str, prefix: &str).return: bool
+fun starts_with_at(s: &str, needle: &str, at: usize).return: bool
+fun ends_with(s: &str, suffix: &str).return: bool
+fun contains(s: &str, needle: &str).return: bool
+fun eq(a: &str, b: &str).return: bool
+fun is_space(c: u8).return: bool
+fun trim(s: &str).return: String
+fun trim_start(s: &str).return: &str
+fun trim_end(s: &str).return: String
+fun prefix(s: &str, n: usize).return: String
+fun copy_range(s: &str, from: usize, to: usize).return: String
+fun to_upper(s: &str).return: String
+fun to_lower(s: &str).return: String
+fun repeat(s: &str, n: usize).return: String
+fun replace(s: &str, from: &str, to: &str).return: String
+fun split(s: &str, sep: &str).return: List<String>
+fun join(parts: List<String>, sep: &str).return: String
+fun concat(a: &str, b: &str).return: String
+fun from_i64(n: i64).return: String
+fun from_u64(n: u64).return: String
+fun from_f64(x: f64, decimals: i32).return: String
+fun parse_i64(s: &str).return: Result<i64, ParseErr>   // enum ParseErr { Empty Invalid }
+fun parse_u64(s: &str).return: Result<u64, ParseErr>
+fun parse_f64(s: &str).return: Result<f64, ParseErr>
 ```
 
 `str.len` and `str.byte` are byte-oriented; `str.char_count` and `str.char_at` are the codepoint-oriented pair. `str.substring` returns a view into the original, so it borrows its argument. `str.to_upper`/`to_lower`/`concat`/`trim`/`copy_range` allocate — the `View` operations (11.5) are the ones that do not.
@@ -2357,16 +2357,16 @@ A `str` **value** has one method of its own, `s.view()`, which makes a length-ca
 ### 16.2 `std/path`
 
 ```kelp
-fun is_absolute(s: &str).R: bool
-fun normalize(s: &str).R: String
-fun file_name(s: &str).R: &str
-fun extension(s: &str).R: &str
-fun stem(s: &str).R: String
-fun has_extension(s: &str, ext: &str).R: bool
-fun split(s: &str).R: List<String>
-fun join(a: &str, b: &str).R: String
-fun join_all(parts: List<String>).R: String
-fun parent(s: &str).R: String
+fun is_absolute(s: &str).return: bool
+fun normalize(s: &str).return: String
+fun file_name(s: &str).return: &str
+fun extension(s: &str).return: &str
+fun stem(s: &str).return: String
+fun has_extension(s: &str, ext: &str).return: bool
+fun split(s: &str).return: List<String>
+fun join(a: &str, b: &str).return: String
+fun join_all(parts: List<String>).return: String
+fun parent(s: &str).return: String
 ```
 
 ### 16.3 `std/math`
@@ -2374,67 +2374,67 @@ fun parent(s: &str).R: String
 ```kelp
 const PI: f64   const E: f64   const TAU: f64
 
-fun sqrt(x: f64).R: f64        fun pow(base: f64, exp: f64).R: f64
-fun floor(x: f64).R: f64       fun ceil(x: f64).R: f64
-fun round(x: f64).R: f64       fun trunc(x: f64).R: f64
-fun exp(x: f64).R: f64         fun ln(x: f64).R: f64
-fun log2(x: f64).R: f64        fun log10(x: f64).R: f64
-fun sin(x: f64).R: f64         fun cos(x: f64).R: f64
-fun tan(x: f64).R: f64         fun atan2(y: f64, x: f64).R: f64
-fun is_nan(x: f64).R: bool     fun is_finite(x: f64).R: bool
-fun sign(x: f64).R: f64
+fun sqrt(x: f64).return: f64        fun pow(base: f64, exp: f64).return: f64
+fun floor(x: f64).return: f64       fun ceil(x: f64).return: f64
+fun round(x: f64).return: f64       fun trunc(x: f64).return: f64
+fun exp(x: f64).return: f64         fun ln(x: f64).return: f64
+fun log2(x: f64).return: f64        fun log10(x: f64).return: f64
+fun sin(x: f64).return: f64         fun cos(x: f64).return: f64
+fun tan(x: f64).return: f64         fun atan2(y: f64, x: f64).return: f64
+fun is_nan(x: f64).return: bool     fun is_finite(x: f64).return: bool
+fun sign(x: f64).return: f64
 
-fun abs(x: i32).R: i32         fun abs(x: i64).R: i64        fun abs(x: f64).R: f64
-fun min(a: i32, b: i32).R: i32 fun min(a: i64, b: i64).R: i64 fun min(a: f64, b: f64).R: f64
-fun max(a: i32, b: i32).R: i32 fun max(a: i64, b: i64).R: i64 fun max(a: f64, b: f64).R: f64
-fun clamp(x: i32, lo: i32, hi: i32).R: i32   // and the i64 and f64 forms
+fun abs(x: i32).return: i32         fun abs(x: i64).return: i64        fun abs(x: f64).return: f64
+fun min(a: i32, b: i32).return: i32 fun min(a: i64, b: i64).return: i64 fun min(a: f64, b: f64).return: f64
+fun max(a: i32, b: i32).return: i32 fun max(a: i64, b: i64).return: i64 fun max(a: f64, b: f64).return: f64
+fun clamp(x: i32, lo: i32, hi: i32).return: i32   // and the i64 and f64 forms
 ```
 
 ### 16.4 `std/fmt`
 
 ```kelp
-fun int(n: i64).R: String
-fun uint(n: u64).R: String
-fun float(x: f64, decimals: i32).R: String
-fun hex(n: u64).R: String
-fun bytes(b: Bytes).R: String
-fun pad_left(s: &str, width: usize, fill: u8).R: String
-fun pad_right(s: &str, width: usize, fill: u8).R: String
+fun int(n: i64).return: String
+fun uint(n: u64).return: String
+fun float(x: f64, decimals: i32).return: String
+fun hex(n: u64).return: String
+fun bytes(b: Bytes).return: String
+fun pad_left(s: &str, width: usize, fill: u8).return: String
+fun pad_right(s: &str, width: usize, fill: u8).return: String
 ```
 
 ### 16.5 `std/mem`
 
 ```kelp
-fun alloc(n: usize).R: Bytes      // zero-filled buffer of n bytes; panics on failure
+fun alloc(n: usize).return: Bytes      // zero-filled buffer of n bytes; panics on failure
 ```
 
 ### 16.6 `std/io` (ungated)
 
 ```kelp
 datac File(val fd: i32)
-fun File.is_open().R: bool
-fun File.read(max: usize).R: Bytes
-fun File.read_into(buf: mut Bytes, at: usize).R: usize
-fun File.read_all().R: Bytes
-fun File.write(data: Bytes).R: usize
-fun File.write_text(text: String).R: usize
-fun File.write_str(text: &str).R: usize
+fun File.is_open().return: bool
+fun File.read(max: usize).return: Bytes
+fun File.read_into(buf: mut Bytes, at: usize).return: usize
+fun File.read_all().return: Bytes
+fun File.write(data: Bytes).return: usize
+fun File.write_text(text: String).return: usize
+fun File.write_str(text: &str).return: usize
 fun File.flush()
 fun File.close()
 fun mut File.set_nonblocking(on: bool)
-fun File.wait_readable(timeout_ms: u64).R: bool
-fun File.wait_writable(timeout_ms: u64).R: bool
+fun File.wait_readable(timeout_ms: u64).return: bool
+fun File.wait_writable(timeout_ms: u64).return: bool
 
-fun stdin().R: File      fun stdout().R: File      fun stderr().R: File
+fun stdin().return: File      fun stdout().return: File      fun stderr().return: File
 
 datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize)
-fun buf_reader(f: File).R: BufReader
-fun mut BufReader.read_line_into(out: mut String).R: bool
-fun mut BufReader.read_line().R: Option<String>   // None at end of file
-fun mut BufReader.read_all().R: Bytes
-fun read_line().R: Option<String>   // buffered stdin
-fun read_lines().R: List<String>
-fun read_all().R: Bytes
+fun buf_reader(f: File).return: BufReader
+fun mut BufReader.read_line_into(out: mut String).return: bool
+fun mut BufReader.read_line().return: Option<String>   // None at end of file
+fun mut BufReader.read_all().return: Bytes
+fun read_line().return: Option<String>   // buffered stdin
+fun read_lines().return: List<String>
+fun read_all().return: Bytes
 
 fun print(s: &str)        fun print_bare(s: &str)
 fun eprint(s: &str)       fun eprint_bare(s: &str)
@@ -2445,9 +2445,9 @@ A `File` is one descriptor: a file, a pipe, a socket and a terminal are the same
 ### 16.7 `std/fs` (domain `fs`)
 
 ```kelp
-fun read(path: &str).R: Bytes
-fun read_text(path: &str).R: String
-fun read_lines(path: &str).R: List<String>
+fun read(path: &str).return: Bytes
+fun read_text(path: &str).return: String
+fun read_lines(path: &str).return: List<String>
 fun write(path: &str, data: Bytes)
 fun write_text(path: &str, text: String)
 fun append(path: &str, data: Bytes)
@@ -2459,35 +2459,35 @@ fun mkdir(path: &str)
 fun mkdir_all(path: &str)
 fun sync(path: &str)
 fun touch(path: &str)
-fun exists(path: &str).R: bool
-fun is_file(path: &str).R: bool
-fun is_dir(path: &str).R: bool
-fun size(path: &str).R: u64
-fun list(path: &str).R: List<String>
-fun walk(dir: &str).R: List<String>
-fun open(path: &str, mode: &str).R: io.File       // "r", "w", "a", "rw"
-fun temp_path(prefix: &str).R: String             // creates the file
+fun exists(path: &str).return: bool
+fun is_file(path: &str).return: bool
+fun is_dir(path: &str).return: bool
+fun size(path: &str).return: u64
+fun list(path: &str).return: List<String>
+fun walk(dir: &str).return: List<String>
+fun open(path: &str, mode: &str).return: io.File       // "r", "w", "a", "rw"
+fun temp_path(prefix: &str).return: String             // creates the file
 datac Metadata(val size: u64, val mtime: i64, val mode: u32, val is_dir: bool, val is_file: bool)
-fun metadata(path: &str).R: Metadata
+fun metadata(path: &str).return: Metadata
 ```
 
 ### 16.8 `std/time` (domain `time`) and `std/rand` (domain `rand`)
 
 ```kelp
-fun time.now_unix().R: i64
-fun time.now_mono_ns().R: i64
+fun time.now_unix().return: i64
+fun time.now_mono_ns().return: i64
 fun time.sleep_ms(ms: u64)
 
-fun rand.u64().R: u64
-fun rand.below(n: u64).R: u64          // 0 .. n-1
-fun rand.bytes(n: usize).R: Bytes
+fun rand.u64().return: u64
+fun rand.below(n: u64).return: u64          // 0 .. n-1
+fun rand.bytes(n: usize).return: Bytes
 ```
 
 ### 16.9 `std/source`
 
 ```kelp
-fun source.file().R: str
-fun source.line().R: usize
+fun source.file().return: str
+fun source.line().return: usize
 ```
 
 Both functions resolve where the call is written. `file()` is the path Kelp
@@ -2497,8 +2497,8 @@ test reports and diagnostics.
 ### 16.9.0 `std/sys`
 
 ```kelp
-fun sys.os().R: str      // "linux", "macos", "windows", "freebsd" or "unknown"
-fun sys.arch().R: str    // "x86_64", "aarch64", "riscv64", "arm", "x86" or "unknown"
+fun sys.os().return: str      // "linux", "macos", "windows", "freebsd" or "unknown"
+fun sys.arch().return: str    // "x86_64", "aarch64", "riscv64", "arm", "x86" or "unknown"
 ```
 
 Both names are fixed when the program is built: they describe the target, not
@@ -2509,7 +2509,7 @@ picks a release asset by platform compares them with `str.eq`.
 
 ```kelp
 fun trace.event(file: &str, line: usize, name: &str)
-fun trace.begin(file: &str, line: usize, name: &str).R: trace.Span
+fun trace.begin(file: &str, line: usize, name: &str).return: trace.Span
 fun trace.end(file: &str, line: usize, span: trace.Span)
 ```
 
@@ -2523,8 +2523,8 @@ features.
 ### 16.10 `std/env` (domain `env`)
 
 ```kelp
-fun has(name: &str).R: bool
-fun get(name: &str).R: String          // "" when unset, there is no Option yet
+fun has(name: &str).return: bool
+fun get(name: &str).return: String          // "" when unset, there is no Option yet
 fun set(name: &str, value: &str)
 fun unset(name: &str)
 ```
@@ -2532,17 +2532,17 @@ fun unset(name: &str)
 ### 16.11 `std/process` (domain `process`)
 
 ```kelp
-fun args().R: List<String>
-fun arg_count().R: usize
-fun spawn(program: &str, args: List<String>).R: Child
-fun run(program: &str, args: List<String>).R: RunResult
-fun run_inherit(program: &str, args: List<String>).R: RunResult
-fun run_inherit_in(dir: &str, program: &str, args: List<String>).R: RunResult
-fun mut Child.wait().R: i32
-fun mut Child.is_running().R: bool
+fun args().return: List<String>
+fun arg_count().return: usize
+fun spawn(program: &str, args: List<String>).return: Child
+fun run(program: &str, args: List<String>).return: RunResult
+fun run_inherit(program: &str, args: List<String>).return: RunResult
+fun run_inherit_in(dir: &str, program: &str, args: List<String>).return: RunResult
+fun mut Child.wait().return: i32
+fun mut Child.is_running().return: bool
 fun Child.kill(signal: i32)
 fun exit(code: i32)
-fun getpid().R: i64
+fun getpid().return: i64
 
 datac Child(val pid: i32, val stdin: io.File, val stdout: io.File, val stderr: io.File,
             var exited: bool, var code: i32, var signal: i32)
@@ -2554,24 +2554,24 @@ The grant names the program path itself, so `process = ["/bin/sh"]` is one path 
 ### 16.12 `std/net` (domain `net`)
 
 ```kelp
-fun connect(host: &str, port: u16).R: Socket
-fun try_connect(host: &str, port: u16).R: result.Result<Socket, ConnectErr>
-fun listen(port: u16).R: Listener
-fun accept(l: Listener).R: Socket
+fun connect(host: &str, port: u16).return: Socket
+fun try_connect(host: &str, port: u16).return: result.Result<Socket, ConnectErr>
+fun listen(port: u16).return: Listener
+fun accept(l: Listener).return: Socket
 fun close(s: Socket)
 fun Listener.close()
 fun shutdown_write(s: Socket)
-fun send(s: Socket, data: Bytes).R: usize
-fun send_all(s: Socket, data: Bytes).R: usize
+fun send(s: Socket, data: Bytes).return: usize
+fun send_all(s: Socket, data: Bytes).return: usize
 fun send_text(s: Socket, text: &str)
-fun recv(s: Socket, max: usize).R: Bytes
-fun recv_into(s: Socket, buf: mut Bytes, at: usize).R: usize
-fun Socket.wait_readable(timeout_ms: u64).R: bool
-fun Socket.wait_writable(timeout_ms: u64).R: bool
+fun recv(s: Socket, max: usize).return: Bytes
+fun recv_into(s: Socket, buf: mut Bytes, at: usize).return: usize
+fun Socket.wait_readable(timeout_ms: u64).return: bool
+fun Socket.wait_writable(timeout_ms: u64).return: bool
 fun mut Socket.set_timeout(ms: u64)
-fun Listener.port().R: u16
-fun Socket.peer_addr().R: String
-fun resolve(host: &str).R: List<String>
+fun Listener.port().return: u16
+fun Socket.peer_addr().return: String
+fun resolve(host: &str).return: List<String>
 
 datac Socket(val fd: i32)
 datac Listener(val fd: i32)
@@ -2583,12 +2583,12 @@ The panicking form stays, and it is the convenience wrapper: `connect` is what a
 ### 16.13 `std/http` (ungated, holds `net`)
 
 ```kelp
-fun get(url: &str).R: Response
-fun post_text(url: &str, body: &str, content_type: &str).R: Response
-fun make_get(url: &str).R: Request
-fun Client.send(req: Request).R: Response
-fun default_client().R: Client
-fun parse_url(s: &str).R: Url
+fun get(url: &str).return: Response
+fun post_text(url: &str, body: &str, content_type: &str).return: Response
+fun make_get(url: &str).return: Request
+fun Client.send(req: Request).return: Response
+fun default_client().return: Client
+fun parse_url(s: &str).return: Url
 
 datac Url(val scheme: String, val host: String, val port: u16, val path: String)
 datac Header(val name: String, val value: String)
@@ -2596,10 +2596,10 @@ datac Request(val method: String, val url: String, val headers: List<Header>, va
 datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val reusable: bool)
 datac Client(val timeout_ms: u64, val max_redirects: i32, val follow_redirects: bool)
 
-fun Response.is_ok().R: bool
-fun Response.has_header(name: &str).R: bool
-fun Response.header(name: &str).R: String
-fun Response.text().R: String
+fun Response.is_ok().return: bool
+fun Response.has_header(name: &str).return: bool
+fun Response.header(name: &str).return: String
+fun Response.text().return: String
 ```
 
 Responses frame their body by `Content-Length`, chunked encoding, a bodyless rule or end-of-file, and a reusable connection returns to the per-`host:port` pool sized by `http_pool` in `coral.toml`. `http.get` panics on a URL it cannot parse, a connection failure, or a capability denial; a response with a non-2xx status is not a panic, it is a `Response`.
@@ -2612,26 +2612,26 @@ enum Option<T> {
     None
 }
 
-fun is_some<T>(o: &Option<T>).R: bool
-fun is_none<T>(o: &Option<T>).R: bool
-fun unwrap_or<T>(o: move Option<T>, fallback: move T).R: T
-fun unwrap<T>(o: move Option<T>).R: T               // panics on None
-fun expect<T>(o: move Option<T>, message: &str).R: T   // panics with `message`
+fun is_some<T>(o: &Option<T>).return: bool
+fun is_none<T>(o: &Option<T>).return: bool
+fun unwrap_or<T>(o: move Option<T>, fallback: move T).return: T
+fun unwrap<T>(o: move Option<T>).return: T               // panics on None
+fun expect<T>(o: move Option<T>, message: &str).return: T   // panics with `message`
 
-fun map<T, U>(o: &Option<T>, f: closure(&T).R: U).R: Option<U>
-fun and_then<T, U>(o: &Option<T>, f: closure(&T).R: Option<U>).R: Option<U>
-fun or_else<T>(o: &Option<T>, f: fun().R: Option<T>).R: Option<T>   // `T` must be Copy
+fun map<T, U>(o: &Option<T>, f: closure(&T).return: U).return: Option<U>
+fun and_then<T, U>(o: &Option<T>, f: closure(&T).return: Option<U>).return: Option<U>
+fun or_else<T>(o: &Option<T>, f: fun().return: Option<T>).return: Option<T>   // `T` must be Copy
 fun each<T>(o: &Option<T>, f: closure(&T))
 ```
 
 The enum is the point: `Some`/`None` is one of the two shapes `?` (5) and `if let` (6.1) understand, so a function that can fail one way returns `Option<T>` and its caller writes `val x = f(...)?`. Nothing in the compiler knows this module exists — the *shape* is the contract, so a program's own `Option` works identically.
 
-The **callbacks borrow the payload** (`closure(&T).R: U`, so a plain function value is widened into one), which is what makes the combinators work at every instantiation: a `when` arm copies a `Copy` payload and auto-borrows it at the call, and an owned one is auto-borrowed out of the owned option the helper took with `move`, so the callback still never takes ownership:
+The **callbacks borrow the payload** (`closure(&T).return: U`, so a plain function value is widened into one), which is what makes the combinators work at every instantiation: a `when` arm copies a `Copy` payload and auto-borrows it at the call, and an owned one is auto-borrowed out of the owned option the helper took with `move`, so the callback still never takes ownership:
 
 ```kelp
 val text = option.Option.Some(value = String.from_str("hello"))
-val len = option.map(o = text, f = fun(s: &String).R: usize = s.len())
-val shout = option.map(o = text, f = fun(s: &String).R = str.to_upper(s.as_str()))
+val len = option.map(o = text, f = fun(s: &String).return: usize = s.len())
+val shout = option.map(o = text, f = fun(s: &String).return = str.to_upper(s.as_str()))
 ```
 
 What hands the payload *out by value* takes the option with **`move`**: `unwrap`, `expect` and `unwrap_or` read the payload of the owned option, which is a partial move of the local the caller gave up, so `Option<String>.unwrap()` works. The move form is the caller's contract too: the option is consumed, so a caller that wants it afterwards passes a fresh expression, or matches it for a tag test only (a pattern that binds an owned payload takes it out just as `unwrap` does, while a `Copy` payload is copied). `or_else` rebuilds `Some` from a payload it was handed through a borrow, so it stays `Copy`-only.
@@ -2644,16 +2644,16 @@ enum Result<T, E> {
     Err(val error: E)
 }
 
-fun is_ok<T, E>(r: &Result<T, E>).R: bool
-fun is_err<T, E>(r: &Result<T, E>).R: bool
-fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T).R: T   // `T` must be Copy
-fun unwrap<T, E>(r: &Result<T, E>).R: T                   // `T` must be Copy; panics on Err
-fun unwrap_err<T, E>(r: &Result<T, E>).R: E               // `E` must be Copy; panics on Ok
+fun is_ok<T, E>(r: &Result<T, E>).return: bool
+fun is_err<T, E>(r: &Result<T, E>).return: bool
+fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T).return: T   // `T` must be Copy
+fun unwrap<T, E>(r: &Result<T, E>).return: T                   // `T` must be Copy; panics on Err
+fun unwrap_err<T, E>(r: &Result<T, E>).return: E               // `E` must be Copy; panics on Ok
 
-fun map<T, U, E>(r: move Result<T, E>, f: closure(&T).R: U).R: Result<U, E>
-fun map_err<T, E, F>(r: move Result<T, E>, f: closure(&E).R: F).R: Result<T, F>
-fun and_then<T, U, E>(r: &Result<T, E>, f: closure(&T).R: Result<U, E>).R: Result<U, E>
-fun or_else<T, E, F>(r: &Result<T, E>, f: closure(&E).R: Result<T, F>).R: Result<T, F>
+fun map<T, U, E>(r: move Result<T, E>, f: closure(&T).return: U).return: Result<U, E>
+fun map_err<T, E, F>(r: move Result<T, E>, f: closure(&E).return: F).return: Result<T, F>
+fun and_then<T, U, E>(r: &Result<T, E>, f: closure(&T).return: Result<U, E>).return: Result<U, E>
+fun or_else<T, E, F>(r: &Result<T, E>, f: closure(&E).return: Result<T, F>).return: Result<T, F>
 fun each<T, E>(r: &Result<T, E>, f: closure(&T))
 ```
 
@@ -2666,12 +2666,12 @@ The `Copy` requirements left here are on the side a helper has to **rebuild** th
 The element-wise API of `List<T>` (`len`, `get`, `push`, `sort`, …) is builtin, because a list is monomorphized and its methods are generated C per element type (12.1). The operations that need a **callback** cannot be generated without knowing what the callback returns, so they are free functions in a module — `list.map(xs, f)` — the same shape `str.*` and `math.*` have.
 
 ```kelp
-fun map<T, U>(xs: &List<T>, f: closure(&T).R: U).R: List<U>
-fun filter<T>(xs: &List<T>, f: closure(&T).R: bool).R: List<T>          // `T` must be Copy
+fun map<T, U>(xs: &List<T>, f: closure(&T).return: U).return: List<U>
+fun filter<T>(xs: &List<T>, f: closure(&T).return: bool).return: List<T>          // `T` must be Copy
 fun each<T>(xs: &List<T>, f: closure(&T))
-fun find_index<T>(xs: &List<T>, f: closure(&T).R: bool).R: Option<usize>
-fun any<T>(xs: &List<T>, f: closure(&T).R: bool).R: bool
-fun all<T>(xs: &List<T>, f: closure(&T).R: bool).R: bool
+fun find_index<T>(xs: &List<T>, f: closure(&T).return: bool).return: Option<usize>
+fun any<T>(xs: &List<T>, f: closure(&T).return: bool).return: bool
+fun all<T>(xs: &List<T>, f: closure(&T).return: bool).return: bool
 ```
 
 Every callback borrows the element, so nothing is ever moved out of the list and the same functions work for a `Copy` and an owned element type:
@@ -2679,7 +2679,7 @@ Every callback borrows the element, so nothing is ever moved out of the list and
 ```kelp
 var names: List<String> = List.empty()
 names.push(String.from_str("ab"))
-val lens = list.map(xs = names, f = fun(s: &String).R: usize = s.len())
+val lens = list.map(xs = names, f = fun(s: &String).return: usize = s.len())
 print(names.len())                       // still owned here
 ```
 
@@ -2704,8 +2704,8 @@ enum Ordering {
 ```kelp
 fun fence(order: Ordering)
 
-fun spawn(entry: <a declared `fun`, a `fun` literal, or a capturing closure, taking one parameter>, arg: move T).R: Thread<T>
-fun join(handle: move Thread<T>).R: Result<T, ThreadErr>
+fun spawn(entry: <a declared `fun`, a `fun` literal, or a capturing closure, taking one parameter>, arg: move T).return: Thread<T>
+fun join(handle: move Thread<T>).return: Result<T, ThreadErr>
 
 datac ThreadErr(val message: String)
 ```
@@ -2739,9 +2739,9 @@ A join hands back `Result<T, ThreadErr>`, so a program that writes one also need
 ### 16.19 `std/ws` (ungated, holds `net` and `rand`)
 
 ```kelp
-fun parse_url(s: &str).R: Url
-fun connect(host: &str, port: u16, path: &str).R: Conn
-fun try_connect(host: &str, port: u16, path: &str).R: result.Result<Conn, WsErr>
+fun parse_url(s: &str).return: Url
+fun connect(host: &str, port: u16, path: &str).return: Conn
+fun try_connect(host: &str, port: u16, path: &str).return: result.Result<Conn, WsErr>
 
 datac Url(val scheme: String, val host: String, val port: u16, val path: String)
 datac Conn(val fd: i32, var buf: Bytes, var start: usize, var frag_opcode: u8, var frag_data: Bytes)
@@ -2751,7 +2751,7 @@ fun Conn.send_binary(data: &Bytes)
 fun Conn.ping(data: &Bytes)
 fun Conn.pong(data: &Bytes)
 fun Conn.close(code: u16, reason: &str)
-fun mut Conn.recv().R: Msg
+fun mut Conn.recv().return: Msg
 
 enum WsErr {
     Dial(val reason: String)
@@ -2809,9 +2809,9 @@ than declared, for the reason 16.18's `spawn`/`join` are: what the lock carries
 decides the signature, so the compiler builds it at the call site.
 
 ```kelp
-fun Mutex.new(value: move T).R: Mutex<T>
-fun Mutex<T>.lock(block: scoped fun(mut T).R: R).R: R
-fun Mutex<T>.into_inner().R: T
+fun Mutex.new(value: move T).return: Mutex<T>
+fun Mutex<T>.lock(block: scoped fun(mut T).return: R).return: R
+fun Mutex<T>.into_inner().return: T
 ```
 
 The guarded value is reachable only through the scoped block: `v` is a `mut T`
@@ -2841,16 +2841,16 @@ is the whole contract; the compiler knows only its canonical key.
 ```kelp
 pub trait Iterator {
     type Item
-    fun mut Self.next().R: option.Option<Self::Item>
+    fun mut Self.next().return: option.Option<Self::Item>
 }
 
 pub datac Range(var lo: i64, val hi: i64, val step: i64)
-fun range(a: i64, b: i64).R: Range                       // [a, b), step 1
-fun range_step(a: i64, b: i64, step: i64).R: Range       // a negative step walks down
+fun range(a: i64, b: i64).return: Range                       // [a, b), step 1
+fun range_step(a: i64, b: i64, step: i64).return: Range       // a negative step walks down
 
-fun count<I: Iterator>(it: move I).R: usize
-fun sum_i64<I: Iterator>(it: move I).R: i64              // the item must be an i64
-fun collect_list<I: Iterator>(it: move I).R: List<I::Item>
+fun count<I: Iterator>(it: move I).return: usize
+fun sum_i64<I: Iterator>(it: move I).return: i64              // the item must be an i64
+fun collect_list<I: Iterator>(it: move I).return: List<I::Item>
 ```
 
 A type opts in by implementing the trait, as a `datac` implementing `Shape`
@@ -2891,7 +2891,7 @@ These are deliberate, and each one has a workaround in this document:
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
 - No references -- and no `View` -- in fields, `List` elements, `Map` values or `Box` contents. `str` and `View` are borrows, so text that must be stored is a `String`; a view is taken at the point of use (11.5).
 - A `View` never becomes a `str`: a slice has no NUL after it, so `str.len`/`str.eq`/`%s` on one would read past the slice. Take `v.to_string()` when you need owned text, and keep `str` and `View` apart otherwise.
-- `str.eq` takes a `str`, so a `View` compares with another `View` or a `str` through `==`/`!=` (or `view.eq(other)`), never through `str.eq`. A `datac`/`enum` gets `==`/`!=` only by declaring `fun T.eq(other: &T).R: bool` (5); a type without one has no equality and no order.
+- `str.eq` takes a `str`, so a `View` compares with another `View` or a `str` through `==`/`!=` (or `view.eq(other)`), never through `str.eq`. A `datac`/`enum` gets `==`/`!=` only by declaring `fun T.eq(other: &T).return: bool` (5); a type without one has no equality and no order.
 - No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`. The other direction *is* implicit (5.1): a `str` or a `View` becomes an owned `String` where one is expected.
 - No sized integer literal and no digit separator: a literal has no width of its own, so a `u8` byte is written `val b: u8 = 0xff`. Hexadecimal and binary are `0x` and `0b` (2.4); there is no octal form and no suffix.
 - A `char` is a code point and does not mix with the integer types: `'a' + 1` and `'a' == 97` are errors. Give the literal the type the arithmetic needs (`val a: u8 = 'a'`).
@@ -2913,7 +2913,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | Message | Cause and fix |
 | --- | --- |
 | `expected 'fun', found Ident("fn")` | the keyword is `fun` |
-| `expression-bodied function requires a '.R: T' return type` | add `.R: T`, or use a block body with `return` |
+| `expression-bodied function requires a '.return: T' return type` | add `.return: T`, or use a block body with `return` |
 | `if without an else branch must evaluate to 'unit'` | an `if`, `if let` or `when` used as a value needs an `else` arm |
 | `pattern 'Circle(a, b)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s)` | `if let` and a `when` arm bind one name per payload field, in order |
 | `expected 'in' between the 'for' binding and what it iterates, found 'xs'` | a `for` is `for name in list { ... }`; the `in` is required (6.2) |
@@ -2958,7 +2958,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `a call through 'f' takes 1 argument(s), found 2` | an indirect call is counted against the callee's own parameter list |
 | `'mut'/'&' cannot be written on the function type` | a function value is Copy, so a borrow of one is a pointer to a pointer |
 | `a function type cannot return another function type` | C cannot write that declarator; return a `datac` holding the function value |
-| `'fun(i32).R: i32' cannot be a 'List' element yet` | a container's generated C type names its element type as a prefix; hold it in a one-field `datac` |
+| `'fun(i32).return: i32' cannot be a 'List' element yet` | a container's generated C type names its element type as a prefix; hold it in a one-field `datac` |
 | `a 'fun' literal cannot capture 's': it is a borrow ('str')` | the environment outlives the frame the borrow points into; capture an owned value, or pass the borrow as a parameter of the literal |
 | `a 'fun' literal cannot capture 'n': it is a field of 'Counter'` | a receiver is a borrow, and a field cannot be moved out of a borrow; bind a `Copy` field to a local first, or take the receiver as a `move` parameter |
 | `cannot capture 'text' into this literal: it belongs to the enclosing closure's environment` | an environment is read through a borrow, so an owned capture cannot be moved out of it; capture it from the frame that owns it, or copy a `Copy` one |
@@ -2966,7 +2966,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `this is a closure: its body captured a binding from the enclosing scope` | the parameter's type has to say `closure(...)`; a `fun(...)` value has no room for an environment |
 | `this is a plain function value, not a closure` | the literal captured nothing, so it has no environment; write the expected type as `fun(...)`, or name a binding to capture |
 | `'&' cannot be written on the closure type` | a closure is an owned value; a parameter of that type already borrows it, and `move closure(...)` takes it over |
-| `'closure().R: i32' cannot be a 'List' element yet` | a closure owns its environment and a list's elements are inline; use `Box<closure(...)>` or a one-field `datac` |
+| `'closure().return: i32' cannot be a 'List' element yet` | a closure owns its environment and a list's elements are inline; use `Box<closure(...)>` or a one-field `datac` |
 | `a 'fun' literal cannot read passdown 'base'` | a passdown is a hidden argument; pass the value as a parameter |
 | `a 'fun' literal cannot return a borrow ('&str')` | an indirect call has no parameter an elided lifetime could bind to; return an owned value |
 | `a 'fun' literal needs a body` | write `= expr` or `{ ... }` |
@@ -3076,8 +3076,8 @@ trait        := [ "pub" ] "trait" ident [ typeparams ] [ ":" bound ("+" bound)* 
 traititem    := traitmethod | staticmethod | assocdecl
 assocdecl    := "type" ident [ ":" bound ("+" bound)* ]   // no `=`: that is a default, refused
 traitmethod  := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
-                [ ".R" ":" type ] ( body | )        // no body: a signature
-staticmethod := "fun" ident "(" [ param ("," param)* ] ")" [ ".R" ":" type ] ( body | )
+                [ ".return" ":" type ] ( body | )        // no body: a signature
+staticmethod := "fun" ident "(" [ param ("," param)* ] ")" [ ".return" ":" type ] ( body | )
 traitimpl    := "impl" traitname [ typeargs ] "for" typename "{" ( traitimplitem )* "}"
 traitimplitem := method | staticmethod | assocbind
 assocbind    := "type" ident "=" type
@@ -3087,7 +3087,7 @@ assocbind    := "type" ident "=" type
 traitname    := ident [ "." ident ]                    // `Shape` or `shape.Shape`
 typename     := ident [ "." ident ]
 method       := "fun" [ "mut" ] "Self" "." ident "(" [ param ("," param)* ] ")"
-                [ ".R" ":" type ] body
+                [ ".return" ":" type ] body
 const        := [ "pub" ] "const" ident ":" type "=" expr
 pd           := "pd" ("val" | "var") ident [ ":" type ] "=" expr
 datac        := [ "pub" ] "datac" ident [ typeparams ] "(" [ field ("," field)* ] ")"
@@ -3098,7 +3098,7 @@ typeparam    := ident [ ":" bound ("+" bound)* ]
 bound        := traitname [ typeargs ]
 typeargs     := "<" type ("," type)* ">"   // in an expression: adjacent to the name and to "("
 fun          := [ "pub" ] [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
-                "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body
+                "(" [ param ("," param)* ] ")" [ ".return" ":" type ] body
                 // `[typeparams]` after the function's own name bounds its type
                 // parameters (9.5); on a receiver it names the receiver's type
                 // arguments and takes no bounds.
@@ -3108,7 +3108,7 @@ body         := "=" expr | block | <nothing for extern>
 type         := [ "&" [ "mut" ] "dyn" ident ]  // a borrowed trait object: `&dyn T`, `&mut dyn T`
               | [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
                        [ "::" ident ]              // an associated type: `I::Item`, `Self::Item`
-                       | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ]
+                       | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".return" "：" type ]
                        | "[" type ";" expr "]"        // a fixed-size array: [T; N]
                        | "(" type "," type ("," type)* ")" )  // a tuple: (A, B)
 fparam       := [ "mut" | "move" ] type
@@ -3146,7 +3146,7 @@ binop        := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
 unary        := ( "-" | "!" | "~" | "&" [ "mut" ] | "*" ) unary | postfix
 postfix      := primary ( "?" | "." ident [ typeargs ] [ "(" args ")" ] )*
 primary      := int | float | string | char | template | "true" | "false"
-              | "fun" "(" [ param ("," param)* ] ")" [ ".R" "：" type ]
+              | "fun" "(" [ param ("," param)* ] ")" [ ".return" "：" type ]
                 ( "=" expr | block )
               | "[" expr ("," expr)* "]"       // an array literal: length is the count
               | "[" expr ";" expr "]"          // a repeat: [0; 4096]
@@ -3242,8 +3242,8 @@ fun take(s: move String)    // `s` owns what it was given: the call site moves i
 So a `fun` that reads text takes `s: String` (a borrow) or `s: &str` (a borrowed view), and **neither one copies**:
 
 ```kelp
-fun len_of(s: String).R: usize = s.len()          // no copy: s is a borrow
-fun len_view(s: &str).R: usize = str.len(s)       // no copy: str is already a view
+fun len_of(s: String).return: usize = s.len()          // no copy: s is a borrow
+fun len_view(s: &str).return: usize = str.len(s)       // no copy: str is already a view
 ```
 
 Consequences you will meet immediately:
@@ -3282,7 +3282,7 @@ fun use_line(l: Line) {
     print(l.n)                // fine: `usize` is Copy
 }
 
-fun take_line(l: move Line).R: String {
+fun take_line(l: move Line).return: String {
     return l.text             // fine: `l` is an owned local, so the field moves out
 }
 
@@ -3291,14 +3291,14 @@ enum Held {
     Blank
 }
 
-fun take_word(h: move Held).R: String {
+fun take_word(h: move Held).return: String {
     return when h {
         Word(text) -> text    // fine: the payload moves out of the owned `h`
         Blank -> String.from_str("")
     }
 }
 
-fun peek_word(h: &Held).R: usize {
+fun peek_word(h: &Held).return: usize {
     return when h {
         Word(text) -> text.len()   // fine: `text` is a `&String` here, and nothing moved
         Blank -> 0
@@ -3313,7 +3313,7 @@ To *take* an owned field out of a value the frame does not own, hold it in a `Bo
 A hand-written parser needs two pieces of state: the text and a position. Neither belongs in a `datac` — a `View` is a borrow, and a borrow cannot be a field (11.5). Pass them:
 
 ```kelp
-fun scan_word(text: View, pos: mut usize).R: result.Result<String, ScanError> {
+fun scan_word(text: View, pos: mut usize).return: result.Result<String, ScanError> {
     val start = *pos                        // `pos` is a `mut usize`: read with `*`
     while *pos < text.len() && is_alpha(text.get(*pos)) {
         *pos += 1                           // and write with `*`
@@ -3339,7 +3339,7 @@ Facts that make this pattern work, and the traps in it:
 
 ```kelp
 // Reading
-fun parse_all(text: &str).R: result.Result<Thing, ParseError> {
+fun parse_all(text: &str).return: result.Result<Thing, ParseError> {
     var pos: usize = 0
     val src = text.view()            // the only strlen in the program
     return parse_value(text = src, pos = pos)
@@ -3375,7 +3375,7 @@ enum Shape {
 - Reading a variant requires a pattern:
 
 ```kelp
-fun area(s: &Shape).R: f64 = when s {
+fun area(s: &Shape).return: f64 = when s {
     Circle(r) -> 3.141592653589793 * r * r
     Rect(w, h) -> w * h
     Empty -> 0.0
@@ -3429,11 +3429,11 @@ impl "std/result"
 
 datac ScanError(val message: String, val at: usize)
 
-fun is_blank(c: u8).R: bool = c == ' ' || c == '\t' || c == '\n' || c == '\r'
+fun is_blank(c: u8).return: bool = c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
-fun is_digit(c: u8).R: bool = c >= '0' && c <= '9'
+fun is_digit(c: u8).return: bool = c >= '0' && c <= '9'
 
-fun is_alpha(c: u8).R: bool {
+fun is_alpha(c: u8).return: bool {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 }
 
@@ -3443,7 +3443,7 @@ fun skip_blanks(text: View, pos: mut usize) {
     }
 }
 
-fun scan_word(text: View, pos: mut usize).R: result.Result<String, ScanError> {
+fun scan_word(text: View, pos: mut usize).return: result.Result<String, ScanError> {
     skip_blanks(text, pos)
     val start = *pos
     while *pos < text.len() && is_alpha(text.get(*pos)) {
@@ -3455,7 +3455,7 @@ fun scan_word(text: View, pos: mut usize).R: result.Result<String, ScanError> {
     return result.Result.Ok(value = text.slice(start, *pos))
 }
 
-fun scan_number(text: View, pos: mut usize).R: result.Result<i64, ScanError> {
+fun scan_number(text: View, pos: mut usize).return: result.Result<i64, ScanError> {
     skip_blanks(text, pos)
     val start = *pos
     var n: i64 = 0
@@ -3469,7 +3469,7 @@ fun scan_number(text: View, pos: mut usize).R: result.Result<i64, ScanError> {
     return result.Result.Ok(value = n)
 }
 
-fun tokenize(text: View).R: result.Result<List<String>, ScanError> {
+fun tokenize(text: View).return: result.Result<List<String>, ScanError> {
     var out: List<String> = List.empty()
     var pos: usize = 0
     while pos < text.len() {
@@ -3516,9 +3516,12 @@ outdated: `impl "..." with caps(...)` is outdated and will be removed in the nex
   --> src/main.kp:2:13
 ```
 
-That finding is the shape an entry produces, shown here from the entry the
-register last held; **the register is empty today** (23.1), so no program
-produces one.
+That finding is the shape an entry produces, shown here from an entry the
+register held earlier. **Since 26.10.3 the register holds one entry, the return
+marker `.R:`** (id `return-r`): `fun f(a: i32).return: i32` is the spelling,
+`.R:` means the same and is read on a declaration, a `fun` literal and a function
+type, and each use prints `the return marker `.R:` is outdated ... write
+`.return:``. Section 7 and every example use `.return:`.
 
 A program that uses an outdated spelling **more than once gets one finding per
 use**, and one finding per use is all it gets: a load reads each module twice

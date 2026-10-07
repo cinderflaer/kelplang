@@ -2,7 +2,7 @@
 // its whole signature, since the body is supplied by the compiler.
 datac Hidden(val n: i32)
 
-pub extern fun poke(h: Hidden).R: i32
+pub extern fun poke(h: Hidden).return: i32
 
 fun main() {
     print(1)

@@ -12,7 +12,7 @@ fun take(s: String) {
     print(s)
 }
 
-fun pick(flag: bool).R: String {
+fun pick(flag: bool).return: String {
     var s = String.from_str("live")
     if flag {
         take(s)

@@ -3,11 +3,11 @@
 // first two slices' single opaque eightbyte.
 datac Pair3(var a: i64, var b: i64)
 
-fun make3(a: i64, b: i64).R: Pair3 {
+fun make3(a: i64, b: i64).return: Pair3 {
     return Pair3(a = a, b = b)
 }
 
-fun sum3(p: move Pair3).R: i64 {
+fun sum3(p: move Pair3).return: i64 {
     return p.a + p.b
 }
 

@@ -5,9 +5,9 @@ impl "std/option"
 // another module through the alias.
 pub trait Iter {
     type Item
-    fun mut Self.next().R: option.Option<Self::Item>
+    fun mut Self.next().return: option.Option<Self::Item>
 }
 
-pub fun first<I: Iter>(it: mut I).R: option.Option<I::Item> {
+pub fun first<I: Iter>(it: mut I).return: option.Option<I::Item> {
     return it.next()
 }

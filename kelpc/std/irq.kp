@@ -10,8 +10,8 @@
 
        datac Line(val n: u32)
 
-       fun claim(n: u32).R: Line
-       fun Line.number().R: u32
+       fun claim(n: u32).return: Line
+       fun Line.number().return: u32
 
    The field is not exported, so a `Line` cannot be built outside this module:
    a struct literal from another module is refused (`stdlib.rs::SEALED_TYPES`),
@@ -34,7 +34,7 @@
 datac Line(val n: u32)
 
 // The receipt for an `irq` grant: a line the calling module was granted.
-fun claim(n: u32).R: Line = Line(n = n)
+fun claim(n: u32).return: Line = Line(n = n)
 
 // The line's number.
-fun Line.number().R: u32 = n
+fun Line.number().return: u32 = n

@@ -11,9 +11,9 @@ enum Option<T> {
 
 // A parameter type in a signature: the instance is created by writing it, and
 // the same name used twice in one program is the same type.
-fun add_pair(p: &Pair<i32, i32>).R: i32 = p.first + p.second
+fun add_pair(p: &Pair<i32, i32>).return: i32 = p.first + p.second
 
-fun unwrap_or(o: &Option<i32>, fallback: i32).R: i32 = when o {
+fun unwrap_or(o: &Option<i32>, fallback: i32).return: i32 = when o {
     Some(v) -> v
     None -> fallback
 }

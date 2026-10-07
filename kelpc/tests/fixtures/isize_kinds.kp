@@ -8,7 +8,7 @@ impl "std/option"
 datac Span(val start: isize, val len: isize)
 
 // A parameter and a return.
-fun shift(by: isize).R: isize = by + 1
+fun shift(by: isize).return: isize = by + 1
 
 fun main() {
     var i: isize = 0

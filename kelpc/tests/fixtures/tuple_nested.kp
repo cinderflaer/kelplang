@@ -1,7 +1,7 @@
 // MISSING-z2bB9: a tuple may hold another tuple, a destructuring binding may
 // nest, `_` ignores one position at any level, and `var (a, b) = ...` makes
 // every position a `var` (`plan/syntax.md` 3 and 4).
-fun range().R: ((i32, i32), i32) = ((1, 2), 3)
+fun range().return: ((i32, i32), i32) = ((1, 2), 3)
 
 fun main() {
     val ((lo, _), span) = range()

@@ -1,4 +1,4 @@
-// A-4 phase C: anonymous `fun` literals — `fun(x: i32).R: i32 = x * 2` written
+// A-4 phase C: anonymous `fun` literals — `fun(x: i32).return: i32 = x * 2` written
 // where an expression is expected. Each literal is one synthesized top-level
 // function, so its body is checked like any other function's: it can use `?`
 // against its own declared return type, and it owns (and drops) its `move`
@@ -9,9 +9,9 @@
 // buffer it is handed.
 impl "std/option"
 
-fun apply(f: fun(i32).R: i32, x: i32).R: i32 = f(x)
+fun apply(f: fun(i32).return: i32, x: i32).return: i32 = f(x)
 
-fun safe_div(a: i32, b: i32).R: option.Option<i32> {
+fun safe_div(a: i32, b: i32).return: option.Option<i32> {
     if b == 0 {
         return option.Option.None
     }
@@ -20,16 +20,16 @@ fun safe_div(a: i32, b: i32).R: option.Option<i32> {
 
 // A literal as a returned value: the function's declared type is the literal's
 // type, spelled out.
-fun doubler().R: fun(i32).R: i32 = fun(x: i32).R: i32 = x * 2
+fun doubler().return: fun(i32).return: i32 = fun(x: i32).return: i32 = x * 2
 
-datac Callbacks(val on_i32: fun(i32).R: i32)
+datac Callbacks(val on_i32: fun(i32).return: i32)
 
 fun main() {
-    val f = fun(x: i32).R: i32 = x * 2
+    val f = fun(x: i32).return: i32 = x * 2
     print(f(21))
-    print(apply(fun(x: i32).R: i32 = x + 1, 5))
+    print(apply(fun(x: i32).return: i32 = x + 1, 5))
 
-    // A block body, and `Unit` when no `.R` is written. A literal in
+    // A block body, and `Unit` when no `.return` is written. A literal in
     // statement position is allowed and discarded.
     val g = fun(x: i32) {
         print(x)
@@ -37,24 +37,24 @@ fun main() {
     g(7)
 
     // A literal's parameters take the same qualifiers a declaration's do.
-    val h = fun(s: move String).R: usize = s.len()
+    val h = fun(s: move String).return: usize = s.len()
     print(h(String.from_str("abcd")))
 
     // A literal inside a literal: each becomes its own function.
-    val outer = fun(x: i32).R: i32 {
-        val inner = fun(y: i32).R: i32 = y * 10
+    val outer = fun(x: i32).return: i32 {
+        val inner = fun(y: i32).return: i32 = y * 10
         return inner(x) + 1
     }
     print(outer(3))
 
     // A literal holding a `datac` field, and one returned from a function.
-    val c = Callbacks(on_i32 = fun(x: i32).R: i32 = x - 1)
+    val c = Callbacks(on_i32 = fun(x: i32).return: i32 = x - 1)
     print(c.on_i32(10))
     val d = doubler()
     print(d(6))
 
-    // `?` inside a literal propagates against the literal's own `.R`.
-    val chain = fun(a: i32, b: i32).R: option.Option<i32> {
+    // `?` inside a literal propagates against the literal's own `.return`.
+    val chain = fun(a: i32, b: i32).return: option.Option<i32> {
         val q = safe_div(a, b)?
         return option.Option.Some(value = q + 1)
     }

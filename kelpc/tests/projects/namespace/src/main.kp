@@ -1,6 +1,6 @@
 impl "util"
 
-fun describe(t: util.Tally).R: i32 = util.bumped(t, 1)
+fun describe(t: util.Tally).return: i32 = util.bumped(t, 1)
 
 fun main() {
     val t = util.Tally(label = 3)

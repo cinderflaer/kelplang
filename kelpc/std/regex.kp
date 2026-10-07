@@ -122,15 +122,15 @@ datac Regex(
     var nsteps: i64
 )
 
-fun is_word_byte(b: u8).R: bool {
+fun is_word_byte(b: u8).return: bool {
     return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
-fun is_space_byte(b: u8).R: bool {
+fun is_space_byte(b: u8).return: bool {
     return b == 32 || (b >= 9 && b <= 13)
 }
 
-fun hex_value(c: u8).R: i32 {
+fun hex_value(c: u8).return: i32 {
     if c >= '0' && c <= '9' {
         return (c - '0').to_i32()
     }
@@ -143,7 +143,7 @@ fun hex_value(c: u8).R: i32 {
     return -1
 }
 
-fun is_quant_byte(c: u8).R: bool = c == '*' || c == '+' || c == '?' || c == '{'
+fun is_quant_byte(c: u8).return: bool = c == '*' || c == '+' || c == '?' || c == '{'
 
 // ---------------------------------------------------------------------------
 // Parser
@@ -156,7 +156,7 @@ fun mut Parser.fail(msg: &str, off: usize) {
     }
 }
 
-fun mut Parser.node(kind: i32, a: i32, b: i32, c: i32, d: i32).R: i32 {
+fun mut Parser.node(kind: i32, a: i32, b: i32, c: i32, d: i32).return: i32 {
     nk.push(kind)
     na.push(a)
     nb.push(b)
@@ -166,7 +166,7 @@ fun mut Parser.node(kind: i32, a: i32, b: i32, c: i32, d: i32).R: i32 {
     return (nk.len() - 1).to_i32()
 }
 
-fun mut Parser.new_class().R: i32 {
+fun mut Parser.new_class().return: i32 {
     val idx = classes.len() / 32
     var i: usize = 0
     while i < 32 {
@@ -182,7 +182,7 @@ fun mut Parser.set_bit(base: usize, b: usize) {
     classes.set(at, classes.get(at) | m)
 }
 
-fun Parser.has_bit(base: usize, b: usize).R: bool {
+fun Parser.has_bit(base: usize, b: usize).return: bool {
     val m: u8 = 1 << (b & 7).to_u8()
     return classes.get(base + (b >> 3)) & m != 0
 }
@@ -233,7 +233,7 @@ fun mut Parser.invert_class(base: usize) {
 // `at`; -1 when it is not one (the caller decides what that means). Leaves
 // `pos` just past what it consumed. `in_class` allows only what a class may
 // hold.
-fun mut Parser.escape_byte(at: usize).R: i32 {
+fun mut Parser.escape_byte(at: usize).return: i32 {
     val n = pat.len()
     if at + 1 >= n {
         self.fail("trailing backslash", at)
@@ -286,7 +286,7 @@ fun mut Parser.bad_escape(at: usize) {
 
 // One item of a character class: a byte (0..255), or -1 when it was a `\d`-style
 // set that has been added to the class directly (or on failure).
-fun mut Parser.class_atom(base: usize).R: i32 {
+fun mut Parser.class_atom(base: usize).return: i32 {
     val at = pos
     val c = pat.get(at)
     if c != '\\' {
@@ -314,7 +314,7 @@ fun mut Parser.class_atom(base: usize).R: i32 {
     return b
 }
 
-fun mut Parser.parse_class().R: i32 {
+fun mut Parser.parse_class().return: i32 {
     val n = pat.len()
     val open = pos
     pos += 1
@@ -369,7 +369,7 @@ fun mut Parser.parse_class().R: i32 {
     return self.node(N_CLASS, ci, 0, 0, 0)
 }
 
-fun mut Parser.parse_escape().R: i32 {
+fun mut Parser.parse_escape().return: i32 {
     val at = pos
     val n = pat.len()
     if at + 1 >= n {
@@ -407,7 +407,7 @@ fun mut Parser.parse_escape().R: i32 {
 }
 
 // A literal byte, folded when the case-insensitive flag is on.
-fun mut Parser.byte_node(b: u8).R: i32 {
+fun mut Parser.byte_node(b: u8).return: i32 {
     var f: i32 = 0
     var v = b
     if flags & F_I != 0 {
@@ -423,7 +423,7 @@ fun mut Parser.byte_node(b: u8).R: i32 {
 
 // `(` ... `)`. Returns a node, or -2 for a flag group `(?i)` that makes no
 // node, or -1 on failure.
-fun mut Parser.parse_group().R: i32 {
+fun mut Parser.parse_group().return: i32 {
     val n = pat.len()
     val open = pos
     pos += 1
@@ -523,7 +523,7 @@ fun mut Parser.parse_group().R: i32 {
     return self.node(N_GROUP, inner, cap, 0, 0)
 }
 
-fun mut Parser.parse_number().R: i32 {
+fun mut Parser.parse_number().return: i32 {
     var v: i32 = 0
     val n = pat.len()
     while pos < n && pat.get(pos) >= '0' && pat.get(pos) <= '9' {
@@ -536,7 +536,7 @@ fun mut Parser.parse_number().R: i32 {
 }
 
 // The repeat operators after an atom.
-fun mut Parser.parse_quant(atom: i32).R: i32 {
+fun mut Parser.parse_quant(atom: i32).return: i32 {
     val n = pat.len()
     if pos >= n {
         return atom
@@ -598,7 +598,7 @@ fun mut Parser.parse_quant(atom: i32).R: i32 {
 }
 
 // One atom, or -2 for a flag group, or -1 on failure.
-fun mut Parser.parse_atom().R: i32 {
+fun mut Parser.parse_atom().return: i32 {
     val n = pat.len()
     val c = pat.get(pos)
     if c == '(' {
@@ -652,7 +652,7 @@ fun mut Parser.parse_atom().R: i32 {
     return self.byte_node(c)
 }
 
-fun mut Parser.parse_cat().R: i32 {
+fun mut Parser.parse_cat().return: i32 {
     val n = pat.len()
     val head = self.node(N_CAT, -1, 0, 0, 0)
     var last: i32 = -1
@@ -679,7 +679,7 @@ fun mut Parser.parse_cat().R: i32 {
     return head
 }
 
-fun mut Parser.parse_alt().R: i32 {
+fun mut Parser.parse_alt().return: i32 {
     val n = pat.len()
     val first = self.parse_cat()
     if failed {
@@ -704,7 +704,7 @@ fun mut Parser.parse_alt().R: i32 {
 // ---------------------------------------------------------------------------
 // Code generation
 
-fun mut Parser.emit(o: i32, x: i32, y: i32).R: usize {
+fun mut Parser.emit(o: i32, x: i32, y: i32).return: usize {
     if op.len() >= MAX_PROG {
         self.fail("pattern is too large (the compiled program is limited to 50000 instructions)", 0)
         return 0
@@ -832,7 +832,7 @@ fun mut Parser.emit_node(n: i32) {
     }
 }
 
-fun refuse(msg: &str, off: usize).R: result.Result<Regex, RegexErr> {
+fun refuse(msg: &str, off: usize).return: result.Result<Regex, RegexErr> {
     return result.Result.Err(error = RegexErr(message = String.from_str(msg), offset = off))
 }
 
@@ -840,7 +840,7 @@ fun refuse(msg: &str, off: usize).R: result.Result<Regex, RegexErr> {
 // problem. A pattern longer than 4096 bytes, nested deeper than 100 groups, with
 // a counted repeat above 1000, with a backreference or lookaround, or too large
 // once its repeats are expanded, is refused.
-fun compile(pattern: &str).R: result.Result<Regex, RegexErr> {
+fun compile(pattern: &str).return: result.Result<Regex, RegexErr> {
     val pv = pattern.view()
     val n = pv.len()
     if n > MAX_PATTERN {
@@ -950,7 +950,7 @@ fun compile(pattern: &str).R: result.Result<Regex, RegexErr> {
 // ---------------------------------------------------------------------------
 // The Pike VM
 
-fun Regex.assert_ok(kind: i32, text: View, pos: usize).R: bool {
+fun Regex.assert_ok(kind: i32, text: View, pos: usize).return: bool {
     val n = text.len()
     if kind == A_BOL {
         return pos == 0
@@ -1041,7 +1041,7 @@ fun mut Regex.add_thread(side: usize, pc0: i32, pos: usize, text: View, nsl: usi
 // Runs the program over `text` from byte `start`, unanchored at the start. True
 // when there is a match, whose first `nsl` capture slots are then in `res`.
 // `early` stops at the first match found (enough for a yes/no answer).
-fun mut Regex.run(text: View, start: usize, nsl: usize, early: bool).R: bool {
+fun mut Regex.run(text: View, start: usize, nsl: usize, early: bool).return: bool {
     val n = text.len()
     val np = op.len()
     gen += 1
@@ -1132,23 +1132,23 @@ fun mut Regex.run(text: View, start: usize, nsl: usize, early: bool).R: bool {
 // The number of VM steps taken since `compile` or the last `reset_steps`: one
 // per instruction expanded and one per thread advanced. It is the measure of
 // work the linearity tests assert on.
-fun Regex.steps().R: i64 = nsteps
+fun Regex.steps().return: i64 = nsteps
 
 fun mut Regex.reset_steps() {
     nsteps = 0
 }
 
 // The number of capture groups, not counting group 0 (the whole match).
-fun Regex.group_count().R: usize = ngroups - 1
+fun Regex.group_count().return: usize = ngroups - 1
 
 // Whether the pattern matches anywhere in `text`.
-fun mut Regex.is_match(text: &str).R: bool {
+fun mut Regex.is_match(text: &str).return: bool {
     return self.run(text.view(), 0, 2, true)
 }
 
 // The leftmost match at or after byte `start`, if any. `^` and `\b` still look
 // at the whole text, so a search that resumes mid-text sees its true context.
-fun mut Regex.find_at(text: &str, start: usize).R: option.Option<Match> {
+fun mut Regex.find_at(text: &str, start: usize).return: option.Option<Match> {
     val tv = text.view()
     if start > tv.len() {
         return option.Option.None
@@ -1161,12 +1161,12 @@ fun mut Regex.find_at(text: &str, start: usize).R: option.Option<Match> {
     return option.Option.Some(value = Match(start = s, end = e, text = tv.slice(s, e).to_string()))
 }
 
-fun mut Regex.find(text: &str).R: option.Option<Match> {
+fun mut Regex.find(text: &str).return: option.Option<Match> {
     return self.find_at(text, 0)
 }
 
 // The leftmost match with every group's span, if any.
-fun mut Regex.captures(text: &str).R: option.Option<Captures> {
+fun mut Regex.captures(text: &str).return: option.Option<Captures> {
     val tv = text.view()
     val nsl = ngroups * 2
     if !self.run(tv, 0, nsl, false) {
@@ -1183,7 +1183,7 @@ fun mut Regex.captures(text: &str).R: option.Option<Captures> {
 
 // Every non-overlapping match, left to right. After an empty match the search
 // resumes one byte further on, so the result is finite.
-fun mut Regex.find_all(text: &str).R: List<Match> {
+fun mut Regex.find_all(text: &str).return: List<Match> {
     val tv = text.view()
     val n = tv.len()
     var out: List<Match> = List.empty()
@@ -1243,7 +1243,7 @@ fun Regex.expand(out: mut String, tv: View, rep: View, nsl: usize) {
     }
 }
 
-fun mut Regex.replace_impl(text: &str, replacement: &str, all: bool).R: String {
+fun mut Regex.replace_impl(text: &str, replacement: &str, all: bool).return: String {
     val tv = text.view()
     val rv = replacement.view()
     val n = tv.len()
@@ -1290,16 +1290,16 @@ fun mut Regex.replace_impl(text: &str, replacement: &str, all: bool).R: String {
 }
 
 // `text` with the first match replaced by `replacement` (see `expand` for `$1`).
-fun mut Regex.replace(text: &str, replacement: &str).R: String {
+fun mut Regex.replace(text: &str, replacement: &str).return: String {
     return self.replace_impl(text, replacement, false)
 }
 
-fun mut Regex.replace_all(text: &str, replacement: &str).R: String {
+fun mut Regex.replace_all(text: &str, replacement: &str).return: String {
     return self.replace_impl(text, replacement, true)
 }
 
 // The pieces of `text` between matches, so one more than the number of matches.
-fun mut Regex.split(text: &str).R: List<String> {
+fun mut Regex.split(text: &str).return: List<String> {
     val tv = text.view()
     val n = tv.len()
     var out: List<String> = List.empty()
@@ -1324,11 +1324,11 @@ fun mut Regex.split(text: &str).R: List<String> {
     return out
 }
 
-fun Captures.len().R: usize = slots.len() / 2
+fun Captures.len().return: usize = slots.len() / 2
 
 // The text of group `i`, or `None` when the group did not take part in the
 // match or does not exist.
-fun Captures.get(i: usize).R: option.Option<String> {
+fun Captures.get(i: usize).return: option.Option<String> {
     if i * 2 + 1 >= slots.len() {
         return option.Option.None
     }
@@ -1341,7 +1341,7 @@ fun Captures.get(i: usize).R: option.Option<String> {
 }
 
 // The span and text of group `i`, as a `Match`.
-fun Captures.span(i: usize).R: option.Option<Match> {
+fun Captures.span(i: usize).return: option.Option<Match> {
     if i * 2 + 1 >= slots.len() {
         return option.Option.None
     }
@@ -1357,7 +1357,7 @@ fun Captures.span(i: usize).R: option.Option<Match> {
 
 // Whether `pattern` matches anywhere in `text`. Panics when the pattern does not
 // compile: a literal pattern in the source is a bug, not an input.
-fun is_match(pattern: &str, text: &str).R: bool {
+fun is_match(pattern: &str, text: &str).return: bool {
     val r = compile(pattern)
     if let Ok(re0) = r {
         var re = re0

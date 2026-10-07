@@ -23,7 +23,7 @@ or implicit instrumentation that can make an ordinary program emit records.
 
 ```kelp
 trace.event(file: &str, line: usize, name: &str)
-trace.begin(file: &str, line: usize, name: &str).R: trace.Span
+trace.begin(file: &str, line: usize, name: &str).return: trace.Span
 trace.end(file: &str, line: usize, span: trace.Span)
 ```
 

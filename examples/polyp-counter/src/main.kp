@@ -22,13 +22,13 @@ enum Msg {
 }
 
 // The constructor the entry's `on_change` is: a top-level `fun`, so nothing is captured and the
-// type is exactly `fun(String).R: Msg`. `fun(String)` hands the text over as a borrow, so the
+// type is exactly `fun(String).return: Msg`. `fun(String)` hands the text over as a borrow, so the
 // constructor copies it into the `Msg`.
-fun changed(text: String).R: Msg = Msg.Changed(text = String.from_str(text.as_str()))
+fun changed(text: String).return: Msg = Msg.Changed(text = String.from_str(text.as_str()))
 
 // The buttons are visited in this order, so their ids are 0 (Inc), 1 (Dec) and 2 (Reset). The smoke
 // run below leans on that; the entry has its own id space and does not consume a button id.
-fun view(s: Counter).R: core.Node<Msg> {
+fun view(s: Counter).return: core.Node<Msg> {
     return polyp.column { k ->
         k.text_styled("a counter", 0, true)
         val shown_count = fmt.int(s.count.to_i64())
@@ -59,7 +59,7 @@ fun update(state: mut Counter, msg: Msg) {
     }
 }
 
-fun smoke_enabled().R: bool {
+fun smoke_enabled().return: bool {
     val value = env.get("POLYP_SMOKE")
     return str.eq(value.as_str(), "1")
 }

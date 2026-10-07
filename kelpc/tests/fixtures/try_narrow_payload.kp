@@ -17,12 +17,12 @@ enum Result<T, E> {
     Err(val error: E)
 }
 
-fun g(n: i64).R: Result<D3, u8> {
+fun g(n: i64).return: Result<D3, u8> {
     if n > 0 { return Result.Ok(value = D3(a = n.to_u8(), b = 2, c = 3)) }
     return Result.Err(error = 9.to_u8())
 }
 
-fun h(n: i64).R: Result<D3, u8> {
+fun h(n: i64).return: Result<D3, u8> {
     val d = g(n = n)?
     return Result.Ok(value = d)
 }

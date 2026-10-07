@@ -5,7 +5,7 @@ impl "std/option"
 impl "std/result"
 impl "std/str"
 
-fun compile_or_die(pat: &str).R: regex.Regex {
+fun compile_or_die(pat: &str).return: regex.Regex {
     val r = regex.compile(pat)
     if let Ok(re) = r {
         return re

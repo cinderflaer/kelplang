@@ -2,7 +2,7 @@
 // the key half is not exempt from the rule.
 datac Hidden(val n: i32)
 
-pub fun tally(m: Map<Hidden, i32>).R: i32 = 1
+pub fun tally(m: Map<Hidden, i32>).return: i32 = 1
 
 fun main() {
     print(1)

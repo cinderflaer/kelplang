@@ -31,7 +31,7 @@
 //!   ends, mirroring the move-state scope stack.
 //!
 //! No surface syntax lets a function return a `Ty::Ref` (`infer.rs`'s
-//! `resolve_type` never produces one for a `.R: T` clause), so a borrow can
+//! `resolve_type` never produces one for a `.return: T` clause), so a borrow can
 //! never escape the call frame that created it — that's what makes
 //! call-scoped release sound without real lifetime inference. Aliasing:
 //! exclusive excludes everything else; any number of shared borrows may
@@ -784,7 +784,7 @@ impl Ctx {
     /// one owner to another, keep its provenance:
     ///
     /// ```kelp
-    /// fun as_str(v: &Json).R: &str {
+    /// fun as_str(v: &Json).return: &str {
     ///     if let Str(s) = v {
     ///         return s.as_str()      // `s` *is* derived from `v`
     ///     }
@@ -801,7 +801,7 @@ impl Ctx {
     /// local masquerade as a view of the parameter:
     ///
     /// ```kelp
-    /// fun f(x: String).R: &str {
+    /// fun f(x: String).return: &str {
     ///     val y = x            // an owned move, not a borrow
     ///     return y.as_str()    // must stay refused: `y` dies with this frame
     /// }
@@ -1086,7 +1086,7 @@ impl Ctx {
         // names a field:
         //
         // ```kelp
-        // fun mut Parser.keyword(word: &str).R: Result<i64, Err> {
+        // fun mut Parser.keyword(word: &str).return: Result<i64, Err> {
         //     val text0 = text.as_str()      // borrows `self`
         //     ...
         //     return self.err("bad")         // reads `self`, which is Copy
@@ -1922,7 +1922,7 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<Vec<String>> {
         // either branch, so its root is the union of the arms' roots, with a
         // `str` literal's static storage dropped as soon as a real owner is in
         // the set. That is what
-        // `fun f(v: &J).R: &str = when v { S(s) -> s.as_str()  N -> "n" }`
+        // `fun f(v: &J).return: &str = when v { S(s) -> s.as_str()  N -> "n" }`
         // needs: one owner (`v`) and one static string.
         tir::ExprKind::Block(b) => block_tail_root(b, ctx),
         tir::ExprKind::If {
@@ -1959,7 +1959,7 @@ fn place_roots(expr: &tir::Expr, ctx: &Ctx) -> Vec<String> {
 /// and does not conflict with a branch that borrows one.
 ///
 /// ```kelp
-/// fun f(v: &J).R: &str = when v {
+/// fun f(v: &J).return: &str = when v {
 ///     S(s) -> s.as_str()   // borrows `v`
 ///     N -> "n"             // static: needs no owner
 /// }

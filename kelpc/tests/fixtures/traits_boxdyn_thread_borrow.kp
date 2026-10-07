@@ -5,15 +5,15 @@ impl "std/thread"
 impl "std/result"
 
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
 }
 
 datac Circle(val r: f64)
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
+    fun Self.area().return: f64 = r * r * 3.0
 }
 
-fun area_of(s: &dyn Shape).R: f64 = s.area()
+fun area_of(s: &dyn Shape).return: f64 = s.area()
 
 fun main() {
     val c = Circle(r = 2.0)

@@ -4,4 +4,4 @@
 // B-1's design pass opened for anything that is not a stdlib module. The
 // bare name here ("getpid") is also the native symbol `codegen_c.rs` calls:
 // MK9-S1-M1 keeps user FFI to that 1:1 mapping.
-pub extern fun getpid().R: i32
+pub extern fun getpid().return: i32

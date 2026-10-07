@@ -3,9 +3,9 @@
 // is what names the type.
 datac Pair<A, B>(val first: A, val second: B)
 
-fun Pair<A, B>.hash().R: u64 = 0
+fun Pair<A, B>.hash().return: u64 = 0
 
-fun Pair<A, B>.eq(other: &Pair<A, B>).R: bool = true
+fun Pair<A, B>.eq(other: &Pair<A, B>).return: bool = true
 
 fun main() {
     var m: Map<Pair<i32, i32>, i32> = Map.new()

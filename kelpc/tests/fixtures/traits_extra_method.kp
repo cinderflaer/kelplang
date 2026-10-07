@@ -1,13 +1,13 @@
 // An impl method the trait does not declare (A-12 slice 2).
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
 }
 
 datac Circle(val r: f64)
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r
-    fun Self.shrink().R: f64 = r
+    fun Self.area().return: f64 = r * r
+    fun Self.shrink().return: f64 = r
 }
 
 fun main() { }

@@ -3,7 +3,7 @@
 // return position. A `pub fun` parameter of the same type is the same walk.
 datac Hidden(val n: i32)
 
-pub datac Callbacks(val on_i32: fun(i32).R: Hidden)
+pub datac Callbacks(val on_i32: fun(i32).return: Hidden)
 
 fun main() {
     print(1)

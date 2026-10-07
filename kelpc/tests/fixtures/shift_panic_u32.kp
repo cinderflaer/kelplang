@@ -1,7 +1,7 @@
 // A shift by the width or more is a run-time panic, like an out-of-bounds
 // index. The amount reaches the shift through a parameter, so the compiler
 // cannot see it.
-fun shift(x: u32, n: u32).R: u32 = x << n
+fun shift(x: u32, n: u32).return: u32 = x << n
 
 fun main() {
     print(shift(1, 31))

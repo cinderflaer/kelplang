@@ -33,7 +33,7 @@ pub datac Fb(val pixels: Ptr<u32>, val width: i32, val height: i32, val stride_p
 
 // The one narrowing step in the module: a value that does not fit saturates instead of
 // panicking, because every caller is computing a clipped bound.
-pub fun clamp_i32(v: i64).R: i32 {
+pub fun clamp_i32(v: i64).return: i32 {
     if v > I32_MAX_I64 {
         return 2147483647
     }
@@ -43,19 +43,19 @@ pub fun clamp_i32(v: i64).R: i32 {
     return v.to_i32()
 }
 
-pub fun empty_rect().R: Rect = Rect(x = 0, y = 0, w = 0, h = 0)
+pub fun empty_rect().return: Rect = Rect(x = 0, y = 0, w = 0, h = 0)
 
 // A datac is not `Copy` even when every field is a scalar, so a caller that wants a second
 // value uses this rather than a plain assignment.
-fun Rect.dup().R: Rect = Rect(x = x, y = y, w = w, h = h)
+fun Rect.dup().return: Rect = Rect(x = x, y = y, w = w, h = h)
 
-fun Rect.right().R: i64 = x.to_i64() + w.to_i64()
+fun Rect.right().return: i64 = x.to_i64() + w.to_i64()
 
-fun Rect.bottom().R: i64 = y.to_i64() + h.to_i64()
+fun Rect.bottom().return: i64 = y.to_i64() + h.to_i64()
 
-fun Rect.is_empty().R: bool = w <= 0 || h <= 0
+fun Rect.is_empty().return: bool = w <= 0 || h <= 0
 
-fun Rect.area().R: i64 {
+fun Rect.area().return: i64 {
     if w <= 0 || h <= 0 {
         return 0
     }
@@ -64,7 +64,7 @@ fun Rect.area().R: i64 {
 
 // The clipped intersection, empty if either side is. `x0`/`y0` are maxima of two `i32`s and
 // `w`/`h` never exceed an input width, so the narrowing below cannot lose a real bound.
-pub fun intersect(a: Rect, b: Rect).R: Rect {
+pub fun intersect(a: Rect, b: Rect).return: Rect {
     if a.is_empty() || b.is_empty() {
         return empty_rect()
     }
@@ -97,7 +97,7 @@ pub fun intersect(a: Rect, b: Rect).R: Rect {
 
 // The smallest rectangle covering both. An empty operand is the identity, so a caller building
 // a bound is never dragged to the origin by a not-yet-set entry.
-pub fun union(a: Rect, b: Rect).R: Rect {
+pub fun union(a: Rect, b: Rect).return: Rect {
     if a.is_empty() {
         return b.dup()
     }
@@ -130,7 +130,7 @@ pub fun union(a: Rect, b: Rect).R: Rect {
 
 // Overlap or share an edge. A zero-width gap still merges, which is the predicate the damage
 // list coalesces on: two dirty strips that touch are one dirty rectangle.
-pub fun touches(a: Rect, b: Rect).R: bool {
+pub fun touches(a: Rect, b: Rect).return: bool {
     if a.is_empty() || b.is_empty() {
         return false
     }
@@ -140,7 +140,7 @@ pub fun touches(a: Rect, b: Rect).R: bool {
 }
 
 // `b` wholly inside `a` (the empty rectangle is inside everything).
-pub fun contains(a: Rect, b: Rect).R: bool {
+pub fun contains(a: Rect, b: Rect).return: bool {
     if b.is_empty() {
         return true
     }
@@ -153,7 +153,7 @@ pub fun contains(a: Rect, b: Rect).R: bool {
 }
 
 // Half-open: `right`/`bottom` are exclusive, which is what a pixel-span loop wants.
-pub fun contains_point(a: Rect, x: i32, y: i32).R: bool {
+pub fun contains_point(a: Rect, x: i32, y: i32).return: bool {
     if a.is_empty() {
         return false
     }
@@ -162,22 +162,22 @@ pub fun contains_point(a: Rect, x: i32, y: i32).R: bool {
     return x_ok && y_ok
 }
 
-pub fun new(pixels: Ptr<u32>, width: i32, height: i32, stride_px: i32).R: Fb {
+pub fun new(pixels: Ptr<u32>, width: i32, height: i32, stride_px: i32).return: Fb {
     return Fb(pixels = pixels, width = width, height = height, stride_px = stride_px)
 }
 
-fun Fb.bounds().R: Rect = Rect(x = 0, y = 0, w = width, h = height)
+fun Fb.bounds().return: Rect = Rect(x = 0, y = 0, w = width, h = height)
 
 // The element offset of one pixel. `i64` in the middle so a large `y * stride_px` cannot wrap
 // before it is narrowed to `isize`.
-fun Fb.index(x: i32, y: i32).R: isize {
+fun Fb.index(x: i32, y: i32).return: isize {
     val i: i64 = y.to_i64() * stride_px.to_i64() + x.to_i64()
     return i.to_isize()
 }
 
 // Read and write one pixel with no bounds check: the caller has already clipped, and the two
 // are `unsafe fun` so only a listed module can call them.
-unsafe fun Fb.get(x: i32, y: i32).R: u32 = self.pixels.offset(self.index(x, y)).read()
+unsafe fun Fb.get(x: i32, y: i32).return: u32 = self.pixels.offset(self.index(x, y)).read()
 
 unsafe fun Fb.put(x: i32, y: i32, color: u32) {
     self.pixels.offset(self.index(x, y)).write(color)
@@ -187,7 +187,7 @@ unsafe fun Fb.put(x: i32, y: i32, color: u32) {
 // bytes go in little-endian order and are taken by masking the `u32` value, not by reading
 // memory, so the checksum is the same on a little- or big-endian host. Stage 5 pins a rendered
 // frame with this rather than with a pixel-by-pixel golden dump.
-pub fun checksum(f: Fb).R: u64 {
+pub fun checksum(f: Fb).return: u64 {
     var h: u64 = 14695981039346656037
     var y: i32 = 0
     while y < f.height {
@@ -210,7 +210,7 @@ pub fun checksum(f: Fb).R: u64 {
 // coverage into the alpha byte (a text pixel's alpha is its mask byte), so `checksum` and this
 // value differ wherever text is drawn, and a display device has no alpha to show. Stage 4's
 // `ramfb` case compares this number with the pixels QEMU captured from the display.
-pub fun checksum_rgb(f: Fb).R: u64 {
+pub fun checksum_rgb(f: Fb).return: u64 {
     var h: u64 = 14695981039346656037
     var y: i32 = 0
     while y < f.height {
@@ -229,7 +229,7 @@ pub fun checksum_rgb(f: Fb).R: u64 {
 }
 
 // The multiply wraps, which is exactly FNV: `u64` arithmetic in Kelp wraps instead of panicking.
-fun fnv_byte(h: u64, b: u8).R: u64 {
+fun fnv_byte(h: u64, b: u8).return: u64 {
     val x: u64 = h ^ b.to_u64()
     return x * 1099511628211
 }

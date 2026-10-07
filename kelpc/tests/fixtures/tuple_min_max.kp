@@ -1,7 +1,7 @@
 // MISSING-z2bB9: a function hands back two things as one tuple value, and the
 // caller takes it apart with a destructuring binding, so a pair no longer needs
 // a one-shot `datac` (`plan/syntax.md` 3 and 4).
-fun min_max(xs: &List<i32>).R: (i32, i32) {
+fun min_max(xs: &List<i32>).return: (i32, i32) {
     var lo = xs.get(i = 0)
     var hi = xs.get(i = 0)
     var i: usize = 0

@@ -3,16 +3,16 @@ pd var log = 0
 
 datac P(var a: i32, var b: i32, var c: i32)
 
-fun t(n: i32).R: i32 {
+fun t(n: i32).return: i32 {
     log = log * 10 + n
     n
 }
 
-fun three(a: i32, b: i32, c: i32).R: i32 { a + b + c }
+fun three(a: i32, b: i32, c: i32).return: i32 { a + b + c }
 
-fun mk(n: i32).R: P { P(a = n, b = 0, c = 0) }
+fun mk(n: i32).return: P { P(a = n, b = 0, c = 0) }
 
-fun P.plus(x: i32, y: i32).R: i32 { a + x + y }
+fun P.plus(x: i32, y: i32).return: i32 { a + x + y }
 
 fun flush(label: str) {
     print("${label}: ${log}")

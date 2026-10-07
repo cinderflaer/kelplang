@@ -55,7 +55,7 @@ pub struct Outdated {
 
 /// Every outdated construct, in the order they were scheduled.
 ///
-/// **Empty, and that is the state a register is meant to reach.** Two entries
+/// **Holds `.R:` since 26.10.3, and empties again when it is removed.** Two entries
 /// lived here and both were removed in the cycle that followed `26.09.0`, which
 /// is the deadline each of them carried: `impl "..." as name`, retired once a
 /// module's own name became its namespace (`syntax.md` 13.1), and
@@ -69,7 +69,14 @@ pub struct Outdated {
 /// spelling is read, and remove the spelling on the next development cycle. An
 /// entry survives only while the spelling still compiles, and the removal is the
 /// parser's, not this module's.
-pub const REGISTER: &[Outdated] = &[];
+pub const REGISTER: &[Outdated] = &[Outdated {
+    id: RETURN_R,
+    what: "the return marker `.R:`",
+    instead: "write `.return:` (`fun f(a: i32).return: i32`), which means the same thing and reads as what it is",
+}];
+
+/// The id of the `.R:` return marker's entry.
+pub const RETURN_R: &str = "return-r";
 
 /// The register entry with this id.
 ///
@@ -77,7 +84,6 @@ pub const REGISTER: &[Outdated] = &[];
 /// the point: it is the read path the next entry arrives through, kept with
 /// `finding` so adding an entry is data rather than new code. The tests below
 /// are what keep the two exercised.
-#[allow(dead_code)]
 pub fn find(id: &str) -> &'static Outdated {
     REGISTER
         .iter()
@@ -86,7 +92,6 @@ pub fn find(id: &str) -> &'static Outdated {
 }
 
 /// The finding for one register entry, at the span that names the construct.
-#[allow(dead_code)] // as `find`: the register's read path, awaiting its next entry
 pub fn finding(id: &str, span: Span, module: &str) -> Diagnostic {
     finding_for(find(id), span, module)
 }
@@ -177,7 +182,7 @@ mod tests {
         // writes a spelling a retired entry owned (the scan), and every shipped
         // module parses (the walk below, which is where a refused spelling fails
         // loudly, naming its fix). The next entry adds its own spelling here.
-        const RETIRED: &[&str] = &["with caps("];
+        const RETIRED: &[&str] = &["with caps(", ").R:", ").R "];
         let mut ids: Vec<&str> = crate::stdlib::shipped().to_vec();
         ids.push(crate::stdlib::RT_MODULE);
         for id in ids {

@@ -24,12 +24,12 @@ region). The surface is the one row 7 asked for:
 
 ```text
 datac Arena(var base: Ptr<u8>, val cap: usize, var used: usize)
-fun new(base: Ptr<u8>, cap: usize).R: Arena
-fun mut Arena.alloc(size: usize, align: usize).R: Ptr<u8>
-fun mut Arena.alloc_zeroed(size: usize, align: usize).R: Ptr<u8>
+fun new(base: Ptr<u8>, cap: usize).return: Arena
+fun mut Arena.alloc(size: usize, align: usize).return: Ptr<u8>
+fun mut Arena.alloc_zeroed(size: usize, align: usize).return: Ptr<u8>
 fun mut Arena.reset()
-fun Arena.used().R: usize
-fun Arena.remaining().R: usize
+fun Arena.used().return: usize
+fun Arena.remaining().return: usize
 ```
 
 `alloc` rounds `used` up to `align`, refuses a request whose aligned end would

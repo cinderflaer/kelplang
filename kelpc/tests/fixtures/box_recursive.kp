@@ -4,14 +4,14 @@
 // pass: every node's box has to be freed exactly once.
 datac Node(val value: i32, val next: Box<Node>)
 
-fun sum_list(list: Node).R: i32 {
+fun sum_list(list: Node).return: i32 {
     if list.next.is_empty() {
         return list.value
     }
     return list.value + sum_list(list.next.get())
 }
 
-fun depth(list: Node).R: i32 {
+fun depth(list: Node).return: i32 {
     if list.next.is_empty() {
         return 1
     }

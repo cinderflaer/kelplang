@@ -15,19 +15,19 @@
 // The bounds of each section, so the loader has one contiguous range to copy.
 // The linker script defines the four symbols; a script that does not is the
 // usual unchecked promise.
-pub fun one_start().R: usize = unsafe {
+pub fun one_start().return: usize = unsafe {
     asm("la {0}, __user1_start", out("r") _)
 }
 
-pub fun one_end().R: usize = unsafe {
+pub fun one_end().return: usize = unsafe {
     asm("la {0}, __user1_end", out("r") _)
 }
 
-pub fun two_start().R: usize = unsafe {
+pub fun two_start().return: usize = unsafe {
     asm("la {0}, __user2_start", out("r") _)
 }
 
-pub fun two_end().R: usize = unsafe {
+pub fun two_end().return: usize = unsafe {
     asm("la {0}, __user2_end", out("r") _)
 }
 

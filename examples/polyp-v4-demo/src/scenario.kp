@@ -16,7 +16,7 @@ impl "std/str"
 
 const DIGITS: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102]
 
-fun hex64(value: u64).R: String {
+fun hex64(value: u64).return: String {
     var out: String = String.from_str("0x")
     var i: i32 = 15
     while i >= 0 {
@@ -27,10 +27,10 @@ fun hex64(value: u64).R: String {
     return out
 }
 
-fun num(n: i64).R: String = str.from_i64(n)
+fun num(n: i64).return: String = str.from_i64(n)
 
 // `step <n> t <ms> checksum 0x<hex> dirty <rects> wants <0|1> ticks <n> memo <hits>/<misses>`
-pub fun step_line(step: i32, t_ms: u64, checksum: u64, dirty: i32, wants: bool, ticks: i32, hits: i32, misses: i32).R: String {
+pub fun step_line(step: i32, t_ms: u64, checksum: u64, dirty: i32, wants: bool, ticks: i32, hits: i32, misses: i32).return: String {
     val a = num(step.to_i64())
     val b = num(t_ms.to_i64())
     val c = hex64(checksum)
@@ -66,7 +66,7 @@ pub fun drive<P: platform.Platform>(
     platform: mut P,
     advance: fun (mut P, u64),
     emit: fun (str),
-).R: app.Model {
+).return: app.Model {
     var state = app.initial()
     var tree: core.Node<app.Msg> = app.view(state)
     var timers = core.new_timers()

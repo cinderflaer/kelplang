@@ -8,27 +8,27 @@ by `externs.rs`) and the shared C helpers in `kelpc/src/externs/tls_helpers.c` (
 
 ```
 // std/tls (PEM bytes; no std/fs, see "Files" below)
-tls.server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes).R: Result<ServerConfig, TlsError>
-tls.server_config_pem_with(cert, key, opts: &ServerOptions).R: Result<ServerConfig, TlsError>
+tls.server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes).return: Result<ServerConfig, TlsError>
+tls.server_config_pem_with(cert, key, opts: &ServerOptions).return: Result<ServerConfig, TlsError>
 
-tls.server_options().R: ServerOptions                       // TLS 1.2 floor, no ALPN, no client certs, 10 s handshake
+tls.server_options().return: ServerOptions                       // TLS 1.2 floor, no ALPN, no client certs, 10 s handshake
 ServerOptions.min_version(v: TlsVersion)     -> ServerOptions   // TlsVersion.Tls12 (default) | Tls13
 ServerOptions.alpn(protocols: &List<String>) -> ServerOptions   // the server's preference order
 ServerOptions.require_client_cert_pem(ca_pem: Bytes) -> ServerOptions   // mTLS
 ServerOptions.handshake_timeout_ms(ms: u64) -> ServerOptions
 ServerConfig.free()
 
-tls.accept(config: &ServerConfig, s: net.Socket).R: Result<TlsStream, TlsError>
-TlsStream.peer_cert_subject().R: Option<String>             // RFC 2253 subject of the peer's certificate (mTLS server side)
-TlsStream.alpn().R: Option<String>                          // negotiated protocol, server and client streams
+tls.accept(config: &ServerConfig, s: net.Socket).return: Result<TlsStream, TlsError>
+TlsStream.peer_cert_subject().return: Option<String>             // RFC 2253 subject of the peer's certificate (mTLS server side)
+TlsStream.alpn().return: Option<String>                          // negotiated protocol, server and client streams
 
-tls.client_options().R: TlsClientOptions                    // system store, no timeout, no ALPN, no client cert
+tls.client_options().return: TlsClientOptions                    // system store, no timeout, no ALPN, no client cert
 TlsOptions.alpn(&List<String>) / TlsOptions.client_cert_pem(cert, key)   -> TlsClientOptions
 TlsClientOptions.alpn / .client_cert_pem / .with_ca_file / .with_timeout_ms
-tls.try_handshake_opts(s, host, &TlsClientOptions).R: Result<TlsStream, TlsError>
+tls.try_handshake_opts(s, host, &TlsClientOptions).return: Result<TlsStream, TlsError>
 
 // std/tlsfile (reads through the fs gate)
-tlsfile.read_pem(path: &str, what: &str).R: Result<Bytes, TlsError>
+tlsfile.read_pem(path: &str, what: &str).return: Result<Bytes, TlsError>
 
 // std/http
 http.serve_tls(port, config, handler) / serve_tls_n / serve_tls_on     // HTTPS with the same limits as `serve`

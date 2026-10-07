@@ -3,4 +3,4 @@
 // the `process` domain. A ui-assigned module is gated exactly the same way.
 impl "display"
 
-pub fun read_pid().R: i32 = display.getpid()
+pub fun read_pid().return: i32 = display.getpid()

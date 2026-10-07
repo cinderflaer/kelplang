@@ -466,8 +466,8 @@ allocation the containers make is now a promise the compiler takes on trust:
 **What the compiler does check.** That `[target]` names `alloc` and `dealloc`
 together or neither, and that `realloc`, when named, needs them; that each name
 is a bare identifier and a non-`extern` `fun` in the entry module; that their
-signatures are exactly `(usize, usize).R: Ptr<u8>`, `(Ptr<u8>, usize, usize)`
-and `(Ptr<u8>, usize, usize, usize).R: Ptr<u8>`; that with no pair `Box`, `List`
+signatures are exactly `(usize, usize).return: Ptr<u8>`, `(Ptr<u8>, usize, usize)`
+and `(Ptr<u8>, usize, usize, usize).return: Ptr<u8>`; that with no pair `Box`, `List`
 and `Map` are refused with a message naming the two keys, while `Thread` stays
 refused even with one (`String` and `Bytes` join the allowed set
 in stage 13, and `View` in stage 23); and that a freestanding image built this
@@ -1099,7 +1099,7 @@ operands are the already-checked expressions from `check_binary_operands`, so a
 side-effecting operand is evaluated once and left to right, exactly as the
 written call would.
 
-**What the compiler does check.** That the type declares `fun T.eq(other: &T).R:
+**What the compiler does check.** That the type declares `fun T.eq(other: &T).return:
 bool` (the shape A-12's key-pair validation already enforces, so a lone `eq`
 with the wrong signature is an error at its declaration), and that the operand
 types are the same `datac`/`enum`, or a `View` against a `View`/`str`. A `datac`

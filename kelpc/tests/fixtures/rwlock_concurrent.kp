@@ -28,7 +28,7 @@ datac State(
     val main_seen: AtomicBool,
 )
 
-fun reader1(s: &State).R: i64 {
+fun reader1(s: &State).return: i64 {
     s.rw.read { v ->
         s.r1_in.store(value = true, order = atomic.Ordering.SeqCst)
         // Hold the read until the main thread's own read block has overlapped
@@ -41,7 +41,7 @@ fun reader1(s: &State).R: i64 {
     }
 }
 
-fun writer(s: &State).R: i64 {
+fun writer(s: &State).return: i64 {
     while !s.w_go.load(order = atomic.Ordering.SeqCst) {
     }
     s.rw.write { v ->

@@ -18,7 +18,7 @@ its mode: `fun(mut Counter)` is a function whose single parameter type is
 `Ty::Ref { mutable: true, Counter }`, so a block parameter bound with that type *is* an exclusive
 borrow with no second rule to keep in sync.
 
-**Part 2, scoped blocks.** A function parameter written `scoped fun(T).R: U` accepts only a `fun`
+**Part 2, scoped blocks.** A function parameter written `scoped fun(T).return: U` accepts only a `fun`
 literal or a trailing block written at the call site, never a stored value. The literal may
 capture an enclosing binding **by borrow**, because the callee can only call it during the call.
 The capturing literal is a stack environment with a no-op drop, not a heap one.

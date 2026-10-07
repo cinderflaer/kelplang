@@ -12,7 +12,7 @@ fun main() {
     val b: i64 = 11
     val s = String.from_str("abc")
 
-    val f = fun() .R: i64 = (a.to_i64() * 100) + b + (s.len().to_i64() * 1000)
+    val f = fun() .return: i64 = (a.to_i64() * 100) + b + (s.len().to_i64() * 1000)
     print(f())
 
     // Both `Copy` captures stay usable, so a copy into the environment is

@@ -6,7 +6,7 @@
 // parameter is the bare type and `"hello"` matches it exactly.
 impl "std/thread"
 
-fun worker(s: str).R: i64 = 0
+fun worker(s: str).return: i64 = 0
 
 fun main() {
     val h = thread.spawn(worker, "hello")

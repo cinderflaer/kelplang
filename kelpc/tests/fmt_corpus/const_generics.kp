@@ -1,9 +1,9 @@
 // pins default-one-space-between-atoms: the const-parameter, const-argument and impl-Trait spellings share lines too.
 datac   Buf<const N: usize>(var data: [i32; N])
 
-fun   sum<const N: usize>(a: &[i32; N]).R: i32 = N
+fun   sum<const N: usize>(a: &[i32; N]).return: i32 = N
 
-fun   describe(x: impl Shape, y: &impl Shape).R: i32 = 0
+fun   describe(x: impl Shape, y: &impl Shape).return: i32 = 0
 
 fun   make() {   val   b: Buf<4> = Buf(data = [0; 4])   }
 

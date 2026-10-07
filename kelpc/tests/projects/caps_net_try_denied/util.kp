@@ -4,7 +4,7 @@ impl "std/net"
 // `net` for `127.0.0.1:*` only, and `localhost` is the same machine under
 // another name. The denial happens at the call site, before the dial, so the
 // port need not be listening.
-pub fun connect_by_another_name().R: i64 {
+pub fun connect_by_another_name().return: i64 {
     val r = net.try_connect("localhost", 1)
     if let Ok(s) = r {
         net.close(s)

@@ -36,7 +36,7 @@ http.serve_threaded(port, handler, workers)        // forever, `workers` threads
 http.serve_threaded_on(&Server, handler, &Limits, workers, idle_ms) -> u64
 ```
 
-`handler` is a plain `fun(&ServerRequest).R: ServerResponse` function value, so nothing borrowed crosses a thread.
+`handler` is a plain `fun(&ServerRequest).return: ServerResponse` function value, so nothing borrowed crosses a thread.
 
 Choices the spec left open, taken as the smallest consistent option:
 

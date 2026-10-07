@@ -228,7 +228,7 @@ fn an_else_if_link_is_reported_and_the_exit_stays_zero() {
     let file = write(
         &dir,
         "link.kp",
-        "fun f(n: i32).R: i32 {\n    if n > 1 {\n        return 1\n    } else if n > 0 {\n        return 2\n    }\n    return 3\n}\n",
+        "fun f(n: i32).return: i32 {\n    if n > 1 {\n        return 1\n    } else if n > 0 {\n        return 2\n    }\n    return 3\n}\n",
     );
 
     let out = lint(&file);
@@ -252,7 +252,7 @@ fn elif_is_silent() {
     let file = write(
         &dir,
         "link.kp",
-        "fun f(n: i32).R: i32 {\n    if n > 1 {\n        return 1\n    } elif n > 0 {\n        return 2\n    }\n    return 3\n}\n",
+        "fun f(n: i32).return: i32 {\n    if n > 1 {\n        return 1\n    } elif n > 0 {\n        return 2\n    }\n    return 3\n}\n",
     );
 
     let out = lint(&file);
@@ -275,7 +275,7 @@ fn the_naming_case_comes_from_the_projects_manifest() {
     let file = write(
         &src,
         "main.kp",
-        "fun readText().R: i32 {\n    val lineCount = 1\n    return lineCount\n}\n",
+        "fun readText().return: i32 {\n    val lineCount = 1\n    return lineCount\n}\n",
     );
 
     let out = lint(&file);
@@ -300,7 +300,7 @@ fn the_naming_case_comes_from_the_projects_manifest() {
 #[test]
 fn a_file_outside_a_project_gets_the_options_default() {
     let dir = scratch("naming-default");
-    let file = write(&dir, "main.kp", "fun read_text().R: i32 = 1\n");
+    let file = write(&dir, "main.kp", "fun read_text().return: i32 = 1\n");
 
     let out = lint(&file);
     assert!(out.status.success());
@@ -323,7 +323,7 @@ fn a_fetched_dependency_is_not_linted_for_its_names() {
     let file = write(
         &deps,
         "lib.kp",
-        "// one\n// two\n\nfun read_text().R: i32 = 1\n",
+        "// one\n// two\n\nfun read_text().return: i32 = 1\n",
     );
 
     let out = lint(&file);

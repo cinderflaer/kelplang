@@ -16,47 +16,47 @@ const PTE_LEAF: u64 = 14
 
 const SATP_MODE_SV39: usize = 8
 
-fun vpn(va: usize, level: usize).R: usize {
+fun vpn(va: usize, level: usize).return: usize {
     (va >> (12 + 9 * level)) & (ENTRIES - 1)
 }
 
-fun page_offset(va: usize).R: usize {
+fun page_offset(va: usize).return: usize {
     va & (PAGE_SIZE - 1)
 }
 
-fun pte_ppn(entry: u64).R: usize {
+fun pte_ppn(entry: u64).return: usize {
     ((entry >> 10) << 12).to_usize()
 }
 
-fun pte_flags(entry: u64).R: u64 {
+fun pte_flags(entry: u64).return: u64 {
     entry & 1023
 }
 
-fun pte_valid(entry: u64).R: bool {
+fun pte_valid(entry: u64).return: bool {
     entry & PTE_V != 0
 }
 
-fun pte_is_leaf(entry: u64).R: bool {
+fun pte_is_leaf(entry: u64).return: bool {
     entry & PTE_LEAF != 0
 }
 
-fun pte_encode(pa: usize, flags: u64).R: u64 {
+fun pte_encode(pa: usize, flags: u64).return: u64 {
     ((pa >> 12).to_u64() << 10) | flags
 }
 
-fun satp_encode(root: usize).R: usize {
+fun satp_encode(root: usize).return: usize {
     (SATP_MODE_SV39 << 60) | (root >> 12)
 }
 
-fun satp_mode(satp: usize).R: usize {
+fun satp_mode(satp: usize).return: usize {
     satp >> 60
 }
 
-fun satp_asid(satp: usize).R: usize {
+fun satp_asid(satp: usize).return: usize {
     (satp >> 44) & 0xFFFF
 }
 
-fun satp_ppn(satp: usize).R: usize {
+fun satp_ppn(satp: usize).return: usize {
     satp & 0xFFFFFFFFFFF
 }
 

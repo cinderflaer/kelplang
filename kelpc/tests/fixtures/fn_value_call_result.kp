@@ -1,9 +1,9 @@
 // A-4: a call's *result* cannot be called directly — `pick(true)(4)` is not
 // the grammar. Bind it first (`val p = pick(true)` then `p(4)`), which is what
 // the accepted fixture does.
-fun double(x: i32).R: i32 = x * 2
+fun double(x: i32).return: i32 = x * 2
 
-fun pick().R: fun(i32).R: i32 = double
+fun pick().return: fun(i32).return: i32 = double
 
 fun main() {
     print(pick()(4))

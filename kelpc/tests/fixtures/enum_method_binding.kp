@@ -5,7 +5,7 @@ enum Shape {
     Empty
 }
 
-fun Shape.label().R: String = when self {
+fun Shape.label().return: String = when self {
     Circle(r) -> "circle"
     Empty -> "empty"
 }

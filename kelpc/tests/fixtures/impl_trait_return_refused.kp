@@ -1,16 +1,16 @@
 // A-20: `impl Trait` is not allowed in return position, and the refusal names
 // the alternatives rather than reporting a parse error.
 trait Shape {
-    fun Self.area().R: i32
+    fun Self.area().return: i32
 }
 
 datac Square(val side: i32)
 
 impl Shape for Square {
-    fun Self.area().R: i32 = side * side
+    fun Self.area().return: i32 = side * side
 }
 
-fun make().R: impl Shape = Square(side = 1)
+fun make().return: impl Shape = Square(side = 1)
 
 fun main() {
     print(make().area())

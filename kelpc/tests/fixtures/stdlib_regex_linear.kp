@@ -6,7 +6,7 @@ impl "std/option"
 impl "std/result"
 impl "std/str"
 
-fun compile_or_die(pat: &str).R: regex.Regex {
+fun compile_or_die(pat: &str).return: regex.Regex {
     val r = regex.compile(pat)
     if let Ok(re) = r {
         return re
@@ -14,7 +14,7 @@ fun compile_or_die(pat: &str).R: regex.Regex {
     panic("bad pattern in the fixture")
 }
 
-fun repeated(unit: &str, times: usize, tail: &str).R: String {
+fun repeated(unit: &str, times: usize, tail: &str).return: String {
     var s = String.with_capacity(str.len(unit) * times + str.len(tail))
     var i: usize = 0
     while i < times {
@@ -25,7 +25,7 @@ fun repeated(unit: &str, times: usize, tail: &str).R: String {
     return s
 }
 
-fun span_of(re: mut regex.Regex, text: &str).R: String {
+fun span_of(re: mut regex.Regex, text: &str).return: String {
     val m = re.find(text)
     if let Some(x) = m {
         return str.concat("match ", x.text.as_str())
@@ -34,7 +34,7 @@ fun span_of(re: mut regex.Regex, text: &str).R: String {
 }
 
 // The steps one `find` over `text` takes with a fresh counter.
-fun steps_of(re: mut regex.Regex, text: &str).R: i64 {
+fun steps_of(re: mut regex.Regex, text: &str).return: i64 {
     re.reset_steps()
     val m = re.find(text)
     return re.steps()

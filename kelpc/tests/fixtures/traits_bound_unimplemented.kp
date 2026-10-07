@@ -1,11 +1,11 @@
 // A call whose type argument does not implement the bound (A-12 slice 2).
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
 }
 
 datac Point(val x: f64)
 
-fun area_of<T: Shape>(s: &T).R: f64 = s.area()
+fun area_of<T: Shape>(s: &T).return: f64 = s.area()
 
 fun main() {
     print(area_of(Point(x = 1.0)))

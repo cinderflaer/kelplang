@@ -2,7 +2,7 @@
 // element position recurses, an array of arrays included.
 datac Hidden(val n: i32)
 
-pub fun grid(cells: [[Hidden; 2]; 3]).R: i32 = 1
+pub fun grid(cells: [[Hidden; 2]; 3]).return: i32 = 1
 
 fun main() {
     print(1)

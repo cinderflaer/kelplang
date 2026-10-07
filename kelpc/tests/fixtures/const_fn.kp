@@ -11,7 +11,7 @@ const TABLE_ENTRIES: usize = entries_for(pages = PAGES)
 const FIVE_FACTORIAL: usize = factorial(n = 5)
 const PADDED: usize = rounded_up(n = 100, step = 64)
 
-fun entries_for(pages: usize).R: usize {
+fun entries_for(pages: usize).return: usize {
     var total: usize = 0
     var i: usize = 0
     while i < pages {
@@ -21,14 +21,14 @@ fun entries_for(pages: usize).R: usize {
     total
 }
 
-fun factorial(n: usize).R: usize {
+fun factorial(n: usize).return: usize {
     if n <= 1 {
         return 1
     }
     n * factorial(n - 1)
 }
 
-fun rounded_up(n: usize, step: usize).R: usize {
+fun rounded_up(n: usize, step: usize).return: usize {
     if n % step == 0 {
         return n
     }

@@ -28,7 +28,7 @@ datac Ref(
     var d: List<i32>
 )
 
-fun mut Ref.mk(kind: i32, a: i32, b: i32, c: i32, d: i32).R: i32 {
+fun mut Ref.mk(kind: i32, a: i32, b: i32, c: i32, d: i32).return: i32 {
     k.push(kind)
     self.a.push(a)
     self.b.push(b)
@@ -37,12 +37,12 @@ fun mut Ref.mk(kind: i32, a: i32, b: i32, c: i32, d: i32).R: i32 {
     return (k.len() - 1).to_i32()
 }
 
-fun mut Ref.lit(ch: u8).R: i32 = self.mk(K_LIT, ch.to_i32(), 0, 0, 0)
-fun mut Ref.set(lo: u8, hi: u8).R: i32 = self.mk(K_SET, lo.to_i32(), hi.to_i32(), 0, 0)
-fun mut Ref.nset(lo: u8, hi: u8).R: i32 = self.mk(K_NSET, lo.to_i32(), hi.to_i32(), 0, 0)
-fun mut Ref.cat(x: i32, y: i32).R: i32 = self.mk(K_CAT, x, y, 0, 0)
-fun mut Ref.alt(x: i32, y: i32).R: i32 = self.mk(K_ALT, x, y, 0, 0)
-fun mut Ref.rep(x: i32, mn: i32, mx: i32, greedy: bool).R: i32 {
+fun mut Ref.lit(ch: u8).return: i32 = self.mk(K_LIT, ch.to_i32(), 0, 0, 0)
+fun mut Ref.set(lo: u8, hi: u8).return: i32 = self.mk(K_SET, lo.to_i32(), hi.to_i32(), 0, 0)
+fun mut Ref.nset(lo: u8, hi: u8).return: i32 = self.mk(K_NSET, lo.to_i32(), hi.to_i32(), 0, 0)
+fun mut Ref.cat(x: i32, y: i32).return: i32 = self.mk(K_CAT, x, y, 0, 0)
+fun mut Ref.alt(x: i32, y: i32).return: i32 = self.mk(K_ALT, x, y, 0, 0)
+fun mut Ref.rep(x: i32, mn: i32, mx: i32, greedy: bool).return: i32 {
     var g: i32 = 0
     if greedy {
         g = 1
@@ -50,12 +50,12 @@ fun mut Ref.rep(x: i32, mn: i32, mx: i32, greedy: bool).R: i32 {
     return self.mk(K_REP, x, mn, mx, g)
 }
 
-fun is_w(b: u8).R: bool {
+fun is_w(b: u8).return: bool {
     return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
 // The end positions of `n` matched at `pos`, best first.
-fun Ref.ends(n: i32, pos: usize, text: View).R: List<usize> {
+fun Ref.ends(n: i32, pos: usize, text: View).return: List<usize> {
     var out: List<usize> = List.empty()
     val i = n.to_usize()
     val kind = k.get(i)
@@ -128,7 +128,7 @@ fun Ref.ends(n: i32, pos: usize, text: View).R: List<usize> {
 }
 
 // The ends of `count` iterations already done, then as many more as allowed.
-fun Ref.rep_ends(n: i32, pos: usize, count: i32, text: View).R: List<usize> {
+fun Ref.rep_ends(n: i32, pos: usize, count: i32, text: View).return: List<usize> {
     var out: List<usize> = List.empty()
     val i = n.to_usize()
     val mn = b.get(i)
@@ -177,16 +177,16 @@ fun Ref.rep_ends(n: i32, pos: usize, count: i32, text: View).R: List<usize> {
 
 datac Pat(val src: String, val root: i32)
 
-fun new_ref().R: Ref {
+fun new_ref().return: Ref {
     return Ref(k = List.empty(), a = List.empty(), b = List.empty(), c = List.empty(), d = List.empty())
 }
 
-fun seq3(r: mut Ref, x: i32, y: i32, z: i32).R: i32 {
+fun seq3(r: mut Ref, x: i32, y: i32, z: i32).return: i32 {
     val yz = r.cat(y, z)
     return r.cat(x, yz)
 }
 
-fun compile_or_die(pat: &str).R: regex.Regex {
+fun compile_or_die(pat: &str).return: regex.Regex {
     val res = regex.compile(pat)
     if let Ok(re) = res {
         return re
@@ -196,13 +196,13 @@ fun compile_or_die(pat: &str).R: regex.Regex {
 
 datac Lcg(var state: u64)
 
-fun mut Lcg.next().R: u64 {
+fun mut Lcg.next().return: u64 {
     state = (state * 1103515245 + 12345) % 2147483648
     return state / 65536
 }
 
 // The input: `len` bytes from "abcd\n", biased towards a and b.
-fun mut Lcg.input(len: usize).R: String {
+fun mut Lcg.input(len: usize).return: String {
     var s = String.empty()
     var i: usize = 0
     while i < len {
@@ -224,7 +224,7 @@ fun mut Lcg.input(len: usize).R: String {
 }
 
 // Checks one pattern on `count` random inputs; returns how many differed.
-fun check(label: &str, pat: &str, r: &Ref, root: i32, seed: u64, count: i32, nullable: bool).R: i32 {
+fun check(label: &str, pat: &str, r: &Ref, root: i32, seed: u64, count: i32, nullable: bool).return: i32 {
     var re = compile_or_die(pat)
     var rng = Lcg(state = seed)
     var bad: i32 = 0

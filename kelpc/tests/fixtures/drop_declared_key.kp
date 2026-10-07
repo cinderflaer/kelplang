@@ -5,8 +5,8 @@ datac Leaf(val tag: f64)
 
 fun mut Leaf.drop() { }
 
-fun Leaf.hash().R: u64 = 0
+fun Leaf.hash().return: u64 = 0
 
-fun Leaf.eq(other: &Leaf).R: bool = true
+fun Leaf.eq(other: &Leaf).return: bool = true
 
 fun main() { }

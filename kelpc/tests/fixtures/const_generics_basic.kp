@@ -11,7 +11,7 @@ datac Buf<const N: usize>(var data: [i32; N], var len: usize)
 // A `bool` const parameter, read as a value in the body.
 datac Flag<const ON: bool>(var value: i32)
 
-fun Buf<const N: usize>.total().R: i32 {
+fun Buf<const N: usize>.total().return: i32 {
     var sum: i32 = 0
     var i: usize = 0
     while i < N {
@@ -21,7 +21,7 @@ fun Buf<const N: usize>.total().R: i32 {
     return sum
 }
 
-fun sum<const N: usize>(a: &[i32; N]).R: i32 {
+fun sum<const N: usize>(a: &[i32; N]).return: i32 {
     var total: i32 = 0
     var i: usize = 0
     while i < N {
@@ -31,9 +31,9 @@ fun sum<const N: usize>(a: &[i32; N]).R: i32 {
     return total
 }
 
-fun zeros<const N: usize>().R: [i32; N] = [0; N]
+fun zeros<const N: usize>().return: [i32; N] = [0; N]
 
-fun flag<const ON: bool>().R: i32 {
+fun flag<const ON: bool>().return: i32 {
     if ON {
         return 1
     }

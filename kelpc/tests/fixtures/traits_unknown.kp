@@ -2,7 +2,7 @@
 datac Circle(val r: f64)
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r
+    fun Self.area().return: f64 = r * r
 }
 
 fun main() { }

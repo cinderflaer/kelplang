@@ -3,7 +3,7 @@ impl "lib"
 // Private to the entry module. The entry point is the only module whose keys
 // are bare, and a bare name belongs to the module that writes it, so `lib`
 // cannot reach this one at all (A-13).
-fun helper(n: i32).R: i32 = n * 2
+fun helper(n: i32).return: i32 = n * 2
 
 fun main() {
     print(helper(n = 21))

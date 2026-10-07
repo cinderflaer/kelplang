@@ -11,21 +11,21 @@
 // `compile_and_run.rs`): a double free or a leak here fails the suite.
 datac Bag(val name: String, val items: List<String>)
 
-fun consume(s: move String).R: usize = s.len()
+fun consume(s: move String).return: usize = s.len()
 
 // A moved parameter is an ordinary owned local, so it can be moved again.
-fun pass_on(s: move String).R: usize = consume(s)
+fun pass_on(s: move String).return: usize = consume(s)
 
 // ...or handed straight back out, which moves it to the caller.
-fun give_back(s: move String).R: String = s
+fun give_back(s: move String).return: String = s
 
 // A `datac` is moved like anything else owned. Reading its field as a method
 // receiver is a borrow, not a partial move, so the value as a whole is freed
 // at the end of this frame, payloads included.
-fun bag_size(b: move Bag).R: usize = b.name.len() + b.items.len()
+fun bag_size(b: move Bag).return: usize = b.name.len() + b.items.len()
 
 // A container moves too, and its elements are freed with it.
-fun drain(xs: move List<String>).R: usize = xs.len()
+fun drain(xs: move List<String>).return: usize = xs.len()
 
 fun main() {
     val a = String.from_str("hello")

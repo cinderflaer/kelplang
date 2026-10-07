@@ -3,7 +3,7 @@
 // The user `drop` on the concrete type runs through the vtable when each box
 // dies, so the printed order is the drop order.
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
     fun mut Self.scale(f: f64)
 }
 
@@ -14,13 +14,13 @@ fun mut Circle.drop() {
 }
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
+    fun Self.area().return: f64 = r * r * 3.0
     fun mut Self.scale(f: f64) { r = r * f }
 }
 
 datac Holder(val shape: Box<dyn Shape>)
 
-fun make().R: Box<dyn Shape> = Box.of(Circle(r = 1.0))
+fun make().return: Box<dyn Shape> = Box.of(Circle(r = 1.0))
 
 fun main() {
     val h = Holder(shape = make())

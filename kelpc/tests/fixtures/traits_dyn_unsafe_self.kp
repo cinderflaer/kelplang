@@ -1,7 +1,7 @@
 // A-12 slice 4: a trait method returning `Self` cannot be dispatched through a
 // trait object, because the concrete type is not known at the call.
 trait Cloneable {
-    fun Self.dup().R: Self
+    fun Self.dup().return: Self
 }
 
 datac Circle(val r: f64)

@@ -5,20 +5,20 @@
 // instantiation exactly as a free function's would be.
 
 trait Counted {
-    fun Self.count().R: i32
+    fun Self.count().return: i32
 }
 
 datac Meter(val n: i32)
 
 impl Counted for Meter {
-    fun Self.count().R: i32 = n
+    fun Self.count().return: i32 = n
 }
 
 datac Pair<A, B>(val first: A, val second: B)
 
-fun counted<T: Counted>(x: &T).R: i32 = x.count()
+fun counted<T: Counted>(x: &T).return: i32 = x.count()
 
-fun Pair<A, B>.total().R: i32 = counted(first) + counted(second)
+fun Pair<A, B>.total().return: i32 = counted(first) + counted(second)
 
 fun main() {
     val p = Pair(first = Meter(n = 3), second = Meter(n = 4))

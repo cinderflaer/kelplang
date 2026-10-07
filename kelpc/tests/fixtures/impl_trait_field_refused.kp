@@ -1,7 +1,7 @@
 // A-20: `impl Trait` is only a parameter type, so a field written that way is
 // refused by name.
 trait Shape {
-    fun Self.area().R: i32
+    fun Self.area().return: i32
 }
 
 datac Holder(val shape: impl Shape)

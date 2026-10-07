@@ -6,15 +6,15 @@ impl "std/ops"
 datac Vec2(val x: i32, val y: i32)
 
 impl ops.Add for Vec2 {
-    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+    fun Self.add(rhs: &Self).return: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
 }
 
 impl ops.Sub for Vec2 {
-    fun Self.sub(rhs: &Self).R: Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
+    fun Self.sub(rhs: &Self).return: Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
 }
 
 impl ops.Ord for Vec2 {
-    fun Self.cmp(other: &Self).R: i32 {
+    fun Self.cmp(other: &Self).return: i32 {
         if x < other.x {
             return -1
         }
@@ -27,7 +27,7 @@ impl ops.Ord for Vec2 {
 
 // Prints its tag when called, so a doubled evaluation shows up as a repeated
 // line and a swapped order shows up as a swapped pair.
-fun mk(tag: i32).R: Vec2 {
+fun mk(tag: i32).return: Vec2 {
     print(tag)
     return Vec2(x = tag, y = 0)
 }

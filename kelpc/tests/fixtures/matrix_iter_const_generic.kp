@@ -9,7 +9,7 @@ datac Ring<const N: usize>(var data: [i32; N], var at: usize)
 
 impl iter.Iterator for Ring<3> {
     type Item = i32
-    fun mut Self.next().R: option.Option<i32> {
+    fun mut Self.next().return: option.Option<i32> {
         if at >= 3 {
             return option.Option.None
         }

@@ -25,7 +25,7 @@ impl "std/str"
 
 // A file read through the `fs` gate, or `Io` with the path and the system's
 // reason. `what` names the file's role for the sentence ("private key").
-fun read_pem(path: &str, what: &str).R: result.Result<Bytes, tls.TlsError> {
+fun read_pem(path: &str, what: &str).return: result.Result<Bytes, tls.TlsError> {
     return when fs.try_read(path) {
         Ok(b) -> result.Result.Ok(value = b)
         Err(e) -> {
@@ -62,10 +62,10 @@ fun read_pem(path: &str, what: &str).R: result.Result<Bytes, tls.TlsError> {
 //
 // A program with no `fs` grant cannot import this module, so it cannot make
 // the TLS runtime read a path at all.
-fun ca_pem(path: &str).R: result.Result<Bytes, tls.TlsError> = read_pem(path, "CA certificate")
+fun ca_pem(path: &str).return: result.Result<Bytes, tls.TlsError> = read_pem(path, "CA certificate")
 
 // The octal digits of the low nine permission bits, as `0644` prints them.
-fun mode_text(mode: u32).R: String {
+fun mode_text(mode: u32).return: String {
     val bits = mode & 511
     var out = String.with_capacity(4)
     out.push_str("0")
@@ -85,7 +85,7 @@ fun mode_text(mode: u32).R: String {
 // bytes to `tls.server_config_pem`:
 //
 //     val key = tlsfile.read_key(key_path)?
-fun read_key(path: &str).R: result.Result<Bytes, tls.TlsError> {
+fun read_key(path: &str).return: result.Result<Bytes, tls.TlsError> {
     if fs.exists(path) {
         val m = fs.metadata(path)
         if (m.mode & 63) != 0 {

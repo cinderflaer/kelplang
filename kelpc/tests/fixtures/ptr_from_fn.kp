@@ -4,9 +4,9 @@
 // through the pointer is out of scope here; this only pins the address itself.
 // The third function carries `align(16)`, so the C oracle and the default
 // backend both have to lower the clause to a real function alignment.
-fun a().R: i32 = 1
-fun b().R: i32 = 2
-align(16) fun c().R: i32 = 3
+fun a().return: i32 = 1
+fun b().return: i32 = 2
+align(16) fun c().return: i32 = 3
 
 fun main() {
     val pa = Ptr.from_fn(a).addr()
@@ -14,7 +14,7 @@ fun main() {
     val pb = Ptr.from_fn(b).addr()
     // A `fun` literal that captures nothing is a plain `fun` value, so its
     // address is a function address like a declared function's.
-    val sign = fun(x: i32).R: i32 = x
+    val sign = fun(x: i32).return: i32 = x
     print(pa == pa_again)
     print(pa != pb)
     print(pa != 0)

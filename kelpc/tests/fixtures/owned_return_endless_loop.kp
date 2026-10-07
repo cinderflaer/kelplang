@@ -7,7 +7,7 @@
 // `collect` is the shape `std/tz`'s abbreviation reader has.
 impl "std/str"
 
-fun collect(n: i32).R: String {
+fun collect(n: i32).return: String {
     var out = String.empty()
     var i = 0
     while true {
@@ -20,7 +20,7 @@ fun collect(n: i32).R: String {
 }
 
 // The same shape with a `List`, whose zero value is no more buildable.
-fun collect_numbers(n: i32).R: List<i64> {
+fun collect_numbers(n: i32).return: List<i64> {
     var out: List<i64> = List.empty()
     var i: i64 = 0
     while true {

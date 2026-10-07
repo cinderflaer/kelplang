@@ -1,7 +1,7 @@
 // A-13 private-in-public: the check runs over the merged program with the
 // whole export set already in hand, so a private type declared *after* the
 // `pub` item that names it is refused exactly as one declared before.
-pub fun describe(h: Hidden).R: i32 = h.n
+pub fun describe(h: Hidden).return: i32 = h.n
 
 datac Hidden(val n: i32)
 

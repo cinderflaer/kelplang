@@ -14,9 +14,9 @@ impl "std/str"
 impl "std/tls"
 
 // The payload the client sends, byte `i` of it, matching the harness's own copy.
-fun payload_byte(i: usize).R: u8 = ((i * 31 + 7) % 256).to_u8()
+fun payload_byte(i: usize).return: u8 = ((i * 31 + 7) % 256).to_u8()
 
-fun payload(n: usize).R: Bytes {
+fun payload(n: usize).return: Bytes {
     var b = mem.alloc(n)
     var i: usize = 0
     while i < n {
@@ -26,7 +26,7 @@ fun payload(n: usize).R: Bytes {
     return b
 }
 
-fun err_name(e: move tls.TlsError).R: String = when e {
+fun err_name(e: move tls.TlsError).return: String = when e {
     Untrusted -> String.from_str("untrusted")
     Expired -> String.from_str("expired")
     HostMismatch -> String.from_str("host_mismatch")
@@ -37,7 +37,7 @@ fun err_name(e: move tls.TlsError).R: String = when e {
     Io(reason) -> str.concat("io ", reason.as_str())
 }
 
-fun fail(e: move tls.TlsError).R: tls.TlsStream {
+fun fail(e: move tls.TlsError).return: tls.TlsStream {
     val text = err_name(e)
     panic(text.as_str())
 }
@@ -47,7 +47,7 @@ fun fail_unit(e: move tls.TlsError) {
     panic(text.as_str())
 }
 
-fun arg_port().R: u16 {
+fun arg_port().return: u16 {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(1).as_str()),
@@ -56,7 +56,7 @@ fun arg_port().R: u16 {
     return p.to_u16()
 }
 
-fun arg_reply_len().R: usize {
+fun arg_reply_len().return: usize {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(2).as_str()),

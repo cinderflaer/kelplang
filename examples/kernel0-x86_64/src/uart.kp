@@ -21,7 +21,7 @@ const THR_EMPTY: u8 = 0x20
 
 // `in al, dx` is the only byte read form, so the port goes to `dx`, the read
 // lands in `al`, and `{0}` (a general register the compiler picks) receives it.
-fun inb(port: u16).R: u8 {
+fun inb(port: u16).return: u8 {
     val v: u8 = unsafe {
         asm(
             "mov dx, {1}\nin al, dx\nmov {0}, al",

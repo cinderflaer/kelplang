@@ -19,10 +19,10 @@ impl "std/str"
 
 pub const REPLACEMENT: i32 = 0xFFFD
 
-fun is_cont(b: u8).R: bool = b >= 0x80 && b <= 0xBF
+fun is_cont(b: u8).return: bool = b >= 0x80 && b <= 0xBF
 
 // `(len << 32) | codepoint` for the unit starting at byte `i` (which must be inside the string).
-pub fun decode(s: &str, i: usize).R: i64 {
+pub fun decode(s: &str, i: usize).return: i64 {
     val n = str.len(s)
     val b0 = str.byte(s, i).to_i64()
     if b0 < 0x80 {
@@ -61,12 +61,12 @@ pub fun decode(s: &str, i: usize).R: i64 {
     return (len << 32) | cp
 }
 
-pub fun unit_len(r: i64).R: usize = (r >> 32).to_usize()
+pub fun unit_len(r: i64).return: usize = (r >> 32).to_usize()
 
-pub fun unit_cp(r: i64).R: i32 = (r & 0xFFFFFFFF).to_i32()
+pub fun unit_cp(r: i64).return: i32 = (r & 0xFFFFFFFF).to_i32()
 
 // The number of units (code points, each malformed run counting once) in the whole string.
-pub fun count(s: &str).R: i32 {
+pub fun count(s: &str).return: i32 {
     val n = str.len(s)
     var i: usize = 0
     var c: i32 = 0
@@ -78,7 +78,7 @@ pub fun count(s: &str).R: i32 {
 }
 
 // The number of units that start before byte offset `upto`.
-pub fun count_before(s: &str, upto: usize).R: i32 {
+pub fun count_before(s: &str, upto: usize).return: i32 {
     val n = str.len(s)
     var i: usize = 0
     var c: i32 = 0
@@ -90,7 +90,7 @@ pub fun count_before(s: &str, upto: usize).R: i32 {
 }
 
 // The byte offset just after the unit that starts at `i` (or `i` itself at the end of the string).
-pub fun next_boundary(s: &str, i: usize).R: usize {
+pub fun next_boundary(s: &str, i: usize).return: usize {
     if i >= str.len(s) {
         return str.len(s)
     }
@@ -99,7 +99,7 @@ pub fun next_boundary(s: &str, i: usize).R: usize {
 
 // The start of the unit that ends at or before `i`: the largest unit boundary strictly below `i`
 // (0 when there is none). Units are defined by scanning from the start, so this scans from there too.
-pub fun prev_boundary(s: &str, i: usize).R: usize {
+pub fun prev_boundary(s: &str, i: usize).return: usize {
     val n = str.len(s)
     var at: usize = 0
     var last: usize = 0
@@ -111,7 +111,7 @@ pub fun prev_boundary(s: &str, i: usize).R: usize {
 }
 
 // The largest unit boundary at or below `i`: a caret that sits inside a unit snaps to its start.
-pub fun snap_boundary(s: &str, i: usize).R: usize {
+pub fun snap_boundary(s: &str, i: usize).return: usize {
     val n = str.len(s)
     var at: usize = 0
     while at < n {
@@ -125,4 +125,4 @@ pub fun snap_boundary(s: &str, i: usize).R: usize {
 }
 
 // Whether `cp` is a Unicode scalar value (what a platform's `Char` event may legitimately carry).
-pub fun is_scalar(cp: i32).R: bool = cp >= 0 && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF)
+pub fun is_scalar(cp: i32).return: bool = cp >= 0 && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF)

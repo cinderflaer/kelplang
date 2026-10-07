@@ -7,7 +7,7 @@
    writes `val x = f(...)?`.
 
    The combinators take a callback (A-4) and read the payload through a
-   *borrow*: `map`'s callback is `closure(&T).R: U`, not `closure(T).R: U`,
+   *borrow*: `map`'s callback is `closure(&T).return: U`, not `closure(T).return: U`,
    because a `when` arm over a borrow binds the payload as a shared borrow,
    never by value. That is also why they work at every instantiation: a `Copy`
    payload is copied into the arm and auto-borrowed at the call, an owned one is
@@ -44,13 +44,13 @@ enum Option<T> {
 }
 
 /// Whether the option holds a value.
-fun is_some<T>(o: &Option<T>).R: bool = when o {
+fun is_some<T>(o: &Option<T>).return: bool = when o {
     Some(_) -> true
     None -> false
 }
 
 /// Whether the option is empty.
-fun is_none<T>(o: &Option<T>).R: bool = when o {
+fun is_none<T>(o: &Option<T>).return: bool = when o {
     Some(_) -> false
     None -> true
 }
@@ -58,14 +58,14 @@ fun is_none<T>(o: &Option<T>).R: bool = when o {
 /// The payload, or `fallback`. The option is taken with `move`, because either
 /// answer is the caller's value: an owned payload is moved out and `fallback` is
 /// handed on as it was given.
-fun unwrap_or<T>(o: move Option<T>, fallback: move T).R: T = when o {
+fun unwrap_or<T>(o: move Option<T>, fallback: move T).return: T = when o {
     Some(v) -> v
     None -> fallback
 }
 
 /// The payload, or a panic naming the call. The option is taken with `move`,
 /// for the same reason `unwrap_or`'s is.
-fun unwrap<T>(o: move Option<T>).R: T {
+fun unwrap<T>(o: move Option<T>).return: T {
     if let Some(v) = o {
         return v
     }
@@ -75,7 +75,7 @@ fun unwrap<T>(o: move Option<T>).R: T {
 /// The payload, or a panic carrying `message` — the form the stdlib uses, where
 /// the message names the operation that failed rather than the accessor. The
 /// option is taken with `move`, for the same reason `unwrap_or`'s is.
-fun expect<T>(o: move Option<T>, message: &str).R: T {
+fun expect<T>(o: move Option<T>, message: &str).return: T {
     if let Some(v) = o {
         return v
     }
@@ -84,7 +84,7 @@ fun expect<T>(o: move Option<T>, message: &str).R: T {
 
 /// Transform the payload through `f`, or pass `None` through. The callback
 /// borrows the payload, so this works for any `T`: the result is a fresh `U`.
-fun map<T, U>(o: &Option<T>, f: closure(&T).R: U).R: Option<U> = when o {
+fun map<T, U>(o: &Option<T>, f: closure(&T).return: U).return: Option<U> = when o {
     Some(v) -> Option.Some(value = f(v))
     None -> Option.None
 }
@@ -92,7 +92,7 @@ fun map<T, U>(o: &Option<T>, f: closure(&T).R: U).R: Option<U> = when o {
 /// Chain a second fallible step: `and_then`'s callback returns an `Option`
 /// itself, which is what makes a sequence of fallible steps readable without
 /// nesting `if let`. Works for any `T`, for the same reason `map` does.
-fun and_then<T, U>(o: &Option<T>, f: closure(&T).R: Option<U>).R: Option<U> = when o {
+fun and_then<T, U>(o: &Option<T>, f: closure(&T).return: Option<U>).return: Option<U> = when o {
     Some(v) -> f(v)
     None -> Option.None
 }
@@ -101,7 +101,7 @@ fun and_then<T, U>(o: &Option<T>, f: closure(&T).R: Option<U>).R: Option<U> = wh
 /// borrow and the `Some` arm rebuilds the payload out of it, which is a copy;
 /// an owned payload comes out with `unwrap_or`, which takes the option with
 /// `move`.
-fun or_else<T>(o: &Option<T>, f: closure().R: Option<T>).R: Option<T> = when o {
+fun or_else<T>(o: &Option<T>, f: closure().return: Option<T>).return: Option<T> = when o {
     Some(v) -> Option.Some(value = v)
     None -> f()
 }

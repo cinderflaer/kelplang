@@ -3,9 +3,9 @@ enum Shape {
     Empty
 }
 
-fun make().R: Shape = Shape.Empty
+fun make().return: Shape = Shape.Empty
 
-fun area(s: &Shape).R: f64 = when s {
+fun area(s: &Shape).return: f64 = when s {
     Circle(r) -> r
     Empty -> 0.0
 }

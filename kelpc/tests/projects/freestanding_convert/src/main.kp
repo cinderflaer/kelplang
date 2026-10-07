@@ -9,18 +9,18 @@ enum IoErr {
 datac AppErr(val code: i32)
 
 impl convert.From<IoErr> for AppErr {
-    fun from(value: IoErr).R: AppErr {
+    fun from(value: IoErr).return: AppErr {
         return when value {
             Bad(code) -> AppErr(code = code + 100)
         }
     }
 }
 
-fun failing().R: result.Result<i32, IoErr> {
+fun failing().return: result.Result<i32, IoErr> {
     return result.Result.Err(error = IoErr.Bad(code = 7))
 }
 
-fun outer().R: result.Result<i32, AppErr> {
+fun outer().return: result.Result<i32, AppErr> {
     val v = failing()?
     return result.Result.Ok(value = v)
 }

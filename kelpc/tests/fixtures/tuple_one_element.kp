@@ -1,7 +1,7 @@
 // MISSING-z2bB9: `(T)` is not a one-element tuple, it is the parenthesized type
 // `T`, and `(e)` is the parenthesized expression `e`: a tuple has two or more
 // elements, and `()` is refused by name (`plan/syntax.md` 3).
-fun one(n: (i32)).R: (i32) = n * 2
+fun one(n: (i32)).return: (i32) = n * 2
 
 fun main() {
     val doubled = one(21)

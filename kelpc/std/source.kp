@@ -1,7 +1,7 @@
 //! Call-site source locations for diagnostics and test reports.
 
 /// The source file containing this call.
-extern fun file().R: str
+extern fun file().return: str
 
 /// The 1-based source line containing this call.
-extern fun line().R: usize
+extern fun line().return: usize

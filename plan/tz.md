@@ -30,11 +30,11 @@ times, as it does in a version 1 file.
 ## API
 
 ```
-tz.load(name: &str).R: result.Result<Zone, TzErr>
-tz.load_in(dir: &str, name: &str).R: result.Result<Zone, TzErr>
-tz.parse(data: &Bytes).R: result.Result<Zone, TzErr>
-tz.utc().R: Zone
-tz.fixed(offset_seconds: i32).R: Zone
+tz.load(name: &str).return: result.Result<Zone, TzErr>
+tz.load_in(dir: &str, name: &str).return: result.Result<Zone, TzErr>
+tz.parse(data: &Bytes).return: result.Result<Zone, TzErr>
+tz.utc().return: Zone
+tz.fixed(offset_seconds: i32).return: Zone
 
 enum TzErr { NotFound, Denied, Corrupt(val message: String) }
 
@@ -43,10 +43,10 @@ datac LocalTime(val year: i32, val month: i32, val day: i32,
                 val hour: i32, val minute: i32, val second: i32,
                 val weekday: i32, val yday: i32, val offset: Offset)
 
-Zone.offset_at(unix_seconds: i64).R: Offset
-Zone.local_parts(unix_seconds: i64).R: LocalTime
-Zone.to_unix(y, m, d, h, mi, s: i32).R: Resolved
-Zone.format(unix_seconds: i64, fmt: &str).R: String
+Zone.offset_at(unix_seconds: i64).return: Offset
+Zone.local_parts(unix_seconds: i64).return: LocalTime
+Zone.to_unix(y, m, d, h, mi, s: i32).return: Resolved
+Zone.format(unix_seconds: i64, fmt: &str).return: String
 
 enum Resolved {
     One(val unix: i64)

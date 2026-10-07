@@ -1,9 +1,9 @@
 // A-4 phase E: the widening from a plain function value to a closure needs the
 // same signature. A mismatch is left to the ordinary type error, which reports
 // both sides.
-fun double(x: f64).R: f64 = x * 2.0
+fun double(x: f64).return: f64 = x * 2.0
 
 fun main() {
-    val f: closure(i32).R: i32 = double
+    val f: closure(i32).return: i32 = double
     print(f(1))
 }

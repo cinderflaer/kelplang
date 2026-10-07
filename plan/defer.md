@@ -7,7 +7,7 @@ where the lock is taken. It is the `defer` half of B-8; user `Drop` is not in it
 ## The surface
 
 ```
-fun with_lock().R: bool {
+fun with_lock().return: bool {
     defer LOCK.store(value = false, order = atomic.Ordering.SeqCst)
     LOCK.store(value = true, order = atomic.Ordering.SeqCst)
     ...

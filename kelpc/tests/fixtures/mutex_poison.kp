@@ -9,7 +9,7 @@ impl "std/result"
 
 pd val m: Mutex<i64> = Mutex.new(0)
 
-fun boom(c: &Mutex<i64>).R: i64 {
+fun boom(c: &Mutex<i64>).return: i64 {
     c.lock { v ->
         *v = 99
         panic("worker exploded")

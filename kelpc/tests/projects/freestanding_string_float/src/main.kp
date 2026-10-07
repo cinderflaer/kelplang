@@ -3,7 +3,7 @@
 // itself legal.
 impl "std/str"
 
-fun alloc(_size: usize, _align: usize).R: Ptr<u8> {
+fun alloc(_size: usize, _align: usize).return: Ptr<u8> {
     return Ptr.null()
 }
 

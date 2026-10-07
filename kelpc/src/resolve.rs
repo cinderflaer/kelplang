@@ -676,6 +676,7 @@ pub fn load(
         traits: Vec::new(),
         trait_impls: Vec::new(),
         functions: Vec::new(),
+        outdated_returns: Vec::new(),
     };
     // `alias -> the target module's symbol prefix`, per module. Built before
     // the merge loop because an `impl` line's two names are qualified with it
@@ -1621,6 +1622,12 @@ impl Loader<'_> {
         let mut program = Parser::new(expanded)
             .parse_program()
             .map_err(|e| Diagnostic::new(e.message, e.span, id))?;
+        for span in &program.outdated_returns {
+            // Still accepted, no longer wanted: `.return:` says what the
+            // marker means (`deprecated.rs`).
+            self.deprecations
+                .push(crate::deprecated::finding(crate::deprecated::RETURN_R, *span, id));
+        }
         // `defer` is lowered away here, before resolution, the type checker,
         // the borrow checker and both backends, so every deferred action is
         // ordinary code by the time any of them sees the tree
@@ -3369,11 +3376,11 @@ mod tests {
 
     #[test]
     fn an_interface_hash_ignores_private_bodies_but_tracks_public_signatures() {
-        let first = "pub fun api(x: i32).R: i32 = x\n\nfun hidden().R: i32 = 1\n";
+        let first = "pub fun api(x: i32).return: i32 = x\n\nfun hidden().return: i32 = 1\n";
         let private_body_changed =
-            "pub fun api(x: i32).R: i32 = x\n\nfun hidden().R: i32 = 999\n";
+            "pub fun api(x: i32).return: i32 = x\n\nfun hidden().return: i32 = 999\n";
         let public_signature_changed =
-            "pub fun api(x: i64).R: i64 = x\n\nfun hidden().R: i32 = 1\n";
+            "pub fun api(x: i64).return: i64 = x\n\nfun hidden().return: i32 = 1\n";
         assert_eq!(
             interface_api_hash("main", first),
             interface_api_hash("main", private_body_changed)
@@ -3388,11 +3395,11 @@ mod tests {
     fn an_interface_hash_tracks_bodies_that_leak_into_importers() {
         let edits = [
             // a generic template body
-            ("pub fun id<T>(x: T).R: T = x\n", "pub fun id<T>(x: T).R: T = x\n\nfun hidden().R: i32 = 2\n"),
+            ("pub fun id<T>(x: T).return: T = x\n", "pub fun id<T>(x: T).return: T = x\n\nfun hidden().return: i32 = 2\n"),
             // a folded constant
-            ("const N: i32 = 1\npub fun f().R: i32 = N\n", "const N: i32 = 2\npub fun f().R: i32 = N\n"),
+            ("const N: i32 = 1\npub fun f().return: i32 = N\n", "const N: i32 = 2\npub fun f().return: i32 = N\n"),
             // a passdown's initializer
-            ("pd val depth: i32 = 1\npub fun f().R: i32 = depth\n", "pd val depth: i32 = 2\npub fun f().R: i32 = depth\n"),
+            ("pd val depth: i32 = 1\npub fun f().return: i32 = depth\n", "pd val depth: i32 = 2\npub fun f().return: i32 = depth\n"),
             // a destructor body
             ("datac B { v: i32 }\nfun mut B.drop() { }\n", "datac B { v: i32 }\nfun mut B.drop() { val x = 1 }\n"),
         ];

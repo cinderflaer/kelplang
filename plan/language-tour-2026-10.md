@@ -14,20 +14,20 @@ A trait names methods with `Self` receivers. A method with a body is a default a
 // trait.
 
 trait Shape {
-    fun Self.area().R: i32
-    fun Self.describe().R: i32 { return 7 }
-    fun Self.summary().R: i32 { return self.area() + self.describe() }
+    fun Self.area().return: i32
+    fun Self.describe().return: i32 { return 7 }
+    fun Self.summary().return: i32 { return self.area() + self.describe() }
 }
 
 trait Tagged {
-    fun Self.tag().R: i32 { return 5 }
+    fun Self.tag().return: i32 { return 5 }
 }
 
 datac Circle(val r: i32)
 
 impl Shape for Circle {
-    fun Self.area().R: i32 = r * r
-    fun Self.describe().R: i32 = 9
+    fun Self.area().return: i32 = r * r
+    fun Self.describe().return: i32 = 9
 }
 
 // `Tagged` declares only a default, so an empty block implements it.
@@ -59,24 +59,24 @@ Output (both backends):
 // `T: Named` satisfies a `T: Shape` bound transitively.
 
 trait Shape {
-    fun Self.area().R: i32
+    fun Self.area().return: i32
 }
 
 trait Named: Shape {
-    fun Self.name().R: i32 { return 3 }
+    fun Self.name().return: i32 { return 3 }
 }
 
 datac Circle(val r: i32)
 
 impl Shape for Circle {
-    fun Self.area().R: i32 = r * r
+    fun Self.area().return: i32 = r * r
 }
 
 impl Named for Circle {}
 
-fun area_of<T: Shape>(x: &T).R: i32 = x.area()
-fun describe<T: Named>(x: &T).R: i32 = x.area() + x.name()
-fun chained<T: Named>(x: &T).R: i32 = area_of(x) + describe(x)
+fun area_of<T: Shape>(x: &T).return: i32 = x.area()
+fun describe<T: Named>(x: &T).return: i32 = x.area() + x.name()
+fun chained<T: Named>(x: &T).return: i32 = area_of(x) + describe(x)
 
 fun main() {
     val c = Circle(r = 3)
@@ -100,24 +100,24 @@ Output (both backends):
 // module, and a default may call a method of the same trait.
 
 trait Doubler {
-    fun Self.double().R: i32
-    fun Self.triple().R: i32 { return self.double() + self.double() + self.double() }
+    fun Self.double().return: i32
+    fun Self.triple().return: i32 { return self.double() + self.double() + self.double() }
 }
 
 trait Named {
-    fun Self.label().R: String
+    fun Self.label().return: String
 }
 
 impl Doubler for i32 {
-    fun Self.double().R: i32 = self + self
+    fun Self.double().return: i32 = self + self
 }
 
 impl Named for String {
-    fun Self.label().R: String = String.from_str("a string")
+    fun Self.label().return: String = String.from_str("a string")
 }
 
-fun twice<T: Doubler>(x: T).R: i32 = x.double() + x.double()
-fun label_of<T: Named>(s: &T).R: String = s.label()
+fun twice<T: Doubler>(x: T).return: i32 = x.double() + x.double()
+fun label_of<T: Named>(s: &T).return: String = s.label()
 
 fun main() {
     val n = 6
@@ -146,24 +146,24 @@ a string
 // A-12 slice 4: two types implementing one trait, called through `&dyn` in a
 // loop over borrowed bindings.
 trait Shape {
-    fun Self.area().R: f64
-    fun Self.kind().R: str
+    fun Self.area().return: f64
+    fun Self.kind().return: str
 }
 
 datac Circle(val r: f64)
 datac Square(val s: f64)
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
-    fun Self.kind().R: str = "circle"
+    fun Self.area().return: f64 = r * r * 3.0
+    fun Self.kind().return: str = "circle"
 }
 
 impl Shape for Square {
-    fun Self.area().R: f64 = s * s
-    fun Self.kind().R: str = "square"
+    fun Self.area().return: f64 = s * s
+    fun Self.kind().return: str = "square"
 }
 
-fun report(s: &dyn Shape).R: f64 {
+fun report(s: &dyn Shape).return: f64 {
     print(s.kind())
     return s.area()
 }
@@ -201,25 +201,25 @@ square
 // copying it, and a `&dyn` borrowed back out of the box goes on to a free
 // function.
 trait Shape {
-    fun Self.area().R: f64
-    fun Self.kind().R: str
+    fun Self.area().return: f64
+    fun Self.kind().return: str
 }
 
 datac Circle(val r: f64)
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
-    fun Self.kind().R: str = "circle"
+    fun Self.area().return: f64 = r * r * 3.0
+    fun Self.kind().return: str = "circle"
 }
 
 datac Square(val s: f64)
 impl Shape for Square {
-    fun Self.area().R: f64 = s * s
-    fun Self.kind().R: str = "square"
+    fun Self.area().return: f64 = s * s
+    fun Self.kind().return: str = "square"
 }
 
-fun describe(s: &dyn Shape).R: str = s.kind()
+fun describe(s: &dyn Shape).return: str = s.kind()
 
-fun make(big: bool).R: Box<dyn Shape> {
+fun make(big: bool).return: Box<dyn Shape> {
     if big {
         return Box.of(Circle(r = 2.0))
     }
@@ -252,20 +252,20 @@ square
 // the vtable. Each element is a fat owned pointer, and the list frees each one
 // through its own vtable on the way out.
 trait Shape {
-    fun Self.area().R: f64
-    fun Self.kind().R: str
+    fun Self.area().return: f64
+    fun Self.kind().return: str
 }
 
 datac Circle(val r: f64)
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r * 3.0
-    fun Self.kind().R: str = "circle"
+    fun Self.area().return: f64 = r * r * 3.0
+    fun Self.kind().return: str = "circle"
 }
 
 datac Square(val s: f64)
 impl Shape for Square {
-    fun Self.area().R: f64 = s * s
-    fun Self.kind().R: str = "square"
+    fun Self.area().return: f64 = s * s
+    fun Self.kind().return: str = "square"
 }
 
 fun main() {
@@ -302,28 +302,28 @@ A trait declares `type Item`, each impl binds it, and generic code names it as `
 // the impl, and generic code reaches the bound's method through `R::Entry`.
 
 trait Named {
-    fun Self.name().R: str
+    fun Self.name().return: str
 }
 
 trait Repo {
     type Entry: Named
-    fun Self.entry().R: Self::Entry
+    fun Self.entry().return: Self::Entry
 }
 
 datac Item(val n: i32)
 
 impl Named for Item {
-    fun Self.name().R: str = "item"
+    fun Self.name().return: str = "item"
 }
 
 datac Store(val v: i32)
 
 impl Repo for Store {
     type Entry = Item
-    fun Self.entry().R: Item = Item(n = v)
+    fun Self.entry().return: Item = Item(n = v)
 }
 
-fun describe<R: Repo>(r: &R).R: str {
+fun describe<R: Repo>(r: &R).return: str {
     val e = r.entry()
     return e.name()
 }
@@ -351,7 +351,7 @@ item
 
 trait Src {
     type Out
-    fun Self.produce().R: Self::Out
+    fun Self.produce().return: Self::Out
 }
 
 datac A(val n: i32)
@@ -359,15 +359,15 @@ datac B(val n: i64)
 
 impl Src for A {
     type Out = i32
-    fun Self.produce().R: i32 = n * 2
+    fun Self.produce().return: i32 = n * 2
 }
 
 impl Src for B {
     type Out = i64
-    fun Self.produce().R: i64 = n * 3
+    fun Self.produce().return: i64 = n * 3
 }
 
-fun produce_of<S: Src>(x: &S).R: S::Out = x.produce()
+fun produce_of<S: Src>(x: &S).return: S::Out = x.produce()
 
 fun main() {
     val a = A(n = 3)
@@ -408,7 +408,7 @@ enum AppErr {
 }
 
 impl convert.From<IoErr> for AppErr {
-    fun from(value: IoErr).R: AppErr {
+    fun from(value: IoErr).return: AppErr {
         return when value {
             Bad(code) -> AppErr.Io(code = code, note = "io")
         }
@@ -416,7 +416,7 @@ impl convert.From<IoErr> for AppErr {
 }
 
 impl convert.From<ParseErr> for AppErr {
-    fun from(value: ParseErr).R: AppErr {
+    fun from(value: ParseErr).return: AppErr {
         return when value {
             Letter(ch) -> AppErr.Parse(note = "parse")
         }
@@ -424,32 +424,32 @@ impl convert.From<ParseErr> for AppErr {
 }
 
 impl convert.From<i32> for AppErr {
-    fun from(value: i32).R: AppErr = AppErr.Io(code = value, note = "int")
+    fun from(value: i32).return: AppErr = AppErr.Io(code = value, note = "int")
 }
 
 impl convert.Into<i32> for AppErr {
-    fun Self.into().R: i32 = 42
+    fun Self.into().return: i32 = 42
 }
 
-fun io_fail().R: result.Result<i32, IoErr> {
+fun io_fail().return: result.Result<i32, IoErr> {
     return result.Result.Err(error = IoErr.Bad(code = 7))
 }
 
-fun parse_fail().R: result.Result<i32, ParseErr> {
+fun parse_fail().return: result.Result<i32, ParseErr> {
     return result.Result.Err(error = ParseErr.Letter(ch = 'x'))
 }
 
-fun lift_io().R: result.Result<i32, AppErr> {
+fun lift_io().return: result.Result<i32, AppErr> {
     val v = io_fail()?
     return result.Result.Ok(value = v)
 }
 
-fun lift_parse().R: result.Result<i32, AppErr> {
+fun lift_parse().return: result.Result<i32, AppErr> {
     val v = parse_fail()?
     return result.Result.Ok(value = v)
 }
 
-fun make<X: convert.From<i32>>(v: i32).R: X {
+fun make<X: convert.From<i32>>(v: i32).return: X {
     return X.from(value = v)
 }
 
@@ -494,20 +494,20 @@ true
 // instantiation exactly as a free function's would be.
 
 trait Counted {
-    fun Self.count().R: i32
+    fun Self.count().return: i32
 }
 
 datac Meter(val n: i32)
 
 impl Counted for Meter {
-    fun Self.count().R: i32 = n
+    fun Self.count().return: i32 = n
 }
 
 datac Pair<A, B>(val first: A, val second: B)
 
-fun counted<T: Counted>(x: &T).R: i32 = x.count()
+fun counted<T: Counted>(x: &T).return: i32 = x.count()
 
-fun Pair<A, B>.total().R: i32 = counted(first) + counted(second)
+fun Pair<A, B>.total().return: i32 = counted(first) + counted(second)
 
 fun main() {
     val p = Pair(first = Meter(n = 3), second = Meter(n = 4))
@@ -539,27 +539,27 @@ impl "std/ops"
 datac Vec2(val x: i64, val y: i64)
 
 impl ops.Add for Vec2 {
-    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+    fun Self.add(rhs: &Self).return: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
 }
 
 impl ops.Sub for Vec2 {
-    fun Self.sub(rhs: &Self).R: Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
+    fun Self.sub(rhs: &Self).return: Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
 }
 
 impl ops.Mul for Vec2 {
-    fun Self.mul(rhs: &Self).R: Vec2 = Vec2(x = x * rhs.x, y = y * rhs.y)
+    fun Self.mul(rhs: &Self).return: Vec2 = Vec2(x = x * rhs.x, y = y * rhs.y)
 }
 
 impl ops.Div for Vec2 {
-    fun Self.div(rhs: &Self).R: Vec2 = Vec2(x = x / rhs.x, y = y / rhs.y)
+    fun Self.div(rhs: &Self).return: Vec2 = Vec2(x = x / rhs.x, y = y / rhs.y)
 }
 
 impl ops.Rem for Vec2 {
-    fun Self.rem(rhs: &Self).R: Vec2 = Vec2(x = x % rhs.x, y = y % rhs.y)
+    fun Self.rem(rhs: &Self).return: Vec2 = Vec2(x = x % rhs.x, y = y % rhs.y)
 }
 
 impl ops.Neg for Vec2 {
-    fun Self.neg().R: Vec2 = Vec2(x = 0 - x, y = 0 - y)
+    fun Self.neg().return: Vec2 = Vec2(x = 0 - x, y = 0 - y)
 }
 
 fun main() {
@@ -622,7 +622,7 @@ impl "std/ops"
 datac Version(val major: i32, val minor: i32)
 
 impl ops.Ord for Version {
-    fun Self.cmp(other: &Self).R: i32 {
+    fun Self.cmp(other: &Self).return: i32 {
         if major < other.major {
             return -1
         }
@@ -703,7 +703,7 @@ impl "std/fmt"
 datac Vec2(val x: i64, val y: i64)
 
 impl fmt.Display for Vec2 {
-    fun Self.to_text().R: String {
+    fun Self.to_text().return: String {
         var out = String.empty()
         val xs = fmt.int(x)
         val ys = fmt.int(y)
@@ -719,7 +719,7 @@ impl fmt.Display for Vec2 {
 datac Line(val a: Vec2, val b: Vec2)
 
 impl fmt.Display for Line {
-    fun Self.to_text().R: String {
+    fun Self.to_text().return: String {
         var out = String.empty()
         val at = a.to_text()
         val bt = b.to_text()
@@ -765,7 +765,7 @@ impl "std/fmt"
 datac Vec2(val x: i64, val y: i64)
 
 impl fmt.Display for Vec2 {
-    fun Self.to_text().R: String {
+    fun Self.to_text().return: String {
         var out = String.empty()
         val xs = fmt.int(x)
         val ys = fmt.int(y)
@@ -781,7 +781,7 @@ impl fmt.Display for Vec2 {
 datac Tag(val id: i64)
 
 impl fmt.Display for Tag {
-    fun Self.to_text().R: String {
+    fun Self.to_text().return: String {
         var out = String.empty()
         val s = fmt.int(id)
         out.push_str("#")
@@ -790,7 +790,7 @@ impl fmt.Display for Tag {
     }
 }
 
-fun show<T: fmt.Display>(x: &T).R: String = x.to_text()
+fun show<T: fmt.Display>(x: &T).return: String = x.to_text()
 
 fun twice<T: fmt.Display>(x: &T) {
     print("${x} ${x}")
@@ -815,7 +815,7 @@ Output (both backends):
 
 ## Iterators, `break` and `continue`
 
-`for x in expr` walks a `List`/array by index and anything else through `std/iter`'s `Iterator` (`type Item`, `fun mut Self.next().R: Option<Self::Item>`). `break` and `continue` target the innermost loop; `defer` runs once per iteration (`plan/iterators.md`).
+`for x in expr` walks a `List`/array by index and anything else through `std/iter`'s `Iterator` (`type Item`, `fun mut Self.next().return: Option<Self::Item>`). `break` and `continue` target the innermost loop; `defer` runs once per iteration (`plan/iterators.md`).
 
 `for_iter_range.kp`
 
@@ -867,7 +867,7 @@ datac Fib(var a: i64, var b: i64)
 
 impl iter.Iterator for Fib {
     type Item = i64
-    fun mut Self.next().R: option.Option<i64> {
+    fun mut Self.next().return: option.Option<i64> {
         val v = self.a
         val n = self.a + self.b
         self.a = self.b
@@ -923,7 +923,7 @@ datac Countdown(var n: i32)
 
 impl iter.Iterator for Countdown {
     type Item = i32
-    fun mut Self.next().R: option.Option<i32> {
+    fun mut Self.next().return: option.Option<i32> {
         if n <= 0 {
             return option.Option.None
         }
@@ -933,7 +933,7 @@ impl iter.Iterator for Countdown {
     }
 }
 
-fun first_even(limit: i32).R: i32 {
+fun first_even(limit: i32).return: i32 {
     defer print("leave")
     for x in Countdown(n = limit) {
         defer print("iter")
@@ -982,7 +982,7 @@ datac Buf<const N: usize>(var data: [i32; N], var len: usize)
 // A `bool` const parameter, read as a value in the body.
 datac Flag<const ON: bool>(var value: i32)
 
-fun Buf<const N: usize>.total().R: i32 {
+fun Buf<const N: usize>.total().return: i32 {
     var sum: i32 = 0
     var i: usize = 0
     while i < N {
@@ -992,7 +992,7 @@ fun Buf<const N: usize>.total().R: i32 {
     return sum
 }
 
-fun sum<const N: usize>(a: &[i32; N]).R: i32 {
+fun sum<const N: usize>(a: &[i32; N]).return: i32 {
     var total: i32 = 0
     var i: usize = 0
     while i < N {
@@ -1002,9 +1002,9 @@ fun sum<const N: usize>(a: &[i32; N]).R: i32 {
     return total
 }
 
-fun zeros<const N: usize>().R: [i32; N] = [0; N]
+fun zeros<const N: usize>().return: [i32; N] = [0; N]
 
-fun flag<const ON: bool>().R: i32 {
+fun flag<const ON: bool>().return: i32 {
     if ON {
         return 1
     }
@@ -1067,7 +1067,7 @@ datac Cursor(var at: usize, val len: usize)
 
 impl iter.Iterator for Cursor {
     type Item = usize
-    fun mut Self.next().R: option.Option<usize> {
+    fun mut Self.next().return: option.Option<usize> {
         if at >= len {
             return option.Option.None
         }
@@ -1077,9 +1077,9 @@ impl iter.Iterator for Cursor {
     }
 }
 
-fun Ring<const N: usize>.cursor().R: Cursor = Cursor(at = 0, len = N)
+fun Ring<const N: usize>.cursor().return: Cursor = Cursor(at = 0, len = N)
 
-fun total<const N: usize>(r: &Ring<N>).R: i32 {
+fun total<const N: usize>(r: &Ring<N>).return: i32 {
     var sum: i32 = 0
     for i in r.cursor() {
         sum += r.data.get(i = i)
@@ -1127,7 +1127,7 @@ fun each(xs: List<i32>, f: scoped fun(i32)) {
     }
 }
 
-fun sum(xs: List<i32>, f: scoped fun(i32).R: i32).R: i32 {
+fun sum(xs: List<i32>, f: scoped fun(i32).return: i32).return: i32 {
     var total = 0
     var i: usize = 0
     while i < xs.len() {
@@ -1354,18 +1354,18 @@ Each of these is a fixture that is refused; the text is the compiler's, verbatim
 - **`for` over something that is not iterable.** (`for_iter_no_impl.kp`)
 
   ```
-  error: 'for' walks a 'List<T>' or a type that implements 'Iterator', and 'i32' is neither: implement 'std.iter.Iterator' for it ('type Item' and 'fun mut Self.next().R: option.Option<Self::Item>'), or walk a 'List' by index
+  error: 'for' walks a 'List<T>' or a type that implements 'Iterator', and 'i32' is neither: implement 'std.iter.Iterator' for it ('type Item' and 'fun mut Self.next().return: option.Option<Self::Item>'), or walk a 'List' by index
   ```
 
 - **`?` with no `From` impl.** (`from_no_impl.kp`)
 
   ```
-  error: '?' cannot convert a failure: 'std.result.Result<i32, IoErr>' carries 'IoErr' and the enclosing function returns 'std.result.Result<i32, AppErr>', whose failure carries 'AppErr' — write 'impl From<IoErr> for AppErr { fun from(value: IoErr).R: AppErr { ... } }' so the operator has a conversion to call
+  error: '?' cannot convert a failure: 'std.result.Result<i32, IoErr>' carries 'IoErr' and the enclosing function returns 'std.result.Result<i32, AppErr>', whose failure carries 'AppErr' — write 'impl From<IoErr> for AppErr { fun from(value: IoErr).return: AppErr { ... } }' so the operator has a conversion to call
   ```
 
 - **An operator with no trait impl.** (`ops_arith_no_add.kp`)
 
   ```
-  error: cannot use '+' on 'P': it does not implement 'Add' from 'std/ops' (write 'impl Add for P { fun Self.add(rhs: &Self).R: P }', importing 'std/ops')
+  error: cannot use '+' on 'P': it does not implement 'Add' from 'std/ops' (write 'impl Add for P { fun Self.add(rhs: &Self).return: P }', importing 'std/ops')
   ```
 

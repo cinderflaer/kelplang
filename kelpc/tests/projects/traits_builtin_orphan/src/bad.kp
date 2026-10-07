@@ -3,5 +3,5 @@ impl "shape"
 // A builtin has no module of its own, so the impl has to live in the trait's
 // module; this one lives in `bad`, which owns neither (A-12 slice 3).
 impl shape.Doubler for i32 {
-    fun Self.double().R: i32 = self + self
+    fun Self.double().return: i32 = self + self
 }

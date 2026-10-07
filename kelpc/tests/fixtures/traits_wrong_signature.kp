@@ -1,12 +1,12 @@
 // An impl method whose return type is not the trait's (A-12 slice 2).
 trait Shape {
-    fun Self.area().R: f64
+    fun Self.area().return: f64
 }
 
 datac Circle(val r: f64)
 
 impl Shape for Circle {
-    fun Self.area().R: i32 = 1
+    fun Self.area().return: i32 = 1
 }
 
 fun main() { }

@@ -11,13 +11,13 @@ enum Tree<T> {
     Branch(val label: T, val left: Box<Tree<T>>, val right: Box<Tree<T>>)
 }
 
-fun sum(n: &Node<i64>).R: i64 = if n.next.is_empty() {
+fun sum(n: &Node<i64>).return: i64 = if n.next.is_empty() {
     n.value
 } else {
     n.value + sum(n = n.next.get())
 }
 
-fun label(t: &Tree<i32>).R: i32 = when t {
+fun label(t: &Tree<i32>).return: i32 = when t {
     Leaf -> 0
     Branch(tag, _left, _right) -> tag
 }

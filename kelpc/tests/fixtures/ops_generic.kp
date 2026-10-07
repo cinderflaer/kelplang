@@ -7,11 +7,11 @@ impl "std/ops"
 datac Vec2(val x: i32, val y: i32)
 
 impl ops.Add for Vec2 {
-    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+    fun Self.add(rhs: &Self).return: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
 }
 
 impl ops.Ord for Vec2 {
-    fun Self.cmp(other: &Self).R: i32 {
+    fun Self.cmp(other: &Self).return: i32 {
         if x < other.x {
             return -1
         }
@@ -28,9 +28,9 @@ impl ops.Ord for Vec2 {
     }
 }
 
-fun sum<T: ops.Add>(a: T, b: T).R: T = a + b
+fun sum<T: ops.Add>(a: T, b: T).return: T = a + b
 
-fun smaller<T: ops.Ord>(a: T, b: T).R: bool = a < b
+fun smaller<T: ops.Ord>(a: T, b: T).return: bool = a < b
 
 fun main() {
     val a = Vec2(x = 1, y = 2)

@@ -3,7 +3,7 @@
 // `checked` call below would deadlock if the first left the mutex held.
 impl "std/result"
 
-fun checked(m: &Mutex<i64>, ok: bool).R: result.Result<i64, i64> {
+fun checked(m: &Mutex<i64>, ok: bool).return: result.Result<i64, i64> {
     return m.lock { v ->
         val t: result.Result<i64, i64> = if ok {
             result.Result.Ok(5)

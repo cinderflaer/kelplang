@@ -4,6 +4,6 @@
 // the environment is not a local this frame owns.
 fun main() {
     val text = String.from_str("x")
-    val f = fun() .R: String = text
+    val f = fun() .return: String = text
     print(f().len())
 }

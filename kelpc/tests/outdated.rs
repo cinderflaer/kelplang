@@ -1,11 +1,10 @@
 //! The deprecation contract for `kelpc build` and `kelpc run` (roadmap open
 //! item 74, `kelpc/src/deprecated.rs`).
 //!
-//! The register is **empty**: both entries it ever held, `impl "..." as name`
-//! and `impl "..." with caps(...)`, were removed in the one cycle their shared
-//! deadline sentence gave them, so no program can produce an `outdated:` finding
-//! today and `--deny-outdated` has nothing to deny. What only a real invocation
-//! can settle is the rest of the contract around that machinery:
+//! The register holds one entry, `.R:` (see the last test); the two it held
+//! before, `impl "..." as name` and `impl "..." with caps(...)`, were removed in
+//! the one cycle their shared deadline sentence gave them. What only a real
+//! invocation can settle is the contract around that machinery:
 //!
 //!   1. a spelling that was on the register is a parse error that names its fix,
 //!      which is what a program still carrying it meets (the two cases below);
@@ -67,7 +66,7 @@ fn stderr(out: &Output) -> String {
 /// The grant under it is a real `fs` delegation, so the case is about the
 /// keyword rather than about a clause the resolver skips.
 fn caps_with_project(dir: &Path) -> PathBuf {
-    write(dir, "src/util.kp", "pub fun answer().R: i32 = 42\n");
+    write(dir, "src/util.kp", "pub fun answer().return: i32 = 42\n");
     write(
         dir,
         "src/main.kp",
@@ -80,7 +79,7 @@ fn the_impl_as_clause_is_gone() {
     // Retired with the first entry: not a warning, a refusal that names the fix,
     // because the register only holds spellings that still compile.
     let dir = scratch("impl-as");
-    write(&dir, "src/util.kp", "pub fun answer().R: i32 = 42\n");
+    write(&dir, "src/util.kp", "pub fun answer().return: i32 = 42\n");
     let source = write(
         &dir,
         "src/main.kp",
@@ -165,7 +164,7 @@ fn the_with_caps_clause_is_gone() {
 #[test]
 fn a_program_with_no_outdated_syntax_prints_nothing() {
     let dir = scratch("clean");
-    write(&dir, "src/util.kp", "pub fun answer().R: i32 = 42\n");
+    write(&dir, "src/util.kp", "pub fun answer().return: i32 = 42\n");
     let source = write(
         &dir,
         "src/main.kp",
@@ -209,7 +208,7 @@ fn a_dependency_is_reached_by_the_name_under_deps() {
     // is the key the `[dependencies]` line gave it.
     let dir = scratch("deps");
     write(&dir, "coral.toml", "name = \"depsdemo\"\n");
-    write(&dir, "src/deps/argparse/lib.kp", "pub fun parse().R: i32 = 7\n");
+    write(&dir, "src/deps/argparse/lib.kp", "pub fun parse().return: i32 = 7\n");
     let source = write(
         &dir,
         "src/main.kp",
@@ -230,4 +229,31 @@ fn a_dependency_is_reached_by_the_name_under_deps() {
     );
     let ran = Command::new(&out).output().expect("run the built program");
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "7\n");
+}
+
+#[test]
+fn the_r_return_marker_still_builds_and_says_what_to_write() {
+    // `.R:` is the one entry on the register (id `return-r`): it compiles, the
+    // build names the marker that replaces it, and `--deny-outdated` turns the
+    // same finding into the error that stops the build.
+    let dir = scratch("return_r");
+    let source = write(
+        &dir,
+        "main.kp",
+        "fun old(x: i32).R: i32 = x\nfun new(x: i32).return: i32 = x\n\nfun main() {\n    print(old(1) + new(2))\n}\n",
+    );
+    let out = dir.join("prog");
+
+    let warned = build(&source, &out, false);
+    assert!(warned.status.success(), "{}", stderr(&warned));
+    let text = stderr(&warned);
+    assert!(text.contains("outdated: the return marker `.R:`"), "{text}");
+    assert!(text.contains("write `.return:`"), "{text}");
+    assert_eq!(text.matches("outdated:").count(), 1, "only the `.R:` is reported: {text}");
+    let ran = Command::new(&out).output().expect("run the built program");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "3\n");
+
+    let denied = build(&source, &out, true);
+    assert!(!denied.status.success());
+    assert!(stderr(&denied).contains("the return marker `.R:` is outdated"), "{}", stderr(&denied));
 }

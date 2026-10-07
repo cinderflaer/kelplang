@@ -1,6 +1,6 @@
 // A-4: `str` is already a borrowed view, so there is nothing to take
 // ownership of — `move str` is refused with the owned spelling named.
-fun consume(s: move str).R: usize = 0
+fun consume(s: move str).return: usize = 0
 
 fun main() {
     print(consume("x"))

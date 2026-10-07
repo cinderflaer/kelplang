@@ -2,7 +2,7 @@
 // no prologue, no epilogue, no compiler-generated `ret`. The System V return
 // register for an `i64` is `rax`, which is what the asm leaves 42 in, and the
 // caller is an ordinary Kelp call.
-naked fun forty_two().R: i64 {
+naked fun forty_two().return: i64 {
     asm("mov rax, 42\nret")
 }
 

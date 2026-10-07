@@ -3,7 +3,7 @@
 impl "std/thread"
 impl "std/result"
 
-fun worker(x: move i64).R: u64 {
+fun worker(x: move i64).return: u64 {
     thread.current_id()
 }
 

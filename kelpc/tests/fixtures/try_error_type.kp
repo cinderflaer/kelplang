@@ -5,9 +5,9 @@ enum Result<T, E> {
     Err(val error: E)
 }
 
-fun a().R: Result<i32, i32> = Result.Ok(value = 1)
+fun a().return: Result<i32, i32> = Result.Ok(value = 1)
 
-fun b().R: Result<i32, String> {
+fun b().return: Result<i32, String> {
     val v = a()?
     return Result.Ok(value = v)
 }

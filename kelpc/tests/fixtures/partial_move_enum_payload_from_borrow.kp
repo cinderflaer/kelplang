@@ -6,7 +6,7 @@ enum Held {
     Held(val text: String)
 }
 
-fun take(h: &Held).R: String {
+fun take(h: &Held).return: String {
     if let Held(text) = h {
         return text
     }

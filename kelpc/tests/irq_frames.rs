@@ -191,7 +191,7 @@ fn main_frame(frame: &str) -> String {
 const MAIN_COMPUTED_LINE: &str = "\
 impl \"std/irq\"
 
-fun claim_it(n: u32).R: irq.Line = irq.claim(n)
+fun claim_it(n: u32).return: irq.Line = irq.claim(n)
 
 fun main() {
     print(claim_it(10).number())
@@ -202,7 +202,7 @@ fun main() {
 const MAIN_COMPUTED_FRAME: &str = "\
 impl \"std/frame\"
 
-fun claim_it(addr: usize).R: frame.Frame = frame.claim(addr)
+fun claim_it(addr: usize).return: frame.Frame = frame.claim(addr)
 
 fun main() {
     print(claim_it(0x80100000).addr())
@@ -215,7 +215,7 @@ fun main() {
 const MAIN_RUNTIME_MISALIGNED: &str = "\
 impl \"std/frame\"
 
-fun claim_it(addr: usize).R: frame.Frame = frame.claim(addr)
+fun claim_it(addr: usize).return: frame.Frame = frame.claim(addr)
 
 fun main() {
     print(claim_it(0x80100001).addr())
@@ -227,7 +227,7 @@ fun main() {
 const MAIN_RUNTIME_OFFSET: &str = "\
 impl \"std/frame\"
 
-fun off(f: frame.Frame, byte: usize).R: usize = f.offset(byte)
+fun off(f: frame.Frame, byte: usize).return: usize = f.offset(byte)
 
 fun main() {
     val f: frame.Frame = frame.claim(0x80100000)

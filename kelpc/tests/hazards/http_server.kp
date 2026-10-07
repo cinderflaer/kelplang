@@ -15,7 +15,7 @@ impl "std/result"
 impl "std/str"
 impl "std/http" caps(net = ["127.0.0.1:*"])
 
-fun arg_u64(i: usize).R: u64 {
+fun arg_u64(i: usize).return: u64 {
     val args = process.args()
     return result.expect(
         r = str.parse_u64(args.get(i).as_str()),
@@ -29,7 +29,7 @@ fun say(text: &str) {
     val b = f.write_str("\n")
 }
 
-fun big().R: http.ServerResponse {
+fun big().return: http.ServerResponse {
     var b = Bytes.empty()
     var i: usize = 0
     while i < 4194304 {
@@ -39,13 +39,13 @@ fun big().R: http.ServerResponse {
     return http.ServerResponse(status = 200, headers = List.empty(), body = b)
 }
 
-fun echo(req: &http.ServerRequest).R: http.ServerResponse {
+fun echo(req: &http.ServerRequest).return: http.ServerResponse {
     var hs: List<http.Header> = List.empty()
     hs.push(http.Header(name = String.from_str("Content-Type"), value = String.from_str("application/octet-stream")))
     return http.ServerResponse(status = 200, headers = hs, body = req.body.clone())
 }
 
-fun param(req: &http.ServerRequest, name: &str).R: String {
+fun param(req: &http.ServerRequest, name: &str).return: String {
     val v = req.query_param(name)
     return when v {
         Some(s) -> s
@@ -53,7 +53,7 @@ fun param(req: &http.ServerRequest, name: &str).R: String {
     }
 }
 
-fun handle(req: &http.ServerRequest).R: http.ServerResponse {
+fun handle(req: &http.ServerRequest).return: http.ServerResponse {
     val segs = req.path_segments()
     if segs.len() == 0 {
         return http.ok_text("hello")
@@ -140,7 +140,7 @@ fun handle(req: &http.ServerRequest).R: http.ServerResponse {
     return http.not_found()
 }
 
-fun fd_count().R: usize {
+fun fd_count().return: usize {
     val listing = fs.list("/proc/self/fd")
     return listing.len()
 }

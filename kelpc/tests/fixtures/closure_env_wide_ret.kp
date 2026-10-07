@@ -12,11 +12,11 @@
 // per-signature closure drop.
 datac Wide(val a: i64, val b: i64, val c: i64)
 
-fun apply(f: closure().R: Wide).R: Wide = f()
+fun apply(f: closure().return: Wide).return: Wide = f()
 
 fun main() {
     val k: i64 = 4
-    val f = fun() .R: Wide = Wide(a = k, b = k + 1, c = k + 2)
+    val f = fun() .return: Wide = Wide(a = k, b = k + 1, c = k + 2)
     val w = apply(f)
     print(w.a)
     print(w.b)

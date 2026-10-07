@@ -4,6 +4,6 @@
 pub extern type Block
 pub extern type Buffer: Block
 
-pub extern fun malloc(size: usize).R: Buffer
+pub extern fun malloc(size: usize).return: Buffer
 
-pub fun down(block: Block).R: Buffer = block
+pub fun down(block: Block).return: Buffer = block

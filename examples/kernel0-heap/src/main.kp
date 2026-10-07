@@ -18,7 +18,7 @@ const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]
 // `align` is always a power of two (every type's alignment the compiler asks
 // for is), so the round-up is a divide and multiply rather than a bit mask: v1
 // has no bitwise operators.
-fun align_up(value: usize, align: usize).R: usize {
+fun align_up(value: usize, align: usize).return: usize {
     return ((value + align - 1) / align) * align
 }
 
@@ -26,7 +26,7 @@ fun align_up(value: usize, align: usize).R: usize {
 // caller, or the null pointer when the arena is full. `check_alloc` in the
 // compiler turns that null into a call to `kp_panic("out of memory")`, so a
 // failed allocation never dereferences null.
-fun alloc(size: usize, align: usize).R: Ptr<u8> {
+fun alloc(size: usize, align: usize).return: Ptr<u8> {
     val out: Ptr<u8> = unsafe {
         val start: usize = align_up(USED, align)
         if start + size > 16384 {
@@ -56,7 +56,7 @@ fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
 // Build `List<i32>` of 1..=10, sum it, and let the list drop on return. The
 // growth path is the no-`realloc` one the manifest asks for: allocate a bigger
 // block, copy the old bytes, free the old block.
-fun sum_one_to_ten().R: i32 {
+fun sum_one_to_ten().return: i32 {
     var xs: List<i32> = List.empty()
     var i: i32 = 1
     while i <= 10 {

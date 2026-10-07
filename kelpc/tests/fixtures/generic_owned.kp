@@ -10,7 +10,7 @@ enum Option<T> {
 
 datac Holder(val o: Option<String>, val tag: i32)
 
-fun text_len(o: &Option<String>).R: usize = when o {
+fun text_len(o: &Option<String>).return: usize = when o {
     Some(v) -> v.len()
     None -> 0
 }

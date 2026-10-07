@@ -7,4 +7,4 @@
 // type is `i32` rather than the `usize` an index would be.
 pub extern fun polyp_post(id: i32)
 
-pub extern fun polyp_poll().R: i32
+pub extern fun polyp_poll().return: i32

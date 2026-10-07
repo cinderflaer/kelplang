@@ -8,7 +8,7 @@ impl "std/result"
 
 datac Bad(val code: i32)
 
-fun parse(n: i32).R: result.Result<i32, Bad> {
+fun parse(n: i32).return: result.Result<i32, Bad> {
     if n > 0 {
         return result.Result.Ok(value = n)
     }
@@ -19,18 +19,18 @@ fun main() {
     // `map` over an owned success payload: the callback borrows the `String`
     // and the rebuilt `Ok` owns the result.
     val named: result.Result<String, Bad> = result.Result.Ok(value = String.from_str(s = "hello"))
-    val len = result.map(r = named, f = fun(s: &String).R: usize = s.len())
+    val len = result.map(r = named, f = fun(s: &String).return: usize = s.len())
     print(result.expect(r = len, message = "err"))
 
     // `map` over an owned error type, the case the borrow receiver could not
     // express.
-    val failed: result.Result<i32, Bad> = result.map(r = parse(-3), f = fun(n: &i32).R: i32 = n * 2)
+    val failed: result.Result<i32, Bad> = result.map(r = parse(-3), f = fun(n: &i32).return: i32 = n * 2)
     print(result.is_err(r = failed))
 
     // `map_err` over an owned success payload: the `Ok` arm moves the `String`
     // on, and the callback borrows the `Bad`.
     val kept: result.Result<String, Bad> = result.Result.Ok(value = String.from_str(s = "kept"))
-    val renamed: result.Result<String, String> = result.map_err(r = kept, f = fun(e: &Bad).R: String = String.from_str(s = "unused"))
+    val renamed: result.Result<String, String> = result.map_err(r = kept, f = fun(e: &Bad).return: String = String.from_str(s = "unused"))
     print(result.is_ok(r = renamed))
 
     // `map_err` over an owned error: the callback reads it through a borrow and
@@ -38,7 +38,7 @@ fun main() {
     val bad: result.Result<i32, Bad> = result.Result.Err(error = Bad(code = 7))
     val tagged: result.Result<i32, String> = result.map_err(
         r = bad,
-        f = fun(e: &Bad).R: String = String.from_str(s = "bad")
+        f = fun(e: &Bad).return: String = String.from_str(s = "bad")
     )
     print(result.is_err(r = tagged))
 }

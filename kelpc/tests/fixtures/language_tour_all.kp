@@ -9,38 +9,38 @@ impl "std/convert"
 
 trait Shape {
     type Unit
-    fun Self.area().R: i32
-    fun Self.name().R: str { return "shape" }
+    fun Self.area().return: i32
+    fun Self.name().return: str { return "shape" }
 }
 
 datac Square(val side: i32)
 
 impl Shape for Square {
     type Unit = i32
-    fun Self.area().R: i32 = side * side
+    fun Self.area().return: i32 = side * side
 }
 
 trait Speak {
-    fun Self.say().R: i32
+    fun Self.say().return: i32
 }
 
 impl Speak for Square {
-    fun Self.say().R: i32 = side
+    fun Self.say().return: i32 = side
 }
 
 datac Vec2(val x: i64, val y: i64)
 
 impl ops.Add for Vec2 {
-    fun Self.add(rhs: &Self).R: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+    fun Self.add(rhs: &Self).return: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
 }
 
 impl fmt.Display for Vec2 {
-    fun Self.to_text().R: String = String.from_str("v")
+    fun Self.to_text().return: String = String.from_str("v")
 }
 
 datac Buf<const N: usize>(var data: [i32; N])
 
-fun Buf<const N: usize>.size().R: usize = N
+fun Buf<const N: usize>.size().return: usize = N
 
 enum LowErr {
     Bad
@@ -51,23 +51,23 @@ enum HighErr {
 }
 
 impl convert.From<LowErr> for HighErr {
-    fun from(value: LowErr).R: HighErr = HighErr.Low
+    fun from(value: LowErr).return: HighErr = HighErr.Low
 }
 
-fun low().R: result.Result<i32, LowErr> = result.Result.Ok(value = 1)
+fun low().return: result.Result<i32, LowErr> = result.Result.Ok(value = 1)
 
-fun high().R: result.Result<i32, HighErr> {
+fun high().return: result.Result<i32, HighErr> {
     val v = low()?
     return result.Result.Ok(value = v)
 }
 
-fun first<I: iter.Iterator>(it: mut I).R: option.Option<I::Item> {
+fun first<I: iter.Iterator>(it: mut I).return: option.Option<I::Item> {
     return it.next()
 }
 
-fun loud(s: &dyn Speak).R: i32 = s.say()
+fun loud(s: &dyn Speak).return: i32 = s.say()
 
-fun boxed(b: Box<dyn Speak>).R: i32 = b.say()
+fun boxed(b: Box<dyn Speak>).return: i32 = b.say()
 
 fun each(f: scoped fun(i32)) {
     f(1)

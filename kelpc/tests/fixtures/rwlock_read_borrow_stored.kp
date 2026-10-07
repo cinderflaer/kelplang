@@ -3,7 +3,7 @@
 // keeps a scoped block's borrow from escaping keeps `v` from being stored.
 fun bad(rw: &RwLock<i64>) {
     rw.read { v ->
-        val f = fun().R: i64 = *v
+        val f = fun().return: i64 = *v
         print(f())
     }
 }

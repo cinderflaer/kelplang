@@ -2,7 +2,7 @@
 // undeclared method is an error at that impl (A-12 slice 3).
 
 trait Shape {
-    fun Self.describe().R: i32 { return self.nope() }
+    fun Self.describe().return: i32 { return self.nope() }
 }
 
 datac C(val r: i32)

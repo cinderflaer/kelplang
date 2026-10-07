@@ -13,7 +13,7 @@ fun mut Ring<const N: usize>.push(v: i32) {
     }
 }
 
-fun Ring<const N: usize>.total().R: i32 {
+fun Ring<const N: usize>.total().return: i32 {
     var sum: i32 = 0
     var i: usize = 0
     while i < N {
@@ -23,7 +23,7 @@ fun Ring<const N: usize>.total().R: i32 {
     return sum
 }
 
-fun Ring<const N: usize>.rings().R: usize = N
+fun Ring<const N: usize>.rings().return: usize = N
 
 fun main() {
     var small = Ring<4>(slot = [0; 4], head = 0, count = 0)

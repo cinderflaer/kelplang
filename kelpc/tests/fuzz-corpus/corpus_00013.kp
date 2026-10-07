@@ -31,34 +31,34 @@ enum ZRes {
     Err(val why: i32)
 }
 
-fun z_add(a: i32, b: i32).R: i32 = 22
-fun z_scale(a: f64, b: f64).R: f64 = (a - (0.125 / 100.0))
-fun z_mk(n: i32).R: ZPoint = ZPoint(x = n, y = n + 1)
-fun z_psum(p: ZPoint).R: i32 = p.x + p.y
-fun z_vsum(v: ZVec).R: f64 = v.x + v.y
-fun z_try(n: i32).R: ZRes {
+fun z_add(a: i32, b: i32).return: i32 = 22
+fun z_scale(a: f64, b: f64).return: f64 = (a - (0.125 / 100.0))
+fun z_mk(n: i32).return: ZPoint = ZPoint(x = n, y = n + 1)
+fun z_psum(p: ZPoint).return: i32 = p.x + p.y
+fun z_vsum(v: ZVec).return: f64 = v.x + v.y
+fun z_try(n: i32).return: ZRes {
     if n > 0 {
         return ZRes.Ok(value = n)
     }
     return ZRes.Err(why = 0)
 }
-fun z_chain(n: i32).R: ZRes {
+fun z_chain(n: i32).return: ZRes {
     val v = z_try(n)?
     return ZRes.Ok(value = v + 1)
 }
-fun z_val(r: ZRes).R: i32 = when r {
+fun z_val(r: ZRes).return: i32 = when r {
     Ok(v) -> v
     Err(_e) -> -1
 }
-fun z_pair_sum(p: [f64; 2]).R: f64 = p.get(i = 0) + p.get(i = 1)
+fun z_pair_sum(p: [f64; 2]).return: f64 = p.get(i = 0) + p.get(i = 1)
 fun z_bump(p: mut i32, d: i32) {
     *p = *p + d
 }
 fun z_scale_f(p: mut f64, by: f64) {
     *p = *p * by
 }
-fun z_double(v: i32).R: i32 = v * 2
-fun z_apply(f: fun(i32).R: i32, v: i32).R: i32 = f(v)
+fun z_double(v: i32).return: i32 = v * 2
+fun z_apply(f: fun(i32).return: i32, v: i32).return: i32 = f(v)
 
 fun main() {
     {
@@ -233,10 +233,10 @@ fun main() {
 
     {
         val s = String.from_str("seed")
-        val f = fun() .R: usize = s.len()
+        val f = fun() .return: usize = s.len()
         print(f())
         val k = (-35)
-        val g = fun(x: i32).R: i32 = x + k
+        val g = fun(x: i32).return: i32 = x + k
         print(g(30))
         val h = z_double
         print(h(30))
@@ -245,7 +245,7 @@ fun main() {
         var i = 0
         while i < 3 {
             val t = String.from_str("data")
-            val c = fun() .R: usize = t.len()
+            val c = fun() .return: usize = t.len()
             print(c())
             i = i + 1
         }

@@ -9,7 +9,7 @@ impl "std/process"
 impl "std/str"
 impl "std/result"
 
-fun server_port().R: u16 {
+fun server_port().return: u16 {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(1).as_str()),
@@ -18,7 +18,7 @@ fun server_port().R: u16 {
     return p.to_u16()
 }
 
-fun fail(e: move tls.TlsError).R: tls.TlsStream {
+fun fail(e: move tls.TlsError).return: tls.TlsStream {
     val text = tls.error_text(e)
     panic(text.as_str())
 }

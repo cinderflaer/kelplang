@@ -65,14 +65,14 @@ way one enters a program:
 ```kelp
 // std/irq
 datac Line(val n: u32)
-fun claim(n: u32).R: Line = Line(n = n)
-fun Line.number().R: u32 = n
+fun claim(n: u32).return: Line = Line(n = n)
+fun Line.number().return: u32 = n
 
 // std/frame
 datac Frame(val addr: usize)
-fun claim(addr: usize).R: Frame { ... }   // the 4096-alignment check
-fun Frame.addr().R: usize = addr
-fun Frame.offset(byte: usize).R: usize    // bounds-checked against 4096
+fun claim(addr: usize).return: Frame { ... }   // the 4096-alignment check
+fun Frame.addr().return: usize = addr
+fun Frame.offset(byte: usize).return: usize    // bounds-checked against 4096
 ```
 
 A `Line` and a `Frame` are handed around as ordinary values, so a driver can be

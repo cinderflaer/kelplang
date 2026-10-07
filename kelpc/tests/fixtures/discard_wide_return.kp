@@ -12,9 +12,9 @@
 // `str` is one pointer, so it never needed a destination.
 datac Triple(val a: i32, val b: i32, val c: i32)
 
-fun wide().R: Triple = Triple(a = 1, b = 2, c = 3)
-fun arr().R: [i32; 3] = [1, 2, 3]
-fun narrow().R: str = "narrow"
+fun wide().return: Triple = Triple(a = 1, b = 2, c = 3)
+fun arr().return: [i32; 3] = [1, 2, 3]
+fun narrow().return: str = "narrow"
 
 fun tail_discard() {
     wide()

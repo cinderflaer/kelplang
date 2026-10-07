@@ -1,7 +1,7 @@
 // A-2: only a generic type can be a generic receiver.
 datac Point(val x: i32)
 
-fun Point<T>.first_of().R: T = x
+fun Point<T>.first_of().return: T = x
 
 fun main() {
     val p = Point(x = 1)

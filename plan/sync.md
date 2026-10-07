@@ -25,12 +25,12 @@ record with the runtime doing the reference counting is the same answer `Thread<
 ## 1. `RwLock<T>` (`std/sync`)
 
 ```
-fun RwLock.new(value: move T).R: RwLock<T>
-fun RwLock<T>.read(block: scoped fun(&T).R: R).R: R
-fun RwLock<T>.write(block: scoped fun(mut T).R: R).R: R
-fun RwLock<T>.try_read(block: scoped fun(&T).R: R).R: Option<R>
-fun RwLock<T>.try_write(block: scoped fun(mut T).R: R).R: Option<R>
-fun RwLock<T>.into_inner().R: T
+fun RwLock.new(value: move T).return: RwLock<T>
+fun RwLock<T>.read(block: scoped fun(&T).return: R).return: R
+fun RwLock<T>.write(block: scoped fun(mut T).return: R).return: R
+fun RwLock<T>.try_read(block: scoped fun(&T).return: R).return: Option<R>
+fun RwLock<T>.try_write(block: scoped fun(mut T).return: R).return: Option<R>
+fun RwLock<T>.into_inner().return: T
 ```
 
 `read` hands the block a `&T`; `write` hands it `mut T`. Many readers run at once, one
@@ -55,11 +55,11 @@ is `Sync` exactly as `Mutex<T>` is: `reachable_mut_path` answers `false` for it.
 ## 2. `Condvar` (`std/sync`)
 
 ```
-fun Condvar.new().R: Condvar
+fun Condvar.new().return: Condvar
 fun Condvar.notify_one()
 fun Condvar.notify_all()
-fun Mutex<T>.wait_while(cv: &Condvar, pred: fun(&T).R: bool, block: scoped fun(mut T).R: R).R: R
-fun Mutex<T>.wait_while_timeout(cv: &Condvar, pred: fun(&T).R: bool, millis: i64, block: scoped fun(mut T).R: R).R: Option<R>
+fun Mutex<T>.wait_while(cv: &Condvar, pred: fun(&T).return: bool, block: scoped fun(mut T).return: R).return: R
+fun Mutex<T>.wait_while_timeout(cv: &Condvar, pred: fun(&T).return: bool, millis: i64, block: scoped fun(mut T).return: R).return: Option<R>
 ```
 
 `cv.wait(...)` needs the mutex's own lock to be released atomically around the wait,
@@ -78,13 +78,13 @@ true and the block did not run, `Some(v)` is the block's value.
 differs from the first design (no new builtin type).**
 
 ```
-fun sync.bounded<T>(cap: usize).R: (Sender<T>, Receiver<T>)
-fun sync.unbounded<T>().R: (Sender<T>, Receiver<T>)
-fun Sender<T>.send(value: move T).R: option.Option<T>
-fun Sender<T>.clone().R: Sender<T>
-fun Receiver<T>.recv().R: result.Result<T, RecvErr>
-fun Receiver<T>.try_recv().R: option.Option<T>
-fun Receiver<T>.recv_timeout(millis: i64).R: result.Result<T, RecvTimeout>
+fun sync.bounded<T>(cap: usize).return: (Sender<T>, Receiver<T>)
+fun sync.unbounded<T>().return: (Sender<T>, Receiver<T>)
+fun Sender<T>.send(value: move T).return: option.Option<T>
+fun Sender<T>.clone().return: Sender<T>
+fun Receiver<T>.recv().return: result.Result<T, RecvErr>
+fun Receiver<T>.try_recv().return: option.Option<T>
+fun Receiver<T>.recv_timeout(millis: i64).return: result.Result<T, RecvTimeout>
 for v in rx { ... }
 ```
 
@@ -106,10 +106,10 @@ declared on a generic type. `for v in rx` is the compiler's `for` desugar over a
 **Implemented, in pure Kelp.**
 
 ```
-fun pool.new(workers: i32).R: Pool
+fun pool.new(workers: i32).return: Pool
 fun Pool.spawn(job: move closure())
 fun Pool.join()
-fun Pool.panicked().R: i32
+fun Pool.panicked().return: i32
 ```
 
 `Pool` holds shared handles to a state mutex, a `Mutex<List<Job>>` FIFO and two

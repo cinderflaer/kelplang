@@ -26,7 +26,7 @@ const USER_STACK_SP: usize = 0x21000
 // The root the kernel itself runs on before the first program switches `satp`.
 static mut KERNEL_ROOT: usize = 0
 
-fun kernel_root().R: usize {
+fun kernel_root().return: usize {
     unsafe { KERNEL_ROOT }
 }
 
@@ -56,7 +56,7 @@ fun enter_supervisor(entry: usize) {
 // run after the switch; the UART is non-user too, so a program's only way to a
 // byte of output is the `write` syscall. The program's own pages are the only
 // ones with `PTE_U` set.
-fun build_space(code: usize, stack: usize).R: usize {
+fun build_space(code: usize, stack: usize).return: usize {
     val root: usize = vm.alloc_frame()
     if root == 0 {
         return 0
@@ -79,7 +79,7 @@ fun build_space(code: usize, stack: usize).R: usize {
 // Copy one user section into a fresh, zeroed frame: the program's code page.
 // The section holds the code and its string data together and every reference
 // inside is pc-relative, so the copy is the whole relocation.
-fun load_program(start: usize, end: usize).R: usize {
+fun load_program(start: usize, end: usize).return: usize {
     if end < start {
         return 0
     }

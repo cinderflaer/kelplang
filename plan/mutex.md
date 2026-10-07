@@ -7,9 +7,9 @@ the mutex the last line of its B-5 entry left open ("`Mutex` itself is what rema
 ## The surface
 
 ```
-fun Mutex.new(value: move T).R: Mutex<T>
-fun Mutex<T>.lock(block: scoped fun(mut T).R: R).R: R
-fun Mutex<T>.into_inner().R: T
+fun Mutex.new(value: move T).return: Mutex<T>
+fun Mutex<T>.lock(block: scoped fun(mut T).return: R).return: R
+fun Mutex<T>.into_inner().return: T
 ```
 
 `Mutex<T>` is a compiler builtin generic in the shape `Atomic<T>`/`Thread<T>` have: one
@@ -18,14 +18,14 @@ monomorphized type per element, not `Copy`, with a drop. `T` is any owned, borro
 function value and a borrow are refused by name.
 
 **The value is reached only through a scoped block.** `m.lock { v -> ... }` passes `v: mut T` to a
-`scoped fun(mut T).R: R`, so the mutable borrow is the existing non-escaping one: it cannot be
+`scoped fun(mut T).return: R`, so the mutable borrow is the existing non-escaping one: it cannot be
 stored in a `datac`, returned, put in a container, or captured by an ordinary closure, because
 those are all ordinary type mismatches (`plan/scoped-blocks.md`). The block's tail is the call's
 value. `into_inner` is the only other way out and it consumes the whole mutex.
 
 **The block's return type is inferred from the block.** `R` is not known before the block is
 checked (`m.lock { v -> *v }` has no written type), so the literal is checked with the
-`infer_scoped_ret` flag: its parameter types come from the expected `scoped fun(mut T).R: R`, and
+`infer_scoped_ret` flag: its parameter types come from the expected `scoped fun(mut T).return: R`, and
 its return is the body's tail type. When the call site names a type (`return m.lock { v -> ... }`
 in a function returning `Result<_, _>`), that type is used instead, which is what lets a `?`
 inside the block propagate the block's declared return.

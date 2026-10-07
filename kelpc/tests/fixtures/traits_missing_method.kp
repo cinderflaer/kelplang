@@ -1,13 +1,13 @@
 // A trait's declared method that the impl does not implement (A-12 slice 2).
 trait Shape {
-    fun Self.area().R: f64
-    fun Self.name().R: str
+    fun Self.area().return: f64
+    fun Self.name().return: str
 }
 
 datac Circle(val r: f64)
 
 impl Shape for Circle {
-    fun Self.area().R: f64 = r * r
+    fun Self.area().return: f64 = r * r
 }
 
 fun main() { }

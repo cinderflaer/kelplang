@@ -3,7 +3,7 @@
 // the first reference parameter, and this one would dangle when the frame pops.
 datac Node(val value: i32, val next: Box<Node>)
 
-fun pick(start: &Node).R: &Node {
+fun pick(start: &Node).return: &Node {
     var local = Node(value = 1, next = Box.of(Node(value = 2, next = Box.empty())))
     var cur = &local
     cur = cur.next.get()

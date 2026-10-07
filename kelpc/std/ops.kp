@@ -13,32 +13,32 @@
    none, and no operator is derived: a type that wants one writes the impl. */
 
 pub trait Add {
-    fun Self.add(rhs: &Self).R: Self
+    fun Self.add(rhs: &Self).return: Self
 }
 
 pub trait Sub {
-    fun Self.sub(rhs: &Self).R: Self
+    fun Self.sub(rhs: &Self).return: Self
 }
 
 pub trait Mul {
-    fun Self.mul(rhs: &Self).R: Self
+    fun Self.mul(rhs: &Self).return: Self
 }
 
 pub trait Div {
-    fun Self.div(rhs: &Self).R: Self
+    fun Self.div(rhs: &Self).return: Self
 }
 
 pub trait Rem {
-    fun Self.rem(rhs: &Self).R: Self
+    fun Self.rem(rhs: &Self).return: Self
 }
 
 pub trait Neg {
-    fun Self.neg().R: Self
+    fun Self.neg().return: Self
 }
 
 // The order trait: `cmp` returns the sign of the order (negative, zero,
 // positive), like `memcmp`. It supplies `<`, `<=`, `>` and `>=` and not
 // equality: `==`/`!=` come from a declared `eq` (`plan/syntax.md` 5).
 pub trait Ord {
-    fun Self.cmp(other: &Self).R: i32
+    fun Self.cmp(other: &Self).return: i32
 }

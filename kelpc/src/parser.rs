@@ -10,6 +10,8 @@ pub struct Parser {
     /// How many `for (a, b) in ...` heads have been desugared, so each one's
     /// hidden element binding has a name of its own (`FOR_PATTERN_PREFIX`).
     for_patterns: usize,
+    /// The span of every `.return:` return marker read so far (outdated).
+    outdated_returns: Vec<Span>,
     /// How many tuple `when`s and variant levels have been rewritten, so each
     /// hidden name is its own (`WHEN_TUPLE_PREFIX`).
     when_temps: usize,
@@ -169,6 +171,7 @@ impl Parser {
             pos: 0,
             if_lets: 0,
             for_patterns: 0,
+            outdated_returns: Vec::new(),
             when_temps: 0,
             no_trailing_block: false,
             depth: 0,
@@ -545,7 +548,27 @@ impl Parser {
             traits,
             trait_impls,
             functions,
+            outdated_returns: std::mem::take(&mut self.outdated_returns),
         })
+    }
+
+    /// The `return` of `.return: T` after a parameter list, or the outdated
+    /// `R` it replaces (`deprecated::RETURN_R`). The `R` spelling still
+    /// compiles and its span is kept, so the resolver can report it.
+    fn expect_return_marker(&mut self) -> PResult<()> {
+        if self.check(&TokenKind::Return) {
+            self.advance();
+            return Ok(());
+        }
+        let (marker, mspan) = self.expect_ident()?;
+        if marker != "R" {
+            return Err(ParseError {
+                message: format!("expected 'return' after '.', found '{marker}'"),
+                span: mspan,
+            });
+        }
+        self.outdated_returns.push(mspan);
+        Ok(())
     }
 
     /// The `percpu` marker before a top-level `static` (kernel stage 8). Like
@@ -871,7 +894,7 @@ impl Parser {
         })
     }
 
-    /// `trait Name { fun Self.m(...).R: T ... }` (A-12 slice 2). The body is
+    /// `trait Name { fun Self.m(...).return: T ... }` (A-12 slice 2). The body is
     /// methods only: an associated item is refused here, where the reason can
     /// name the follow-up. A method with a body is a default (A-12 slice 3).
     fn parse_trait_decl(&mut self, is_pub: bool) -> PResult<TraitDecl> {
@@ -1836,7 +1859,7 @@ impl Parser {
                     })
                 }
                 // A receiverless trait method is a **static** method (A-12
-                // slice 6): `fun from(value: T).R: Self`. It may not take type
+                // slice 6): `fun from(value: T).return: Self`. It may not take type
                 // parameters of its own (a generic method stays refused), which
                 // keeps it exactly as object-unsafe-free as a receiver method.
                 None => {
@@ -1900,18 +1923,12 @@ impl Parser {
 
         let return_type = if self.check(&TokenKind::Dot) {
             self.advance();
-            let (marker, mspan) = self.expect_ident()?;
-            if marker != "R" {
-                return Err(ParseError {
-                    message: format!("expected 'R' after '.', found '{marker}'"),
-                    span: mspan,
-                });
-            }
+            self.expect_return_marker()?;
             self.expect(TokenKind::Colon, "':'")?;
             let ty = self.parse_type()?;
             if let Some(span) = impl_trait_anywhere(&ty) {
                 return Err(ParseError {
-                    message: "'impl Trait' is not allowed in return position: write a named type parameter and bound it ('fun f<T: Trait>(...).R: T') when the caller needs a concrete type, or return the owning value ('Box<dyn Trait>')".to_string(),
+                    message: "'impl Trait' is not allowed in return position: write a named type parameter and bound it ('fun f<T: Trait>(...).return: T') when the caller needs a concrete type, or return the owning value ('Box<dyn Trait>')".to_string(),
                     span,
                 });
             }
@@ -1937,7 +1954,7 @@ impl Parser {
                 let eq_span = self.advance().span;
                 if return_type.is_none() {
                     return Err(ParseError {
-                        message: "expression-bodied function requires a '.R: T' return type"
+                        message: "expression-bodied function requires a '.return: T' return type"
                             .to_string(),
                         span: eq_span,
                     });
@@ -1964,7 +1981,7 @@ impl Parser {
             let eq_span = self.advance().span;
             if return_type.is_none() {
                 return Err(ParseError {
-                    message: "expression-bodied function requires a '.R: T' return type"
+                    message: "expression-bodied function requires a '.return: T' return type"
                         .to_string(),
                     span: eq_span,
                 });
@@ -2166,10 +2183,10 @@ impl Parser {
                 span,
             });
         }
-        // A function type (A-4): `fun(i32, String).R: bool`. `fun` is a
+        // A function type (A-4): `fun(i32, String).return: bool`. `fun` is a
         // keyword, so this can never be an ordinary type name. A closure type
         // (A-4 phase E) is the same shape under the `closure` keyword:
-        // `closure(i32).R: i32` is a function value that owns an environment.
+        // `closure(i32).return: i32` is a function value that owns an environment.
         // A fixed-size array type (A-18): `[T; N]`. Its length is a
         // compile-time constant expression (A-19), kept as an expression here
         // and folded by `infer.rs` when the type is resolved. So
@@ -2253,7 +2270,7 @@ impl Parser {
             let start = self.advance().span;
             return self.parse_fn_type(start, amp_start, "fun", false);
         }
-        // `scoped fun(T).R: U` — a *contextual* modifier. `scoped` is read as
+        // `scoped fun(T).return: U` — a *contextual* modifier. `scoped` is read as
         // one only when the next token is `fun`, so an ordinary type or
         // binding named `scoped` is untouched, and the modifier never has a
         // keyword that could break an existing program.
@@ -2388,10 +2405,10 @@ impl Parser {
         Ok((params, variadic))
     }
 
-    /// `fun(x: i32).R: i32 = x * 2` in expression position — an anonymous
+    /// `fun(x: i32).return: i32 = x * 2` in expression position — an anonymous
     /// function (A-4). A body is required (there is no `extern` spelling for
     /// a literal), and everything else about the header is a declaration's:
-    /// the same parameter list, the same optional `.R: T`.
+    /// the same parameter list, the same optional `.return: T`.
     fn parse_fn_literal(&mut self) -> PResult<Expr> {
         let start = self.expect(TokenKind::Fun, "'fun'")?.span;
         let (params, variadic) = self.parse_params()?;
@@ -2404,13 +2421,7 @@ impl Parser {
         }
         let return_type = if self.check(&TokenKind::Dot) {
             self.advance();
-            let (marker, mspan) = self.expect_ident()?;
-            if marker != "R" {
-                return Err(ParseError {
-                    message: format!("expected 'R' after '.', found '{marker}'"),
-                    span: mspan,
-                });
-            }
+            self.expect_return_marker()?;
             self.expect(TokenKind::Colon, "':'")?;
             Some(self.parse_type()?)
         } else {
@@ -2464,7 +2475,7 @@ impl Parser {
         Ok(mode)
     }
 
-    /// The rest of `fun(i32, String).R: bool`, with `fun` already consumed.
+    /// The rest of `fun(i32, String).return: bool`, with `fun` already consumed.
     /// A parameter of a function type takes the same `mut`/`move` qualifiers
     /// a declaration's parameter takes, because the two have to agree: a
     /// written `fun(String)` is a function whose parameter is a borrow, and
@@ -2493,13 +2504,7 @@ impl Parser {
         let mut span = start.to(close.span);
         let ret = if self.check(&TokenKind::Dot) {
             self.advance();
-            let (marker, mspan) = self.expect_ident()?;
-            if marker != "R" {
-                return Err(ParseError {
-                    message: format!("expected 'R' after '.', found '{marker}'"),
-                    span: mspan,
-                });
-            }
+            self.expect_return_marker()?;
             self.expect(TokenKind::Colon, "':'")?;
             let ty = self.parse_type()?;
             span = span.to(ty.span);
@@ -4304,7 +4309,7 @@ mod tests {
     #[test]
     fn parses_a_trait_an_impl_and_bounds() {
         let p = parse(
-            "trait Shape {\n    fun Self.area().R: f64\n    fun mut Self.scale(f: f64)\n}\ndatac C(val r: f64)\nimpl Shape for C {\n    fun Self.area().R: f64 = r\n    fun mut Self.scale(f: f64) { r = f }\n}\nfun f<T: Shape + Other>(x: &T).R: f64 = x.area()\nfun main() {}",
+            "trait Shape {\n    fun Self.area().return: f64\n    fun mut Self.scale(f: f64)\n}\ndatac C(val r: f64)\nimpl Shape for C {\n    fun Self.area().return: f64 = r\n    fun mut Self.scale(f: f64) { r = f }\n}\nfun f<T: Shape + Other>(x: &T).return: f64 = x.area()\nfun main() {}",
         );
         assert_eq!(p.traits.len(), 1);
         let t = &p.traits[0];
@@ -4354,7 +4359,7 @@ mod tests {
     #[test]
     fn parses_default_methods_supertraits_and_builtin_impls() {
         let p = parse(
-            "trait Shape {\n    fun Self.area().R: f64\n}\ntrait Named: Shape + Other {\n    fun Self.name().R: str\n    fun Self.loud().R: str { return self.name() }\n}\nimpl Named for i32 {\n    fun Self.name().R: str = \"n\"\n}\nfun main() {}",
+            "trait Shape {\n    fun Self.area().return: f64\n}\ntrait Named: Shape + Other {\n    fun Self.name().return: str\n    fun Self.loud().return: str { return self.name() }\n}\nimpl Named for i32 {\n    fun Self.name().return: str = \"n\"\n}\nfun main() {}",
         );
         assert_eq!(p.traits.len(), 2);
         let named = &p.traits[1];
@@ -4381,7 +4386,7 @@ mod tests {
     #[test]
     fn an_associated_type_is_declared_in_a_trait_and_bound_in_an_impl() {
         let p = parse(
-            "trait Src {\n    type Out: Named\n    fun Self.produce().R: Self::Out\n}\n\nimpl Src for i32 {\n    type Out = i32\n    fun Self.produce().R: i32 = self\n}\nfun main() {}",
+            "trait Src {\n    type Out: Named\n    fun Self.produce().return: Self::Out\n}\n\nimpl Src for i32 {\n    type Out = i32\n    fun Self.produce().return: i32 = self\n}\nfun main() {}",
         );
         let src = &p.traits[0];
         assert_eq!(src.assoc_types.len(), 1);
@@ -4410,7 +4415,7 @@ mod tests {
 
     #[test]
     fn a_bound_on_a_receivers_type_parameter_does_not_parse() {
-        let err = parse_err("datac Pair<A, B>(val first: A, val second: B)\nfun Pair<A: Shape, B>.first().R: A = first\nfun main() {}");
+        let err = parse_err("datac Pair<A, B>(val first: A, val second: B)\nfun Pair<A: Shape, B>.first().return: A = first\nfun main() {}");
         assert!(err.message.contains("bound cannot be written"), "{}", err.message);
     }
 
@@ -4423,28 +4428,28 @@ mod tests {
     #[test]
     fn an_impl_static_method_parses_and_a_wrong_receiver_does_not() {
         // A receiverless impl method is a static member (A-12 slice 6).
-        let p = parse("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun area().R: f64 = r }\nfun main() {}");
+        let p = parse("trait Shape { fun Self.area().return: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun area().return: f64 = r }\nfun main() {}");
         assert!(
             p.functions
                 .iter()
                 .any(|f| f.name == "area" && f.receiver.is_none() && f.trait_impl.is_some()),
             "a static impl method should parse"
         );
-        let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun C.area().R: f64 = r }\nfun main() {}");
+        let err = parse_err("trait Shape { fun Self.area().return: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun C.area().return: f64 = r }\nfun main() {}");
         assert!(err.message.contains("receiver is written 'Self'"), "{}", err.message);
-        let err = parse_err("trait Shape { fun Self.area().R: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun Self<A>.area().R: f64 = r }\nfun main() {}");
+        let err = parse_err("trait Shape { fun Self.area().return: f64 }\ndatac C(val r: f64)\nimpl Shape for C { fun Self<A>.area().return: f64 = r }\nfun main() {}");
         assert!(err.message.contains("cannot take type parameters"), "{}", err.message);
     }
 
     #[test]
     fn self_outside_a_trait_or_an_impl_does_not_parse() {
-        let err = parse_err("fun Self.area().R: f64 = 0.0\nfun main() {}");
+        let err = parse_err("fun Self.area().return: f64 = 0.0\nfun main() {}");
         assert!(err.message.contains("inside a 'trait' or an 'impl'"), "{}", err.message);
     }
 
     #[test]
     fn an_impl_for_a_bare_generic_does_not_parse() {
-        let err = parse_err("trait Shape { fun Self.area().R: f64 }\nimpl Shape for List<i32> { fun Self.area().R: f64 = 0.0 }\nfun main() {}");
+        let err = parse_err("trait Shape { fun Self.area().return: f64 }\nimpl Shape for List<i32> { fun Self.area().return: f64 = 0.0 }\nfun main() {}");
         assert!(err.message.contains("generic instantiation"), "{}", err.message);
     }
 
@@ -4454,18 +4459,18 @@ mod tests {
         // type checker (A-12 slice 7); the checker refuses the bare spelling
         // wherever it is not a `Box` argument, and `tests/fixtures/traits_dyn.kp`
         // pins that message.
-        let p = parse("trait Shape { fun Self.area().R: f64 }\nfun take(s: dyn Shape) {}\nfun main() {}");
+        let p = parse("trait Shape { fun Self.area().return: f64 }\nfun take(s: dyn Shape) {}\nfun main() {}");
         let ty = &p.functions[0].params[0].ty;
         assert_eq!(ty.dyn_trait.as_deref(), Some("Shape"));
         assert!(!ty.amp);
         // `Box<dyn A + B>` is refused where the `+` is: a trait object names one
         // trait.
-        let err = parse_err("trait A { fun Self.a().R: i32 }\ntrait B { fun Self.b().R: i32 }\nfun take(s: Box<dyn A + B>) {}\nfun main() {}");
+        let err = parse_err("trait A { fun Self.a().return: i32 }\ntrait B { fun Self.b().return: i32 }\nfun take(s: Box<dyn A + B>) {}\nfun main() {}");
         assert!(err.message.contains("names one trait"), "{}", err.message);
         // A-20: `impl Shape` now parses as a *parameter* type and is
         // desugared into a fresh bounded parameter; a stored position (`let`,
         // a field, a return) is refused by the type checker.
-        let p = parse("trait Shape { fun Self.area().R: f64 }\nfun take(s: impl Shape) {}\nfun main() {}");
+        let p = parse("trait Shape { fun Self.area().return: f64 }\nfun take(s: impl Shape) {}\nfun main() {}");
         assert_eq!(p.functions[0].params[0].ty.impl_trait, None);
         assert_eq!(p.functions[0].type_params.len(), 1);
         assert_eq!(p.functions[0].type_param_bounds[0][0].name, "Shape");
@@ -4504,7 +4509,7 @@ mod tests {
         let p = parse(
             "section(\".rodata.boot\") const K: [u8; 2] = [1, 2]\n\
              section(\".text.boot\") fun boot() {}\n\
-             pub section(\".x\") fun h().R: i32 = 1\n",
+             pub section(\".x\") fun h().return: i32 = 1\n",
         );
         assert_eq!(p.consts[0].section.as_deref(), Some(".rodata.boot"));
         assert_eq!(p.functions[0].section.as_deref(), Some(".text.boot"));
@@ -4564,7 +4569,7 @@ mod tests {
 
     #[test]
     fn a_section_clause_on_an_extern_fun_does_not_parse() {
-        let err = parse_err("section(\".x\") extern fun f(n: i32).R: i32");
+        let err = parse_err("section(\".x\") extern fun f(n: i32).return: i32");
         assert!(
             err.message.contains("no code of its own to place"),
             "{}",
@@ -4616,7 +4621,7 @@ mod tests {
 
     #[test]
     fn an_align_clause_on_an_extern_fun_does_not_parse() {
-        let err = parse_err("align(4) extern fun f(n: i32).R: i32");
+        let err = parse_err("align(4) extern fun f(n: i32).return: i32");
         assert!(
             err.message.contains("no code of its own to align"),
             "{}",
@@ -4638,14 +4643,14 @@ mod tests {
     fn a_tuple_type_is_its_element_list() {
         // MISSING-z2bB9: `(A, B)` is a type, and `(A)` is not a tuple but the
         // parenthesized type `A` (`plan/syntax.md` 3).
-        let p = parse("fun f(p: (i32, String)).R: (i32, i32) = (1, 2)");
+        let p = parse("fun f(p: (i32, String)).return: (i32, i32) = (1, 2)");
         let param = &p.functions[0].params[0].ty;
         assert_eq!(param.display(), "(i32, String)");
         assert_eq!(param.tuple.as_ref().unwrap().len(), 2);
         let ret = p.functions[0].return_type.as_ref().unwrap();
         assert_eq!(ret.display(), "(i32, i32)");
 
-        let paren = parse("fun f().R: (i32) = 1");
+        let paren = parse("fun f().return: (i32) = 1");
         let ret = paren.functions[0].return_type.as_ref().unwrap();
         assert!(ret.tuple.is_none(), "(T) is the parenthesized type T");
         assert_eq!(ret.display(), "i32");
@@ -4667,7 +4672,7 @@ mod tests {
     fn a_tuple_literal_needs_two_elements() {
         // `(e)` is the parenthesized expression it always was, and `()` has no
         // value at all.
-        let p = parse("fun f().R: i32 {\n    val a = (1)\n    return a\n}");
+        let p = parse("fun f().return: i32 {\n    val a = (1)\n    return a\n}");
         match &p.functions[0].body {
             FunctionBody::Block(b) => match &b.stmts[0] {
                 Stmt::Let { init, .. } => {
@@ -4751,7 +4756,7 @@ mod tests {
 
     #[test]
     fn parses_params_and_return_clause() {
-        let p = parse("fun add(a: i32, b: i32).R: i32 {\n    return a + b\n}");
+        let p = parse("fun add(a: i32, b: i32).return: i32 {\n    return a + b\n}");
         let f = &p.functions[0];
         assert_eq!(f.params.len(), 2);
         assert_eq!(f.params[0].name, "a");
@@ -4805,21 +4810,21 @@ mod tests {
 
     #[test]
     fn elif_is_the_same_link_as_else_if() {
-        let spelled_out = "fun f(n: i32).R: i32 {\n    if n > 2 { return 1 } else if n > 1 { return 2 } else { return 3 }\n}";
-        let spelled_elif = "fun f(n: i32).R: i32 {\n    if n > 2 { return 1 } elif n > 1 { return 2 } else { return 3 }\n}";
+        let spelled_out = "fun f(n: i32).return: i32 {\n    if n > 2 { return 1 } else if n > 1 { return 2 } else { return 3 }\n}";
+        let spelled_elif = "fun f(n: i32).return: i32 {\n    if n > 2 { return 1 } elif n > 1 { return 2 } else { return 3 }\n}";
         assert_eq!(chain(spelled_out), 3);
         assert_eq!(chain(spelled_elif), chain(spelled_out));
     }
 
     #[test]
     fn an_if_chain_may_mix_both_spellings() {
-        let mixed = "fun f(n: i32).R: i32 {\n    if n > 3 { return 1 } else if n > 2 { return 2 } elif n > 1 { return 3 } else { return 4 }\n}";
+        let mixed = "fun f(n: i32).return: i32 {\n    if n > 3 { return 1 } else if n > 2 { return 2 } elif n > 1 { return 3 } else { return 4 }\n}";
         assert_eq!(chain(mixed), 4);
     }
 
     #[test]
     fn elif_needs_no_else_after_it() {
-        let src = "fun f(n: i32).R: i32 {\n    if n > 1 { return 1 } elif n > 0 { return 2 }\n}";
+        let src = "fun f(n: i32).return: i32 {\n    if n > 1 { return 1 } elif n > 0 { return 2 }\n}";
         assert_eq!(chain(src), 2);
     }
 
@@ -4828,11 +4833,11 @@ mod tests {
         // `elif let PAT = e { ... }` is `else if let PAT = e { ... }` in the
         // preferred spelling, so it goes through the same desugaring: a block
         // whose `when` carries the link.
-        let after_a_pattern = "enum Answer {\n    Yes(val n: i32)\n    No\n}\n\nfun f(m: Answer).R: i32 {\n    if let Yes(n) = m {\n        return n\n    } elif let No = m {\n        return 0\n    }\n    return 1\n}";
+        let after_a_pattern = "enum Answer {\n    Yes(val n: i32)\n    No\n}\n\nfun f(m: Answer).return: i32 {\n    if let Yes(n) = m {\n        return n\n    } elif let No = m {\n        return 0\n    }\n    return 1\n}";
         assert_eq!(parse(after_a_pattern).functions.len(), 1);
         // And a chain may leave the pattern form for a boolean one, either
         // way round.
-        let leaving_the_pattern = "enum Answer {\n    Yes(val n: i32)\n    No\n}\n\nfun f(m: Answer).R: i32 {\n    if let Yes(n) = m {\n        return n\n    } elif n > 1 {\n        return 2\n    }\n    return 1\n}";
+        let leaving_the_pattern = "enum Answer {\n    Yes(val n: i32)\n    No\n}\n\nfun f(m: Answer).return: i32 {\n    if let Yes(n) = m {\n        return n\n    } elif n > 1 {\n        return 2\n    }\n    return 1\n}";
         assert_eq!(parse(leaving_the_pattern).functions.len(), 1);
     }
 
@@ -4848,7 +4853,7 @@ mod tests {
 
     #[test]
     fn parses_expression_bodied_function() {
-        let p = parse("fun add(a: i32, b: i32).R: i32 = a + b");
+        let p = parse("fun add(a: i32, b: i32).return: i32 = a + b");
         match &p.functions[0].body {
             FunctionBody::Expr(e) => assert!(matches!(e, Expr::Binary { op: BinOp::Add, .. })),
             other => panic!("expected expr body, got {other:?}"),
@@ -4962,7 +4967,7 @@ mod tests {
     #[test]
     fn parses_an_enum_and_a_pattern_when() {
         let p = parse(
-            "enum Shape {\n    Circle(val r: f64)\n    Rect(val w: f64, val h: f64)\n    Empty\n}\n\ndatac Point(val x: i32)\n\nfun area(s: &Shape).R: f64 = when s {\n    Circle(r) -> r\n    Rect(w, h) -> w * h\n    Empty -> 0.0\n}",
+            "enum Shape {\n    Circle(val r: f64)\n    Rect(val w: f64, val h: f64)\n    Empty\n}\n\ndatac Point(val x: i32)\n\nfun area(s: &Shape).return: f64 = when s {\n    Circle(r) -> r\n    Rect(w, h) -> w * h\n    Empty -> 0.0\n}",
         );
         assert_eq!(p.enums.len(), 1);
         let e = &p.enums[0];
@@ -4993,7 +4998,7 @@ mod tests {
     #[test]
     fn an_else_arm_in_a_pattern_when_parses_as_a_catch_all() {
         let p = parse(
-            "enum Flag {\n    On\n    Off\n}\n\nfun f(x: &Flag).R: i32 = when x {\n    On -> 1\n    else -> 2\n}",
+            "enum Flag {\n    On\n    Off\n}\n\nfun f(x: &Flag).return: i32 = when x {\n    On -> 1\n    else -> 2\n}",
         );
         match &p.functions[0].body {
             FunctionBody::Expr(Expr::When { arms, .. }) => {
@@ -5100,7 +5105,7 @@ mod tests {
         let p = parse("enum Option<T> {\n    Some(val value: T)\n    None\n}\nfun main() {}");
         assert_eq!(p.enums[0].type_params, vec!["T".to_string()]);
 
-        let p = parse("fun f(p: Pair<i32, String>).R: Option<i32> = 1\nfun main() {}");
+        let p = parse("fun f(p: Pair<i32, String>).return: Option<i32> = 1\nfun main() {}");
         let ty = &p.functions[0].params[0].ty;
         assert_eq!(ty.name, "Pair");
         assert_eq!(ty.args.len(), 2);
@@ -5119,11 +5124,11 @@ mod tests {
     fn parses_type_parameters_on_a_function() {
         // A-2: a free function declares its own parameters after its name, and
         // a receiver method's come from the receiver's argument list.
-        let p = parse("fun first<T>(xs: List<T>).R: T = xs.get(i = 0)\nfun main() {}");
+        let p = parse("fun first<T>(xs: List<T>).return: T = xs.get(i = 0)\nfun main() {}");
         assert_eq!(p.functions[0].type_params, vec!["T".to_string()]);
         assert!(p.functions[0].receiver.is_none());
 
-        let p = parse("fun Pair<A, B>.first().R: A = a\nfun main() {}");
+        let p = parse("fun Pair<A, B>.first().return: A = a\nfun main() {}");
         let f = &p.functions[0];
         assert!(f.type_params.is_empty());
         let r = f.receiver.as_ref().expect("a receiver");
@@ -5144,17 +5149,17 @@ mod tests {
         assert_eq!(p.datacs[0].const_params[0].name, "N");
         assert_eq!(p.datacs[0].const_params[0].ty, "usize");
 
-        let p = parse("fun f<const N: usize, T>().R: i32 = 0\nfun main() {}");
+        let p = parse("fun f<const N: usize, T>().return: i32 = 0\nfun main() {}");
         assert_eq!(p.functions[0].type_params, vec!["N".to_string(), "T".to_string()]);
         assert_eq!(p.functions[0].const_params.len(), 1);
         assert_eq!(p.functions[0].const_params[0].name, "N");
 
-        let p = parse("fun f(a: Buf<16>).R: i32 = 0\nfun main() {}");
+        let p = parse("fun f(a: Buf<16>).return: i32 = 0\nfun main() {}");
         let arg = &p.functions[0].params[0].ty.args[0];
         assert!(arg.const_expr.is_some());
         assert!(arg.name.is_empty());
 
-        let p = parse("fun f(a: Buf<SIZE * 2>).R: i32 = 0\nfun main() {}");
+        let p = parse("fun f(a: Buf<SIZE * 2>).return: i32 = 0\nfun main() {}");
         let arg = &p.functions[0].params[0].ty.args[0];
         assert!(matches!(
             arg.const_expr.as_deref(),
@@ -5163,7 +5168,7 @@ mod tests {
 
         // A bare name (`Buf<SIZE>`) parses as a type argument; the resolver
         // reads it as the const where the parameter is a `const`.
-        let p = parse("fun f(a: Buf<SIZE>).R: i32 = 0\nfun main() {}");
+        let p = parse("fun f(a: Buf<SIZE>).return: i32 = 0\nfun main() {}");
         assert_eq!(p.functions[0].params[0].ty.args[0].name, "SIZE");
     }
 
@@ -5171,7 +5176,7 @@ mod tests {
     fn parses_impl_trait_in_argument_position_as_a_bounded_parameter() {
         // A-20: each `impl Trait` occurrence becomes its own fresh parameter,
         // and the trait is its bound.
-        let p = parse("fun f(x: impl Shape, y: &impl Shape).R: i32 = 0\nfun main() {}");
+        let p = parse("fun f(x: impl Shape, y: &impl Shape).return: i32 = 0\nfun main() {}");
         let f = &p.functions[0];
         assert_eq!(f.type_params.len(), 2);
         assert_ne!(f.type_params[0], f.type_params[1]);
@@ -5185,7 +5190,7 @@ mod tests {
     #[test]
     fn impl_trait_in_a_return_position_is_refused_at_parse_time() {
         parse_err(
-            "trait Shape { fun Self.area().R: i32 }\nfun f().R: impl Shape = 1\nfun main() {}",
+            "trait Shape { fun Self.area().return: i32 }\nfun f().return: impl Shape = 1\nfun main() {}",
         );
     }
 
@@ -5285,7 +5290,7 @@ mod tests {
     #[test]
     fn parses_when_and_desugars_to_nested_if() {
         let p = parse(
-            "fun classify(n: i32).R: i32 = when {\n    n > 0 -> 1\n    n < 0 -> -1\n    else -> 0\n}",
+            "fun classify(n: i32).return: i32 = when {\n    n > 0 -> 1\n    n < 0 -> -1\n    else -> 0\n}",
         );
         match &p.functions[0].body {
             FunctionBody::Expr(Expr::If { then_block, else_block, .. }) => {
@@ -5320,14 +5325,14 @@ mod tests {
 
     #[test]
     fn accepts_ampersand_str_type() {
-        let p = parse("fun f(s: &str).R: &str = s");
+        let p = parse("fun f(s: &str).return: &str = s");
         assert_eq!(p.functions[0].params[0].ty.name, "str");
         assert_eq!(p.functions[0].return_type.as_ref().unwrap().name, "str");
     }
 
     #[test]
     fn parses_a_move_parameter() {
-        let p = parse("fun consume(s: move String).R: usize = s.len()");
+        let p = parse("fun consume(s: move String).return: usize = s.len()");
         let param = &p.functions[0].params[0];
         assert!(param.mode.moves());
         assert!(!param.mode.mutable());
@@ -5336,7 +5341,7 @@ mod tests {
 
     #[test]
     fn parses_a_function_type_in_parameter_and_return_position() {
-        let p = parse("fun apply(f: fun(i32).R: i32, x: i32).R: fun(move String) = f");
+        let p = parse("fun apply(f: fun(i32).return: i32, x: i32).return: fun(move String) = f");
         let f = &p.functions[0];
         let param = &f.params[0];
         assert!(param.ty.is_fn());
@@ -5346,7 +5351,7 @@ mod tests {
         assert_eq!(params[0].ty.name, "i32");
         assert_eq!(param.ty.fn_ret.as_ref().unwrap().name, "i32");
 
-        // The return type is a function type with no `.R`, so it returns
+        // The return type is a function type with no `.return`, so it returns
         // `Unit` — and its parameter is a `move`, which a function type
         // spells the same way a declaration does.
         let ret = f.return_type.as_ref().unwrap();
@@ -5359,13 +5364,13 @@ mod tests {
     #[test]
     fn parses_a_closure_type_in_parameter_and_return_position() {
         // A closure type is a function type under the `closure` keyword — the
-        // same parameter list, the same optional `.R:` (A-4 phase E).
-        let p = parse("fun use(f: closure(i32).R: i32, g: move closure()) {}");
+        // same parameter list, the same optional `.return:` (A-4 phase E).
+        let p = parse("fun use(f: closure(i32).return: i32, g: move closure()) {}");
         let f = &p.functions[0];
 
         let f_param = &f.params[0];
         assert!(f_param.ty.is_closure());
-        assert_eq!(f_param.ty.display(), "closure(i32).R: i32");
+        assert_eq!(f_param.ty.display(), "closure(i32).return: i32");
         assert!(!f_param.mode.moves());
 
         // A bare closure parameter borrows the environment (an owned type's
@@ -5378,7 +5383,7 @@ mod tests {
 
     #[test]
     fn parses_a_fun_literal_in_expression_position() {
-        let p = parse("fun main() {\n    val f = fun(x: move String).R: usize = x.len()\n}");
+        let p = parse("fun main() {\n    val f = fun(x: move String).return: usize = x.len()\n}");
         let stmts = match &p.functions[0].body {
             FunctionBody::Block(b) => &b.stmts,
             _ => panic!("expected block body"),
@@ -5398,7 +5403,7 @@ mod tests {
 
     #[test]
     fn a_fun_literal_needs_a_body() {
-        parse_err("fun main() {\n    val f = fun(x: i32).R: i32\n}");
+        parse_err("fun main() {\n    val f = fun(x: i32).return: i32\n}");
     }
 
     #[test]
@@ -5480,7 +5485,7 @@ mod tests {
 
     #[test]
     fn parses_module_qualified_type_names() {
-        let p = parse("fun f(c: circle.Circle).R: circle.Circle = c");
+        let p = parse("fun f(c: circle.Circle).return: circle.Circle = c");
         assert_eq!(p.functions[0].params[0].ty.name, "circle.Circle");
         assert_eq!(p.functions[0].return_type.as_ref().unwrap().name, "circle.Circle");
     }
@@ -5609,7 +5614,7 @@ mod tests {
     #[test]
     fn pub_is_read_on_the_five_item_forms_that_can_carry_it() {
         let p = parse(
-            "pub const LIMIT: i32 = 1\npub datac Point(val x: i32)\npub enum Shape { Empty }\npub fun f().R: i32 = 1\npub extern fun g().R: i32",
+            "pub const LIMIT: i32 = 1\npub datac Point(val x: i32)\npub enum Shape { Empty }\npub fun f().return: i32 = 1\npub extern fun g().return: i32",
         );
         assert!(p.consts[0].is_pub);
         assert!(p.datacs[0].is_pub);
@@ -5645,7 +5650,7 @@ mod tests {
 
     #[test]
     fn an_item_without_pub_is_private() {
-        let p = parse("fun f().R: i32 = 1");
+        let p = parse("fun f().return: i32 = 1");
         assert!(!p.functions[0].is_pub);
     }
 
@@ -5657,7 +5662,7 @@ mod tests {
 
     #[test]
     fn pub_on_a_receiver_method_names_the_type() {
-        let e = parse_err("pub fun Circle.area().R: f64 = 1.0");
+        let e = parse_err("pub fun Circle.area().return: f64 = 1.0");
         assert!(
             e.message.contains("mark the type 'pub' instead"),
             "got: {}",
@@ -5802,7 +5807,7 @@ mod tests {
     #[test]
     fn a_scoped_function_parameter_type_parses_as_a_modifier() {
         parse("fun each(f: scoped fun(i32)) {}\n");
-        parse("fun each(f: scoped fun(i32).R: i32) {}\n");
+        parse("fun each(f: scoped fun(i32).return: i32) {}\n");
         // `scoped` is contextual: as an ordinary type name it is untouched.
         parse("datac scoped(val n: i32)\nfun f(x: scoped) {}\n");
     }
@@ -5864,7 +5869,7 @@ mod tests {
 
     #[test]
     fn a_naked_fun_declaration_sets_its_flag() {
-        let p = parse("naked fun f().R: i64 {\n    asm(\"ret\")\n}\nfun main() {}");
+        let p = parse("naked fun f().return: i64 {\n    asm(\"ret\")\n}\nfun main() {}");
         assert!(p.functions[0].naked);
         assert!(!p.functions[0].unsafe_);
         assert!(!p.functions[1].naked);
@@ -5872,7 +5877,7 @@ mod tests {
 
     #[test]
     fn naked_and_unsafe_can_be_written_together() {
-        let p = parse("pub unsafe naked fun f().R: i64 {\n    asm(\"ret\")\n}\nfun main() {}");
+        let p = parse("pub unsafe naked fun f().return: i64 {\n    asm(\"ret\")\n}\nfun main() {}");
         assert!(p.functions[0].naked);
         assert!(p.functions[0].unsafe_);
         assert!(p.functions[0].is_pub);

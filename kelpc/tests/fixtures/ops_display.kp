@@ -7,7 +7,7 @@ impl "std/fmt"
 datac Vec2(val x: i64, val y: i64)
 
 impl fmt.Display for Vec2 {
-    fun Self.to_text().R: String {
+    fun Self.to_text().return: String {
         var out = String.empty()
         val xs = fmt.int(x)
         val ys = fmt.int(y)
@@ -23,7 +23,7 @@ impl fmt.Display for Vec2 {
 datac Line(val a: Vec2, val b: Vec2)
 
 impl fmt.Display for Line {
-    fun Self.to_text().R: String {
+    fun Self.to_text().return: String {
         var out = String.empty()
         val at = a.to_text()
         val bt = b.to_text()

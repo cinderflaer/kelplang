@@ -1,1 +1,1 @@
-pub extern fun getpid().R: i32
+pub extern fun getpid().return: i32

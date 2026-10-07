@@ -1,4 +1,4 @@
-fun mk().R: (i32, (String, i32)) {
+fun mk().return: (i32, (String, i32)) {
     return (7, (String.from_str(s = "hi"), 9))
 }
 fun main() {

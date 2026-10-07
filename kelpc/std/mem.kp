@@ -8,9 +8,9 @@
    There is deliberately no `mem.free`: owned values are freed by the drop
    rules, so an explicit free would be a double free. */
 
-extern fun alloc_raw(n: usize).R: Bytes
+extern fun alloc_raw(n: usize).return: Bytes
 
 // An owned, zero-filled buffer of `n` bytes. This allocator's result is
 // fixed-size; the buffers that *grow* are `String`/`Bytes`, which own their
 // own storage and reserve as they append (S1).
-fun alloc(n: usize).R: Bytes = alloc_raw(n)
+fun alloc(n: usize).return: Bytes = alloc_raw(n)

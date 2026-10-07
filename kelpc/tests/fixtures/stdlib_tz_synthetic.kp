@@ -25,7 +25,7 @@ fun t(st: mut Stats, name: &str, ok: bool) {
     }
 }
 
-fun digits(n: i64).R: String = str.from_i64(n)
+fun digits(n: i64).return: String = str.from_i64(n)
 
 // One `str.eq` comparison. `value` arrives as an owned `String` so the
 // temporary is bound by the call itself: `str.eq` needs a `&str` that outlives
@@ -34,7 +34,7 @@ fun same(st: mut Stats, name: &str, value: String, expect: &str) {
     t(st, name, str.eq(value.as_str(), expect))
 }
 
-fun label(r: &tz.Resolved).R: String {
+fun label(r: &tz.Resolved).return: String {
     var out = String.empty()
     if let One(u) = r {
         out.push_str("one ")
@@ -121,7 +121,7 @@ fun push_types(out: mut Bytes) {
 // 32-bit in the first) and the footer `footer` when one is given. The first
 // header and block are the version 1 form every version 2 file carries ahead of
 // its own.
-fun build(version: u8, timecnt: i32, footer: &str, have_footer: bool).R: Bytes {
+fun build(version: u8, timecnt: i32, footer: &str, have_footer: bool).return: Bytes {
     var out = Bytes.empty()
     push_header(out, version, timecnt, 2, 8)
     if timecnt > 0 {

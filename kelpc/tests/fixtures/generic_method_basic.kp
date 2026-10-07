@@ -3,22 +3,22 @@
 // concrete type.
 datac Pair<A, B>(val first: A, var second: B)
 
-fun Pair<A, B>.first_of().R: A = first
-fun Pair<A, B>.sum_of().R: A = first + second
-fun Pair<A, B>.second_of().R: B = second
-fun Pair<A, B>.with_second(v: B).R: Pair<A, B> = Pair(first = first, second = v)
+fun Pair<A, B>.first_of().return: A = first
+fun Pair<A, B>.sum_of().return: A = first + second
+fun Pair<A, B>.second_of().return: B = second
+fun Pair<A, B>.with_second(v: B).return: Pair<A, B> = Pair(first = first, second = v)
 fun mut Pair<A, B>.replace_second(v: B) { second = v }
 
 // Only ever instantiated for `String` — a body is checked per instantiation,
 // so a body that makes sense for one element type is fine as long as that is
 // the one it is used at.
-fun Pair<A, B>.first_len().R: usize = first.len()
+fun Pair<A, B>.first_len().return: usize = first.len()
 
 // A method calling a generic free function: `T` is bound at the call.
-fun describe<T>(x: T).R: i32 = 1
-fun Pair<A, B>.tag(x: A).R: i32 = describe(x = x) + 1
+fun describe<T>(x: T).return: i32 = 1
+fun Pair<A, B>.tag(x: A).return: i32 = describe(x = x) + 1
 
-fun total(p: &Pair<i32, i32>).R: i32 = p.sum_of()
+fun total(p: &Pair<i32, i32>).return: i32 = p.sum_of()
 
 fun main() {
     val p = Pair(first = 1, second = 2)

@@ -3312,11 +3312,11 @@ fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
          a different path than the check admitted"
     );
     assert_eq!(run.status.code(), Some(1), "the control must be denied");
-    // `util.kp:23:31` is `fs.read_text("/etc/passwd")` in the control, as the
+    // `util.kp:23:36` is `fs.read_text("/etc/passwd")` in the control, as the
     // compiler was invoked with the file. (`pub` on the control's own line is
     // what moved the column from 27; A-13.)
     let expected = format!(
-        "{}:23:31: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+        "{}:23:36: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
          granted:\n    {}/kelp_caps_double_eval/**\n",
         caps_project("caps_double_eval").join("util.kp").display(),
         scratch_root().display()
@@ -3439,7 +3439,7 @@ fn a_primitive_checks_its_resource_argument_once() {
     );
     assert_eq!(run.status.code(), Some(1), "the control must be denied");
     let expected = format!(
-        "{}:20:30: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+        "{}:20:35: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
          granted:\n    {}/kelp_caps_raw_double_eval/**\n",
         caps_project("caps_raw_double_eval").join("util.kp").display(),
         scratch_root().display()
@@ -10310,7 +10310,7 @@ fn move_parameter_misuse_is_rejected() {
 
 // ---------------------------------------------------------------------------
 // A-4 phase B: function values — a declared `fun` as a value of type
-// `fun(T).R: U`, called through a local, a field, a passdown or a parameter.
+// `fun(T).return: U`, called through a local, a field, a passdown or a parameter.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -10329,7 +10329,7 @@ fn a_function_value_with_the_wrong_shape_is_rejected() {
     // String)` callback cannot be handed a borrow.
     assert_rejected_with(
         "tests/fixtures/fn_value_mismatch.kp",
-        "expected 'fun(f64).R: f64'",
+        "expected 'fun(f64).return: f64'",
     );
     assert_rejected_with(
         "tests/fixtures/fn_value_move_arg.kp",
@@ -10378,7 +10378,7 @@ fn function_type_misuse_is_rejected() {
     );
     assert_rejected_with(
         "tests/fixtures/fn_value_print.kp",
-        "cannot pass a value of type 'fun(i32).R: i32' to 'print'",
+        "cannot pass a value of type 'fun(i32).return: i32' to 'print'",
     );
 }
 
@@ -10406,7 +10406,7 @@ fn a_fun_literal_is_a_function_value() {
     // Also in the AddressSanitizer list: the `move` literal frees what it is
     // handed. Covers a literal passed directly, a block body, a nested
     // literal, a literal in a `datac` field, a literal returned from a
-    // function, and `?` propagating against the literal's own `.R`.
+    // function, and `?` propagating against the literal's own `.return`.
     assert_compiles_and_runs(
         "tests/fixtures/fn_literal.kp",
         "42\n6\n7\n4\n31\n9\n12\ntrue\n4\n",
@@ -10466,7 +10466,7 @@ fn an_indirect_call_numbers_the_environment_after_a_mem_class_return_pointer() {
 #[test]
 fn fun_literal_misuse_is_rejected() {
     // A passdown is a hidden argument a function value cannot carry, a borrow
-    // return has no elision root, the tail is checked against `.R` like any
+    // return has no elision root, the tail is checked against `.return` like any
     // function's, and a body is required.
     assert_rejected_with(
         "tests/fixtures/fn_literal_passdown.kp",
@@ -10528,7 +10528,7 @@ fn a_combinator_needing_a_copy_payload_says_so() {
 
 // ---------------------------------------------------------------------------
 // A-4 phase E: captures — a `fun` literal that names a binding from the
-// enclosing scope becomes a closure (`closure(T).R: U`), which owns the heap
+// enclosing scope becomes a closure (`closure(T).return: U`), which owns the heap
 // environment its captures were moved into.
 // ---------------------------------------------------------------------------
 
@@ -10641,7 +10641,7 @@ fn the_closure_type_and_its_limits_are_checked() {
     );
     assert_rejected_with(
         "tests/fixtures/closure_signature_mismatch.kp",
-        "declared as 'closure(i32).R: i32'",
+        "declared as 'closure(i32).return: i32'",
     );
     assert_rejected_with(
         "tests/fixtures/closure_where_fn_expected.kp",
@@ -16466,12 +16466,12 @@ fn cache_project(tag: &str) -> PathBuf {
     .expect("write main");
     std::fs::write(
         dir.join("src/alpha.kp"),
-        "impl \"beta\"\n\npub fun greet().R: str = beta.message()\n",
+        "impl \"beta\"\n\npub fun greet().return: str = beta.message()\n",
     )
     .expect("write alpha");
     std::fs::write(
         dir.join("src/beta.kp"),
-        "pub fun message().R: str = \"hello\"\n",
+        "pub fun message().return: str = \"hello\"\n",
     )
     .expect("write beta");
     dir
@@ -16481,7 +16481,7 @@ fn cache_project(tag: &str) -> PathBuf {
 fn set_beta_message(dir: &Path, body: &str) {
     std::fs::write(
         dir.join("src/beta.kp"),
-        format!("pub fun message().R: str = {body}\n"),
+        format!("pub fun message().return: str = {body}\n"),
     )
     .expect("rewrite beta");
 }
@@ -16754,10 +16754,10 @@ fn changing_a_callee_signature_misses_the_caller_too() {
     .unwrap();
     std::fs::write(
         dir.join("src/alpha.kp"),
-        "impl \"beta\"\n\npub fun greet().R: i64 = beta.value()\n",
+        "impl \"beta\"\n\npub fun greet().return: i64 = beta.value()\n",
     )
     .unwrap();
-    std::fs::write(dir.join("src/beta.kp"), "pub fun value().R: i64 = 41\n").unwrap();
+    std::fs::write(dir.join("src/beta.kp"), "pub fun value().return: i64 = 41\n").unwrap();
     let cache = out_path("cache_signature_cache");
     let _ = std::fs::remove_dir_all(&cache);
     let first = cache_build(&dir, &out_path("cache_signature_1"), &cache, &[], &[]);
@@ -16767,10 +16767,10 @@ fn changing_a_callee_signature_misses_the_caller_too() {
     // every unit declares every program item.
     std::fs::write(
         dir.join("src/alpha.kp"),
-        "impl \"beta\"\n\npub fun greet().R: i64 = beta.value(0)\n",
+        "impl \"beta\"\n\npub fun greet().return: i64 = beta.value(0)\n",
     )
     .unwrap();
-    std::fs::write(dir.join("src/beta.kp"), "pub fun value(x: i64).R: i64 = x + 41\n").unwrap();
+    std::fs::write(dir.join("src/beta.kp"), "pub fun value(x: i64).return: i64 = x + 41\n").unwrap();
     let second_bin = out_path("cache_signature_2");
     let second = cache_build(&dir, &second_bin, &cache, &[], &[]);
     assert!(second.ok, "the second build failed:\n{}", second.stderr);

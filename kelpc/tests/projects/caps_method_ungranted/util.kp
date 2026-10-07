@@ -1,7 +1,7 @@
 impl "std/io"
 impl "std/process"
 
-fun probe().R: bool {
+fun probe().return: bool {
     var c = process.Child(
         pid = 1,
         stdin = io.File(fd = 0),

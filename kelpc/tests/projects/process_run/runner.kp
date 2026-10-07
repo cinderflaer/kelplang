@@ -3,7 +3,7 @@ impl "std/process"
 // This module holds `process` because `main.kp` delegated it. Every call below
 // is checked against the patterns it received, before the fork happens.
 
-fun sh(script: &str).R: List<String> {
+fun sh(script: &str).return: List<String> {
     var args: List<String> = List.empty()
     args.push(String.from_str("-c"))
     args.push(String.from_str(script))
@@ -14,15 +14,15 @@ fun sh(script: &str).R: List<String> {
 // wants the exit code, the captured stderr and the output reads them off one
 // owned value (`val text = r.out` moves the field out). The type is spelled
 // `process.RunResult` because an imported type is always module-qualified.
-pub fun run_echo().R: process.RunResult = process.run("/bin/sh", sh("printf hi"))
+pub fun run_echo().return: process.RunResult = process.run("/bin/sh", sh("printf hi"))
 
-pub fun run_exit().R: process.RunResult = process.run("/bin/sh", sh("exit 3"))
+pub fun run_exit().return: process.RunResult = process.run("/bin/sh", sh("exit 3"))
 
-pub fun run_stderr().R: process.RunResult = process.run("/bin/sh", sh("printf oops >&2"))
+pub fun run_stderr().return: process.RunResult = process.run("/bin/sh", sh("printf oops >&2"))
 
 // Everything after `argv[0]`, joined with commas. The arguments the harness
 // passes are the visible part of `process.args`.
-pub fun tail_args().R: String {
+pub fun tail_args().return: String {
     val args = process.args()
     val n = args.len()
     var out = String.with_capacity(16)
@@ -37,7 +37,7 @@ pub fun tail_args().R: String {
     return out
 }
 
-pub fun arg_count().R: usize {
+pub fun arg_count().return: usize {
     val args = process.args()
     return args.len()
 }

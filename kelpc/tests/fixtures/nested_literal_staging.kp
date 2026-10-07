@@ -26,9 +26,9 @@ datac Node(val value: i64, val next: Box<Node>)
 
 datac Pair(val left: i32, val right: i32)
 
-fun pair_sum(p: Pair).R: i64 = p.left.to_i64() + p.right.to_i64()
+fun pair_sum(p: Pair).return: i64 = p.left.to_i64() + p.right.to_i64()
 
-fun node_total(n: &Node).R: i64 = if n.next.is_empty() {
+fun node_total(n: &Node).return: i64 = if n.next.is_empty() {
     n.value
 } else {
     n.value + node_total(n = n.next.get())
@@ -36,9 +36,9 @@ fun node_total(n: &Node).R: i64 = if n.next.is_empty() {
 
 // A `Two`-class return value: the literal is staged where the epilogue reads it
 // from, and its `next` field initializer stages another one.
-fun four().R: Node = Node(value = 4, next = Box.of(Node(value = 5, next = Box.empty())))
+fun four().return: Node = Node(value = 4, next = Box.of(Node(value = 5, next = Box.empty())))
 
-fun five(p: Pair).R: Node = Node(
+fun five(p: Pair).return: Node = Node(
     value = 4 + pair_sum(p = p),
     next = Box.of(Node(value = pair_sum(p = Pair(left = 5, right = 5)), next = Box.empty())),
 )

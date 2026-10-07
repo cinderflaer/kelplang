@@ -1,6 +1,6 @@
 // `alloc` takes one parameter instead of `(size: usize, align: usize)`, so the
 // front end refuses it rather than generating a call with the wrong arity.
-fun alloc(size: usize).R: Ptr<u8> {
+fun alloc(size: usize).return: Ptr<u8> {
     return Ptr.null()
 }
 

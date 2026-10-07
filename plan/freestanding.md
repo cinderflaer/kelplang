@@ -273,10 +273,10 @@ realloc = "krealloc"      # optional
 ```
 
 All three are bare names of `fun`s in the entry module,
-`extern`-free, with fixed signatures: `fun alloc(size: usize, align: usize).R:
+`extern`-free, with fixed signatures: `fun alloc(size: usize, align: usize).return:
 Ptr<u8>` (the null pointer on failure), `fun dealloc(p: Ptr<u8>, size: usize,
 align: usize)`, and `fun realloc(p: Ptr<u8>, old: usize, new: usize, align:
-usize).R: Ptr<u8>`. `alloc` and `dealloc` are required together; `realloc` needs
+usize).return: Ptr<u8>`. `alloc` and `dealloc` are required together; `realloc` needs
 the pair. A wrong signature is a compile error naming the expected one.
 
 With a pair configured, `Box<T>`, `List<T>` and `Map<V>` are allowed whenever

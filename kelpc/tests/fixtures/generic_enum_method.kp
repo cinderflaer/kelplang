@@ -4,7 +4,7 @@ enum Option<T> {
     None
 }
 
-fun Option<T>.is_some().R: bool = true
+fun Option<T>.is_some().return: bool = true
 
 fun main() {
     val o: Option<i32> = Option.None

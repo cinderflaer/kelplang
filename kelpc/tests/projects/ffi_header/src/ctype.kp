@@ -2,4 +2,4 @@
 // native symbol through this project's coral.toml '[extern."ctype"]'
 // section. "toupper" is the native symbol, and its `header = "ctype.h"` key
 // is what the generated C includes for its prototype.
-pub extern fun toupper(c: i32).R: i32
+pub extern fun toupper(c: i32).return: i32
