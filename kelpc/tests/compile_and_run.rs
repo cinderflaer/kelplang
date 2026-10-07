@@ -1786,6 +1786,15 @@ fn fs_mutators_have_fallible_twins() {
 }
 
 #[test]
+fn a_pool_closes_connections_that_idled_too_long() {
+    // Open item 56: `close_idle(after_ms)` and `set_idle_timeout(ms)`.
+    assert_compiles_and_runs(
+        "tests/fixtures/http_pool_idle.kp",
+        "warm 4\nclosed fresh 0\nkept 4\nclosed all 4\nleft 0\nfalse\nafter stale checkout 0\ndone\n",
+    );
+}
+
+#[test]
 fn http_builds_a_multipart_form_body() {
     // MISSING-j2Wka: the exact wire bytes, with CR shown as `\r`.
     assert_compiles_and_runs("tests/fixtures/http_multipart.kp", "multipart/form-data; boundary=xXboundaryXx\n--xXboundaryXx\\r\nContent-Disposition: form-data; name=\"content\"\\r\n\\r\nhello\\r\n--xXboundaryXx\\r\nContent-Disposition: form-data; name=\"a%22b%0D%0AX: y\"\\r\n\\r\nv\\r\n--xXboundaryXx\\r\nContent-Disposition: form-data; name=\"file\"; filename=\"n%22ote.txt\"\\r\nContent-Type: text/plain\\r\n\\r\nline1\nline2\\r\n--xXboundaryXx--\\r\n\nmultipart/form-data; boundary=xXboundaryXx\nPOST\n");

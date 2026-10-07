@@ -59,7 +59,8 @@ impl "std/thread"
    `plan/tls-server.md`.
 
    Not here, deliberately: gzip, HTTP/2, cookies, proxies, `Expect:
-   100-continue` on the client and idle reaping. */
+   100-continue` on the client. (Idle reaping is `Pool.set_idle_timeout` and
+   `Pool.close_idle`.) */
 
 /// The port for `http` URLs.
 const DEFAULT_PORT: u16 = 80
@@ -189,6 +190,12 @@ datac Pool(
     val timeout_ms: u64,
     /// The idle connections ready for reuse.
     var idle: List<Conn>,
+    /// When each idle connection went idle, `net.mono_ms` time, in step with
+    /// `idle` (same length, same order).
+    var idle_since: List<i64>,
+    /// How long a connection may stay idle before `checkout` closes it instead
+    /// of reusing it, in milliseconds; 0 keeps them for good (the default).
+    var idle_ms: u64,
 )
 
 /// Permission to use one pooled connection for one exchange. `fd`/`tls_handle`
@@ -1338,11 +1345,19 @@ fun pool(host: &str, port: u16).R: Pool = Pool(
     size = pool_size,
     timeout_ms = DEFAULT_TIMEOUT_MS,
     idle = empty_idle(),
+    idle_since = empty_stamps(),
+    idle_ms = 0,
 )
 
 /// An empty idle-connection list.
 fun empty_idle().R: List<Conn> {
     var l: List<Conn> = List.empty()
+    return l
+}
+
+/// An empty list of idle timestamps.
+fun empty_stamps().R: List<i64> {
+    var l: List<i64> = List.empty()
     return l
 }
 
@@ -1380,6 +1395,7 @@ fun mut Pool.warm(use_tls: bool) {
     while i < cap {
         val c = connect_configured(h.as_str(), p, t, use_tls)
         idle.push(c)
+        idle_since.push(net.mono_ms())
         i = i + 1
     }
 }
@@ -1406,9 +1422,13 @@ fun mut Pool.checkout(use_tls: bool).R: Lease {
 ///
 /// Panics: if the capability denies the host.
 fun mut Pool.try_checkout(use_tls: bool).R: result.Result<Lease, HttpErr> {
-    if !idle.is_empty() {
+    while !idle.is_empty() {
         val c = idle.pop()
-        if c.is_tls() == use_tls {
+        val since = idle_since.pop()
+        // Past the idle timeout the peer has probably closed it, and reusing it
+        // would cost one failed request: close it and look at the next.
+        val stale = idle_ms > 0 && (net.mono_ms() - since) >= idle_ms.to_i64()
+        if !stale && c.is_tls() == use_tls {
             return result.Result.Ok(value = Lease(fd = c.fd, tls_handle = c.tls_handle, reused = true))
         }
         conn_close(c)
@@ -1429,6 +1449,7 @@ fun mut Pool.try_checkout(use_tls: bool).R: result.Result<Lease, HttpErr> {
 fun mut Pool.release(lease: Lease, reusable: bool) {
     if reusable && idle.len() < size {
         idle.push(lease.conn())
+        idle_since.push(net.mono_ms())
     } else {
         conn_close(lease.conn())
     }
@@ -1442,9 +1463,50 @@ fun mut Pool.close_all() {
             going = false
         } else {
             val c = idle.pop()
+            val since = idle_since.pop()
             conn_close(c)
         }
     }
+}
+
+/// From now on `checkout` closes a kept connection that has been idle for
+/// `ms` or longer instead of reusing it (0 turns it off again). Pick a value
+/// below the server's own keep-alive timeout, so a connection the peer has
+/// already closed is never the one chosen.
+fun mut Pool.set_idle_timeout(ms: u64) {
+    idle_ms = ms
+}
+
+/// Closes every kept connection that has been idle for `after_ms` or longer and
+/// returns how many it closed. Call it from a program's own timer to cap the
+/// descriptors a long-lived pool holds (a program that talks to many hosts
+/// keeps `size` per host); `close_idle(0)` closes them all. The clock is
+/// `net.mono_ms`, which `std/http` already reads for its own timeouts, so the
+/// module needs no `time` grant.
+///
+/// Panics: if closing a connection fails.
+fun mut Pool.close_idle(after_ms: u64).R: usize {
+    val now = net.mono_ms()
+    var kept_conns: List<Conn> = List.empty()
+    var kept_since: List<i64> = List.empty()
+    var closed: usize = 0
+    // Popping is newest first, so the survivors are pushed back in reverse.
+    while !idle.is_empty() {
+        val c = idle.pop()
+        val since = idle_since.pop()
+        if (now - since) >= after_ms.to_i64() {
+            conn_close(c)
+            closed = closed + 1
+        } else {
+            kept_conns.push(c)
+            kept_since.push(since)
+        }
+    }
+    while !kept_conns.is_empty() {
+        idle.push(kept_conns.pop())
+        idle_since.push(kept_since.pop())
+    }
+    return closed
 }
 
 /// Whether a pool serves the host and port of `u`.
