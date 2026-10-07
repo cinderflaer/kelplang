@@ -497,7 +497,7 @@ Everything already merged (see the pending changelog), plus:
 #### 26.11.0 (ships as 26.10.3 if cut in October 2026): language ergonomics I (one lane at a time)
 
 Order inside the release, each lane merged before the next starts:
-1. **MISSING-Sw9Hd** disjoint-field captures, and the unchecked `g(s, s)` with two `mut` params (L).
+1. ~~**MISSING-Sw9Hd**~~ disjoint-field captures and the `g(s, s)` hole **shipped** (borrow roots are field paths; nested-block capture and the fmt rewrap stay open). Original text: **MISSING-Sw9Hd** disjoint-field captures, and the unchecked `g(s, s)` with two `mut` params (L).
 2. ~~**MISSING-Gt6Qc**~~ `t.0`, `for (a, b)` and variant/name tuple patterns in `when` **shipped** (literal and nested positions, and `const` tuples, stay open); the `Map` iterator needs a tuple element that can be a borrow and is not shipped. Original text: tuple patterns in `when`, destructuring `for (k, v)`, `t.0` access (M); with it the `Map`
    iterator and `List.iter()` of MISSING-Hd4Lr (moved from 26.10.2, see there).
 3. **MISSING-Lk9Xs** `loop`, labelled `break`/`continue`, `break` with a value (M).

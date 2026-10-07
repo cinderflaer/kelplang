@@ -1,0 +1,14 @@
+// The same shape on the *same* field: the block writes `s.items` while the call
+// borrows `s.items`, which still overlap and are refused.
+datac State(var count: i32, var items: List<i32>)
+
+fun each(xs: &List<i32>, f: scoped fun(i32)) {
+    f(1)
+}
+
+fun main() {
+    var s = State(count = 0, items = List.empty())
+    each(s.items) { n ->
+        s.items.push(n)
+    }
+}

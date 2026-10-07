@@ -417,7 +417,7 @@ struct VarState {
     /// or exclusively borrowed again, and committing turns it into
     /// `borrow = Exclusive`, which fails if a shared borrow taken meanwhile is
     /// still live (`f(&mut c, &c)`).
-    reserved: bool,
+    reserved: Vec<String>,
     /// The owner roots this binding's value may borrow from, when the binding
     /// *is* a reference. The provenance a pattern binding would otherwise lose,
     /// and what makes a pointer local usable as a cursor (open item 33). Empty
@@ -535,7 +535,7 @@ impl Scope {
                     // Identical on both sides: a reservation is active before
                     // the branch and no arm releases it, so there is nothing to
                     // merge.
-                    reserved: va.reserved,
+                    reserved: va.reserved.clone(),
                     roots,
                 },
             );
@@ -587,6 +587,9 @@ struct Ctx {
     /// argument, whose expression type alone cannot distinguish a reborrow as
     /// shared from one as exclusive.
     fn_mut_params: HashMap<String, Vec<bool>>,
+    /// Per scoped-block literal (by key), which field paths of each capture its
+    /// body uses (`capture_footprint`).
+    capture_footprints: HashMap<String, Vec<Option<Vec<String>>>>,
     /// The current function's own return-borrow rule: the name of the
     /// parameter a returned borrow must be rooted at, when the function
     /// declares a borrowed return type. `None` with `ret_is_borrow` set
@@ -638,8 +641,39 @@ impl Ctx {
         self.scopes.push(Scope::default());
     }
 
+    /// The strongest borrow on `root` or on anything that overlaps it: the same
+    /// place, a place it is a part of (`s` for `s/items`), or a part of it
+    /// (`s/items` for `s`). Two field paths of one owner that neither contains
+    /// the other (`s/items`, `s/count`) do not overlap. This is the question a
+    /// conflict check asks; `pin_exact` is the count a borrow adds to and takes
+    /// from.
     fn pin_of(&self, root: &str) -> BorrowKind {
+        let mut found = BorrowKind::None;
+        for (other, kind) in &self.pins {
+            if !roots_overlap(root, other) {
+                continue;
+            }
+            found = match (&found, kind) {
+                (BorrowKind::Exclusive, _) | (_, BorrowKind::Exclusive) => BorrowKind::Exclusive,
+                (BorrowKind::Shared(a), BorrowKind::Shared(b)) => BorrowKind::Shared(a + b),
+                (BorrowKind::Shared(a), BorrowKind::None) => BorrowKind::Shared(*a),
+                (BorrowKind::None, k) => k.clone(),
+            };
+        }
+        found
+    }
+
+    /// The borrow recorded on exactly `root`, for the counter a borrow starts
+    /// and ends (`pin_of` answers conflicts, this keeps the books).
+    fn pin_exact(&self, root: &str) -> BorrowKind {
         self.pins.get(root).cloned().unwrap_or(BorrowKind::None)
+    }
+
+    /// Whether a method call is holding a reservation on `root` or on anything
+    /// that overlaps it.
+    fn is_reserved(&self, root: &str) -> bool {
+        self.lookup(var_of(root))
+            .is_some_and(|v| v.reserved.iter().any(|r| roots_overlap(root, r)))
     }
 
     fn set_pin(&mut self, root: &str, kind: BorrowKind) {
@@ -652,7 +686,7 @@ impl Ctx {
 
     /// Adds one pin without a conflict check: shared counts up, exclusive wins.
     fn add_pin(&mut self, root: &str, mutable: bool) {
-        let kind = match (self.pin_of(root), mutable) {
+        let kind = match (self.pin_exact(root), mutable) {
             (_, true) => BorrowKind::Exclusive,
             (BorrowKind::Exclusive, false) => BorrowKind::Exclusive,
             (BorrowKind::Shared(n), false) => BorrowKind::Shared(n + 1),
@@ -754,7 +788,7 @@ impl Ctx {
             VarState {
                 ty: ty.clone(),
                 moved_at: None,
-                reserved: false,
+                reserved: Vec::new(),
                 roots: Vec::new(),
             },
         );
@@ -1101,7 +1135,7 @@ impl Ctx {
                 span,
             });
         }
-        let reserved = v.reserved;
+        let reserved = !v.reserved.is_empty();
         if self.pin_of(name) != BorrowKind::None || reserved {
             return Err(BorrowError {
                 message: format!("cannot move {} while it is borrowed", display_root(name)),
@@ -1159,7 +1193,7 @@ impl Ctx {
             return Ok(());
         }
         if self.pin_of(name) != BorrowKind::None
-            || self.lookup(name).map(|v| v.reserved).unwrap_or(false)
+            || self.lookup(name).map(|v| !v.reserved.is_empty()).unwrap_or(false)
         {
             return Err(BorrowError {
                 message: format!("cannot assign to {} while it is borrowed", display_root(name)),
@@ -1181,7 +1215,7 @@ impl Ctx {
     }
 
     fn start_borrow(&mut self, root: &str, mutable: bool, span: Span) -> Result<()> {
-        let moved = self.lookup(root).map(|v| v.moved_at.is_some()).unwrap_or(false);
+        let moved = self.lookup(var_of(root)).map(|v| v.moved_at.is_some()).unwrap_or(false);
         if moved {
             return Err(BorrowError {
                 message: format!("cannot borrow {}: value was moved", display_root(root)),
@@ -1193,7 +1227,7 @@ impl Ctx {
         // second exclusive borrow: `xs.insert(0, xs.remove(0))` is still two
         // mutable borrows of one list. `commit` is what rejects a shared
         // borrow that is still live when the receiver's own borrow begins.
-        let reserved = self.lookup(root).map(|v| v.reserved).unwrap_or(false);
+        let reserved = self.is_reserved(root);
         if reserved {
             if mutable {
                 return Err(BorrowError {
@@ -1207,7 +1241,11 @@ impl Ctx {
             self.add_pin(root, false);
             return Ok(());
         }
-        let new = match (self.pin_of(root), mutable) {
+        // The conflict is against everything that overlaps `root`; the count that
+        // is kept is `root`'s own.
+        let around = self.pin_of(root);
+        let own = self.pin_exact(root);
+        let new = match (&around, mutable) {
             (BorrowKind::Exclusive, _) => {
                 return Err(BorrowError {
                     message: format!(
@@ -1226,7 +1264,10 @@ impl Ctx {
                     span,
                 });
             }
-            (BorrowKind::Shared(n), false) => BorrowKind::Shared(n + 1),
+            (BorrowKind::Shared(_), false) => match own {
+                BorrowKind::Shared(n) => BorrowKind::Shared(n + 1),
+                _ => BorrowKind::Shared(1),
+            },
             (BorrowKind::None, true) => BorrowKind::Exclusive,
             (BorrowKind::None, false) => BorrowKind::Shared(1),
         };
@@ -1235,7 +1276,7 @@ impl Ctx {
     }
 
     fn end_borrow(&mut self, root: &str) {
-        let new = match self.pin_of(root) {
+        let new = match self.pin_exact(root) {
             BorrowKind::Shared(n) if n > 1 => BorrowKind::Shared(n - 1),
             _ => BorrowKind::None,
         };
@@ -1246,16 +1287,16 @@ impl Ctx {
     /// aside before its own arguments are checked, so an argument may read the
     /// same place. Nothing is borrow-checked as exclusive yet (MISSING-n4Bz7).
     fn reserve_exclusive(&mut self, root: &str, span: Span) -> Result<()> {
-        if !self.knows(root) {
+        if !self.knows(var_of(root)) {
             return Ok(());
         }
-        if self.lookup(root).map(|v| v.moved_at.is_some()).unwrap_or(false) {
+        if self.lookup(var_of(root)).map(|v| v.moved_at.is_some()).unwrap_or(false) {
             return Err(BorrowError {
                 message: format!("cannot borrow {}: value was moved", display_root(root)),
                 span,
             });
         }
-        if self.lookup(root).map(|v| v.reserved).unwrap_or(false) {
+        if self.is_reserved(root) {
             return Err(BorrowError {
                 message: format!("cannot borrow {}: already borrowed exclusively", display_root(root)),
                 span,
@@ -1279,8 +1320,8 @@ impl Ctx {
             }
             BorrowKind::None => {}
         }
-        if let Some(v) = self.lookup_mut(root) {
-            v.reserved = true;
+        if let Some(v) = self.lookup_mut(var_of(root)) {
+            v.reserved.push(root.to_string());
         }
         Ok(())
     }
@@ -1308,8 +1349,10 @@ impl Ctx {
     /// live here is a real conflict (`f(&mut c, &c)`), and so is a move, which
     /// `use_value` already refused.
     fn commit_exclusive(&mut self, root: &str, span: Span) -> Result<()> {
-        if let Some(v) = self.lookup_mut(root) {
-            v.reserved = false;
+        if let Some(v) = self.lookup_mut(var_of(root)) {
+            if let Some(at) = v.reserved.iter().position(|r| r == root) {
+                v.reserved.remove(at);
+            }
         }
         if self.pin_of(root) != BorrowKind::None {
             return Err(BorrowError {
@@ -1660,6 +1703,7 @@ impl Ctx {
         let mut owners: Vec<String> = roots
             .into_iter()
             .filter(|r| r != STATIC_ROOT)
+            .map(|r| var_of(&r).to_string())
             .collect();
         owners.sort();
         owners.dedup();
@@ -1761,8 +1805,26 @@ fn is_reference_ty(ty: &Ty) -> bool {
 fn display_root(name: &str) -> String {
     match name.strip_prefix("pd#") {
         Some(qualified) => format!("passdown '{qualified}'"),
-        None => format!("'{name}'"),
+        None => format!("'{}'", name.replace(PATH_SEP, ".")),
     }
+}
+
+/// The separator between an owner and the fields of it a borrow is rooted at
+/// (`s/items`). A character no name contains, so a module path's dots (a
+/// passdown is `pd#std.rt.x`) are never read as one.
+const PATH_SEP: char = '/';
+
+/// The variable a root lives in: `s` for `s/items/head`.
+fn var_of(root: &str) -> &str {
+    root.split(PATH_SEP).next().unwrap_or(root)
+}
+
+/// Whether two roots can name overlapping storage: the same place, or one a
+/// part of the other. Two fields of one owner neither contains the other.
+fn roots_overlap(a: &str, b: &str) -> bool {
+    a == b
+        || (a.len() < b.len() && b.starts_with(a) && b.as_bytes()[a.len()] == PATH_SEP as u8)
+        || (b.len() < a.len() && a.starts_with(b) && a.as_bytes()[b.len()] == PATH_SEP as u8)
 }
 
 /// One projection written the way a person reads it: `bag.xs`, or `o.text`
@@ -1905,6 +1967,14 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<Vec<String>> {
         // from, and a pattern binding keeps the place its payload came from
         // (`set_roots` has the reasoning).
         tir::ExprKind::Ident(name) => Some(ctx.roots_of(name)),
+        // A field read straight off a local is rooted at that field, the way
+        // `place_roots` roots the borrow that starts it: the binding that
+        // holds the result must pin the same part of the owner.
+        tir::ExprKind::FieldAccess { .. } | tir::ExprKind::Ref { .. } | tir::ExprKind::Deref { .. }
+            if tir_root_ident(expr).is_some() && field_suffix(expr).is_some() =>
+        {
+            Some(place_roots(expr, ctx))
+        }
         tir::ExprKind::FieldAccess { base, .. }
         | tir::ExprKind::EnumField { base, .. }
         | tir::ExprKind::Ref { expr: base, .. }
@@ -1948,8 +2018,45 @@ fn block_tail_root(block: &tir::Block, ctx: &Ctx) -> Option<Vec<String>> {
 /// the cursor (`plan/provenance.md`).
 fn place_roots(expr: &tir::Expr, ctx: &Ctx) -> Vec<String> {
     match tir_root_ident(expr) {
-        Some(name) => ctx.roots_of(name),
+        Some(name) => {
+            let roots = ctx.roots_of(name);
+            // A field of a struct is a part of its owner, so a borrow of it is
+            // rooted at that part and does not overlap a borrow of another
+            // field (`plan/exclusive-captures.md`). Anything the chain passes
+            // through that is not a plain struct field (an enum payload, a
+            // dereference, a trait object) stops the path where it is.
+            match field_suffix(expr) {
+                Some(suffix) if !suffix.is_empty() => roots
+                    .into_iter()
+                    .map(|r| if r == STATIC_ROOT || r.starts_with("pd#") { r } else { format!("{r}{suffix}") })
+                    .collect(),
+                _ => roots,
+            }
+        }
         None => Vec::new(),
+    }
+}
+
+/// `/items/head` for `s.items.head` when every step is a struct field read
+/// straight off a local, `None` when the chain is anything else (the whole
+/// owner is then the root).
+fn field_suffix(expr: &tir::Expr) -> Option<String> {
+    match &expr.kind {
+        tir::ExprKind::Ident(_) => Some(String::new()),
+        tir::ExprKind::FieldAccess { base, field } => {
+            let inner = field_suffix(base)?;
+            let base_ty = match &base.ty {
+                Ty::Ref { inner, .. } => &**inner,
+                other => other,
+            };
+            if !matches!(base_ty, Ty::Struct(_)) {
+                return None;
+            }
+            Some(format!("{inner}{PATH_SEP}{field}"))
+        }
+        // `*p` and `&x` read through to the same storage as their operand.
+        tir::ExprKind::Deref { expr: inner } | tir::ExprKind::Ref { expr: inner, .. } => field_suffix(inner),
+        _ => None,
     }
 }
 
@@ -1989,6 +2096,15 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
     // `check_call` has one rule for both.
     let mut fn_borrow_root: HashMap<String, Option<usize>> = HashMap::new();
     let mut fn_mut_params: HashMap<String, Vec<bool>> = HashMap::new();
+    let mut capture_footprints: HashMap<String, Vec<Option<Vec<String>>>> = HashMap::new();
+    for f in &program.functions {
+        if let Some(env) = &f.env {
+            capture_footprints.insert(
+                f.name.clone(),
+                (0..env.fields.len()).map(|i| capture_footprint(&f.body, i)).collect(),
+            );
+        }
+    }
     for f in &program.functions {
         if crate::infer::is_borrowed_value(&f.ret) {
             fn_borrow_root.insert(f.name.clone(), crate::infer::borrow_root_param(&f.params));
@@ -2011,7 +2127,7 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
         .map(|p| (p.name.clone(), p.value_ty.clone()))
         .collect();
     for f in &program.functions {
-        let function = check_function(f, &owned, &program.drop_types, &fn_borrow_root, &fn_mut_params, &globals, &enums).map_err(|e| {
+        let function = check_function(f, &owned, &program.drop_types, &fn_borrow_root, &fn_mut_params, &capture_footprints, &globals, &enums).map_err(|e| {
             Diagnostic::new(e.message, e.span, f.module.clone())
         })?;
         plan.functions.insert(f.name.clone(), function);
@@ -2025,6 +2141,7 @@ fn check_function(
     drop_types: &std::collections::HashSet<String>,
     fn_borrow_root: &HashMap<String, Option<usize>>,
     fn_mut_params: &HashMap<String, Vec<bool>>,
+    capture_footprints: &HashMap<String, Vec<Option<Vec<String>>>>,
     globals: &[(String, Ty)],
     enums: &HashMap<String, EnumDef>,
 ) -> Result<FnDrops> {
@@ -2035,6 +2152,7 @@ fn check_function(
         drop_types: drop_types.clone(),
         fn_borrow_root: fn_borrow_root.clone(),
         fn_mut_params: fn_mut_params.clone(),
+        capture_footprints: capture_footprints.clone(),
         // A borrowed return type borrows from the first reference
         // parameter — `infer.rs` has already rejected a function that
         // returns one without taking any.
@@ -2353,6 +2471,170 @@ fn expr_mentions(expr: &tir::Expr, name: &str) -> bool {
         | tir::ExprKind::StaticRef(_)
         | tir::ExprKind::FnRef(_)
         | tir::ExprKind::Capture { .. } => false,
+    }
+}
+
+
+/// Which parts of the capture at `index` a scoped block's body uses, as field
+/// paths (`/count`), or `None` when it uses the capture as a whole (passes it
+/// on, reads it by value, takes a field of something that is not a plain
+/// struct). A block that only writes `s.count` captures that field of `s`, so a
+/// call that borrows another field (`s.items`) does not overlap it
+/// (MISSING-Sw9Hd, `plan/exclusive-captures.md`). Sound because the block's body
+/// is the only code that holds the capture, and it reaches nothing outside the
+/// paths this returns.
+fn capture_footprint(body: &tir::Block, index: usize) -> Option<Vec<String>> {
+    let mut whole = false;
+    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    footprint_block(body, index, &mut whole, &mut paths);
+    if whole || paths.is_empty() {
+        None
+    } else {
+        Some(paths.into_iter().collect())
+    }
+}
+
+/// A field chain that bottoms out at capture `index`, with the path of fields
+/// read off it (`/items/head`), looking through borrows and dereferences.
+fn capture_chain(expr: &tir::Expr, index: usize) -> Option<String> {
+    match &expr.kind {
+        tir::ExprKind::Capture { index: i } if *i == index => Some(String::new()),
+        tir::ExprKind::FieldAccess { base, field } => {
+            let inner = capture_chain(base, index)?;
+            let base_ty = match &base.ty {
+                Ty::Ref { inner, .. } => &**inner,
+                other => other,
+            };
+            if !matches!(base_ty, Ty::Struct(_)) {
+                return None;
+            }
+            Some(format!("{inner}{PATH_SEP}{field}"))
+        }
+        tir::ExprKind::Deref { expr: inner } | tir::ExprKind::Ref { expr: inner, .. } => capture_chain(inner, index),
+        _ => None,
+    }
+}
+
+fn footprint_block(
+    block: &tir::Block,
+    index: usize,
+    whole: &mut bool,
+    paths: &mut std::collections::BTreeSet<String>,
+) {
+    for stmt in &block.stmts {
+        match stmt {
+            tir::Stmt::Let { init, .. } => footprint_expr(init, index, whole, paths),
+            tir::Stmt::While { cond, body, .. } => {
+                footprint_expr(cond, index, whole, paths);
+                footprint_block(body, index, whole, paths);
+            }
+            tir::Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    footprint_expr(v, index, whole, paths);
+                }
+            }
+            tir::Stmt::Break { .. } | tir::Stmt::Continue { .. } => {}
+            tir::Stmt::Expr(e) => footprint_expr(e, index, whole, paths),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        footprint_expr(tail, index, whole, paths);
+    }
+}
+
+fn footprint_expr(
+    expr: &tir::Expr,
+    index: usize,
+    whole: &mut bool,
+    paths: &mut std::collections::BTreeSet<String>,
+) {
+    // The longest field chain off the capture is one use of one part of it.
+    if let Some(path) = capture_chain(expr, index) {
+        if path.is_empty() {
+            *whole = true;
+        } else {
+            paths.insert(path);
+        }
+        return;
+    }
+    let mut go = |e: &tir::Expr| footprint_expr(e, index, whole, paths);
+    match &expr.kind {
+        tir::ExprKind::Unary { expr, .. }
+        | tir::ExprKind::FieldAccess { base: expr, .. }
+        | tir::ExprKind::EnumTag { expr, .. }
+        | tir::ExprKind::EnumField { base: expr, .. }
+        | tir::ExprKind::Try { expr, .. }
+        | tir::ExprKind::Deref { expr }
+        | tir::ExprKind::Ref { expr, .. }
+        | tir::ExprKind::DynCoerce { expr, .. }
+        | tir::ExprKind::BoxDynCoerce { expr, .. }
+        | tir::ExprKind::BoxDynBorrow { expr, .. }
+        | tir::ExprKind::BoxDynIsEmpty { expr }
+        | tir::ExprKind::FnToClosure { func: expr }
+        | tir::ExprKind::ArrayRepeat { value: expr } => go(expr),
+        tir::ExprKind::Binary { lhs, rhs, .. } | tir::ExprKind::Assign { target: lhs, value: rhs } => {
+            go(lhs);
+            go(rhs);
+        }
+        tir::ExprKind::Call { args, .. } | tir::ExprKind::VariadicCall { args, .. } => {
+            for a in args {
+                go(a);
+            }
+        }
+        tir::ExprKind::IndirectCall { callee, args } | tir::ExprKind::DynCall { receiver: callee, args, .. } => {
+            go(callee);
+            for a in args {
+                go(a);
+            }
+        }
+        tir::ExprKind::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                go(v);
+            }
+        }
+        tir::ExprKind::EnumLit { fields, .. } | tir::ExprKind::ArrayLit(fields) => {
+            for v in fields {
+                go(v);
+            }
+        }
+        tir::ExprKind::If { cond, then_block, else_block } => {
+            go(cond);
+            footprint_block(then_block, index, whole, paths);
+            if let Some(b) = else_block {
+                footprint_block(b, index, whole, paths);
+            }
+        }
+        tir::ExprKind::Block(b) => footprint_block(b, index, whole, paths),
+        tir::ExprKind::ClosureLit { captures, .. } | tir::ExprKind::ScopedClosureLit { captures, .. } => {
+            for c in captures {
+                go(c);
+            }
+        }
+        tir::ExprKind::Template { pieces, .. } => {
+            for p in pieces {
+                if let tir::TemplatePiece::Value(v) = p {
+                    go(v);
+                }
+            }
+        }
+        tir::ExprKind::Asm(block) => {
+            for op in &block.operands {
+                if let Some(e) = &op.operand {
+                    go(e);
+                }
+            }
+        }
+        // The capture used bare (any other node that reads it) is the whole of
+        // it; a capture index that is not ours, a literal, a name: nothing.
+        tir::ExprKind::Capture { .. }
+        | tir::ExprKind::Ident(_)
+        | tir::ExprKind::IntLit(_)
+        | tir::ExprKind::CharLit(_)
+        | tir::ExprKind::FloatLit(_)
+        | tir::ExprKind::StringLit(_)
+        | tir::ExprKind::BoolLit(_)
+        | tir::ExprKind::StaticRef(_)
+        | tir::ExprKind::FnRef(_) => {}
     }
 }
 
@@ -3160,11 +3442,11 @@ fn take_call_arguments(
             // borrow argument does: a same-call aliasing `g(&mut s, { k ->
             // use(s) })` is refused here, and every borrow releases together
             // after the call.
-            if let tir::ExprKind::ScopedClosureLit { captures, .. } = &a.kind {
-                for c in captures {
+            if let tir::ExprKind::ScopedClosureLit { key, captures } = &a.kind {
+                for (ci, c) in captures.iter().enumerate() {
                     if let tir::ExprKind::Ref { mutable, expr: inner } = &c.kind {
                         check_place(inner, ctx)?;
-                        for root in place_roots(inner, ctx) {
+                        for root in capture_roots(place_roots(inner, ctx), key, ci, ctx) {
                             if root == STATIC_ROOT {
                                 continue;
                             }
@@ -3178,7 +3460,7 @@ fn take_call_arguments(
                         // is exclusive against every other use of its roots
                         // exactly as a captured `&mut place` is
                         // (`plan/exclusive-captures.md`).
-                        for root in place_roots(c, ctx) {
+                        for root in capture_roots(place_roots(c, ctx), key, ci, ctx) {
                             if root == STATIC_ROOT {
                                 continue;
                             }
@@ -3186,9 +3468,9 @@ fn take_call_arguments(
                             // a `Ref` node, so `start_borrow` never saw it:
                             // look at every other argument (and every earlier
                             // exclusive capture) of this call directly.
-                            let twice = taken.contains(&root)
+                            let twice = taken.iter().any(|t| roots_overlap(t, &root))
                                 || args.iter().enumerate().any(|(j, other)| {
-                                    j != i && arg_roots(other, ctx).contains(&root)
+                                    j != i && arg_roots(other, ctx).iter().any(|r| roots_overlap(r, &root))
                                 });
                             if twice {
                                 return Err(BorrowError {
@@ -3211,7 +3493,7 @@ fn take_call_arguments(
         }
     }
     for (root, span) in shared_reborrows {
-        if exclusive_reborrows.contains(&root) {
+        if exclusive_reborrows.iter().any(|r| roots_overlap(r, &root)) {
             return Err(BorrowError {
                 message: format!(
                     "cannot borrow {}: already borrowed exclusively",
@@ -3222,6 +3504,24 @@ fn take_call_arguments(
         }
     }
     Ok(taken)
+}
+
+/// The roots a scoped block's capture pins: the capture's own roots, narrowed
+/// to the field paths the block's body uses when it only touches parts of it.
+fn capture_roots(roots: Vec<String>, key: &str, index: usize, ctx: &Ctx) -> Vec<String> {
+    let Some(Some(paths)) = ctx.capture_footprints.get(key).and_then(|v| v.get(index)) else {
+        return roots;
+    };
+    roots
+        .into_iter()
+        .flat_map(|r| {
+            if r == STATIC_ROOT || r.starts_with("pd#") {
+                vec![r]
+            } else {
+                paths.iter().map(|p| format!("{r}{p}")).collect()
+            }
+        })
+        .collect()
 }
 
 fn release_call_borrows(taken: &[String], ctx: &mut Ctx) {

@@ -30,3 +30,4 @@ empty on release.
 - A line that ends in a binary or assignment operator, `,`, `.` or `->` continues onto the next line.
 - Tuple patterns in `when` take literal positions (`(0, y)`, `('a', true)`) and nested tuples (`((a, b), c)`).
 - `for (key, value) in map` walks a `Map` (a snapshot of the keys, in insertion order).
+- Borrow check: two fields of one owner are different places. `bump(s.count, s.items)` takes both exclusively, a live `&mut s.count` leaves `s.items` usable, and a scoped block that writes `s.count` runs in a call that borrows `s.items`. Overlapping borrows (the whole owner and a field, the same field twice) are still refused.
