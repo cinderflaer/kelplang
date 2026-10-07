@@ -62,17 +62,6 @@ aggregate value. Emitting it as a private global plus a copy removes it and was
 held back because it changes the IR of every array literal. 2.9 s at `-O2`,
 0.5 s at `-O0`.
 
-### MISSING-Uc6Kj kelp: TLS gaps: encrypted keys, key-file permission check, config reload
-
-repo: kelp | found: 2026-10-06 | effort: M
-
-source: wiki `language/limits.md` (unreleased), "Networking", TLS also serves.
-
-An encrypted private key is refused; a key file's permissions are not checked;
-a built `ServerConfig` is immutable, so a certificate renewal means rebuilding
-it and re-accepting; `serve_tls` binds every interface because `net.listen`
-takes no host. Verification cannot be disabled, which is by design and not a gap.
-
 ### MISSING-Hd4Lr kelp: no iterator adapters, no `Map` iterator, no `List.iter()`
 
 repo: kelp | found: 2026-10-06 | effort: M

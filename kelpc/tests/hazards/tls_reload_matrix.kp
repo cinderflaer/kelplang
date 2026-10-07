@@ -1,0 +1,291 @@
+// MISSING-Uc6Kj: encrypted keys, the key-file permission check and a live
+// certificate reload. A hazard like `tls_server_matrix.kp`: it needs the PEM
+// files `tests/tls_server.rs` makes (argv[2] is their directory) and it waits
+// on sockets, every wait bounded. argv[1] is the scenario.
+impl "std/net"
+impl "std/process"
+impl "std/str"
+impl "std/fmt"
+impl "std/result"
+impl "std/option"
+impl "std/thread"
+impl "std/tls"
+impl "std/tlsfile" caps(fs = ["/**"])
+
+datac Job(val fd: i32, val cfg: tls.ServerConfig, val rounds: i32)
+
+fun join3(a: &str, b: &str, c: &str).R: String {
+    var s = String.with_capacity(64)
+    s.push_str(a)
+    s.push_str(b)
+    s.push_str(c)
+    return s
+}
+
+fun path(dir: &str, name: &str).R: String = join3(dir, "/", name)
+
+fun say(s: &str) {
+    print(s)
+}
+
+fun err_tag(e: &tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(_) -> String.from_str("handshake_failed")
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(_) -> String.from_str("io")
+}
+
+fun pem(dir: &str, name: &str).R: Bytes {
+    val p = path(dir, name)
+    return when tlsfile.read_pem(p.as_str(), "file") {
+        Ok(b) -> b
+        Err(_) -> Bytes.empty()
+    }
+}
+
+fun ca_bytes(dir: &str).R: Bytes = pem(dir, "ca.pem")
+
+// A configuration, as one line: "ok" or the error tag, plus "leak" when the
+// pass phrase or the key text reached the error text.
+fun config_line(label: &str, dir: &str, cert: &str, key: &str, phrase: &str).R: String {
+    var opts = tls.server_options()
+    if str.len(phrase) > 0 {
+        opts = opts.key_password(phrase)
+    }
+    val r = tls.server_config_pem_with(pem(dir, cert), pem(dir, key), &opts)
+    var line = String.with_capacity(64)
+    line.push_str(label)
+    line.push_str(" ")
+    when r {
+        Ok(c) -> {
+            line.push_str("ok")
+            c.free()
+        }
+        Err(e) -> {
+            val tmp_6857 = err_tag(&e)
+            line.push_str(tmp_6857.as_str())
+            val text = tls.error_text(e)
+            if str.contains(text.as_str(), "swordfish") || str.contains(text.as_str(), "PRIVATE KEY") {
+                line.push_str(" leak")
+            }
+        }
+    }
+    return line
+}
+
+fun encrypted_keys(dir: &str) {
+    val line1 = config_line("encrypted with the phrase", dir, "server.pem", "server_enc.key", "swordfish")
+    say(line1.as_str())
+    val line2 = config_line("encrypted without a phrase", dir, "server.pem", "server_enc.key", "")
+    say(line2.as_str())
+    val line3 = config_line("encrypted with a wrong phrase", dir, "server.pem", "server_enc.key", "wrong")
+    say(line3.as_str())
+    val line4 = config_line("plain with a phrase", dir, "server.pem", "server.key", "swordfish")
+    say(line4.as_str())
+}
+
+fun key_line(name: &str, p: &str).R: String {
+    val r = tlsfile.read_key(p)
+    var line = String.with_capacity(64)
+    line.push_str("key ")
+    line.push_str(name)
+    line.push_str(" ")
+    when r {
+        Ok(b) -> {
+            line.push_str("ok")
+        }
+        Err(e) -> {
+            val tag = err_tag(&e)
+            line.push_str(tag.as_str())
+            val text = tls.error_text(e)
+            if str.contains(text.as_str(), "0644") {
+                line.push_str(" mode=0644")
+            }
+        }
+    }
+    return line
+}
+
+fun key_perms(dir: &str) {
+    val good = path(dir, "server.key")
+    val open = path(dir, "server_open.key")
+    val gone = path(dir, "no_such.key")
+    val a = key_line("good", good.as_str())
+    say(a.as_str())
+    val b = key_line("open", open.as_str())
+    say(b.as_str())
+    val c = key_line("gone", gone.as_str())
+    say(c.as_str())
+}
+
+// Accepts `rounds` connections on one shared configuration and answers each
+// with an echo. The line says how many handshakes the server completed.
+fun server_main(job: move Job).R: String {
+    val l = net.Listener(fd = job.fd)
+    var done: u64 = 0
+    var seen: u64 = 0
+    var i: i32 = 0
+    while i < job.rounds {
+        i = i + 1
+        val acc = net.try_accept(l)
+        when acc {
+            Ok(sock) -> {
+                seen = seen + 1
+                val hs = tls.accept(job.cfg, sock)
+                when hs {
+                    Ok(t) -> {
+                        val got = tls.try_read(t, 64)
+                        when got {
+                            Ok(b) -> {
+                                val w = tls.try_write_all(t, b)
+                                done = done + 1
+                            }
+                            Err(_) -> {
+                            }
+                        }
+                        val sd = tls.try_shutdown(t)
+                        net.close(sock)
+                    }
+                    Err(_) -> {
+                        net.close(sock)
+                    }
+                }
+            }
+            Err(_) -> {
+            }
+        }
+    }
+    var line = String.with_capacity(48)
+    line.push_str("server accepted ")
+    val tmp_7007 = fmt.uint(seen)
+    line.push_str(tmp_7007.as_str())
+    line.push_str(" completed ")
+    val tmp_9429 = fmt.uint(done)
+    line.push_str(tmp_9429.as_str())
+    return line
+}
+
+fun client_round(label: &str, dir: &str, port: u16).R: String {
+    val opts = tls.client_options().with_ca_pem(ca_bytes(dir)).with_timeout_ms(10000)
+    val s = net.connect("127.0.0.1", port)
+    val hs = tls.try_handshake_opts(s, "localhost", &opts)
+    var line = String.with_capacity(64)
+    line.push_str(label)
+    line.push_str(" ")
+    when hs {
+        Ok(t) -> {
+            val w = tls.try_write_all(t, Bytes.from_str("hello"))
+            val r = tls.try_read(t, 64)
+            when r {
+                Ok(b) -> {
+                    line.push_str("echo=")
+                    val tmp_5147 = String.from_bytes(b)
+                    line.push_str(tmp_5147.as_str())
+                }
+                Err(e) -> {
+                    line.push_str("read ")
+                    val tmp_6857 = err_tag(&e)
+                    line.push_str(tmp_6857.as_str())
+                }
+            }
+            val sd = tls.try_shutdown(t)
+        }
+        Err(e) -> {
+            val tmp_6857 = err_tag(&e)
+            line.push_str(tmp_6857.as_str())
+        }
+    }
+    net.close(s)
+    return line
+}
+
+fun reload_line(label: &str, r: move option.Option<tls.TlsError>).R: String {
+    var line = String.with_capacity(48)
+    line.push_str(label)
+    line.push_str(" ")
+    when r {
+        Some(e) -> {
+            val tmp_6857 = err_tag(&e)
+            line.push_str(tmp_6857.as_str())
+        }
+        None -> {
+            line.push_str("none")
+        }
+    }
+    return line
+}
+
+fun reload(dir: &str) {
+    val opts = tls.server_options()
+    val built = tls.server_config_pem_with(pem(dir, "server.pem"), pem(dir, "server.key"), &opts)
+    when built {
+        Ok(cfg) -> reload_with(cfg, dir, &opts)
+        Err(_) -> say("config failed")
+    }
+}
+
+fun reload_with(cfg: tls.ServerConfig, dir: &str, opts: &tls.ServerOptions) {
+    val l = net.listen_on("127.0.0.1", 0)
+    var lm = net.Listener(fd = l.fd)
+    lm.set_timeout(10000)
+    val port = l.port()
+    // The thread gets a copy of the handle; the configuration is one object.
+    val shared = tls.ServerConfig(ctx = cfg.ctx, handshake_timeout_ms = cfg.handshake_timeout_ms)
+    val h = thread.spawn(server_main, Job(fd = l.fd, cfg = shared, rounds = 4))
+    val line6 = client_round("round 1", dir, port)
+    say(line6.as_str())
+    val line7 = reload_line("reload expired", cfg.reload_pem(pem(dir, "expired.pem"), pem(dir, "server.key"), opts))
+    say(line7.as_str())
+    val line8 = client_round("round 2", dir, port)
+    say(line8.as_str())
+    val line9 = reload_line("reload mismatched", cfg.reload_pem(pem(dir, "server.pem"), pem(dir, "other_server.key"), opts))
+    say(line9.as_str())
+    val line10 = client_round("round 3", dir, port)
+    say(line10.as_str())
+    val line11 = reload_line("reload valid", cfg.reload_pem(pem(dir, "server.pem"), pem(dir, "server.key"), opts))
+    say(line11.as_str())
+    val line12 = client_round("round 4", dir, port)
+    say(line12.as_str())
+    val line = when thread.join(h) {
+        Ok(s) -> s
+        Err(_) -> String.from_str("server thread failed")
+    }
+    say(line.as_str())
+    cfg.free()
+    l.close()
+}
+
+// `listen_on` binds the host it is given: loopback answers on 127.0.0.1 and
+// the port it reports is the one that was bound.
+fun listen_host() {
+    val l = net.listen_on("127.0.0.1", 0)
+    val port = l.port()
+    val c = net.connect("127.0.0.1", port)
+    val s = net.accept(l)
+    say("listen_on loopback accepted")
+    net.close(c)
+    net.close(s)
+    l.close()
+}
+
+fun main() {
+    val args = process.args()
+    val mode = args.get(1).clone()
+    val dir = args.get(2).clone()
+    if str.eq(mode.as_str(), "encrypted_keys") {
+        encrypted_keys(dir.as_str())
+    }
+    if str.eq(mode.as_str(), "key_perms") {
+        key_perms(dir.as_str())
+    }
+    if str.eq(mode.as_str(), "reload") {
+        reload(dir.as_str())
+    }
+    if str.eq(mode.as_str(), "listen_on") {
+        listen_host()
+    }
+}

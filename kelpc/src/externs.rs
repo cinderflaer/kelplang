@@ -706,6 +706,16 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         include_str!("externs/tls_server_ctx_try.c"),
     ),
     (
+        "std/net",
+        "listen_on_raw",
+        include_str!("externs/net_listen_on.c"),
+    ),
+    (
+        "std/tls",
+        "reload_try_raw",
+        include_str!("externs/tls_reload_try.c"),
+    ),
+    (
         "std/tls",
         "accept_try_raw",
         include_str!("externs/tls_accept_try.c"),

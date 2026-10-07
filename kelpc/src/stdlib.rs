@@ -726,6 +726,7 @@ fn net_checked_args(callee: &str, _arg_is_str: &[bool]) -> Vec<CapCheck> {
             vec![CapCheck::HostPort(0, 1)]
         }
         "listen" | "listen_raw" => vec![CapCheck::Port(0)],
+        "listen_on" | "listen_on_raw" => vec![CapCheck::HostPort(0, 1)],
         "resolve" | "resolve_raw" => vec![CapCheck::Host(0)],
         _ => Vec::new(),
     }

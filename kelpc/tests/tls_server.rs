@@ -208,7 +208,114 @@ fn make_certs(dir: &Path) -> Result<(), String> {
             "an expired certificate",
         )?;
     }
+    // The key variants `tests/hazards/tls_reload_matrix.kp` reads: an
+    // encrypted copy (pass phrase "swordfish"), a world-readable copy and the
+    // plain key pinned to 0600.
+    step(
+        openssl(
+            dir,
+            &["pkey", "-in", "server.key", "-aes256", "-passout", "pass:swordfish", "-out", "server_enc.key"],
+        ),
+        "an encrypted key",
+    )?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::copy(dir.join("server.key"), dir.join("server_open.key")).map_err(|e| e.to_string())?;
+        let mode = |name: &str, bits: u32| {
+            std::fs::set_permissions(dir.join(name), std::fs::Permissions::from_mode(bits)).map_err(|e| e.to_string())
+        };
+        mode("server.key", 0o600)?;
+        mode("server_enc.key", 0o600)?;
+        mode("server_open.key", 0o644)?;
+    }
     Ok(())
+}
+
+/// The reload program, built once per process for the backend under test.
+fn reload_bin() -> &'static PathBuf {
+    static BIN: OnceLock<PathBuf> = OnceLock::new();
+    BIN.get_or_init(|| {
+        let bin = scratch(&format!("reload_{}", backend()));
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hazards/tls_reload_matrix.kp");
+        let out = kelpc().arg("build").arg(&src).arg("-o").arg(&bin).output().expect("failed to spawn kelpc");
+        assert!(
+            out.status.success(),
+            "the TLS reload program did not compile:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        bin
+    })
+}
+
+fn run_reload(mode: &str) -> Option<Vec<String>> {
+    let dir = certs()?;
+    let out: Output = Command::new("sh")
+        .arg("-c")
+        .arg("ulimit -v 1048576; ulimit -t 30; exec timeout 60 \"$0\" \"$@\"")
+        .arg(reload_bin())
+        .arg(mode)
+        .arg(dir)
+        .env_remove("SSL_CERT_FILE")
+        .env_remove("SSL_CERT_DIR")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run the TLS reload program");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        out.status.success(),
+        "scenario '{mode}' exited with {:?}\nstdout: {stdout}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Some(stdout.lines().map(|l| l.to_string()).collect())
+}
+
+fn expect_reload(mode: &str, want: &[&str]) {
+    if let Some(got) = run_reload(mode) {
+        assert_eq!(got, want, "scenario '{mode}' on the {} backend", backend());
+    }
+}
+
+#[test]
+fn an_encrypted_private_key_needs_its_pass_phrase() {
+    // MISSING-Uc6Kj: right phrase builds; none or a wrong one is a typed error
+    // that quotes neither the phrase nor the key.
+    expect_reload(
+        "encrypted_keys",
+        &[
+            "encrypted with the phrase ok",
+            "encrypted without a phrase handshake_failed",
+            "encrypted with a wrong phrase handshake_failed",
+            "plain with a phrase ok",
+        ],
+    );
+}
+
+#[test]
+fn read_key_refuses_a_key_file_others_can_read() {
+    expect_reload("key_perms", &["key good ok", "key open io mode=0644", "key gone io"]);
+}
+
+#[test]
+fn a_reload_replaces_the_certificate_for_new_handshakes_and_a_bad_one_changes_nothing() {
+    expect_reload(
+        "reload",
+        &[
+            "round 1 echo=hello",
+            "reload expired none",
+            "round 2 expired",
+            "reload mismatched handshake_failed",
+            "round 3 expired",
+            "reload valid none",
+            "round 4 echo=hello",
+            "server accepted 4 completed 2",
+        ],
+    );
+}
+
+#[test]
+fn listen_on_binds_the_named_host() {
+    expect_reload("listen_on", &["listen_on loopback accepted"]);
 }
 
 /// The matrix program, built once per process for the backend under test.

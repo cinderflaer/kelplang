@@ -6,7 +6,10 @@
        other refusal (no certificate, no common ALPN protocol, a version
        below the floor) is a failed handshake. */
     *kelp_err_code = 0;
-    SSL* ssl = SSL_new((SSL_CTX*)kelp_ctx);
+    kelp_tls_slot* slot = (kelp_tls_slot*)kelp_ctx;
+    pthread_mutex_lock(&slot->mu);
+    SSL* ssl = SSL_new(slot->ctx);
+    pthread_mutex_unlock(&slot->mu);
     if (ssl == NULL) {
         kelp_panic("tls.accept: cannot create an SSL handle");
     }

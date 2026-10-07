@@ -67,19 +67,36 @@ static inline int kelp_tls_load_chain(SSL_CTX* ctx, const unsigned char* pem, si
     return 0;
 }
 
-// An encrypted key would make OpenSSL ask for a pass phrase on the terminal;
-// there is no pass phrase API, so it is refused instead.
-static int kelp_tls_no_password(char* buf, int size, int rwflag, void* userdata) {
-    (void)buf;
-    (void)size;
+// The pass phrase of an encrypted private key, handed to OpenSSL's callback so
+// it never asks on the terminal. With no pass phrase given (`len` 0) the
+// callback answers 0 and an encrypted key is refused.
+typedef struct {
+    const unsigned char* pass;
+    size_t len;
+} kelp_tls_pass;
+
+static int kelp_tls_pass_cb(char* buf, int size, int rwflag, void* userdata) {
     (void)rwflag;
-    (void)userdata;
-    return 0;
+    const kelp_tls_pass* p = (const kelp_tls_pass*)userdata;
+    if (p == NULL || p->len == 0 || size <= 0) {
+        return 0;
+    }
+    size_t n = p->len < (size_t)size ? p->len : (size_t)size;
+    memcpy(buf, p->pass, n);
+    return (int)n;
 }
+
+// What a `ServerConfig` points at: the current `SSL_CTX`, swapped under the
+// lock by a reload. A handshake takes a reference through `SSL_new`, so a
+// context replaced while sessions run stays alive until the last of them ends.
+typedef struct {
+    SSL_CTX* ctx;
+    pthread_mutex_t mu;
+} kelp_tls_slot;
 
 // The private key in `pem`, which must belong to the certificate already
 // loaded into `ctx`. 0, or 5 with a fixed sentence in `text`.
-static inline int kelp_tls_load_key(SSL_CTX* ctx, const unsigned char* pem, size_t len, char* text, size_t text_len) {
+static inline int kelp_tls_load_key(SSL_CTX* ctx, const unsigned char* pem, size_t len, const unsigned char* pass, size_t pass_len, char* text, size_t text_len) {
     if (len == 0 || len > 0x7fffffff) {
         return kelp_tls_fail(text, text_len, "the private key file is empty");
     }
@@ -87,10 +104,16 @@ static inline int kelp_tls_load_key(SSL_CTX* ctx, const unsigned char* pem, size
     if (bio == NULL) {
         return kelp_tls_fail(text, text_len, "cannot read the private key");
     }
-    EVP_PKEY* key = PEM_read_bio_PrivateKey(bio, NULL, kelp_tls_no_password, NULL);
+    kelp_tls_pass pw;
+    pw.pass = pass;
+    pw.len = pass_len;
+    EVP_PKEY* key = PEM_read_bio_PrivateKey(bio, NULL, kelp_tls_pass_cb, &pw);
     BIO_free(bio);
     if (key == NULL) {
-        return kelp_tls_fail(text, text_len, "the private key is malformed (or encrypted: encrypted keys are not supported)");
+        if (pass_len == 0) {
+            return kelp_tls_fail(text, text_len, "the private key is malformed or encrypted (an encrypted key needs ServerOptions.key_password)");
+        }
+        return kelp_tls_fail(text, text_len, "the private key is malformed or the pass phrase is wrong");
     }
     if (SSL_CTX_use_PrivateKey(ctx, key) != 1) {
         EVP_PKEY_free(key);
@@ -236,6 +259,7 @@ static inline SSL_CTX* kelp_tls_server_ctx(
         const unsigned char* key, size_t key_len,
         const unsigned char* ca, size_t ca_len,
         const unsigned char* alpn, size_t alpn_len,
+        const unsigned char* pass, size_t pass_len,
         int min13, int* code, char* text, size_t text_len) {
     *code = 5;
     if (!kelp_tls_alpn_valid(alpn, alpn_len)) {
@@ -253,7 +277,7 @@ static inline SSL_CTX* kelp_tls_server_ctx(
     // names the application the session cache belongs to.
     SSL_CTX_set_session_id_context(ctx, (const unsigned char*)"kelp-tls", 8);
     if (kelp_tls_load_chain(ctx, cert, cert_len, text, text_len) != 0
-            || kelp_tls_load_key(ctx, key, key_len, text, text_len) != 0) {
+            || kelp_tls_load_key(ctx, key, key_len, pass, pass_len, text, text_len) != 0) {
         SSL_CTX_free(ctx);
         return NULL;
     }
