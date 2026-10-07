@@ -10178,8 +10178,6 @@ fn generic_method_misuse_is_rejected() {
         "generic_method_wrong_params",
         // A non-generic type has nothing to parameterize.
         "generic_method_on_plain",
-        // A method cannot be declared on a generic `enum`'s template.
-        "generic_enum_method",
     ] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));
     }
@@ -11916,6 +11914,15 @@ fn a_method_can_declare_type_parameters_of_its_own() {
     // call, with a `mut` receiver and a trait bound.
     assert_compiles_and_runs("tests/fixtures/method_own_type_params.kp", "3\ntrue\ntrue\n2\n2\n7\n");
     assert_compiles_and_runs("tests/fixtures/method_own_type_params_bound.kp", "11\n");
+}
+
+#[test]
+fn a_generic_enum_can_carry_methods_and_option_and_result_do() {
+    // The receiver on a generic `enum`'s template used to be refused; now
+    // `fun Opt<T>.map<U>(...)` is a method, and `std/option` / `std/result`
+    // carry their borrowing combinators as methods too.
+    assert_compiles_and_runs("tests/fixtures/enum_generic_method.kp", "true\n40\n");
+    assert_compiles_and_runs("tests/fixtures/option_result_methods.kp", "true\nfalse\n5\n4\ntrue\nfalse\n");
 }
 
 #[test]

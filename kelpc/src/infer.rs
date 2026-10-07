@@ -8138,16 +8138,6 @@ fn collect_func_templates(
                 ));
             }
             if let Some(type_tmpl) = type_tmpl {
-                if matches!(type_tmpl.kind, GenericKind::Sum(_)) {
-                    return Err(Diagnostic::new(
-                        format!(
-                            "'{}' is a generic enum: a method cannot be declared on the enum template; declare it on a concrete enum, or write a free function over the instantiation instead",
-                            r.type_name
-                        ),
-                        f.span,
-                        f.module.clone(),
-                    ));
-                }
                 if type_tmpl.params != r.type_args {
                     return Err(Diagnostic::new(
                         format!(

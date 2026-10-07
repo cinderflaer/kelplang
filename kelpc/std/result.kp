@@ -126,3 +126,26 @@ fun each<T, E>(r: &Result<T, E>, f: closure(&T)) {
         Err(_) -> {}
     }
 }
+
+// ---- method forms ----
+//
+// The borrowing helpers above, also callable on a value: `r.is_ok()` is
+// `result.is_ok(r)`. The ones that take the result with `move` (`map`,
+// `map_err`) stay free functions: a method always borrows its receiver.
+
+/// `r.is_ok()`.
+fun Result<T, E>.is_ok().return: bool = is_ok(self)
+
+/// `r.is_err()`.
+fun Result<T, E>.is_err().return: bool = is_err(self)
+
+/// `r.and_then(f)`: see `and_then`.
+fun Result<T, E>.and_then<U>(f: closure(&T).return: Result<U, E>).return: Result<U, E> = and_then(self, f)
+
+/// `r.or_else(f)`: see `or_else`.
+fun Result<T, E>.or_else<F>(f: closure(&E).return: Result<T, F>).return: Result<T, F> = or_else(self, f)
+
+/// `r.each(f)`: see `each`.
+fun Result<T, E>.each(f: closure(&T)) {
+    each(self, f)
+}
