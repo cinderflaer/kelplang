@@ -1,0 +1,18 @@
+fun main() {
+    val a = 1 +
+        2
+    val b = a *
+        3 -
+        1
+    val s = String.from_str(s = "x").
+        len()
+    var t = 0
+    t +=
+        5
+    print(a + b + t)
+    print(s)
+    if a == 3 &&
+        b == 8 {
+        print(1)
+    }
+}

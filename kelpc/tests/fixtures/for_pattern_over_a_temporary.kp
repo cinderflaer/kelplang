@@ -1,0 +1,11 @@
+fun mk().return: List<(i32, i32)> {
+    var l: List<(i32, i32)> = List.empty()
+    l.push((1, 2))
+    l.push((3, 4))
+    return l
+}
+fun main() {
+    for (a, b) in mk() {
+        print(a + b)
+    }
+}

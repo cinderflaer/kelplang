@@ -4073,7 +4073,17 @@ const PRINTABLE_BUILTINS: &[&str] = &["print", "print!"];
 /// site picks by argument type; user code cannot define overloads at all,
 /// and cannot see the mechanism except as `math.abs` working on whatever
 /// number it is given.
-const OVERLOADABLE: &[&str] = &["abs", "min", "max", "clamp"];
+/// The overloaded `std/math` names that stayed usable as a function value when
+/// they gained an `f32` overload: `abs`, `min`, `max` and `clamp` were never one.
+const FLOAT_MATH_VALUES: &[&str] = &[
+    "sqrt", "pow", "floor", "ceil", "round", "trunc", "exp", "ln", "log2", "log10", "sin", "cos", "tan", "atan2",
+    "is_nan", "is_finite", "sign",
+];
+
+const OVERLOADABLE: &[&str] = &[
+    "abs", "min", "max", "clamp", "sqrt", "pow", "floor", "ceil", "round", "trunc", "exp", "ln", "log2", "log10", "sin",
+    "cos", "tan", "atan2", "is_nan", "is_finite", "sign",
+];
 
 /// Whether a module id is one the compiler ships (M6.3, stdlib decision 4).
 /// The `std/` prefix is deliberately *not* the test: a project file at
@@ -4879,6 +4889,13 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             }
         }
 
+        // Float width conversion: `f32.to_f64()` is exact, `f64.to_f32()` rounds
+        // to the nearest `f32` (an infinity when the value is too large), and
+        // neither can lose a value in the checked sense an integer narrowing
+        // can, so both are unchecked like the integer-to-float pair above.
+        add("f32#to_f64", vec![("self".to_string(), Ty::F32)], Ty::F64, false);
+        add("f64#to_f32", vec![("self".to_string(), Ty::F64)], Ty::F32, false);
+
         // Byte-order conversion (kernel stage 3, MK9-S8 / roadmap B-10). Every
         // integer wider than a byte has `swap_bytes`, `to_be` and `to_le`, plus
         // the two static forms written on the type name
@@ -4949,6 +4966,8 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         Ty::U16 => Some("u16"),
         Ty::Usize => Some("usize"),
         Ty::Isize => Some("isize"),
+        Ty::F32 => Some("f32"),
+        Ty::F64 => Some("f64"),
         // An owned parameter is a borrow (M4's rule: every owned parameter is
         // borrowed), so `b.len()` on one arrives here as `&Bytes`/`&String`.
         Ty::Ref { inner, .. } => builtin_type_name(inner),
@@ -12251,6 +12270,28 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
     match expr {
         // Handled above, before the closure widening.
         ast::Expr::FnLit { .. } => unreachable!("a 'fun' literal is checked before this match"),
+        // H-12: an integer literal where a float is expected is that float
+        // (`val w: f64 = 3`, `x * 2` with `x: f64`, `f(255)` for an `f32`
+        // parameter), when the float holds it exactly. A *value* never
+        // converts; only the literal's own spelling adapts.
+        ast::Expr::IntLit(v, span) if expected.is_some_and(|t| t.is_float()) => {
+            let ty = expected.expect("checked above").clone();
+            let exact = if ty == Ty::F32 { 1u64 << 24 } else { 1u64 << 53 };
+            if *v > exact {
+                return Err(TypeError {
+                    message: format!(
+                        "the literal {v} is not exactly representable as '{}': write it as a float ({v}.0) to accept the rounding, or use a smaller number",
+                        ty.display()
+                    ),
+                    span: *span,
+                });
+            }
+            Ok(tir::Expr {
+                kind: tir::ExprKind::FloatLit(*v as f64),
+                ty,
+                span: *span,
+            })
+        }
         ast::Expr::IntLit(v, span) => {
             let (ty, defaulted) = int_lit_ty(expected);
             check_int_literal(*v as i128, &ty, defaulted, *span)?;
@@ -12541,7 +12582,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // the value when the range is judged, so the pair is checked here
             // and the literal's own check, which cannot see the sign, is
             // skipped. Every other operand is checked below as it always was.
-            if *op == UnOp::Neg {
+            if *op == UnOp::Neg && !expected.is_some_and(|t| t.is_float()) {
                 if let ast::Expr::IntLit(v, lit_span) = &**sub {
                     let (ty, defaulted) = int_lit_ty(expected);
                     check_int_literal(-(*v as i128), &ty, defaulted, *lit_span)?;
@@ -12661,6 +12702,38 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                                 ty: fn_ty,
                                 span: *span,
                             });
+                        }
+                        // The float math functions have an `f32` overload beside
+                        // the `f64` one, and `val m = math.sqrt` predates it: as
+                        // a value the name is the overload the expected function
+                        // type names, or the `f64` one when nothing does.
+                        if FLOAT_MATH_VALUES.contains(&field.as_str()) {
+                            let wants = match expected {
+                                Some(Ty::Fn { params, .. }) => Some(params.clone()),
+                                _ => None,
+                            };
+                            let mut keys: Vec<String> = ctx
+                                .sigs
+                                .keys()
+                                .filter(|k| k.split('@').next() == Some(&qualified))
+                                .cloned()
+                                .collect();
+                            keys.sort();
+                            let pick = keys.iter().find(|k| {
+                                let sig = &ctx.sigs[*k];
+                                match &wants {
+                                    Some(p) => sig.params.iter().map(|(_, t)| t).eq(p.iter()),
+                                    None => sig.params.iter().all(|(_, t)| *t == Ty::F64),
+                                }
+                            });
+                            if let Some(key) = pick {
+                                let fn_ty = fn_value_ty(&ctx.sigs[key]);
+                                return Ok(tir::Expr {
+                                    kind: tir::ExprKind::FnRef(key.clone()),
+                                    ty: fn_ty,
+                                    span: *span,
+                                });
+                            }
                         }
                         if ctx.sigs.keys().any(|k| k.split('@').next() == Some(&qualified)) {
                             return Err(TypeError {

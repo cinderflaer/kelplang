@@ -39,7 +39,7 @@ const MAX_NESTING: usize = 200;
 
 /// The hidden element name of a `for` with a destructuring pattern. No source
 /// text can spell it, so it cannot collide with a program's own name.
-const FOR_PATTERN_PREFIX: &str = "#for";
+const FOR_PATTERN_PREFIX: &str = "#forpat";
 
 /// The hidden names a `when` over a tuple binds: the tuple itself and each
 /// variant level's payload.

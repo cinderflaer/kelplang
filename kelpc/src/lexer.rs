@@ -254,6 +254,37 @@ pub struct LexError {
     pub span: Span,
 }
 
+/// Whether a line that ends in this token continues onto the next one: a binary
+/// or assignment operator, a comma, a `.`, or a `when` arrow. `<` and `>` are
+/// left out because they also close and open type argument lists, `%` because an
+/// alias pattern (`%*name*%`) ends in one, `&` and `|`
+/// because a bare one can end a pattern or a type, and `?` because it is a
+/// complete postfix.
+fn continues_line(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::Star
+            | TokenKind::Slash
+            | TokenKind::AndAnd
+            | TokenKind::OrOr
+            | TokenKind::Eq
+            | TokenKind::EqEq
+            | TokenKind::NotEq
+            | TokenKind::LtEq
+            | TokenKind::GtEq
+            | TokenKind::PlusEq
+            | TokenKind::MinusEq
+            | TokenKind::StarEq
+            | TokenKind::SlashEq
+            | TokenKind::PercentEq
+            | TokenKind::Comma
+            | TokenKind::Dot
+            | TokenKind::Arrow
+    )
+}
+
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
         Lexer {
@@ -418,9 +449,17 @@ impl<'a> Lexer<'a> {
     }
 
     fn run(&mut self) -> Result<Vec<Token>, LexError> {
-        let mut tokens = Vec::new();
+        let mut tokens: Vec<Token> = Vec::new();
         loop {
             match self.next_token()? {
+                // A line that ends in an operator that needs a right-hand side
+                // (or in `,` or `.`) goes on to the next line: the newline is
+                // not a statement end. The formatter's token stream keeps the
+                // newline, so it can reproduce the source as written.
+                Some(t)
+                    if !self.keep_comments
+                        && t.kind == TokenKind::Newline
+                        && tokens.last().is_some_and(|p| continues_line(&p.kind)) => {}
                 Some(t) => tokens.push(t),
                 None => {
                     tokens.push(Token {

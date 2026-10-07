@@ -1,0 +1,17 @@
+fun half(x: f32).return: f32 { return x / 2 }
+fun main() {
+    val x: f64 = 2.5
+    val y = x * 2
+    print(y)
+    val z: f32 = 1.5
+    print(z * 2)
+    print(2 * x)
+    val w: f64 = 3
+    print(w)
+    print(half(5))
+    val n: f64 = -4
+    print(n)
+    if x > 2 {
+        print(1)
+    }
+}

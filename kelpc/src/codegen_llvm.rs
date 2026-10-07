@@ -7931,6 +7931,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
                         .ok_or_else(|| no_value("the argument of a conversion"))?;
                     let v = self.emit_conversion(callee, &from, &to, arg)?;
                     return Ok(Some(v));
+                }                if from.is_float() && to.is_float() {
+                    let arg = args
+                        .first()
+                        .ok_or_else(|| no_value("the argument of a conversion"))?;
+                    let v = self.value_of(arg)?;
+                    let to_ty = self.lty(&to)?;
+                    let widen = matches!(from, Ty::F32);
+                    return Ok(Some(self.g.builder.build_fp_cast(widen, v, to_ty, "to_f")));
                 }
             }
         }
