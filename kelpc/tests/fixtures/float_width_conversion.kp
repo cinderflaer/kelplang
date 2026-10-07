@@ -1,0 +1,8 @@
+fun main() {
+    val a: f32 = 1.5
+    val b: f64 = a.to_f64()
+    print(b + 1)
+    val c: f64 = 2.25
+    val d: f32 = c.to_f32()
+    print(d * 2)
+}

@@ -1002,7 +1002,10 @@ impl Checker<'_> {
                 };
                 return Err(unavailable(
                     format!(
-                        "the call to '{callee}' is unavailable in a freestanding build: {reason}"
+                        "the call to '{}' is unavailable in a freestanding build: {reason}",
+                        // The overload's parameter types are part of its key,
+                        // not of the name a reader wrote.
+                        callee.split('@').next().unwrap_or(callee)
                     ),
                     expr.span,
                     module,

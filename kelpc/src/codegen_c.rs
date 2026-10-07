@@ -6058,6 +6058,10 @@ impl<'a> Gen<'a> {
                     let value = self.expr_value(&args[0]);
                     return numeric_conversion(callee, &from, &to, &value);
                 }
+                if from.is_float() && to.is_float() {
+                    let value = self.expr_value(&args[0]);
+                    return format!("(({})({value}))", to.c_type());
+                }
             }
         }
         // Byte-order conversion (kernel stage 3, MK9-S8): `x.swap_bytes()`,

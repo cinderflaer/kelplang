@@ -26,3 +26,5 @@ empty on release.
 - `loop { ... }`, loop labels (`'outer: for ...`) and `break 'outer` / `continue 'outer` leave or continue an outer loop. `break` still carries no value.
 - A method can declare type parameters of its own: `fun Pair<A, B>.map_first<C>(f: fun(A).return: C).return: Pair<C, B>`, on a plain or a generic `datac`, inferred at the call and bound-able.
 - A generic `enum` can carry methods (`fun Opt<T>.map<U>(...)`), and `Option`/`Result` now have `is_some`, `is_none`, `map`, `and_then`, `or_else`, `each` and `is_ok`, `is_err`, `and_then`, `or_else`, `each` as methods (the borrowing combinators; `unwrap_or` and friends take `move` and stay free functions).
+- An integer literal where a float is expected is that float (`x * 2`, `val w: f64 = 3`), when exactly representable; `f32.to_f64()` and `f64.to_f32()` convert float widths; every `std/math` function has an `f32` overload.
+- A line that ends in a binary or assignment operator, `,`, `.` or `->` continues onto the next line.

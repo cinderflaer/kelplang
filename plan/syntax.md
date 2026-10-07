@@ -276,7 +276,7 @@ print(math.pow(base = 2.0,
                exp = 8.0))
 ```
 
-Inside `(` `)` newlines are insignificant, which is what lets a field list or an argument list wrap. Two statements on one line with no separator is an error. A wrapped expression must be parenthesized: a trailing operator does not continue the line.
+Inside `(` `)` newlines are insignificant, which is what lets a field list or an argument list wrap. Two statements on one line with no separator is an error. Since 26.10.3 a line that **ends** in a binary or assignment operator (`+ - * / && || = == != <= >=` and the compound assignments), in `,`, in `.` or in a `when` arrow `->` continues onto the next line; `<`, `>`, `%`, `&` and `|` do not (they also close and open type arguments or end a pattern), and a line that *starts* with an operator is a new statement.
 
 ### 2.3 Identifiers and keywords
 

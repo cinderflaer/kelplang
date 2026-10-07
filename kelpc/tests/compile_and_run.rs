@@ -11926,6 +11926,26 @@ fn a_generic_enum_can_carry_methods_and_option_and_result_do() {
 }
 
 #[test]
+fn small_ergonomics_literal_float_math_f32_and_line_continuation() {
+    // H-12: an integer literal where a float is expected is that float.
+    assert_compiles_and_runs(
+        "tests/fixtures/literal_adapts_to_float.kp",
+        "5.000000\n3.000000\n5.000000\n3.000000\n2.500000\n-4.000000\n1\n",
+    );
+    // `f32.to_f64()` / `f64.to_f32()`, and the f32 overloads of `std/math`.
+    assert_compiles_and_runs("tests/fixtures/float_width_conversion.kp", "2.500000\n4.500000\n");
+    assert_compiles_and_runs(
+        "tests/fixtures/math_f32_overloads.kp",
+        "2.000000\n16.000000\n9.500000\n4.000000\n4.000000\n1.000000\nfalse\n",
+    );
+    // A line that ends in a binary operator, `,` or `.` goes on (open item 11).
+    assert_compiles_and_runs("tests/fixtures/line_continuation_after_operator.kp", "16\n1\n1\n");
+    // A `for (a, b)` over a temporary, whose hidden names must not meet the
+    // loop desugar's own.
+    assert_compiles_and_runs("tests/fixtures/for_pattern_over_a_temporary.kp", "3\n7\n");
+}
+
+#[test]
 fn a_nested_owned_field_can_be_partially_moved_and_reinitialised() {
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_field.kp", "Ada\n7\nLondon\n");
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_reinit.kp", "old\nnew\n");

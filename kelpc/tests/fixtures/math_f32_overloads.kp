@@ -1,0 +1,11 @@
+impl "std/math"
+fun main() {
+    val z: f32 = 4.0
+    print(math.sqrt(z))
+    print(math.pow(z, 2.0))
+    print(math.max(z, 9.5))
+    print(math.abs(-z))
+    print(math.sqrt(16.0))
+    print(math.floor(z / 3))
+    print(math.is_nan(z))
+}
