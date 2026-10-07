@@ -1,6 +1,7 @@
 impl "std/fs"
 impl "std/tls"
 impl "std/result"
+impl "std/str"
 
 /* std/tlsfile: the file-reading layer over `std/tls`'s PEM-bytes functions
    (st3, `plan/tls-server.md`).
@@ -18,8 +19,9 @@ impl "std/result"
 
    A file that cannot be read is `TlsError.Io` with the path and the system's
    reason; everything else is `std/tls`'s own typed error. A private key is
-   never put in an error text. The library does not check the key file's
-   permissions: keep it `0600`, owned by the serving user. */
+   never put in an error text. `read_pem` does not look at a key file's
+   permissions; `read_key` (below) refuses one that group or others can read or
+   write, so a key left at `0644` is a typed error rather than a silent leak. */
 
 // A file read through the `fs` gate, or `Io` with the path and the system's
 // reason. `what` names the file's role for the sentence ("private key").
@@ -61,3 +63,41 @@ fun read_pem(path: &str, what: &str).R: result.Result<Bytes, tls.TlsError> {
 // A program with no `fs` grant cannot import this module, so it cannot make
 // the TLS runtime read a path at all.
 fun ca_pem(path: &str).R: result.Result<Bytes, tls.TlsError> = read_pem(path, "CA certificate")
+
+// The octal digits of the low nine permission bits, as `0644` prints them.
+fun mode_text(mode: u32).R: String {
+    val bits = mode & 511
+    var out = String.with_capacity(4)
+    out.push_str("0")
+    val a = str.from_u64((bits >> 6).to_u64())
+    val b = str.from_u64(((bits >> 3) & 7).to_u64())
+    val c = str.from_u64((bits & 7).to_u64())
+    out.push_str(a.as_str())
+    out.push_str(b.as_str())
+    out.push_str(c.as_str())
+    return out
+}
+
+// A private key file, read through the `fs` gate after its permissions are
+// checked: any group or other bit (`mode & 0077`) is `TlsError.Io` naming the
+// file and its mode, and the file is not read. Fix it with `chmod 600`. A
+// file that is missing or unreadable is the same `Io` as `read_pem`'s. Hand the
+// bytes to `tls.server_config_pem`:
+//
+//     val key = tlsfile.read_key(key_path)?
+fun read_key(path: &str).R: result.Result<Bytes, tls.TlsError> {
+    if fs.exists(path) {
+        val m = fs.metadata(path)
+        if (m.mode & 63) != 0 {
+            var text = String.with_capacity(128)
+            text.push_str("tls: the private key file ")
+            text.push_str(path)
+            text.push_str(" has mode ")
+            val shown = mode_text(m.mode)
+            text.push_str(shown.as_str())
+            text.push_str(": group and others must have no access (chmod 600)")
+            return result.Result.Err(error = tls.TlsError.Io(reason = text))
+        }
+    }
+    return read_pem(path, "private key")
+}

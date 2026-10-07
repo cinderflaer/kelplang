@@ -42,7 +42,7 @@
     if (kelp_cert_pem->len > 0) {
         char text[128];
         if (kelp_tls_load_chain(ctx, kelp_cert_pem->data, kelp_cert_pem->len, text, sizeof text) != 0
-                || kelp_tls_load_key(ctx, kelp_key_pem->data, kelp_key_pem->len, text, sizeof text) != 0) {
+                || kelp_tls_load_key(ctx, kelp_key_pem->data, kelp_key_pem->len, NULL, 0, text, sizeof text) != 0) {
             SSL_CTX_free(ctx);
             *kelp_err_code = 5;
             free(kelp_reason->data);

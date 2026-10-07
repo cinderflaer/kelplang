@@ -33,6 +33,7 @@ impl "std/result"
 extern fun connect_raw(host: &str, port: u16).R: i32
 extern fun connect_try_raw(host: &str, port: u16, reason: mut String).R: i32
 extern fun listen_raw(port: u16).R: i32
+extern fun listen_on_raw(host: &str, port: u16).R: i32
 extern fun accept_raw(fd: i32).R: i32
 extern fun accept_try_raw(fd: i32, reason: mut String).R: i32
 extern fun mono_ms_raw().R: i64
@@ -156,6 +157,16 @@ fun try_recv_into(s: Socket, buf: mut Bytes, at: usize).R: result.Result<usize, 
 /// Panics: if the port is outside the granted capability, or the bind fails
 /// (including "address already in use").
 fun listen(port: u16).R: Listener = Listener(fd = listen_raw(port))
+
+/// As `listen`, bound to one host: `"127.0.0.1"` for loopback only, `"0.0.0.0"`
+/// (or `"*"`) for every interface, or a name that resolves to an IPv4 address.
+/// The check is on `host:port` like `connect`'s, so a grant of
+/// `127.0.0.1:8080` lets a module listen on loopback and refuses `0.0.0.0`,
+/// where `listen(8080)` only checks the port.
+///
+/// Panics: if `host:port` is outside the granted capability, the host does not
+/// resolve, or the bind fails (including "address already in use").
+fun listen_on(host: &str, port: u16).R: Listener = Listener(fd = listen_on_raw(host, port))
 
 /// Blocks until a peer connects, then returns a socket for it. One thread can
 /// serve many sockets by asking `wait_readable` first instead.

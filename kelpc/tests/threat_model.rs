@@ -1071,6 +1071,22 @@ fn n06_a_listen_port_outside_the_grant_is_denied() {
     }
 }
 
+/// N6b (open item 55): `net.listen_on(host, port)` checks the host as well as
+/// the port, so a grant for `127.0.0.1:8080` refuses the wildcard address and
+/// every other host and port, where `net.listen(8080)` only compared the port.
+#[test]
+fn n06b_listen_on_checks_the_host_against_the_grant() {
+    for (host, port) in [("0.0.0.0", 8080u16), ("*", 8080), ("127.0.0.2", 8080), ("127.0.0.1", 8081)] {
+        let lab = Lab::new("n06b");
+        lab.simple(
+            "net = [\"127.0.0.1:8080\"]",
+            NET,
+            &format!("    val l = net.listen_on(\"{host}\", {port})\n    print(\"bound\")\n    l.close()"),
+        );
+        lab.denied("is outside the net capability");
+    }
+}
+
 /// A one-shot loopback HTTP server: answers the first request with a 302 to
 /// `location` (`PORT` is replaced by the server's own port), and reports how
 /// many connections it took in the following second.

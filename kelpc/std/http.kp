@@ -2150,6 +2150,14 @@ fun listen(port: u16).R: Server {
     return Server(fd = l.fd)
 }
 
+/// As `listen`, bound to one host (`"127.0.0.1"` for loopback only). Gated as
+/// `net.listen_on`: the importer's grant must cover the host and the port.
+/// Panics: as `net.listen_on`.
+fun listen_on(host: &str, port: u16).R: Server {
+    val l = net.listen_on(host, port)
+    return Server(fd = l.fd)
+}
+
 /// The port the server listens on.
 fun Server.port().R: u16 {
     val l = net.Listener(fd = fd)

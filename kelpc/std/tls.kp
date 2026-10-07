@@ -80,7 +80,8 @@ const ERR_TIMEOUT: i32 = 7
 const ERR_IO: i32 = 8
 
 extern fun handshake_try_raw(fd: i32, host: &str, ca_pem: Bytes, timeout_ms: u64, alpn: Bytes, cert_pem: Bytes, key_pem: Bytes, err_code: mut i32, reason: mut String).R: TlsHandle
-extern fun server_ctx_try_raw(cert: Bytes, key: Bytes, ca: Bytes, alpn: Bytes, min13: i32, err_code: mut i32, reason: mut String).R: TlsCtx
+extern fun server_ctx_try_raw(cert: Bytes, key: Bytes, ca: Bytes, alpn: Bytes, pass: Bytes, min13: i32, err_code: mut i32, reason: mut String).R: TlsCtx
+extern fun reload_try_raw(ctx: TlsCtx, cert: Bytes, key: Bytes, ca: Bytes, alpn: Bytes, pass: Bytes, min13: i32, err_code: mut i32, reason: mut String)
 extern fun accept_try_raw(ctx: TlsCtx, fd: i32, timeout_ms: u64, err_code: mut i32, reason: mut String).R: TlsHandle
 extern fun ctx_free_raw(ctx: TlsCtx)
 extern fun alpn_raw(handle: TlsHandle, out: mut String).R: bool
@@ -443,7 +444,7 @@ pub enum TlsVersion {
 // What a server needs besides its certificate. A value, built with the methods
 // below and handed to `server_config_with`, so a `ServerConfig` itself has
 // nothing left to change once it exists.
-pub datac ServerOptions(val floor: i32, val alpn_list: Bytes, val ca_pem: Bytes, val timeout_ms: u64)
+pub datac ServerOptions(val floor: i32, val alpn_list: Bytes, val ca_pem: Bytes, val timeout_ms: u64, val key_pass: Bytes)
 
 // A built server configuration. Immutable; one `SSL_CTX*` that OpenSSL lets
 // every thread make sessions from, so a config is shared by reference or by
@@ -458,6 +459,7 @@ fun server_options().R: ServerOptions = ServerOptions(
     alpn_list = Bytes.empty(),
     ca_pem = Bytes.empty(),
     timeout_ms = 10000,
+    key_pass = Bytes.empty(),
 )
 
 fun TlsVersion.floor_code().R: i32 = when self {
@@ -470,6 +472,7 @@ fun ServerOptions.min_version(v: TlsVersion).R: ServerOptions = ServerOptions(
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
+    key_pass = key_pass.clone(),
 )
 
 // The protocols this server speaks, in order of preference (`"h2"`,
@@ -481,6 +484,7 @@ fun ServerOptions.alpn(protocols: &List<String>).R: ServerOptions = ServerOption
     alpn_list = alpn_wire(protocols),
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
+    key_pass = key_pass.clone(),
 )
 
 // Verify client certificates against the CA(s) in this PEM text, and refuse a
@@ -491,6 +495,7 @@ fun ServerOptions.require_client_cert_pem(ca_pem: Bytes).R: ServerOptions = Serv
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
+    key_pass = key_pass.clone(),
 )
 
 // The handshake deadline `accept` applies; 0 waits forever.
@@ -499,6 +504,21 @@ fun ServerOptions.handshake_timeout_ms(ms: u64).R: ServerOptions = ServerOptions
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
     timeout_ms = ms,
+    key_pass = key_pass.clone(),
+)
+
+// The pass phrase of an encrypted private key (PEM `ENCRYPTED PRIVATE KEY` or
+// the older `Proc-Type: 4,ENCRYPTED` form). Without one an encrypted key is
+// refused with a fixed sentence; with a wrong one the same sentence says the
+// key is malformed or the phrase wrong. The phrase is never put in an error
+// text, and it lives only in these options: drop them once the configuration
+// is built.
+fun ServerOptions.key_password(phrase: &str).R: ServerOptions = ServerOptions(
+    floor = floor,
+    alpn_list = alpn_list.clone(),
+    ca_pem = ca_pem.clone(),
+    timeout_ms = timeout_ms,
+    key_pass = Bytes.from_str(phrase),
 )
 
 // The wire form of an ALPN list: each name behind its length byte. A name that
@@ -544,6 +564,7 @@ fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions).R: res
         key,
         opts.ca_pem.clone(),
         opts.alpn_list.clone(),
+        opts.key_pass.clone(),
         min13,
         &mut code,
         &mut reason,
@@ -552,6 +573,36 @@ fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions).R: res
         return result.Result.Err(error = error_from(code, reason))
     }
     return result.Result.Ok(value = ServerConfig(ctx = ctx, handshake_timeout_ms = opts.timeout_ms))
+}
+
+// Replaces the certificate and key this configuration hands to *new*
+// handshakes, from PEM text, with the options given (the floor, ALPN, client CA
+// and pass phrase are taken from `opts`, so a reload may change them too). A
+// renewal is `reload_pem` on the live configuration: nothing is re-accepted and
+// no thread has to be stopped. Connections already established keep the
+// certificate they started with. If the new material is malformed, does not
+// match, or the phrase is wrong, the old certificate stays in force and the
+// failure is the value (`None` is success). `ServerConfig.handshake_timeout_ms`
+// is not changed by a reload.
+must_use fun ServerConfig.reload_pem(cert: Bytes, key: Bytes, opts: &ServerOptions).R: option.Option<TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val min13 = if opts.floor == 13 { 1 } else { 0 }
+    reload_try_raw(
+        ctx,
+        cert,
+        key,
+        opts.ca_pem.clone(),
+        opts.alpn_list.clone(),
+        opts.key_pass.clone(),
+        min13,
+        &mut code,
+        &mut reason,
+    )
+    if code != 0 {
+        return option.Option.Some(value = error_from(code, reason))
+    }
+    return option.Option.None
 }
 
 // Ends the configuration. Sessions already made from it keep working until
