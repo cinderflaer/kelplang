@@ -11874,6 +11874,17 @@ fn a_tuple_has_positions_patterns_in_when_and_a_destructuring_for() {
     assert_compiles_and_runs("tests/fixtures/tuple_access_and_patterns.kp", "1\n2\n3\n2\n12\n8\n5\n40\n0\n3\n");
     assert_compiles_and_runs("tests/fixtures/tuple_when_owned_payloads.kp", "5\n300\n");
     assert_compiles_and_runs("tests/fixtures/tuple_index_nested.kp", "7\n9\n2\n");
+    // Literal positions and nested tuple patterns in a `when`.
+    assert_compiles_and_runs(
+        "tests/fixtures/tuple_when_literals_and_nested.kp",
+        "100\n7\n30\n-1\n7\n7\n5\n8\n11\n0\n1\n2\n3\n4\n",
+    );
+    // `for (k, v) in map` (the `Map` iteration of MISSING-Hd4Lr).
+    assert_compiles_and_runs("tests/fixtures/for_over_a_map.kp", "1\n2\n3\n10\n20\n7\n5\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_tuple_when_literals_without_fallback.kp",
+        "needs an arm that matches anything there",
+    );
     assert_rejected_with(
         "tests/fixtures/refused_tuple_when_not_exhaustive.kp",
         "this 'when' is not exhaustive: 'None' of enum",

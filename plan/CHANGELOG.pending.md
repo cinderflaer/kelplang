@@ -28,3 +28,5 @@ empty on release.
 - A generic `enum` can carry methods (`fun Opt<T>.map<U>(...)`), and `Option`/`Result` now have `is_some`, `is_none`, `map`, `and_then`, `or_else`, `each` and `is_ok`, `is_err`, `and_then`, `or_else`, `each` as methods (the borrowing combinators; `unwrap_or` and friends take `move` and stay free functions).
 - An integer literal where a float is expected is that float (`x * 2`, `val w: f64 = 3`), when exactly representable; `f32.to_f64()` and `f64.to_f32()` convert float widths; every `std/math` function has an `f32` overload.
 - A line that ends in a binary or assignment operator, `,`, `.` or `->` continues onto the next line.
+- Tuple patterns in `when` take literal positions (`(0, y)`, `('a', true)`) and nested tuples (`((a, b), c)`).
+- `for (key, value) in map` walks a `Map` (a snapshot of the keys, in insertion order).

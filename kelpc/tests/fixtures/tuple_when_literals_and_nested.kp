@@ -1,0 +1,50 @@
+impl "std/option"
+
+fun classify(a: i32, b: i32).return: i32 {
+    return when (a, b) {
+        (0, 0) -> 100
+        (0, y) -> y
+        (x, 0) -> x * 10
+        (-1, _) -> -1
+        (x, y) -> x + y
+    }
+}
+
+fun pick(p: (i32, i32), o: &option.Option<i32>).return: i32 {
+    return when (p, o) {
+        ((1, k), Some(v)) -> k + v
+        ((1, k), None) -> k
+        ((a, 2), _) -> a * 2
+        (_, Some(v)) -> v
+        (_, None) -> 0
+    }
+}
+
+fun letter(c: char, flag: bool).return: i32 {
+    return when (c, flag) {
+        ('a', true) -> 1
+        ('a', false) -> 2
+        (_, true) -> 3
+        else -> 4
+    }
+}
+
+fun main() {
+    print(classify(0, 0))
+    print(classify(0, 7))
+    print(classify(3, 0))
+    print(classify(-1, 5))
+    print(classify(2, 5))
+    val some2: option.Option<i32> = option.Option.Some(value = 2)
+    val some11: option.Option<i32> = option.Option.Some(value = 11)
+    val none: option.Option<i32> = option.Option.None
+    print(pick((1, 5), &some2))
+    print(pick((1, 5), &none))
+    print(pick((4, 2), &none))
+    print(pick((9, 9), &some11))
+    print(pick((9, 9), &none))
+    print(letter('a', true))
+    print(letter('a', false))
+    print(letter('b', true))
+    print(letter('b', false))
+}

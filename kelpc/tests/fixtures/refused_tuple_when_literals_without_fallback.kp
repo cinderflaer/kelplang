@@ -1,0 +1,7 @@
+fun f(a: i32, b: i32).return: i32 {
+    return when (a, b) {
+        (0, 1) -> 1
+        (1, 0) -> 2
+    }
+}
+fun main() { print(f(0, 1)) }

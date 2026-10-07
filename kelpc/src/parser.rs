@@ -49,6 +49,10 @@ const WHEN_TUPLE_PREFIX: &str = "#wt";
 /// between it and its target.
 const LABEL_FLAG_PREFIX: &str = "#lbl";
 
+/// The start of the refusal for a literal position with no arm that matches
+/// anything there.
+const NO_LITERAL_FALLBACK: &str = "a position matched by literals needs an arm that matches anything there";
+
 #[derive(Debug)]
 pub struct ParseError {
     pub message: String,
@@ -4311,6 +4315,65 @@ impl Parser {
     /// One position of a tuple pattern: `_`, a lowercase name, or a variant
     /// (`None`, `Some(x)`, `Rect(w, _)`).
     fn parse_tuple_position(&mut self) -> PResult<TuplePat> {
+        self.nest()?;
+        let r = self.parse_tuple_position_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_tuple_position_inner(&mut self) -> PResult<TuplePat> {
+        // A nested tuple pattern.
+        if self.check(&TokenKind::LParen) {
+            let open = self.advance().span;
+            let mut elems = Vec::new();
+            loop {
+                elems.push(self.parse_tuple_position()?);
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
+            let close = self.expect(TokenKind::RParen, "')' to close the tuple pattern")?.span;
+            if elems.len() < 2 {
+                return Err(ParseError {
+                    message: "a tuple pattern needs two or more positions".to_string(),
+                    span: open.to(close),
+                });
+            }
+            return Ok(TuplePat::Tuple(elems, open.to(close)));
+        }
+        // A literal position.
+        let lit_span = self.peek().span;
+        match self.peek_kind().clone() {
+            TokenKind::IntLit(v) => {
+                self.advance();
+                return Ok(TuplePat::Lit { key: format!("i{v}"), expr: Expr::IntLit(v, lit_span) });
+            }
+            TokenKind::Minus if matches!(self.peek2_kind(), TokenKind::IntLit(_)) => {
+                self.advance();
+                let TokenKind::IntLit(v) = self.peek_kind().clone() else { unreachable!() };
+                let end = self.advance().span;
+                return Ok(TuplePat::Lit {
+                    key: format!("-i{v}"),
+                    expr: Expr::Unary {
+                        op: UnOp::Neg,
+                        expr: Box::new(Expr::IntLit(v, end)),
+                        span: lit_span.to(end),
+                    },
+                });
+            }
+            TokenKind::CharLit(c) => {
+                self.advance();
+                return Ok(TuplePat::Lit { key: format!("c{c}"), expr: Expr::CharLit(c, lit_span) });
+            }
+            TokenKind::True | TokenKind::False => {
+                let value = matches!(self.peek_kind(), TokenKind::True);
+                self.advance();
+                return Ok(TuplePat::Lit { key: format!("b{value}"), expr: Expr::BoolLit(value, lit_span) });
+            }
+            _ => {}
+        }
         let (name, span) = self.expect_ident()?;
         if name == "_" {
             return Ok(TuplePat::Any(None));
@@ -4350,8 +4413,19 @@ impl Parser {
     }
 
     fn compile_tuple_rows_inner(&mut self, rows: Vec<TupleRow>, cols: &[Expr], span: Span) -> PResult<Expr> {
+        // A nested tuple pattern splits its position into one position per
+        // element before anything else is decided, so the rest only ever sees
+        // flat columns.
+        if let Some(c) = rows[0].pats.iter().position(|p| matches!(p, TuplePat::Tuple(..))) {
+            return self.expand_tuple_column(rows, cols, c, span);
+        }
         let first = &rows[0];
-        let Some(c) = first.pats.iter().position(|p| matches!(p, TuplePat::Variant { .. })) else {
+        // The first position the first row has to test: a variant or a literal.
+        let Some(c) = first
+            .pats
+            .iter()
+            .position(|p| matches!(p, TuplePat::Variant { .. } | TuplePat::Lit { .. }))
+        else {
             let mut stmts = Vec::new();
             for (name, value) in &first.binds {
                 stmts.push(Stmt::Let { name: name.clone(), mutable: false, ty: None, init: value.clone(), span });
@@ -4366,6 +4440,9 @@ impl Parser {
             stmts.push(Stmt::Expr { expr: body, span: body_span });
             return Ok(Expr::Block(Block { stmts, span: first.span }));
         };
+        if matches!(first.pats[c], TuplePat::Lit { .. }) {
+            return self.compile_literal_column(rows, cols, c, span);
+        }
         // The variants named in column `c`, in order of first appearance.
         let mut variants: Vec<(String, usize, Span)> = Vec::new();
         for row in &rows {
@@ -4403,6 +4480,18 @@ impl Parser {
                             next.binds.push((n.clone(), cols[c].clone()));
                         }
                     }
+                    TuplePat::Lit { expr, .. } => {
+                        return Err(ParseError {
+                            message: "a position cannot be matched by a variant in one arm and a literal in another".to_string(),
+                            span: expr.span(),
+                        })
+                    }
+                    TuplePat::Tuple(_, tspan) => {
+                        return Err(ParseError {
+                            message: "a position cannot be matched by a variant in one arm and a tuple in another".to_string(),
+                            span: *tspan,
+                        })
+                    }
                 }
                 next.pats[c] = TuplePat::Any(None);
                 group.push(next);
@@ -4431,15 +4520,161 @@ impl Parser {
             }
         }
         if !rest.is_empty() {
-            let body = self.compile_tuple_rows(rest, cols, span)?;
-            let bspan = body.span();
-            arms.push(WhenArm { pattern: None, body, span: bspan });
+            // The rows that match any variant are the `else` arm. When they
+            // test a literal with nothing to catch the other values, the arm
+            // is dropped instead of refused: if the variants above already
+            // cover the enum it was never reachable, and if they do not the
+            // ordinary "not exhaustive" error names the missing variant.
+            match self.compile_tuple_rows(rest, cols, span) {
+                Ok(body) => {
+                    let bspan = body.span();
+                    arms.push(WhenArm { pattern: None, body, span: bspan });
+                }
+                Err(e) if e.message.starts_with(NO_LITERAL_FALLBACK) => {}
+                Err(e) => return Err(e),
+            }
         }
         Ok(Expr::When {
             scrutinee: Box::new(cols[c].clone()),
             arms,
             span,
         })
+    }
+
+    /// Splits column `c`, where the first row writes a nested tuple pattern,
+    /// into one column per element (`cols[c].f0`, `cols[c].f1`, ...). A row that
+    /// writes a tuple there contributes its elements; a row that writes a name
+    /// or `_` matches every element and binds the name to the whole position.
+    fn expand_tuple_column(&mut self, rows: Vec<TupleRow>, cols: &[Expr], c: usize, span: Span) -> PResult<Expr> {
+        let TuplePat::Tuple(first_elems, _) = &rows[0].pats[c] else { unreachable!("the caller found a tuple here") };
+        let width = first_elems.len();
+        let mut new_cols: Vec<Expr> = cols[..c].to_vec();
+        for j in 0..width {
+            new_cols.push(Expr::FieldAccess {
+                base: Box::new(cols[c].clone()),
+                field: crate::types::tuple_field_name(j),
+                span,
+            });
+        }
+        new_cols.extend(cols[c + 1..].iter().cloned());
+        let mut next_rows = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut pats: Vec<TuplePat> = row.pats[..c].to_vec();
+            let mut binds = row.binds.clone();
+            match &row.pats[c] {
+                TuplePat::Tuple(elems, tspan) => {
+                    if elems.len() != width {
+                        return Err(ParseError {
+                            message: format!("this nested tuple pattern has {} positions and an earlier arm's has {width}", elems.len()),
+                            span: *tspan,
+                        });
+                    }
+                    pats.extend(elems.iter().cloned());
+                }
+                TuplePat::Any(name) => {
+                    if let Some(n) = name {
+                        binds.push((n.clone(), cols[c].clone()));
+                    }
+                    pats.extend(std::iter::repeat(TuplePat::Any(None)).take(width));
+                }
+                TuplePat::Variant { span: vspan, .. } => {
+                    return Err(ParseError {
+                        message: "a position that is a tuple in one arm cannot be a variant in another".to_string(),
+                        span: *vspan,
+                    })
+                }
+                TuplePat::Lit { expr, .. } => {
+                    return Err(ParseError {
+                        message: "a position that is a tuple in one arm cannot be a literal in another".to_string(),
+                        span: expr.span(),
+                    })
+                }
+            }
+            pats.extend(row.pats[c + 1..].iter().cloned());
+            next_rows.push(TupleRow { pats, binds, body: row.body, span: row.span });
+        }
+        self.compile_tuple_rows(next_rows, &new_cols, span)
+    }
+
+    /// Column `c`, where the first row writes a literal: `if col == lit { ... }
+    /// else if col == other { ... } else { rows that match anything }`. A column
+    /// of literals needs an arm that matches anything there, since a number has
+    /// no list of values to be exhaustive over.
+    fn compile_literal_column(&mut self, rows: Vec<TupleRow>, cols: &[Expr], c: usize, span: Span) -> PResult<Expr> {
+        let mut lits: Vec<(String, Expr)> = Vec::new();
+        for row in &rows {
+            match &row.pats[c] {
+                TuplePat::Lit { key, expr } => {
+                    if !lits.iter().any(|(k, _)| k == key) {
+                        lits.push((key.clone(), expr.clone()));
+                    }
+                }
+                TuplePat::Any(_) => {}
+                TuplePat::Variant { span: vspan, .. } => {
+                    return Err(ParseError {
+                        message: "a position cannot be matched by a literal in one arm and a variant in another".to_string(),
+                        span: *vspan,
+                    })
+                }
+                TuplePat::Tuple(_, tspan) => {
+                    return Err(ParseError {
+                        message: "a position cannot be matched by a literal in one arm and a tuple in another".to_string(),
+                        span: *tspan,
+                    })
+                }
+            }
+        }
+        let any_rows = |this: &mut Parser, rows: &[TupleRow], want: Option<&str>| -> Vec<TupleRow> {
+            let _ = this;
+            let mut group = Vec::new();
+            for row in rows {
+                let mut next = row.clone();
+                match &row.pats[c] {
+                    TuplePat::Lit { key, .. } if Some(key.as_str()) == want => {}
+                    TuplePat::Lit { .. } => continue,
+                    TuplePat::Any(name) => {
+                        if let Some(n) = name {
+                            next.binds.push((n.clone(), cols[c].clone()));
+                        }
+                    }
+                    _ => continue,
+                }
+                next.pats[c] = TuplePat::Any(None);
+                group.push(next);
+            }
+            group
+        };
+        let fallback = any_rows(self, &rows, None);
+        if fallback.is_empty() {
+            return Err(ParseError {
+                message: format!("{NO_LITERAL_FALLBACK}: add an arm with a name or '_' in that position, or 'else'"),
+                span: rows[0].span,
+            });
+        }
+        let mut acc: ElseBranch = {
+            let body = self.compile_tuple_rows(fallback, cols, span)?;
+            ElseBranch::Block(Block { stmts: vec![Stmt::Expr { expr: body, span }], span })
+        };
+        for (key, lit) in lits.into_iter().rev() {
+            let group = any_rows(self, &rows, Some(&key));
+            let body = self.compile_tuple_rows(group, cols, span)?;
+            let cond = Expr::Binary {
+                op: BinOp::Eq,
+                lhs: Box::new(cols[c].clone()),
+                rhs: Box::new(lit),
+                span,
+            };
+            acc = ElseBranch::If(Expr::If {
+                cond: Box::new(cond),
+                then_block: Block { stmts: vec![Stmt::Expr { expr: body, span }], span },
+                else_block: Some(Box::new(acc)),
+                span,
+            });
+        }
+        match acc {
+            ElseBranch::If(e) => Ok(e),
+            ElseBranch::Block(b) => Ok(Expr::Block(b)),
+        }
     }
 }
 
@@ -4468,6 +4703,11 @@ enum TuplePat {
     Any(Option<String>),
     /// `Some(x)` / `None`: a variant and the names of its payload.
     Variant { name: String, binds: Vec<Option<String>>, span: Span },
+    /// `0`, `-1`, `'a'`, `true`: a literal the position is compared with. `key`
+    /// tells two spellings of one value apart from two values.
+    Lit { key: String, expr: Expr },
+    /// `(a, b)` inside a tuple pattern: the position is itself a tuple.
+    Tuple(Vec<TuplePat>, Span),
 }
 
 /// One arm of a tuple `when`, with the names already bound on the way to it.
