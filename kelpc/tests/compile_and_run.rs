@@ -1786,6 +1786,12 @@ fn fs_mutators_have_fallible_twins() {
 }
 
 #[test]
+fn http_builds_a_multipart_form_body() {
+    // MISSING-j2Wka: the exact wire bytes, with CR shown as `\r`.
+    assert_compiles_and_runs("tests/fixtures/http_multipart.kp", "multipart/form-data; boundary=xXboundaryXx\n--xXboundaryXx\\r\nContent-Disposition: form-data; name=\"content\"\\r\n\\r\nhello\\r\n--xXboundaryXx\\r\nContent-Disposition: form-data; name=\"a%22b%0D%0AX: y\"\\r\n\\r\nv\\r\n--xXboundaryXx\\r\nContent-Disposition: form-data; name=\"file\"; filename=\"n%22ote.txt\"\\r\nContent-Type: text/plain\\r\n\\r\nline1\nline2\\r\n--xXboundaryXx--\\r\n\nmultipart/form-data; boundary=xXboundaryXx\nPOST\n");
+}
+
+#[test]
 fn owned_datac_fields_are_dropped_with_the_struct() {
     assert_compiles_and_runs(
         "tests/fixtures/string_field.kp",

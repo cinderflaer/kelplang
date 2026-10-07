@@ -50,28 +50,6 @@ wiki changelog page.
 
 Sorted easiest first. `effort:` is S (a stdlib function or one small diagnostic), M (one subsystem, one lane), L (touches a hotspot file or needs a design call inside a lane), XL (mark-sized, or blocked on a decision). Within a tier the order is a rough guess; dependencies are named in the entries.
 
-### MISSING-j2Wka kelp: no multipart/form-data body, which an attachment upload needs
-
-repo: kelp | found: 2026-09-24 | effort: M
-
-source: `kelp/plan/architecture.md`, the `std/http` section and the `std/ws`
-record it gained with MISSING-k4Nvz; neither `std/http` nor `fpl/httpx` builds a
-multipart body.
-
-A multipart/form-data body is the shape every attachment upload wants: a
-`boundary` in the `Content-Type`, then one part per field or file, each with its
-own headers and a CRLF-delimited body, and the closing `--boundary--`. Discord's
-message-with-attachment endpoint is one instance; it is the ordinary way an HTTP
-API takes a file.
-
-Nothing in the tree writes one: `std/http` sends the `Request.body` it is given,
-and `fpl/httpx` composes headers and forms but has no multipart builder. The
-work is a builder over `Bytes`/`String` (part, boundary, final closing part) and
-the `Content-Type` line, which is a `std/http`-shaped helper rather than a
-language feature. Not recorded in `plan/` as anything but "out of scope for
-MK5-S4" (that section lists `Expect: 100-continue`, idle reaping and `https`
-beside it), so this entry is the record that it is a gap rather than a decision.
-
 ### MISSING-Nf3Rb kelp: a 5,000-element array literal takes ~3 s at `-O2`
 
 repo: kelp | found: 2026-10-06 | effort: M
