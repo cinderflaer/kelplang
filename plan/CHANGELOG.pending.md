@@ -16,7 +16,7 @@ empty on release.
 
 ## Compiler
 
-- `std/fs` has fallible twins of its mutators: `try_write`, `try_write_text`, `try_append`, `try_remove`, `try_rename`, `try_mkdir_all` and `try_symlink` and `try_remove_all` return `Option<io.IoErr>` (`None` on success) instead of panicking, and `try_list` returns `Result<List<String>, io.IoErr>`, so a tool can report a failure and carry on.
+- `std/fs` has fallible twins of its mutators: `try_write`, `try_write_text`, `try_append`, `try_remove`, `try_rename`, `try_mkdir_all`, `try_symlink` and `try_remove_all` return `Option<io.IoErr>` (`None` on success) instead of panicking, and `try_list` returns `Result<List<String>, io.IoErr>`, so a tool can report a failure and carry on.
 - `List.with_capacity(n)` builds an empty list with room for at least `n` elements, so a fill that knows its size allocates once. The element type comes from the binding, and the list grows past `n` like any other.
 - A string literal accepts `\$` for a literal dollar sign, so `"\$KELPC is unset"` is an ordinary string value instead of a template.
 - `kelpc build --incremental --timings` prints a `front-end interfaces: H hit, M miss` line. The generated `.kpi` interface artifacts are validated against the current build (a corrupt or old-format file is a miss and is rewritten atomically); the front end does not reuse them yet. A module that declares a generic item, `const`, `static`, `pd` or `drop` now folds its whole text into its interface hash, because a body edit there can change an importer.
