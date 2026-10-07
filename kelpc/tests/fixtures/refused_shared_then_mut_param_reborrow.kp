@@ -1,0 +1,15 @@
+datac S(var a: i32)
+
+fun bump_from(y: &S, x: mut S) {
+    x.a = y.a + 1
+}
+
+fun h(s: mut S) {
+    bump_from(s, s)
+}
+
+fun main() {
+    var s = S(a = 1)
+    h(s)
+    print(s.a)
+}
