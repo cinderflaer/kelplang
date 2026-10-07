@@ -281,6 +281,8 @@ of a trait with an associated type. Generic impls are the one that blocks the
 iterator adapters (MISSING-Hd4Lr) and `impl Iterator for Ring<3>` (the
 "iterators with const generics" row of the feature-interaction table).
 
+Design note written (26.10.3): `plan/generic-trait-impls.md`.
+
 ### MISSING-Ra5Wn kelp: no async, no coroutines, no weaker atomic orderings
 
 repo: kelp | found: 2026-10-06 | effort: XL
@@ -320,9 +322,13 @@ still static: grants are source text, a plugin or worker cannot be handed a
 narrower grant at runtime, and a grant cannot be revoked or bounded in lifetime
 or holder count. Listed so the capability story is not read as complete.
 
+Design note written (26.10.3): `plan/capability-narrowing.md`, sections 3 and 4.
+
 ### MISSING-t9Qmz kelp: a module in the middle cannot forward a narrowed grant
 
 repo: kelp | found: 2026-09-24 | effort: XL
+
+Design note written (26.10.3): `plan/capability-narrowing.md`, sections 1 and 2.
 
 source: repro run against `kelpc` on 2026-09-24, prompted by a library that
 wants to send for its caller; `kelpc/src/resolve.rs` (the delegation rule).

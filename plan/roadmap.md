@@ -504,8 +504,7 @@ Order inside the release, each lane merged before the next starts:
 4. ~~**MISSING-Pw3Fz** methods with their own type parameters (L)~~ shipped, with methods on generic enums.
 5. Open item 75, trailing closures; open item 11, trailing-operator line continuation in the lexer;
    H-12, a numeric literal adapts to its expected type; open item 7, `f32` overloads in `std/math`.
-6. Design notes only: `plan/generic-trait-impls.md` (Ve8Nc) and `plan/capability-narrowing.md`
-   (Iq2Tz, t9Qmz).
+6. ~~Design notes only~~ **written** (26.10.3): `plan/generic-trait-impls.md` (Ve8Nc) and `plan/capability-narrowing.md` (Iq2Tz, t9Qmz).
 
 #### 26.11.1: generics and traits
 
