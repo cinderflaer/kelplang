@@ -1,0 +1,8 @@
+// MISSING-Cn2Ym: `Sender.send` is `must_use`, so a send whose result is thrown
+// away is refused; `val _r = tx.send(1)` is the explicit discard.
+impl "std/sync"
+
+fun main() {
+    val (tx, rx) = sync.unbounded<i64>()
+    tx.send(1)
+}

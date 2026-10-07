@@ -132,7 +132,7 @@ fun write(path: &str, data: Bytes) {
 /// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
 /// no success value to write (MISSING-n6Bsc), so the absence of an error is the
 /// success.
-fun try_write(path: &str, data: Bytes).R: option.Option<io.IoErr> {
+must_use fun try_write(path: &str, data: Bytes).R: option.Option<io.IoErr> {
     var err: i32 = 0
     try_write_raw(path, data, &mut err)
     if err == 0 {
@@ -150,7 +150,7 @@ fun write_text(path: &str, text: String) {
 /// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
 /// no success value to write (MISSING-n6Bsc), so the absence of an error is the
 /// success.
-fun try_write_text(path: &str, text: String).R: option.Option<io.IoErr> {
+must_use fun try_write_text(path: &str, text: String).R: option.Option<io.IoErr> {
     var err: i32 = 0
     try_write_text_raw(path, text, &mut err)
     if err == 0 {
@@ -200,7 +200,7 @@ fun remove(path: &str) {
 /// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
 /// no success value to write (MISSING-n6Bsc), so the absence of an error is the
 /// success.
-fun try_remove(path: &str).R: option.Option<io.IoErr> {
+must_use fun try_remove(path: &str).R: option.Option<io.IoErr> {
     var err: i32 = 0
     try_remove_raw(path, &mut err)
     if err == 0 {
@@ -221,7 +221,7 @@ fun rename(from: &str, to: &str) {
 /// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
 /// no success value to write (MISSING-n6Bsc), so the absence of an error is the
 /// success.
-fun try_rename(from: &str, to: &str).R: option.Option<io.IoErr> {
+must_use fun try_rename(from: &str, to: &str).R: option.Option<io.IoErr> {
     var err: i32 = 0
     try_rename_raw(from, to, &mut err)
     if err == 0 {
@@ -250,7 +250,7 @@ fun append(path: &str, data: Bytes) {
 /// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
 /// no success value to write (MISSING-n6Bsc), so the absence of an error is the
 /// success.
-fun try_append(path: &str, data: Bytes).R: option.Option<io.IoErr> {
+must_use fun try_append(path: &str, data: Bytes).R: option.Option<io.IoErr> {
     var err: i32 = 0
     try_append_raw(path, data, &mut err)
     if err == 0 {
@@ -323,7 +323,7 @@ fun mkdir_all(path: &str) {
 /// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
 /// no success value to write (MISSING-n6Bsc), so the absence of an error is the
 /// success.
-fun try_mkdir_all(path: &str).R: option.Option<io.IoErr> {
+must_use fun try_mkdir_all(path: &str).R: option.Option<io.IoErr> {
     var err: i32 = 0
     try_mkdir_all_raw(path, &mut err)
     if err == 0 {
@@ -367,7 +367,7 @@ fun remove_all(target: &str) {
 /// gone, or the first failure (`errno` and its text) with the rest left in
 /// place. A link out of the grant that the walk reaches is still a capability
 /// panic, not a value (open item 73).
-fun try_remove_all(target: &str).R: option.Option<io.IoErr> {
+must_use fun try_remove_all(target: &str).R: option.Option<io.IoErr> {
     if is_symlink(target) {
         return try_remove(target)
     }
@@ -455,7 +455,7 @@ fun symlink(target: &str, link: &str) {
 /// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
 /// no success value to write (MISSING-n6Bsc), so the absence of an error is the
 /// success.
-fun try_symlink(target: &str, link: &str).R: option.Option<io.IoErr> {
+must_use fun try_symlink(target: &str, link: &str).R: option.Option<io.IoErr> {
     var err: i32 = 0
     try_symlink_raw(target, link, &mut err)
     if err == 0 {

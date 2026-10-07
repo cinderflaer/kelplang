@@ -4914,6 +4914,15 @@ fn a_for_loop_needs_its_in() {
 }
 
 #[test]
+fn a_must_use_result_cannot_be_dropped() {
+    // MISSING-Cn2Ym: the marker is on `Sender.send` and the `fs.try_*`
+    // mutators, and a user function can carry it too.
+    assert_rejected_with("tests/fixtures/must_use_send_dropped.kp", "must be used");
+    assert_rejected_with("tests/fixtures/must_use_user_dropped.kp", "'check' must be used");
+    assert_compiles_and_runs("tests/fixtures/must_use_user_fun.kp", "positive\ntrue\n");
+}
+
+#[test]
 fn a_for_loop_only_walks_a_list_or_an_iterator() {
     // A `List`/array keeps the index walk; anything else has to implement
     // `std.iter.Iterator`, and the refusal names the trait so the fix is one

@@ -590,7 +590,7 @@ impl<'a> Scanner<'a> {
                     j = self.skip_balanced(j + 1);
                 }
                 TokenKind::Ident(n)
-                    if matches!(n.as_str(), "unsafe" | "naked" | "percpu")
+                    if matches!(n.as_str(), "unsafe" | "naked" | "percpu" | "must_use")
                         && matches!(
                             self.kind(j + 1),
                             TokenKind::Fun | TokenKind::Static | TokenKind::Ident(_)
@@ -800,7 +800,7 @@ impl<'a> Scanner<'a> {
             }
             let mut k = j;
             while matches!(self.kind(k), TokenKind::Pub | TokenKind::Extern)
-                || (matches!(self.kind(k), TokenKind::Ident(n) if n == "unsafe" || n == "naked")
+                || (matches!(self.kind(k), TokenKind::Ident(n) if n == "unsafe" || n == "naked" || n == "must_use")
                     && matches!(self.kind(k + 1), TokenKind::Fun | TokenKind::Ident(_)))
             {
                 k += 1;

@@ -112,18 +112,17 @@ source: wiki `language/limits.md` (unreleased), "Control flow". Also: a
 needs a flag variable or a helper function. Unlike `elif` (decided and shipped)
 this one has no decision recorded either way.
 
-### MISSING-Cn2Ym kelp: channels have no `select`, no zero-capacity form, no `must_use`
+### MISSING-Cn2Ym kelp: channels have no `select` and no zero-capacity form
 
 repo: kelp | found: 2026-10-06 | effort: M
 
 source: wiki `language/limits.md` (unreleased), "Concurrency".
 
-`sync.bounded`/`unbounded` only; `Sender.send` returns an `Option` the compiler
-does not force a caller to read, and a thread handle nobody joins is detached
-with its record leaked "because v1 has no `must_use`". A `must_use` attribute is
-the smallest piece and fixes both the dropped `send` result and the leaked
-handle. `std/pool` bounds concurrency, not thread creation (no reusable
-workers).
+`sync.bounded`/`unbounded` only. `must_use fun` shipped in 26.10.2 and
+`Sender.send` carries it. A thread handle that is bound and never joined is
+detached with its record leaked (a bare `thread.spawn(...)` statement is
+already refused). `std/pool` bounds concurrency, not thread creation (no
+reusable workers).
 
 ### MISSING-Tb8Vh kelp: thread-local storage
 

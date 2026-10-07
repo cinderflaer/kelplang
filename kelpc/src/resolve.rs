@@ -103,6 +103,9 @@ pub struct Project {
     /// the set `infer.rs` requires an `unsafe` context to call. Empty for a
     /// program that declares none.
     unsafe_fns: std::collections::HashSet<String>,
+    /// The functions written `must_use fun` (MISSING-Cn2Ym), by canonical key:
+    /// a call to one used as a statement is refused.
+    must_use_fns: std::collections::HashSet<String>,
     /// The manifest's `[target]` section (kernel stage 4), or the hosted default
     /// when there is none. `infer.rs` reads the entry name from it, the
     /// freestanding checker its allowed set, and the driver the triple and
@@ -136,6 +139,11 @@ impl Project {
     /// The functions declared `unsafe fun` (MK9-S2 stage 1), by canonical key.
     pub fn unsafe_fns(&self) -> &std::collections::HashSet<String> {
         &self.unsafe_fns
+    }
+
+    /// The functions declared `must_use fun`, by canonical key.
+    pub fn must_use_fns(&self) -> &std::collections::HashSet<String> {
+        &self.must_use_fns
     }
 
     /// The manifest's `[target]` section, or the hosted default (kernel stage
@@ -1176,6 +1184,19 @@ pub fn load(
             }
         }
     }
+    let mut must_use_fns = std::collections::HashSet::new();
+    for m in &loader.modules {
+        let parsed = &loader.parsed[&m.id];
+        for f in &parsed.functions {
+            if f.must_use {
+                let key = match &f.receiver {
+                    Some(r) => format!("{}{}#{}", m.prefix, r.type_name, f.name),
+                    None => format!("{}{}", m.prefix, f.name),
+                };
+                must_use_fns.insert(key);
+            }
+        }
+    }
     for m in &loader.modules {
         let Some(domain) = domain_of_with_extern(&m.id, &loader.extern_modules) else {
             continue;
@@ -1211,6 +1232,7 @@ pub fn load(
         gated,
         extern_modules: loader.extern_modules,
         unsafe_fns,
+        must_use_fns,
         target: manifest_target,
         incremental: manifest_incremental,
         sanitize: manifest_sanitize,

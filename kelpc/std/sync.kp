@@ -186,7 +186,7 @@ fun unbounded<T>().R: (Sender<T>, Receiver<T>) {
 /// Queue `value`. `None` means it was queued; `Some(value)` hands it back because
 /// the receiver is gone. A scoped block cannot capture an owned value by move, so
 /// the value waits in a private one-element mutex and the block swaps it across.
-fun Sender<T>.send(value: move T).R: option.Option<T> {
+must_use fun Sender<T>.send(value: move T).R: option.Option<T> {
     val staged: Mutex<List<T>> = Mutex.new(List.of(value))
     val r = self.end.meta.wait_while(&self.end.nf, fun(s: &ChanMeta).R: bool = s.bounded && s.count >= s.cap && s.rx_alive) { s ->
         var mine = staged.swap(List.empty())
