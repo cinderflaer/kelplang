@@ -23,3 +23,4 @@ empty on release.
 
 - Tuples: `t.0` reads a position, `for (a, b) in pairs` takes each element apart, and `when (a, b) { (Some(x), _) -> ... }` matches several values at once (variant, name or `_` per position).
 - The return marker is `.return:` (`fun f(a: i32).return: i32`); `.R:` still compiles and prints an `outdated:` finding naming the fix, and is removed in the next development cycle. The shipped stdlib, examples and docs now write `.return:`.
+- `loop { ... }`, loop labels (`'outer: for ...`) and `break 'outer` / `continue 'outer` leave or continue an outer loop. `break` still carries no value.

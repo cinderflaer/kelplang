@@ -1,0 +1,16 @@
+fun main() {
+    'outer: for i in [1, 2, 3] {
+        val s = String.from_str(s = "keep")
+        for j in [1, 2, 3] {
+            val t = String.from_str(s = "inner")
+            if j == 2 {
+                if i == 2 {
+                    break 'outer
+                }
+                continue 'outer
+            }
+            print(t.len() + s.len())
+        }
+    }
+    print(7)
+}

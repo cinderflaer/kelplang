@@ -10,6 +10,12 @@ pub struct Parser {
     /// How many `for (a, b) in ...` heads have been desugared, so each one's
     /// hidden element binding has a name of its own (`FOR_PATTERN_PREFIX`).
     for_patterns: usize,
+    /// The loops the statement being parsed sits inside, innermost last, so a
+    /// `break 'outer` can find its target. A function, a `fun` literal and a
+    /// trailing block start a fresh stack: a label does not cross them.
+    loop_stack: Vec<LoopCtx>,
+    /// How many labelled exits have needed a flag (`LABEL_FLAG_PREFIX`).
+    label_flags: usize,
     /// The span of every `.return:` return marker read so far (outdated).
     outdated_returns: Vec<Span>,
     /// How many tuple `when`s and variant levels have been rewritten, so each
@@ -38,6 +44,10 @@ const FOR_PATTERN_PREFIX: &str = "#for";
 /// The hidden names a `when` over a tuple binds: the tuple itself and each
 /// variant level's payload.
 const WHEN_TUPLE_PREFIX: &str = "#wt";
+
+/// The hidden flag a labelled `break`/`continue` sets to leave the loops
+/// between it and its target.
+const LABEL_FLAG_PREFIX: &str = "#lbl";
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -171,6 +181,8 @@ impl Parser {
             pos: 0,
             if_lets: 0,
             for_patterns: 0,
+            loop_stack: Vec::new(),
+            label_flags: 0,
             outdated_returns: Vec::new(),
             when_temps: 0,
             no_trailing_block: false,
@@ -251,7 +263,10 @@ impl Parser {
             }
             self.expect(TokenKind::Arrow, "'->' after the block's parameters")?;
         }
-        let block = self.parse_block_body(start)?;
+        let outer = std::mem::take(&mut self.loop_stack);
+        let block = self.parse_block_body(start);
+        self.loop_stack = outer;
+        let block = block?;
         let span = block.span;
         *end = span;
         args.push(CallArg {
@@ -1732,6 +1747,13 @@ impl Parser {
     /// declaration is shared, so a trait method, a default and an `impl`
     /// method are parsed by the same code and cannot drift apart.
     fn parse_function(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>, align: Option<u32>, signature: bool) -> PResult<FunctionDecl> {
+        let outer = std::mem::take(&mut self.loop_stack);
+        let r = self.parse_function_inner(is_pub, unsafe_, naked, section, align, signature);
+        self.loop_stack = outer;
+        r
+    }
+
+    fn parse_function_inner(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>, align: Option<u32>, signature: bool) -> PResult<FunctionDecl> {
         // `extern fun ...` — a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -2410,6 +2432,13 @@ impl Parser {
     /// a literal), and everything else about the header is a declaration's:
     /// the same parameter list, the same optional `.return: T`.
     fn parse_fn_literal(&mut self) -> PResult<Expr> {
+        let outer = std::mem::take(&mut self.loop_stack);
+        let r = self.parse_fn_literal_inner();
+        self.loop_stack = outer;
+        r
+    }
+
+    fn parse_fn_literal_inner(&mut self) -> PResult<Expr> {
         let start = self.expect(TokenKind::Fun, "'fun'")?.span;
         let (params, variadic) = self.parse_params()?;
         if variadic {
@@ -2686,8 +2715,28 @@ impl Parser {
     fn parse_stmt(&mut self) -> PResult<Stmt> {
         match self.peek_kind() {
             TokenKind::Val | TokenKind::Var => self.parse_let_stmt(),
-            TokenKind::While => self.parse_while_stmt(),
-            TokenKind::For => self.parse_for_stmt(),
+            TokenKind::While | TokenKind::For => self.parse_loop_construct(None),
+            // `loop { ... }`: an endless loop, `while true` under another name.
+            // Contextual, like `break`: `loop` followed by `{` at the start of
+            // a statement.
+            TokenKind::Ident(name) if name == "loop" && matches!(self.peek2_kind(), TokenKind::LBrace) => {
+                self.parse_loop_construct(None)
+            }
+            // `'outer: while ...` / `'outer: for ...` / `'outer: loop { ... }`.
+            TokenKind::Label(name) => {
+                let label = name.clone();
+                self.advance();
+                self.expect(TokenKind::Colon, "':' after the loop label")?;
+                let loop_ahead = matches!(self.peek_kind(), TokenKind::While | TokenKind::For)
+                    || matches!(self.peek_kind(), TokenKind::Ident(n) if n == "loop");
+                if !loop_ahead {
+                    return Err(ParseError {
+                        message: format!("the label '{label} has to be followed by a 'while', 'for' or 'loop'"),
+                        span: self.peek().span,
+                    });
+                }
+                self.parse_loop_construct(Some(label))
+            }
             TokenKind::Defer => self.parse_defer_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
             // `break` and `continue` are read as ordinary names everywhere
@@ -2695,10 +2744,15 @@ impl Parser {
             // loop control statement (`plan/iterators.md`); `break + 1` and
             // `break()` stay expressions.
             TokenKind::Ident(name)
-                if (name == "break" || name == "continue") && self.statement_ends_here() =>
+                if (name == "break" || name == "continue")
+                    && (self.statement_ends_here() || matches!(self.peek2_kind(), TokenKind::Label(_))) =>
             {
                 let is_break = name == "break";
                 let span = self.advance().span;
+                if let TokenKind::Label(label) = self.peek_kind().clone() {
+                    let lspan = self.advance().span;
+                    return self.parse_labelled_exit(is_break, &label, span.to(lspan));
+                }
                 Ok(if is_break {
                     Stmt::Break { span }
                 } else {
@@ -2814,6 +2868,145 @@ impl Parser {
             });
         }
         Ok(BindingPattern::Tuple(positions))
+    }
+
+    /// `loop { ... }`: `while true { ... }` (the loop control statements and the
+    /// missing-return analysis already treat that as an endless loop).
+    fn parse_loop_stmt(&mut self) -> PResult<Stmt> {
+        let start = self.advance().span;
+        let body = self.parse_block()?;
+        let span = start.to(body.span);
+        Ok(Stmt::While {
+            cond: Expr::BoolLit(true, start),
+            body,
+            iterating: None,
+            span,
+        })
+    }
+
+    /// One loop (`while`, `for` or `loop`), optionally labelled, with the
+    /// bookkeeping a labelled exit needs. A `break 'outer` from inside nested
+    /// loops sets a hidden flag and breaks the innermost loop; each loop
+    /// between it and the target then re-checks the flag right after it ends
+    /// and breaks in turn, and the target either breaks or continues. Every
+    /// step is an ordinary `break`, `continue`, `if` and `var`, so borrow
+    /// checking, drops and both backends see nothing new.
+    fn parse_loop_construct(&mut self, label: Option<String>) -> PResult<Stmt> {
+        self.loop_stack.push(LoopCtx { label, flag: None, exits: Vec::new() });
+        let parsed = match self.peek_kind() {
+            TokenKind::While => self.parse_while_stmt(),
+            TokenKind::For => self.parse_for_stmt(),
+            _ => self.parse_loop_stmt(),
+        };
+        let ctx = self.loop_stack.pop().expect("the loop pushed above");
+        let stmt = parsed?;
+        if ctx.flag.is_none() && ctx.exits.is_empty() {
+            return Ok(stmt);
+        }
+        let span = match &stmt {
+            Stmt::While { span, .. } | Stmt::For { span, .. } => *span,
+            _ => unreachable!("a loop construct is a while or a for"),
+        };
+        let mut stmts: Vec<Stmt> = Vec::new();
+        if let Some(flag) = &ctx.flag {
+            stmts.push(Stmt::Let {
+                name: flag.clone(),
+                mutable: true,
+                ty: None,
+                init: Expr::IntLit(0, span),
+                span,
+            });
+        }
+        stmts.push(stmt);
+        let parent = self.loop_stack.len();
+        let ident = |name: &str| Expr::Ident(name.to_string(), span);
+        let test = |name: &str, op: BinOp, n: u64| Expr::Binary {
+            op,
+            lhs: Box::new(Expr::Ident(name.to_string(), span)),
+            rhs: Box::new(Expr::IntLit(n, span)),
+            span,
+        };
+        let when = |cond: Expr, body: Vec<Stmt>| Stmt::Expr {
+            expr: Expr::If {
+                cond: Box::new(cond),
+                then_block: Block { stmts: body, span },
+                else_block: None,
+                span,
+            },
+            span,
+        };
+        for target in ctx.exits {
+            let flag = self.loop_stack[target].flag.clone().expect("a target with an exit has a flag");
+            if target + 1 == parent {
+                // The target is the loop this one sits directly in.
+                stmts.push(when(test(&flag, BinOp::Eq, 1), vec![Stmt::Break { span }]));
+                stmts.push(when(
+                    test(&flag, BinOp::Eq, 2),
+                    vec![
+                        Stmt::Expr {
+                            expr: Expr::Assign {
+                                target: Box::new(ident(&flag)),
+                                value: Box::new(Expr::IntLit(0, span)),
+                                span,
+                            },
+                            span,
+                        },
+                        Stmt::Continue { span },
+                    ],
+                ));
+            } else {
+                stmts.push(when(test(&flag, BinOp::NotEq, 0), vec![Stmt::Break { span }]));
+            }
+        }
+        Ok(Stmt::Expr { expr: Expr::Block(Block { stmts, span }), span })
+    }
+
+    /// `break 'outer` / `continue 'outer`. The innermost loop is a plain
+    /// `break`/`continue`; an outer one sets the target's flag (1 for break,
+    /// 2 for continue) and breaks, and `parse_loop_construct` adds the
+    /// re-checks after each loop in between.
+    fn parse_labelled_exit(&mut self, is_break: bool, label: &str, span: Span) -> PResult<Stmt> {
+        let Some(target) = self.loop_stack.iter().rposition(|l| l.label.as_deref() == Some(label)) else {
+            return Err(ParseError {
+                message: format!("no enclosing loop is labelled '{label}; a label is written before a loop ('{label}: for ...') and does not cross a function or a block passed to a call"),
+                span,
+            });
+        };
+        let top = self.loop_stack.len() - 1;
+        if target == top {
+            return Ok(if is_break { Stmt::Break { span } } else { Stmt::Continue { span } });
+        }
+        let flag = match self.loop_stack[target].flag.clone() {
+            Some(f) => f,
+            None => {
+                self.label_flags += 1;
+                let f = format!("{}{}", LABEL_FLAG_PREFIX, self.label_flags - 1);
+                self.loop_stack[target].flag = Some(f.clone());
+                f
+            }
+        };
+        for between in (target + 1)..=top {
+            if !self.loop_stack[between].exits.contains(&target) {
+                self.loop_stack[between].exits.push(target);
+            }
+        }
+        Ok(Stmt::Expr {
+            expr: Expr::Block(Block {
+                stmts: vec![
+                    Stmt::Expr {
+                        expr: Expr::Assign {
+                            target: Box::new(Expr::Ident(flag, span)),
+                            value: Box::new(Expr::IntLit(if is_break { 1 } else { 2 }, span)),
+                            span,
+                        },
+                        span,
+                    },
+                    Stmt::Break { span },
+                ],
+                span,
+            }),
+            span,
+        })
     }
 
     fn parse_while_stmt(&mut self) -> PResult<Stmt> {
@@ -4248,6 +4441,14 @@ fn is_place_chain(e: &Expr) -> bool {
         Expr::FieldAccess { base, .. } => is_place_chain(base),
         _ => false,
     }
+}
+
+/// A loop being parsed: its label, the hidden flag a labelled exit to it uses,
+/// and the outer loops whose flags a `break`/`continue` inside it sets.
+struct LoopCtx {
+    label: Option<String>,
+    flag: Option<String>,
+    exits: Vec<usize>,
 }
 
 /// One position of a tuple pattern in a `when` arm.

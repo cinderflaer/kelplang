@@ -1,0 +1,6 @@
+fun main() {
+    'o: for i in [1, 2] {
+        val f = fun() { break 'o }
+        f()
+    }
+}

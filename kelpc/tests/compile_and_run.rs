@@ -11893,6 +11893,23 @@ fn assigning_to_something_that_is_not_a_place_is_an_error_not_a_crash() {
 }
 
 #[test]
+fn loop_and_labelled_break_and_continue_leave_nested_loops() {
+    // MISSING-Lk9Xs: `loop { }`, `'outer: for ...`, `break 'outer` and
+    // `continue 'outer`, on both backends.
+    assert_compiles_and_runs("tests/fixtures/loop_and_labels.kp", "4\n4\n51\n");
+    // Each exit frees the owned locals of every loop it leaves.
+    assert_compiles_and_runs("tests/fixtures/loop_labels_free_owned_locals.kp", "9\n9\n7\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_unknown_loop_label.kp",
+        "no enclosing loop is labelled 'nope",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_label_across_a_closure.kp",
+        "no enclosing loop is labelled 'o",
+    );
+}
+
+#[test]
 fn a_nested_owned_field_can_be_partially_moved_and_reinitialised() {
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_field.kp", "Ada\n7\nLondon\n");
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_reinit.kp", "old\nnew\n");
