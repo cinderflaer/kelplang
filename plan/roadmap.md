@@ -481,7 +481,7 @@ Everything already merged (see the pending changelog), plus:
 - ~~**MISSING-Uc6Kj**~~ done: encrypted keys, key-file permission check, config reload (M); with open item 55,
   `net.listen_on(host, port)` so `serve_tls` can stop binding every interface.
 - **MISSING-j2Wka** multipart/form-data builder (M).
-- **MISSING-Nf3Rb** array literal as a private global plus a copy (M); needs the differential sweep.
+- ~~**MISSING-Nf3Rb**~~ done: array literal as a private global plus a copy (M); needs the differential sweep (run at the release gate).
 - **MISSING-Cn2Ym** `must_use` only; `select` waits for 26.12.1.
 - ~~**MISSING-Hd4Lr** `Map` iterator and `List.iter()`~~ moved to 26.11.0 (decided 2026-10-07): `ListIter<T>`/`MapIter<K, V>`
   cannot implement `Iterator` without generic trait impls (Ve8Nc, `impl<T> Iterator for Wrap<T>` is a parse

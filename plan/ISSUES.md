@@ -50,18 +50,6 @@ wiki changelog page.
 
 Sorted easiest first. `effort:` is S (a stdlib function or one small diagnostic), M (one subsystem, one lane), L (touches a hotspot file or needs a design call inside a lane), XL (mark-sized, or blocked on a decision). Within a tier the order is a rough guess; dependencies are named in the entries.
 
-### MISSING-Nf3Rb kelp: a 5,000-element array literal takes ~3 s at `-O2`
-
-repo: kelp | found: 2026-10-06 | effort: M
-
-source: wiki `language/limits.md` (unreleased), "Compile time", marked (open);
-`kelp/plan/scaling.md`.
-
-Quadratic in length, inside LLVM, because the literal is one `[N x i32]`
-aggregate value. Emitting it as a private global plus a copy removes it and was
-held back because it changes the IR of every array literal. 2.9 s at `-O2`,
-0.5 s at `-O0`.
-
 ### MISSING-Hd4Lr kelp: no iterator adapters, no `Map` iterator, no `List.iter()`
 
 repo: kelp | found: 2026-10-06 | effort: M
