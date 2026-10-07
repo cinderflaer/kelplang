@@ -1,0 +1,7 @@
+fun f(a: i32).R: i32 {
+    return a
+}
+
+fun main() {
+    f -= (1, 2)
+}

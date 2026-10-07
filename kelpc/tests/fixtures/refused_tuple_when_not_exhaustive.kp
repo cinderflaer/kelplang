@@ -1,0 +1,8 @@
+impl "std/option"
+fun pick(a: &option.Option<i32>, b: &option.Option<i32>).R: i32 {
+    return when (a, b) {
+        (Some(x), Some(y)) -> x + y
+        (None, _) -> 0
+    }
+}
+fun main() { print(1) }

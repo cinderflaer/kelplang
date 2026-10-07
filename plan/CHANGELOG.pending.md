@@ -17,3 +17,8 @@ empty on release.
 ## Fixed
 
 - Borrow check: one call can no longer pass the same `mut` parameter to a `mut` parameter and a `&` parameter (`f(s, s)`); the shared reborrow was not tracked, so the aliasing was accepted in either order.
+
+## Added
+
+- Tuples: `t.0` reads a position, `for (a, b) in pairs` takes each element apart, and `when (a, b) { (Some(x), _) -> ... }` matches several values at once (variant, name or `_` per position).
+- Assigning to something that is not a place (`f -= 1` on a function name) is a diagnostic, not a compiler crash.

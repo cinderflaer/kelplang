@@ -1,0 +1,15 @@
+impl "std/option"
+
+fun pick(a: option.Option<String>, b: option.Option<String>).R: usize {
+    return when (a, b) {
+        (Some(x), Some(y)) -> x.len() + y.len()
+        (Some(x), None) -> x.len()
+        (None, Some(y)) -> y.len() * 100
+        (None, None) -> 0
+    }
+}
+
+fun main() {
+    print(pick(option.Option.Some(value = String.from_str(s = "ab")), option.Option.Some(value = String.from_str(s = "cde"))))
+    print(pick(option.Option.None, option.Option.Some(value = String.from_str(s = "cde"))))
+}

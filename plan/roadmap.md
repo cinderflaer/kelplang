@@ -427,6 +427,12 @@ item above is closed or recorded as a permanent decision, and every Backlog bloc
 closed by a written decision. Version numbers are targets: an unreleased number may be renumbered when a
 release slips, a released one never (see `AGENTS.md`, "Version scheme").
 
+**Numbering rule (maintainer, 2026-10-07): the dates in this schedule are not real.** The month in a
+release name is the calendar month it ships in, and the last number counts releases within that month. So
+a release cut in October 2026 after `26.10.2` is `26.10.3`, whatever heading it has below; the headings
+name the *content* of each step, and the version is assigned at the tag. Wherever this section says
+`26.11.0` and later, read "the next release with that content".
+
 Ordering rules:
 1. Soundness holes before features (BUG-q4Vn2, MISSING-Sw9Hd).
 2. Stdlib and runtime work (own files, parallel lanes) before language-shape work, which collides in
@@ -488,11 +494,11 @@ Everything already merged (see the pending changelog), plus:
   error today), and a `for (k, v) in map` desugar needs the tuple destructuring of Gt6Qc. They ship with Gt6Qc as one compiler desugar.
 - Open items 45 (`time.sleep_ms` ungated for library modules, already true through `thread.sleep_ms`) and 56 (pool idle timeout and reaper, done as `Pool.set_idle_timeout`/`Pool.close_idle`).
 
-#### 26.11.0: language ergonomics I (one lane at a time)
+#### 26.11.0 (ships as 26.10.3 if cut in October 2026): language ergonomics I (one lane at a time)
 
 Order inside the release, each lane merged before the next starts:
 1. **MISSING-Sw9Hd** disjoint-field captures, and the unchecked `g(s, s)` with two `mut` params (L).
-2. **MISSING-Gt6Qc** tuple patterns in `when`, destructuring `for (k, v)`, `t.0` access (M); with it the `Map`
+2. ~~**MISSING-Gt6Qc**~~ `t.0`, `for (a, b)` and variant/name tuple patterns in `when` **shipped** (literal and nested positions, and `const` tuples, stay open); the `Map` iterator needs a tuple element that can be a borrow and is not shipped. Original text: tuple patterns in `when`, destructuring `for (k, v)`, `t.0` access (M); with it the `Map`
    iterator and `List.iter()` of MISSING-Hd4Lr (moved from 26.10.2, see there).
 3. **MISSING-Lk9Xs** `loop`, labelled `break`/`continue`, `break` with a value (M).
 4. **MISSING-Pw3Fz** methods with their own type parameters (L).

@@ -10309,7 +10309,12 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
                 }
             }
         }
-        other => unreachable!("not a place expression: {other:?}"),
+        // A function name, a literal or a call result is not somewhere a value
+        // can be stored (`f -= 1`, `1 = x`).
+        _ => Err(TypeError {
+            message: "cannot assign to this expression: it is not a variable, a field or an element".to_string(),
+            span: target.span,
+        }),
     }
 }
 
