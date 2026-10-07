@@ -1,0 +1,22 @@
+// A scoped block that writes one field of an owner while the call borrows another
+// field of it (MISSING-Sw9Hd): `s.count` and `s.items` are different parts of `s`,
+// so the block's exclusive capture and the callee's borrow do not overlap.
+datac State(var count: i32, var items: List<i32>)
+
+fun each(xs: &List<i32>, f: scoped fun(i32)) {
+    var i: usize = 0
+    while i < xs.len() {
+        f(xs.get(i))
+        i += 1
+    }
+}
+
+fun main() {
+    var s = State(count = 0, items = List.empty())
+    s.items.push(3)
+    s.items.push(4)
+    each(s.items) { n ->
+        s.count += n
+    }
+    print(s.count)
+}

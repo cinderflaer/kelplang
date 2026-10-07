@@ -208,17 +208,16 @@ compile-time limits: no `comptime` block, no compile-time `List`/`Map`, no
 `size_of`/`align_of` in a `const`, and no method or builtin call in a constant
 (`str.len("x")`).
 
-### MISSING-Sw9Hd kelp: scoped blocks cannot capture disjoint fields
+### MISSING-Sw9Hd kelp: a block inside a block cannot capture the outer block's exclusive capture
 
-repo: kelp | found: 2026-10-06 | effort: L
+repo: kelp | found: 2026-10-06 | effort: M
 
 source: wiki `language/limits.md` (unreleased), "Scoped blocks".
 
-Borrow roots are whole variables, so a block writing `s.count` while the callee
-borrows `s.items` is refused. Also open: a block inside a block cannot capture
-the outer block's exclusive capture, and `kelpc fmt` cannot re-wrap a trailing
-block (open item 75). The soundness half is closed: `g(s, s)` with a `mut` and a
-`&` parameter is refused in either order, as two `mut` parameters already were.
+Disjoint-field captures and the `g(s, s)` soundness hole shipped in 26.10.3.
+Still open: a block inside a block cannot capture the outer block's exclusive
+capture (the message names the two ways out), and `kelpc fmt` cannot re-wrap a
+trailing block (open item 75).
 
 ### MISSING-Xo5Ga kelp: no Unicode case mapping, and no `str` slicing that is codepoint aware
 

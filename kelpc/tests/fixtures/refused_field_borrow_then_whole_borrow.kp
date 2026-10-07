@@ -1,0 +1,7 @@
+datac State(var count: i32, var items: List<i32>)
+fun main() {
+    var s = State(count = 3, items = List.empty())
+    val r = &mut s.items
+    val q = &mut s
+    r.push(1)
+}

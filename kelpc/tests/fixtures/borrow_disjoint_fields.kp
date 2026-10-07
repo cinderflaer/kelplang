@@ -1,0 +1,28 @@
+// Two fields of one owner are different places (MISSING-Sw9Hd): a call may borrow
+// both exclusively, and a live borrow of one field leaves the other usable.
+datac State(var count: i32, var items: List<i32>)
+
+fun bump(a: mut i32, b: mut List<i32>) {
+    *a += 1
+    b.push(*a)
+}
+
+fun main() {
+    var s = State(count = 0, items = List.empty())
+    bump(s.count, s.items)
+    bump(s.count, s.items)
+    print(s.count)
+    print(s.items.len())
+
+    val c = &mut s.count
+    s.items.push(7)
+    *c += 10
+    print(s.count)
+    print(s.items.len())
+
+    val a = &mut s.count
+    val b = &mut s.items
+    *a += 1
+    b.push(*a)
+    print(s.items.len())
+}

@@ -1,0 +1,6 @@
+datac State(var count: i32, var items: List<i32>)
+fun whole(a: mut i32, s: mut State) { *a += 1 }
+fun main() {
+    var s = State(count = 0, items = List.empty())
+    whole(s.count, s)
+}

@@ -1,0 +1,6 @@
+datac State(var count: i32, var items: List<i32>)
+fun two(a: mut i32, b: mut i32) { *a += *b }
+fun main() {
+    var s = State(count = 0, items = List.empty())
+    two(s.count, s.count)
+}

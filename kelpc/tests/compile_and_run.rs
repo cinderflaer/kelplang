@@ -11813,19 +11813,19 @@ fn a_scoped_block_can_write_what_it_captures() {
 fn an_exclusive_capture_conflicts_with_the_rest_of_its_call() {
     assert_rejected_with(
         "tests/fixtures/excl_refused_same_call_arg.kp",
-        "cannot borrow 's': already borrowed exclusively",
+        "cannot borrow 's.count': already borrowed exclusively",
     );
     assert_rejected_with(
         "tests/fixtures/excl_refused_two_blocks.kp",
-        "cannot borrow 's': already borrowed exclusively",
+        "cannot borrow 's.count': already borrowed exclusively",
     );
     assert_rejected_with(
         "tests/fixtures/excl_refused_shared_arg.kp",
-        "cannot borrow 's' as exclusive: already borrowed as shared",
+        "cannot borrow 's.count' as exclusive: already borrowed as shared",
     );
     assert_rejected_with(
         "tests/fixtures/excl_refused_receiver.kp",
-        "cannot borrow 's' as exclusive: already borrowed exclusively",
+        "cannot borrow 's.count' as exclusive: already borrowed exclusively",
     );
     assert_rejected_with(
         "tests/fixtures/excl_refused_param_aliases_owner.kp",
@@ -11954,6 +11954,36 @@ fn small_ergonomics_literal_float_math_f32_and_line_continuation() {
     // A `for (a, b)` over a temporary, whose hidden names must not meet the
     // loop desugar's own.
     assert_compiles_and_runs("tests/fixtures/for_pattern_over_a_temporary.kp", "3\n7\n");
+}
+
+#[test]
+fn two_fields_of_one_owner_are_different_places_to_borrow() {
+    // MISSING-Sw9Hd: roots are field paths now. Disjoint fields borrow
+    // together (a call, two live borrows, a scoped block against a call's
+    // other argument); anything that overlaps is still refused.
+    assert_compiles_and_runs("tests/fixtures/borrow_disjoint_fields.kp", "2\n2\n12\n3\n4\n");
+    assert_compiles_and_runs("tests/fixtures/excl_capture_disjoint_field.kp", "7\n");
+    assert_rejected_with(
+        "tests/fixtures/excl_refused_same_field.kp",
+        "cannot borrow 's.items' as exclusive: already borrowed as shared",
+    );
+    assert_rejected_with("tests/fixtures/refused_field_and_whole.kp", "cannot borrow 's': already borrowed exclusively");
+    assert_rejected_with(
+        "tests/fixtures/refused_same_field_twice.kp",
+        "cannot borrow 's.count': already borrowed exclusively",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_whole_while_field_borrowed.kp",
+        "cannot move 's' while it is borrowed",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_field_borrow_then_whole_borrow.kp",
+        "cannot borrow 's': already borrowed exclusively",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_field_shared_then_write.kp",
+        "cannot borrow 's.items' as exclusive: already borrowed as shared",
+    );
 }
 
 #[test]
