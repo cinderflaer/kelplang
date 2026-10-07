@@ -11151,6 +11151,15 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
         } => {
             let probe = check_expr(iterable, ctx, None)?;
             let iter_ty = probe.ty.clone();
+            // `for (k, v) in map`: the parser read the pattern as a hidden
+            // element binding and a `val (k, v) = <hidden>` at the top of the
+            // body. A `Map` has no element that is a pair (its entries are not
+            // stored as one), so the pattern is taken apart here: the loop walks
+            // the keys, `k` is the key and `v` is `map.get(key)`.
+            if crate::types::map_key_of(&iter_ty).is_some() {
+                let desugared = desugar_map_for(binding, iterable, body, *span, &iter_ty)?;
+                return check_stmt(&desugared, ctx);
+            }
             let list = crate::types::list_elem_of(&iter_ty).is_some()
                 || crate::types::array_elem_of(&iter_ty).is_some();
             if list {
@@ -11299,6 +11308,91 @@ fn implements_iterator(ctx: &Ctx, ty: &Ty) -> bool {
     let origin = ctx.env.instances.borrow().origin.get(&name).cloned();
     origin.map_or(false, |(template, _)| {
         ctx.fns.templates.contains_key(&format!("{template}#next"))
+    })
+}
+
+/// `for (k, v) in map { body }` becomes `for #key in map.keys() { val k =
+/// #key; val v = map.get(#key); body }`. The keys are a snapshot in insertion
+/// order, so the map may be changed inside the loop, and a key removed there
+/// makes the later `get` panic like any `get` of an absent key.
+fn desugar_map_for(
+    binding: &str,
+    iterable: &ast::Expr,
+    body: &ast::Block,
+    span: Span,
+    iter_ty: &Ty,
+) -> Result<ast::Stmt> {
+    let refuse = |message: String| Err(TypeError { message, span });
+    if !binding.starts_with("#forpat") {
+        return refuse(format!(
+            "'for' over a '{}' binds the key and the value together: write 'for (key, value) in map'",
+            iter_ty.display()
+        ));
+    }
+    let Some(ast::Stmt::LetTuple { pattern: ast::BindingPattern::Tuple(positions), .. }) = body.stmts.first() else {
+        return refuse("a 'for' over a Map needs the pattern '(key, value)'".to_string());
+    };
+    let (ast::BindingPattern::Name(_) | ast::BindingPattern::Ignore, ast::BindingPattern::Name(_) | ast::BindingPattern::Ignore) =
+        (&positions[0], &positions[1])
+    else {
+        return refuse("a 'for' over a Map binds two names: 'for (key, value) in map', with '_' to ignore one".to_string());
+    };
+    if positions.len() != 2 {
+        return refuse(format!(
+            "a 'for' over a Map binds a key and a value, and this pattern has {} positions",
+            positions.len()
+        ));
+    }
+    if ast::temporary_root(iterable).is_some() {
+        return refuse("a 'for' over a Map walks a named map: bind the map to a 'val' first".to_string());
+    }
+    let ident = |name: &str| ast::Expr::Ident(name.to_string(), span);
+    let mut stmts: Vec<ast::Stmt> = Vec::new();
+    if let ast::BindingPattern::Name(k) = &positions[0] {
+        stmts.push(ast::Stmt::Let { name: k.clone(), mutable: false, ty: None, init: ident(binding), span });
+    }
+    if let ast::BindingPattern::Name(v) = &positions[1] {
+        stmts.push(ast::Stmt::Let {
+            name: v.clone(),
+            mutable: false,
+            ty: None,
+            init: ast::Expr::MethodCall {
+                receiver: Box::new(iterable.clone()),
+                method: "get".to_string(),
+                type_args: Vec::new(),
+                // A `String` key is looked up by its `str` view.
+                args: vec![ast::CallArg {
+                    name: None,
+                    value: if matches!(crate::types::map_key_of(iter_ty), Some(Ty::String)) {
+                        ast::Expr::MethodCall {
+                            receiver: Box::new(ident(binding)),
+                            method: "as_str".to_string(),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            span,
+                        }
+                    } else {
+                        ident(binding)
+                    },
+                }],
+                span,
+            },
+            span,
+        });
+    }
+    stmts.extend(body.stmts[1..].iter().cloned());
+    Ok(ast::Stmt::For {
+        binding: binding.to_string(),
+        binding_span: span,
+        iterable: ast::Expr::MethodCall {
+            receiver: Box::new(iterable.clone()),
+            method: "keys".to_string(),
+            type_args: Vec::new(),
+            args: Vec::new(),
+            span,
+        },
+        body: ast::Block { stmts, span: body.span },
+        span,
     })
 }
 
