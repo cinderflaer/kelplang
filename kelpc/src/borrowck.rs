@@ -1775,11 +1775,16 @@ fn field_display(name: &str, proj: &Projection) -> String {
     }
 }
 
-fn projection_field_path(proj: &Projection) -> Vec<&str> {
+/// The path a projection names, one entry per step. A payload field has no
+/// name another projection could share, so it is keyed by the two indices its
+/// `tir` node carries, behind a `#` no field name can start with: the same
+/// payload moved twice then compares equal, and a payload never compares equal
+/// to a `datac` field.
+fn projection_field_path(proj: &Projection) -> Vec<String> {
     match proj {
-        Projection::Field(field) => vec![field],
-        Projection::NestedField(path) => path.iter().map(String::as_str).collect(),
-        Projection::EnumPayload { .. } => Vec::new(),
+        Projection::Field(field) => vec![field.clone()],
+        Projection::NestedField(path) => path.clone(),
+        Projection::EnumPayload { variant, field, .. } => vec![format!("#{variant}.{field}")],
     }
 }
 
