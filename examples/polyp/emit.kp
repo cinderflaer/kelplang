@@ -1,0 +1,12 @@
+// Polyp's emit switch: whether this run prints the first view as an HTML document instead of opening
+// a window (`[build] emit = "html"` in coral.toml, see `html_first` in lib.kp). The switch is the
+// environment variable KELP_POLYP_EMIT, and only the value "html" selects it. The library grants this
+// module that one name. The application must pass that name down on its `impl "deps/polyp/lib"` line,
+// because a module can delegate only what it holds: `caps(env = ["KELP_POLYP_EMIT"])`.
+impl "std/env"
+impl "std/str"
+
+pub fun html_requested().return: bool {
+    val value = env.get("KELP_POLYP_EMIT")
+    return str.eq(value.as_str(), "html")
+}

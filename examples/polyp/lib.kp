@@ -6,6 +6,8 @@
 // scheduled-input helpers and the counters. plan/polyp-v3.md is the design.
 impl "deps/polyp/core"
 impl "deps/polyp/diag"
+impl "deps/polyp/emit" caps(env = ["KELP_POLYP_EMIT"])
+impl "deps/polyp/headless_backend"
 impl "deps/polyp/gtk_backend" caps(ui = ["*"])
 impl "std/str"
 
@@ -29,11 +31,27 @@ pub fun button<M>(label: move String, on_click: move M).return: core.Node<M> = c
 // The loop, on the GTK backend. `init` is moved in and the final state is returned, so a caller can
 // read what the run left behind without a second sharing mechanism.
 pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (S).return: core.Node<M>, update: fun (mut S, M)).return: S {
+    if emit.html_requested() {
+        return html_first(init = init, view = view)
+    }
     var backend = gtk_backend.open(title = title, width = width, height = height)
     val final = core.run(backend = backend, init = init, view = view, update = update)
     diag.capture(backend)
     gtk_backend.close(backend)
     return final
+}
+
+// `[build] emit = "html"`: the first view, built on the headless backend and printed as one HTML
+// document on stdout. There is no window and no loop; kelpc captures the output into index.html.
+fun html_first<S, M>(init: move S, view: fun (S).return: core.Node<M>).return: S {
+    var state = init
+    var tree = view(state)
+    var backend = headless_backend.new(List.empty())
+    val first = core.create_all(&tree)
+    backend.apply(&first)
+    val page = headless_backend.html(&backend)
+    print(page.as_str())
+    return state
 }
 
 // An application stylesheet. `gtk_init` is idempotent, so calling this before `run` is fine.

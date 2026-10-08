@@ -32,7 +32,10 @@ pkgs.mkShell {
   # dependency for MK5-S4b-M1's TLS test server) can find `openssl.pc` under
   # `pkgs.openssl.dev` the way its build script expects, rather than needing
   # `OPENSSL_DIR` set by hand.
-  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config ];
+  # `pkgs.gtk4.dev` supplies the `gtk4.pc` that a Polyp consumer's `[extern."deps/polyp/gtk"]`
+  # (`pkg_config = "gtk4"`) asks for at compile time. Polyp's `lib.kp` imports the GTK backend
+  # unconditionally, so any program that builds against Polyp needs the GTK headers in this shell.
+  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config pkgs.gtk4.dev ];
 
   LLVM_SYS_211_PREFIX = llvmPrefix;
 }

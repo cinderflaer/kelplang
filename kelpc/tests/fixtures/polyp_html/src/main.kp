@@ -1,0 +1,42 @@
+// Polyp HTML emit (`[build] emit = "html"`): the first view of this app is written as index.html.
+// The program is never started as a window; kelpc runs it once with KELP_POLYP_EMIT=html.
+impl "deps/polyp/core"
+impl "deps/polyp/lib" caps(ui = ["*"], env = ["KELP_POLYP_EMIT"])
+impl "std/fmt"
+impl "std/str"
+
+datac Counter(var count: i32)
+
+enum Msg {
+    Inc
+}
+
+fun view(s: Counter).return: core.Node<Msg> {
+    val shown_count = fmt.int(s.count.to_i64())
+    val shown = str.concat("the count is ", shown_count.as_str())
+    return polyp.column { k ->
+        k.text("Hello from Polyp")
+        k.text(shown.as_str())
+        k.spacer(6)
+        k.button("+1", Msg.Inc)
+    }
+}
+
+fun update(state: mut Counter, msg: Msg) {
+    when msg {
+        Inc -> {
+            state.count += 1
+        }
+    }
+}
+
+fun main() {
+    val final = polyp.run(
+        title = "polyp html",
+        width = 320,
+        height = 200,
+        init = Counter(count = 2),
+        view = view,
+        update = update,
+    )
+}
