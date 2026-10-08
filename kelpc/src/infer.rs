@@ -6326,6 +6326,10 @@ enum ConstValue {
     /// the integer `97`.
     Char(u32),
     Str(String),
+    /// A tuple of constants, each with its own type: `const ORIGIN: (i32, i32)
+    /// = (1, 2)`. It substitutes as the record literal the tuple is, so a use
+    /// site pays nothing a runtime tuple would not.
+    Tuple(Vec<(ConstValue, Ty)>),
     /// The value of an expression that has none: a `fun` called for its effect
     /// (or one that fell off its end), which is what makes `Unit` a result a
     /// caller has to handle rather than a case that cannot arise.
@@ -6852,6 +6856,14 @@ fn value_of(e: &tir::Expr) -> Option<ConstResult> {
         tir::ExprKind::FloatLit(v) => ConstValue::Float(*v),
         tir::ExprKind::BoolLit(b) => ConstValue::Bool(*b),
         tir::ExprKind::StringLit(s) => ConstValue::Str(s.clone()),
+        // A folded tuple comes back out as the record literal it substituted as.
+        tir::ExprKind::StructLit { fields, .. } => {
+            let mut elems = Vec::with_capacity(fields.len());
+            for (_, v) in fields {
+                elems.push(value_of(v)?);
+            }
+            ConstValue::Tuple(elems)
+        }
         _ => return None,
     };
     Some((value, e.ty.clone()))
@@ -6874,6 +6886,13 @@ fn literal_for(value: &ConstValue, declared: &Ty) -> std::result::Result<tir::Ex
         (Char(c), Ty::Char) => tir::ExprKind::CharLit(*c),
         (Char(c), t) if t.is_integer() => tir::ExprKind::IntLit(*c as i128),
         (Str(s), Ty::Str) => tir::ExprKind::StringLit(s.clone()),
+        (Tuple(elems), Ty::Struct(name)) => {
+            let mut fields = Vec::with_capacity(elems.len());
+            for (i, (v, t)) in elems.iter().enumerate() {
+                fields.push((crate::types::tuple_field_name(i), literal_for(v, t)?));
+            }
+            tir::ExprKind::StructLit { name: name.clone(), fields, borrowed_fields: Vec::new() }
+        }
         (_, t) => return Err(format!("its initializer is not a '{}' value", t.display())),
     };
     Ok(tir::Expr {
@@ -7386,8 +7405,40 @@ impl<'a> ConstEvaluator<'a> {
             ast::Expr::ArrayLit { .. } | ast::Expr::ArrayRepeat { .. } => {
                 Err(self.unsupported(expr.span(), "an array value"))
             }
-            ast::Expr::TupleLit { .. } => {
-                Err(self.unsupported(expr.span(), "a tuple value"))
+            ast::Expr::TupleLit { elems, .. } => {
+                // The declared tuple type, when there is one, gives each
+                // position the type a bare literal should take.
+                let hinted: Option<Vec<Ty>> = match expected {
+                    Some(Ty::Struct(name)) => self
+                        .env
+                        .instances
+                        .borrow()
+                        .records
+                        .get(name)
+                        .map(|def| def.fields.iter().map(|f| f.ty.clone()).collect()),
+                    _ => None,
+                };
+                if hinted.as_ref().is_some_and(|h| h.len() != elems.len()) {
+                    return Err(TypeError {
+                        message: format!(
+                            "a tuple of {} element(s) is expected here, and this one has {}",
+                            hinted.as_ref().map_or(0, |h| h.len()),
+                            elems.len()
+                        ),
+                        span: expr.span(),
+                    });
+                }
+                let mut values = Vec::with_capacity(elems.len());
+                for (i, e) in elems.iter().enumerate() {
+                    let hint = hinted.as_ref().map(|h| &h[i]);
+                    let (v, t) = self.eval(e, hint, scope)?;
+                    if scope.halted() {
+                        return Ok((ConstValue::Unit, Ty::Unit));
+                    }
+                    values.push((v, t));
+                }
+                let ty = tuple_ty(self.env, values.iter().map(|(_, t)| t.clone()).collect());
+                Ok((ConstValue::Tuple(values), ty))
             }
             ast::Expr::Template { .. } => Err(self.unsupported(expr.span(), "a string template")),
             ast::Expr::FnLit { .. } => Err(self.unsupported(expr.span(), "a 'fun' literal")),

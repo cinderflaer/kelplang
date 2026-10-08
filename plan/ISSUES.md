@@ -63,16 +63,6 @@ and `get`. Still open: `map`, `filter`, `take`, `skip`, `enumerate`, `zip` and
 `impl<I: Iterator> Iterator for Take<I>`, which is MISSING-Ve8Nc, so this entry
 waits on that one.
 
-### MISSING-Gt6Qc kelp: a tuple cannot be a `const` value
-
-repo: kelp | found: 2026-10-06 | effort: S
-
-source: wiki `language/limits.md` (unreleased), "Data and generics".
-
-Shipped in 26.10.3: `t.0`, `for (a, b) in pairs`, and tuple patterns in `when`
-with variant, literal, name, `_` and nested positions. Still open: a tuple value
-in a `const` initializer.
-
 ### MISSING-Cn2Ym kelp: channels have no `select` and no zero-capacity form
 
 repo: kelp | found: 2026-10-06 | effort: M

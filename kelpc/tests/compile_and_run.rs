@@ -11872,6 +11872,8 @@ fn a_tuple_has_positions_patterns_in_when_and_a_destructuring_for() {
     assert_compiles_and_runs("tests/fixtures/tuple_access_and_patterns.kp", "1\n2\n3\n2\n12\n8\n5\n40\n0\n3\n");
     assert_compiles_and_runs("tests/fixtures/tuple_when_owned_payloads.kp", "5\n300\n");
     assert_compiles_and_runs("tests/fixtures/tuple_index_nested.kp", "7\n9\n2\n");
+    // A tuple as a `const` value.
+    assert_compiles_and_runs("tests/fixtures/const_tuple.kp", "1\n3\n7\ntrue\n14\n2\n98\n");
     // Literal positions and nested tuple patterns in a `when`.
     assert_compiles_and_runs(
         "tests/fixtures/tuple_when_literals_and_nested.kp",
