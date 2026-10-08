@@ -1,7 +1,7 @@
 // The Polyp app of the HTML emit fixture: the state, the view and the update. `main.kp` runs it in a
 // window, and `emit.kp` prints its first view as index.html (`[build] emit = "html"`). The app only
 // builds the view tree, so it imports the core and not the library.
-impl "deps/polyp/core"
+impl "deps/polyp/core/core"
 impl "std/fmt"
 impl "std/str"
 

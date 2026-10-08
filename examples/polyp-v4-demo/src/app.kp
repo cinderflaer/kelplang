@@ -4,8 +4,8 @@
 // three memoised rows (stage 4). `src/main.kp` runs it on the hosted headless platform and
 // prints the transcript, and the two `examples/polyp-v4-*` kernels run the very same file on bare metal,
 // so this module may not print, hold a `pd`, or touch a libc: it reports through a `fun (str)`.
-impl "deps/polyp/anim"
-impl "deps/polyp/core"
+impl "deps/polyp/core/anim"
+impl "deps/polyp/core/core"
 impl "std/str"
 
 pub datac Row(val id: i32, val label: String, val done: bool)

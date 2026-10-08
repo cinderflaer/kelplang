@@ -4,9 +4,9 @@
 // real signal handlers and the counters; it never sees a `Node`, only the `Props` a patch carries,
 // so the loop above it has no idea a display is involved at all. `gtk.kp` is the binding and
 // `queue.kp` the message ring the signal handlers post into.
-impl "deps/polyp/core"
-impl "deps/polyp/gtk"
-impl "deps/polyp/queue"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/gtk/gtk"
+impl "deps/polyp/backends/gtk/queue"
 impl "std/fmt"
 impl "std/option"
 impl "std/str"

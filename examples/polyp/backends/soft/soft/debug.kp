@@ -9,7 +9,7 @@
 // under `[unsafe] modules`. The integer-to-decimal writer is spelled out rather than reached
 // through `std/fmt`, because a PPM header is five small numbers and a `String` per number would
 // allocate for nothing.
-impl "deps/polyp/soft/fb"
+impl "deps/polyp/backends/soft/soft/fb"
 impl "std/fs"
 
 // Push the decimal digits of a non-negative `i64`.

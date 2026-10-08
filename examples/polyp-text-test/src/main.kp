@@ -6,16 +6,16 @@
 //   draw     malformed and truncated input draws one box per run and reads nothing out of bounds
 //   edit     an entry's caret moves and backspace/delete act by code point, with 2-, 3- and 4-byte
 //            characters, a malformed byte, and a programmatic text change that strands the caret
-impl "deps/polyp/core"
-impl "deps/polyp/soft/damage"
-impl "deps/polyp/soft/draw"
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/font"
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft/platform"
-impl "deps/polyp/soft/utf8"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft/damage"
+impl "deps/polyp/backends/soft/soft/draw"
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/font"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft/platform"
+impl "deps/polyp/backends/soft/soft/utf8"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "std/str"
 
 datac St(var n: i32)

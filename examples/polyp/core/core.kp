@@ -7,7 +7,7 @@
 //
 // The split is plan/polyp-v3.md. v2's matching rules, keys, builder and counters are unchanged;
 // the GTK calls moved to `gtk_backend.kp` and `lib.kp` is the facade the examples import.
-impl "deps/polyp/anim"
+impl "deps/polyp/core/anim"
 impl "std/atomic"
 impl "std/option"
 impl "std/str"

@@ -6,13 +6,13 @@
 //   set_value setting an entry's text through the tree reaches the model
 //   toggle    a checkbox toggles through its id (and is named after the label next to it)
 //   disabled  a disabled button and entry reject every action, are skipped by Tab and ignore clicks
-impl "deps/polyp/core"
-impl "deps/polyp/soft/a11y"
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft/platform"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft/a11y"
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft/platform"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/todo/app"
 impl "std/str"
 

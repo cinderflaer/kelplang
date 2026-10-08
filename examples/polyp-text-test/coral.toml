@@ -3,4 +3,4 @@ entry = "src/main.kp"
 
 # Polyp v4 stage 2's tests: the same raster and headless platform the v3 tests audit.
 [unsafe]
-modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/headless_platform"]
+modules = ["deps/polyp/backends/soft/soft/fb", "deps/polyp/backends/soft/soft/draw", "deps/polyp/backends/soft/soft/headless_platform"]

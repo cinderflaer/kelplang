@@ -1,7 +1,7 @@
 // Polyp on bare metal, x86-64 (Polyp v3 stage 4).
 //
 // The same program as `examples/polyp-fb-riscv64`, on the second ISA family: `deps/todo/app` is the
-// todo model, view and update, `deps/todo/scenario` is the shared driver, `deps/polyp/soft_backend`
+// todo model, view and update, `deps/todo/scenario` is the shared driver, `deps/polyp/backends/soft/soft_backend`
 // with the stage-2 raster is the same code, and `fb_platform.kp` is literally the same source file
 // (a symlink to the riscv64 project's). The only architecture-specific parts are the COM1 driver and
 // this entry module's halting.
@@ -9,8 +9,8 @@
 // One step line is printed per frame, then the report `examples/polyp-todo/smoke.sh` reads, so the
 // equivalence test can compare both the pixels (`checksum`) and the state machine (the report) with
 // the hosted run and with the other kernel.
-impl "deps/polyp/core"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/todo/app"
 impl "deps/todo/scenario"
 impl "fb_platform"

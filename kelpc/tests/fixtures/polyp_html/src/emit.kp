@@ -1,7 +1,7 @@
 // The HTML entry of the fixture (`[build] emit_entry = "emit.kp"`): kelpc compiles this file in place
 // of main.kp, runs it once and writes its stdout as index.html. It prints the first view of the same
 // app, with no window and no environment variable.
-impl "deps/polyp/lib" caps(ui = ["*"])
+impl "deps/polyp/backends/gtk/polyp/lib" caps(ui = ["*"])
 impl "app"
 
 fun main() {

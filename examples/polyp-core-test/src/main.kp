@@ -8,9 +8,9 @@
 // The second half runs the todo example's own program on the headless backend with the same
 // scripted input `examples/polyp-todo/smoke.sh` gives the GTK backend, and prints the same summary,
 // so the two backends' counters can be compared line by line.
-impl "deps/polyp/core"
-impl "deps/polyp/diag"
-impl "deps/polyp/headless_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/core/diag"
+impl "deps/polyp/backends/headless/headless_backend"
 impl "deps/todo/app"
 impl "std/env"
 impl "std/str"

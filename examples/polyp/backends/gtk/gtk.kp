@@ -1,6 +1,6 @@
 // The GTK4 binding Polyp builds its widgets with. Every function is an
 // `extern fun` bound to a real symbol by the consumer's coral.toml, whose
-// `[extern."deps/polyp/gtk"]` section is pasted from examples/polyp/README.md;
+// `[extern."deps/polyp/backends/gtk/gtk"]` section is pasted from README.md;
 // the header there supplies the C prototypes and `pkg_config = "gtk4"` the
 // include and link paths.
 //

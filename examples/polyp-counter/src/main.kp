@@ -6,8 +6,8 @@
 // text and builds the `Msg`, and the loop (which owns the state) calls it. `src/deps/polyp/` is a
 // link to examples/polyp/ in this repository; a real consumer copies the library there. See
 // examples/polyp/README.md.
-impl "deps/polyp/core"
-impl "deps/polyp/lib" caps(ui = ["*"])
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/gtk/polyp/lib" caps(ui = ["*"])
 impl "std/env"
 impl "std/fmt"
 impl "std/str"

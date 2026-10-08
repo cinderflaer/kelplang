@@ -10,10 +10,10 @@
 //
 // The surface is in `.bss` and the compiler's `_start` stub zeroes it, so it starts black, the way
 // `HeadlessPlatform` zeroes its own buffer.
-impl "deps/polyp/soft/damage"
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/platform"
+impl "deps/polyp/backends/soft/soft/damage"
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/platform"
 impl "std/option"
 
 // 320x200, the resolution the hosted run is compared at.

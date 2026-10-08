@@ -6,7 +6,7 @@
 // the caller supplies rather than through `print`, because a freestanding build refuses `print`
 // wherever it appears in a module it compiles and this module is the program both sides run
 // (`plan/polyp-v3.md`, stage 4).
-impl "deps/polyp/core"
+impl "deps/polyp/core/core"
 impl "std/str"
 
 pub datac Todo(val id: i32, val title: String, var done: bool)

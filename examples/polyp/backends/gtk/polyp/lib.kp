@@ -4,10 +4,9 @@
 // it lives in a backend (`gtk_backend.kp` here, `headless_backend.kp` for tests). This module is
 // the thin, stable surface an application imports: the builder, `run`, the stylesheet hook, the
 // scheduled-input helpers and the counters. plan/polyp-v3.md is the design.
-impl "deps/polyp/core"
-impl "deps/polyp/diag"
-impl "deps/polyp/headless_backend"
-impl "deps/polyp/gtk_backend" caps(ui = ["*"])
+impl "deps/polyp/core/core"
+impl "deps/polyp/core/diag"
+impl "deps/polyp/backends/gtk/gtk_backend" caps(ui = ["*"])
 impl "std/str"
 
 // `GTK_ORIENTATION_*`, kept here because v2 exported them.
@@ -21,7 +20,7 @@ pub fun column<M>(block: scoped fun(mut core.Children<M>)).return: core.Node<M> 
 pub fun row<M>(block: scoped fun(mut core.Children<M>)).return: core.Node<M> = core.row(block)
 
 // The plain constructors, the two spellings v1 had. `polyp.Node<M>` is `core.Node<M>` now, so an
-// application imports `deps/polyp/core` for the type it writes in a `view` signature.
+// application imports `deps/polyp/core/core` for the type it writes in a `view` signature.
 pub fun plain_column<M>(children: move List<core.Node<M>>).return: core.Node<M> = core.plain_column(children)
 pub fun plain_row<M>(children: move List<core.Node<M>>).return: core.Node<M> = core.plain_row(children)
 pub fun text<M>(text: move String).return: core.Node<M> = core.text(text)
@@ -35,18 +34,6 @@ pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (
     diag.capture(backend)
     gtk_backend.close(backend)
     return final
-}
-
-// The first view as one HTML document on stdout, built on the headless backend. There is no window
-// and no loop. An app's `[build] emit_entry` program calls this from its `main` in place of `run`;
-// kelpc runs that program once and writes the output as index.html (`[build] emit = "html"`).
-pub fun emit_html<S, M>(init: move S, view: fun (S).return: core.Node<M>) {
-    val tree = view(init)
-    var backend = headless_backend.new(List.empty())
-    val first = core.create_all(&tree)
-    backend.apply(&first)
-    val page = headless_backend.html(&backend)
-    print(page.as_str())
 }
 
 // An application stylesheet. `gtk_init` is idempotent, so calling this before `run` is fine.

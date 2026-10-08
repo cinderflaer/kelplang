@@ -17,16 +17,16 @@
 // `core.frame_step` runs one turn of the Elm loop, so a platform that owns a frame clock calls
 // `frame` and a program that lets the backend block calls `core.run`. Both take the same path
 // through `update`/`view`/`diff`/`apply`, which is why the counters cannot drift.
-impl "deps/polyp/anim"
-impl "deps/polyp/core"
-impl "deps/polyp/soft/a11y"
-impl "deps/polyp/soft/damage"
-impl "deps/polyp/soft/draw"
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/font"
-impl "deps/polyp/soft/platform"
-impl "deps/polyp/soft/utf8"
+impl "deps/polyp/core/anim"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft/a11y"
+impl "deps/polyp/backends/soft/soft/damage"
+impl "deps/polyp/backends/soft/soft/draw"
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/font"
+impl "deps/polyp/backends/soft/soft/platform"
+impl "deps/polyp/backends/soft/soft/utf8"
 impl "std/option"
 impl "std/str"
 

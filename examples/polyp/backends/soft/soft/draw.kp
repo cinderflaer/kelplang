@@ -21,7 +21,7 @@
 //
 // This module writes through `fb`'s raw pixel access, so a project that imports it lists it
 // under `[unsafe] modules`.
-impl "deps/polyp/soft/fb"
+impl "deps/polyp/backends/soft/soft/fb"
 
 pub const MAX_CLIP: usize = 8
 

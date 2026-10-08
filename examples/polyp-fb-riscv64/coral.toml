@@ -18,7 +18,7 @@ dealloc = "dealloc"
 # surface) and the two raster modules that write pixels. `core`, `soft_backend`, `font`, `damage`,
 # `event`, `platform`, the scenario and the application contain no `unsafe`.
 [unsafe]
-modules = ["main", "uart", "fb_platform", "ramfb", "deps/polyp/soft/fb", "deps/polyp/soft/draw"]
+modules = ["main", "uart", "fb_platform", "ramfb", "deps/polyp/backends/soft/soft/fb", "deps/polyp/backends/soft/soft/draw"]
 
 # The NS16550's register window on this machine, held by the entry module and delegated to the one
 # module that names the device (`plan/device-caps.md`), plus the fw_cfg window the ramfb

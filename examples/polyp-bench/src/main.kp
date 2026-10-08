@@ -9,13 +9,13 @@
 // The frame counts are `scenario_frames`: 100 for the typing scenario and 50 for the checkbox one
 // (the counts their names claim), 40 for the scroll and 30 for the resize and repaint, so the whole
 // run fits inside the bounded runner the test suite uses.
-impl "deps/polyp/core"
-impl "deps/polyp/soft/damage"
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft/platform"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft/damage"
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft/platform"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/todo/app"
 impl "std/env"
 impl "std/option"

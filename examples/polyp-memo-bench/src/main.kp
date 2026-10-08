@@ -8,11 +8,11 @@
 // development host's at one moment and noisy (`plan/polyp-v4.md` quotes a run).
 //
 // `POLYP_BENCH_QUICK` shortens a run to a handful of frames so a test can bound it.
-impl "deps/polyp/core"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft/platform"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft/platform"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "std/env"
 impl "std/str"
 impl "std/time"

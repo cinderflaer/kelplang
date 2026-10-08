@@ -1,7 +1,7 @@
 # Polyp's platform contract
 
 *The plain-terms description of what an operating system has to provide to run a Polyp program on
-`examples/polyp/soft_backend.kp`: the five functions and the buffer the soft backend draws into
+`backends/soft/soft_backend.kp`: the five functions and the buffer the soft backend draws into
 (stage 3 and stage 5's `now_us`), and the extra facts a **bare-metal** project has to write down
 (stage 4, proved by `examples/polyp-fb-riscv64/` and `examples/polyp-fb-x86_64/`). The design is
 `plan/polyp-v3.md`.*
@@ -12,7 +12,7 @@ functions and one buffer, and this file says exactly what each has to be.
 
 ## The five functions
 
-The interface is `trait Platform` in `examples/polyp/soft/platform.kp`. A platform implements it
+The interface is `trait Platform` in `backends/soft/soft/platform.kp`. A platform implements it
 for its own type.
 
 ### `framebuffer() -> Fb`
@@ -64,7 +64,7 @@ its own clock. The deadline is the only reader; `frame` (with no budget) never c
 
 The next pending input event, oldest first, or `None` when the queue is empty. The backend calls
 it in a loop until it answers `None`, so a platform may return events one per call and does not
-have to count them. `Event` is the six-variant enum in `examples/polyp/soft/event.kp`:
+have to count them. `Event` is the six-variant enum in `backends/soft/soft/event.kp`:
 
 - `PointerMove(x, y)`, `PointerDown(x, y, button)`, `PointerUp(x, y, button)`: a mouse or touch
   pointer, in framebuffer pixels. Only `BUTTON_LEFT` activates a widget.
@@ -160,7 +160,7 @@ advance twice, because `frame_step` ran on the first call.
 ## What the platform does not have to do
 
 - No event loop, no window, no display server.
-- No text shaping or font loading: the font is embedded in `examples/polyp/soft/font.kp`.
+- No text shaping or font loading: the font is embedded in `backends/soft/soft/font.kp`.
 - No input decoding beyond its own system: the platform turns its keys, pointer and text into the
   six `Event` variants and passes them on.
 - No clipping arithmetic: the backend clips every primitive to the framebuffer and to each damage
@@ -168,9 +168,9 @@ advance twice, because `frame_step` ran on the first call.
 
 ## What a minimal implementation looks like
 
-`examples/polyp/soft/headless_platform.kp` is a complete platform in about a hundred lines: it
+`backends/soft/soft/headless_platform.kp` is a complete platform in about a hundred lines: it
 allocates the buffer with `Ptr.alloc<u32>`, records the presented rectangles and the frame
-checksum, and plays a scripted event list. `examples/polyp/soft/ppm_platform.kp` adds a PPM dump.
+checksum, and plays a scripted event list. `backends/soft/soft/ppm_platform.kp` adds a PPM dump.
 `examples/polyp-todo-soft/` drives the todo program through `frame` and pins the checksums.
 
 ## What a freestanding OS must provide

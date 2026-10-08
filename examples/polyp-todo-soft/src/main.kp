@@ -10,10 +10,10 @@
 // The step lines it prints are the expected output for the two kernels: the framebuffer
 // equivalence test runs this binary at `POLYP_SOFT_SIZE=kernel` (the kernels' 320x200) and compares
 // its `step ` lines, byte for byte, with each kernel's serial output.
-impl "deps/polyp/core"
-impl "deps/polyp/diag"
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/core/diag"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/todo/app"
 impl "deps/todo/scenario"
 impl "std/env"

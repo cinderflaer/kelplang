@@ -18,4 +18,4 @@ dealloc = "dealloc"
 # surface) and the two raster modules that write pixels. There is no `[caps]` `mmio` grant: a COM1
 # byte moves through the `in`/`out` instructions, not through a `Ptr.from_addr`.
 [unsafe]
-modules = ["main", "uart", "fb_platform", "deps/polyp/soft/fb", "deps/polyp/soft/draw"]
+modules = ["main", "uart", "fb_platform", "deps/polyp/backends/soft/soft/fb", "deps/polyp/backends/soft/soft/draw"]

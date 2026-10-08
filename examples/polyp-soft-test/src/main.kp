@@ -6,11 +6,11 @@
 // checksums. The damage list's invariants are checked per pixel. Three API contracts are
 // exercised under `POLYP_SOFT_TEST`: `scale` (a text scale outside 1..=4), `clip_depth` (a ninth
 // push) and `clip_empty` (a pop past the base); `dump` writes a PPM for the Rust test to read.
-impl "deps/polyp/soft/damage"
-impl "deps/polyp/soft/debug" caps(fs = ["/**"])
-impl "deps/polyp/soft/draw"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/font"
+impl "deps/polyp/backends/soft/soft/damage"
+impl "deps/polyp/backends/soft/soft/debug" caps(fs = ["/**"])
+impl "deps/polyp/backends/soft/soft/draw"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/font"
 impl "static_fb"
 impl "std/env"
 impl "std/str"

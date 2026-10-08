@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generates the extended glyph tables of examples/polyp/soft/font.kp (Polyp v4 stage 2).
+"""Generates the extended glyph tables of backends/soft/soft/font.kp (Polyp v4 stage 2).
 
 The ASCII table (U+0020..U+007E) is read from font.kp and never changed. Every other glyph is drawn
 here as seven rows of five characters (`#` is a lit pixel, row 0 on top) or composed from an ASCII
 letter and an accent mark, then written back into font.kp between the two GENERATED markers as
 hex-coded columns: one byte per column, bit r set when row r is lit, five bytes per glyph, exactly
-the layout the hand-written ASCII table has. Run `python3 examples/polyp/tools/font_gen.py` to rewrite
+the layout the hand-written ASCII table has. Run `python3 tools/font_gen.py` to rewrite
 the tables; `--art` prints every glyph as text.
 
 A cell is 5 columns by 7 rows and the pen advances 6, so a capital with an accent cannot keep its 7
@@ -15,7 +15,7 @@ mark, which is what the cap-height of the lowercase x-height body (rows 2..6) al
 import re, sys, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FONT_KP = os.path.join(HERE, '..', 'soft', 'font.kp')
+FONT_KP = os.path.join(HERE, '..', 'backends', 'soft', 'soft', 'font.kp')
 
 src = open(FONT_KP).read()
 m = re.search(r'static FONT: \[u8; 475\] = \[([^\]]*)\]', src)
@@ -1185,7 +1185,7 @@ if '--art' in sys.argv:
         print('\n'.join(GLYPHS[cp]))
     sys.exit(0)
 
-BEGIN = '// BEGIN GENERATED GLYPH TABLES (examples/polyp/tools/font_gen.py)'
+BEGIN = '// BEGIN GENERATED GLYPH TABLES (tools/font_gen.py)'
 END = '// END GENERATED GLYPH TABLES'
 text = src
 if BEGIN in text:

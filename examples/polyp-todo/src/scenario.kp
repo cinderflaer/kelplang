@@ -10,10 +10,10 @@
 // `emit` is the one thing a run may do differently: a hosted entry prints the line, a kernel writes
 // the bytes to its UART. The line itself is built here, with integer formatting only (`str.from_i64`
 // and a hex table), so the two sides cannot disagree about how the same checksum reads.
-impl "deps/polyp/core"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/platform"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/platform"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/todo/app"
 impl "std/str"
 

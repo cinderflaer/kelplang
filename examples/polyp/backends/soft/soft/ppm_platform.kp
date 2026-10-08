@@ -4,12 +4,12 @@
 // then records the frame as `HeadlessPlatform` does; with the variable unset it is exactly a
 // `HeadlessPlatform`. It is the "look at a frame" platform for a developer, the same job
 // `soft/debug.kp` does for the raster, and it is hosted-only for the same reason: `std/fs`.
-impl "deps/polyp/soft/damage"
-impl "deps/polyp/soft/debug" caps(fs = ["/**"])
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft/platform"
+impl "deps/polyp/backends/soft/soft/damage"
+impl "deps/polyp/backends/soft/soft/debug" caps(fs = ["/**"])
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft/platform"
 impl "std/env"
 impl "std/fmt"
 impl "std/option"

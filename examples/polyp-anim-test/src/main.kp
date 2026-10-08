@@ -13,13 +13,13 @@
 //   every     a repeating timer fires at the right ticks and skips the periods it missed
 //   after     a one-shot fires once, and re-arms when the state removes it and adds it again
 //   idle      a UI at rest has `wants_frames` false and presents nothing
-impl "deps/polyp/anim"
-impl "deps/polyp/core"
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft/platform"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/anim"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft/platform"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "std/str"
 
 enum Msg {

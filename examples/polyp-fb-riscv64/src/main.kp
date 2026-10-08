@@ -3,14 +3,14 @@
 // This is the whole of the operating system the renderer needs: a UART, a `static mut` framebuffer,
 // a bump arena behind the manifest's `[target] alloc`/`dealloc`, and a panic handler. The program
 // it runs is the same one the hosted run runs: `deps/todo/app` is the todo model, view and update,
-// `deps/todo/scenario` is the shared driver, and `deps/polyp/soft_backend` with the stage-2 raster
+// `deps/todo/scenario` is the shared driver, and `deps/polyp/backends/soft/soft_backend` with the stage-2 raster
 // is the same code the hosted soft backend is. Nothing here draws a pixel itself.
 //
 // One step line is printed per frame, then the report `examples/polyp-todo/smoke.sh` reads, so the
 // equivalence test can compare both the pixels (`checksum`) and the state machine (the report) with
 // the hosted run.
-impl "deps/polyp/core"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/todo/app"
 impl "deps/todo/scenario"
 impl "fb_platform"

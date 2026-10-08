@@ -1,7 +1,7 @@
 // The Polyp v4 demo on the hosted headless platform: the deterministic transcript the kernels are
 // compared with. See `app.kp` for the program and `scenario.kp` for the driver.
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/v4/app"
 impl "deps/v4/scenario"
 

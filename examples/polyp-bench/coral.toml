@@ -5,4 +5,4 @@ entry = "src/main.kp"
 # those three modules are the audited ones. `std/time` needs the `time` domain, which the entry
 # `main` holds implicitly.
 [unsafe]
-modules = ["deps/polyp/soft/fb", "deps/polyp/soft/draw", "deps/polyp/soft/headless_platform"]
+modules = ["deps/polyp/backends/soft/soft/fb", "deps/polyp/backends/soft/soft/draw", "deps/polyp/backends/soft/soft/headless_platform"]

@@ -28,7 +28,7 @@
 //
 // Nothing here dereferences a pixel, so the module needs no `[unsafe]` entry, and it imports
 // only the pure-integer half of the raster.
-impl "deps/polyp/soft/fb"
+impl "deps/polyp/backends/soft/soft/fb"
 
 pub const MAX_DAMAGE: usize = 16
 

@@ -8,7 +8,7 @@
 // Focus and the entry text are modelled rather than delegated: a programmatic edit writes the
 // entry's text and then posts that entry's id, which is the signal a real entry would have
 // emitted, and a patch leaves a focused entry's text alone exactly as GTK's backend does.
-impl "deps/polyp/core"
+impl "deps/polyp/core/core"
 impl "std/fmt"
 impl "std/option"
 impl "std/str"
@@ -537,95 +537,4 @@ impl core.Backend for Headless {
     fun Self.entries_built().return: i32 = entry_builds
 
     fun Self.stats().return: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed, memo_hits = 0, memo_misses = 0, view_calls = 0)
-}
-
-// HTML (`[build] emit = "html"`, stage 1). The retained tree as one static document: the same walk
-// `dump` makes, with each widget written as a plain element. Containers are `div`s with flex classes
-// (`polyp-column` and `polyp-row`), text is a `p`, a button is a `button`, a spacer is an empty `div`
-// of its height, and every other kind is a `div` with a `data-kind` attribute. Nothing interactive is
-// wired: the page is the first frame, not a running program.
-fun html_escape(s: &str).return: String {
-    val a = str.replace(s, "&", "&amp;")
-    val b = str.replace(a.as_str(), "<", "&lt;")
-    val c = str.replace(b.as_str(), ">", "&gt;")
-    val d = str.replace(c.as_str(), "\"", "&quot;")
-    return str.replace(d.as_str(), "'", "&#39;")
-}
-
-fun html_element(tag: str, attrs: str, body: &str).return: String {
-    var out = String.from_str("<")
-    out = append(out, tag)
-    out = append(out, attrs)
-    out = append(out, ">")
-    out = append(out, body)
-    out = append(out, "</")
-    out = append(out, tag)
-    out = append(out, ">")
-    return out
-}
-
-fun html_of(n: &HNode).return: String {
-    var body = String.from_str("")
-    var i: usize = 0
-    while i < n.kids.len() {
-        val child = html_of(n.kids.get(i))
-        body = append(body, child.as_str())
-        i += 1
-    }
-    if n.kind == core.KIND_TEXT {
-        val escaped = html_escape(n.props.text.as_str())
-        val cls = if n.props.bold { " class=\"polyp-text polyp-bold\"" } else { " class=\"polyp-text\"" }
-        val text_attrs = str.concat(cls, " data-kind=\"text\"")
-        return html_element("p", text_attrs.as_str(), escaped.as_str())
-    }
-    if n.kind == core.KIND_BUTTON {
-        val label = html_escape(n.props.label.as_str())
-        return html_element("button", " type=\"button\" data-kind=\"button\"", label.as_str())
-    }
-    if n.kind == core.KIND_COLUMN || n.kind == core.KIND_ROW {
-        val flex = if n.kind == core.KIND_COLUMN { "polyp-column" } else { "polyp-row" }
-        var attrs = str.concat(" class=\"", flex)
-        attrs = append(attrs, "\"")
-        if n.props.spacing > 0 {
-            val gap = fmt.int(n.props.spacing.to_i64())
-            attrs = append(attrs, " style=\"gap:")
-            attrs = append(attrs, gap.as_str())
-            attrs = append(attrs, "px\"")
-        }
-        val kind = if n.kind == core.KIND_COLUMN { "column" } else { "row" }
-        attrs = append(attrs, " data-kind=\"")
-        attrs = append(attrs, kind)
-        attrs = append(attrs, "\"")
-        return html_element("div", attrs.as_str(), body.as_str())
-    }
-    if n.kind == core.KIND_SPACER {
-        val px = fmt.int(n.props.height.to_i64())
-        val attrs = str.concat(" style=\"height:", px.as_str())
-        val spacer_attrs = str.concat(attrs.as_str(), "px\" data-kind=\"spacer\"")
-        return html_element("div", spacer_attrs.as_str(), "")
-    }
-    val other = str.concat(" data-kind=\"", kind_name(n.kind))
-    val other_attrs = str.concat(other.as_str(), "\"")
-    return html_element("div", other_attrs.as_str(), body.as_str())
-}
-
-// The first frame as a complete HTML document. The style is inline so the file is self-contained.
-pub fun html(be: &Headless).return: String {
-    var body = String.from_str("")
-    var i: usize = 0
-    while i < be.root.len() {
-        val top = html_of(be.root.get(i))
-        body = append(body, top.as_str())
-        i += 1
-    }
-    var doc = String.from_str("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
-    doc = append(doc, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Polyp</title>\n")
-    doc = append(doc, "<style>\nbody { margin: 16px; font-family: sans-serif; }\n")
-    doc = append(doc, ".polyp-column { display: flex; flex-direction: column; align-items: flex-start; }\n")
-    doc = append(doc, ".polyp-row { display: flex; flex-direction: row; align-items: center; }\n")
-    doc = append(doc, ".polyp-text { margin: 4px 0; }\n.polyp-bold { font-weight: bold; }\n")
-    doc = append(doc, "</style>\n</head>\n<body>\n")
-    doc = append(doc, body.as_str())
-    doc = append(doc, "\n</body>\n</html>\n")
-    return doc
 }

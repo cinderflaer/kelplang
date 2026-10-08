@@ -8,10 +8,10 @@
 //
 // The framebuffer is allocated once, at construction, through `Ptr.alloc<u32>` and never freed:
 // the module is on a consumer's `[unsafe]` list for that one allocation and the fill.
-impl "deps/polyp/soft/damage"
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/platform"
+impl "deps/polyp/backends/soft/soft/damage"
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/platform"
 impl "std/option"
 
 const MAX_PRESENTED: usize = 32

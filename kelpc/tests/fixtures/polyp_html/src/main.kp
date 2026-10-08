@@ -1,6 +1,6 @@
 // The normal Polyp app of the HTML emit fixture: it opens a window. The view and the update are in
 // `app.kp`, and `emit.kp` is the entry that `[build] emit = "html"` compiles instead of this file.
-impl "deps/polyp/lib" caps(ui = ["*"])
+impl "deps/polyp/backends/gtk/polyp/lib" caps(ui = ["*"])
 impl "app"
 
 fun main() {

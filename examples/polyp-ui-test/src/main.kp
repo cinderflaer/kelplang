@@ -12,14 +12,14 @@
 //
 // `POLYP_UI_TEST=ppm` runs the PpmPlatform acceptance instead, which the Rust test points at a
 // temporary directory and then checks the file it wrote.
-impl "deps/polyp/core"
-impl "deps/polyp/soft/damage"
-impl "deps/polyp/soft/event"
-impl "deps/polyp/soft/fb"
-impl "deps/polyp/soft/headless_platform"
-impl "deps/polyp/soft/platform"
-impl "deps/polyp/soft/ppm_platform" caps(fs = ["/**"], env = ["POLYP_DUMP_DIR"])
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft/damage"
+impl "deps/polyp/backends/soft/soft/event"
+impl "deps/polyp/backends/soft/soft/fb"
+impl "deps/polyp/backends/soft/soft/headless_platform"
+impl "deps/polyp/backends/soft/soft/platform"
+impl "deps/polyp/backends/soft/soft/ppm_platform" caps(fs = ["/**"], env = ["POLYP_DUMP_DIR"])
+impl "deps/polyp/backends/soft/soft_backend"
 impl "std/env"
 impl "std/option"
 impl "std/str"

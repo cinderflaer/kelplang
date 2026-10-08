@@ -6,7 +6,7 @@
 // entry point calls) and a static cannot hold a heap type, so the counter set lives in `core.kp`
 // as `Atomic` statics and this one snapshot lives here, where a project that must not carry a `pd`
 // simply does not import it. plan/polyp-v3.md, stage 4 is the design.
-impl "deps/polyp/core"
+impl "deps/polyp/core/core"
 
 // One entry text per entry widget, in tree order, as of the last `capture`.
 pd var entry_texts: List<String> = List.empty()

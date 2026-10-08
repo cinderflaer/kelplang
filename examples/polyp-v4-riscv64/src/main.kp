@@ -6,8 +6,8 @@
 // handler would do. The program, `deps/v4/app`, and the driver, `deps/v4/scenario`, are the files the
 // hosted `examples/polyp-v4-demo` runs, so the step lines this prints are compared byte for byte
 // with the hosted transcript.
-impl "deps/polyp/core"
-impl "deps/polyp/soft_backend"
+impl "deps/polyp/core/core"
+impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/v4/app"
 impl "deps/v4/scenario"
 impl "fb_platform"
