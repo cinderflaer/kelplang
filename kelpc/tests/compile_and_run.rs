@@ -12028,9 +12028,14 @@ fn an_exclusive_capture_is_refused_where_it_cannot_be_sound() {
         "tests/fixtures/excl_refused_returns_borrow.kp",
         "(an exclusive capture) and returns a borrow",
     );
+    // A block in a block may capture the outer block's exclusive capture
+    // (MISSING-Sw9Hd): the inner write is checked against the rest of the inner
+    // call exactly as a local's would be.
+    assert_compiles_and_runs("tests/fixtures/excl_capture_nested.kp", "2\n");
+    assert_compiles_and_runs("tests/fixtures/excl_capture_nested_disjoint.kp", "2\n");
     assert_rejected_with(
-        "tests/fixtures/excl_refused_nested.kp",
-        "cannot capture 's' into this nested block",
+        "tests/fixtures/excl_refused_nested_same_call.kp",
+        "cannot borrow 'a captured value.count' as exclusive: this call also uses it",
     );
     assert_rejected_with(
         "tests/fixtures/excl_refused_stored.kp",

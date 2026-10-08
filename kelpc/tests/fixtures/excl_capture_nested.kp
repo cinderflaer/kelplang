@@ -1,4 +1,4 @@
-// A block inside a block cannot capture the outer block's exclusive capture.
+// A block inside a block can capture the outer block's exclusive capture: both write `s.count`, one call at a time.
 datac State(var count: i32)
 
 fun each(f: scoped fun(i32)) {

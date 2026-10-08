@@ -49,7 +49,7 @@ no new syntax and no annotation; the capture's mode is inferred per binding from
 | The call's receiver is the captured owner (`s.each { s.count += 1 }`), or a field of it (`s.bag.each { s.count += 1 }`) | refused: the receiver's reservation conflicts. Roots are whole variables, so a field of `s` and `s` conflict |
 | A live borrow of the owner still used after the call (`val first = s.items.get(0)` ... `print(first)`) | refused: borrows end at their last use (`plan/nll.md`) and this one has not ended |
 | The same borrow dead before the call | accepted: the call is the only user of the owner, and the owner is free again afterwards (`excl_capture_field`) |
-| Nested block capturing the outer block's exclusive capture | refused in v1, with a message that names the two ways out (section 5) |
+| Nested block capturing the outer block's exclusive capture | allowed since 26.10.3: a `Capture` has an owner root (`#capN`, with field paths) inside the literal body, so the inner call's other arguments are checked against it (`excl_capture_nested*.kp`, `excl_refused_nested_same_call.kp`) |
 | `defer` in the block | the lowering splices it into the block body, so it runs when the block returns, once per call; it is an ordinary statement of the block (`excl_capture_defer_loop`) |
 | `defer` in the enclosing function that reads the owner | runs at function end; the capture was released when the call returned, so it is fine |
 | `return` inside the block | leaves only the block (a literal is its own function); the call and its borrows end normally (`excl_capture_returns_value`) |
@@ -234,11 +234,6 @@ explicit same-call check.
 
 Not done, and why (each is a follow-up, none blocks the rule):
 
-1. **Nested blocks.** A block inside a block that uses a name the outer block captures exclusively
-   is refused (even a read: copying a `&mut` into a second environment is a reborrow the checker
-   cannot yet follow). A name the outer block does not use exclusively is captured by the inner
-   block as before, and an inner block may read the outer block's own locals. Allowing it needs the borrow checker to give a `Capture` an owner root inside a literal
-   body (so the inner call's other arguments can be checked against it); today a capture has none.
-   Until then the message names the two ways out.
+1. **Nested blocks**: done in 26.10.3 (see the table in section 1).
 2. **Wiki and `fmt`**: `fmt.rs` still has no block-rewrapping rule (open item 75); the wiki pages
    are written from `plan/language-tour-2026-10.md`.

@@ -185,16 +185,16 @@ compile-time limits: no `comptime` block, no compile-time `List`/`Map`, no
 `size_of`/`align_of` in a `const`, and no method or builtin call in a constant
 (`str.len("x")`).
 
-### MISSING-Sw9Hd kelp: a block inside a block cannot capture the outer block's exclusive capture
+### MISSING-Sw9Hd kelp: `kelpc fmt` cannot re-wrap a trailing block
 
 repo: kelp | found: 2026-10-06 | effort: M
 
-source: wiki `language/limits.md` (unreleased), "Scoped blocks".
+source: open item 75, `plan/exclusive-captures.md`.
 
-Disjoint-field captures and the `g(s, s)` soundness hole shipped in 26.10.3.
-Still open: a block inside a block cannot capture the outer block's exclusive
-capture (the message names the two ways out), and `kelpc fmt` cannot re-wrap a
-trailing block (open item 75).
+The disjoint-field captures, the `g(s, s)` hole and the block-inside-a-block
+capture all shipped in 26.10.3. What is left is the formatter: `kelpc fmt` copies
+tokens and rewrites only the whitespace between them, so it has no rule for
+re-wrapping a trailing block (`f { x -> ... }`).
 
 ### MISSING-Xo5Ga kelp: no Unicode case mapping, and no `str` slicing that is codepoint aware
 

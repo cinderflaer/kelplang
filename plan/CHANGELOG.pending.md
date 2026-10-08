@@ -15,3 +15,4 @@ writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
 
 - A tuple can be a `const` value: `const ORIGIN: (i32, i32) = (1, 2)`, read with `ORIGIN.0` or a destructuring binding.
+- A block inside a block can capture the outer block's exclusive capture; the inner call's other arguments are checked against it like a local's.
