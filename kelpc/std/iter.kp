@@ -266,3 +266,59 @@ fun mut ChainIter<A, B, T>.next().return: option.Option<T> {
 pub fun chain<A: Iterator, B: Iterator>(a: move A, b: move B).return: ChainIter<A, B, A::Item> {
     return ChainIter(first = a, second = b, first_done = false)
 }
+
+// ---- consumers --------------------------------------------------------------------
+
+/* Whether `pred` holds for some item; stops at the first that does. */
+pub fun any<I: Iterator>(it: move I, pred: closure(&I::Item).return: bool).return: bool {
+    var cursor = it
+    for x in cursor {
+        if pred(x) {
+            return true
+        }
+    }
+    return false
+}
+
+/* Whether `pred` holds for every item; stops at the first that does not. */
+pub fun all<I: Iterator>(it: move I, pred: closure(&I::Item).return: bool).return: bool {
+    var cursor = it
+    for x in cursor {
+        if !pred(x) {
+            return false
+        }
+    }
+    return true
+}
+
+/* The first item for which `pred` holds. */
+pub fun find<I: Iterator>(it: move I, pred: closure(&I::Item).return: bool).return: option.Option<I::Item> {
+    var cursor = it
+    for x in cursor {
+        if pred(x) {
+            return option.Option.Some(value = x)
+        }
+    }
+    return option.Option.None
+}
+
+/* The last item, or `None` for an empty iterator. */
+pub fun last<I: Iterator>(it: move I).return: option.Option<I::Item> {
+    var cursor = it
+    var out: option.Option<I::Item> = option.Option.None
+    for x in cursor {
+        out = option.Option.Some(value = x)
+    }
+    return out
+}
+
+/* `init` folded with `f` over the items, in order: `f(acc, &item)` is the next
+   accumulator. */
+pub fun fold<I: Iterator, A>(it: move I, init: move A, f: closure(&A, &I::Item).return: A).return: A {
+    var cursor = it
+    var acc = init
+    for x in cursor {
+        acc = f(acc, x)
+    }
+    return acc
+}
