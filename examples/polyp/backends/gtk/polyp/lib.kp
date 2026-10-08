@@ -7,6 +7,7 @@
 impl "deps/polyp/core/core"
 impl "deps/polyp/core/diag"
 impl "deps/polyp/backends/gtk/gtk_backend" caps(ui = ["*"])
+impl "deps/polyp/backends/headless/headless_backend"
 impl "std/str"
 
 // `GTK_ORIENTATION_*`, kept here because v2 exported them.
@@ -34,6 +35,18 @@ pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (
     diag.capture(backend)
     gtk_backend.close(backend)
     return final
+}
+
+// The first view as one HTML document on stdout, built on the headless backend. There is no window
+// and no loop. An app's `[build] emit_entry` program calls this from its `main` in place of `run`;
+// kelpc runs that program once and writes the output as index.html (`[build] emit = "html"`).
+pub fun emit_html<S, M>(init: move S, view: fun (S).return: core.Node<M>) {
+    val tree = view(init)
+    var backend = headless_backend.new(List.empty())
+    val first = core.create_all(&tree)
+    backend.apply(&first)
+    val page = headless_backend.html(&backend)
+    print(page.as_str())
 }
 
 // An application stylesheet. `gtk_init` is idempotent, so calling this before `run` is fine.
