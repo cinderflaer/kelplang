@@ -3,6 +3,7 @@ entry = "src/main.kp"
 
 [build]
 emit = "html"
+emit_entry = "emit.kp"
 
 # Everything from here down is pasted from examples/polyp/README.md: Kelp has no
 # manifest for a library, so the consumer carries the library's `[extern.*]`

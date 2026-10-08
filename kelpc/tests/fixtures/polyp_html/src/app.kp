@@ -1,0 +1,31 @@
+// The Polyp app of the HTML emit fixture: the state, the view and the update. `main.kp` runs it in a
+// window, and `emit.kp` prints its first view as index.html (`[build] emit = "html"`). The app only
+// builds the view tree, so it imports the core and not the library.
+impl "deps/polyp/core"
+impl "std/fmt"
+impl "std/str"
+
+pub datac Counter(var count: i32)
+
+pub enum Msg {
+    Inc
+}
+
+pub fun view(s: Counter).return: core.Node<Msg> {
+    val shown_count = fmt.int(s.count.to_i64())
+    val shown = str.concat("the count is ", shown_count.as_str())
+    return core.column { k ->
+        k.text("Hello from Polyp")
+        k.text(shown.as_str())
+        k.spacer(6)
+        k.button("+1", Msg.Inc)
+    }
+}
+
+pub fun update(state: mut Counter, msg: Msg) {
+    when msg {
+        Inc -> {
+            state.count += 1
+        }
+    }
+}

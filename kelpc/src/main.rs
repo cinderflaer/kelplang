@@ -637,13 +637,11 @@ fn build(
     true
 }
 
-/// The environment variable a Polyp program reads to print its first view as an
-/// HTML document instead of opening a window (`examples/polyp/emit.kp`).
-const HTML_ENV: &str = "KELP_POLYP_EMIT";
-
-/// `[build] emit = "html"`: runs the built program once with `KELP_POLYP_EMIT=html`
+/// `[build] emit = "html"`: runs the built program once, with no extra environment,
 /// and writes what it prints as `index.html` in the output directory, which is the
-/// directory the binary was written to. A program that prints no HTML document is
+/// directory the binary was written to. The program is `[build] emit_entry`, which
+/// `resolve::load` compiled in place of the entry, so its first view is chosen by the
+/// build and needs no capability at run time. A program that prints no HTML document is
 /// refused rather than written out, so the file is never a stray stdout.
 fn emit_html(out_path: &Path) -> ExitCode {
     let abs_out = if out_path.is_absolute() {
@@ -652,11 +650,7 @@ fn emit_html(out_path: &Path) -> ExitCode {
         PathBuf::from("./").join(out_path)
     };
     guard::stop();
-    let output = match Command::new(&abs_out)
-        .env(HTML_ENV, "html")
-        .stdin(Stdio::null())
-        .output()
-    {
+    let output = match Command::new(&abs_out).stdin(Stdio::null()).output() {
         Ok(output) => output,
         Err(e) => {
             eprintln!("error: could not run '{}' to emit its HTML: {e}", abs_out.display());
@@ -681,7 +675,7 @@ fn emit_html(out_path: &Path) -> ExitCode {
     };
     if !html.starts_with("<!doctype html>") {
         eprintln!(
-            "error: '{}' printed no HTML document for '[build] emit = \"html\"': the program's entry point must be a Polyp app whose view runs through polyp.run (examples/polyp/lib.kp)",
+            "error: '{}' printed no HTML document for '[build] emit = \"html\"': the [build] emit_entry must call polyp.emit_html (examples/polyp/lib.kp)",
             abs_out.display()
         );
         return ExitCode::FAILURE;
@@ -1696,8 +1690,8 @@ fn real_main() -> ExitCode {
     ) {
         return ExitCode::FAILURE;
     }
-    // `[build] emit = "html"` replaces the run: the program is run once to print its
-    // first view, and `run` does not start it as an application.
+    // `[build] emit = "html"` replaces the run: the `emit_entry` program is run once to
+    // print its first view, and `run` does not start it as an application.
     if emit == resolve::Emit::Html {
         if freestanding {
             eprintln!(

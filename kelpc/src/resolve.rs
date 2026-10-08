@@ -125,8 +125,9 @@ pub struct Project {
 }
 
 /// What `kelpc build` writes for a project (`[build] emit`). `Html` builds the
-/// program, runs it once with `KELP_POLYP_EMIT=html`, and writes its stdout as
-/// `index.html` beside the binary (see `examples/polyp/lib.kp`).
+/// project's `[build] emit_entry` instead of its `entry`, runs it once, and writes
+/// its stdout as `index.html` beside the binary (see `polyp.emit_html` in
+/// `examples/polyp/lib.kp`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Emit {
     Binary,
@@ -567,16 +568,34 @@ pub fn load(
                 )
             })?;
             let manifest = parse_manifest(&text, &manifest_path)?;
-            let entry_file = fs::canonicalize(given.join(&manifest.entry)).map_err(|e| {
-                Diagnostic::new(
-                    format!(
-                        "cannot read the manifest's entry point '{}': {e}",
-                        manifest.entry
-                    ),
-                    Span::new(0, 0),
-                    "",
-                )
-            })?;
+            // `[build] emit = "html"` compiles `[build] emit_entry` (a file under
+            // `src/`) in place of the manifest's entry, so the HTML program is a
+            // separate module graph and its grants are its own.
+            let entry_file = match (manifest.emit, &manifest.emit_entry) {
+                (Emit::Html, Some(emit_entry)) => {
+                    let path = given.join("src").join(emit_entry);
+                    fs::canonicalize(&path).map_err(|e| {
+                        Diagnostic::new(
+                            format!(
+                                "cannot read the [build] emit_entry point '{emit_entry}' ({}): {e}",
+                                path.display()
+                            ),
+                            Span::new(0, 0),
+                            "",
+                        )
+                    })?
+                }
+                _ => fs::canonicalize(given.join(&manifest.entry)).map_err(|e| {
+                    Diagnostic::new(
+                        format!(
+                            "cannot read the manifest's entry point '{}': {e}",
+                            manifest.entry
+                        ),
+                        Span::new(0, 0),
+                        "",
+                    )
+                })?,
+            };
             (
                 entry_file,
                 Some(given.clone()),
@@ -1802,6 +1821,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         incremental: false,
         sanitize: None,
         emit: Emit::Binary,
+        emit_entry: None,
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -1986,6 +2006,18 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
             ));
         }
     }
+    // `[build] emit = "html"` builds `emit_entry` instead of `entry`, so it has to
+    // name one. The check runs here, after every key, because the two keys may come
+    // in either order.
+    if manifest.emit == Emit::Html && manifest.emit_entry.is_none() {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME}'s [build] section sets emit = \"html\" but names no emit_entry; add emit_entry = \"<file under src/>\", the Polyp app whose main calls polyp.emit_html"
+            ),
+            at,
+            "",
+        ));
+    }
     // A `[target]` section has to say which mode it is: the other four keys
     // mean different things in each, so a section that names only `triple`
     // would be silently hosted, which is the one outcome the section exists to
@@ -2137,6 +2169,9 @@ struct Manifest {
     sanitize: Option<crate::driver::Sanitizer>,
     /// `[build] emit = "binary"|"html"`.
     emit: Emit,
+    /// `[build] emit_entry = "<file under src/>"`: the entry compiled when `emit`
+    /// is `Html`. Required for `Html`, ignored for `Binary`.
+    emit_entry: Option<String>,
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
@@ -2278,6 +2313,24 @@ fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(),
             "",
         ));
     };
+    if key.trim() == "emit_entry" {
+        let value = value.trim();
+        let name = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .unwrap_or("");
+        if name.is_empty() {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME} value for '[build] emit_entry' must be a double-quoted file name under src/, found '{value}'"
+                ),
+                at,
+                "",
+            ));
+        }
+        manifest.emit_entry = Some(name.to_string());
+        return Ok(());
+    }
     if key.trim() == "emit" {
         let value = value.trim();
         let name = value
@@ -2319,7 +2372,7 @@ fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(),
     if key.trim() != "incremental" {
         return Err(Diagnostic::new(
             format!(
-                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: its keys are 'incremental', 'sanitize' and 'emit'",
+                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: its keys are 'incremental', 'sanitize', 'emit' and 'emit_entry'",
                 key.trim()
             ),
             at,
@@ -3811,7 +3864,7 @@ mod tests {
         );
         let err = manifest_err("name = \"x\"\n[build]\nunits = true\n");
         assert!(
-            err.message.contains("its keys are 'incremental', 'sanitize' and 'emit'"),
+            err.message.contains("its keys are 'incremental', 'sanitize', 'emit' and 'emit_entry'"),
             "{}",
             err.message
         );
@@ -3822,7 +3875,7 @@ mod tests {
         use super::Emit;
         assert_eq!(manifest("name = \"x\"\n").emit, Emit::Binary);
         assert_eq!(
-            manifest("name = \"x\"\n[build]\nemit = \"html\"\n").emit,
+            manifest("name = \"x\"\n[build]\nemit = \"html\"\nemit_entry = \"emit.kp\"\n").emit,
             Emit::Html
         );
         assert_eq!(
@@ -3837,6 +3890,28 @@ mod tests {
         );
         let err = manifest_err("name = \"x\"\n[build]\nemit = html\n");
         assert!(err.message.contains("(double-quoted)"), "{}", err.message);
+    }
+
+    #[test]
+    fn html_emit_names_the_entry_it_compiles() {
+        let m = manifest("name = \"x\"\n[build]\nemit = \"html\"\nemit_entry = \"emit.kp\"\n");
+        assert_eq!(m.emit_entry.as_deref(), Some("emit.kp"));
+        // The key order does not matter, and a binary build needs no entry.
+        let m = manifest("name = \"x\"\n[build]\nemit_entry = \"emit.kp\"\nemit = \"html\"\n");
+        assert_eq!(m.emit_entry.as_deref(), Some("emit.kp"));
+        assert_eq!(manifest("name = \"x\"\n[build]\nemit = \"binary\"\n").emit_entry, None);
+    }
+
+    #[test]
+    fn html_emit_without_an_emit_entry_is_an_error() {
+        let err = manifest_err("name = \"x\"\n[build]\nemit = \"html\"\n");
+        assert!(
+            err.message.contains("names no emit_entry"),
+            "{}",
+            err.message
+        );
+        let err = manifest_err("name = \"x\"\n[build]\nemit_entry = \"\"\nemit = \"html\"\n");
+        assert!(err.message.contains("'[build] emit_entry'"), "{}", err.message);
     }
 
     #[test]
