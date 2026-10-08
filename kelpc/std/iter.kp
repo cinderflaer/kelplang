@@ -12,17 +12,15 @@
    costs no libc: `Range.next` is an ordinary method and the `for` is an
    ordinary `while` by the time either backend sees it.
 
-   What is deliberately absent, and why:
-
-   - A borrowing `List.iter()` yielding `&T`. A borrow into a list cannot
-     outlive the iterator that handed it out, and v1 has no lifetime syntax to
-     tie the two together, so the owned `List.into_iter()` (below) is the list
-     iterator and it needs an element the language can move.
-   - `map`/`filter` and every other closure-taking adapter. They would have to
-     store a `closure(T).return: U` whose `U` is the inner iterator's `Item`, which
-     needs `Item` to be nameable in a `datac`'s field type. The language can
-     name it in a *generic function* (`I::Item`) but not in a generic type
-     declaration, so these wait on that. */
+   Adapters and the list iterator are at the end of the file. An adapter is a
+   generic `datac` over the iterator it wraps and over that iterator's item
+   (`TakeIter<I, T>`), and a generic type whose template declares
+   `fun mut Name<...>.next().return: option.Option<Item>` is an `Iterator` by
+   shape: it satisfies `I: Iterator` and names `I::Item`, with no generic trait
+   impl (`plan/generic-trait-impls.md` is the general solution; this is the
+   case the adapters need). A borrowing `List.iter()` yielding `&T` is still
+   absent: a borrow into a list cannot outlive the iterator that handed it out
+   without lifetime syntax, so the list iterators own their items. */
 
 impl "std/option"
 
@@ -102,4 +100,169 @@ pub fun collect_list<I: Iterator>(it: move I).return: List<I::Item> {
         out.push(x)
     }
     return out
+}
+
+// ---- the list iterator --------------------------------------------------------
+
+/* An owned walk over a list, front to back. The list is held reversed so that
+   `next` is a `pop`, which moves the element out: no element needs to be
+   `Copy`, and nothing is shifted. */
+pub datac ListIter<T>(var rest: List<T>)
+
+fun mut ListIter<T>.next().return: option.Option<T> {
+    if self.rest.is_empty() {
+        return option.Option.None
+    }
+    return option.Option.Some(value = self.rest.pop())
+}
+
+/* The list's elements in order, moving the list into the iterator. */
+pub fun into_iter<T>(xs: move List<T>).return: ListIter<T> {
+    var rest = xs
+    rest.reverse()
+    return ListIter(rest = rest)
+}
+
+/* The elements of a borrowed list, cloned, for an element that can be copied.
+   (An element that cannot be cloned walks with `into_iter`.) */
+pub fun cloned<T>(xs: &List<T>).return: ListIter<T> {
+    return into_iter(xs.clone())
+}
+
+// ---- adapters -------------------------------------------------------------------
+//
+// Each adapter takes its iterator by `move` and is itself an iterator, so they
+// chain: `iter.take(iter.filter(iter.into_iter(xs), pred), 3)`. The second type
+// parameter is the wrapped iterator's item, written out because a type's
+// declaration cannot spell `I::Item`; the constructor functions fill it in.
+
+pub datac MapIter<I, T, U>(var inner: I, val f: closure(&T).return: U)
+
+fun mut MapIter<I, T, U>.next().return: option.Option<U> {
+    val item = self.inner.next()
+    return when item {
+        Some(x) -> option.Option.Some(value = self.f(x))
+        None -> option.Option.None
+    }
+}
+
+/* Each item through `f`. */
+pub fun map<I: Iterator, U>(it: move I, f: move closure(&I::Item).return: U).return: MapIter<I, I::Item, U> {
+    return MapIter(inner = it, f = f)
+}
+
+pub datac FilterIter<I, T>(var inner: I, val pred: closure(&T).return: bool)
+
+fun mut FilterIter<I, T>.next().return: option.Option<T> {
+    while true {
+        val item = self.inner.next()
+        when item {
+            Some(x) -> {
+                if self.pred(x) {
+                    return option.Option.Some(value = x)
+                }
+            }
+            None -> {
+                return option.Option.None
+            }
+        }
+    }
+}
+
+/* The items for which `pred` holds. */
+pub fun filter<I: Iterator>(it: move I, pred: move closure(&I::Item).return: bool).return: FilterIter<I, I::Item> {
+    return FilterIter(inner = it, pred = pred)
+}
+
+pub datac TakeIter<I, T>(var inner: I, var left: usize)
+
+fun mut TakeIter<I, T>.next().return: option.Option<T> {
+    if self.left == 0 {
+        return option.Option.None
+    }
+    self.left -= 1
+    return self.inner.next()
+}
+
+/* At most the first `n` items. */
+pub fun take<I: Iterator>(it: move I, n: usize).return: TakeIter<I, I::Item> {
+    return TakeIter(inner = it, left = n)
+}
+
+pub datac SkipIter<I, T>(var inner: I, var left: usize)
+
+fun mut SkipIter<I, T>.next().return: option.Option<T> {
+    while self.left > 0 {
+        self.left -= 1
+        val dropped = self.inner.next()
+        when dropped {
+            Some(_) -> {}
+            None -> {
+                self.left = 0
+            }
+        }
+    }
+    return self.inner.next()
+}
+
+/* The items after the first `n`. */
+pub fun skip<I: Iterator>(it: move I, n: usize).return: SkipIter<I, I::Item> {
+    return SkipIter(inner = it, left = n)
+}
+
+pub datac EnumerateIter<I, T>(var inner: I, var index: usize)
+
+fun mut EnumerateIter<I, T>.next().return: option.Option<(usize, T)> {
+    val item = self.inner.next()
+    return when item {
+        Some(x) -> {
+            val at = self.index
+            self.index += 1
+            option.Option.Some(value = (at, x))
+        }
+        None -> option.Option.None
+    }
+}
+
+/* Each item with its position, counting from 0. */
+pub fun enumerate<I: Iterator>(it: move I).return: EnumerateIter<I, I::Item> {
+    return EnumerateIter(inner = it, index = 0)
+}
+
+pub datac ZipIter<A, B, T, U>(var left: A, var right: B)
+
+fun mut ZipIter<A, B, T, U>.next().return: option.Option<(T, U)> {
+    val a = self.left.next()
+    val b = self.right.next()
+    return when (a, b) {
+        (Some(x), Some(y)) -> option.Option.Some(value = (x, y))
+        else -> option.Option.None
+    }
+}
+
+/* Pairs of items, stopping when either iterator does. */
+pub fun zip<A: Iterator, B: Iterator>(a: move A, b: move B).return: ZipIter<A, B, A::Item, B::Item> {
+    return ZipIter(left = a, right = b)
+}
+
+pub datac ChainIter<A, B, T>(var first: A, var second: B, var first_done: bool)
+
+fun mut ChainIter<A, B, T>.next().return: option.Option<T> {
+    if !self.first_done {
+        val item = self.first.next()
+        when item {
+            Some(x) -> {
+                return option.Option.Some(value = x)
+            }
+            None -> {
+                self.first_done = true
+            }
+        }
+    }
+    return self.second.next()
+}
+
+/* All of `a`, then all of `b`; the two must yield the same item type. */
+pub fun chain<A: Iterator, B: Iterator>(a: move A, b: move B).return: ChainIter<A, B, A::Item> {
+    return ChainIter(first = a, second = b, first_done = false)
 }

@@ -1,0 +1,15 @@
+impl "std/iter"
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    xs.push(4)
+    xs.push(5)
+    for x in iter.into_iter(xs) {
+        print(x)
+    }
+    print(iter.count(iter.take(iter.range(0, 100), 7)))
+    print(iter.sum_i64(iter.skip(iter.range(0, 10), 7)))
+}

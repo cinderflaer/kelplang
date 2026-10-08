@@ -50,18 +50,18 @@ wiki changelog page.
 
 Sorted easiest first. `effort:` is S (a stdlib function or one small diagnostic), M (one subsystem, one lane), L (touches a hotspot file or needs a design call inside a lane), XL (mark-sized, or blocked on a decision). Within a tier the order is a rough guess; dependencies are named in the entries.
 
-### MISSING-Hd4Lr kelp: no iterator adapters and no `List.iter()`
+### MISSING-Hd4Lr kelp: no borrowing `List.iter()` and no `fold`/`any`/`all`/`find`
 
-repo: kelp | found: 2026-10-06 | effort: M
+repo: kelp | found: 2026-10-06 | effort: S
 
-source: wiki `language/limits.md` (unreleased), "Containers": "The iterator
-protocol shipped, the adapters did not"; `kelp/plan/iterators-status.md`.
+source: wiki `language/limits.md` (unreleased), "Containers".
 
-`for (key, value) in map` shipped in 26.10.3 as a compiler desugar over `keys()`
-and `get`. Still open: `map`, `filter`, `take`, `skip`, `enumerate`, `zip` and
-`chain`, and `List.iter()` / `into_iter()`. The adapters need
-`impl<I: Iterator> Iterator for Take<I>`, which is MISSING-Ve8Nc, so this entry
-waits on that one.
+Shipped in 26.10.3: `for (key, value) in map`, `iter.into_iter`/`cloned`, and the
+adapters `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain`, made
+possible by the by-shape rule (a generic type with an iterator-shaped `next` is an
+`Iterator`). Still open: a `List.iter()` that yields `&T` (needs a way to tie a
+borrow to the iterator), and the consumers beyond `count`, `sum_i64` and
+`collect_list`.
 
 ### MISSING-Cn2Ym kelp: channels have no `select` and no zero-capacity form
 
@@ -267,8 +267,8 @@ Still absent: `impl<T: A> B for Pair<T>`, blanket impls, `where` clauses, a
 bound on an associated type (`I: Iterator<Item = i64>`), default or generic
 associated types, associated consts, generic trait methods, `impl Trait` in
 return position, an upcast between trait objects, and `dyn` of a generic trait or
-of a trait with an associated type. Generic impls are the one that blocks the
-iterator adapters (MISSING-Hd4Lr) and `impl Iterator for Ring<3>` (the
+of a trait with an associated type. The iterator adapters shipped without it (by-shape rule); generic impls still block
+`impl Iterator for Ring<3>` (the
 "iterators with const generics" row of the feature-interaction table).
 
 Design note written (26.10.3): `plan/generic-trait-impls.md`.

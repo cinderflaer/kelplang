@@ -248,6 +248,22 @@ struct TypeEnv {
     /// for the whole program, exactly as `impls` is, so a projection at a call
     /// site and the impl's own signature agree.
     assoc: std::rc::Rc<HashMap<(String, String), HashMap<String, Ty>>>,
+    /// Generic types that are iterators by shape: the type template declares
+    /// `fun mut Name<P, ...>.next().return: option.Option<Item>`, where `Item` is
+    /// a written type over the template's own parameters. Keyed by template
+    /// name. `std/iter`'s adapters are such types (`TakeIter<I, T>`), and this is
+    /// what lets one satisfy `I: Iterator` and name `I::Item` without a generic
+    /// trait impl (`plan/generic-trait-impls.md`).
+    iter_nexts: std::rc::Rc<HashMap<String, IterNext>>,
+}
+
+/// See `TypeEnv::iter_nexts`.
+#[derive(Clone)]
+struct IterNext {
+    /// The template's type parameters, in order.
+    params: Vec<String>,
+    /// The `Item` of the `option.Option<Item>` `next` returns, as written.
+    item: ast::TypeExpr,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -8421,6 +8437,7 @@ fn check_program_pass(
         dyn_pairs: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
         dyn_traits: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
         assoc: std::rc::Rc::new(HashMap::new()),
+        iter_nexts: std::rc::Rc::new(collect_iter_nexts(program)),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -17181,6 +17198,51 @@ fn func_template_named(ctx: &Ctx, name: &str, owned: &str) -> Option<String> {
     (name.contains('.') && ctx.fns.templates.contains_key(name)).then(|| name.to_string())
 }
 
+/// The generic types that declare an iterator-shaped `next` (`TypeEnv::iter_nexts`).
+fn collect_iter_nexts(program: &ast::Program) -> HashMap<String, IterNext> {
+    let mut out = HashMap::new();
+    for f in &program.functions {
+        let (Some(r), "next") = (&f.receiver, f.name.as_str()) else { continue };
+        if r.type_args.is_empty() || !r.mutable || !f.params.is_empty() {
+            continue;
+        }
+        let Some(ret) = &f.return_type else { continue };
+        let is_option = ret.name == "Option" || ret.name.ends_with(".Option");
+        if !is_option || ret.args.len() != 1 {
+            continue;
+        }
+        out.insert(
+            r.type_name.clone(),
+            IterNext { params: r.type_args.clone(), item: ret.args[0].clone() },
+        );
+    }
+    out
+}
+
+/// A written type that mentions only the template's parameters, builtin scalars
+/// and tuples of those, resolved against an instance's arguments.
+fn resolve_item_type(te: &ast::TypeExpr, params: &[String], args: &[Ty], env: &TypeEnv) -> Option<Ty> {
+    if let Some(elems) = &te.tuple {
+        let tys: Option<Vec<Ty>> = elems.iter().map(|e| resolve_item_type(e, params, args, env)).collect();
+        return Some(tuple_ty(env, tys?));
+    }
+    if !te.args.is_empty() || te.amp || te.array_elem.is_some() || te.fn_params.is_some() {
+        return None;
+    }
+    if let Some(i) = params.iter().position(|p| *p == te.name) {
+        return args.get(i).cloned();
+    }
+    Ty::from_name(&te.name)
+}
+
+/// The `Item` of a generic type that is an iterator by shape, from the instance's
+/// own arguments.
+fn shaped_iterator_item(env: &TypeEnv, instance: &str) -> Option<Ty> {
+    let (template, args) = env.instances.borrow().origin.get(instance).cloned()?;
+    let next = env.iter_nexts.get(&template)?;
+    resolve_item_type(&next.item, &next.params, &args, env)
+}
+
 /// Whether `ty_name` implements `trait_key`, directly or through a supertrait
 /// (A-12 slice 3): a type with `impl B for` satisfies a bound on `A` whenever
 /// `B: A`, because implementing `B` required an `impl A for` the type.
@@ -17191,6 +17253,11 @@ fn implements_trait(env: &TypeEnv, trait_key: &str, ty_name: &str) -> bool {
         .map(|types| types.contains(ty_name))
         .unwrap_or(false)
     {
+        return true;
+    }
+    // A generic type whose template declares an iterator-shaped `next` is an
+    // `Iterator` by shape (`TypeEnv::iter_nexts`).
+    if trait_key == ITERATOR_TRAIT_KEY && shaped_iterator_item(env, ty_name).is_some() {
         return true;
     }
     env.impls.iter().any(|(other, types)| {
@@ -17433,10 +17500,14 @@ fn assoc_projection_bindings(
                 continue;
             };
             for tk in trait_keys_with_supertraits(env, &key) {
-                if let Some(bindings) = env.assoc.get(&(tk, arg_name.clone())) {
+                if let Some(bindings) = env.assoc.get(&(tk.clone(), arg_name.clone())) {
                     for (item, ty) in bindings {
                         out.entry(format!("{param}::{item}"))
                             .or_insert_with(|| ty.clone());
+                    }
+                } else if tk == ITERATOR_TRAIT_KEY {
+                    if let Some(ty) = shaped_iterator_item(env, &arg_name) {
+                        out.entry(format!("{param}::Item")).or_insert(ty);
                     }
                 }
             }
