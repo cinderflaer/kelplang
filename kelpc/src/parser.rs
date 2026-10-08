@@ -5357,8 +5357,8 @@ mod tests {
 
     #[test]
     fn a_tuple_literal_needs_two_elements() {
-        // `(e)` is the parenthesized expression it always was, and `()` has no
-        // value at all.
+        // `(e)` is the parenthesized expression it always was, and a tuple
+        // needs a comma, so one element is never a tuple.
         let p = parse("fun f().return: i32 {\n    val a = (1)\n    return a\n}");
         match &p.functions[0].body {
             FunctionBody::Block(b) => match &b.stmts[0] {
@@ -5382,8 +5382,18 @@ mod tests {
             other => panic!("expected a block body, got {other:?}"),
         }
 
-        let err = parse_err("fun f() {\n    val p = ()\n}");
-        assert!(err.message.contains("'()' is not a value"), "{}", err.message);
+        // `()` is the unit value: an empty block, which evaluates to `unit`.
+        let p = parse("fun f() {\n    val u = ()\n}");
+        match &p.functions[0].body {
+            FunctionBody::Block(b) => match &b.stmts[0] {
+                Stmt::Let { init, .. } => match init {
+                    Expr::Block(unit) => assert!(unit.stmts.is_empty(), "got {init:?}"),
+                    other => panic!("expected the unit value, got {other:?}"),
+                },
+                other => panic!("expected a let, got {other:?}"),
+            },
+            other => panic!("expected a block body, got {other:?}"),
+        }
     }
 
     #[test]
