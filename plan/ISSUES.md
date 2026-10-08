@@ -50,7 +50,7 @@ wiki changelog page.
 
 Sorted easiest first. `effort:` is S (a stdlib function or one small diagnostic), M (one subsystem, one lane), L (touches a hotspot file or needs a design call inside a lane), XL (mark-sized, or blocked on a decision). Within a tier the order is a rough guess; dependencies are named in the entries.
 
-### MISSING-Hd4Lr kelp: no borrowing `List.iter()` and no `fold`/`any`/`all`/`find`
+### MISSING-Hd4Lr kelp: no borrowing `List.iter()`
 
 repo: kelp | found: 2026-10-06 | effort: S
 
@@ -60,8 +60,8 @@ Shipped in 26.10.3: `for (key, value) in map`, `iter.into_iter`/`cloned`, and th
 adapters `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain`, made
 possible by the by-shape rule (a generic type with an iterator-shaped `next` is an
 `Iterator`). Still open: a `List.iter()` that yields `&T` (needs a way to tie a
-borrow to the iterator), and the consumers beyond `count`, `sum_i64` and
-`collect_list`.
+borrow to the iterator). The consumers `any`, `all`, `find`, `last` and `fold`
+shipped with the adapters.
 
 ### MISSING-Cn2Ym kelp: channels have no `select` and no zero-capacity form
 

@@ -1,0 +1,18 @@
+impl "std/iter"
+impl "std/option"
+
+fun main() {
+    print(iter.any(iter.range(0, 10), fun(x: &i64).return: bool = x == 7))
+    print(iter.all(iter.range(0, 10), fun(x: &i64).return: bool = x < 5))
+    val zero: i64 = 0
+    print(iter.fold(iter.range(1, 5), zero, fun(a: &i64, x: &i64).return: i64 = a + x))
+    val f = iter.find(iter.range(0, 100), fun(x: &i64).return: bool = x * x > 50)
+    print(when f { Some(v) -> v  None -> -1 })
+    val l = iter.last(iter.range(3, 8))
+    print(when l { Some(v) -> v  None -> -1 })
+    var words: List<String> = List.empty()
+    words.push(String.from_str(s = "a"))
+    words.push(String.from_str(s = "bcd"))
+    val zu: usize = 0
+    print(iter.fold(iter.into_iter(words), zu, fun(a: &usize, s: &String).return: usize = a + s.len()))
+}

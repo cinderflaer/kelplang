@@ -12011,6 +12011,8 @@ fn iterator_adapters_chain_over_a_list_a_range_and_each_other() {
         "60\n80\n0\n10\n1\n11\n2\n12\n100\n102\n1\n2\n7\n8\n4\n14\n",
     );
     assert_compiles_and_runs("tests/fixtures/iter_adapters_owned.kp", "3\n5\n0\n1\n1\n2\n");
+    // The consumers: any, all, find, last, fold.
+    assert_compiles_and_runs("tests/fixtures/iter_consumers.kp", "true\nfalse\n10\n8\n7\n4\n");
 }
 
 #[test]
