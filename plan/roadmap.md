@@ -472,6 +472,12 @@ Ordering rules:
   ship, nothing else from the old MK12 sketch.
 - **KelpScript is gated, not scheduled**: 27.03.0 ships the cheaper ownership tools first (`Rc`/`Arc`,
   arenas, borrows in containers); 27.06.0 writes `plan/kelpscript.md` and decides with that evidence.
+- **`kelpc fmt` never re-wraps** (decided 2026-10-08, closing open item 75's last piece). The formatter
+  copies tokens and rewrites only the whitespace between them and the indentation of a line; it keeps the
+  author's line breaks, so a trailing block (`f { x -> ... }`) is spaced like any other brace and is never
+  split or joined. A line-breaking pass would need an AST printer, which cannot keep comments or the
+  author's blank-line grouping (`kelp/kelpc/src/fmt.rs`, header). Trailing-block spacing is pinned in
+  `tests/fmt_corpus/scoped_blocks.kp`.
 - **Passdowns stay module-scoped and a `datac` still names earlier types by value** (open items 10, 12),
   recorded as design.
 
