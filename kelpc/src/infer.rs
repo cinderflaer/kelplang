@@ -10351,12 +10351,6 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
         // (or is being probed), and the message says which.
         tir::ExprKind::Capture { index } => {
             let name = ctx.captures.get(*index).map(|(n, _)| n.clone()).unwrap_or_default();
-            if ctx.outer_excl.contains(&name) {
-                return Err(TypeError {
-                    message: nested_exclusive_message(&name),
-                    span: target.span,
-                });
-            }
             match &target.ty {
                 Ty::Ref { mutable: true, .. } => Ok(()),
                 Ty::Ref { mutable: false, .. } => {
@@ -10398,11 +10392,6 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
     }
 }
 
-fn nested_exclusive_message(name: &str) -> String {
-    format!(
-        "cannot capture '{name}' into this nested block: it is an exclusive capture of the enclosing block, and a block inside a block cannot hold it; pass '{name}' to the inner call as an ordinary argument, or capture it in the outer function"
-    )
-}
 
 /// The enclosing bindings a scoped literal may capture exclusively: writable
 /// (`var`), not a borrow, not a function value.
@@ -12149,12 +12138,6 @@ fn check_fn_literal_pass(
             // this literal copies it out of that environment. Moving it out
             // instead would be a partial move (A-11), which is why only a
             // `Copy` capture can be nested this way.
-            if matches!(ty, Ty::Ref { mutable: true, .. }) {
-                return Err(TypeError {
-                    message: nested_exclusive_message(name),
-                    span,
-                });
-            }
             if !ty.is_copy() {
                 return Err(TypeError {
                     message: format!(

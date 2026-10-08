@@ -1805,7 +1805,18 @@ fn is_reference_ty(ty: &Ty) -> bool {
 fn display_root(name: &str) -> String {
     match name.strip_prefix("pd#") {
         Some(qualified) => format!("passdown '{qualified}'"),
-        None => format!("'{}'", name.replace(PATH_SEP, ".")),
+        None => match name.strip_prefix("#cap") {
+            // A captured binding of a scoped block has no name of its own here.
+            Some(rest) => {
+                let path = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+                if path.is_empty() {
+                    "'a captured value'".to_string()
+                } else {
+                    format!("'a captured value{}'", path.replace(PATH_SEP, "."))
+                }
+            }
+            None => format!("'{}'", name.replace(PATH_SEP, ".")),
+        },
     }
 }
 
@@ -2033,7 +2044,28 @@ fn place_roots(expr: &tir::Expr, ctx: &Ctx) -> Vec<String> {
                 _ => roots,
             }
         }
-        None => Vec::new(),
+        // A captured binding of a scoped block is a place too, rooted at the
+        // capture (`#cap0`): a block nested in this one captures it again, and
+        // that has to be checked against the rest of the call it is written in
+        // exactly as a local would be.
+        None => match capture_base(expr) {
+            Some(index) => {
+                let suffix = field_suffix(expr).unwrap_or_default();
+                vec![format!("#cap{index}{suffix}")]
+            }
+            None => Vec::new(),
+        },
+    }
+}
+
+/// The capture a place chain bottoms out at, looking through borrows,
+/// dereferences and field reads.
+fn capture_base(expr: &tir::Expr) -> Option<usize> {
+    match &expr.kind {
+        tir::ExprKind::Capture { index } => Some(*index),
+        tir::ExprKind::FieldAccess { base, .. } => capture_base(base),
+        tir::ExprKind::Deref { expr: inner } | tir::ExprKind::Ref { expr: inner, .. } => capture_base(inner),
+        _ => None,
     }
 }
 
@@ -2042,7 +2074,7 @@ fn place_roots(expr: &tir::Expr, ctx: &Ctx) -> Vec<String> {
 /// owner is then the root).
 fn field_suffix(expr: &tir::Expr) -> Option<String> {
     match &expr.kind {
-        tir::ExprKind::Ident(_) => Some(String::new()),
+        tir::ExprKind::Ident(_) | tir::ExprKind::Capture { .. } => Some(String::new()),
         tir::ExprKind::FieldAccess { base, field } => {
             let inner = field_suffix(base)?;
             let base_ty = match &base.ty {
@@ -3453,7 +3485,7 @@ fn take_call_arguments(
                             ctx.start_borrow(&root, *mutable, c.span)?;
                             taken.push(root);
                         }
-                    } else if let (tir::ExprKind::Ident(_), Ty::Ref { mutable: true, .. }) = (&c.kind, &c.ty) {
+                    } else if let (tir::ExprKind::Ident(_) | tir::ExprKind::Capture { .. }, Ty::Ref { mutable: true, .. }) = (&c.kind, &c.ty) {
                         // An exclusive borrow the enclosing function holds
                         // (a `mut` parameter, a `var` of `&mut` type) copied
                         // into the environment is a reborrow for the call: it

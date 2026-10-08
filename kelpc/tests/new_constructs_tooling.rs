@@ -94,7 +94,7 @@ fn check_json_reports_each_new_refusal_as_a_finding_not_a_crash() {
         "matrix_from_try_in_next.kp",
         "matrix_iter_const_generic.kp",
         "excl_refused_val.kp",
-        "excl_refused_nested.kp",
+        "excl_refused_nested_same_call.kp",
         "excl_refused_same_call_arg.kp",
     ] {
         let out = run(&["check", "--json"], &fixture(name));
@@ -118,7 +118,7 @@ fn fmt_and_lint_keep_every_refusal_fixture_lexable() {
     for name in [
         "matrix_assoc_boxdyn.kp",
         "matrix_iter_const_generic.kp",
-        "excl_refused_nested.kp",
+        "excl_refused_nested_same_call.kp",
         "excl_capture_view.kp",
     ] {
         let lint = run(&["lint"], &fixture(name));
