@@ -108,6 +108,12 @@ pub struct TraitImplDecl {
     pub module: String,
     /// The `impl` keyword's own span, what a coherence error points at.
     pub impl_span: Span,
+    /// `impl<T: Bound> Trait for Type<T>`: the impl's own type parameters, which
+    /// are the generic type's own in order, and the bounds on each. Empty for an
+    /// impl on a concrete type. A generic impl is a set of template methods plus
+    /// a condition (the bounds) under which an instance implements the trait.
+    pub type_params: Vec<String>,
+    pub type_param_bounds: Vec<Vec<TypeExpr>>,
 }
 
 /// One `type Name = Type` inside an `impl` body (A-12 slice 5).
@@ -386,6 +392,11 @@ pub struct FunctionDecl {
     /// vectors are always the same length. Empty for a receiver method, whose
     /// parameters are its type's and take no bound.
     pub type_param_bounds: Vec<Vec<TypeExpr>>,
+    /// For a method of a generic impl (`impl<I: Iterator> Tr for Type<I>`): the
+    /// impl's bounds on the receiver type's parameters, one list per parameter
+    /// in order, so the method sees them (`I::Item`) and an instance is checked
+    /// against them. Empty otherwise.
+    pub receiver_bounds: Vec<Vec<TypeExpr>>,
     /// `Some` for a method declared inside an `impl Trait for Type { ... }`
     /// block (A-12 slice 2).
     pub trait_impl: Option<TraitImplSite>,

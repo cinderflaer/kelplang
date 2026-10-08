@@ -245,22 +245,23 @@ is therefore a design call (a zero-size payload, or a sugar that makes
 `Result<unit, E>` carry no payload) plus codegen in both backends, not one small
 diagnostic.
 
-### MISSING-Ve8Nc kelp: generic trait impls, `where` clauses and blanket impls
+### MISSING-Ve8Nc kelp: blanket impls, impls for one instantiation, and bounds on projections
 
-repo: kelp | found: 2026-10-06 | effort: XL
+repo: kelp | found: 2026-10-06 | effort: L
 
 source: wiki `language/limits.md` (unreleased), "Not present at all", Traits;
-roadmap A-12.
+roadmap A-12; design note `plan/generic-trait-impls.md`.
 
-Still absent: `impl<T: A> B for Pair<T>`, blanket impls, `where` clauses, a
-bound on an associated type (`I: Iterator<Item = i64>`), default or generic
-associated types, associated consts, generic trait methods, `impl Trait` in
-return position, an upcast between trait objects, and `dyn` of a generic trait or
-of a trait with an associated type. The iterator adapters shipped without it (by-shape rule); generic impls still block
-`impl Iterator for Ring<3>` (the
-"iterators with const generics" row of the feature-interaction table).
-
-Design note written (26.10.3): `plan/generic-trait-impls.md`.
+Shipped in 26.10.3: `impl<A: Bound, B: Bound> Trait for Type<A, B>` (the type's own
+parameters, template methods, conditional on the bounds), associated types over the
+parameters (`type Item = I::Item`), and `where` as a second spelling of a bound on a
+function or an impl. Still absent: a blanket impl (`impl<T: A> B for T`), an impl
+for one instantiation (`Type<i32>`), an equality constraint or a bound on a
+projection (`I: Iterator<Item = i64>`, `where I::Item: Display`), a const parameter
+on an impl, default or generic associated types, associated consts, generic trait
+methods, `impl Trait` in return position, an upcast between trait objects, `dyn`
+of a generic impl, a trait's default methods in a generic impl, and operators
+through a generic impl.
 
 ### MISSING-Ra5Wn kelp: no async, no coroutines, no weaker atomic orderings
 

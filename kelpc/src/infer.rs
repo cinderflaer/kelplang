@@ -155,6 +155,23 @@ struct TraitImplInfo {
     assoc_types: Vec<(String, ast::TypeExpr, Span)>,
     module: String,
     impl_span: Span,
+    /// `impl<T: Bound> Trait for Type<T>`: the impl's own parameters (the generic
+    /// type's, in order) and the bounds on each. Empty for a concrete type.
+    type_params: Vec<String>,
+    type_param_bounds: Vec<Vec<ast::TypeExpr>>,
+}
+
+/// One generic impl, registered for `implements_trait`: an instance of
+/// `template` implements the trait when every bound on the impl's parameters
+/// holds for the instance's argument at that position.
+#[derive(Clone)]
+struct GenericImpl {
+    template: String,
+    /// The trait key each parameter must implement, one list per parameter.
+    bounds: Vec<Vec<String>>,
+    /// `type Item = I::Item`, as written, over the impl's parameters.
+    assoc_types: Vec<(String, ast::TypeExpr)>,
+    params: Vec<String>,
 }
 
 /// One built instantiation, on its way into the instance table.
@@ -255,6 +272,9 @@ struct TypeEnv {
     /// what lets one satisfy `I: Iterator` and name `I::Item` without a generic
     /// trait impl (`plan/generic-trait-impls.md`).
     iter_nexts: std::rc::Rc<HashMap<String, IterNext>>,
+    /// The generic impls (`impl<T: Bound> Trait for Type<T>`), by trait-instance
+    /// key.
+    generic_impls: std::rc::Rc<HashMap<String, Vec<GenericImpl>>>,
 }
 
 /// See `TypeEnv::iter_nexts`.
@@ -3205,6 +3225,8 @@ fn collect_trait_impls(program: &ast::Program) -> Vec<TraitImplInfo> {
                 .collect(),
             module: i.module.clone(),
             impl_span: i.impl_span,
+            type_params: i.type_params.clone(),
+            type_param_bounds: i.type_param_bounds.clone(),
         })
         .collect()
 }
@@ -3531,6 +3553,24 @@ fn collect_assoc_bindings(
     let mut out: HashMap<(String, String), HashMap<String, Ty>> = HashMap::new();
     for imp in impls {
         let info = &traits[&imp.trait_name];
+        if !imp.type_params.is_empty() {
+            // A generic impl binds its associated types over its parameters, so
+            // they are resolved per instance (`resolve_impl_assoc`); here only
+            // that every declared one is bound.
+            for declared in &info.assoc_types {
+                if !imp.assoc_types.iter().any(|(name, _, _)| *name == declared.name) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "trait '{}' declares 'type {}', and 'impl {} for {}' does not bind it: add 'type {} = <type>' to the block",
+                            info.name, declared.name, imp.trait_name, imp.type_name, declared.name
+                        ),
+                        imp.impl_span,
+                        imp.module.clone(),
+                    ));
+                }
+            }
+            continue;
+        }
         let prefix = project.prefix_of(&imp.module);
         let aliases = project.alias_prefixes_of(&imp.module);
         let scope = TypeScope {
@@ -3642,6 +3682,28 @@ fn check_trait_impl_signatures(
         .collect();
     for imp in impls {
         let info = &traits[&imp.trait_name];
+        if !imp.type_params.is_empty() {
+            // Template methods have no signature until an instance is made, so
+            // a generic impl is checked where it is used; here only that it
+            // writes every method the trait has no body for.
+            for m in &info.methods {
+                let needs_body = matches!(m.body, ast::FunctionBody::Signature);
+                if needs_body && !imp.methods.contains(&m.name) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "trait '{}' declares '{}', and 'impl {} for {}' does not implement it: a generic impl writes every method (it cannot use the trait's default)",
+                            info.name,
+                            render_fn_decl(m),
+                            imp.trait_name,
+                            imp.type_name,
+                        ),
+                        imp.impl_span,
+                        imp.module.clone(),
+                    ));
+                }
+            }
+            continue;
+        }
         let self_ty = builtin_for_type_name(&imp.type_name)
             .unwrap_or_else(|| Ty::Struct(imp.type_name.clone()));
         let trait_args = trait_arg_tys(&imp.trait_arg_names);
@@ -8270,7 +8332,13 @@ fn collect_func_templates(
                     let mut b: Vec<Vec<ast::TypeExpr>> = f
                         .receiver
                         .as_ref()
-                        .map(|r| vec![Vec::new(); r.type_args.len()])
+                        .map(|r| {
+                            if f.receiver_bounds.len() == r.type_args.len() {
+                                f.receiver_bounds.clone()
+                            } else {
+                                vec![Vec::new(); r.type_args.len()]
+                            }
+                        })
                         .unwrap_or_default();
                     b.extend(f.type_param_bounds.iter().cloned());
                     b
@@ -8399,7 +8467,48 @@ fn check_program_pass(
     let traits = std::rc::Rc::new(collect_traits(program, project)?);
     let trait_impls = collect_trait_impls(program);
     let mut impls: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+    let mut generic_impls: HashMap<String, Vec<GenericImpl>> = HashMap::new();
     for imp in &trait_impls {
+        if !imp.type_params.is_empty() {
+            let prefix = project.prefix_of(&imp.module);
+            let aliases = project.alias_prefixes_of(&imp.module);
+            let mut bounds: Vec<Vec<String>> = Vec::new();
+            for bs in &imp.type_param_bounds {
+                let mut keys = Vec::new();
+                for b in bs {
+                    if !b.args.is_empty() {
+                        return Err(Diagnostic::new(
+                            format!("the bound '{}' on an impl parameter takes trait arguments, which a generic impl does not support yet", b.display()),
+                            imp.impl_span,
+                            imp.module.clone(),
+                        ));
+                    }
+                    let Some(key) = qualify_written_name(&b.name, prefix, &aliases) else {
+                        return Err(Diagnostic::new(
+                            format!("'{}' bounds a parameter of this impl, but its first segment is not a module it imports", b.name),
+                            imp.impl_span,
+                            imp.module.clone(),
+                        ));
+                    };
+                    if !traits.contains_key(&key) {
+                        return Err(Diagnostic::new(
+                            format!("'{}' is not a trait, so it cannot bound a parameter of this impl", b.name),
+                            imp.impl_span,
+                            imp.module.clone(),
+                        ));
+                    }
+                    keys.push(key);
+                }
+                bounds.push(keys);
+            }
+            generic_impls.entry(imp.trait_instance.clone()).or_default().push(GenericImpl {
+                template: imp.type_name.clone(),
+                bounds,
+                assoc_types: imp.assoc_types.iter().map(|(n, t, _)| (n.clone(), t.clone())).collect(),
+                params: imp.type_params.clone(),
+            });
+            continue;
+        }
         impls
             .entry(imp.trait_instance.clone())
             .or_default()
@@ -8438,6 +8547,7 @@ fn check_program_pass(
         dyn_traits: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
         assoc: std::rc::Rc::new(HashMap::new()),
         iter_nexts: std::rc::Rc::new(collect_iter_nexts(program)),
+        generic_impls: std::rc::Rc::new(generic_impls),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -17243,6 +17353,103 @@ fn shaped_iterator_item(env: &TypeEnv, instance: &str) -> Option<Ty> {
     resolve_item_type(&next.item, &next.params, &args, env)
 }
 
+/// The generic impl of `trait_key` that applies to the instance `ty_name`, if
+/// there is one: the instance's template has an impl and every bound on the
+/// impl's parameters holds for the instance's arguments.
+fn generic_impl_applies(env: &TypeEnv, trait_key: &str, ty_name: &str) -> Option<(GenericImpl, Vec<Ty>)> {
+    let (template, args) = env.instances.borrow().origin.get(ty_name).cloned()?;
+    for gi in env.generic_impls.get(trait_key)? {
+        if gi.template != template {
+            continue;
+        }
+        let holds = gi.bounds.iter().enumerate().all(|(i, keys)| {
+            keys.iter().all(|key| {
+                args.get(i)
+                    .and_then(|a| {
+                        struct_name_of(a)
+                            .map(|s| s.to_string())
+                            .or_else(|| builtin_type_name(a).map(|s| s.to_string()))
+                    })
+                    .is_some_and(|n| implements_trait(env, key, &n))
+            })
+        });
+        if holds {
+            return Some((gi.clone(), args));
+        }
+    }
+    None
+}
+
+/// Why a type with a generic impl of `trait_key` does not implement it: the
+/// first argument whose bound fails, spelled out. `None` when the type has no
+/// generic impl of the trait at all.
+fn generic_impl_shortfall(env: &TypeEnv, trait_key: &str, ty: &Ty) -> Option<String> {
+    let name = struct_name_of(ty)?.to_string();
+    let (template, args) = env.instances.borrow().origin.get(&name).cloned()?;
+    let gi = env.generic_impls.get(trait_key)?.iter().find(|g| g.template == template)?;
+    for (i, keys) in gi.bounds.iter().enumerate() {
+        let arg = args.get(i)?;
+        let arg_name = struct_name_of(arg)
+            .map(|s| s.to_string())
+            .or_else(|| builtin_type_name(arg).map(|s| s.to_string()))
+            .unwrap_or_else(|| arg.display());
+        for key in keys {
+            if !implements_trait(env, key, &arg_name) {
+                return Some(format!(
+                    "its impl needs '{}' ('{}' is parameter '{}') to implement '{}', and it does not",
+                    arg.display(),
+                    gi.template,
+                    gi.params.get(i).map(String::as_str).unwrap_or("?"),
+                    key
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// The type a trait's associated type `item` is for the instance `ty_name`:
+/// bound by a concrete impl, by a generic impl (resolved over the instance's
+/// arguments), or the item of an iterator by shape.
+fn assoc_type_of(env: &TypeEnv, ty: &Ty, item: &str) -> Option<Ty> {
+    let name = struct_name_of(ty)
+        .map(|s| s.to_string())
+        .or_else(|| builtin_type_name(ty).map(|s| s.to_string()))?;
+    for ((_, tn), bindings) in env.assoc.iter() {
+        if *tn == name {
+            if let Some(t) = bindings.get(item) {
+                return Some(t.clone());
+            }
+        }
+    }
+    for trait_key in env.generic_impls.keys() {
+        if let Some((gi, args)) = generic_impl_applies(env, trait_key, &name) {
+            if let Some((_, te)) = gi.assoc_types.iter().find(|(n, _)| n == item) {
+                return resolve_impl_assoc(te, &gi.params, &args, env);
+            }
+        }
+    }
+    if item == "Item" {
+        return shaped_iterator_item(env, &name);
+    }
+    None
+}
+
+/// A generic impl's `type Item = ...`, resolved over an instance's arguments:
+/// a parameter, a builtin, a tuple of those, or a projection `P::Name` of a
+/// parameter's argument.
+fn resolve_impl_assoc(te: &ast::TypeExpr, params: &[String], args: &[Ty], env: &TypeEnv) -> Option<Ty> {
+    if let Some(item) = &te.assoc {
+        let i = params.iter().position(|p| *p == te.name)?;
+        return assoc_type_of(env, args.get(i)?, item);
+    }
+    if let Some(elems) = &te.tuple {
+        let tys: Option<Vec<Ty>> = elems.iter().map(|e| resolve_impl_assoc(e, params, args, env)).collect();
+        return Some(tuple_ty(env, tys?));
+    }
+    resolve_item_type(te, params, args, env)
+}
+
 /// Whether `ty_name` implements `trait_key`, directly or through a supertrait
 /// (A-12 slice 3): a type with `impl B for` satisfies a bound on `A` whenever
 /// `B: A`, because implementing `B` required an `impl A for` the type.
@@ -17258,6 +17465,11 @@ fn implements_trait(env: &TypeEnv, trait_key: &str, ty_name: &str) -> bool {
     // A generic type whose template declares an iterator-shaped `next` is an
     // `Iterator` by shape (`TypeEnv::iter_nexts`).
     if trait_key == ITERATOR_TRAIT_KEY && shaped_iterator_item(env, ty_name).is_some() {
+        return true;
+    }
+    // `impl<T: Bound> Trait for Type<T>`: an instance implements the trait when
+    // each of its arguments meets the bounds the impl puts on its parameter.
+    if generic_impl_applies(env, trait_key, ty_name).is_some() {
         return true;
     }
     env.impls.iter().any(|(other, types)| {
@@ -17433,6 +17645,19 @@ fn check_trait_bounds(
                 .map(|n| implements_trait(&ctx.env, &instance, &n))
                 .unwrap_or(false);
             if !implements {
+                // A type with a generic impl of the trait fails on one of its
+                // arguments; name which, rather than suggesting a concrete impl.
+                if let Some(why) = generic_impl_shortfall(&ctx.env, &instance, arg) {
+                    return Err(TypeError {
+                        message: format!(
+                            "the call to '{}' needs '{}' to implement the trait '{}': {why}",
+                            display_callee(&tmpl.key),
+                            arg.display(),
+                            b.display(),
+                        ),
+                        span,
+                    });
+                }
                 return Err(TypeError {
                     message: format!(
                         "the call to '{}' needs '{}' to implement the trait '{}', and it does not: write 'impl {} for {} {{ ... }}' in the trait's module or in the type's",
@@ -17504,6 +17729,12 @@ fn assoc_projection_bindings(
                     for (item, ty) in bindings {
                         out.entry(format!("{param}::{item}"))
                             .or_insert_with(|| ty.clone());
+                    }
+                } else if let Some((gi, targs)) = generic_impl_applies(env, &tk, &arg_name) {
+                    for (item, te) in &gi.assoc_types {
+                        if let Some(ty) = resolve_impl_assoc(te, &gi.params, &targs, env) {
+                            out.entry(format!("{param}::{item}")).or_insert(ty);
+                        }
                     }
                 } else if tk == ITERATOR_TRAIT_KEY {
                     if let Some(ty) = shaped_iterator_item(env, &arg_name) {

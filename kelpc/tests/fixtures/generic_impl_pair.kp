@@ -1,0 +1,26 @@
+trait Describe {
+    fun Self.describe().return: i32
+}
+
+impl Describe for i32 {
+    fun Self.describe().return: i32 = self
+}
+
+datac Pair<A, B>(val a: A, val b: B)
+
+impl<A: Describe, B: Describe> Describe for Pair<A, B> {
+    fun Self.describe().return: i32 {
+        return self.a.describe() * 10 + self.b.describe()
+    }
+}
+
+fun show<T: Describe>(x: &T).return: i32 {
+    return x.describe()
+}
+
+fun main() {
+    val p = Pair(a = 1, b = 2)
+    print(show(p))
+    val nested = Pair(a = Pair(a = 3, b = 4), b = 5)
+    print(show(nested))
+}

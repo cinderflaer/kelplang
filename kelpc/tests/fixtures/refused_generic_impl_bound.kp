@@ -1,0 +1,11 @@
+trait Describe { fun Self.describe().return: i32 }
+impl Describe for i32 { fun Self.describe().return: i32 = self }
+datac Pair<A, B>(val a: A, val b: B)
+impl<A: Describe, B: Describe> Describe for Pair<A, B> {
+    fun Self.describe().return: i32 { return 1 }
+}
+fun show<T: Describe>(x: &T).return: i32 { return x.describe() }
+fun main() {
+    val p = Pair(a = 1, b = true)
+    print(show(p))
+}

@@ -5895,10 +5895,10 @@ fn the_trait_shapes_this_slice_does_not_reach_are_refused_by_name() {
     // sugar (A-20, 9.3);
     // `impl_trait_arguments_are_fresh_bounded_type_parameters` pins the
     // positive half, and the stored positions stay refused.
-    assert_rejected_with(
-        "tests/fixtures/traits_where_clause.kp",
-        "'where' clause is not in this slice",
-    );
+    // A `where` clause was on this list and is now the other spelling of a
+    // bound (26.10.3); `a_trait_can_be_implemented_for_a_generic_type_under_bounds`
+    // pins it.
+    assert_compiles_and_runs("tests/fixtures/traits_where_clause.kp", "");
     assert_rejected_with(
         "tests/fixtures/traits_drop_declared.kp",
         "the trait 'Drop' is built in",
@@ -12011,6 +12011,24 @@ fn iterator_adapters_chain_over_a_list_a_range_and_each_other() {
         "60\n80\n0\n10\n1\n11\n2\n12\n100\n102\n1\n2\n7\n8\n4\n14\n",
     );
     assert_compiles_and_runs("tests/fixtures/iter_adapters_owned.kp", "3\n5\n0\n1\n1\n2\n");
+}
+
+#[test]
+fn a_trait_can_be_implemented_for_a_generic_type_under_bounds() {
+    // MISSING-Ve8Nc (the slice that is built): `impl<A: Describe, B: Describe>
+    // Describe for Pair<A, B>`, an associated type over the parameters, and a
+    // `where` clause as the other spelling of a bound.
+    assert_compiles_and_runs("tests/fixtures/generic_impl_pair.kp", "12\n345\n");
+    assert_compiles_and_runs("tests/fixtures/generic_impl_iterator.kp", "6\n6\n");
+    assert_compiles_and_runs("tests/fixtures/where_clause.kp", "3\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_generic_impl_bound.kp",
+        "its impl needs 'bool' ('Pair' is parameter 'B') to implement 'Describe', and it does not",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_blanket_impl.kp",
+        "needs the generic type it is for",
+    );
 }
 
 #[test]
@@ -19259,7 +19277,7 @@ fn matrix_a_user_iterator_runs_defers_per_iteration_and_on_return() {
 fn matrix_a_const_generic_type_is_not_an_iterator_but_a_cursor_walks_it() {
     assert_rejected_with(
         "tests/fixtures/matrix_iter_const_generic.kp",
-        "wrap the instantiation in a non-generic 'datac'",
+        "implement the trait for a non-generic wrapper",
     );
     assert_compiles_and_runs(
         "tests/fixtures/matrix_iter_const_generic_ok.kp",

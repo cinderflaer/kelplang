@@ -1050,6 +1050,14 @@ impl Parser {
     /// type before any later pass sees them.
     fn parse_trait_impl_decl(&mut self) -> PResult<(TraitImplDecl, Vec<FunctionDecl>)> {
         let impl_span = self.expect(TokenKind::Impl, "'impl'")?.span;
+        // `impl<T: Bound> Trait for Type<T>`: the impl's own type parameters.
+        let impl_params = self.parse_type_params()?;
+        if let Some(p) = impl_params.iter().find(|p| p.const_ty.is_some()) {
+            return Err(ParseError {
+                message: format!("an impl cannot take the const parameter '{}' yet: only type parameters", p.name),
+                span: p.span,
+            });
+        }
         let (trait_name, trait_span) = self.parse_dotted_name()?;
         // `impl From<IoErr> for AppErr` (A-12 slice 6): the trait's arguments,
         // which name the trait instance this block implements.
@@ -1074,12 +1082,49 @@ impl Parser {
                 span: type_span,
             });
         }
+        let mut impl_bounds: Vec<Vec<TypeExpr>> = impl_params.iter().map(|p| p.bounds.clone()).collect();
         if self.check(&TokenKind::Lt) {
+            // `Type<T, U>`: the generic type with the impl's own parameters, in
+            // order. Anything else (`Pair<i32>`, `Pair<List<T>>`) would be an
+            // impl for one instantiation, which a template cannot express.
+            let (args, args_span) = self.parse_type_arg_list()?;
+            let same = args.len() == impl_params.len()
+                && args.iter().zip(impl_params.iter()).all(|(a, p)| {
+                    a.name == p.name && a.args.is_empty() && a.tuple.is_none() && !a.amp && a.array_elem.is_none()
+                        && a.fn_params.is_none()
+                });
+            if impl_params.is_empty() || !same {
+                return Err(ParseError {
+                    message: "an impl for a generic type writes the type's parameters, in order, as its own: 'impl<T: Bound> Trait for Type<T>'; an impl for one instantiation ('Type<i32>') is not supported - implement the trait for a non-generic wrapper, or give the type an inherent method".to_string(),
+                    span: args_span,
+                });
+            }
+        } else if !impl_params.is_empty() {
             return Err(ParseError {
-                message: "implementing a trait for a generic instantiation is not in this slice: a trait is implemented for a declared 'datac' or 'enum' name, or for a builtin type that already carries methods; wrap the instantiation in a non-generic 'datac' and implement the trait for that, or give the generic type an inherent method instead"
-                    .to_string(),
-                span: self.peek().span,
+                message: "'impl<...>' needs the generic type it is for: 'impl<T: Bound> Trait for Type<T>' (a blanket impl, 'impl<T> Trait for T', is not supported yet)".to_string(),
+                span: type_span,
             });
+        }
+        // `where T: A + B` after the header: more bounds on the impl's parameters.
+        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "where") {
+            self.advance();
+            loop {
+                let (pname, pspan) = self.expect_ident()?;
+                let Some(at) = impl_params.iter().position(|p| p.name == pname) else {
+                    return Err(ParseError {
+                        message: format!("'where {pname}: ...' names no type parameter of this impl: declare it in 'impl<...>'"),
+                        span: pspan,
+                    });
+                };
+                self.expect(TokenKind::Colon, "':' after the parameter in a 'where' clause")?;
+                let more = self.parse_bounds()?;
+                impl_bounds[at].extend(more);
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
         }
         self.expect(TokenKind::LBrace, "'{' to open the impl's body")?;
         let mut methods = Vec::new();
@@ -1146,7 +1191,15 @@ impl Parser {
                         span: r.span,
                     })
                 }
-                Some(r) if r.type_name == "Self" => {}
+                Some(r) if r.type_name == "Self" => {
+                    // A generic impl's methods are template methods of the type.
+                    if !impl_params.is_empty() {
+                        if let Some(r) = &mut f.receiver {
+                            r.type_args = impl_params.iter().map(|p| p.name.clone()).collect();
+                        }
+                        f.receiver_bounds = impl_bounds.clone();
+                    }
+                }
                 Some(r) => {
                     return Err(ParseError {
                         message: format!(
@@ -1182,6 +1235,8 @@ impl Parser {
                 assoc_types,
                 module: String::new(),
                 impl_span,
+                type_params: impl_params.iter().map(|p| p.name.clone()).collect(),
+                type_param_bounds: impl_bounds,
             },
             methods,
         ))
@@ -1926,7 +1981,7 @@ impl Parser {
         // at the declaration, so every later pass sees an ordinary generic
         // function. A receiver method takes no type parameters of its own, and
         // a trait signature declares none either, so both refuse it.
-        let (params, type_params, type_param_bounds) = desugar_impl_trait_params(
+        let (params, type_params, mut type_param_bounds) = desugar_impl_trait_params(
             params,
             type_params,
             type_param_bounds,
@@ -1977,10 +2032,26 @@ impl Parser {
         // is not in this slice, and it would otherwise be read as the start of
         // a body and fail with something about `=`, so it is refused by name.
         if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "where") {
-            return Err(ParseError {
-                message: "a 'where' clause is not in this slice: write the bound on the type parameter itself ('fun f<T: Name>(...)'), and write several of them separated by '+' ('fun f<T: A + B>')".to_string(),
-                span: self.peek().span,
-            });
+            self.advance();
+            loop {
+                let (pname, pspan) = self.expect_ident()?;
+                let Some(at) = type_params.iter().position(|p| *p == pname) else {
+                    return Err(ParseError {
+                        message: format!(
+                            "'where {pname}: ...' names no type parameter of this function: a 'where' clause bounds a parameter written in the '<...>' list, so declare '{pname}' there first"
+                        ),
+                        span: pspan,
+                    });
+                };
+                self.expect(TokenKind::Colon, "':' after the parameter in a 'where' clause")?;
+                let more = self.parse_bounds()?;
+                type_param_bounds[at].extend(more);
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
         }
 
         let body = if signature {
@@ -2049,6 +2120,7 @@ impl Parser {
             is_pub,
             type_params,
             type_param_bounds,
+            receiver_bounds: Vec::new(),
             const_params,
             trait_impl: None,
             extern_,
@@ -5061,7 +5133,7 @@ mod tests {
     #[test]
     fn an_impl_for_a_bare_generic_does_not_parse() {
         let err = parse_err("trait Shape { fun Self.area().return: f64 }\nimpl Shape for List<i32> { fun Self.area().return: f64 = 0.0 }\nfun main() {}");
-        assert!(err.message.contains("generic instantiation"), "{}", err.message);
+        assert!(err.message.contains("an impl for a generic type writes the type's parameters"), "{}", err.message);
     }
 
     #[test]

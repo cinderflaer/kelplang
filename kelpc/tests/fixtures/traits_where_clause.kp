@@ -1,4 +1,4 @@
-// A `where` clause is a later slice: the bound goes on the parameter.
+// A `where` clause is the other spelling of a bound on a parameter (26.10.3).
 trait Shape {
     fun Self.area().return: f64
 }
