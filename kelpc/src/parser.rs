@@ -3937,11 +3937,15 @@ impl Parser {
                 // a tuple has two or more elements (`plan/syntax.md` 3).
                 self.advance();
                 if self.check(&TokenKind::RParen) {
-                    return Err(ParseError {
-                        message: "'()' is not a value: a tuple has two or more elements, and the absent value is 'unit', which no expression writes"
-                            .to_string(),
-                        span: tok.span,
-                    });
+                    // `()` is the absent value, of type `unit` (`plan/syntax.md`
+                    // 3, 6.4). It is an empty block: a block with no tail
+                    // evaluates to `unit`, so `Ok(value = ())` builds a
+                    // `Result<unit, E>` whose payload occupies no storage.
+                    let close = self.advance().span;
+                    return Ok(Expr::Block(Block {
+                        stmts: Vec::new(),
+                        span: tok.span.to(close),
+                    }));
                 }
                 let expr = self.parse_expr()?;
                 if !self.check(&TokenKind::Comma) {

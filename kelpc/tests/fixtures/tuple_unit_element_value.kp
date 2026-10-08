@@ -1,0 +1,8 @@
+// `unit` is the absent value, and it cannot be stored: a tuple element is
+// field-like, so `((), 1)` is refused. This is the rule that keeps `()` a value
+// you can return and pass into a `Result<unit, E>` success arm, but not one
+// you can keep in a tuple, a `datac` field or a `List`.
+fun main() {
+    val pair = ((), 1)
+    print(1)
+}

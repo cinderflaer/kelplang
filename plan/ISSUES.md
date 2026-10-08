@@ -219,32 +219,6 @@ A panic leaks every live owner in the frames above it, including a held `Mutex`
 guard and an open file in a worker. Needs a decision (unwind, or run drops
 without unwinding, or document the leak as permanent) before it is a task.
 
-### MISSING-n6Bsc kelp: `Result<unit, E>` has no constructible success value
-
-repo: kelp | found: 2026-09-25 | effort: L
-
-source: `kelp/plan/syntax.md` 6.4 and 7: `unit` is the absent value's type, and
-no expression writes that value.
-
-Repro: `fun f().return: result.Result<unit, String> { return result.Result.Ok(value = ()) }`
-is refused. `()`, `Result<(), String>` and `Result<unit, String>` type-check (the
-type is accepted), but writing the success payload is not:
-
-    error: '()' is not a value: a tuple has two or more elements, and the absent
-    value is 'unit', which no expression writes
-
-So the natural port of Rust code that returns `Result<(), E>` has no spelling.
-Every `coral` seam returns `Result<_, String>`, and the port answers with
-`Result<i32, String>` and `ok0()` (0 for success) instead
-(`coral/kelp/src/base.kp`).
-
-Re-tiered S to L on 2026-10-06: a `Result<unit, E>` payload needs a `unit` value
-stored in an enum payload, which `plan/syntax.md` section 3 refuses on purpose
-(`unit` "cannot be an element", the same rule as a `datac` field). Writing `()`
-is therefore a design call (a zero-size payload, or a sugar that makes
-`Result<unit, E>` carry no payload) plus codegen in both backends, not one small
-diagnostic.
-
 ### MISSING-Ve8Nc kelp: blanket impls, impls for one instantiation, and bounds on projections
 
 repo: kelp | found: 2026-10-06 | effort: L

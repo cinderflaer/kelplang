@@ -19523,3 +19523,24 @@ fn six_lock_globals_are_used_from_several_threads() {
         "20\n21\n25\n27\n20\n",
     );
 }
+
+// ---------------------------------------------------------------------------
+// `Result<unit, E>` has a constructible success value (MISSING-n6Bsc): `()` is
+// the absent value, and `Ok(value = ())` builds the success arm, which returns
+// from a function and matches like any other `Ok`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn result_of_unit_builds_its_success_arm_from_unit_and_matches_it() {
+    assert_compiles_and_runs("tests/fixtures/result_unit_ok.kp", "ok\nnot positive\nsuccess\n");
+}
+
+#[test]
+fn unit_is_not_stored_in_a_tuple_even_though_unit_is_a_value() {
+    // `()` is a value now, but the absent value is still not an element: a
+    // tuple element is field-like, the same rule a `datac` field obeys.
+    assert_rejected_with(
+        "tests/fixtures/tuple_unit_element_value.kp",
+        "produces no value ('unit')",
+    );
+}

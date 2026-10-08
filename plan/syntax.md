@@ -385,7 +385,9 @@ Rules that follow from the table:
 - `[T; N]` holds its elements inline too, and it is the one container that may hold another *array*: `[[u8; 4]; 8]` is a page table. It may not hold a `List`, a `Map` or a `Box` (12.4).
 - A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
 - A tuple type, `(A, B)`, is a record with positional fields and no name of its own; it owns its elements, so its elements obey the field rules (3.1).
-- `Unit` is not a value and cannot be stored.
+- `()` is the absent value, of type `Unit`. It can be returned, passed and bound, and
+  it is the success payload of a `Result<unit, E>` (6.4). A `Unit` cannot be stored in a
+  tuple, a `datac` field or a container, and an enum payload of type `unit` occupies no storage.
 - A function type is Copy and owns nothing: a function value is a plain function pointer, so copying one is copying a pointer. It cannot be borrowed (`&`/`mut`), stored in a container, or used as a type argument's *element* — the placements 7.4 lists.
 - A closure type is **not** Copy: it owns the environment its captures were moved into, and dropping it frees that environment. A parameter of the closure type borrows it (as an owned type's parameter does), and `move closure(...)` takes it over. It cannot be borrowed with `&`, cannot be a `List`/`Map` element, and *may* be a `Box` element (`Box<closure(...)>`, the optional-callback shape) or a `datac`/`enum` field.
 - `Atomic<T>` is not Copy either, but for the opposite reason to every other owned type: it owns nothing (so it needs no drop), and a copy would be a second handle to one location. Every one of its operations takes a **shared** borrow, `store` included, which is what leaves the type no `&mut` path at all and lets a `&Atomic<T>` be shared rather than moved (12.5). Its element set is closed: `bool` and the integer types.
@@ -410,8 +412,8 @@ the equivalent `datac` would have obeyed.
 
 - **Two or more elements.** `(T)` is not a one-element tuple: it is the
   parenthesized type `T`, exactly as `(e)` is the parenthesized expression `e`,
-  so `val x = (5)` binds an `i32`. `()` is refused by name, because the absent
-  value's type is spelled `unit`. There is no one-element tuple, so there is no
+  so `val x = (5)` binds an `i32`. `()` is not a tuple: it is the absent value (3),
+  whose type is spelled `unit`. There is no one-element tuple, so there is no
   rule about one.
 - **A tuple owns its elements.** An element is stored by value where the tuple
   sits, so it is *field-like*: an element may not be a borrow, a `str` or a

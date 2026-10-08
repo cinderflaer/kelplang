@@ -129,9 +129,8 @@ fun write(path: &str, data: Bytes) {
 }
 
 /// The fallible twin of `write`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
-/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
-/// success.
+/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
+/// than `Result<unit, E>`, so the absence of an error is `None`.
 must_use fun try_write(path: &str, data: Bytes).return: option.Option<io.IoErr> {
     var err: i32 = 0
     try_write_raw(path, data, &mut err)
@@ -147,9 +146,8 @@ fun write_text(path: &str, text: String) {
 }
 
 /// The fallible twin of `write_text`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
-/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
-/// success.
+/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
+/// than `Result<unit, E>`, so the absence of an error is `None`.
 must_use fun try_write_text(path: &str, text: String).return: option.Option<io.IoErr> {
     var err: i32 = 0
     try_write_text_raw(path, text, &mut err)
@@ -197,9 +195,8 @@ fun remove(path: &str) {
 }
 
 /// The fallible twin of `remove`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
-/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
-/// success.
+/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
+/// than `Result<unit, E>`, so the absence of an error is `None`.
 must_use fun try_remove(path: &str).return: option.Option<io.IoErr> {
     var err: i32 = 0
     try_remove_raw(path, &mut err)
@@ -218,9 +215,8 @@ fun rename(from: &str, to: &str) {
 }
 
 /// The fallible twin of `rename`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
-/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
-/// success.
+/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
+/// than `Result<unit, E>`, so the absence of an error is `None`.
 must_use fun try_rename(from: &str, to: &str).return: option.Option<io.IoErr> {
     var err: i32 = 0
     try_rename_raw(from, to, &mut err)
@@ -247,9 +243,8 @@ fun append(path: &str, data: Bytes) {
 }
 
 /// The fallible twin of `append`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
-/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
-/// success.
+/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
+/// than `Result<unit, E>`, so the absence of an error is `None`.
 must_use fun try_append(path: &str, data: Bytes).return: option.Option<io.IoErr> {
     var err: i32 = 0
     try_append_raw(path, data, &mut err)
@@ -320,9 +315,8 @@ fun mkdir_all(path: &str) {
 }
 
 /// The fallible twin of `mkdir_all`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
-/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
-/// success.
+/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
+/// than `Result<unit, E>`, so the absence of an error is `None`.
 must_use fun try_mkdir_all(path: &str).return: option.Option<io.IoErr> {
     var err: i32 = 0
     try_mkdir_all_raw(path, &mut err)
@@ -452,9 +446,8 @@ fun symlink(target: &str, link: &str) {
 }
 
 /// The fallible twin of `symlink`: `None` on success, or the reason it failed (the
-/// POSIX `errno` and its text, as `try_read` reports it). `Result<unit, E>` has
-/// no success value to write (MISSING-n6Bsc), so the absence of an error is the
-/// success.
+/// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
+/// than `Result<unit, E>`, so the absence of an error is `None`.
 must_use fun try_symlink(target: &str, link: &str).return: option.Option<io.IoErr> {
     var err: i32 = 0
     try_symlink_raw(target, link, &mut err)

@@ -515,7 +515,6 @@ Order inside the release, each lane merged before the next starts:
 
 #### 26.11.1: generics and traits
 
-- **MISSING-n6Bsc** `Result<unit, E>` with a success value (L): a zero-size payload, so `Ok(())` works.
 - **MISSING-Ey4Mt** const generics beyond integer and `bool` (L).
 - **MISSING-Ve8Nc** generic trait impls, `where` clauses, blanket impls (XL, per the 26.11.0 note).
 - **MISSING-Hd4Lr** iterator adapters `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain`.

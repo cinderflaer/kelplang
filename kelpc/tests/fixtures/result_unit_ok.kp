@@ -1,0 +1,34 @@
+// `Result<unit, E>` has a constructible success value: `()` is the absent
+// value, and `Ok(value = ())` builds the success arm of a `Result` whose
+// payload is `unit`. The payload occupies no storage, so the success arm is
+// just its tag, and the arm matches like any other `Ok`.
+impl "std/result"
+
+fun check_positive(x: i32).return: result.Result<unit, String> {
+    if x > 0 {
+        return result.Result.Ok(value = ())
+    }
+    return result.Result.Err(error = "not positive")
+}
+
+fun run_check(x: i32) {
+    val r = check_positive(x)
+    when r {
+        Ok(_) -> print("ok")
+        Err(e) -> print(e)
+    }
+}
+
+fun explicit_success().return: result.Result<unit, String> {
+    val done: result.Result<unit, String> = result.Result.Ok(value = ())
+    return done
+}
+
+fun main() {
+    run_check(3)
+    run_check(-1)
+    when explicit_success() {
+        Ok(v) -> print("success")
+        Err(e) -> print(e)
+    }
+}

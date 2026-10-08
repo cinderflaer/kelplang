@@ -619,7 +619,7 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize).ret
 /// Makes at least one byte available, refilling from the socket if needed.
 ///
 /// Fallible core; `ensure` is the panicking form. The `usize` is always 0: a
-/// `Result<unit, E>` has no success value to write (MISSING-n6Bsc).
+/// refill has no count to report.
 fun mut Cursor.try_ensure().return: result.Result<usize, HttpErr> {
     if start >= buf.len() {
         val chunk = conn_recv_try(self.conn(), 4096)?
