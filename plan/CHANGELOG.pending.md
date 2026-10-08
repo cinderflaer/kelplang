@@ -16,3 +16,4 @@ empty on release.
 
 - A tuple can be a `const` value: `const ORIGIN: (i32, i32) = (1, 2)`, read with `ORIGIN.0` or a destructuring binding.
 - A block inside a block can capture the outer block's exclusive capture; the inner call's other arguments are checked against it like a local's.
+- `std/iter`: `into_iter(list)` and `cloned(&list)` walk a list, and `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain` are iterator adapters that nest. A generic type whose template declares `fun mut Name<...>.next().return: option.Option<Item>` is an `Iterator` by shape, so it satisfies `I: Iterator` and names `I::Item`.

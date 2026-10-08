@@ -12001,6 +12001,19 @@ fn two_fields_of_one_owner_are_different_places_to_borrow() {
 }
 
 #[test]
+fn iterator_adapters_chain_over_a_list_a_range_and_each_other() {
+    // MISSING-Hd4Lr: `std/iter`'s `into_iter` and the adapters. A generic type
+    // with an iterator-shaped `next` satisfies `I: Iterator` and names
+    // `I::Item`, so the adapters nest without a generic trait impl.
+    assert_compiles_and_runs("tests/fixtures/iter_list_take_skip.kp", "1\n2\n3\n4\n5\n7\n24\n");
+    assert_compiles_and_runs(
+        "tests/fixtures/iter_adapters.kp",
+        "60\n80\n0\n10\n1\n11\n2\n12\n100\n102\n1\n2\n7\n8\n4\n14\n",
+    );
+    assert_compiles_and_runs("tests/fixtures/iter_adapters_owned.kp", "3\n5\n0\n1\n1\n2\n");
+}
+
+#[test]
 fn a_nested_owned_field_can_be_partially_moved_and_reinitialised() {
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_field.kp", "Ada\n7\nLondon\n");
     assert_compiles_and_runs("tests/fixtures/nested_partial_move_reinit.kp", "old\nnew\n");
