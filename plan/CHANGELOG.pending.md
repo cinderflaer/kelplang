@@ -13,3 +13,5 @@ back to this header. No need to ask first.
 Keep each line short and factual: what changed, and why it matters to someone
 writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
+
+- A tuple can be a `const` value: `const ORIGIN: (i32, i32) = (1, 2)`, read with `ORIGIN.0` or a destructuring binding.

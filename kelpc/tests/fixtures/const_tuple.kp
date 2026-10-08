@@ -1,0 +1,16 @@
+const ORIGIN: (i32, i32) = (1, 2)
+const WIDE: (i64, bool) = (7, true)
+const SUM: i32 = 3 + 4
+const MIXED: (i32, i32) = (SUM, SUM * 2)
+
+fun main() {
+    print(ORIGIN.0)
+    val (x, y) = ORIGIN
+    print(x + y)
+    print(WIDE.0)
+    print(WIDE.1)
+    print(MIXED.1)
+    for (a, b) in [ORIGIN, MIXED] {
+        print(a * b)
+    }
+}
