@@ -1,8 +1,14 @@
 # Generic trait impls, `where` clauses and blanket impls (MISSING-Ve8Nc)
 
-*Design note, written in 26.10.3 ahead of the implementation. XL. Nothing here is built; the note
-exists so that the implementation lands against a written rule, as `plan/traits.md` did for the
-slices before it, and so the iterator adapters (MISSING-Hd4Lr) have a precise dependency.*
+*Design note, written in 26.10.3 ahead of the implementation, then partly built in the same
+release. **Built (26.10.3):** steps 1 to 3 of section 4 for an impl on a generic type
+(`impl<A: Bound, B: Bound> Trait for Type<A, B>`, template methods, conditional satisfaction,
+associated types over the parameters, the failing argument named in the error) and `where` as a
+second spelling of a bound on a function or an impl. `std/iter`'s adapters ship through a simpler
+by-shape rule (a generic type whose template declares an iterator-shaped `next` is an
+`Iterator`). **Not built:** blanket impls (section 2 item 5), an impl for one instantiation, equality
+constraints and bounds on projections (`where I::Item: Display`), `dyn` of a generic impl,
+default methods in a generic impl, operators through a generic impl.*
 
 ## 1. What is missing and what it blocks
 

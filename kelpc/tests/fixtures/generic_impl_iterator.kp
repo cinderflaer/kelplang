@@ -1,0 +1,24 @@
+impl "std/iter"
+impl "std/option"
+
+datac Twice<I>(var inner: I, var pending: bool)
+
+impl<I: iter.Iterator> iter.Iterator for Twice<I> {
+    type Item = I::Item
+    fun mut Self.next().return: option.Option<I::Item> {
+        return self.inner.next()
+    }
+}
+
+fun twice<I: iter.Iterator>(it: move I).return: Twice<I> {
+    return Twice(inner = it, pending = false)
+}
+
+fun main() {
+    var n: i64 = 0
+    for x in twice(iter.range(0, 4)) {
+        n += x
+    }
+    print(n)
+    print(iter.sum_i64(twice(iter.take(iter.range(1, 100), 3))))
+}

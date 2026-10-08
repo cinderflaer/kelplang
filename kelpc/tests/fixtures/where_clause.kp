@@ -1,0 +1,9 @@
+trait Named { fun Self.name().return: i32 }
+datac Dog(val id: i32)
+impl Named for Dog { fun Self.name().return: i32 = id }
+fun total<T, U>(a: &T, b: &U).return: i32 where T: Named, U: Named {
+    return a.name() + b.name()
+}
+fun main() {
+    print(total(Dog(id = 1), Dog(id = 2)))
+}
