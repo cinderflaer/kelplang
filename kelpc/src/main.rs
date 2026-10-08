@@ -34,7 +34,7 @@ use opt::OptLevel;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::time::Instant;
 
 /// Name this compiler is installed and invoked as. Kept in sync with the
@@ -432,6 +432,7 @@ fn build(
     incremental_flag: bool,
     sanitize_flag: Option<driver::Sanitizer>,
     freestanding_out: &mut bool,
+    emit_out: &mut resolve::Emit,
     print_timings: bool,
 ) -> bool {
     let mut sources = SourceMap::new();
@@ -507,6 +508,7 @@ fn build(
         return false;
     }
     *freestanding_out = loaded.project.target().is_freestanding();
+    *emit_out = loaded.project.emit();
 
     // The sanitizer: the flag wins over the manifest. Only the C backend can
     // build one (the LLVM backend links no sanitizer passes), so the default
@@ -633,6 +635,67 @@ fn build(
         timing.print();
     }
     true
+}
+
+/// The environment variable a Polyp program reads to print its first view as an
+/// HTML document instead of opening a window (`examples/polyp/emit.kp`).
+const HTML_ENV: &str = "KELP_POLYP_EMIT";
+
+/// `[build] emit = "html"`: runs the built program once with `KELP_POLYP_EMIT=html`
+/// and writes what it prints as `index.html` in the output directory, which is the
+/// directory the binary was written to. A program that prints no HTML document is
+/// refused rather than written out, so the file is never a stray stdout.
+fn emit_html(out_path: &Path) -> ExitCode {
+    let abs_out = if out_path.is_absolute() {
+        out_path.to_path_buf()
+    } else {
+        PathBuf::from("./").join(out_path)
+    };
+    guard::stop();
+    let output = match Command::new(&abs_out)
+        .env(HTML_ENV, "html")
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            eprintln!("error: could not run '{}' to emit its HTML: {e}", abs_out.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    if !output.status.success() {
+        eprintln!(
+            "error: '{}' failed while emitting its HTML ({}):\n{}",
+            abs_out.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return ExitCode::FAILURE;
+    }
+    let html = match String::from_utf8(output.stdout) {
+        Ok(text) => text,
+        Err(_) => {
+            eprintln!("error: '{}' printed bytes that are not UTF-8 while emitting its HTML", abs_out.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    if !html.starts_with("<!doctype html>") {
+        eprintln!(
+            "error: '{}' printed no HTML document for '[build] emit = \"html\"': the program's entry point must be a Polyp app whose view runs through polyp.run (examples/polyp/lib.kp)",
+            abs_out.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    let dir = match out_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let index = dir.join("index.html");
+    if let Err(e) = write_atomic(&index, &html) {
+        eprintln!("error: could not write '{}': {e}", index.display());
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
 }
 
 /// Prints the deprecations one load found, and says whether the build may
@@ -1618,6 +1681,7 @@ fn real_main() -> ExitCode {
     }
 
     let mut freestanding = false;
+    let mut emit = resolve::Emit::Binary;
     if !build(
         &path,
         &out_path,
@@ -1627,9 +1691,21 @@ fn real_main() -> ExitCode {
         incremental,
         sanitize,
         &mut freestanding,
+        &mut emit,
         print_timings,
     ) {
         return ExitCode::FAILURE;
+    }
+    // `[build] emit = "html"` replaces the run: the program is run once to print its
+    // first view, and `run` does not start it as an application.
+    if emit == resolve::Emit::Html {
+        if freestanding {
+            eprintln!(
+                "error: '{path}' sets '[build] emit = \"html\"', which needs a hosted program to run once; a freestanding project's artifact is a bare-metal ELF"
+            );
+            return ExitCode::FAILURE;
+        }
+        return emit_html(&out_path);
     }
 
     if command == "run" {

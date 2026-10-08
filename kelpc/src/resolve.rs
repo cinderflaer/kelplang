@@ -119,12 +119,29 @@ pub struct Project {
     /// `coral.toml`'s `[build] sanitize = "address"`: the sanitizer the C
     /// backend builds the program with. `--sanitize=` on the command line wins.
     sanitize: Option<crate::driver::Sanitizer>,
+    /// `coral.toml`'s `[build] emit = "binary"|"html"`: what `kelpc build`
+    /// leaves behind. `Binary` is the default.
+    emit: Emit,
+}
+
+/// What `kelpc build` writes for a project (`[build] emit`). `Html` builds the
+/// program, runs it once with `KELP_POLYP_EMIT=html`, and writes its stdout as
+/// `index.html` beside the binary (see `examples/polyp/lib.kp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Emit {
+    Binary,
+    Html,
 }
 
 impl Project {
     /// The manifest's `[build] sanitize`, if it names one.
     pub fn sanitize(&self) -> Option<crate::driver::Sanitizer> {
         self.sanitize
+    }
+
+    /// The manifest's `[build] emit`, `Binary` when it names none.
+    pub fn emit(&self) -> Emit {
+        self.emit
     }
 
     /// The native library and symbol allowlist a `[extern."<module id>"]`
@@ -534,6 +551,7 @@ pub fn load(
         manifest_target,
         manifest_incremental,
         manifest_sanitize,
+        manifest_emit,
     ) = if given.is_dir() {
             let manifest_path = given.join(MANIFEST_NAME);
             let text = fs::read_to_string(&manifest_path).map_err(|_| {
@@ -572,6 +590,7 @@ pub fn load(
                 manifest.target,
                 manifest.incremental,
                 manifest.sanitize,
+                manifest.emit,
             )
         } else {
             match find_manifest_root(&given) {
@@ -604,6 +623,7 @@ pub fn load(
                         manifest.target,
                         manifest.incremental,
                         manifest.sanitize,
+                        manifest.emit,
                     )
                 }
                 None => {
@@ -624,6 +644,7 @@ pub fn load(
                         TargetDecl::hosted(),
                         false,
                         None,
+                        Emit::Binary,
                     )
                 }
             }
@@ -1237,6 +1258,7 @@ pub fn load(
         target: manifest_target,
         incremental: manifest_incremental,
         sanitize: manifest_sanitize,
+        emit: manifest_emit,
     };
     if let Some(sink) = &mut timings {
         sink.resolve = resolve_start.elapsed();
@@ -1779,6 +1801,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         target_cpus_set: false,
         incremental: false,
         sanitize: None,
+        emit: Emit::Binary,
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -2112,6 +2135,8 @@ struct Manifest {
     incremental: bool,
     /// `[build] sanitize = "address"|"undefined"|"thread"`.
     sanitize: Option<crate::driver::Sanitizer>,
+    /// `[build] emit = "binary"|"html"`.
+    emit: Emit,
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
@@ -2248,11 +2273,32 @@ fn parse_unsafe_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
 fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
     let Some((key, value)) = line.split_once('=') else {
         return Err(Diagnostic::new(
-            format!("expected 'incremental = true|false' or 'sanitize = \"address\"' in {MANIFEST_NAME}'s [build] section, found '{line}'"),
+            format!("expected 'incremental = true|false', 'sanitize = \"address\"' or 'emit = \"binary\"|\"html\"' in {MANIFEST_NAME}'s [build] section, found '{line}'"),
             at,
             "",
         ));
     };
+    if key.trim() == "emit" {
+        let value = value.trim();
+        let name = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .unwrap_or("");
+        manifest.emit = match name {
+            "binary" => Emit::Binary,
+            "html" => Emit::Html,
+            _ => {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[build] emit' must be \"binary\" or \"html\" (double-quoted), found '{value}'"
+                    ),
+                    at,
+                    "",
+                ))
+            }
+        };
+        return Ok(());
+    }
     if key.trim() == "sanitize" {
         let value = value.trim();
         let name = value
@@ -2273,7 +2319,7 @@ fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(),
     if key.trim() != "incremental" {
         return Err(Diagnostic::new(
             format!(
-                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: the section has one key, 'incremental' (besides 'sanitize')",
+                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: its keys are 'incremental', 'sanitize' and 'emit'",
                 key.trim()
             ),
             at,
@@ -3765,10 +3811,32 @@ mod tests {
         );
         let err = manifest_err("name = \"x\"\n[build]\nunits = true\n");
         assert!(
-            err.message.contains("the section has one key, 'incremental'"),
+            err.message.contains("its keys are 'incremental', 'sanitize' and 'emit'"),
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn the_build_section_chooses_what_is_emitted() {
+        use super::Emit;
+        assert_eq!(manifest("name = \"x\"\n").emit, Emit::Binary);
+        assert_eq!(
+            manifest("name = \"x\"\n[build]\nemit = \"html\"\n").emit,
+            Emit::Html
+        );
+        assert_eq!(
+            manifest("name = \"x\"\n[build]\nemit = \"binary\"\n").emit,
+            Emit::Binary
+        );
+        let err = manifest_err("name = \"x\"\n[build]\nemit = \"exe\"\n");
+        assert!(
+            err.message.contains("must be \"binary\" or \"html\""),
+            "{}",
+            err.message
+        );
+        let err = manifest_err("name = \"x\"\n[build]\nemit = html\n");
+        assert!(err.message.contains("(double-quoted)"), "{}", err.message);
     }
 
     #[test]

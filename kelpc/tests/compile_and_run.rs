@@ -18223,6 +18223,41 @@ fn polyp_core_diffs_and_runs_the_todo_program_with_no_display() {
 
 const EXPECTED: &str = "identical\n0\n0\n0\n0\ntext\n0\n1\n0\n0\nreorder\n0\n0\n0\n2\ninsert\n2\n0\n0\n0\nremove\n0\n0\n1\n0\nkind\n1\n0\n1\n0\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n-- tree --\ncolumn\n  row\n    entry id=0 \"gamma\"\n    button id=1 \"add\"\n  separator\n  scrolled\n    row #1\n      checkbox id=2 unchecked\n      text \"alpha\"\n      button id=3 \"^\"\n      button id=4 \"x\"\n    row #2\n      checkbox id=5 checked\n      text \"beta\"\n      button id=6 \"^\"\n      button id=7 \"x\"\n  progress 0.500\n\n";
 
+/// `[build] emit = "html"` (Polyp HTML emit): the app's first view is written as
+/// `index.html` in the directory the binary went to. The fixture is a Polyp app with
+/// two texts, a spacer and a button, and the page must carry what a browser would show.
+#[test]
+fn polyp_html_emit_writes_the_first_view_as_index_html() {
+    let dir = out_path("polyp_html_emit");
+    std::fs::create_dir_all(&dir).expect("could not create the emit directory");
+    let index = dir.join("index.html");
+    let _ = std::fs::remove_file(&index);
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/polyp_html"))
+        .arg("-o")
+        .arg(dir.join("app"))
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the polyp html fixture to emit, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let html = std::fs::read_to_string(&index)
+        .unwrap_or_else(|e| panic!("expected index.html beside the binary: {e}"));
+    for want in [
+        "<!doctype html>",
+        "<p class=\"polyp-text\" data-kind=\"text\">Hello from Polyp</p>",
+        "the count is 2",
+        "<div class=\"polyp-column\" style=\"gap:6px\" data-kind=\"column\">",
+        "<div style=\"height:6px\" data-kind=\"spacer\"></div>",
+        "<button type=\"button\" data-kind=\"button\">+1</button>",
+    ] {
+        assert!(html.contains(want), "index.html lacks {want:?}:\n{html}");
+    }
+}
+
 /// The duplicate-key half, in its own run because a `panic` ends the process.
 #[test]
 fn polyp_core_panics_on_a_duplicate_key_and_names_it() {
