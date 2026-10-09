@@ -300,7 +300,7 @@ impl SourceMap {
 /// that have a short form, and `\u00XX` for the rest). Text above the ASCII
 /// range is written through as UTF-8, which JSON allows and which keeps a
 /// message written in another script readable.
-fn json_string(s: &str) -> String {
+pub(crate) fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {

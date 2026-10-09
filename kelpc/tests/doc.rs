@@ -266,3 +266,179 @@ fn a_datac_doc_comment_is_not_inherited_by_its_fields() {
         assert!(!msg.contains(documented), "{documented} must not be reported:\n{msg}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// `kelpc doc --format json`, `--text`, and `kelpc stdlib --json` (K1, K2, K3,
+// K5). The JSON is compared as text with a checked-in document, because the
+// tests carry no JSON parser; the fixture is read from its own directory so
+// every path in the output is relative and the same on every machine.
+// ---------------------------------------------------------------------------
+
+/// Runs `kelpc doc ...` with the fixture directory as the working directory,
+/// so file paths in the output are relative.
+fn run_in_json_fixture(args: &[&str], stdin: Option<&str>) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = kelpc()
+        .arg("doc")
+        .args(args)
+        .current_dir(docs().join("json"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn kelpc");
+    {
+        let mut pipe = child.stdin.take().expect("stdin pipe");
+        // An empty stdin is written too, so a command that reads it sees EOF.
+        let _ = pipe.write_all(stdin.unwrap_or("").as_bytes());
+    }
+    child.wait_with_output().expect("wait for kelpc")
+}
+
+#[test]
+fn json_document_matches_the_expected_file() {
+    let r = run_in_json_fixture(&["src", "--format", "json"], None);
+    assert!(r.status.success(), "{}", stderr(&r));
+    let got = String::from_utf8(r.stdout).expect("utf-8 output");
+    let want = read(&docs().join("expected").join("json").join("project.json"));
+    assert_eq!(want, got, "the JSON document differs from tests/docs/expected/json/project.json");
+}
+
+#[test]
+fn json_document_is_deterministic() {
+    let a = run_in_json_fixture(&["src", "--format", "json"], None);
+    let b = run_in_json_fixture(&["src", "--format", "json"], None);
+    assert!(a.status.success() && b.status.success());
+    assert_eq!(a.stdout, b.stdout);
+}
+
+#[test]
+fn json_document_has_the_trait_impl_alias_and_nested_module() {
+    let r = run_in_json_fixture(&["src", "--format", "json"], None);
+    let text = String::from_utf8(r.stdout).expect("utf-8 output");
+    // Modules come sorted by id: the dependency, the entry, the nested file.
+    let ids = ["\"id\":\"deps/argparse/lib\"", "\"id\":\"main\"", "\"id\":\"shapes/circle\""];
+    let mut last = 0;
+    for needle in ids {
+        let at = text.find(needle).unwrap_or_else(|| panic!("missing {needle}"));
+        assert!(at >= last, "modules are not sorted by id");
+        last = at;
+    }
+    // The trait impl names its trait and its target type.
+    assert!(
+        text.contains("\"trait_impls\":[{\"trait\":\"Shape\",\"target\":\"Circle\""),
+        "trait impl missing: {text}"
+    );
+    // A dependency import is aliased by the compiler's own rule.
+    assert!(
+        text.contains("{\"path\":\"deps/argparse/lib\",\"alias\":\"argparse\""),
+        "dependency alias missing: {text}"
+    );
+    assert!(text.contains("{\"path\":\"shapes/circle\",\"alias\":\"circle\""));
+    // The compiler's builtin table comes with the document.
+    assert!(text.contains("\"builtins\":[{\"key\":\"Bytes#append\""));
+    assert!(text.contains("{\"key\":\"String#len\",\"type\":\"String\",\"name\":\"len\""));
+}
+
+#[test]
+fn json_name_spans_point_at_the_name_in_the_file() {
+    let r = run_in_json_fixture(&["src", "--format", "json"], None);
+    let text = String::from_utf8(r.stdout).expect("utf-8 output");
+    let circle = read(&docs().join("json").join("src").join("shapes").join("circle.kp"));
+    // (name, the text that comes right before it in circle.kp): the span is
+    // the bytes of the name, found at a known place rather than by search.
+    let cases = [
+        ("Shape", "trait "),
+        ("area", "Self."),
+        ("Circle", "datac "),
+        ("r", "val "),
+    ];
+    for (name, before) in cases {
+        let at = circle.find(&format!("{before}{name}")).unwrap_or_else(|| panic!("{name} in circle.kp"));
+        let start = at + before.len();
+        let span = format!("[{start},{}]", start + name.len());
+        assert_eq!(&circle[start..start + name.len()], name);
+        assert!(text.contains(&format!("\"name\":\"{name}\",")), "{name} missing");
+        assert!(text.contains(&format!("\"name_span\":{span}")), "no span {span} for {name}");
+    }
+}
+
+#[test]
+fn json_from_stdin_documents_the_buffer() {
+    let buffer = "/// Doubles.\npub fun twice(n: i32).return: i32 = n * 2\n";
+    let r = run_in_json_fixture(&["--text", "src/buffer.kp", "--format", "json"], Some(buffer));
+    assert!(r.status.success(), "{}", stderr(&r));
+    let text = String::from_utf8(r.stdout).expect("utf-8 output");
+    assert!(text.contains("\"id\":\"buffer\",\"file\":\"src/buffer.kp\""), "{text}");
+    let start = buffer.find("twice").unwrap();
+    let span = format!("\"name_span\":[{start},{}]", start + "twice".len());
+    assert!(text.contains(&span), "{span} missing from {text}");
+    assert!(text.contains("\"doc\":\"Doubles.\""));
+    // The buffer is the only module: the project's files are not read.
+    assert!(!text.contains("shapes/circle"));
+}
+
+#[test]
+fn text_needs_exactly_one_file_name() {
+    let r = run_in_json_fixture(&["--text", "src", "--format", "json"], Some(""));
+    assert!(!r.status.success());
+    assert!(stderr(&r).contains("'--text' needs exactly one"), "{}", stderr(&r));
+}
+
+#[test]
+fn json_format_writes_to_stdout_not_a_directory() {
+    let out = scratch("json_no_dir");
+    let r = run_in_json_fixture(&["src", "--format", "json", "-o", out.to_str().unwrap()], None);
+    assert!(!r.status.success());
+    assert!(stderr(&r).contains("writes to stdout"), "{}", stderr(&r));
+}
+
+/// The stdlib listing writes every shipped module under `<dir>/<build>/` and
+/// names the synthetic `std/thread` calls.
+#[test]
+fn stdlib_listing_writes_the_shipped_sources_and_lists_them() {
+    let dir = scratch("stdlib_list");
+    let r = kelpc()
+        .args(["stdlib", "--json", "--dir", dir.to_str().unwrap()])
+        .output()
+        .expect("spawn kelpc");
+    assert!(r.status.success(), "{}", stderr(&r));
+    let text = String::from_utf8(r.stdout).expect("utf-8 output");
+    for id in ["std/iter", "std/sync", "std/ops", "std/convert"] {
+        assert!(text.contains(&format!("\"id\":\"{id}\"")), "{id} not listed: {text}");
+    }
+    for name in ["fence", "spawn", "join"] {
+        assert!(text.contains(&format!("{{\"name\":\"{name}\",\"kind\":\"fun\"")), "{name} not listed");
+    }
+    // The build id names the directory, and it is a 64-digit SHA-256.
+    let build = text
+        .split("\"build\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("a build id");
+    assert_eq!(build.len(), 64, "build id {build}");
+    assert!(build.bytes().all(|b| b.is_ascii_hexdigit()));
+    assert!(dir.join(build).is_dir());
+    // The file written for a module is the shipped source, byte for byte.
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+    for module in ["iter", "sync", "ops", "convert"] {
+        let written = read(&dir.join(build).join("std").join(format!("{module}.kp")));
+        assert_eq!(written, read(&shipped.join(format!("{module}.kp"))), "std/{module}");
+    }
+    // A second run finds the same bytes and prints the same listing.
+    let again = kelpc()
+        .args(["stdlib", "--json", "--dir", dir.to_str().unwrap()])
+        .output()
+        .expect("spawn kelpc");
+    assert_eq!(text.as_bytes(), again.stdout.as_slice());
+}
+
+#[test]
+fn stdlib_needs_json_and_a_directory() {
+    let plain = kelpc().args(["stdlib"]).output().expect("spawn kelpc");
+    assert!(!plain.status.success());
+    let no_dir = kelpc().args(["stdlib", "--json"]).output().expect("spawn kelpc");
+    assert!(!no_dir.status.success());
+    assert!(stderr(&no_dir).contains("--dir"), "{}", stderr(&no_dir));
+}

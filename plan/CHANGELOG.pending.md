@@ -13,3 +13,5 @@ back to this header. No need to ask first.
 Keep each line short and factual: what changed, and why it matters to someone
 writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
+
+- `kelpc doc --format json` (with `--text` for stdin) and `kelpc stdlib --json --dir <dir>` give editor tools the declarations, spans, import aliases, trait impls, builtin members and shipped std sources as data.

@@ -1,0 +1,8 @@
+//! The entry point. It uses a nested module and a dependency.
+impl "shapes/circle"
+impl "deps/argparse/lib"
+
+/// Runs the demo.
+pub fun main() {
+    print("hi")
+}

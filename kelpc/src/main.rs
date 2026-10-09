@@ -89,7 +89,10 @@ fn usage() {
          {BIN_NAME} fmt --check <path>...\n       \
          {BIN_NAME} lint <path>...\n       \
          {BIN_NAME} doc <file.{EXT}|project dir>... [-o <dir>] [--format md|html] [--private] [--check]\n       \
+         {BIN_NAME} doc <file.{EXT}|project dir>... --format json\n       \
+         {BIN_NAME} doc --text <file.{EXT}> --format json < buffer\n       \
          {BIN_NAME} doc --std [-o <dir>] [--format md|html] [--private] [--check]\n       \
+         {BIN_NAME} stdlib --json --dir <dir>\n       \
          {BIN_NAME} cache stats|clear [--dir <dir>]\n       \
          {BIN_NAME} version [--verbose]\n\n\
          The optimization level is -O0, -O1, -O2, -O3 or -Os, and -O2 is the\n\
@@ -1344,21 +1347,127 @@ fn collect_kp_into(
     Ok(())
 }
 
+/// `kelpc stdlib --json --dir <dir>`: writes every shipped std module's source
+/// to `<dir>/<build-id>/<module path>.kp` and prints the listing as JSON: the
+/// build id, the compiler version, and per module its id, file path, SHA-256 of
+/// the source and its synthetic declarations (`stdlib::SYNTHETIC_ITEMS`).
+///
+/// A file that already holds the right bytes is left alone, so a second run is
+/// a read. The build id changes whenever the table does, so a directory written
+/// by another compiler is never read for this one.
+fn stdlib_command(args: &[String]) -> ExitCode {
+    let mut json = false;
+    let mut dir: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => json = true,
+            "--dir" => {
+                i += 1;
+                match args.get(i) {
+                    Some(d) => dir = Some(PathBuf::from(d)),
+                    None => {
+                        eprintln!("error: '--dir' needs a directory");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            other => {
+                eprintln!("error: unexpected argument '{other}'; expected --json --dir <dir>");
+                return ExitCode::FAILURE;
+            }
+        }
+        i += 1;
+    }
+    if !json {
+        eprintln!("error: 'stdlib' writes its listing as JSON; pass '--json --dir <dir>'");
+        return ExitCode::FAILURE;
+    }
+    let Some(dir) = dir else {
+        eprintln!("error: 'stdlib --json' needs '--dir <dir>' to write the sources to");
+        return ExitCode::FAILURE;
+    };
+    let dir = if dir.is_absolute() {
+        dir
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(dir),
+            Err(e) => {
+                eprintln!("error: cannot read the working directory: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
+    let build = stdlib::build_id();
+    let root = dir.join(&build);
+    let mut rows = Vec::new();
+    for id in stdlib::shipped() {
+        let Some(text) = stdlib::source(id) else {
+            eprintln!("error: the compiler ships '{id}' with no source");
+            return ExitCode::FAILURE;
+        };
+        let sha = sha256::sha256_hex(text.as_bytes());
+        let target = root.join(format!("{id}.{}", resolve::EXT));
+        let current = fs::read(&target).ok().map(|bytes| sha256::sha256_hex(&bytes));
+        if current.as_deref() != Some(sha.as_str()) {
+            if let Some(parent) = target.parent() {
+                if let Err(e) = fs::create_dir_all(parent) {
+                    eprintln!("error: cannot create '{}': {e}", parent.display());
+                    return ExitCode::FAILURE;
+                }
+            }
+            if let Err(e) = fs::write(&target, &text) {
+                eprintln!("error: cannot write '{}': {e}", target.display());
+                return ExitCode::FAILURE;
+            }
+        }
+        let syms: Vec<String> = stdlib::synthetic_items(id)
+            .iter()
+            .map(|item| {
+                format!(
+                    "{{\"name\":{},\"kind\":{},\"sig\":{}}}",
+                    diag::json_string(item.name),
+                    diag::json_string(item.kind),
+                    diag::json_string(item.sig),
+                )
+            })
+            .collect();
+        rows.push(format!(
+            "{{\"id\":{},\"path\":{},\"sha256\":{},\"builtin_syms\":[{}]}}",
+            diag::json_string(id),
+            diag::json_string(&target.to_string_lossy()),
+            diag::json_string(&sha),
+            syms.join(","),
+        ));
+    }
+    println!(
+        "{{\"schema\":1,\"build\":{},\"compiler\":{},\"dir\":{},\"modules\":[{}]}}",
+        diag::json_string(&build),
+        diag::json_string(&release_name(VERSION)),
+        diag::json_string(&root.to_string_lossy()),
+        rows.join(","),
+    );
+    ExitCode::SUCCESS
+}
+
 /// `kelpc doc`: the documentation generator (`plan/doc-tool.md`). The pages
 /// are built by `doc.rs`; this reads the sources, writes the files, and runs
 /// the `--check` gate.
 fn doc_command(args: &[String]) -> ExitCode {
     let mut out_dir = PathBuf::from("doc");
+    let mut out_given = false;
     let mut format = doc::Format::Markdown;
     let mut private = false;
     let mut check = false;
     let mut std_mode = false;
+    let mut text_mode = false;
     let mut paths: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-o" => {
                 i += 1;
+                out_given = true;
                 match args.get(i) {
                     Some(dir) => out_dir = PathBuf::from(dir),
                     None => {
@@ -1372,9 +1481,10 @@ fn doc_command(args: &[String]) -> ExitCode {
                 match args.get(i).map(String::as_str) {
                     Some("md") => format = doc::Format::Markdown,
                     Some("html") => format = doc::Format::Html,
+                    Some("json") => format = doc::Format::Json,
                     other => {
                         eprintln!(
-                            "error: '--format' takes 'md' or 'html', found '{}'",
+                            "error: '--format' takes 'md', 'html' or 'json', found '{}'",
                             other.unwrap_or("nothing")
                         );
                         return ExitCode::FAILURE;
@@ -1384,9 +1494,10 @@ fn doc_command(args: &[String]) -> ExitCode {
             "--private" => private = true,
             "--check" => check = true,
             "--std" => std_mode = true,
+            "--text" => text_mode = true,
             other if other.starts_with('-') && other.len() > 1 => {
                 eprintln!(
-                    "error: unknown flag '{other}'; expected one of: -o, --format, --private, --check, --std"
+                    "error: unknown flag '{other}'; expected one of: -o, --format, --private, --check, --std, --text"
                 );
                 return ExitCode::FAILURE;
             }
@@ -1401,6 +1512,35 @@ fn doc_command(args: &[String]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    if format == doc::Format::Json {
+        if out_given {
+            eprintln!("error: '--format json' writes to stdout; '-o' does not apply to it");
+            return ExitCode::FAILURE;
+        }
+        if check {
+            eprintln!("error: '--format json' and '--check' are separate; run one at a time");
+            return ExitCode::FAILURE;
+        }
+    }
+    // `--text` documents a buffer read from stdin, as `check --text` checks
+    // one. The one path names the buffer, which may not be on disk.
+    let buffer: Option<String> = if text_mode {
+        if std_mode || paths.len() != 1 || Path::new(&paths[0]).is_dir() {
+            eprintln!(
+                "error: '--text' needs exactly one '.{}' file name, not a directory or '--std': a buffer is always one open file",
+                resolve::EXT
+            );
+            return ExitCode::FAILURE;
+        }
+        let mut buf = String::new();
+        if let Err(e) = io::stdin().read_to_string(&mut buf) {
+            eprintln!("error: cannot read '--text' from stdin: {e}");
+            return ExitCode::FAILURE;
+        }
+        Some(buf)
+    } else {
+        None
+    };
 
     let mut sources = SourceMap::new();
     let mut modules: Vec<doc::Module> = Vec::new();
@@ -1457,12 +1597,15 @@ fn doc_command(args: &[String]) -> ExitCode {
         files.sort();
         files.dedup();
         for file in files {
-            let text = match read_source(&file) {
-                Ok(text) => text,
-                Err(()) => {
-                    failed = true;
-                    continue;
-                }
+            let text = match &buffer {
+                Some(buf) => buf.clone(),
+                None => match read_source(&file) {
+                    Ok(text) => text,
+                    Err(()) => {
+                        failed = true;
+                        continue;
+                    }
+                },
             };
             let rel = file.strip_prefix(&base).unwrap_or(&file).with_extension("");
             let id = rel
@@ -1481,6 +1624,12 @@ fn doc_command(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let opts = doc::Options { format, private };
+    if format == doc::Format::Json {
+        for (_, text) in doc::render(&modules, &opts) {
+            print!("{text}");
+        }
+        return ExitCode::SUCCESS;
+    }
     if check {
         let missing = doc::missing_docs(&modules, &opts);
         for (file, line, message) in &missing {
@@ -1544,6 +1693,7 @@ fn real_main() -> ExitCode {
         Some("fmt") => return fmt_command(&args[2..]),
         Some("lint") => return lint_command(&args[2..]),
         Some("doc") => return doc_command(&args[2..]),
+        Some("stdlib") => return stdlib_command(&args[2..]),
         Some("check") => return check_command(&args[2..]),
         Some("cache") => return cache_command(&args[2..]),
         Some(c @ ("build" | "run")) => {

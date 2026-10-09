@@ -1804,7 +1804,7 @@ impl Loader<'_> {
 /// The `deps/` prefix is what makes this coral's rule rather than the
 /// language's: `src/deps/` is the directory Coral fetches into, and a file
 /// named `lib.kp` elsewhere in a project is just a file.
-fn default_alias(path: &str) -> String {
+pub(crate) fn default_alias(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("deps/") {
         if let Some(directory) = rest.strip_suffix("/lib") {
             if let Some(name) = directory.rsplit('/').next() {

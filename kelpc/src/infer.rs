@@ -6322,6 +6322,42 @@ fn contains_param(elem: &Ty) -> Ty {
     }
 }
 
+/// One entry of the `BUILTINS` table as a listing: the key (`String#len`), the
+/// type and member names it splits into, whether it is called on the type
+/// (`String.from_str`) rather than on a value, and its parameters and result
+/// as the type checker spells them. `kelpc doc --format json` writes these.
+pub struct BuiltinSig {
+    pub key: String,
+    pub type_name: String,
+    pub name: String,
+    pub associated: bool,
+    /// `(name, type)`, the receiver first when there is one.
+    pub params: Vec<(String, String)>,
+    pub ret: String,
+}
+
+/// Every `BUILTINS` entry, sorted by key. `List` and `Map` members are not in
+/// the table: their signatures depend on the element type, so `list_sig` and
+/// `map_sig` build them on demand.
+pub fn builtin_signatures() -> Vec<BuiltinSig> {
+    let mut out: Vec<BuiltinSig> = BUILTINS
+        .iter()
+        .map(|(key, b)| {
+            let (type_name, name) = key.split_once('#').unwrap_or(("", key.as_str()));
+            BuiltinSig {
+                key: key.clone(),
+                type_name: type_name.to_string(),
+                name: name.to_string(),
+                associated: b.associated,
+                params: b.params.iter().map(|(n, t)| (n.clone(), t.display())).collect(),
+                ret: b.ret.display(),
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    out
+}
+
 /// The signature a builtin key resolves to, if it is one.
 fn builtin_sig(key: &str) -> Option<FnSig> {
     BUILTINS.get(key).map(|b| FnSig {
