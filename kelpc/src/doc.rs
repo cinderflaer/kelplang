@@ -1357,7 +1357,7 @@ fn render_md(page: &Page, index: &LinkIndex) -> String {
                     o.push_str(&format!("- `{}`", mem.sig));
                     if let Some(d) = &mem.doc {
                         let d = first_paragraph(d);
-                        o.push_str(&format!(" — {}", link_markdown(&d, index, &page.file)));
+                        o.push_str(&format!(": {}", link_markdown(&d, index, &page.file)));
                     }
                     o.push('\n');
                 }
@@ -1420,7 +1420,7 @@ fn md_index(pages: &[Page]) -> String {
         if let Some(d) = &p.module.scan.module_doc {
             let s = first_paragraph(d);
             if !s.is_empty() {
-                o.push_str(&format!(" — {s}"));
+                o.push_str(&format!(" - {s}"));
             }
         }
         o.push('\n');
@@ -1588,7 +1588,7 @@ fn render_html(page: &Page, index: &LinkIndex) -> String {
                     o.push_str(&format!("<li><code>{}</code>", esc(&mem.sig)));
                     if let Some(d) = &mem.doc {
                         o.push_str(&format!(
-                            " &mdash; {}",
+                            ": {}",
                             html_inline(&first_paragraph(d), index, &page.file)
                         ));
                     }
@@ -1649,7 +1649,7 @@ fn html_index(pages: &[Page]) -> String {
         if let Some(d) = &p.module.scan.module_doc {
             let s = first_paragraph(d);
             if !s.is_empty() {
-                o.push_str(&format!(" &mdash; {}", esc(&s)));
+                o.push_str(&format!(" - {}", esc(&s)));
             }
         }
         o.push_str("</li>\n");
@@ -1681,7 +1681,23 @@ pub fn render(modules: &[Module], opts: &Options) -> Vec<(String, String)> {
             }
         }
     }
-    out
+    out.into_iter().map(|(name, text)| (name, no_dashes(&text))).collect()
+}
+
+/// Replaces every en dash and em dash in a generated page with a hyphen, and
+/// the HTML entities that would display one. This runs over the whole text of
+/// every page, so a dash cannot reach a page from any source: the doc comments
+/// copied from `.kp` files, a signature, or the generator's own prose. The
+/// generator's own sentences were reworded to read correctly on their own; the
+/// hyphen is the fallback for text it copies from source.
+pub fn no_dashes(text: &str) -> String {
+    text.replace("&mdash;", "-")
+        .replace("&ndash;", "-")
+        .replace("&#8212;", "-")
+        .replace("&#8211;", "-")
+        .replace("&#x2014;", "-")
+        .replace("&#x2013;", "-")
+        .replace(['\u{2014}', '\u{2013}'], "-")
 }
 
 /// The public items without a doc comment, as `(file, line, message)`.

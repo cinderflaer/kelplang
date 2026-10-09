@@ -19784,3 +19784,52 @@ fn the_base32_edges_are_unchanged() {
         "\nMY======\nMZXQ====\nMZXW6===\nMZXW6YQ=\nMZXW6YTB\nMZXW6YTBOI======\nAAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSAIJCEMSCKJRHFAUSUKZMFUXC6MBRGIZTINJWG44DSOR3HQ6T4P2AIFBEGRCFIZDUQSKKJNGE2TSPKBIVEU2UKVLFOWCZLJNVYXK6L5QGCYTDMRSWMZ3INFVGW3DNNZXXA4LSON2HK5TXPB4XU634PV7H7AEBQKBYJBMGQ6EITCULRSGY5D4QSGJJHFEVS2LZRGM2TOOJ3HU7UCQ2FI5EUWTKPKFJVKV2ZLNOV6YLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM7UGR2LJ5JVOW27MNTWW33TO55X7A4HROHZHF43T6R2PK5PWO33XP6DY7F47U6X3PP6HZ7L57Z7P674======\n666f6f62\n666f6f\n666f6f626172\n666f6f6261\ninvalid\ninvalid\n\ninvalid\n",
     );
 }
+
+/// `kelpc doc` never writes an em dash (U+2014) or an en dash (U+2013) into a
+/// generated page, whatever the source says. The fixture puts both dashes, and
+/// the HTML entities that display them, on every doc path: a module doc, a
+/// constant, a static, a passdown, a datac with field docs, an enum with variant
+/// docs, a trait with its items, a trait impl, a function and a method. Every
+/// format and visibility is generated, and every file of every run is searched.
+#[test]
+fn the_doc_generator_never_emits_an_em_or_en_dash() {
+    let src = fixture("tests/fixtures/doc_no_dashes.kp");
+    let base = std::env::temp_dir().join(format!("kelpc_doc_nodash_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let mut pages = 0;
+    for (format, private) in [("md", false), ("md", true), ("html", false), ("html", true)] {
+        let name = format!("{format}{}", if private { "-private" } else { "" });
+        let out = base.join(&name);
+        let mut cmd = kelpc();
+        cmd.arg("doc").arg(&src).args(["--format", format]);
+        if private {
+            cmd.arg("--private");
+        }
+        cmd.arg("-o").arg(&out);
+        let r = cmd.output().expect("spawn kelpc");
+        assert!(r.status.success(), "kelpc doc {name} failed: {}", String::from_utf8_lossy(&r.stderr));
+        let mut saw_fixture_prose = false;
+        for entry in std::fs::read_dir(&out).expect("read the output directory") {
+            let path = entry.expect("read a directory entry").path();
+            let text = std::fs::read_to_string(&path).expect("read a generated page");
+            for dash in ['\u{2014}', '\u{2013}'] {
+                assert!(
+                    !text.contains(dash),
+                    "{name}: {} contains U+{:04X}",
+                    path.display(),
+                    dash as u32
+                );
+            }
+            for entity in ["&mdash;", "&ndash;", "&#8212;", "&#8211;"] {
+                assert!(!text.contains(entity), "{name}: {} contains {entity}", path.display());
+            }
+            if text.contains("The reading") {
+                saw_fixture_prose = true;
+            }
+            pages += 1;
+        }
+        assert!(saw_fixture_prose, "{name}: the fixture's doc comments were not generated");
+    }
+    assert!(pages >= 8, "expected at least 8 generated pages, got {pages}");
+    let _ = std::fs::remove_dir_all(&base);
+}

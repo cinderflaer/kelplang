@@ -24,8 +24,8 @@ A circle.
 
 **Fields**
 
-- `val r: f64` — The radius.
-- `var tag: i32` — A free tag.
+- `val r: f64`: The radius.
+- `var tag: i32`: A free tag.
 
 #### `Circle.diameter`
 
@@ -49,8 +49,8 @@ Kinds of shape.
 
 **Variants**
 
-- `Round(val r: f64)` — A round one.
-- `Flat` — A flat one.
+- `Round(val r: f64)`: A round one.
+- `Flat`: A flat one.
 
 ## Traits
 
@@ -64,7 +64,7 @@ Something with an area.
 
 **Required and provided items**
 
-- `fun Self.area().return: f64` — The area.
+- `fun Self.area().return: f64`: The area.
 - `type Item`
 
 ## Functions
