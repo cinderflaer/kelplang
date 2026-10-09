@@ -7,10 +7,12 @@ associated types over the parameters, the failing argument named in the error) a
 second spelling of a bound on a function or an impl. `std/iter`'s adapters ship through a simpler
 by-shape rule (a generic type whose template declares an iterator-shaped `next` is an
 `Iterator`). **Built (26.10.4):** step 4 of section 4, coherence (the overlap check) and blanket
-impls (section 2 item 5), as recorded under step 4 below. **Not built:** step 5 (equality
-constraints and bounds on projections, `where I::Item: Display`), an impl for one instantiation,
-`dyn` of a generic impl or of a blanket impl, default methods in a generic impl or a blanket impl,
-operators through a generic impl.*
+impls (section 2 item 5), as recorded under step 4 below; and step 5 of section 4, bounds on
+projections and equality constraints, as recorded under step 5 below (built 2026-10-09). **Not
+built:** an equality constraint or a projection bound on a blanket impl, an impl for one
+instantiation, `dyn` of a generic impl or of a blanket impl, default methods in a generic impl or a
+blanket impl, operators through a generic impl (MISSING-Lh6Yp). The section 6 exclusions stay refused
+by name (their own entries in `ISSUES.md`).*
 
 ## 1. What is missing and what it blocks
 
@@ -105,8 +107,25 @@ item that unlocks the rest of MISSING-Hd4Lr.
   directly or through other blanket impls. A `dyn` coercion of a type whose trait comes from a
   blanket impl (the blanket impl has no vtable of its own). A trait default in a blanket impl, and
   an associated type or a trait argument on one.
-- *Step 5 refusals.* A bound on a projection (`where I::Item: Bound`) and an equality constraint
-  (`Iterator<Item = i64>`) are refused by name, each saying it is step 5 of this note.
+- *Refused by name.* An equality constraint on a generic trait's own parameter, on a supertrait or
+  on an associated type's bound; an equality constraint or a projection bound on a blanket impl; a
+  negative bound (`T: !Name`, section 6).
+
+**Step 5, as built (26.10.4, 2026-10-09).**
+
+- *Equality constraints.* `I: Iterator<Item = i64>`, inline or in a `where` clause, on a function
+  or a generic impl. The trait must declare the associated type; the constraint is checked at each
+  instance on the concrete binding (`I::Item` of the argument, through its impl or its iterator
+  shape), and the right-hand side is read in the declaring module's spelling. A body is checked per
+  instance, so it reads `Item` as the bound's type.
+- *Bounds on projections.* `where I::Item: Display` on a function or a generic impl. It is checked
+  at each call (or instance) on the concrete associated type: a type that binds no such associated
+  type is refused, and so is a type whose associated type does not implement the bound.
+- *Generic impl bounds govern an iterator.* A generic type with an explicit generic `impl Iterator`
+  satisfies `Iterator` only through that impl's bounds; the iterator-shape rule applies to a
+  generic type with no such impl (the `std/iter` adapters), as before.
+- *Refused by name:* a trait argument on a projection bound (`where I::Item: From<i32>`), a
+  constraint naming an associated type the trait does not declare, and the forms in the list above.
 
 Each step keeps the previous tests green and adds its own fixtures; steps 1 to 3 are one release,
 4 to 5 the next, 6 the one after, so a slip moves the adapters and nothing else.

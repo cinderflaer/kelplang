@@ -454,7 +454,8 @@ Ordering rules:
 - **`loop`, labelled `break`/`continue` and `break` with a value in `loop` are accepted** (MISSING-Lk9Xs).
   `break`/`continue` inside a `defer` body stays refused.
 - **Generic trait impls, `where` clauses and blanket impls are accepted** (MISSING-Ve8Nc), after a design
-  note in 26.11.0.
+  note in 26.11.0. Bounds on projections (`where I::Item: Display`) and equality constraints
+  (`I: Iterator<Item = i64>`) are accepted on functions and generic impls from 26.10.4.
 - **No unwinding, permanently** (MISSING-Jy7Df). A panic ends the process, which keeps "no exceptions".
   What ships instead is a panic hook (`std/panic`) that runs once before exit, so a program can flush and
   release by hand, and a documented list of what a panic does not run.
@@ -515,8 +516,9 @@ Order inside the release, each lane merged before the next starts:
 
 #### 26.11.1: generics and traits
 
-- **MISSING-Ve8Nc** step 5 of `plan/generic-trait-impls.md` only: bounds on projections and equality
-  constraints (steps 1 to 4 are in 26.10.3 and 26.10.4).
+- **MISSING-Ve8Nc** is closed: step 5 of `plan/generic-trait-impls.md` (bounds on projections and
+  equality constraints) shipped in 26.10.4, with steps 1 to 4. What it leaves open is tracked in its
+  own entries, MISSING-Lh6Yp (the rest of generic trait impls) and the section 6 exclusions.
 - **MISSING-Hd4Lr** iterator adapters `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain`.
 - Open item 24, extension methods through trait impls on builtin and imported types; open items 8 and 25,
   the `String` API gaps (`as_bytes`, `slice`); open item 35, `print` of a `datac`/`List` through a derived
@@ -585,9 +587,11 @@ Order inside the release, each lane merged before the next starts:
 #### Coverage
 
 Every `ISSUES.md` entry is in a release above: q4Vn2 26.10.1; k7Rwq 26.10.1; Uc6Kj, j2Wka, Nf3Rb 26.10.2;
-Sw9Hd, Gt6Qc, Lk9Xs, Pw3Fz 26.11.0; n6Bsc, Ey4Mt, Ve8Nc, Hd4Lr 26.11.1; vT4Kd, oH9AB, Mta7v 26.12.0;
+Sw9Hd, Gt6Qc, Lk9Xs, Pw3Fz 26.11.0; n6Bsc, Ey4Mt, Hd4Lr 26.11.1; vT4Kd, oH9AB, Mta7v 26.12.0;
 Cn2Ym, Tb8Vh, Jy7Df, Xo5Ga 26.12.1; Iq2Tz, t9Qmz 27.02.0; Bm8Wk 27.03.0; Zq1Pe 27.04.0; Dl7Ps 27.05.0;
-Ra5Wn 27.06.0 (weaker orderings 26.12.1). Open items 58, 59, 62, 63, 64 and 65 are records of shipped
+Ra5Wn 27.06.0 (weaker orderings 26.12.1). Gk3Rw, Pt7Hn, Lh6Yp, Sb5Vq, Wd2Lm, Fn9Zx, Ur4Ct and Ko8Ej
+(the generic trait impls leftovers and the design note's section 6 exclusions, found 2026-10-09) are
+unscheduled until a release is slotted. Open items 58, 59, 62, 63, 64 and 65 are records of shipped
 behaviour and need no release. Anything found later goes into `ISSUES.md` and is slotted at the next
 release whose theme it matches.
 

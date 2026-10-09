@@ -960,7 +960,7 @@ impl Parser {
         // in hand.
         let supertraits = if self.check(&TokenKind::Colon) {
             self.advance();
-            self.parse_bounds()?
+            self.parse_plain_bounds("a supertrait")?
         } else {
             Vec::new()
         };
@@ -985,7 +985,7 @@ impl Parser {
                 }
                 let bounds = if self.check(&TokenKind::Colon) {
                     self.advance();
-                    self.parse_bounds()?
+                    self.parse_plain_bounds("an associated type's bound")?
                 } else {
                     Vec::new()
                 };
@@ -1127,30 +1127,11 @@ impl Parser {
                 span: type_span,
             });
         }
-        // `where T: A + B` after the header: more bounds on the impl's parameters.
-        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "where") {
-            self.advance();
-            loop {
-                let (pname, pspan) = self.expect_ident()?;
-                if self.check(&TokenKind::ColonColon) {
-                    return Err(Parser::projection_bound_error(&pname, pspan));
-                }
-                let Some(at) = impl_params.iter().position(|p| p.name == pname) else {
-                    return Err(ParseError {
-                        message: format!("'where {pname}: ...' names no type parameter of this impl: declare it in 'impl<...>'"),
-                        span: pspan,
-                    });
-                };
-                self.expect(TokenKind::Colon, "':' after the parameter in a 'where' clause")?;
-                let more = self.parse_bounds()?;
-                impl_bounds[at].extend(more);
-                if self.check(&TokenKind::Comma) {
-                    self.advance();
-                    continue;
-                }
-                break;
-            }
-        }
+        // `where T: A + B` after the header: more bounds on the impl's parameters,
+        // and `where T::Item: B` on an associated type projected from one.
+        let impl_param_names: Vec<String> = impl_params.iter().map(|p| p.name.clone()).collect();
+        let mut impl_projections: Vec<ProjectionBound> = Vec::new();
+        self.parse_where_clause(&impl_param_names, &mut impl_bounds, &mut impl_projections, "impl")?;
         self.expect(TokenKind::LBrace, "'{' to open the impl's body")?;
         let mut methods = Vec::new();
         let mut names = Vec::new();
@@ -1271,6 +1252,7 @@ impl Parser {
                 impl_span,
                 type_params: impl_params.iter().map(|p| p.name.clone()).collect(),
                 type_param_bounds: impl_bounds,
+                projection_bounds: impl_projections,
             },
             methods,
         ))
@@ -1606,28 +1588,38 @@ impl Parser {
     /// One or more trait names separated by `+` (A-12 slice 2): `Name`,
     /// `alias.Name`, `A + B`. A bound names a trait and nothing else, so no
     /// argument list and no `&` is accepted.
-    /// The refusal for a `where` bound on a projection (`where I::Item: Display`),
-    /// which is step 5 of `plan/generic-trait-impls.md`, not built yet.
-    fn projection_bound_error(pname: &str, span: Span) -> ParseError {
-        ParseError {
-            message: format!(
-                "a bound on a projection ('where {pname}::...: Bound') is step 5 of plan/generic-trait-impls.md, not built yet: bound the parameter itself, or name the concrete type"
-            ),
-            span,
-        }
+    fn parse_bounds(&mut self) -> PResult<Vec<TypeExpr>> {
+        self.parse_bounds_at(None)
     }
 
-    fn parse_bounds(&mut self) -> PResult<Vec<TypeExpr>> {
+    /// `parse_bounds` for a site that takes plain trait names only (a
+    /// supertrait, an associated type's bound): an equality constraint there is
+    /// refused where it is written, naming the site.
+    fn parse_plain_bounds(&mut self, site: &str) -> PResult<Vec<TypeExpr>> {
+        self.parse_bounds_at(Some(site))
+    }
+
+    /// One or more bounds separated by `+`. `Name<Arg, Assoc = Type>` (MISSING-
+    /// Ve8Nc step 5) is a trait instance whose arguments are types and whose
+    /// `Assoc = Type` items are equality constraints on its associated types;
+    /// `site` refuses the constraints where a plain name is required.
+    fn parse_bounds_at(&mut self, site: Option<&str>) -> PResult<Vec<TypeExpr>> {
         let mut out = Vec::new();
         loop {
+            // A negative bound (`T: !Name`) is excluded from this design
+            // (`plan/generic-trait-impls.md` 6): refused by name where it starts.
+            if self.check(&TokenKind::Bang) {
+                return Err(ParseError {
+                    message: "a negative bound ('!Name') is excluded from generic trait impls (plan/generic-trait-impls.md section 6): a bound says a type implements a trait, and no bound says that it does not".to_string(),
+                    span: self.peek().span,
+                });
+            }
             let (name, span) = self.parse_dotted_name()?;
             // `Name<Arg>` (A-12 slice 6): a bound on a trait instance. The
             // trait's own arguments are a comma-separated type list, exactly
-            // as an impl line writes them. The one `<` shape that is not in
-            // this slice is the equality constraint `Name<Item = i32>`, so it
-            // is detected by the `=` after the first name and refused where it
-            // is written rather than misreported as a bad argument list.
+            // as an impl line writes them.
             let mut bounds_span = span;
+            let mut eqs: Vec<(String, TypeExpr)> = Vec::new();
             let args = if self.check(&TokenKind::Lt) {
                 let open = self.advance().span;
                 let mut args = Vec::new();
@@ -1635,15 +1627,21 @@ impl Parser {
                     if matches!(self.peek_kind(), TokenKind::Ident(_))
                         && matches!(self.peek2_kind(), TokenKind::Eq)
                     {
-                        let (item, _) = self.expect_ident()?;
-                        return Err(ParseError {
-                            message: format!(
-                                "an equality constraint on an associated type ('{name}<{item} = i32>') is step 5 of plan/generic-trait-impls.md, not built yet: bound the parameter with the trait ('{name}') and name the concrete type where it is used ('I::Item'), rather than fixing it in the bound"
-                            ),
-                            span: self.peek().span,
-                        });
+                        let (item, item_span) = self.expect_ident()?;
+                        if let Some(site) = site {
+                            return Err(ParseError {
+                                message: format!(
+                                    "an equality constraint ('{name}<{item} = ...>') is not in this slice on {site}: an equality constraint is written on a function's or an impl's type parameter ('fun f<I: {name}<{item} = i64>>')"
+                                ),
+                                span: item_span,
+                            });
+                        }
+                        self.expect(TokenKind::Eq, "'=' after the associated type in an equality constraint")?;
+                        let ty = self.parse_type()?;
+                        eqs.push((item, ty));
+                    } else {
+                        args.push(self.parse_type()?);
                     }
-                    args.push(self.parse_type()?);
                     if self.check(&TokenKind::Comma) {
                         self.advance();
                         continue;
@@ -1658,6 +1656,7 @@ impl Parser {
             };
             let mut bound = TypeExpr::named(name, bounds_span);
             bound.args = args;
+            bound.bound_eq = eqs;
             bound.span = bounds_span;
             out.push(bound);
             if self.check(&TokenKind::Plus) {
@@ -1667,6 +1666,58 @@ impl Parser {
             break;
         }
         Ok(out)
+    }
+
+    /// The `where` clause after a generic declaration's header (MISSING-Ve8Nc
+    /// step 5), shared by a function and an impl: `where T: A + B` bounds a
+    /// parameter, and `where T::Assoc: A` bounds an associated type projected
+    /// from one. `params` names the declaration's own type parameters; a name
+    /// outside them is refused here, where the declaration is in hand.
+    fn parse_where_clause(
+        &mut self,
+        params: &[String],
+        bounds: &mut [Vec<TypeExpr>],
+        projections: &mut Vec<ProjectionBound>,
+        owner: &str,
+    ) -> PResult<()> {
+        if !matches!(self.peek_kind(), TokenKind::Ident(n) if n == "where") {
+            return Ok(());
+        }
+        self.advance();
+        loop {
+            let (pname, pspan) = self.expect_ident()?;
+            let Some(at) = params.iter().position(|p| *p == pname) else {
+                return Err(ParseError {
+                    message: format!(
+                        "'where {pname}: ...' names no type parameter of this {owner}: a 'where' clause bounds a parameter written in the '<...>' list, so declare '{pname}' there first"
+                    ),
+                    span: pspan,
+                });
+            };
+            if self.check(&TokenKind::ColonColon) {
+                self.advance();
+                let (assoc, _) = self.expect_ident()?;
+                self.expect(TokenKind::Colon, "':' after the associated type in a 'where' clause")?;
+                let more = self.parse_bounds()?;
+                for bound in more {
+                    projections.push(ProjectionBound {
+                        param: pname.clone(),
+                        assoc: assoc.clone(),
+                        bound,
+                    });
+                }
+            } else {
+                self.expect(TokenKind::Colon, "':' after the parameter in a 'where' clause")?;
+                let more = self.parse_bounds()?;
+                bounds[at].extend(more);
+            }
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        Ok(())
     }
 
     /// A `datac`/`enum` parameter list, with a bound refused (A-12 slice 2): a
@@ -2073,34 +2124,10 @@ impl Parser {
             None
         };
 
-        // `where T: Name` is the other spelling of a bound (A-12 slice 2). It
-        // is not in this slice, and it would otherwise be read as the start of
-        // a body and fail with something about `=`, so it is refused by name.
-        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "where") {
-            self.advance();
-            loop {
-                let (pname, pspan) = self.expect_ident()?;
-                if self.check(&TokenKind::ColonColon) {
-                    return Err(Parser::projection_bound_error(&pname, pspan));
-                }
-                let Some(at) = type_params.iter().position(|p| *p == pname) else {
-                    return Err(ParseError {
-                        message: format!(
-                            "'where {pname}: ...' names no type parameter of this function: a 'where' clause bounds a parameter written in the '<...>' list, so declare '{pname}' there first"
-                        ),
-                        span: pspan,
-                    });
-                };
-                self.expect(TokenKind::Colon, "':' after the parameter in a 'where' clause")?;
-                let more = self.parse_bounds()?;
-                type_param_bounds[at].extend(more);
-                if self.check(&TokenKind::Comma) {
-                    self.advance();
-                    continue;
-                }
-                break;
-            }
-        }
+        // `where T: Name` is the other spelling of a bound (A-12 slice 2), and
+        // `where T::Item: Name` bounds an associated type (MISSING-Ve8Nc step 5).
+        let mut projection_bounds: Vec<ProjectionBound> = Vec::new();
+        self.parse_where_clause(&type_params, &mut type_param_bounds, &mut projection_bounds, "function")?;
 
         let body = if signature {
             // A trait method with no body is a signature; one written with `=`
@@ -2168,6 +2195,7 @@ impl Parser {
             is_pub,
             type_params,
             type_param_bounds,
+            projection_bounds,
             receiver_bounds: Vec::new(),
             const_params,
             trait_impl: None,
@@ -2243,6 +2271,7 @@ impl Parser {
                 fn_ret: None,
                 const_expr: None,
                 impl_trait: None,
+                bound_eq: Vec::new(),
                 span,
             });
         }
@@ -2293,6 +2322,7 @@ impl Parser {
                     fn_ret: None,
                     const_expr: None,
                     impl_trait: None,
+                    bound_eq: Vec::new(),
                     span,
                 });
             }
@@ -2336,6 +2366,7 @@ impl Parser {
                 fn_ret: None,
                 const_expr: None,
                 impl_trait: Some(trait_name),
+                bound_eq: Vec::new(),
                 span,
             });
         }
@@ -2369,6 +2400,7 @@ impl Parser {
                 fn_ret: None,
                 const_expr: None,
                 impl_trait: None,
+                bound_eq: Vec::new(),
                 span: amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close)),
             });
         }
@@ -2419,6 +2451,7 @@ impl Parser {
                 fn_ret: None,
                 const_expr: None,
                 impl_trait: None,
+                bound_eq: Vec::new(),
                 span,
             });
         }
@@ -2494,6 +2527,7 @@ impl Parser {
                 fn_ret: None,
                 const_expr: None,
                 impl_trait: None,
+                bound_eq: Vec::new(),
                 span: amp_start.map(|a| a.to(span)).unwrap_or(span),
             });
         }
@@ -2512,6 +2546,7 @@ impl Parser {
             fn_ret: None,
             const_expr: None,
             impl_trait: None,
+            bound_eq: Vec::new(),
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
         })
     }
@@ -2690,6 +2725,7 @@ impl Parser {
             fn_ret: ret,
             const_expr: None,
             impl_trait: None,
+            bound_eq: Vec::new(),
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
         })
     }

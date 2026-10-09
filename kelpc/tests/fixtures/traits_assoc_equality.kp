@@ -1,11 +1,22 @@
-// An equality constraint on an associated type is not in this slice: refused by
-// name.
+// An equality constraint must name an associated type the trait declares; Src
+// declares Out, so Missing is refused by name at the call.
 
 trait Src {
     type Out
     fun Self.produce().return: Self::Out
 }
 
-fun pick<I: Src<Out = i32>>(x: &I).return: i32 = 0
+datac Feed(val n: i32)
 
-fun main() { }
+impl Src for Feed {
+    type Out = i32
+    fun Self.produce().return: Self::Out {
+        return self.n
+    }
+}
+
+fun pick<I: Src<Missing = i32>>(x: I).return: i32 = 0
+
+fun main() {
+    print(pick(Feed(n = 1)))
+}

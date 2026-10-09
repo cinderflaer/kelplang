@@ -6159,7 +6159,7 @@ fn the_associated_type_shapes_are_refused_by_name() {
     );
     assert_rejected_with(
         "tests/fixtures/traits_assoc_equality.kp",
-        "equality constraint on an associated type",
+        "declares no associated type 'Missing'",
     );
     assert_rejected_with(
         "tests/fixtures/traits_assoc_bound_violated.kp",
@@ -12056,6 +12056,25 @@ fn a_trait_can_be_implemented_for_a_generic_type_under_bounds() {
     // `where` clause as the other spelling of a bound.
     assert_compiles_and_runs("tests/fixtures/generic_impl_pair.kp", "12\n345\n");
     assert_compiles_and_runs("tests/fixtures/generic_impl_iterator.kp", "6\n6\n");
+    assert_compiles_and_runs("tests/fixtures/where_projection_bound.kp", "#1\n#0\n2\n#2\n#1\n2\n");
+    assert_compiles_and_runs("tests/fixtures/where_equality_constraint.kp", "12\n103\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_where_projection_bound.kp",
+        "the call to 'show_all' needs 'I::Item', which is 'Plain' for 'Plains', to implement the trait 'fmt.Display', and it does not",
+    );
+    assert_compiles_and_runs("tests/fixtures/impl_where_constraints.kp", "3\n2\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_impl_where_projection.kp",
+        "its impl needs 'I::Item' to implement 'std.fmt.Display', and it does not",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_impl_where_equality.kp",
+        "its impl needs 'Strs' ('Wrap' is parameter 'I') to bind 'Item' to 'i64', and it binds 'String'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_negative_bound.kp",
+        "a negative bound ('!Name') is excluded from generic trait impls (plan/generic-trait-impls.md section 6)",
+    );
     assert_compiles_and_runs("tests/fixtures/where_clause.kp", "3\n");
     assert_rejected_with(
         "tests/fixtures/refused_generic_impl_bound.kp",
@@ -12097,7 +12116,7 @@ fn a_blanket_impl_applies_to_every_type_that_meets_its_bound() {
     );
     assert_rejected_with(
         "tests/fixtures/refused_blanket_projection_bound.kp",
-        "a bound on a projection ('where I::...: Bound') is step 5 of plan/generic-trait-impls.md, not built yet",
+        "binds no associated type 'Item'",
     );
 }
 

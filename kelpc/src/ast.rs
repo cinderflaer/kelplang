@@ -114,6 +114,17 @@ pub struct TraitImplDecl {
     /// a condition (the bounds) under which an instance implements the trait.
     pub type_params: Vec<String>,
     pub type_param_bounds: Vec<Vec<TypeExpr>>,
+    /// `where I::Item: Bound` on the impl (MISSING-Ve8Nc step 5), as for a function.
+    pub projection_bounds: Vec<ProjectionBound>,
+}
+
+/// One `where P::Assoc: Bound` clause (MISSING-Ve8Nc step 5): the bound `bound`
+/// on the associated type `assoc` of the type parameter `param`.
+#[derive(Debug, Clone)]
+pub struct ProjectionBound {
+    pub param: String,
+    pub assoc: String,
+    pub bound: TypeExpr,
 }
 
 /// One `type Name = Type` inside an `impl` body (A-12 slice 5).
@@ -392,6 +403,10 @@ pub struct FunctionDecl {
     /// vectors are always the same length. Empty for a receiver method, whose
     /// parameters are its type's and take no bound.
     pub type_param_bounds: Vec<Vec<TypeExpr>>,
+    /// `where I::Item: Bound` (MISSING-Ve8Nc step 5): a bound on the associated
+    /// type `assoc` projected from the type parameter `param`, which the
+    /// instance checks at each call. Empty when the `where` clause has none.
+    pub projection_bounds: Vec<ProjectionBound>,
     /// For a method of a generic impl (`impl<I: Iterator> Tr for Type<I>`): the
     /// impl's bounds on the receiver type's parameters, one list per parameter
     /// in order, so the method sees them (`I::Item`) and an instance is checked
@@ -628,6 +643,10 @@ pub struct TypeExpr {
     /// parser sees this shape; `infer.rs` refuses any that is left (a `let`,
     /// a field, a return).
     pub impl_trait: Option<String>,
+    /// The equality constraints written on a bound (`I: Iterator<Item = i64>`):
+    /// each `(assoc, type)` pair, in source order (MISSING-Ve8Nc step 5). Empty
+    /// for every bound without one, and on every `TypeExpr` that is not a bound.
+    pub bound_eq: Vec<(String, TypeExpr)>,
     pub span: Span,
 }
 
@@ -650,6 +669,7 @@ impl TypeExpr {
             fn_ret: None,
             const_expr: None,
             impl_trait: None,
+            bound_eq: Vec::new(),
             span,
         }
     }
@@ -672,6 +692,7 @@ impl TypeExpr {
             fn_ret: None,
             const_expr: Some(Box::new(expr)),
             impl_trait: None,
+            bound_eq: Vec::new(),
             span,
         }
     }

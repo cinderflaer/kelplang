@@ -1,0 +1,9 @@
+// A negative bound is excluded from generic trait impls
+// (plan/generic-trait-impls.md section 6) and is refused by name.
+impl "std/fmt"
+
+fun show<T: !fmt.Display>(x: &T).return: i64 = 0
+
+fun main() {
+    print(show(1))
+}

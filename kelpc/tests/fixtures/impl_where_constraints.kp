@@ -1,0 +1,53 @@
+// MISSING-Ve8Nc step 5 on a generic impl: an equality constraint and a `where`
+// projection bound on the impl's parameter are checked where the impl is used.
+impl "std/iter"
+impl "std/option"
+impl "std/fmt"
+
+datac Wrap<I>(var inner: I)
+
+impl<I> iter.Iterator for Wrap<I> where I: iter.Iterator<Item = i64> {
+    type Item = i64
+    fun mut Self.next().return: option.Option<i64> {
+        return self.inner.next()
+    }
+}
+
+datac Tag(val id: i64)
+
+impl fmt.Display for Tag {
+    fun Self.to_text().return: String {
+        var out = String.empty()
+        val s = fmt.int(id)
+        out.push_str("#")
+        out.push_str(s.as_str())
+        return out
+    }
+}
+
+datac Tags(var left: i64)
+
+impl iter.Iterator for Tags {
+    type Item = Tag
+    fun mut Self.next().return: option.Option<Tag> {
+        if self.left == 0 {
+            return option.Option.None
+        }
+        self.left -= 1
+        return option.Option.Some(value = Tag(id = self.left))
+    }
+}
+
+datac Keep<I>(var inner: I)
+
+impl<I: iter.Iterator> iter.Iterator for Keep<I> where I::Item: fmt.Display {
+    type Item = I::Item
+    fun mut Self.next().return: option.Option<I::Item> {
+        return self.inner.next()
+    }
+}
+
+fun main() {
+    print(iter.sum_i64(Wrap(inner = iter.range(0, 3))))
+    print(iter.count(Keep(inner = Tags(left = 2))))
+}

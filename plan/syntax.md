@@ -1344,9 +1344,9 @@ print(area_of(c))
   impl must bind every declared associated type and may add none, and a declared bound is checked
   against the impl's type. Missing, extra, duplicate, a projection through a type with no such
   bound, and a bound the impl's type does not satisfy are each refused by name. Default associated
-  types (`type Item = i32` in a trait), associated consts, generic associated types, and equality
-  constraints (`I: Iterator<Item = i32>`) are not in this slice and are refused by name;
-  `plan/traits.md` 10 is the design.
+  types (`type Item = i32` in a trait), associated consts, and generic associated types are not in
+  this slice and are refused by name; equality constraints (`I: Iterator<Item = i32>`) were refused
+  here and are accepted from 26.10.4 (`### 9.5.5`); `plan/traits.md` 10 is the design.
 - A trait may take **type parameters** of its own: `pub trait From<T> { ... }`, written exactly like a `datac`/`fun` parameter list (with bounds: `trait Store<K, V: Named>`). The parameters are in scope in every method signature and default body, and the trait name plus its arguments (*trait instance*, `From<IoErr>`) is what an impl and a bound name. A trait method may take `mut` on its receiver, and the impl has to match it. A trait method may not take type parameters of its own (a generic method is still refused). A generic trait's argument is a named type or a builtin; a container, tuple, array, borrow, function type or handle is refused by name. A generic trait may not declare an associated type and may not be used behind `&dyn` (both follow-ups).
 - A trait method written with **no receiver** is a **static method**: `fun from(value: T).return: Self`, and an impl writes it without a receiver too (`fun from(value: IoErr).return: AppErr { ... }`). It is called on the type name (`AppErr.from(7)`) or through a bounded parameter (`X.from(7)` for `<X: From<i32>>`); `Self` in its return type is the implementing type. A type may implement `From<A>` and `From<B>` at once, and the call picks by argument type; a trait-name call (`From.from(7)`) is allowed only when `Self` and the trait's arguments are inferable. `std/convert` ships `From<T>` and `Into<T>` with **no blanket impls**. `plan/traits.md` 11 is the design.
 - A trait may name **supertraits** after a `:`, separated by `+`: `trait B: A + C { ... }`. An
@@ -1563,6 +1563,32 @@ fun main() {
 - Not in this slice, each refused by name: a user trait that supplies an operator (only the shipped
   `std/ops` traits are named by the lowering), a bitwise/shift/logical operator through a trait,
   and any derive or macro helper. `plan/traits.md` 13 is the design.
+
+### 9.5.5 Bounds on projections and equality constraints
+
+A bound may name an associated type of a parameter, and a constraint may fix it. Both are written on a
+function or a generic impl, inline or in a `where` clause, and are checked at each instance on the
+concrete type:
+
+```kelp
+fun total<I>(it: move I).return: i64 where I: iter.Iterator<Item = i64> {
+    var sum: i64 = 0
+    var cursor = it
+    for x in cursor {
+        sum += x
+    }
+    return sum
+}
+
+fun show_all<I: iter.Iterator>(it: move I).return: i64 where I::Item: fmt.Display {
+    ...
+}
+```
+
+An equality constraint names an associated type the trait declares and a type it must be; a
+projection bound names a plain trait the associated type must implement. A negative bound (`T: !Name`)
+and a bound with trait arguments on a projection are refused by name. `plan/generic-trait-impls.md`
+section 4 step 5 is the design.
 
 ## 10. Ownership, moves and borrowing
 
@@ -3129,7 +3155,8 @@ a local binding type (9.5.1). A bare `dyn Name` is refused by name. `::` is the
 associated-type projection: it is written only after a type name that is a type
 parameter or `Self` in a trait signature, and it names a type the impl bound
 (9.5). A bound never carries an argument list: `I: Iterator<Item = i32>` is an
-equality constraint and is refused by name.)
+equality constraint, accepted on a function or a generic impl from 26.10.4 and refused on a
+supertrait or an associated type's bound.)
 
 ```
 stmt         := "val" | "var" | "while" | "for" | "return" | expr

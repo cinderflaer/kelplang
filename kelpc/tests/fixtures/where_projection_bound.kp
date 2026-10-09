@@ -1,0 +1,45 @@
+// MISSING-Ve8Nc step 5: a `where` bound on a projection (`I::Item: Display`) is
+// checked at each call on the concrete item type, for two concrete iterators.
+impl "std/iter"
+impl "std/fmt"
+impl "std/option"
+
+datac Tag(val id: i64)
+
+impl fmt.Display for Tag {
+    fun Self.to_text().return: String {
+        var out = String.empty()
+        val s = fmt.int(id)
+        out.push_str("#")
+        out.push_str(s.as_str())
+        return out
+    }
+}
+
+datac Tags(var left: i64)
+
+impl iter.Iterator for Tags {
+    type Item = Tag
+    fun mut Self.next().return: option.Option<Tag> {
+        if self.left == 0 {
+            return option.Option.None
+        }
+        self.left -= 1
+        return option.Option.Some(value = Tag(id = self.left))
+    }
+}
+
+fun show_all<I: iter.Iterator>(it: move I).return: i64 where I::Item: fmt.Display {
+    var n: i64 = 0
+    var cursor = it
+    for x in cursor {
+        print(x.to_text())
+        n += 1
+    }
+    return n
+}
+
+fun main() {
+    print(show_all(Tags(left = 2)))
+    print(show_all(iter.take(Tags(left = 3), 2)))
+}

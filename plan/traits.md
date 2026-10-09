@@ -584,7 +584,8 @@ supertrait needs is a second rule on top of the impl's own arguments.
   follow-up named. A generic trait may not declare an associated type
   (`trait Name<T> { type Item }`) and may not be used behind `dyn`: an associated type has no
   single binding to name and the vtable has no slot for a parameter, so both are follow-ups. A
-  `where` clause and an equality constraint on a parameter stay refused, exactly as in section 5.
+  `where` clause and an equality constraint on a parameter stay refused, exactly as in section 5
+  (both are accepted on a function or a generic impl from 26.10.4, `plan/generic-trait-impls.md` step 5).
 
 ### 11.2 A static method has no receiver
 
@@ -702,7 +703,8 @@ Each refused where it is written, with the message naming the follow-up:
   by name: the projection and the vtable each have no slot for a trait parameter.
 - **A generic trait argument that is not a named type or a builtin** (a container, a tuple, an
   array, a borrow, a function type, a handle). Refused by name.
-- **An equality constraint** (`I: Iterator<Item = i32>`) and a **`where` clause**, as before.
+- **An equality constraint** (`I: Iterator<Item = i32>`) and a **`where` clause**, as before (both are
+  accepted on a function or a generic impl from 26.10.4, `plan/generic-trait-impls.md` step 5).
 - **A generic method of a trait** (`fun Self.map<U>(...)`), and a **generic static method**.
 
 ### 11.7 What the compiler does not check

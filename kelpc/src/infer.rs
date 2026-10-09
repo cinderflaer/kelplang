@@ -159,6 +159,8 @@ struct TraitImplInfo {
     /// type's, in order) and the bounds on each. Empty for a concrete type.
     type_params: Vec<String>,
     type_param_bounds: Vec<Vec<ast::TypeExpr>>,
+    /// `where I::Item: Bound` on the impl (MISSING-Ve8Nc step 5).
+    projection_bounds: Vec<ast::ProjectionBound>,
 }
 
 /// One generic impl, registered for `implements_trait`: an instance of
@@ -172,6 +174,16 @@ struct GenericImpl {
     /// `type Item = I::Item`, as written, over the impl's parameters.
     assoc_types: Vec<(String, ast::TypeExpr)>,
     params: Vec<String>,
+    /// The equality constraints (`I: Iterator<Item = i64>`) on each parameter,
+    /// as `(assoc, type)`, one list per parameter (MISSING-Ve8Nc step 5).
+    eqs: Vec<Vec<(String, ast::TypeExpr)>>,
+    /// The `where I::Item: Bound` clauses, as `(parameter index, assoc, trait
+    /// key)`.
+    projections: Vec<(usize, String, String)>,
+    /// The impl's module prefix and alias table, so a constraint's right-hand
+    /// name resolves where the impl was written.
+    prefix: String,
+    aliases: HashMap<String, String>,
 }
 
 /// One blanket impl (`impl<T: Bound> Trait for T`), registered for
@@ -326,6 +338,9 @@ struct FuncTemplate {
     /// parameter with no bound has an empty list, and a receiver method's
     /// parameters are its type's, so its lists are all empty.
     bounds: Vec<Vec<ast::TypeExpr>>,
+    /// `where I::Item: Bound` (MISSING-Ve8Nc step 5): checked at each call on
+    /// the concrete associated type.
+    projection_bounds: Vec<ast::ProjectionBound>,
     /// `Some` for a receiver method: the canonical receiver type name (already
     /// prefixed) and whether the receiver is `mut`.
     receiver: Option<(String, bool)>,
@@ -2973,6 +2988,16 @@ fn collect_traits(
         for bounds in &t.type_param_bounds {
             let mut resolved = Vec::new();
             for b in bounds {
+                if !b.bound_eq.is_empty() {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "an equality constraint on a generic trait's parameter ('{}') is not in this slice: bound the parameter with a plain trait name",
+                            b.display()
+                        ),
+                        b.span,
+                        t.module.clone(),
+                    ));
+                }
                 if !b.args.is_empty() {
                     return Err(Diagnostic::new(
                         format!(
@@ -3303,6 +3328,7 @@ fn collect_trait_impls(program: &ast::Program) -> Vec<TraitImplInfo> {
             impl_span: i.impl_span,
             type_params: i.type_params.clone(),
             type_param_bounds: i.type_param_bounds.clone(),
+            projection_bounds: i.projection_bounds.clone(),
         })
         .collect()
 }
@@ -8523,6 +8549,7 @@ fn collect_func_templates(
                     b.extend(f.type_param_bounds.iter().cloned());
                     b
                 },
+                projection_bounds: f.projection_bounds.clone(),
                 receiver: f
                     .receiver
                     .as_ref()
@@ -8654,6 +8681,16 @@ fn check_program_pass(
     let mut blanket_impls: Vec<BlanketImpl> = Vec::new();
     for imp in &trait_impls {
         if imp.type_params.contains(&imp.type_name) {
+            if !imp.projection_bounds.is_empty() || imp.type_param_bounds.iter().flatten().any(|b| !b.bound_eq.is_empty()) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "an equality constraint or a 'where' projection bound on 'impl<...> {} for {}' is not in this slice: a blanket impl takes plain trait bounds, and a generic impl ('impl<T> {} for Type<T>') takes both",
+                        imp.trait_name, imp.type_name, imp.trait_name
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
             // `impl<T: Bound> Trait for T`: a blanket impl. It binds no associated
             // type yet, and its trait takes no arguments (the parser refuses those).
             if let Some((name, _, _)) = imp.assoc_types.first() {
@@ -8682,11 +8719,16 @@ fn check_program_pass(
         }
         if !imp.type_params.is_empty() {
             let bounds = impl_param_bounds(imp, &traits, project)?;
+            let (eqs, projections) = impl_constraints(imp, &traits, project)?;
             generic_impls.entry(imp.trait_instance.clone()).or_default().push(GenericImpl {
                 template: imp.type_name.clone(),
                 bounds,
                 assoc_types: imp.assoc_types.iter().map(|(n, t, _)| (n.clone(), t.clone())).collect(),
                 params: imp.type_params.clone(),
+                eqs,
+                projections,
+                prefix: project.prefix_of(&imp.module).to_string(),
+                aliases: project.alias_prefixes_of(&imp.module),
             });
             continue;
         }
@@ -17542,6 +17584,78 @@ fn shaped_iterator_item(env: &TypeEnv, instance: &str) -> Option<Ty> {
     resolve_item_type(&next.item, &next.params, &args, env)
 }
 
+/// The equality constraints and the `where` projection bounds of a generic
+/// impl (MISSING-Ve8Nc step 5), checked as declared: each constraint names an
+/// associated type its trait declares, and a projection bound names a plain
+/// trait.
+type ImplConstraints = (Vec<Vec<(String, ast::TypeExpr)>>, Vec<(usize, String, String)>);
+
+fn impl_constraints(
+    imp: &TraitImplInfo,
+    traits: &HashMap<String, TraitInfo>,
+    project: &Project,
+) -> std::result::Result<ImplConstraints, Diagnostic> {
+    let prefix = project.prefix_of(&imp.module);
+    let aliases = project.alias_prefixes_of(&imp.module);
+    let mut eqs: Vec<Vec<(String, ast::TypeExpr)>> = Vec::new();
+    for bs in &imp.type_param_bounds {
+        let mut list = Vec::new();
+        for b in bs {
+            if b.bound_eq.is_empty() {
+                continue;
+            }
+            let key = qualify_written_name(&b.name, prefix, &aliases).unwrap_or_default();
+            for (assoc, rhs) in &b.bound_eq {
+                let declared = traits
+                    .get(&key)
+                    .is_some_and(|info| info.assoc_types.iter().any(|a| a.name == *assoc));
+                if !declared {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'{}' declares no associated type '{assoc}', so the equality constraint '{assoc} = {}' on a parameter of this impl names nothing",
+                            b.name,
+                            rhs.display()
+                        ),
+                        imp.impl_span,
+                        imp.module.clone(),
+                    ));
+                }
+                list.push((assoc.clone(), rhs.clone()));
+            }
+        }
+        eqs.push(list);
+    }
+    let mut projections = Vec::new();
+    for pb in &imp.projection_bounds {
+        let Some(idx) = imp.type_params.iter().position(|p| *p == pb.param) else {
+            continue;
+        };
+        if !pb.bound.args.is_empty() {
+            return Err(Diagnostic::new(
+                format!("'where {}::{}: {}' bounds a projection with trait arguments, which is not in this slice", pb.param, pb.assoc, pb.bound.display()),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        }
+        let Some(key) = qualify_written_name(&pb.bound.name, prefix, &aliases) else {
+            return Err(Diagnostic::new(
+                format!("'{}' bounds '{}::{}' of this impl, but its first segment is not a module it imports", pb.bound.name, pb.param, pb.assoc),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        };
+        if !traits.contains_key(&key) {
+            return Err(Diagnostic::new(
+                format!("'{}' is not a trait, so it cannot bound '{}::{}' of this impl", pb.bound.name, pb.param, pb.assoc),
+                imp.impl_span,
+                imp.module.clone(),
+            ));
+        }
+        projections.push((idx, pb.assoc.clone(), key));
+    }
+    Ok((eqs, projections))
+}
+
 /// The trait key each parameter of a generic or blanket impl must implement, one
 /// list per parameter, in the impl's own module's spelling.
 fn impl_param_bounds(
@@ -17640,11 +17754,28 @@ fn generic_impl_applies(env: &TypeEnv, trait_key: &str, ty_name: &str) -> Option
                     .is_some_and(|n| implements_trait(env, key, &n))
             })
         });
-        if holds {
+        if holds && generic_impl_constraints_hold(env, gi, &args) {
             return Some((gi.clone(), args));
         }
     }
     None
+}
+
+/// The equality constraints and projection bounds of a generic impl hold for
+/// the instance's arguments (MISSING-Ve8Nc step 5).
+fn generic_impl_constraints_hold(env: &TypeEnv, gi: &GenericImpl, args: &[Ty]) -> bool {
+    let eqs_hold = gi.eqs.iter().enumerate().all(|(i, list)| {
+        list.iter().all(|(assoc, rhs)| {
+            args.get(i)
+                .and_then(|a| assoc_type_of(env, a, assoc))
+                .is_some_and(|got| eq_rhs_matches(rhs, &gi.params, args, &gi.prefix, &gi.aliases, &got))
+        })
+    });
+    eqs_hold
+        && gi.projections.iter().all(|(i, assoc, key)| {
+            args.get(*i)
+                .is_some_and(|a| matches!(projection_check(env, a, assoc, key), ProjectionCheck::Holds))
+        })
 }
 
 /// Why a type with a generic impl of `trait_key` does not implement it: the
@@ -17670,6 +17801,27 @@ fn generic_impl_shortfall(env: &TypeEnv, trait_key: &str, ty: &Ty) -> Option<Str
                     key
                 ));
             }
+        }
+        for (assoc, rhs) in gi.eqs.get(i).into_iter().flatten() {
+            let got = assoc_type_of(env, arg, assoc).map(|t| t.display()).unwrap_or_else(|| "nothing".to_string());
+            if assoc_type_of(env, arg, assoc).is_none_or(|got| !eq_rhs_matches(rhs, &gi.params, &args, &gi.prefix, &gi.aliases, &got)) {
+                return Some(format!(
+                    "its impl needs '{}' ('{}' is parameter '{}') to bind '{assoc}' to '{}', and it binds '{got}'",
+                    arg.display(),
+                    gi.template,
+                    gi.params.get(i).map(String::as_str).unwrap_or("?"),
+                    rhs.display()
+                ));
+            }
+        }
+    }
+    for (i, assoc, key) in &gi.projections {
+        let Some(a) = args.get(*i) else { continue };
+        if !matches!(projection_check(env, a, assoc, key), ProjectionCheck::Holds) {
+            return Some(format!(
+                "its impl needs '{}::{assoc}' to implement '{key}', and it does not",
+                gi.params.get(*i).map(String::as_str).unwrap_or("?")
+            ));
         }
     }
     None
@@ -17731,7 +17883,13 @@ fn implements_trait(env: &TypeEnv, trait_key: &str, ty_name: &str) -> bool {
     }
     // A generic type whose template declares an iterator-shaped `next` is an
     // `Iterator` by shape (`TypeEnv::iter_nexts`).
-    if trait_key == ITERATOR_TRAIT_KEY && shaped_iterator_item(env, ty_name).is_some() {
+    // An explicit generic `impl Iterator` of the type governs it: its bounds
+    // (`where I::Item: Display`, `I: Iterator<Item = i64>`) must hold, so the
+    // shape alone does not satisfy the trait then (MISSING-Ve8Nc step 5).
+    if trait_key == ITERATOR_TRAIT_KEY
+        && shaped_iterator_item(env, ty_name).is_some()
+        && !has_generic_impl_of(env, trait_key, ty_name)
+    {
         return true;
     }
     // `impl<T: Bound> Trait for Type<T>`: an instance implements the trait when
@@ -17746,6 +17904,17 @@ fn implements_trait(env: &TypeEnv, trait_key: &str, ty_name: &str) -> bool {
     env.impls.iter().any(|(other, types)| {
         other != trait_key && types.contains(ty_name) && trait_requires(env, other, trait_key)
     })
+}
+
+/// Whether the generic type `ty_name` (an instance) has an explicit generic impl
+/// of `trait_key` written for its template, whatever the impl's bounds are.
+fn has_generic_impl_of(env: &TypeEnv, trait_key: &str, ty_name: &str) -> bool {
+    let Some((template, _)) = env.instances.borrow().origin.get(ty_name).cloned() else {
+        return false;
+    };
+    env.generic_impls
+        .get(trait_key)
+        .is_some_and(|impls| impls.iter().any(|g| g.template == template))
 }
 
 /// Whether trait `sub` inherits, directly or transitively, from `sup`.
@@ -17941,9 +18110,190 @@ fn check_trait_bounds(
                     span,
                 });
             }
+            check_bound_equalities(ctx, tmpl, type_args, arg, b, &key, param, span)?;
+        }
+    }
+    for pb in &tmpl.projection_bounds {
+        check_projection_bound(ctx, tmpl, type_args, pb, span)?;
+    }
+    Ok(())
+}
+
+/// Whether `got` is the type an equality constraint's right-hand side names,
+/// read in the spelling of the declaration that wrote it: a parameter of that
+/// declaration (bound to `args`), a builtin, or a named type of its module.
+fn eq_rhs_matches(
+    te: &ast::TypeExpr,
+    params: &[String],
+    args: &[Ty],
+    prefix: &str,
+    aliases: &HashMap<String, String>,
+    got: &Ty,
+) -> bool {
+    if !te.args.is_empty() || te.tuple.is_some() || te.array_elem.is_some() || te.amp || te.fn_params.is_some() {
+        return false;
+    }
+    if let Some(i) = params.iter().position(|p| *p == te.name) {
+        return args.get(i).is_some_and(|a| a == got);
+    }
+    if let Some(t) = Ty::from_name(&te.name) {
+        return &t == got;
+    }
+    if builtin_type_name(got).is_some_and(|b| b == te.name) {
+        return true;
+    }
+    qualify_written_name(&te.name, prefix, aliases)
+        .is_some_and(|key| struct_name_of(got).is_some_and(|n| n == key))
+}
+
+/// Checks the equality constraints (`I: Iterator<Item = i64>`) one bound of a
+/// call's parameter writes: the trait declares each associated type, and the
+/// argument's type binds it to the named type (MISSING-Ve8Nc step 5).
+#[allow(clippy::too_many_arguments)]
+fn check_bound_equalities(
+    ctx: &Ctx,
+    tmpl: &FuncTemplate,
+    type_args: &[Ty],
+    arg: &Ty,
+    b: &ast::TypeExpr,
+    key: &str,
+    param: &str,
+    span: Span,
+) -> Result<()> {
+    let callee = display_callee(&tmpl.key);
+    for (assoc, rhs) in &b.bound_eq {
+        let declared = ctx
+            .env
+            .traits
+            .get(key)
+            .is_some_and(|info| info.assoc_types.iter().any(|a| a.name == *assoc));
+        if !declared {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' declares no associated type '{assoc}', so the equality constraint '{assoc} = {}' on '{param}' of '{callee}' names nothing",
+                    b.name,
+                    rhs.display()
+                ),
+                span,
+            });
+        }
+        let Some(got) = assoc_type_of(&ctx.env, arg, assoc) else {
+            return Err(TypeError {
+                message: format!(
+                    "the call to '{callee}' instantiates '{param}: {}' with '{}', which binds no '{assoc}', so the equality constraint '{assoc} = {}' cannot hold",
+                    b.display(),
+                    arg.display(),
+                    rhs.display()
+                ),
+                span,
+            });
+        };
+        if !eq_rhs_matches(rhs, &tmpl.params, type_args, &tmpl.prefix, &tmpl.aliases, &got) {
+            return Err(TypeError {
+                message: format!(
+                    "the call to '{callee}' instantiates '{param}: {}' with '{}', whose '{assoc}' is '{}', not '{}': the equality constraint '{assoc} = {}' fails",
+                    b.display(),
+                    arg.display(),
+                    got.display(),
+                    rhs.display(),
+                    rhs.display()
+                ),
+                span,
+            });
         }
     }
     Ok(())
+}
+
+/// Whether a concrete type's associated type meets a bound (MISSING-Ve8Nc
+/// step 5): the type binds `assoc`, and that type implements `key`.
+enum ProjectionCheck {
+    Holds,
+    NoItem,
+    Unmet(Ty),
+}
+
+fn projection_check(env: &TypeEnv, arg: &Ty, assoc: &str, key: &str) -> ProjectionCheck {
+    let Some(item) = assoc_type_of(env, arg, assoc) else {
+        return ProjectionCheck::NoItem;
+    };
+    let name = struct_name_of(&item)
+        .map(|s| s.to_string())
+        .or_else(|| builtin_type_name(&item).map(|s| s.to_string()));
+    match name {
+        Some(n) if implements_trait(env, key, &n) => ProjectionCheck::Holds,
+        _ => ProjectionCheck::Unmet(item),
+    }
+}
+
+/// Checks one `where P::Assoc: Bound` clause of a function at a call: the bound
+/// is on the concrete associated type, so `I::Item` is checked where `I` is
+/// bound (MISSING-Ve8Nc step 5).
+fn check_projection_bound(
+    ctx: &Ctx,
+    tmpl: &FuncTemplate,
+    type_args: &[Ty],
+    pb: &ast::ProjectionBound,
+    span: Span,
+) -> Result<()> {
+    let callee = display_callee(&tmpl.key);
+    let written = format!("{}::{}", pb.param, pb.assoc);
+    let Some(pi) = tmpl.params.iter().position(|p| *p == pb.param) else {
+        return Ok(());
+    };
+    let Some(arg) = type_args.get(pi) else {
+        return Ok(());
+    };
+    if !pb.bound.args.is_empty() {
+        return Err(TypeError {
+            message: format!(
+                "'where {written}: {}' bounds a projection with trait arguments, which is not in this slice",
+                pb.bound.display()
+            ),
+            span,
+        });
+    }
+    let Some(key) = qualify_written_name(&pb.bound.name, &tmpl.prefix, &tmpl.aliases) else {
+        return Err(TypeError {
+            message: format!(
+                "'{}' bounds '{written}' of '{callee}', but its first segment is not a module the declaration imports",
+                pb.bound.name
+            ),
+            span,
+        });
+    };
+    if !ctx.env.traits.contains_key(&key) {
+        return Err(TypeError {
+            message: format!(
+                "'{}' is not a trait, so it cannot bound '{written}' of '{callee}': a bound names a declared trait ('trait {} {{ ... }}')",
+                pb.bound.name, pb.bound.name
+            ),
+            span,
+        });
+    }
+    match projection_check(&ctx.env, arg, &pb.assoc, &key) {
+        ProjectionCheck::Holds => Ok(()),
+        ProjectionCheck::NoItem => Err(TypeError {
+            message: format!(
+                "the call to '{callee}' bounds '{written}' with '{}', but '{}' binds no associated type '{}': a projection bound needs a type that binds it, such as an iterator",
+                pb.bound.display(),
+                arg.display(),
+                pb.assoc
+            ),
+            span,
+        }),
+        ProjectionCheck::Unmet(item) => Err(TypeError {
+            message: format!(
+                "the call to '{callee}' needs '{written}', which is '{}' for '{}', to implement the trait '{}', and it does not: write 'impl {} for {} {{ ... }}' in the trait's module or in the type's",
+                item.display(),
+                arg.display(),
+                pb.bound.display(),
+                pb.bound.display(),
+                item.display()
+            ),
+            span,
+        }),
+    }
 }
 
 /// The refusal for a `dyn` coercion of a type whose trait comes from a blanket

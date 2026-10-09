@@ -207,29 +207,74 @@ A panic leaks every live owner in the frames above it, including a held `Mutex`
 guard and an open file in a worker. Needs a decision (unwind, or run drops
 without unwinding, or document the leak as permanent) before it is a task.
 
-### MISSING-Ve8Nc kelp: bounds on projections, equality constraints, and the rest of generic trait impls
+### MISSING-Gk3Rw kelp: no associated consts in traits or generic impls
 
-repo: kelp | found: 2026-10-06 | effort: L
+repo: kelp | found: 2026-10-09 | effort: L
 
-source: wiki `language/limits.md` (unreleased), "Not present at all", Traits;
-roadmap A-12; design note `plan/generic-trait-impls.md`.
+source: `plan/generic-trait-impls.md` section 6 (excluded from the generic trait impls
+design); refused by name today: `kelpc/tests/fixtures/traits_assoc_const.kp`, "associated
+consts are not in this slice". Follow-up release: none scheduled (no release named in
+`plan/roadmap.md`).
 
-Shipped in 26.10.3: `impl<A: Bound, B: Bound> Trait for Type<A, B>` (the type's own
-parameters, template methods, conditional on the bounds), associated types over the
-parameters (`type Item = I::Item`), and `where` as a second spelling of a bound on a
-function or an impl. Shipped in 26.10.4: coherence (two overlapping impls of a trait
-are refused) and blanket impls (`impl<T: A> B for T`), steps 1 to 4 of
-`plan/generic-trait-impls.md` section 4.
+### MISSING-Pt7Hn kelp: no trait-object upcast between trait objects
 
-Still absent, step 5 of the design note: a bound on a projection (`where I::Item:
-Display`) and an equality constraint (`I: Iterator<Item = i64>`), both refused by name
-until then. Also still absent, the design note's section 6 exclusions: specialization,
-negative bounds, associated consts, generic associated types, higher-ranked bounds,
-`impl Trait` in return position, and an upcast between trait objects. Not in step 4 or 5
-but still open (listed in the design note's header): an impl for one instantiation
-(`Type<i32>`), a const parameter on an impl, generic trait methods, `dyn` of a generic
-impl or of a blanket impl, a trait's default method in a generic or blanket impl, and
-operators through a generic impl.
+repo: kelp | found: 2026-10-09 | effort: L
+
+source: `plan/generic-trait-impls.md` section 6 (excluded); `plan/traits.md` 12 names it open
+for `Box<dyn Name>` and `&dyn Name`. Follow-up release: none scheduled (no release named in
+`plan/roadmap.md`).
+
+### MISSING-Lh6Yp kelp: generic trait impls, the rest after step 5 of the design note
+
+repo: kelp | found: 2026-10-09 | effort: L
+
+source: `plan/generic-trait-impls.md` header ("Not built") and section 4 step 6 onward. Step 5
+(bounds on projections and equality constraints, on functions and generic impls) is built in
+26.10.4. Still refused by name: an equality constraint or a `where` projection bound on a
+blanket impl (`impl<T: Iterator<Item = i64>> Tr for T`); an impl for one instantiation
+(`Type<i32>`); a const parameter on an impl; generic trait methods; `dyn` of a generic impl or
+of a blanket impl; a trait's default method in a generic or blanket impl; operators through a
+generic impl. Follow-up release: 26.11.1 for the adapters (MISSING-Hd4Lr); the others are
+unscheduled.
+
+### MISSING-Sb5Vq kelp: no specialization
+
+repo: kelp | found: 2026-10-09 | effort: XL
+
+source: `plan/generic-trait-impls.md` section 2 item 5 and section 6 (excluded: coherence is
+overlap-free with no specialization). Follow-up release: none scheduled; a design decision
+first.
+
+### MISSING-Wd2Lm kelp: no negative bounds
+
+repo: kelp | found: 2026-10-09 | effort: XL
+
+source: `plan/generic-trait-impls.md` section 6 (excluded). Refused by name today:
+`kelpc/tests/fixtures/refused_negative_bound.kp`, "a negative bound ('!Name') is excluded from
+generic trait impls". Follow-up release: none scheduled; a design decision first.
+
+### MISSING-Fn9Zx kelp: no generic associated types
+
+repo: kelp | found: 2026-10-09 | effort: XL
+
+source: `plan/generic-trait-impls.md` section 6 (excluded); refused by name today:
+`kelpc/tests/fixtures/traits_assoc_gat.kp`, "generic associated type is not in this slice".
+Follow-up release: none scheduled; a design decision first.
+
+### MISSING-Ur4Ct kelp: no higher-ranked bounds
+
+repo: kelp | found: 2026-10-09 | effort: XL
+
+source: `plan/generic-trait-impls.md` section 6 (excluded). Follow-up release: none scheduled;
+a design decision first.
+
+### MISSING-Ko8Ej kelp: no `impl Trait` in return position
+
+repo: kelp | found: 2026-10-09 | effort: XL
+
+source: `plan/generic-trait-impls.md` section 6 (excluded); the parser refuses `impl Trait`
+in a return type today (`kelpc/tests/fixtures/impl_trait_return_refused.kp`). Follow-up
+release: none scheduled; a design decision first.
 
 ### MISSING-Ra5Wn kelp: no async, no coroutines, no weaker atomic orderings
 

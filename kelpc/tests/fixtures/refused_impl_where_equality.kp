@@ -1,0 +1,27 @@
+// A generic impl's equality constraint (`I: Iterator<Item = i64>`) fails for a
+// type whose Item is String, so the instance is refused at the call.
+impl "std/iter"
+impl "std/option"
+
+datac Wrap<I>(var inner: I)
+
+impl<I> iter.Iterator for Wrap<I> where I: iter.Iterator<Item = i64> {
+    type Item = i64
+    fun mut Self.next().return: option.Option<i64> {
+        return self.inner.next()
+    }
+}
+
+datac Strs(var left: i64)
+
+impl iter.Iterator for Strs {
+    type Item = String
+    fun mut Self.next().return: option.Option<String> {
+        return option.Option.None
+    }
+}
+
+fun main() {
+    var w = Wrap(inner = Strs(left = 1))
+    print(iter.count(w))
+}

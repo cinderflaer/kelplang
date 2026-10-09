@@ -1,0 +1,27 @@
+// MISSING-Ve8Nc step 5: an equality constraint (`I: Iterator<Item = i64>`), in a
+// `where` clause and in the parameter list, types the body's reads of `Item`.
+impl "std/iter"
+
+fun total<I>(it: move I).return: i64 where I: iter.Iterator<Item = i64> {
+    var sum: i64 = 0
+    var cursor = it
+    for x in cursor {
+        val doubled: i64 = x * 2
+        sum += doubled
+    }
+    return sum
+}
+
+fun first_plus<I: iter.Iterator<Item = i64>>(it: move I, extra: i64).return: i64 {
+    var cursor = it
+    var sum: i64 = extra
+    for x in cursor {
+        sum += x
+    }
+    return sum
+}
+
+fun main() {
+    print(total(iter.range(1, 4)))
+    print(first_plus(iter.range(0, 3), 100))
+}

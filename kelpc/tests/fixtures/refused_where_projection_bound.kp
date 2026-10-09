@@ -1,0 +1,33 @@
+// MISSING-Ve8Nc step 5: a projection bound the concrete item type does not
+// satisfy is refused at the call, naming the projection and the type.
+impl "std/iter"
+impl "std/fmt"
+impl "std/option"
+
+datac Plain(val id: i64)
+
+datac Plains(var left: i64)
+
+impl iter.Iterator for Plains {
+    type Item = Plain
+    fun mut Self.next().return: option.Option<Plain> {
+        if self.left == 0 {
+            return option.Option.None
+        }
+        self.left -= 1
+        return option.Option.Some(value = Plain(id = self.left))
+    }
+}
+
+fun show_all<I: iter.Iterator>(it: move I).return: i64 where I::Item: fmt.Display {
+    var n: i64 = 0
+    var cursor = it
+    for x in cursor {
+        n += 1
+    }
+    return n
+}
+
+fun main() {
+    print(show_all(Plains(left = 2)))
+}

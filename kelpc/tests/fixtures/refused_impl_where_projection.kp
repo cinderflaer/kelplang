@@ -1,0 +1,33 @@
+// A `where` projection bound on a generic impl that the instance's item type
+// does not satisfy: Keep<Plains> needs its Item to implement Display.
+impl "std/iter"
+impl "std/option"
+impl "std/fmt"
+
+datac Plain(val id: i64)
+
+datac Plains(var left: i64)
+
+impl iter.Iterator for Plains {
+    type Item = Plain
+    fun mut Self.next().return: option.Option<Plain> {
+        if self.left == 0 {
+            return option.Option.None
+        }
+        self.left -= 1
+        return option.Option.Some(value = Plain(id = self.left))
+    }
+}
+
+datac Keep<I>(var inner: I)
+
+impl<I: iter.Iterator> iter.Iterator for Keep<I> where I::Item: fmt.Display {
+    type Item = I::Item
+    fun mut Self.next().return: option.Option<I::Item> {
+        return self.inner.next()
+    }
+}
+
+fun main() {
+    print(iter.count(Keep(inner = Plains(left = 2))))
+}
