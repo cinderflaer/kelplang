@@ -37,3 +37,22 @@ unsafe extern "C" {
     pub fn pthread_cond_wait(c: *mut Opaque, m: *mut Opaque) -> c_int;
     pub fn pthread_cond_broadcast(c: *mut Opaque) -> c_int;
 }
+
+/// Out-of-memory and internal-error exit. Calls the runtime's hook if one is
+/// installed (kelp_gc_set_panic_hook); otherwise prints `panic: <msg>` and exits
+/// with status 1, the same shape kelp_rt prints on the main thread.
+/// `msg` must be NUL-terminated.
+pub fn fatal(msg: &'static [u8]) -> ! {
+    let hook = unsafe { crate::state::st().oom_hook };
+    if hook != 0 {
+        let f: unsafe extern "C" fn(*const u8) = unsafe { core::mem::transmute(hook) };
+        unsafe { f(msg.as_ptr()) };
+    }
+    let prefix = b"panic: ";
+    unsafe {
+        write(2, prefix.as_ptr() as *const c_void, prefix.len());
+        write(2, msg.as_ptr() as *const c_void, msg.len() - 1);
+        write(2, b"\n".as_ptr() as *const c_void, 1);
+        exit(1);
+    }
+}
