@@ -148,15 +148,6 @@ to want any of the above; it does not depend on this entry.
 signature could not name a Kelp `enum` or `datac` on the default backend, and
 the prelude now emits those typedefs from the C backend's own layout writers.
 
-### MISSING-Xo5Ga kelp: no Unicode case mapping, and no `str` slicing that is codepoint aware
-
-repo: kelp | found: 2026-10-06 | effort: L
-
-source: wiki `language/limits.md` (unreleased), "Text": `to_upper`/`to_lower` are
-ASCII-only; most string functions count bytes, with the `char_*` helpers as a
-separate set. A `std/unicode` table module (case, width, grapheme boundaries,
-normalization) has no entry in the plan.
-
 ### MISSING-Zq1Pe kelp: `std/ws` is client-only, and `std/http` is HTTP/1.1 only
 
 repo: kelp | found: 2026-10-06 | effort: L

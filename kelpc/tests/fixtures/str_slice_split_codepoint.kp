@@ -1,0 +1,7 @@
+// M-Xo5Ga: an end offset inside the two-byte "é" is refused, not sliced.
+impl "std/str"
+
+fun main() {
+    val s = "é!"
+    print(str.slice(s, 0, 1))
+}

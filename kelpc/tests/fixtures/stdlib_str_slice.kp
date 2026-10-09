@@ -1,0 +1,15 @@
+// M-Xo5Ga: `str.slice` takes byte offsets that must fall on codepoint
+// boundaries. "é" is two bytes, "€" three, "😀" four.
+impl "std/str"
+
+fun main() {
+    val s = "aé€😀!"
+    print(str.len(s))
+    print(str.slice(s, 0, 1))
+    print(str.slice(s, 1, 3))
+    print(str.slice(s, 3, 6))
+    print(str.slice(s, 6, 10))
+    print(str.slice(s, 10, 11))
+    print(str.slice(s, 3, 3).len())
+    print(str.slice(s, 0, str.len(s)))
+}

@@ -1,0 +1,21 @@
+// M-Xo5Ga: `str.to_upper` and `str.to_lower` apply the Unicode simple case
+// mappings, not only ASCII. Each line below is one call, printed on its own line.
+impl "std/str"
+
+fun main() {
+    // Latin with diacritics, and the sharp s, whose simple uppercase is itself.
+    print(str.to_upper("café naïve"))
+    print(str.to_lower("ÉCOLE Ñandú"))
+    print(str.to_upper("straße"))
+    // Greek, including the final sigma: its simple uppercase is capital sigma.
+    print(str.to_upper("αβγ ωσς"))
+    print(str.to_lower("ΑΒΓ ΩΣ"))
+    // Cyrillic.
+    print(str.to_upper("привет ёж"))
+    print(str.to_lower("ПРИВЕТ ЁЖ"))
+    // A dotted capital I lowercases to a plain i under the simple mapping.
+    print(str.to_lower("İstanbul"))
+    // A two-byte letter whose lowercase is three bytes: the output is re-sized.
+    print(str.to_lower("Ⱥ"))
+    print(str.to_lower("Ⱥ").len())
+}
