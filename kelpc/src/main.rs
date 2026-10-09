@@ -12,6 +12,7 @@ mod driver;
 mod externs;
 mod fmt;
 mod freestanding;
+mod gc_descr;
 mod guard;
 mod infer;
 mod lexer;

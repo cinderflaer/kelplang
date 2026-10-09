@@ -254,6 +254,30 @@ pub fn link_llvm_object(
     )
 }
 
+/// Links a managed build's object (WP3): the program's object, the embedded
+/// runtime, then the collector archive `gc_archive` (WP1's `kelpc/gc` static
+/// library, which defines `kelp_gc_*`), then `-ldl` for the Rust side of that
+/// archive. Only the managed case calls this; every other build links exactly
+/// as before. The archive takes the slot a `extern fun` object takes, after the
+/// runtime, so the program's `kelp_gc_*` references resolve against it.
+pub fn link_managed_object(
+    object_path: &Path,
+    gc_archive: &Path,
+    out_path: &Path,
+    opt: OptLevel,
+) -> Result<(), CompileError> {
+    link_llvm_objects(
+        std::slice::from_ref(&object_path.to_path_buf()),
+        Some(gc_archive),
+        out_path,
+        opt,
+        &["dl".to_string()],
+        &[],
+        &[],
+        false,
+    )
+}
+
 /// Links several objects into the final binary: the incremental mode's
 /// finishing step (roadmap A-14 slice 1), where each compilation unit is its
 /// own object and the link line carries all of them.

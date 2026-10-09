@@ -13,3 +13,6 @@ back to this header. No need to ask first.
 Keep each line short and factual: what changed, and why it matters to someone
 writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
+
+## compiler
+- Managed-mode lowering (WP3, WIP): GC descriptors, typed Box allocation, drop gating; not yet compiled or verified.
