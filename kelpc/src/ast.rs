@@ -183,7 +183,7 @@ pub struct ExternTypeDecl {
     pub span: Span,
 }
 
-/// One `const NAME: T = expr` — a top-level compile-time constant (M6.3).
+/// One `const NAME: T = expr` - a top-level compile-time constant (M6.3).
 /// The type is mandatory (a `const` is a declared contract, unlike `val`),
 /// and the initializer has to fold to a literal, so there is nothing to
 /// allocate and nothing to drop.
@@ -206,7 +206,7 @@ pub struct ConstDecl {
     pub span: Span,
 }
 
-/// One `static NAME: T = expr` — a top-level global object (kernel stage 7).
+/// One `static NAME: T = expr` - a top-level global object (kernel stage 7).
 /// Unlike a `const`, which folds to a literal, a static is one object with a
 /// stable address, so its read is a load and `&NAME` is meaningful.
 #[derive(Debug, Clone)]
@@ -214,7 +214,7 @@ pub struct StaticDecl {
     pub name: String,
     /// `pub static ...` (A-13). See `ConstDecl::is_pub`.
     pub is_pub: bool,
-    /// `static mut NAME` — every access to it is `unsafe`.
+    /// `static mut NAME` - every access to it is `unsafe`.
     pub mutable: bool,
     /// `percpu static mut NAME` (kernel stage 8, MK9-S3-M3): the static is one
     /// object *per CPU*, laid out as the manifest's `[target] cpus` copies and
@@ -232,15 +232,15 @@ pub struct StaticDecl {
     pub span: Span,
 }
 
-/// One `pd val name = expr` / `pd var name: T = expr` — a passdown
+/// One `pd val name = expr` / `pd var name: T = expr` - a passdown
 /// (`plan/syntax.md` §9): a top-level binding a function can name without
 /// being passed it.
 #[derive(Debug, Clone)]
 pub struct PdDecl {
     pub name: String,
     /// `true` for `pd var`. Per the plan's resolution of §9's open question,
-    /// writability is confined to the top level either way — inside a
-    /// function body a passdown is read-only — so this only records which
+    /// writability is confined to the top level either way - inside a
+    /// function body a passdown is read-only - so this only records which
     /// keyword was written (and is what a future top-level statement form
     /// would consult).
     pub mutable: bool,
@@ -255,7 +255,7 @@ pub struct PdDecl {
 /// One `impl "shapes/circle"` line, plus its optional `caps(...)` grants (M7).
 #[derive(Debug, Clone)]
 pub struct ImplDecl {
-    /// The string literal's contents, verbatim (`shapes/circle` — no `.kp`).
+    /// The string literal's contents, verbatim (`shapes/circle` - no `.kp`).
     pub path: String,
     /// `caps(domain = [patterns...])` grants. Empty when the clause is
     /// absent. Two jobs in one syntax: it *delegates* the domain to the
@@ -304,7 +304,7 @@ pub struct DatacDecl {
     /// methods come with it: a method is reached through a value of the type,
     /// never through a module alias.
     pub is_pub: bool,
-    /// `datac Pair<A, B>` — the declared type parameters, in order (A-2).
+    /// `datac Pair<A, B>` - the declared type parameters, in order (A-2).
     /// Empty for an ordinary `datac`. A parameter is in scope inside every
     /// field type of this declaration and nowhere else; the declaration is a
     /// *template*, so `infer.rs` does not resolve its fields until an
@@ -312,7 +312,7 @@ pub struct DatacDecl {
     /// parameter is listed here too, in declaration order, and its value is
     /// carried by `const_params` (A-20).
     pub type_params: Vec<String>,
-    /// `datac Buf<const N: usize>` — the `const` parameters of the list above,
+    /// `datac Buf<const N: usize>` - the `const` parameters of the list above,
     /// in declaration order (A-20). Every name here also appears in
     /// `type_params`; this is what says which of them is a value.
     pub const_params: Vec<ConstParamDecl>,
@@ -327,13 +327,13 @@ pub struct DatacDecl {
     /// Canonical id of the module this was declared in: `""` for the entry
     /// module, otherwise its path relative to `src/` without the `.kp`
     /// suffix (`"shapes/circle"`). Set by `resolve.rs`; the parser leaves it
-    /// empty. Used to attribute a diagnostic to the right source file — a
+    /// empty. Used to attribute a diagnostic to the right source file - a
     /// `Span` is only meaningful inside its own file.
     pub module: String,
     pub span: Span,
 }
 
-/// One `enum Shape { Circle(val r: f64) Empty }` — a tagged union (A-1).
+/// One `enum Shape { Circle(val r: f64) Empty }` - a tagged union (A-1).
 /// `variants` is never empty, and variant names are unique within the enum;
 /// both are checked in `infer.rs`.
 #[derive(Debug, Clone)]
@@ -341,10 +341,10 @@ pub struct EnumDecl {
     pub name: String,
     /// `pub enum ...` (A-13). See `DatacDecl::is_pub`.
     pub is_pub: bool,
-    /// `enum Option<T>` — the declared type parameters, in order (A-2). See
+    /// `enum Option<T>` - the declared type parameters, in order (A-2). See
     /// `DatacDecl::type_params`.
     pub type_params: Vec<String>,
-    /// `enum Buf<const N: usize>` — the `const` parameters of the list above
+    /// `enum Buf<const N: usize>` - the `const` parameters of the list above
     /// (A-20). See `DatacDecl::const_params`.
     pub const_params: Vec<ConstParamDecl>,
     pub variants: Vec<VariantDecl>,
@@ -390,11 +390,11 @@ pub struct FunctionDecl {
     /// Never true on a receiver method: the parser refuses `pub` there, since
     /// a method's reachability follows its declaring type.
     pub is_pub: bool,
-    /// `fun f<T>(...)` — the function's own type parameters (A-2). Empty for
+    /// `fun f<T>(...)` - the function's own type parameters (A-2). Empty for
     /// an ordinary function, and empty for a *receiver method*, whose type
     /// parameters come from the receiver instead (`Receiver::type_args`).
     pub type_params: Vec<String>,
-    /// `fun sum<const N: usize>(...)` — the `const` parameters of the list
+    /// `fun sum<const N: usize>(...)` - the `const` parameters of the list
     /// above (A-20). See `DatacDecl::const_params`.
     pub const_params: Vec<ConstParamDecl>,
     /// `fun f<T: A + B>(...)`: the traits each parameter of `type_params`
@@ -415,7 +415,7 @@ pub struct FunctionDecl {
     /// `Some` for a method declared inside an `impl Trait for Type { ... }`
     /// block (A-12 slice 2).
     pub trait_impl: Option<TraitImplSite>,
-    /// `extern fun ...` — the body is supplied by the compiler (M6.2), so
+    /// `extern fun ...` - the body is supplied by the compiler (M6.2), so
     /// `body` is always `FunctionBody::Extern` here.
     pub extern_: bool,
     /// `unsafe fun ...` (MK9-S2 stage 1): the function may be called only from
@@ -426,14 +426,14 @@ pub struct FunctionDecl {
     /// result thrown away, is a compile error. `val _r = f()` is the explicit
     /// discard.
     pub must_use: bool,
-    /// `extern fun g(a: T, ...)` — a *user* extern whose last parameter is the
+    /// `extern fun g(a: T, ...)` - a *user* extern whose last parameter is the
     /// `...` variadic marker (gap 7). A call passes the fixed arguments and
     /// then any number of extra arguments, each of a scalar, `bool`, `str` or
     /// opaque-handle type. Only a module with a `coral.toml`
     /// `[extern."<module id>"]` section may write one; `infer.rs` is where
     /// that is enforced.
     pub variadic: bool,
-    /// `Some` for `fun Type.name(...)` / `fun mut Type.name(...)` —
+    /// `Some` for `fun Type.name(...)` / `fun mut Type.name(...)` -
     /// receiver-form methods. The receiver is *not* one of `params`; it's
     /// a separate implicit first argument, matching how the surface syntax
     /// keeps it outside the parens.
@@ -471,7 +471,7 @@ pub struct FunctionDecl {
 #[derive(Debug, Clone)]
 pub struct Receiver {
     pub type_name: String,
-    /// `fun Pair<A, B>.first()` — the receiver's type arguments, which are the
+    /// `fun Pair<A, B>.first()` - the receiver's type arguments, which are the
     /// method's type parameters (A-2). They must be exactly the generic type's
     /// own parameter list, in order, so the body can name them.
     pub type_args: Vec<String>,
@@ -499,10 +499,10 @@ pub struct ConstParamDecl {
 #[derive(Debug, Clone)]
 pub enum FunctionBody {
     Block(Block),
-    /// `fun f(...).return: T = expr` — sugar checked/lowered as if it were
+    /// `fun f(...).return: T = expr` - sugar checked/lowered as if it were
     /// `fun f(...).return: T { return expr }`.
     Expr(Expr),
-    /// `extern fun f(...)` — no body in `.kp` at all; `codegen_c.rs` writes
+    /// `extern fun f(...)` - no body in `.kp` at all; `codegen_c.rs` writes
     /// the compiler-supplied C body instead. Never reaches `check_function`'s
     /// block/expression paths.
     Extern,
@@ -530,9 +530,9 @@ pub enum ParamMode {
     /// The default: an implicit shared borrow for a `datac`-shaped type,
     /// plain by-value for a `Copy` type.
     Borrow,
-    /// `mut T` — an exclusive borrow.
+    /// `mut T` - an exclusive borrow.
     Mut,
-    /// `move T` — the callee owns the argument and the call site moves it.
+    /// `move T` - the callee owns the argument and the call site moves it.
     Move,
 }
 
@@ -557,7 +557,7 @@ impl ParamMode {
 
 /// One parameter of a function *type* (A-4): `fun(String)` (a borrow),
 /// `fun(mut Counter)` (an exclusive borrow), `fun(move Job)` (ownership).
-/// There is no binding name — a function type is not a declaration — so this
+/// There is no binding name - a function type is not a declaration - so this
 /// is a mode and a type, exactly as `Param` is minus the name.
 #[derive(Debug, Clone)]
 pub struct FnTypeParam {
@@ -583,7 +583,7 @@ pub struct TypeExpr {
     pub tuple: Option<Vec<TypeExpr>>,
     /// Type arguments, for the one generic the compiler knows: `List<T>`.
     /// Empty for every ordinary type name, and the parser only accepts them
-    /// after a bare or dotted name — `List<i32>`, never `math.List<i32>`.
+    /// after a bare or dotted name - `List<i32>`, never `math.List<i32>`.
     /// `infer.rs` rejects arguments on a name that is not `List`, and more
     /// than one on `List` itself; v1 has no user-definable generics.
     pub args: Vec<TypeExpr>,
@@ -613,7 +613,7 @@ pub struct TypeExpr {
     /// `None` for every ordinary type; the parser only sets it after a leading
     /// `&` (with or without `mut`).
     pub dyn_trait: Option<String>,
-    /// `scoped fun(T).return: U` — a *contextual* modifier (`scoped` is not a
+    /// `scoped fun(T).return: U` - a *contextual* modifier (`scoped` is not a
     /// keyword, and is only a modifier when the next token is `fun`). A
     /// scoped function value may only be written at a call site and may not
     /// outlive the call (`plan/scoped-blocks.md`). Legal only on a top-level
@@ -621,7 +621,7 @@ pub struct TypeExpr {
     /// another function type it could be stored as that type, which is the
     /// one thing the modifier forbids.
     pub scoped: bool,
-    /// `fun(i32, String).return: bool` — the parameters, when this is a function
+    /// `fun(i32, String).return: bool` - the parameters, when this is a function
     /// type (A-4). `Some`, even when empty (`fun()`), is what marks it as one;
     /// `None` for every ordinary type. `name` is `"fun"` in that case, or
     /// `"closure"` for the owned, environment-carrying form (A-4 phase E);
@@ -651,7 +651,7 @@ pub struct TypeExpr {
 }
 
 impl TypeExpr {
-    /// An ordinary named type with no arguments — the shape almost every
+    /// An ordinary named type with no arguments - the shape almost every
     /// construction site wants.
     pub fn named(name: impl Into<String>, span: Span) -> TypeExpr {
         TypeExpr {
@@ -697,7 +697,7 @@ impl TypeExpr {
         }
     }
 
-    /// Whether this is a closure type (`closure(i32).return: i32`) — the owned,
+    /// Whether this is a closure type (`closure(i32).return: i32`) - the owned,
     /// environment-carrying form of a function type (A-4 phase E).
     pub fn is_closure(&self) -> bool {
         self.fn_params.is_some() && self.name == "closure"
@@ -869,8 +869,8 @@ pub enum Stmt {
     },
     /// An expression used as a full statement. Whether it's the block's
     /// *tail* (value-producing) or purely a side-effecting statement is
-    /// decided positionally — textually the block's last statement is the
-    /// tail — there's no `;` to mark it either way now that statements are
+    /// decided positionally - textually the block's last statement is the
+    /// tail - there's no `;` to mark it either way now that statements are
     /// newline-terminated.
     Expr {
         expr: Expr,
@@ -907,7 +907,7 @@ pub enum BinOp {
 pub enum UnOp {
     Neg,
     Not,
-    /// `~a` — bitwise complement. Prefix only: the language has no `~`
+    /// `~a` - bitwise complement. Prefix only: the language has no `~`
     /// postfix form and no `~=`.
     BitNot,
 }
@@ -921,10 +921,10 @@ pub struct CallArg {
 }
 
 /// A "place": an expression with stable storage that can be borrowed,
-/// assigned into, or matched without moving what it names — an `Ident`, a
+/// assigned into, or matched without moving what it names - an `Ident`, a
 /// `.field` chain rooted in one, or a dereferenced borrow (`*p`, `(*p).field`).
 /// Shared between `parser.rs` (which uses it to decide whether `if let`'s
-/// desugared scrutinee needs a fresh owning temporary — see `parse_if_let`)
+/// desugared scrutinee needs a fresh owning temporary - see `parse_if_let`)
 /// and `infer.rs` (which uses it for the same question about an explicit
 /// `&expr`/method-borrow argument), so the definition of "a place" cannot
 /// drift between the two.
@@ -1006,7 +1006,7 @@ pub enum Expr {
     /// a negative value is an `Unary` negation of one of these (MISSING-x8Wq3).
     /// `infer.rs` decides the type from the literal's context.
     IntLit(u64, Span),
-    /// `'a'` — one Unicode scalar value (open item 53), from the lexer
+    /// `'a'` - one Unicode scalar value (open item 53), from the lexer
     /// already decoded. Its *type* is not decided here: `infer.rs` gives it
     /// the integer type its context asks for (so a `u8` byte comparison can
     /// write `c == '"'`) and `char` when nothing asks for one.
@@ -1030,7 +1030,7 @@ pub enum Expr {
         rhs: Box<Expr>,
         span: Span,
     },
-    /// Also covers `datac` construction (`Circle(r = 2.0)`) — at parse
+    /// Also covers `datac` construction (`Circle(r = 2.0)`) - at parse
     /// time a call and a construction look identical; `infer.rs`
     /// disambiguates by whether `callee` names a function or a `datac`.
     /// `type_args` is the explicit instantiation (`Pair<i32, String>(...)`,
@@ -1058,7 +1058,7 @@ pub enum Expr {
         span: Span,
     },
     Block(Block),
-    /// `&expr` (shared) / `&mut expr` (exclusive) — taking a borrow of a
+    /// `&expr` (shared) / `&mut expr` (exclusive) - taking a borrow of a
     /// local. Only legal outside signatures; parameter/receiver positions
     /// use the bare/`mut T` forms instead (parsed via `Param.mutable`).
     Ref {
@@ -1066,7 +1066,7 @@ pub enum Expr {
         expr: Box<Expr>,
         span: Span,
     },
-    /// `expr?` — propagate a failure out of the enclosing function
+    /// `expr?` - propagate a failure out of the enclosing function
     /// (MK5-S6-M1). Postfix, and the operand must be an `enum` shaped
     /// `Ok`/`Err` or `Some`/`None`; `infer.rs` decides that and lowers it to a
     /// `tir::ExprKind::Try`.
@@ -1074,17 +1074,17 @@ pub enum Expr {
         expr: Box<Expr>,
         span: Span,
     },
-    /// `*expr` — dereferencing a borrow.
+    /// `*expr` - dereferencing a borrow.
     Deref {
         expr: Box<Expr>,
         span: Span,
     },
-    /// `receiver.method(args)` — syntactically indistinguishable from
+    /// `receiver.method(args)` - syntactically indistinguishable from
     /// `.field` access until the parser sees a `(` right after the method
     /// name. `infer.rs` resolves `method` against the receiver expression's
     /// type and lowers this to a plain `Call` (the receiver becomes the
     /// first argument, auto-borrowed exactly like any other `Ty::Ref`
-    /// parameter) — no new `tir`/codegen shape needed.
+    /// parameter) - no new `tir`/codegen shape needed.
     MethodCall {
         receiver: Box<Expr>,
         method: String,
@@ -1094,7 +1094,7 @@ pub enum Expr {
         args: Vec<CallArg>,
         span: Span,
     },
-    /// `fun(x: i32).return: i32 = x * 2` — an anonymous function (A-4), written
+    /// `fun(x: i32).return: i32 = x * 2` - an anonymous function (A-4), written
     /// where an expression is expected. `infer.rs` synthesizes one top-level
     /// function per literal; the expression's value is a function value when
     /// the body captured nothing, and a *closure* (a function value plus an
@@ -1108,7 +1108,7 @@ pub enum Expr {
         /// typed by hand. A literal with this set and no expected function
         /// type is refused rather than guessed at.
         infer_params: bool,
-        /// The `.return: T`. `None` means `Unit`, exactly as on a declaration —
+        /// The `.return: T`. `None` means `Unit`, exactly as on a declaration -
         /// there is no return-type inference, because a literal's type *is*
         /// its signature. A block literal with `infer_params` takes the return
         /// from the expected type instead: a non-unit expected return makes
@@ -1123,8 +1123,8 @@ pub enum Expr {
     },
     /// A string literal with `$name` / `${expr}` interpolation, already split
     /// into parts by the lexer. Can only be consumed by `print`/`print!` in
-    /// v1 — building a `str` value out of pieces needs the owned `String`
-    /// type, which lands in M6 — so `infer.rs` rejects it anywhere else.
+    /// v1 - building a `str` value out of pieces needs the owned `String`
+    /// type, which lands in M6 - so `infer.rs` rejects it anywhere else.
     Template {
         parts: Vec<TemplatePart>,
         span: Span,
@@ -1156,7 +1156,7 @@ pub enum Expr {
         nostack: bool,
         span: Span,
     },
-    /// `when expr { Variant(bind) -> value ... }` — pattern matching over an
+    /// `when expr { Variant(bind) -> value ... }` - pattern matching over an
     /// `enum` scrutinee (A-1, `plan/syntax.md` §6.3). Distinct from the
     /// boolean `when`, which has no scrutinee and is desugared by the parser
     /// (see `parser::parse_when`); this form is checked by `infer.rs`, which
@@ -1222,7 +1222,7 @@ pub struct WhenArm {
     pub span: Span,
 }
 
-/// `Rect(w, h)` / `Empty` — a variant name and one binding per payload
+/// `Rect(w, h)` / `Empty` - a variant name and one binding per payload
 /// field, in field order. `None` in `binds` is `_`: that payload is ignored
 /// rather than named.
 #[derive(Debug, Clone)]

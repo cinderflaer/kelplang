@@ -8,8 +8,8 @@
 //! single self-contained file with no install-time layout to get wrong, and
 //! the stdlib version is pinned to the compiler version for free.
 //!
-//! `resolve.rs` treats a `std/...` id exactly like a project module — same
-//! lexer, same parser, same aliases, same prefixing — with the text coming
+//! `resolve.rs` treats a `std/...` id exactly like a project module - same
+//! lexer, same parser, same aliases, same prefixing - with the text coming
 //! from here instead of from `src/`.
 
 use crate::ast::{BinOp, UnOp};
@@ -127,7 +127,7 @@ pub const DEFAULT_HTTP_POOL: usize = 4;
 
 /// The placeholder `std/http.kp` carries instead of a literal pool ceiling.
 /// Substitution happens on the source text *before* lexing, so this spelling
-/// never reaches the parser — and it deliberately avoids `%*name*%`, which is
+/// never reaches the parser - and it deliberately avoids `%*name*%`, which is
 /// the alias sigil and would be expanded by `preprocess.rs` first.
 const HTTP_POOL_PLACEHOLDER: &str = "__KELP_HTTP_POOL__";
 
@@ -646,7 +646,7 @@ pub fn checked_args(domain: &str, callee: &str, arg_is_str: &[bool]) -> Vec<CapC
     }
 }
 
-/// The first `str`-shaped argument, or `None` when there is none — the shape
+/// The first `str`-shaped argument, or `None` when there is none - the shape
 /// a call whose resource is simply "its path" needs.
 fn first_str_arg(arg_is_str: &[bool]) -> Option<usize> {
     arg_is_str.iter().position(|is_str| *is_str)

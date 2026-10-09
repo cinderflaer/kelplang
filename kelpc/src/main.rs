@@ -156,10 +156,10 @@ fn usage() {
          read, so fmt never waits on a node that has no data to give and\n\
          never replaces one. Formatting changes whitespace and indentation\n\
          only: it never rewrites a token, so a formatted file is the same\n\
-         program, and a rewritten file is a new inode — a hard link to it\n\
-         keeps the old bytes. A file that does not parse — by fmt's own\n\
+         program, and a rewritten file is a new inode - a hard link to it\n\
+         keeps the old bytes. A file that does not parse - by fmt's own\n\
          reading of it, or by the compiler's when the project's aliases are\n\
-         needed — is reported as a parse error and left alone.\n\n\
+         needed - is reported as a parse error and left alone.\n\n\
          lint prints warnings for the sources under each path (.{EXT} files,\n\
          recursing a directory, with a symbolic link inside a directory\n\
          skipped and reported). A warning is not a failure: lint exits zero\n\
@@ -720,7 +720,7 @@ fn report_deprecations(sources: &SourceMap, found: &[Diagnostic], deny: bool) ->
 /// artifact is a program to run rather than a file to keep, and the working
 /// directory is where the person who asked for it is standing. The stem keeps
 /// the old naming (`examples/hello.kp` is `build/hello`), so nothing about how
-/// a build is *named* changes — only where it lands.
+/// a build is *named* changes - only where it lands.
 fn default_out_path(source_path: &str) -> PathBuf {
     let stem = Path::new(source_path)
         .file_stem()
@@ -734,7 +734,7 @@ fn default_out_path(source_path: &str) -> PathBuf {
 ///
 /// Formatting is per-file: the file is lexed and parsed on its own and no
 /// `coral.toml` is required. The one thing one file cannot carry is the alias
-/// table — a `%*name*%` may be declared by a module this file imports — so
+/// table - a `%*name*%` may be declared by a module this file imports - so
 /// when a file's own declarations cannot resolve its references, the file is
 /// put to the compiler's own resolver, which reads the project exactly as
 /// `kelpc build` does; see `fmt_text`.
@@ -860,16 +860,16 @@ fn read_source(path: &Path) -> Result<String, ()> {
 /// parses the result. So when this file's own gate refuses it, the file is put
 /// to the resolver:
 ///
-/// - the resolver accepts it — the file parses under the project's table, which
-///   is a stronger check than the one that refused it — and it is formatted;
+/// - the resolver accepts it - the file parses under the project's table, which
+///   is a stronger check than the one that refused it - and it is formatted;
 /// - the resolver rejects it too, and its diagnostic is printed verbatim. That
 ///   is the same text, at the same position, that `kelpc build` prints for that
 ///   file.
 ///
 /// The resolver is only consulted for a file the gate could not check on its
 /// own, so a file with no aliases never loads a module graph at all. What `fmt`
-/// validates is therefore the file's own text, plus — only when the file's own
-/// gate refuses it — the project alias table it needs to expand that file. It
+/// validates is therefore the file's own text, plus - only when the file's own
+/// gate refuses it - the project alias table it needs to expand that file. It
 /// does not validate the project. A project broken somewhere this file does not
 /// reach (a cyclic or malformed `[alias]` entry, or an imported module with a
 /// syntax error) makes `kelpc build` exit 1 with a real diagnostic while `fmt`
@@ -903,8 +903,8 @@ fn report_fmt_error(path: &Path, src: &str, e: &fmt::FmtError) {
 
 /// The file a `fmt` path names.
 ///
-/// A symbolic link given by name is resolved to the file it points at — through
-/// a chain of links, absolute or relative targets alike — so that `-w` rewrites
+/// A symbolic link given by name is resolved to the file it points at - through
+/// a chain of links, absolute or relative targets alike - so that `-w` rewrites
 /// *that* file and the link is left as a link. Writing to the link's own path
 /// instead would rename a temporary over the link itself: the link would be
 /// replaced by a regular file and the file the user meant would never change.
@@ -939,7 +939,7 @@ fn fmt_file(path: &Path) -> Result<PathBuf, String> {
     if target.is_dir() {
         return Err(RefusalKind::NotARegularFile.message(format!(
             "'{}' is a symbolic link to the directory '{}'; fmt writes files, not \
-             directories — pass the directory itself",
+             directories - pass the directory itself",
             path.display(),
             target.display()
         )));
@@ -1091,20 +1091,20 @@ fn write_one(path: &Path) -> bool {
 /// source file: a reader sees the old bytes or the new ones, never a mixture.
 ///
 /// `target` is already the resolved file (`fmt_file`), so the temporary lands in
-/// the directory the write happens in — the same filesystem, which is what makes
-/// the rename atomic — and not next to a link that points somewhere else.
+/// the directory the write happens in - the same filesystem, which is what makes
+/// the rename atomic - and not next to a link that points somewhere else.
 ///
 /// The temporary's name carries the process id and a per-process counter, so two
 /// `fmt -w` runs against the same path write two different temporaries. With one
 /// fixed name they would write the *same* one, and either run could rename the
-/// other's half-written bytes into place — or find the file already renamed away
+/// other's half-written bytes into place - or find the file already renamed away
 /// and fail on it. The rename is one step either way, so the last run to finish
 /// wins and the file is never a mixture of the two. The name is not taken from
 /// the source, so a target whose own name is at the filesystem's limit still
 /// gets a temporary the directory can hold.
 ///
-/// A failure *after* the temporary exists — a write that runs out of space, a
-/// rename that fails — removes it before returning. A leftover temporary in a
+/// A failure *after* the temporary exists - a write that runs out of space, a
+/// rename that fails - removes it before returning. A leftover temporary in a
 /// source directory is a file the next `git status` reports and nothing owns.
 ///
 /// The rename makes the file that lands a **new inode**, and that is a
@@ -1116,7 +1116,7 @@ fn write_one(path: &Path) -> bool {
 /// bits follow the file, and a file moved to a secondary group first does not
 /// carry that group through); the owner cannot be varied without privilege, so
 /// "the owner does not follow" rests on reading this function; and ACLs and
-/// extended attributes rest on the same reading — mode bits have nowhere to put
+/// extended attributes rest on the same reading - mode bits have nowhere to put
 /// either, and no test measures them. Writing the file in place instead would
 /// keep all of that and lose the atomicity above, which is the property this
 /// function exists for.
@@ -1148,7 +1148,7 @@ fn write_atomic(target: &Path, contents: &str) -> std::io::Result<()> {
 static TEMP_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// The `.kp` files a `fmt` path names: an explicitly named file (whatever its
-/// extension — `fmt FILE` to stdout accepts one too), or every `.kp` file under
+/// extension - `fmt FILE` to stdout accepts one too), or every `.kp` file under
 /// a directory. Also returns the symbolic links the walk refused to follow, so
 /// the caller can report them.
 ///
@@ -1167,12 +1167,12 @@ fn collect_kp(path: &Path, command: &str) -> Result<(Vec<PathBuf>, Vec<String>),
                 .map(|t| t.display().to_string())
                 .unwrap_or_else(|_| path.display().to_string());
             return Err(RefusalKind::NotARegularFile.message(format!(
-                "'{}' is a symbolic link to the directory '{real}'; {command} does not follow it — \
+                "'{}' is a symbolic link to the directory '{real}'; {command} does not follow it - \
                  pass the directory itself",
                 path.display()
             )));
         }
-        // A link to a file — or a dangling one, which the per-file gate reports
+        // A link to a file - or a dangling one, which the per-file gate reports
         // with the link named.
         return Ok((vec![path.to_path_buf()], Vec::new()));
     }
@@ -1321,7 +1321,7 @@ fn naming_for(path: &Path) -> Option<lint::Naming> {
 /// Collects the `.kp` files under `dir`, never following a symbolic link.
 ///
 /// A link may name a file outside the tree the caller named, or a directory that
-/// holds this one — `ln -s . here` is enough — so following one could format a
+/// holds this one - `ln -s . here` is enough - so following one could format a
 /// file twice under two names, rewrite a file outside the tree, or recurse
 /// without end. The link is recorded instead, and the caller reports it.
 fn collect_kp_into(

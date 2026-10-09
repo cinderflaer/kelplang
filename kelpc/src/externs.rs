@@ -1,8 +1,8 @@
 //! Compiler-supplied C bodies for `extern fun` declarations (M6.2).
 //!
 //! Stdlib decision 3 in the plan: the stdlib ships as `.kp` sources, and the
-//! few operations that cannot be written in Kelp at all — a raw syscall, a
-//! `malloc`, a byte read out of a `&str` — are declared `extern` and have
+//! few operations that cannot be written in Kelp at all - a raw syscall, a
+//! `malloc`, a byte read out of a `&str` - are declared `extern` and have
 //! their body supplied here. That keeps the *policy* (the public function,
 //! its checks, its documentation) in reviewable Kelp source while confining the
 //! unportable primitive to one place.
@@ -10,7 +10,7 @@
 //! Keyed by `(module id, bare function name)`, e.g. `("std/mem",
 //! "alloc_raw")`. A module id is the `impl` path (`std/mem`), not the dotted
 //! symbol prefix. An `extern` with no entry here is rejected in `infer.rs`,
-//! not silently left undefined — which is also why user code cannot declare
+//! not silently left undefined - which is also why user code cannot declare
 //! one: only compiler-shipped modules have bodies.
 
 /// One compiler-supplied body: the module that may use it, the name written
@@ -397,8 +397,8 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "normalize_raw",
         // The normalization itself is Kelp (`std/rt`), so this body is the
         // buffer it writes into and the owned `String` it hands back. The
-        // `kelp_Bytes` here is a borrowed *view* of a stack array — `len` is
-        // the capacity, which is the normalizer's contract — and it is
+        // `kelp_Bytes` here is a borrowed *view* of a stack array - `len` is
+        // the capacity, which is the normalizer's contract - and it is
         // deliberately never dropped: it is not an allocation, and dropping it
         // would `free` a stack address.
         "    char buf[PATH_MAX + 1];\n    kelp_Bytes view;\n    view.data = (unsigned char*)buf;\n    view.len = PATH_MAX;\n    view.cap = PATH_MAX;\n    if (!kelp_std__rt__path_normalize(kelp_s, &view)) {\n        kelp_panic(\"path.normalize: path must be absolute and must not escape its own root\");\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw(strlen(buf));\n    memcpy(b.data, buf, b.len);\n    return kelp_String__from_bytes(b);\n",
@@ -646,7 +646,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/net",
         "resolve_raw",
-        "    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    struct addrinfo* list = NULL;\n    int rc = getaddrinfo(kelp_host, NULL, &hints, &list);\n    if (rc != 0) {\n        kelp_panic_gai(\"net.resolve: cannot resolve host\", rc);\n    }\n    /* One address per line, in the order `getaddrinfo` reported them, with\n       duplicates dropped — an address literal resolves to itself, so this\n       is also the honest way to see what `connect` would try first. */\n    char out[4096];\n    size_t at = 0;\n    out[0] = 0;\n    char seen[16][INET6_ADDRSTRLEN];\n    size_t seen_n = 0;\n    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {\n        void* src = NULL;\n        if (a->ai_family == AF_INET) {\n            src = &((struct sockaddr_in*)a->ai_addr)->sin_addr;\n        } else if (a->ai_family == AF_INET6) {\n            src = &((struct sockaddr_in6*)a->ai_addr)->sin6_addr;\n        } else {\n            continue;\n        }\n        char host[INET6_ADDRSTRLEN];\n        if (inet_ntop(a->ai_family, src, host, sizeof host) == NULL) {\n            continue;\n        }\n        bool dup = false;\n        for (size_t i = 0; i < seen_n; i++) {\n            if (strcmp(seen[i], host) == 0) {\n                dup = true;\n                break;\n            }\n        }\n        if (dup) {\n            continue;\n        }\n        if (seen_n < 16) {\n            snprintf(seen[seen_n], sizeof seen[seen_n], \"%s\", host);\n            seen_n++;\n        }\n        size_t hl = strlen(host);\n        if (at + hl + 1 >= sizeof out) {\n            break;\n        }\n        if (at > 0) {\n            out[at++] = '\\n';\n        }\n        memcpy(out + at, host, hl);\n        at += hl;\n        out[at] = 0;\n    }\n    freeaddrinfo(list);\n    return kelp_String__from_str(out);\n",
+        "    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    struct addrinfo* list = NULL;\n    int rc = getaddrinfo(kelp_host, NULL, &hints, &list);\n    if (rc != 0) {\n        kelp_panic_gai(\"net.resolve: cannot resolve host\", rc);\n    }\n    /* One address per line, in the order `getaddrinfo` reported them, with\n       duplicates dropped - an address literal resolves to itself, so this\n       is also the honest way to see what `connect` would try first. */\n    char out[4096];\n    size_t at = 0;\n    out[0] = 0;\n    char seen[16][INET6_ADDRSTRLEN];\n    size_t seen_n = 0;\n    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {\n        void* src = NULL;\n        if (a->ai_family == AF_INET) {\n            src = &((struct sockaddr_in*)a->ai_addr)->sin_addr;\n        } else if (a->ai_family == AF_INET6) {\n            src = &((struct sockaddr_in6*)a->ai_addr)->sin6_addr;\n        } else {\n            continue;\n        }\n        char host[INET6_ADDRSTRLEN];\n        if (inet_ntop(a->ai_family, src, host, sizeof host) == NULL) {\n            continue;\n        }\n        bool dup = false;\n        for (size_t i = 0; i < seen_n; i++) {\n            if (strcmp(seen[i], host) == 0) {\n                dup = true;\n                break;\n            }\n        }\n        if (dup) {\n            continue;\n        }\n        if (seen_n < 16) {\n            snprintf(seen[seen_n], sizeof seen[seen_n], \"%s\", host);\n            seen_n++;\n        }\n        size_t hl = strlen(host);\n        if (at + hl + 1 >= sizeof out) {\n            break;\n        }\n        if (at > 0) {\n            out[at++] = '\\n';\n        }\n        memcpy(out + at, host, hl);\n        at += hl;\n        out[at] = 0;\n    }\n    freeaddrinfo(list);\n    return kelp_String__from_str(out);\n",
     ),
     // ---- std/tls (MK5-S4b-M1, open item 37) --------------------------------
     //

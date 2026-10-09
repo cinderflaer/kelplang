@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::lexer::Span;
 
 /// A secondary location attached to a diagnostic. Used where an error has a
-/// natural second site that lives in *another* file — an alias's definition
+/// natural second site that lives in *another* file - an alias's definition
 /// versus the `%*name*%` that used it (M5.3), which is the case that stops a
 /// single `(module, span)` pair from being enough.
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ pub struct DiagnosticNote {
 pub struct Diagnostic {
     pub message: String,
     pub span: Span,
-    /// Canonical module id — the module's path relative to `src/` without
+    /// Canonical module id - the module's path relative to `src/` without
     /// the `.kp` suffix (`"shapes/circle"`). The entry module has one too
     /// (its own path), even though its *symbol prefix* is empty.
     pub module: String,
@@ -220,11 +220,11 @@ impl SourceMap {
                 )
             }
             // Module `""` is the sentinel for a diagnostic raised before (or
-            // instead of) loading a module — a bad CLI path, a missing
-            // `coral.toml` — so there is no file to point at.
+            // instead of) loading a module - a bad CLI path, a missing
+            // `coral.toml` - so there is no file to point at.
             None if module.is_empty() => format!("{label}{message}"),
             // Only reachable if a diagnostic was produced for a module whose
-            // file was never registered — a compiler bug, not a user error.
+            // file was never registered - a compiler bug, not a user error.
             None => format!("{label}{message}\n  --> <module '{module}'>"),
         }
     }

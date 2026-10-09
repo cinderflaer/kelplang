@@ -12,7 +12,7 @@
 //! the actual `free` calls. Where those go is decided by `borrowck.rs`, which
 //! hands over a `DropPlan` keyed by span, so this pass only has to ask "which
 //! locals die at the end of this block" and "which die before this return" as
-//! it writes each one — no second walk, and no lockstep between two passes.
+//! it writes each one - no second walk, and no lockstep between two passes.
 
 use crate::ast::{AsmOperandKind, BinOp, UnOp};
 use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
@@ -30,7 +30,7 @@ use std::fmt::Write;
 /// for that mistake to surface.
 ///
 /// `kelp_bytes_drop` takes a pointer and clears it, so a drop is idempotent at
-/// runtime as well as unreachable twice by construction — together with the
+/// runtime as well as unreachable twice by construction - together with the
 /// move checking that is what makes "no double free is expressible" testable
 /// rather than merely argued.
 const RUNTIME: &str = include_str!("../runtime/kelp_rt.c");
@@ -46,7 +46,7 @@ const RUNTIME: &str = include_str!("../runtime/kelp_rt.c");
 /// skips that call chain entirely. Measured on
 /// `benchmarks/sorting/sort.kp` (n = 5,000,000): 16 landed at 254ms, 24 at
 /// 243ms, 32 at 238ms, with diminishing returns above that (a further push to
-/// 64 was only 227ms) — 32 stays inside the well-tested range while clearing
+/// 64 was only 227ms) - 32 stays inside the well-tested range while clearing
 /// the 250ms target with headroom, rather than chasing the last few
 /// milliseconds outside it. Shared with the LLVM backend's
 /// `KELP_SORT_INSERTION_CUTOFF`.
@@ -76,7 +76,7 @@ const KELP_SORT_BLOCK: u64 = 64;
 /// Where the capability check's own half lives (MK7 §8): the deny path, the
 /// buffered plumbing, and the allowlist loops. The *matching* and the *path
 /// normalization* it calls are Kelp (`std/rt`), declared just before this text
-/// is emitted — see `runtime_prototypes` and `kelpc/runtime/cap_glue.c`.
+/// is emitted - see `runtime_prototypes` and `kelpc/runtime/cap_glue.c`.
 pub(crate) const CAP_GLUE: &str = include_str!("../runtime/cap_glue.c");
 
 /// The C headers a generated program (and the `extern fun` bodies the LLVM
@@ -275,7 +275,7 @@ struct CapTable {
 
 impl CapTable {
     /// `None` means the calling module holds the domain but has no pattern
-    /// list recorded — impossible for a gated call, since the gate is what
+    /// list recorded - impossible for a gated call, since the gate is what
     /// admits the call at all.
     fn patterns_for(&self, module: &str, domain: &str) -> Option<&Vec<String>> {
         self.patterns.get(&(module.to_string(), domain.to_string()))
@@ -320,7 +320,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     let owned = owned_types(&program.structs, &program.enums, &program.drop_types);
     // The user types with a derived deep copy and a derived order
     // (MISSING-jL9tE): the least fixpoint over the declaration graph, computed
-    // once here for the same reasons `owned` is — `infer.rs` offers
+    // once here for the same reasons `owned` is - `infer.rs` offers
     // `List.clone`/`List.sort` for exactly the types these sets name, and if
     // the two disagreed the checker would offer a signature with no body.
     let type_decls = type_decls(&program.structs, &program.enums);
@@ -365,7 +365,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         // The module has to be *in* the program, or the calls below are
         // undefined symbols at link time. That is guaranteed by the resolver,
         // which injects `std/rt` for every module that holds a capability domain
-        // and for `std/path` — the same conditions that made either flag true —
+        // and for `std/path` - the same conditions that made either flag true -
         // so an absence here is a compiler bug and is reported as one rather
         // than discovered by `ld` with nothing pointing at the cause.
         let prototypes = runtime_prototypes(program);
@@ -390,7 +390,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     // hold a domain with no patterns (that is how `process.args` and
     // `process.exit` are reachable without granting any program), and a call
     // that *does* name a resource still has to have an array to deny against
-    // — skipping it left the generated C referring to a symbol that was never
+    // - skipping it left the generated C referring to a symbol that was never
     // defined.
     if cap_needed {
         out.push_str("// capability allowlists, compiled in per module\n");
@@ -414,12 +414,12 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     // makes a recursive `datac` work (M8).
     //
     // 1. every `datac`'s struct tag, forward-declared;
-    // 2. every container typedef, outermost last — a container holds its
+    // 2. every container typedef, outermost last - a container holds its
     //    contents through a pointer, so it is complete before any `datac`
     //    that uses it, including a `datac` whose own body comes later
     //    (`List<Tree>` inside `Tree`, or a mutually recursive pair);
     // 3. the `datac`s themselves, each with its drop function;
-    // 4. the container function sets, innermost first — their signatures need
+    // 4. the container function sets, innermost first - their signatures need
     //    the element's complete type, and a container drop calls the element's
     //    drop function, which step 3 has already defined.
     //
@@ -572,7 +572,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     }
 
     // A-1: `datac`s and `enum`s are emitted in one merged declaration order,
-    // because a field or payload may only name an earlier type by value — so
+    // because a field or payload may only name an earlier type by value - so
     // this order is what makes every typedef complete at the point it is
     // used, exactly as the single-kind declaration order did before.
     let mut decls: Vec<(usize, Decl)> = program
@@ -714,7 +714,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     }
 
     // Each `fun` literal that captured something has an environment struct and
-    // a drop function (A-4 phase E). They go here — after every typedef, since
+    // a drop function (A-4 phase E). They go here - after every typedef, since
     // a field holds its captured value by value, and before every function, so
     // a literal's body and its drop exist before anything names them.
     for f in &program.functions {
@@ -725,7 +725,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
 
     // Prototypes come first: a `pd` initializer may call a function
     // (`pd var r = buf_reader(...)`), and `write_pd_globals` emits
-    // `kelp_init_pds` — so the declarations have to be in scope before that
+    // `kelp_init_pds` - so the declarations have to be in scope before that
     // definition, not after it.
     for f in &program.functions {
         if f.name == "main" {
@@ -1111,7 +1111,7 @@ fn static_init_c(init: &crate::tir::StaticInit, ty: &Ty, structs: &[StructDef]) 
 }
 
 /// Emits an `extern` declaration's body: either the compiler-supplied C text
-/// from `externs.rs` (a stdlib module), or — MK9-S1-M1, roadmap B-1 — a
+/// from `externs.rs` (a stdlib module), or - MK9-S1-M1, roadmap B-1 - a
 /// direct-call trampoline to the native symbol a *user* module's own
 /// `coral.toml` `[extern."<module id>"]` section allowlisted, when
 /// `extern_ffi_symbols` (`infer.rs::check_program_pass`) names one for this
@@ -1159,7 +1159,7 @@ pub(crate) fn write_extern(
 /// itself (gap 4): it expands in place into the `(func, user_data,
 /// destroy_notify)` triple the native side expects, which the body below
 /// spells and `write_callback_glue` defines. There is nothing else to
-/// write — the "compiler-supplied body" that `write_extern`'s
+/// write - the "compiler-supplied body" that `write_extern`'s
 /// stdlib branch looks up in `externs.rs` exists to hand-write a primitive
 /// `.kp` cannot express at all (a raw syscall, a `malloc`); a user FFI
 /// binding has no such primitive to hand-write, since the whole point is
@@ -1254,7 +1254,7 @@ fn write_user_extern(out: &mut String, f: &Function, symbol: &str, closure_by_re
 /// initializes them, in declaration order (M5.2). The global's name is the
 /// same `pd#...` name a referencing function takes as a hidden parameter, so
 /// inside such a function the parameter shadows its own global and both
-/// spell the same symbol in C — including inside `main`, which can take no
+/// spell the same symbol in C - including inside `main`, which can take no
 /// parameters and therefore reads the globals directly.
 ///
 /// A `pd` initializer *is* code that runs, so a gated call inside one is
@@ -1443,7 +1443,7 @@ fn write_field_eq(out: &mut String, ty: &Ty, a: &str, b: &str) {
 
 /// (M6.2). Emitted in declaration order, and a `datac` may only name earlier
 /// `datac`s, so a struct's drop function is always defined before the struct
-/// that calls it — no forward declarations needed.
+/// that calls it - no forward declarations needed.
 fn write_struct(
     out: &mut String,
     s: &StructDef,
@@ -1604,7 +1604,7 @@ fn variant_member(name: &str) -> String {
 
 /// One `enum`'s C typedef and drop function (A-1). A tagged union: the tag is
 /// the variant's index, and each variant keeps its payload in a struct of its
-/// own inside a union — so exactly one payload is live, which is the whole
+/// own inside a union - so exactly one payload is live, which is the whole
 /// difference from a `datac`.
 ///
 /// A variant with no payload still gets a member with one `char` field: an
@@ -1682,7 +1682,7 @@ fn write_enum(
             }
             out.push_str("        break;\n    }\n");
         }
-        // No `default:` arm on purpose — `switch` on an unknown tag is a
+        // No `default:` arm on purpose - `switch` on an unknown tag is a
         // compiler-visible hole, and every tag this program can produce is
         // one of the cases above.
         out.push_str("    }\n}\n");
@@ -1865,13 +1865,13 @@ fn write_container_typedef(out: &mut String, ty: &Ty) {
 /// One closure instantiation's C typedef (A-4 phase E): the fat pointer a
 /// capturing `fun` literal becomes. Three members, and each earns its place:
 ///
-/// * `fn` — the generated function, whose first parameter is the environment.
+/// * `fn` - the generated function, whose first parameter is the environment.
 ///   Making it typed (rather than `void*`) is why the closure is
 ///   monomorphized per signature, exactly like a container.
-/// * `env` — the environment itself, type-erased: the layout belongs to the
+/// * `env` - the environment itself, type-erased: the layout belongs to the
 ///   one literal that made it, and casting it back inside the generated
 ///   function is what keeps that layout out of the type system.
-/// * `drop` — how to free the environment. The value cannot know its own
+/// * `drop` - how to free the environment. The value cannot know its own
 ///   layout, so it carries the destructor beside the pointer; without that a
 ///   closure could not drop what it captured.
 ///
@@ -1929,7 +1929,7 @@ fn coerce_mangle(ty: &Ty) -> String {
 
 /// The machinery behind `tir::ExprKind::FnToClosure` (A-4 phase E): a plain
 /// function value has no environment, so widening it into a closure means
-/// giving it one — a one-field heap struct holding the code pointer — and
+/// giving it one - a one-field heap struct holding the code pointer - and
 /// calling through a generated thunk. Emitted with the closure typedefs,
 /// because it is C shape rather than data: the thunk takes the environment
 /// first, exactly as a literal's generated function does, so the resulting
@@ -2010,8 +2010,8 @@ fn write_coerce_thunk(out: &mut String, ty: &Ty) {
 /// The generated `fn` member of a widened *known* function value (A-4 phase
 /// E): a shim that takes the environment a closure's `fn` member is called
 /// with and ignores it, then calls the function it wraps with the arguments.
-/// So the common widening — `list.map(xs, double)`, `Holder(cb = fun(x: i32)
-/// .return: i32 = x)` — costs no allocation and no indirection a `fun` value would
+/// So the common widening - `list.map(xs, double)`, `Holder(cb = fun(x: i32)
+/// .return: i32 = x)` - costs no allocation and no indirection a `fun` value would
 /// not have had, and only a widening of a function value whose identity is not
 /// statically known needs the heap wrapper.
 fn write_shim(out: &mut String, key: &str, ty: &Ty) {
@@ -2100,7 +2100,7 @@ fn write_thread_body(out: &mut String, sig: &Ty) {
     .unwrap();
 }
 
-/// One closure instantiation's function set — which is one function: the
+/// One closure instantiation's function set - which is one function: the
 /// drop. Everything else about a closure is the generated literal's or the
 /// caller's, and both are emitted elsewhere.
 fn write_closure(out: &mut String, ty: &Ty) {
@@ -2607,7 +2607,7 @@ fn container_depth(ty: &Ty) -> usize {
 /// One `Box<T>` instantiation's function set (M8). The box holds a pointer
 /// to one value or `NULL`; `take` moves the value out and is the reason a box
 /// can be empty at all (`Box.empty()`), which is what makes a recursive
-/// `datac` — and a loop that walks one — expressible without `Option`.
+/// `datac` - and a loop that walks one - expressible without `Option`.
 fn write_box(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
     let boxed = crate::types::box_c_type(elem);
     let boxed_ty = Ty::Box(Box::new(elem.clone()));
@@ -3009,7 +3009,7 @@ fn write_list(
 /// The S1 half of a `List<T>` function set: ordering, membership, a copied
 /// range, and the two operations that shift elements around. Which of these
 /// exist depends on the element type, exactly as `infer::list_sig` decides
-/// when it offers the signature — `types::list_sortable_elem` and its
+/// when it offers the signature - `types::list_sortable_elem` and its
 /// siblings are the single source of truth for both passes.
 fn write_list_s1(
     out: &mut String,
@@ -3272,7 +3272,7 @@ fn write_list_s1(
 /// Every container instantiation the program mentions, so `generate` knows
 /// which C typedefs and function sets to write. A `Box<T>` may contain
 /// another container (`Box<List<String>>`), so the walk recurses; a borrow
-/// of a container (`&List<T>` — every `List` parameter and method receiver)
+/// of a container (`&List<T>` - every `List` parameter and method receiver)
 /// is looked through.
 /// Every container and closure instantiation the program uses (M8, A-4
 /// phase E): one C typedef plus, for a container, one function set per
@@ -3290,7 +3290,7 @@ struct Instantiations {
     /// Closure signatures that a plain function value is widened into
     /// somewhere in the program, so each needs its thunk (A-4 phase E).
     coerced: HashSet<Ty>,
-    /// Widened values whose function is a *known* one — a declared `fun`
+    /// Widened values whose function is a *known* one - a declared `fun`
     /// named as a value, or a literal that captured nothing (whose value is a
     /// `FnRef` too). Each needs a shim instead of a thunk and a heap
     /// environment: the wrapper has nothing to hold, so `env` is `NULL` and
@@ -3605,7 +3605,7 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
 /// generated function that receives it, because nothing else names either.
 ///
 /// Each owned field is dropped through `types::drop_fn_name`, then the struct
-/// itself is freed — the same order a `datac`'s drop uses, one level down.
+/// itself is freed - the same order a `datac`'s drop uses, one level down.
 fn write_env(out: &mut String, f: &Function, owned: &HashSet<String>) {
     let Some(env) = &f.env else {
         return;
@@ -3659,7 +3659,7 @@ fn write_signature(out: &mut String, f: &Function) {
     // cannot write as `ret name(params)`: the returned pointer's own
     // parameter list has to be attached to the name, before this function's.
     // One level is what a function type is allowed to be here (a function
-    // type may not return a function type — `infer.rs` refuses that), so one
+    // type may not return a function type - `infer.rs` refuses that), so one
     // level is what this handles. A literal that captured something has a
     // hidden environment parameter (A-4 phase E), which goes first in either
     // spelling.
@@ -3685,7 +3685,7 @@ fn write_signature(out: &mut String, f: &Function) {
     out.push(')');
 }
 
-/// The parenthesized parameter list of a function's own signature — `void`
+/// The parenthesized parameter list of a function's own signature - `void`
 /// when it takes none, which is what a C definition requires. A literal that
 /// captured something receives its environment first, as a `void*` the body
 /// casts back to the literal's own environment struct: the environment's
@@ -3717,7 +3717,7 @@ fn write_params(out: &mut String, params: &[(String, Ty)], env: bool) {
     }
 }
 
-/// A function type's own parameter list, as C — the same text a declarator
+/// A function type's own parameter list, as C - the same text a declarator
 /// needs after the name, so `types.rs` and this emitter agree on one spelling:
 /// `types::fn_params_c` is that spelling, and a `unit` parameter is left out of
 /// it.
@@ -3873,8 +3873,8 @@ impl<'a> Gen<'a> {
 
     /// A condition rendered as a parenthesized C expression, with no second
     /// pair of parentheses when `cond` already renders as one group. Every
-    /// binary expression is emitted `(a op b)` — including the `tag == n` a
-    /// `when` arm tests — so wrapping it in `if (…)` produced `if ((a == b))`,
+    /// binary expression is emitted `(a op b)` - including the `tag == n` a
+    /// `when` arm tests - so wrapping it in `if (…)` produced `if ((a == b))`,
     /// which clang flags as an extraneous parenthesis. On the most common
     /// conditions in the language (`if a == b`, `while i < n`, every `when`
     /// arm) that is a warning per occurrence, enough of it on a fresh build to
@@ -3913,7 +3913,7 @@ impl<'a> Gen<'a> {
     }
 
     /// Frees owned locals in the order `borrowck.rs` decided (reverse
-    /// declaration order — a later binding is freed before an earlier one it
+    /// declaration order - a later binding is freed before an earlier one it
     /// may have taken its value from).
     fn write_drops(&mut self, targets: &[DropTarget], depth: usize) {
         for t in targets {
@@ -4031,8 +4031,8 @@ impl<'a> Gen<'a> {
 
     /// Writes a function body's statements. Unlike a nested block used as a
     /// mere statement (`write_block_body`), a present tail expression here
-    /// becomes the function's `return` — not a discarded expression statement
-    /// — whenever the function actually returns a value; `infer.rs` treats a
+    /// becomes the function's `return` - not a discarded expression statement
+    /// - whenever the function actually returns a value; `infer.rs` treats a
     /// tail-expression body exactly like `return <tail>;` (see
     /// `check_function`), so codegen has to honor that too. For a `Unit`-
     /// returning function (including `main`), the tail is still discarded,
@@ -4049,7 +4049,7 @@ impl<'a> Gen<'a> {
             self.write_line_marker(tail.span, depth);
             // A body whose tail is a `panic` diverges: `infer.rs` accepts it
             // against any declared return type, and here it is a plain
-            // statement — `return kelp_panic(...)` would be a void expression
+            // statement - `return kelp_panic(...)` would be a void expression
             // in a non-void function.
             if matches!(&tail.kind, ExprKind::Call { callee, .. } if callee == "panic") {
                 self.write_stmt_like_expr(tail, depth);
@@ -4242,7 +4242,7 @@ impl<'a> Gen<'a> {
         self.out.push('}');
     }
 
-    /// Evaluates `expr` into a fresh temporary, then runs `drops` — the shape
+    /// Evaluates `expr` into a fresh temporary, then runs `drops` - the shape
     /// every "produce a value, then free the frame" site needs, since the
     /// value may read through something being freed. Records the temporary's
     /// name in `last_temp`.
@@ -4448,7 +4448,7 @@ impl<'a> Gen<'a> {
             // A `fun` literal that captured something (A-4 phase E): build its
             // environment on the heap, move (or copy) each capture into it,
             // and hand back the fat pointer. One statement expression, so the
-            // whole thing is a value like any other — and so the captures are
+            // whole thing is a value like any other - and so the captures are
             // evaluated exactly once, in field order.
             ExprKind::ClosureLit { key, captures } => {
                 let env_ty = crate::types::env_struct_name(key);
@@ -4529,7 +4529,7 @@ impl<'a> Gen<'a> {
             }
             // A call through a function value: the callee is an expression
             // (a local, or a field), so it is parenthesized before the
-            // argument list — `(f)(x)`. A closure is a fat pointer, so the
+            // argument list - `(f)(x)`. A closure is a fat pointer, so the
             // call names its code pointer and passes the environment as the
             // hidden first argument; the callee is bound to a temporary
             // first, so a field or a dereference is evaluated once.
@@ -4688,7 +4688,7 @@ impl<'a> Gen<'a> {
             // A variant construction is a compound literal in one expression:
             // the tag is the variant's index, and the payload goes into that
             // variant's union member by designator. A payload-less variant
-            // needs no initializer at all — C zero-initializes what the
+            // needs no initializer at all - C zero-initializes what the
             // designators do not mention.
             ExprKind::EnumLit {
                 enum_name,
@@ -4782,7 +4782,7 @@ impl<'a> Gen<'a> {
             // the failure tag, rebuild the failure in the enclosing function's
             // return type and return it; otherwise the statement-expression is
             // the live success payload. The temporary is deliberately never
-            // dropped — exactly one variant's payload is moved out of it on
+            // dropped - exactly one variant's payload is moved out of it on
             // either path, and dropping the rest would free what was moved.
             ExprKind::Try {
                 expr: sub,
@@ -4895,7 +4895,7 @@ impl<'a> Gen<'a> {
                 // A shared borrow of a *temporary* (`str.join(str.split(s,
                 // sep), sep)`) has no address to take, so the temporary is
                 // hoisted into a C variable first. Its lifetime is the
-                // enclosing expression — the same duration the borrow has,
+                // enclosing expression - the same duration the borrow has,
                 // which is why `infer.rs` only allows this for a shared
                 // borrow of something that is not itself returned.
                 let tmp = fresh_temp();
@@ -5008,9 +5008,9 @@ impl<'a> Gen<'a> {
                 for d in &drops {
                     // An `Ident` target's drop names a binding `drop_name`
                     // resolves the usual way. A `FieldAccess`/`Deref` target
-                    // (`h.name = ...`, `*p = ...`) has no binding at all —
+                    // (`h.name = ...`, `*p = ...`) has no binding at all -
                     // `borrowck.rs` records `binding: None` for exactly this
-                    // shape (roadmap open item 15, cases 2 and 3) — so the
+                    // shape (roadmap open item 15, cases 2 and 3) - so the
                     // place to free is the target's own lvalue, read again:
                     // nothing between the two evaluations writes it, so a
                     // second render of the same place is the old value.
@@ -5034,7 +5034,7 @@ impl<'a> Gen<'a> {
                 else_block,
             } => {
                 // GNU statement-expressions only yield a value from a
-                // trailing *expression statement*, never from control flow —
+                // trailing *expression statement*, never from control flow -
                 // `if`/`else` has no value of its own in C. So an `if` used
                 // here (e.g. the RHS of a `let`) is lowered via a temporary
                 // that each branch assigns into, with the temporary itself as
@@ -5090,7 +5090,7 @@ impl<'a> Gen<'a> {
     }
 
     /// Writes a block whose tail expression (if any) is assigned into `tmp`
-    /// instead of being yielded as a statement-expression value — used for
+    /// instead of being yielded as a statement-expression value - used for
     /// the branches of an `if` that's itself being lowered via a temporary.
     fn write_block_assign(&mut self, block: &Block, tmp: &str, depth: usize) {
         self.push_locals();
@@ -6050,8 +6050,8 @@ impl<'a> Gen<'a> {
             return self.condvar_call(op, args, ret);
         }
         // `n.to_u8()` and friends (S1): a numeric conversion, emitted inline
-        // as a cast — with a range check when the target is an integer that
-        // can lose the value — rather than a C function per pair.
+        // as a cast - with a range check when the target is an integer that
+        // can lose the value - rather than a C function per pair.
         if let Some((src, dst)) = callee.split_once("#to_") {
             if let (Some(from), Some(to)) = (Ty::from_name(src), Ty::from_name(dst)) {
                 if from.is_integer() && (to.is_integer() || to.is_float()) {
@@ -6117,7 +6117,7 @@ impl<'a> Gen<'a> {
         }
         if callee == "print" || callee == "print!" {
             let arg = &args[0];
-            // `print` appends a newline, `print!` doesn't — opposite of the
+            // `print` appends a newline, `print!` doesn't - opposite of the
             // old `println`/`print` naming.
             let newline = if callee == "print" { "\\n" } else { "" };
             // An owned buffer that arrives *unwrapped* is a temporary nothing
@@ -6149,7 +6149,7 @@ impl<'a> Gen<'a> {
 
         // A shared borrow of a *temporary* (`str.join(str.split(s, sep),
         // sep)`) has no address to take, so the temporary is hoisted into a C
-        // variable that lives exactly as long as the call — and is freed
+        // variable that lives exactly as long as the call - and is freed
         // right after it, since nothing else owns it. The whole call becomes
         // one statement expression so the temporary is still alive when the
         // call runs; hoisting it into the *argument* alone would not do,
@@ -6196,7 +6196,7 @@ impl<'a> Gen<'a> {
             if let Some(elem) = elem {
                 let base = name_of(&elem);
                 // `get` has two C spellings: by value for a `Copy` element,
-                // by pointer for an owned one — which one is decided by the
+                // by pointer for an owned one - which one is decided by the
                 // call's own result type, never by guessing.
                 let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
                     "get_const"
@@ -6244,7 +6244,7 @@ impl<'a> Gen<'a> {
             if let (Some(value), Some(key)) = (from_ret, from_args) {
                 let base = crate::types::map_c_type(&key, &value);
                 // `get` has two C spellings: by value for a `Copy` value, by
-                // pointer for an owned one — decided by the call's own result
+                // pointer for an owned one - decided by the call's own result
                 // type, never by guessing.
                 let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
                     "get_const"
@@ -6284,14 +6284,14 @@ impl<'a> Gen<'a> {
 
     /// `base.field` in C: `->` when `base` is reached through a borrow
     /// (`Ty::Ref`), `.` otherwise. Each `FieldAccess` node decides this
-    /// purely from its own immediate base's type — a chain like `c.inner.x`
+    /// purely from its own immediate base's type - a chain like `c.inner.x`
     /// (where `c` is a `mut Counter` parameter and `inner` is a plain
     /// embedded field) gets this right node-by-node: the innermost access
     /// sees `c`'s `Ref` type and emits `->`, the outer one sees `inner`'s
     /// plain `Struct` type and emits `.`, with no extra state threaded
     /// through.
     /// `<base>.kelp_tag`, or `<base>->kelp_tag` when the base is itself a
-    /// borrow — the same rule `field_access` uses for a datac field.
+    /// borrow - the same rule `field_access` uses for a datac field.
     fn enum_tag_access(&self, base: &Expr) -> String {
         let base_text = self.expr_value(base);
         if matches!(base.ty, Ty::Ref { .. }) {
@@ -6663,7 +6663,7 @@ impl<'a> Gen<'a> {
 
     /// Renders an assignment target as a C lvalue. The type checker
     /// guarantees an assignment's target is always an `Ident`, a `.field`
-    /// chain rooted in one, or a dereferenced borrow (`*p`, `(*p).field`) —
+    /// chain rooted in one, or a dereferenced borrow (`*p`, `(*p).field`) -
     /// see `infer::is_tir_place`.
     /// `asm(...)` (kernel stage 5): one GCC extended-asm statement. The operand
     /// order is the LLVM backend's (outputs in appearance order, then inputs),
@@ -6820,8 +6820,8 @@ impl<'a> Gen<'a> {
             // An opaque handle has no readable value, so `infer.rs` refuses
             // one in `print` before codegen sees it.
             Ty::Handle(_) => unreachable!("an opaque handle cannot be printed"),
-            // A borrowed `Bytes`/`String` is the only way `print` sees one —
-            // `infer.rs` auto-borrows an owned place — so `->` is the accessor
+            // A borrowed `Bytes`/`String` is the only way `print` sees one -
+            // `infer.rs` auto-borrows an owned place - so `->` is the accessor
             // that applies. The length is cast because `%.*s` takes an `int`.
             Ty::Ref { inner, .. } if matches!(**inner, Ty::Bytes | Ty::String) => (
                 "%.*s",
@@ -6860,9 +6860,9 @@ fn indent(out: &mut String, depth: usize) {
 
 /// Whether a `tir` expression has stable storage: an `Ident`, a `.field`
 /// chain rooted in one, or a dereferenced borrow. Mirrors
-/// `infer::is_tir_place` — used here only to decide whether a borrow needs a
+/// `infer::is_tir_place` - used here only to decide whether a borrow needs a
 /// hoisted temporary.
-/// The user type a value names, looking through a borrow — the codegen-side
+/// The user type a value names, looking through a borrow - the codegen-side
 /// twin of `infer::struct_name_of`, and the reason an `EnumField` node does
 /// not have to carry the enum's name.
 fn struct_name_of_ty(ty: &Ty) -> Option<&str> {
@@ -7120,7 +7120,7 @@ fn printf_text(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             // CR was missing, and a raw carriage return inside a C string
-            // literal is not a string at all — it breaks the generated line.
+            // literal is not a string at all - it breaks the generated line.
             // Nothing could reach this until the lexer learned `\r` (S4), so
             // it took a protocol that ends its lines with CRLF to find it.
             '\r' => out.push_str("\\r"),
@@ -7144,7 +7144,7 @@ fn printf_text(s: &str) -> String {
 /// value: `100000000000000000000.0` becomes `100000000000000000000` and `-0.0`
 /// becomes `-0`. Emitted as-is, the first makes `cc` reject the file ("integer
 /// literal is too large to be represented in any integer type") and the second
-/// silently changes the value — C reads `-0` as the integer zero, so a sign
+/// silently changes the value - C reads `-0` as the integer zero, so a sign
 /// test or an integer-arithmetic rewrite of both operands loses the sign and
 /// the float-ness. `Debug` is the shortest form that keeps the type: it always
 /// emits a `.` or an exponent (`1e20`, `-0.0`, `0.1`, `1.7976931348623157e308`),
@@ -7227,7 +7227,7 @@ pub(crate) fn c_string_literal(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             // CR was missing, and a raw carriage return inside a C string
-            // literal is not a string at all — it breaks the generated line.
+            // literal is not a string at all - it breaks the generated line.
             // Nothing could reach this until the lexer learned `\r` (S4), so a
             // protocol that ends its lines with CRLF is what found it.
             '\r' => out.push_str("\\r"),
@@ -7290,7 +7290,7 @@ fn numeric_conversion(callee: &str, from: &Ty, to: &Ty, value: &str) -> String {
     let tmp = fresh_temp();
     // Only the bounds the source's own range cannot rule out. The upper
     // comparison used to be emitted unconditionally, so `i32.to_u32` checked
-    // `tmp > 4294967295LL` against an `int32_t` — a comparison clang reports
+    // `tmp > 4294967295LL` against an `int32_t` - a comparison clang reports
     // as always false, which is the second half of BUG-3's warning noise. A
     // bound that is unreachable by construction is dropped, not emitted as a
     // tautology.

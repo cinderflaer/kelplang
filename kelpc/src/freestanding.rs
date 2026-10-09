@@ -1245,7 +1245,7 @@ mod tests {
     #[test]
     fn every_admitted_item_is_declared_in_its_module() {
         // A free function is `fun name(`, and a receiver method is
-        // `fun Self.name(` / `fun mut Self.name(` — a method's declaration
+        // `fun Self.name(` / `fun mut Self.name(` - a method's declaration
         // carries the receiver, so the name alone never matches.
         let declares = |source: &str, name: &str| {
             let mut at = 0;

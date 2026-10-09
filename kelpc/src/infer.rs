@@ -40,7 +40,7 @@ struct VarInfo {
 
 /// One user-declared generic type (A-2): a `datac` or `enum` written with
 /// type parameters. Its fields are kept *as written* rather than resolved,
-/// because a type parameter has no type until an instantiation binds one —
+/// because a type parameter has no type until an instantiation binds one -
 /// resolution happens in `TypeScope::instantiate`, with the parameters bound
 /// to the concrete arguments.
 #[derive(Clone)]
@@ -224,7 +224,7 @@ struct InstanceState {
 
 /// The program's generic templates and the instances built so far. Shared by
 /// reference between the `Ctx` clones each function gets, so an instantiation
-/// discovered while checking one body is visible to every other — and to the
+/// discovered while checking one body is visible to every other - and to the
 /// final `tir::Program`.
 #[derive(Clone, Default)]
 struct TypeEnv {
@@ -322,7 +322,7 @@ struct IterNext {
 /// parameters (`fun first<T>(xs: List<T>).return: T`) or a receiver method on a
 /// generic type (`fun Pair<A, B>.first().return: A`). Its parameter and return
 /// types are kept as written, because a type parameter has no type until an
-/// instantiation binds it — exactly like `GenericTemplate`.
+/// instantiation binds it - exactly like `GenericTemplate`.
 #[derive(Clone)]
 struct FuncTemplate {
     /// Declaration key: the prefixed name, or `Type#name` for a receiver.
@@ -672,7 +672,7 @@ struct Ctx {
     /// diagnostics consult.
     enums: HashMap<String, EnumDef>,
     /// Top-level `const`s (M6.3), keyed by their module-qualified name and
-    /// already folded to a literal — so a use site is a substitution, not a
+    /// already folded to a literal - so a use site is a substitution, not a
     /// load from anywhere.
     consts: HashMap<String, ConstInfo>,
     /// Top-level `static`s (kernel stage 7), keyed by their module-qualified
@@ -692,7 +692,7 @@ struct Ctx {
     /// (`std.math.abs`) -> each declaration's parameter types and its
     /// type-suffixed key.
     overloads: HashMap<String, Vec<(Vec<Ty>, String)>>,
-    /// The module being checked — needed by capability diagnostics, which
+    /// The module being checked - needed by capability diagnostics, which
     /// have to name the module that lacks the grant.
     module: String,
     /// Capability domains *this* module holds, with their patterns (M7). The
@@ -713,7 +713,7 @@ struct Ctx {
     ret_ty: Ty,
     scopes: Vec<HashMap<String, VarInfo>>,
     /// Symbol prefix of the module being checked (`""` for the entry
-    /// module, else `"shapes.circle."`) — a bare type name in this module
+    /// module, else `"shapes.circle."`) - a bare type name in this module
     /// resolves to `prefix + name`.
     prefix: String,
     /// alias -> target module's symbol prefix, for this module's `impl`
@@ -723,7 +723,7 @@ struct Ctx {
     aliases: HashMap<String, String>,
     /// This module's passdowns, keyed by the bare name a function writes.
     /// `plan/syntax.md` §9 leaves the cross-module question open; M5.2
-    /// answers it the same way M5.1 answered imports — module-scoped, so
+    /// answers it the same way M5.1 answered imports - module-scoped, so
     /// only functions in the declaring module can name it.
     pds: HashMap<String, PdInfo>,
     /// The program's generic type templates and the instances built so far
@@ -752,7 +752,7 @@ struct Ctx {
     /// passdown that is still zero-initialized at that point.
     init_state: Option<std::collections::HashSet<String>>,
     /// True only while checking `main`'s body. `main` is emitted with a
-    /// fixed C signature — it cannot receive hidden parameters — so its
+    /// fixed C signature - it cannot receive hidden parameters - so its
     /// passdown references take the address of the generated global instead
     /// of naming a parameter. Every other function that references a
     /// passdown is wired and uses its parameter.
@@ -761,12 +761,12 @@ struct Ctx {
     /// internal name (`pd#<qualified>`). The generated parameter and the
     /// generated global share that name, so an identifier in the body means
     /// the parameter when it is listed here and the file-scope global when it
-    /// is not — a distinction `hidden_args` has to make when it hands a
+    /// is not - a distinction `hidden_args` has to make when it hands a
     /// passdown on: a parameter is already the borrow, while the global needs
     /// its address taken. Empty for `main`, a `pd` initializer, and a `fun`
     /// literal, none of which can receive one.
     own_hidden: Vec<String>,
-    /// The wiring key this body is checked under — `main`, a declaration key,
+    /// The wiring key this body is checked under - `main`, a declaration key,
     /// or the template an instantiation came from. The borrow modes and the
     /// probe's collected uses are both filed under it.
     fn_key: String,
@@ -826,7 +826,7 @@ struct Ctx {
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
     /// an implicit `self.field` (`fun Circle.area().return: f64 = 3.14159 * r *
-    /// r` — no `self.` qualifier written, per `plan/syntax.md` §5's "no
+    /// r` - no `self.` qualifier written, per `plan/syntax.md` §5's "no
     /// `self` keyword").
     receiver_struct: Option<String>,
     /// How many scrutinee temporaries a `when` has staged, so each one's
@@ -892,7 +892,7 @@ struct StaticInfo {
     /// The bare name a function in the declaring module writes.
     name: String,
     ty: Ty,
-    /// `static mut NAME` — every access is `unsafe`.
+    /// `static mut NAME` - every access is `unsafe`.
     mutable: bool,
 }
 
@@ -911,7 +911,7 @@ struct PdInfo {
     hidden: String,
     /// The passdown's own type.
     value_ty: Ty,
-    /// Whether it was declared `pd var` — used for the wording of the
+    /// Whether it was declared `pd var` - used for the wording of the
     /// "read-only inside a function" diagnostic, and to tell a write that
     /// can be given an exclusive borrow from one that can never be allowed.
     mutable: bool,
@@ -926,7 +926,7 @@ impl PdInfo {
     /// this passdown's hidden parameter, and what a read dereferences.
     ///
     /// `exclusive` is the referencing function's mode (roadmap item 17): a
-    /// function that *writes* the passdown — directly or through a callee —
+    /// function that *writes* the passdown - directly or through a callee -
     /// holds it as an exclusive borrow, and one that only reads it holds a
     /// shared one. A `pd var` that no function writes is therefore a shared
     /// borrow everywhere, so `show(cfg)` does not collide with the
@@ -989,10 +989,10 @@ impl PdInfo {
 /// that emits the program runs with the result.
 #[derive(Debug, Default)]
 struct PdProbe {
-    /// `(caller's wiring key, hidden name)` — the caller uses the passdown
+    /// `(caller's wiring key, hidden name)` - the caller uses the passdown
     /// exclusively, so it must hold an exclusive borrow of it.
     exclusive_uses: std::collections::HashSet<(String, String)>,
-    /// `(caller's wiring key, callee's wiring key)` — the call graph the
+    /// `(caller's wiring key, callee's wiring key)` - the call graph the
     /// closure walks: a function that calls a writer holds the passdown
     /// exclusively too, or it could hand a shared borrow to a callee that
     /// writes through it.
@@ -1104,7 +1104,7 @@ impl Ctx {
         self.struct_def(sname)?.field(name).map(|f| f.ty.clone())
     }
 
-    /// Whether `name` is a field of the named `datac` — used only to tell a
+    /// Whether `name` is a field of the named `datac` - used only to tell a
     /// literal's diagnostic "this is a field of the receiver you are in, and
     /// reading it by value is a partial move" apart from "undefined name"
     /// (A-4 phase E).
@@ -1178,7 +1178,7 @@ impl Ctx {
 
     /// The capability gate (M7): a gated module's item is reachable only
     /// from a module that holds the domain. This is a *resolution* error, not
-    /// a runtime check — the point of the feature is that code without a
+    /// a runtime check - the point of the feature is that code without a
     /// grant has no name to reach the resource with.
     fn check_capability(&self, key: &str, span: Span) -> Result<()> {
         let Some(domain) = self.gated.get(key) else {
@@ -1192,7 +1192,7 @@ impl Ctx {
         // and a gated stdlib module has to be able to call its own helpers
         // (`process.run` is `spawn` plus a drain loop, and `std/net` will
         // want the same shape). Nothing outside the compiler can declare a
-        // gated item — `stdlib::domain_of` only knows stdlib ids — so this
+        // gated item - `stdlib::domain_of` only knows stdlib ids - so this
         // exemption cannot widen a user module's authority.
         if !self.prefix.is_empty() && key.starts_with(self.prefix.as_str()) {
             return Ok(());
@@ -1211,7 +1211,7 @@ impl Ctx {
 
     /// `resolve.rs` stores a non-entry module's top-level names with their
     /// module prefix, but the plan's rule is that a file's own items are
-    /// reachable *bare* inside that file — so a bare lookup has to try the
+    /// reachable *bare* inside that file - so a bare lookup has to try the
     /// prefixed spelling too. The entry module's prefix is empty, so this is
     /// the identity there.
     fn qualify_own(&self, name: &str) -> String {
@@ -1260,7 +1260,7 @@ impl Ctx {
     }
 
     /// The key the passdown wiring table is filed under: an instantiation's
-    /// wiring is its template's (A-2), and so is its borrow mode — every use
+    /// wiring is its template's (A-2), and so is its borrow mode - every use
     /// site of one instance is `wired_for`-ed through the same entry.
     fn wiring_key_of(&self, key: &str) -> String {
         if self.wired.contains_key(key) {
@@ -1294,7 +1294,7 @@ impl Ctx {
     /// A use that needs an exclusive borrow. In the probe pass it is what the
     /// next pass is computed from, so it is recorded and allowed; in the pass
     /// that emits the program the modes already say the answer, and reaching
-    /// here means the closure missed the use — say so instead of emitting an
+    /// here means the closure missed the use - say so instead of emitting an
     /// unchecked write.
     fn note_pd_exclusive_use(&self, pd: &PdInfo) -> bool {
         let Some(probe) = &self.pd_probe else {
@@ -1332,7 +1332,7 @@ impl Ctx {
     }
 
     /// Every `datac`/`enum` declaration the checker knows, generic instances
-    /// included, as `(name, each field's type)` — what the derived
+    /// included, as `(name, each field's type)` - what the derived
     /// clone/order/key fixpoints (`types::clonable_types`) run over.
     fn type_decls(&self) -> Vec<(String, Vec<Ty>)> {
         type_decls_of(&self.structs, &self.enums, &self.env.instances.borrow())
@@ -1422,7 +1422,7 @@ fn type_decls_of(
 /// - a builtin (`i32`, `f64`, `str`, ...) is itself;
 /// - `alias.Item` resolves through the current module's `impl` table;
 /// - a bare name belongs to the current module, so it gets that module's
-///   prefix — imported types are never reachable unqualified (strict
+///   prefix - imported types are never reachable unqualified (strict
 ///   module-qualified namespace, per the plan).
 struct TypeScope<'a> {
     structs: &'a HashMap<String, StructDef>,
@@ -1432,7 +1432,7 @@ struct TypeScope<'a> {
     enums: &'a HashMap<String, EnumDef>,
     /// Generic templates and the instances built so far (A-2). Shared, and
     /// mutable through a `RefCell`, because resolving `Pair<i32, String>`
-    /// *creates* the instantiation it names — including from inside another
+    /// *creates* the instantiation it names - including from inside another
     /// instantiation's fields.
     env: TypeEnv,
     /// The type parameters in scope, bound to concrete arguments: non-empty
@@ -1488,14 +1488,14 @@ impl TypeScope<'_> {
     fn resolve(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
         let resolved = self.resolve_base(ty, indirect)?;
         // A `datac` that contains itself *by value* has no finite size.
-        // Through a container it is fine — that is the whole point of `Box`
-        // and of a list's pointer buffer — so the check is skipped there.
+        // Through a container it is fine - that is the whole point of `Box`
+        // and of a list's pointer buffer - so the check is skipped there.
         if !indirect {
             if let Some(ip) = self.in_progress {
                 if resolved == Ty::Struct(ip.to_string()) {
                     return Err(TypeError {
                         message: format!(
-                            "'{ip}' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next: Box<{ip}>', or a 'List<{ip}>' for many)"
+                            "'{ip}' cannot hold itself by value - that type has no finite size; put it behind indirection ('val next: Box<{ip}>', or a 'List<{ip}>' for many)"
                         ),
                         span: ty.span,
                     });
@@ -1544,8 +1544,8 @@ impl TypeScope<'_> {
         }
         // `scoped` is a *parameter* modifier (`plan/scoped-blocks.md` part 2)
         // and is handled by `resolve_param_mode`, before this is reached. Any
-        // other position — a return type, a `val` annotation, a `datac`
-        // field, another function type's own parameter — would store the
+        // other position - a return type, a `val` annotation, a `datac`
+        // field, another function type's own parameter - would store the
         // value, which is exactly what the modifier forbids.
         if ty.scoped {
             return Err(TypeError {
@@ -1664,7 +1664,7 @@ impl TypeScope<'_> {
             return Ok(Ty::Array(Box::new(elem), len));
         }
         // A function type (A-4): `fun(i32, String).return: bool`. Checked before
-        // every name, because it is the one written type that is not one —
+        // every name, because it is the one written type that is not one -
         // and `fun` cannot be a name at all, since it is a keyword. A closure
         // type (A-4 phase E) is the same shape under `closure`.
         if let Some(params) = &ty.fn_params {
@@ -1765,7 +1765,7 @@ impl TypeScope<'_> {
             || ty.name == "Ptr"
         {
             // `Map<K, V>` names its key type, and `Map<V>` is the shorthand
-            // for a `String` key — which is what every use site written before
+            // for a `String` key - which is what every use site written before
             // A-2 says, and the two spellings are the same `Ty`.
             let (key, value_arg, value_span) = if ty.name == "Map" {
                 match ty.args.len() {
@@ -1946,7 +1946,7 @@ impl TypeScope<'_> {
             // of the name is enough to say what is missing.
             Err(TypeError {
                 message: format!(
-                    "'{}' is a generic type — it needs {} type argument(s): '{}<{}>'",
+                    "'{}' is a generic type - it needs {} type argument(s): '{}<{}>'",
                     tmpl.name,
                     tmpl.params.len(),
                     tmpl.name,
@@ -1968,7 +1968,7 @@ impl TypeScope<'_> {
             } else {
                 Err(TypeError {
                     message: format!(
-                        "'{}' is declared after this type — a type may only name types declared before it by value; behind a 'Box' or 'List' it may name any type, including itself",
+                        "'{}' is declared after this type - a type may only name types declared before it by value; behind a 'Box' or 'List' it may name any type, including itself",
                         ty.name
                     ),
                     span: ty.span,
@@ -1982,7 +1982,7 @@ impl TypeScope<'_> {
                     self.aliases,
                     &self.env,
                 ) {
-                    Some(hint) => format!("unknown type '{}' — did you mean {hint}?", ty.name),
+                    Some(hint) => format!("unknown type '{}' - did you mean {hint}?", ty.name),
                     None => format!("unknown type '{}'", ty.name),
                 },
                 span: ty.span,
@@ -2205,7 +2205,7 @@ impl TypeScope<'_> {
                 Some(prefix) => Ok(format!("{prefix}{item}")),
                 None => Err(TypeError {
                     message: format!(
-                        "unknown module alias '{alias}' in type '{name}' — was it imported?"
+                        "unknown module alias '{alias}' in type '{name}' - was it imported?"
                     ),
                     span,
                 }),
@@ -2308,7 +2308,7 @@ impl TypeScope<'_> {
                     if crate::types::is_borrowed_field_ty(&ty) {
                         return Err(TypeError {
                             message: format!(
-                                "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible — an owned 'String' is the way to keep text in one",
+                                "field '{}' is a borrowed type ('{}') - a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible - an owned 'String' is the way to keep text in one",
                                 f.name,
                                 ty.display()
                             ),
@@ -2357,7 +2357,7 @@ impl TypeScope<'_> {
                         if crate::types::is_borrowed_field_ty(&ty) {
                             return Err(TypeError {
                                 message: format!(
-                                    "payload field '{}' is a borrowed type ('{}') — an enum holds owned data only in v1, so a '&str', 'View' or reference payload is not expressible — an owned 'String' is the way to keep text in one",
+                                    "payload field '{}' is a borrowed type ('{}') - an enum holds owned data only in v1, so a '&str', 'View' or reference payload is not expressible - an owned 'String' is the way to keep text in one",
                                     f.name,
                                     ty.display()
                                 ),
@@ -2395,7 +2395,7 @@ impl TypeScope<'_> {
     /// parameter (A-4), because the two have to mean the same thing: a
     /// written `fun(String)` has to be the type of `fun f(s: String)`.
     ///
-    /// `move T` resolves to the bare type — the same by-value shape a `Copy`
+    /// `move T` resolves to the bare type - the same by-value shape a `Copy`
     /// type already has. That is the whole type-level difference, and it is
     /// what makes a moved argument an ordinary whole-value read at the call
     /// site: no new argument-matching rule, and `borrowck.rs` marks the
@@ -2426,7 +2426,7 @@ impl TypeScope<'_> {
             // write through.
             return Err(TypeError {
                 message: format!(
-                    "'mut' cannot be written on the function type '{}' — a function value is Copy (it is a plain function pointer), so there is nothing to write through; write the type without 'mut'",
+                    "'mut' cannot be written on the function type '{}' - a function value is Copy (it is a plain function pointer), so there is nothing to write through; write the type without 'mut'",
                     ty.display()
                 ),
                 span: ty.span,
@@ -2435,7 +2435,7 @@ impl TypeScope<'_> {
         Ok(implicit_borrow_wrap(base, mode.mutable()))
     }
 
-    /// `scoped fun(T).return: U` — the non-escaping callback type
+    /// `scoped fun(T).return: U` - the non-escaping callback type
     /// (`plan/scoped-blocks.md` part 2). The qualifier is only meaningful as
     /// written: `mut` needs something to write through and `move` something
     /// to own, and a scoped value is neither, so both are refused by name
@@ -2446,7 +2446,7 @@ impl TypeScope<'_> {
         if mode.moves() {
             return Err(TypeError {
                 message: format!(
-                    "'move' cannot be written on '{}' — a scoped function value is a fat pointer with a stack environment, so there is nothing to own; write it without 'move'",
+                    "'move' cannot be written on '{}' - a scoped function value is a fat pointer with a stack environment, so there is nothing to own; write it without 'move'",
                     ty.display()
                 ),
                 span: ty.span,
@@ -2455,7 +2455,7 @@ impl TypeScope<'_> {
         if mode.mutable() {
             return Err(TypeError {
                 message: format!(
-                    "'mut' cannot be written on '{}' — a scoped function value is Copy and has nothing to write through; write it without 'mut'",
+                    "'mut' cannot be written on '{}' - a scoped function value is Copy and has nothing to write through; write it without 'mut'",
                     ty.display()
                 ),
                 span: ty.span,
@@ -2464,7 +2464,7 @@ impl TypeScope<'_> {
         if ty.amp {
             return Err(TypeError {
                 message: format!(
-                    "'&' cannot be written on '{}' — a scoped function value is already a fat pointer passed by value; write it without '&'",
+                    "'&' cannot be written on '{}' - a scoped function value is already a fat pointer passed by value; write it without '&'",
                     ty.display()
                 ),
                 span: ty.span,
@@ -2513,7 +2513,7 @@ impl TypeScope<'_> {
             };
             return Err(TypeError {
                 message: format!(
-                    "'move' cannot be written on '{written}' — a 'str' is already a borrowed view, '&T' is already a copy of a borrow, and a function value is already Copy, so there is nothing to take ownership of; write the owned type instead ('move String')"
+                    "'move' cannot be written on '{written}' - a 'str' is already a borrowed view, '&T' is already a copy of a borrow, and a function value is already Copy, so there is nothing to take ownership of; write the owned type instead ('move String')"
                 ),
                 span: ty.span,
             });
@@ -2522,8 +2522,8 @@ impl TypeScope<'_> {
     }
 
     /// A function type (A-4). Each parameter goes through the *same* rule a
-    /// declaration's parameter does — an implicit shared borrow for an owned
-    /// type, `mut` for an exclusive one, `move` for ownership — which is what
+    /// declaration's parameter does - an implicit shared borrow for an owned
+    /// type, `mut` for an exclusive one, `move` for ownership - which is what
     /// makes a written `fun(String)` and the signature of `fun f(s: String)`
     /// the same type, and therefore what makes passing `f` where a
     /// `fun(String)` is expected type-check with no conversion.
@@ -2532,12 +2532,12 @@ impl TypeScope<'_> {
     /// sensible spelling for them: a function type that *returns* a function
     /// type, and a borrow of a function value (which is Copy, so there is
     /// nothing to borrow). A function type as a parameter of a function type
-    /// is fine — `int32_t (*)(int32_t (*)(int32_t))` is ordinary C.
+    /// is fine - `int32_t (*)(int32_t (*)(int32_t))` is ordinary C.
     fn resolve_fn_type(&self, ty: &ast::TypeExpr, params: &[ast::FnTypeParam]) -> Result<Ty> {
         if ty.amp {
             return Err(TypeError {
                 message: format!(
-                    "'&' cannot be written on the function type '{}' — a function value is Copy (it is a plain function pointer), so a borrowed one would be a pointer to a pointer; write the type without '&'",
+                    "'&' cannot be written on the function type '{}' - a function value is Copy (it is a plain function pointer), so a borrowed one would be a pointer to a pointer; write the type without '&'",
                     ty.display()
                 ),
                 span: ty.span,
@@ -2551,7 +2551,7 @@ impl TypeScope<'_> {
             if p.ty.scoped {
                 return Err(TypeError {
                     message: format!(
-                        "'scoped {}' cannot be a parameter of a function type — a function type is a value that can be stored and passed on, and a scoped function value may only live for one call; write it as a top-level parameter of a declaration instead",
+                        "'scoped {}' cannot be a parameter of a function type - a function type is a value that can be stored and passed on, and a scoped function value may only live for one call; write it as a top-level parameter of a declaration instead",
                         p.ty.display()
                     ),
                     span: p.ty.span,
@@ -2563,7 +2563,7 @@ impl TypeScope<'_> {
             if r.amp {
                 return Err(TypeError {
                     message: format!(
-                        "a function type cannot return a borrow ('&{}') — the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a function *type* is called through a pointer where there is none; return an owned value instead",
+                        "a function type cannot return a borrow ('&{}') - the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a function *type* is called through a pointer where there is none; return an owned value instead",
                         r.display()
                     ),
                     span: r.span,
@@ -2574,7 +2574,7 @@ impl TypeScope<'_> {
             Some(r) if r.is_fn() => {
                 return Err(TypeError {
                     message: format!(
-                        "a function type cannot return another function type ('{}') — C cannot write that declarator, and nothing needs it; return a 'datac' holding the function value instead",
+                        "a function type cannot return another function type ('{}') - C cannot write that declarator, and nothing needs it; return a 'datac' holding the function value instead",
                         ty.display()
                     ),
                     span: r.span,
@@ -2590,7 +2590,7 @@ impl TypeScope<'_> {
         if ty.amp {
             return Err(TypeError {
                 message: format!(
-                    "'&' cannot be written on the closure type '{}' — a closure is an owned value, and a parameter of that type already borrows it; write the type without '&', or 'move {}' to take ownership",
+                    "'&' cannot be written on the closure type '{}' - a closure is an owned value, and a parameter of that type already borrows it; write the type without '&', or 'move {}' to take ownership",
                     ty.display(),
                     ty.display()
                 ),
@@ -2602,7 +2602,7 @@ impl TypeScope<'_> {
             if p.ty.scoped {
                 return Err(TypeError {
                     message: format!(
-                        "'scoped {}' cannot be a parameter of a closure type — a closure type is a value that can be stored and passed on, and a scoped function value may only live for one call; write it as a top-level parameter of a declaration instead",
+                        "'scoped {}' cannot be a parameter of a closure type - a closure type is a value that can be stored and passed on, and a scoped function value may only live for one call; write it as a top-level parameter of a declaration instead",
                         p.ty.display()
                     ),
                     span: p.ty.span,
@@ -2614,7 +2614,7 @@ impl TypeScope<'_> {
             if r.amp {
                 return Err(TypeError {
                     message: format!(
-                        "a closure type cannot return a borrow ('&{}') — the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a closure is called through a value; return an owned value instead",
+                        "a closure type cannot return a borrow ('&{}') - the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a closure is called through a value; return an owned value instead",
                         r.display()
                     ),
                     span: r.span,
@@ -2625,7 +2625,7 @@ impl TypeScope<'_> {
             Some(r) if r.is_fn() || r.is_closure() => {
                 return Err(TypeError {
                     message: format!(
-                        "a closure type cannot return a function type ('{}') — C cannot write that declarator, and a closure's result is a value rather than a call target; return a 'datac' holding the function value instead",
+                        "a closure type cannot return a function type ('{}') - C cannot write that declarator, and a closure's result is a value rather than a call target; return a 'datac' holding the function value instead",
                         ty.display()
                     ),
                     span: r.span,
@@ -2639,7 +2639,7 @@ impl TypeScope<'_> {
 
     fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
         // A receiver names a *type*, so a generic type needs its arguments
-        // — and there is no spelling for them on a receiver yet. Say that
+        // - and there is no spelling for them on a receiver yet. Say that
         // rather than let the ordinary "needs N type arguments" message
         // arrive with no explanation of where they would go (A-2).
         //
@@ -2655,7 +2655,7 @@ impl TypeScope<'_> {
         {
             return Err(TypeError {
                 message: format!(
-                    "'{}' is a generic type — the receiver has to name its type parameters, and they have to be the type's own, in order ('fun {}<{}>.method(...)')",
+                    "'{}' is a generic type - the receiver has to name its type parameters, and they have to be the type's own, in order ('fun {}<{}>.method(...)')",
                     r.type_name,
                     r.type_name,
                     self.env
@@ -4126,7 +4126,7 @@ fn function_value_at(
         if ctx.wired_for(key).is_some_and(|w| !w.is_empty()) {
             return Err(TypeError {
                 message: format!(
-                    "'{written}' reads a passdown, so it cannot be a function value — a passdown is passed to the callee as a hidden argument, and a function value is a plain C function pointer; call it directly instead"
+                    "'{written}' reads a passdown, so it cannot be a function value - a passdown is passed to the callee as a hidden argument, and a function value is a plain C function pointer; call it directly instead"
                 ),
                 span,
             });
@@ -4158,7 +4158,7 @@ fn function_value_at(
     if ctx.fns.templates.contains_key(key) {
         return Err(TypeError {
             message: format!(
-                "'{written}' is a generic function — a function value needs one concrete signature, so wrap the call in a small non-generic function and pass that"
+                "'{written}' is a generic function - a function value needs one concrete signature, so wrap the call in a small non-generic function and pass that"
             ),
             span,
         });
@@ -4175,7 +4175,7 @@ fn indirect_callee(
     ctx: &mut Ctx,
 ) -> Result<Option<(tir::Expr, Ty)>> {
     // A parameter of a closure type is a *borrow* of one (the parameter rule
-    // borrows an owned type), so the callee's type may be `&closure(..)` —
+    // borrows an owned type), so the callee's type may be `&closure(..)` -
     // codegen dereferences it. A `fun` is `Copy`, so it is never borrowed.
     let callable = |ty: &Ty| -> Option<Ty> {
         match ty {
@@ -4238,7 +4238,7 @@ fn indirect_callee(
         if !ctx.pd_initialized(&pd.hidden) {
             return Err(TypeError {
                 message: format!(
-                    "passdown '{}' is read before it is initialized — a 'pd' initializer can only use passdowns declared before it",
+                    "passdown '{}' is read before it is initialized - a 'pd' initializer can only use passdowns declared before it",
                     pd.qualified
                 ),
                 span,
@@ -4255,8 +4255,8 @@ fn indirect_callee(
 /// `f(x)` where `f` holds a function value (A-4): a local, a passdown, or a
 /// `datac` field (`cfg.on_event(x)`). A function *type* has no parameter
 /// names, so arguments are positional and counted against the callee's own
-/// list; everything else — the borrow an owned parameter implies, the move a
-/// `move` parameter implies — is the rule `check_call_arg` already applies to
+/// list; everything else - the borrow an owned parameter implies, the move a
+/// `move` parameter implies - is the rule `check_call_arg` already applies to
 /// a declared call, because the parameter types are the same types.
 fn check_indirect_call_expr(
     callee: tir::Expr,
@@ -4299,7 +4299,7 @@ fn check_indirect_call_expr(
         if a.name.is_some() {
             return Err(TypeError {
                 message: format!(
-                    "a call through {what} cannot use named arguments — a function type has no parameter names, so every argument is positional"
+                    "a call through {what} cannot use named arguments - a function type has no parameter names, so every argument is positional"
                 ),
                 span: a.value.span(),
             });
@@ -4319,7 +4319,7 @@ fn check_indirect_call_expr(
     })
 }
 
-/// The type of a `datac` field read through a (possibly borrowed) receiver —
+/// The type of a `datac` field read through a (possibly borrowed) receiver -
 /// `None` when there is no such field. Used only to find a field holding a
 /// function value, which is callable with method syntax.
 fn fn_field_ty(ty: &Ty, name: &str, ctx: &Ctx) -> Option<Ty> {
@@ -4331,7 +4331,7 @@ fn fn_field_ty(ty: &Ty, name: &str, ctx: &Ctx) -> Option<Ty> {
 /// A function's lookup key in `sigs`/`tir::Function.name`: a receiver-form
 /// method is keyed `Type#name` (a receiver method and a free function can
 /// share a bare name with no collision, and `#` can't appear in a real
-/// identifier so it can't collide with a hand-written name either) — a
+/// identifier so it can't collide with a hand-written name either) - a
 /// plain function is keyed by its bare name, unchanged from before
 /// receivers existed.
 fn sig_key(f: &ast::FunctionDecl) -> String {
@@ -4859,13 +4859,13 @@ fn sig_key_for(f: &ast::FunctionDecl, prefix: &str, params: &[(String, Ty)]) -> 
 /// `Type#name`, exactly like a receiver method) but their bodies are emitted
 /// by `codegen_c.rs` from the fixed runtime preamble, so nothing about call
 /// resolution, argument matching, or passdown wiring needs to know they are
-/// special — only codegen, and only in that the C function it names already
+/// special - only codegen, and only in that the C function it names already
 /// exists.
 struct Builtin {
     params: Vec<(String, Ty)>,
     ret: Ty,
-    /// `Bytes.empty()` — an *associated* function written on the type name,
-    /// with no receiver argument — versus `b.len()`, which takes one.
+    /// `Bytes.empty()` - an *associated* function written on the type name,
+    /// with no receiver argument - versus `b.len()`, which takes one.
     associated: bool,
 }
 
@@ -4909,7 +4909,7 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
 
         // Growing a `Bytes` in place (S1). `push`/`append` need an exclusive
         // borrow, so the borrow checker refuses to grow a buffer while a
-        // `str`/`&Bytes` view of it is alive — which is what makes the
+        // `str`/`&Bytes` view of it is alive - which is what makes the
         // reallocation sound without a lifetime syntax (see the bump of
         // `cap` in the runtime preamble).
         let bytes_exclusive = Ty::Ref { mutable: true, inner: Box::new(Ty::Bytes) };
@@ -5027,14 +5027,14 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // A length-carrying view of text (A-8). The two constructors are the
         // only places a length is *derived* (`str.view` runs one `strlen`,
         // `String.view` reads the length it already has); every operation on a
-        // `View` is length-aware, and none of them is a C string function — a
+        // `View` is length-aware, and none of them is a C string function - a
         // slice has no NUL after it, so `strlen`/`strcmp` on one would read
         // past the slice and report a different string than the program has.
         // That is also why none of these takes or returns a `str`.
         //
         // `self` is by value for every one of them: a `View` is two words of
         // `Copy` data (a pointer and a length), so a borrow would add an
-        // indirection and buy nothing — the same choice the integer
+        // indirection and buy nothing - the same choice the integer
         // conversions make.
         add("str#view", vec![("self".to_string(), Ty::Str)], Ty::View, false);
         add(
@@ -5080,7 +5080,7 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // Growing a `String` in place (S1). The same exclusive-borrow rule
         // as `Bytes`, and the same NUL-termination invariant: `push_str`
         // appends a borrowed view, so a view of `self` would alias the
-        // buffer `realloc` may move — the borrow checker rejects that.
+        // buffer `realloc` may move - the borrow checker rejects that.
         let string_exclusive = Ty::Ref { mutable: true, inner: Box::new(Ty::String) };
         add(
             "String#push",
@@ -5105,7 +5105,7 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
 
         // Failing deliberately (S1): `kelp_panic`/`kelp_assert` already exist in
         // the runtime, these two entries are all that was missing. They are
-        // free functions, not methods — the map key is a bare name, which is
+        // free functions, not methods - the map key is a bare name, which is
         // the same namespace `print` occupies.
         add("panic", vec![("msg".to_string(), Ty::Str)], Ty::Unit, false);
         add("assert", vec![("cond".to_string(), Ty::Bool)], Ty::Unit, false);
@@ -5148,8 +5148,8 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
                 );
             }
             // Integer -> float (the jsonlibary port's fourth gap). An integer
-            // never mixes with a float by itself — `n * 1.0` is a type error,
-            // because operands must match exactly — and before this the only
+            // never mixes with a float by itself - `n * 1.0` is a type error,
+            // because operands must match exactly - and before this the only
             // way to widen one was to format it and parse it back
             // (`str.parse_f64(fmt.int(n).as_str())`), which allocates a
             // `String` to add zero to a number. `to_f64` is the exact
@@ -5212,7 +5212,7 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         m
     });
 
-/// The name a builtin type answers to in a method key — the non-`datac`
+/// The name a builtin type answers to in a method key - the non-`datac`
 /// counterpart of `struct_name_of`.
 fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
     match ty {
@@ -5280,7 +5280,7 @@ fn borrowed_element_reason(ty: &Ty) -> Option<String> {
 /// Why a *function value* cannot be a container element, in one sentence
 /// that says the real reason (A-4). It is not the borrow rule and not the
 /// inline-storage rule: a function pointer is a plain inline value, and the
-/// only thing missing is a C spelling — a container's generated type names its
+/// only thing missing is a C spelling - a container's generated type names its
 /// element as a prefix (`kelp_List__i32`), and a function pointer's name goes
 /// *inside* the declarator (`int32_t (*kelp_f)(int32_t)`), so there is no such
 /// prefix. The way round it is a one-field `datac`, which is what a program
@@ -5288,17 +5288,17 @@ fn borrowed_element_reason(ty: &Ty) -> Option<String> {
 fn fn_element_reason(ty: &Ty, container: &str) -> Option<String> {
     match ty {
         Ty::Fn { .. } => Some(format!(
-            "'{}' cannot be a '{container}' element yet — a function value is a plain inline value, but a container's generated C type names its element type as a name prefix, and a function pointer has no such spelling (the name goes inside its declarator); hold it in a one-field 'datac' instead",
+            "'{}' cannot be a '{container}' element yet - a function value is a plain inline value, but a container's generated C type names its element type as a name prefix, and a function pointer has no such spelling (the name goes inside its declarator); hold it in a one-field 'datac' instead",
             ty.display()
         )),
         // A closure *is* nameable (it is an ordinary C struct), so the honest
         // reason is different: it owns an environment, and a container holds
         // its elements inline, so every element would have to be moved in and
-        // dropped out through the container's own generated functions — which
+        // dropped out through the container's own generated functions - which
         // is the same shape a function value is refused for, one level up
         // (A-4 phase E).
         Ty::Closure { .. } => Some(format!(
-            "'{}' cannot be a '{container}' element yet — a closure owns the environment its captures were moved into, and a container's elements are held inline; put it in a 'Box' or a one-field 'datac' instead",
+            "'{}' cannot be a '{container}' element yet - a closure owns the environment its captures were moved into, and a container's elements are held inline; put it in a 'Box' or a one-field 'datac' instead",
             ty.display()
         )),
         _ => None,
@@ -5879,8 +5879,8 @@ fn require_ptr_unsafe(key: &str, span: Span, ctx: &Ctx) -> Result<()> {
 
 /// Refuses a name that reaches a `static mut` outside an `unsafe` context
 /// (kernel stage 7). The gate fires where the name is resolved, so every way
-/// of touching the object — a read, a write, a field access, a method
-/// receiver or an address — goes through it, exactly as `Ptr`'s unsafe
+/// of touching the object - a read, a write, a field access, a method
+/// receiver or an address - goes through it, exactly as `Ptr`'s unsafe
 /// operations do.
 fn require_static_unsafe(s: &StaticInfo, span: Span, ctx: &Ctx) -> Result<()> {
     if !s.mutable || ctx.unsafe_depth > 0 {
@@ -6076,7 +6076,7 @@ fn check_ptr_method(
         if !explicit.is_empty() {
             return Err(TypeError {
                 message: format!(
-                    "'Ptr.{method}' does not take type arguments — a method's type parameters come from its receiver"
+                    "'Ptr.{method}' does not take type arguments - a method's type parameters come from its receiver"
                 ),
                 span,
             });
@@ -6331,7 +6331,7 @@ fn builtin_sig(key: &str) -> Option<FnSig> {
 }
 
 /// For a callee whose result is a *borrow*, the parameter index the elided
-/// lifetime binds to — always the first reference parameter, which is why
+/// lifetime binds to - always the first reference parameter, which is why
 /// this only has to answer for functions that return one at all.
 /// `borrowck.rs` needs it at every return site and every call site; builtins
 /// share the rule with `.kp` functions.
@@ -6343,7 +6343,7 @@ pub fn borrow_root_param(params: &[(String, Ty)]) -> Option<usize> {
 /// `str` and `View` count: a `str` parameter *is* `&str`, and a `View` is a
 /// `&str` with a length, both modelled as flat borrowed values (`Ty::Str`,
 /// `Ty::View`) rather than a `Ty::Ref`. That is the same set as
-/// `types::is_borrowed_field_ty` — a type that points at somebody else's data
+/// `types::is_borrowed_field_ty` - a type that points at somebody else's data
 /// cannot be a parameter's elision root unless it is also a type you cannot
 /// store, which is the same fact stated twice.
 pub fn is_ref_param(ty: &Ty) -> bool {
@@ -6356,7 +6356,7 @@ pub fn is_ref_param(ty: &Ty) -> bool {
 ///
 /// `Ty::Ref` is the general case. `Ty::View` is the flat one: it is a pointer
 /// and a length passed *by value*, so it is not a `Ty::Ref` in the type
-/// system, but it points at text somebody else owns exactly as `&str` does —
+/// system, but it points at text somebody else owns exactly as `&str` does -
 /// which is why every rule that applies to a returned `&str` has to apply to a
 /// returned `View` (A-8). `borrowck.rs` keys those rules on this predicate
 /// rather than on `Ty::Ref` alone.
@@ -6367,7 +6367,7 @@ pub fn is_borrowed_value(ty: &Ty) -> bool {
 /// The elided borrow root for a builtin method, if it returns a borrow.
 pub fn builtin_borrow_root(key: &str) -> Option<Option<usize>> {
     // `List#get`/`Box#get`/`Map#get` on an owned element type return a
-    // borrow of the container itself — the first parameter, like every
+    // borrow of the container itself - the first parameter, like every
     // builtin method's `self`. (For a `Copy` element the type checker never
     // asks, since the call's result is not a borrow; see
     // `borrowck::check_call`.)
@@ -6394,7 +6394,7 @@ fn str_view_compatible(actual: &Ty, declared: &Ty) -> bool {
 }
 
 /// Whether a tail expression diverges, so the function never returns through
-/// it and it satisfies any declared return type — including a borrowed one.
+/// it and it satisfies any declared return type - including a borrowed one.
 /// This is the `panic` ending every payload reader has:
 ///
 /// ```kelp
@@ -6419,7 +6419,7 @@ pub fn tail_diverges(expr: &tir::Expr) -> bool {
 /// The type two values of these types have in common, or `None` when they do
 /// not agree: `==`, with the one relaxation `str` and `&str` get.
 ///
-/// `is_str_like` is the language's own statement that those two are one type —
+/// `is_str_like` is the language's own statement that those two are one type -
 /// `str.eq`, `print`, `str.len`, a `str` parameter and a `&str` return all take
 /// either, because both are the same C value (`const char*`). Returns already
 /// said so (`str_view_compatible`), but arm unification compared them by
@@ -6434,7 +6434,7 @@ pub fn tail_diverges(expr: &tir::Expr) -> bool {
 /// ```
 ///
 /// The join is the **borrow**, not the bare `str`: the borrow checker
-/// understands `Ty::Ref` — it pins the owner and it drives the elision rule —
+/// understands `Ty::Ref` - it pins the owner and it drives the elision rule -
 /// and does not understand `Ty::Str`, so a value that might be a view of
 /// somebody else's text has to be typed as one. The two are the same C value,
 /// so nothing else about the program changes. An *exclusive* `&mut str` is not
@@ -6453,7 +6453,7 @@ fn join_value_type(left: &Ty, right: &Ty) -> Option<Ty> {
     None
 }
 
-/// Whether a type is `str` or a borrow of one — the two spellings of the
+/// Whether a type is `str` or a borrow of one - the two spellings of the
 /// same borrowed view, which `print` and argument matching treat alike.
 fn is_str_like(ty: &Ty) -> bool {
     match ty {
@@ -6470,11 +6470,11 @@ fn is_str_like(ty: &Ty) -> bool {
 fn char_integer_hint(found: &Ty, expected: &Ty) -> String {
     if let (Ty::Array(fe, fl), Ty::Array(ee, el)) = (found, expected) {
         if fe == ee && fl != el {
-            return " — an array's length is part of its type; pass an array of the expected length, or declare the parameter over any length (`fun f<const N: usize>(a: &[T; N])`)".to_string();
+            return " - an array's length is part of its type; pass an array of the expected length, or declare the parameter over any length (`fun f<const N: usize>(a: &[T; N])`)".to_string();
         }
     }
     if matches!(found, Ty::Char) && expected.is_integer() {
-        " — a character literal takes the type its context asks for, so with nothing to ask it is 'char'; give it the type you mean (`val c: u8 = '\"'`) or write the value as an integer".to_string()
+        " - a character literal takes the type its context asks for, so with nothing to ask it is 'char'; give it the type you mean (`val c: u8 = '\"'`) or write the value as an integer".to_string()
     } else {
         String::new()
     }
@@ -6482,7 +6482,7 @@ fn char_integer_hint(found: &Ty, expected: &Ty) -> String {
 
 /// The direction 5.1 does *not* make implicit: a `str`/`View` becomes an
 /// owned `String`/`Bytes` automatically, but the reverse needs an explicit
-/// `.as_str()`/`.view()` — `print` and `.as_str()` on a bound `String` both
+/// `.as_str()`/`.view()` - `print` and `.as_str()` on a bound `String` both
 /// look like the conversion happens for free, so a caller who has only met
 /// those two reasonably expects `str.concat(a_string, ...)` to work the same
 /// way, and the type-mismatch alone (`'String'`, expected 'str'`) does not
@@ -6497,7 +6497,7 @@ fn str_view_hint(found: &Ty, expected: &Ty) -> String {
         _ => return String::new(),
     };
     format!(
-        " — there is no implicit conversion this direction (5.1 only goes the other way, 'str'/'View' to an owned 'String'); call `.{method}` to borrow it"
+        " - there is no implicit conversion this direction (5.1 only goes the other way, 'str'/'View' to an owned 'String'); call `.{method}` to borrow it"
     )
 }
 
@@ -6587,7 +6587,7 @@ fn printable_codepoint(cp: u32) -> String {
 
 /// One checked compile-time constant (M6.3). Folded at its declaration and
 /// substituted at every use, so it has no storage, no initializer function,
-/// and no runtime cost — `math.PI` is the literal `3.141592653589793` in the
+/// and no runtime cost - `math.PI` is the literal `3.141592653589793` in the
 /// generated C.
 #[derive(Debug, Clone)]
 struct ConstInfo {
@@ -6963,7 +6963,7 @@ fn check_static_type_inner(
             Ok(())
         }
         other => Err(format!(
-            "'{}' cannot be a static's type: a static holds a Copy scalar, an integer/'bool'/'char' array, a 'datac' of those, or an 'Atomic<T>' — a heap type, a borrow, a 'View', a function value, a 'Ptr<T>' and an 'extern type' handle are all refused",
+            "'{}' cannot be a static's type: a static holds a Copy scalar, an integer/'bool'/'char' array, a 'datac' of those, or an 'Atomic<T>' - a heap type, a borrow, a 'View', a function value, a 'Ptr<T>' and an 'extern type' handle are all refused",
             other.display()
         )),
     }
@@ -8393,7 +8393,7 @@ fn collect_templates(
             if Ty::from_name(p).is_some() {
                 return Err(Diagnostic::new(
                     format!(
-                        "type parameter '{p}' shadows the builtin type '{p}' — pick another name"
+                        "type parameter '{p}' shadows the builtin type '{p}' - pick another name"
                     ),
                     *span,
                     module.clone(),
@@ -8451,7 +8451,7 @@ fn collect_func_templates(
         let key = sig_key(f);
         if f.receiver.is_none() && f.name == "main" {
             return Err(Diagnostic::new(
-                "'main' cannot take type parameters — it is the program entry point"
+                "'main' cannot take type parameters - it is the program entry point"
                     .to_string(),
                 f.span,
                 f.module.clone(),
@@ -8461,7 +8461,7 @@ fn collect_func_templates(
             if Ty::from_name(p).is_some() {
                 return Err(Diagnostic::new(
                     format!(
-                        "type parameter '{p}' shadows the builtin type '{p}' — pick another name"
+                        "type parameter '{p}' shadows the builtin type '{p}' - pick another name"
                     ),
                     f.span,
                     f.module.clone(),
@@ -8484,7 +8484,7 @@ fn collect_func_templates(
             if !blanket && type_tmpl.is_none() && (!r.type_args.is_empty() || f.type_params.is_empty()) {
                 return Err(Diagnostic::new(
                     format!(
-                        "'{}' is not a generic type — only a receiver on a generic type may declare type parameters of the type; a method of a plain type may declare its own ('fun {}.{}<U>(...)')",
+                        "'{}' is not a generic type - only a receiver on a generic type may declare type parameters of the type; a method of a plain type may declare its own ('fun {}.{}<U>(...)')",
                         r.type_name, r.type_name, f.name
                     ),
                     f.span,
@@ -8567,13 +8567,13 @@ fn collect_func_templates(
 
 /// Walk the probe's call edges to a fixpoint: a function that calls a writer
 /// holds the passdown exclusively too. Holding a *shared* borrow while a
-/// callee writes through the same storage is the hazard — and the callee need
+/// callee writes through the same storage is the hazard - and the callee need
 /// not name the passdown to do it, since a function that only forwards takes
-/// the global's address itself — so the edge is followed whatever the callee
+/// the global's address itself - so the edge is followed whatever the callee
 /// names. A promotion for a passdown a function never references is inert
 /// (nothing reads the entry), which is what keeps a read-only reference
-/// shared and the ergonomics this exists for. Monotone — modes are only ever
-/// added — so this terminates.
+/// shared and the ergonomics this exists for. Monotone - modes are only ever
+/// added - so this terminates.
 fn close_pd_modes(
     exclusive_uses: &std::collections::HashSet<(String, String)>,
     edges: &std::collections::HashSet<(String, String)>,
@@ -8604,14 +8604,14 @@ fn close_pd_modes(
 
 /// The passdown borrow modes (roadmap item 17). Every `pd var` used to be
 /// handed to every referencing function as an exclusive borrow, so a function
-/// that takes the passdown as an argument *and* reads it — `fun show(s: &str)
-/// { print(cfg) }` called as `show(cfg)` — was refused with a borrow
+/// that takes the passdown as an argument *and* reads it - `fun show(s: &str)
+/// { print(cfg) }` called as `show(cfg)` - was refused with a borrow
 /// conflict, and a read-only `pd var` was as good as unusable.
 ///
 /// The upgrade set is discovered rather than guessed at. A first *probe* pass
 /// runs with every passdown shared: a use that needs an exclusive borrow is
 /// recorded instead of refused, and every call site records an edge. The probe
-/// is a real body check whose `tir` is thrown away — which is what lets the
+/// is a real body check whose `tir` is thrown away - which is what lets the
 /// answer come from the checker itself, including generic instances,
 /// overloads and `mut` receivers, instead of from a re-implementation of
 /// resolution that could disagree with it. `close_pd_modes` then walks the
@@ -8789,7 +8789,7 @@ fn check_program_pass(
     // `codegen_c.rs` must emit their C typedefs in: a `datac` may only name
     // `datac`s declared before it (see `TypeScope::later_datacs`), so
     // declaration order is a valid topological order. Emitting them from a
-    // `HashMap`'s iteration order instead — which is what this did before —
+    // `HashMap`'s iteration order instead - which is what this did before -
     // made a struct-embedding-struct program compile or fail *at random*
     // from one run to the next.
     let mut struct_order: Vec<String> = Vec::new();
@@ -8950,7 +8950,7 @@ fn check_program_pass(
                     if crate::types::is_borrowed_field_ty(&ty) {
                         return Err(Diagnostic::new(
                             format!(
-                                "payload field '{}' is a borrowed type ('{}') — an enum holds owned data only in v1, so a '&str', 'View' or reference payload is not expressible — an owned 'String' is the way to keep text in one",
+                                "payload field '{}' is a borrowed type ('{}') - an enum holds owned data only in v1, so a '&str', 'View' or reference payload is not expressible - an owned 'String' is the way to keep text in one",
                                 f.name,
                                 ty.display()
                             ),
@@ -9066,7 +9066,7 @@ fn check_program_pass(
             if matches!(ty, Ty::Ref { .. } | Ty::Dyn { .. }) {
                 return Err(Diagnostic::new(
                     format!(
-                        "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible — an owned 'String' is the way to keep text in one",
+                        "field '{}' is a borrowed type ('{}') - a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible - an owned 'String' is the way to keep text in one",
                         f.name,
                         ty.display()
                     ),
@@ -9250,7 +9250,7 @@ fn check_program_pass(
             {
                 return Err(Diagnostic::new(
                     format!(
-                        "'{}' is a builtin type — its methods are provided by the compiler and cannot be declared",
+                        "'{}' is a builtin type - its methods are provided by the compiler and cannot be declared",
                         r.type_name
                     ),
                     f.span,
@@ -9264,7 +9264,7 @@ fn check_program_pass(
             params.push((p.name.clone(), ty));
         }
         // `.return: T` never goes through `resolve_param_type`, so a function's
-        // return type is always a plain owned `Ty` — never `Ty::Ref`. That's
+        // return type is always a plain owned `Ty` - never `Ty::Ref`. That's
         // what makes the borrow checker's call-scoped release sound: no
         // surface syntax exists yet for a function to hand a borrow back to
         // its caller, so a borrow can never escape the call frame that took
@@ -9536,7 +9536,7 @@ fn check_program_pass(
     let mut functions = Vec::new();
     for (i, f) in program.functions.iter().enumerate() {
         // A-2: a generic function's body is checked once per instantiation,
-        // in the worklist loop below — there is no signature to check it
+        // in the worklist loop below - there is no signature to check it
         // against yet.
         if !decl_type_params(f).is_empty() {
             continue;
@@ -9670,19 +9670,19 @@ fn check_program_pass(
     order_declarations(&mut records, &mut sums);
     // A-4: one function per `fun` literal, synthesized while bodies were
     // checked (a literal inside a literal's body included). They are ordinary
-    // functions from here on — borrowck drops their owned parameters and
+    // functions from here on - borrowck drops their owned parameters and
     // codegen emits them with a prototype like any other.
     functions.extend(fns.instances.borrow_mut().literals.drain(..));
     // Gap 7: the fixed-arity wrappers the program's variadic user externs
-    // need. They are ordinary `extern fun`s to every later pass — an LLVM
-    // declaration and a C body that forwards to the native symbol — so they
+    // need. They are ordinary `extern fun`s to every later pass - an LLVM
+    // declaration and a C body that forwards to the native symbol - so they
     // join the same list, and `extern_ffi_symbols` below points each one at
     // the extern's own native symbol.
     let variadic_wrappers: Vec<(String, tir::Function)> =
         fns.instances.borrow_mut().variadic_wrappers.drain(..).collect();
     functions.extend(variadic_wrappers.iter().map(|(_, f)| f.clone()));
     // The native symbol each user-declared `extern fun` binds to
-    // (MK9-S1-M1, roadmap B-1), keyed by the function's full, prefixed name —
+    // (MK9-S1-M1, roadmap B-1), keyed by the function's full, prefixed name -
     // `codegen_c.rs::write_extern` reads this instead of `externs.rs` when a
     // function's module has no compiler-supplied body, and writes a
     // direct-call trampoline to the symbol. The map holds the renamed C
@@ -9859,7 +9859,7 @@ fn by_value_structs(ty: &Ty, out: &mut Vec<String>) {
     }
 }
 
-/// Gives every declaration — hand-written and instantiated alike — a position
+/// Gives every declaration - hand-written and instantiated alike - a position
 /// in one topological order (A-2). A type that contains another *by value* has
 /// to be emitted after it, because C needs the complete type; hand-written
 /// declarations already arrive in declaration order, which is topological
@@ -9934,7 +9934,7 @@ fn order_declarations(records: &mut [StructDef], sums: &mut [EnumDef]) {
 }
 
 /// The passdowns of one module, keyed by the bare name a function writes.
-/// `before` limits it to passdowns declared earlier — used while checking a
+/// `before` limits it to passdowns declared earlier - used while checking a
 /// `pd` initializer, so "use before declaration" is a real error rather than
 /// a silent read of a zero-initialized global.
 fn pd_map(all: &[PdInfo], module: &str, before: Option<usize>) -> HashMap<String, PdInfo> {
@@ -10214,7 +10214,7 @@ fn scan_all(
 /// receiver field, or `val`/`var` in scope hides a passdown of the same name,
 /// so a hidden name is not a passdown reference. A method call's name, a
 /// field access's field name, and a call's callee are never passdown
-/// references either — only bare identifiers are.
+/// references either - only bare identifiers are.
 struct PdScan {
     scopes: Vec<std::collections::HashSet<String>>,
     /// Field names of the current receiver's `datac`, which shadow passdowns
@@ -10332,7 +10332,7 @@ impl PdScan {
                     self.scan_expr(e);
                 }
             }
-            // Only the base — a field named like a passdown isn't a read of
+            // Only the base - a field named like a passdown isn't a read of
             // it.
             ast::Expr::FieldAccess { base, .. } => self.scan_expr(base),
             ast::Expr::Assign { target, value, .. } => {
@@ -10448,7 +10448,7 @@ fn scan_pd_uses(
         .iter()
         .map(|name| visible[name].clone())
         .collect();
-    // Declaration order, not reference order — so the hidden parameters (and
+    // Declaration order, not reference order - so the hidden parameters (and
     // therefore the generated C signatures) are stable.
     used.sort_by_key(|p| p.index);
     used
@@ -10473,7 +10473,7 @@ fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
         base
     } else {
         // Everything that owns memory, so the caller keeps it. This is the whole
-        // list: `datac`/`enum`, `Bytes`, `String`, the containers, a closure —
+        // list: `datac`/`enum`, `Bytes`, `String`, the containers, a closure -
         // and a fixed-size array whose element owns something (A-18). Asking
         // `is_copy` rather than listing the types is what keeps the two in step:
         // an array of scalars is a value and is passed like one, while
@@ -10484,7 +10484,7 @@ fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
 }
 
 /// Unwraps a (possibly borrowed) type down to the `datac` name it names, if
-/// any — used by field access/assignment so `.field` auto-derefs through a
+/// any - used by field access/assignment so `.field` auto-derefs through a
 /// `Ref` base exactly like an owned struct.
 fn struct_name_of(ty: &Ty) -> Option<&str> {
     match ty {
@@ -10504,7 +10504,7 @@ fn is_panic_message(ty: &Ty) -> bool {
         || matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::String))
 }
 
-/// Whether a type is one of the builtin owned buffers, or a borrow of one —
+/// Whether a type is one of the builtin owned buffers, or a borrow of one -
 /// the types `print` renders straight out of their buffer.
 fn is_printable_buffer(ty: &Ty) -> bool {
     match ty {
@@ -10522,7 +10522,7 @@ fn is_printable_buffer(ty: &Ty) -> bool {
 /// A temporary is passed through as the owned value it is: `codegen_c.rs`
 /// hoists it into a C temporary and frees it right after the `printf`, which
 /// is what makes `print(str.to_upper(s))` allocate once, print, and free
-/// (M6.3 — until then this was a diagnostic telling the author to bind a
+/// (M6.3 - until then this was a diagnostic telling the author to bind a
 /// `val` first).
 fn borrow_for_print(value: tir::Expr, _what: &str, _ctx: &Ctx) -> Result<tir::Expr> {
     if !matches!(value.ty, Ty::Bytes | Ty::String) {
@@ -10547,7 +10547,7 @@ fn borrow_for_print(value: tir::Expr, _what: &str, _ctx: &Ctx) -> Result<tir::Ex
 }
 
 /// A "place": something with stable storage that can be borrowed or
-/// assigned into — an `Ident`, a `.field` chain rooted in one, or a
+/// assigned into - an `Ident`, a `.field` chain rooted in one, or a
 /// dereferenced borrow (`*p`, `(*p).field`).
 fn is_tir_place(expr: &tir::Expr) -> bool {
     matches!(
@@ -10587,7 +10587,7 @@ fn is_durable_place(expr: &tir::Expr) -> bool {
 }
 
 /// `ast::is_place`, kept callable under its old local name at every existing
-/// call site — the definition itself now lives in `ast.rs` so `parser.rs` can
+/// call site - the definition itself now lives in `ast.rs` so `parser.rs` can
 /// share it (see `parse_if_let`).
 fn is_ast_place(expr: &ast::Expr) -> bool {
     ast::is_place(expr)
@@ -10658,7 +10658,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
             Ty::Ref { mutable: true, .. } => Ok(()),
             Ty::Ref { mutable: false, .. } => {
                 // A `pd val` read is a Deref of a shared borrow, so it lands
-                // here — worth the passdown's own wording, since "shared
+                // here - worth the passdown's own wording, since "shared
                 // borrow" is not what the author wrote (M6.4). A `pd var`
                 // holds an exclusive borrow exactly when its body writes it,
                 // so a write that arrives through a shared borrow is either
@@ -10778,7 +10778,7 @@ fn note_excl_need(e: &tir::Expr, ctx: &Ctx) {
     }
 }
 
-/// `Type.name` for a receiver method, `name` for a plain function — for
+/// `Type.name` for a receiver method, `name` for a plain function - for
 /// diagnostics only (`sig_key` is the lookup key; this is what a person
 /// reads).
 fn display_name(f: &ast::FunctionDecl) -> String {
@@ -10915,7 +10915,7 @@ fn check_function(
         if project.extern_ffi_of(&f.module).is_none() {
             return Err(TypeError {
                 message: format!(
-                    "'{}' writes '...', but only a user 'extern fun' — one whose module has a coral.toml '[extern.\"{}\"]' section — may be variadic",
+                    "'{}' writes '...', but only a user 'extern fun' - one whose module has a coral.toml '[extern.\"{}\"]' section - may be variadic",
                     display_name(f),
                     f.module
                 ),
@@ -10997,7 +10997,7 @@ fn check_function(
     // (see `PdInfo::arg` for the call-site side). `main` is the exception
     // downstream, not here: `codegen_c.rs` emits a fixed `main(argc, argv)`
     // regardless of parameters, and the body's `pd#...` identifiers then
-    // resolve to the file-scope globals — which is why the hidden name and
+    // resolve to the file-scope globals - which is why the hidden name and
     // the global name are the same string.
     let hidden = if key == "main" || is_drop_method {
         Vec::new()
@@ -11072,7 +11072,7 @@ fn check_function(
     let mut params = Vec::new();
     // Parameters (and the receiver, if any) are immutable bindings, like
     // `val`; v1 has no syntax to declare a mutable *binding* for one (the
-    // borrow itself can still be exclusive — that's `Ty::Ref { mutable:
+    // borrow itself can still be exclusive - that's `Ty::Ref { mutable:
     // true, .. }`, a property of the type, not the binding).
     if f.receiver.is_some() {
         let (pname, ty) = &sig.params[0];
@@ -11097,13 +11097,13 @@ fn check_function(
         ast::FunctionBody::Extern => {
             // No `.kp` body. Either `codegen_c.rs` writes the
             // compiler-supplied C (see `externs.rs`, stdlib modules only), or
-            // — MK9-S1-M1, roadmap B-1 — this module has its own
+            // - MK9-S1-M1, roadmap B-1 - this module has its own
             // `coral.toml` `[extern."<module id>"]` entry, in which case
             // `codegen_c.rs` writes a direct-call trampoline to the native
             // symbol instead, gated the same way a stdlib extern is (see
             // `resolve.rs::domain_of_with_extern` and the `gated` map it
             // feeds). Confirm one of the two actually admits this
-            // declaration before accepting it — otherwise the failure would
+            // declaration before accepting it - otherwise the failure would
             // surface as a `cc` error at best, or as a silently missing
             // symbol, or (worse, for the manifest case) as a user extern
             // that reaches a native symbol its own manifest never
@@ -11118,7 +11118,7 @@ fn check_function(
                     Some(_) => {
                         return Err(TypeError {
                             message: format!(
-                                "extern function '{bare}' is not in this module's coral.toml '[extern.\"{}\"]' symbol allowlist — add it there before declaring 'extern fun {bare}'",
+                                "extern function '{bare}' is not in this module's coral.toml '[extern.\"{}\"]' symbol allowlist - add it there before declaring 'extern fun {bare}'",
                                 f.module
                             ),
                             span: f.span,
@@ -11127,7 +11127,7 @@ fn check_function(
                     None => {
                         return Err(TypeError {
                             message: format!(
-                                "extern function '{bare}' has no compiler-supplied body — only compiler-shipped stdlib modules may declare 'extern fun', unless this module has its own coral.toml '[extern.\"{}\"]' section naming '{bare}' in its 'symbols' allowlist", f.module
+                                "extern function '{bare}' has no compiler-supplied body - only compiler-shipped stdlib modules may declare 'extern fun', unless this module has its own coral.toml '[extern.\"{}\"]' section naming '{bare}' in its 'symbols' allowlist", f.module
                             ),
                             span: f.span,
                         });
@@ -11163,7 +11163,7 @@ fn check_function(
     // A body whose tail is a `panic` diverges, so it satisfies any declared
     // return type: `fun unwrap<T>(o: &Option<T>).return: T { ... panic("...") }` is
     // the "this cannot happen" accessor. Nothing else in the language is
-    // divergence-aware — an `if` arm cannot be a `panic` — so this is
+    // divergence-aware - an `if` arm cannot be a `panic` - so this is
     // deliberately the narrow rule the accessors need.
     let tail_diverges = body
         .tail
@@ -11631,12 +11631,12 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             let checked = check_expr(expr, ctx, None)?;
             refuse_dropped_must_use(&checked, ctx, stmt_span(stmt))?;
             // A non-tail expression statement discards its value, and nothing
-            // owns an owned value afterwards — v1 has no drop point for a
+            // owns an owned value afterwards - v1 has no drop point for a
             // temporary, so this would leak. Reject it instead.
             if !checked.ty.is_copy() {
                 return Err(TypeError {
                     message: format!(
-                        "this expression produces an owned '{}' value that is never used — bind it to a 'val' or 'var', print it, or pass it to something that takes it by value",
+                        "this expression produces an owned '{}' value that is never used - bind it to a 'val' or 'var', print it, or pass it to something that takes it by value",
                         checked.ty.display()
                     ),
                     span: stmt_span(stmt),
@@ -12141,8 +12141,8 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
 /// A `fun` literal (A-4): `fun(x: i32).return: i32 = x * 2`.
 ///
 /// A literal is one synthesized top-level function, so most of the work is
-/// the same work a declaration needs — resolve the signature, bind the
-/// parameters, check the body against the declared return — and the rest is
+/// the same work a declaration needs - resolve the signature, bind the
+/// parameters, check the body against the declared return - and the rest is
 /// the two things that make it a *literal*: its body is checked in a scope of
 /// its own (no captures yet), and the checked body is stored where codegen
 /// will emit it.
@@ -12283,7 +12283,7 @@ fn check_fn_literal_pass(
                 if !params_ast.is_empty() {
                     return Err(TypeError {
                         message: format!(
-                            "this block declares parameter(s) ({}), but there is no function type at this position to take their types from — a block header is typed by the closure point it is passed to; write the parameter types on a 'fun(...)' literal instead",
+                            "this block declares parameter(s) ({}), but there is no function type at this position to take their types from - a block header is typed by the closure point it is passed to; write the parameter types on a 'fun(...)' literal instead",
                             params_ast
                                 .iter()
                                 .map(|p| p.name.clone())
@@ -12305,13 +12305,13 @@ fn check_fn_literal_pass(
         let ret = match return_type {
             Some(rt) => {
                 // A borrow would outlive the frame that produced it, and a
-                // function value is a plain pointer to code — the elision
+                // function value is a plain pointer to code - the elision
                 // rule that says *which* argument a borrow comes from has no
                 // place to be written here.
                 if rt.amp {
                     return Err(TypeError {
                         message: format!(
-                            "a 'fun' literal cannot return a borrow ('&{}') — an indirect call has no parameter an elided lifetime could bind to; return an owned value instead",
+                            "a 'fun' literal cannot return a borrow ('&{}') - an indirect call has no parameter an elided lifetime could bind to; return an owned value instead",
                             rt.display()
                         ),
                         span: rt.span,
@@ -12338,7 +12338,7 @@ fn check_fn_literal_pass(
         st.literal_count += 1;
         format!("#funlit{}", st.literal_count)
     };
-    // The body's own scope. The enclosing locals are not *bindings* here —
+    // The body's own scope. The enclosing locals are not *bindings* here -
     // they are the names the body may capture, which is what makes the
     // literal a closure when it names one (A-4 phase E). The lookup map
     // carries their types, because a capture's type is the captured
@@ -12346,7 +12346,7 @@ fn check_fn_literal_pass(
     //
     // * the enclosing frame's locals,
     // * the enclosing literal's own captures (a literal inside a literal),
-    // * and everything *that* literal could see, transitively — which is how
+    // * and everything *that* literal could see, transitively - which is how
     //   `fun` inside `fun` reaches a binding of the function two frames up
     //   (the enclosing closure captures it in turn).
     let mut outer_bindings: HashMap<String, Ty> = ctx.outer_bindings.clone();
@@ -12425,15 +12425,15 @@ fn check_fn_literal_pass(
     }
     let capture_list = inner.captures.clone();
     // The environment: one field per capture, filled at the point the literal
-    // is *evaluated* — which is where a capture moves its value out of the
+    // is *evaluated* - which is where a capture moves its value out of the
     // enclosing frame. Each field's initializer is written in the enclosing
-    // function's terms: a local by name, or — for a literal nested in a
-    // literal — a read of the enclosing closure's environment.
+    // function's terms: a local by name, or - for a literal nested in a
+    // literal - a read of the enclosing closure's environment.
     let mut captures = Vec::with_capacity(capture_list.len());
     let mut env_fields: Vec<(String, Ty)> = Vec::with_capacity(capture_list.len());
     for (i, (name, ty)) in capture_list.iter().enumerate() {
         // A scoped function value lives only for the call it was written in,
-        // so an ordinary closure's environment — which can be returned — may
+        // so an ordinary closure's environment - which can be returned - may
         // not hold one (`plan/scoped-blocks.md` part 2).
         if !scoped && matches!(ty, Ty::ScopedFn { .. }) {
             return Err(TypeError {
@@ -12458,12 +12458,12 @@ fn check_fn_literal_pass(
         // A borrow cannot be captured by an ordinary closure (its environment
         // outlives the frame), but a scoped literal's environment is stack and
         // lives only for the call, so a borrowed *value* (a `&T` parameter, a
-        // `str` view) is simply copied in — it is a pointer, and the borrow it
+        // `str` view) is simply copied in - it is a pointer, and the borrow it
         // carries is already live in the enclosing frame.
         if crate::types::is_borrowed_field_ty(&ty) && !scoped {
             return Err(TypeError {
                 message: format!(
-                    "a 'fun' literal cannot capture '{name}': it is a borrow ('{}'), and the environment it would be stored in outlives the frame the borrow points into — capture an owned value, or pass it as a parameter of the literal",
+                    "a 'fun' literal cannot capture '{name}': it is a borrow ('{}'), and the environment it would be stored in outlives the frame the borrow points into - capture an owned value, or pass it as a parameter of the literal",
                     ty.display()
                 ),
                 span,
@@ -12509,7 +12509,7 @@ fn check_fn_literal_pass(
             }
         } else if ctx.note_capture(name).is_some() {
             // The name belongs to the environment of the literal this one was
-            // written inside — so the enclosing literal captures it too, and
+            // written inside - so the enclosing literal captures it too, and
             // this literal copies it out of that environment. Moving it out
             // instead would be a partial move (A-11), which is why only a
             // `Copy` capture can be nested this way.
@@ -12603,9 +12603,9 @@ fn check_fn_literal_pass(
 /// conversion the language has between borrowed and owned text (open item 21).
 ///
 /// This is the wrapper, not the body: putting the conversion *here* means
-/// every site that knows an expected type gets it — a call argument, a `val`
+/// every site that knows an expected type gets it - a call argument, a `val`
 /// with a written type, a `return`, a `datac` field, a container element, a
-/// `when` arm, a block tail — with no list of sites to keep in sync. The
+/// `when` arm, a block tail - with no list of sites to keep in sync. The
 /// alternative shape (coerce at each site) is the same behaviour with N
 /// chances to forget one.
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
@@ -12652,8 +12652,8 @@ fn coerce_handle_upcast(
 /// A `str` used where a `String` is expected becomes one, by `String.from_str`.
 ///
 /// `String.from_str("...")` was the single most repeated construct in the JSON
-/// library this came from — once per parser error message, once per `kind()`
-/// arm, once per `String.from_str("null")` — because a literal is a `str` and
+/// library this came from - once per parser error message, once per `kind()`
+/// arm, once per `String.from_str("null")` - because a literal is a `str` and
 /// an owned field is a `String`, and nothing bridged the two. The conversion is
 /// a copy, which is what an owned value has to be; nothing implicit the other
 /// way (`String` to `str`) is added here, because that direction is a
@@ -12715,7 +12715,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
     }
     // A plain function value where a closure is expected (A-4 phase E): the
     // one widening in this phase, handled here so that every site which knows
-    // the expected type gets it — a call argument, a `val` with a written
+    // the expected type gets it - a call argument, a `val` with a written
     // type, a `return`, a `datac` field, `Box.of(x)`. The value is checked
     // with no expectation of its own (nothing about a `fun` literal depends
     // on the closure type it will be widened into) and then wrapped.
@@ -12811,7 +12811,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         // `String`, `n + '0'` to make a digit.
         //
         // A code point that does not fit the requested integer type is
-        // refused rather than truncated — `'中'` in a `u8` position is a
+        // refused rather than truncated - `'中'` in a `u8` position is a
         // mistake, not a byte to keep.
         ast::Expr::CharLit(v, span) => {
             let ty = match expected {
@@ -12924,7 +12924,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     span: *span,
                 });
             }
-            // Not a local or parameter — inside a receiver-form method,
+            // Not a local or parameter - inside a receiver-form method,
             // fall back to the receiver's field of that name (no `self.`
             // qualifier is ever written; see `plan/syntax.md` §5).
             if let Some(field_ty) = ctx.receiver_field_ty(name) {
@@ -12944,19 +12944,19 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if ctx.in_fn_literal && ctx.pds.contains_key(name) {
                 return Err(TypeError {
                     message: format!(
-                        "a 'fun' literal cannot read passdown '{name}' — a passdown is passed to the function that names it as a hidden argument, and a function value is a plain pointer to code; pass the value as a parameter instead"
+                        "a 'fun' literal cannot read passdown '{name}' - a passdown is passed to the function that names it as a hidden argument, and a function value is a plain pointer to code; pass the value as a parameter instead"
                     ),
                     span: *span,
                 });
             }
-            // Not a local or receiver field — a passdown (M5.2), which the
+            // Not a local or receiver field - a passdown (M5.2), which the
             // wiring scan has already made this function take as a hidden
             // parameter named `pd#...`, so the reference is that parameter.
             if let Some(pd) = ctx.pds.get(name).cloned() {
                 if !ctx.pd_initialized(&pd.hidden) {
                     return Err(TypeError {
                         message: format!(
-                            "passdown '{}' is read before it is initialized — a 'pd' initializer can only use passdowns declared before it",
+                            "passdown '{}' is read before it is initialized - a 'pd' initializer can only use passdowns declared before it",
                             pd.qualified
                         ),
                         span: *span,
@@ -12976,7 +12976,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 }
                 return Ok(pd.value(*span, ctx.pd_global_borrow, ctx.pd_exclusive(&pd)));
             }
-            // Not a local, receiver field, or passdown — a declared `fun`
+            // Not a local, receiver field, or passdown - a declared `fun`
             // named as a *value* (A-4): `val f = double`. A function
             // reference carries no environment, so the C function itself is
             // the value.
@@ -12987,7 +12987,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     span: *span,
                 });
             }
-            // Not a local, receiver field, or passdown — a compile-time
+            // Not a local, receiver field, or passdown - a compile-time
             // constant (M6.3), substituted as the literal it folded to.
             if let Some(c) = ctx.consts.get(&ctx.qualify_own(name)).cloned() {
                 let mut value = c.value;
@@ -12995,7 +12995,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 return Ok(value);
             }
             // Not a local, receiver field, passdown, function value or
-            // constant — a top-level `static` (kernel stage 7). A static is a
+            // constant - a top-level `static` (kernel stage 7). A static is a
             // real object, so a use is a `StaticRef` place; a `static mut`
             // may only be named inside `unsafe`, and the gate is here so a
             // read, a write, a field access and an address are all covered
@@ -13050,7 +13050,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 }
                 // A field of the receiver the literal was written in is a
                 // name the reader can *see*, but reading it out of a borrowed
-                // receiver is a partial move (A-11) — which is why the field
+                // receiver is a partial move (A-11) - which is why the field
                 // itself, not just the literal, has to be the reason.
                 if let Some(owner) = &ctx.outer_receiver {
                     if ctx.field_of(owner, name).is_some() {
@@ -13066,13 +13066,13 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             Err(TypeError {
                 message: match ctx.foreign_pds.get(name) {
                     Some(module) => format!(
-                        "'{name}' is a passdown of module '{module}' — a passdown is only visible inside the module that declares it"
+                        "'{name}' is a passdown of module '{module}' - a passdown is only visible inside the module that declares it"
                     ),
                     // Inside a `pd` initializer only passdowns declared
                     // *before* it are in scope at all, so the generic name is
                     // usually a forward reference.
                     None if ctx.init_state.is_some() => format!(
-                        "undefined variable '{name}' — a 'pd' initializer can only use passdowns declared before it"
+                        "undefined variable '{name}' - a 'pd' initializer can only use passdowns declared before it"
                     ),
                     None => format!("undefined variable '{name}'"),
                 },
@@ -13143,7 +13143,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     if !sub_t.ty.is_integer() {
                         return Err(TypeError {
                             message: format!(
-                                "cannot apply '~' to a value of type '{}' — '~' complements the bits of an integer",
+                                "cannot apply '~' to a value of type '{}' - '~' complements the bits of an integer",
                                 sub_t.ty.display()
                             ),
                             span: *span,
@@ -13171,7 +13171,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         ast::Expr::FieldAccess { base, field, span } => {
             if let ast::Expr::Ident(name, _) = base.as_ref() {
                 if is_module_alias(name, ctx) {
-                    // `math.PI` — a module's `const`, written without call
+                    // `math.PI` - a module's `const`, written without call
                     // parentheses (M6.3). Everything else in a module is a
                     // function and needs a call.
                     if let Some(prefix) = ctx.aliases.get(name).cloned() {
@@ -13184,7 +13184,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                             value.span = *span;
                             return Ok(value);
                         }
-                        // `other.NAME` — a module's `pub static`, written
+                        // `other.NAME` - a module's `pub static`, written
                         // without call parentheses, exactly as its `const` is.
                         if let Some(s) = ctx.statics.get(&qualified).cloned() {
                             require_static_unsafe(&s, *span, ctx)?;
@@ -13194,7 +13194,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                                 span: *span,
                             });
                         }
-                        // `val f = math.sqrt` — a module's item named as a
+                        // `val f = math.sqrt` - a module's item named as a
                         // function value (A-4), the qualified spelling of the
                         // same thing a bare name means inside its own module.
                         if let Some((key, fn_ty)) =
@@ -13241,7 +13241,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         if ctx.sigs.keys().any(|k| k.split('@').next() == Some(&qualified)) {
                             return Err(TypeError {
                                 message: format!(
-                                    "'{name}.{field}' is an overloaded stdlib function — its parameter types are part of the name, so it is not a value; write a non-generic wrapper function and pass that"
+                                    "'{name}.{field}' is an overloaded stdlib function - its parameter types are part of the name, so it is not a value; write a non-generic wrapper function and pass that"
                                 ),
                                 span: *span,
                             });
@@ -13249,7 +13249,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     }
                     return Err(TypeError {
                         message: format!(
-                            "'{name}' is a module, not a value — call its items as '{name}.{field}(...)'"
+                            "'{name}' is a module, not a value - call its items as '{name}.{field}(...)'"
                         ),
                         span: *span,
                     });
@@ -13260,12 +13260,12 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if let Some(path) = expr_path(base) {
                 ctx.check_type_path_exported(&path, *span)?;
             }
-            // `Option.None` — a payload-less variant of a generic `enum`
+            // `Option.None` - a payload-less variant of a generic `enum`
             // (A-2), the generic counterpart of the `Shape.Empty` case below.
             if let Some(tmpl_name) = generic_type_path(base, ctx) {
                 return check_generic_bare_variant(&tmpl_name, field, *span, ctx, expected);
             }
-            // `Shape.Empty` — a payload-less variant, written without a call
+            // `Shape.Empty` - a payload-less variant, written without a call
             // (A-1). `Shape.Circle` is the error case: a variant that carries
             // payload has to be constructed with its arguments.
             if let Some(ename) = enum_path(base, ctx) {
@@ -13280,7 +13280,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         .collect();
                     return Err(TypeError {
                         message: format!(
-                            "'{field}' is not a variant of enum '{ename}' — the variants are {}",
+                            "'{field}' is not a variant of enum '{ename}' - the variants are {}",
                             names.join(", ")
                         ),
                         span: *span,
@@ -13291,7 +13291,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         vdef.fields.iter().map(|f| f.name.clone()).collect();
                     return Err(TypeError {
                         message: format!(
-                            "variant '{}.{}' carries payload ({}) — construct it as '{}.{}({})'",
+                            "variant '{}.{}' carries payload ({}) - construct it as '{}.{}({})'",
                             ename,
                             field,
                             fields.join(", "),
@@ -13324,7 +13324,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if ctx.is_enum(&sname) {
                 return Err(TypeError {
                     message: format!(
-                        "enum '{sname}' has no field '{field}' — match it with 'when {sname} {{ ... }}' to read a payload"
+                        "enum '{sname}' has no field '{field}' - match it with 'when {sname} {{ ... }}' to read a payload"
                     ),
                     span: *span,
                 });
@@ -13485,7 +13485,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if let Some(path) = expr_path(receiver) {
                 ctx.check_type_path_exported(&path, *span)?;
             }
-            // `Option.Some(v = 1)` — construction of a generic `enum`
+            // `Option.Some(v = 1)` - construction of a generic `enum`
             // variant (A-2), before the concrete-enum check because a generic
             // enum has no entry in the enum table.
             if let Some(tmpl_name) = generic_type_path(receiver, ctx) {
@@ -13500,7 +13500,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     expected,
                 );
             }
-            // `Shape.Circle(r = 1.0)` — construction of an `enum` variant
+            // `Shape.Circle(r = 1.0)` - construction of an `enum` variant
             // (A-1). Checked before method resolution because it is the same
             // `Type.member(...)` shape as a method call, and the receiver is
             // a *type*, not a value. A member that is not a variant falls
@@ -13523,7 +13523,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if !type_args.is_empty() && !ptr_receiver(receiver, ctx) {
                 return Err(TypeError {
                     message: format!(
-                        "'{method}' does not take type arguments — a method's type parameters come from its receiver"
+                        "'{method}' does not take type arguments - a method's type parameters come from its receiver"
                     ),
                     span: *span,
                 });
@@ -13827,7 +13827,7 @@ fn generic_template_name(name: &str, ctx: &Ctx) -> Option<String> {
 /// Pairs every parameter with the index of the argument that fills it,
 /// honouring named arguments exactly as `match_args` does. Factored out so
 /// type-argument inference (A-2) can see the pairing before the parameter
-/// types are known — `match_args` needs the types, and the types need the
+/// types are known - `match_args` needs the types, and the types need the
 /// pairing.
 fn arg_slots(what: &str, names: &[String], args: &[ast::CallArg], span: Span) -> Result<Vec<usize>> {
     if args.len() != names.len() {
@@ -13925,10 +13925,10 @@ fn check_arity(name: &str, params: &[String], explicit: &[Ty], span: Span) -> Re
 /// type the corresponding argument actually has (A-2). Only the shapes that
 /// can carry a parameter are inspected: a bare parameter name, or a parameter
 /// under a `List`/`Box`/`Map`. A field type that mentions no parameter is
-/// ignored here — its argument is checked against it later, by `match_args`,
+/// ignored here - its argument is checked against it later, by `match_args`,
 /// which is also where a mismatch is reported.
 /// A written type name as its canonical key, resolved against the module the
-/// *declaration* was written in rather than the module the call site is in —
+/// *declaration* was written in rather than the module the call site is in -
 /// `Result<T, E>` inside `std/result.kp` is `std.result.Result<T, E>` no matter
 /// who calls it.
 fn qualify_written(name: &str, prefix: &str, aliases: &HashMap<String, String>) -> String {
@@ -14092,7 +14092,7 @@ fn finish_type_args(
             None => {
                 return Err(TypeError {
                     message: format!(
-                        "cannot infer type parameter '{p}' of '{name}' here — annotate the binding (e.g. 'val x: {name}<{}> = ...') or pass an argument that determines it",
+                        "cannot infer type parameter '{p}' of '{name}' here - annotate the binding (e.g. 'val x: {name}<{}> = ...') or pass an argument that determines it",
                         params.join(", ")
                     ),
                     span,
@@ -14106,7 +14106,7 @@ fn finish_type_args(
 /// The type a constructor argument is checked *against*, as far as the
 /// bindings so far allow it (A-2). `Node(value = 1, next = Box.empty())`
 /// needs the second argument to know it is a `Box<Node<i32>>`, and the only
-/// place that says so is the field's written type — which can be resolved
+/// place that says so is the field's written type - which can be resolved
 /// once an earlier argument has pinned the parameters. `None` means "not
 /// enough is known yet", and the argument is probed unconstrained.
 fn field_hint(
@@ -14141,7 +14141,7 @@ fn field_hint(
     scope.resolve(written, false).ok()
 }
 
-/// `Pair(first = 1, second = "x")` — construction of a generic `datac` (A-2).
+/// `Pair(first = 1, second = "x")` - construction of a generic `datac` (A-2).
 /// The type arguments are inferred from the argument types, falling back to
 /// the expected type, so a generic value is built with the same syntax as an
 /// ordinary one.
@@ -14161,7 +14161,7 @@ fn check_generic_datac_construction(
         };
         return Err(TypeError {
             message: format!(
-                "'{}' is an enum — construct one of its variants: {}",
+                "'{}' is an enum - construct one of its variants: {}",
                 tmpl.name,
                 variants.join(", ")
             ),
@@ -14172,7 +14172,7 @@ fn check_generic_datac_construction(
     let slots = arg_slots(&format!("datac '{}'", tmpl.name), &names, args, span)?;
     // With an explicit instantiation there is nothing to infer; otherwise the
     // expected type is consulted first, because it is the only thing that can
-    // pin a parameter *before* an argument is probed — which is what makes
+    // pin a parameter *before* an argument is probed - which is what makes
     // `xs.push(Option.Some(value = 7))` infer `Option<i64>` from the list's
     // element type rather than defaulting the literal to `i32`.
     let type_args = if explicit.is_empty() {
@@ -14215,7 +14215,7 @@ fn check_generic_datac_construction(
     })
 }
 
-/// `Option.Some(v = 1)` — construction of one variant of a generic `enum`
+/// `Option.Some(v = 1)` - construction of one variant of a generic `enum`
 /// (A-2), the enum counterpart of `check_generic_datac_construction`.
 fn check_generic_enum_construction(
     tmpl_name: &str,
@@ -14230,7 +14230,7 @@ fn check_generic_enum_construction(
     let GenericKind::Sum(variants) = &tmpl.kind else {
         return Err(TypeError {
             message: format!(
-                "'{}' is a generic datac — construct it as '{}(...)'",
+                "'{}' is a generic datac - construct it as '{}(...)'",
                 tmpl.name, tmpl.name
             ),
             span,
@@ -14240,7 +14240,7 @@ fn check_generic_enum_construction(
         let names: Vec<String> = variants.iter().map(|v| format!("'{}'", v.name)).collect();
         return Err(TypeError {
             message: format!(
-                "'{}.{}' is not a variant — the variants of '{}' are {}",
+                "'{}.{}' is not a variant - the variants of '{}' are {}",
                 tmpl.name,
                 variant,
                 tmpl.name,
@@ -14300,7 +14300,7 @@ fn check_generic_enum_construction(
     })
 }
 
-/// `Option.None` — a payload-less variant of a generic `enum`, written without
+/// `Option.None` - a payload-less variant of a generic `enum`, written without
 /// a call (A-2). Nothing in the expression determines the type arguments, so
 /// this form only checks when the expected type does.
 fn check_generic_bare_variant(
@@ -14314,7 +14314,7 @@ fn check_generic_bare_variant(
     let GenericKind::Sum(variants) = &tmpl.kind else {
         return Err(TypeError {
             message: format!(
-                "'{}' is a generic datac — read its fields with '.' after constructing it",
+                "'{}' is a generic datac - read its fields with '.' after constructing it",
                 tmpl.name
             ),
             span,
@@ -14324,7 +14324,7 @@ fn check_generic_bare_variant(
         let names: Vec<String> = variants.iter().map(|v| format!("'{}'", v.name)).collect();
         return Err(TypeError {
             message: format!(
-                "'{}.{}' is not a variant — the variants of '{}' are {}",
+                "'{}.{}' is not a variant - the variants of '{}' are {}",
                 tmpl.name,
                 variant,
                 tmpl.name,
@@ -14337,7 +14337,7 @@ fn check_generic_bare_variant(
         let fields: Vec<String> = vdef.fields.iter().map(|f| f.name.clone()).collect();
         return Err(TypeError {
             message: format!(
-                "variant '{}.{}' carries payload ({}) — construct it as '{}.{}({})'",
+                "variant '{}.{}' carries payload ({}) - construct it as '{}.{}({})'",
                 tmpl.name,
                 variant,
                 fields.join(", "),
@@ -14373,7 +14373,7 @@ fn check_generic_bare_variant(
 /// The two-variant shapes `?` understands (MK5-S6-M1): `Ok`/`Err`, where the
 /// failure carries a payload, and `Some`/`None`, where it does not. Recognized
 /// by *variant name and arity*, never by the enum's own name, so a program's
-/// own `Result`/`Option` works with no import and no blessed name — the shape
+/// own `Result`/`Option` works with no import and no blessed name - the shape
 /// is the contract.
 struct TryShape {
     ok: usize,
@@ -14410,19 +14410,19 @@ fn try_shape(edef: &EnumDef) -> Option<TryShape> {
 
 /// `expr?` (MK5-S6-M1). The operand has to be an `enum` shaped `Ok`/`Err` or
 /// `Some`/`None`, held by value (a borrow cannot give its payload away), and
-/// the enclosing function has to return an enum of the same shape — with the
+/// the enclosing function has to return an enum of the same shape - with the
 /// *same* failure payload type for `Ok`/`Err`, because v1 has no error
 /// conversion. What the operator evaluates to is the success payload.
 fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     let inner = check_expr(sub, ctx, None)?;
     // The operand is read as a whole value and its payload is moved out, so a
-    // borrow is not usable here — `when`/`if let` is the form for that.
+    // borrow is not usable here - `when`/`if let` is the form for that.
     let source = match &inner.ty {
         Ty::Struct(name) => name.clone(),
         other => {
             return Err(TypeError {
                 message: format!(
-                    "'?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value, not '{}' — match it with 'when' or 'if let' instead",
+                    "'?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value, not '{}' - match it with 'when' or 'if let' instead",
                     other.display()
                 ),
                 span,
@@ -14453,7 +14453,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
         other => {
             return Err(TypeError {
                 message: format!(
-                    "'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' — it returns '{}'",
+                    "'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' - it returns '{}'",
                     other.display()
                 ),
                 span,
@@ -14467,7 +14467,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
         let names: Vec<String> = rdef.variants.iter().map(|v| format!("'{}'", v.name)).collect();
         return Err(TypeError {
             message: format!(
-                "'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' — it returns '{}', with {}",
+                "'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' - it returns '{}', with {}",
                 ret.display(),
                 names.join(", ")
             ),
@@ -14477,7 +14477,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     if shape.err_has_payload != rshape.err_has_payload {
         return Err(TypeError {
             message: format!(
-                "'?' here propagates {} failure, but the enclosing function returns '{}' — the two have to be the same shape; match the value instead (`when r {{ Ok(v) -> ..., Err(e) -> return <your failure> }}`), or make the function return the same kind of enum",
+                "'?' here propagates {} failure, but the enclosing function returns '{}' - the two have to be the same shape; match the value instead (`when r {{ Ok(v) -> ..., Err(e) -> return <your failure> }}`), or make the function return the same kind of enum",
                 if shape.err_has_payload { "a carrying" } else { "a payload-less" },
                 ret.display()
             ),
@@ -14498,7 +14498,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
                 None => {
                     return Err(TypeError {
                         message: format!(
-                            "'?' cannot convert a failure: '{}' carries '{}' and the enclosing function returns '{}', whose failure carries '{}' — write 'impl From<{}> for {} {{ fun from(value: {}).return: {} {{ ... }} }}' so the operator has a conversion to call",
+                            "'?' cannot convert a failure: '{}' carries '{}' and the enclosing function returns '{}', whose failure carries '{}' - write 'impl From<{}> for {} {{ fun from(value: {}).return: {} {{ ... }} }}' so the operator has a conversion to call",
                             inner.ty.display(),
                             from.display(),
                             ret.display(),
@@ -14589,7 +14589,7 @@ fn find_from_conversion(ctx: &Ctx, from_ty: &Ty, to_ty: &Ty) -> Result<Option<(S
     Ok(None)
 }
 
-/// `Shape.Circle(r = 1.0)` — one variant's worth of payload, checked against
+/// `Shape.Circle(r = 1.0)` - one variant's worth of payload, checked against
 /// the payload fields exactly as a `datac` construction is checked against its
 /// fields (A-1).
 fn check_enum_construction(
@@ -14619,7 +14619,7 @@ fn check_enum_construction(
             .collect();
         return Err(TypeError {
             message: format!(
-                "'{ename}.{variant}' is not a variant — the variants of '{ename}' are {}",
+                "'{ename}.{variant}' is not a variant - the variants of '{ename}' are {}",
                 names.join(", ")
             ),
             span,
@@ -14648,7 +14648,7 @@ fn check_enum_construction(
     })
 }
 
-/// `when s { Circle(r) -> ... else -> ... }` (A-1) — a pattern match over an
+/// `when s { Circle(r) -> ... else -> ... }` (A-1) - a pattern match over an
 /// `enum`, lowered here to a chain of `if <tag test> { <bindings> <body> }
 /// else ...`: the same TIR shape the boolean `when` already lowers to in the
 /// parser, plus two node kinds (`EnumTag`, `EnumField`) that codegen emits as
@@ -14670,7 +14670,7 @@ fn check_when(
     let Some(ename) = struct_name_of(&scrut.ty).map(|s| s.to_string()) else {
         return Err(TypeError {
             message: format!(
-                "'when' with a scrutinee matches an 'enum', but '{}' is not one — for a chain of conditions write 'when {{ cond -> value }}' with no scrutinee",
+                "'when' with a scrutinee matches an 'enum', but '{}' is not one - for a chain of conditions write 'when {{ cond -> value }}' with no scrutinee",
                 scrut.ty.display()
             ),
             span: scrut.span,
@@ -14679,7 +14679,7 @@ fn check_when(
     let Some(edef) = ctx.enum_def(&ename) else {
         return Err(TypeError {
             message: format!(
-                "'when' with a scrutinee matches an 'enum', but '{ename}' is a datac — read its fields with '.' instead"
+                "'when' with a scrutinee matches an 'enum', but '{ename}' is a datac - read its fields with '.' instead"
             ),
             span: scrut.span,
         });
@@ -14720,7 +14720,7 @@ fn check_when(
                         .collect();
                     return Err(TypeError {
                         message: format!(
-                            "'{}' is not a variant of enum '{ename}' — the variants are {}",
+                            "'{}' is not a variant of enum '{ename}' - the variants are {}",
                             p.variant,
                             names.join(", ")
                         ),
@@ -14847,7 +14847,7 @@ fn check_when(
         if !missing.is_empty() {
             return Err(TypeError {
                 message: format!(
-                    "this 'when' is not exhaustive: {} of enum '{ename}' has no arm — add an arm, or an 'else' arm",
+                    "this 'when' is not exhaustive: {} of enum '{ename}' has no arm - add an arm, or an 'else' arm",
                     missing.join(" and ")
                 ),
                 span,
@@ -14860,7 +14860,7 @@ fn check_when(
     // variant can be live (and when it is an `else` arm, that is its meaning).
     // Doing it this way also means the chain always has an `else`, so the
     // temporary an `if`-as-a-value lowers to is always assigned on both
-    // paths — no uninitialized read, and nothing for a C warning to flag.
+    // paths - no uninitialized read, and nothing for a C warning to flag.
     let (_, base_block) = checked
         .pop()
         .expect("a 'when' always parses with at least one arm");
@@ -14907,7 +14907,7 @@ fn check_when(
 fn stdlib_instantiation_note(ctx: &Ctx) -> String {
     if is_shipped_module(&ctx.module) {
         format!(
-            " — this is inside the shipped standard library ('{}'), so the instantiation you asked for is one it does not offer: a helper that hands a value out is written for a 'Copy' payload or element, and the module's header says which",
+            " - this is inside the shipped standard library ('{}'), so the instantiation you asked for is one it does not offer: a helper that hands a value out is written for a 'Copy' payload or element, and the module's header says which",
             ctx.module
         )
     } else {
@@ -14953,7 +14953,7 @@ fn shadowed_module_alias_note(receiver: &ast::Expr, method: &str, ctx: &Ctx) -> 
 /// The passdown whose storage a place expression is, if it is one: the hidden
 /// parameter (`pd#<name>`, already a borrow) directly, or behind the explicit
 /// `&` that a `main` or `pd` initializer takes of the generated global. Any
-/// other place — a local, a field of one, a dereferenced borrow — is `None`.
+/// other place - a local, a field of one, a dereferenced borrow - is `None`.
 /// The two shapes are why this looks through a `Ref` rather than matching the
 /// identifier alone (M6.4).
 fn pd_place_hidden(expr: &tir::Expr) -> Option<&str> {
@@ -14965,7 +14965,7 @@ fn pd_place_hidden(expr: &tir::Expr) -> Option<&str> {
 }
 
 /// Assignment targets: `Ident`, a `.field` chain rooted in one, or a
-/// dereferenced borrow (`*p`, `(*p).field`) — anything `is_ast_place`
+/// dereferenced borrow (`*p`, `(*p).field`) - anything `is_ast_place`
 /// accepts.
 /// The two rules a written place obeys: it must be writable at all (`var`, an
 /// exclusive borrow, ...), and a field of a `datac` must be declared `var`.
@@ -15180,7 +15180,7 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
 /// type at all. Comparisons are only generated for scalars C can compare
 /// directly: an owned value, a `datac`, or a `str` has no comparison of its
 /// own, and emitting one produces invalid C at `cc` (or, for `str`, a
-/// comparison of *addresses* rather than text — silently wrong, which is
+/// comparison of *addresses* rather than text - silently wrong, which is
 /// worse). References are allowed *except* `&str`, which is the same address
 /// comparison in disguise.
 fn comparable(ty: &Ty) -> bool {
@@ -15200,18 +15200,18 @@ fn comparison_error(ty: &Ty, op: BinOp) -> String {
     };
     if is_str_like(ty) {
         return format!(
-            "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text — use 'str.eq', or compare bytes with 'str.len'/'str.byte'"
+            "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text - use 'str.eq', or compare bytes with 'str.len'/'str.byte'"
         );
     }
     match ty {
         Ty::Str => format!(
-            "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text — use 'str.eq', or compare bytes with 'str.len'/'str.byte'"
+            "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text - use 'str.eq', or compare bytes with 'str.len'/'str.byte'"
         ),
         // A `View` *could* compare byte-wise (it has a length), but `==` on a
         // non-scalar is not how any other type reads and `view.eq` says what
         // it does.
         Ty::View => format!(
-            "cannot compare 'View' values with '{sym}': use 'view.eq(other)' — it compares the bytes and the lengths, where '{sym}' would compare the pointers"
+            "cannot compare 'View' values with '{sym}': use 'view.eq(other)' - it compares the bytes and the lengths, where '{sym}' would compare the pointers"
         ),
         Ty::Bytes | Ty::String => format!(
             "cannot compare '{}' values with '{}': v1 has no equality for owned values",
@@ -15592,7 +15592,7 @@ fn print_error(callee: &str, ty: &Ty) -> String {
     }
 }
 
-/// Whether the expression is a bare numeric or character literal — a value
+/// Whether the expression is a bare numeric or character literal - a value
 /// with **no width of its own**, whose type comes entirely from its context
 /// (`syntax.md` §2.4/§5). A literal in that position has no type until
 /// something asks for one, which is what lets the rule below pick the
@@ -15625,7 +15625,7 @@ fn is_untyped_literal(expr: &ast::Expr) -> bool {
 /// `192 + cp / 64` is `u32` in Rust, where the literal's type is inferred from
 /// the expression it meets. Here `192` was typed `i32` before the right side
 /// was ever read, and the result was
-/// `operator requires matching numeric operands, found 'i32' and 'u32'` — for
+/// `operator requires matching numeric operands, found 'i32' and 'u32'` - for
 /// a rule the reference already stated ("a literal has no width of its own; it
 /// takes the integer type its context requires"). The sibling operand *is* the
 /// context.
@@ -15633,7 +15633,7 @@ fn is_untyped_literal(expr: &ast::Expr) -> bool {
 /// So: when there is no expectation to work from and the left side is a bare
 /// literal while the right side is not, the right side is checked first and
 /// the literal takes its type. Both literals, or neither, still go left to
-/// right — nothing about the common cases changes.
+/// right - nothing about the common cases changes.
 fn check_binary_operands(
     lhs: &ast::Expr,
     rhs: &ast::Expr,
@@ -15710,7 +15710,7 @@ fn check_binary(
             })
         }
         // Bitwise operators (A-9). Integral operands of the same type,
-        // result the same type — the same rule arithmetic uses, one domain
+        // result the same type - the same rule arithmetic uses, one domain
         // over. `~` is the prefix form and is checked on the unary path.
         //
         // `bool` is deliberately not a bitwise domain: `a & b` on two
@@ -15840,7 +15840,7 @@ fn check_binary(
 
 /// Matches call-site arguments (each optionally named, `f(x = 1)`) against
 /// a callee's declared parameter list, by name first and positionally for
-/// the rest — shared between plain function calls and `datac` construction,
+/// the rest - shared between plain function calls and `datac` construction,
 /// since both look identical at a call site.
 fn match_args(
     what: &str,
@@ -15915,10 +15915,10 @@ fn match_args_split<'a>(
 }
 
 /// Checks one call-site argument against its matched parameter type. When
-/// the parameter is `Ty::Ref`, the caller never writes `&` — a plain place
+/// the parameter is `Ty::Ref`, the caller never writes `&` - a plain place
 /// argument (`p`, `p.x`) is auto-borrowed here (the callee's signature is
 /// what decides shared vs exclusive), matching `plan/syntax.md`'s "shared
-/// borrow is implicit — write nothing." An argument that's already a borrow
+/// borrow is implicit - write nothing." An argument that's already a borrow
 /// (an explicit `&expr`, or forwarding an existing `Ref`-typed parameter)
 /// type-matches directly instead of double-wrapping; a shared parameter
 /// accepts an exclusive argument (implicit downgrade), never the reverse.
@@ -15926,7 +15926,7 @@ fn match_args_split<'a>(
 /// borrow from a temporary: the temporary is freed at the end of the
 /// enclosing statement, and codegen would have to drop it before the borrow
 /// could be used. Argument matching itself allows a temporary for a shared
-/// borrow — that is what makes `str.join(str.split(s, sep), sep)` legal — so
+/// borrow - that is what makes `str.join(str.split(s, sep), sep)` legal - so
 /// the one case where the lifetime actually matters is checked here, where
 /// the callee's return type and its elided root are both known.
 ///
@@ -15958,7 +15958,7 @@ fn require_place_for_borrowed_arg(
     if !is_durable_place(inner) {
         return Err(TypeError {
             message: format!(
-                "this call returns a borrow of its parameter '{}', so that argument has to be a variable or a field — a temporary would be freed before the borrow could be used; bind it to a local first (`val tmp = <the expression>`) and pass `tmp` instead",
+                "this call returns a borrow of its parameter '{}', so that argument has to be a variable or a field - a temporary would be freed before the borrow could be used; bind it to a local first (`val tmp = <the expression>`) and pass `tmp` instead",
                 params[idx].0
             ),
             span,
@@ -15982,7 +15982,7 @@ fn check_expr_or_memo(
     }
 }
 
-/// `pname` is how the argument is named in a diagnostic — `'b'` for a
+/// `pname` is how the argument is named in a diagnostic - `'b'` for a
 /// declared parameter, `1` for the position in a call through a function value
 /// (a function *type* has no parameter names).
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
@@ -15990,8 +15990,8 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
     // A `scoped fun(...)` parameter accepts only a `fun` literal or a trailing
     // block written at this call site (`plan/scoped-blocks.md`), never a
     // stored value. The one exception is forwarding a scoped value that is
-    // already in hand — a `scoped fun(...)` parameter of this frame, or a
-    // `val` bound to one — which is still inside the call.
+    // already in hand - a `scoped fun(...)` parameter of this frame, or a
+    // `val` bound to one - which is still inside the call.
     if matches!(pty, Ty::ScopedFn { .. }) && !matches!(arg_expr, ast::Expr::FnLit { .. }) {
         let checked = check_expr(arg_expr, ctx, None)?;
         if !matches!(checked.ty, Ty::ScopedFn { .. }) {
@@ -16021,12 +16021,12 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         refuse_open_arg(&checked.ty, arg_expr)?;
         // A `&str` view and a `str` are the same value (both are the flat
         // borrowed view type), so a view satisfies a `str` parameter
-        // directly — that is what makes `str.len(s.as_str())` work (M6.3).
+        // directly - that is what makes `str.len(s.as_str())` work (M6.3).
         if is_str_like(pty) && is_str_like(&checked.ty) {
             return Ok(checked);
         }
         // The parameter is bare (by value), so this call *moves* its argument
-        // in — which a `move T` parameter and every container's
+        // in - which a `move T` parameter and every container's
         // `push`/`set`-shaped builtin both do. A borrow cannot be moved out
         // of, so name that instead of leaving a plain type mismatch
         // (`'&String'` against `'String'`) to imply the caller forgot an `&`
@@ -16034,7 +16034,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         if matches!(checked.ty, Ty::Ref { .. }) && !pty.is_copy() {
             return Err(TypeError {
                 message: format!(
-                    "argument {pname} has type '{}', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()'){}",
+                    "argument {pname} has type '{}', but this call moves its argument in, and a borrow cannot be moved out of - pass an owned value (a 'Box' holding one moves it out with 'take()'){}",
                     checked.ty.display(),
                     stdlib_instantiation_note(ctx)
                 ),
@@ -16115,7 +16115,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
 /// The one widening a function value gets (A-4 phase E): a plain `fun` value
 /// used where a closure is expected is wrapped, so the two are separate types
 /// but one *value* can be written either way. A signature mismatch is left
-/// alone — the caller's own type comparison reports it, and a coerced value
+/// alone - the caller's own type comparison reports it, and a coerced value
 /// whose signature does not fit would hide which half was wrong.
 fn coerce_fn_to_closure(expected: Ty, value: tir::Expr) -> tir::Expr {
     let Ty::Closure { params, ret } = &expected else {
@@ -16409,13 +16409,13 @@ fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String> {
     };
     match (expected, actual) {
         (Ty::Closure { .. }, Ty::Fn { .. }) => Some(
-            "this is a plain function value, not a closure: its body captured nothing, so it carries no environment — a `fun` literal becomes a closure when it names a binding from the enclosing scope, and a declared `fun` is always a plain function value".to_string(),
+            "this is a plain function value, not a closure: its body captured nothing, so it carries no environment - a `fun` literal becomes a closure when it names a binding from the enclosing scope, and a declared `fun` is always a plain function value".to_string(),
         ),
         (Ty::Fn { .. }, Ty::Closure { .. }) => Some(
-            "this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for — write the expected type as 'closure(...)' (the same parameter list and '.return:'), or pass a declared function instead".to_string(),
+            "this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for - write the expected type as 'closure(...)' (the same parameter list and '.return:'), or pass a declared function instead".to_string(),
         ),
         (Ty::Fn { .. } | Ty::Closure { .. }, Ty::ScopedFn { .. }) => Some(
-            "this is a scoped function value: it may only be passed to another 'scoped fun(...)' parameter, because it may not outlive the call it was written in — a plain function or closure parameter could store it or return it".to_string(),
+            "this is a scoped function value: it may only be passed to another 'scoped fun(...)' parameter, because it may not outlive the call it was written in - a plain function or closure parameter could store it or return it".to_string(),
         ),
         (Ty::ScopedFn { .. }, Ty::Fn { .. } | Ty::Closure { .. }) => Some(
             "this parameter takes a plain function or closure value, and what was passed is a scoped one: a scoped literal may only be written at the call site of a 'scoped fun(...)' parameter".to_string(),
@@ -17153,7 +17153,7 @@ fn check_call(
         });
     }
 
-    // `Shape(r = 1.0)` — an enum is constructed by naming a variant, never by
+    // `Shape(r = 1.0)` - an enum is constructed by naming a variant, never by
     // calling the type itself.
     if ctx.is_enum(callee) || ctx.is_enum(&ctx.qualify_own(callee)) {
         let ename = if ctx.is_enum(callee) {
@@ -17170,7 +17170,7 @@ fn check_call(
             .collect();
         return Err(TypeError {
             message: format!(
-                "'{ename}' is an enum — construct one of its variants: {}",
+                "'{ename}' is an enum - construct one of its variants: {}",
                 variants.join(", ")
             ),
             span,
@@ -17271,7 +17271,7 @@ fn check_call(
                     }
                     // A compiler-provided free function (`panic`, `assert`)
                     // lives in the same table as the builtin methods, so it is
-                    // consulted after the program's own signatures — a user
+                    // consulted after the program's own signatures - a user
                     // function of the same name wins, and there is no
                     // shadowing surprise.
                     None => match builtin_sig(callee) {
@@ -17295,7 +17295,7 @@ fn check_call(
                                 &ctx.aliases,
                                 &ctx.env,
                             ) {
-                                Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
+                                Some(hint) => format!("call to undefined function '{callee}' - did you mean {hint}?"),
                                 None => format!("call to undefined function '{callee}'"),
                             },
                             span,
@@ -17506,7 +17506,7 @@ fn check_claim_argument(
 /// same list names the same one. The wrapper's own parameters are the extern's
 /// declared parameters followed by one per extra argument, so
 /// `codegen_c.rs::write_user_extern` forwards all of them to the native symbol
-/// unchanged — the C compiler then applies the default argument promotions a
+/// unchanged - the C compiler then applies the default argument promotions a
 /// real variadic call gets.
 fn register_variadic_wrapper(
     ctx: &mut Ctx,
@@ -18525,7 +18525,7 @@ fn instantiate_function(
         }
     }
     let what = format!("function '{}'", display_callee(&tmpl.key));
-    // With an explicit instantiation there is nothing to infer — the arguments
+    // With an explicit instantiation there is nothing to infer - the arguments
     // are still matched, but by `check_call`, against the signature this
     // produces. Otherwise the expected return type and the argument types
     // supply the parameters.
@@ -18568,7 +18568,7 @@ fn instantiate_function(
     if let Some(sig) = ctx.sig_of(&key) {
         return Ok((key, sig));
     }
-    // The parameter and return types, resolved from the *final* arguments —
+    // The parameter and return types, resolved from the *final* arguments -
     // whichever way they were determined, so an explicit instantiation needs
     // no inference bindings at all. A failure here is a problem in the
     // template's own signature, written in the template's file, so the
@@ -18634,7 +18634,7 @@ fn instantiate_function(
     if st.sigs.len() >= MAX_FUNCTION_INSTANTIATIONS {
         return Err(TypeError {
             message: format!(
-                "generic instantiation did not terminate — more than {MAX_FUNCTION_INSTANTIATIONS} function instances were created; a generic function that calls itself with a different type argument grows without bound"
+                "generic instantiation did not terminate - more than {MAX_FUNCTION_INSTANTIATIONS} function instances were created; a generic function that calls itself with a different type argument grows without bound"
             ),
             span,
         });
@@ -18711,7 +18711,7 @@ fn resolve_overload(
     }
 }
 
-/// " — it is declared for i32, i64, f64", for the message above.
+/// " - it is declared for i32, i64, f64", for the message above.
 fn overload_options(callee: &str, owned_key: &str, ctx: &Ctx) -> String {
     for base in [callee, owned_key] {
         if let Some(set) = ctx.overloads.get(base) {
@@ -18722,7 +18722,7 @@ fn overload_options(callee: &str, owned_key: &str, ctx: &Ctx) -> String {
             names.sort();
             names.dedup();
             if !names.is_empty() {
-                return format!(" — it is declared for {}", names.join(", "));
+                return format!(" - it is declared for {}", names.join(", "));
             }
         }
     }
@@ -18731,8 +18731,8 @@ fn overload_options(callee: &str, owned_key: &str, ctx: &Ctx) -> String {
 
 /// The hidden passdown arguments a call to `callee` has to pass, in the
 /// order the callee's signature declares them (M5.2). Each one is a borrow of
-/// the passdown's storage: the generated global's address, or — inside a
-/// function that received that passdown as a hidden parameter — the parameter
+/// the passdown's storage: the generated global's address, or - inside a
+/// function that received that passdown as a hidden parameter - the parameter
 /// itself, which *is* that same borrow. A caller that only calls a function
 /// reading a passdown never receives one of its own (the wiring is per
 /// function's own references), which is why the global's address is the
@@ -18749,7 +18749,7 @@ fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
         if !ctx.pd_initialized(&pd.hidden) {
             return Err(TypeError {
                 message: format!(
-                    "'{callee}' reads passdown '{}', which is not initialized yet here — a 'pd' initializer can only call functions whose passdowns are already set up",
+                    "'{callee}' reads passdown '{}', which is not initialized yet here - a 'pd' initializer can only call functions whose passdowns are already set up",
                     pd.qualified
                 ),
                 span,
@@ -18775,7 +18775,7 @@ fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
 /// Checks a string template's interpolated pieces and lowers it to one
 /// `tir::ExprKind::Template`. Interpolated values must be printable under
 /// exactly the rule `print` already applies (numeric, `bool`, `char`,
-/// `str`) — a template is a formatted print, not a string builder.
+/// `str`) - a template is a formatted print, not a string builder.
 fn check_template(
     parts: &[ast::TemplatePart],
     newline: bool,
@@ -19101,7 +19101,7 @@ fn check_handle_associated(
 
 /// `receiver.method(args)`: resolves `method` against the receiver
 /// expression's `datac` type, then lowers to a plain `tir::ExprKind::Call`
-/// — the receiver becomes the first argument, auto-borrowed through
+/// - the receiver becomes the first argument, auto-borrowed through
 /// `check_call_arg` exactly like any other `Ty::Ref` parameter (so a
 /// `fun mut T.m()` method reuses M4's aliasing checks with no special
 /// casing). No new `tir`/codegen shape is needed for method calls at all.
@@ -19326,7 +19326,7 @@ fn check_method_call(
     // builtin, written on the type name, so it takes no receiver argument and
     // is resolved before the receiver is checked as a value (it isn't one). A
     // local or an `impl` alias of the same name shadows the type name,
-    // exactly as it would anywhere else — which is why those cases fall
+    // exactly as it would anywhere else - which is why those cases fall
     // through to the ordinary method path below.
     if let ast::Expr::Ident(name, _) = receiver {
         if ctx.lookup(name).is_none() && !is_module_alias(name, ctx) {
@@ -19603,8 +19603,8 @@ fn check_method_call(
     // `cfg.on_event(x)` where the receiver has a *field* of function type
     // (A-4): the call syntax is a method's, the callee is a field, and the
     // field is a place holding a function value. A declared method of the
-    // same name wins — the declaration is the more specific statement of what
-    // the type does — so this is only consulted when there is no such method.
+    // same name wins - the declaration is the more specific statement of what
+    // the type does - so this is only consulted when there is no such method.
     if ctx.sig_of(&format!("{owner}#{method}")).is_none() {
         if let Some(fn_ty) = fn_field_ty(&probe.ty, method, ctx) {
             // A field holding a closure is callable the same way (A-4 phase
@@ -19672,7 +19672,7 @@ fn check_method_call(
         // A-2: a method declared on a generic type (`fun Pair<A, B>.first()`).
         // Its type arguments are the receiver's own instantiation, which the
         // probe already resolved, so the template key is the *type template*
-        // plus the method name — and the instance's key is what the call names.
+        // plus the method name - and the instance's key is what the call names.
         None => match method_template_key(ctx, &owner, method) {
             Some(tmpl_key) => {
                 instantiate_function(ctx, &tmpl_key, &[], args, span, expected, Some(&probe.ty))?
@@ -19718,7 +19718,7 @@ fn check_method_call(
                         && matches!(method, "sort" | "contains" | "slice" | "clone") =>
                 {
                     format!(
-                        "List<{}>.{method} is not defined: '{}' has no {}, and a 'datac'/'enum' takes one from its fields, so every field it holds has to have it too — use an element whose fields all do",
+                        "List<{}>.{method} is not defined: '{}' has no {}, and a 'datac'/'enum' takes one from its fields, so every field it holds has to have it too - use an element whose fields all do",
                         e.display(),
                         e.display(),
                         match method {
@@ -19729,11 +19729,11 @@ fn check_method_call(
                     )
                 }
                 (Some(e), "List") => format!(
-                    "List<{}> has no method '{method}' — the List surface is len, is_empty, push, get, set, pop, clear, sort, reverse, contains, slice, clone, insert, remove",
+                    "List<{}> has no method '{method}' - the List surface is len, is_empty, push, get, set, pop, clear, sort, reverse, contains, slice, clone, insert, remove",
                     e.display()
                 ),
                 (Some(e), "Map") => format!(
-                    "Map<{}> has no method '{method}' — the Map surface is len, is_empty, has, get, get_or, insert, remove, clear, keys, values",
+                    "Map<{}> has no method '{method}' - the Map surface is len, is_empty, has, get, get_or, insert, remove, clear, keys, values",
                     e.display()
                 ),
                 (Some(e), "Array") => format!(
@@ -19741,7 +19741,7 @@ fn check_method_call(
                     e.display()
                 ),
                 (Some(e), _) => format!(
-                    "Box<{}> has no method '{method}' — the Box surface is is_empty, get, set, take",
+                    "Box<{}> has no method '{method}' - the Box surface is is_empty, get, set, take",
                     e.display()
                 ),
                 // An `Atomic<T>` with no such method: `bool` has the five
@@ -20429,7 +20429,7 @@ fn lower_enum_from_int(
 /// The associated constructors of the three builtin containers, written on
 /// the type name: `List.of(x)`/`List.empty()`, `Box.of(x)`/`Box.empty()`,
 /// and `Map.new()`/`Map.empty()`/`Map.with_capacity(n)`. Each needs its
-/// element type from somewhere — `of` takes it from its argument (or from
+/// element type from somewhere - `of` takes it from its argument (or from
 /// the binding's written type, which is what `expected` is for),
 /// `empty`/`new` only from the written type, and `with_capacity` from the
 /// written type as well because its argument is a count, not an element.
@@ -20503,7 +20503,7 @@ fn check_container_associated(
         "Map" => Ty::Map(Box::new(Ty::Unit), Box::new(Ty::Unit)),
         _ => Ty::Box(Box::new(Ty::Unit)),
     };
-    // `Map.empty()` and `Map.new()` are one operation — a map starts empty —
+    // `Map.empty()` and `Map.new()` are one operation - a map starts empty -
     // so they lower to one key. They used to lower to two and codegen only
     // ever emitted `__new`, so `Map.empty()` compiled to a call to a function
     // that did not exist; a `datac`/`enum` value type is not what exposed it,
@@ -20620,7 +20620,7 @@ fn check_container_associated(
             })
         }
         "of" if container == "Map" => Err(TypeError {
-            message: "'Map.of' does not exist — a map starts empty; write 'Map.new()' with the value type on the binding, then 'insert(k, v)'".to_string(),
+            message: "'Map.of' does not exist - a map starts empty; write 'Map.new()' with the value type on the binding, then 'insert(k, v)'".to_string(),
             span,
         }),
         "of" => {
@@ -20659,11 +20659,11 @@ fn check_container_associated(
         }
         other => Err(TypeError {
             message: format!(
-                "'{container}.{other}' is not a {container} operation — {}",
+                "'{container}.{other}' is not a {container} operation - {}",
                 if container == "List" {
                     "write 'List.of(x)' for a one-element list, 'List.empty()' or 'List.with_capacity(n)' with the element type on the binding, or call a method on a value ('xs.push(x)', 'xs.get(i)', 'xs.len()')"
                 } else if container == "Map" {
-                    "a map starts empty — write 'Map.new()' with the type on the binding ('var m: Map<String, i32> = Map.new()'), then call a method on the value ('m.insert(k, v)', 'm.get(k)', 'm.len()')"
+                    "a map starts empty - write 'Map.new()' with the type on the binding ('var m: Map<String, i32> = Map.new()'), then call a method on the value ('m.insert(k, v)', 'm.get(k)', 'm.len()')"
                 } else {
                     "write 'Box.of(x)' for a one-value box, 'Box.empty()' with the element type on the binding, or call a method on a value ('b.get()', 'b.set(v)', 'b.take()', 'b.is_empty()')"
                 }
@@ -21415,13 +21415,13 @@ fn qualified_hint<'a>(
         None => {
             let import_path = module_path.replace('.', "/");
             format!(
-                "'{name}' is declared in module '{import_path}' — add `impl \"{import_path}\"` and reach it as `<alias>.{name}`"
+                "'{name}' is declared in module '{import_path}' - add `impl \"{import_path}\"` and reach it as `<alias>.{name}`"
             )
         }
     })
 }
 
-/// `alias.item(args)` — a reference to an item in an imported module, per
+/// `alias.item(args)` - a reference to an item in an imported module, per
 /// M5's strict module-qualified namespace. `prefix` is that module's symbol
 /// prefix, so the actual lookup key is just `prefix + item`: the same
 /// table `check_call` uses for any other call, which is why imported
@@ -21496,7 +21496,7 @@ fn check_module_item(
         });
     }
     // A receiver method lives under a `Type#name` key, which a module path
-    // can't spell — say so rather than "no such item".
+    // can't spell - say so rather than "no such item".
     let method_suffix = format!("#{item}");
     if let Some(key) = ctx
         .sigs
@@ -21506,7 +21506,7 @@ fn check_module_item(
         let type_name = key.trim_end_matches(&method_suffix).trim_end_matches(prefix);
         return Err(TypeError {
             message: format!(
-                "'{item}' is a method on '{type_name}', not a free function — call it on a value ('value.{item}(...)')"
+                "'{item}' is a method on '{type_name}', not a free function - call it on a value ('value.{item}(...)')"
             ),
             span,
         });

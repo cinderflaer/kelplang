@@ -103,7 +103,7 @@ impl Lowerer {
     ///
     /// `is_function_body` decides what the block's last expression means. A
     /// function body's tail *is* the returned value, so it is lowered as an
-    /// explicit `return` — one return site the cleanup and the elided-borrow
+    /// explicit `return` - one return site the cleanup and the elided-borrow
     /// rule see together. Any other block's tail is a value, so it is preserved
     /// through a synthesized binding while the cleanup runs after it.
     fn block(

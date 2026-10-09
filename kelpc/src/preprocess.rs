@@ -19,7 +19,7 @@
 //! cycles.
 //!
 //! Spans are the fiddly part. A replacement's tokens are lexed from the
-//! alias's text, where offsets are meaningless in the file being compiled —
+//! alias's text, where offsets are meaningless in the file being compiled -
 //! so every replacement token gets remapped onto the `%*name*%` occurrence
 //! the user actually wrote, which keeps `file:line:col` useful. The one
 //! exception is an error *at* the reference itself: those carry the use site
@@ -57,7 +57,7 @@ fn defined_here(def: &AliasDef) -> String {
 #[derive(Debug, Clone)]
 pub struct AliasDef {
     pub name: String,
-    /// The replacement text, verbatim — the source slice for an inline
+    /// The replacement text, verbatim - the source slice for an inline
     /// declaration, the quoted value for a `[alias]` entry.
     pub text: String,
     /// Absolute offset of `text` in its own file, so a reference *inside* a
@@ -128,7 +128,7 @@ impl AliasTable {
         Ok(())
     }
 
-    /// Rejects a cycle anywhere in the table, used or not — the same rule
+    /// Rejects a cycle anywhere in the table, used or not - the same rule
     /// imports follow (an import cycle is an error even if nothing calls into
     /// it). Expansion checks for cycles again as it goes; this is what
     /// catches an unused one.
@@ -143,7 +143,7 @@ impl AliasTable {
 
     /// `from` is the reference that led here: `(module, span)` of the
     /// `%*name*%` occurrence inside the previous alias's *text*, already
-    /// mapped to its own file's offset — so the two spans of a cycle can land
+    /// mapped to its own file's offset - so the two spans of a cycle can land
     /// in two different files.
     fn visit_alias(
         &self,
@@ -296,7 +296,7 @@ impl AliasTable {
 
     /// Textual expansion inside a string literal (or template chunk): an
     /// `impl "%*shared*%"` path is the case this exists for. The replacement
-    /// is spliced in as raw text — no re-lexing, so a `$` in the replacement
+    /// is spliced in as raw text - no re-lexing, so a `$` in the replacement
     /// stays a literal `$`.
     fn expand_text(
         &self,

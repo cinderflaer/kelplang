@@ -33,7 +33,7 @@ pub enum TokenKind {
     /// `TemplateStart` ... `TemplateEnd` sequence below instead, so every
     /// existing string in every existing test keeps this exact token.
     StringLit(String),
-    /// `'a'`, `'\n'`, `'\u{4e2d}'` — one Unicode scalar value, stored as its
+    /// `'a'`, `'\n'`, `'\u{4e2d}'` - one Unicode scalar value, stored as its
     /// code point (open item 53). Distinct from `IntLit` at the token and
     /// AST levels so the parser and the type checker can tell a character
     /// from a number; `infer.rs` is what decides the type, and a character
@@ -77,7 +77,7 @@ pub enum TokenKind {
 
     // keywords
     Fun,
-    /// `closure(i32).return: i32` — the type of a `fun` literal that captures
+    /// `closure(i32).return: i32` - the type of a `fun` literal that captures
     /// (A-4, phase E): a function *value* that carries an environment, so it
     /// is owned (not Copy) and drops that environment. A keyword rather than
     /// a contextual name, for the reason `fun` is one: the spelling is a type
@@ -87,25 +87,25 @@ pub enum TokenKind {
     Val,
     Var,
     Mut,
-    /// `fun consume(s: move String)` — a parameter that takes ownership of
+    /// `fun consume(s: move String)` - a parameter that takes ownership of
     /// its argument (A-4), the counterpart of `mut T`'s exclusive borrow.
     Move,
     If,
     Else,
-    /// `elif cond { ... }` — the `else if` link spelled as one keyword. It
+    /// `elif cond { ... }` - the `else if` link spelled as one keyword. It
     /// means exactly what `else if` means (`plan/syntax.md` 6.1 records both
     /// spellings, with `elif` the preferred one), so the parser hands it to
     /// the same function the `else if` link goes to; the only other reader is
     /// `kelpc lint`, which warns when the longer spelling is written.
     Elif,
     While,
-    /// `for x in xs { ... }` — the indexed walk over a `List` (A-5,
+    /// `for x in xs { ... }` - the indexed walk over a `List` (A-5,
     /// `plan/syntax.md` §6.2). The parser desugars it to a `while`, so no pass
     /// after the parser knows this form exists. `in` is **not** a keyword; it
     /// is read contextually, exactly as `let` is after `if`.
     For,
     When,
-    /// `defer EXPR` — a statement whose action runs when the enclosing block
+    /// `defer EXPR` - a statement whose action runs when the enclosing block
     /// is left (kernel stage 6, `plan/defer.md`). `defer.rs` rewrites it away
     /// before name resolution, so no later pass knows this form exists.
     Defer,
@@ -113,11 +113,11 @@ pub enum TokenKind {
     True,
     False,
     Datac,
-    /// `enum Shape { Circle(val r: f64) Empty }` — a tagged union
+    /// `enum Shape { Circle(val r: f64) Empty }` - a tagged union
     /// (`plan/syntax.md` §9.2): exactly one variant is live, and `when` on a
     /// scrutinee matches it (A-1).
     Enum,
-    /// `pd val name = expr` / `pd var name = expr` — a passdown
+    /// `pd val name = expr` / `pd var name = expr` - a passdown
     /// (`plan/syntax.md` §9).
     Pd,
     /// `impl "path/to/module"`: the import keyword (`plan/syntax.md` §8),
@@ -134,12 +134,12 @@ pub enum TokenKind {
     /// (`plan/syntax.md` 13.1), and the `impl` parser refuses the clause by name
     /// rather than letting a stale one read as something else.
     As,
-    /// `const NAME: T = expr` — a top-level compile-time constant (M6.3).
+    /// `const NAME: T = expr` - a top-level compile-time constant (M6.3).
     Const,
-    /// `static NAME: T = expr` — a top-level global object (kernel stage 7).
+    /// `static NAME: T = expr` - a top-level global object (kernel stage 7).
     /// Unlike a `const`, one with a stable address.
     Static,
-    /// `extern fun name(...).return: T` — a declaration whose body the compiler
+    /// `extern fun name(...).return: T` - a declaration whose body the compiler
     /// supplies (M6.2). Only compiler-shipped stdlib modules may use it: the
     /// whole point is to confine the unportable primitive (a syscall, a
     /// `malloc`) to a body that is not `.kp` source.
@@ -170,7 +170,7 @@ pub enum TokenKind {
     /// glues `.`, and two colons written apart stay two `Colon`s.
     ColonColon,
     Dot,
-    /// `...` — the variadic marker a user `extern fun` may write as its last
+    /// `...` - the variadic marker a user `extern fun` may write as its last
     /// parameter (gap 7). Nothing follows it, and it is not a value: it only
     /// ever appears in a declaration's parameter list.
     DotDotDot,
@@ -199,14 +199,14 @@ pub enum TokenKind {
     OrOr,
     Bang,
     Amp,
-    /// `a | b` — bitwise or (A-9). `||` is still one token; a single `|` used
+    /// `a | b` - bitwise or (A-9). `||` is still one token; a single `|` used
     /// to be a lex error.
     Pipe,
-    /// `a ^ b` — bitwise exclusive or.
+    /// `a ^ b` - bitwise exclusive or.
     Caret,
-    /// `~a` — bitwise complement, prefix only.
+    /// `~a` - bitwise complement, prefix only.
     Tilde,
-    /// `expr?` — propagate a failure out of the enclosing function
+    /// `expr?` - propagate a failure out of the enclosing function
     /// (MK5-S6-M1). Postfix, so it is only ever read after an expression.
     Question,
 
@@ -224,20 +224,20 @@ pub struct Lexer<'a> {
     bytes: &'a [u8],
     pos: usize,
     /// Depth of unclosed `(`. Newlines are insignificant (not tokenized)
-    /// while this is > 0 — this is what lets a `datac`'s field-list parens,
+    /// while this is > 0 - this is what lets a `datac`'s field-list parens,
     /// or any parenthesized sub-expression, span multiple lines.
     paren_depth: usize,
     /// The `paren_depth` in force when each unclosed `{` was opened. A block
     /// *inside* parens is where the rule above stops: `{` opens a statement
     /// block, and statements are separated by newlines, so those are tokenized
-    /// again however deep the parens are — which is what lets a `fun` literal
+    /// again however deep the parens are - which is what lets a `fun` literal
     /// with a multi-statement body be written as a call argument
     /// (`f(fun(x: i32) { a\n b\n })`). A function body's own braces are at
     /// paren depth 0, so a wrapped argument list inside it still ignores
     /// newlines (A-4 phase E).
     brace_parens: Vec<usize>,
     /// Tokens produced by a single source construct but consumed one at a
-    /// time — only string templates use this: one `"..."` literal expands to
+    /// time - only string templates use this: one `"..."` literal expands to
     /// a whole token run, and `next_token` drains the run before reading
     /// more source.
     pending: VecDeque<Token>,
@@ -312,7 +312,7 @@ impl<'a> Lexer<'a> {
         Some(b)
     }
 
-    /// Skips spaces, tabs and carriage returns — the trivia a token never
+    /// Skips spaces, tabs and carriage returns - the trivia a token never
     /// starts with. A newline is *not* skipped: whether it is significant
     /// depends on `paren_depth`, so the caller handles it.
     fn skip_ws(&mut self) {
@@ -337,14 +337,14 @@ impl<'a> Lexer<'a> {
     ///
     /// **Block comments nest**, like Kotlin's and Rust's rather than like C's:
     /// an inner `/*` needs its own `*/`, so commenting out a region that
-    /// already contains a block comment works. The alternative — C's rule —
+    /// already contains a block comment works. The alternative - C's rule -
     /// ends the comment at the *first* `*/`, so the rest of the region becomes
     /// code and the failure is a parse error somewhere else entirely. The cost
     /// of nesting is that an extra `*/` no longer "closes twice" silently: an
     /// unbalanced `/*` is an unterminated comment, reported at its own start.
     ///
     /// A `//` inside a block comment is just text, and a `/*` inside a line
-    /// comment is too — the caller decides which delimiters apply.
+    /// comment is too - the caller decides which delimiters apply.
     fn consume_block_comment(&mut self) -> Result<(), LexError> {
         let start = self.pos;
         self.pos += 2; // the opening `/*`, already checked by the caller
@@ -430,7 +430,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// Lexes the whole source. Comments are skipped, exactly as they always
-    /// have been — the parser's token stream is this one, and it does not
+    /// have been - the parser's token stream is this one, and it does not
     /// change.
     pub fn tokenize(mut self) -> Result<Vec<Token>, LexError> {
         self.keep_comments = false;
@@ -439,8 +439,8 @@ impl<'a> Lexer<'a> {
 
     /// `tokenize`, but comments are returned as `TokenKind::Comment`
     /// tokens instead of being skipped, and a run of newlines stops at one.
-    /// Everything else — token text, spans, the collapse of a blank-line run
-    /// into a single `Newline` — is identical, which is what lets the
+    /// Everything else - token text, spans, the collapse of a blank-line run
+    /// into a single `Newline` - is identical, which is what lets the
     /// formatter reconstruct the source while nothing else in the compiler
     /// changes.
     pub fn tokenize_with_trivia(mut self) -> Result<Vec<Token>, LexError> {
@@ -515,7 +515,7 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 // Significant at the top level, and inside a block whose own
-                // braces were opened inside parens — otherwise parens win.
+                // braces were opened inside parens - otherwise parens win.
                 let in_paren_block = self
                     .brace_parens
                     .last()
@@ -878,7 +878,7 @@ impl<'a> Lexer<'a> {
                     }
                     // Fold the specific adjacent shape `ident!(` into one
                     // identifier token (covers `print!`), rather than
-                    // merging `!` into identifiers generally — that would
+                    // merging `!` into identifiers generally - that would
                     // wrongly swallow `!=` when written without a space
                     // (`x!=y`).
                     if self.peek() == Some(b'!') && self.peek_at(1) == Some(b'(') {
@@ -991,7 +991,7 @@ impl<'a> Lexer<'a> {
             None => return Err(err!("unterminated character literal")),
             Some(b'\n') => {
                 return Err(err!(
-                    "a character literal cannot span lines — write '\\n' for a newline"
+                    "a character literal cannot span lines - write '\\n' for a newline"
                 ))
             }
             Some(b'\\') => match self.advance() {
@@ -1007,12 +1007,12 @@ impl<'a> Lexer<'a> {
                 // is `'A'`. It is the byte NN in a byte literal. Two hex
                 // digits exactly (open item 64).
                 Some(b'x') => self.lex_hex_escape(start)? as u32,
-                // `\u{4e2d}` — the code point in hex, braced so the escape has
+                // `\u{4e2d}` - the code point in hex, braced so the escape has
                 // an unambiguous end and an arbitrary number of digits.
                 Some(b'u') => {
                     if self.advance() != Some(b'{') {
                         return Err(err!(
-                            "a unicode escape is written '\\u{{...}}' — for example '\\u{{4e2d}}'"
+                            "a unicode escape is written '\\u{{...}}' - for example '\\u{{4e2d}}'"
                         ));
                     }
                     let hex_start = self.pos;
@@ -1025,7 +1025,7 @@ impl<'a> Lexer<'a> {
                     let digits = self.src[hex_start..self.pos].to_string();
                     if self.advance() != Some(b'}') {
                         return Err(err!(
-                            "a unicode escape is closed with '}}' — for example '\\u{{4e2d}}'"
+                            "a unicode escape is closed with '}}' - for example '\\u{{4e2d}}'"
                         ));
                     }
                     let v = u32::from_str_radix(&digits, 16)
@@ -1179,7 +1179,7 @@ impl<'a> Lexer<'a> {
     /// Without interpolation this queues the single `StringLit` token it
     /// always did. With interpolation it queues the flat template run
     /// (`TemplateStart StrChunk ... TemplateEnd`), lexing each `${...}`'s
-    /// tokens through `next_token` — which is what makes nested strings,
+    /// tokens through `next_token` - which is what makes nested strings,
     /// nested templates, and absolute spans work with no offset math.
     fn lex_string(&mut self, start: usize) -> Result<(), LexError> {
         let mut text = String::new();
@@ -1229,7 +1229,7 @@ impl<'a> Lexer<'a> {
                     // Anything else is an error rather than the bare character:
                     // passing it through made `"\q"` mean `"q"`, so a typo was
                     // silently a different string. `\0` is rejected for a second
-                    // reason — a `str` is NUL-terminated and could not hold one.
+                    // reason - a `str` is NUL-terminated and could not hold one.
                     Some(c) => {
                         return Err(LexError {
                             message: format!(
@@ -1290,7 +1290,7 @@ impl<'a> Lexer<'a> {
                             span: Span::new(close, close + 1),
                         });
                     } else {
-                        // `$name` — an identifier, nothing more (use
+                        // `$name` - an identifier, nothing more (use
                         // `${name.field}` for anything compound). Wrapped in
                         // the same start/end pair as `${...}` so the parser
                         // has one uniform shape to read.
@@ -1328,7 +1328,7 @@ impl<'a> Lexer<'a> {
                 Some(c) => {
                     // A non-ASCII byte starts a multi-byte UTF-8 sequence.
                     // `src` is UTF-8, so reassemble the character instead of
-                    // pushing each byte as its own Latin-1 scalar — the
+                    // pushing each byte as its own Latin-1 scalar - the
                     // latter re-encodes as mojibake and inflates the
                     // literal's byte length, which `String.len` would then
                     // report.
@@ -1693,7 +1693,7 @@ mod tests {
     #[test]
     fn decodes_multibyte_utf8_in_string_literals() {
         // The lexer is byte-oriented, so a literal used to push each byte of a
-        // multi-byte character as its own Latin-1 scalar — `"héllo"` came out
+        // multi-byte character as its own Latin-1 scalar - `"héllo"` came out
         // as `"hÃ©llo"`, and `String.len` then reported 8 bytes for 6. The
         // character has to survive verbatim.
         assert_eq!(
@@ -1720,8 +1720,8 @@ mod tests {
     }
 
     /// The formatter needs the comments the parser never sees. The default
-    /// stream is unchanged — this is the whole point of keeping the change
-    /// additive — and the trivia stream interleaves the comment in source
+    /// stream is unchanged - this is the whole point of keeping the change
+    /// additive - and the trivia stream interleaves the comment in source
     /// order.
     #[test]
     fn trivia_retention_keeps_comments_without_changing_the_default_stream() {

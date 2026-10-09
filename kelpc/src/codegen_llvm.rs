@@ -4992,8 +4992,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// A scoped `fun` literal (`plan/scoped-blocks.md` part 2): the same fat
     /// pointer `emit_closure_lit` builds, but the environment is an `alloca`
-    /// of the enclosing function — it cannot outlive the call the literal was
-    /// written in — and the `drop` member is `null`, because every field is a
+    /// of the enclosing function - it cannot outlive the call the literal was
+    /// written in - and the `drop` member is `null`, because every field is a
     /// `Copy` value or a shared borrow and the environment owns nothing.
     fn emit_scoped_closure_lit(
         &mut self,
@@ -5993,7 +5993,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // value. `borrowck.rs` records an `at_assign` entry with
             // `binding: None` for this shape too now (roadmap open item 15,
             // case 3), so the old field value is freed first, the same as an
-            // `Ident` target — just at this address instead of a resolved
+            // `Ident` target - just at this address instead of a resolved
             // binding, since there is no declaration to key one to.
             ExprKind::FieldAccess { base, field } => {
                 let (ptr, struct_ty, index) = self.field_place(base, field)?;
@@ -6014,7 +6014,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // writes into whatever the borrow names. The value `*p` pointed
             // at is freed first, the same way and for the same reason the
             // `FieldAccess` arm above now does (roadmap open item 15, case
-            // 2) — without it, the value a `*p = value` overwrote had no
+            // 2) - without it, the value a `*p = value` overwrote had no
             // binding anywhere in this frame to be freed by, ever.
             ExprKind::Deref { expr: sub } => {
                 let ptr = self.value_of(sub)?;
@@ -8117,7 +8117,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// generated fixed-arity wrapper, never the native symbol itself. The
     /// wrapper is declared like any other extern (`declare_extern`), so its
     /// `RtFn` is in the runtime table under the wrapper's own symbol, and the
-    /// capability plan still reads the extern's key — that is what carries the
+    /// capability plan still reads the extern's key - that is what carries the
     /// domain and the argument positions the grant governs.
     fn emit_variadic_call(
         &mut self,
@@ -10771,7 +10771,7 @@ const L_CAP: u32 = 2;
 /// skips that call chain entirely. Measured on
 /// `benchmarks/sorting/sort.kp` (n = 5,000,000): 16 landed at 254ms, 24 at
 /// 243ms, 32 at 238ms, with diminishing returns above that (a further push to
-/// 64 was only 227ms) — 32 stays inside the well-tested range while clearing
+/// 64 was only 227ms) - 32 stays inside the well-tested range while clearing
 /// the 250ms target with headroom, rather than chasing the last few
 /// milliseconds outside it. Shared with the C backend's
 /// `KELP_SORT_INSERTION_CUTOFF`.

@@ -88,7 +88,7 @@ fn mixing_wildcard_error(span: Span) -> ParseError {
 
 /// The name prefix of the local an `if let` binds its scrutinee to. `#` cannot
 /// appear in a lexed identifier, so a synthesized name can never collide with
-/// one the user wrote — the same trick `infer.rs` uses for a hidden passdown
+/// one the user wrote - the same trick `infer.rs` uses for a hidden passdown
 /// parameter.
 const IF_LET_PREFIX: &str = "#iflet";
 
@@ -288,7 +288,7 @@ impl Parser {
 
     /// Whether the `{` the parser has already consumed opens a block whose
     /// first tokens are a parameter header: one or more identifiers, comma
-    /// separated, then `->`. A lookahead only — nothing is consumed.
+    /// separated, then `->`. A lookahead only - nothing is consumed.
     fn block_header_starts_params(&self) -> bool {
         let mut i = self.pos;
         if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Ident(_))) {
@@ -700,7 +700,7 @@ impl Parser {
         }
     }
 
-    /// `const NAME: T = expr` — the type is mandatory, since a `const` is a
+    /// `const NAME: T = expr` - the type is mandatory, since a `const` is a
     /// declared contract rather than an inferred binding.
     fn parse_const_decl(&mut self, is_pub: bool, section: Option<String>) -> PResult<ConstDecl> {
         let start = self.expect(TokenKind::Const, "'const'")?.span;
@@ -721,7 +721,7 @@ impl Parser {
         })
     }
 
-    /// `static NAME: T = expr` / `static mut NAME: T = expr` — a top-level
+    /// `static NAME: T = expr` / `static mut NAME: T = expr` - a top-level
     /// global object (kernel stage 7), optionally with a leading `percpu`
     /// (kernel stage 8). The type is mandatory, as it is on a `const`, and the
     /// initializer must fold at compile time.
@@ -835,7 +835,7 @@ impl Parser {
                 span: self.peek().span,
             });
         }
-        // `caps(domain = ["pattern", ...], ...)` — the capability grant
+        // `caps(domain = ["pattern", ...], ...)` - the capability grant
         // (M7). Domains and patterns are validated in `resolve.rs`, where the
         // module graph (and therefore the importer's own set) is known.
         // `caps(*)` is the one alternative spelling: it delegates the whole
@@ -1810,7 +1810,7 @@ impl Parser {
     }
 
     /// `enum Shape { Circle(val r: f64) Rect(val w: f64, val h: f64) Empty }`
-    /// — variants are newline-separated, and a variant's payload list is the
+    /// - variants are newline-separated, and a variant's payload list is the
     /// same one a `datac` uses (`plan/syntax.md` §9.2).
     fn parse_enum_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<EnumDecl> {
         let start = self.expect(TokenKind::Enum, "'enum'")?.span;
@@ -1909,7 +1909,7 @@ impl Parser {
     }
 
     fn parse_function_inner(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>, align: Option<u32>, signature: bool) -> PResult<FunctionDecl> {
-        // `extern fun ...` — a declaration whose body the compiler supplies
+        // `extern fun ...` - a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
         let extern_ = if self.check(&TokenKind::Extern) {
@@ -1929,7 +1929,7 @@ impl Parser {
         // refused with the parameter form named instead (A-4).
         if self.check(&TokenKind::Move) {
             return Err(ParseError {
-                message: "'move' cannot be written on a receiver — a method always borrows its receiver; a move-taking parameter is written 'name: move T'".to_string(),
+                message: "'move' cannot be written on a receiver - a method always borrows its receiver; a move-taking parameter is written 'name: move T'".to_string(),
                 span: self.peek().span,
             });
         }
@@ -2088,7 +2088,7 @@ impl Parser {
 
         if extern_ && receiver.is_some() {
             return Err(ParseError {
-                message: "'extern' cannot be used on a receiver method — declare it as a free function"
+                message: "'extern' cannot be used on a receiver method - declare it as a free function"
                     .to_string(),
                 span: start,
             });
@@ -2153,7 +2153,7 @@ impl Parser {
             // it.
             if self.check(&TokenKind::Eq) || self.check(&TokenKind::LBrace) {
                 return Err(ParseError {
-                    message: "an 'extern fun' declaration has no body — the compiler supplies it"
+                    message: "an 'extern fun' declaration has no body - the compiler supplies it"
                         .to_string(),
                     span: self.peek().span,
                 });
@@ -2459,7 +2459,7 @@ impl Parser {
             let start = self.advance().span;
             return self.parse_fn_type(start, amp_start, "fun", false);
         }
-        // `scoped fun(T).return: U` — a *contextual* modifier. `scoped` is read as
+        // `scoped fun(T).return: U` - a *contextual* modifier. `scoped` is read as
         // one only when the next token is `fun`, so an ordinary type or
         // binding named `scoped` is untouched, and the modifier never has a
         // keyword that could break an existing program.
@@ -2476,7 +2476,7 @@ impl Parser {
         }
         let (first, first_span) = self.expect_ident()?;
         // A dotted name is a module-qualified reference to an imported item
-        // (`circle.Circle`) — see `resolve.rs`, which rewrites it to the
+        // (`circle.Circle`) - see `resolve.rs`, which rewrites it to the
         // item's canonical, module-prefixed name.
         let mut name = first;
         let mut span = first_span;
@@ -2551,7 +2551,7 @@ impl Parser {
         })
     }
 
-    /// `( name: T, ... )` — one parameter list, shared by a declaration and a
+    /// `( name: T, ... )` - one parameter list, shared by a declaration and a
     /// `fun` literal (A-4), since the two take exactly the same parameters.
     /// The flag is `true` for a declaration whose last parameter is the `...`
     /// variadic marker (gap 7); a `fun` literal refuses one at its own call
@@ -2576,7 +2576,7 @@ impl Parser {
             self.expect(TokenKind::Colon, "':'")?;
             // `mut T` requests an exclusive borrow and `move T` takes
             // ownership (A-4); this is the *only* spelling for either in
-            // parameter position — `&mut T` is rejected here (the leading
+            // parameter position - `&mut T` is rejected here (the leading
             // `&` in `parse_type` expects an identifier next, not the `mut`
             // keyword token), and `&`/`mut` stay expression-only.
             let mode = self.parse_param_mode()?;
@@ -2596,7 +2596,7 @@ impl Parser {
         Ok((params, variadic))
     }
 
-    /// `fun(x: i32).return: i32 = x * 2` in expression position — an anonymous
+    /// `fun(x: i32).return: i32 = x * 2` in expression position - an anonymous
     /// function (A-4). A body is required (there is no `extern` spelling for
     /// a literal), and everything else about the header is a declaration's:
     /// the same parameter list, the same optional `.return: T`.
@@ -2666,7 +2666,7 @@ impl Parser {
         };
         if self.check(&TokenKind::Mut) || self.check(&TokenKind::Move) {
             return Err(ParseError {
-                message: "'mut' and 'move' cannot be combined on one parameter — 'mut T' is an exclusive borrow, 'move T' takes ownership".to_string(),
+                message: "'mut' and 'move' cannot be combined on one parameter - 'mut T' is an exclusive borrow, 'move T' takes ownership".to_string(),
                 span: self.peek().span,
             });
         }
@@ -2811,15 +2811,15 @@ impl Parser {
         }
     }
 
-    /// `<T, U>` in an *expression*, immediately followed by `(` — the explicit
+    /// `<T, U>` in an *expression*, immediately followed by `(` - the explicit
     /// instantiation of a generic construction or call, `Pair<i32, String>(...)`
     /// or `Option.Some<i32>(v = 1)` (A-2).
     ///
     /// This is the one place the spelling is ambiguous: `a < b > (c)` is a
     /// valid comparison chain, and `a < b, c > (d)` is not (a comma cannot
     /// appear in an expression there), so a lookahead that simply tries is not
-    /// safe. The rule is adjacency — the `<` must touch the name and the `(`
-    /// must touch the `>` — so comparison code, which is written with spaces,
+    /// safe. The rule is adjacency - the `<` must touch the name and the `(`
+    /// must touch the `>` - so comparison code, which is written with spaces,
     /// can never be misread. Returns `None` and restores the token position
     /// when the form does not apply.
     fn try_explicit_type_args(&mut self) -> PResult<Option<Vec<TypeExpr>>> {
@@ -3315,7 +3315,7 @@ impl Parser {
     }
 
     /// `for x in xs { BODY }`, desugared here into an indexed walk over the
-    /// `List` — the same trick the boolean `when` and `if let` already use, so
+    /// `List` - the same trick the boolean `when` and `if let` already use, so
     /// nothing downstream learns a new form (A-5, `plan/syntax.md` §6.2):
     ///
     /// ```text
@@ -3331,7 +3331,7 @@ impl Parser {
     /// `SEQ` is the iterable as written when it is a place, and a synthesized
     /// `val #for0 = EXPR` otherwise (so a call is evaluated once and freed at
     /// the end of the block). Binding a place by value would move the list, and
-    /// a parameter *is* a borrow — `for x in xs` inside a function would move
+    /// a parameter *is* a borrow - `for x in xs` inside a function would move
     /// out of a borrow, which is the common case.
     ///
     /// The element binding is exactly what `List.get` gives: a copy for a
@@ -3673,7 +3673,7 @@ impl Parser {
         loop {
             chain += 1;
             self.chain_limit(chain)?;
-            // `expr?` — the propagation operator (MK5-S6-M1). It is postfix,
+            // `expr?` - the propagation operator (MK5-S6-M1). It is postfix,
             // so it binds tighter than any binary operator and chains with the
             // accesses below (`f()?.x`).
             if self.check(&TokenKind::Question) {
@@ -3700,7 +3700,7 @@ impl Parser {
                     continue;
                 }
                 let (name, nspan) = self.expect_ident()?;
-                // `Option.Some<i32>(v = 1)` — an explicit instantiation on a
+                // `Option.Some<i32>(v = 1)` - an explicit instantiation on a
                 // generic `enum`'s variant (A-2). Recognized only in the
                 // adjacent form, so `a.b < c > (d)` stays a comparison.
                 let type_args = self.try_explicit_type_args()?.unwrap_or_default();
@@ -4167,7 +4167,7 @@ impl Parser {
     /// the block, and whatever follows (nothing, `else`, `else if`, or
     /// `elif`). Shared by `if` and `elif`, which is why a chain may mix them.
     fn parse_if_link(&mut self, start: Span) -> PResult<Expr> {
-        // `if let PATTERN = EXPR { ... }` — a pattern condition rather than a
+        // `if let PATTERN = EXPR { ... }` - a pattern condition rather than a
         // boolean one. `let` is only an identifier everywhere else in the
         // language, so this is recognized by the token pair rather than by
         // reserving the word; the one thing it costs is that a binding
@@ -4213,7 +4213,7 @@ impl Parser {
     /// { val #iflet0 = EXPR  when #iflet0 { PATTERN -> { THEN } else -> { ELSE } } }
     /// ```
     ///
-    /// Nothing downstream needs a new case — and binding the scrutinee first is
+    /// Nothing downstream needs a new case - and binding the scrutinee first is
     /// what makes a temporary legal here, since the pattern form of `when`
     /// requires a *place* (an owned payload binds as a borrow of it, and a
     /// borrow of a temporary would not outlive the arm).
@@ -4256,13 +4256,13 @@ impl Parser {
                 Expr::Block(block)
             }
         } else if self.check(&TokenKind::Elif) {
-            // `elif let Foo(x) = e { ... }` — the chained pattern link, in the
+            // `elif let Foo(x) = e { ... }` - the chained pattern link, in the
             // spelling 6.1 prefers. Same link, same function.
             let link = self.parse_elif()?;
             span = span.to(link.span());
             link
         } else {
-            // No `else`, so the whole thing produces `Unit` — exactly what an
+            // No `else`, so the whole thing produces `Unit` - exactly what an
             // `if` without one does. An empty block is the `Unit` arm.
             Expr::Block(Block {
                 stmts: Vec::new(),
@@ -4313,11 +4313,11 @@ impl Parser {
             span,
         };
         // The `when` is the block's last statement, which is what makes it the
-        // block's value (statements are positional in this language — there is
+        // block's value (statements are positional in this language - there is
         // no `tail` field to set).
         //
         // A scrutinee that is already a *place* (`if let Ok(v) = r`) is used
-        // directly, with no synthesized binding at all — exactly what a bare
+        // directly, with no synthesized binding at all - exactly what a bare
         // `when r { ... }` already does (6.1's own note: "a bare `when` needs
         // a place, since a payload borrow has to outlive the arm", and
         // matching a place never moves it, only a field of it). This is what
@@ -4325,8 +4325,8 @@ impl Parser {
         // = r { ... }` legal: each link only *reads* `r` to test its tag, so
         // reading it twice is fine, the same way `when`'s own multi-arm form
         // reads its one scrutinee once and tests it repeatedly. Binding it to
-        // a fresh `val #iflet0 = r` first — every earlier version of this
-        // desugaring did that unconditionally — makes the *first* `if let`
+        // a fresh `val #iflet0 = r` first - every earlier version of this
+        // desugaring did that unconditionally - makes the *first* `if let`
         // look like it moves `r` into the temporary, and the next `else if
         // let`'s own re-evaluation of the same source expression then reads
         // an already-moved place. A scrutinee that is *not* a place (a call's
@@ -4346,10 +4346,10 @@ impl Parser {
 
     /// Parses both forms of `when`:
     ///
-    /// - `when { cond -> value, ..., else -> value }` — no scrutinee, so it
+    /// - `when { cond -> value, ..., else -> value }` - no scrutinee, so it
     ///   is desugared here and now to a nested `if`/`else` chain; `infer.rs`
     ///   and `codegen_c.rs` never see this form at all.
-    /// - `when expr { Variant(bind) -> value, ..., else -> value }` — a
+    /// - `when expr { Variant(bind) -> value, ..., else -> value }` - a
     ///   pattern match (A-1), kept as `Expr::When` because only `infer.rs`
     ///   knows the scrutinee's type, and therefore which variants exist.
     ///
@@ -4377,7 +4377,7 @@ impl Parser {
             // A newline separates arms, but it is not *required* to: inside
             // `(` `)` the lexer does not emit newline tokens at all (see
             // `Lexer::paren_depth`), and a `when` is allowed to be a call
-            // argument. An arm head is unambiguous either way — every arm is
+            // argument. An arm head is unambiguous either way - every arm is
             // `head -> value`, and `->` appears nowhere else in the language.
             if !self.check(&TokenKind::RBrace) {
                 self.skip_newlines();
@@ -4427,7 +4427,7 @@ impl Parser {
         }
     }
 
-    /// `when s { Circle(r) -> ... else -> ... }` — the pattern form. Arm
+    /// `when s { Circle(r) -> ... else -> ... }` - the pattern form. Arm
     /// heads are *shapes*, not expressions: a variant name with an optional
     /// `(bind, ...)` list, where each bind is an identifier or `_`.
     fn parse_when_patterns(&mut self, start: Span) -> PResult<Expr> {
@@ -4483,7 +4483,7 @@ impl Parser {
             // A newline separates arms, but it is not *required* to: inside
             // `(` `)` the lexer does not emit newline tokens at all (see
             // `Lexer::paren_depth`), and a `when` is allowed to be a call
-            // argument. An arm head is unambiguous either way — every arm is
+            // argument. An arm head is unambiguous either way - every arm is
             // `head -> value`, and `->` appears nowhere else in the language.
             if !self.check(&TokenKind::RBrace) {
                 self.skip_newlines();
@@ -6006,7 +6006,7 @@ mod tests {
 
     #[test]
     fn explicit_type_arguments_are_recognized_only_when_adjacent() {
-        // A-2: `Pair<i32, String>(...)` — the `<` touches the name and the
+        // A-2: `Pair<i32, String>(...)` - the `<` touches the name and the
         // `(` touches the `>`, which is what keeps an ordinary comparison
         // chain (`a < b > (c)`) from being read as an instantiation.
         let p = parse("fun main() {\n    val x = Pair<i32, String>(a = 1)\n}");
@@ -6137,7 +6137,7 @@ mod tests {
         assert_eq!(param.ty.fn_ret.as_ref().unwrap().name, "i32");
 
         // The return type is a function type with no `.return`, so it returns
-        // `Unit` — and its parameter is a `move`, which a function type
+        // `Unit` - and its parameter is a `move`, which a function type
         // spells the same way a declaration does.
         let ret = f.return_type.as_ref().unwrap();
         assert!(ret.is_fn());
@@ -6148,7 +6148,7 @@ mod tests {
 
     #[test]
     fn parses_a_closure_type_in_parameter_and_return_position() {
-        // A closure type is a function type under the `closure` keyword — the
+        // A closure type is a function type under the `closure` keyword - the
         // same parameter list, the same optional `.return:` (A-4 phase E).
         let p = parse("fun use(f: closure(i32).return: i32, g: move closure()) {}");
         let f = &p.functions[0];

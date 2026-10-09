@@ -23,6 +23,7 @@ empty on release.
 - The Polyp examples use the Polyp v5 impl ids (`deps/polyp/core/core`, `deps/polyp/backends/gtk/polyp/lib`, `deps/polyp/backends/gtk/gtk`, `deps/polyp/backends/gtk/queue`, `deps/polyp/backends/soft/...`). The `polyp` namespace is unchanged. The v0 examples are frozen.
 
 ## compiler
+- Compiler messages and source comments use plain hyphens and commas, with no em or en dashes.
 
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
 - `kelpc doc --text` prints the documentation as plain text (on branch lighthouse-support, not merged).
