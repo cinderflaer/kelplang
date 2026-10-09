@@ -1,0 +1,7 @@
+// MISSING-Ey4Mt: arithmetic on a `char` const parameter inside a type is
+// refused by name, as it is for an integer parameter.
+fun make<const C: char>().return: [i32; C + 1] = [0; 3]
+
+fun main() {
+    print(make<'a'>().len())
+}

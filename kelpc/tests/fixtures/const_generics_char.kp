@@ -1,0 +1,30 @@
+// MISSING-Ey4Mt: a `char` const parameter. The value is a compile-time
+// character, read as a value in the body, compared with `==`, and used as a
+// type argument of a `datac`. Two instantiations of one template are two types.
+
+// A plain `fun` whose body reads the character and returns it.
+fun glyph<const C: char>().return: char = C
+
+// A `bool` result from comparing the parameter.
+fun is_slash<const C: char>().return: bool {
+    return C == '/'
+}
+
+// A `datac` with a `char` const parameter, and a method reading it.
+datac Tag<const C: char>(var weight: i32)
+
+fun Tag<const C: char>.mark().return: char {
+    return C
+}
+
+fun main() {
+    print(glyph<'x'>())
+    print(glyph<'y'>())
+    print(is_slash<'/'>())
+    print(is_slash<'a'>())
+    val a = Tag<'x'>(weight = 1)
+    val b = Tag<'y'>(weight = 2)
+    print(a.mark())
+    print(b.mark())
+    print(a.weight + b.weight)
+}

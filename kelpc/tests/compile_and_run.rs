@@ -4186,6 +4186,40 @@ fn arithmetic_on_a_const_parameter_in_a_type_is_refused() {
 }
 
 #[test]
+fn a_char_const_parameter_is_a_value_a_type_argument_and_a_comparison() {
+    // `glyph<'x'>` and `glyph<'y'>` are two instantiations; `C == '/'` compares
+    // the parameter; `Tag<'x'>` and `Tag<'y'>` are two `datac` types.
+    assert_compiles_and_runs(
+        "tests/fixtures/const_generics_char.kp",
+        "x\ny\ntrue\nfalse\nx\ny\n3\n",
+    );
+}
+
+#[test]
+fn arithmetic_on_a_char_const_parameter_in_a_type_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/const_generics_char_arithmetic.kp",
+        "'C' is a const parameter, and arithmetic on one in a type",
+    );
+}
+
+#[test]
+fn a_const_parameter_on_a_trait_is_refused_for_a_char_too() {
+    assert_rejected_with(
+        "tests/fixtures/const_generics_trait_refused.kp",
+        "a trait cannot take a const parameter ('const C')",
+    );
+}
+
+#[test]
+fn a_const_parameter_of_any_other_type_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/const_generics_string_refused.kp",
+        "'const S' has type 'String': a const parameter's type is one of 'usize', 'u8', 'u16', 'u32', 'u64', 'i32', 'i64', 'bool' or 'char'",
+    );
+}
+
+#[test]
 fn impl_trait_arguments_are_fresh_bounded_type_parameters() {
     // `fun pair_area(a: impl Shape, b: &impl Shape)` is two parameters, so two
     // different types may be passed, and the trait's methods dispatch

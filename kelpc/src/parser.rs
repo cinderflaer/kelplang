@@ -1524,7 +1524,7 @@ impl Parser {
                 if self.check(&TokenKind::Lt) || self.check(&TokenKind::Colon) {
                     return Err(ParseError {
                         message: format!(
-                            "a const parameter's type is one of 'usize', 'u8'..'u64', 'i32', 'i64' or 'bool', so '{ty}' cannot take arguments or bounds"
+                            "a const parameter's type is one of 'usize', 'u8'..'u64', 'i32', 'i64', 'bool' or 'char', so '{ty}' cannot take arguments or bounds"
                         ),
                         span: self.peek().span,
                     });
@@ -2691,11 +2691,15 @@ impl Parser {
     }
 
     /// Whether the tokens at the cursor begin a const argument rather than a
-    /// type: an integer or boolean literal, a leading `-`, or a name that is
+    /// type: an integer, boolean or character literal, a leading `-`, or a name that is
     /// called or used in an arithmetic expression (`SIZE * 2`, `size()`).
     fn starts_const_arg(&self) -> bool {
         match self.peek_kind() {
-            TokenKind::IntLit(_) | TokenKind::True | TokenKind::False | TokenKind::Minus => true,
+            TokenKind::IntLit(_)
+            | TokenKind::CharLit(_)
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::Minus => true,
             TokenKind::Ident(_) => {
                 let mut i = self.pos + 1;
                 while matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Dot))

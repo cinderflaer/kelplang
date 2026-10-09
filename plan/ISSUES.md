@@ -173,18 +173,6 @@ to want any of the above; it does not depend on this entry.
 signature could not name a Kelp `enum` or `datac` on the default backend, and
 the prelude now emits those typedefs from the C backend's own layout writers.
 
-### MISSING-Ey4Mt kelp: const generics stop at plain integer and `bool` parameters
-
-repo: kelp | found: 2026-10-06 | effort: L
-
-source: wiki `language/limits.md` (unreleased), "Const generics".
-
-Refused: arithmetic on the parameter inside a type (`[T; N + 1]`), a const
-parameter on a trait, a non-integer non-`bool` const parameter. Related
-compile-time limits: no `comptime` block, no compile-time `List`/`Map`, no
-`size_of`/`align_of` in a `const`, and no method or builtin call in a constant
-(`str.len("x")`).
-
 ### MISSING-Xo5Ga kelp: no Unicode case mapping, and no `str` slicing that is codepoint aware
 
 repo: kelp | found: 2026-10-06 | effort: L

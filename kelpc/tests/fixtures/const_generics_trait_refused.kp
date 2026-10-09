@@ -1,0 +1,9 @@
+// MISSING-Ey4Mt: a trait may not take a const parameter, and a `char` one is
+// refused the same way as an integer one.
+trait Tagged<const C: char> {
+    fun tag(): i32
+}
+
+fun main() {
+    print(1)
+}

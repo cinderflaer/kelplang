@@ -10,7 +10,8 @@ Two spellings that remove a reason to write a converter:
 1. **Const type parameters.** A parameter of a `datac`, an `enum` or a `fun` may be a compile-time
    *value* rather than a type: `datac Buf<const N: usize>(var data: [i32; N], var len: usize)`,
    `fun sum<const N: usize>(a: &[i32; N]).return: i32`, `fun Buf<const N: usize>.push(...)`. The value
-   is one of `usize`, `u8`, `u16`, `u32`, `u64`, `i32`, `i64` and `bool`.
+   is one of `usize`, `u8`, `u16`, `u32`, `u64`, `i32`, `i64`, `bool` and `char` (MISSING-Ey4Mt). A
+   `char` value is a code point: `Tag<'x'>` is the instantiation with `'x'`, read as a `char` in the body.
 2. **`impl Trait` in argument position.** `fun f(x: impl Shape, y: &impl Shape)` is sugar for two
    fresh bounded type parameters, one per `impl` occurrence.
 
@@ -63,8 +64,9 @@ planned.
 
 **Refused by name:** arithmetic on a const parameter in a type, a value that does not fit the
 declared type, a const parameter used as a type, a type written where a const argument belongs and
-a const argument where a type belongs, a `bool` parameter given a non-boolean value, and a trait
-with a const parameter.
+a const argument where a type belongs, a `bool` parameter given a non-boolean value, a `char`
+parameter given a number (and a number or `bool` parameter given a character), a `char` parameter used
+as an array length, a const parameter of any other type, and a trait with a const parameter.
 
 ## `impl Trait` in argument position
 
@@ -116,5 +118,6 @@ libc).
   Refused by name.
 - **A const parameter on a trait, and a const argument in a trait's own argument list.** A trait is
   implemented for a type; a const there would be a second binding to infer.
-- **A const parameter that is not an integer or `bool`** (a length is a count, and every other type
-  is either not foldable or not comparable at compile time).
+- **A const parameter that is not an integer, `bool` or `char`** (a length is a count, and every other
+  type is either not foldable or not comparable at compile time). `char` is in scope since
+  MISSING-Ey4Mt: a code point folds, compares and prints like a character literal.

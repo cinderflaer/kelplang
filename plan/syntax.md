@@ -1268,7 +1268,10 @@ fun zeros<const N: usize>().return: [i32; N] = [0; N]
   because the length an instantiation takes has to be one the compiler can already fold.
 - One copy per distinct value, exactly as for a type argument: `Ring<4>` and `Ring<8>` are two
   types with two sets of generated functions.
-- A trait may not take a const parameter (a trait is implemented for a type).
+- A const parameter's type is one of `usize`, `u8`..`u64`, `i32`, `i64`, `bool` or `char`. A `char`
+  parameter takes a character (`Tag<'x'>`) and reads as a `char` in the body; any other type is refused
+  by name.
+- A trait may not take a const parameter, whatever its type (a trait is implemented for a type).
 
 #### `impl Trait` in argument position
 

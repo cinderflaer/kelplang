@@ -597,10 +597,16 @@ impl Ty {
             Ty::Ptr(elem) => format!("Ptr<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
             Ty::ConstInt { value, ty } => {
-                if matches!(**ty, Ty::Bool) {
-                    if *value == 0 { "false".to_string() } else { "true".to_string() }
-                } else {
-                    value.to_string()
+                match **ty {
+                    Ty::Bool => if *value == 0 { "false".to_string() } else { "true".to_string() },
+                    // A character argument is spelled as its literal where that is
+                    // a plain letter or digit, and as its code point otherwise, so
+                    // no written spelling can collide with another argument's.
+                    Ty::Char => match u32::try_from(*value).ok().and_then(char::from_u32) {
+                        Some(c) if c.is_ascii_alphanumeric() => format!("'{c}'"),
+                        _ => format!("U+{value:04X}"),
+                    },
+                    _ => value.to_string(),
                 }
             }
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),

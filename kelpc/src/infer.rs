@@ -407,10 +407,11 @@ fn const_param_tys(
             "i32" => Ty::I32,
             "i64" => Ty::I64,
             "bool" => Ty::Bool,
+            "char" => Ty::Char,
             other => {
                 return Err(Diagnostic::new(
                     format!(
-                        "'const {}' has type '{other}': a const parameter's type is one of 'usize', 'u8', 'u16', 'u32', 'u64', 'i32', 'i64' or 'bool'",
+                        "'const {}' has type '{other}': a const parameter's type is one of 'usize', 'u8', 'u16', 'u32', 'u64', 'i32', 'i64', 'bool' or 'char'",
                         d.name
                     ),
                     d.span,
@@ -438,7 +439,7 @@ fn bind_const_args(
             continue;
         };
         let Some(arg) = args.get(idx) else { continue };
-        let Ty::ConstInt { value, .. } = arg else {
+        let Ty::ConstInt { value, ty: arg_ty } = arg else {
             return Err(TypeError {
                 message: format!(
                     "const parameter '{name}' expects a constant expression of type '{}', but a type was written: write a literal or a 'const' ('Buf<16>', 'Buf<SIZE>'), not a type name",
@@ -448,11 +449,41 @@ fn bind_const_args(
             });
         };
         let value = *value;
+        // A `char` parameter takes a character and nothing else, and no
+        // other parameter takes one (A-20, MISSING-Ey4Mt).
+        let arg_is_char = matches!(**arg_ty, Ty::Char);
+        let wants_char = matches!(declared, Ty::Char);
+        if wants_char && !arg_is_char {
+            return Err(TypeError {
+                message: format!(
+                    "const parameter '{name}' is a 'char', so its argument has to be a character literal or a 'char' const ('Tag<'x'>'), not a number"
+                ),
+                span,
+            });
+        }
+        if !wants_char && arg_is_char {
+            return Err(TypeError {
+                message: format!(
+                    "const parameter '{name}' is a '{}', so its argument has to be an integer or 'bool' value, and a character is not one",
+                    declared.display()
+                ),
+                span,
+            });
+        }
         if matches!(declared, Ty::Bool) {
             if value != 0 && value != 1 {
                 return Err(TypeError {
                     message: format!(
                         "const parameter '{name}' is a 'bool', so its argument has to be 'true' or 'false'"
+                    ),
+                    span,
+                });
+            }
+        } else if wants_char {
+            if u32::try_from(value).ok().and_then(char::from_u32).is_none() {
+                return Err(TypeError {
+                    message: format!(
+                        "const parameter '{name}' is a 'char', and U+{value:04X} is not a Unicode scalar value"
                     ),
                     span,
                 });
@@ -1947,7 +1978,15 @@ impl TypeScope<'_> {
         // A const parameter as a length (A-20): `[T; N]` inside a template,
         // where the instantiation binds `N` to a value.
         if let ast::Expr::Ident(name, _) = expr {
-            if let Some(Ty::ConstInt { value, .. }) = self.params.get(name) {
+            if let Some(Ty::ConstInt { value, ty }) = self.params.get(name) {
+                if matches!(**ty, Ty::Char) {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{name}' is a 'char' const parameter, and an array length has to be an integer"
+                        ),
+                        span: expr.span(),
+                    });
+                }
                 if *value < 1 {
                     return Err(TypeError {
                         message: format!(
@@ -2032,9 +2071,19 @@ impl TypeScope<'_> {
         // instantiation bound, re-typed to the parameter it is being passed
         // to.
         if let ast::Expr::Ident(name, span) = expr {
-            if let Some(Ty::ConstInt { value, .. }) = self.params.get(name) {
+            if let Some(Ty::ConstInt { value, ty: source }) = self.params.get(name) {
                 let value = *value;
-                if !matches!(declared, Ty::Bool) {
+                if matches!(**source, Ty::Char) != matches!(declared, Ty::Char) {
+                    return Err(TypeError {
+                        message: format!(
+                            "const parameter '{name}' is a '{}' and cannot be passed where a '{}' is expected",
+                            source.display(),
+                            declared.display()
+                        ),
+                        span: *span,
+                    });
+                }
+                if !matches!(declared, Ty::Bool | Ty::Char) {
                     check_int_literal(value, declared, false, *span)?;
                 }
                 return Ok(Ty::ConstInt {
@@ -2053,14 +2102,20 @@ impl TypeScope<'_> {
             ConstEvaluator::new(const_fns, self.structs, &self.enums, &self.env, consts);
         let mut scope = ConstScope::new(self.prefix.to_string(), self.aliases.clone());
         let (value, _) = evaluator.eval(expr, Some(declared), &mut scope)?;
-        let value = match value {
-            ConstValue::Int(n) => n,
-            ConstValue::Bool(b) => i128::from(b),
+        let value = match (value, declared) {
+            (ConstValue::Char(c), Ty::Char) => i128::from(c),
+            (ConstValue::Int(n), t) if !matches!(t, Ty::Char) => n,
+            (ConstValue::Bool(b), t) if !matches!(t, Ty::Char) => i128::from(b),
             _ => {
                 return Err(TypeError {
                     message: format!(
-                        "a const parameter of type '{}' takes an integer or boolean value, and this expression is not one",
-                        declared.display()
+                        "a const parameter of type '{}' takes {}, and this expression is not one",
+                        declared.display(),
+                        if matches!(declared, Ty::Char) {
+                            "a character value"
+                        } else {
+                            "an integer or boolean value"
+                        }
                     ),
                     span: expr.span(),
                 })
@@ -2088,12 +2143,13 @@ impl TypeScope<'_> {
             ConstEvaluator::new(const_fns, self.structs, &self.enums, &self.env, consts);
         let mut scope = ConstScope::new(self.prefix.to_string(), self.aliases.clone());
         let (value, ty) = evaluator.eval(expr, None, &mut scope)?;
-        let value = match value {
-            ConstValue::Int(n) => n,
-            ConstValue::Bool(b) => i128::from(b),
+        let (value, ty) = match value {
+            ConstValue::Int(n) => (n, ty),
+            ConstValue::Bool(b) => (i128::from(b), ty),
+            ConstValue::Char(c) => (i128::from(c), Ty::Char),
             _ => {
                 return Err(TypeError {
-                    message: "a const argument has to be an integer or boolean value".to_string(),
+                    message: "a const argument has to be an integer, boolean or character value".to_string(),
                     span: expr.span(),
                 })
             }
@@ -12665,10 +12721,10 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // instantiation folded it to a literal, so `i < N` and `[0; N]`
             // see the value the monomorphization was built for.
             if let Some(Ty::ConstInt { value, ty }) = ctx.type_args.get(name) {
-                let kind = if matches!(**ty, Ty::Bool) {
-                    tir::ExprKind::BoolLit(*value != 0)
-                } else {
-                    tir::ExprKind::IntLit(*value)
+                let kind = match **ty {
+                    Ty::Bool => tir::ExprKind::BoolLit(*value != 0),
+                    Ty::Char => tir::ExprKind::CharLit(*value as u32),
+                    _ => tir::ExprKind::IntLit(*value),
                 };
                 return Ok(tir::Expr {
                     kind,
