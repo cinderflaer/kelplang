@@ -200,8 +200,7 @@ source: `plan/generic-trait-impls.md` header ("Not built") and section 4 step 6 
 blanket impl (`impl<T: Iterator<Item = i64>> Tr for T`); an impl for one instantiation
 (`Type<i32>`); a const parameter on an impl; generic trait methods; `dyn` of a generic impl or
 of a blanket impl; a trait's default method in a generic or blanket impl; operators through a
-generic impl. Follow-up release: 26.11.1 for the adapters (MISSING-Hd4Lr); the others are
-unscheduled.
+generic impl. The rest are unscheduled.
 
 ### MISSING-Sb5Vq kelp: no specialization
 
