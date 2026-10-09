@@ -15,3 +15,7 @@
 pub mod abi;
 pub mod cleanup;
 pub mod panic;
+pub mod env;
+pub mod io;
+pub mod net;
+pub mod proc;
