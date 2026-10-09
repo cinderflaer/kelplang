@@ -1,0 +1,26 @@
+// churn-list-grow: grow a List<i64> to 100000 elements, sum it, clear it, and repeat. The List
+// buffer is reallocated many times on each round and freed by clear.
+impl "std/str"
+
+fun main() {
+    var total: i64 = 0
+    var round: i64 = 0
+    while round < 12 {
+        var xs: List<i64> = List.empty()
+        var i: i64 = 0
+        while i < 100000 {
+            xs.push(i * (round + 1) + 1)
+            i = i + 1
+        }
+        var s: i64 = 0
+        var k: usize = 0
+        while k < xs.len() {
+            s = (s + xs.get(k)) % 1000000007
+            k = k + 1
+        }
+        total = (total + s) % 1000000007
+        xs.clear()
+        round = round + 1
+    }
+    print("churn-list-grow rounds=12 checksum=$total")
+}
