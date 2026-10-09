@@ -1,0 +1,54 @@
+//! Dashes: a module whose docs carry — and – dashes on every path. –
+//! The module doc also has entities, &mdash; and &ndash; and &#8212;.
+//!
+//! See `Gauge` for the — datac and `Mode` for the – enum.
+
+/// A constant — with a dash in its doc.
+pub const LIMIT: i32 = 3
+
+/// A static – counter.
+pub static mut TICKS: i32 = 0
+
+/// A passdown – that stays private.
+pd val step = 2
+
+/// A gauge — with field docs.
+///
+/// - the reading is in `value` – and the range is in `max`
+pub datac Gauge(
+    /// The reading — now.
+    val value: i32,
+    /// The top of the range –.
+    var max: i32
+)
+
+/// A mode — with variant docs.
+pub enum Mode {
+    /// On – for a while.
+    On(val level: i32)
+    /// Off — entirely.
+    Off
+}
+
+/// A trait — with a required item and a type item.
+pub trait Reading {
+    /// The current value – as a number.
+    fun Self.reading().return: i32
+    type Unit
+}
+
+impl Reading for Gauge {
+    /// The reading — of this gauge.
+    fun Self.reading().return: i32 = self.value
+}
+
+/// Builds a gauge — from a value.
+pub fun make(v: i32).return: Gauge = Gauge(value = v, max = 9)
+
+/// A method – on Gauge.
+fun Gauge.doubled().return: i32 = self.value * 2
+
+fun hidden() {
+}
+
+datac Private(val a: i32)
