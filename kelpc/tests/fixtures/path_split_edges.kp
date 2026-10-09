@@ -1,0 +1,33 @@
+// std/path.split on its edge cases: leading, trailing and doubled separators,
+// empty and separator-only paths, non-ASCII components, and a long path with
+// many components. `split` took a whole-path copy for every component, and
+// must still return the same components in the same order.
+impl "std/path"
+impl "std/str"
+impl "std/list"
+
+fun show(s: &str) {
+    val parts = path.split(s)
+    print(parts.len())
+    var i: usize = 0
+    while i < parts.len() {
+        print(parts.get(i).as_str())
+        i = i + 1
+    }
+}
+
+fun main() {
+    show("/a//b/")
+    show("")
+    show("/")
+    show("//")
+    show("a")
+    show("/é/ü")
+    show("a/b/c")
+    val long = str.repeat("/comp", 2000)
+    val parts = path.split(long.as_str())
+    print(parts.len())
+    print(parts.get(0).as_str())
+    print(parts.get(1999).as_str())
+    print(parts.get(1999).len())
+}

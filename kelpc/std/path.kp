@@ -103,7 +103,9 @@ fun split(s: &str).return: List<String> {
     while i <= n {
         if i == n || sv.get(i) == 47 {
             if i > start {
-                out.push(str.copy_range(s, start, i))
+                // The view is taken once, above. `str.copy_range` would take the
+                // whole path again (a `strlen`) for every component.
+                out.push(sv.slice(start, i).to_string())
             }
             start = i + 1
         }

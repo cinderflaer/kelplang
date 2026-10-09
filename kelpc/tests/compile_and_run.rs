@@ -19703,3 +19703,14 @@ fn unit_is_not_stored_in_a_tuple_even_though_unit_is_a_value() {
         "produces no value ('unit')",
     );
 }
+
+/// `std/path.split` on its edge cases: leading, trailing and doubled separators,
+/// empty and separator-only paths, non-ASCII components, and a 2000-component
+/// path. The components are pinned to the 26.10.4 output.
+#[test]
+fn the_path_split_edges_are_unchanged() {
+    assert_compiles_and_runs(
+        "tests/fixtures/path_split_edges.kp",
+        "2\na\nb\n0\n0\n0\n1\na\n2\né\nü\n3\na\nb\nc\n2000\ncomp\ncomp\n4\n",
+    );
+}
