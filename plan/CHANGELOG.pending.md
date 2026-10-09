@@ -24,6 +24,7 @@ empty on release.
 
 ## compiler
 
+- `kelpc` now finds `ld.lld` (`KELPC_LLD`, then PATH) and has the hosted link argv builder in `sysroot.rs`. No link line has changed yet: builds still use `cc`.
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
 - `kelpc doc --text` prints the documentation as plain text (on branch lighthouse-support, not merged).
 - `kelpc` builtin listing is available as JSON (on branch lighthouse-support, not merged).
