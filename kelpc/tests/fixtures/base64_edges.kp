@@ -1,0 +1,65 @@
+// std/encoding base64 on its edge cases: the RFC 4648 vectors, every byte value
+// (so every one of the 64 alphabet characters is produced), a long input, and
+// decode failures. `base64_encode` looked each character up with a `str.byte`
+// call on the alphabet, and must still produce exactly the same text.
+impl "std/encoding"
+impl "std/str"
+impl "std/result"
+impl "std/mem"
+
+fun decode_show(text: &str) {
+    val r = encoding.base64_decode(text)
+    when r {
+        Ok(b) -> print(encoding.hex_encode(&b))
+        Err(e) -> print("invalid")
+    }
+}
+
+fun enc_show(s: &str) {
+    val b = Bytes.from_str(s)
+    print(encoding.base64_encode(&b))
+}
+
+fun main() {
+    enc_show("")
+    enc_show("f")
+    enc_show("fo")
+    enc_show("foo")
+    enc_show("foob")
+    enc_show("fooba")
+    enc_show("foobar")
+    var all = mem.alloc(256)
+    var i: usize = 0
+    while i < 256 {
+        all.set(i, i.to_u8())
+        i = i + 1
+    }
+    print(encoding.base64_encode(&all))
+    var big = mem.alloc(3001)
+    i = 0
+    while i < 3001 {
+        big.set(i, ((i * 7) % 256).to_u8())
+        i = i + 1
+    }
+    val enc = encoding.base64_encode(&big)
+    print(enc.len())
+    decode_show("Zm9vYmFy")
+    decode_show("Zm9vYg==")
+    decode_show("Zm9vYmE=")
+    decode_show("Zg==")
+    decode_show("")
+    decode_show("Zm9*")
+    decode_show("Zm9v!mFy")
+    decode_show("Zg=")
+    decode_show("Z===")
+    decode_show("Zm=v")
+    decode_show("+/+/")
+    val back = encoding.base64_decode(enc.as_str())
+    when back {
+        Ok(b) -> {
+            print(b.len())
+            print(b.get(3000))
+        }
+        Err(e) -> print("invalid")
+    }
+}

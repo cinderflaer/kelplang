@@ -37,7 +37,28 @@ enum DecodeErr {
     Invalid
 }
 
-fun b64_char(v: u8).return: u8 = str.byte(B64_ALPHABET, v.to_usize())
+// The character for a 6-bit value. The alphabet is A-Z, a-z, 0-9, `+`, `/` in
+// that order, so the value maps by range. The `str.byte` lookup it replaces
+// scanned the alphabet for its NUL on every character. A value past 63 still
+// goes through that lookup, so it panics exactly as before.
+fun b64_char(v: u8).return: u8 {
+    if v < 26 {
+        return v + 65
+    }
+    if v < 52 {
+        return v - 26 + 97
+    }
+    if v < 62 {
+        return v - 52 + 48
+    }
+    if v == 62 {
+        return 43
+    }
+    if v == 63 {
+        return 47
+    }
+    return str.byte(B64_ALPHABET, v.to_usize())
+}
 
 // The 6-bit value a base64 character encodes, or `None` for `=` and anything
 // outside the alphabet.

@@ -19714,3 +19714,15 @@ fn the_path_split_edges_are_unchanged() {
         "2\na\nb\n0\n0\n0\n1\na\n2\né\nü\n3\na\nb\nc\n2000\ncomp\ncomp\n4\n",
     );
 }
+
+/// `std/encoding` base64 on its edge cases: the RFC 4648 vectors, every byte
+/// value (so all 64 alphabet characters appear), a 3001-byte round trip, and the
+/// decode failures. The encoder's character lookup changed; the text it writes
+/// is pinned to the 26.10.4 output.
+#[test]
+fn the_base64_edges_are_unchanged() {
+    assert_compiles_and_runs(
+        "tests/fixtures/base64_edges.kp",
+        "\nZg==\nZm8=\nZm9v\nZm9vYg==\nZm9vYmE=\nZm9vYmFy\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==\n4004\n666f6f626172\n666f6f62\n666f6f6261\n66\n\ninvalid\ninvalid\ninvalid\ninvalid\ninvalid\nfbffbf\n3001\n8\n",
+    );
+}
