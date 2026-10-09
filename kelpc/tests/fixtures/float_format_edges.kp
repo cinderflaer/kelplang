@@ -1,0 +1,26 @@
+// std/str.from_f64 and std/fmt.float on their edge cases: zero and negative
+// zero, rounding at the last digit, a value whose text is longer than a small
+// buffer (a huge magnitude, and many decimals), NaN and the infinities, and a
+// tiny value that prints as zeros. The C body formats the number, and its
+// output must stay byte for byte the same.
+impl "std/str"
+impl "std/fmt"
+impl "std/math"
+
+fun main() {
+    print(str.from_f64(0.0, 2))
+    print(str.from_f64(-0.0, 2))
+    print(str.from_f64(1.5, 0))
+    print(str.from_f64(2.5, 0))
+    print(str.from_f64(123.456, 10))
+    print(str.from_f64(-3.14159, 3))
+    print(str.from_f64(1.0 / math.pow(base = 10.0, exp = 10.0), 3))
+    print(str.from_f64(0.1, 20))
+    print(fmt.float(x = 2.0 / 3.0, decimals = 6))
+    print(fmt.float(x = 1048576.0, decimals = 2))
+    print(str.from_f64(math.pow(base = 10.0, exp = 300.0), 2))
+    print(str.from_f64(1.0, 200))
+    print(str.from_f64(0.0 / 0.0, 2))
+    print(str.from_f64(1.0 / 0.0, 2))
+    print(str.from_f64(-1.0 / 0.0, 2))
+}

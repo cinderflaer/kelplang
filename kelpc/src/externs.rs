@@ -65,7 +65,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/str",
         "from_f64_raw",
-        "    int need = snprintf(NULL, 0, \"%.*f\", (int)kelp_decimals, kelp_x);\n    if (need < 0) {\n        kelp_panic(\"str.from_f64: formatting failed\");\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw((size_t)need);\n    snprintf((char*)b.data, b.len + 1, \"%.*f\", (int)kelp_decimals, kelp_x);\n    return kelp_String__from_bytes(b);\n",
+        "    /* A number that prints in a small stack buffer, which is every number a\n       caller normally formats, is formatted once and copied. Anything longer\n       takes the sizing pass and a second formatting into the result. */\n    char small[128];\n    int need = snprintf(small, sizeof small, \"%.*f\", (int)kelp_decimals, kelp_x);\n    if (need < 0) {\n        kelp_panic(\"str.from_f64: formatting failed\");\n    }\n    if ((size_t)need < sizeof small) {\n        kelp_Bytes s = kelp_bytes_alloc_raw((size_t)need);\n        memcpy(s.data, small, (size_t)need + 1);\n        return kelp_String__from_bytes(s);\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw((size_t)need);\n    snprintf((char*)b.data, b.len + 1, \"%.*f\", (int)kelp_decimals, kelp_x);\n    return kelp_String__from_bytes(b);\n",
     ),
     (
         "std/str",
