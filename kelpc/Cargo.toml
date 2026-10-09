@@ -5,7 +5,7 @@ name = "kelpc"
 # semver-legal form and every human-facing spelling pads the month back:
 # `kelpc/src/main.rs::release_name` does that for `kelpc version`, and the tag,
 # the release asset and the changelog entry are written padded too.
-version = "26.10.3"
+version = "26.10.4"
 edition = "2024"
 
 [[bin]]

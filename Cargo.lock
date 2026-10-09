@@ -53,7 +53,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "kelpc"
-version = "26.10.3"
+version = "26.10.4"
 dependencies = [
  "llvm-sys",
  "openssl",
