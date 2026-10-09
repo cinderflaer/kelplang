@@ -207,7 +207,7 @@ A panic leaks every live owner in the frames above it, including a held `Mutex`
 guard and an open file in a worker. Needs a decision (unwind, or run drops
 without unwinding, or document the leak as permanent) before it is a task.
 
-### MISSING-Ve8Nc kelp: blanket impls, impls for one instantiation, and bounds on projections
+### MISSING-Ve8Nc kelp: bounds on projections, equality constraints, and the rest of generic trait impls
 
 repo: kelp | found: 2026-10-06 | effort: L
 
@@ -217,13 +217,19 @@ roadmap A-12; design note `plan/generic-trait-impls.md`.
 Shipped in 26.10.3: `impl<A: Bound, B: Bound> Trait for Type<A, B>` (the type's own
 parameters, template methods, conditional on the bounds), associated types over the
 parameters (`type Item = I::Item`), and `where` as a second spelling of a bound on a
-function or an impl. Still absent: a blanket impl (`impl<T: A> B for T`), an impl
-for one instantiation (`Type<i32>`), an equality constraint or a bound on a
-projection (`I: Iterator<Item = i64>`, `where I::Item: Display`), a const parameter
-on an impl, default or generic associated types, associated consts, generic trait
-methods, `impl Trait` in return position, an upcast between trait objects, `dyn`
-of a generic impl, a trait's default methods in a generic impl, and operators
-through a generic impl.
+function or an impl. Shipped in 26.10.4: coherence (two overlapping impls of a trait
+are refused) and blanket impls (`impl<T: A> B for T`), steps 1 to 4 of
+`plan/generic-trait-impls.md` section 4.
+
+Still absent, step 5 of the design note: a bound on a projection (`where I::Item:
+Display`) and an equality constraint (`I: Iterator<Item = i64>`), both refused by name
+until then. Also still absent, the design note's section 6 exclusions: specialization,
+negative bounds, associated consts, generic associated types, higher-ranked bounds,
+`impl Trait` in return position, and an upcast between trait objects. Not in step 4 or 5
+but still open (listed in the design note's header): an impl for one instantiation
+(`Type<i32>`), a const parameter on an impl, generic trait methods, `dyn` of a generic
+impl or of a blanket impl, a trait's default method in a generic or blanket impl, and
+operators through a generic impl.
 
 ### MISSING-Ra5Wn kelp: no async, no coroutines, no weaker atomic orderings
 

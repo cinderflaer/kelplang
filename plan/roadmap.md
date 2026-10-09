@@ -515,7 +515,8 @@ Order inside the release, each lane merged before the next starts:
 
 #### 26.11.1: generics and traits
 
-- **MISSING-Ve8Nc** generic trait impls, `where` clauses, blanket impls (XL, per the 26.11.0 note).
+- **MISSING-Ve8Nc** step 5 of `plan/generic-trait-impls.md` only: bounds on projections and equality
+  constraints (steps 1 to 4 are in 26.10.3 and 26.10.4).
 - **MISSING-Hd4Lr** iterator adapters `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain`.
 - Open item 24, extension methods through trait impls on builtin and imported types; open items 8 and 25,
   the `String` API gaps (`as_bytes`, `slice`); open item 35, `print` of a `datac`/`List` through a derived

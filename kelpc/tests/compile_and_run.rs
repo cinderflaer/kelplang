@@ -12063,7 +12063,41 @@ fn a_trait_can_be_implemented_for_a_generic_type_under_bounds() {
     );
     assert_rejected_with(
         "tests/fixtures/refused_blanket_impl.kp",
-        "needs the generic type it is for",
+        "bounds its parameter on 'Describe' itself",
+    );
+}
+
+#[test]
+fn a_blanket_impl_applies_to_every_type_that_meets_its_bound() {
+    // MISSING-Ve8Nc step 4: `impl<T: Describe> Tagged for T` is a template per
+    // method, instantiated for each concrete type that meets the bound, so
+    // dispatch stays static. Coherence refuses an overlapping impl by name, and
+    // a blanket impl's bound is checked where the method is used.
+    assert_compiles_and_runs("tests/fixtures/blanket_impl_concrete.kp", "700\n3400\n");
+    assert_compiles_and_runs("tests/fixtures/blanket_impl_generic_fn.kp", "20\n48\n");
+    assert_rejected_with(
+        "tests/fixtures/refused_blanket_overlap.kp",
+        "'impl Describe for T' overlaps 'impl Describe for i32': a blanket impl applies to every type that meets its bound, so it overlaps every other impl of 'Describe', and there is no specialization to choose between them: a blanket impl has to be the trait's only impl",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_generic_impl_overlap.kp",
+        "'impl Tagged for Pair<A>' overlaps 'impl Tagged for Pair<A>': both apply to every 'Pair', so one type would have two impls of 'Tagged', and there is no specialization to choose between them",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_blanket_cycle.kp",
+        "the blanket impl of 'Describe' bounds its parameter on 'Describe' itself",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_blanket_unchecked_bound.kp",
+        "whose bound 'Describe' on the receiver cannot be checked on 'List<i32>'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_blanket_dyn.kp",
+        "implements 'Tagged' through a blanket impl, and a blanket impl has no 'dyn' form yet",
+    );
+    assert_rejected_with(
+        "tests/fixtures/refused_blanket_projection_bound.kp",
+        "a bound on a projection ('where I::...: Bound') is step 5 of plan/generic-trait-impls.md, not built yet",
     );
 }
 

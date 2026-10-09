@@ -174,6 +174,22 @@ struct GenericImpl {
     params: Vec<String>,
 }
 
+/// One blanket impl (`impl<T: Bound> Trait for T`), registered for
+/// `implements_trait` and for method lookup: every type that meets `bounds`
+/// implements `trait_key`, and its methods are templates keyed `impl#Trait#name`
+/// (`types::blanket_receiver_name`).
+#[derive(Clone)]
+struct BlanketImpl {
+    trait_key: String,
+    trait_name: String,
+    /// The trait keys the parameter must implement.
+    bounds: Vec<String>,
+    /// The method names the block writes, which is what lookup searches.
+    methods: Vec<String>,
+    module: String,
+    impl_span: Span,
+}
+
 /// One built instantiation, on its way into the instance table.
 enum Instance {
     Record(StructDef),
@@ -275,6 +291,10 @@ struct TypeEnv {
     /// The generic impls (`impl<T: Bound> Trait for Type<T>`), by trait-instance
     /// key.
     generic_impls: std::rc::Rc<HashMap<String, Vec<GenericImpl>>>,
+    /// The blanket impls (`impl<T: Bound> Trait for T`), in source order. Coherence
+    /// (`check_trait_impl_overlap`) allows at most one per trait, and no other impl
+    /// of that trait.
+    blanket_impls: std::rc::Rc<Vec<BlanketImpl>>,
 }
 
 /// See `TypeEnv::iter_nexts`.
@@ -3399,6 +3419,73 @@ fn resolve_trait_method_sig(
     Ok(FnSig { params, ret })
 }
 
+/// Coherence (MISSING-Ve8Nc step 4): two impls of one trait that could both
+/// apply to the same type are an error at the later one, with the earlier one
+/// named as a note. Two impls overlap when their type patterns unify, whatever
+/// their bounds: a blanket impl overlaps every other impl of its trait, and two
+/// impls of one generic type overlap. There is no specialization, so no bound
+/// is used to tell two impls apart. Two concrete impls for one type keep their
+/// own message in `check_trait_impl_names`.
+fn check_trait_impl_overlap(
+    traits: &HashMap<String, TraitInfo>,
+    impls: &[TraitImplInfo],
+) -> std::result::Result<(), Diagnostic> {
+    let is_blanket = |i: &TraitImplInfo| i.type_params.contains(&i.type_name);
+    let display = |i: &TraitImplInfo| {
+        if i.type_params.is_empty() || is_blanket(i) {
+            i.type_name.clone()
+        } else {
+            format!("{}<{}>", i.type_name, i.type_params.join(", "))
+        }
+    };
+    for (j, imp) in impls.iter().enumerate() {
+        for earlier in &impls[..j] {
+            if earlier.trait_instance != imp.trait_instance {
+                continue;
+            }
+            let blanket = is_blanket(imp) || is_blanket(earlier);
+            let same_generic = !imp.type_params.is_empty()
+                && !earlier.type_params.is_empty()
+                && imp.type_name == earlier.type_name;
+            if !blanket && !same_generic {
+                continue;
+            }
+            let trait_name = traits
+                .get(&imp.trait_name)
+                .map(|t| t.name.clone())
+                .unwrap_or_else(|| imp.trait_name.clone());
+            let message = if blanket {
+                format!(
+                    "'impl {} for {}' overlaps 'impl {} for {}': a blanket impl applies to every type that meets its bound, so it overlaps every other impl of '{}', and there is no specialization to choose between them: a blanket impl has to be the trait's only impl",
+                    trait_name,
+                    display(imp),
+                    trait_name,
+                    display(earlier),
+                    trait_name
+                )
+            } else {
+                format!(
+                    "'impl {} for {}' overlaps 'impl {} for {}': both apply to every '{}', so one type would have two impls of '{}', and there is no specialization to choose between them",
+                    trait_name,
+                    display(imp),
+                    trait_name,
+                    display(earlier),
+                    imp.type_name,
+                    trait_name
+                )
+            };
+            let mut err = Diagnostic::new(message, imp.impl_span, imp.module.clone());
+            err.notes.push(crate::diag::DiagnosticNote {
+                message: format!("the overlapping impl of '{trait_name}' is written here"),
+                span: earlier.impl_span,
+                module: earlier.module.clone(),
+            });
+            return Err(err);
+        }
+    }
+    Ok(())
+}
+
 /// The name-level checks on every `impl Name for Type { ... }` block (A-12
 /// slice 2): the trait exists, the type is a declared `datac`/`enum`, the impl
 /// is in one of the two modules, and no second impl of the same trait for the
@@ -3499,7 +3586,21 @@ fn check_trait_impl_names(
         // A builtin `for` type (A-12 slice 3) has no module of its own, so the
         // impl must sit in the trait's module (the orphan rule); a declared
         // `datac`/`enum` may be implemented in either owner's module.
-        let type_module: &str = if let Some(_builtin) = builtin_for_type_name(&imp.type_name) {
+        let type_module: &str = if imp.type_params.contains(&imp.type_name) {
+            // A blanket impl names no type of its own, so the orphan rule leaves
+            // it the trait's module alone.
+            if imp.module != info.module {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'impl {} for {}' is written in module '{}', but a blanket impl names no type of its own, so it lives in the trait's module ('{}'): write it there",
+                        imp.trait_name, imp.type_name, imp.module, info.module
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+            info.module.as_str()
+        } else if let Some(_builtin) = builtin_for_type_name(&imp.type_name) {
             if imp.module != info.module {
                 return Err(Diagnostic::new(
                     format!(
@@ -3577,14 +3678,20 @@ fn check_trait_impl_names(
             }
         }
         if let Some(first) = seen.insert((&imp.trait_instance, &imp.type_name), imp) {
-            return Err(Diagnostic::new(
+            let mut err = Diagnostic::new(
                 format!(
                     "trait '{}' already has an impl for '{}' (written in module '{}'): a trait is implemented for a type at most once",
                     info.name, imp.type_name, first.module
                 ),
                 imp.impl_span,
                 imp.module.clone(),
-            ));
+            );
+            err.notes.push(crate::diag::DiagnosticNote {
+                message: format!("the other impl of '{}' for '{}' is written here", info.name, first.type_name),
+                span: first.impl_span,
+                module: first.module.clone(),
+            });
+            return Err(err);
         }
     }
     Ok(())
@@ -3739,6 +3846,22 @@ fn check_trait_impl_signatures(
     for imp in impls {
         let info = &traits[&imp.trait_name];
         if !imp.type_params.is_empty() {
+            // A blanket impl takes no trait default yet: every method it has
+            // with a body is written in the block (the defaults are not copied).
+            if imp.type_params.contains(&imp.type_name) {
+                for m in &info.methods {
+                    if !matches!(m.body, ast::FunctionBody::Signature) && !imp.methods.contains(&m.name) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "trait '{}' gives '{}' a default body, and 'impl {} for {}' uses that default: a blanket impl writes every method itself (a default in a blanket impl is not supported yet)",
+                                info.name, m.name, imp.trait_name, imp.type_name
+                            ),
+                            imp.impl_span,
+                            imp.module.clone(),
+                        ));
+                    }
+                }
+            }
             // Template methods have no signature until an instance is made, so
             // a generic impl is checked where it is used; here only that it
             // writes every method the trait has no body for.
@@ -8331,7 +8454,8 @@ fn collect_func_templates(
             // parameterize, and one that writes the wrong names or order
             // would make the body's `T` mean something the type does not.
             let type_tmpl = generics.get(&r.type_name);
-            if type_tmpl.is_none() && (!r.type_args.is_empty() || f.type_params.is_empty()) {
+            let blanket = crate::types::is_blanket_receiver(&r.type_name);
+            if !blanket && type_tmpl.is_none() && (!r.type_args.is_empty() || f.type_params.is_empty()) {
                 return Err(Diagnostic::new(
                     format!(
                         "'{}' is not a generic type — only a receiver on a generic type may declare type parameters of the type; a method of a plain type may declare its own ('fun {}.{}<U>(...)')",
@@ -8522,41 +8646,42 @@ fn check_program_pass(
     // signature's `Self` is bound through.
     let traits = std::rc::Rc::new(collect_traits(program, project)?);
     let trait_impls = collect_trait_impls(program);
+    // Coherence runs before the templates are collected, because two generic
+    // impls of one type would otherwise be reported as one function defined twice.
+    check_trait_impl_overlap(&traits, &trait_impls)?;
     let mut impls: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
     let mut generic_impls: HashMap<String, Vec<GenericImpl>> = HashMap::new();
+    let mut blanket_impls: Vec<BlanketImpl> = Vec::new();
     for imp in &trait_impls {
-        if !imp.type_params.is_empty() {
-            let prefix = project.prefix_of(&imp.module);
-            let aliases = project.alias_prefixes_of(&imp.module);
-            let mut bounds: Vec<Vec<String>> = Vec::new();
-            for bs in &imp.type_param_bounds {
-                let mut keys = Vec::new();
-                for b in bs {
-                    if !b.args.is_empty() {
-                        return Err(Diagnostic::new(
-                            format!("the bound '{}' on an impl parameter takes trait arguments, which a generic impl does not support yet", b.display()),
-                            imp.impl_span,
-                            imp.module.clone(),
-                        ));
-                    }
-                    let Some(key) = qualify_written_name(&b.name, prefix, &aliases) else {
-                        return Err(Diagnostic::new(
-                            format!("'{}' bounds a parameter of this impl, but its first segment is not a module it imports", b.name),
-                            imp.impl_span,
-                            imp.module.clone(),
-                        ));
-                    };
-                    if !traits.contains_key(&key) {
-                        return Err(Diagnostic::new(
-                            format!("'{}' is not a trait, so it cannot bound a parameter of this impl", b.name),
-                            imp.impl_span,
-                            imp.module.clone(),
-                        ));
-                    }
-                    keys.push(key);
-                }
-                bounds.push(keys);
+        if imp.type_params.contains(&imp.type_name) {
+            // `impl<T: Bound> Trait for T`: a blanket impl. It binds no associated
+            // type yet, and its trait takes no arguments (the parser refuses those).
+            if let Some((name, _, _)) = imp.assoc_types.first() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'type {name}' in 'impl {} for {}': a blanket impl binds no associated type yet, so it writes the bound and the methods only",
+                        imp.trait_name, imp.type_name
+                    ),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
             }
+            let bounds = impl_param_bounds(imp, &traits, project)?
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            blanket_impls.push(BlanketImpl {
+                trait_key: imp.trait_instance.clone(),
+                trait_name: imp.trait_name.clone(),
+                bounds,
+                methods: imp.methods.clone(),
+                module: imp.module.clone(),
+                impl_span: imp.impl_span,
+            });
+            continue;
+        }
+        if !imp.type_params.is_empty() {
+            let bounds = impl_param_bounds(imp, &traits, project)?;
             generic_impls.entry(imp.trait_instance.clone()).or_default().push(GenericImpl {
                 template: imp.type_name.clone(),
                 bounds,
@@ -8570,6 +8695,7 @@ fn check_program_pass(
             .or_default()
             .insert(imp.type_name.clone());
     }
+    check_blanket_cycles(&blanket_impls)?;
     let env = TypeEnv {
         generics: std::rc::Rc::new(generics),
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
@@ -8604,6 +8730,7 @@ fn check_program_pass(
         assoc: std::rc::Rc::new(HashMap::new()),
         iter_nexts: std::rc::Rc::new(collect_iter_nexts(program)),
         generic_impls: std::rc::Rc::new(generic_impls),
+        blanket_impls: std::rc::Rc::new(blanket_impls),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -16083,6 +16210,9 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
         .get(trait_name)
         .is_some_and(|set| set.contains(&type_name));
     if !implements {
+        if blanket_holds(&ctx.env, &trait_name.to_string(), &type_name.to_string()) {
+            return Err(blanket_dyn_refusal(&want, &value.ty, &inner, trait_name, span));
+        }
         return Err(TypeError {
             message: format!(
                 "expected '{}', found '{}': '{}' does not implement '{}', so write 'impl {} for {}' first",
@@ -16170,6 +16300,9 @@ fn coerce_box_to_dyn(
         .get(trait_name)
         .is_some_and(|set| set.contains(&type_name));
     if !implements {
+        if blanket_holds(&ctx.env, &trait_name.to_string(), &type_name.to_string()) {
+            return Err(blanket_dyn_refusal(&want, &value.ty, &inner, trait_name, span));
+        }
         return Err(TypeError {
             message: format!(
                 "expected '{}', found '{}': '{}' does not implement '{}', so write 'impl {} for {}' first",
@@ -17409,6 +17542,84 @@ fn shaped_iterator_item(env: &TypeEnv, instance: &str) -> Option<Ty> {
     resolve_item_type(&next.item, &next.params, &args, env)
 }
 
+/// The trait key each parameter of a generic or blanket impl must implement, one
+/// list per parameter, in the impl's own module's spelling.
+fn impl_param_bounds(
+    imp: &TraitImplInfo,
+    traits: &HashMap<String, TraitInfo>,
+    project: &Project,
+) -> std::result::Result<Vec<Vec<String>>, Diagnostic> {
+    let prefix = project.prefix_of(&imp.module);
+    let aliases = project.alias_prefixes_of(&imp.module);
+    let mut bounds: Vec<Vec<String>> = Vec::new();
+    for bs in &imp.type_param_bounds {
+        let mut keys = Vec::new();
+        for b in bs {
+            if !b.args.is_empty() {
+                return Err(Diagnostic::new(
+                    format!("the bound '{}' on an impl parameter takes trait arguments, which a generic impl does not support yet", b.display()),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+            let Some(key) = qualify_written_name(&b.name, prefix, &aliases) else {
+                return Err(Diagnostic::new(
+                    format!("'{}' bounds a parameter of this impl, but its first segment is not a module it imports", b.name),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            };
+            if !traits.contains_key(&key) {
+                return Err(Diagnostic::new(
+                    format!("'{}' is not a trait, so it cannot bound a parameter of this impl", b.name),
+                    imp.impl_span,
+                    imp.module.clone(),
+                ));
+            }
+            keys.push(key);
+        }
+        bounds.push(keys);
+    }
+    Ok(bounds)
+}
+
+/// Refuses blanket impls whose bounds lead back to themselves (`impl<T: A> B for
+/// T` with `impl<T: B> A for T`, or a blanket impl bounded on its own trait):
+/// checking one such instance would need the same check again, forever.
+fn check_blanket_cycles(blankets: &[BlanketImpl]) -> std::result::Result<(), Diagnostic> {
+    for b in blankets {
+        let mut stack: Vec<String> = b.bounds.clone();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(key) = stack.pop() {
+            if key == b.trait_key {
+                return Err(Diagnostic::new(
+                    format!(
+                        "the blanket impl of '{}' bounds its parameter on '{}' itself, so checking any type against it would need the same check again: a blanket impl's bound has to be a different trait",
+                        b.trait_name, b.trait_name
+                    ),
+                    b.impl_span,
+                    b.module.clone(),
+                ));
+            }
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            for other in blankets.iter().filter(|o| o.trait_key == key) {
+                stack.extend(other.bounds.iter().cloned());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The blanket impl of `trait_key` whose bounds `name` meets, if any: a type
+/// that meets them implements the trait (`TypeEnv::blanket_impls`).
+fn blanket_holds(env: &TypeEnv, trait_key: &str, name: &str) -> bool {
+    env.blanket_impls
+        .iter()
+        .any(|b| b.trait_key == trait_key && b.bounds.iter().all(|k| implements_trait(env, k, name)))
+}
+
 /// The generic impl of `trait_key` that applies to the instance `ty_name`, if
 /// there is one: the instance's template has an impl and every bound on the
 /// impl's parameters holds for the instance's arguments.
@@ -17526,6 +17737,10 @@ fn implements_trait(env: &TypeEnv, trait_key: &str, ty_name: &str) -> bool {
     // `impl<T: Bound> Trait for Type<T>`: an instance implements the trait when
     // each of its arguments meets the bounds the impl puts on its parameter.
     if generic_impl_applies(env, trait_key, ty_name).is_some() {
+        return true;
+    }
+    // `impl<T: Bound> Trait for T`: every type that meets the bound implements it.
+    if blanket_holds(env, trait_key, ty_name) {
         return true;
     }
     env.impls.iter().any(|(other, types)| {
@@ -17731,6 +17946,101 @@ fn check_trait_bounds(
     Ok(())
 }
 
+/// The refusal for a `dyn` coercion of a type whose trait comes from a blanket
+/// impl: a blanket impl has no vtable of its own yet, so the method is reached
+/// through a generic function instead.
+fn blanket_dyn_refusal(
+    want: &Ty,
+    value_ty: &Ty,
+    inner: &Ty,
+    trait_name: &str,
+    span: Span,
+) -> TypeError {
+    TypeError {
+        message: format!(
+            "expected '{}', found '{}': '{}' implements '{}' through a blanket impl, and a blanket impl has no 'dyn' form yet (MISSING-Ve8Nc step 4 does not include it): call the method through a generic function ('fun f<T: {}>(x: &T)') instead",
+            want.display(),
+            value_ty.display(),
+            inner.display(),
+            trait_name,
+            trait_name
+        ),
+        span,
+    }
+}
+
+/// Whether a builtin receiver carries type arguments its impl table cannot see
+/// (`List<i32>` answers to the name `List` for every element type).
+fn builtin_arguments_unchecked(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::List(_) | Ty::Box(_) | Ty::Array(..) | Ty::Map(..) | Ty::Atomic(_) | Ty::Mutex(_) | Ty::RwLock(_)
+    )
+}
+
+/// The template of a blanket impl's method `method` that applies to the receiver
+/// `ty`, if one does. `None` when no blanket impl writes the method, or none of
+/// them applies to `ty`. `Some(Err)` when two blanket impls of different traits
+/// both apply (refused by name), or when the receiver has no name to check the
+/// bound against (a reference or a function type has no impl table).
+fn blanket_method_template(ctx: &Ctx, ty: &Ty, method: &str, span: Span) -> Option<Result<String>> {
+    let candidates: Vec<&BlanketImpl> = ctx
+        .env
+        .blanket_impls
+        .iter()
+        .filter(|b| b.methods.iter().any(|m| m == method))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let Some(name) = struct_name_of(ty)
+        .map(|s| s.to_string())
+        .or_else(|| builtin_type_name(ty).map(|s| s.to_string()))
+    else {
+        let b = candidates[0];
+        let bound = b.bounds.first().map(|k| k.as_str()).unwrap_or(b.trait_name.as_str());
+        return Some(Err(TypeError {
+            message: format!(
+                "the method '{method}' comes from a blanket impl of '{}', whose bound on the receiver ('{bound}') cannot be checked on '{}': a reference or a function type has no impl table to check a bound against, so call the method on the value it names",
+                b.trait_name,
+                ty.display()
+            ),
+            span,
+        }));
+    };
+    let holding: Vec<&BlanketImpl> = candidates
+        .iter()
+        .copied()
+        .filter(|b| b.bounds.iter().all(|k| implements_trait(&ctx.env, k, &name)))
+        .collect();
+    // A builtin container's impl table is keyed by its bare name (`List`), so a
+    // bound on its element cannot be answered for `List<i32>`. A bound that
+    // fails by name there is refused, not read as "does not apply".
+    if holding.is_empty() && builtin_arguments_unchecked(ty) {
+        let b = candidates[0];
+        let bound = b.bounds.first().map(|k| k.as_str()).unwrap_or(b.trait_name.as_str());
+        return Some(Err(TypeError {
+            message: format!(
+                "the method '{method}' comes from a blanket impl of '{}', whose bound '{bound}' on the receiver cannot be checked on '{}': a builtin container's impl table has no entry per element type, so the bound on its element is not visible to the check",
+                b.trait_name,
+                ty.display()
+            ),
+            span,
+        }));
+    }
+    match holding.as_slice() {
+        [] => None,
+        [one] => Some(Ok(format!("{}#{method}", crate::types::blanket_receiver_name(&one.trait_key)))),
+        [a, b, ..] => Some(Err(TypeError {
+            message: format!(
+                "'{}.{method}()' is ambiguous: the blanket impls of '{}' and '{}' both provide '{method}' for it, and a method is not chosen between traits by name",
+                name, a.trait_name, b.trait_name
+            ),
+            span,
+        })),
+    }
+}
+
 /// The template key of a method declared on a generic type (A-2): `owner` is
 /// the receiver's *instance* key (`Pair<i32, String>`), and the template is
 /// declared under the type template's own name (`Pair#first`).
@@ -17822,8 +18132,18 @@ fn instantiate_function(
     let mut bindings: HashMap<String, Ty> = HashMap::new();
     // A method's type parameters are the receiver type's, which the receiver
     // expression already resolved.
+    let blanket = tmpl
+        .receiver
+        .as_ref()
+        .is_some_and(|(name, _)| crate::types::is_blanket_receiver(name));
     if tmpl.receiver.is_some() {
-        if let Some(rk) = receiver_ty.and_then(struct_name_of) {
+        if blanket {
+            // A blanket impl's parameter is the receiver type itself, whatever
+            // it is (a builtin included), not an instance's argument.
+            if let (Some(rt), Some(p)) = (receiver_ty, tmpl.params.first()) {
+                bindings.insert(p.clone(), rt.clone());
+            }
+        } else if let Some(rk) = receiver_ty.and_then(struct_name_of) {
             if let Some((_, targs)) = ctx.env.instances.borrow().origin.get(rk).cloned() {
                 for (p, a) in tmpl.params.iter().zip(targs.iter()) {
                     bindings.insert(p.clone(), a.clone());
@@ -17910,13 +18230,17 @@ fn instantiate_function(
     };
     let mut params = Vec::new();
     if let Some((_, receiver_mutable)) = &tmpl.receiver {
-        let rk = receiver_ty
-            .and_then(struct_name_of)
-            .expect("a receiver method is only instantiated for a struct receiver");
-        params.push((
-            "self".to_string(),
-            implicit_borrow_wrap(Ty::Struct(rk.to_string()), *receiver_mutable),
-        ));
+        let self_ty = if blanket {
+            receiver_ty
+                .cloned()
+                .expect("a blanket method is only instantiated for a receiver")
+        } else {
+            let rk = receiver_ty
+                .and_then(struct_name_of)
+                .expect("a receiver method is only instantiated for a struct receiver");
+            Ty::Struct(rk.to_string())
+        };
+        params.push(("self".to_string(), implicit_borrow_wrap(self_ty, *receiver_mutable)));
     }
     for p in &tmpl.declared {
         let ty = scope.resolve_param(p).map_err(|e| TypeError {
@@ -18965,6 +19289,11 @@ fn check_method_call(
     let container_key = crate::types::map_key_of(&decided)
         .cloned()
         .unwrap_or(Ty::Unit);
+    // A blanket impl's method (`impl<T: Bound> Trait for T`) is the last source
+    // a method name is tried against: an inherent method, a concrete or generic
+    // impl and a builtin all come first. Its result is taken only in the arm
+    // below, and only when nothing else matched.
+    let mut blanket_tmpl = blanket_method_template(ctx, &probe.ty, method, span);
     let (key, sig) = match ctx.sig_of(&key) {
         Some(s) => (key, s),
         // A-2: a method declared on a generic type (`fun Pair<A, B>.first()`).
@@ -18990,6 +19319,11 @@ fn check_method_call(
                 Some(s) => (key, s),
                 None => match builtin_sig(&key) {
                     Some(s) => (key, s),
+                    None if blanket_tmpl.is_some() => {
+                        let found = blanket_tmpl.take().expect("the guard saw a blanket method");
+                        let tmpl_key = found?;
+                        instantiate_function(ctx, &tmpl_key, &[], args, span, expected, Some(&probe.ty))?
+                    }
                     None => {
                         let base = match (&container_elem, owner.as_str()) {
                 // A destructor type is not `Copy` (kernel stage 9,

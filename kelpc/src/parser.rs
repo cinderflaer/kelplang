@@ -1083,7 +1083,29 @@ impl Parser {
             });
         }
         let mut impl_bounds: Vec<Vec<TypeExpr>> = impl_params.iter().map(|p| p.bounds.clone()).collect();
-        if self.check(&TokenKind::Lt) {
+        // `impl<T: Bound> Trait for T`: a blanket impl, whose type is the impl's
+        // own parameter. It applies to every type that meets the bound.
+        let blanket = impl_params.iter().any(|p| p.name == type_name);
+        if blanket {
+            if self.check(&TokenKind::Lt) {
+                return Err(ParseError {
+                    message: format!("a blanket impl names its parameter as the type it implements for: 'impl<{type_name}: Bound> Trait for {type_name}', with no '<...>' after '{type_name}'"),
+                    span: type_span,
+                });
+            }
+            if impl_params.len() != 1 {
+                return Err(ParseError {
+                    message: format!("a blanket impl has exactly one type parameter, the type it implements for: 'impl<{type_name}: Bound> Trait for {type_name}'"),
+                    span: type_span,
+                });
+            }
+            if !trait_args.is_empty() {
+                return Err(ParseError {
+                    message: format!("a blanket impl of a trait with type arguments is not supported yet: 'impl<{type_name}: Bound> Trait<...> for {type_name}' has no argument to bind the instance by, so write the trait without its arguments"),
+                    span: type_span,
+                });
+            }
+        } else if self.check(&TokenKind::Lt) {
             // `Type<T, U>`: the generic type with the impl's own parameters, in
             // order. Anything else (`Pair<i32>`, `Pair<List<T>>`) would be an
             // impl for one instantiation, which a template cannot express.
@@ -1101,7 +1123,7 @@ impl Parser {
             }
         } else if !impl_params.is_empty() {
             return Err(ParseError {
-                message: "'impl<...>' needs the generic type it is for: 'impl<T: Bound> Trait for Type<T>' (a blanket impl, 'impl<T> Trait for T', is not supported yet)".to_string(),
+                message: "'impl<...>' needs the generic type it is for: 'impl<T: Bound> Trait for Type<T>', or a blanket impl 'impl<T: Bound> Trait for T' with the parameter as the type".to_string(),
                 span: type_span,
             });
         }
@@ -1110,6 +1132,9 @@ impl Parser {
             self.advance();
             loop {
                 let (pname, pspan) = self.expect_ident()?;
+                if self.check(&TokenKind::ColonColon) {
+                    return Err(Parser::projection_bound_error(&pname, pspan));
+                }
                 let Some(at) = impl_params.iter().position(|p| p.name == pname) else {
                     return Err(ParseError {
                         message: format!("'where {pname}: ...' names no type parameter of this impl: declare it in 'impl<...>'"),
@@ -1207,6 +1232,15 @@ impl Parser {
                             r.type_name, f.name
                         ),
                         span: r.span,
+                    })
+                }
+                None if blanket => {
+                    return Err(ParseError {
+                        message: format!(
+                            "a blanket impl has no static member yet: '{}' has no receiver to take the type from, so write it as a method ('fun Self.{}(...)')",
+                            f.name, f.name
+                        ),
+                        span: f.span,
                     })
                 }
                 None => {}
@@ -1572,6 +1606,17 @@ impl Parser {
     /// One or more trait names separated by `+` (A-12 slice 2): `Name`,
     /// `alias.Name`, `A + B`. A bound names a trait and nothing else, so no
     /// argument list and no `&` is accepted.
+    /// The refusal for a `where` bound on a projection (`where I::Item: Display`),
+    /// which is step 5 of `plan/generic-trait-impls.md`, not built yet.
+    fn projection_bound_error(pname: &str, span: Span) -> ParseError {
+        ParseError {
+            message: format!(
+                "a bound on a projection ('where {pname}::...: Bound') is step 5 of plan/generic-trait-impls.md, not built yet: bound the parameter itself, or name the concrete type"
+            ),
+            span,
+        }
+    }
+
     fn parse_bounds(&mut self) -> PResult<Vec<TypeExpr>> {
         let mut out = Vec::new();
         loop {
@@ -1593,7 +1638,7 @@ impl Parser {
                         let (item, _) = self.expect_ident()?;
                         return Err(ParseError {
                             message: format!(
-                                "an equality constraint on an associated type ('{name}<{item} = i32>') is not in this slice: bound the parameter with the trait ('{name}') and name the concrete type where it is used ('I::Item'), rather than fixing it in the bound"
+                                "an equality constraint on an associated type ('{name}<{item} = i32>') is step 5 of plan/generic-trait-impls.md, not built yet: bound the parameter with the trait ('{name}') and name the concrete type where it is used ('I::Item'), rather than fixing it in the bound"
                             ),
                             span: self.peek().span,
                         });
@@ -2035,6 +2080,9 @@ impl Parser {
             self.advance();
             loop {
                 let (pname, pspan) = self.expect_ident()?;
+                if self.check(&TokenKind::ColonColon) {
+                    return Err(Parser::projection_bound_error(&pname, pspan));
+                }
                 let Some(at) = type_params.iter().position(|p| *p == pname) else {
                     return Err(ParseError {
                         message: format!(

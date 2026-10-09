@@ -1,14 +1,16 @@
 # Generic trait impls, `where` clauses and blanket impls (MISSING-Ve8Nc)
 
-*Design note, written in 26.10.3 ahead of the implementation, then partly built in the same
-release. **Built (26.10.3):** steps 1 to 3 of section 4 for an impl on a generic type
+*Design note, written in 26.10.3 ahead of the implementation, then built in two releases.
+**Built (26.10.3):** steps 1 to 3 of section 4 for an impl on a generic type
 (`impl<A: Bound, B: Bound> Trait for Type<A, B>`, template methods, conditional satisfaction,
 associated types over the parameters, the failing argument named in the error) and `where` as a
 second spelling of a bound on a function or an impl. `std/iter`'s adapters ship through a simpler
 by-shape rule (a generic type whose template declares an iterator-shaped `next` is an
-`Iterator`). **Not built:** blanket impls (section 2 item 5), an impl for one instantiation, equality
-constraints and bounds on projections (`where I::Item: Display`), `dyn` of a generic impl,
-default methods in a generic impl, operators through a generic impl.*
+`Iterator`). **Built (26.10.4):** step 4 of section 4, coherence (the overlap check) and blanket
+impls (section 2 item 5), as recorded under step 4 below. **Not built:** step 5 (equality
+constraints and bounds on projections, `where I::Item: Display`), an impl for one instantiation,
+`dyn` of a generic impl or of a blanket impl, default methods in a generic impl or a blanket impl,
+operators through a generic impl.*
 
 ## 1. What is missing and what it blocks
 
@@ -81,6 +83,30 @@ item that unlocks the rest of MISSING-Hd4Lr.
 4. Coherence (overlap check) and blanket impls.
 5. `where` clauses on functions and impls, projections, equality constraints.
 6. `std/iter`: `ListIter<T>`, then the adapters, each with the differential corpus behind it.
+
+**Step 4, as built (26.10.4).**
+
+- *Coherence.* Two impls of one trait overlap when their type patterns unify, whatever their
+  bounds are. A blanket impl overlaps every other impl of its trait, and two impls of one generic
+  type overlap. The error is reported at the later impl, with the earlier one named as a note. Two
+  concrete impls for one type keep the "already has an impl" error, now with the other impl named
+  as a note. No bound is used to tell two impls apart, so there is no specialization.
+- *Blanket impls.* `impl<T: A, ...> B for T` takes exactly one type parameter, names no trait
+  arguments, binds no associated type, and has no static member and no trait default. It lives in
+  the trait's module. A type implements `B` when every bound on `T` holds for it, which is the rule
+  `implements_trait` applies. Each method is a template keyed `impl#B#name` and is instantiated
+  with `T` bound to the receiver type, builtins included, exactly as a generic method is. Method
+  lookup tries inherent, concrete, generic and builtin methods first and a blanket method last.
+  Two blanket impls of different traits that both provide one method name for one receiver are
+  refused as ambiguous.
+- *Refused by name.* A bound that cannot be checked on the receiver: a builtin container such as
+  `List<i32>` answers to its bare name, so a bound on its element fails by name and the call is
+  refused, not read as "does not apply". A blanket impl whose bound leads back to its own trait,
+  directly or through other blanket impls. A `dyn` coercion of a type whose trait comes from a
+  blanket impl (the blanket impl has no vtable of its own). A trait default in a blanket impl, and
+  an associated type or a trait argument on one.
+- *Step 5 refusals.* A bound on a projection (`where I::Item: Bound`) and an equality constraint
+  (`Iterator<Item = i64>`) are refused by name, each saying it is step 5 of this note.
 
 Each step keeps the previous tests green and adds its own fixtures; steps 1 to 3 are one release,
 4 to 5 the next, 6 the one after, so a slip moves the adapters and nothing else.

@@ -998,6 +998,18 @@ pub const KEY_PAIR_EQ_METHOD: &str = "eq";
 /// The key is also what a static impl method's function name is suffixed with,
 /// which is how `From<IoErr>`'s `from` and `From<String>`'s `from` for one type
 /// stay distinct.
+/// The receiver name every method of a blanket impl (`impl<T: Bound> Trait for
+/// T`) is keyed under: `impl#Trait`, which no declared type can carry because
+/// `impl` is a keyword. A blanket method's key is `impl#Trait#name`.
+pub fn blanket_receiver_name(trait_key: &str) -> String {
+    format!("impl#{trait_key}")
+}
+
+/// Whether a receiver type name is a blanket impl's (see `blanket_receiver_name`).
+pub fn is_blanket_receiver(name: &str) -> bool {
+    name.starts_with("impl#")
+}
+
 pub fn trait_instance_key(name: &str, args: &[String]) -> String {
     if args.is_empty() {
         name.to_string()

@@ -659,7 +659,9 @@ pub trait Into<T> {
 }
 ```
 
-- **There are no blanket impls.** `impl<T> Into<U> for T where U: From<T>` would need a
+- **There are no blanket impls in this slice.** (Blanket impls `impl<T: Bound> Trait for T` were added in
+  26.10.4, `plan/generic-trait-impls.md` step 4; `Into` is still not derived for anything.)
+  `impl<T> Into<U> for T where U: From<T>` would need a
   compiler-known blanket impl, which this slice does not add, so a type that wants `into` writes
   its own `impl Into<U> for X` (or uses `From` directly). The reason is the same one section 5
   gives for `where` clauses: a blanket impl is a second inference rule in a slice whose whole point
@@ -693,6 +695,7 @@ Each refused where it is written, with the message naming the follow-up:
 
 - **A blanket impl** (`impl<T> Into<U> for T`, `impl<T: From<T>> ...`). There is no blanket impl
   of any trait in this slice; `std/convert`'s `Into` is declared but not derived for anything.
+  (Written as of slice 6. Blanket impls were added in 26.10.4; see `plan/generic-trait-impls.md`.)
 - **`Into` in `?`.** `?` uses `From` only, so an `Into` impl with no matching `From` does not
   convert.
 - **An associated type in a generic trait**, and **`&dyn` of a generic trait.** Both are refused

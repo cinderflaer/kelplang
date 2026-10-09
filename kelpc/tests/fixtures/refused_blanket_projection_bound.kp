@@ -1,0 +1,25 @@
+trait Describe {
+    fun Self.describe().return: i32
+}
+
+impl Describe for i32 {
+    fun Self.describe().return: i32 = self
+}
+
+trait Tagged {
+    fun Self.tag().return: i32
+}
+
+impl<T: Describe> Tagged for T {
+    fun Self.tag().return: i32 {
+        return self.describe()
+    }
+}
+
+fun first<I>(it: I).return: i32 where I::Item: Describe {
+    return 1
+}
+
+fun main() {
+    print(1)
+}

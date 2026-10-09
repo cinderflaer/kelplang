@@ -1,0 +1,32 @@
+trait Describe {
+    fun Self.describe().return: i32
+}
+
+impl Describe for i32 {
+    fun Self.describe().return: i32 = self
+}
+
+datac Point(val x: i32, val y: i32)
+
+impl Describe for Point {
+    fun Self.describe().return: i32 {
+        return self.x * 10 + self.y
+    }
+}
+
+trait Tagged {
+    fun Self.tag().return: i32
+}
+
+impl<T: Describe> Tagged for T {
+    fun Self.tag().return: i32 {
+        return self.describe() * 100
+    }
+}
+
+fun main() {
+    val n: i32 = 7
+    print(n.tag())
+    val p = Point(x = 3, y = 4)
+    print(p.tag())
+}

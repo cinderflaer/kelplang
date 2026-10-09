@@ -1,0 +1,29 @@
+trait Describe {
+    fun Self.describe().return: i32
+}
+
+trait Shown {
+    fun Self.shown().return: i32
+}
+
+trait Tagged {
+    fun Self.tag().return: i32
+}
+
+datac Pair<A>(val a: A)
+
+impl<A: Describe> Tagged for Pair<A> {
+    fun Self.tag().return: i32 {
+        return 1
+    }
+}
+
+impl<A: Shown> Tagged for Pair<A> {
+    fun Self.tag().return: i32 {
+        return 2
+    }
+}
+
+fun main() {
+    print(1)
+}

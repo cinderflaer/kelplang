@@ -846,7 +846,11 @@ pub fn load(
             // A builtin `for` type has no module to be prefixed with, and
             // `Ty::from_name` is exactly the set of builtin names (A-12 slice
             // 3); a declared `datac`/`enum` is qualified the usual way.
-            i.type_name = if crate::types::Ty::from_name(&i.type_name).is_some() {
+            // A blanket impl's `for` type is its own parameter (`impl<T> Tr for
+            // T`), which names no declared type, so it is kept as written.
+            i.type_name = if i.type_params.contains(&i.type_name)
+                || crate::types::Ty::from_name(&i.type_name).is_some()
+            {
                 i.type_name.clone()
             } else {
                 canon(&i.type_name, i.type_span)?
@@ -887,7 +891,17 @@ pub fn load(
             if let Some(mut site) = f.trait_impl.clone() {
                 let written_trait = site.trait_name.clone();
                 let written_type = site.self_type.clone();
-                let self_type = canon(&written_type, f.span)?;
+                // A blanket impl's method: its receiver was written `Self` over the
+                // impl's own parameter, so `Self` becomes that parameter name.
+                let blanket = f
+                    .receiver
+                    .as_ref()
+                    .is_some_and(|r| r.type_args.contains(&written_type));
+                let self_type = if blanket {
+                    written_type.clone()
+                } else {
+                    canon(&written_type, f.span)?
+                };
                 // A-12 slice 6: the canonical trait-instance key, computed from
                 // the arguments this method's own `impl` line wrote, so two
                 // instantiations of one trait for one type are two functions
@@ -915,6 +929,14 @@ pub fn load(
                 site.trait_instance = crate::types::trait_instance_key(&trait_key, &arg_names);
                 f.trait_impl = Some(site);
                 substitute_self(&mut f, &self_type, &assoc);
+                if blanket {
+                    // The receiver names the blanket impl itself, so its methods
+                    // key as `impl#Trait#name` and never collide with another
+                    // blanket impl's method of the same name.
+                    if let Some(r) = &mut f.receiver {
+                        r.type_name = crate::types::blanket_receiver_name(&trait_key);
+                    }
+                }
             }
             f.module = m.id.clone();
             program.functions.push(f);
@@ -935,7 +957,11 @@ pub fn load(
         .map(|i| {
             let trait_decl = program.traits.iter().find(|t| t.name == i.trait_name);
             let trait_module = trait_decl.map(|t| t.module.clone()).unwrap_or_default();
+            // A blanket impl takes no trait default yet (infer.rs refuses it by
+            // name), so none is generated for it.
+            let blanket = i.type_params.contains(&i.type_name);
             let defaults: Vec<ast::FunctionDecl> = trait_decl
+                .filter(|_| !blanket)
                 .map(|t| {
                     t.methods
                         .iter()
