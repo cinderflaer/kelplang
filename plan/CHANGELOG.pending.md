@@ -13,3 +13,7 @@ back to this header. No need to ask first.
 Keep each line short and factual: what changed, and why it matters to someone
 writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
+
+## Compiler
+
+- Managed-mode GC core (`kelpc/gc`, Rust staticlib `libkelp_gc.a`): C ABI header and descriptor layout for WP3; not yet linked by the compiler.
