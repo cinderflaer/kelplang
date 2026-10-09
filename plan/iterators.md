@@ -150,9 +150,13 @@ strictness `Shape` has for `area`.
   without it a composed adapter (`take(skip(range(0, 100), 10), 5)`) cannot
   satisfy `take`'s own `I: Iterator` bound, and the item projection
   `Skip<Range>::Item` has no binding to resolve.
-- **`List.iter()` yielding `&T`.** A borrow into a list cannot outlive the
-  iterator that handed it out, and v1 has no lifetime syntax to tie the two
-  together (A-11). The owned `List.into_iter()` is the honest form and it is
+- **`List.iter()` yielding `&T` as an iterator value.** `for x in xs.iter()` is
+  accepted and desugars to `for x in xs` (the element is the shared borrow
+  `List.get` gives, and the body may not mutate `xs`); no iterator value is built.
+  A borrowing iterator value (`xs.iter().map(...)`) cannot outlive the iterator
+  that handed it out, and v1 has no lifetime syntax to tie the two together (A-11).
+  That needs a design note first (MISSING-Hd4Lr, option 3). The owned
+  `List.into_iter()` is the honest form and it is
   itself blocked: it would be a method on the builtin `List<T>`, and the
   compiler's `List` surface is builtin, so a shipped module cannot add one.
 - **`List.into_iter()`.** Same reason. A `List` method is either compiler-

@@ -1,0 +1,11 @@
+// `for name in names.iter()` over a list of owned Strings: each element is a
+// shared borrow, printed through its `str` view as in `for name in names`.
+impl "std/str"
+
+fun main() {
+    val names = str.split("alpha,beta,gamma", ",")
+    for name in names.iter() {
+        print(name.as_str())
+    }
+    print(names.len())
+}

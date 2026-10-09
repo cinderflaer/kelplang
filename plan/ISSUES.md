@@ -50,19 +50,6 @@ wiki changelog page.
 
 Sorted easiest first. `effort:` is S (a stdlib function or one small diagnostic), M (one subsystem, one lane), L (touches a hotspot file or needs a design call inside a lane), XL (mark-sized, or blocked on a decision). Within a tier the order is a rough guess; dependencies are named in the entries.
 
-### MISSING-Hd4Lr kelp: no borrowing `List.iter()`
-
-repo: kelp | found: 2026-10-06 | effort: S
-
-source: wiki `language/limits.md` (unreleased), "Containers".
-
-Shipped in 26.10.3: `for (key, value) in map`, `iter.into_iter`/`cloned`, and the
-adapters `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain`, made
-possible by the by-shape rule (a generic type with an iterator-shaped `next` is an
-`Iterator`). Still open: a `List.iter()` that yields `&T` (needs a way to tie a
-borrow to the iterator). The consumers `any`, `all`, `find`, `last` and `fold`
-shipped with the adapters.
-
 ### MISSING-Cn2Ym kelp: channels have no `select` and no zero-capacity form
 
 repo: kelp | found: 2026-10-06 | effort: M
@@ -401,3 +388,31 @@ aliasing model for `&mut`, no catalogue of defined behaviour (overflow is
 `-fwrapv` from the toolchain, not a language rule), and no dynamic checker for the
 move/borrow rules, so soundness is a reading of `infer.rs`/`borrowck.rs` rather
 than a test result. Matters more now that `unsafe` and raw pointers have shipped.
+
+### MISSING-Hd4Lr kelp: no borrowing iterator value for the std/iter adapters
+
+repo: kelp | found: 2026-10-06 | effort: XL
+
+source: wiki `language/limits.md` (unreleased), "Containers".
+
+Shipped in 26.10.3: `for (key, value) in map`, `iter.into_iter`/`cloned`, and the
+adapters `map`, `filter`, `take`, `skip`, `enumerate`, `zip`, `chain`, made possible by
+the by-shape rule (a generic type with an iterator-shaped `next` is an `Iterator`). The
+consumers `any`, `all`, `find`, `last` and `fold` shipped with the adapters.
+
+Part 1 done (2026-10-09, option 1 of the lane decision): `for x in xs.iter()` and
+`for (k, v) in m.iter()` are accepted. They desugar to the existing `for x in xs` and
+`for (k, v) in m` walks (`infer.rs`, `for_iter_receiver`), so the element is the shared
+borrow `List.get` already gives, and the body may not mutate the walked list. No new
+iterator type. Fixtures: `for_iter_list_sum`, `for_iter_list_strings`,
+`for_iter_list_mutated`, `for_iter_map`.
+
+Still open (option 3, pending): an iterator value that yields `&T` on its own, so that
+`xs.iter().map(...)` or `filter`, `take`, `skip` on a borrowing iterator can hold a
+borrow of the list. A borrow cannot outlive the iterator that carries it, and v1 has no
+lifetime syntax to tie the two together (`plan/iterators.md` section 5). Earlier
+findings: `infer.rs` refuses a `datac` or `enum` field that is a borrow, and a tuple
+element or a stored value may not be a borrow. So this needs a design note first: how a
+value holds a borrow, and what `borrowck.rs` checks for it. Next step: write that note
+in `plan/iterators.md`. No code until it is decided. Until then the adapters take owned
+items only.

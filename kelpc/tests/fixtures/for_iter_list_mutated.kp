@@ -1,0 +1,9 @@
+// `for x in xs.iter()` walks `xs` itself, so the body may not mutate it: the
+// refusal is the one a plain `for x in xs` gives.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs.iter() {
+        xs.push(x)
+    }
+}

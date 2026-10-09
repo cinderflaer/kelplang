@@ -4962,6 +4962,35 @@ fn a_for_loop_walks_a_list_without_an_index() {
 }
 
 #[test]
+fn a_for_loop_over_list_iter_sums_a_list_of_i32() {
+    // Hd4Lr part 1: `xs.iter()` is the same walk as `xs`, with the element a
+    // shared borrow of the list.
+    assert_compiles_and_runs("tests/fixtures/for_iter_list_sum.kp", "12\n3\n");
+}
+
+#[test]
+fn a_for_loop_over_list_iter_walks_owned_strings() {
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iter_list_strings.kp",
+        "alpha\nbeta\ngamma\n3\n",
+    );
+}
+
+#[test]
+fn a_for_loop_over_list_iter_refuses_a_mutation_of_the_list() {
+    // The same refusal a plain `for x in xs` gives: the walked place is `xs`.
+    assert_rejected_with(
+        "tests/fixtures/for_iter_list_mutated.kp",
+        "cannot mutate 'xs' while iterating over it",
+    );
+}
+
+#[test]
+fn a_for_loop_over_map_iter_walks_the_entries() {
+    assert_compiles_and_runs("tests/fixtures/for_iter_map.kp", "1\n2\n3\n");
+}
+
+#[test]
 fn a_for_loop_needs_its_in() {
     // `in` is not a keyword (syntax.md 2.3): it is read contextually, so the
     // diagnostic says what is missing instead of resolving a function `in`.

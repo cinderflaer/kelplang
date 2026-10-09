@@ -18,9 +18,11 @@
    `fun mut Name<...>.next().return: option.Option<Item>` is an `Iterator` by
    shape: it satisfies `I: Iterator` and names `I::Item`, with no generic trait
    impl (`plan/generic-trait-impls.md` is the general solution; this is the
-   case the adapters need). A borrowing `List.iter()` yielding `&T` is still
-   absent: a borrow into a list cannot outlive the iterator that handed it out
-   without lifetime syntax, so the list iterators own their items. */
+   case the adapters need). A borrowing iterator value (`List.iter()` yielding
+   `&T` through `.map`, `.filter`, ...) is still absent: a borrow into a list
+   cannot outlive the iterator that handed it out without lifetime syntax, so
+   the list iterators own their items. `for x in xs.iter()` is a desugar of
+   `for x in xs`, not a value. */
 
 impl "std/option"
 

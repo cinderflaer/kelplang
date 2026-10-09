@@ -1,0 +1,14 @@
+// `for x in xs.iter()` walks the list the way `for x in xs` does: each element
+// is a shared borrow of the list, here a `Copy` i32 read as a value.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(3)
+    xs.push(4)
+    xs.push(5)
+    var total: i32 = 0
+    for x in xs.iter() {
+        total += x
+    }
+    print(total)
+    print(xs.len())
+}

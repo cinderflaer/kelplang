@@ -11537,10 +11537,15 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
         ast::Stmt::For {
             binding,
             binding_span,
-            iterable,
+            iterable: written,
             body,
             span,
         } => {
+            // `for x in xs.iter()` (and `for (k, v) in m.iter()`) walks the
+            // same place as `for x in xs`: the element is the shared borrow
+            // `List.get` already gives, and the body may not mutate `xs`.
+            let stripped = for_iter_receiver(written, ctx)?;
+            let iterable = stripped.as_ref().unwrap_or(written);
             let probe = check_expr(iterable, ctx, None)?;
             let iter_ty = probe.ty.clone();
             // `for (k, v) in map`: the parser read the pattern as a hidden
@@ -11701,6 +11706,24 @@ fn implements_iterator(ctx: &Ctx, ty: &Ty) -> bool {
     origin.map_or(false, |(template, _)| {
         ctx.fns.templates.contains_key(&format!("{template}#next"))
     })
+}
+
+/// The receiver of a `xs.iter()` written as a `for` iterable, when `xs` is a
+/// `List`, an array or a `Map`: such a loop walks `xs` itself, so it takes the
+/// same desugar as `for x in xs`. Any other `iter()` (a user type's own method)
+/// is left as written and goes down the `Iterator` path.
+fn for_iter_receiver(iterable: &ast::Expr, ctx: &mut Ctx) -> Result<Option<ast::Expr>> {
+    let ast::Expr::MethodCall { receiver, method, type_args, args, .. } = iterable else {
+        return Ok(None);
+    };
+    if method != "iter" || !type_args.is_empty() || !args.is_empty() {
+        return Ok(None);
+    }
+    let recv_ty = check_expr(receiver, ctx, None)?.ty;
+    let walkable = crate::types::list_elem_of(&recv_ty).is_some()
+        || crate::types::array_elem_of(&recv_ty).is_some()
+        || crate::types::map_key_of(&recv_ty).is_some();
+    Ok(walkable.then(|| (**receiver).clone()))
 }
 
 /// `for (k, v) in map { body }` becomes `for #key in map.keys() { val k =
