@@ -1,0 +1,46 @@
+// std/encoding base32 on its edge cases: the RFC 4648 vectors, every byte value
+// (so all 32 alphabet characters are produced), padding at each remainder, and
+// decode failures. `base32_encode` looked each character up with a `str.byte`
+// call on the alphabet, and must still produce exactly the same text.
+impl "std/encoding"
+impl "std/str"
+impl "std/result"
+impl "std/mem"
+
+fun enc_show(s: &str) {
+    val b = Bytes.from_str(s)
+    print(encoding.base32_encode(&b))
+}
+
+fun decode_show(text: &str) {
+    val r = encoding.base32_decode(text)
+    when r {
+        Ok(b) -> print(encoding.hex_encode(&b))
+        Err(e) -> print("invalid")
+    }
+}
+
+fun main() {
+    enc_show("")
+    enc_show("f")
+    enc_show("fo")
+    enc_show("foo")
+    enc_show("foob")
+    enc_show("fooba")
+    enc_show("foobar")
+    var all = mem.alloc(256)
+    var i: usize = 0
+    while i < 256 {
+        all.set(i, i.to_u8())
+        i = i + 1
+    }
+    print(encoding.base32_encode(&all))
+    decode_show("MZXW6YQ=")
+    decode_show("MZXW6===")
+    decode_show("MZXW6YTBOI======")
+    decode_show("MZXW6YTB")
+    decode_show("mzxw6===")
+    decode_show("MZXW6Y1=")
+    decode_show("")
+    decode_show("MZ")
+}

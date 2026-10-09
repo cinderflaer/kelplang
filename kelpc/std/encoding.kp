@@ -175,7 +175,18 @@ fun base64_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
     return result.Result.Ok(value = out)
 }
 
-fun b32_char(v: u8).return: u8 = str.byte(B32_ALPHABET, v.to_usize())
+// The character for a 5-bit value. The alphabet is A-Z then 2-7, so the value
+// maps by range. A value past 31 still goes through the `str.byte` lookup, so it
+// panics exactly as before.
+fun b32_char(v: u8).return: u8 {
+    if v < 26 {
+        return v + 65
+    }
+    if v < 32 {
+        return v - 26 + 50
+    }
+    return str.byte(B32_ALPHABET, v.to_usize())
+}
 
 // The 5-bit value a base32 character encodes, or `None` for `=` and anything
 // outside the alphabet. Lowercase is refused rather than folded: RFC 4648's
