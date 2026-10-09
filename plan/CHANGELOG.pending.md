@@ -13,3 +13,7 @@ back to this header. No need to ask first.
 Keep each line short and factual: what changed, and why it matters to someone
 writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
+
+## compiler
+
+- `[target] mode = "managed"` is accepted by the manifest, with `heap_max = N` (a whole number of MiB, default 256) for the managed heap cap. Hosted and freestanding are unchanged. The memory or resource classifier is in `kelpc/src/managed.rs`; the heap refusal is not yet wired into the checker, and a managed build still takes the hosted path.

@@ -16,6 +16,7 @@ mod guard;
 mod infer;
 mod lexer;
 mod lint;
+mod managed;
 mod llvm_ffi;
 mod opt;
 mod parser;

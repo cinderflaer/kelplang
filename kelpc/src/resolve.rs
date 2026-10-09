@@ -274,6 +274,11 @@ pub enum TargetMode {
     /// No libc, no runtime object, a user entry point and a linker script
     /// (LLVM backend only).
     Freestanding,
+    /// The hosted runtime with a collected heap (`kelpscript-gc-paper.md`):
+    /// memory values live in the GC heap capped by `heap_max`, and resource
+    /// values are refused from it (`managed.rs`). The allocator hooks and the
+    /// freestanding keys do not apply, because the collector owns the heap.
+    Managed,
 }
 
 /// One `coral.toml` `[target]` section (kernel stage 4): where the program runs.
@@ -298,6 +303,9 @@ pub struct TargetDecl {
     /// static is laid out as. 1 when the section names none, which is what a
     /// single-hart image and every project before this stage get.
     cpus: u64,
+    /// `heap_max = N` (managed mode): the collected heap's cap in MiB. `None`
+    /// when the section names none; `heap_max_mib` then gives the default.
+    heap_max: Option<u64>,
 }
 
 impl TargetDecl {
@@ -314,6 +322,7 @@ impl TargetDecl {
             dealloc: None,
             realloc: None,
             cpus: 1,
+            heap_max: None,
         }
     }
 
@@ -325,6 +334,12 @@ impl TargetDecl {
 
     pub fn is_freestanding(&self) -> bool {
         self.mode == TargetMode::Freestanding
+    }
+
+    /// Whether the section says `mode = "managed"` (the collected heap).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn is_managed(&self) -> bool {
+        self.mode == TargetMode::Managed
     }
 
     /// The LLVM triple (`riscv64-unknown-none-elf`), freestanding only.
@@ -370,6 +385,13 @@ impl TargetDecl {
     /// the manifest's `[target] cpus`, or 1 when it names none.
     pub fn cpus(&self) -> u64 {
         self.cpus
+    }
+
+    /// The managed heap's cap in MiB: the manifest's `heap_max`, or
+    /// `managed::DEFAULT_HEAP_MAX_MIB` (256) when it names none.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn heap_max_mib(&self) -> u64 {
+        self.heap_max.unwrap_or(crate::managed::DEFAULT_HEAP_MAX_MIB)
     }
 }
 
@@ -2138,14 +2160,47 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         if !manifest.target_mode_set {
             return Err(Diagnostic::new(
                 format!(
-                    "{MANIFEST_NAME}'s [target] section is missing 'mode = \"hosted\"' or 'mode = \"freestanding\"'"
+                    "{MANIFEST_NAME}'s [target] section is missing 'mode = \"hosted\"', 'mode = \"freestanding\"' or 'mode = \"managed\"'"
                 ),
                 at,
                 "",
             ));
         }
         match manifest.target.mode {
+            TargetMode::Managed => {
+                // Managed is the hosted runtime with a collected heap, so the
+                // freestanding keys mean nothing here, and the allocator hooks
+                // would fight the collector for the heap, so they are refused too.
+                for (key, value) in [
+                    ("triple", manifest.target.triple.as_ref()),
+                    ("entry", manifest.target.entry.as_ref()),
+                    ("linker_script", manifest.target.linker_script.as_ref()),
+                    ("panic", manifest.target.panic.as_ref()),
+                    ("alloc", manifest.target.alloc.as_ref()),
+                    ("dealloc", manifest.target.dealloc.as_ref()),
+                    ("realloc", manifest.target.realloc.as_ref()),
+                ] {
+                    if value.is_some() {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME}'s [target] key '{key}' is not used with 'mode = \"managed\"': the collector owns the heap, and the key only applies to 'mode = \"freestanding\"' or to a container allocator"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                }
+            }
             TargetMode::Hosted => {
+                if manifest.target.heap_max.is_some() {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "{MANIFEST_NAME}'s [target] key 'heap_max' is only meaningful with 'mode = \"managed\"'"
+                        ),
+                        at,
+                        "",
+                    ));
+                }
                 for (key, value) in [
                     ("triple", manifest.target.triple.as_ref()),
                     ("entry", manifest.target.entry.as_ref()),
@@ -2167,6 +2222,15 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                 }
             }
             TargetMode::Freestanding => {
+                if manifest.target.heap_max.is_some() {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "{MANIFEST_NAME}'s [target] key 'heap_max' is only meaningful with 'mode = \"managed\"'"
+                        ),
+                        at,
+                        "",
+                    ));
+                }
                 for (key, value) in [
                     ("triple", manifest.target.triple.as_ref()),
                     ("entry", manifest.target.entry.as_ref()),
@@ -2517,7 +2581,8 @@ fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(),
 
 /// One `key = value` line inside `coral.toml`'s `[target]` section (kernel
 /// stage 4): `mode`, `triple`, `entry`, `linker_script` or `panic`, each a
-/// double-quoted string, plus `cpus` (kernel stage 8), a bare integer. The
+/// double-quoted string, plus `cpus` (kernel stage 8) and `heap_max` (managed
+/// mode), bare integers. The
 /// section's completeness is checked once, after the whole file is read, so an
 /// out-of-order line is not an error.
 fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
@@ -2565,6 +2630,43 @@ fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
         manifest.target_cpus_set = true;
         return Ok(());
     }
+    // `heap_max` is the managed heap's cap in MiB, a bare integer like `cpus`.
+    // The bound is `managed::HEAP_MAX_MIB_RANGE`, so a typo cannot ask for a heap
+    // the host does not have, and a zero cap is refused rather than read as 256.
+    if key == "heap_max" {
+        if manifest.target.heap_max.is_some() {
+            return Err(Diagnostic::new(
+                format!("'heap_max' appears more than once in {MANIFEST_NAME}'s [target] section"),
+                at,
+                "",
+            ));
+        }
+        let range = crate::managed::HEAP_MAX_MIB_RANGE;
+        let Ok(n) = value.parse::<u64>() else {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME} value for '[target] heap_max' must be a whole number of MiB between {} and {}, found '{value}'",
+                    range.start(),
+                    range.end()
+                ),
+                at,
+                "",
+            ));
+        };
+        if !range.contains(&n) {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME} value for '[target] heap_max' must be between {} and {} MiB, found {n}",
+                    range.start(),
+                    range.end()
+                ),
+                at,
+                "",
+            ));
+        }
+        manifest.target.heap_max = Some(n);
+        return Ok(());
+    }
     let Some(value) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
         return Err(Diagnostic::new(
             format!(
@@ -2586,10 +2688,11 @@ fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
             manifest.target.mode = match value {
                 "hosted" => TargetMode::Hosted,
                 "freestanding" => TargetMode::Freestanding,
+                "managed" => TargetMode::Managed,
                 other => {
                     return Err(Diagnostic::new(
                         format!(
-                            "unknown '{other}' for {MANIFEST_NAME}'s '[target] mode': it is 'hosted' or 'freestanding'"
+                            "unknown '{other}' for {MANIFEST_NAME}'s '[target] mode': it is 'hosted', 'freestanding' or 'managed'"
                         ),
                         at,
                         "",
@@ -2668,7 +2771,7 @@ fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
         other => {
             return Err(Diagnostic::new(
                 format!(
-                    "unknown key '{other}' in {MANIFEST_NAME}'s [target] section: it is 'mode', 'triple', 'entry', 'linker_script', 'panic', 'alloc', 'dealloc', 'realloc' or 'cpus'"
+                    "unknown key '{other}' in {MANIFEST_NAME}'s [target] section: it is 'mode', 'triple', 'entry', 'linker_script', 'panic', 'alloc', 'dealloc', 'realloc', 'cpus' or 'heap_max'"
                 ),
                 at,
                 "",
@@ -4157,6 +4260,70 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn a_managed_target_section_is_accepted_with_the_default_heap() {
+        let m = manifest("name = \"x\"\n[target]\nmode = \"managed\"\n");
+        assert!(m.target.is_managed());
+        assert!(!m.target.is_freestanding());
+        assert_eq!(m.target.heap_max_mib(), 256);
+        assert_eq!(m.target.heap_max_mib(), crate::managed::DEFAULT_HEAP_MAX_MIB);
+    }
+
+    #[test]
+    fn heap_max_is_read_in_mib_for_a_managed_section() {
+        let m = manifest("name = \"x\"\n[target]\nmode = \"managed\"\nheap_max = 512\n");
+        assert_eq!(m.target.heap_max_mib(), 512);
+    }
+
+    #[test]
+    fn a_bad_heap_max_is_a_clear_error() {
+        for bad in ["\"512\"", "abc", "-1", "0", "65537", "1.5"] {
+            let err = manifest_err(&format!(
+                "name = \"x\"\n[target]\nmode = \"managed\"\nheap_max = {bad}\n"
+            ));
+            assert!(
+                err.message.contains("'[target] heap_max'"),
+                "{bad}: {}",
+                err.message
+            );
+        }
+        let err = manifest_err("name = \"x\"\n[target]\nmode = \"managed\"\nheap_max = 0\n");
+        assert!(err.message.contains("between 1 and 65536 MiB"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_duplicate_heap_max_is_refused() {
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"managed\"\nheap_max = 64\nheap_max = 128\n",
+        );
+        assert!(err.message.contains("appears more than once"), "{}", err.message);
+    }
+
+    #[test]
+    fn heap_max_is_refused_outside_managed_mode() {
+        let err = manifest_err("name = \"x\"\n[target]\nmode = \"hosted\"\nheap_max = 64\n");
+        assert!(err.message.contains("only meaningful with 'mode = \"managed\"'"), "{}", err.message);
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\ntriple = \"riscv64-unknown-none-elf\"\n\
+             entry = \"kmain\"\nlinker_script = \"k.ld\"\nheap_max = 64\n",
+        );
+        assert!(err.message.contains("only meaningful with 'mode = \"managed\"'"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_managed_section_refuses_the_freestanding_and_allocator_keys() {
+        for line in ["triple = \"x\"", "entry = \"main\"", "alloc = \"a\""] {
+            let err = manifest_err(&format!("name = \"x\"\n[target]\nmode = \"managed\"\n{line}\n"));
+            assert!(err.message.contains("is not used with 'mode = \"managed\"'"), "{}", err.message);
+        }
+    }
+
+    #[test]
+    fn an_unknown_key_message_names_heap_max() {
+        let err = manifest_err("name = \"x\"\n[target]\nmode = \"managed\"\nnope = \"1\"\n");
+        assert!(err.message.contains("'heap_max'"), "{}", err.message);
     }
 
     #[test]
