@@ -505,14 +505,17 @@ pub fn compile(
     linked.map_err(|e| e.message)
 }
 
-/// Lower a whole program in managed mode (WP3) and return the IR text, without
-/// linking. The object is written beside the IR, as every lowering does, so the
-/// tests can check that managed IR also verifies and emits. The managed build's
-/// driver is not wired yet (WP2 owns the mode), so only tests call this.
-pub fn compile_managed_ir(
+/// Lower a whole program and return the IR text, without linking, in the hosted
+/// (`managed = false`) or managed (`managed = true`) form. The object is written
+/// beside the IR, as every lowering does, so the tests can check that the IR
+/// also verifies and emits. Only the tests call this: the managed build's driver
+/// is WP2's, so nothing in a real build reaches it yet.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn compile_ir(
     program: &Program,
     drops: &DropPlan,
     sources: &SourceMap,
+    managed: bool,
     ir_path: &Path,
     object_path: &Path,
 ) -> Result<String, String> {
@@ -537,7 +540,7 @@ pub fn compile_managed_ir(
         None,
         None,
         None,
-        true,
+        managed,
         &mut timings,
     )?;
     std::fs::read_to_string(ir_path)

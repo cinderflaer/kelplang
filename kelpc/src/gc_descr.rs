@@ -259,3 +259,110 @@ impl<'a> GcTypes<'a> {
         Ok(global)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::borrowck;
+    use crate::codegen_llvm;
+    use crate::diag::SourceMap;
+    use crate::infer;
+    use crate::resolve;
+    use std::path::{Path, PathBuf};
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("managed_lower")
+            .join(name)
+    }
+
+    /// Lower one fixture to IR text. `managed` picks the managed branch; the
+    /// hosted branch is the same code with the flag off.
+    pub(super) fn lower(name: &str, managed: bool) -> Result<String, String> {
+        let mut sources = SourceMap::new();
+        let loaded = resolve::load(&fixture(name), &mut sources, None, None)
+            .map_err(|d| format!("{d:?}"))?;
+        let typed = infer::check_program(&loaded.program, &loaded.project)
+            .map_err(|d| format!("{d:?}"))?;
+        let drops = borrowck::check_program(&typed).map_err(|d| format!("{d:?}"))?;
+        let dir = std::env::temp_dir().join(format!(
+            "kelpc-gc-test-{}-{}",
+            std::process::id(),
+            if managed { "managed" } else { "hosted" }
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let stem = name.trim_end_matches(".kp");
+        codegen_llvm::compile_ir(
+            &typed,
+            &drops,
+            &sources,
+            managed,
+            &dir.join(format!("{stem}.ll")),
+            &dir.join(format!("{stem}.o")),
+        )
+    }
+
+    /// The golden IR is written, not generated, by the test: running with
+    /// `KELPC_WRITE_GOLDEN=1` replaces the fixture with the current output, so a
+    /// reviewer can read the diff before it is committed.
+    /// The debug info names the fixture's directory, which is this checkout's
+    /// path. The golden text names it as `@FIXTURE_DIR@` instead, so the test
+    /// passes in any worktree.
+    fn normalize(ir: &str) -> String {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("managed_lower");
+        ir.replace(&dir.display().to_string(), "@FIXTURE_DIR@")
+    }
+
+    fn check_golden(actual: &str, golden: &str) {
+        let path = fixture(golden);
+        let actual = normalize(actual);
+        if std::env::var("KELPC_WRITE_GOLDEN").as_deref() == Ok("1") {
+            std::fs::write(&path, &actual).expect("write golden");
+            return;
+        }
+        let expected = std::fs::read_to_string(&path).expect("read golden fixture");
+        assert_eq!(actual, expected, "managed IR differs from {golden}");
+    }
+
+    #[test]
+    fn node_descriptor_lists_the_two_box_slots() {
+        let ir = lower("node.kp", true).expect("managed lowering of node.kp");
+        check_golden(&ir, "node.managed.ll");
+        // One descriptor for Node: two pointer slots at 0 and 8, not noscan.
+        assert!(ir.contains("@kelp_gc_ptrs_Node = internal constant [2 x i32] [i32 0, i32 8]"), "{ir}");
+        assert!(ir.contains("@kelp_gc_type_Node = internal constant %kelp_gc_type { i32 1, i32 16, i32 8, i32 0, i32 2, ptr @kelp_gc_ptrs_Node, i32 0, i32 0, ptr null }"), "{ir}");
+    }
+
+    #[test]
+    fn box_of_allocates_through_kelp_gc_alloc() {
+        let ir = lower("node.kp", true).expect("managed lowering of node.kp");
+        assert!(ir.contains("declare ptr @kelp_gc_alloc(ptr)"), "{ir}");
+        assert!(ir.contains("call ptr @kelp_gc_alloc(ptr @kelp_gc_type_Node)"), "{ir}");
+        // The managed module never reaches libc's allocator for a Box.
+        assert!(!ir.contains("call ptr @malloc"), "{ir}");
+    }
+
+    #[test]
+    fn managed_build_emits_no_free_for_a_memory_only_value() {
+        let ir = lower("node.kp", true).expect("managed lowering of node.kp");
+        // The `declare void @free` line is libc's, always present. What matters
+        // is that no call reaches it, and no drop function for Node exists.
+        assert!(!ir.lines().any(|l| l.contains("call") && l.contains("@free(")), "{ir}");
+        assert!(!ir.contains("kelp_drop_Node"), "{ir}");
+        // The Box drop for Node is still defined (Box<Node> is instantiated), but
+        // its body only clears the slot: no call in it, so no free.
+        let body = ir
+            .split("define internal void @kelp_box_drop__Node")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("the Box<Node> drop body");
+        assert!(!body.contains("call"), "{body}");
+    }
+
+    #[test]
+    fn hosted_build_still_frees_and_has_no_gc_symbols() {
+        let ir = lower("node.kp", false).expect("hosted lowering of node.kp");
+        assert!(!ir.contains("kelp_gc_"), "{ir}");
+        assert!(ir.contains("@malloc("), "{ir}");
+    }
+}

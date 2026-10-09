@@ -260,6 +260,7 @@ pub fn link_llvm_object(
 /// archive. Only the managed case calls this; every other build links exactly
 /// as before. The archive takes the slot a `extern fun` object takes, after the
 /// runtime, so the program's `kelp_gc_*` references resolve against it.
+#[allow(dead_code)] // WP2 wires the managed link; the link smoke test is the first caller.
 pub fn link_managed_object(
     object_path: &Path,
     gc_archive: &Path,
