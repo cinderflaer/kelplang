@@ -51,14 +51,13 @@ kelpc run hello.kp
 
 ### 1.3 Projects
 
-A project is a directory with a `coral.toml`, sources under `src/`, and optionally an `alias.kpconf`:
+A project is a directory with a `coral.toml`, and sources under `src/`. Module aliases, if any, are an `[alias]` section of `coral.toml`:
 
 ```
 myproject/
-    coral.toml
+    coral.toml               # optional [alias] section, see 13.3
     src/main.kp              # entry module, the only one with unprefixed names
     src/shapes/circle.kp     # impl "shapes/circle"
-    alias.kpconf             # optional, see 13.3
 ```
 
 ```sh
@@ -77,7 +76,7 @@ What a project buys you, concretely:
 
 - **`impl` paths and module ids are relative to `src/`**, not to the working directory or to the importing file. `impl "shapes/circle"` is always `<root>/src/shapes/circle.kp`, however deep the importer sits (§13.3).
 - **The entry module can be somewhere other than `src/main.kp`**, and it is the only module whose top-level names are unprefixed. A non-entry module's items are reached only as `alias.Item`, and only the ones that module exports with `pub` (§13.3, §13.4).
-- **A `alias.kpconf` at the project root** (beside `coral.toml`, not in `src/`).
+- **An `[alias]` section in `coral.toml`**, one `name = "module/path"` per line (13.3).
 - **The program-level settings** in the manifest — today `http_pool`, `naming_case` (19), and the entry module's own `[caps]` grant (1.4, C-2).
 
 ### 1.4 `coral.toml`
@@ -2165,7 +2164,7 @@ alias %*db*% = "storage/postgres"
 impl %*db*%
 ```
 
-Aliases come from two places: an inline `alias %*name*% = <raw text to end of line>` declaration, and `alias.kpconf` at the project root, one `name="replacement text"` per line. Substitution has no parameters, no scoping and no hygiene; `%*a*%` defined as `%*b*% * 2` with `%*b*%` defined as `40 + 2` prints `84`, because precedence is whatever the expanded text happens to produce.
+Aliases come from two places: an inline `alias %*name*% = <raw text to end of line>` declaration, and the `[alias]` section of `coral.toml`, one `name = "module/path"` per line. A `[alias]` value is a relative module path: non-empty, with no leading `/` and no `..` component, and it is checked when the manifest is read. `coral.toml` is the only place the table is read from; a file named `alias.kpconf` is ignored. Substitution has no parameters, no scoping and no hygiene; `%*a*%` defined as `%*b*% * 2` with `%*b*%` defined as `40 + 2` prints `84`, because precedence is whatever the expanded text happens to produce.
 
 ### 13.4 Visibility
 

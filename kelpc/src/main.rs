@@ -856,7 +856,7 @@ fn read_source(path: &Path) -> Result<String, ()> {
 ///
 /// That refusal is not final. The resolver is the authority on it, because it
 /// is what `kelpc build` runs and it loads the whole project: it expands the
-/// file against the project's own alias table, `alias.kpconf` included, and
+/// file against the project's own alias table, the `[alias]` section included, and
 /// parses the result. So when this file's own gate refuses it, the file is put
 /// to the resolver:
 ///
@@ -871,7 +871,7 @@ fn read_source(path: &Path) -> Result<String, ()> {
 /// validates is therefore the file's own text, plus — only when the file's own
 /// gate refuses it — the project alias table it needs to expand that file. It
 /// does not validate the project. A project broken somewhere this file does not
-/// reach (a cyclic or malformed `alias.kpconf`, or an imported module with a
+/// reach (a cyclic or malformed `[alias]` entry, or an imported module with a
 /// syntax error) makes `kelpc build` exit 1 with a real diagnostic while `fmt`
 /// formats a file that references no unresolvable alias; the two answer
 /// different questions and agree only about the file they are given.

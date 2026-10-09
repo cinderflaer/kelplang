@@ -459,7 +459,7 @@ fn a_bare_mut_parameter_in_arithmetic_names_the_deref_fix() {
 }
 
 // ---------------------------------------------------------------------------
-// M5: multi-file projects (`impl` imports, `alias.kpconf`-free form).
+// M5: multi-file projects (`impl` imports).
 //
 // A project lives in `tests/projects/<name>/`. `kelpc build` accepts either the
 // project directory (using `coral.toml`'s entry point) or any `.kp` file inside
@@ -1246,7 +1246,7 @@ fn a_passdown_is_not_visible_from_another_module() {
 }
 
 // ---------------------------------------------------------------------------
-// M5.3: `%*alias*%` text substitution (`alias.kpconf` + inline `alias`).
+// M5.3: `%*alias*%` text substitution (`[alias]` in coral.toml + inline `alias`).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1259,7 +1259,7 @@ fn aliases_substitute_text_in_expressions_and_strings() {
 }
 
 #[test]
-fn an_alias_kpconf_entry_can_be_an_impl_path() {
+fn an_alias_in_the_manifest_can_be_an_impl_path() {
     assert_project_runs("alias_kpconf", &project("alias_kpconf"), "42\n");
 }
 
@@ -1286,7 +1286,7 @@ fn an_unknown_alias_is_rejected() {
 
 #[test]
 fn an_alias_cycle_across_two_files_names_both_sites() {
-    // `a` is defined in `alias.kpconf`, `b` in `main.kp`; the diagnostic points
+    // `a` is defined in coral.toml's [alias], `b` in `main.kp`; the diagnostic points
     // at the reference that closed the cycle and notes the definition, so
     // both files appear.
     let bin = out_path("alias_kpconf_cycle");
@@ -1299,7 +1299,7 @@ fn an_alias_cycle_across_two_files_names_both_sites() {
         .expect("failed to spawn kelpc");
     assert!(!build.status.success(), "expected a rejection");
     let stderr = String::from_utf8_lossy(&build.stderr);
-    for needle in ["alias cycle: a -> b -> a", "alias.kpconf:", "main.kp:"] {
+    for needle in ["alias cycle: a -> b -> a", "coral.toml:", "main.kp:"] {
         assert!(
             stderr.contains(needle),
             "expected the error to mention '{needle}', got:\n{stderr}"

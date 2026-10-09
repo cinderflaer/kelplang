@@ -92,7 +92,7 @@
 //!   files need.
 //! - the compiler's resolver, which `main.rs` puts to a file that gate refuses
 //!   (`fmt_text`). It loads the project and expands the file against the
-//!   project's whole alias table — `alias.kpconf` included — which is what
+//!   project's whole alias table, the `[alias]` section of `coral.toml` included, which is what
 //!   `kelpc build` uses for that file. A file it accepts is formatted; a file it
 //!   rejects is refused with its diagnostic, which is the text and position
 //!   `kelpc build` prints.
@@ -102,10 +102,10 @@
 //! refuses, and it is asked only about that file. So for a file whose own gate
 //! *accepts* it — one that references no unresolvable alias — the resolver
 //! never runs, and `fmt` neither loads the project's alias configuration nor
-//! diagnoses it: a cyclic or malformed `alias.kpconf`, or an imported module
+//! diagnoses it: a cyclic or malformed `[alias]` section, or an imported module
 //! with a syntax error, is something `kelpc build` exits 1 on and reports,
 //! while such a file is formatted. A file the gate refuses does reach
-//! `alias.kpconf`, through the resolver, and can be refused with its
+//! `[alias]`, through the resolver, and can be refused with its
 //! diagnostic.
 //!
 //! An undefined alias, and an alias another module declares whose expansion

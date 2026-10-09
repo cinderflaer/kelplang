@@ -4,8 +4,9 @@
 //! the plan's "Imports & project structure": no parameters, no hygiene, no
 //! scoping. Two definition sites feed one table:
 //!
-//! - `alias.kpconf` at the project root, zsh-alias-flavored — one
-//!   `name="replacement text"` per line.
+//! - an `[alias]` table in the project's `coral.toml`, one
+//!   `name = "module/path"` per line. The value is a relative module path,
+//!   validated when the manifest is read (`resolve.rs`).
 //! - an inline `alias %*name*% = <raw text to end of line>` declaration in
 //!   any `.kp` file. The declaration gets its own keyword precisely because
 //!   the right-hand side is *macro text*, not an expression: it is never
@@ -36,26 +37,34 @@ use crate::diag::Diagnostic;
 use crate::lexer::{Lexer, Span, Token, TokenKind};
 use crate::resolve::{is_ident, is_keyword};
 
-/// Module id `alias.kpconf` diagnostics are attributed to. Not a legal module
-/// id — `impl` paths are identifier segments — so it cannot collide with a
-/// real module, and `SourceMap` still renders its path.
-pub const KPCONF_MODULE: &str = "alias.kpconf";
+/// Module id the `[alias]` entries of `coral.toml` are attributed to. Not a
+/// legal module id (it contains a dot), so it cannot collide with a real
+/// module, and `SourceMap` still renders its path.
+pub const MANIFEST_MODULE: &str = "coral.toml";
 
-/// File name looked for at the project root.
-pub const KPCONF_FILE_NAME: &str = "alias.kpconf";
+/// The note text that points at where an alias was defined. An entry from
+/// the manifest names its table; an inline declaration is named by its own
+/// `%*name*%`.
+fn defined_here(def: &AliasDef) -> String {
+    if def.module == MANIFEST_MODULE {
+        format!("alias '{}' in coral.toml [alias] is defined here", def.name)
+    } else {
+        format!("'%*{}*%' is defined here", def.name)
+    }
+}
 
 /// One alias definition.
 #[derive(Debug, Clone)]
 pub struct AliasDef {
     pub name: String,
     /// The replacement text, verbatim — the source slice for an inline
-    /// declaration, the quoted string for `alias.kpconf`.
+    /// declaration, the quoted value for a `[alias]` entry.
     pub text: String,
     /// Absolute offset of `text` in its own file, so a reference *inside* a
     /// definition can be mapped back to a real source span (used by the
     /// cycle diagnostics).
     pub text_offset: usize,
-    /// Module the definition came from (`alias.kpconf` for the config file).
+    /// Module the definition came from (`coral.toml` for a `[alias]` entry).
     pub module: String,
     pub span: Span,
 }
@@ -102,12 +111,14 @@ impl AliasTable {
         }
         if let Some(previous) = self.defs.get(&def.name) {
             let previous = previous.clone();
-            let message = format!(
-                "alias '%*{}*%' is already defined in module '{}'",
-                def.name, previous.module
-            );
-            return Err(Diagnostic::new(message, def.span, def.module).with_note(
-                format!("'%*{}*%' is defined here", def.name),
+            let where_ = if previous.module == MANIFEST_MODULE {
+                "coral.toml [alias]".to_string()
+            } else {
+                format!("module '{}'", previous.module)
+            };
+            let message = format!("alias '%*{}*%' is already defined in {where_}", def.name);
+            return Err(Diagnostic::new(message, def.span, def.module.clone()).with_note(
+                defined_here(&previous),
                 previous.span,
                 previous.module,
             ));
@@ -157,11 +168,7 @@ impl AliasTable {
                     span,
                     module,
                 )
-                .with_note(
-                    format!("'%*{name}*%' is defined here"),
-                    def.span,
-                    def.module.clone(),
-                ));
+                .with_note(defined_here(&def), def.span, def.module.clone()));
             }
             None => {}
         }
@@ -262,11 +269,7 @@ impl AliasTable {
                     use_span,
                     module,
                 )
-                .with_note(
-                    format!("'%*{name}*%' is defined here"),
-                    def.span,
-                    def.module.clone(),
-                )
+                .with_note(defined_here(&def), def.span, def.module.clone())
             })?
             .into_iter()
             .filter(|t| !matches!(t.kind, TokenKind::Eof))
@@ -358,11 +361,7 @@ impl AliasTable {
             use_span,
             use_module,
         )
-        .with_note(
-            format!("'%*{name}*%' is defined here"),
-            def.span,
-            def.module.clone(),
-        )
+        .with_note(defined_here(def), def.span, def.module.clone())
     }
 }
 
@@ -533,81 +532,6 @@ pub fn scan_inline_aliases(
     Ok(defs)
 }
 
-/// Parses `alias.kpconf`: one `name="replacement text"` per line, blank lines
-/// skipped, `#` at the start of a line is a comment. Deliberately tiny — this
-/// is the zsh-alias-flavored config file from the plan, not a config format.
-pub fn parse_kpconf(text: &str) -> Result<Vec<AliasDef>, Diagnostic> {
-    let mut defs = Vec::new();
-    let mut offset = 0usize;
-    for line in text.split_inclusive('\n') {
-        let line_start = offset;
-        offset += line.len();
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let indent = line.len() - line.trim_start().len();
-        let body = trimmed.trim_end();
-        let Some((name, value)) = body.split_once('=') else {
-            return Err(kpconf_error(
-                format!("expected 'name=\"replacement text\"', found '{body}'"),
-                line_start + indent,
-                body.len(),
-            ));
-        };
-        let name = name.trim();
-        let value = value.trim();
-        let value_start = line_start + indent + (body.len() - value.len());
-        let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
-            return Err(kpconf_error(
-                format!("the replacement text for '{name}' must be a double-quoted string"),
-                value_start,
-                value.len(),
-            ));
-        };
-        defs.push(AliasDef {
-            name: name.to_string(),
-            text: unescape(inner),
-            text_offset: value_start + 1,
-            module: KPCONF_MODULE.to_string(),
-            span: Span::new(line_start + indent, line_start + indent + body.len()),
-        });
-    }
-    Ok(defs)
-}
-
-fn kpconf_error(message: String, start: usize, len: usize) -> Diagnostic {
-    Diagnostic::new(
-        format!("{} ({KPCONF_FILE_NAME})", message),
-        Span::new(start, start + len),
-        KPCONF_MODULE,
-    )
-}
-
-/// `\"` and `\\` are the only escapes the config format recognizes; anything
-/// else is literal, so a replacement text full of backslashes (a Windows path
-/// in an `impl` alias, say) needs no doubling.
-fn unescape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
-                None => out.push('\\'),
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
 /// Every `%*name*%` reference inside a piece of alias text, as
 /// `(name, byte offset within the text)`.
 fn text_alias_refs(text: &str) -> Vec<(String, usize)> {
@@ -767,19 +691,5 @@ mod tests {
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].name, "c");
         assert_eq!(defs[0].text, "http.new(timeout = 30)");
-    }
-
-    #[test]
-    fn parses_alias_kpconf_lines() {
-        let defs = parse_kpconf("# comment\n\nshared=\"../shared/utils\"\n").unwrap();
-        assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0].name, "shared");
-        assert_eq!(defs[0].text, "../shared/utils");
-    }
-
-    #[test]
-    fn rejects_a_bad_alias_kpconf_line() {
-        assert!(parse_kpconf("shared = ../shared/utils\n").is_err());
-        assert!(parse_kpconf("shared\n").is_err());
     }
 }

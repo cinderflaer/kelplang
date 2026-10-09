@@ -553,6 +553,8 @@ pub fn load(
         manifest_incremental,
         manifest_sanitize,
         manifest_emit,
+        manifest_alias,
+        manifest_alias_source,
     ) = if given.is_dir() {
             let manifest_path = given.join(MANIFEST_NAME);
             let text = fs::read_to_string(&manifest_path).map_err(|_| {
@@ -610,6 +612,8 @@ pub fn load(
                 manifest.incremental,
                 manifest.sanitize,
                 manifest.emit,
+                manifest.alias,
+                manifest.alias_source,
             )
         } else {
             match find_manifest_root(&given) {
@@ -643,6 +647,8 @@ pub fn load(
                         manifest.incremental,
                         manifest.sanitize,
                         manifest.emit,
+                        manifest.alias,
+                        manifest.alias_source,
                     )
                 }
                 None => {
@@ -664,6 +670,8 @@ pub fn load(
                         false,
                         None,
                         Emit::Binary,
+                        Vec::new(),
+                        None,
                     )
                 }
             }
@@ -671,18 +679,12 @@ pub fn load(
 
     let entry = module_id_of(&entry_file, &src_dir)?;
 
-    // `alias.kpconf` lives at the project root — the directory holding
-    // `coral.toml`, or the entry file's own directory for a manifest-less file.
-    let kpconf_path = match &root {
-        Some(r) => r.join(preprocess::KPCONF_FILE_NAME),
-        None => src_dir.join(preprocess::KPCONF_FILE_NAME),
-    };
-
     let mut loader = Loader {
         src_dir: src_dir.clone(),
         entry: entry.clone(),
         entry_text,
-        kpconf_path,
+        manifest_alias,
+        manifest_alias_source,
         sources,
         http_pool,
         aliases: AliasTable::new(),
@@ -1432,16 +1434,20 @@ struct Loader<'a> {
     /// the entry module is read, so a re-expansion round reads the cached
     /// tokens instead of consuming it twice.
     entry_text: Option<String>,
-    /// `<project root>/alias.kpconf`, whether or not it exists.
-    kpconf_path: PathBuf,
+    /// The `[alias]` entries of `coral.toml`, already checked by
+    /// `parse_manifest`. Defined into the table before any module is read.
+    manifest_alias: Vec<preprocess::AliasDef>,
+    /// The manifest's path and text, when it has `[alias]` entries. Registered
+    /// with the source map so a diagnostic about one entry can show its line.
+    manifest_alias_source: Option<(PathBuf, String)>,
     /// The manifest's `http_pool` ceiling (S4), or the compiler default when
     /// there is no manifest. Threaded into the loader because the value is
     /// spliced into `std/http`'s *source text* before it is lexed — the one
     /// configuration value the shipped stdlib reads.
     http_pool: usize,
     sources: &'a mut SourceMap,
-    /// The one flat, global alias table: `alias.kpconf` plus every inline
-    /// declaration in the project.
+    /// The one flat, global alias table: the manifest's `[alias]` entries plus
+    /// every inline declaration in the project.
     aliases: AliasTable,
     /// Raw, unexpanded token streams per module, kept so a later round can
     /// re-expand against a table that has grown.
@@ -1500,8 +1506,8 @@ struct AllGrantEdge {
 const MAX_ALIAS_ROUNDS: usize = 8;
 
 impl Loader<'_> {
-    /// Reads `alias.kpconf`, discovers the module graph, then loads it for
-    /// real.
+    /// Registers the manifest's `[alias]` entries, discovers the module graph,
+    /// then loads it for real.
     ///
     /// Two phases, because the two halves of M5.3 need each other: an `impl`
     /// path may contain `%*alias*%`, so the file graph is only knowable after
@@ -1511,7 +1517,7 @@ impl Loader<'_> {
     /// is ignored — and just collects aliases; the final strict round runs
     /// against the complete table, where every failure is a real error.
     fn load_project(&mut self) -> Result<(), Diagnostic> {
-        self.load_alias_kpconf()?;
+        self.load_manifest_aliases()?;
 
         let mut last_error = None;
         for _ in 0..MAX_ALIAS_ROUNDS {
@@ -1569,13 +1575,14 @@ impl Loader<'_> {
         self.deprecations.clear();
     }
 
-    fn load_alias_kpconf(&mut self) -> Result<(), Diagnostic> {
-        let Ok(text) = fs::read_to_string(&self.kpconf_path) else {
-            return Ok(()); // the file is optional
-        };
-        self.sources
-            .insert(preprocess::KPCONF_MODULE, &self.kpconf_path, text.clone());
-        for def in preprocess::parse_kpconf(&text)? {
+    /// Defines the manifest's `[alias]` entries. They go in before any inline
+    /// declaration is scanned, so a module that re-declares one of their names
+    /// is the duplicate that gets reported, naming the manifest.
+    fn load_manifest_aliases(&mut self) -> Result<(), Diagnostic> {
+        if let Some((path, text)) = self.manifest_alias_source.take() {
+            self.sources.insert(preprocess::MANIFEST_MODULE, &path, text);
+        }
+        for def in std::mem::take(&mut self.manifest_alias) {
             self.aliases.define(def)?;
         }
         Ok(())
@@ -1830,6 +1837,76 @@ fn raw_imports(tokens: &[Token]) -> Vec<(String, Span)> {
     imports
 }
 
+/// One `name = "path"` line of the `[alias]` section. The path is the module
+/// an `impl "%*name*%"` resolves to, so it must name a module below `src/`:
+/// a relative path with no leading `/` and no `..` component. The name itself
+/// is checked by `AliasTable::define`, which also reports a duplicate across
+/// the whole project.
+fn parse_alias_line(manifest: &mut Manifest, line: &str, line_offset: usize) -> Result<(), Diagnostic> {
+    let at = Span::new(0, 0);
+    let Some((key, value)) = line.split_once('=') else {
+        return Err(Diagnostic::new(
+            format!("expected 'name = \"path\"' in {MANIFEST_NAME} [alias], found '{line}'"),
+            at,
+            "",
+        ));
+    };
+    let name = key.trim();
+    if manifest.alias.iter().any(|d| d.name == name) {
+        return Err(Diagnostic::new(
+            format!("alias '{name}' is already defined in {MANIFEST_NAME} [alias]"),
+            at,
+            "",
+        ));
+    }
+    let Some(path) = value
+        .trim()
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+    else {
+        return Err(Diagnostic::new(
+            format!("{MANIFEST_NAME} [alias] value for '{name}' must be a double-quoted string"),
+            at,
+            "",
+        ));
+    };
+    if path.is_empty() {
+        return Err(Diagnostic::new(
+            format!("alias '{name}' in {MANIFEST_NAME} [alias] has an empty path"),
+            at,
+            "",
+        ));
+    }
+    if path.starts_with('/') {
+        return Err(Diagnostic::new(
+            format!(
+                "alias '{name}' in {MANIFEST_NAME} [alias] must be a relative module path, found '{path}'"
+            ),
+            at,
+            "",
+        ));
+    }
+    if path.split('/').any(|part| part == "..") {
+        return Err(Diagnostic::new(
+            format!("alias '{name}' in {MANIFEST_NAME} [alias] must not contain '..', found '{path}'"),
+            at,
+            "",
+        ));
+    }
+    // Where the path's first byte sits in the manifest: after the `=`, past
+    // the spaces, and one more byte for the opening quote.
+    let after_eq = line.find('=').map_or(0, |i| i + 1);
+    let value_start = after_eq + (line[after_eq..].len() - line[after_eq..].trim_start().len());
+    manifest.alias.push(preprocess::AliasDef {
+        name: name.to_string(),
+        text: path.to_string(),
+        text_offset: line_offset + value_start + 1,
+        module: preprocess::MANIFEST_MODULE.to_string(),
+        span: Span::new(line_offset, line_offset + line.len()),
+    });
+    Ok(())
+}
+
 fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
     let mut manifest = Manifest {
         name: None,
@@ -1848,6 +1925,8 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         sanitize: None,
         emit: Emit::Binary,
         emit_entry: None,
+        alias: Vec::new(),
+        alias_source: None,
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -1860,6 +1939,10 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         if line.is_empty() {
             continue;
         }
+        // Where this line starts in the manifest, for the `[alias]` spans.
+        // `line` is a sub-slice of `text` (`lines` and `split` only slice), so
+        // the byte distance is the offset.
+        let line_offset = line.as_ptr() as usize - text.as_ptr() as usize;
         // A `[section]` header hands the rest of that section to Coral:
         // `name`, `version`, `entry`, `http_pool` and `naming_case` must
         // appear before the first one. `[caps]` (C-2) and `[extern."<module
@@ -1914,6 +1997,8 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                 parse_target_line(&mut manifest, line, at)?;
             } else if name == "build" {
                 parse_build_line(&mut manifest, line, at)?;
+            } else if name == "alias" {
+                parse_alias_line(&mut manifest, line, line_offset)?;
             }
             continue;
         }
@@ -2137,6 +2222,9 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
             }
         }
     }
+    if !manifest.alias.is_empty() {
+        manifest.alias_source = Some((path.to_path_buf(), text.to_string()));
+    }
     Ok(manifest)
 }
 
@@ -2173,6 +2261,12 @@ struct Manifest {
     /// allowed to contain `unsafe`. Empty when the section is absent, which
     /// keeps a project that never writes `unsafe` behaving exactly as before.
     unsafe_modules: Vec<String>,
+    /// `[alias]`: one `name = "path"` per line, in the order the manifest
+    /// lists them. Each is an alias whose replacement text is the relative
+    /// module path.
+    alias: Vec<preprocess::AliasDef>,
+    /// The manifest's path and text, set only when `alias` is non-empty.
+    alias_source: Option<(PathBuf, String)>,
     /// Whether a `[target]` section header was seen at all (kernel stage 4).
     /// Distinct from the fields below being unset, because a `[target]` section
     /// that names no `mode` is an error rather than the hosted default.
@@ -4104,5 +4198,49 @@ mod tests {
     fn an_unknown_key_in_the_target_section_is_rejected() {
         let err = manifest_err("name = \"x\"\n[target]\nmode = \"hosted\"\nnope = \"1\"\n");
         assert!(err.message.contains("unknown key 'nope'"), "{}", err.message);
+    }
+
+    #[test]
+    fn alias_entries_are_read_from_the_alias_section() {
+        let text = "name = \"x\"\n[alias]\nutil = \"helpers/util\"\n";
+        let m = manifest(text);
+        assert_eq!(m.alias.len(), 1);
+        assert_eq!(m.alias[0].name, "util");
+        assert_eq!(m.alias[0].text, "helpers/util");
+        assert_eq!(m.alias[0].module, "coral.toml");
+        let at = m.alias[0].text_offset;
+        assert_eq!(&text[at..at + "helpers/util".len()], "helpers/util");
+        assert!(m.alias_source.is_some());
+    }
+
+    #[test]
+    fn alias_paths_must_be_relative_and_non_empty() {
+        for (value, needle) in [
+            ("\"\"", "has an empty path"),
+            ("\"/abs/util\"", "must be a relative module path"),
+            ("\"../up\"", "must not contain '..'"),
+            ("\"a/../b\"", "must not contain '..'"),
+            ("util", "must be a double-quoted string"),
+        ] {
+            let err = manifest_err(&format!("[alias]\nu = {value}\n"));
+            assert!(err.message.contains(needle), "{value}: {}", err.message);
+        }
+    }
+
+    #[test]
+    fn a_duplicate_alias_in_the_section_is_rejected() {
+        let err = manifest_err("[alias]\nu = \"a\"\nu = \"b\"\n");
+        assert!(
+            err.message.contains("alias 'u' is already defined in coral.toml [alias]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn a_manifest_without_an_alias_section_has_no_aliases() {
+        let m = manifest("name = \"x\"\n");
+        assert!(m.alias.is_empty());
+        assert!(m.alias_source.is_none());
     }
 }
