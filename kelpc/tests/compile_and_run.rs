@@ -13152,6 +13152,18 @@ fn the_hosted_str_core_operations_are_unchanged() {
     );
 }
 
+/// `str.index_of`, `str.contains` and `str.replace` on their edge cases: empty
+/// and over-long needles, overlapping candidates, byte offsets in non-ASCII
+/// text, and a match only at the end of a long haystack. Their answers are
+/// pinned to the 26.10.4 output, which the search loops must keep.
+#[test]
+fn the_str_search_and_replace_edges_are_unchanged() {
+    assert_compiles_and_runs(
+        "tests/fixtures/str_search_edges.kp",
+        "4\n0\nnone\n0\nnone\n0\n2\n2\n7\n0\n2\n0\nnone\nnone\n999\nnone\ntrue\ntrue\ntrue\nfalse\ntrue\na+b+c\nba\nabc\n\nhello\n\nxyz\nab\n3000\n1000\n",
+    );
+}
+
 /// Kernel stage 7's rejection half: `std/str` is only partly on the freestanding
 /// allowed set, so its other functions are refused at the call, by name. The
 /// check runs before either backend is named, so the C oracle refuses with the

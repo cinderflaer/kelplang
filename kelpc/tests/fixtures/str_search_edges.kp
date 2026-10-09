@@ -1,0 +1,53 @@
+// The search and replace functions of std/str on their edge cases: empty
+// haystack and needle, needle longer than the haystack, overlapping
+// candidates, non-ASCII text (offsets are bytes), and a long haystack whose
+// only match is at the very end. `index_of`, `contains` and `replace` were
+// re-measuring the haystack at every position, and must still answer exactly
+// as they always did.
+impl "std/str"
+impl "std/option"
+
+fun show(o: option.Option<usize>) {
+    when o {
+        Some(at) -> print(at)
+        None -> print("none")
+    }
+}
+
+fun main() {
+    show(str.index_of("hello world", "o"))
+    show(str.index_of("hello", ""))
+    show(str.index_of("", "a"))
+    show(str.index_of("", ""))
+    show(str.index_of("abc", "abcd"))
+    show(str.index_of("abcabc", "abc"))
+    show(str.index_of("xxabc", "abc"))
+    show(str.index_of("aaaab", "aab"))
+    show(str.index_of("héllo wörld", "wö"))
+    show(str.index_of("ééé", "é"))
+    show(str.index_of("abc", "c"))
+    show(str.index_of("abc", "abc"))
+    show(str.index_of("abc", "bd"))
+    val long = str.repeat("a", 1000)
+    show(str.index_of(long.as_str(), "b"))
+    val tail = str.concat(long.as_str(), "b")
+    show(str.index_of(tail.as_str(), "ab"))
+    show(str.index_of(tail.as_str(), "bb"))
+    print(str.contains("needle in haystack", "needle"))
+    print(str.contains("abc", ""))
+    print(str.contains("", ""))
+    print(str.contains("ab", "abc"))
+    print(str.contains(tail.as_str(), "ab"))
+    print(str.replace("a-b-c", "-", "+"))
+    print(str.replace("aaa", "aa", "b"))
+    print(str.replace("abc", "", "X"))
+    print(str.replace("", "a", "X"))
+    print(str.replace("héllo", "é", "e"))
+    print(str.replace("abc", "abc", ""))
+    print(str.replace("xyz", "q", "r"))
+    print(str.replace("ab", "ab", "ab"))
+    val pairs = str.repeat("ab", 1000)
+    val r = str.replace(pairs.as_str(), "ab", "xyz")
+    print(r.len())
+    print(str.replace(tail.as_str(), "ab", "-").len())
+}

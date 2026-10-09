@@ -63,8 +63,13 @@ fun char_count(s: &str).return: usize {
 /// `if let Some(at) = ...` and `?` usable at the call site instead of an `ok`
 /// flag (MK5-S6-M1).
 fun index_of(s: &str, needle: &str).return: option.Option<usize> {
-    val ls = len(s)
-    val ln = len(needle)
+    // Both views are taken once, here. `starts_with_at` takes a `str` and so
+    // re-measures the whole haystack (a `strlen`) at every position, which made
+    // a search O(n) per byte.
+    val sv = s.view()
+    val nv = needle.view()
+    val ls = sv.len()
+    val ln = nv.len()
     if ln == 0 {
         return option.Option.Some(value = 0)
     }
@@ -73,7 +78,7 @@ fun index_of(s: &str, needle: &str).return: option.Option<usize> {
     }
     var i: usize = 0
     while i + ln <= ls {
-        if starts_with_at(s, needle, i) {
+        if view_starts_with_at(sv, nv, i) {
             return option.Option.Some(value = i)
         }
         i = i + 1
@@ -512,7 +517,8 @@ fun parse_err(s: &str).return: ParseErr {
 /// `from` matches nothing (rather than every position), so the result is a
 /// copy of `s`.
 fun replace(s: &str, from: &str, to: &str).return: String {
-    val lf = len(from)
+    val fv = from.view()
+    val lf = fv.len()
     if lf == 0 {
         return String.from_str(s)
     }
@@ -521,7 +527,7 @@ fun replace(s: &str, from: &str, to: &str).return: String {
     var out = String.with_capacity(ls)
     var i: usize = 0
     while i < ls {
-        if i + lf <= ls && starts_with_at(s, from, i) {
+        if i + lf <= ls && view_starts_with_at(sv, fv, i) {
             out.push_str(to)
             i = i + lf
         } else {
