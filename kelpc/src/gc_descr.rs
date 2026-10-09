@@ -366,3 +366,23 @@ mod tests {
         assert!(ir.contains("@malloc("), "{ir}");
     }
 }
+
+#[cfg(test)]
+mod hosted_identity {
+    use super::tests::lower;
+
+    /// The hosted IR of `node.kp` is byte-identical to origin/main's, recorded
+    /// as `hosted_node.ll` by running origin/main's kelpc on the same file. The
+    /// managed branches are behind the managed flag, so this is the check that
+    /// they do not change hosted output.
+    #[test]
+    fn hosted_ir_matches_origin_main() {
+        let actual = lower("node.kp", false).expect("hosted lowering of node.kp");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("managed_lower");
+        let normalized = actual.replace(&dir.display().to_string(), "@FIXTURE_DIR@");
+        let golden = std::fs::read_to_string(dir.join("hosted_node.ll")).expect("read hosted fixture");
+        assert_eq!(normalized, golden, "hosted IR differs from origin/main");
+    }
+}
