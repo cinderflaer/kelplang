@@ -1,0 +1,9 @@
+// A select takes its receive cases over one element type: channels of `i64` and
+// `String` cannot share one select, so the call is refused.
+impl "std/sync"
+
+fun main() {
+    val (tx_a, rx_a) = sync.bounded<i64>(1)
+    val (tx_b, rx_b) = sync.bounded<String>(1)
+    val picked = sync.select2(&rx_a, &rx_b)
+}

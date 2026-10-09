@@ -71,12 +71,29 @@
 
        fun sync.bounded<T>(cap: usize).return: (Sender<T>, Receiver<T>)
        fun sync.unbounded<T>().return: (Sender<T>, Receiver<T>)
+       fun sync.rendezvous<T>().return: (Sender<T>, Receiver<T>)
        fun Sender<T>.send(value: move T).return: option.Option<T>
        fun Sender<T>.clone().return: Sender<T>
        fun Receiver<T>.recv().return: result.Result<T, RecvErr>
        fun Receiver<T>.try_recv().return: option.Option<T>
        fun Receiver<T>.recv_timeout(millis: i64).return: result.Result<T, RecvTimeout>
+       fun sync.select2<T>(a: &Receiver<T>, b: &Receiver<T>).return: Pick<T>
+       fun sync.select3<T>(a: &Receiver<T>, b: &Receiver<T>, c: &Receiver<T>).return: Pick<T>
        for v in rx { ... }
+
+   `rendezvous` is the zero-capacity form: one value is in flight at a time and
+   `send` returns only after a receive has taken that value (`None` then), so a
+   send and a receive meet. `bounded(0)` stays a panic; the rendezvous is its own
+   constructor so the panic message and its fixture keep their meaning.
+
+   `select2` and `select3` take receive cases over one element type and return
+   the first case, in argument order, that is ready: `Pick.Got(index, value)` for
+   a value, `Pick.Closed(index)` for a channel whose senders are all gone and
+   whose queue is empty (a closed channel is ready). `index` is 0-based. They
+   block while no case is ready. The wait is a poll with a 1 ms sleep, not a
+   shared wakeup: a channel keeps no list of select waiters, so a select answers
+   at most about one poll period after its value arrives. Send cases are not
+   in `select`: a send case needs a non-blocking send, which is not built.
 
    There is no new runtime record. The two ends share one queue and one state
    record through `Mutex.share()` and `Condvar.share()` (a handle to the same
@@ -104,6 +121,7 @@
    `Mutex` and `Condvar` are refused there by name. */
 impl "std/option"
 impl "std/result"
+impl "std/thread"
 
 /// Why `recv` has no value: every sender is gone and the queue is empty.
 enum RecvErr {
@@ -121,7 +139,7 @@ enum RecvTimeout {
 
 /// Everything the two ends agree on, guarded by one mutex. `count` mirrors the
 /// queue's length, so the waits never need to look inside the generic queue.
-datac ChanMeta(var count: usize, var senders: i64, var rx_alive: bool, val cap: usize, val bounded: bool)
+datac ChanMeta(var count: usize, var senders: i64, var rx_alive: bool, val cap: usize, val bounded: bool, val handoff: bool, var pushed: usize, var taken: usize)
 
 /// What a sender owns besides the queue, and the destructor that closes the
 /// channel when the last one goes.
@@ -159,9 +177,19 @@ fun mut RecvEnd.drop() {
     nf.notify_all()
 }
 
-/// Builds a channel with capacity `cap`, bounded or not.
-fun make_channel<T>(cap: usize, bounded: bool).return: (Sender<T>, Receiver<T>) {
-    val meta = Mutex.new(ChanMeta(count = 0, senders = 1, rx_alive = true, cap = cap, bounded = bounded))
+/// One outcome of a `select`: the case at `index` (0-based) received `value`,
+/// or the case at `index` is a channel that is closed and empty.
+enum Pick<T> {
+    /// The case at `index` received a value.
+    Got(val index: usize, val value: T)
+    /// The case at `index` is closed: every sender is gone and the queue is empty.
+    Closed(val index: usize)
+}
+
+/// Builds a channel holding at most `cap` values (`bounded`), or none of a limit
+/// (`!bounded`). `handoff` is the rendezvous: each send also waits for its take.
+fun make_channel<T>(cap: usize, bounded: bool, handoff: bool).return: (Sender<T>, Receiver<T>) {
+    val meta = Mutex.new(ChanMeta(count = 0, senders = 1, rx_alive = true, cap = cap, bounded = bounded, handoff = handoff, pushed = 0, taken = 0))
     val q: Mutex<List<T>> = Mutex.new(List.empty())
     val ne = Condvar.new()
     val nf = Condvar.new()
@@ -175,33 +203,74 @@ fun bounded<T>(cap: usize).return: (Sender<T>, Receiver<T>) {
     if cap == 0 {
         panic("sync.bounded: the capacity must be at least 1")
     }
-    return make_channel<T>(cap, true)
+    return make_channel<T>(cap, true, false)
+}
+
+/// The zero-capacity channel: `send` returns only once a receive takes its value.
+fun rendezvous<T>().return: (Sender<T>, Receiver<T>) {
+    return make_channel<T>(1, true, true)
 }
 
 /// A channel with no limit: `send` never waits.
 fun unbounded<T>().return: (Sender<T>, Receiver<T>) {
-    return make_channel<T>(0, false)
+    return make_channel<T>(0, false, false)
 }
 
 /// Queue `value`. `None` means it was queued; `Some(value)` hands it back because
 /// the receiver is gone. A scoped block cannot capture an owned value by move, so
 /// the value waits in a private one-element mutex and the block swaps it across.
+/// A rendezvous send also waits until its value is taken, and if the receiver
+/// goes away first it takes the value back and hands it over as `Some`.
 must_use fun Sender<T>.send(value: move T).return: option.Option<T> {
     val staged: Mutex<List<T>> = Mutex.new(List.of(value))
-    val r = self.end.meta.wait_while(&self.end.nf, fun(s: &ChanMeta).return: bool = s.bounded && s.count >= s.cap && s.rx_alive) { s ->
+    val r: result.Result<usize, T> = self.end.meta.wait_while(&self.end.nf, fun(s: &ChanMeta).return: bool = s.bounded && s.count >= s.cap && s.rx_alive) { s ->
         var mine = staged.swap(List.empty())
         if s.rx_alive {
             s.count += 1
+            s.pushed += 1
             var queue = self.q.swap(List.empty())
             queue.push(mine.remove(0))
             val none = self.q.swap(queue)
-            val sent: option.Option<T> = option.Option.None
-            sent
+            val ticket: usize = s.pushed
+            val queued: result.Result<usize, T> = result.Result.Ok(value = ticket)
+            queued
         } else {
-            option.Option.Some(value = mine.remove(0))
+            val back: result.Result<usize, T> = result.Result.Err(error = mine.remove(0))
+            back
         }
     }
     self.end.ne.notify_one()
+    return when r {
+        Err(v) -> {
+            val gone: option.Option<T> = option.Option.Some(value = v)
+            gone
+        }
+        Ok(ticket) -> self.await_take(ticket)
+    }
+}
+
+/// The rendezvous wait: value number `ticket` is taken once `taken` reaches it.
+/// Without a handoff the send is already complete and this answers `None`.
+fun Sender<T>.await_take(ticket: usize).return: option.Option<T> {
+    val handoff = self.end.meta.lock { s -> s.handoff }
+    if !handoff {
+        val none: option.Option<T> = option.Option.None
+        return none
+    }
+    val r = self.end.meta.wait_while(&self.end.nf, fun(s: &ChanMeta).return: bool = s.taken < ticket && s.rx_alive) { s ->
+        if s.taken >= ticket {
+            val taken: option.Option<T> = option.Option.None
+            taken
+        } else {
+            // The receiver is gone and nothing took the value, so it is still
+            // the only queued item: take it back for the sender.
+            s.count -= 1
+            val item = self.q.lock { l -> l.remove(0) }
+            val back: option.Option<T> = option.Option.Some(value = item)
+            back
+        }
+    }
+    self.end.nf.notify_all()
     return r
 }
 
@@ -216,6 +285,7 @@ fun Receiver<T>.recv().return: result.Result<T, RecvErr> {
     val r = self.end.meta.wait_while(&self.end.ne, fun(s: &ChanMeta).return: bool = s.count == 0 && s.senders > 0) { s ->
         if s.count > 0 {
             s.count -= 1
+            s.taken += 1
             val item = self.q.lock { l -> l.remove(0) }
             val got: result.Result<T, RecvErr> = result.Result.Ok(value = item)
             got
@@ -224,7 +294,7 @@ fun Receiver<T>.recv().return: result.Result<T, RecvErr> {
             closed
         }
     }
-    self.end.nf.notify_one()
+    self.end.nf.notify_all()
     return r
 }
 
@@ -233,6 +303,7 @@ fun Receiver<T>.try_recv().return: option.Option<T> {
     val r = self.end.meta.lock { s ->
         if s.count > 0 {
             s.count -= 1
+            s.taken += 1
             val item = self.q.lock { l -> l.remove(0) }
             option.Option.Some(value = item)
         } else {
@@ -240,7 +311,7 @@ fun Receiver<T>.try_recv().return: option.Option<T> {
             none
         }
     }
-    self.end.nf.notify_one()
+    self.end.nf.notify_all()
     return r
 }
 
@@ -249,6 +320,7 @@ fun Receiver<T>.recv_timeout(millis: i64).return: result.Result<T, RecvTimeout> 
     val r = self.end.meta.wait_while_timeout(&self.end.ne, fun(s: &ChanMeta).return: bool = s.count == 0 && s.senders > 0, millis) { s ->
         if s.count > 0 {
             s.count -= 1
+            s.taken += 1
             val item = self.q.lock { l -> l.remove(0) }
             val got: result.Result<T, RecvTimeout> = result.Result.Ok(value = item)
             got
@@ -257,7 +329,7 @@ fun Receiver<T>.recv_timeout(millis: i64).return: result.Result<T, RecvTimeout> 
             closed
         }
     }
-    self.end.nf.notify_one()
+    self.end.nf.notify_all()
     return when r {
         Some(v) -> v
         None -> {
@@ -276,4 +348,83 @@ fun mut Receiver<T>.next().return: option.Option<T> {
             done
         }
     }
+}
+
+/// One non-blocking look at a receive case: `None` while the channel is open and
+/// empty, `Some(Ok(v))` for a value taken now, `Some(Err(Closed))` once it is
+/// closed and empty. Used by `select2` and `select3`, which poll it.
+fun Receiver<T>.poll().return: option.Option<result.Result<T, RecvErr>> {
+    val r = self.end.meta.lock { s ->
+        if s.count > 0 {
+            s.count -= 1
+            s.taken += 1
+            val item = self.q.lock { l -> l.remove(0) }
+            val got: result.Result<T, RecvErr> = result.Result.Ok(value = item)
+            val ready: option.Option<result.Result<T, RecvErr>> = option.Option.Some(value = got)
+            ready
+        } else if s.senders == 0 {
+            val gone: result.Result<T, RecvErr> = result.Result.Err(error = RecvErr.Closed)
+            val closed: option.Option<result.Result<T, RecvErr>> = option.Option.Some(value = gone)
+            closed
+        } else {
+            val none: option.Option<result.Result<T, RecvErr>> = option.Option.None
+            none
+        }
+    }
+    self.end.nf.notify_all()
+    return r
+}
+
+/// The `Pick` for case `index` once its poll has answered.
+fun pick_of<T>(index: usize, r: move result.Result<T, RecvErr>).return: Pick<T> {
+    return when r {
+        Ok(v) -> Pick.Got(index = index, value = v)
+        Err(_) -> Pick.Closed(index = index)
+    }
+}
+
+/// Waits for whichever of two receive cases is ready first; the lower index wins a tie.
+fun select2<T>(a: &Receiver<T>, b: &Receiver<T>).return: Pick<T> {
+    while true {
+        when a.poll() {
+            Some(r) -> {
+                return pick_of(0, r)
+            }
+            None -> {}
+        }
+        when b.poll() {
+            Some(r) -> {
+                return pick_of(1, r)
+            }
+            None -> {}
+        }
+        thread.sleep_ms(1)
+    }
+    panic("select2: unreachable")
+}
+
+/// Waits for whichever of three receive cases is ready first; the lowest index wins a tie.
+fun select3<T>(a: &Receiver<T>, b: &Receiver<T>, c: &Receiver<T>).return: Pick<T> {
+    while true {
+        when a.poll() {
+            Some(r) -> {
+                return pick_of(0, r)
+            }
+            None -> {}
+        }
+        when b.poll() {
+            Some(r) -> {
+                return pick_of(1, r)
+            }
+            None -> {}
+        }
+        when c.poll() {
+            Some(r) -> {
+                return pick_of(2, r)
+            }
+            None -> {}
+        }
+        thread.sleep_ms(1)
+    }
+    panic("select3: unreachable")
 }

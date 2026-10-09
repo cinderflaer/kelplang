@@ -1,0 +1,67 @@
+// The zero-capacity channel. A send on a rendezvous completes only once a receive
+// takes its value, so a sender parked on it is still blocked after a pause with
+// nothing received ("blocked"), and it finishes at once when the receiver takes
+// the value ("7" then "done" once joined). The second half is the other way out:
+// the receiver goes away while the sender is parked, and the send hands the value
+// back to the sender instead of losing it ("handed back"). Each worker reports
+// through its own `bool` channel, so main can look without blocking.
+impl "std/thread"
+impl "std/result"
+impl "std/sync"
+impl "std/option"
+
+datac Job(val tx: sync.Sender<i64>, val ack: sync.Sender<bool>)
+
+fun worker(job: move Job) {
+    val back = job.tx.send(7)
+    val acked = job.ack.send(true)
+}
+
+fun back_worker(job: move Job) {
+    when job.tx.send(9) {
+        Some(_) -> {
+            val acked = job.ack.send(true)
+        }
+        None -> {}
+    }
+}
+
+fun hang_up(rx: move sync.Receiver<i64>) {
+}
+
+fun main() {
+    val (tx, rx) = sync.rendezvous<i64>()
+    val (ack, ack_rx) = sync.bounded<bool>(1)
+    val h = thread.spawn(worker, Job(tx = tx, ack = ack))
+    thread.sleep_ms(30)
+    when ack_rx.try_recv() {
+        Some(_) -> print("sent")
+        None -> print("blocked")
+    }
+    when rx.recv() {
+        Ok(v) -> print(v)
+        Err(_) -> print("closed")
+    }
+    when thread.join(h) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    when ack_rx.try_recv() {
+        Some(_) -> print("done")
+        None -> print("pending")
+    }
+
+    val (tx2, rx2) = sync.rendezvous<i64>()
+    val (ack2, ack2_rx) = sync.bounded<bool>(1)
+    val h2 = thread.spawn(back_worker, Job(tx = tx2, ack = ack2))
+    thread.sleep_ms(30)
+    hang_up(rx2)
+    when thread.join(h2) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    when ack2_rx.try_recv() {
+        Some(_) -> print("handed back")
+        None -> print("kept")
+    }
+}

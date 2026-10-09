@@ -133,6 +133,7 @@ kind.
 ## What is deliberately out of scope
 
 - A blocking `Condvar.wait` that hands back a guard; the mutex method is the shape.
-- A `select`/`try_recv`-with-deadline over several channels.
+- A `select` with send cases, and a shared wakeup for `select` (it polls; see `std/sync`).
+- A `try_recv`-with-deadline over several channels.
 - A fair queue or priority in the pool; FIFO only.
 - More than one ordering: everything here is `SeqCst` by construction.

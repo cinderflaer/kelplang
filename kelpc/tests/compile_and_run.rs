@@ -11483,6 +11483,37 @@ fn a_channel_closes_when_its_senders_or_its_receiver_drop() {
     );
 }
 
+/// A rendezvous send completes only when a receive takes its value; a receiver
+/// that leaves while the sender is parked hands the value back.
+#[test]
+fn a_rendezvous_send_completes_only_when_a_receive_takes_it() {
+    assert_compiles_and_runs(
+        "tests/fixtures/chan_rendezvous.kp",
+        "blocked\n7\ndone\nhanded back\n",
+    );
+}
+
+/// `select2` answers with the one ready case, and a closed empty channel is ready too.
+#[test]
+fn a_select_takes_whichever_channel_is_ready() {
+    assert_compiles_and_runs("tests/fixtures/chan_select.kp", "1\n5\n1\n6\n0\nclosed\n");
+}
+
+/// `select3` with nothing ready waits for the one channel that sends.
+#[test]
+fn a_select_with_no_ready_case_blocks_until_one_is() {
+    assert_compiles_and_runs("tests/fixtures/chan_select_blocks.kp", "2\n42\n");
+}
+
+/// A select over channels of two element types is refused.
+#[test]
+fn a_select_over_two_element_types_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/chan_select_mixed.kp",
+        "argument 'b' has type '&std.sync.Receiver<String>', expected '&std.sync.Receiver<i64>'",
+    );
+}
+
 /// `recv_timeout` times out, takes a late value, and reports a closed channel.
 #[test]
 fn a_channel_recv_timeout_times_out_and_then_receives() {

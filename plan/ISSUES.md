@@ -50,18 +50,6 @@ wiki changelog page.
 
 Sorted easiest first. `effort:` is S (a stdlib function or one small diagnostic), M (one subsystem, one lane), L (touches a hotspot file or needs a design call inside a lane), XL (mark-sized, or blocked on a decision). Within a tier the order is a rough guess; dependencies are named in the entries.
 
-### MISSING-Cn2Ym kelp: channels have no `select` and no zero-capacity form
-
-repo: kelp | found: 2026-10-06 | effort: M
-
-source: wiki `language/limits.md` (unreleased), "Concurrency".
-
-`sync.bounded`/`unbounded` only. `must_use fun` shipped in 26.10.2 and
-`Sender.send` carries it. A thread handle that is bound and never joined is
-detached with its record leaked (a bare `thread.spawn(...)` statement is
-already refused). `std/pool` bounds concurrency, not thread creation (no
-reusable workers).
-
 ### MISSING-Tb8Vh kelp: thread-local storage
 
 repo: kelp | found: 2026-10-06 | effort: M

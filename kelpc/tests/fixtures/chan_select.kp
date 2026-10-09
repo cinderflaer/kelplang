@@ -1,0 +1,36 @@
+// `select2` takes whichever receive case is ready. Only one channel holds a
+// value at a time, so each answer is fixed: index 1 with 5, then index 1 with 6
+// after another value arrives on it. Dropping the sender of channel 0 makes that
+// channel closed and empty, which is a ready case: `Closed(0)`.
+impl "std/result"
+impl "std/option"
+impl "std/sync"
+
+fun show(p: move sync.Pick<i64>) {
+    when p {
+        Got(i, v) -> {
+            print(i)
+            print(v)
+        }
+        Closed(i) -> {
+            print(i)
+            print("closed")
+        }
+    }
+}
+
+fun give_up(tx: move sync.Sender<i64>) {
+}
+
+fun main() {
+    val (tx_a, rx_a) = sync.bounded<i64>(2)
+    val (tx_b, rx_b) = sync.bounded<i64>(2)
+    val first = tx_b.send(5)
+    show(sync.select2(&rx_a, &rx_b))
+
+    val second = tx_b.send(6)
+    show(sync.select2(&rx_a, &rx_b))
+
+    give_up(tx_a)
+    show(sync.select2(&rx_a, &rx_b))
+}
