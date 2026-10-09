@@ -31,6 +31,7 @@ empty on release.
 ## stdlib
 
 - `kelpc stdlib --json` lists the standard library as JSON (on branch lighthouse-support, not merged).
+- The runtime differential `kelpc/tests/run-runtime-diff.sh` and its recorded baseline from origin/main are in place, with runtime link smoke tests (on branch stage1-wp6, not merged).
 
 ## fixes
 
