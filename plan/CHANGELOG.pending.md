@@ -27,6 +27,8 @@ empty on release.
 - `Box<T>` blocks of up to 64 bytes are recycled through per-thread free lists instead of malloc and free (binary-trees runs about 1.9x faster). Programs with their own allocator are unchanged.
 - The `Box` free lists read their per-thread state with the initial-exec TLS model, so each allocation skips a `__tls_get_addr` call.
 - A pooled `Box` allocation or release is inline in the generated code: a call into the runtime only when a size class is empty or a thread is new.
+- A managed build refuses `thread.spawn` of a closure that captures values, including one bound to a name first. A thread's argument or result, and a `Mutex` or `RwLock` value, that holds a `Box`, `String`, `List`, `Map` or `Bytes` is refused by name, because the collector does not scan those records yet.
+- When a thread cannot start, `thread.spawn` panics with the `pthread_create` return code (`errno N: ...`) and frees what it built, where it used to leak it.
 
 ## compiler
 
@@ -54,6 +56,8 @@ empty on release.
 - The roadmap says channels and Mutex ship now, and the download row says when it was true (landed on main, be51d2e).
 - The KelpScript proposal moves to `plan/kelpscript.md` (on branch kelpscript-plan, not merged).
 - The dev shell (`shell.nix`) adds `gdb`, so the debug-info test (`llvm_debug_info`) can resolve its fault backtrace.
+- A managed program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
+- A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
 
 ## limits
 
