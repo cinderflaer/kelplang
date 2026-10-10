@@ -1,5 +1,5 @@
-//! Differential fuzzing and the conformance corpus (MK7 S5, the MK7 record in
-//! `plan/done.md`).
+//! Fuzzing and the conformance corpus for the `llvm` backend (MK7 S5, the MK7
+//! record in `plan/done.md`).
 //!
 //! The corpus in `tests/fixtures/` is a curated set a person wrote, and the
 //! plan records that it has been blind three times inside one session: a float
@@ -18,17 +18,19 @@
 //!    `String` and the drop plan; `List`/`Map`/`Box`/`[T; N]`; references; and
 //!    closures and function values. The same seed always produces the same
 //!    text, so a failure has a name a reader can quote.
-//! 2. **The differential run.** Each program is written to a file *before* it is
-//!    built, built with both the C oracle (through the project's internal
-//!    switch) and the default `llvm` backend, and both binaries are run. Stdout
-//!    must match byte for byte and the exit statuses must match. A disagreement
-//!    is a failure and never a skip.
+//! 2. **The run.** Each program is written to a file *before* it is built, built
+//!    with the `llvm` backend, and run. The build must succeed and the run must
+//!    end with an exit code, not a signal. A generated program that the compiler
+//!    refuses is a generator bug, never a skip.
 //! 3. **The conformance corpus.** `tests/fuzz-corpus/*.kp` holds a checked-in
 //!    subset of the generator's own output, one file per seed, so the sweep
-//!    grows into a permanent suite instead of a one-off run. The corpus is run
-//!    differentially by [`the_conformance_corpus_agrees_between_the_two_backends`]
-//!    and checked to be exactly the generator's output by
-//!    [`the_corpus_files_are_the_generators_own_output`], so it cannot drift.
+//!    grows into a permanent suite instead of a one-off run. Each corpus program
+//!    has a `.golden` beside it: the exit status and the stdout the C oracle
+//!    produced for it, frozen before the C backend was removed on 2026-10-10.
+//!    The corpus is checked against those goldens by
+//!    [`the_conformance_corpus_matches_its_goldens`], and checked to be exactly
+//!    the generator's output by [`the_corpus_files_are_the_generators_own_output`],
+//!    so it cannot drift.
 //!
 //! The generator is biased toward the shapes the plan names as previously
 //! blind, because a generator over straight-line arithmetic would re-find only
@@ -40,13 +42,13 @@
 //! ## Running it
 //!
 //! The default suite runs the cheap plumbing tests only: one pinned seed is
-//! built with both backends and compared (`the_generator_and_corpus_helpers_agree`),
-//! and every corpus file is checked against the generator (no compilation).
-//! The two heavy tests are `#[ignore]`d so `cargo test --release` stays
-//! reasonable, the way `backend_coverage.rs` and `memory_gate.rs` are:
+//! built and run (`the_generator_and_corpus_helpers_agree`), and every corpus
+//! file is checked against the generator (no compilation). The heavy tests are
+//! `#[ignore]`d so `cargo test --release` stays reasonable, the way
+//! `backend_coverage.rs` and `memory_gate.rs` are:
 //!
 //! ```text
-//! # the fixed seed list, 256 programs, both backends:
+//! # the fixed seed list, 256 programs:
 //! cargo test --release --test differential_fuzz -- --ignored --nocapture
 //!
 //! # and the same knobs the memory gate has, for a longer run:
@@ -57,14 +59,16 @@
 //! `FUZZ_SEED_START` (default 1) and `FUZZ_SEED_COUNT` (default 256) select the
 //! seed list, so a gate can be repeatable and still be run big enough to mean
 //! something. The generated programs are written under
-//! `CARGO_TARGET_TMPDIR/differential_fuzz/<test>/`, named by seed, so a mismatch
+//! `CARGO_TARGET_TMPDIR/differential_fuzz/<test>/`, named by seed, so a failure
 //! is a file someone can read. Each test owns its own directory, so the heavy
 //! tests can run beside each other without building over one another's files.
 //!
 //! `FUZZ_EMIT=1 cargo test --release --test differential_fuzz -- --ignored
-//! emit_the_conformance_corpus --nocapture` is the one way the corpus is
-//! rewritten: it writes `CORPUS_SEEDS` back to `tests/fuzz-corpus/`. It refuses
-//! to run without the variable so a stray `--ignored` cannot touch the tree.
+//! emit_the_conformance_corpus --nocapture` is the one way the corpus `.kp` files
+//! are rewritten: it writes `CORPUS_SEEDS` back to `tests/fuzz-corpus/`. It
+//! refuses to run without the variable so a stray `--ignored` cannot touch the
+//! tree. The goldens cannot be regenerated any more: their reference was the C
+//! oracle, which is gone.
 
 use std::collections::BTreeSet;
 use std::os::unix::process::ExitStatusExt;
@@ -991,15 +995,11 @@ fn scratch(name: &str) -> PathBuf {
     p
 }
 
-fn build(backend: &str, source: &Path, bin: &Path) -> Output {
+fn build(source: &Path, bin: &Path) -> Output {
     let mut cmd = Command::new(kelpc_bin());
     cmd.arg("build");
     cmd.env_remove("KELPC_BACKEND");
-    if backend == "c" {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
+    cmd.env_remove("KELPC_ORACLE");
     cmd.arg(source)
         .arg("-o")
         .arg(bin)
@@ -1035,92 +1035,59 @@ impl Run {
     }
 }
 
-/// What one program did under the two backends. The heavy tests turn the three
-/// non-`Agreed` variants into counts and failures; a mismatch is never allowed
-/// to be one of the numbers a run reports and moves on from.
+/// What one program did under the `llvm` backend. The heavy tests turn the
+/// non-`Ran` variants into counts and failures; a failure is never allowed to be
+/// one of the numbers a run reports and moves on from.
 enum Outcome {
-    /// Both backends built it and agreed on stdout and exit status.
-    Agreed,
-    /// The frontend or the C backend refused it, so the generator emitted an
-    /// invalid program. Always a generator bug, never acceptable.
-    Rejected(String),
-    /// The `llvm` backend did not build it. At S5 the surface is landed, so
-    /// this is a gap or an internal error, never a named refusal to tolerate.
-    LlvmFailed(String),
-    /// Both backends built it and disagreed on stdout or exit status.
-    Disagreed(String),
+    /// It built, ran to an exit code, and matched what it was checked against
+    /// (nothing, for a generated program; its golden, for a corpus program).
+    Ran,
+    /// The compiler refused it. The generator emits valid programs, so this is a
+    /// generator bug or a gap in the surface, never acceptable.
+    Refused(String),
+    /// The build died from a signal, or failed with no diagnostic.
+    BuildCrashed(String),
+    /// The run died from a signal, or it did not match its golden.
+    Mismatch(String),
 }
 
-/// Builds one program with both backends, runs both, and compares them. The
-/// failure strings name the seed and the program path, and show both outputs
-/// and both exit statuses, so a mismatch is diagnosable from the report alone.
+/// Builds one program with the `llvm` backend and runs it. The failure strings
+/// name the seed and the program path, and show the output and the exit status,
+/// so a failure is diagnosable from the report alone.
 fn check(seed: u64, shapes: &[&str], source: &Path, dir: &Path) -> Outcome {
-    // The binary path must not end in `.c`: the C backend writes the generated
-    // C beside the binary (`<out>.c`), and `cc` refuses a source that is also
-    // its own output. A directory per backend keeps the two builds apart too.
-    let c_dir = dir.join("c");
     let l_dir = dir.join("llvm");
-    for d in [&c_dir, &l_dir] {
-        std::fs::create_dir_all(d)
-            .unwrap_or_else(|e| panic!("could not create '{}': {e}", d.display()));
-    }
-    let c_bin = c_dir.join(format!("seed_{seed:05}"));
+    std::fs::create_dir_all(&l_dir)
+        .unwrap_or_else(|e| panic!("could not create '{}': {e}", l_dir.display()));
     let l_bin = l_dir.join(format!("seed_{seed:05}"));
-
-    let c_build = build("c", source, &c_bin);
-    if !c_build.status.success() {
-        return Outcome::Rejected(format!(
-            "seed {seed} ({}): the C backend refused it at '{}', so the generator \
-             is wrong:\n{}",
-            shapes.join(" "),
-            source.display(),
-            String::from_utf8_lossy(&c_build.stderr).trim_end(),
-        ));
-    }
-
-    let l_build = build("llvm", source, &l_bin);
+    let l_build = build(source, &l_bin);
     if !l_build.status.success() {
-        return Outcome::LlvmFailed(format!(
-            "seed {seed} ({}): the llvm backend failed to build '{}' ({}) while the \
-             C backend built it:\n{}",
+        let message = format!(
+            "seed {seed} ({}): the llvm backend did not build '{}' ({}):\n{}",
             shapes.join(" "),
             source.display(),
-            l_build.status.code().map_or("signal".to_string(), |c| format!(
-                "exit {c}"
-            )),
+            l_build.status.code().map_or("signal".to_string(), |c| format!("exit {c}")),
             String::from_utf8_lossy(&l_build.stderr).trim_end(),
-        ));
+        );
+        return match l_build.status.code() {
+            Some(_) if first_line_is_diagnostic(&l_build.stderr) => Outcome::Refused(message),
+            _ => Outcome::BuildCrashed(message),
+        };
     }
-
-    let c_run = run(&c_bin);
     let l_run = run(&l_bin);
-
-    for (backend, finished) in [("c", &c_run), ("llvm", &l_run)] {
-        if finished.signal.is_some() {
-            return Outcome::Disagreed(format!(
-                "seed {seed} ({}): the '{backend}' binary for '{}' was {}",
-                shapes.join(" "),
-                source.display(),
-                finished.ending(),
-            ));
-        }
-    }
-
-    if c_run.stdout != l_run.stdout || c_run.code != l_run.code {
-        return Outcome::Disagreed(format!(
-            "seed {seed} ({}): '{}' disagrees between the backends\n  \
-             c    ({}): {:?}\n  llvm ({}): {:?}\n  the program is '{}'",
+    if l_run.signal.is_some() {
+        return Outcome::Mismatch(format!(
+            "seed {seed} ({}): the llvm binary for '{}' was {}",
             shapes.join(" "),
             source.display(),
-            c_run.ending(),
-            String::from_utf8_lossy(&c_run.stdout),
             l_run.ending(),
-            String::from_utf8_lossy(&l_run.stdout),
-            source.display(),
         ));
     }
+    Outcome::Ran
+}
 
-    Outcome::Agreed
+/// Whether a failed build's stderr begins with a `kelpc` diagnostic.
+fn first_line_is_diagnostic(stderr: &[u8]) -> bool {
+    String::from_utf8_lossy(stderr).starts_with("error:")
 }
 
 /// The seed list for the heavy run: `FUZZ_SEED_START` and `FUZZ_SEED_COUNT`
@@ -1170,8 +1137,8 @@ fn corpus_seed_of(path: &Path) -> Option<u64> {
 // ---------------------------------------------------------------------------
 
 /// The cheap default-suite check: the generator is deterministic, and one
-/// pinned seed is built with both backends and agrees. It also proves the
-/// generator's own output is valid Kelp, because the C backend builds it.
+/// pinned seed builds with the `llvm` backend and runs to an exit code. It also
+/// proves the generator's own output is valid Kelp, because the compiler builds it.
 #[test]
 fn the_generator_and_corpus_helpers_agree() {
     // Determinism: the same seed is the same bytes, twice.
@@ -1190,10 +1157,9 @@ fn the_generator_and_corpus_helpers_agree() {
     let source = dir.join("pinned_seed_7.kp");
     std::fs::write(&source, &a.source)
         .unwrap_or_else(|e| panic!("could not write '{}': {e}", source.display()));
-
     match check(7, &a.shapes, &source, &dir) {
-        Outcome::Agreed => {}
-        Outcome::Rejected(m) | Outcome::LlvmFailed(m) | Outcome::Disagreed(m) => {
+        Outcome::Ran => {}
+        Outcome::Refused(m) | Outcome::BuildCrashed(m) | Outcome::Mismatch(m) => {
             panic!("{m}")
         }
     }
@@ -1234,50 +1200,44 @@ fn the_corpus_files_are_the_generators_own_output() {
     }
 }
 
-/// The heavy half: the fixed seed list, both backends, byte-for-byte stdout and
-/// exit status. Every program is written under the scratch directory before it
-/// is built, so a failure is a file someone can open. The counts the plan's
-/// §5 wants are printed with `--nocapture`.
+/// The heavy half: the fixed seed list, built and run with the `llvm` backend.
+/// Every program is written under the scratch directory before it is built, so a
+/// failure is a file someone can open. The counts are printed with `--nocapture`.
 #[test]
-#[ignore = "generates and compiles hundreds of programs with both backends; run with --ignored"]
-fn the_generator_agrees_between_the_two_backends() {
+#[ignore = "generates and compiles hundreds of programs; run with --ignored"]
+fn the_generator_builds_and_runs_every_seed() {
     let dir = scratch("generated");
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("could not create '{}': {e}", dir.display()));
-
     let (start, count) = fuzz_seeds();
-    let mut agreed = 0usize;
-    let mut rejected = 0usize;
-    let mut llvm_failed = 0usize;
+    let mut ran = 0usize;
+    let mut refused = 0usize;
+    let mut build_crashed = 0usize;
     let mut mismatches = 0usize;
     let mut failures: Vec<String> = Vec::new();
     let mut covered: BTreeSet<&'static str> = BTreeSet::new();
-
     for seed in start..start + count {
         let program = generate(seed);
         covered.extend(program.shapes.iter().copied());
-
         let source = dir.join(format!("seed_{seed:05}.kp"));
         std::fs::write(&source, &program.source)
             .unwrap_or_else(|e| panic!("could not write '{}': {e}", source.display()));
-
         match check(seed, &program.shapes, &source, &dir) {
-            Outcome::Agreed => agreed += 1,
-            Outcome::Rejected(m) => {
-                rejected += 1;
+            Outcome::Ran => ran += 1,
+            Outcome::Refused(m) => {
+                refused += 1;
                 failures.push(m);
             }
-            Outcome::LlvmFailed(m) => {
-                llvm_failed += 1;
+            Outcome::BuildCrashed(m) => {
+                build_crashed += 1;
                 failures.push(m);
             }
-            Outcome::Disagreed(m) => {
+            Outcome::Mismatch(m) => {
                 mismatches += 1;
                 failures.push(m);
             }
         }
     }
-
     let missing: Vec<&str> = SHAPES
         .iter()
         .copied()
@@ -1285,9 +1245,8 @@ fn the_generator_agrees_between_the_two_backends() {
         .collect();
     println!(
         "differential fuzz: seeds {start}..{} generated {count} programs; \
-         {agreed} built by both backends and agreed, {rejected} refused by the \
-         frontend or the C backend, {llvm_failed} failed only on llvm, \
-         {mismatches} mismatch(es); shapes not drawn: {}",
+         {ran} built and ran, {refused} refused by the compiler, {build_crashed} build \
+         crash(es), {mismatches} run crash(es); shapes not drawn: {}",
         start + count,
         if missing.is_empty() {
             "none".to_string()
@@ -1295,7 +1254,6 @@ fn the_generator_agrees_between_the_two_backends() {
             missing.join(", ")
         },
     );
-
     assert!(
         failures.is_empty(),
         "{} failing program(s) out of {count} generated (seed {start} upward); \
@@ -1306,15 +1264,17 @@ fn the_generator_agrees_between_the_two_backends() {
     );
 }
 
-/// The differential run of the checked-in corpus: the same comparison, over the
-/// files that ship instead of over freshly generated text.
+/// The checked-in corpus, built with the `llvm` backend and compared with its
+/// golden: the exit status and the stdout the C oracle printed for the same file
+/// before the C backend was removed. Each golden is `tests/fuzz-corpus/<name>.golden`:
+/// its first line is `exit <code>` (or `signal <n>`), and the rest is the stdout,
+/// byte for byte.
 #[test]
-#[ignore = "builds and runs the whole fuzz corpus with both backends; run with --ignored"]
-fn the_conformance_corpus_agrees_between_the_two_backends() {
+#[ignore = "builds and runs the whole fuzz corpus; run with --ignored"]
+fn the_conformance_corpus_matches_its_goldens() {
     let dir = scratch("corpus");
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("could not create '{}': {e}", dir.display()));
-
     let mut entries: Vec<(u64, PathBuf)> = std::fs::read_dir(corpus_dir())
         .unwrap_or_else(|e| panic!("could not read '{}': {e}", corpus_dir().display()))
         .filter_map(|entry| {
@@ -1336,15 +1296,38 @@ fn the_conformance_corpus_agrees_between_the_two_backends() {
     for (seed, source) in &entries {
         let shapes = generate(*seed).shapes;
         match check(*seed, &shapes, source, &dir) {
-            Outcome::Agreed => {}
-            Outcome::Rejected(m) | Outcome::LlvmFailed(m) | Outcome::Disagreed(m) => {
-                failures.push(m)
+            Outcome::Ran => {}
+            Outcome::Refused(m) | Outcome::BuildCrashed(m) | Outcome::Mismatch(m) => {
+                failures.push(m);
+                continue;
             }
         }
+        let golden_path = source.with_extension("golden");
+        let golden = std::fs::read(&golden_path).unwrap_or_else(|e| {
+            panic!("'{}' is missing ({e}); the corpus has no golden for seed {seed}", golden_path.display())
+        });
+        let (header, frozen_stdout) = match golden.iter().position(|b| *b == b'\n') {
+            Some(at) => (&golden[..at], &golden[at + 1..]),
+            None => panic!("'{}' has no header line", golden_path.display()),
+        };
+        let header = String::from_utf8_lossy(header).to_string();
+        let observed = run(&dir.join("llvm").join(format!("seed_{seed:05}")));
+        let observed_header = match (observed.code, observed.signal) {
+            (Some(code), _) => format!("exit {code}"),
+            (None, Some(signal)) => format!("signal {signal}"),
+            (None, None) => "unknown".to_string(),
+        };
+        if observed_header != header || observed.stdout != frozen_stdout {
+            failures.push(format!(
+                "seed {seed}: '{}' differs from its golden\n  golden: {header}, {:?}\n  llvm:   {observed_header}, {:?}",
+                source.display(),
+                String::from_utf8_lossy(frozen_stdout),
+                String::from_utf8_lossy(&observed.stdout),
+            ));
+        }
     }
-
     println!(
-        "conformance corpus: {} program(s), {} failure(s)",
+        "conformance corpus: {} program(s) checked against their goldens, {} failure(s)",
         entries.len(),
         failures.len(),
     );
