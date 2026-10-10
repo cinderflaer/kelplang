@@ -10553,7 +10553,7 @@ impl<'a> Gen<'a> {
         let arg_ptr = func.get_param(2);
         let out_ptr = func.get_param(3);
         // Managed: the runtime thread joins the collector before its first
-        // allocation, and leaves it after its last one.
+        // allocation. It leaves in the runtime's cleanup handler.
         if let Some(gc) = &self.gc {
             let (attach, aty) = gc.thread_attach;
             self.builder.build_call(attach, aty, &[], "");
@@ -10570,10 +10570,9 @@ impl<'a> Gen<'a> {
         if yields {
             self.builder.build_store(value, out_ptr);
         }
-        if let Some(gc) = &self.gc {
-            let (detach, dty) = gc.thread_detach;
-            self.builder.build_call(detach, dty, &[], "");
-        }
+        // The thread leaves the collector in the runtime's cleanup handler
+        // (`kelp_thread_release`), which runs on a normal return and on a
+        // worker's panic alike, after the environment's drop.
         self.builder.build_ret_void();
         Ok(())
     }

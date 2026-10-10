@@ -289,8 +289,8 @@ pub struct GcTypes<'a> {
     /// `kelp_gc_init`, and at the top of every spawned thread body, before its
     /// first allocation.
     pub thread_attach: (LlvmFunction<'a>, FnType<'a>),
-    /// `void kelp_gc_thread_detach(void)`: called before a spawned thread body
-    /// returns.
+    /// `void kelp_gc_thread_detach(void)`. The spawned body does not call it:
+    /// the runtime's cleanup handler does, on a return and on a panic alike.
     pub thread_detach: (LlvmFunction<'a>, FnType<'a>),
     cache: RefCell<HashMap<String, Value<'a>>>,
 }
