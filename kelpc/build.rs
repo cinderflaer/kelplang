@@ -1,21 +1,13 @@
-//! Compiles the C runtime `runtime/kelp_rt.c` into an object that ships inside
-//! `kelpc` and is linked into every LLVM-built program (MK7 §3.2).
+//! Builds the Rust runtime `kelp-rt/` into two static archives that ship inside
+//! `kelpc` and are linked into every LLVM-built program (MK7 section 3.2):
+//! `libkelp_rt.a`, the hosted runtime with the panic handler, and
+//! `kelp_rt_managed.o`, the same runtime as one object with its byte buffers taken from
+//! the collector. `driver.rs` embeds both with `include_bytes!`, so `kelpc`
+//! needs nothing beside its own binary.
 //!
-//! The file is the same text the C backend emits into each generated program,
-//! kept verbatim so the two backends cannot diverge on the panic text, the
-//! `Bytes`/`String` invariants or the capability matcher's meaning. The C
-//! backend still compiles it as part of the generated `.c`; the LLVM backend
-//! needs it as a separate object, so it is compiled once here and embedded in
-//! the compiler binary with `include_bytes!` (see `driver.rs`). Embedding rather
-//! than shipping a file beside the executable is what keeps `kelpc` independent
-//! of its own install location.
-//!
-//! The runtime's functions are `static` in the verbatim text, which is what a
-//! single generated translation unit wants. The IR calls them across an object
-//! boundary, so this build strips `static` and supplies the standard headers the
-//! text relies on the generated program for. One consequence is that
-//! `kelp_panic` becomes a single external definition, so the LLVM lowering must
-//! declare it rather than define a second copy.
+//! The C runtime that stood here until the C removal (step C) is gone. The
+//! `kelp_String__*_ptr` adapters the IR calls are defined in `kelp-rt`, next
+//! to the by-value forms they wrap.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -158,22 +150,60 @@ fn is_outer_build_variable(name: &str) -> bool {
         || name.starts_with("CARGO_FEATURE_")
 }
 
-/// Builds the Rust runtime (`kelp-rt/`) into `$OUT_DIR/libkelp_rt.a`.
+/// What `build.rs` makes from `kelp-rt/`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Output {
+    /// A static library with the `#[panic_handler]`: the hosted runtime, which
+    /// links against nothing but libc.
+    Staticlib,
+    /// One relocatable object with no panic handler: the managed runtime. Its
+    /// `core` references are resolved by the collector archive it links with,
+    /// which is a staticlib and so carries the one panic handler a managed
+    /// program needs. A staticlib here would carry a second one.
+    Object,
+}
+
+/// One runtime variant `build.rs` builds from `kelp-rt/`.
+struct RuntimeVariant {
+    /// The nested build's target directory name under `$OUT_DIR`.
+    dir: &'static str,
+    /// The file name under `$OUT_DIR`, which `driver.rs` embeds.
+    file: &'static str,
+    /// The `kelp-rt` cargo feature the variant turns on.
+    feature: &'static str,
+    output: Output,
+}
+
+const HOSTED: RuntimeVariant = RuntimeVariant {
+    dir: "kelp-rt",
+    file: "libkelp_rt.a",
+    feature: "panic-handler",
+    output: Output::Staticlib,
+};
+
+const MANAGED: RuntimeVariant = RuntimeVariant {
+    dir: "kelp-rt-managed",
+    file: "kelp_rt_managed.o",
+    feature: "managed",
+    output: Output::Object,
+};
+
+/// Builds one runtime variant (`kelp-rt/`) into `$OUT_DIR/<file>`.
 ///
 /// The primary path is a nested `cargo rustc --crate-type staticlib --locked
-/// --offline` with its own
-/// target directory, so `libc` resolves from the root `Cargo.lock` and the nested
-/// build never waits on the outer build's target lock. If that fails, the
-/// fallback calls `rustc --crate-type staticlib` directly with the `libc` rlib
-/// the nested build left behind.
-fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path) {
+/// --offline` with its own target directory, so `libc` resolves from the root
+/// `Cargo.lock` and the nested build never waits on the outer build's target
+/// lock. If that fails, the fallback calls `rustc --crate-type staticlib`
+/// directly with the `libc` rlib the nested build left behind.
+fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path, variant: &RuntimeVariant) {
     let repo = manifest_dir
         .parent()
         .expect("kelpc sits in the repository root's child directory");
     let rt_dir = repo.join("kelp-rt");
     let target = std::env::var("TARGET").expect("TARGET is set by cargo");
-    let nested_dir = out_dir.join("kelp-rt");
-    let archive_out = out_dir.join("libkelp_rt.a");
+    let nested_dir = out_dir.join(variant.dir);
+    let archive_out = out_dir.join(variant.file);
+    let feature_cfg = format!("feature=\"{}\"", variant.feature);
 
     println!("cargo:rerun-if-changed={}", rt_dir.join("src").display());
     println!("cargo:rerun-if-changed={}", rt_dir.join("Cargo.toml").display());
@@ -203,10 +233,19 @@ fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path) {
     let mut cmd = Command::new(cargo);
     cmd.current_dir(repo)
         .args(["rustc", "-p", "kelp-rt", "--lib", "--release", "--locked", "--offline"])
-        .args(["--crate-type", "staticlib"])
-        .args(["--features", "panic-handler", "--target", &target, "--target-dir"])
-        .arg(&nested_dir)
-        .env("CARGO_PROFILE_RELEASE_PANIC", "abort")
+        .args(["--features", variant.feature, "--target", &target, "--target-dir"])
+        .arg(&nested_dir);
+    match variant.output {
+        Output::Staticlib => {
+            cmd.args(["--crate-type", "staticlib"]);
+        }
+        Output::Object => {
+            let mut emit = std::ffi::OsString::from("--emit=obj=");
+            emit.push(&archive_out);
+            cmd.arg("--").arg(emit);
+        }
+    }
+    cmd.env("CARGO_PROFILE_RELEASE_PANIC", "abort")
         .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "2")
         .env("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1")
         .env("CARGO_PROFILE_RELEASE_DEBUG", "0")
@@ -220,12 +259,25 @@ fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path) {
         }
     }
 
+    // A stale output must not pass for this build's, so it goes first.
+    let _ = std::fs::remove_file(&archive_out);
     let nested_archive = nested_dir.join(&target).join("release").join("libkelp_rt.a");
     let nested_ok = match cmd.output() {
-        Ok(out) if out.status.success() => nested_archive.exists(),
+        Ok(out) if out.status.success() => match variant.output {
+            Output::Staticlib => {
+                let found = nested_archive.exists();
+                if found {
+                    std::fs::copy(&nested_archive, &archive_out)
+                        .expect("could not copy the nested kelp-rt archive into OUT_DIR");
+                }
+                found
+            }
+            Output::Object => archive_out.exists(),
+        },
         Ok(out) => {
             println!(
-                "cargo:warning=nested cargo build of kelp-rt failed, trying rustc: {}",
+                "cargo:warning=nested cargo build of kelp-rt ({}) failed, trying rustc: {}",
+                variant.feature,
                 String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
             );
             false
@@ -236,8 +288,6 @@ fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path) {
         }
     };
     if nested_ok {
-        std::fs::copy(&nested_archive, &archive_out)
-            .expect("could not copy the nested kelp-rt archive into OUT_DIR");
         return;
     }
 
@@ -260,8 +310,12 @@ fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path) {
     );
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
     let mut fb = Command::new(rustc);
-    fb.args(["--edition", "2024", "--crate-type", "staticlib", "--crate-name", "kelp_rt"])
-        .args(["--cfg", "feature=\"panic-handler\"", "--target", &target])
+    let crate_type = match variant.output {
+        Output::Staticlib => "staticlib",
+        Output::Object => "rlib",
+    };
+    fb.args(["--edition", "2024", "--crate-type", crate_type, "--crate-name", "kelp_rt"])
+        .args(["--cfg", &feature_cfg, "--target", &target])
         .args(["-C", "opt-level=2", "-C", "panic=abort", "-C", "codegen-units=1"])
         .args(["-C", "debuginfo=0", "-C", "overflow-checks=off"])
         .args(["-C", "force-unwind-tables=yes", "-C", "relocation-model=pic"])
@@ -272,6 +326,9 @@ fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path) {
         .arg("-o")
         .arg(&archive_out)
         .arg(rt_dir.join("src/lib.rs"));
+    if variant.output == Output::Object {
+        fb.arg("--emit=obj");
+    }
     for r in &remaps {
         fb.arg(r);
     }
@@ -284,118 +341,11 @@ fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path) {
 fn main() {
     bake_build_info();
     bake_sysroot_dirs();
-    build_rust_runtime(
-        &PathBuf::from(
-            std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"),
-        ),
-        &PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo")),
-    );
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"),
     );
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
-    let source = manifest_dir.join("runtime/kelp_rt.c");
-    println!("cargo:rerun-if-changed={}", source.display());
+    build_rust_runtime(&manifest_dir, &out_dir, &HOSTED);
+    build_rust_runtime(&manifest_dir, &out_dir, &MANAGED);
     println!("cargo:rerun-if-changed=build.rs");
-
-    // The generated C program supplies these headers before the runtime text;
-    // compiled on its own the text has none, so the wrapper is what lets the
-    // same file build both ways. `#define static` is the one deliberate
-    // difference: it gives the helpers the external linkage the IR needs.
-    let wrapper = out_dir.join("kelp_rt_export.c");
-    let body = format!(
-        "/* Generated by build.rs from runtime/kelp_rt.c. Do not edit. */\n\
-         #include <errno.h>\n\
-         #include <netdb.h>\n\
-         #include <pthread.h>\n\
-         #include <stdatomic.h>\n\
-         #include <stdbool.h>\n\
-         #include <signal.h>\n\
-         #include <stddef.h>\n\
-         #include <stdint.h>\n\
-         #include <stdio.h>\n\
-         #include <stdlib.h>\n\
-         #include <string.h>\n\
-         /* The socket surface the shared dial in `runtime/kelp_rt.c` needs:
-\
-            `sys/socket.h` and `sys/types.h` for `socket`/`connect`, and
-\
-            `unistd.h` for `close`. The generated program supplies the same
-\
-            headers before the same text. */\n\
-         #include <sys/socket.h>\n\
-         #include <sys/types.h>\n\
-         #include <unistd.h>\n\
-         #define static\n\
-         #include \"{}\"\n\
-         \n\
-         /* The pointer-spelled entry point for `String.from_bytes`, whose C form\n\
-            takes a 24-byte `kelp_Bytes` by value. An IR call cannot cross such an\n\
-            argument (MK7 section 3.3, BUG-vN4tR), so the IR declares this adapter\n\
-            and hands it a pointer. It is C to C inside this translation unit, where\n\
-            both sides are compiled by the same compiler and agree, and the buffer\n\
-            is moved into the result exactly as the by-value form moves it. */\n\
-         kelp_String kelp_String__from_bytes_ptr(const kelp_Bytes* b) {{\n\
-             return kelp_String__from_bytes(*b);\n\
-         }}\n\
-         \n\
-         /* The same for the reverse direction: `kelp_String__into_bytes` takes a
-\
-            24-byte `kelp_String` by value and returns a 24-byte `kelp_Bytes`, and
-\
-            an IR call cannot cross either by value (MK7 section 3.3,
-\
-            BUG-vN4tR). The adapter takes the receiver by pointer, so the IR
-\
-            stages the `String` into a slot of its own and the buffer moves into
-\
-            the result exactly as the by-value form moves it. */\n\
-         kelp_Bytes kelp_String__into_bytes_ptr(const kelp_String* self) {{\n\
-             return kelp_String__into_bytes(*self);\n\
-         }}\n",
-        source.display()
-    );
-    std::fs::write(&wrapper, body).expect("could not write the runtime wrapper");
-
-    let object = out_dir.join("kelp_rt.o");
-    // `-pthread` because the runtime text now reaches `pthread_create`,
-    // `pthread_exit` and `pthread_join` (MK9-S3-M1 stage C1): it makes the
-    // thread-safe macros visible and links the library on systems whose libc
-    // does not carry them.
-    let status = Command::new("cc")
-        .args(["-c", "-O2", "-fPIC", "-fwrapv", "-pthread"])
-        // Keep the build directory out of the object's file symbol and any
-        // `__FILE__`, so the same commit builds the same bytes anywhere.
-        .arg(format!("-ffile-prefix-map={}=.", out_dir.display()))
-        .arg(format!("-ffile-prefix-map={}=.", manifest_dir.display()))
-        .arg("-o")
-        .arg(&object)
-        .arg(&wrapper)
-        .status()
-        .expect("could not invoke 'cc' to build the Kelp runtime object");
-    assert!(
-        status.success(),
-        "cc failed to build the Kelp runtime object from runtime/kelp_rt.c"
-    );
-
-    // The managed variant (`KELP_GC_MANAGED`): the same text, with its String
-    // and Bytes buffers allocated from the collector through `kelp_gc.h`. A
-    // managed link takes this object instead of the hosted one.
-    let managed_object = out_dir.join("kelp_rt_managed.o");
-    let gc_include = manifest_dir.join("gc").join("include");
-    let status = Command::new("cc")
-        .args(["-c", "-O2", "-fPIC", "-fwrapv", "-pthread", "-DKELP_GC_MANAGED"])
-        .arg(format!("-I{}", gc_include.display()))
-        .arg(format!("-ffile-prefix-map={}=.", out_dir.display()))
-        .arg(format!("-ffile-prefix-map={}=.", manifest_dir.display()))
-        .arg("-o")
-        .arg(&managed_object)
-        .arg(&wrapper)
-        .status()
-        .expect("could not invoke 'cc' to build the managed Kelp runtime object");
-    assert!(
-        status.success(),
-        "cc failed to build the managed Kelp runtime object from runtime/kelp_rt.c"
-    );
-    println!("cargo:rerun-if-changed={}", gc_include.join("kelp_gc.h").display());
 }

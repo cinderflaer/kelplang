@@ -5,18 +5,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::guard::GuardedOutput;
 use crate::opt::OptLevel;
 
-/// The C runtime object, compiled from `runtime/kelp_rt.c` by `build.rs` and
-/// embedded in the compiler binary. The driver writes it to a temporary file at
-/// link time, so `kelpc` needs nothing beside its own binary and does not depend
-/// on its install location (MK7 §3.2).
-static RUNTIME_OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kelp_rt.o"));
-/// The managed runtime object (`KELP_GC_MANAGED`): the same runtime, with its
-/// byte buffers allocated from the collector. A managed link takes it.
-static RUNTIME_OBJECT_MANAGED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kelp_rt_managed.o"));
-/// The Rust runtime archive, built from `kelp-rt/` by `build.rs`. Embedded but not
-/// linked yet: the link switches to it in stage 1 WP7.
-#[allow(dead_code)]
+/// The hosted runtime archive, built from `kelp-rt/` by `build.rs`. The driver
+/// writes it to a temporary file at link time, so `kelpc` needs nothing beside
+/// its own binary and does not depend on its install location (MK7 section 3.2).
 static RUNTIME_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libkelp_rt.a"));
+/// The managed runtime object (`kelp-rt` with the `managed` feature): the same
+/// runtime, with its byte buffers allocated from the collector. It is an object
+/// and not an archive, because the collector archive it links with already
+/// carries the panic handler. A managed link takes it.
+static RUNTIME_OBJECT_MANAGED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kelp_rt_managed.o"));
 
 /// Makes the temporary runtime object's name unique within one process: several
 /// compilations can run at once (the test suite does), and two of them must not
@@ -261,13 +258,18 @@ fn link_llvm_objects_with_archive(
 ) -> Result<(), CompileError> {
     // Found before anything is written, so a missing `ld.lld` leaves no temp file.
     let sys = crate::sysroot::discover_here().map_err(|message| CompileError { message })?;
+    // A managed link (the collector archive is named) takes the managed runtime
+    // object; a hosted link takes the runtime archive.
+    let (runtime_bytes, ext) = if gc_archive.is_some() {
+        (RUNTIME_OBJECT_MANAGED, "o")
+    } else {
+        (RUNTIME_ARCHIVE, "a")
+    };
     let runtime_path = std::env::temp_dir().join(format!(
-        "kelp_rt_{}_{}.o",
+        "kelp_rt_{}_{}.{ext}",
         std::process::id(),
         RUNTIME_TMP.fetch_add(1, Ordering::Relaxed)
     ));
-    // A managed link (the collector archive is named) takes the managed runtime.
-    let runtime_bytes = if gc_archive.is_some() { RUNTIME_OBJECT_MANAGED } else { RUNTIME_OBJECT };
     std::fs::write(&runtime_path, runtime_bytes).map_err(|e| CompileError {
         message: format!(
             "could not write the runtime object to '{}': {e}",
