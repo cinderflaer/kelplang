@@ -234,7 +234,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// (three attempts at a port nobody owns, then a clean exit) and
 /// `ws_try_connect` (a refused dial told apart from a `403` answer by
 /// `WsErr`). Nothing in the slice is a new construct for either backend: the
-/// dial loop is one `kelp_rt.c` helper behind two thin extern bodies, and the
+/// dial loop is one `kelp-rt` helper behind two thin extern bodies, and the
 /// fallible surface is Kelp over `std/net` and `std/result`. The two new
 /// denial projects (`caps_net_try_denied`, `ws_try_net_denied`) are negative
 /// fixtures without manifests and stay outside the corpus, like

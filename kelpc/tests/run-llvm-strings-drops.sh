@@ -4,7 +4,7 @@
 #
 # S2 is "aggregates, containers and drops" (the MK7 record in plan/done.md). S2A
 # was its plain-record slice; **S2B is its runtime and heap slice**: the C
-# runtime object `runtime/kelp_rt.c` compiled once and linked into every LLVM
+# runtime (`kelp-rt/`, the Rust archive `build.rs` builds) linked into every LLVM
 # binary, the `str`/`String`/`Bytes`/`View` representations, a `datac` with an
 # owned field, and the drop plan emitted at the same points the removed C backend
 # emits it. Its exit criterion is byte-identical stdout and exit status on the
