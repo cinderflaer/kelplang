@@ -8069,6 +8069,25 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // the hidden pointer takes the destination as its explicit first
         // argument, which is the same call clang would emit.
         if let Some(rt) = self.g.runtime.get(&symbol_name(callee)).copied() {
+            // A `Bytes` element access with a signed `x.to_usize()` index: the
+            // same fused check as a `List` one (`emit_indexed_fused`).
+            if plan.is_none() && !rt.sret {
+                if let Some((from, conv, inner)) = fused_index_call(callee, args) {
+                    let symbol = symbol_name(callee);
+                    if let Some(len) = self.fused_len_fn(&symbol, true) {
+                        return self.emit_indexed_fused(
+                            len,
+                            (rt.func, rt.ty),
+                            true,
+                            args,
+                            ret,
+                            &from,
+                            conv,
+                            inner,
+                        );
+                    }
+                }
+            }
             return self.call_runtime_entry(rt, args, &prepared, plan.as_ref());
         }
 
@@ -8078,6 +8097,18 @@ impl<'g, 'a> FnGen<'g, 'a> {
             let Some((func, fty)) = self.g.container_fns.get(&symbol).copied() else {
                 return Err(refuse(&format!("the call to '{callee}'"), "S2D"));
             };
+            // A `List` element access whose index is a signed `x.to_usize()`:
+            // one bounds branch in place of the sign branch and the bounds
+            // branch (`emit_indexed_fused`). Anything else takes the call.
+            if plan.is_none() {
+                if let Some((from, conv, inner)) = fused_index_call(callee, args) {
+                    if let Some(len) = self.fused_len_fn(&symbol, false) {
+                        return self.emit_indexed_fused(
+                            len, (func, fty), false, args, ret, &from, conv, inner,
+                        );
+                    }
+                }
+            }
             let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
             for (index, a) in args.iter().enumerate() {
@@ -8261,6 +8292,131 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.cur = ok_bb;
         self.terminated = false;
         self.cast_int(from, to, v)
+    }
+
+    /// The length function of the container an element access `symbol` (ending
+    /// in `__get` or `__set`) reads: the monomorphized `<base>__len` of a
+    /// `List`, or the runtime's `<base>__len` for a `Bytes` (`runtime`). `None`
+    /// for any other symbol, which keeps the plain call.
+    fn fused_len_fn(&self, symbol: &str, runtime: bool) -> Option<(LlvmFunction<'a>, FnType<'a>)> {
+        let base = symbol
+            .strip_suffix("__get")
+            .or_else(|| symbol.strip_suffix("__set"))?;
+        let len = format!("{base}__len");
+        if runtime {
+            self.g.runtime.get(&len).map(|rt| (rt.func, rt.ty))
+        } else {
+            self.g.container_fns.get(&len).copied()
+        }
+    }
+
+    /// `list.get(x.to_usize())` / `list.set(x.to_usize(), v)` (and the `Bytes`
+    /// forms) for a signed `x`, with the conversion's sign check and the
+    /// container's bounds check fused into one branch on the unsigned index.
+    ///
+    /// A negative `x` is an unsigned value at least the length, so it is out of
+    /// bounds and takes the slow arm, where the sign is tested: the message is
+    /// the conversion's for a negative index and the container's for a large
+    /// one. The in-bounds arm calls the container function, whose own check the
+    /// branch has already decided, so LLVM removes it. The slow arm calls it too,
+    /// which panics (`kelp_panic` does not return) and ends the block.
+    ///
+    /// The evaluation order is the call's: the container, then `x`, then (for
+    /// `set`) the value, then the access. The value is read-only (`fused_index_call`
+    /// admits no other), so emitting it in each arm changes no state and keeps
+    /// its own panics in the order they had: after the conversion's panic, and
+    /// before the container's.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_indexed_fused(
+        &mut self,
+        len: (LlvmFunction<'a>, FnType<'a>),
+        call: (LlvmFunction<'a>, FnType<'a>),
+        runtime_abi: bool,
+        args: &[Expr],
+        ret: &Ty,
+        from: &Ty,
+        conv: &str,
+        inner: &Expr,
+    ) -> Result<Option<Value<'a>>, String> {
+        let (len_fn, len_ty) = len;
+        let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+        let container = if runtime_abi {
+            self.rt_arg_value(&args[0], &mut held)?
+        } else {
+            self.arg_value(&args[0], &mut held)?
+        };
+        let x = self.value_of(inner)?;
+        let n = self.g.builder.build_call(len_fn, len_ty, &[container], "len");
+        let u = self.cast_int(from, &Ty::Usize, x)?;
+        let oob = self.g.builder.build_icmp(IntCmp::Uge, u, n, "index.oob");
+        let slow = self.cur_fn.append_block("index.slow");
+        let fast = self.cur_fn.append_block("index.in");
+        self.g.builder.build_cond_br(oob, slow, fast);
+
+        // Out of bounds: a negative index is the conversion's panic, anything
+        // else reaches the container's own check through the call and panics.
+        self.g.builder.position_at_end(slow);
+        self.cur = slow;
+        self.terminated = false;
+        let from_ty = self.lty(from)?;
+        let zero = self.g.ctx.const_int(from_ty, 0, false);
+        let neg = self.g.builder.build_icmp(IntCmp::Slt, x, zero, "index.neg");
+        let conv_bb = self.cur_fn.append_block("index.conv");
+        let rest = self.cur_fn.append_block("index.list");
+        self.g.builder.build_cond_br(neg, conv_bb, rest);
+
+        // The same text `emit_conversion` panics with for this conversion.
+        self.g.builder.position_at_end(conv_bb);
+        self.cur = conv_bb;
+        let msg = format!("{}: value out of range", conv.replace('#', "."));
+        let msg_ptr = self.string_global(&msg)?;
+        self.g.emit_panic_ptr(msg_ptr);
+
+        self.g.builder.position_at_end(rest);
+        self.cur = rest;
+        let mut slow_held: Vec<(Value<'a>, Ty)> = Vec::new();
+        let slow_values = self.indexed_call_args(args, runtime_abi, container, u, &mut slow_held)?;
+        let (func, fty) = call;
+        self.g.builder.build_call(func, fty, &slow_values, "");
+        self.g.builder.build_unreachable();
+
+        // In bounds: the same arguments and the call, whose check folds away.
+        self.g.builder.position_at_end(fast);
+        self.cur = fast;
+        self.terminated = false;
+        let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+        let values = self.indexed_call_args(args, runtime_abi, container, u, &mut held)?;
+        let yields_value = *ret != Ty::Unit;
+        let name = if yields_value { "call" } else { "" };
+        let v = self.g.builder.build_call(func, fty, &values, name);
+        for (slot, ty) in held {
+            self.g.call_drop(slot, &ty)?;
+        }
+        Ok(if yields_value { Some(v) } else { None })
+    }
+
+    /// The argument values of an indexed container call once the container and
+    /// the index are known: the container, the unsigned index, then the rest
+    /// (the value of a `set`), evaluated the way the call evaluates them.
+    fn indexed_call_args(
+        &mut self,
+        args: &[Expr],
+        runtime_abi: bool,
+        container: Value<'a>,
+        index: Value<'a>,
+        held: &mut Vec<(Value<'a>, Ty)>,
+    ) -> Result<Vec<Value<'a>>, String> {
+        let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
+        values.push(container);
+        values.push(index);
+        for a in &args[2..] {
+            values.push(if runtime_abi {
+                self.rt_arg_value(a, held)?
+            } else {
+                self.arg_value(a, held)?
+            });
+        }
+        Ok(values)
     }
 
     /// Cast an integer value to `to`, with no range check: the caller has already
@@ -15757,6 +15913,63 @@ fn container_symbol(callee: &str, args: &[Expr], ret: &Ty) -> Option<String> {
         }
     }
     None
+}
+
+/// The `List#get`/`List#set` or `Bytes#get`/`Bytes#set` call whose index is
+/// `x.to_usize()` for a signed integer `x`: the source type, the conversion's
+/// callee name (for its panic text) and `x`. `None` for every other call.
+fn fused_index_call<'e>(callee: &str, args: &'e [Expr]) -> Option<(Ty, &'e str, &'e Expr)> {
+    let op = callee
+        .strip_prefix("List#")
+        .or_else(|| callee.strip_prefix("Bytes#"))?;
+    if op != "get" && op != "set" {
+        return None;
+    }
+    // The length is read before the value of a `set` is evaluated, so the value
+    // must not be able to change a length: only a read-only expression is fused.
+    if op == "set" && !read_only_expr(args.get(2)?) {
+        return None;
+    }
+    let index = args.get(1)?;
+    let ExprKind::Call { callee: conv, args: conv_args } = &index.kind else {
+        return None;
+    };
+    let (src, dst) = conv.split_once("#to_")?;
+    if dst != "usize" {
+        return None;
+    }
+    let from = Ty::from_name(src)?;
+    if !from.is_integer() || !is_signed(&from) {
+        return None;
+    }
+    let inner = conv_args.first()?;
+    Some((from, conv.as_str(), inner))
+}
+
+/// An expression that reads state and cannot write any: literals, names,
+/// operators, field reads, borrows, conversions and element reads of a `List`
+/// or `Bytes` whose own operands are read-only. A call of any other function
+/// is not read-only, because it may push to or set a container.
+fn read_only_expr(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::StaticRef(_)
+        | ExprKind::Capture { .. } => true,
+        ExprKind::Unary { expr, .. } | ExprKind::Ref { expr, .. } => read_only_expr(expr),
+        ExprKind::Binary { lhs, rhs, .. } => read_only_expr(lhs) && read_only_expr(rhs),
+        ExprKind::FieldAccess { base, .. } => read_only_expr(base),
+        ExprKind::Call { callee, args } => {
+            let reads = callee.contains("#to_")
+                || callee == "List#get"
+                || callee == "Bytes#get";
+            reads && args.iter().all(read_only_expr)
+        }
+        _ => false,
+    }
 }
 
 /// A symbol name for a LLVM function, mirroring `codegen_c.rs::c_name` without

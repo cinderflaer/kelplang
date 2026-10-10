@@ -27,6 +27,7 @@ empty on release.
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
 - `kelpc doc --text` prints the documentation as plain text (on branch lighthouse-support, not merged).
 - `kelpc` builtin listing is available as JSON (on branch lighthouse-support, not merged).
+- The LLVM backend checks a `List` index of `x.to_usize()` (signed `x`) with one bounds branch instead of two; the same panics and messages, faster `List.get` and `List.set` in tight loops.
 
 ## stdlib
 
