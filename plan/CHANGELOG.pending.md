@@ -16,3 +16,10 @@ empty on release.
 
 ## compiler
 - Managed-mode lowering (WP3, WIP): GC descriptors, typed Box allocation, drop gating, safepoint polls at calls and loop back edges; golden IR and hosted identity pass, link smoke blocked until the collector defines rust_eh_personality.
+- `[target] mode = "managed"` is accepted by the manifest, with `heap_max = N` (a whole number of MiB, default 256) for the managed heap cap. Hosted and freestanding are unchanged. The memory or resource classifier is in `kelpc/src/managed.rs`; the heap refusal is not yet wired into the checker, and a managed build still takes the hosted path.
+
+- Managed-mode lowering (WP3, WIP): GC descriptors, typed Box allocation, drop gating; not yet compiled or verified.
+- Managed mode: the checker now refuses a resource (a `Thread`, `Mutex`, `datac` holding one) in a `Box`, `List`, `Map`, array or closure environment, by name. The heap-slot hook runs after the pass; hosted builds are unchanged.
+- Managed mode: GC type descriptors for `Map` headers and entries, closure environments and closure values are defined in `kelpc/src/gc_descr.rs`. Nothing emits them yet; the managed lowering still allocates through the stub path.
+- Managed builds (`-DKELP_GC_MANAGED`) allocate String and Bytes buffers from the collector and free nothing; hosted runtime output is byte-identical.
+- Managed mode tests: refusal fixtures for a Box and a Map value; a containers fixture (List of Strings, Map of datacs, a closure capturing a Box) whose managed run is ignored until the collector is linked.

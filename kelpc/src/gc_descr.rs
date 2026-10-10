@@ -55,6 +55,69 @@ fn align_up(value: u64, align: u64) -> u64 {
     }
 }
 
+/// Byte offset of a `Map` header's index buffer pointer: the entries pointer
+/// is first, then three `i64` counts, then the index (`codegen_llvm.rs`,
+/// `emit_map_bodies`: `{ ptr, i64, i64, i64, ptr, i64, i64 }`).
+pub const MAP_INDEX_OFFSET: u64 = 32;
+
+/// Byte offset of a closure value's environment pointer (`{ fn, env, drop }`).
+pub const CLOSURE_ENV_OFFSET: u64 = 8;
+
+/// The C layout of a sequence of fields laid out one after another: the total
+/// size, the alignment, and each field's offset. The same walk
+/// `pointer_offsets` makes for a `datac`, so a descriptor and the LLVM struct
+/// agree on every offset.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn fields_layout(
+    layout: &dyn GcLayout,
+    fields: &[Ty],
+) -> Result<(u64, u64, Vec<u64>), String> {
+    let mut offset = 0;
+    let mut align_max = 1;
+    let mut offsets = Vec::with_capacity(fields.len());
+    for field in fields {
+        let (size, align) = layout.size_align(field)?;
+        offset = align_up(offset, align);
+        offsets.push(offset);
+        offset += size;
+        align_max = align_max.max(align);
+    }
+    Ok((align_up(offset, align_max), align_max, offsets))
+}
+
+/// The pointer slots of a map entry record `{ key, value, occupied }`, which is
+/// the element type of a `Map`'s entries buffer. Returns the record's size and
+/// alignment with the pointer offsets, so the caller can name it as the
+/// buffer's element descriptor.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn map_entry_layout(
+    layout: &dyn GcLayout,
+    key: &Ty,
+    value: &Ty,
+) -> Result<(u64, u64, Vec<u32>), String> {
+    let (size, align, offsets) = fields_layout(layout, &[key.clone(), value.clone(), Ty::U8])?;
+    let mut ptrs = Vec::new();
+    pointer_offsets(layout, key, offsets[0], &mut ptrs)?;
+    pointer_offsets(layout, value, offsets[1], &mut ptrs)?;
+    Ok((size, align, ptrs.into_iter().map(|p| p as u32).collect()))
+}
+
+/// The pointer slots of a closure environment: the captures in environment
+/// order, laid out as a C struct (`codegen_llvm.rs`, `declare_closure_envs`).
+/// Returns the environment's size and alignment with the slot offsets.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn env_layout(
+    layout: &dyn GcLayout,
+    captures: &[Ty],
+) -> Result<(u64, u64, Vec<u32>), String> {
+    let (size, align, offsets) = fields_layout(layout, captures)?;
+    let mut ptrs = Vec::new();
+    for (cap, offset) in captures.iter().zip(offsets) {
+        pointer_offsets(layout, cap, offset, &mut ptrs)?;
+    }
+    Ok((size, align, ptrs.into_iter().map(|p| p as u32).collect()))
+}
+
 /// Append the byte offset (from `base`) of every GC pointer slot in a value of
 /// `ty`, in address order.
 ///
@@ -75,13 +138,24 @@ pub fn pointer_offsets(
 ) -> Result<(), String> {
     match ty {
         Ty::Box(_) | Ty::String | Ty::Bytes | Ty::List(_) => out.push(base),
+        // A `Map` header is `{ entries, len, cap, cap2, index, count, mask }`
+        // (`codegen_llvm.rs` `emit_map_bodies`): the entries buffer at offset 0
+        // and the `u32` index buffer at `MAP_INDEX_OFFSET`. Both are base
+        // pointers, and each buffer names its own descriptor in its header.
+        Ty::Map(..) => {
+            out.push(base);
+            out.push(base + MAP_INDEX_OFFSET);
+        }
+        // A closure value is the fat `{ fn, env, drop }` (`codegen_llvm.rs`,
+        // closures). Only `env` is a GC pointer; `fn` and `drop` are code.
+        Ty::Closure { .. } => out.push(base + CLOSURE_ENV_OFFSET),
+        // A borrow owns nothing: the owner is walked where it is declared.
+        Ty::Ref { .. } => {}
         Ty::Struct(name) => {
-            let mut offset = 0;
-            for field in layout.struct_fields(name)? {
-                let (size, align) = layout.size_align(&field)?;
-                offset = align_up(offset, align);
-                pointer_offsets(layout, &field, base + offset, out)?;
-                offset += size;
+            let fields = layout.struct_fields(name)?;
+            let (_, _, offsets) = fields_layout(layout, &fields)?;
+            for (field, offset) in fields.iter().zip(offsets) {
+                pointer_offsets(layout, field, base + offset, out)?;
             }
         }
         Ty::Array(elem, count) => {
@@ -234,16 +308,35 @@ impl<'a> GcTypes<'a> {
         let mut offsets = Vec::new();
         pointer_offsets(layout, ty, 0, &mut offsets)?;
         let (size, align) = layout.size_align(ty)?;
-        let id = self.cache.borrow().len() as u64 + 1;
-        let flags = if offsets.is_empty() { KELP_GC_NOSCAN } else { 0 };
+        let offsets: Vec<u32> = offsets.into_iter().map(|o| o as u32).collect();
+        Ok(self.descriptor_raw(ctx, module, &key, size, align, &offsets))
+    }
+
+    /// A descriptor with the given shape, emitted once under `key`. Used for the
+    /// types that have no `Ty` of their own: a `Map` entry record and a closure
+    /// environment (`map_entry_layout`, `env_layout`). `key` names the global
+    /// and must be unique per shape.
+    pub fn descriptor_raw(
+        &self,
+        ctx: &'a Context,
+        module: &'a Module<'a>,
+        key: &str,
+        size: u64,
+        align: u64,
+        offsets: &[u32],
+    ) -> Value<'a> {
+        if let Some(existing) = self.cache.borrow().get(key) {
+            return *existing;
+        }
         let i32t = ctx.i32();
         let ptr = ctx.opaque_ptr();
+        let flags = if offsets.is_empty() { KELP_GC_NOSCAN } else { 0 };
         let (offsets_ptr, count) = if offsets.is_empty() {
             (ctx.const_null(ptr), 0)
         } else {
             let elems: Vec<Value<'a>> = offsets
                 .iter()
-                .map(|off| ctx.const_int(i32t, *off, false))
+                .map(|off| ctx.const_int(i32t, u64::from(*off), false))
                 .collect();
             let arr_ty = ctx.array_type(i32t, offsets.len() as u64);
             let arr = module.add_global(&format!("kelp_gc_ptrs_{key}"), arr_ty);
@@ -252,6 +345,7 @@ impl<'a> GcTypes<'a> {
             arr.set_internal_linkage();
             (arr, offsets.len() as u64)
         };
+        let id = self.cache.borrow().len() as u64 + 1;
         let fields = [
             ctx.const_int(i32t, id, false),
             ctx.const_int(i32t, size, false),
@@ -268,8 +362,8 @@ impl<'a> GcTypes<'a> {
         global.set_initializer(init);
         global.set_constant(true);
         global.set_internal_linkage();
-        self.cache.borrow_mut().insert(key, global);
-        Ok(global)
+        self.cache.borrow_mut().insert(key.to_string(), global);
+        global
     }
 }
 
@@ -439,5 +533,93 @@ mod hosted_identity {
         let normalized = actual.replace(&dir.display().to_string(), "@FIXTURE_DIR@");
         let golden = std::fs::read_to_string(dir.join("hosted_node.ll")).expect("read hosted fixture");
         assert_eq!(normalized, golden, "hosted IR differs from origin/main");
+    }
+}
+
+#[cfg(test)]
+mod container_layout {
+    //! The pointer slots of the container shapes, against a fixed layout: a
+    //! `String` or `List` header is 24 bytes with its buffer pointer first, a
+    //! `Map` header has its index at 32, a closure value's env is at 8.
+    use super::*;
+
+    struct Fixed;
+
+    impl GcLayout for Fixed {
+        fn struct_fields(&self, name: &str) -> Result<Vec<Ty>, String> {
+            Err(format!("no fields for {name} in this test"))
+        }
+        fn size_align(&self, ty: &Ty) -> Result<(u64, u64), String> {
+            Ok(match ty {
+                Ty::I32 => (4, 4),
+                Ty::I64 => (8, 8),
+                Ty::U8 => (1, 1),
+                Ty::Box(_) => (8, 8),
+                Ty::String | Ty::Bytes | Ty::List(_) => (24, 8),
+                Ty::Map(..) => (56, 8),
+                Ty::Closure { .. } => (24, 8),
+                other => return Err(format!("no layout for {other:?}")),
+            })
+        }
+    }
+
+    fn string_map() -> Ty {
+        Ty::Map(Box::new(Ty::String), Box::new(Ty::I32))
+    }
+
+    #[test]
+    fn a_string_and_a_list_header_point_at_their_buffer() {
+        let mut out = Vec::new();
+        pointer_offsets(&Fixed, &Ty::String, 0, &mut out).unwrap();
+        assert_eq!(out, vec![0]);
+        out.clear();
+        pointer_offsets(&Fixed, &Ty::List(Box::new(Ty::I64)), 0, &mut out).unwrap();
+        assert_eq!(out, vec![0]);
+    }
+
+    #[test]
+    fn a_bytes_buffer_has_no_pointer_slots() {
+        let mut out = Vec::new();
+        pointer_offsets(&Fixed, &Ty::U8, 0, &mut out).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_map_header_points_at_entries_and_index() {
+        let mut out = Vec::new();
+        pointer_offsets(&Fixed, &string_map(), 0, &mut out).unwrap();
+        assert_eq!(out, vec![0, MAP_INDEX_OFFSET]);
+    }
+
+    #[test]
+    fn a_map_entry_lists_the_key_string_and_no_value_pointer() {
+        let (size, align, ptrs) = map_entry_layout(&Fixed, &Ty::String, &Ty::I32).unwrap();
+        // { String (24), i32 (4), u8 } is 32 bytes with the value at 24.
+        assert_eq!((size, align), (32, 8));
+        assert_eq!(ptrs, vec![0]);
+    }
+
+    #[test]
+    fn a_map_entry_with_a_box_value_lists_its_pointer_after_the_key() {
+        let boxed = Ty::Box(Box::new(Ty::I64));
+        let (_, _, ptrs) = map_entry_layout(&Fixed, &Ty::String, &boxed).unwrap();
+        // The key is 24 bytes, the Box value starts at 24.
+        assert_eq!(ptrs, vec![0, 24]);
+    }
+
+    #[test]
+    fn a_closure_env_lists_each_pointer_capture_at_its_offset() {
+        let captures = vec![Ty::Box(Box::new(Ty::I32)), Ty::I64, Ty::String];
+        let (size, align, ptrs) = env_layout(&Fixed, &captures).unwrap();
+        assert_eq!((size, align), (40, 8));
+        assert_eq!(ptrs, vec![0, 16]);
+    }
+
+    #[test]
+    fn a_closure_value_names_its_env_pointer_only() {
+        let closure = Ty::Closure { params: vec![], ret: Box::new(Ty::Unit) };
+        let mut out = Vec::new();
+        pointer_offsets(&Fixed, &closure, 0, &mut out).unwrap();
+        assert_eq!(out, vec![CLOSURE_ENV_OFFSET]);
     }
 }
