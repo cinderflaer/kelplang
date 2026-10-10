@@ -748,6 +748,9 @@ mod container_layout {
         fn struct_fields(&self, name: &str) -> Result<Vec<Ty>, String> {
             Err(format!("no fields for {name} in this test"))
         }
+        fn enum_variants(&self, _name: &str) -> Option<Vec<Vec<Ty>>> {
+            None
+        }
         fn size_align(&self, ty: &Ty) -> Result<(u64, u64), String> {
             Ok(match ty {
                 Ty::I32 => (4, 4),
