@@ -20,3 +20,4 @@ pub mod env;
 pub mod io;
 pub mod net;
 pub mod proc;
+pub mod text;
