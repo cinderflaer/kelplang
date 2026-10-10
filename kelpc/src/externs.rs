@@ -663,7 +663,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     // success and one of `std/tls`'s `ERR_*` constants on failure, with a
     // sentence in `kelp_reason`. `kelp_tls_classify_verify` and
     // `kelp_tls_classify_error` (the two `static inline` helpers in
-    // `codegen_c::C_HEADERS`) own the translation from OpenSSL's error state,
+    // `cdecl::C_HEADERS`) own the translation from OpenSSL's error state,
     // so every body classifies the same way.
     (
         "std/tls",
@@ -799,14 +799,26 @@ mod tests {
              static kelp_Bytes kelp_bytes_alloc_raw(size_t n) {{\n    unsigned char* p = (unsigned char*)malloc(n + 1);\n    if (p == NULL) {{\n        kelp_panic(\"out of memory\");\n    }}\n    memset(p, 0, n + 1);\n    kelp_Bytes b;\n    b.data = p;\n    b.len = n;\n    b.cap = n;\n    return b;\n}}\n\
              static kelp_Bytes recv_raw(int kelp_fd, size_t kelp_max) {{\n{body}}}\n\
              int main(void) {{\n    int sv[2];\n    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {{\n        perror(\"socketpair\");\n        return 1;\n    }}\n    struct timeval tv;\n    tv.tv_sec = 0;\n    tv.tv_usec = 250000;\n    setsockopt(sv[0], SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);\n    struct timespec t0, t1;\n    clock_gettime(CLOCK_MONOTONIC, &t0);\n    kelp_Bytes b = recv_raw(sv[0], 0);\n    clock_gettime(CLOCK_MONOTONIC, &t1);\n    long us = (t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_nsec - t0.tv_nsec) / 1000L;\n    printf(\"%zu %ld\\n\", b.len, us);\n    return 0;\n}}\n",
-            headers = crate::codegen_c::C_HEADERS,
+            headers = crate::cdecl::C_HEADERS,
         );
 
         let dir = std::env::temp_dir().join(format!("kelp_recv_zero_{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a scratch directory for the harness");
         let bin = dir.join("recv_zero");
-        crate::driver::compile_c(&source, &bin, crate::opt::OptLevel::DEFAULT, &[], &[], &[], &[], false, None)
-            .unwrap_or_else(|e| panic!("the recv_raw harness did not compile: {}", e.message));
+        let source_path = dir.join("recv_zero.c");
+        std::fs::write(&source_path, &source).expect("the harness source is written");
+        let built = Command::new("cc")
+            .args(["-O0", "-fwrapv", "-pthread", "-o"])
+            .arg(&bin)
+            .arg(&source_path)
+            .arg("-lm")
+            .output()
+            .expect("could not invoke 'cc' for the recv_raw harness");
+        assert!(
+            built.status.success(),
+            "the recv_raw harness did not compile:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
 
         let out = Command::new(&bin)
             .stdout(Stdio::piped())
