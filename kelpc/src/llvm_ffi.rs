@@ -90,7 +90,7 @@ use llvm_sys::core::{
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
     LLVMSetAlignment, LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer,
     LLVMSetLinkage, LLVMSetMetadata, LLVMSetOrdering, LLVMSetSection, LLVMSetTarget,
-    LLVMSetVolatile,
+    LLVMSetThreadLocal, LLVMSetThreadLocalMode, LLVMSetVolatile,
     LLVMConstArray2, LLVMIsConstant,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVectorType,
     LLVMVoidTypeInContext,
@@ -872,6 +872,18 @@ impl<'ctx> Value<'ctx> {
     pub fn set_appending_linkage(&self) {
         // SAFETY: as above; the argument is a global handle's own ref.
         unsafe { LLVMSetLinkage(self.raw, LLVMLinkage::LLVMAppendingLinkage) };
+    }
+
+    /// Make a global thread-local with the initial-exec model
+    /// (`LLVMSetThreadLocal` and `LLVMSetThreadLocalMode`), the model the
+    /// runtime's own per-thread variables use: one load from the thread
+    /// pointer, no `__tls_get_addr` call.
+    pub fn set_thread_local_initial_exec(&self) {
+        // SAFETY: as above; the mode value is LLVM's `LLVMInitialExecTLSModel`.
+        unsafe {
+            LLVMSetThreadLocal(self.raw, 1);
+            LLVMSetThreadLocalMode(self.raw, llvm_sys::LLVMThreadLocalMode::LLVMInitialExecTLSModel);
+        }
     }
 
     /// Give a global (or a function) weak linkage (`LLVMSetLinkage` with

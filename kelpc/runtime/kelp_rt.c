@@ -9,7 +9,9 @@
    list is handed back to free() when the thread exits. Bigger or more aligned
    blocks go straight to malloc and free. Alloc and free must pass the same
    size and align, which the Box lowering does (an owned trait object reads
-   both from the vtable its box was allocated with). */
+   both from the vtable its box was allocated with).   The LLVM backend pops and pushes these lists inline (codegen_llvm.rs,
+   `box_alloc_in` and `box_free_in`), so the names, the array of
+   KELP_BOX_POOL_CLASSES heads and the int flag are a contract with it. */
 #define KELP_BOX_POOL_MAX 64
 #define KELP_BOX_POOL_CLASSES (KELP_BOX_POOL_MAX / 16)
 typedef struct kelp_BoxBlock { struct kelp_BoxBlock* next; } kelp_BoxBlock;

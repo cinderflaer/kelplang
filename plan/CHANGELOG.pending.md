@@ -24,6 +24,7 @@ empty on release.
 
 - `Box<T>` blocks of up to 64 bytes are recycled through per-thread free lists instead of malloc and free (about 3x less allocator time on binary-trees). Programs with their own allocator are unchanged.
 - The `Box` free lists read their per-thread state with the initial-exec TLS model, so each allocation skips a `__tls_get_addr` call.
+- A pooled `Box` allocation or release is inline in the generated code: a call into the runtime only when a size class is empty or a thread is new.
 
 ## compiler
 
