@@ -27,6 +27,9 @@ pub const DEFAULT_STOP_TIMEOUT_MS: usize = 10_000;
 pub struct BlockMeta {
     /// FREE, ACTIVE or LARGE (see heap.rs).
     pub state: u32,
+    /// Small objects marked in the current cycle (reset at cycle start). Sweep
+    /// compares it with the allocated count to skip fully live blocks.
+    pub live: u32,
     /// One byte per line; nonzero means the line holds a live object (set by mark).
     pub lines: [u8; LINES],
     /// One bit per 8-byte granule: a set bit marks an object header (ACTIVE only).
@@ -74,6 +77,12 @@ pub struct State {
     pub oom_hook: usize,    // 0 or an `extern "C" fn(*const u8)` address
     pub collecting: bool,
     pub cycles: usize,
+    /// Stop-the-world time in ns: total and the longest single pause (measurement).
+    pub pause_ns_total: u64,
+    pub pause_ns_max: u64,
+    /// Time in root scan and mark, and in sweep, summed over cycles (measurement).
+    pub mark_ns_total: u64,
+    pub sweep_ns_total: u64,
     pub allocs: usize,
 }
 

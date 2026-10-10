@@ -9,6 +9,7 @@ pub const MAP_PRIVATE: c_int = 0x02;
 pub const MAP_ANONYMOUS: c_int = 0x20;
 pub const MAP_NORESERVE: c_int = 0x4000;
 pub const CLOCK_REALTIME: c_int = 0;
+pub const CLOCK_MONOTONIC: c_int = 1;
 /// glibc's ETIMEDOUT on Linux.
 pub const ETIMEDOUT: c_int = 110;
 
@@ -50,6 +51,13 @@ unsafe extern "C" {
     pub fn pthread_cond_wait(c: *mut Opaque, m: *mut Opaque) -> c_int;
     pub fn pthread_cond_timedwait(c: *mut Opaque, m: *mut Opaque, abs: *const Timespec) -> c_int;
     pub fn pthread_cond_broadcast(c: *mut Opaque) -> c_int;
+}
+
+/// Monotonic nanoseconds (measurement only).
+pub fn now_ns() -> u64 {
+    let mut t = Timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { clock_gettime(CLOCK_MONOTONIC, &mut t) };
+    t.tv_sec as u64 * 1_000_000_000 + t.tv_nsec as u64
 }
 
 /// A deadline `ms` milliseconds from now on the clock `pthread_cond_timedwait` uses.

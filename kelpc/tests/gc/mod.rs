@@ -17,7 +17,7 @@ use core::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::process::Command;
 use std::sync::{Arc, Barrier, Mutex, MutexGuard};
 
-use crate::heap::{blk, desc_of, find_object, object_total, rd, total_for};
+use crate::heap::{blk, desc_of, find_object, object_total, rd, total_for, FREE};
 use crate::state::*;
 use crate::threads::{ROOTS, THREADS};
 use crate::types::*;
@@ -212,6 +212,10 @@ unsafe fn reset() {
     s.mark_len = 0;
     s.cycles = 0;
     s.allocs = 0;
+    s.pause_ns_total = 0;
+    s.pause_ns_max = 0;
+    s.mark_ns_total = 0;
+    s.sweep_ns_total = 0;
     s.scan_stacks = true;
     REQUEST.store(0, SeqCst);
 }
@@ -414,6 +418,7 @@ fn churn_ten_million_sixteen_byte_cells_keeps_heap_bounded() {
         kelp_gc_thread_attach();
         const N: usize = 10_000_000;
         for i in 0..N {
+            // LINK, not NODE: wr_scalar writes offset 8, which is a pointer slot of NODE.
             let p = kelp_gc_alloc(&LINK) as usize;
             assert_eq!(p % 8, 0);
             wr_scalar(p, i);
@@ -507,6 +512,153 @@ unsafe fn build_enum_roots() {
 
 /// Item 6: the enum tag is a u32 at `tag_off`. Variant 0 keeps its pointer
 /// alive; variant 1 has no pointer slots, so its pointer is not traced.
+/// Addresses the enum test expects to be live or dead after a collection. They
+/// live in statics, which are not scanned, so the test frame holds no copy.
+static ENUM_TRACED: Slot<usize> = Slot(UnsafeCell::new(0));
+static ENUM_UNTRACED: Slot<usize> = Slot(UnsafeCell::new(0));
+
+/// Builds the enum fixture in its own frame, so no pointer local outlives it.
+#[inline(never)]
+unsafe fn enum_fixture() {
+    let x = kelp_gc_alloc(&LINK) as usize;
+    let y = kelp_gc_alloc(&LINK) as usize;
+    let a = kelp_gc_alloc(&ENUM) as usize;
+    let b = kelp_gc_alloc(&ENUM) as usize;
+    core::ptr::write(a as *mut usize, x);
+    core::ptr::write((a + 8) as *mut u32, 0);
+    core::ptr::write(b as *mut usize, y);
+    core::ptr::write((b + 8) as *mut u32, 1);
+    (*ENUM_ROOTS.0.get())[0] = a;
+    (*ENUM_ROOTS.0.get())[1] = b;
+    *ENUM_TRACED.0.get() = x;
+    *ENUM_UNTRACED.0.get() = y;
+}
+
+/// Every shared object is marked once: a DAG where each node is named by two
+/// parents must count each node's bytes exactly once in the cycle's live total.
+#[inline(never)]
+unsafe fn build_shared_chain(n: usize) -> usize {
+    let mut next = 0usize;
+    for _ in 0..n {
+        let node = kelp_gc_alloc(&NODE) as usize;
+        core::ptr::write(node as *mut usize, next);
+        core::ptr::write((node + 8) as *mut usize, next);
+        next = node;
+    }
+    next
+}
+
+#[test]
+fn mark_counts_each_shared_object_once() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        const N: usize = 4000;
+        kelp_gc_register_root_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
+        *ROOT_SLOT.0.get() = build_shared_chain(N);
+        clobber_stack();
+        kelp_gc_collect();
+        let live = st().live;
+        assert_eq!(live, N * total_for(16), "each shared node marked and counted once");
+        let mut p = *ROOT_SLOT.0.get();
+        let mut count = 0usize;
+        while p != 0 {
+            assert_eq!(kelp_gc_is_heap_ptr(p as *const u8), 1, "chain node survives");
+            count += 1;
+            p = core::ptr::read(p as *const usize);
+        }
+        assert_eq!(count, N, "whole chain intact");
+        kelp_gc_unregister_root_region(ROOT_SLOT.0.get() as *mut u8);
+        kelp_gc_thread_detach();
+    }
+}
+
+/// Two garbage nodes, kept in statics so no test-frame local roots them.
+static DEAD_NODES: Slot<[usize; 2]> = Slot(UnsafeCell::new([0; 2]));
+
+#[inline(never)]
+unsafe fn build_interleaved(n: usize) -> usize {
+    let mut all = Vec::with_capacity(n);
+    for _ in 0..n {
+        all.push(kelp_gc_alloc(&LINK) as usize);
+    }
+    // Live chain through the even nodes only.
+    let mut head = 0usize;
+    let mut i = n;
+    while i > 0 {
+        i -= 1;
+        if i % 2 == 0 {
+            core::ptr::write(all[i] as *mut usize, head);
+            head = all[i];
+        }
+    }
+    *DEAD_NODES.0.get() = [all[1], all[n - 1]];
+    head
+}
+
+/// Sweep invariant: in a mixed block only the dead objects lose their start
+/// bits; live neighbours keep theirs. Half of a 512-node list is rooted, the
+/// other half is garbage interleaved with it.
+#[test]
+fn sweep_clears_only_dead_starts_in_mixed_blocks() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        kelp_gc_register_root_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
+        const N: usize = 512;
+        let head = build_interleaved(N);
+        *ROOT_SLOT.0.get() = head;
+        clobber_stack();
+        kelp_gc_collect();
+        // Live: every even node reachable from the head.
+        let mut p = head;
+        let mut live = 0usize;
+        while p != 0 {
+            assert_eq!(kelp_gc_is_heap_ptr(p as *const u8), 1, "live node keeps its start");
+            live += 1;
+            p = core::ptr::read(p as *const usize);
+        }
+        assert_eq!(live, N / 2, "every even node is on the chain");
+        for d in *DEAD_NODES.0.get() {
+            assert_eq!(kelp_gc_is_heap_ptr(d as *const u8), 0, "dead node loses its start");
+        }
+        kelp_gc_unregister_root_region(ROOT_SLOT.0.get() as *mut u8);
+        kelp_gc_thread_detach();
+    }
+}
+
+/// Sweep invariant: when nothing is reachable, every block is freed; no block
+/// stays ACTIVE with stale start bits or live lines.
+#[inline(never)]
+unsafe fn churn_garbage(n: usize) {
+    for _ in 0..n {
+        black_box(kelp_gc_alloc(&LINK));
+    }
+}
+
+#[test]
+fn sweep_frees_every_empty_block_without_residue() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        churn_garbage(200_000);
+        clobber_stack();
+        kelp_gc_collect();
+        let s = st();
+        assert_eq!(s.used_blocks, 0, "no block stays in use with nothing reachable");
+        assert_eq!(s.live, 0, "nothing marked");
+        for b in 0..s.nblocks {
+            let m = blk(b);
+            assert_eq!((*m).state, FREE, "block {b} is free");
+            assert!((*m).starts.iter().all(|&w| w == 0), "block {b} has no start bits");
+        }
+        kelp_gc_thread_detach();
+    }
+}
+
 #[test]
 fn enum_tag_is_read_as_u32_and_selects_the_variant() {
     let _g = serial();
@@ -601,6 +753,7 @@ fn stack_only_object_of_a_native_thread_survives_collections() {
     static DONE: AtomicBool = AtomicBool::new(false);
     let worker = std::thread::spawn(|| unsafe {
         kelp_gc_thread_attach();
+        // LINK: offset 8 is a scalar there, not a pointer slot.
         let p = kelp_gc_alloc(&LINK) as usize;
         core::ptr::write((p + 8) as *mut usize, 4242);
         READY.store(true, SeqCst);
@@ -699,7 +852,11 @@ fn threads_stop_the_world_and_keep_their_roots() {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
+    // The main thread is attached, so it must be in native state while it
+    // blocks on the workers; otherwise a worker's collection waits for it forever.
+    unsafe { kelp_gc_enter_native() };
     let all_ok = handles.into_iter().all(|h| h.join().expect("worker"));
+    unsafe { kelp_gc_leave_native() };
     unsafe {
         let s = st();
         eprintln!("threads: cycles {}", s.cycles);
@@ -1013,6 +1170,78 @@ fn reused_memory_reads_as_zero_in_both_spaces() {
     }
 }
 
+// ---- Collection-path benchmarks (ignored by default). Run one at a time in
+// their own process with a fixed heap cap, e.g.
+//   cargo test --release --no-run; ( ulimit -v 1048576; ... ) bench_binary_trees --ignored --exact
+// They print cycles, total and max stop-the-world pause, and wall time.
+
+fn report_pauses(label: &str, wall: f64) {
+    unsafe {
+        let s = st();
+        eprintln!(
+            "BENCH {label}: wall {wall:.3} s; cycles {}; pause total {:.2} ms (mark {:.2}, sweep {:.2}); pause max {:.3} ms; peak blocks {}",
+            s.cycles,
+            s.pause_ns_total as f64 / 1e6,
+            s.mark_ns_total as f64 / 1e6,
+            s.sweep_ns_total as f64 / 1e6,
+            s.pause_ns_max as f64 / 1e6,
+            s.peak_blocks
+        );
+    }
+}
+
+/// Binary-trees: a long-lived tree plus repeated short-lived trees of each depth.
+#[inline(never)]
+unsafe fn bt_make(d: u32) -> usize {
+    let n = kelp_gc_alloc(&NODE) as usize;
+    if d > 0 {
+        let l = bt_make(d - 1);
+        let r = bt_make(d - 1);
+        core::ptr::write(n as *mut usize, l);
+        core::ptr::write((n + 8) as *mut usize, r);
+    }
+    n
+}
+
+#[inline(never)]
+unsafe fn bt_check(n: usize) -> usize {
+    let l = core::ptr::read(n as *const usize);
+    if l == 0 {
+        return 1;
+    }
+    1 + bt_check(l) + bt_check(core::ptr::read((n + 8) as *const usize))
+}
+
+#[test]
+#[ignore]
+fn bench_binary_trees() {
+    const MAX_DEPTH: u32 = 16;
+    const MIN_DEPTH: u32 = 4;
+    unsafe {
+        kelp_gc_init(8 << 20, 128 << 20);
+        kelp_gc_thread_attach();
+        let start = std::time::Instant::now();
+        let long = bt_make(MAX_DEPTH);
+        let mut d = MIN_DEPTH;
+        let mut total = 0usize;
+        while d <= MAX_DEPTH {
+            let iters = 1usize << (MAX_DEPTH - d + MIN_DEPTH);
+            let mut check = 0;
+            for _ in 0..iters {
+                let t = bt_make(d);
+                check += bt_check(t);
+            }
+            total += check;
+            eprintln!("depth {d}: {iters} trees, {check} nodes");
+            d += 2;
+        }
+        assert_eq!(bt_check(long), (1usize << (MAX_DEPTH + 1)) - 1, "long-lived tree intact");
+        black_box(total);
+        report_pauses("binary-trees", start.elapsed().as_secs_f64());
+        kelp_gc_thread_detach();
+    }
+}
+
 /// Every object that is rooted survives collections with its header and
 /// payload intact, the collector finds it by its payload address, and no two
 /// objects overlap. Garbage bursts between the roots force many cycles.
@@ -1052,3 +1281,52 @@ fn every_allocation_is_reachable_and_no_two_overlap() {
         kelp_gc_thread_detach();
     }
 }
+
+static LIVE_HEAD: Slot<usize> = Slot(UnsafeCell::new(0));
+
+/// Large live set: a 1.5 M-node list rooted through a root region, churned
+/// with garbage so that each cycle marks the whole list.
+#[test]
+#[ignore]
+fn bench_large_live_set() {
+    const LIVE: usize = 1_500_000;
+    const CHURN: usize = 30_000_000;
+    unsafe {
+        kelp_gc_init(8 << 20, 128 << 20);
+        kelp_gc_thread_attach();
+        kelp_gc_register_root_region(LIVE_HEAD.0.get() as *mut u8, &ROOT_PTR);
+        let start = std::time::Instant::now();
+        for i in 0..LIVE {
+            let n = kelp_gc_alloc(&LINK) as usize;
+            core::ptr::write(n as *mut usize, *LIVE_HEAD.0.get());
+            core::ptr::write((n + 8) as *mut usize, i);
+            *LIVE_HEAD.0.get() = n;
+        }
+        for _ in 0..CHURN {
+            black_box(kelp_gc_alloc(&BYTES_16));
+        }
+        let mut p = *LIVE_HEAD.0.get();
+        let mut count = 0usize;
+        while p != 0 {
+            count += 1;
+            p = core::ptr::read(p as *const usize);
+        }
+        assert_eq!(count, LIVE, "live list intact");
+        kelp_gc_unregister_root_region(LIVE_HEAD.0.get() as *mut u8);
+        report_pauses("large-live-set", start.elapsed().as_secs_f64());
+        kelp_gc_thread_detach();
+    }
+}
+
+/// 16-byte payload with no pointers: churn filler.
+static BYTES_16: KelpGcType = KelpGcType {
+    id: 6,
+    size: 16,
+    align: 8,
+    flags: DESC_NOSCAN,
+    n_ptrs: 0,
+    ptr_off: core::ptr::null(),
+    tag_off: 0,
+    n_variants: 0,
+    variants: core::ptr::null(),
+};

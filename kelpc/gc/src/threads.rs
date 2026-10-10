@@ -266,7 +266,11 @@ pub unsafe fn collect() -> bool {
     }
     check_stopped(me);
     record_stop(me, RUNNING);
+    let t0 = sys::now_ns();
     mark::collect_locked();
+    let dt = sys::now_ns() - t0;
+    st().pause_ns_total += dt;
+    st().pause_ns_max = core::cmp::max(st().pause_ns_max, dt);
     st().collecting = false;
     REQUEST.store(0, Release);
     broadcast();
