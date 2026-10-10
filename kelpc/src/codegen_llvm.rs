@@ -647,6 +647,12 @@ fn lower_to_object(
     // offset uses the module's layout, and LLVM's default is not the host's (it
     // aligns an `i64` to 4). See `Module::set_data_layout`.
     module.set_data_layout(layout);
+    // A hosted program's functions carry unwind tables, as C functions do by
+    // default on x86-64: a worker's panic unwinds them with `pthread_exit`
+    // (see `kelp-rt/src/panic.rs`). A freestanding image has no thread to end.
+    if freestanding.is_none() {
+        module.set_unwind_tables();
+    }
 
     let mut lowering = Gen::new(
         ctx,
