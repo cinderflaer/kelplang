@@ -18,6 +18,7 @@ pub mod cleanup;
 pub mod panic;
 pub mod env;
 pub mod io;
+pub mod map;
 pub mod net;
 pub mod proc;
 pub mod text;
