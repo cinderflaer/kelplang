@@ -64,8 +64,9 @@ unsafe fn do_init(heap_min: usize, heap_max: usize) {
     let meta = map(meta_bytes);
     let types_bytes = TYPE_TABLE_IDS * 8;
     let types = map(types_bytes);
-    // One mark entry per possible object (minimum 16 bytes each).
-    let mark_cap = region_bytes / 16;
+    // Mark stack entries: one per pointer slot of a live object (at most one
+    // word per 8 bytes of heap), plus room for conservative root words.
+    let mark_cap = region_bytes / 8 + (1 << 21);
     let mark = map(mark_cap * 8);
     s.region = (raw + BLOCK - 1) & !(BLOCK - 1);
     s.region_bytes = region_bytes;

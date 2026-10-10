@@ -329,21 +329,28 @@ pub unsafe fn sweep() {
                 }
             }
             ACTIVE => {
-                for w in 0..64 {
-                    let mut bits = (*m).starts[w];
-                    while bits != 0 {
-                        let bit = bits.trailing_zeros() as usize;
-                        bits &= bits - 1;
-                        let h = base_of(b) + (w * 64 + bit) * 8;
-                        if (rd(h) & HDR_MARK) as usize != s.epoch {
-                            (*m).starts[w] &= !(1u64 << bit);
-                        }
-                    }
-                }
                 if (*m).lines.iter().all(|&x| x == 0) {
+                    // No marked line: every object here is dead. Free the block
+                    // without reading a single header.
                     (*m).state = FREE;
                     (*m).starts = [0; 64];
                     s.used_blocks -= 1;
+                } else {
+                    let allocated: u32 = (*m).starts.iter().map(|w| w.count_ones()).sum();
+                    // Every allocated object marked: nothing to clear.
+                    if (*m).live != allocated {
+                        for w in 0..64 {
+                            let mut bits = (*m).starts[w];
+                            while bits != 0 {
+                                let bit = bits.trailing_zeros() as usize;
+                                bits &= bits - 1;
+                                let h = base_of(b) + (w * 64 + bit) * 8;
+                                if (rd(h) & HDR_MARK) as usize != s.epoch {
+                                    (*m).starts[w] &= !(1u64 << bit);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
