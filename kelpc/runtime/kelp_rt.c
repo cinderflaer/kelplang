@@ -13,8 +13,11 @@
 #define KELP_BOX_POOL_MAX 64
 #define KELP_BOX_POOL_CLASSES (KELP_BOX_POOL_MAX / 16)
 typedef struct kelp_BoxBlock { struct kelp_BoxBlock* next; } kelp_BoxBlock;
-static _Thread_local kelp_BoxBlock* kelp_box_free_heads[KELP_BOX_POOL_CLASSES];
-static _Thread_local int kelp_box_registered = 0;
+/* initial-exec: the runtime object is built -fPIC, where the default TLS model
+   calls __tls_get_addr on every access, which would cost more than the list. */
+static __thread kelp_BoxBlock* kelp_box_free_heads[KELP_BOX_POOL_CLASSES]
+    __attribute__((tls_model("initial-exec")));
+static __thread int kelp_box_registered __attribute__((tls_model("initial-exec"))) = 0;
 static pthread_once_t kelp_box_key_once = PTHREAD_ONCE_INIT;
 static pthread_key_t kelp_box_key;
 
