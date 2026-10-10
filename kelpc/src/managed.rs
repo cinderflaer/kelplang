@@ -106,6 +106,15 @@ pub enum HeapSlot {
     ArrayElement,
     DatacField,
     ClosureCapture,
+    /// The argument a `thread.spawn` moves into its worker. It sits in a
+    /// malloc'd start record the collector does not scan (Tidepool, step 0).
+    ThreadArgument,
+    /// The value a worker returns through `join`. It sits in a malloc'd slot
+    /// the collector does not scan.
+    ThreadResult,
+    /// The value a `Mutex` or `RwLock` holds. The record is malloc'd, so the
+    /// collector does not scan it.
+    LockValue,
 }
 
 impl HeapSlot {
@@ -118,7 +127,18 @@ impl HeapSlot {
             HeapSlot::ArrayElement => "an array element",
             HeapSlot::DatacField => "a field of a heap-resident datac",
             HeapSlot::ClosureCapture => "a value captured by a closure environment",
+            HeapSlot::ThreadArgument => "a thread's argument",
+            HeapSlot::ThreadResult => "a thread's result",
+            HeapSlot::LockValue => "the value of a Mutex or RwLock",
         }
+    }
+
+    /// The runtime-record positions, where a memory value is refused as well as
+    /// a resource: the collector does not scan the malloc'd record that holds
+    /// the value, so a collection could free it. Until the dynamic root table
+    /// exists (Tidepool, section 3), the value must be a number or a resource.
+    fn is_runtime_record(self) -> bool {
+        matches!(self, HeapSlot::ThreadArgument | HeapSlot::ThreadResult | HeapSlot::LockValue)
     }
 }
 
@@ -329,8 +349,65 @@ pub fn check_heap_uses(
     for u in ordered {
         let kind = resolve(&u.ty, decls);
         check_heap_slot(u.slot, &u.ty.display(), kind, u.span)?;
+        if u.slot.is_runtime_record() && kind == ResourceKind::Memory && holds_collected(&u.ty, decls) {
+            return Err(runtime_record_diagnostic(u.slot, &u.ty.display(), u.span));
+        }
     }
     Ok(())
+}
+
+/// The refusal for a memory value that holds collected memory in a runtime
+/// record (a thread's argument or result, or a Mutex or RwLock value). The
+/// record is malloc'd, and the collector does not scan it, so a collection
+/// could free the value while the program still uses it.
+fn runtime_record_diagnostic(slot: HeapSlot, ty_name: &str, at: Span) -> Diagnostic {
+    Diagnostic::new(
+        format!(
+            "'{ty_name}' cannot be {} in managed mode: the collector does not yet scan the values a thread or a lock holds outside the heap, so a collection could free '{ty_name}' while the program still uses it. Use a number or a resource there",
+            slot.describe()
+        ),
+        at,
+        "",
+    )
+}
+
+/// Whether a value of type `ty` holds collected memory somewhere in it: a
+/// `String`, `Bytes`, `List`, `Map`, `Box`, an array, a closure, or a
+/// declaration with one of those among its fields. A scalar, a borrow and a
+/// resource do not count here (a resource is refused by its own check). An
+/// unknown declaration counts, so an undecided type is never let in.
+pub fn holds_collected(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>) -> bool {
+    let mut path = Vec::new();
+    holds_walk(ty, decls, &mut path)
+}
+
+fn holds_walk(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>, path: &mut Vec<String>) -> bool {
+    match ty {
+        Ty::Bytes | Ty::String | Ty::View | Ty::List(_) | Ty::Map(_, _) | Ty::Box(_) | Ty::BoxDyn { .. } => true,
+        Ty::Closure { .. } => true,
+        Ty::Array(elem, _) => holds_walk(elem, decls, path),
+        Ty::Struct(name) => {
+            if STDLIB_RESOURCE_STRUCTS.contains(&name.as_str()) {
+                return false;
+            }
+            if STDLIB_MEMORY_STRUCTS.contains(&name.as_str()) {
+                return true;
+            }
+            if path.iter().any(|p| p == name) {
+                // A recursive declaration reaches itself only through a
+                // container, which already answered true.
+                return false;
+            }
+            let Some(facts) = decls(name.as_str()) else {
+                return true;
+            };
+            path.push(name.clone());
+            let held = facts.fields.iter().any(|f| holds_walk(f, decls, path));
+            path.pop();
+            held
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -596,6 +673,17 @@ mod tests {
             resolve(&Ty::Struct("Missing".into()), &decls),
             ResourceKind::Declared
         );
+    }
+
+    #[test]
+    fn a_value_holding_collected_memory_is_not_a_thread_or_lock_value() {
+        let none = |_: &str| -> Option<DeclFacts> { None };
+        assert!(!holds_collected(&Ty::I64, &none));
+        assert!(!holds_collected(&Ty::Thread(Box::new(Ty::I32)), &none));
+        assert!(holds_collected(&Ty::String, &none));
+        assert!(holds_collected(&list(Ty::I32), &none));
+        let d = runtime_record_diagnostic(HeapSlot::LockValue, "List<i32>", span());
+        assert!(d.message.contains("'List<i32>' cannot be the value of a Mutex or RwLock"), "{}", d.message);
     }
 
     #[test]
