@@ -1,0 +1,38 @@
+// churn-string-split: build a comma-separated String of 20000 short pieces, split it into owned
+// Strings, fold their bytes, and drop the pieces. 25 rounds.
+impl "std/str"
+
+fun main() {
+    var total: i64 = 0
+    var round: i64 = 0
+    while round < 25 {
+        var s = String.empty()
+        var i: i64 = 0
+        while i < 20000 {
+            s.push_str("p")
+            val num = str.from_i64(i * 7 + round)
+            s.push_str(num.as_str())
+            s.push_str(",")
+            i = i + 1
+        }
+        val pieces = str.split(s.as_str(), ",")
+        var count: i64 = 0
+        var k: usize = 0
+        while k < pieces.len() {
+            val p = pieces.get(k).as_str()
+            val len = str.len(p)
+            if len > 0 {
+                count = count + 1
+                var b: usize = 0
+                while b < len {
+                    total = (total * 31 + str.byte(p, b).to_i64()) % 1000000007
+                    b = b + 1
+                }
+            }
+            k = k + 1
+        }
+        total = (total + count) % 1000000007
+        round = round + 1
+    }
+    print("churn-string-split rounds=25 checksum=$total")
+}

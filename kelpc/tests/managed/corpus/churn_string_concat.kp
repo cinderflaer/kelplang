@@ -1,0 +1,29 @@
+// churn-string-concat: build a String by appending pieces in a loop, hash its bytes through a
+// View, and drop it. 300 rounds of 2000 appends each.
+impl "std/str"
+
+fun main() {
+    var total: i64 = 0
+    var round: i64 = 0
+    while round < 300 {
+        var s = String.empty()
+        var i: i64 = 0
+        while i < 2000 {
+            s.push_str("ab")
+            val num = str.from_i64(i + round)
+            s.push_str(num.as_str())
+            i = i + 1
+        }
+        val v = s.view()
+        val n = s.len()
+        var p: usize = 0
+        var h: i64 = 0
+        while p < n {
+            h = (h * 31 + v.get(p).to_i64()) % 1000000007
+            p = p + 1
+        }
+        total = (total + h + n.to_i64()) % 1000000007
+        round = round + 1
+    }
+    print("churn-string-concat rounds=300 checksum=$total")
+}
