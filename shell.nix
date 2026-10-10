@@ -40,7 +40,7 @@ pkgs.mkShell {
   # later change. This adds only the lld binaries and does not touch `cc`.
   # `gdb` is the debugger the debug-info test (`kelpc/tests/llvm_debug_info.rs`) runs
   # to resolve a SIGFPE backtrace to a `.kp` line. Without it that test fails.
-  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config pkgs.gtk4.dev pkgs.llvmPackages_21.lld pkgs.gdb ];
+  packages = [ llvm.dev llvm.lib pkgs.openssl.out pkgs.openssl.dev pkgs.pkg-config pkgs.gtk4.dev pkgs.llvmPackages_21.lld pkgs.gdb ];
 
   LLVM_SYS_211_PREFIX = llvmPrefix;
 }
