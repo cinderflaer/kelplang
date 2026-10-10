@@ -10,6 +10,9 @@ use crate::opt::OptLevel;
 /// link time, so `kelpc` needs nothing beside its own binary and does not depend
 /// on its install location (MK7 §3.2).
 static RUNTIME_OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kelp_rt.o"));
+/// The managed runtime object (`KELP_GC_MANAGED`): the same runtime, with its
+/// byte buffers allocated from the collector. A managed link takes it.
+static RUNTIME_OBJECT_MANAGED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kelp_rt_managed.o"));
 /// The Rust runtime archive, built from `kelp-rt/` by `build.rs`. Embedded but not
 /// linked yet: the link switches to it in stage 1 WP7.
 #[allow(dead_code)]
@@ -364,7 +367,9 @@ fn link_llvm_objects_with_archive(
         std::process::id(),
         RUNTIME_TMP.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&runtime_path, RUNTIME_OBJECT).map_err(|e| CompileError {
+    // A managed link (the collector archive is named) takes the managed runtime.
+    let runtime_bytes = if gc_archive.is_some() { RUNTIME_OBJECT_MANAGED } else { RUNTIME_OBJECT };
+    std::fs::write(&runtime_path, runtime_bytes).map_err(|e| CompileError {
         message: format!(
             "could not write the runtime object to '{}': {e}",
             runtime_path.display()
