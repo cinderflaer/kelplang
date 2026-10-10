@@ -81,8 +81,40 @@ fn bake_build_info() {
     println!("cargo:rustc-env=KELPC_LLVM_VERSION={llvm}");
 }
 
+/// The directory holding `name` as `cc` sees it (`cc -print-file-name=<name>`),
+/// or `None` when `cc` does not know the file. The result is empty, not an
+/// error, so a build without a usable `cc` still succeeds: `sysroot.rs` then
+/// falls back to the system directories at run time.
+fn cc_file_dir(name: &str) -> String {
+    let path = first_line(
+        Command::new("cc")
+            .arg(format!("-print-file-name={name}"))
+            .output()
+            .ok(),
+    )
+    .map(PathBuf::from);
+    // `cc` echoes the bare name back when it cannot find the file.
+    path.filter(|p| p.is_absolute() && p.is_file())
+        .and_then(|p| p.parent().map(|d| d.display().to_string()))
+        .unwrap_or_default()
+}
+
+/// Records the glibc crt, libc and gcc library directories for `sysroot.rs`
+/// (`KELPC_CRT_DIR`, `KELPC_LIBC_DIR`, `KELPC_GCC_LIB_DIR`). Build time only:
+/// kelpc itself does not run `cc` to find them.
+fn bake_sysroot_dirs() {
+    println!("cargo:rerun-if-env-changed=CC");
+    let crt = cc_file_dir("crti.o");
+    let libc = cc_file_dir("libc.so");
+    let gcc = cc_file_dir("crtbeginS.o");
+    println!("cargo:rustc-env=KELPC_CRT_DIR={crt}");
+    println!("cargo:rustc-env=KELPC_LIBC_DIR={libc}");
+    println!("cargo:rustc-env=KELPC_GCC_LIB_DIR={gcc}");
+}
+
 fn main() {
     bake_build_info();
+    bake_sysroot_dirs();
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"),
     );

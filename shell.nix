@@ -35,7 +35,10 @@ pkgs.mkShell {
   # `pkgs.gtk4.dev` supplies the `gtk4.pc` that a Polyp consumer's `[extern."deps/polyp/gtk"]`
   # (`pkg_config = "gtk4"`) asks for at compile time. Polyp's `lib.kp` imports the GTK backend
   # unconditionally, so any program that builds against Polyp needs the GTK headers in this shell.
-  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config pkgs.gtk4.dev ];
+  # `ld.lld` (LLVM 21, the same line as `llvm` above). Stage 3's lookup in
+  # `kelpc/src/sysroot.rs` finds it here; the hosted link switches to it in a
+  # later change. This adds only the lld binaries and does not touch `cc`.
+  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config pkgs.gtk4.dev pkgs.llvmPackages_21.lld ];
 
   LLVM_SYS_211_PREFIX = llvmPrefix;
 }

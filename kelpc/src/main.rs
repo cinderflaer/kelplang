@@ -24,6 +24,7 @@ mod preprocess;
 mod resolve;
 mod sha256;
 mod stdlib;
+mod sysroot;
 mod timings;
 mod tir;
 mod types;
