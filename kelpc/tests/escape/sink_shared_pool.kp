@@ -1,0 +1,11 @@
+// T15 refusal: the Box is pushed into a List, which is a shared-pool object.
+fun stash(n: i32) {
+    var xs: List<Box<i32>> = List.empty()
+    val b = Box.of(n)
+    xs.push(b)
+    print(xs.len())
+}
+
+fun main() {
+    stash(1)
+}

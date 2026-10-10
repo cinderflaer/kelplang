@@ -12,6 +12,7 @@ mod doc;
 mod driver;
 mod extern_agg;
 mod extern_object;
+mod escape;
 mod externs;
 mod fmt;
 mod freestanding;

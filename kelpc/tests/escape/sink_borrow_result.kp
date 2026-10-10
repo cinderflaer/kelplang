@@ -1,0 +1,13 @@
+// T15 refusal: a borrow of the Box is passed to a call whose result holds a
+// reference, so the borrow reaches the result.
+datac Cell(val v: i32)
+
+fun peek() {
+    val b = Box.of(Cell(v = 1))
+    val r = b.get()
+    print(r.v)
+}
+
+fun main() {
+    peek()
+}

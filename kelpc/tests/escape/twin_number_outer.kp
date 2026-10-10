@@ -1,0 +1,14 @@
+// T45 twin: a block value is read into a number, and the number is stored in
+// a place outside the body. The Box itself never leaves the body.
+datac Acc(var total: i32)
+
+fun record(n: i32, acc: mut Acc) {
+    val b = Box.of(n)
+    acc.total = b.get()
+}
+
+fun main() {
+    var acc = Acc(total = 0)
+    record(5, acc)
+    print(acc.total)
+}

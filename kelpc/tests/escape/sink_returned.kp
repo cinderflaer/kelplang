@@ -1,0 +1,9 @@
+// T15 refusal: the Box is returned from its body.
+fun make(n: i32).return: Box<i32> {
+    return Box.of(n)
+}
+
+fun main() {
+    val b = make(1)
+    print(b.get())
+}

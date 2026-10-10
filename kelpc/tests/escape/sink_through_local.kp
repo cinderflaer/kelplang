@@ -1,0 +1,10 @@
+// T15 refusal: the Box leaves through a local that is returned.
+fun make(n: i32).return: Box<i32> {
+    val b = Box.of(n)
+    return b
+}
+
+fun main() {
+    val b = make(1)
+    print(b.get())
+}

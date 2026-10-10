@@ -1,0 +1,13 @@
+// T15 refusal: the Box is stored in a field of a parameter, which the body
+// does not own.
+datac Holder(var slot: Box<i32>)
+
+fun fill(h: mut Holder, n: i32) {
+    h.slot = Box.of(n)
+}
+
+fun main() {
+    var h = Holder(slot = Box.empty())
+    fill(h, 7)
+    print(h.slot.get())
+}

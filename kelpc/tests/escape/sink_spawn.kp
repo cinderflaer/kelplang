@@ -1,0 +1,14 @@
+// T15 refusal: the Box is passed to a thread spawn, which crosses to a worker.
+impl "std/thread"
+impl "std/result"
+fun worker(b: move Box<i32>).return: i32 {
+    return b.get()
+}
+
+fun main() {
+    val h = thread.spawn(worker, Box.of(4))
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+}

@@ -1,0 +1,13 @@
+// T15 refusal: the Box is moved by value into a parameter of another function.
+fun consume(b: move Box<i32>) {
+    print(b.get())
+}
+
+fun run(n: i32) {
+    val b = Box.of(n)
+    consume(b)
+}
+
+fun main() {
+    run(2)
+}

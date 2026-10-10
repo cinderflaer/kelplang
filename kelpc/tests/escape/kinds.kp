@@ -1,0 +1,12 @@
+// One site of each kind the analysis names outside Box.of: a Box.set element,
+// a closure literal, and a List constructor.
+fun main() {
+    var b: Box<i32> = Box.empty()
+    b.set(7)
+    val n = 3
+    val f = fun() .return: i32 = n + 1
+    var xs: List<i32> = List.empty()
+    xs.push(f())
+    print(b.get())
+    print(xs.len())
+}

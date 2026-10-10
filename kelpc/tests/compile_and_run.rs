@@ -18333,3 +18333,26 @@ fn the_doc_generator_never_emits_an_em_or_en_dash() {
     assert!(pages >= 8, "expected at least 8 generated pages, got {pages}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// Tidepool step 2a, T45: safe twins. Each is an ordinary program that compiles
+// and prints the expected line, and the escape analysis (kelpc/src/escape.rs)
+// accepts its block values. Their refusal twins are unit tests in that file.
+#[test]
+fn escape_twin_block_value_returns_a_number() {
+    assert_compiles_and_runs("tests/escape/twin_returns_number.kp", "5\n");
+}
+
+#[test]
+fn escape_twin_block_value_used_only_inside_its_body() {
+    assert_compiles_and_runs("tests/escape/twin_local_use.kp", "6\n");
+}
+
+#[test]
+fn escape_twin_borrowing_method_with_a_plain_result() {
+    assert_compiles_and_runs("tests/escape/twin_method_plain_result.kp", "false\n3\n");
+}
+
+#[test]
+fn escape_twin_number_stored_in_an_outer_variable() {
+    assert_compiles_and_runs("tests/escape/twin_number_outer.kp", "5\n");
+}

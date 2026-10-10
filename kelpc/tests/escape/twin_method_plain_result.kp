@@ -1,0 +1,11 @@
+// T45 twin: methods with a borrowed receiver are called on a block value, and
+// their results hold no reference (a bool, and an owned value taken out).
+datac Cell(val v: i32)
+
+fun main() {
+    var b = Box.of(Cell(v = 3))
+    val empty = b.is_empty()
+    val c = b.take()
+    print(empty)
+    print(c.v)
+}

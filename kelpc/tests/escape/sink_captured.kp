@@ -1,0 +1,11 @@
+// T15 refusal: the Box is captured by a closure literal, whose environment is
+// shared-pool memory.
+fun make(n: i32) {
+    val b = Box.of(n)
+    val f = fun() .return: i32 = b.get()
+    print(f())
+}
+
+fun main() {
+    make(3)
+}
