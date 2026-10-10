@@ -594,6 +594,15 @@ impl<'a> crate::gc_descr::GcLayout for Gen<'a> {
         let t = self.lty2(ty)?;
         Ok((self.layout.abi_size_of(t), self.layout.abi_alignment_of(t) as u64))
     }
+
+    fn enum_variants(&self, name: &str) -> Option<Vec<Vec<Ty>>> {
+        self.program.enums.iter().find(|e| e.name == name).map(|e| {
+            e.variants
+                .iter()
+                .map(|v| v.fields.iter().map(|f| f.ty.clone()).collect())
+                .collect()
+        })
+    }
 }
 
 /// Lower one module and write its object: the per-module half of the backend.
@@ -3529,7 +3538,9 @@ impl<'a> Gen<'a> {
             let llvm_ty = ctx.struct_type(&struct_tag(&e.name));
             self.structs.insert(e.name.clone(), llvm_ty);
             let union_ty = ctx.struct_type(&enum_union_name(&e.name));
-            let (tag_bytes, tag_signed) = e.tag_storage();
+            // A managed build's enum tag is always an i32 (`kelp_gc.h`: the
+            // descriptor reads a u32 at tag_off), whatever `repr` names.
+            let (tag_bytes, tag_signed) = if self.managed { (4, true) } else { e.tag_storage() };
             let tag_ty = enum_tag_llvm_type(ctx, tag_bytes);
             let variants = e
                 .variants

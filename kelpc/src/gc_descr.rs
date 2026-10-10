@@ -23,6 +23,8 @@ use crate::types::{ty_mangle, Ty};
 /// `KELP_GC_NOSCAN` in the descriptor's `flags`: the payload has no GC pointer
 /// slots, so the collector never reads it (paper 3.2).
 pub const KELP_GC_NOSCAN: u64 = 1;
+/// `KELP_GC_ENUM` in the descriptor's `flags`: the tag selects a variant's pointer list.
+pub const KELP_GC_ENUM: u64 = 2;
 
 /// The C-ABI symbols WP3 emits calls to (paper 3.4). WP1 defines them; until it
 /// lands, the stub in `tests/managed_lower/gc_stub.rs` fixes the same
@@ -51,6 +53,9 @@ pub trait GcLayout {
     fn struct_fields(&self, name: &str) -> Result<Vec<Ty>, String>;
     /// The ABI `(size, align)` of a value of `ty` in the target's layout.
     fn size_align(&self, ty: &Ty) -> Result<(u64, u64), String>;
+    /// The payload field types of each variant of the enum `name`, in
+    /// declaration order, or `None` when `name` is not an enum.
+    fn enum_variants(&self, name: &str) -> Option<Vec<Vec<Ty>>>;
 }
 
 fn align_up(value: u64, align: u64) -> u64 {
@@ -158,6 +163,11 @@ pub fn pointer_offsets(
         // A borrow owns nothing: the owner is walked where it is declared.
         Ty::Ref { .. } => {}
         Ty::Struct(name) => {
+            if layout.enum_variants(name).is_some() {
+                return Err(format!(
+                    "managed mode describes the enum '{name}' only as a heap object (a Box payload or a List element); an enum stored inside a datac is not described yet"
+                ));
+            }
             let fields = layout.struct_fields(name)?;
             let (_, _, offsets) = fields_layout(layout, &fields)?;
             for (field, offset) in fields.iter().zip(offsets) {
@@ -261,6 +271,8 @@ pub struct GcTypes<'a> {
     /// ptr variants }`. The field order and widths match the C struct, so the
     /// LLVM layout and the C layout are the same 48 bytes.
     pub descr_ty: Type<'a>,
+    /// `struct kelp_gc_variant`: `{ u32 n_ptrs, ptr ptr_off }`, one per enum variant.
+    pub variant_ty: Type<'a>,
     /// `void* kelp_gc_alloc(const kelp_gc_type* t)`.
     pub alloc: (LlvmFunction<'a>, FnType<'a>),
     /// `void kelp_gc_init(size_t heap_min, size_t heap_max)`, called once from
@@ -293,6 +305,8 @@ impl<'a> GcTypes<'a> {
             descr_ty,
             &[i32t, i32t, i32t, i32t, i32t, ptr, i32t, i32t, ptr],
         );
+        let variant_ty = ctx.struct_type("kelp_gc_variant");
+        ctx.struct_set_body(variant_ty, &[i32t, ptr]);
         let alloc_ty = ctx.fn_type(ptr, &[ptr], false);
         let alloc = (module.add_function(GC_ALLOC, alloc_ty), alloc_ty);
         let array_ty = ctx.fn_type(ptr, &[ptr, ctx.i64()], false);
@@ -306,6 +320,7 @@ impl<'a> GcTypes<'a> {
         let thread_detach = (module.add_function(GC_THREAD_DETACH, thread_ty), thread_ty);
         GcTypes {
             descr_ty,
+            variant_ty,
             alloc,
             alloc_array,
             init,
@@ -330,11 +345,102 @@ impl<'a> GcTypes<'a> {
         if let Some(existing) = self.cache.borrow().get(&key) {
             return Ok(*existing);
         }
+        if let Ty::Struct(name) = ty {
+            if let Some(variants) = layout.enum_variants(name) {
+                let (size, align) = layout.size_align(ty)?;
+                return self.enum_descriptor(ctx, module, layout, &key, size, align, &variants);
+            }
+        }
         let mut offsets = Vec::new();
         pointer_offsets(layout, ty, 0, &mut offsets)?;
         let (size, align) = layout.size_align(ty)?;
         let offsets: Vec<u32> = offsets.into_iter().map(|o| o as u32).collect();
         Ok(self.descriptor_raw(ctx, module, &key, size, align, &offsets))
+    }
+
+    /// The descriptor of an enum (`KELP_GC_ENUM`): the tag is the u32 at offset
+    /// 0 of the `{ tag, union }` struct, the union starts at the first offset
+    /// past the tag that its widest payload's alignment allows, and each
+    /// variant lists its own pointer slots from the payload start. The variant
+    /// table is indexed by the tag value.
+    fn enum_descriptor(
+        &self,
+        ctx: &'a Context,
+        module: &'a Module<'a>,
+        layout: &dyn GcLayout,
+        key: &str,
+        size: u64,
+        align: u64,
+        variants: &[Vec<Ty>],
+    ) -> Result<Value<'a>, String> {
+        if let Some(existing) = self.cache.borrow().get(key) {
+            return Ok(*existing);
+        }
+        let i32t = ctx.i32();
+        let ptr = ctx.opaque_ptr();
+        let mut payloads = Vec::with_capacity(variants.len());
+        let mut union_align = 1u64;
+        for fields in variants {
+            let (_, field_align, offsets) = fields_layout(layout, fields)?;
+            union_align = union_align.max(field_align);
+            payloads.push((fields, offsets));
+        }
+        let union_off = align_up(4, union_align);
+        let mut any_ptr = false;
+        let mut per_variant = Vec::with_capacity(payloads.len());
+        for (fields, offsets) in &payloads {
+            let mut ptrs = Vec::new();
+            for (field, offset) in fields.iter().zip(offsets) {
+                pointer_offsets(layout, field, union_off + offset, &mut ptrs)?;
+            }
+            any_ptr |= !ptrs.is_empty();
+            per_variant.push(ptrs.into_iter().map(|p| p as u32).collect::<Vec<u32>>());
+        }
+        let variant_ty = self.variant_ty;
+        let mut entries = Vec::with_capacity(per_variant.len());
+        for (index, ptrs) in per_variant.iter().enumerate() {
+            let (count, slots) = if ptrs.is_empty() {
+                (0, ctx.const_null(ptr))
+            } else {
+                let elems: Vec<Value<'a>> =
+                    ptrs.iter().map(|off| ctx.const_int(i32t, u64::from(*off), false)).collect();
+                let arr_ty = ctx.array_type(i32t, ptrs.len() as u64);
+                let arr = module.add_global(&format!("kelp_gc_ptrs_{key}_{index}"), arr_ty);
+                arr.set_initializer(ctx.const_array(i32t, &elems));
+                arr.set_constant(true);
+                arr.set_internal_linkage();
+                (ptrs.len() as u64, arr)
+            };
+            entries.push(ctx.const_named_struct(variant_ty, &[ctx.const_int(i32t, count, false), slots]));
+        }
+        let variants_global = module.add_global(
+            &format!("kelp_gc_variants_{key}"),
+            ctx.array_type(variant_ty, entries.len() as u64),
+        );
+        variants_global.set_initializer(ctx.const_array(variant_ty, &entries));
+        variants_global.set_constant(true);
+        variants_global.set_internal_linkage();
+        let flags = KELP_GC_ENUM | if any_ptr { 0 } else { KELP_GC_NOSCAN };
+        let id = self.cache.borrow().len() as u64 + 1;
+        assert!(id < U8_BUFFER_DESCR_ID, "descriptor table reached the reserved u8 buffer id");
+        let fields = [
+            ctx.const_int(i32t, id, false),
+            ctx.const_int(i32t, size, false),
+            ctx.const_int(i32t, align, false),
+            ctx.const_int(i32t, flags, false),
+            ctx.const_int(i32t, 0, false),
+            ctx.const_null(ptr),
+            ctx.const_int(i32t, 0, false),
+            ctx.const_int(i32t, entries.len() as u64, false),
+            variants_global,
+        ];
+        let init = ctx.const_named_struct(self.descr_ty, &fields);
+        let global = module.add_global(&format!("kelp_gc_type_{key}"), self.descr_ty);
+        global.set_initializer(init);
+        global.set_constant(true);
+        global.set_internal_linkage();
+        self.cache.borrow_mut().insert(key.to_string(), global);
+        Ok(global)
     }
 
     /// A descriptor with the given shape, emitted once under `key`. Used for the
