@@ -1,0 +1,19 @@
+multipart/form-data; boundary=xXboundaryXx
+--xXboundaryXx\r
+Content-Disposition: form-data; name="content"\r
+\r
+hello\r
+--xXboundaryXx\r
+Content-Disposition: form-data; name="a%22b%0D%0AX: y"\r
+\r
+v\r
+--xXboundaryXx\r
+Content-Disposition: form-data; name="file"; filename="n%22ote.txt"\r
+Content-Type: text/plain\r
+\r
+line1
+line2\r
+--xXboundaryXx--\r
+
+multipart/form-data; boundary=xXboundaryXx
+POST
