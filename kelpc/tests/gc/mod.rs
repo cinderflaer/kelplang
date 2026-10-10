@@ -17,7 +17,7 @@ use core::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::process::Command;
 use std::sync::{Arc, Barrier, Mutex, MutexGuard};
 
-use crate::heap::{blk, desc_of, rd, total_for};
+use crate::heap::{blk, desc_of, find_object, object_total, rd, total_for};
 use crate::state::*;
 use crate::threads::{ROOTS, THREADS};
 use crate::types::*;
@@ -935,5 +935,120 @@ fn measure_heap_lock_contention_four_threads() {
             rate4 / rate1
         );
         assert_eq!(a4, 4_000_000, "every allocation counted");
+    }
+}
+
+// ---- Allocation invariants (zeroing, reachability, no overlap). ----
+
+/// Payload sizes for the mixed rounds. 16 to 3000 bytes use the line-hole
+/// space; 9000 bytes (with its header) is above LARGE_MIN and uses the run space.
+const MIX_BYTES: [usize; 6] = [16, 24, 100, 1000, 3000, 9000];
+
+/// A root region of `n` pointer slots, zeroed and registered. The slots and
+/// layout are leaked; the caller unregisters with `kelp_gc_unregister_root_region`.
+unsafe fn register_pointer_roots(n: usize) -> *mut usize {
+    let slots: &'static mut [usize] = Box::leak(vec![0usize; n].into_boxed_slice());
+    let offs: &'static [u32] = Box::leak((0..n as u32).map(|i| i * 8).collect::<Vec<_>>().into_boxed_slice());
+    let layout: &'static KelpGcType = Box::leak(Box::new(KelpGcType {
+        id: 0,
+        size: (n * 8) as u32,
+        align: 8,
+        flags: 0,
+        n_ptrs: n as u32,
+        ptr_off: offs.as_ptr(),
+        tag_off: 0,
+        n_variants: 0,
+        variants: core::ptr::null(),
+    }));
+    let base = slots.as_mut_ptr();
+    kelp_gc_register_root_region(base as *mut u8, layout);
+    base
+}
+
+/// Allocate `n` byte arrays, one per MIX_BYTES size class, and store each in
+/// root slot `i` before filling its payload with `fill`. Byte arrays are
+/// NOSCAN, so the fill cannot forge a pointer slot. Returns the number of
+/// payload bytes that were nonzero when handed out.
+unsafe fn fill_round(slots: *mut usize, n: usize, fill: u8) -> usize {
+    let mut dirty = 0;
+    for i in 0..n {
+        let len = MIX_BYTES[i % MIX_BYTES.len()];
+        let p = kelp_gc_alloc_array(&BYTES, len) as usize;
+        for k in 0..len {
+            if core::ptr::read((p + k) as *const u8) != 0 {
+                dirty += 1;
+            }
+        }
+        core::ptr::write_bytes(p as *mut u8, fill, len);
+        *slots.add(i) = p;
+    }
+    dirty
+}
+
+/// Memory that the collector freed is cleared before the next object takes
+/// it, in both the line-hole space and the run space. The second round must
+/// also land on the first round's addresses, so the test does exercise reuse.
+#[test]
+fn reused_memory_reads_as_zero_in_both_spaces() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        const N: usize = 20_000;
+        let slots = register_pointer_roots(N);
+        let first = fill_round(slots, N, 0xAB);
+        assert_eq!(first, 0, "fresh memory handed out nonzero");
+        let round1: Vec<usize> = (0..N).map(|i| *slots.add(i)).collect();
+        for i in 0..N {
+            *slots.add(i) = 0;
+        }
+        kelp_gc_collect();
+        kelp_gc_collect();
+        let dirty = fill_round(slots, N, 0x5C);
+        assert_eq!(dirty, 0, "a reused object was not zeroed");
+        let reused = (0..N).filter(|&i| *slots.add(i) == round1[i]).count();
+        assert!(reused >= N / 2, "expected reuse of freed memory, got {reused} of {N} at the same address");
+        kelp_gc_unregister_root_region(slots as *mut u8);
+        kelp_gc_thread_detach();
+    }
+}
+
+/// Every object that is rooted survives collections with its header and
+/// payload intact, the collector finds it by its payload address, and no two
+/// objects overlap. Garbage bursts between the roots force many cycles.
+#[test]
+fn every_allocation_is_reachable_and_no_two_overlap() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        const N: usize = 6000;
+        let slots = register_pointer_roots(N);
+        for i in 0..N {
+            let p = kelp_gc_alloc_array(&BYTES, MIX_BYTES[i % MIX_BYTES.len()]) as usize;
+            core::ptr::write(p as *mut usize, i + 1);
+            *slots.add(i) = p;
+            for _ in 0..8 {
+                black_box(kelp_gc_alloc_array(&BYTES, 1500));
+            }
+        }
+        for _ in 0..3 {
+            kelp_gc_collect();
+        }
+        assert!(st().cycles >= 10, "expected many cycles, got {}", st().cycles);
+        let mut ranges = Vec::with_capacity(N);
+        for i in 0..N {
+            let p = *slots.add(i);
+            let h = p - 8;
+            assert_eq!(find_object(p), Some(h), "rooted object {i} is not found by the collector");
+            assert_eq!(core::ptr::read(p as *const usize), i + 1, "rooted object {i} changed");
+            ranges.push((h, h + object_total(h)));
+        }
+        ranges.sort();
+        for w in ranges.windows(2) {
+            assert!(w[0].1 <= w[1].0, "objects overlap: {:x?} and {:x?}", w[0], w[1]);
+        }
+        kelp_gc_unregister_root_region(slots as *mut u8);
+        kelp_gc_thread_detach();
     }
 }
