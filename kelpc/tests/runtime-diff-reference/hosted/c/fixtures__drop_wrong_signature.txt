@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/drop_wrong_signature.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Leaf.drop' must take its receiver with 'mut': the drop body reads and may adjust the value it is running for, so write 'fun mut Leaf.drop()'
+  --> <root>/kelpc/tests/fixtures/drop_wrong_signature.kp:6:1
+run-status: not run

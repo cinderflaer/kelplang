@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_dyn_field.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: field 'shape' is a borrowed type ('&dyn Shape') — a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible — an owned 'String' is the way to keep text in one
+  --> <root>/kelpc/tests/fixtures/traits_dyn_field.kp:7:18
+run-status: not run

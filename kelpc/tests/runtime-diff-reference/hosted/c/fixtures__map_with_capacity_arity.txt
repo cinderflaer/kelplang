@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_with_capacity_arity.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Map.with_capacity' takes exactly 1 argument (the entry count), found 2
+  --> <root>/kelpc/tests/fixtures/map_with_capacity_arity.kp:3:28
+run-status: not run

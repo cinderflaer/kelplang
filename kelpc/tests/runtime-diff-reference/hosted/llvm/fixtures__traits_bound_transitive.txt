@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_bound_transitive.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the call to 'needs_doubled' needs 'OnlyNamed' to implement the trait 'Doubled', and it does not: write 'impl Doubled for OnlyNamed { ... }' in the trait's module or in the type's
+  --> <root>/kelpc/tests/fixtures/traits_bound_transitive.kp:20:40
+run-status: not run

@@ -1,0 +1,14 @@
+unit: kelpc/tests/fixtures/recursive_datac.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+113
+2
+100
+l1
+l1
+b1
+--- stderr

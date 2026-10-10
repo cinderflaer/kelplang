@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/closure_where_fn_expected.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for — write the expected type as 'closure(...)' (the same parameter list and '.return:'), or pass a declared function instead
+  --> <root>/kelpc/tests/fixtures/closure_where_fn_expected.kp:8:17
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/thread_join_not_a_handle.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'thread.join' takes a 'Thread<T>' handle, found 'i32': a handle comes from 'thread.spawn', which is the only call that makes one
+  --> <root>/kelpc/tests/fixtures/thread_join_not_a_handle.kp:7:25
+run-status: not run

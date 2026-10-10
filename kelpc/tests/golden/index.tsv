@@ -1,0 +1,1079 @@
+# kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by oracle_freeze.
+# counts candidates=1076 ran=549 c_refused=494 excluded=33
+tag	status	exit	stderr_first_line	stdout_sha256
+fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
+fixture_alias_cycle	c-refused		error: alias cycle	
+fixture_alias_unknown	c-refused		error: unknown alias '%*nope*%'	
+fixture_aliases	ran	exit 0		cbc24e6e9c4e6ae735e55b8fc81833e9353245a832f64bfc26de2f4b44108343
+fixture_arena_bad_align	ran	exit 1	panic: arena align must be a power of two	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_arena_bump	ran	exit 0		af954a7f50120b9fc3dc1d17a53c37905b2124645f467ca4143812d0e6298d4f
+fixture_array_basic	ran	exit 0		de446661b37382c200f01b515ac0c6a2c72e5b115875b6c8161c10ea947979ed
+fixture_array_bounds	ran	exit 1	panic: Array.get: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_array_bounds_set	ran	exit 1	panic: Array.get: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_array_container_element	c-refused		error: 'List<i32>' cannot be an array element	
+fixture_array_length_is_a_constant	c-refused		error: 'k' is not a constant here	
+fixture_array_literal_big	ran	exit 0		fd676eaadb10002c3a5ebc8217f17e37f8a87af8457faaa541a8e2c3f3a24486
+fixture_array_literal_length_mismatch	c-refused		error: an array of 3 element(s) is expected here, and this literal has 2	
+fixture_array_of_a_borrow	c-refused		error: '&i32' cannot be a container element	
+fixture_array_owned	ran	exit 0		1b8cc45aa4afbfdce553d8d18a62ca47478a67a203bdc970e0a048ab75c6e35d
+fixture_array_repeat_owned_datac	c-refused		error: the repeat form '[x; N]' needs an element that owns nothing, and 'Name' owns memory. Copying it into 2 slots would make 2 owners of the same buffer; write the elements out ('[a, b, c]') instead	
+fixture_array_repeat_owns_memory	c-refused		error: the repeat form '[x; N]' needs an element that owns nothing, and 'String' owns memory. Copying it into 4 slots would make 4 owners of the same buffer; write the elements out ('[a, b, c]') instead	
+fixture_array_wide_and_float	ran	exit 0		4e406bc9951a87bba89662d213510da036ee26b9003dac68296ed43cb76c57ba
+fixture_asm_float_print	ran	exit 0		8de455c6e146cf98f0798d870508c2a810409ecdd2783494198c051099b45425
+fixture_asm_float_scalars	ran	exit 0		7d76b4ac132b425aefaf55fc518cd0d2b0af453d6f3a6b98a04686432f2af10b
+fixture_asm_unknown_operand	c-refused		error: unknown asm operand kind 'sideways'	
+fixture_assert_fail	ran	exit 1	panic: assertion failed	7365bdcabd311341db7a5c2302ecf1f35cec950bd07acf62a24742976fd8072a
+fixture_assign_owned_field	ran	exit 0		f43c51c62f2715a8fb82f42789f2b3084a58fb60f452bb83515f64855dde5f6d
+fixture_assign_through_deref	ran	exit 0		8203200abcdb94ae4f8ed2fb4d5db7b8d9ee1b6948bddf09a1a35efef77397bd
+fixture_assign_to_immutable	c-refused		error: cannot assign to 'x'	
+fixture_atomic_array_element	c-refused		error: 'Atomic<i32>' cannot be an array element	
+fixture_atomic_bool	ran	exit 0		330a6af8aafc7e4e65ed6773589c519e08a020bc88eeac81bd203d0959f8421e
+fixture_atomic_box_element	c-refused		error: 'Atomic<i32>' cannot be a 'Box' element	
+fixture_atomic_cas_err	ran	exit 0		74d82bbb6c6e8a7365ee8e379bbddf51c65b396189d5e7116dbc4f34619c3700
+fixture_atomic_counter	ran	exit 0		faf44e261812bba7cbe3748172346040cb27b90b4d2d81602805616d8468b6ad
+fixture_atomic_element_refused	c-refused		error: 'f64' cannot be an 'Atomic' element in v1	
+fixture_atomic_int_fetch	ran	exit 0		dac0f5d94064bff219b7b72d3b6d58e0790a2df7972359feca42846864038315
+fixture_atomic_list_element	c-refused		error: 'Atomic<i32>' cannot be a 'List' element	
+fixture_atomic_map_value	c-refused		error: 'Atomic<i32>' cannot be a 'Map' value	
+fixture_atomic_ordering_reserved	c-refused		error: 'Acquire' is not a variant of enum 'std.atomic.Ordering' — the variants are 'SeqCst'	
+fixture_base32_edges	ran	exit 0		539389a008730fbc0e343a32515c0f8dbec263d107a84bb4117f58da6ad65596
+fixture_base64_edges	ran	exit 0		628ccb2043f6b89c7b6959df5d9cbc106e0512cdf32ab232051b125fec16dc9e
+fixture_binary_literal_with_a_decimal_digit	c-refused		error: invalid digit '2' in a binary literal	
+fixture_bitwise	ran	exit 0		c53fa4ded969fc8a7ab2607072907638a725a1a1d2d2d69cdc9fc020d2cd24fd
+fixture_bitwise_bool	c-refused		error: operator requires matching integer operands, found 'bool' and 'bool'	
+fixture_blanket_impl_concrete	ran	exit 0		d6090cf0275544b319837d4daf1bd133c5ad2a54ddaaacc59ebdca09276f55c9
+fixture_blanket_impl_generic_fn	ran	exit 0		b21975635ab732463ce69b344bb4cacbeb79cc0d5ac6c5f9acb480bcdb37598f
+fixture_block_comments	ran	exit 0		ea07bf730741c1bdef5ef48f9135f39aa58971e16aa4bed48f9b799cfcf878c8
+fixture_borrow_basic	ran	exit 0		6f824b0ac63893ca68db46a60805c2cc169f802d709ff8eb58e39ece2f631799
+fixture_borrow_chain_through_a_borrow	ran	exit 0		1e2f69cc56e76b61449fb8ca93ea7a0b7971154b0549fbda2e5e8577fa87253e
+fixture_borrow_conflict	c-refused		error: cannot borrow 'c' as exclusive	
+fixture_borrow_disjoint_fields	ran	exit 0		09f853d92befcbeed1ad8d102066f8bdca8b90e573ef0b30d5700e994e44a882
+fixture_borrow_field_of_temp	c-refused		error: cannot borrow a temporary value	
+fixture_borrow_field_of_temp_returned	ran	exit 0		73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac
+fixture_borrow_of_a_borrow	c-refused		error: this is a borrow of a borrow	
+fixture_borrow_provenance_and_arms	ran	exit 0		687a0539fbe8794c88f6630009125ad9abd7bbbdf403923a63415c77382eb694
+fixture_borrow_returned	ran	exit 0		cbe9594c59b74b5af380ebaee77e4bcdc66065a22b3f2e782c54c9b583fbfe2b
+fixture_borrow_temp_arg	ran	exit 0		940ffee7b9297b0a57d242e35ec53f83d61f8c168537fba32103a37c1aecb292
+fixture_borrow_temp_binding	ran	exit 0		5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03
+fixture_borrow_temp_returned	ran	exit 0		73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac
+fixture_borrow_temp_slots	ran	exit 0		3bb028ed3077a47dc524265d019c911a434fde9479f34feab05a217a657c7600
+fixture_borrow_two_phase	ran	exit 0		3c8fb6bbaa380f2f86dc92a9910377fc2baf5a545caa61614c8e8302f37cf6cb
+fixture_borrow_two_phase_alias	c-refused		error: cannot borrow 'p' as exclusive	
+fixture_borrow_two_phase_nested	c-refused		error: cannot borrow 'xs'	
+fixture_box_basic	ran	exit 0		d7415a80630d7deaf86b625f2a4f9c7b941b6a6a46c88fd4e1e519768dbe5074
+fixture_box_borrow_element	c-refused		error: '&str' cannot be a container element	
+fixture_box_empty_panic	ran	exit 1	panic: Box.get: the box is empty	a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
+fixture_box_field_take	ran	exit 0		536add29f7b4e11ee4b2d9e3595601edcdbc98b07ef7481de196b0fc3ecf51dc
+fixture_box_of_open_box	c-refused		error: 'Box<unit>' cannot be a 'Box' element	
+fixture_box_owned_elements	ran	exit 0		798e85accec6ed62f2f74c66aa1c2809ccc17f9c3262255d0bc00209ec243fd9
+fixture_box_recursive	ran	exit 0		93d2b70ddc4ea0453c9e6e9a4103c9c59e31d99c5c860d049ceb3b0aabb018c7
+fixture_box_set_open_box	c-refused		error: 'Box<unit>' cannot be a 'Box' element	
+fixture_break_and_continue	ran	exit 0		6c4eacf36f42c103d06254ac0498803e40063a2878ee8bb8ac640b566c8f6c63
+fixture_byte_literal_does_not_widen	c-refused		error: a byte literal is a 'u8', not a 'i64'	
+fixture_byte_literal_holds_two_bytes	c-refused		error: a byte literal holds exactly one byte	
+fixture_byte_literal_is_not_ascii	c-refused		error: a byte literal is one ASCII character or a '\xNN' escape, and 'é' is not one	
+fixture_byte_literals	ran	exit 0		86426096117820f4ecfcc5c841527962ce348eec721594069183d37a9e901cc6
+fixture_bytes_build	ran	exit 0		fccad81a368d3a0e61c8cc77f14086784a21c3fe27d154b0d491e1f755e0ce8e
+fixture_bytes_endian	ran	exit 0		28bfaeca02c310de8164ac062d51b0dfbd974337f2db86e48ed7b05e55163de5
+fixture_bytes_read_oob	ran	exit 1	panic: Bytes.read_u32_le: offset out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_bytes_read_wrapped_oob	ran	exit 1	panic: Bytes.read_u16_le: offset out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_bytes_write_oob	ran	exit 1	panic: Bytes.write_u16_be: offset out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_caps_star_mixing	c-refused		error: `caps(*)` already means every domain, so nothing can stand beside the `*`	
+fixture_caps_time_rand	ran	exit 0		6419a5d47d7e2b4f40f8fe54174c54fe313343f67740297963c22abcb6f223d0
+fixture_chan_bounded_mpsc	ran	exit 0		6b0caa71c1aabff27538e7d150a4fbc8f8898eec4a44d446a1df8b3644eee53f
+fixture_chan_close	ran	exit 0		d2a4bf2faa75c28345995b27b42c90b9641266688c113edcd23e381a6c1938d0
+fixture_chan_non_sendable	c-refused		error: in 'std.sync.bounded<str>'	
+fixture_chan_recv_timeout	ran	exit 0		3a28b5ccf3b23ca01f4516bf1fcf56f22af577bbaffa70d771975d67d75b10b3
+fixture_chan_rendezvous	ran	exit 0		ce537dc4c59701ed9025f47155504239879d859e2816f6ff678eb3a5ee5107c2
+fixture_chan_select	ran	exit 0		d467d747eb25f8b1a6bf4a759110d997d0fc76670509605c013eb71a96cb2c06
+fixture_chan_select_blocks	ran	exit 0		ac853736761ed279625f05b51995a4879d7fb5801b4f1c525f81400f83b9eb6a
+fixture_chan_select_mixed	c-refused		error: argument 'b' has type '&std.sync.Receiver<String>', expected '&std.sync.Receiver<i64>'	
+fixture_chan_send_a_lock	c-refused		error: in 'std.sync.bounded<Mutex<i64>>'	
+fixture_chan_zero_capacity	ran	exit 1	panic: sync.bounded: the capacity must be at least 1	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_char_literal_does_not_fit	c-refused		error: the character '中' (U+4E2D) does not fit in 'u8'	
+fixture_char_literals	ran	exit 0		9d30ee55f9060b29c8ef2018da4609294649ae820c4e9e1d562dec4f76970407
+fixture_closure_basic	ran	exit 0		735b34fde4983f2ecc8f5d1a9e94d1e41bd20a82b4503765d160dfeed951f262
+fixture_closure_capture_borrow	c-refused		error: a 'fun' literal cannot capture 's'	
+fixture_closure_capture_by_value	c-refused		error: cannot read a captured value out of the closure's environment by value	
+fixture_closure_capture_receiver	c-refused		error: a 'fun' literal cannot capture 'n'	
+fixture_closure_datac_borrow_param	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+fixture_closure_element	c-refused		error: 'closure().return	
+fixture_closure_env_wide_ret	ran	exit 0		af8d1f9b519f8f041c8ce4f11d0558665b4e8d5a16ee242c93e4ee3f5e8bd6bf
+fixture_closure_move	ran	exit 0		1a22fcd8212054e30284fea2f9afe59584bd7e92d4901a04387a001f11def2d2
+fixture_closure_nested_owned	c-refused		error: cannot capture 'text' into this literal	
+fixture_closure_signature_mismatch	c-refused		error: cannot assign value of type 'fun(f64).return	
+fixture_closure_two_captures	ran	exit 0		97ad51a8ddef98bf24e5fc6fc0dcef2a4ecaa7b445deab2e6de77d4854df887c
+fixture_closure_type_amp	c-refused		error: '&' cannot be written on the closure type 'closure().return	
+fixture_closure_use_after_capture	c-refused		error: use of moved value 'text'	
+fixture_closure_use_after_move	c-refused		error: use of moved value 'g'	
+fixture_closure_value_widening	ran	exit 0		819e83d2fdfc263063139970f78ba7372c5daeef13403aad69175ed8dcdf827a
+fixture_closure_where_fn_expected	c-refused		error: this is a closure	
+fixture_compare_owned	c-refused		error: cannot compare 'String' values with '=='	
+fixture_condvar_handshake	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+fixture_condvar_timeout	ran	exit 0		f19bda883af3e918e6745149fb3a20e4f55cf4b8c1fa9460c8c41a4127159706
+fixture_const_fn	ran	exit 0		2dd2ffbc8b90d8e7bf254b2c2080d57e43832e321556eb48ca3573e17c80fa05
+fixture_const_generics_arithmetic	c-refused		error: 'N' is a const parameter, and arithmetic on one in a type ('[T; N + 1]') is not in this slice	
+fixture_const_generics_basic	ran	exit 0		b1adbf004ebdb8763bb179ce9ba1fdeb1c450fa6410246adfa389f5091e8bc8b
+fixture_const_generics_char	ran	exit 0		5ad9e8ea6067b793c6afb29edf7f3443ead616d3c6fb3165f049ee89d9463c8e
+fixture_const_generics_char_arithmetic	c-refused		error: in 'make<'a'>'	
+fixture_const_generics_expr_arg	ran	exit 0		b6703886c84d741a341246fd166424300fd64b745fca6a64756e4d76f6033a72
+fixture_const_generics_mismatch	c-refused		error: argument 'a' has type '[i32; 3]', expected '[i32; 4]' — an array's length is part of its type; pass an array of the expected length, or declare the parameter over any length (`fun f<const N	
+fixture_const_generics_string_refused	c-refused		error: 'const S' has type 'String'	
+fixture_const_generics_trait_refused	c-refused		error: a trait cannot take a const parameter ('const C')	
+fixture_const_generics_two_sizes	ran	exit 0		928ba518bc5c15d0becaf4c685b33402e9d5ef7af3c26dad7e3888c8a659ef2c
+fixture_const_not_constant	c-refused		error: 'print' cannot be called in a constant expression	
+fixture_const_tuple	ran	exit 0		eb87b8b7dd0ff0eee9a0a8c0e177d1e36111143eae559ad96918df738bd6331b
+fixture_consts	ran	exit 0		d34b8ecd64e746b0f1b2883978ec0aee86db13be0e6a819531f769cebfc6c3c5
+fixture_container_element_from_use	ran	exit 0		487f75686427376ce9c634558d2088b0237eb13d7c9e2046f63c854b77dde6f7
+fixture_cursor_alias_reassign	c-refused		error: cannot assign to 'list' while it is borrowed	
+fixture_cursor_branch_join	c-refused		error: cannot assign to 'a' while it is borrowed	
+fixture_cursor_branch_join2	c-refused		error: cannot assign to 'b' while it is borrowed	
+fixture_cursor_branch_union	c-refused		error: cannot assign to 'b' while it is borrowed	
+fixture_cursor_mut_alias	c-refused		error: cannot borrow 'a'	
+fixture_cursor_mutate_while_used	c-refused		error: cannot assign to 'list' while it is borrowed	
+fixture_cursor_over_a_list_by_index	ran	exit 0		95cf32708a31caa478a0e9141103ac567d85e5186e697e7e0c81f75589999e31
+fixture_cursor_retarget_releases_the_old_owner	ran	exit 0		84fa61ffd2392fe852a5dc8cd5a7cc37bad6b57d7f12de37ecbd042bf75ac746
+fixture_cursor_returned_from_local	c-refused		error: cannot return a borrow of 'local'	
+fixture_cursor_root_moved	c-refused		error: cannot move 'list' while it is borrowed	
+fixture_cursor_two_mut_cursors	c-refused		error: cannot borrow 'a'	
+fixture_cursor_walks_a_box_list	ran	exit 0		c69f3b32b04c55509063f3498988606d923d1a124dbf4a31c155473e21ec48be
+fixture_datac_basic	ran	exit 0		4e0eed2109863a3830c373c5bb46f285c14fdd2d4a1a16251ce533748e834f82
+fixture_datac_embeds_datac	ran	exit 0		aa67a169b0bba217aa0aa88a65346920c84c42447c36ba5f7ea65f422c1fe5d8
+fixture_datac_forward_reference	c-refused		error: 'Inner' is declared after this type — a type may only name types declared before it by value; behind a 'Box' or 'List' it may name any type, including itself	
+fixture_datac_memory_class	ran	exit 0		ff63638241b343e8a37c21d1170da6be90e955d154e4b10c462cc951b82f129c
+fixture_datac_memory_class_by_value	ran	exit 0		35aa25235e52a9d8d9c769cf8b93c3b33c8602a4c58b328aa4a21125a033d2fb
+fixture_datac_owned_fields	ran	exit 0		ee927721772a0970adfa9088c64b702421e29c14dd6d101ab84d2a3f3a501960
+fixture_datac_self_value	c-refused		error: 'Bad' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next	
+fixture_datac_str_field	ran	exit 0		73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac
+fixture_datac_two_eightbytes	ran	exit 0		85cc24ac31d740079a52662fa2477ac296dcc16cb071abe4eafced558d2ae63b
+fixture_defer_borrow_return	ran	exit 0		c7b4d83a6dd82d205d8ecdb3b758713c7136e828dcbb4443149c11919e924f31
+fixture_defer_break_inside	c-refused		error: a deferred action cannot contain 'break' or 'continue'	
+fixture_defer_closure_try	ran	exit 0		17a8957375527007970422e0f6bb71589349aa0cc4c7fa1b8d9c0f0b6ff0270d
+fixture_defer_for_loop	ran	exit 0		d114f2a4dd3e37e41cbb02889648132b54237b1e245c0b37c2f937d0be2f321e
+fixture_defer_later_local	c-refused		error: this 'defer' names 'x', which is declared later in the block	
+fixture_defer_lifo	ran	exit 0		76be6a403b5f536db378b38567a4a47b9a1efee5ae65d178b4e7b228d30c9832
+fixture_defer_lock_flag	ran	exit 0		0823bd24a3b200a27310872ca7794008d70b316ae5841675b1acf789e4169aec
+fixture_defer_nested_blocks	ran	exit 0		8329476e37fa289cad9e37a751b7de2d27fda4321114efe6ef1d06ad3ac64a43
+fixture_defer_panic_skips_action	ran	exit 1	panic: stop	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb
+fixture_defer_return_in_loop	ran	exit 0		a34453f43f8da767c6ac650eaaa60dbc8a283097b01ec6138b412aa5bf073370
+fixture_defer_return_inside	c-refused		error: a deferred action cannot contain 'return'	
+fixture_defer_sees_final_value	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+fixture_defer_then_branch	ran	exit 0		6d9652f32617631409d8ba893aa69b930d491827bdcfed3276c53ab842736417
+fixture_defer_try_exit	c-refused		error: defer with an early `?` exit is not supported yet	
+fixture_defer_use_after_move	c-refused		error: use of moved value 's'	
+fixture_defer_value_block	ran	exit 0		6d51b24299994492c2c153297d560ef24a8f5f228d6d6ff5f5c3479c56ec6de9
+fixture_discard_wide_return	ran	exit 0		c652f3dc9fbb7d67758198c696e30a7ecf47ebc92151183514e296929cb1e6fd
+fixture_doc_comment_trailing	c-refused		error: '//!' is a documentation comment and must start a line	
+fixture_doc_no_dashes	c-refused		error: trait 'Reading' declares 'type Unit', and 'impl Reading for Gauge' does not bind it	
+fixture_documentation_comment	ran	exit 0		10159baf262b43a92d95db59dae1f72c645127301661e0a3ce4e38b295a97c58
+fixture_double_move_in_loop	c-refused		error: use of moved value 'p'	
+fixture_drop_builtin_type	c-refused		error: 'i32' is a builtin type — its methods are provided by the compiler and cannot be declared	
+fixture_drop_container	ran	exit 0		36fde74a38beb8424049352600c6282ef455af8f505eab4a2d48fd09c78103ac
+fixture_drop_control_flow	ran	exit 0		fe29295ec84f1f6750d17da92a0bedf0ea848f6a7914536e1fb3503c56d02eec
+fixture_drop_declared_key	c-refused		error: 'Leaf.hash' cannot be declared	
+fixture_drop_enum	ran	exit 0		f2e6c50a8e1307b8a9e89d088f1988ce9b08cf7155ac033b992de8587d269074
+fixture_drop_guard_lock	ran	exit 0		acb2b288b9f028830645d94e3a4417e5ffc574a024576d6f69b53d989e9d93ea
+fixture_drop_map	ran	exit 0		47c027768397f582cffe4e3a65550aaafe014df46f8fc38ebafc87c3c9129279
+fixture_drop_moved	ran	exit 0		2dd07acd8bc9377b7f999e3d9d693e2f05f1f6e605055c91f85634d8551bfcf2
+fixture_drop_not_copy	c-refused		error: List<Leaf>.clone is not defined	
+fixture_drop_order	ran	exit 0		f2516b2ffa4d7a7fc83c4c6715410dd9ca1660f4aa99b1f154d412d771dce54f
+fixture_drop_owned_field	ran	exit 0		17e7d41bc35537875879eed6c39755cd42e414c9e2ba54f08140a93473d9f09a
+fixture_drop_partial_move	c-refused		error: cannot move field 'leaf' out of 'h' by value	
+fixture_drop_reassign	ran	exit 0		81f58bd9b1ff434342497816728a9925ff6a29a79a633ebe05910bcc4c0aa329
+fixture_drop_thread_closure	ran	exit 0		5fe3a667490bb68e123bc6000f89680927d64096a7de920958ec6586a5e2fa32
+fixture_drop_two_impls	c-refused		error: method 'Leaf.drop' is defined more than once	
+fixture_drop_wrong_signature	c-refused		error: 'Leaf.drop' must take its receiver with 'mut'	
+fixture_elision_not_from_param	c-refused		error: cannot return a borrow of 's'	
+fixture_elision_wrong_param	c-refused		error: cannot return a borrow of 'b'	
+fixture_else_if_let	ran	exit 0		fc5283afd0ae712cd1e0bb6f93cb80310d10264d9042890748ed4488415ddf41
+fixture_endian_scalars	ran	exit 0		e840df667cbf84a90207f308f9c9511c83ea5f021f8ea554e6832e173b4cbf2b
+fixture_enum_bare_variant	c-refused		error: variant 'Shape.Circle' carries payload (r) — construct it as 'Shape.Circle(r)'	
+fixture_enum_basic	ran	exit 0		c97caacaaee927709839a75d52131b2853599bb512607b440c379783880cfb45
+fixture_enum_bind_count	c-refused		error: pattern 'Circle(r, x)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s) (r)	
+fixture_enum_container	ran	exit 0		a87246e8ee937f02a9da0b1bdc026e6ad1cb792cf80e06779877f8ee1bab9285
+fixture_enum_ctor_name	c-refused		error: 'Shape' is an enum — construct one of its variants	
+fixture_enum_datac_clash	c-refused		error: 'Shape' is used for both a datac and an enum	
+fixture_enum_datac_scrutinee	c-refused		error: 'when' with a scrutinee matches an 'enum', but 'Point' is a datac — read its fields with '.' instead	
+fixture_enum_discriminant	ran	exit 0		8dde8470b57a0d9c606ab1932b250b2e6ba0f5069bc3050390f3e01e7a7b8976
+fixture_enum_discriminant_duplicate	c-refused		error: variant 'A' of enum 'E' repeats the discriminant 1	
+fixture_enum_discriminant_with_payload	c-refused		error: enum 'E' has a variant with a payload, so no variant may have an explicit discriminant	
+fixture_enum_duplicate_arm	c-refused		error: variant 'Circle' is matched more than once	
+fixture_enum_field_access	c-refused		error: enum 'Shape' has no field 'r' — match it with 'when Shape { ... }' to read a payload	
+fixture_enum_generic_method	ran	exit 0		f731091303cdfceb10669a38f8fe2ea471b04693cbdfc1e1326f75498d2c4045
+fixture_enum_in_containers	ran	exit 0		3380e687784bf7efc703455ede45a6bb34b4844c18edc123ec2cef7262961d38
+fixture_enum_layout	ran	exit 0		787fbe5d6b2b4f4fe31eda17f6e4a49cf9755590ad755093fb2749b3c9b15cc7
+fixture_enum_liveness	ran	exit 0		f97c0359d1b464354eb9f9614c8ddfc732d6e5b4380f26b0f13911be3c5f2490
+fixture_enum_method	c-refused		error: an 'enum' method is called on a value, not on a variant path; bind the variant first, as in	
+fixture_enum_method_binding	ran	exit 0		61ce67ddbb2998b8ee479ac8fa034ba0886c9b455fd7ab627e81a2bf559ee2d7
+fixture_enum_non_exhaustive	c-refused		error: this 'when' is not exhaustive	
+fixture_enum_owned	ran	exit 0		310fcea9b60778230b2b6753dd73ed35547e9927c02d85bdcdb397c3c6afb4be
+fixture_enum_payload_move	c-refused		error: 'when' arms have different types	
+fixture_enum_recursive	ran	exit 0		d2f1ff15a900c78dcbf6244e12cb32219eb73c4e9aaea6d0bb7076bcb89e4be9
+fixture_enum_self_by_value	c-refused		error: 'Loop' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next	
+fixture_enum_temp_scrutinee	ran	exit 0		65e8fe344f770e52ea7f3f8fc8633959361bb78e6ad3a178b7d3b1f16b6e2e9f
+fixture_enum_unknown_method	c-refused		error: enum 'Shape' has no method 'label'	
+fixture_enum_unknown_variant	c-refused		error: 'Square' is not a variant of enum 'Shape' — the variants are 'Circle', 'Empty'	
+fixture_env_thread_churn	ran	exit 0		48ef6cc7d91f52031bd0ea12d01026bfd86c3f4ed16b7a2ef4b3baf8f70454f7
+fixture_env_thread_stress	ran	exit 0		36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c
+fixture_eq_operator_bad_signature	c-refused		error: 'P.eq' takes exactly one parameter, a shared borrow of 'P', so write 'fun P.eq(other	
+fixture_eq_operator_datac	ran	exit 0		f2786083f6da7c9b94fe10737439ac6c4101fdc63e61a57d0de3377a80efe466
+fixture_eq_operator_enum	ran	exit 0		91ab0ee3e2b07c8fd21233e5a5a3d102efb1e61e0f911a8937bbb24f1e126d36
+fixture_eq_operator_no_eq	c-refused		error: cannot compare 'P' values with '=='	
+fixture_eq_operator_order	c-refused		error: cannot compare 'P' values with '<'	
+fixture_eq_operator_order_gt	c-refused		error: cannot compare 'P' values with '>'	
+fixture_eq_operator_type_mismatch	c-refused		error: cannot compare 'A' with 'B'	
+fixture_eq_operator_view	ran	exit 0		d827616f56e6af1faa3da3a51a50629fc2cedc2af4e9e59d9383c9309a4cf51a
+fixture_escape_dollar	ran	exit 0		296a180a46f76a98090d0f9054a43d19b3008feacf83421206a17b0f7fea42c1
+fixture_escapes	ran	exit 0		057a17adcd3331eac51a0db8a76cbcbe656b536089c2a08c328510458c870220
+fixture_eval_order_basic	ran	exit 0		b51fb92cbbabc5e6cf9fbb770768632ec5f5c3e03aec6287c266282d7f8f82a1
+fixture_eval_order_condition	ran	exit 0		babf3495e73d28805499887b1179669a50f5a50dd59724f835926cdf608c9168
+fixture_eval_order_more	ran	exit 0		9b48686a780afe59acf1f3ffaf6140813eb7ab7aaaab6970c57735f5624a781b
+fixture_eval_order_template	ran	exit 0		01fce481c7201b81622479f28db028000a535849b2bd31fb3b3302043a7f1f80
+fixture_excl_capture_copy_var	ran	exit 0		8e2b752a4693cdad73f25c90b965f792b860530cba17528a7f6d727832676203
+fixture_excl_capture_defer_loop	ran	exit 0		4229d651b00159f1ea45b4bf24d3750361b953f98c1d2906737afc9cc21fe762
+fixture_excl_capture_disjoint_field	ran	exit 0		10159baf262b43a92d95db59dae1f72c645127301661e0a3ce4e38b295a97c58
+fixture_excl_capture_disjoint_receiver	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+fixture_excl_capture_drain	ran	exit 0		28592e1f813ddb52bac3f1610ffe6a403362e752426dec7757014f2b87c6a35d
+fixture_excl_capture_field	ran	exit 0		47ece8310b25b115ba80759cc840b5e141dcc1c7100bc740d9ea51a5e6653cf6
+fixture_excl_capture_list_push	ran	exit 0		a0854f0d23677175bce7478676271264d647dbe0cb247e907759c82dfb146b76
+fixture_excl_capture_mut_param	ran	exit 0		45080860abd6d79b808dbd71836bf29e41918f1bf1f05f7ce732ada7674cc816
+fixture_excl_capture_nested	ran	exit 0		53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3
+fixture_excl_capture_nested_disjoint	ran	exit 0		53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3
+fixture_excl_capture_returns_value	ran	exit 0		9d1d17a4cb613e78db6e988061723b23bb2200b4e77a698c78333b71620c1d9b
+fixture_excl_capture_two_owners	ran	exit 0		70aa4c2ff244ae32d8ec41275cf583593e25e08ef6758965c0250f5e847ab510
+fixture_excl_capture_view	ran	exit 0		24b737cd3cc1e6feab6b038b05279b268ebc8a92c163cb0d769eac616eeb13ec
+fixture_excl_refused_live_borrow	c-refused		error: cannot borrow 's.items' as exclusive	
+fixture_excl_refused_mut_param_twice	c-refused		error: cannot borrow 's.count' as exclusive	
+fixture_excl_refused_nested_same_call	c-refused		error: cannot borrow 'a captured value.count' as exclusive	
+fixture_excl_refused_receiver	c-refused		error: cannot borrow 's.count' as exclusive	
+fixture_excl_refused_returns_borrow	c-refused		error: this block writes through 's' (an exclusive capture) and returns a borrow ('str')	
+fixture_excl_refused_same_call_arg	c-refused		error: cannot borrow 's.count'	
+fixture_excl_refused_same_field	c-refused		error: cannot borrow 's.items' as exclusive	
+fixture_excl_refused_shared_arg	c-refused		error: cannot borrow 's.count' as exclusive	
+fixture_excl_refused_shared_param	c-refused		error: cannot write to captured 's'	
+fixture_excl_refused_stored	c-refused		error: this is a scoped function value	
+fixture_excl_refused_two_blocks	c-refused		error: cannot borrow 's.count'	
+fixture_excl_refused_val	c-refused		error: cannot write to captured 's'	
+fixture_explicit_destructor_call	c-refused		error: 'Leaf.drop' cannot be called	
+fixture_extern_no_body	c-refused		error: extern function 'not_a_real_primitive' has no compiler-supplied body — only compiler-shipped stdlib modules may declare 'extern fun', unless this module has its own coral.toml '[extern."extern_no_body"]' section naming 'not_a_real_primitive' in its 'symbols' allowlist	
+fixture_extern_receiver	c-refused		error: 'extern' cannot be used on a receiver method — declare it as a free function	
+fixture_extern_signatures	ran	exit 0		c154b4b296a236fccfac84b60b0f28ecd057d055b4d47f1d288400aab688b7b6
+fixture_ffi_variadic_not_last	c-refused		error: '...' must be the last parameter of an 'extern fun'	
+fixture_field_read_does_not_move	ran	exit 0		541391dac0811041090441f35e0d2742e5a6f7745e76a042ed595203183e4bb8
+fixture_float_conversions	ran	exit 0		bff76aed3d7d2330c867710e6398bc952fd3a86ee816ec0289bb772e48e2e0b4
+fixture_float_datac_boundary	ran	exit 0		303f979e9d91a098906a39ba0f0be4a049ecb70c9d122f5c58c66b3c0c1ed13d
+fixture_float_datac_containers	ran	exit 0		4f17aaa6359d3452c2a039593e6e5f85378fa52399ca80b246880c7510ca1e91
+fixture_float_datac_memory	ran	exit 0		0b24e2e3f6ddfff33bc707b5b0772decc88276a3f6ab75fa888e1524c533e8a1
+fixture_float_enum_register_file	ran	exit 0		65f448eee4dfe9e7f6a6acaa0971826700015d0df1972bff318d9ce035701fa3
+fixture_float_field_write	ran	exit 0		83fd46943f86a4caba3f822bcbbf1dba28ae5bed6494b958c607777f6d4401fe
+fixture_float_format_edges	excluded		prints the formatting of 0.0 / 0.0, whose sign bit the language leaves unspecified (plan/bugfix-pass.md:107-120, the NaN sign)	
+fixture_float_integral_literal	ran	exit 0		0bb935040788b902d1447559a1caf5d669e100d968ad87e669564afc1a9f261e
+fixture_float_nonfinite_literal	ran	exit 0		598bb7830b844d1030500f412b924a3031b612dcff2c4c713371fd85852b4282
+fixture_float_width_conversion	ran	exit 0		2387faf07a813006e82cf2fda883952018d569c6f24a468e348a5b36c4c96d6c
+fixture_fn_literal	ran	exit 0		0d8b4a8f386c4b92e23c343c6c378e68a30e46c312b1c835a33655def2f642c7
+fixture_fn_literal_borrow_return	c-refused		error: a 'fun' literal cannot return a borrow ('&str') — an indirect call has no parameter an elided lifetime could bind to; return an owned value instead	
+fixture_fn_literal_capture	ran	exit 0		1286c4c74194e75cffa46c8e560ae72c829e1f554b2a1bed4549ba13b7ca59c8
+fixture_fn_literal_no_body	c-refused		error: a 'fun' literal needs a body	
+fixture_fn_literal_passdown	c-refused		error: a 'fun' literal cannot read passdown 'base' — a passdown is passed to the function that names it as a hidden argument, and a function value is a plain pointer to code; pass the value as a parameter instead	
+fixture_fn_literal_tail_type	c-refused		error: this 'fun' literal is declared to return 'i32' but its body evaluates to 'unit'	
+fixture_fn_type_borrow_return	c-refused		error: a function type cannot return a borrow ('&Point') — the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a function *type* is called through a pointer where there is none; return an owned value instead	
+fixture_fn_value	ran	exit 0		167ada4a94d32af9a94054d2e22098232245074c76b6e746bd93b6af2a44bbf5
+fixture_fn_value_amp	c-refused		error: '&' cannot be written on the function type 'fun(i32).return	
+fixture_fn_value_arity	c-refused		error: a call through 'f' takes 1 argument(s), found 2	
+fixture_fn_value_borrow	c-refused		error: 'mut' cannot be written on the function type 'fun(i32).return	
+fixture_fn_value_call_result	c-refused		error: expected ')', found LParen	
+fixture_fn_value_element	c-refused		error: 'fun(i32).return	
+fixture_fn_value_generic	c-refused		error: 'first' is a generic function — a function value needs one concrete signature, so wrap the call in a small non-generic function and pass that	
+fixture_fn_value_main	c-refused		error: cannot reference 'main'	
+fixture_fn_value_mismatch	c-refused		error: argument 'f' has type 'fun(i32).return	
+fixture_fn_value_move_arg	c-refused		error: argument 1 has type '&String', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()')	
+fixture_fn_value_named_args	c-refused		error: a call through 'f' cannot use named arguments — a function type has no parameter names, so every argument is positional	
+fixture_fn_value_nested_return	c-refused		error: a function type cannot return another function type ('fun().return	
+fixture_fn_value_passdown	c-refused		error: 'uses_greeting' reads a passdown, so it cannot be a function value — a passdown is passed to the callee as a hidden argument, and a function value is a plain C function pointer; call it directly instead	
+fixture_fn_value_plain	ran	exit 0		1d5a7ac43232e9a964134a57fb2a8df493959963b0c94c8528f454ab455f5d1d
+fixture_fn_value_print	c-refused		error: cannot pass a value of type 'fun(i32).return	
+fixture_for_iter_borrowed	c-refused		error: cannot borrow 'f'	
+fixture_for_iter_break	ran	exit 0		a3265dc8607e89540e7cbf95b220e7fc5582825b16abdf006f888773a17fa7d8
+fixture_for_iter_break_outside	c-refused		error: 'break' is a loop control statement, and no loop encloses it	
+fixture_for_iter_defer	ran	exit 0		f7d3762e04758ea616474b72a41273c6c45a2618800eb9fe5a62222db772f9d8
+fixture_for_iter_helpers	ran	exit 0		9dc516b53deb862aea16af21f7e664e5ca8d66509da8bfd7a2bbbf7575b88730
+fixture_for_iter_list_mutated	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_iter_list_strings	ran	exit 0		ef779d1b228afe6b1e13c51f56b601ab7b61fff8b98faa055b6491da19fa8742
+fixture_for_iter_list_sum	ran	exit 0		afe758b3be5a19b940cdcf2e57d9c0be3e1879e24e24ac82eaa0ce2cbf39ab6b
+fixture_for_iter_map	ran	exit 0		14c5e74c4b96ccef41cd94db73a9ec3348038ac094feca4fd897cecffa07cdae
+fixture_for_iter_nested	ran	exit 0		5834b82edf45a6b51cd1ffd05e188297a048da69f5f5ff9f4c99708cb74277f2
+fixture_for_iter_no_impl	c-refused		error: 'for' walks a 'List<T>' or a type that implements 'Iterator', and 'i32' is neither	
+fixture_for_iter_range	ran	exit 0		0adf8243db2e1089cdb9a883b6d5157e3bd0f1b8627df49e49fa792172a997e0
+fixture_for_iterated_place_is_read_only	ran	exit 0		e92d410560b3c0434f0c0a6743037e3f8998dc99467c33b6ab5e699db88bdbb4
+fixture_for_loop	ran	exit 0		7c24cbffd22e8309fe729253468fadfb0ff4d37c1e6453b68e8a776c6934cdf0
+fixture_for_missing_in	c-refused		error: expected 'in' between the 'for' binding and what it iterates, found 'xs'	
+fixture_for_mutates_another_field	ran	exit 0		b3afef0e7bc7a4e8a30048b5388d63af1c62c2932c7bd15c9db71695e6b9ebc3
+fixture_for_mutates_iterated_assign	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_mutates_iterated_capture	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_mutates_iterated_field	c-refused		error: cannot mutate 'self.items' while iterating over it	
+fixture_for_mutates_iterated_move	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_mutates_iterated_mutarg	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_mutates_iterated_mutref	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_mutates_iterated_nested	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_mutates_iterated_push	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_mutates_iterated_remove	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_mutates_iterated_set	c-refused		error: cannot mutate 'xs' while iterating over it	
+fixture_for_not_a_list	c-refused		error: 'for' walks a 'List<T>' or a type that implements 'Iterator', and 'i32' is neither	
+fixture_for_over_a_map	ran	exit 0		c0283144db7cb0825f8ec56e0d50fe22ae3249fb787e4f1633a9c71bc2a878ab
+fixture_for_pattern_over_a_temporary	ran	exit 0		2d65ba73dd83363826d117438319b05674f16d55faef1e57f780964edae7bba1
+fixture_from_conversion	ran	exit 0		831963a51c265769736ad376fdfaecccd89093ad91083db7bda57b3e36409299
+fixture_from_duplicate_impl	c-refused		error: trait 'std.convert.From' already has an impl for 'T' (written in module 'from_duplicate_impl')	
+fixture_from_no_impl	c-refused		error: '?' cannot convert a failure	
+fixture_from_trait_name	ran	exit 0		41912244554878bbf7e5d2229e643eae81197531648d2e687302682e5fdf92e7
+fixture_fs_errno	ran	exit 1	panic: fs.read: cannot open file	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_fs_fallible	ran	exit 0		82806136f6dfec799b52f1244ea385d797f4068efaafdd13dc3224a2f7960070
+fixture_fs_path_family	ran	exit 0		462641da31553a54fdf5397e9fc3130cf1a57e55093142256b65b98e3c6358fd
+fixture_fs_set_mode	ran	exit 0		494ba3921243417df1b58d7c1180209b755eade914fda5ab034b6175024cadde
+fixture_fs_symlink_kind	ran	exit 0		a19d813c8a80931580be266c6e0447dfc430e2cb0d2adf1bfbabf86e0ea332db
+fixture_fs_try_mutators	ran	exit 0		9cecdbb4072c09b29dcdbef16744affcd590071ec57bf8459054b0e729ad4c69
+fixture_generic_arity	c-refused		error: 'Pair' takes 2 type argument(s), found 1	
+fixture_generic_borrowed_field	c-refused		error: in 'Holder<str>'	
+fixture_generic_cannot_infer	c-refused		error: cannot infer type parameter 'T' of 'Option' here — annotate the binding (e.g. 'val x	
+fixture_generic_clash	c-refused		error: 'Holder' is used for both a generic and a non-generic type	
+fixture_generic_explicit_args	ran	exit 0		d62dcd6aa1f711ca8a90ff444e346a746c1006303b8ee6191a4b62eb59221bb9
+fixture_generic_explicit_arity	c-refused		error: 'Pair' takes 2 type argument(s), found 1	
+fixture_generic_explicit_method	c-refused		error: 'first_of' does not take type arguments — a method's type parameters come from its receiver	
+fixture_generic_explicit_plain	c-refused		error: 'Point' does not take type arguments	
+fixture_generic_function_arity	c-refused		error: function 'pair_of' expects 2 argument(s), found 1	
+fixture_generic_function_basic	ran	exit 0		3a0f32db49f0c7a76a329875b397cbe9a214cebf57225394f9086d2198347447
+fixture_generic_function_cannot_infer	c-refused		error: cannot infer type parameter 'T' of 'empty_of' here — annotate the binding (e.g. 'val x	
+fixture_generic_function_clash	c-refused		error: function 'pick' is defined more than once	
+fixture_generic_function_owned	ran	exit 0		29399a9c24a9021337dbd109d82d431ff8a738425189c6ccb6509c6f1fdb2a04
+fixture_generic_function_shadow	c-refused		error: type parameter 'i64' shadows the builtin type 'i64' — pick another name	
+fixture_generic_impl_iterator	ran	exit 0		3275c31dd99be467469cb4b2308e6cdf1d88173b34e1f729620be77ee34993c5
+fixture_generic_impl_pair	ran	exit 0		937d03ff40976adfb157c7e2ae13b3789541dd6d9582cb4ffec88cc3a2966076
+fixture_generic_main	c-refused		error: 'main' cannot take type parameters — it is the program entry point	
+fixture_generic_method	c-refused		error: 'Pair' is a generic type — the receiver has to name its type parameters, and they have to be the type's own, in order ('fun Pair<A, B>.method(...)')	
+fixture_generic_method_basic	ran	exit 0		1ded5d6a9e9edf58a57f37a70b06d501cc70e1332cfd98d958cb5df855262b04
+fixture_generic_method_on_plain	c-refused		error: 'Point' is not a generic type — only a receiver on a generic type may declare type parameters of the type; a method of a plain type may declare its own ('fun Point.first_of<U>(...)')	
+fixture_generic_method_wrong_params	c-refused		error: receiver 'Pair' must write the type's own type parameters, in order	
+fixture_generic_needs_args	c-refused		error: 'Pair' is a generic type — it needs 2 type argument(s)	
+fixture_generic_nested_inference	ran	exit 0		14c5e74c4b96ccef41cd94db73a9ec3348038ac094feca4fd897cecffa07cdae
+fixture_generic_owned	ran	exit 0		f6808ffc64bfc3df465ab0e6d99bb57715dd393df94b81a745da2ffba6f8f86f
+fixture_generic_param_duplicate	c-refused		error: type parameter 'T' is declared more than once	
+fixture_generic_param_shadow	c-refused		error: type parameter 'i32' shadows the builtin type 'i32' — pick another name	
+fixture_generic_recursive	ran	exit 0		e0b58d6598d214cd414bc211b1e977021f1b7d289e9fa0e66e609b76c8e1653a
+fixture_generic_self_value	c-refused		error: in 'Bad<i32>'	
+fixture_generic_trait_arity	c-refused		error: trait 'std.convert.From' takes 1 type argument(s), and 'impl std.convert.From for E' writes 0	
+fixture_generic_trait_dyn	c-refused		error: '&dyn convert.From' is not allowed	
+fixture_generic_type_basic	ran	exit 0		ebc14fd3c723c018811a3f5f661b846b68cefb2932719b45039454c5c731da3d
+fixture_grow_while_borrowed	c-refused		error: cannot borrow 's' as exclusive	
+fixture_heap_branches	ran	exit 0		a3ef8ef61797273baa76fd314ba50d5ef3c38c367921e4ebe352500870a64b74
+fixture_heap_bytes	ran	exit 0		3183b6b2f9320f3676cce23a0878efc8838a26f0f2e28b7784383a0d982c710b
+fixture_heap_drops_in_control_flow	ran	exit 0		21d0f88cce078b5979e16ee13f35d6889feae8201cb96ba593e3575951daf932
+fixture_heap_drops_in_desugared_blocks	ran	exit 0		ad0fadf63cc7cd779ce475e345bf4063565b63a3c2efef1eebc89790aaa6acba
+fixture_heap_field_of_owned_temporary	ran	exit 0		f4ddd99f1125fbd7e5964e8b917d5b87eb376e57a8cc4c66504aed7b4fa0a9b2
+fixture_heap_field_of_temporary	ran	exit 0		fa360771c59a5ace3f972eaaf058514cadff8ecca51c8cba7437fd60de3ffc2f
+fixture_heap_move_then_rebind	ran	exit 0		451d660bc5f37a981539cf07c4c6a182693a7d165b4589ecb1165a72555ff90a
+fixture_heap_narrow_fields	ran	exit 0		6e827444556077929063ac2026a795f886f815bcfed9029acd0526ec882c7b36
+fixture_heap_param_borrow	ran	exit 0		83f72717be5b2d3427cbc920b83e91bec2bc32b9f3fa86f18c011dd9c274f54e
+fixture_heap_reassign	ran	exit 0		0db2607cee51cbf39b7e6a2b226439820b91967f1f3f3d5a58bf2bbb29bfae7f
+fixture_heap_returned	ran	exit 0		8e39e6b7cede6aa6ae5ffe8454ba5b4522903f3fd0bc23fb78b1bc7558d6e934
+fixture_heap_scope_drop	ran	exit 0		149610e7122c6c2df4f7e5935ff39e733a88f7b2b1d176eb50795ada637faf35
+fixture_heap_temporary_print	ran	exit 0		0cb3503c6841b1e4114dacececf401b88103c3c514e834ee39d7cea490fb648d
+fixture_heap_use_after_move	c-refused		error: use of moved value 'a'	
+fixture_hex_escape_needs_two_digits	c-refused		error: a hex escape is written '\xNN', with two hex digits	
+fixture_hex_literal_without_digits	c-refused		error: a hexadecimal literal needs at least one hex digit, for example '0x1f'	
+fixture_hosted_list_alloc	ran	exit 0		06e9d52c1720fca412803e3b07c4b228ff113e303f4c7ab94665319d832bbfb7
+fixture_http_multipart	ran	exit 0		2a499902b49c0b2f38a7462f38da0418153cb0536e01b5d0dd63ae5072926126
+fixture_http_pool_idle	ran	exit 0		e07ad4b9cc69d10ed09ed3a8ed1545c48302774ec98937281ece5bfc305d5097
+fixture_http_server_lowlevel	ran	exit 0		5752edbba531e839af32b3b49b2095fb8e0938fdd3c82600aa0a1a74098e4d69
+fixture_http_try_send	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_https_try_dial	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_if_expr	ran	exit 0		e8f533e310170a31a7e5e5fe125447fbe0253de205966ae295713c98c6ac531c
+fixture_if_let_basic	ran	exit 0		d1e8275356bee46ea77c9f9a4c0c6e2bdf35c4ede203577135ea4a5436ce91bb
+fixture_if_let_bind_count	c-refused		error: pattern 'Circle(a, b)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s) (r)	
+fixture_if_let_chain_same_scrutinee	ran	exit 0		42ea9fb682b7e8994ade18bb67e474dfde6c4efa02d2927317ca8212062cfb37
+fixture_if_let_unknown_variant	c-refused		error: 'Circle' is not a variant of enum 'Shape' — the variants are 'Empty'	
+fixture_impl_trait_args	ran	exit 0		0983e84648fb9b1d382a0a6675f34dc81a00e1fc1f0592dc4f01509f849a8e32
+fixture_impl_trait_field_refused	c-refused		error: 'impl Shape' is only legal as a whole parameter type of a declared function	
+fixture_impl_trait_return_refused	c-refused		error: 'impl Trait' is not allowed in return position	
+fixture_impl_where_constraints	ran	exit 0		751f43ef30ddf4d6c674a46de13ceb7c92008fe3a8b8f71cf49b291112dc120b
+fixture_int_conversion_overflow	ran	exit 1	panic: i64.to_u8: value out of range	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_int_conversions	ran	exit 0		11de98707dcb186253d0e97063289e2762f68a16be293901aec30d8eeb45a569
+fixture_int_literal_const_out_of_range	c-refused		error: '4294967295' does not fit 'i32'	
+fixture_int_literal_method_receiver	c-refused		error: '4294967295' does not fit 'i32', the type a literal takes when nothing determines one	
+fixture_int_literal_out_of_range	c-refused		error: '4294967295' does not fit 'i32', the type a literal takes when nothing determines one	
+fixture_int_literal_typed	ran	exit 0		21986e308690ba6b5a406264621d9d9842d6e5fa36a8b0949c475a263c1b21d3
+fixture_int_literal_width	ran	exit 0		e1a9f998fa12fef33765c28bd88e5a4e08a8fc730e8d3ffe9aaea86b85bd64f4
+fixture_int_literals	ran	exit 0		f0f90f1e24fdf8a225921dc7d1f6e128e2ee904a4687a9e81fb1a459680fc219
+fixture_int_mod_narrow	ran	exit 0		4fadb5f2723fb5c9245e94b1a4989e0fc6c4b245eb2e6768f9ef53e46af125d9
+fixture_int_narrow_width_arithmetic	ran	exit 0		98006fa877de10f3eb204179ef7d87fe177654e4609a872da658fffecebbe0bb
+fixture_io_stdio	ran	exit 0	warning	050e1be8bcc483589fbf30b652f9c7390c8af7ac2e8581bb74994b3a3b8dda7d
+fixture_io_streams	ran	exit 0		db0f3d1b1273e031bcd11e801821dbebe4c0ee50694272a121b2d8b134814522
+fixture_io_write_bodies	ran	exit 0		a6802bf90d88ac51259fdc0a057318f4da8e48c6e06e92a306a948769197349c
+fixture_irq_frame_claim	ran	exit 0		d355b1f8f5f8a708e99bdd1f42182678c550137327cc7814dad692b6c5c04d6a
+fixture_isize_kinds	ran	exit 0		38773bdbdeceb1cde1c94c34d0e583779b2e3f6913ff479c1c5cfd1980e82794
+fixture_iter_adapters	ran	exit 0		b297eb64e7ce7c113bafef56fd85ca7d5c6c43e947f9b2d4e9d7c1f736cd1406
+fixture_iter_adapters_owned	ran	exit 0		e768c3bf73d2ebf8c5c3ac983d5da1246e15a26daa2ee2358af6735409344722
+fixture_iter_consumers	ran	exit 0		506ace5a56bfc422b3fbfcf20598087fc08777f4de3fb5b2e0d141172c64c6d2
+fixture_iter_list_take_skip	ran	exit 0		14f2d0d77f246883e2097c861d1f50add0faac40afb3e1f581e87d9f108401e7
+fixture_language_tour_all	ran	exit 0		3d03156e316b826a3932bf0e209e767fcd9ac06616dbec8b8c2222ab8e0a921f
+fixture_layout_query_in_a_constant	ran	exit 0		1148b48a8d116c35a6fe09da0adbed1bf2af70e320113f326bff674e84f9c3ab
+fixture_line_continuation_after_operator	ran	exit 0		ae78f04a41517bdd9853439dee50a432988fc5300b6167db80d0e2d7e1344d65
+fixture_list_basic	ran	exit 0		cbdc47dc0c9f3771907f8d7aa0eb2f16bcb29cdf4b10a9152114c767a3882109
+fixture_list_borrow_element	c-refused		error: '&str' cannot be a container element	
+fixture_list_box_element	ran	exit 0		09827cfe6f3819652408d5c1de070853cc20f5516ae85d5bdefd012af5327cc6
+fixture_list_clone	ran	exit 0		37ebad47767b3a5ee3ceab6299d6f6bac9429b04431276c6f41107a8787d2b75
+fixture_list_container_element	c-refused		error: 'Map<String, i32>' cannot be a 'List' element	
+fixture_list_datac_clone_sort	ran	exit 0		285d993c29b1f7011c437284712cf7722689dd4ec23c066151806bb093773f12
+fixture_list_datac_element	ran	exit 0		60ad35dbabc82cd6b606d05e21259b022c193d70399127e7ead71cbe6944a060
+fixture_list_element_widths	ran	exit 0		3fe2a0c48e8311f3fa4b855f82694eacf3c58bfacdb6919f2b8e81c728d8ecd7
+fixture_list_field	ran	exit 0		8e644239879d1016f4d783cb8744aea2a55b536d2fe8dbeccd4e464a69c65916
+fixture_list_float_element	ran	exit 0		ff3b668f66beddabcba3bcd6d2d6dbf74eac20f67d832cc1cfebc7b1ed726dd4
+fixture_list_growth_and_rebuild	ran	exit 0		429dace3cd31d7bd86fa204c3e550d515cd3154475e5afe73e3a3ee1e0df880c
+fixture_list_insert_bounds	ran	exit 1	panic: List.insert: index out of bounds	53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3
+fixture_list_insert_open_list	c-refused		error: 'List<unit>' cannot be a 'List' element	
+fixture_list_insert_remove_shifts	ran	exit 0		7843181d4bae14477277591d9f138196a1e2e4943137cd78fd2b81ed22fcacc1
+fixture_list_moved_element	c-refused		error: use of moved value 's'	
+fixture_list_narrow_element_pop	ran	exit 0		883e28cce02e603ac6d335b4144ba5ee1b375c3d50435a711a12764c3abf0e1c
+fixture_list_nested_list	ran	exit 0		c2964508297b9bd3a3671a22137c99e86afb6415924895f6cf38469881021791
+fixture_list_nested_open	ran	exit 0		90f9a177b08dabe3ed23ce5ab17d2f7f93be46a67bf63250f4c9d2d1617b4e7e
+fixture_list_nested_open_marker	c-refused		error: 'List<unit>' cannot be a 'List' element	
+fixture_list_nested_owned	ran	exit 0		19ce6a89a479d6cdc47c17de2b03428db78cd2cd1b090fd8e06c9f83de73c5c0
+fixture_list_no_element_type	c-refused		error: the element type of 'xs' is still open	
+fixture_list_of_open_list	c-refused		error: 'List<unit>' cannot be a 'List' element	
+fixture_list_owned	ran	exit 0		d94e0f3a317c81a3ba066a1e61719ad22eaf4093c43e56c4d67a7eec7d6b0617
+fixture_list_owned_replacement	ran	exit 0		475b26ce51a1d040d33b7f6f3eee6a30bdebc6eac42d9bce4f7a11ebafaaca0b
+fixture_list_pop_empty	ran	exit 1	panic: List.pop: the list is empty	9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa
+fixture_list_remove_bounds	ran	exit 1	panic: List.remove: index out of bounds	5d90ef7fc0d040fd56a1e48697cfa99e0dfaf4fd803aefefc3b5053ec1d36aea
+fixture_list_slice_bounds	ran	exit 1	panic: List.slice: range out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_list_slice_insert	ran	exit 0		cbd90394e12e7774dd4eb34356c57167664a884bb6c617dc5a32f1dcfe9806d3
+fixture_list_sort_introsort_stress	ran	exit 0		a3251298061cb24a0e5f0925ba06758497c144becd112659d4ee4c6a55ea7e97
+fixture_list_sort_kinds	ran	exit 0		1ad5495d3fe6446bf2e1bfa2fcf1214d40a3e34019148c9915d3e31fb153068c
+fixture_list_unsortable_element	c-refused		error: List<Bucket>.sort is not defined	
+fixture_list_with_capacity	ran	exit 0		760ed5574a1559ac35492ec1697da7e9dd8b2fc6956d261096ac1d31be6e177d
+fixture_list_with_capacity_arity	c-refused		error: 'List.with_capacity' takes exactly 1 argument (the element count), found 2	
+fixture_literal_adapts_to_float	ran	exit 0		424e3ae1b0c54891110bb704def52bf20a2c67822b983f3fea40486827f5129f
+fixture_literal_const_is_not_a_literal	c-refused		error: operator requires matching numeric operands, found 'i32' and 'u32'	
+fixture_literal_operand_typing	ran	exit 0		97e6d75a2288710ef1710f386db1cf5c61bc787a0019e3fd10977b776bfae039
+fixture_loop_and_labels	ran	exit 0		7ec2701c789e7ef0d506c3e74297830782b62e7c80c842212a0a56bb85c37ecf
+fixture_loop_labels_free_owned_locals	ran	exit 0		ef101ff50dcea92a427007e316782d53e8cd72efea3bb7d3328425e3a6313f58
+fixture_loop_value	ran	exit 0		239442c517e3893cc5d642cd3e6475665f9a1890efc82b0b413112d7c570dd15
+fixture_map_arity	c-refused		error: 'Map' takes 1 or 2 type arguments ('Map<V>' or 'Map<K, V>'), found 3	
+fixture_map_basic	ran	exit 0		e1f2129076a5ca3b7bcda97bdf448bdee0148fa8b610bf60085d8e2be63064a7
+fixture_map_borrow_key	c-refused		error: '&i32' cannot be a container element	
+fixture_map_clear_then_reuse	ran	exit 0		83dc7c9825bc242e4e48c01b85538acd8062ee3ac1ec6e3f30d1af1c6133dcdc
+fixture_map_container_value	c-refused		error: 'List<i32>' cannot be a 'Map' value	
+fixture_map_datac	ran	exit 0		d212fb244c8f7a9505f5165a463aff338d0e654030f69c8bd9768a45d2a78e31
+fixture_map_datac_key	ran	exit 0		0da23750059df8e8209f905588c5c55497f500c6997a7a052f4879726d770f07
+fixture_map_datac_key_ok	ran	exit 0		9f87a5503a7f5f7a3a40bab5c42dfec3f74660255032d5236f1dfcce307841f1
+fixture_map_datac_value_clone	ran	exit 0		2edba8a3b2a3d92c8a9a87a5e8deb1c0bcd9000b4413c32646bff573c0d371ea
+fixture_map_declared_key	ran	exit 0		40a07eb20126c4f44ebe9cdf787176b82c630a5dd547aa7c6080abc5fabcd3cd
+fixture_map_declared_key_enum	ran	exit 0		deef798b1b0d290bd82f6eecc0a7397ae4d75ae2891172f81fd90fb82e6db9ac
+fixture_map_enum_key	ran	exit 0		c54133814c8f8cc073bc18853ba1ff6ddc728da83dc70362228f297e27fae66a
+fixture_map_float_key	c-refused		error: 'f64' cannot be a Map key	
+fixture_map_growth_and_rehash	ran	exit 0		4e3a7ffcc3f1ce9826064dcdcadaf0b11ac7576276635f975300e8c3b4106f1f
+fixture_map_key_pair_eq_arity	c-refused		error: 'Key.eq' takes exactly one parameter, a shared borrow of 'Key', so write 'fun Key.eq(other	
+fixture_map_key_pair_eq_owned	c-refused		error: 'Key.eq' must take 'other	
+fixture_map_key_pair_generic	c-refused		error: 'Pair.hash' cannot have type parameters	
+fixture_map_key_pair_hash_ret	c-refused		error: 'Key.hash' must return 'u64', found 'i32'	
+fixture_map_key_pair_mut	c-refused		error: 'Key.hash' cannot take 'mut'	
+fixture_map_key_pair_no_deep_copy	c-refused		error: 'WithList' declares its own key pair, but the map clones a key in and 'WithList' has no deep copy	
+fixture_map_key_pair_only_eq	ran	exit 0		82b11c59cdfac7a49302be496fabb65f0c4bb06d136cbfcc36b55c39fc038cf5
+fixture_map_key_pair_only_hash	c-refused		error: 'Half' declares 'hash' but not 'eq'	
+fixture_map_key_types	ran	exit 0		044707fc4390ca2fc9f19de5fa32c5478db3717734faee132fb95886caf6f72b
+fixture_map_key_widths	ran	exit 0		97e93968358925fec09ec8958f8b2163ff25bcfeef7f45d61d5d134b98d6fa79
+fixture_map_list_key	c-refused		error: 'List<i32>' cannot be a Map key	
+fixture_map_missing_key	ran	exit 1	panic: Map.get: key not found	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_map_move	c-refused		error: use of moved value 'a'	
+fixture_map_nested_datac_key	ran	exit 0		9bafaa1df71723faf9a88756037183474ee9e47564f7b203e284606a0a1a36c1
+fixture_map_no_value_type	c-refused		error: the element type of 'm' is still open	
+fixture_map_owned	ran	exit 0		cbc3a8649d77c63af07261fcf361c9b98edb6eea97e0a11610775870fe3eec7e
+fixture_map_owned_round_trip	ran	exit 0		40d812374d458a818f5b0eaabd6dbc1654f86c753ac4abe000d433c36fc9ae03
+fixture_map_remove_missing	ran	exit 1	panic: Map.remove: key not found	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_map_replace_drops_old_value	ran	exit 0		ff010e1d825a869274edf0955114f3f54d9c2d0143a45e793e55968af44d0e11
+fixture_map_tombstones_and_reuse	ran	exit 0		d36c2f30478d5f5e9d26a2903c458a2e363fae5781694411fcf776a0faa4680c
+fixture_map_unkeyable_datac_key	c-refused		error: 'Bad' cannot be a Map key	
+fixture_map_with_capacity	ran	exit 0		e8078103ec2ae1f37a9ee79665f1cfedc21447bd76aed0df3ebeb268bd6e9c30
+fixture_map_with_capacity_arity	c-refused		error: 'Map.with_capacity' takes exactly 1 argument (the entry count), found 2	
+fixture_math_f32_overloads	ran	exit 0		369d7a6eea647e58e20c6fb0d0e9d8d3d21040ddd261d44a88735166211cbe01
+fixture_matrix_assoc_boxdyn	c-refused		error: 'Box<dyn Source>' is not allowed	
+fixture_matrix_display_generic	ran	exit 0		3405dc043bf3be42bbfaa5fd6edb33f8779cad0461604a5f16908fc30bf46c13
+fixture_matrix_from_try_in_next	c-refused		error: '?' here propagates a carrying failure, but the enclosing function returns 'std.option.Option<i32>' — the two have to be the same shape; match the value instead (`when r { Ok(v) -> ..., Err(e) -> return <your failure> }`), or make the function return the same kind of enum	
+fixture_matrix_from_try_ok	ran	exit 0		ab33c7bae8be3c79b8f5f63229c04ab95e19e8c9801c3a41b45cce1b36a501b7
+fixture_matrix_generic_trait_operator	c-refused		error: trait 'std.ops.Add' takes no type arguments, and 'impl std.ops.Add for Vec2' writes 1	
+fixture_matrix_iter_const_generic	c-refused		error: an impl for a generic type writes the type's parameters, in order, as its own	
+fixture_matrix_iter_const_generic_ok	ran	exit 0		4aee2f0e0a953e4c918a4f9d0e7408b2c12ca7b776f15b8bb5d12ce9272a7c6b
+fixture_matrix_iter_defer_return	ran	exit 0		e4a8c0fba0e740f2fb645547ff96a194d367319ed4fff347e9532e83b44207c0
+fixture_matrix_ord_map_key	ran	exit 0		dfb01bcf4d1fecf47cfbf84caaabae0e93046b30107cafc9f88e31d8b8cd6b43
+fixture_matrix_ord_only_key	ran	exit 0		b62c64ee89a1e40dd7eab4462b1f67b066415b3abc37e99cfbd72fc5210e9feb
+fixture_method_own_type_params	ran	exit 0		791006551f794c8cbb4b643ce29443c9ebb2cdebde03044584e6d0eced8728a3
+fixture_method_own_type_params_bound	ran	exit 0		25d4f2a86deb5e2574bb3210b67bb24fcc4afb19f93a7b65a057daa874a9d18e
+fixture_move_param	ran	exit 0		30ff52b76863ecb57b56c6f007434f6d2060ff48937715c4c9c9e434e38706ce
+fixture_move_param_and_body_local	ran	exit 0		f57eb699b70ad6ac432e5c8769830fd23f62e19524adb7444b4c55bf042678f4
+fixture_move_param_borrow_arg	c-refused		error: argument 's' has type '&String', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()')	
+fixture_move_param_loop	c-refused		error: use of moved value 'a'	
+fixture_move_param_mut_conflict	c-refused		error: 'mut' and 'move' cannot be combined on one parameter — 'mut T' is an exclusive borrow, 'move T' takes ownership	
+fixture_move_param_receiver	c-refused		error: 'move' cannot be written on a receiver — a method always borrows its receiver; a move-taking parameter is written 'name	
+fixture_move_param_ref	c-refused		error: 'move' cannot be written on '&String' — a 'str' is already a borrowed view, '&T' is already a copy of a borrow, and a function value is already Copy, so there is nothing to take ownership of; write the owned type instead ('move String')	
+fixture_move_param_return	ran	exit 0		c1ac86aeb704038d13b25b5af0d3aa7a4e9da70f7e19091caafd35074fc41719
+fixture_move_param_shadowed_by_a_local	ran	exit 0		f57eb699b70ad6ac432e5c8769830fd23f62e19524adb7444b4c55bf042678f4
+fixture_move_param_str	c-refused		error: 'move' cannot be written on 'str' — a 'str' is already a borrowed view, '&T' is already a copy of a borrow, and a function value is already Copy, so there is nothing to take ownership of; write the owned type instead ('move String')	
+fixture_move_param_use_after	c-refused		error: use of moved value 'a'	
+fixture_move_then_reinit	ran	exit 0		a26506a61d66cc295632c94567211745d278e5a12de843d3c3acfd110aaa4139
+fixture_move_while_borrowed	c-refused		error: cannot move 'p' while it is borrowed	
+fixture_must_use_send_dropped	c-refused		error: the result of 'std.sync.Sender#send' must be used	
+fixture_must_use_user_dropped	c-refused		error: the result of 'check' must be used	
+fixture_must_use_user_fun	ran	exit 0		65a8fb85b2569b50f3416e07f76f1be70ea57ad05d45d220094a36fe32651c27
+fixture_mut_param_bare_read	c-refused		error: operator requires matching numeric operands, found 'mut i64' and 'i32'; 'sink' is a borrow ('mut i64'), so the operator reads the reference itself; write '*sink' to read through it	
+fixture_mut_param_shared_reborrow_twice	ran	exit 0		93bb398ee62b03f88a7f4da667527d36c76df6e4392a12ce0ed971816ca8aace
+fixture_mutex_into_inner	ran	exit 0		1ff3d08be3e31077a9c753f747a586f34b24e7d8129c157250879574434439c5
+fixture_mutex_list_push	ran	exit 0		673650f936cb3b0a2f93ce09d81be10748b1b203c19e8176b4eefc1964a0cf3a
+fixture_mutex_lock_borrow_returned	c-refused		error: return type mismatch	
+fixture_mutex_lock_borrow_stored	c-refused		error: a 'fun' literal cannot capture 'v'	
+fixture_mutex_lock_return	ran	exit 0		53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3
+fixture_mutex_lock_try	ran	exit 0		917df3320d778ddbaa5c5c7742bc4046bf803c36ed2b050f30844ed206783469
+fixture_mutex_lock_value	ran	exit 0		bd5bf67a334999803cd24dedf497ca7be011baf3914a440109df70a732ae5f62
+fixture_mutex_poison	ran	exit 1	panic: mutex poisoned	65968943a426fad3cd56b9100d8c84d25c15763d9d11012b37dca895f6ff804e
+fixture_mutex_share_swap	ran	exit 0		2d5584bdc7caca223610a8fcb19caf65ca6a906e874419c8246767464c6c31d9
+fixture_mutex_spawn_borrow	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+fixture_mutex_stress	ran	exit 0		06516f7a6e849dd3bbe5e3cd905cbaf7dab8f059572d2586adde4eb88ceabdd3
+fixture_named_args	ran	exit 0		1e74477de3d0600fa17d558d72961f665cceda1f2eae1d9e96098dadb88ea03d
+fixture_nested_literal_staging	ran	exit 0		5649233f0882a4932e3ce367b736fbc4dbcf220bf12d1ed8f25575abe2994bad
+fixture_nested_partial_move_field	ran	exit 0		e3346e74e900aa22499f15ddc0ad1b45602098264abbbaff6b74b834c84677b8
+fixture_nested_partial_move_reinit	ran	exit 0		92ac9321e2f7d396720e17184d34da66fdd4f45f51e8949a0a3db33db379c81a
+fixture_nested_while_registers	ran	exit 0		8e37bed9dff3949ffd23ae638260dff869f5cc26e551f2a9e5e289a8888949fa
+fixture_net_loopback	ran	exit 0		5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03
+fixture_net_poll	ran	exit 0		1d4ec97fc482a71ff5dc1e103249846af06e3a71cf7b367447313e17ede89794
+fixture_net_resolve	ran	exit 0		66e0f478acc72fb18c8e3392e841da4aa98901cc446e2faee7da55258b9921df
+fixture_net_timeout	ran	exit 1	panic: net.recv: timed out	a61eb4074b2cf994d16529f91f08d48258a14778d14cf4854c6a6beda57da1fe
+fixture_net_try_connect	ran	exit 0		6eb4d1f5267a250be604c5e395a9ff94be9bacea4c0d129ddcaf65fb608c0d04
+fixture_net_try_connect_retry	ran	exit 0		bdadb348c1fb0718bf5e046822d94d985c4b426ec76342c2b241ddd5b6fe0329
+fixture_nll_borrow_returned_from_local	c-refused		error: cannot return a borrow of 'local'	
+fixture_nll_borrow_used_next_iteration	c-refused		error: cannot borrow 'names' as exclusive	
+fixture_nll_defer_use_after_mutation	c-refused		error: cannot borrow 's' as exclusive	
+fixture_nll_get_then_push	ran	exit 0		2c299cb07a3569cf780a3a1ecc2c07ba4d421ea5e72dbb1ca34f69a9c20191a6
+fixture_nll_if_branch_then_mutate	ran	exit 0		c8dc95cb96297c291366869b0a841897994a366f592ab17dbdaf3a197e2ff063
+fixture_nll_last_use_before_loop	ran	exit 0		2c299cb07a3569cf780a3a1ecc2c07ba4d421ea5e72dbb1ca34f69a9c20191a6
+fixture_nll_mutate_before_use	c-refused		error: cannot borrow 'names' as exclusive	
+fixture_nll_scoped_block_mutates_owner	c-refused		error: cannot borrow 's' as exclusive	
+fixture_nll_view_after_reassign	c-refused		error: cannot assign to 's' while it is borrowed	
+fixture_offset_of_missing_field	c-refused		error: 'P' has no field 'y'	
+fixture_ops_arith_no_add	c-refused		error: cannot use '+' on 'P'	
+fixture_ops_arithmetic	ran	exit 0		312fa0539ab5bcf0a2e0669bfc6ecc62182f1de83686e31152e642944ec2da6d
+fixture_ops_compound_assign	ran	exit 0		d455be121a83c1cc2091626832f64a45e72fa5004cc90a79f391ce9b6ab1aa16
+fixture_ops_display	ran	exit 0		06f9b4e50f10edae0e379e75e7a5bc0071370fb92a3197f82616ecc15b618cbe
+fixture_ops_display_missing	c-refused		error: cannot interpolate a value of type 'P' into a string template	
+fixture_ops_generic	ran	exit 0		7a9a4233a5d3685295f8f33f9d3a6e3ed146244fb5491c3bf96474b1fa973096
+fixture_ops_mixed_types	c-refused		error: cannot use '+' on 'A' and 'B'	
+fixture_ops_operands_once	ran	exit 0		296fece9ed9b371d4dd2cf7da9adb2226e6b3a165068e7d863ba754959f8c415
+fixture_ops_ord	ran	exit 0		3c2f591499f9d40572776466c644cc6a61867c60b11e7e9e3886c59519d6df36
+fixture_ops_ord_no_eq	c-refused		error: cannot compare 'P' values with '=='	
+fixture_ops_orphan_builtin	c-refused		error: 'impl std.ops.Add for i32' is written in module 'ops_orphan_builtin', but 'i32' is a builtin type, which has no module	
+fixture_option_result_methods	ran	exit 0		0e92c09332ec8e0342e4ed7f58ada93442b0106c92af6a3cb5138cc4a89dd32a
+fixture_option_unwrap_owned	ran	exit 0		2c99cc1c2d2b97cdc540774a47a9e8cdd7bd5f19bc050d393bb62e95f5eb2bb3
+fixture_owned_conditional_move	ran	exit 0		de9e2db73705d61790d58561ae26785f79d8cfcb50afc995f58ff1edada0da0f
+fixture_owned_field_read	c-refused		error: use of moved value 'bag.xs'	
+fixture_owned_move_in_loop	ran	exit 0		98ea6e4f216f2fb4b69fff9b3a44842c38686ca685f3f55dc48c5d3fb1107be4
+fixture_owned_rebind	ran	exit 0		62be4935b357e23806c8f448cfc9f627a277e3f9d4cbce14a02706daa0e3a150
+fixture_owned_return_endless_loop	ran	exit 0		b417376a9a864c37a4809c4d5f01c60751b271fc35b58297ad0fd52fd4306e09
+fixture_owned_statement	c-refused		error: this expression produces an owned 'String' value that is never used — bind it to a 'val' or 'var', print it, or pass it to something that takes it by value	
+fixture_panic_bound_message	ran	exit 1	panic: bound message	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb
+fixture_panic_msg	ran	exit 1	panic: deliberate failure	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb
+fixture_panic_not_a_message	c-refused		error: cannot pass a value of type 'i32' to 'panic'	
+fixture_panic_owned_message	ran	exit 1	panic: 7	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb
+fixture_panic_tail	ran	exit 1	panic: always_fails: non-positive	f0b5c2c2211c8d67ed15e75e656c7862d086e9245420892a7de62cd9ec582a06
+fixture_partial_move_borrow_base	c-refused		error: cannot use 'bag' as a whole value	
+fixture_partial_move_conditional	ran	exit 0		16f3afa1c05350e327e79c057d4c6946e9e29d1734603350a0d7f6fd927c6538
+fixture_partial_move_double	c-refused		error: use of moved value 'bag.xs'	
+fixture_partial_move_enum_payload_double	c-refused		error: use of moved value 'h.text'	
+fixture_partial_move_enum_payload_from_borrow	c-refused		error: return type mismatch	
+fixture_partial_move_enum_payload_owned	ran	exit 0		3190eaea6aefa981424d6c5267b5a68efdb367fca3f5d908624f538537fb29b8
+fixture_partial_move_field	ran	exit 0		f2919fcf7c87ac6de1e2b2b990f3b3e998047c3d4b4ce8c1b4d412eabf0c2384
+fixture_partial_move_from_borrow	c-refused		error: cannot move the field 'xs' out of 'b'	
+fixture_partial_move_move_param	ran	exit 0		7a846b0d2f0630c11d85c68eb65ee609c6910cdfff0b1e4787226c8ca0f9977a
+fixture_partial_move_reassign	ran	exit 0		a6e2b7a040683432de03a18fd8a1939a2fdf82585b364bfc874bdd4095c4cae1
+fixture_partial_move_use_base	c-refused		error: cannot use 'bag' as a whole value	
+fixture_passdown_datac	ran	exit 0		225db4ab7fe0baf7b317579a90a5971bd3ebf25b3d474aa2ef0e5a6636a62ff3
+fixture_passdown_globals	ran	exit 0		77ed95e766779b4378203caa3508b709f840d7cc05bfa8cb21e5fbefdd0040e8
+fixture_passdowns	ran	exit 0		d53847e14623a65b4186979cae3b7ed98cf90a67fdd9434705737e190dcbee44
+fixture_path_absolute	ran	exit 0		4e66e2d6c3a5a6d00c37aa4072e5c1dd0a96fe88e36fe4c73a3d5dab25235705
+fixture_path_normalize	ran	exit 0		8b0cf9f13340f982c0d80456c470bb3b27561802fc43321e4f4d23318a4f8c7a
+fixture_path_parts	ran	exit 0		dd105febfbefc7d1f3ee3291e85897ed2ac73e4bae1e3348e1ff0bf3ccdc5e47
+fixture_path_polish	ran	exit 0		91d0eec288d67f6d678acc8672870f62fd5620d468d8615efa7a86f67e0c64af
+fixture_path_split_edges	ran	exit 0		f5f23fb46e730dd5840f415601048b4222be846d6652fd81bcd270cebe138043
+fixture_pd_argument_forwarding	ran	exit 0		68fcaf49269f3dd03f6048ce45170cd4a9fb690197fe3c98762e7a9e4d1efdc2
+fixture_pd_forward_read	c-refused		error: undefined variable 'late' — a 'pd' initializer can only use passdowns declared before it	
+fixture_pd_lock_globals_many	ran	exit 0		d2d1d28ed19027bde5d27ff31ebf7d3bf7b3b67dbfee53b9e17c5783f5296794
+fixture_pd_lock_globals_pair	ran	exit 0		72c4972e747822ecb96f0b3a0099901a052e1de7987192969925e50d8deb9891
+fixture_pd_owned	ran	exit 0		9a78f156c67e7d8b4149df9ed16824b15a547f1e72ba14a6e5c7faed375098fd
+fixture_pd_owned_container	ran	exit 0		dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22
+fixture_pd_shadowed	ran	exit 0		ed3362ccbd70ad0ce0ba2c10244db167ec441a5f9f18f0e53b5deb82e1fe6922
+fixture_pd_val_write	c-refused		error: cannot assign to passdown 'fixed'	
+fixture_pd_var_copy_read_twice	ran	exit 0		9131ad788752aa38b17e72d6d5c5eb64aa44bb33036caa711f26b7181d14e226
+fixture_pd_var_datac_reassign	ran	exit 0		3745c882c88b8b61d10285950542626e048461316b6b5567afcf58be2e3908f5
+fixture_pd_var_double_borrow	c-refused		error: cannot borrow passdown 'tally'	
+fixture_pd_var_mut_argument	ran	exit 0		8d58f634a5b5051db5ee0bb9d005779b382be410e8ebd5144590f2f0429f9220
+fixture_pd_var_read_only_datac	ran	exit 0		7a1a0ff7c6a379bf48d268ab2134d5a7a028c99b83470d229f065147082ac38f
+fixture_pd_var_read_only_shared	ran	exit 0		6a4cd3158a5b3434f54fb79be796548b861cdd520c8d77f13b6839b7b54eb635
+fixture_pd_var_write	ran	exit 0		31f75ca815e515fae9c2c28d073c588d0b06bc0b9e925ad05f4802575b99e55b
+fixture_pd_write_reaches_callers	ran	exit 0		b6d2dcff1abd56b5acef59328337e2bd3602cc9168059edd70566d97a3962054
+fixture_pool_drop_joins	ran	exit 0		51aee3cf692d8421368768a90601c008cc38b02e124743f8fc9f87fbc35bab9f
+fixture_pool_panics	ran	exit 0		c6a456485a6e0e11260f7a00907500070f376fa7b22cf6152ef4d1d481d06395
+fixture_pool_spawn_after_join	ran	exit 1	panic: Pool.spawn: the pool has been joined	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_pool_sum	ran	exit 0		c8dd0456c8fca3d7d7556b73ddbcd6efb60391447453eeb000e4bdbf5daa4499
+fixture_pool_zero_workers	ran	exit 1	panic: pool.new: a pool needs at least one worker	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_process_spawn	ran	exit 0		93044ad5e1d3331ec1c0158e243b6c828ed732a4cf2b4cf4a5a2c9e0f797c536
+fixture_ptr_from_fn	ran	exit 0		6bbb4fb214212d1fd3d1a84b515b85180428fa070e3b98b9e1b75925b258c054
+fixture_ptr_from_fn_closure	c-refused		error: 'Ptr.from_fn' takes a function, but this is a closure	
+fixture_push_to_val_string	c-refused		error: cannot assign to 's'	
+fixture_receiver_methods	ran	exit 0		a8c4e77f82caf30c845e914b5fd2e45328dc5c1b9456bc892f5ca519396ae5b3
+fixture_receiver_mut_on_val	c-refused		error: cannot assign to 'c'	
+fixture_recursive_datac	ran	exit 0		046c2184ef4fb6bcd8cb40b84b205a61060febb76333340658ce0b1d83938e9b
+fixture_refused_aggregate_text_borrow	c-refused		error: field 'view' borrows 'source', but that value is not moved into an earlier String/Bytes field of this datac	
+fixture_refused_assign_to_a_function	c-refused		error: cannot assign to this expression	
+fixture_refused_blanket_cycle	c-refused		error: the blanket impl of 'Describe' bounds its parameter on 'Describe' itself, so checking any type against it would need the same check again	
+fixture_refused_blanket_dyn	c-refused		error: expected '&dyn Tagged', found '&i32'	
+fixture_refused_blanket_impl	c-refused		error: the blanket impl of 'Describe' bounds its parameter on 'Describe' itself, so checking any type against it would need the same check again	
+fixture_refused_blanket_overlap	c-refused		error: 'impl Describe for T' overlaps 'impl Describe for i32'	
+fixture_refused_blanket_projection_bound	c-refused		error: the call to 'first' bounds 'I::Item' with 'Describe', but 'i32' binds no associated type 'Item'	
+fixture_refused_blanket_unchecked_bound	c-refused		error: the method 'tag' comes from a blanket impl of 'Tagged', whose bound 'Describe' on the receiver cannot be checked on 'List<i32>'	
+fixture_refused_break_value_in_statement_loop	c-refused		error: only a 'loop' used as a value can 'break' with one	
+fixture_refused_field_and_whole	c-refused		error: cannot borrow 's'	
+fixture_refused_field_borrow_then_whole_borrow	c-refused		error: cannot borrow 's'	
+fixture_refused_field_shared_then_write	c-refused		error: cannot borrow 's.items' as exclusive	
+fixture_refused_generic_impl_bound	c-refused		error: the call to 'show' needs 'Pair<i32, bool>' to implement the trait 'Describe'	
+fixture_refused_generic_impl_overlap	c-refused		error: 'impl Tagged for Pair<A>' overlaps 'impl Tagged for Pair<A>'	
+fixture_refused_impl_where_equality	c-refused		error: the call to 'std.iter.count' needs 'Wrap<Strs>' to implement the trait 'Iterator'	
+fixture_refused_impl_where_projection	c-refused		error: the call to 'std.iter.count' needs 'Keep<Plains>' to implement the trait 'Iterator'	
+fixture_refused_label_across_a_closure	c-refused		error: no enclosing loop is labelled 'o; a label is written before a loop ('o	
+fixture_refused_mut_param_reborrow_twice	c-refused		error: cannot borrow 's'	
+fixture_refused_mut_param_with_shared_reborrow	c-refused		error: cannot borrow 's'	
+fixture_refused_negative_bound	c-refused		error: a negative bound ('!Name') is excluded from generic trait impls (plan/generic-trait-impls.md section 6)	
+fixture_refused_nested_partial_move_parent	c-refused		error: use of moved value 'p.name'	
+fixture_refused_plain_break_in_value_loop	c-refused		error: this 'loop' produces a value, so every 'break' out of it carries one	
+fixture_refused_same_field_twice	c-refused		error: cannot borrow 's.count'	
+fixture_refused_shared_then_mut_param_reborrow	c-refused		error: cannot borrow 's'	
+fixture_refused_tuple_when_literals_without_fallback	c-refused		error: a position matched by literals needs an arm that matches anything there	
+fixture_refused_tuple_when_not_exhaustive	c-refused		error: this 'when' is not exhaustive	
+fixture_refused_unknown_loop_label	c-refused		error: no enclosing loop is labelled 'nope; a label is written before a loop ('nope	
+fixture_refused_value_loop_without_break_value	c-refused		error: a 'loop' used as a value needs a 'break value' to produce one	
+fixture_refused_where_projection_bound	c-refused		error: the call to 'show_all' needs 'I::Item', which is 'Plain' for 'Plains', to implement the trait 'fmt.Display', and it does not	
+fixture_refused_whole_while_field_borrowed	c-refused		error: cannot move 's' while it is borrowed	
+fixture_repr_align	ran	exit 0		c0cd8ed452fdb739754c2a91974170c5faa017c21121cefa84c339c0155422e4
+fixture_repr_align_not_power_of_two	c-refused		error: 'repr(align(3))' needs a power of two	
+fixture_repr_c_padded	ran	exit 0		f149535fe6483267ab410c371efc8c7f7fbc93d8f097ca6a2d01d491d51804c9
+fixture_repr_packed	ran	exit 0		b6c05609d75d1f4090ad5a69817fae974afc75483574f24efa3050189a242f37
+fixture_result_map_owned	ran	exit 0		437bcf922bfd55f1a43d998d42413292221fb1b9e57658cdb9167dff040fc363
+fixture_result_unit_ok	ran	exit 0		d718da9f5374c9d16137f2f6b320b5b516d5a999f81ede012e0ad97a9bd20295
+fixture_result_unit_payload	ran	exit 0		d2bc750cd9b209d146f904af555b5266dc51aeb798fac19c5d671a6d492932fc
+fixture_rwlock_basic	ran	exit 0		9e39823a430598a71f1ec0b5ca7f0040c6134035e303e4ab5b58bcf2b6010f2c
+fixture_rwlock_concurrent	ran	exit 0		9fc690bb69534ef35102769af45a763d221ea08e54b44044356aee4de7b80cc6
+fixture_rwlock_poison	ran	exit 1	panic: rwlock poisoned	f6ce73d3b4d1ee5d0aa501214b6b8ec5207acc42da3c6b8346502db537dbbf8f
+fixture_rwlock_read_borrow_returned	c-refused		error: return type mismatch	
+fixture_rwlock_read_borrow_stored	c-refused		error: a 'fun' literal cannot capture 'v'	
+fixture_rwlock_read_releases	ran	exit 0		45e2376c0a6323fd7d9b246d58bca91c19020176cedbef64fb57ca0508048198
+fixture_rwlock_spawn_borrow	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+fixture_rwlock_try	ran	exit 0		13dd5633e12652cd671a8e0134c9cfe6756b15cfe982ad19b311be3e9efd18e8
+fixture_same_call_aliasing	c-refused		error: cannot borrow 'c'	
+fixture_scalar_borrow	ran	exit 0		2396b7d2b87488ac974eb6fa3837f4a4a8a81c492b97f9b672580678921a870e
+fixture_scalar_borrow_f64	ran	exit 0		0b43a1ddd8e8be342a79b6d8a355feceddac3a548d09c43d7cf4f360bac80724
+fixture_scoped_block_borrow	ran	exit 0		7a7cca347199b45aa41ba80311b8dd4312ff83e0b012c0cfbacd658f7799bbc2
+fixture_scoped_block_captures	ran	exit 0		284e1067b9037c6d9d114e626c70787e7e817c42e7701e763bdc70fd1d5980a0
+fixture_scoped_block_generic	ran	exit 0		1121cfccd5913f0a63fec40a6ffd44ea64f9dc135c66634ba001d10bcf4302a2
+fixture_scoped_block_params	ran	exit 0		96cb212259a350ec6f0fe01bb8bafbc3886349266a313da1e8f97029227a0fad
+fixture_scoped_borrow_escapes_move	c-refused		error: use of moved value 's'	
+fixture_scoped_borrow_in_loop	ran	exit 0		0678252cd03edf8f28219d865a7d5f5e0bcbe637217b761097d769a288ad4bb5
+fixture_scoped_escaping_borrow	c-refused		error: cannot borrow 's.a'	
+fixture_scoped_param_not_literal	c-refused		error: argument 'f' has type 'fun(i32)', expected 'scoped fun(i32)'	
+fixture_scoped_param_returned	c-refused		error: return type mismatch	
+fixture_scoped_param_stored	c-refused		error: this is a scoped function value	
+fixture_scoped_param_to_plain	c-refused		error: this is a scoped function value	
+fixture_scrutinee_field_of_temporary	ran	exit 0		37b97d45faabc9bf15e4d7cbb6b9985c486ccf470d2f6c9f6f6486bdbd26aa65
+fixture_section_attribute	ran	exit 0		040316eca5e77dbb2212c1efe8b81cb23bc67ce0ac8cb5c9d902d98bd45ddfa1
+fixture_shadowed_local_in_one_block	ran	exit 0		c8ecf2ae6a284e90e056222fc36e0a37346d56ac4c59ab74ab6780873ac2c176
+fixture_shadowed_module_alias	c-refused		error: datac 'str' has no method 'join' 'path' is a local binding here, so 'path.join' is not the module 'path'; rename the binding	
+fixture_shift_checked	ran	exit 0		0aeb0b9220701130911e671baa910c5cab229089a42fea10c121a03abb996865
+fixture_shift_const_named_too_wide	c-refused		error: a shift by 8 is not defined for a 'u8', whose width is 8 bits	
+fixture_shift_const_too_wide	c-refused		error: a shift by 33 is not defined for a 'u32', whose width is 32 bits	
+fixture_shift_panic_negative	ran	exit 1	panic: shift amount out of range	09e8d43a32ca23eaf5331194b916831487c49c657d2f786a9dd98c2a7b0cd309
+fixture_shift_panic_u32	ran	exit 1	panic: shift amount out of range	604fec38960d7c5bd3bd6c06ad8f4b42eac0bb30ea02d43518d0f9f11d5e131e
+fixture_shift_panic_u64	ran	exit 1	panic: shift amount out of range	83acd6ec9b70e1b3d1bf22d3451ebba0ea14c2de3fc46dcc761886521b339147
+fixture_shift_panic_u8_right	ran	exit 1	panic: shift amount out of range	4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+fixture_source_location	ran	exit 0		41fa93db86707a4aaca67dbe0deb71f40461c113f6c516524fa73edf7c9938a9
+fixture_static_assign_immutable	c-refused		error: cannot assign to 'static X'	
+fixture_static_heap_type	c-refused		error: 'String' cannot be a static's type	
+fixture_static_mut_outside_unsafe	c-refused		error: 'static mut C' is an unsafe operation	
+fixture_static_not_constant	c-refused		error: the initializer is not constant	
+fixture_std_str_order	ran	exit 0		c5bc6b5c0e3f169a8da243d86e911c5de7f41d5c9359a0d732ec7fee9c7c88d0
+fixture_stdlib_build	ran	exit 0		b9b5b10be9279b5ab0b99d62eddd1fc7db1eeb52a2ac7d415c2fff2bc648f1e8
+fixture_stdlib_closure_callbacks	ran	exit 0		2819b289b977764e35898fb89662537aaa19be96e6e8849bde5ee9606f0d56b4
+fixture_stdlib_combinators	ran	exit 0		bf126431de8a7be7c22e5abbfb002dab8f7000fee77806e02a89f202f574090a
+fixture_stdlib_encoding	ran	exit 0		a92f02103ab77ff8a2284dfd86640f8352ada9ccefac9c64bfbb883b6c8fcf9c
+fixture_stdlib_fmt	ran	exit 0		129e850421dfd5a80563b9703a947e16e4b5164dffa46e7e072e4ea5043a03fe
+fixture_stdlib_list	ran	exit 0		a2028b72ed778c6d4452bf5cfb641fca800b727d76b921f44ebb32d4de935235
+fixture_stdlib_list_callbacks	ran	exit 0		8f8a7e68fc457daec3fd125692bb64d659485a3850c1fe4a4c7fe955de728ef4
+fixture_stdlib_list_filter_owned	c-refused		error: argument 'v' has type '&String', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()') — this is inside the shipped standard library ('std/list'), so the instantiation you asked for is one it does not offer	
+fixture_stdlib_math	ran	exit 0		d7a2a3b6d9bcaa740cd97c94d4678ee9f97f6556aad3c6609d00d787d3778b0a
+fixture_stdlib_mem	ran	exit 0		0b8cb28f1a36aff921d11cc6f4175d4696370394107d37ee2879efa1d3bb8e4a
+fixture_stdlib_option_result	ran	exit 0		409bd417a0b817f4dcba73fc1a60e8e55ff5e09efdcd3f3b0da7d8c318f96e19
+fixture_stdlib_parse	ran	exit 0		727c6d37f4d231cbc19463cda42f189aad323e5d353eceaee3becf5f7186735a
+fixture_stdlib_path	ran	exit 0		11328f82467004380de1cc4b9abebce4c124c14c95b1f78b9c2cb3cac2b073ec
+fixture_stdlib_regex_api	ran	exit 0		fb50cbe97d7f7b0de42211315a19987fde9a0956cab08f552935ef6628194eda
+fixture_stdlib_regex_differential	ran	exit 0		bed0754f56913e79e68b20b0fc37a12e46eb63a0500e03cbb98dde376441b317
+fixture_stdlib_regex_errors	ran	exit 0		9775df6bb607502c058f6c9cebbb58e44e53246fd31db4ad0a97c7e230e79581
+fixture_stdlib_regex_linear	ran	exit 0		a8a19fd5693da160e7af2d013666a107ee2e734b08af314893f42b16da768cbe
+fixture_stdlib_regex_panic	ran	exit 1	panic: regex.is_match: unclosed group	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_stdlib_regex_table	ran	exit 0		10708400e9a4841e16414074e488d1d57d844836d5b45e53d8be8eeb64742cf5
+fixture_stdlib_sort	ran	exit 0		39b2e4f441beeb1cfbda62caabf961a0c2d1d57de168639e1d42284e89ba36f0
+fixture_stdlib_str	ran	exit 0		3784c5a6ae2268249785de2f59cfb951a2e415e84be13cb8cde74fcf048ecda6
+fixture_stdlib_str_case	ran	exit 0		711c74eeb4693c12e4e9d398a16c63a03c2a6401b1e5c1707e44da99ef4f2f78
+fixture_stdlib_str_slice	ran	exit 0		e8356fc390daf99c0c8841cb15016187332a4ec20494627bcfa05039738ec9fc
+fixture_stdlib_tz_synthetic	ran	exit 0		eaf45019ab314f6a498acdf3971d24d291569bb14484636f5de18471e95bfb54
+fixture_stdlib_tz_zones	ran	exit 0		ccf1c207a9c1d707b220673ef9cd93826f049be0fee60cf66758267f3120e8e6
+fixture_str_byte_at_len	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_str_byte_edges	ran	exit 0		e503d0e65099dd03f45122c37113adb7c506fe9837633f4a06b2ead544525057
+fixture_str_byte_empty	ran	exit 1	panic: str.byte: index out of bounds	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_str_comparison	c-refused		error: cannot compare 'str' values with '=='	
+fixture_str_core	ran	exit 0		d42839eeefd039a4606165c824ca52575422c6abff37ba18039108af61b787a6
+fixture_str_search_edges	ran	exit 0		749221ee16158437366bfd2f665884fc2c9b2e791ce6e308a51ecc73e332018a
+fixture_str_slice_split_codepoint	ran	exit 1	panic: str.slice: byte 1 is inside a codepoint	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_str_to_string_coercion	ran	exit 0		868acd1d761a0fcf8bf3a2925690b8193640bda9c76f5417f402a0f064df8d00
+fixture_string_basic	ran	exit 0		e881ceece0e103272396ef9d5e84887e48d2c14965163eb33cf1ea82b4d825b9
+fixture_string_build	ran	exit 0		2dce4e78c1b59e92a3ace1e250a8fcf78ff23f05401d27399be2fc3062490346
+fixture_string_field	ran	exit 0		13ede09df8d88cb5c57ee388a90d685bbd2eeb57d01be30aed14ed2a5697b151
+fixture_string_hex_escape_is_not_text	c-refused		error: a string literal is UTF-8	
+fixture_string_view_basic	ran	exit 0		b6edbd53e9f6586d9bc50623601f3f33d74f7c3f60f8f114532c790dc1a2865b
+fixture_string_views	ran	exit 0		df4b4510ed899ba009ecc26b34168aea5f7f4beafebf2c05b3de90887f506ed8
+fixture_string_with_capacity_zero	ran	exit 0		71a6c8cae4c328ec8cb583dc0793b03028661497db4efe3ccadb1aa71f6b2a33
+fixture_sys_target	ran	exit 0		d94c682e74526601c4f05c38bab0bc17c6b602a83b1519349150a965eb693160
+fixture_template_buffer_pieces	ran	exit 0		390bfe0d85beb8859c1effc5b349173cbd049dc612aeae35973aba06b236464f
+fixture_template_not_printed	c-refused		error: a string template can only be printed	
+fixture_templates	ran	exit 0		d9c5f408208d56756d61cf101ae9555f916ae095d923b5f222875649f7a6973d
+fixture_thread_current_id	ran	exit 0		acb2b288b9f028830645d94e3a4417e5ffc574a024576d6f69b53d989e9d93ea
+fixture_thread_fence	ran	exit 0		3231d517713de40c42cbb9f33588e46d3221919c918f146e36c134bc85c90287
+fixture_thread_join_accepted	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+fixture_thread_join_not_a_handle	c-refused		error: 'thread.join' takes a 'Thread<T>' handle, found 'i32'	
+fixture_thread_join_unit	ran	exit 0		1cb2a65e099f35f40d732c1ecc589983f201789147eb4257d90031d1938b25f1
+fixture_thread_panic	ran	exit 0		3d0a60dbb1da88d07efcad603acc413a98d116d316bebbfe5153b89119005298
+fixture_thread_sleep	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+fixture_thread_spawn_accepted	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+fixture_thread_spawn_array_element	c-refused		error: 'Thread<i64>' cannot be an array element	
+fixture_thread_spawn_borrowed_value	c-refused		error: field 'text' stores a borrowed 'View', so construct it from a string literal or from an earlier String/Bytes field in this datac	
+fixture_thread_spawn_box_element	c-refused		error: 'Thread<i64>' cannot be a 'Box' element	
+fixture_thread_spawn_closure	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+fixture_thread_spawn_list_element	c-refused		error: 'Thread<i64>' cannot be a 'List' element	
+fixture_thread_spawn_local_borrow	c-refused		error: 'thread.spawn' cannot send '&Atomic<i64>'	
+fixture_thread_spawn_map_element	c-refused		error: 'Thread<i64>' cannot be a 'Map' value	
+fixture_thread_spawn_mut_borrow	c-refused		error: 'thread.spawn' cannot send '&mut Atomic<i64>'	
+fixture_thread_spawn_pd_atomic	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+fixture_thread_spawn_str_arg	c-refused		error: 'thread.spawn' cannot send a 'str'	
+fixture_thread_spawn_var_field	c-refused		error: 'thread.spawn' cannot share 'Counter' across a thread boundary	
+fixture_thread_stress	ran	exit 0		06516f7a6e849dd3bbe5e3cd905cbaf7dab8f059572d2586adde4eb88ceabdd3
+fixture_tls_bad_record	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_big_body	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_ca_file	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_concurrent	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_error	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_handle_not_an_integer	c-refused		error: cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'usize'	
+fixture_tls_handle_not_forged	c-refused		error: function 'forge' declared to return 'std.tls.TlsHandle' but body evaluates to 'i32'	
+fixture_tls_handshake_no_timeout	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_handshake_socket_timeout	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_partial	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_pool_close	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_reset_handshake	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_reset_read	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_sni	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_timeout_handshake	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_timeout_read	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_truncated	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_tls_try_ok	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_trace	excluded		its stderr carries a clock reading and the source path, which change from run to run	
+fixture_trailing_block	ran	exit 0		2eb4769f20b160c4b9f960869896fa65046dbac9684e88cbdd5a38c15399d21c
+fixture_trailing_block_capture	ran	exit 0		9422b95a5e9325e99b4848aa8d911c6ddf0745dea8d00a54dc8915fa23de5d2f
+fixture_traits_assoc_bound	ran	exit 0		dba146114aa3f04b22d964a1fa1cc3e200fa22c7e0b943c3cfbc2fe57b4e0eb8
+fixture_traits_assoc_bound_violated	c-refused		error: 'type Entry = Item' in 'impl Repo for Store' does not satisfy the bound 'type Entry	
+fixture_traits_assoc_const	c-refused		error: associated consts are not in this slice	
+fixture_traits_assoc_default_self	ran	exit 0		724d18377ab39824cfb0e8a8a9520a2302f0c77850e04cd052836e12237d4562
+fixture_traits_assoc_equality	c-refused		error: 'Src' declares no associated type 'Missing', so the equality constraint 'Missing = i32' on 'I' of 'pick' names nothing	
+fixture_traits_assoc_extra	c-refused		error: 'type Out' is not declared by trait 'Src'	
+fixture_traits_assoc_gat	c-refused		error: a generic associated type is not in this slice	
+fixture_traits_assoc_missing	c-refused		error: trait 'Src' declares 'type Out', and 'impl Src for A' does not bind it	
+fixture_traits_assoc_no_bound	c-refused		error: in 'pick<A>'	
+fixture_traits_assoc_two_types	ran	exit 0		abc5712c66b68c5276a0f1c3fde538d6158a66c5cd219041792ea5efa9671cdb
+fixture_traits_associated_type	c-refused		error: a default associated type is not in this slice	
+fixture_traits_bound_second	c-refused		error: the call to 'grow_and_measure' needs 'OnlyShape' to implement the trait 'Grow', and it does not	
+fixture_traits_bound_transitive	c-refused		error: the call to 'needs_doubled' needs 'OnlyNamed' to implement the trait 'Doubled', and it does not	
+fixture_traits_bound_unimplemented	c-refused		error: the call to 'area_of' needs 'Point' to implement the trait 'Shape', and it does not	
+fixture_traits_boxdyn_enum	ran	exit 0		074b974af4200b08fd57bd02cb1cee603294bb9c4e77bed2a7093b25ccaccdcd
+fixture_traits_boxdyn_factory	ran	exit 0		73e327b0c236e1625b432cc8c584f85757abf8f7390ee0ef94b6ab51bb5f3b64
+fixture_traits_boxdyn_field	ran	exit 0		4dcec7e78a952065e97fd2502b236c1875327ccef92aaf40df3a2d89a6f432b7
+fixture_traits_boxdyn_generic_trait	c-refused		error: 'Box<dyn convert.From>' is not allowed	
+fixture_traits_boxdyn_list	ran	exit 0		0a4f7e8898c742702b0049bcc1dd1c7cb04678250f37ddc871ed3cb8b9cb4df8
+fixture_traits_boxdyn_move	ran	exit 0		d0fb0b0ce0f76bc73b45d397d790d9229264de1bc09b0ba3ce4cf9d10cd07aa0
+fixture_traits_boxdyn_mut_while_borrowed	c-refused		error: cannot borrow 'b' as exclusive	
+fixture_traits_boxdyn_not_impl	c-refused		error: expected 'Box<dyn Shape>', found 'Box<i32>'	
+fixture_traits_boxdyn_object_safe	c-refused		error: 'Box<dyn Maker>' is not allowed	
+fixture_traits_boxdyn_partial_move	c-refused		error: use of moved value 'h.shape'	
+fixture_traits_boxdyn_plus	c-refused		error: `dyn` names one trait	
+fixture_traits_boxdyn_take	c-refused		error: 'Box<dyn Shape>.take' is not allowed	
+fixture_traits_boxdyn_thread	ran	exit 0		1079ad34d4383259de1b2189102cdf8136fff018b1bbed019fb3c71ea94ff5ff
+fixture_traits_boxdyn_thread_borrow	c-refused		error: 'thread.spawn' cannot send '&dyn Shape'	
+fixture_traits_boxdyn_use_after_move	c-refused		error: use of moved value 'b'	
+fixture_traits_datac_and_enum	ran	exit 0		d9395612052c49dd86c25e9f871d1ee29cfd24c392f5e5617f325aa9b085ddc4
+fixture_traits_default_body	ran	exit 0		4cda6bf812db86b3b7606b14ff3062ddab828d0d5af971f2e0730842896861e9
+fixture_traits_default_undeclared_method	c-refused		error: datac 'C' has no method 'nope'	
+fixture_traits_default_wrong_override	c-refused		error: method 'describe' does not match trait 'Shape'	
+fixture_traits_drop_declared	c-refused		error: the trait 'Drop' is built in	
+fixture_traits_duplicate_impl	c-refused		error: trait 'Shape' already has an impl for 'Circle' (written in module 'traits_duplicate_impl')	
+fixture_traits_dyn	c-refused		error: 'dyn Shape' is not a type on its own	
+fixture_traits_dyn_builtin	ran	exit 0		4b9258d432ecb4511cfe5471a58f3feea9e8aa513e1d32294894693827d3b0d4
+fixture_traits_dyn_default_super	ran	exit 0		5006c44ae9c01b5ddb885734acfc8ecebb3c95378ee37eef05724d4fc5dfd511
+fixture_traits_dyn_dispatch	ran	exit 0		0a4f7e8898c742702b0049bcc1dd1c7cb04678250f37ddc871ed3cb8b9cb4df8
+fixture_traits_dyn_field	c-refused		error: field 'shape' is a borrowed type ('&dyn Shape') — a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible — an owned 'String' is the way to keep text in one	
+fixture_traits_dyn_forward	ran	exit 0		ba8549ffbc1d1d6f2a97bb4cb143729dc55790ad4d8a423d848d6671c2c510b4
+fixture_traits_dyn_mut	ran	exit 0		9d6e4bee32ce548297f536ca33b88e00911678606e88cc92f9ee58a89583eaff
+fixture_traits_dyn_not_impl	c-refused		error: expected '&dyn Shape', found '&Other'	
+fixture_traits_dyn_return	c-refused		error: '&dyn Shape' cannot be a return type	
+fixture_traits_dyn_unknown	c-refused		error: '&dyn Nope' names no declared trait	
+fixture_traits_dyn_unsafe_param	c-refused		error: '&dyn Comparable' is not allowed	
+fixture_traits_dyn_unsafe_self	c-refused		error: '&dyn Cloneable' is not allowed	
+fixture_traits_extra_method	c-refused		error: 'shrink' is not declared by trait 'Shape'	
+fixture_traits_generic_datac_method	ran	exit 0		c6aa27d2ba0d2bbc9e43f4f65230b2f184de1ca2bdc2e90a53ca245c56ed524c
+fixture_traits_impl_for_builtin	ran	exit 0		8347a4494a44397b3b5d880e3ee192935b0fb788fb676fe9b2114ca1b42e89eb
+fixture_traits_impl_trait_argument	ran	exit 0		e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_traits_inherent_collision	c-refused		error: 'impl Shape for Circle' declares 'Circle.area', which 'Circle' already has as an explicit method	
+fixture_traits_missing_method	c-refused		error: trait 'Shape' declares 'fun Self.name().return	
+fixture_traits_missing_supertrait	c-refused		error: 'impl Named for C' is missing its supertrait	
+fixture_traits_self_in_signature	ran	exit 0		a6e2b7a040683432de03a18fd8a1939a2fdf82585b364bfc874bdd4095c4cae1
+fixture_traits_supertrait	ran	exit 0		cfd298c6283ddd22fd12eb45fb822aabec5cbde43b12549ebc19950e00e5d329
+fixture_traits_supertrait_cycle	c-refused		error: the supertrait relation is cyclic	
+fixture_traits_unknown	c-refused		error: 'impl Shape for Circle' names no declared trait	
+fixture_traits_where_clause	ran	exit 0		e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+fixture_traits_wrong_receiver	c-refused		error: method 'grow' takes its receiver differently than trait 'Grow' declares it	
+fixture_traits_wrong_signature	c-refused		error: method 'area' does not match trait 'Shape'	
+fixture_try_borrowed	c-refused		error: '?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value, not '&Option<i32>' — match it with 'when' or 'if let' instead	
+fixture_try_drops_frame	ran	exit 0		431a381addaf28054a8ac643de3cb2bbfa69b3232ad48854edec077189b9775c
+fixture_try_error_type	c-refused		error: '?' cannot convert a failure	
+fixture_try_frame_drops	ran	exit 0		0a010a29043e369e20f985482c10c33a3dda1eeb6beecf2643f5507d4e07d6e0
+fixture_try_in_main	c-refused		error: '?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' — it returns 'unit'	
+fixture_try_narrow_payload	ran	exit 0		294bdb5fea4b1f8121dbc81377522f4fd5ac0f16b0d9d4b737ea2ea6d0caff13
+fixture_try_non_enum	c-refused		error: '?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value, not 'i32' — match it with 'when' or 'if let' instead	
+fixture_try_operator	ran	exit 0		4566a276d44dfde5c80b2bf66c60e87695c8028425efdff0115c25e73d1b2695
+fixture_try_shape_mismatch	c-refused		error: '?' here propagates a carrying failure, but the enclosing function returns 'Option<i32>' — the two have to be the same shape; match the value instead (`when r { Ok(v) -> ..., Err(e) -> return <your failure> }`), or make the function return the same kind of enum	
+fixture_try_to_conversion	ran	exit 0		581903534341ce9b2601bd6c7e8a37050484e7b3c32be86efeb3ae8737daa354
+fixture_try_to_widening	c-refused		error: type 'u8' has no method 'try_to_u32'	
+fixture_try_to_without_option	c-refused		error: 'i64.try_to_u8' hands back 'Option<u8>', which 'std.option.Option' declares	
+fixture_try_wrong_shape	c-refused		error: '?' needs an enum with an 'Ok' and an 'Err' variant (or a 'Some' and a 'None'), but 'Shape' has 'Circle', 'Empty'	
+fixture_tuple_access_and_patterns	ran	exit 0		5611d1197112a9cd25a7a6820fad022739e9bfaa4f2f288ffc27fb68f30cfc8d
+fixture_tuple_arity	c-refused		error: this pattern has 3 position(s), and the tuple it destructures ('(i32, i32)') has 2	
+fixture_tuple_borrowed_element	c-refused		error: element 1 of the tuple is a borrowed type ('str')	
+fixture_tuple_datac_field	ran	exit 0		d9e9efd35389f29766f06ad6823856a7e7e2ae0cd5aa50e6a9da97b4462c78eb
+fixture_tuple_derived_copy_sort	ran	exit 0		d38f0835810759acfc9e86f6dc2b68506e03c6e409d4a71a74e5154829566d9c
+fixture_tuple_element_borrow	c-refused		error: cannot read element 1 of the tuple out of a borrow by value	
+fixture_tuple_empty_type	c-refused		error: '()' is not a type	
+fixture_tuple_index_nested	ran	exit 0		5d25fc3ffabdb18b242dca324b1fa5e678a99d793d2be68cac792c19a584a856
+fixture_tuple_later_element	c-refused		error: 'Later' is declared after this type — a type may only name types declared before it by value; behind a 'Box' or 'List' it may name any type, including itself	
+fixture_tuple_min_max	ran	exit 0		99b3ca9fd59062f48ee6038f163f38706eabc885b9ad4be11ee4e89b8b47d935
+fixture_tuple_moved_twice	c-refused		error: use of moved value 'p'	
+fixture_tuple_nested	ran	exit 0		599035213823b49e31f2544e7d04f735e6ece94b0494a6429f20cd5b0f8728b3
+fixture_tuple_not_a_tuple	c-refused		error: a destructuring binding takes one tuple value apart, and this initializer is a 'i32'	
+fixture_tuple_one_element	ran	exit 0		0807597fa8ee1214b0099dd89d64315e56c72212a97d00ed243e915dbcf525f6
+fixture_tuple_param	ran	exit 0		8da432c74aa324826c155f7b5bb433fd294749054ab0b24ce5229075e7bb2af8
+fixture_tuple_placements	ran	exit 0		a7d6c0c78f11ef879235b09fc458f3ff88015689ff0d610b8f1c40d3ab902779
+fixture_tuple_print	c-refused		error: cannot pass a value of type '(i32, i32)' to 'print'	
+fixture_tuple_try	ran	exit 0		d72f4734e18b43099edeffd8f2f5a2909d922cdef88a29250bc7aadca8bcf49f
+fixture_tuple_unit_element	c-refused		error: element 2 of the tuple is 'unit'	
+fixture_tuple_unit_element_value	c-refused		error: element 1 of the tuple produces no value ('unit')	
+fixture_tuple_when_literals_and_nested	ran	exit 0		8a8ac1011943b1b868d7a6c65b97a0fd033fb4d955ec57859e19972d3401c208
+fixture_tuple_when_owned_payloads	ran	exit 0		a11ffc643445c04ee38403a5679334a775569821a93b0c1e2529259f88a46daf
+fixture_type_mismatch	c-refused		error: cannot assign value of type 'str' to 'x' declared as 'i32'	
+fixture_u64_literal_beyond_max	c-refused		error: '18446744073709551616' is larger than the largest integer literal, 18446744073709551615	
+fixture_u64_literal_contexts	ran	exit 0		b742e3f21ea18f7ddc87f92abf585eed5d4d6d9d0d40ccf3876f5b5167098483
+fixture_u64_literal_does_not_narrow	c-refused		error: '18446744073709551615' does not fit 'i32'	
+fixture_u64_literal_needs_a_context	c-refused		error: '18446744073709551615' does not fit 'i32', the type a literal takes when nothing determines one	
+fixture_u64_literal_range	ran	exit 0		85be6a67829178e2c915c0e2ed925b66fed95aeabdd7f35927253f7e269c1cff
+fixture_unit_return_value	ran	exit 0		14f3cba70f4dd8e17f76f6897ac4a8993aab0ce265ea401f8d4ea440272db9c6
+fixture_unit_val_binding	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+fixture_unit_val_generic_binding	ran	exit 0		a6e2b7a040683432de03a18fd8a1939a2fdf82585b364bfc874bdd4095c4cae1
+fixture_unknown_escape	c-refused		error: unknown escape '\q' in a string literal	
+fixture_use_after_move	c-refused		error: use of moved value 'p'	
+fixture_val_field_immutable	c-refused		error: cannot write to 'x'	
+fixture_view	ran	exit 0		a8f6f4df1a7410a12b17170c89ced229c1c622409bd188ce1249c9ec52e5075e
+fixture_view_element	c-refused		error: 'View' is a borrowed view	
+fixture_view_field	c-refused		error: field 'text' stores a borrowed 'View', so construct it from a string literal or from an earlier String/Bytes field in this datac	
+fixture_view_of_temporary	ran	exit 0		73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac
+fixture_view_pins_owner	c-refused		error: cannot move 's' while it is borrowed	
+fixture_view_released_at_scope_end	ran	exit 0		5eda15904b90665240a3d80543c9e21dce26fb9914b38c3e422d174d6f419a5a
+fixture_view_returned_from_local	c-refused		error: cannot return this value as 'View'	
+fixture_visibility_pub_array_type	c-refused		error: 'grid' is exported but its signature names 'Hidden', which module 'visibility_pub_array_type' does not export	
+fixture_visibility_pub_borrow	c-refused		error: 'peek' is exported but its signature names 'Hidden', which module 'visibility_pub_borrow' does not export	
+fixture_visibility_pub_box_type	c-refused		error: 'stash' is exported but its signature names 'Hidden', which module 'visibility_pub_box_type' does not export	
+fixture_visibility_pub_datac_field	c-refused		error: 'Boxed' is exported but its signature names 'Hidden', which module 'visibility_pub_datac_field' does not export	
+fixture_visibility_pub_enum_payload	c-refused		error: 'Shape' is exported but its signature names 'Hidden', which module 'visibility_pub_enum_payload' does not export	
+fixture_visibility_pub_extern_type	c-refused		error: 'poke' is exported but its signature names 'Hidden', which module 'visibility_pub_extern_type' does not export	
+fixture_visibility_pub_fn_type	c-refused		error: 'Callbacks' is exported but its signature names 'Hidden', which module 'visibility_pub_fn_type' does not export	
+fixture_visibility_pub_fun_param	c-refused		error: 'describe' is exported but its signature names 'Hidden', which module 'visibility_pub_fun_param' does not export	
+fixture_visibility_pub_fun_return	c-refused		error: 'make' is exported but its signature names 'Secret', which module 'visibility_pub_fun_return' does not export	
+fixture_visibility_pub_late_type	c-refused		error: 'describe' is exported but its signature names 'Hidden', which module 'visibility_pub_late_type' does not export	
+fixture_visibility_pub_list_type	c-refused		error: 'lookup' is exported but its signature names 'Hidden', which module 'visibility_pub_list_type' does not export	
+fixture_visibility_pub_map_type	c-refused		error: 'tally' is exported but its signature names 'Hidden', which module 'visibility_pub_map_type' does not export	
+fixture_visibility_pub_method_type	c-refused		error: 'Boxed.stash' is exported but its signature names 'Hidden', which module 'visibility_pub_method_type' does not export	
+fixture_when_expr	ran	exit 0		764e2173d9dc3a9894835738ac3be2d808acdb7caabc959cfa8cacbba90e1a7d
+fixture_when_in_args	ran	exit 0		4a1ad737f99cef0b2fd9575aa63bc4c4664152f4c3ff5c1e2a4807cf6db61108
+fixture_where_clause	ran	exit 0		1121cfccd5913f0a63fec40a6ffd44ea64f9dc135c66634ba001d10bcf4302a2
+fixture_where_equality_constraint	ran	exit 0		ba7743d238ab04703995856840efbda02ff994d8fd19a217d336f22a1ece75a1
+fixture_where_projection_bound	ran	exit 0		98b5ced772923a1f8f78944365b46da155cb014cbe8c0a3d68555d76fb8c093e
+fixture_while_accumulator	ran	exit 0		4c82a221b575ce7fe118b2e8cdf0764bf4ef570a3017e80b6d3438af9095f376
+fixture_while_true_break	ran	exit 0		8b6d97d5fc45e93c9837c5fa0691350c95a6023f49ae78de1f90f8980fe250f9
+fixture_write_through_shared_borrow	c-refused		error: cannot write to 'c'	
+fixture_ws_gate	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_ws_try_connect	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_ws_wss	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+fixture_ws_wss_parse	ran	exit 0		253799c006f1910138421d4c99f72186d7d6538cf93adbdfde2af9d0b42c35b5
+project_alias_cross_file	ran	exit 0		02357021ef2eb417e565dcf47d0fcdfd1a702783ff632ccd43c78df7af4c1c79
+project_alias_kpconf	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+project_alias_kpconf_cycle	c-refused		error: alias cycle	
+project_arena_memory	ran	exit 0		a6f7fe20fd28b95c3b15514e6c181e91a3ffa33b28a89edaf2054077f656cc97
+project_asm_clobber	ran	exit 0		7de1555df0c2700329e815b93b32c571c3ea54dc967b89e81ab73b9972b72d1d
+project_asm_inout	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+project_asm_naked	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+project_asm_naked_two_stmts	c-refused		error: a 'naked fun' body must be exactly one 'asm(...)' statement	
+project_asm_out	ran	exit 0		88dcc3fa6ee7c472c426748ec197df6a2c7e39e320515c68d09e6b1894cf01ab
+project_asm_outside_unsafe	c-refused		error: 'asm' is an unsafe operation	
+project_asm_riscv	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/asm_riscv' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_asm_unlisted	c-refused		error: module 'main' is not listed in coral.toml [unsafe] modules	
+project_caps_entry_pattern_denied	c-refused		error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_entry_pattern_denied/**' must start with '/'	
+project_caps_entry_restricted	c-refused		error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_entry_restricted/**' must start with '/'	
+project_caps_entry_ungranted	c-refused		error: 'std.fs.exists' needs the 'fs' capability, which module 'main' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(fs = ["<pattern>"])`)	
+project_closure_datac_param	ran	exit 0		9898479bfabd961cde3c91327af8e70831a1eb0d93a55681d0c47b67ce3b0508
+project_convert_cross	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
+project_ffi_bad_domain	c-refused		error: 'disk' is not a capability domain; v1 has fs, net, process, env, time, rand, ui, mmio, irq, frames	
+project_ffi_bad_header	c-refused		error: coral.toml value for '[extern."ctype"] header' must not be empty	
+project_ffi_bad_header_dotdot	c-refused		error: coral.toml value for '[extern."ctype"] header' must not contain '"', '<', '>', a newline or '..'	
+project_ffi_bad_rename	c-refused		error: coral.toml C symbol for '[extern."sys"] symbols' must be a C identifier, found 'get-pid'	
+project_ffi_bad_symbol	c-refused		error: extern function 'getpid' is not in this module's coral.toml '[extern."sys"]' symbol allowlist — add it there before declaring 'extern fun getpid'	
+project_ffi_callback	ran	exit 0		582da6d349f0777516b1be0d2ba4540c2d17b4da1be8d43ff5f59cccabe68654
+project_ffi_callback_move_param	c-refused		error: the callback closure type 'closure(move i32)' takes 'move i32' by ownership or an exclusive borrow, but a native callback thunk forwards every argument by value	
+project_ffi_callback_two	c-refused		error: 'helper.kelp_call_twice' takes 2 callback closures, but a user 'extern fun' can expand at most one 'move closure(...)' parameter in this pass	
+project_ffi_denied	c-refused		error: 'sys.getpid' needs the 'process' capability, which module 'util' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(process = ["<pattern>"])`)	
+project_ffi_fn_pointer	ran	exit 0		c6b52aaa4985699ddb9dd49186e1666c887c85cabf0818d3d664334e1a823b3c
+project_ffi_getpid	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
+project_ffi_handle	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
+project_ffi_handle_bad_downcast	c-refused		error: function 'mem.down' declared to return 'mem.Buffer' but body evaluates to 'mem.Block'	
+project_ffi_handle_no_section	c-refused		error: 'extern type Buffer' is only legal in a module with a coral.toml '[extern."mem"]' section	
+project_ffi_handle_null	ran	exit 0		21d91041c5d1a59661f8936571ee5c87e96f6f0c7a532b52ec17c5b9bea8220b
+project_ffi_handle_null_outside	c-refused		error: 'mem.Buffer.null()' is only legal in a module with a coral.toml '[extern."<module id>"]' section, because only there can a native handle exist	
+project_ffi_handle_print	c-refused		error: cannot pass a value of type 'mem.Buffer' to 'print'	
+project_ffi_handle_upcast	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
+project_ffi_header	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
+project_ffi_include_dir	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
+project_ffi_layout	ran	exit 0		ca5c8203801a11983dc011e1a140f91687940a3620c3b7b9e5664a857475949b
+project_ffi_pkg_config	c-refused		error: pkg-config failed for kelptest:	
+project_ffi_rename	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
+project_ffi_ui_denied	c-refused		error: 'display.getpid' needs the 'ui' capability, which module 'util' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(ui = ["<pattern>"])`)	
+project_ffi_ui_domain	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
+project_ffi_ui_pattern	c-refused		error: patterns are not enforceable in the 'ui' domain yet	
+project_ffi_unknown_pkg_config	c-refused		error: pkg-config failed for kelp-nonexistent-pkg-9zz:	
+project_ffi_variadic	ran	exit 0		c892f5094c0d91f67a058c3abe6b30469091f792e0df6f3e22ebb19483e5fbaa
+project_ffi_variadic_bad_arg	c-refused		error: extra argument 1 of 'helper.kelp_va_sum' has type 'String', which a variadic 'extern fun' cannot pass	
+project_freestanding_alloc	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_alloc' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_alloc_bad_sig	c-refused		error: the allocator function 'alloc' named by coral.toml's '[target]' has the wrong signature	
+project_freestanding_alloc_half	c-refused		error: coral.toml's [target] section names 'alloc' without 'dealloc'	
+project_freestanding_alloc_string	c-refused		error: the call to 'String#char_count' is unavailable in a freestanding build	
+project_freestanding_arena	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_arena' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_boxdyn	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_boxdyn' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_channel	c-refused		error: the module 'std/sync' is unavailable in a freestanding build	
+project_freestanding_condvar	c-refused		error: the binding 'cv' has type 'Condvar', whose runtime half is a pthread condition variable	
+project_freestanding_constgen	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_constgen' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_convert	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_convert' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_defer	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_defer' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_drop	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_drop' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_dyn	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_dyn' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_iter	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_iter' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_list_no_alloc	c-refused		error: the binding 'xs' has type 'List', which needs an allocator in a freestanding build	
+project_freestanding_main	c-refused		error: 'main' is unavailable in a freestanding build	
+project_freestanding_memcpy	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_memcpy' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_memcpy_user	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_memcpy_user' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_min	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_min' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_mutex	c-refused		error: the binding 'm' has type 'Mutex', whose runtime half is a pthread mutex	
+project_freestanding_no_entry	c-refused		error: no entry function 'kmain' found	
+project_freestanding_ops	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_ops' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_panic_bad_arity	c-refused		error: the freestanding panic handler 'kp_panic' must be a 'fun(msg	
+project_freestanding_panic_bad_type	c-refused		error: the freestanding panic handler 'kp_panic' must be a 'fun(msg	
+project_freestanding_percpu_1	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_percpu_1' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_percpu_4	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_percpu_4' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_pool	c-refused		error: the module 'std/pool' is unavailable in a freestanding build	
+project_freestanding_print	c-refused		error: 'print' is unavailable in a freestanding build	
+project_freestanding_ptr_alloc	c-refused		error: 'Ptr#alloc' is unavailable in a freestanding build	
+project_freestanding_rwlock	c-refused		error: the binding 'rw' has type 'RwLock', whose runtime half is pthread condition variables	
+project_freestanding_shift	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_shift' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_statics	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_statics' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_alloc	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_alloc' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_arena	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_arena' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_atomic	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_atomic' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_frame	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_frame' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_irq	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_irq' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_kernel	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_kernel' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_math	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_math' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_math_refused	c-refused		error: the call to 'std.math.sqrt' is unavailable in a freestanding build	
+project_freestanding_std_option	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_option' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_option_no_alloc	c-refused		error: the call to 'std.option.map<i32, i32>' is unavailable in a freestanding build	
+project_freestanding_std_refused_env	c-refused		error: the module 'std/env' is unavailable in a freestanding build	
+project_freestanding_std_refused_thread	c-refused		error: the module 'std/thread' is unavailable in a freestanding build	
+project_freestanding_std_refused_time	c-refused		error: the module 'std/time' is unavailable in a freestanding build	
+project_freestanding_std_refused_tz	c-refused		error: the module 'std/tz' is unavailable in a freestanding build	
+project_freestanding_std_regex	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_regex' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_result	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_result' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_std_str	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_std_str' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_str	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_str' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_str_refused	c-refused		error: the call to 'std.str.char_count' is unavailable in a freestanding build	
+project_freestanding_string_float	c-refused		error: the call to 'std.str.from_f64' is unavailable in a freestanding build	
+project_freestanding_string_no_alloc	c-refused		error: the binding 's' has type 'String', which is unavailable in a freestanding build without an allocator	
+project_freestanding_try_alloc	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_try_alloc' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_freestanding_try_alloc_no_alloc	c-refused		error: 'Ptr#try_alloc' is unavailable in a freestanding build	
+project_freestanding_view	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_view' sets '[target] mode = "freestanding"', which only the llvm backend can build	
+project_http_close_vs_keepalive	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_http_get	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_http_pool_off	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_http_rate_limit	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_http_redirect	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_http_redirect_denied	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_https_big_headers	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_https_get	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_https_get_denied	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_https_redirect	excluded		needs command-line arguments from a harness; run with none it records a deterministic index panic	
+project_incremental_units	ran	exit 0		8b189d96febb7a010066aff3d48185722ad7f821d19b59c1f37a1e43254056dc
+project_namespace	ran	exit 0		5ccd3d75cb5c611cde0fb901d378efb4e9dab5e48ac6d66c40bfd0bcb063fc5c
+project_percpu_cpus_65	c-refused		error: coral.toml value for '[target] cpus' must be between 1 and 64, found 65	
+project_percpu_cpus_zero	c-refused		error: coral.toml value for '[target] cpus' must be between 1 and 64, found 0	
+project_percpu_hosted	c-refused		error: the per-CPU static 'SLOT' is only legal in a freestanding build	
+project_percpu_initializer	c-refused		error: the initializer is not constant	
+project_percpu_no_mut	c-refused		error: a per-CPU static must be 'mut', written 'percpu static mut SLOT	
+project_percpu_outside_unsafe	c-refused		error: 'static mut SLOT' is an unsafe operation	
+project_ptr_try_alloc_outside_unsafe	c-refused		error: 'Ptr.try_alloc' is an unsafe operation	
+project_ptrs_try_alloc	ran	exit 0		9503466da05df90f14a0657c4459f85eb68421d29e0fd6d91cea7fb8e14b56f0
+project_sched_task_layout	ran	exit 0		af5e156a5e54529601cb5e2272d5252444b94bde4ff8158865c3909f45df2162
+project_shapes	ran	exit 0		006a65b2de86720a8d9034953970cdffd3aceb34688d44718391df76853373e1
+project_static_atomic_threads	ran	exit 0		83c02ac2d48c863dab2ccf6870455aadfc2cec073b8db269b517c879d76aa6d9
+project_static_datac_array	ran	exit 0		9e88c5ba601792303d0194e1734cfbcae7b014b7faf475a2f8cc2599c8892e3d
+project_static_globals	ran	exit 0		bdfeab7b68e26b2f190fba38c8102a5e4a543cf60b736d0ef1bc93cb29167d7d
+project_static_module	ran	exit 0		fcb9cc30b0f3e4715d032f3a0ce158e4d6bea8c618bda0f5d1f167300a087b8a
+project_static_private	c-refused		error: 'state.HIDDEN' is private	
+project_std_internal_entry	c-refused		error: module 'std/internal/main' is below the compiler-reserved std/internal namespace	
+project_traits_assoc_cross	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
+project_traits_builtin_orphan	c-refused		error: 'impl shape.Doubler for i32' is written in module 'bad', but 'i32' is a builtin type, which has no module	
+project_traits_cross	ran	exit 0		a458688c076ed9edbab246e92f93e47ef56f8f82280438415bd5f231fca60d96
+project_traits_default_cross	ran	exit 0		1286c4c74194e75cffa46c8e560ae72c829e1f554b2a1bed4549ba13b7ca59c8
+project_traits_third_module	c-refused		error: 'impl shape.Shape for circle.Circle' is written in module 'bad', which owns neither	
+project_trap_frame_layout	ran	exit 0		ec3c47ca4dd7775443e4d73557e56fea4a7b6d67e51e0909d8b490d0cc308cb8
+project_unsafe_bad_elem	c-refused		error: 'String' is an owned heap value, which is not one machine-level value a raw pointer can address	
+project_unsafe_fn	ran	exit 0		94d5a38598be77593d4781b8fbd74cb4e2cd05bb006b1b531988ab2db90de9c9
+project_unsafe_fn_outside	c-refused		error: 'poke' is an 'unsafe fun'	
+project_unsafe_not_listed	c-refused		error: module 'main' is not listed in coral.toml [unsafe] modules	
+project_unsafe_outside_block	c-refused		error: 'Ptr.read' is an unsafe operation	
+project_unsafe_ptr	ran	exit 0		ed881db1437cb59b047529dc6eee4d6ce56e54737b0b78771415443223ed21c3
+project_unsafe_unaligned	ran	exit 0		f108a28eb73ec8ada76003ae332fc3f2bd6b0633364cbab792a927029da1dd7f
+project_visibility_std_path	c-refused		error: unknown type 'Hidden'	
+project_vm_pure	ran	exit 0		a80a3f2f1a57fe9a57b67914b025814a6ba828ad9d58d6c459727b8f4175dbb8
+project_x86_idt_layout	ran	exit 0		67fa2222fd64f8f8a4407f4a3eb972d948a92509a16be001a1aa32ff3661f45f
+example_download	ran	exit 2		b155c2058fbd713f7f82006f26d5a9211bab264a8315ba592a25c5fdf1d19f76
+example_download_pool	ran	exit 2		93b81b8bb60dfdf8e9020a09c2c2c4a5fd7da16cb404c944866531d56da34519
+example_fib	ran	exit 0		4c82a221b575ce7fe118b2e8cdf0764bf4ef570a3017e80b6d3438af9095f376
+example_hello	ran	exit 0		853ff93762a06ddbf722c4ebe9ddd66d8f63ddaea97f521c3ecc20da7c976020

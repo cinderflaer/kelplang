@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_mutex
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the binding 'm' has type 'Mutex', whose runtime half is a pthread mutex: a freestanding program has no threads and no libc, so a kernel would use a spin lock over an `Atomic<T>` instead
+  --> <root>/kelpc/tests/projects/freestanding_mutex/src/main.kp:6:25
+--- nm -u
+(no image)

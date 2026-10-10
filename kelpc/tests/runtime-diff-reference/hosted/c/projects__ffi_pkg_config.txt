@@ -1,0 +1,11 @@
+unit: kelpc/tests/projects/ffi_pkg_config
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: pkg-config failed for kelptest:
+Package kelptest was not found in the pkg-config search path.
+Perhaps you should add the directory containing `kelptest.pc'
+to the PKG_CONFIG_PATH environment variable
+No package 'kelptest' found
+run-status: not run

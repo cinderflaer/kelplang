@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/cursor_two_mut_cursors.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 'a': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/cursor_two_mut_cursors.kp:9:14
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_blanket_dyn.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: expected '&dyn Tagged', found '&i32': 'i32' implements 'Tagged' through a blanket impl, and a blanket impl has no 'dyn' form yet (MISSING-Ve8Nc step 4 does not include it): call the method through a generic function ('fun f<T: Tagged>(x: &T)') instead
+  --> <root>/kelpc/tests/fixtures/refused_blanket_dyn.kp:21:26
+run-status: not run

@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/ws_wss_parse.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+gateway.discord.gg 443 /?v=10&encoding=json true
+8443 true
+80 false
+--- stderr

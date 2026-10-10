@@ -1,0 +1,12 @@
+unit: kelpc/tests/fixtures/heap_field_of_temporary.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+7
+7
+7
+3
+--- stderr

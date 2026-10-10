@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/rwlock_read_borrow_returned.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: return type mismatch: expected 'unit', found '&i64'
+  --> <root>/kelpc/tests/fixtures/rwlock_read_borrow_returned.kp:6:9
+run-status: not run

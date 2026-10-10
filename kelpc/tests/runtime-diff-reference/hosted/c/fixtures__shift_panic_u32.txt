@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/shift_panic_u32.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+2147483648
+--- stderr
+panic: shift amount out of range

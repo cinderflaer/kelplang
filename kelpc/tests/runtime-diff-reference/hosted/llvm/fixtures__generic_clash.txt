@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_clash.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Holder' is used for both a generic and a non-generic type
+  --> <root>/kelpc/tests/fixtures/generic_clash.kp:2:1
+run-status: not run

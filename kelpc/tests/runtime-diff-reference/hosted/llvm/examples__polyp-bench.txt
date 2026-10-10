@@ -1,0 +1,43 @@
+unit: examples/polyp-bench
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+scroll-200
+200
+187536900
+200
+0
+3832
+3854
+type-100
+500
+16719500
+500
+500
+3921
+3929
+toggle-50
+250
+7226945
+495
+0
+3529
+3547
+resize
+150
+187531425
+2400
+0
+5766
+6431
+repaint
+150
+141783450
+150
+0
+3335
+3458
+--- stderr

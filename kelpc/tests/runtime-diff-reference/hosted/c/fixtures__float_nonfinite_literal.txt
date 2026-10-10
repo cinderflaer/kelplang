@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/float_nonfinite_literal.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+infinite
+nan
+--- stderr

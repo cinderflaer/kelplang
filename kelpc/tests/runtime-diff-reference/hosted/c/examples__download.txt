@@ -1,0 +1,9 @@
+unit: examples/download.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 2
+--- stdout
+usage: download <url> <output-path>
+--- stderr

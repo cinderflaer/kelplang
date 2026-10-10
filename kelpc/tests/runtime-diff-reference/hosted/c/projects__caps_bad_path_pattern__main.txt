@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/caps_bad_path_pattern/main.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: capability patterns are absolute paths — 'tmp/**' must start with '/'
+  --> <root>/kelpc/tests/projects/caps_bad_path_pattern/main.kp:4:20
+run-status: not run

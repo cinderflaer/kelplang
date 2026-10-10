@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/scoped_escaping_borrow.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's.a': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/scoped_escaping_borrow.kp:11:13
+run-status: not run

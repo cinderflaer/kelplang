@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_method.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Pair' is a generic type — the receiver has to name its type parameters, and they have to be the type's own, in order ('fun Pair<A, B>.method(...)')
+  --> <root>/kelpc/tests/fixtures/generic_method.kp:5:5
+run-status: not run

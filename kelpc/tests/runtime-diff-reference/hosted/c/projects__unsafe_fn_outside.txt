@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/unsafe_fn_outside
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'poke' is an 'unsafe fun': it can only be called inside 'unsafe { ... }' or from another 'unsafe fun'
+  --> <root>/kelpc/tests/projects/unsafe_fn_outside/src/main.kp:9:5
+run-status: not run

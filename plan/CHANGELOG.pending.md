@@ -31,15 +31,20 @@ empty on release.
 - The C text the `llvm` backend still emits (runtime headers, `extern fun` declarations, callback glue) moved from `codegen_c.rs` to `cdecl.rs`. Emitted output is unchanged.
 - `kelpc` now finds `ld.lld` (`KELPC_LLD`, then PATH) and has the hosted link argv builder in `sysroot.rs`. No link line has changed yet: builds still use `cc`.
 - `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C. Programs are unchanged: the C runtime is still the one linked.
+- The corpus has golden outputs frozen from the C oracle at v26.10.5 (`kelpc/tests/golden/`), and the `llvm` backend is checked at five optimization levels against `-O0` with no C in the comparison.
+
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
 - `kelpc doc --text` prints the documentation as plain text (on branch lighthouse-support, not merged).
 - `kelpc` builtin listing is available as JSON (on branch lighthouse-support, not merged).
 - The LLVM backend checks a `List` index of `x.to_usize()` (signed `x`) with one bounds branch instead of two; the same panics and messages, faster `List.get` and `List.set` in tight loops.
 - The capability checks are ported from C to Rust in `kelp-rt/src/cap.rs` (stage 1, not yet linked into `kelpc`); the checks behave as before.
+- The runtime's panic, I/O flush, env cache, child table and dial are ported to Rust in the new `kelp-rt` crate (stage 1, WP2). Not linked by `kelpc` yet; behaviour is unchanged.
+- The LLVM backend takes the builtin heap layouts and the runtime prototypes from one table (stage 1 WP5); no language change.
 
 ## stdlib
 
 - `kelpc stdlib --json` lists the standard library as JSON (on branch lighthouse-support, not merged).
+- The runtime differential `kelpc/tests/run-runtime-diff.sh` and its recorded baseline from origin/main are in place, with runtime link smoke tests (on branch stage1-wp6, not merged).
 
 ## fixes
 

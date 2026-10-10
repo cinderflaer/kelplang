@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/ptr_from_fn_closure.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Ptr.from_fn' takes a function, but this is a closure: its body captured something, so it carries an environment the code address alone cannot describe; pass a declared 'fun' or a 'fun' literal that captures nothing
+  --> <root>/kelpc/tests/fixtures/ptr_from_fn_closure.kp:7:13
+run-status: not run

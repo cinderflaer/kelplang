@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/move_param_loop.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: use of moved value 'a'
+  --> <root>/kelpc/tests/fixtures/move_param_loop.kp:10:23
+run-status: not run

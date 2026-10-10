@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/byte_literal_does_not_widen.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a byte literal is a 'u8', not a 'i64': write it as a character literal when it should take this type
+  --> <root>/kelpc/tests/fixtures/byte_literal_does_not_widen.kp:5:18
+run-status: not run

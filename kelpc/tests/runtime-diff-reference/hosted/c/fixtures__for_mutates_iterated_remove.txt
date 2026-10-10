@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/for_mutates_iterated_remove.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot mutate 'xs' while iterating over it
+  --> <root>/kelpc/tests/fixtures/for_mutates_iterated_remove.kp:5:14
+run-status: not run

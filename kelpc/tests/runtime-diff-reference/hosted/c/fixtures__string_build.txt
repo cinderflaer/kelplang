@@ -1,0 +1,19 @@
+unit: kelpc/tests/fixtures/string_build.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+0
+hi
+hi there
+8
+hi there!
+9
+0
+true
+0
+true
+x
+--- stderr

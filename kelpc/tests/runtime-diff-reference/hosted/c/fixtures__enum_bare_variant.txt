@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/enum_bare_variant.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: variant 'Shape.Circle' carries payload (r) — construct it as 'Shape.Circle(r)'
+  --> <root>/kelpc/tests/fixtures/enum_bare_variant.kp:7:13
+run-status: not run

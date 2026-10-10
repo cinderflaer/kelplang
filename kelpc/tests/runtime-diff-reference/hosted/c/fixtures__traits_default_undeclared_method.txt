@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_default_undeclared_method.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: datac 'C' has no method 'nope'
+  --> <root>/kelpc/tests/fixtures/traits_default_undeclared_method.kp:5:46
+run-status: not run

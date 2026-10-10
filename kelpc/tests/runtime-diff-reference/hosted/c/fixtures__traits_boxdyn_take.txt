@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_boxdyn_take.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Box<dyn Shape>.take' is not allowed: the concrete type behind an owned trait object is erased, so no sized value can be moved in or out; borrow the trait with 'get()' and call its methods, or keep the boxed type concrete
+  --> <root>/kelpc/tests/fixtures/traits_boxdyn_take.kp:17:17
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/fn_value_generic.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'first' is a generic function — a function value needs one concrete signature, so wrap the call in a small non-generic function and pass that
+  --> <root>/kelpc/tests/fixtures/fn_value_generic.kp:6:13
+run-status: not run

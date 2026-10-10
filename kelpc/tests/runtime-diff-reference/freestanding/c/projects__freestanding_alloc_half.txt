@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/freestanding_alloc_half
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: coral.toml's [target] section names 'alloc' without 'dealloc': the allocator hook requires both, because a container that allocates must be able to free
+--- nm -u
+(no image)

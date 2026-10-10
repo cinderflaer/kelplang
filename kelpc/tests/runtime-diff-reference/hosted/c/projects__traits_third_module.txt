@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/traits_third_module
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'impl shape.Shape for circle.Circle' is written in module 'bad', which owns neither: an impl lives in the trait's module ('shape') or in the type's ('circle')
+  --> <root>/kelpc/tests/projects/traits_third_module/src/bad.kp:6:1
+run-status: not run

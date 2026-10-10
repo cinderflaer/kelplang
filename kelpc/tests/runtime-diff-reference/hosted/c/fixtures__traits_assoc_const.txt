@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_assoc_const.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: associated consts are not in this slice: a trait declares methods and associated types only
+  --> <root>/kelpc/tests/fixtures/traits_assoc_const.kp:4:5
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/chan_non_sendable.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: in 'std.sync.bounded<str>': in 'std.sync.Sender<str>': 'str' is a borrowed view: a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', an 'enum', another 'List', or a 'Box'
+  --> <root>/kelpc/tests/fixtures/chan_non_sendable.kp:6:20
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_arity.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Pair' takes 2 type argument(s), found 1
+  --> <root>/kelpc/tests/fixtures/generic_arity.kp:5:12
+run-status: not run

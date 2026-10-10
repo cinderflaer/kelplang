@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/move_param_borrow_arg.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: argument 's' has type '&String', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()')
+  --> <root>/kelpc/tests/fixtures/move_param_borrow_arg.kp:6:48
+run-status: not run

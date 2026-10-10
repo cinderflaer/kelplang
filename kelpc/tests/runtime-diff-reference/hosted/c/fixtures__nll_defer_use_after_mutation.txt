@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/nll_defer_use_after_mutation.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's' as exclusive: already borrowed as shared
+  --> <root>/kelpc/tests/fixtures/nll_defer_use_after_mutation.kp:10:5
+run-status: not run

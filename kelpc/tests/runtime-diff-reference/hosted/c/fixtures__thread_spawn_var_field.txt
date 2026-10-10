@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/thread_spawn_var_field.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'thread.spawn' cannot share 'Counter' across a thread boundary: the borrow reaches a 'var' field, so two threads could write it through the same shared borrow. A shared borrow may cross only when its pointee has no reachable '&mut' path, which an 'Atomic<T>' has by construction
+  --> <root>/kelpc/tests/fixtures/thread_spawn_var_field.kp:17:34
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_trait_arity.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: trait 'std.convert.From' takes 1 type argument(s), and 'impl std.convert.From for E' writes 0: write 'impl std.convert.From<T> for E' to name the instance
+  --> <root>/kelpc/tests/fixtures/generic_trait_arity.kp:9:1
+run-status: not run

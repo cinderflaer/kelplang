@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/borrow_two_phase_nested.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 'xs': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/borrow_two_phase_nested.kp:7:18
+run-status: not run

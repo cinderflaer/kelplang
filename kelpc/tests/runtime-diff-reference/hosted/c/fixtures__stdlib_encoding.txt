@@ -1,0 +1,44 @@
+unit: kelpc/tests/fixtures/stdlib_encoding.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+aGVsbG8=
+aGk=
+YQ==
+
+hello
+hi
+a
+true
+true
+NBSWY3DP
+NBUQ====
+hello
+true
+true
+Cn8eVZg
+2g
+hello
+true
+4869
+Hi
+Hello
+true
+true
+a%20b%2Fc%3Fd%3De%26f
+plain-._~
+a b/c
+true
+true
+a+b%2Bc
+a b+c
+true
+00000000  48 69                                             |Hi|
+
+da39a3ee5e6b4b0d3255bfef95601890afd80709
+a9993e364706816aba3e25717850c26c9cd0d89d
+84983e441c3bd26ebaae4aa1f95129e5e54670f1
+--- stderr

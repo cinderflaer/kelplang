@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_blanket_impl.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the blanket impl of 'Describe' bounds its parameter on 'Describe' itself, so checking any type against it would need the same check again: a blanket impl's bound has to be a different trait
+  --> <root>/kelpc/tests/fixtures/refused_blanket_impl.kp:2:1
+run-status: not run

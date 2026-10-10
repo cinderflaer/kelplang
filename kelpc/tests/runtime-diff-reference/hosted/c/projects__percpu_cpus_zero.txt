@@ -1,0 +1,7 @@
+unit: kelpc/tests/projects/percpu_cpus_zero
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: coral.toml value for '[target] cpus' must be between 1 and 64, found 0
+run-status: not run

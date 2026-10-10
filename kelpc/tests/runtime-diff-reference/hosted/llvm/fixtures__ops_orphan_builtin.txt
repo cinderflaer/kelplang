@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/ops_orphan_builtin.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'impl std.ops.Add for i32' is written in module 'ops_orphan_builtin', but 'i32' is a builtin type, which has no module: implement a trait for a builtin in the trait's own module ('std/ops')
+  --> <root>/kelpc/tests/fixtures/ops_orphan_builtin.kp:6:1
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/visibility_pub_extern_type.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'poke' is exported but its signature names 'Hidden', which module 'visibility_pub_extern_type' does not export: add 'pub' to 'Hidden', or make 'poke' private
+  --> <root>/kelpc/tests/fixtures/visibility_pub_extern_type.kp:5:24
+run-status: not run

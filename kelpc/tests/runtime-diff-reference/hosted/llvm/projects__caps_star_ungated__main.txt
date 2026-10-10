@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/caps_star_ungated/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: module 'std/str' is ungated: it reaches no capability domain, so `caps(*)` would grant it nothing; drop the clause
+  --> <root>/kelpc/tests/projects/caps_star_ungated/main.kp:3:1
+run-status: not run

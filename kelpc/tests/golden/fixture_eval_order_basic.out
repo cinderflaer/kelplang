@@ -1,0 +1,19 @@
+x 1 2 3
+tmpl: 123
+6
+call: 123
+binop: 123
+ctor: 123
+array: 123
+push: 12
+and: 1
+or: 1
+set: 12
+compound: 7
+195
+nested: 12345
+7 4
+arith: 1234
+recv: 123
+6
+recv2: 123

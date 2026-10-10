@@ -1,0 +1,12 @@
+unit: kelpc/tests/fixtures/block_comments.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+first
+second
+no newline here
+done
+--- stderr

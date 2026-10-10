@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_assoc_missing.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: trait 'Src' declares 'type Out', and 'impl Src for A' does not bind it: add 'type Out = <concrete type>' to the block
+  --> <root>/kelpc/tests/fixtures/traits_assoc_missing.kp:11:1
+run-status: not run

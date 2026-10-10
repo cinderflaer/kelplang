@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/unqualified_import/main.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: call to undefined function 'Thing' — did you mean 'prov.Thing'?
+  --> <root>/kelpc/tests/projects/unqualified_import/main.kp:4:13
+run-status: not run

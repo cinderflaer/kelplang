@@ -1,0 +1,16 @@
+unit: kelpc/tests/fixtures/float_datac_containers.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+1.500000
+2.500000
+2.500000
+3.500000
+4.500000
+4.500000
+3.500000
+5.500000
+--- stderr

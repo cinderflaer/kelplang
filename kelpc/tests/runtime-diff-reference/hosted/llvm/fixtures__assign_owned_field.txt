@@ -1,0 +1,12 @@
+unit: kelpc/tests/fixtures/assign_owned_field.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+beta
+gamma
+delta
+epsilon
+--- stderr

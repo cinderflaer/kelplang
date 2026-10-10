@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/pd_var_read_only_datac.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+api
+3
+api
+--- stderr

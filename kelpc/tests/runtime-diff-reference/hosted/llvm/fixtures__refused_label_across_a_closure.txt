@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_label_across_a_closure.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: no enclosing loop is labelled 'o; a label is written before a loop ('o: for ...') and does not cross a function or a block passed to a call
+  --> <root>/kelpc/tests/fixtures/refused_label_across_a_closure.kp:3:25
+run-status: not run

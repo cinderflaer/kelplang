@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/borrow_conflict.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 'c' as exclusive: already borrowed as shared
+  --> <root>/kelpc/tests/fixtures/borrow_conflict.kp:6:13
+run-status: not run

@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/traits_dyn_default_super.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+circle
+a shape
+16.000000
+--- stderr

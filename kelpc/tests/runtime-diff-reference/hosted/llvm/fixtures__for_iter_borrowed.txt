@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/for_iter_borrowed.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 'f': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/for_iter_borrowed.kp:21:17
+run-status: not run

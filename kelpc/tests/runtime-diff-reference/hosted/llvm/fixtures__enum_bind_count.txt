@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/enum_bind_count.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: pattern 'Circle(r, x)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s) (r)
+  --> <root>/kelpc/tests/fixtures/enum_bind_count.kp:7:5
+run-status: not run

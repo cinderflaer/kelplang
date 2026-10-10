@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/nested_partial_move_field.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+Ada
+7
+London
+--- stderr

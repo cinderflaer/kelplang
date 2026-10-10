@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/unknown_module/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot find module 'nope': expected '<root>/kelpc/tests/projects/unknown_module/nope.kp'
+  --> <root>/kelpc/tests/projects/unknown_module/main.kp:1:1
+run-status: not run

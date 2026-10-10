@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/percpu_no_mut
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a per-CPU static must be 'mut', written 'percpu static mut SLOT: T = INIT': a read-only per-CPU is just a 'static'
+  --> <root>/kelpc/tests/projects/percpu_no_mut/src/main.kp:1:8
+run-status: not run

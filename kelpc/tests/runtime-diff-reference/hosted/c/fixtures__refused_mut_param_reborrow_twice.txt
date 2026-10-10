@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_mut_param_reborrow_twice.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/refused_mut_param_reborrow_twice.kp:12:14
+run-status: not run

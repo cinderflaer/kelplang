@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/fs_set_mode.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+420
+493
+--- stderr

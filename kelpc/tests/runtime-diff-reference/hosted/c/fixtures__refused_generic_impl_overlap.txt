@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/refused_generic_impl_overlap.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'impl Tagged for Pair<A>' overlaps 'impl Tagged for Pair<A>': both apply to every 'Pair', so one type would have two impls of 'Tagged', and there is no specialization to choose between them
+  --> <root>/kelpc/tests/fixtures/refused_generic_impl_overlap.kp:21:1
+  note: the overlapping impl of 'Tagged' is written here
+  --> <root>/kelpc/tests/fixtures/refused_generic_impl_overlap.kp:15:1
+run-status: not run

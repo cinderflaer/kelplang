@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_arity.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Map' takes 1 or 2 type arguments ('Map<V>' or 'Map<K, V>'), found 3
+  --> <root>/kelpc/tests/fixtures/map_arity.kp:4:12
+run-status: not run

@@ -1,0 +1,20 @@
+unit: kelpc/tests/fixtures/enum_liveness.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+21
+143
+-13
+141
+42
+-1
+185
+86
+297
+-3
+226
+136
+--- stderr

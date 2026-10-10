@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/visibility_pub_array_type.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'grid' is exported but its signature names 'Hidden', which module 'visibility_pub_array_type' does not export: add 'pub' to 'Hidden', or make 'grid' private
+  --> <root>/kelpc/tests/fixtures/visibility_pub_array_type.kp:5:23
+run-status: not run

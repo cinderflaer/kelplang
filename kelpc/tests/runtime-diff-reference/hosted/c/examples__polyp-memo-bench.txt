@@ -1,0 +1,44 @@
+unit: examples/polyp-memo-bench
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+plain
+200
+40
+0
+0
+236353
+5498
+145
+190
+memo
+200
+40
+40
+7960
+236353
+5488
+92
+99
+plain
+1000
+40
+0
+0
+118517
+7957
+644
+1108
+memo
+1000
+40
+40
+39960
+118517
+7302
+404
+625
+--- stderr

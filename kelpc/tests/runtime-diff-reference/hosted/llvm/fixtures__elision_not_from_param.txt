@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/elision_not_from_param.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot return a borrow of 's': '&str' borrows from its first reference parameter 'a', so the returned value must be derived from 'a'
+  --> <root>/kelpc/tests/fixtures/elision_not_from_param.kp:5:12
+run-status: not run

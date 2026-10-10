@@ -1,0 +1,10 @@
+unit: kelpc/tests/projects/alias_kpconf_cycle
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: alias cycle: a -> b -> a
+  --> <root>/kelpc/tests/projects/alias_kpconf_cycle/src/main.kp:1:15
+  note: alias 'a' in coral.toml [alias] is defined here
+  --> <root>/kelpc/tests/projects/alias_kpconf_cycle/coral.toml:6:1
+run-status: not run

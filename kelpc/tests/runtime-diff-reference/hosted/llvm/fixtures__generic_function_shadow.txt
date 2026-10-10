@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_function_shadow.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: type parameter 'i64' shadows the builtin type 'i64' — pick another name
+  --> <root>/kelpc/tests/fixtures/generic_function_shadow.kp:2:1
+run-status: not run

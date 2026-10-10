@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/dotdot/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'impl' paths must not contain '.' or '..' segments
+  --> <root>/kelpc/tests/projects/dotdot/main.kp:1:1
+run-status: not run

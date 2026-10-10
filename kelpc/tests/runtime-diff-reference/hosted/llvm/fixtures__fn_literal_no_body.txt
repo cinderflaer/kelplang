@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/fn_literal_no_body.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a 'fun' literal needs a body: '= expr' or '{ ... }'
+  --> <root>/kelpc/tests/fixtures/fn_literal_no_body.kp:3:36
+run-status: not run

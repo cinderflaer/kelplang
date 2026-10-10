@@ -1,0 +1,24 @@
+unit: kelpc/tests/fixtures/iter_adapters.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+60
+80
+0
+10
+1
+11
+2
+12
+100
+102
+1
+2
+7
+8
+4
+14
+--- stderr

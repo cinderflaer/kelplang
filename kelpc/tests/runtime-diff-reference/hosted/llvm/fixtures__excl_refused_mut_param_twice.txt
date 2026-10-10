@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_mut_param_twice.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's.count' as exclusive: this call also uses it, and a block that writes through a captured exclusive borrow needs the call's other arguments to leave it alone
+  --> <root>/kelpc/tests/fixtures/excl_refused_mut_param_twice.kp:10:12
+run-status: not run

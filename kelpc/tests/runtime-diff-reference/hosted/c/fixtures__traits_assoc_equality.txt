@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_assoc_equality.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Src' declares no associated type 'Missing', so the equality constraint 'Missing = i32' on 'I' of 'pick' names nothing
+  --> <root>/kelpc/tests/fixtures/traits_assoc_equality.kp:21:11
+run-status: not run

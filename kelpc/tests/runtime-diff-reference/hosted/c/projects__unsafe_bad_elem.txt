@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/unsafe_bad_elem
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'String' is an owned heap value, which is not one machine-level value a raw pointer can address
+  --> <root>/kelpc/tests/projects/unsafe_bad_elem/src/main.kp:4:16
+run-status: not run

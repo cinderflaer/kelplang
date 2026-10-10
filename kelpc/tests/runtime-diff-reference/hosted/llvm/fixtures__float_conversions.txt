@@ -1,0 +1,16 @@
+unit: kelpc/tests/fixtures/float_conversions.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+16777217.000000
+16777216.000000
+-7.000000
+-3.500000
+200.000000
+200.000000
+3000000000.000000
+0.500000
+--- stderr

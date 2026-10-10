@@ -1,0 +1,9 @@
+unit: kelpc/tests/fixtures/chan_zero_capacity.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+--- stderr
+panic: sync.bounded: the capacity must be at least 1

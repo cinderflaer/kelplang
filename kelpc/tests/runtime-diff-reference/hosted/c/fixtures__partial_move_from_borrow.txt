@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/partial_move_from_borrow.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot move the field 'xs' out of 'b': the value is borrowed, so it is not this frame's to give away
+  --> <root>/kelpc/tests/fixtures/partial_move_from_borrow.kp:6:39
+run-status: not run

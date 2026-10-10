@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/tuple_element_borrow.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot read element 1 of the tuple out of a borrow by value: the value is borrowed, so it is not this frame's to give away; read a 'Copy' element, use the tuple through a borrow (pass it to a parameter, call a method on it), or take it with 'move'
+  --> <root>/kelpc/tests/fixtures/tuple_element_borrow.kp:8:5
+run-status: not run

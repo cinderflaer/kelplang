@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/visibility_type_private/main.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'lib.Hidden' is private: 'Hidden' is declared in module 'lib' without 'pub', so only that module can name it; add 'pub' to its declaration to export it
+  --> <root>/kelpc/tests/projects/visibility_type_private/main.kp:5:17
+run-status: not run

@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/refused_blanket_overlap.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'impl Describe for T' overlaps 'impl Describe for i32': a blanket impl applies to every type that meets its bound, so it overlaps every other impl of 'Describe', and there is no specialization to choose between them: a blanket impl has to be the trait's only impl
+  --> <root>/kelpc/tests/fixtures/refused_blanket_overlap.kp:13:1
+  note: the overlapping impl of 'Describe' is written here
+  --> <root>/kelpc/tests/fixtures/refused_blanket_overlap.kp:9:1
+run-status: not run

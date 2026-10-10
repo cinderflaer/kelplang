@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/pd_var_double_borrow.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow passdown 'tally': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/pd_var_double_borrow.kp:14:26
+run-status: not run

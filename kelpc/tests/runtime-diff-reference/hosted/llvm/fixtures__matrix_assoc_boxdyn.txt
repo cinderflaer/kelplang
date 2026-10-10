@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/matrix_assoc_boxdyn.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Box<dyn Source>' is not allowed: the trait declares the associated type 'Item', and a trait object does not know which type an implementor binds; use a bounded type parameter ('<T: Source>') instead
+  --> <root>/kelpc/tests/fixtures/matrix_assoc_boxdyn.kp:20:16
+run-status: not run

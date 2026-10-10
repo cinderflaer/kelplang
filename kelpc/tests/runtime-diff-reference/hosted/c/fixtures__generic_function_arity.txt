@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_function_arity.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: function 'pair_of' expects 2 argument(s), found 1
+  --> <root>/kelpc/tests/fixtures/generic_function_arity.kp:5:11
+run-status: not run

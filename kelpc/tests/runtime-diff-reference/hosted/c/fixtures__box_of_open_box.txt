@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/box_of_open_box.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Box<unit>' cannot be a 'Box' element: a container whose element type is not decided yet has no element type to name, so push a value into it (or write its element type) before using it as an element
+  --> <root>/kelpc/tests/fixtures/box_of_open_box.kp:6:20
+run-status: not run

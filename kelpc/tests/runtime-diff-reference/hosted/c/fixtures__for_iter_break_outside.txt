@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/for_iter_break_outside.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'break' is a loop control statement, and no loop encloses it: write it inside a 'while' or a 'for'
+  --> <root>/kelpc/tests/fixtures/for_iter_break_outside.kp:4:5
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_field_borrow_then_whole_borrow.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/refused_field_borrow_then_whole_borrow.kp:5:13
+run-status: not run

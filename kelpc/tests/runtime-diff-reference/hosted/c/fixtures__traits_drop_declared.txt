@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_drop_declared.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the trait 'Drop' is built in: a type's destructor is written 'fun mut T.drop()', not through a trait
+  --> <root>/kelpc/tests/fixtures/traits_drop_declared.kp:2:7
+run-status: not run

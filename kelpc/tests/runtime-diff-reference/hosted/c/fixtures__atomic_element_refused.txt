@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/atomic_element_refused.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'f64' cannot be an 'Atomic' element in v1: the element set is 'bool' and the integer types ('i32', 'i64', 'u32', 'u64', 'u8', 'u16', 'usize', 'isize'), because one atomic operation is one machine-word operation and there is no atomic arithmetic for a float
+  --> <root>/kelpc/tests/fixtures/atomic_element_refused.kp:8:19
+run-status: not run

@@ -475,6 +475,20 @@ static int kelp_env_unset(const char* name) {
    behaviour. */
 static _Thread_local int kelp_listen_loopback = 0;
 
+/* The two accessors the Rust runtime's cap glue uses in place of the variable
+   (stage 1 plan 3.4): `set` stores the verdict and returns it, `take` returns
+   the stored verdict and clears it. The oracle's behaviour is unchanged. */
+int kelp_listen_loopback_set(int v) {
+    kelp_listen_loopback = v;
+    return v;
+}
+
+int kelp_listen_loopback_take(void) {
+    int v = kelp_listen_loopback;
+    kelp_listen_loopback = 0;
+    return v;
+}
+
 /* The children `process.spawn` started and nobody has reaped. `process.kill`
    and `process.wait` accept only these pids: a `process` grant names programs
    to *start*, and without this table `kill` took any pid, so a module holding

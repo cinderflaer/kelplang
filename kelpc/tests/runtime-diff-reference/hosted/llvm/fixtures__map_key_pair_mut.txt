@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_key_pair_mut.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Key.hash' cannot take 'mut': a key pair's receiver is a shared borrow, so write 'fun Key.hash()' without 'mut'
+  --> <root>/kelpc/tests/fixtures/map_key_pair_mut.kp:5:1
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_blanket_unchecked_bound.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the method 'tag' comes from a blanket impl of 'Tagged', whose bound 'Describe' on the receiver cannot be checked on 'List<i32>': a builtin container's impl table has no entry per element type, so the bound on its element is not visible to the check
+  --> <root>/kelpc/tests/fixtures/refused_blanket_unchecked_bound.kp:22:11
+run-status: not run

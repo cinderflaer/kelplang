@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/alias_cycle.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: alias cycle: a -> b -> a
+  --> <root>/kelpc/tests/fixtures/alias_cycle.kp:5:15
+  note: '%*a*%' is defined here
+  --> <root>/kelpc/tests/fixtures/alias_cycle.kp:4:1
+run-status: not run

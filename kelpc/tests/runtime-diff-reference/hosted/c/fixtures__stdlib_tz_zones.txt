@@ -1,0 +1,9 @@
+unit: kelpc/tests/fixtures/stdlib_tz_zones.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+cases: 57, failed: 0
+--- stderr

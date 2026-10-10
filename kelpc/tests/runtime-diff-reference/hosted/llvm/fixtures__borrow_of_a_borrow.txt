@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/borrow_of_a_borrow.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: this is a borrow of a borrow: '&o' borrows a value that is already a borrow, and Kelp has no '&&T'; pass the borrow itself
+  --> <root>/kelpc/tests/fixtures/borrow_of_a_borrow.kp:7:23
+run-status: not run

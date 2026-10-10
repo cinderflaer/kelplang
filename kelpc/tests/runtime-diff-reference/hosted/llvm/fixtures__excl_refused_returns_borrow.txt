@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_returns_borrow.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: this block writes through 's' (an exclusive capture) and returns a borrow ('str'): the borrow would outlive the call that holds 's' exclusively; return an owned value (a copy or a 'String.from_str(...)') instead
+  --> <root>/kelpc/tests/fixtures/excl_refused_returns_borrow.kp:13:18
+run-status: not run

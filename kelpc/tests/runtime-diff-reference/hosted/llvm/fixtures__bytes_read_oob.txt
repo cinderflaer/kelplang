@@ -1,0 +1,9 @@
+unit: kelpc/tests/fixtures/bytes_read_oob.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+--- stderr
+panic: Bytes.read_u32_le: offset out of bounds

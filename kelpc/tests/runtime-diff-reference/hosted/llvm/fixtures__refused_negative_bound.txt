@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_negative_bound.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a negative bound ('!Name') is excluded from generic trait impls (plan/generic-trait-impls.md section 6): a bound says a type implements a trait, and no bound says that it does not
+  --> <root>/kelpc/tests/fixtures/refused_negative_bound.kp:5:13
+run-status: not run

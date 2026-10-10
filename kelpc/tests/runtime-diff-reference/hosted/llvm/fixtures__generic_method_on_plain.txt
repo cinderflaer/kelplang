@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_method_on_plain.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Point' is not a generic type — only a receiver on a generic type may declare type parameters of the type; a method of a plain type may declare its own ('fun Point.first_of<U>(...)')
+  --> <root>/kelpc/tests/fixtures/generic_method_on_plain.kp:4:1
+run-status: not run

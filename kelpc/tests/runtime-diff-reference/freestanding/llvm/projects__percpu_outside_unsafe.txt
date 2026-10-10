@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/percpu_outside_unsafe
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'static mut SLOT' is an unsafe operation: reading, writing or taking its address can only be done inside 'unsafe { ... }' or in a function declared 'unsafe fun'
+  --> <root>/kelpc/tests/projects/percpu_outside_unsafe/src/main.kp:4:13
+--- nm -u
+(no image)

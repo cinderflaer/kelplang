@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/offset_of_missing_field.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'P' has no field 'y'
+  --> <root>/kelpc/tests/fixtures/offset_of_missing_field.kp:5:11
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/try_error_type.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: '?' cannot convert a failure: 'Result<i32, i32>' carries 'i32' and the enclosing function returns 'Result<i32, String>', whose failure carries 'String' — write 'impl From<i32> for String { fun from(value: i32).return: String { ... } }' so the operator has a conversion to call
+  --> <root>/kelpc/tests/fixtures/try_error_type.kp:11:13
+run-status: not run

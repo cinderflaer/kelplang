@@ -1,0 +1,8 @@
+unit: examples/polyp/core/core.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot find module 'deps/polyp/core/anim': expected '<root>/examples/polyp/core/deps/polyp/core/anim.kp'
+  --> <root>/examples/polyp/core/core.kp:10:1
+run-status: not run

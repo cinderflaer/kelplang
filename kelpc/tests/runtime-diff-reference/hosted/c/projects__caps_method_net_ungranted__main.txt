@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/caps_method_net_ungranted/main.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'std.net.Listener' wraps an operating-system descriptor, so building one from a number needs the 'net' capability, which module 'util' was not granted; a module that holds no grant can only use the handles it is given
+  --> <root>/kelpc/tests/projects/caps_method_net_ungranted/util.kp:3:27
+run-status: not run

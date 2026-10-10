@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/traits_duplicate_impl.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: trait 'Shape' already has an impl for 'Circle' (written in module 'traits_duplicate_impl'): a trait is implemented for a type at most once
+  --> <root>/kelpc/tests/fixtures/traits_duplicate_impl.kp:12:1
+  note: the other impl of 'Shape' for 'Circle' is written here
+  --> <root>/kelpc/tests/fixtures/traits_duplicate_impl.kp:8:1
+run-status: not run

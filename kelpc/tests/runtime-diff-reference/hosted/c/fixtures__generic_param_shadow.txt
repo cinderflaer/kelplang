@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_param_shadow.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: type parameter 'i32' shadows the builtin type 'i32' — pick another name
+  --> <root>/kelpc/tests/fixtures/generic_param_shadow.kp:3:1
+run-status: not run

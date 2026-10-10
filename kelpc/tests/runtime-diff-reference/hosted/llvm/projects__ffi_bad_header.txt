@@ -1,0 +1,7 @@
+unit: kelpc/tests/projects/ffi_bad_header
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: coral.toml value for '[extern."ctype"] header' must not be empty
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/move_param_ref.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'move' cannot be written on '&String' — a 'str' is already a borrowed view, '&T' is already a copy of a borrow, and a function value is already Copy, so there is nothing to take ownership of; write the owned type instead ('move String')
+  --> <root>/kelpc/tests/fixtures/move_param_ref.kp:2:21
+run-status: not run

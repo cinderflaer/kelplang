@@ -1,0 +1,25 @@
+unit: kelpc/tests/fixtures/process_spawn.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+0
+one-two
+7
+0
+0
+oops
+0
+hello
+
+true
+137
+false
+127
+true
+1
+true
+true
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_live_borrow.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's.items' as exclusive: already borrowed as shared
+  --> <root>/kelpc/tests/fixtures/excl_refused_live_borrow.kp:15:10
+run-status: not run
