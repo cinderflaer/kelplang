@@ -1,0 +1,11 @@
+// WP3 golden fixture: the managed lowering of a recursive `datac`.
+// `Node` holds two owned pointers, so its descriptor lists two pointer slots,
+// at offsets 0 and 8. `Box.of` allocates through `kelp_gc_alloc`, and nothing
+// in the drop path frees memory.
+datac Node(val left: Box<Node>, val right: Box<Node>)
+
+fun main() {
+    val leaf = Node(left = Box.empty(), right = Box.empty())
+    val tree = Node(left = Box.of(leaf), right = Box.empty())
+    print(tree.left.is_empty())
+}
