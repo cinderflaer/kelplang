@@ -4145,12 +4145,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // directly; the slots a referencing function gets are bound below for
         // every other function.
         if self.fn_name == "main" {
-            // Managed: the collector starts first, with the paper's defaults
-            // (minimum 8 MiB, maximum 256 MiB).
+            // Managed: the collector starts first, with the default heap bounds
+            // (paper 3.4). The manifest's `heap_max` is not read yet (WP2).
             if let Some(gc) = &self.g.gc {
                 let (init, ity) = gc.init;
-                let min = self.g.ctx.const_int(self.g.ctx.i64(), 8 << 20, false);
-                let max = self.g.ctx.const_int(self.g.ctx.i64(), 256 << 20, false);
+                let min = self.g.ctx.const_int(self.g.ctx.i64(), crate::gc_descr::DEFAULT_HEAP_MIN, false);
+                let max = self.g.ctx.const_int(self.g.ctx.i64(), crate::gc_descr::DEFAULT_HEAP_MAX, false);
                 self.g.builder.build_call(init, ity, &[min, max], "");
             }
             if let Some(init) = self.g.init_pds_fn {
@@ -4571,6 +4571,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self.g.builder.build_load(lty, slot, "drop.val"))
     }
 
+    /// A managed build's safepoint poll at the current position (paper 5.1):
+    /// one call to `kelp_gc_safepoint`, which the collector answers with one
+    /// load when no collection is requested. Nothing in a hosted build.
+    fn gc_poll(&self) {
+        if let Some(gc) = &self.g.gc {
+            let (func, fty) = gc.safepoint;
+            self.g.builder.build_call(func, fty, &[], "");
+        }
+    }
+
     fn emit_while(&mut self, cond: &Expr, body: &Block) -> Result<(), String> {
         let header = self.cur_fn.append_block("while.cond");
         let body_bb = self.cur_fn.append_block("while.body");
@@ -4594,6 +4604,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.loops.pop();
         body?;
         if !self.terminated {
+            // Managed: a safepoint poll on every back edge (paper 5.1), so a
+            // loop with no call still lets a collection stop this thread.
+            self.gc_poll();
             let back = self.g.builder.build_br(header);
             // A loop whose bound is a small literal is unrolled in full, so its
             // body is the straight line of steps the SLP vectorizer packs `nbody`
@@ -7924,6 +7937,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
         ret: &Ty,
         span: Span,
     ) -> Result<Option<Value<'a>>, String> {
+        // Managed: a safepoint poll before every call (paper 5.1).
+        self.gc_poll();
         if callee == "std.source.file" {
             let path = self
                 .g

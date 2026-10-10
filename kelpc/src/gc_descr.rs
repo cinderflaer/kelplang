@@ -29,6 +29,13 @@ pub const KELP_GC_NOSCAN: u64 = 1;
 /// signatures, and the golden test checks the IR against that stub.
 pub const GC_ALLOC: &str = "kelp_gc_alloc";
 pub const GC_INIT: &str = "kelp_gc_init";
+pub const GC_SAFEPOINT: &str = "kelp_gc_safepoint";
+
+/// The heap cap a managed program gets when its manifest names none: 256 MiB,
+/// paper 3.4 and the `heap_max` default. The minimum (the collection trigger
+/// floor) is 8 MiB.
+pub const DEFAULT_HEAP_MIN: u64 = 8 << 20;
+pub const DEFAULT_HEAP_MAX: u64 = 256 << 20;
 
 /// The layout facts descriptor emission needs from the program. `codegen_llvm`
 /// implements it on its own state, so this module never reaches into `Gen`.
@@ -179,6 +186,9 @@ pub struct GcTypes<'a> {
     /// `int32 kelp_gc_init(size_t heap_min, size_t heap_max)`, called once from
     /// `main` before anything else (paper 3.4).
     pub init: (LlvmFunction<'a>, FnType<'a>),
+    /// `void kelp_gc_safepoint(void)`, a poll at loop back edges and call sites
+    /// (paper 5.1).
+    pub safepoint: (LlvmFunction<'a>, FnType<'a>),
     cache: RefCell<HashMap<String, Value<'a>>>,
 }
 
@@ -196,10 +206,13 @@ impl<'a> GcTypes<'a> {
         let alloc = (module.add_function(GC_ALLOC, alloc_ty), alloc_ty);
         let init_ty = ctx.fn_type(ctx.void(), &[ctx.i64(), ctx.i64()], false);
         let init = (module.add_function(GC_INIT, init_ty), init_ty);
+        let poll_ty = ctx.fn_type(ctx.void(), &[], false);
+        let safepoint = (module.add_function(GC_SAFEPOINT, poll_ty), poll_ty);
         GcTypes {
             descr_ty,
             alloc,
             init,
+            safepoint,
             cache: RefCell::new(HashMap::new()),
         }
     }
@@ -357,6 +370,48 @@ mod tests {
             .and_then(|rest| rest.split('}').next())
             .expect("the Box<Node> drop body");
         assert!(!body.contains("call"), "{body}");
+    }
+
+    /// Lower a managed fixture, link it against the collector archive named by
+    /// `KELP_GC_LIB` and run it. Returns the program's stdout. The archive is
+    /// built from branch `gc-core` (`kelpc/gc`, `cargo build --release`).
+    fn link_and_run(name: &str) -> String {
+        let archive = std::env::var("KELP_GC_LIB").expect("KELP_GC_LIB names libkelp_gc.a");
+        lower(name, true).expect("managed lowering");
+        let stem = name.trim_end_matches(".kp");
+        let dir = std::env::temp_dir().join(format!("kelpc-gc-test-{}-managed", std::process::id()));
+        let object = dir.join(format!("{stem}.o"));
+        let exe = dir.join(stem);
+        crate::driver::link_managed_object(
+            &object,
+            Path::new(&archive),
+            &exe,
+            crate::opt::OptLevel::O0,
+        )
+        .map_err(|e| e.message)
+        .expect("managed link");
+        let output = std::process::Command::new(&exe).output().expect("run managed program");
+        assert!(output.status.success(), "exit {:?}", output.status);
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// Known blocker: the archive from `gc-core` references
+    /// `rust_eh_personality` without defining it (a `panic = "abort"` staticlib),
+    /// so these fail to link until the collector defines that symbol. The fix
+    /// belongs in `kelpc/gc`, not in the link line.
+    ///
+    /// The node fixture prints `false`, because `tree.left` is the non-empty box.
+    #[test]
+    #[ignore = "links WP1's kelp_gc static library: set KELP_GC_LIB and run with --ignored"]
+    fn link_smoke_runs_node_under_the_collector() {
+        assert_eq!(link_and_run("node.kp"), "false");
+    }
+
+    /// The hello fixture allocates one Box through the collector and prints it.
+    #[test]
+    #[ignore = "links WP1's kelp_gc static library: set KELP_GC_LIB and run with --ignored"]
+    fn link_smoke_hello_prints_under_the_collector() {
+        assert_eq!(link_and_run("hello.kp"), "hello from the managed build");
     }
 
     #[test]

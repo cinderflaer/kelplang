@@ -15,4 +15,4 @@ writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
 
 ## compiler
-- Managed-mode lowering (WP3, WIP): GC descriptors, typed Box allocation, drop gating; not yet compiled or verified.
+- Managed-mode lowering (WP3, WIP): GC descriptors, typed Box allocation, drop gating, safepoint polls at calls and loop back edges; golden IR and hosted identity pass, link smoke blocked until the collector defines rust_eh_personality.

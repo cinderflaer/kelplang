@@ -409,6 +409,8 @@ declare ptr @kelp_gc_alloc(ptr)
 
 declare void @kelp_gc_init(i64, i64)
 
+declare void @kelp_gc_safepoint()
+
 define internal %kelp_Box__Node @kelp_Box__Node__empty() {
 entry:
   %b = alloca %kelp_Box__Node, align 8
@@ -528,17 +530,23 @@ entry:
   call void @kelp_gc_init(i64 8388608, i64 268435456), !dbg !6
   store i32 %0, ptr @kelp_argc, align 4, !dbg !6
   store ptr %1, ptr @kelp_argv, align 8, !dbg !6
+  call void @kelp_gc_safepoint(), !dbg !7
   %call = call %kelp_Box__Node @kelp_Box__Node__empty(), !dbg !7
   %left = insertvalue %tag_Node undef, %kelp_Box__Node %call, 0, !dbg !7
+  call void @kelp_gc_safepoint(), !dbg !7
   %call1 = call %kelp_Box__Node @kelp_Box__Node__empty(), !dbg !7
   %right = insertvalue %tag_Node %left, %kelp_Box__Node %call1, 1, !dbg !7
   store %tag_Node %right, ptr %leaf, align 8, !dbg !6
+  call void @kelp_gc_safepoint(), !dbg !8
   %leaf2 = load %tag_Node, ptr %leaf, align 8, !dbg !8
   %call3 = call %kelp_Box__Node @kelp_Box__Node__of(%tag_Node %leaf2), !dbg !8
   %left4 = insertvalue %tag_Node undef, %kelp_Box__Node %call3, 0, !dbg !8
+  call void @kelp_gc_safepoint(), !dbg !8
   %call5 = call %kelp_Box__Node @kelp_Box__Node__empty(), !dbg !8
   %right6 = insertvalue %tag_Node %left4, %kelp_Box__Node %call5, 1, !dbg !8
   store %tag_Node %right6, ptr %tree, align 8, !dbg !6
+  call void @kelp_gc_safepoint(), !dbg !9
+  call void @kelp_gc_safepoint(), !dbg !9
   %left7 = getelementptr inbounds nuw %tag_Node, ptr %tree, i32 0, i32 0, !dbg !9
   %call8 = call i1 @kelp_Box__Node__is_empty(ptr %left7), !dbg !9
   %bool = select i1 %call8, ptr @str, ptr @str.7, !dbg !9
