@@ -1,0 +1,20 @@
+// An `errdefer` sees only the locals already in scope where it is written, so
+// naming a local declared after it is refused, as `defer` refuses it.
+impl "std/result"
+
+enum Bad {
+    Oops
+}
+
+fun f().return: result.Result<i32, Bad> {
+    errdefer print(later)
+    val later = 5
+    return result.Result.Ok(value = later)
+}
+
+fun main() {
+    when f() {
+        Ok(v) -> print(v)
+        Err(_) -> print("err")
+    }
+}

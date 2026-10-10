@@ -890,6 +890,38 @@ The message is a `str`, or an owned `String` read without being consumed: `panic
 
 That is the whole of the divergence rule: it applies to a function body's tail and nowhere else, so a `panic` cannot be the arm of an `if`/`when` used as a value. It exists because it is what makes a "this cannot happen" accessor expressible at all (`std/option`'s `unwrap` is the first one).
 
+### 6.5 `errdefer`
+
+`errdefer EXPR` is a statement, written like `defer` (`plan/defer.md`), whose action runs only when the function leaves through its **error variant**. An error exit is either:
+
+- a `return` whose value is the failure variant: `Err(..)` of a `Result`, or `None` of an `Option`; or
+- a `?` that propagates that failure.
+
+```kelp
+fun open_pair(a: str, b: str).return: Result<Pair, IoErr> {
+    val first = open(a)?
+    errdefer close(first)
+    val second = open(b)?      // if this fails, first is closed
+    Ok(Pair(first, second))
+}
+```
+
+- **Positional.** Like `defer`, an `errdefer` is active only once control has reached its statement. Here the `?` on `open(a)` fails before the `errdefer` exists, so `close` is not run.
+- **Order.** On an error exit the errdefers of every block being left run first, the innermost block first. Within a block the errdefers run newest first, and then that block's ordinary defers run newest first. A value whose drop was registered before the `errdefer` is then dropped by the drop plan (10.3) after the action has run, unless the action moved it.
+- **Ordinary exits.** A `return` of a success value (`Ok`, `Some`, or any other value), and falling off the end of the function, run the ordinary defers only. The errdefers do not run.
+- **Panic.** A `panic` runs neither errdefers nor defers. This is the rule `defer` already has (`plan/defer.md`): a panic never returns, so nothing is unwound.
+- **Option.** For an `Option`, the failure variant is `None`, so a `None` return or a `?` on `None` is an error exit.
+- **`?` and `defer`.** The refusal of a `defer` in a block that has a `?` (`plan/defer.md`) still applies. An `errdefer` alone does not refuse a `?`.
+
+Refusals, each by name:
+
+- **Return type.** An `errdefer` in a function whose return type is not `Result<..>` or `Option<..>` is refused: "an 'errdefer' runs only on the error path, so it needs a function that returns Result or Option". Fix: declare the return type as `Result` or `Option` (a type alias to one is refused too, since the check reads the name), or write a `defer` if the cleanup should run on every exit.
+- **Later locals.** An `errdefer` that names a local declared after it is refused: "this 'errdefer' names 'x', which is declared later in the block". It sees only the locals already in scope where it is written, as a `defer` does.
+- **Action contents.** The action may not contain `return`, `?`, `break` or `continue`, since it runs while the function is already leaving on an error.
+- **Closures.** An `errdefer` inside a `fun` literal is refused. The literal's own return is its error exit, and a literal has no declared failure shape here.
+
+The lowering is in `defer.rs` and needs no new form after that pass: a return or a `?` on an error exit becomes a `when` on the returned value, whose failure arm runs the errdefers and the ordinary defers, and whose other arm runs the ordinary defers only. The `return` or `?` is then taken as written, so the `From` conversion of `?` and the drop plan apply unchanged.
+
 ## 7. Functions
 
 ### 7.1 Declaration

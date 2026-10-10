@@ -14292,6 +14292,51 @@ fn a_defer_naming_a_later_local_is_refused() {
     );
 }
 
+// Kernel stage 6 `errdefer` (`plan/syntax.md`, errdefer): an action that runs
+// only when the function leaves through its error variant. `defer.rs` lowers the
+// returned value's test into a `when`, so the error path runs the errdefers and
+// the other paths do not.
+
+/// On the error path the `errdefer` runs before the function returns its `Err`;
+/// on the success path it does not run.
+#[test]
+fn an_errdefer_runs_on_the_error_path_only() {
+    assert_compiles_and_runs(
+        "tests/fixtures/errdefer_error_path.kp",
+        "8\ncleanup\nerr\n",
+    );
+}
+
+/// A `?` that fails after an `errdefer` has been written runs it, with the
+/// locals bound before it still in scope; a `?` that succeeds does not.
+#[test]
+fn an_errdefer_runs_when_a_later_question_mark_fails() {
+    assert_compiles_and_runs(
+        "tests/fixtures/errdefer_second_try.kp",
+        "3\n1\nerr\n",
+    );
+}
+
+/// An `errdefer` in a function whose return type is neither Result nor Option is
+/// refused, because there is no error variant for it to run on.
+#[test]
+fn an_errdefer_in_a_function_that_does_not_return_result_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/errdefer_non_result.kp",
+        "an 'errdefer' runs only on the error path",
+    );
+}
+
+/// An `errdefer` naming a local declared after it is refused by name, as a
+/// `defer` is.
+#[test]
+fn an_errdefer_naming_a_later_local_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/errdefer_later_local.kp",
+        "declared later in the block",
+    );
+}
+
 /// `break`/`continue` are ordinary loop control in a written `while`
 /// (`plan/iterators.md`).
 #[test]

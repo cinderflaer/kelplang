@@ -2964,6 +2964,7 @@ impl Parser {
                 self.parse_loop_construct(Some(label))
             }
             TokenKind::Defer => self.parse_defer_stmt(),
+            TokenKind::Errdefer => self.parse_errdefer_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
             // `break` and `continue` are read as ordinary names everywhere
             // else, so a bare one here (the statement ends after it) is the
@@ -3458,6 +3459,13 @@ impl Parser {
         let expr = self.parse_head_expr()?;
         let span = start.to(expr.span());
         Ok(Stmt::Defer { expr, span })
+    }
+
+    fn parse_errdefer_stmt(&mut self) -> PResult<Stmt> {
+        let start = self.expect(TokenKind::Errdefer, "'errdefer'")?.span;
+        let expr = self.parse_head_expr()?;
+        let span = start.to(expr.span());
+        Ok(Stmt::Errdefer { expr, span })
     }
 
     fn parse_return_stmt(&mut self) -> PResult<Stmt> {

@@ -16,6 +16,13 @@
 //! - a deferred action sees only the locals already in scope where the `defer`
 //!   is written, so naming a local declared later in the block is refused.
 //!
+//! `errdefer EXPR` is the same statement with a narrower exit set: it runs only
+//! on an error exit, a `return` whose value is the failure variant (`Err` of a
+//! `Result`, `None` of an `Option`) or a `?` that propagates one. Such an exit
+//! is lowered to a `when` on the returned value, so the failure arm runs the
+//! errdefers of every block it leaves (innermost first, each block's errdefers
+//! before its ordinary defers) and the other arm runs the ordinary defers only.
+//!
 //! Every synthesized statement carries the `defer` statement's span, so a
 //! diagnostic about the duplicated action names the `defer` and not the exit it
 //! was spliced before. Synthesized names start with `#`, which cannot appear in
@@ -30,12 +37,16 @@ use crate::lexer::Span;
 const RET_PREFIX: &str = "#defer_ret";
 const TMP_PREFIX: &str = "#defer_tmp";
 const TAIL_PREFIX: &str = "#defer_tail";
+const TRY_PREFIX: &str = "#errdefer_try";
 
 /// Lowers every `defer` in `program`, attributing a refusal to `module`.
 pub fn lower(program: &mut Program, module: &str) -> Result<(), Diagnostic> {
     let mut lowerer = Lowerer {
         module: module.to_string(),
         counter: 0,
+        shape: None,
+        closure_depth: 0,
+        ret_ty: None,
     };
     for f in &mut program.functions {
         lowerer.function(f)?;
@@ -61,6 +72,31 @@ pub fn lower(program: &mut Program, module: &str) -> Result<(), Diagnostic> {
 struct Cleanup {
     expr: Expr,
     span: Span,
+    /// `true` for an `errdefer`: it runs on an error exit only.
+    errdefer: bool,
+}
+
+/// The failure variant of a function's return type: `Err` (which carries a
+/// payload) for a `Result`, `None` (which does not) for an `Option`. The
+/// success variant is every other arm, so the lowering names only the failure.
+#[derive(Clone, Copy)]
+struct ErrShape {
+    err: &'static str,
+    payload: bool,
+}
+
+fn err_shape(return_type: Option<&TypeExpr>) -> Option<ErrShape> {
+    let name = return_type?.name.rsplit('.').next()?;
+    match name {
+        "Result" => Some(ErrShape { err: "Err", payload: true }),
+        "Option" => Some(ErrShape { err: "None", payload: false }),
+        _ => None,
+    }
+}
+
+/// The actions of a normal exit: the ordinary defers, errdefers left out.
+fn ordinary(actions: &[Cleanup]) -> Vec<Cleanup> {
+    actions.iter().filter(|c| !c.errdefer).cloned().collect()
 }
 
 /// The actions an exit has to run, already in execution order: the innermost
@@ -70,17 +106,33 @@ struct Chain(Vec<Cleanup>);
 
 impl Chain {
     /// The actions active after the `before` defers of the current block have
-    /// run, followed by what an exit out of the enclosing blocks owes.
+    /// run, followed by what an exit out of the enclosing blocks owes. Per
+    /// block, the errdefers (newest first) come before the ordinary defers
+    /// (newest first): on an error exit a block's errdefers run before its defers.
     fn exit(before: &[Cleanup], outer: &Chain) -> Chain {
-        let mut actions: Vec<Cleanup> = before.iter().rev().cloned().collect();
+        let mut actions: Vec<Cleanup> = before.iter().rev().filter(|c| c.errdefer).cloned().collect();
+        actions.extend(before.iter().rev().filter(|c| !c.errdefer).cloned());
         actions.extend(outer.0.iter().cloned());
         Chain(actions)
+    }
+
+    fn has_errdefer(&self) -> bool {
+        self.0.iter().any(|c| c.errdefer)
     }
 }
 
 struct Lowerer {
     module: String,
     counter: usize,
+    /// The failure shape of the function being lowered, `None` when its return
+    /// type is neither `Result` nor `Option`, and inside a `fun` literal.
+    shape: Option<ErrShape>,
+    /// How many `fun` literals enclose the code being lowered.
+    closure_depth: usize,
+    /// The declared return type of the function being lowered. An errdefer
+    /// return binds its value with it, so a constructor such as
+    /// `Result.Ok(..)` still infers its other type parameter from the signature.
+    ret_ty: Option<TypeExpr>,
 }
 
 impl Lowerer {
@@ -91,6 +143,9 @@ impl Lowerer {
 
     fn function(&mut self, f: &mut FunctionDecl) -> Result<(), Diagnostic> {
         let empty = Chain::default();
+        self.shape = err_shape(f.return_type.as_ref());
+        self.ret_ty = f.return_type.clone();
+        self.closure_depth = 0;
         match &mut f.body {
             FunctionBody::Block(block) => self.block(block, &empty, &HashSet::new(), true),
             FunctionBody::Expr(expr) => self.expr(expr, &empty, &HashSet::new()),
@@ -170,7 +225,7 @@ impl Lowerer {
                             self.module.clone(),
                         ));
                     }
-                    refuse_later_locals(&expr, &not_yet_here, span, &self.module)?;
+                    refuse_later_locals(&expr, &not_yet_here, span, &self.module, "defer")?;
                     if let Some(exit_span) = first_loop_exit_in_expr(&expr) {
                         return Err(Diagnostic::new(
                             "a deferred action cannot contain 'break' or 'continue': the action runs while the block is being left, so it cannot leave the loop again".to_string(),
@@ -189,7 +244,64 @@ impl Lowerer {
                     // still runs when the action's own block is left.
                     let empty = Chain::default();
                     self.expr(&mut expr, &empty, &HashSet::new())?;
-                    active.push(Cleanup { expr, span });
+                    active.push(Cleanup { expr, span, errdefer: false });
+                }
+                Stmt::Errdefer { expr, span } => {
+                    if self.closure_depth > 0 {
+                        return Err(Diagnostic::new(
+                            "an 'errdefer' inside a 'fun' literal is not supported yet: the literal's own return is its error exit".to_string(),
+                            span,
+                            self.module.clone(),
+                        ));
+                    }
+                    if self.shape.is_none() {
+                        return Err(Diagnostic::new(
+                            "an 'errdefer' runs only on the error path, so it needs a function that returns Result or Option, and this one does not: declare the return type as Result<..> or Option<..>, or use 'defer' for a cleanup that runs on every exit".to_string(),
+                            span,
+                            self.module.clone(),
+                        ));
+                    }
+                    if let Some(return_span) = first_return_in_expr(&expr) {
+                        return Err(Diagnostic::new(
+                            "an errdefer action cannot contain 'return': the action runs while the function is already leaving on an error".to_string(),
+                            return_span,
+                            self.module.clone(),
+                        )
+                        .with_note(
+                            "the 'errdefer' whose action this is".to_string(),
+                            span,
+                            self.module.clone(),
+                        ));
+                    }
+                    if let Some(try_span) = first_try_in_expr(&expr) {
+                        return Err(Diagnostic::new(
+                            "an errdefer action cannot contain '?': the action runs while the function is already leaving on an error, so a second early exit cannot be taken from it".to_string(),
+                            try_span,
+                            self.module.clone(),
+                        )
+                        .with_note(
+                            "the 'errdefer' whose action this is".to_string(),
+                            span,
+                            self.module.clone(),
+                        ));
+                    }
+                    refuse_later_locals(&expr, &not_yet_here, span, &self.module, "errdefer")?;
+                    if let Some(exit_span) = first_loop_exit_in_expr(&expr) {
+                        return Err(Diagnostic::new(
+                            "an errdefer action cannot contain 'break' or 'continue': the action runs while the function is leaving on an error".to_string(),
+                            exit_span,
+                            self.module.clone(),
+                        )
+                        .with_note(
+                            "the 'errdefer' whose action this is".to_string(),
+                            span,
+                            self.module.clone(),
+                        ));
+                    }
+                    let mut expr = expr;
+                    let empty = Chain::default();
+                    self.expr(&mut expr, &empty, &HashSet::new())?;
+                    active.push(Cleanup { expr, span, errdefer: true });
                 }
                 other => {
                     let exit = Chain::exit(&active, outer);
@@ -220,10 +332,13 @@ impl Lowerer {
                                 new_stmts.push(Stmt::Expr { expr, span });
                             } else if is_function_body {
                                 self.push_return(&mut new_stmts, Some(expr), span, &exit);
+                            } else if ordinary(&active).is_empty() {
+                                new_stmts.push(Stmt::Expr { expr, span });
                             } else {
+                                let normal = ordinary(&active);
                                 let tail = self.fresh(TAIL_PREFIX);
                                 let mut inner: Vec<Stmt> =
-                                    Vec::with_capacity(active.len() + 2);
+                                    Vec::with_capacity(normal.len() + 2);
                                 inner.push(Stmt::Let {
                                     name: tail.clone(),
                                     mutable: false,
@@ -231,7 +346,7 @@ impl Lowerer {
                                     init: expr,
                                     span,
                                 });
-                                for c in active.iter().rev() {
+                                for c in normal.iter().rev() {
                                     let name = self.fresh(TMP_PREFIX);
                                     inner.push(Stmt::Let {
                                         name,
@@ -257,11 +372,11 @@ impl Lowerer {
                         // unchanged, so a loop body with no defers emits
                         // exactly what it wrote.
                         Stmt::Break { span } => {
-                            self.push_exit_actions(&mut new_stmts, &active);
+                            self.push_exit_actions(&mut new_stmts, &ordinary(&active));
                             new_stmts.push(Stmt::Break { span });
                         }
                         Stmt::Continue { span } => {
-                            self.push_exit_actions(&mut new_stmts, &active);
+                            self.push_exit_actions(&mut new_stmts, &ordinary(&active));
                             new_stmts.push(Stmt::Continue { span });
                         }
                         mut other => {
@@ -273,8 +388,9 @@ impl Lowerer {
             }
         }
 
-        if falls_through && !tail_is_expr && !active.is_empty() {
-            for c in active.iter().rev() {
+        let normal = ordinary(&active);
+        if falls_through && !tail_is_expr && !normal.is_empty() {
+            for c in normal.iter().rev() {
                 let name = self.fresh(TMP_PREFIX);
                 new_stmts.push(Stmt::Let {
                     name,
@@ -316,18 +432,51 @@ impl Lowerer {
         span: Span,
         exit: &Chain,
     ) {
+        // With an errdefer owed, the value is bound with the declared return
+        // type: the failure test then sees a value of the function's own type.
+        let typed = if self.shape.is_some() && exit.has_errdefer() {
+            self.ret_ty.clone()
+        } else {
+            None
+        };
         let ret = value.map(|value| {
             let name = self.fresh(RET_PREFIX);
             out.push(Stmt::Let {
                 name: name.clone(),
                 mutable: false,
-                ty: None,
+                ty: typed,
                 init: value,
                 span,
             });
             name
         });
-        for c in &exit.0 {
+        match (&ret, self.shape) {
+            // An errdefer is owed, so the returned value decides which actions
+            // run: the failure arm runs everything `exit` owes, and any other
+            // value runs the ordinary defers only.
+            (Some(name), Some(shape)) if exit.has_errdefer() => {
+                let failure = self.cleanup_stmts(exit.0.iter());
+                let otherwise = self.cleanup_stmts(exit.0.iter().filter(|c| !c.errdefer));
+                out.push(Stmt::Expr {
+                    expr: failure_when(name, shape, failure, otherwise, span),
+                    span,
+                });
+            }
+            _ => {
+                let ordinary_exit = self.cleanup_stmts(exit.0.iter().filter(|c| !c.errdefer));
+                out.extend(ordinary_exit);
+            }
+        }
+        out.push(Stmt::Return {
+            value: ret.map(|name| Expr::Ident(name, span)),
+            span,
+        });
+    }
+
+    /// One `val #tmp = <action>` per action, in the order given.
+    fn cleanup_stmts<'a>(&mut self, actions: impl Iterator<Item = &'a Cleanup>) -> Vec<Stmt> {
+        let mut out = Vec::new();
+        for c in actions {
             let name = self.fresh(TMP_PREFIX);
             out.push(Stmt::Let {
                 name,
@@ -337,10 +486,62 @@ impl Lowerer {
                 span: c.span,
             });
         }
-        out.push(Stmt::Return {
-            value: ret.map(|name| Expr::Ident(name, span)),
+        out
+    }
+
+    /// `sub?` under errdefers. The failure is an exit the errdefers must see
+    /// before the `?` returns, so `sub?` becomes a block that binds the operand,
+    /// runs the errdefers when it is the failure variant, and then takes the
+    /// `?` as written. The `?` keeps its `From` conversion and its drop plan.
+    /// With no errdefer owed the `?` is left as it is.
+    fn try_expr(
+        &mut self,
+        expr: &mut Expr,
+        outer: &Chain,
+        not_yet: &HashSet<String>,
+    ) -> Result<(), Diagnostic> {
+        let Expr::Try { expr: sub, .. } = expr else {
+            unreachable!("try_expr is only called on a '?'");
+        };
+        self.expr(sub, outer, not_yet)?;
+        if !outer.has_errdefer() {
+            return Ok(());
+        }
+        let shape = self
+            .shape
+            .expect("an errdefer is only recorded in a function with a failure shape");
+        let Expr::Try { expr: sub, span } = expr else {
+            unreachable!("checked above");
+        };
+        let span = *span;
+        let operand = std::mem::replace(sub.as_mut(), Expr::BoolLit(false, span));
+        let name = self.fresh(TRY_PREFIX);
+        let failure = self.cleanup_stmts(outer.0.iter());
+        let block = Block {
+            stmts: vec![
+                Stmt::Let {
+                    name: name.clone(),
+                    mutable: false,
+                    ty: None,
+                    init: operand,
+                    span,
+                },
+                Stmt::Expr {
+                    expr: failure_when(&name, shape, failure, Vec::new(), span),
+                    span,
+                },
+                Stmt::Expr {
+                    expr: Expr::Try {
+                        expr: Box::new(Expr::Ident(name, span)),
+                        span,
+                    },
+                    span,
+                },
+            ],
             span,
-        });
+        };
+        *expr = Expr::Block(block);
+        Ok(())
     }
 
     fn stmt(
@@ -368,6 +569,7 @@ impl Lowerer {
             // position is known.
             Stmt::Return { .. }
             | Stmt::Defer { .. }
+            | Stmt::Errdefer { .. }
             | Stmt::Break { .. }
             | Stmt::Continue { .. } => Ok(()),
         }
@@ -387,10 +589,10 @@ impl Lowerer {
             | Expr::StringLit(..)
             | Expr::BoolLit(..)
             | Expr::Ident(..) => Ok(()),
-            Expr::Unary { expr, .. }
-            | Expr::Ref { expr, .. }
-            | Expr::Deref { expr, .. }
-            | Expr::Try { expr, .. } => self.expr(expr, outer, not_yet),
+            Expr::Unary { expr, .. } | Expr::Ref { expr, .. } | Expr::Deref { expr, .. } => {
+                self.expr(expr, outer, not_yet)
+            }
+            Expr::Try { .. } => self.try_expr(expr, outer, not_yet),
             Expr::Binary { lhs, rhs, .. } => {
                 self.expr(lhs, outer, not_yet)?;
                 self.expr(rhs, outer, not_yet)
@@ -432,11 +634,16 @@ impl Lowerer {
             // leaves the closure, not the block around the literal.
             Expr::FnLit { body, .. } => {
                 let empty = Chain::default();
-                match body.as_mut() {
+                let saved = self.shape.take();
+                self.closure_depth += 1;
+                let result = match body.as_mut() {
                     FunctionBody::Block(b) => self.block(b, &empty, &HashSet::new(), true),
                     FunctionBody::Expr(e) => self.expr(e, &empty, &HashSet::new()),
                     FunctionBody::Extern | FunctionBody::Signature => Ok(()),
-                }
+                };
+                self.closure_depth -= 1;
+                self.shape = saved;
+                result
             }
             Expr::Template { parts, .. } => {
                 for part in parts {
@@ -476,6 +683,32 @@ impl Lowerer {
     }
 }
 
+/// `when SCRUTINEE { Err(_) -> failure, _ -> otherwise }`: the failure arm
+/// names only the failure variant, and a payload is ignored with `_`.
+fn failure_when(scrutinee: &str, shape: ErrShape, failure: Vec<Stmt>, otherwise: Vec<Stmt>, span: Span) -> Expr {
+    Expr::When {
+        scrutinee: Box::new(Expr::Ident(scrutinee.to_string(), span)),
+        arms: vec![
+            WhenArm {
+                pattern: Some(VariantPattern {
+                    variant: shape.err.to_string(),
+                    binds: if shape.payload { vec![None] } else { Vec::new() },
+                    span,
+                }),
+                body: Expr::Block(Block { stmts: failure, span }),
+                span,
+            },
+            WhenArm {
+                pattern: None,
+                body: Expr::Block(Block { stmts: otherwise, span }),
+                span,
+            },
+        ],
+        span,
+        let_else: false,
+    }
+}
+
 /// The first `panic(...)` as a block's tail, which diverges. Only this exact
 /// shape is recognized, mirroring `infer::tail_diverges`, so the two passes
 /// agree about which expression is the returned value.
@@ -508,6 +741,7 @@ fn refuse_later_locals(
     not_yet: &HashSet<String>,
     span: Span,
     module: &str,
+    keyword: &str,
 ) -> Result<(), Diagnostic> {
     if not_yet.is_empty() {
         return Ok(());
@@ -519,7 +753,7 @@ fn refuse_later_locals(
     if let Some(name) = hits.first() {
         return Err(Diagnostic::new(
             format!(
-                "this 'defer' names '{name}', which is declared later in the block: a deferred action sees only the locals already in scope where the 'defer' is written"
+                "this '{keyword}' names '{name}', which is declared later in the block: a deferred action sees only the locals already in scope where the '{keyword}' is written"
             ),
             span,
             module,
@@ -561,7 +795,7 @@ fn free_in_stmt(stmt: &Stmt, bound: &HashSet<String>, out: &mut HashSet<String>)
             }
         }
         Stmt::Expr { expr, .. } => free_in_expr(expr, bound, out),
-        Stmt::Defer { expr, .. } => free_in_expr(expr, bound, out),
+        Stmt::Defer { expr, .. } | Stmt::Errdefer { expr, .. } => free_in_expr(expr, bound, out),
         Stmt::Break { .. } | Stmt::Continue { .. } => {}
     }
 }
@@ -688,6 +922,9 @@ fn first_try_in_block(block: &Block) -> Option<Span> {
         Stmt::Return { value, .. } => value.as_ref().and_then(first_try_in_expr),
         Stmt::Expr { expr, .. } => first_try_in_expr(expr),
         Stmt::Defer { expr, .. } => first_try_in_expr(expr),
+        // An errdefer's own `?` is refused where it is written, so it does not
+        // make the block's ordinary `?` refusal fire.
+        Stmt::Errdefer { .. } => None,
         Stmt::Break { .. } | Stmt::Continue { .. } => None,
     })
 }
@@ -816,7 +1053,7 @@ fn first_return_in_block(block: &Block) -> Option<Span> {
             iterable, body, ..
         } => first_return_in_expr(iterable).or_else(|| first_return_in_block(body)),
         Stmt::Expr { expr, .. } => first_return_in_expr(expr),
-        Stmt::Defer { expr, .. } => first_return_in_expr(expr),
+        Stmt::Defer { expr, .. } | Stmt::Errdefer { expr, .. } => first_return_in_expr(expr),
         Stmt::Break { .. } | Stmt::Continue { .. } => None,
     })
 }
@@ -891,6 +1128,6 @@ fn first_loop_exit_in_block(block: &Block) -> Option<Span> {
         } => first_loop_exit_in_expr(iterable).or_else(|| first_loop_exit_in_block(body)),
         Stmt::Return { value, .. } => value.as_ref().and_then(first_loop_exit_in_expr),
         Stmt::Expr { expr, .. } => first_loop_exit_in_expr(expr),
-        Stmt::Defer { expr, .. } => first_loop_exit_in_expr(expr),
+        Stmt::Defer { expr, .. } | Stmt::Errdefer { expr, .. } => first_loop_exit_in_expr(expr),
     })
 }

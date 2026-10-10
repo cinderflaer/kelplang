@@ -867,6 +867,14 @@ pub enum Stmt {
         expr: Expr,
         span: Span,
     },
+    /// `errdefer EXPR` (kernel stage 6): like `defer`, but the action runs only
+    /// when the block is left by an error exit, a `return` or a `?` whose value
+    /// is the failure variant (`plan/syntax.md`, errdefer). `defer.rs` rewrites
+    /// it away before name resolution, as it does `Defer`.
+    Errdefer {
+        expr: Expr,
+        span: Span,
+    },
     /// An expression used as a full statement. Whether it's the block's
     /// *tail* (value-producing) or purely a side-effecting statement is
     /// decided positionally — textually the block's last statement is the
@@ -1413,7 +1421,7 @@ fn first_unsafe_in_block(block: &Block) -> Option<Span> {
             iterable, body, ..
         } => first_unsafe_in_expr(iterable).or_else(|| first_unsafe_in_block(body)),
         Stmt::Return { value, .. } => value.as_ref().and_then(first_unsafe_in_expr),
-        Stmt::Defer { expr, .. } => first_unsafe_in_expr(expr),
+        Stmt::Defer { expr, .. } | Stmt::Errdefer { expr, .. } => first_unsafe_in_expr(expr),
         Stmt::Break { .. } | Stmt::Continue { .. } => None,
         Stmt::Expr { expr, .. } => first_unsafe_in_expr(expr),
     })
