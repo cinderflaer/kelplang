@@ -7,8 +7,7 @@
 # scalars. This script names exactly that set.
 #
 # The whole suite is backend-agnostic by construction, so the rest of
-# `compile_and_run.rs` runs against `llvm` too, one backend at a time, through
-# `run-all-backends.sh` (`BACKENDS="c llvm"`). What this script adds is the
+# `compile_and_run.rs` runs against `llvm` too. What this script adds is the
 # *closed* S1 list: a fixture that has grown a construct outside the subset is
 # refused by name, and a refusal is the correct S1 answer, not a failure to hide.
 # Tying the gate to names rather than to a substring means a later fixture cannot
@@ -24,17 +23,10 @@ cd "$(dirname "$0")/../.."
 
 BACKEND="${BACKEND:-llvm}"
 
-# KELPC_ORACLE is the project's one backend switch, and it names only the C
-# oracle; unsetting it selects the default llvm backend. This wrapper keeps the
-# gate's one-backend-at-a-time shape now that the user-facing selector is gone:
-# BACKEND=c sets the switch and anything else removes it. The retired
-# KELPC_BACKEND is stripped either way, so a stale export cannot refuse a build.
+# The retired KELPC_BACKEND and KELPC_ORACLE are stripped, so a stale export
+# cannot refuse a build.
 backend_env() {
-    if [ "$BACKEND" = "c" ]; then
-        env -u KELPC_BACKEND KELPC_ORACLE=c "$@"
-    else
-        env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
-    fi
+    env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
 }
 
 # Exactly the S1 fixtures, by test function. `hello.kp` and `fib.kp` are under

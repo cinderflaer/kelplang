@@ -13,7 +13,7 @@
 #     reads what an earlier one wrote), the `atexit` registration of
 #     `kelp_drop_pds` for an owned passdown, and the `argv` `main` saves into the
 #     runtime's own globals.
-#   * the capability check: the same call sites `codegen_c.rs::cap_plan` guards,
+#   * the capability check: the same call sites the removed C backend's `cap_plan` guards,
 #     against the same compiled-in per-`(module, domain)` allowlist, with the
 #     resource argument evaluated *once* into a value the check and the call
 #     share (BUG-Kf7Rn). The check functions are `runtime/cap_glue.c` itself,
@@ -22,7 +22,7 @@
 #   * the last three refusals: `String#into_bytes` through the runtime object's
 #     pointer-spelled adapter, and a field or a method receiver of an owned
 #     temporary, staged and dropped at the expression that read through it
-#     (`codegen_c.rs::staged_field_value`).
+#     (the removed C backend's `staged_field_value`).
 #
 # The list is closed by `--exact`: a fixture that has grown a construct outside
 # this slice is refused by name and is deliberately *not* here. The earlier
@@ -64,17 +64,10 @@ cd "$(dirname "$0")/../.."
 
 BACKEND="${BACKEND:-llvm}"
 
-# KELPC_ORACLE is the project's one backend switch, and it names only the C
-# oracle; unsetting it selects the default llvm backend. This wrapper keeps the
-# gate's one-backend-at-a-time shape now that the user-facing selector is gone:
-# BACKEND=c sets the switch and anything else removes it. The retired
-# KELPC_BACKEND is stripped either way, so a stale export cannot refuse a build.
+# The retired KELPC_BACKEND and KELPC_ORACLE are stripped, so a stale export
+# cannot refuse a build.
 backend_env() {
-    if [ "$BACKEND" = "c" ]; then
-        env -u KELPC_BACKEND KELPC_ORACLE=c "$@"
-    else
-        env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
-    fi
+    env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
 }
 
 # The fixtures and projects this slice turns from a refusal into a built target,
@@ -306,7 +299,7 @@ fi
 
 # A borrow of a field of an owned temporary (`mkName().name`, `mkName().r`,
 # `mkName().items.len()`) stages the *whole* temporary into a slot and drops it
-# after the call or the `printf`, which is `codegen_c.rs::stage_borrowed_field`:
+# after the call or the `printf`, which is the removed C backend's `stage_borrowed_field`:
 # at the temporary and not at the field, so a `datac` that owns two `String`s
 # frees both. `Named` here has `r: String` and `name: String`, and `Bag` owns a
 # `List`.
@@ -323,7 +316,7 @@ done
 # A *value*-position read through an owned temporary (`print(mkName().r)` where
 # `r` is an `i64`) has no borrow to hang the drop on, so the temporary is staged,
 # the field read out of the copy, the temporary dropped, and the value handed on:
-# `codegen_c.rs::staged_field_value`. This is the shape that has to be dropped
+# the removed C backend's `staged_field_value`. This is the shape that has to be dropped
 # once per expression rather than once per statement, which is what the loop
 # condition in this fixture exercises.
 #
@@ -344,49 +337,4 @@ do
     fi
 done
 
-# The deny path, compared directly: a denied program under both backends, with
-# stderr and the exit status byte for byte. The tests above already assert the
-# text as a literal; this is the same claim against the oracle compiler rather
-# than against a string an author wrote.
-DENY=""
-for project in caps_denied caps_raw_denied caps_env_denied caps_net_denied caps_net_resolve_denied caps_link_denied caps_double_eval caps_raw_double_eval
-do
-    # The two double-eval programs need their scratch files to exist, the way
-    # `compile_and_run.rs` creates them; the rest deny on a path that is fixed.
-    mkdir -p "/tmp/kelp_$project"
-    printf 'FILECONTENT\n' > "/tmp/kelp_$project/a" 2>/dev/null || true
-    target="kelpc/tests/projects/$project/main.kp"
-    if ! KELPC_ORACLE=c ./target/release/kelpc build "$target" \
-        -o "$REF_OUT/$project-c" >/dev/null 2>"$REF_OUT/$project.c.build"; then
-        echo "the C backend no longer builds '$project', so the diff below proves nothing" >&2
-        cat "$REF_OUT/$project.c.build" >&2
-        exit 1
-    fi
-    if ! backend_env ./target/release/kelpc build "$target" \
-        -o "$REF_OUT/$project-l" >/dev/null 2>"$REF_OUT/$project.l.build"; then
-        echo "the $BACKEND backend no longer builds '$project'" >&2
-        cat "$REF_OUT/$project.l.build" >&2
-        exit 1
-    fi
-    set +e
-    "$REF_OUT/$project-c" >"$REF_OUT/$project.c.out" 2>"$REF_OUT/$project.c.err"
-    c_status=$?
-    "$REF_OUT/$project-l" >"$REF_OUT/$project.l.out" 2>"$REF_OUT/$project.l.err"
-    l_status=$?
-    set -e
-    if [ "$c_status" != "$l_status" ]; then
-        echo "'$project' exits $c_status under 'c' and $l_status under '$BACKEND'" >&2
-        exit 1
-    fi
-    if ! diff -u "$REF_OUT/$project.c.err" "$REF_OUT/$project.l.err"; then
-        echo "'$project' prints a different denial under '$BACKEND' (above)" >&2
-        exit 1
-    fi
-    if ! diff -u "$REF_OUT/$project.c.out" "$REF_OUT/$project.l.out"; then
-        echo "'$project' prints a different stdout under '$BACKEND' (above)" >&2
-        exit 1
-    fi
-    DENY="$DENY $project"
-done
-
-echo "$BACKEND S3 gate passed: $(printf '%s\n' $TESTS | wc -l) tests, the passdown globals, the init and atexit drop, the saved argv, the capability check declarations and the path/name/host/hostport/port call shapes, the String#into_bytes adapter, the owned-temporary staging and drop, and $(printf '%s\n' $DENY | wc -w) denied programs byte-identical to the C backend"
+echo "$BACKEND S3 gate passed: $(printf '%s\n' $TESTS | wc -l) tests, the passdown globals, the init and atexit drop, the saved argv, the capability check declarations and the path/name/host/hostport/port call shapes, the String#into_bytes adapter and the owned-temporary staging and drop"

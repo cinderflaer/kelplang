@@ -6,7 +6,7 @@
 // The fix stages the temporary itself and drops *it*, which is why a
 // two-owned-field `datac` is the interesting case and not a one-field one.
 //
-// The same shape was invalid C before the fix: `codegen_c.rs` emitted
+// The same shape was invalid C before the fix: the removed C backend emitted
 // `(&(kelp_mkName()).kelp_r)`, the address of a field of an rvalue, and `cc`
 // rejected it. The backend now stages the temporary and frees *it*, so the
 // fixture builds and is in the valgrind leak gate.

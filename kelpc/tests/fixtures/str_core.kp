@@ -1,8 +1,7 @@
 // Kernel stage 7: the `str` operations a freestanding build lowers itself
 // (`len`, `byte`, `eq`, `starts_with` and `ptr`). This fixture is the hosted
 // half of the promise that they behave exactly as they always did, and the
-// suite runs it on both backends: the default LLVM backend and, through
-// `KELPC_ORACLE=c`, the C oracle. The freestanding half is
+// suite runs it on the default LLVM backend. The freestanding half is
 // `tests/projects/freestanding_str` plus the QEMU boots.
 impl "std/str"
 

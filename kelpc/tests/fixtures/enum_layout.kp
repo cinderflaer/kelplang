@@ -1,5 +1,5 @@
 // MK7 §5's enum slice: the layout the asm backend builds for a tagged union has
-// to be the one `codegen_c.rs::write_enum`'s emitted `typedef` gets from clang,
+// to be the one the removed C backend's `write_enum`'s emitted `typedef` gets from clang,
 // and the two numbers it can get wrong are both silent — a wrong payload offset
 // reads the wrong bytes, and a union sized to the wrong variant changes the
 // enum's own size, which changes its SysV class. Neither crashes.

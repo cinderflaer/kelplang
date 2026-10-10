@@ -2,8 +2,8 @@
 // checked `Ptr<u8>`. Two distinct functions have distinct, non-null addresses,
 // and asking for the same function twice gives the same address. Calling
 // through the pointer is out of scope here; this only pins the address itself.
-// The third function carries `align(16)`, so the C oracle and the default
-// backend both have to lower the clause to a real function alignment.
+// The third function carries `align(16)`, so the backend has to lower the clause
+// to a real function alignment.
 fun a().return: i32 = 1
 fun b().return: i32 = 2
 align(16) fun c().return: i32 = 3
