@@ -14,11 +14,22 @@ use crate::cleanup;
 
 /// The personality routine the unwind tables name (`force-unwind-tables`, which
 /// `pthread_exit`'s forced unwind needs). The runtime is built with `panic=abort`,
-/// so no frame calls it; it is defined so the archive links without the
-/// standard library's unwinder.
+/// so there is nothing to catch: every frame answers `_URC_CONTINUE_UNWIND`, so
+/// the forced unwind of a worker's `pthread_exit` walks on to the thread's start.
+/// Any other answer makes glibc abort the thread.
 #[cfg(all(not(test), feature = "panic-handler"))]
 #[unsafe(no_mangle)]
-pub extern "C" fn rust_eh_personality() {}
+pub extern "C" fn rust_eh_personality(
+    _version: c_int,
+    _actions: c_int,
+    _class: u64,
+    _exception: *mut c_void,
+    _context: *mut c_void,
+) -> c_int {
+    /// `_URC_CONTINUE_UNWIND`.
+    const CONTINUE_UNWIND: c_int = 8;
+    CONTINUE_UNWIND
+}
 
 #[cfg(all(not(test), feature = "panic-handler"))]
 #[panic_handler]
