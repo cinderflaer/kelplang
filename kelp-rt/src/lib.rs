@@ -14,6 +14,7 @@
 
 pub mod abi;
 pub mod alloc;
+pub mod cap;
 pub mod cleanup;
 pub mod panic;
 pub mod env;

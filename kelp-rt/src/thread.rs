@@ -51,7 +51,7 @@ unsafe extern "C" fn thread_release(raw: *mut c_void) {
         // The worker's last touch of the handle. If the owner already dropped
         // it unjoined, nobody else will free it.
         if state(h).swap(2, Ordering::AcqRel) == 1 {
-            thread_dispose(h);
+            kelp_thread_dispose(h);
         }
     }
 }
@@ -181,7 +181,8 @@ pub unsafe extern "C" fn kelp_thread_message(h: *mut WorkerHandle) -> *const c_c
 ///
 /// # Safety
 /// The worker must have ended; `h` must not be used afterwards.
-unsafe fn thread_dispose(h: *mut WorkerHandle) {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_thread_dispose(h: *mut WorkerHandle) {
     unsafe {
         libc::free((*h).arg);
         libc::free((*h).result);
@@ -204,7 +205,7 @@ pub unsafe extern "C" fn kelp_thread_drop(slot: *mut *mut WorkerHandle) {
         libc::pthread_detach((*h).tid);
         *slot = ptr::null_mut();
         if state(h).swap(1, Ordering::AcqRel) == 2 {
-            thread_dispose(h);
+            kelp_thread_dispose(h);
         }
     }
 }

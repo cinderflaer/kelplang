@@ -12,6 +12,14 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::cleanup;
 
+/// The personality routine the unwind tables name (`force-unwind-tables`, which
+/// `pthread_exit`'s forced unwind needs). The runtime is built with `panic=abort`,
+/// so no frame calls it; it is defined so the archive links without the
+/// standard library's unwinder.
+#[cfg(all(not(test), feature = "panic-handler"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_eh_personality() {}
+
 #[cfg(all(not(test), feature = "panic-handler"))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
