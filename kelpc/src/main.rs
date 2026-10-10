@@ -2,6 +2,7 @@ mod ast;
 mod backend;
 mod borrowck;
 mod cache;
+mod cdecl;
 mod codegen_c;
 mod codegen_llvm;
 mod deprecated;

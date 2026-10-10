@@ -333,7 +333,7 @@ use std::time::{Duration, Instant};
 
 use crate::ast::{AsmOperandKind, BinOp, UnOp};
 use crate::cache::{Cache, KeyFields};
-use crate::codegen_c::asm_operand_text;
+use crate::cdecl::asm_operand_text;
 use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::llvm_ffi::{
     self, AtomicRmw, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
@@ -498,7 +498,7 @@ pub fn compile(
         link_libs,
         library_dirs,
         pkg_config_flags,
-        crate::codegen_c::uses_tls(program),
+        crate::cdecl::uses_tls(program),
     );
     timings.link += link_start.elapsed();
     linked.map_err(|e| e.message)
@@ -1067,7 +1067,7 @@ fn compile_units(
         link_libs,
         library_dirs,
         pkg_config_flags,
-        crate::codegen_c::uses_tls(program),
+        crate::cdecl::uses_tls(program),
     );
     timings.link += link_start.elapsed();
     // A unit object that came from the cache and does not link is corrupt in a
@@ -15215,10 +15215,10 @@ fn program_c_source(program: &Program) -> Option<String> {
          from `codegen_c.rs::write_extern`, so this file is the C backend's\n   \
          copy of the same functions. */\n",
     );
-    out.push_str(crate::codegen_c::C_HEADERS);
-    out.push_str(&crate::codegen_c::extern_header_includes(&program.extern_headers));
-    if crate::codegen_c::uses_tls(program) {
-        out.push_str(crate::codegen_c::OPENSSL_HEADERS);
+    out.push_str(crate::cdecl::C_HEADERS);
+    out.push_str(&crate::cdecl::extern_header_includes(&program.extern_headers));
+    if crate::cdecl::uses_tls(program) {
+        out.push_str(crate::cdecl::OPENSSL_HEADERS);
     }
 
     // The builtin layouts, field for field the structs `runtime/kelp_rt.c`
@@ -15250,7 +15250,7 @@ fn program_c_source(program: &Program) -> Option<String> {
             signature_tys.push(ty.clone());
         }
     }
-    crate::codegen_c::write_referenced_type_layouts(
+    crate::cdecl::write_referenced_type_layouts(
         &mut out,
         &program.structs,
         &program.enums,
@@ -15297,7 +15297,7 @@ fn program_c_source(program: &Program) -> Option<String> {
     // the reference always has a definition. The list is the whole module rather
     // than the one function: it is one emitter, and an unused declaration costs
     // nothing.
-    let prototypes = crate::codegen_c::runtime_prototypes(program);
+    let prototypes = crate::cdecl::runtime_prototypes(program);
     if !prototypes.is_empty() {
         out.push('\n');
         out.push_str(&prototypes);
@@ -15307,17 +15307,17 @@ fn program_c_source(program: &Program) -> Option<String> {
     // closure(...)` parameters: the same thunk and destructor text the C
     // backend emits, compiled into this same object. Emitted before the
     // bodies because `write_user_extern` names both.
-    let callback_sigs = crate::codegen_c::callback_signatures(program);
+    let callback_sigs = crate::cdecl::callback_signatures(program);
     if !callback_sigs.is_empty() {
         out.push_str("\n/* native-callback glue (gap 4) */\n");
         for sig in &callback_sigs {
-            crate::codegen_c::write_callback_glue(&mut out, sig);
+            crate::cdecl::write_callback_glue(&mut out, sig);
         }
     }
 
     for f in &externs {
         out.push('\n');
-        crate::codegen_c::write_extern(&mut out, f, &program.extern_ffi_symbols, true);
+        crate::cdecl::write_extern(&mut out, f, &program.extern_ffi_symbols, true);
     }
 
     if cap_glue {
@@ -15333,7 +15333,7 @@ fn program_c_source(program: &Program) -> Option<String> {
                 cap_array_symbol(&g.module, &g.domain),
                 g.patterns
                     .iter()
-                    .map(|p| format!("{}, ", crate::codegen_c::c_string_literal(p)))
+                    .map(|p| format!("{}, ", crate::cdecl::c_string_literal(p)))
                     .collect::<String>()
             ));
         }
@@ -15342,7 +15342,7 @@ fn program_c_source(program: &Program) -> Option<String> {
             functions the external linkage the IR calls them with; the C\n   \
             backend's own copy stays static, where the call sites are in the\n   \
             same translation unit. */\n#define static\n");
-        out.push_str(crate::codegen_c::CAP_GLUE);
+        out.push_str(crate::cdecl::CAP_GLUE);
         out.push_str("\n#undef static\n");
     }
     Some(out)
