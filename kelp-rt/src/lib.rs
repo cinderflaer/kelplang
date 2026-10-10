@@ -13,6 +13,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod abi;
+pub mod alloc;
 pub mod cleanup;
 pub mod panic;
 pub mod env;
