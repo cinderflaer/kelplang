@@ -202,8 +202,7 @@ program schedules its own input: post id 0 (Inc), post id 0 (Inc), post id 1
 (Dec), then quit after 250 ms. The only line on stdout must be the final count,
 `1`. A crash, a hang (`timeout 60`) or anything else on stdout fails the script.
 
-The C backend (`KELPC_ORACLE=c`) produces the same count; both backends are
-supported, LLVM is the default.
+The LLVM backend is the only backend.
 
 ## Known limits
 

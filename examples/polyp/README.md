@@ -26,18 +26,15 @@ examples/polyp-todo/smoke.sh      # GTK, with GSK_RENDERER=cairo GDK_BACKEND=x11
 examples/polyp-counter/smoke.sh
 ```
 
-Display-free tests run in the plain development shell, on both compiler
-backends:
+Display-free tests run in the plain development shell:
 
 ```sh
 nix-shell /path/to/dev.nix --run 'cd kelpc && cargo test --test compile_and_run polyp'
-nix-shell /path/to/dev.nix --run 'cd kelpc && KELPC_ORACLE=c cargo test --test compile_and_run polyp'
 ```
 
 Smoke runs schedule their own input and print a deterministic summary.
 The counter must print exactly `1\ntyped\n1`. The todo smoke checks the
-model, the creation marks, `removed == 5` and the focus. Both smoke runs
-also build with `KELPC_ORACLE=c` and check the same output.
+model, the creation marks, `removed == 5` and the focus.
 
 ### Add Polyp to a project
 

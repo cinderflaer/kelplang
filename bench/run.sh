@@ -72,7 +72,7 @@ command -v clang >/dev/null 2>&1 && HAVE_CLANG=1
 
 VARIANTS="c-gcc"
 [ "$HAVE_CLANG" = 1 ] && VARIANTS="$VARIANTS c-clang"
-VARIANTS="$VARIANTS rust kelp-llvm kelp-c"
+VARIANTS="$VARIANTS rust kelp-llvm"
 
 [ -n "$REPORT_ONLY" ] || : > "$CSV"
 csv() { printf '%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$4" "$5" >> "$CSV"; }
@@ -85,7 +85,6 @@ build_one() {
         c-clang)   clang -O2 -o "$bin" "$d/$n.c" -lm ;;
         rust)      rustc -C opt-level=3 -o "$bin" "$d/$n.rs" ;;
         kelp-llvm) "$KELPC" build -O2 "$d/$n.kp" -o "$bin" ;;
-        kelp-c)    KELPC_ORACLE=c "$KELPC" build -O2 "$d/$n.kp" -o "$bin" ;;
     esac
 }
 
@@ -124,8 +123,8 @@ if [ -z "$REPORT_ONLY" ]; then
     fi
     echo "- rustc: $(rustc --version 2>&1 | head -1)"
     echo "- kelpc: $("$KELPC" version 2>&1 | head -1) ($("$KELPC" version --verbose 2>&1 | grep -i -m1 -E 'commit|git|rev' || echo 'no commit info'))"
-    echo "- Builds: C \`cc -O2\`; Rust \`rustc -C opt-level=3\` (bounds checks and overflow wrapping as in the source; no cargo, no LTO); Kelp \`kelpc build -O2\` on the default LLVM backend (\`kelp-llvm\`) and with \`KELPC_ORACLE=c\` (\`kelp-c\`, the C oracle backend, compiled by the same \`cc -O2\`). No \`-march=native\`, no \`-ffast-math\`, no SIMD intrinsics."
-    echo "- Bounds checks: ON in Kelp (both backends) and in Rust (indexing); OFF in C. This is a stated asymmetry in C's favour."
+    echo "- Builds: C \`cc -O2\`; Rust \`rustc -C opt-level=3\` (bounds checks and overflow wrapping as in the source; no cargo, no LTO); Kelp \`kelpc build -O2\` on the LLVM backend (\`kelp-llvm\`). No \`-march=native\`, no \`-ffast-math\`, no SIMD intrinsics."
+    echo "- Bounds checks: ON in Kelp and in Rust (indexing); OFF in C. This is a stated asymmetry in C's favour."
     echo "- Method: each benchmark is built ${BUILD_RUNS} times (median build time), then run once as a discarded warm-up and ${RUNS} times, always with the full default size (first-argument override: \`${SIZE_ARG:-none}\`), each run under \`( ulimit -v 4194304; ulimit -t 300; timeout 300 time nice -n 0 ... )\`. Wall time is read with \`date +%s%N\` around the whole wrapper (includes about 1-3 ms of fork/exec of \`timeout\`/\`time\`/\`nice\`, the same for every row), peak RSS from GNU \`time %M\`. A row's checksum status compares the program's stdout with the gcc C version's stdout on every run."
     echo "- Noise: other processes run on this host (a Minecraft server, other agents' builds). The 1-minute load average is read before and after each block of runs; a row is flagged NOISY when it changed by more than 1.0. Nothing is stopped or throttled to quiet the host."
     echo

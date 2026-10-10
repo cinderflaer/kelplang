@@ -3,7 +3,7 @@
 // Every number printed here is a count, not a time: the pixels come from the stage-2 primitives'
 // own return values, the rectangles from `paint`, and the layout counts from the measure/arrange
 // counters. The Rust test `polyp_soft_work_budgets_hold` pins the whole output, so the budgets are
-// the same on the LLVM backend and on the C oracle.
+// the same on the LLVM backend.
 //
 // The sections are:
 //   idle      an idle frame writes 0 pixels and presents 0 rectangles
