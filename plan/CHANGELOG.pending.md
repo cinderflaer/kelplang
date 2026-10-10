@@ -46,6 +46,7 @@ empty on release.
 - The roadmap no longer carries a release schedule, and ISSUES no longer has release slots (landed on main, c87fb51).
 - The roadmap says channels and Mutex ship now, and the download row says when it was true (landed on main, be51d2e).
 - The KelpScript proposal moves to `plan/kelpscript.md` (on branch kelpscript-plan, not merged).
+- The dev shell (`shell.nix`) adds `gdb`, so the debug-info test (`llvm_debug_info`) can resolve its fault backtrace.
 
 ## limits
 
