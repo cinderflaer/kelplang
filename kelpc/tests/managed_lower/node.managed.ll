@@ -407,9 +407,15 @@ declare void @kelp_cap_deny(ptr, ptr, ptr, i64, ptr, ptr)
 
 declare ptr @kelp_gc_alloc(ptr)
 
+declare ptr @kelp_gc_alloc_array(ptr, i64)
+
 declare void @kelp_gc_init(i64, i64)
 
 declare void @kelp_gc_safepoint()
+
+declare void @kelp_gc_thread_attach()
+
+declare void @kelp_gc_thread_detach()
 
 define internal %kelp_Box__Node @kelp_Box__Node__empty() {
 entry:
@@ -528,6 +534,7 @@ entry:
   %leaf = alloca %tag_Node, align 8, !dbg !6
   %tree = alloca %tag_Node, align 8, !dbg !6
   call void @kelp_gc_init(i64 8388608, i64 268435456), !dbg !6
+  call void @kelp_gc_thread_attach(), !dbg !6
   store i32 %0, ptr @kelp_argc, align 4, !dbg !6
   store ptr %1, ptr @kelp_argv, align 8, !dbg !6
   call void @kelp_gc_safepoint(), !dbg !7

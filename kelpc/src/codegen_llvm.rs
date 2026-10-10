@@ -4210,6 +4210,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let min = self.g.ctx.const_int(self.g.ctx.i64(), crate::gc_descr::DEFAULT_HEAP_MIN, false);
                 let max = self.g.ctx.const_int(self.g.ctx.i64(), cap, false);
                 self.g.builder.build_call(init, ity, &[min, max], "");
+                let (attach, aty) = gc.thread_attach;
+                self.g.builder.build_call(attach, aty, &[], "");
             }
             if let Some(init) = self.g.init_pds_fn {
                 let ty = self.g.ctx.fn_type(self.g.ctx.void(), &[], false);
@@ -5141,7 +5143,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .env_types
             .get(key)
             .ok_or_else(|| no_value(&format!("the environment of '{key}'")))?;
-        let env = self.g.malloc_for(env_ty)?;
+        let env = if self.g.managed {
+            let descr = self.g.closure_env_descr(key)?;
+            let (func, fty) = self.g.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?.alloc;
+            self.g.call(func, fty, &[descr], "env")
+        } else {
+            self.g.malloc_for(env_ty)?
+        };
         self.cur = self.g.check_alloc(env, self.cur_fn)?;
         for (index, init) in captures.iter().enumerate() {
             let value = self.value_of(init)?;
@@ -5221,7 +5229,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         let code = self.value_of(func)?;
         let env_ty = self.g.coerce_env_ty;
-        let env = self.g.malloc_for(env_ty)?;
+        let env = if self.g.managed {
+            let descr = self.g.coerce_env_descr()?;
+            let (func, fty) = self.g.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?.alloc;
+            self.g.call(func, fty, &[descr], "env")
+        } else {
+            self.g.malloc_for(env_ty)?
+        };
         self.cur = self.g.check_alloc(env, self.cur_fn)?;
         let slot = self
             .g
@@ -9834,6 +9848,88 @@ impl<'a> Gen<'a> {
         Ok(self.call(func, fty, &[descr], "gc"))
     }
 
+    /// The GC descriptor of one element of a container buffer (`gc_descr`):
+    /// a `List` buffer is an array of its element's descriptor, so the
+    /// collector reads the element's pointer slots at each stride. Managed only.
+    fn elem_descr(&self, elem: &Ty) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        gc.descriptor(self.ctx, self.module, self, elem)
+    }
+
+    /// `kelp_gc_alloc_array(descr, count)`: a zeroed GC array of `count`
+    /// elements of the descriptor's type. Managed only.
+    fn gc_array(&self, descr: Value<'a>, count: Value<'a>) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let (func, fty) = gc.alloc_array;
+        Ok(self.call(func, fty, &[descr, count], "gc.arr"))
+    }
+
+    /// Managed growth of a container buffer: a fresh GC array of `count`
+    /// elements with the first `old_bytes` of the old buffer copied over. The
+    /// old block is not freed; the collector reclaims it once unreachable.
+    fn gc_grow(
+        &self,
+        old: Value<'a>,
+        old_bytes: Value<'a>,
+        descr: Value<'a>,
+        count: Value<'a>,
+        func: LlvmFunction<'a>,
+    ) -> Result<Value<'a>, String> {
+        let buf = self.gc_array(descr, count)?;
+        self.check_alloc(buf, func)?;
+        let (memcpy, mty) = self.mem_fn("memcpy")?;
+        self.call(memcpy, mty, &[buf, old, old_bytes], "");
+        Ok(buf)
+    }
+
+    /// The descriptor of a `Map`'s entry record `{ key, value, live }`, which
+    /// is the element type of its entries buffer (`gc_descr::map_entry_layout`).
+    /// `name` is the map's C name, so each map gets one global. Managed only.
+    fn map_entry_descr(&self, key: &Ty, value: &Ty, name: &str) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let (size, align, offsets) = crate::gc_descr::map_entry_layout(self, key, value)?;
+        Ok(gc.descriptor_raw(
+            self.ctx,
+            self.module,
+            &format!("map_entry.{name}"),
+            size,
+            align,
+            &offsets,
+        ))
+    }
+
+    /// The environment descriptor of a capturing literal, one per literal
+    /// (`gc_descr::env_layout` over its captures). Managed only.
+    fn closure_env_descr(&self, fn_name: &str) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let env = self
+            .program
+            .functions
+            .iter()
+            .find(|f| f.name == fn_name)
+            .and_then(|f| f.env.as_ref())
+            .ok_or_else(|| no_value(&format!("the environment of '{fn_name}'")))?;
+        let captures: Vec<Ty> = env.fields.iter().map(|(_, ty)| ty.clone()).collect();
+        let (size, align, offsets) = crate::gc_descr::env_layout(self, &captures)?;
+        Ok(gc.descriptor_raw(
+            self.ctx,
+            self.module,
+            &format!("env.{fn_name}"),
+            size,
+            align,
+            &offsets,
+        ))
+    }
+
+    /// The one-field environment of a widened function value. It holds a code
+    /// pointer, which is not a GC pointer, so its descriptor is noscan.
+    fn coerce_env_descr(&self) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let size = self.layout.abi_size_of(self.coerce_env_ty);
+        let align = self.layout.abi_alignment_of(self.coerce_env_ty) as u64;
+        Ok(gc.descriptor_raw(self.ctx, self.module, "coerce_env", size, align, &[]))
+    }
+
     /// `malloc(sizeof(<ty>))` lowered to a constant byte count, through the
     /// project's own allocator when the manifest configured one.
     fn malloc_for(&self, ty: Type<'a>) -> Result<Value<'a>, String> {
@@ -10448,6 +10544,12 @@ impl<'a> Gen<'a> {
         let env = func.get_param(1);
         let arg_ptr = func.get_param(2);
         let out_ptr = func.get_param(3);
+        // Managed: the runtime thread joins the collector before its first
+        // allocation, and leaves it after its last one.
+        if let Some(gc) = &self.gc {
+            let (attach, aty) = gc.thread_attach;
+            self.builder.build_call(attach, aty, &[], "");
+        }
         let arg_ty = self.lty2(&params[0])?;
         let arg = self.builder.build_load(arg_ty, arg_ptr, "arg");
         let ret_lty = llvm_ret_type(self.ctx, &self.structs, &self.containers, ret)?;
@@ -10459,6 +10561,10 @@ impl<'a> Gen<'a> {
             .build_indirect_call(code, call_ty, &[env, arg], name);
         if yields {
             self.builder.build_store(value, out_ptr);
+        }
+        if let Some(gc) = &self.gc {
+            let (detach, dty) = gc.thread_detach;
+            self.builder.build_call(detach, dty, &[], "");
         }
         self.builder.build_ret_void();
         Ok(())
@@ -11955,7 +12061,12 @@ impl<'a> Gen<'a> {
                 .builder
                 .build_int_binop(IntBinOp::Mul, cap, self.v_i64(elem_size), "old.bytes");
             let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
-            let buf = self.heap_realloc(data, old_size, size, elem_align, f)?;
+            let buf = if self.managed {
+                let descr = self.elem_descr(elem)?;
+                self.gc_grow(data, old_size, descr, final_cap, f)?
+            } else {
+                self.heap_realloc(data, old_size, size, elem_align, f)?
+            };
             self.st(buf, self.fld(list_ty, self_p, L_DATA, "data"));
             self.st(final_cap, self.fld(list_ty, self_p, L_CAP, "cap"));
             self.builder.build_br(done);
@@ -14686,7 +14797,12 @@ impl<'a> Gen<'a> {
             self.builder.build_cond_br(zerocap, empty, sized);
             self.builder.position_at_end(sized);
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, cap, self.v_i64(entry_size), "bytes");
-            let entries = self.heap_alloc(bytes, entry_align)?;
+            let entries = if self.managed {
+                let descr = self.map_entry_descr(key, value, &base)?;
+                self.gc_array(descr, cap)?
+            } else {
+                self.heap_alloc(bytes, entry_align)?
+            };
             self.check_alloc(entries, f)?;
             self.st(entries, self.fld(map_ty, m, M_ENTRIES, "entries"));
             self.st(cap, self.fld(map_ty, m, M_ENTRY_CAP, "entry_cap"));
@@ -14802,7 +14918,13 @@ impl<'a> Gen<'a> {
             let old = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
             self.heap_dealloc(old, old_bytes, index_align)?;
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, final_cap, self.v_i64(4), "bytes");
-            let buf = self.heap_alloc(bytes, index_align)?;
+            let buf = if self.managed {
+                // The index is `u32` slots: a noscan array, so the collector never reads it.
+                let descr = self.elem_descr(&Ty::U32)?;
+                self.gc_array(descr, final_cap)?
+            } else {
+                self.heap_alloc(bytes, index_align)?
+            };
             self.check_alloc(buf, f)?;
             let (memset, sety) = self.mem_fn("memset")?;
             self.call(memset, sety, &[buf, self.v_i32(0), bytes], "");
@@ -15047,7 +15169,12 @@ impl<'a> Gen<'a> {
             let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, new_cap, self.v_i64(entry_size), "bytes");
             let old_bytes = self.builder.build_int_binop(IntBinOp::Mul, ecap, self.v_i64(entry_size), "old.bytes");
-            let new_entries = self.heap_realloc(entries, old_bytes, bytes, entry_align, f)?;
+            let new_entries = if self.managed {
+                let descr = self.map_entry_descr(key, value, &base)?;
+                self.gc_grow(entries, old_bytes, descr, new_cap, f)?
+            } else {
+                self.heap_realloc(entries, old_bytes, bytes, entry_align, f)?
+            };
             self.st(new_entries, self.fld(map_ty, self_p, M_ENTRIES, "entries"));
             self.st(new_cap, self.fld(map_ty, self_p, M_ENTRY_CAP, "entry_cap"));
             self.builder.build_br(have_space);
