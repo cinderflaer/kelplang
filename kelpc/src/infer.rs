@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::ast::{self, BinOp, Repr, UnOp};
 use crate::diag::Diagnostic;
 use crate::lexer::Span;
+use crate::managed;
 use crate::resolve::Project;
 use crate::tir;
 use crate::types::{EnumDef, FieldDef, FnSig, StructDef, Ty};
@@ -222,6 +223,15 @@ struct InstanceState {
     in_progress: std::collections::HashSet<String>,
 }
 
+/// Managed mode: records that a value of `ty` goes into the heap at `slot`.
+/// The check itself runs after the pass, in `managed::check_heap_uses`. Hosted
+/// builds record nothing.
+fn note_heap_use(env: &TypeEnv, slot: managed::HeapSlot, ty: &Ty, span: Span) {
+    if env.managed {
+        env.heap_uses.borrow_mut().push(managed::HeapUse { slot, ty: ty.clone(), span });
+    }
+}
+
 /// The program's generic templates and the instances built so far. Shared by
 /// reference between the `Ctx` clones each function gets, so an instantiation
 /// discovered while checking one body is visible to every other — and to the
@@ -243,6 +253,13 @@ struct TypeEnv {
     /// signatures are, and the derived-copy fixpoints those resolutions ask
     /// must already know which types a destructor keeps out of them.
     declared_drops: std::rc::Rc<std::collections::HashSet<String>>,
+    /// Managed mode (`managed.rs`): whether this program is checked for the
+    /// collected heap. Off in hosted and freestanding, where `heap_uses` stays
+    /// empty and no check runs.
+    managed: bool,
+    /// Managed mode: every value that goes into a heap slot, recorded during
+    /// the pass and decided after it (`managed::check_heap_uses`).
+    heap_uses: std::rc::Rc<std::cell::RefCell<Vec<managed::HeapUse>>>,
     /// The canonical keys of the items each module exports (A-13). Private by
     /// default, so a key is here only for a declaration written `pub`, or for
     /// any declaration in a compiler-shipped module (the transitional rule
@@ -1118,7 +1135,7 @@ impl Ctx {
     /// names them, because that order is the environment's field order: the
     /// body's `ExprKind::Capture` indices and the environment `codegen_c.rs`
     /// writes have to agree.
-    fn note_capture(&mut self, name: &str) -> Option<Ty> {
+    fn note_capture(&mut self, name: &str, span: Span) -> Option<Ty> {
         let ty = self.outer_bindings.get(name).cloned()?;
         // A scoped literal's environment is stack and owns nothing, so an
         // owned non-`Copy` capture is a *shared borrow* of the enclosing
@@ -1137,6 +1154,12 @@ impl Ctx {
         } else {
             ty
         };
+        // Managed mode: an owned environment is a heap object, so a value
+        // captured into it is a heap slot. A scoped literal's environment is
+        // the stack, so it is not one.
+        if !self.borrowed_captures {
+            note_heap_use(&self.env, managed::HeapSlot::ClosureCapture, &ty, span);
+        }
         if !self.captures.iter().any(|(n, _)| n == name) {
             self.captures.push((name.to_string(), ty.clone()));
         }
@@ -1661,6 +1684,7 @@ impl TypeScope<'_> {
                     span: ty.span,
                 });
             }
+            note_heap_use(&self.env, managed::HeapSlot::ArrayElement, &elem, ty.span);
             return Ok(Ty::Array(Box::new(elem), len));
         }
         // A function type (A-4): `fun(i32, String).return: bool`. Checked before
@@ -1778,6 +1802,7 @@ impl TypeScope<'_> {
                                 span: ty.args[0].span,
                             });
                         }
+                        note_heap_use(&self.env, managed::HeapSlot::MapKey, &key, ty.args[0].span);
                         (key, &ty.args[1], ty.args[1].span)
                     }
                     n => {
@@ -1825,6 +1850,15 @@ impl TypeScope<'_> {
                     message: error,
                     span: value_span,
                 });
+            }
+            let slot = match ty.name.as_str() {
+                "List" => Some(managed::HeapSlot::ListElement),
+                "Map" => Some(managed::HeapSlot::MapValue),
+                "Box" => Some(managed::HeapSlot::BoxPayload),
+                _ => None,
+            };
+            if let Some(slot) = slot {
+                note_heap_use(&self.env, slot, &elem, value_span);
             }
             return Ok(if ty.name == "List" {
                 Ty::List(Box::new(elem))
@@ -4206,7 +4240,7 @@ fn indirect_callee(
         // literal (A-4 phase E): the literal captures it like any other
         // binding, and the call goes through the capture. The capture is
         // registered here, which is why this takes `&mut Ctx`.
-        if let Some(ty) = ctx.note_capture(name) {
+        if let Some(ty) = ctx.note_capture(name, span) {
             // A scoped literal captures an owned closure by shared borrow, so
             // a callable capture may arrive as `&closure(...)` as well.
             let callable = matches!(ty, Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. })
@@ -8743,6 +8777,8 @@ fn check_program_pass(
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
         declared_keys: declared_keys.clone(),
         declared_drops: declared_drops.clone(),
+        managed: project.target().is_managed(),
+        heap_uses: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         exported: std::rc::Rc::new(collect_exports(program)),
         // `resolve.rs` has prefixed every handle name, so the set is already
         // canonical. A handle is a type like any other and is known before any
@@ -9822,6 +9858,15 @@ fn check_program_pass(
     }
     let mut dyn_traits: Vec<String> = env.dyn_traits.borrow().iter().cloned().collect();
     dyn_traits.sort();
+
+    // Managed mode: every heap slot the pass recorded, decided now that every
+    // declaration's facts are known (`managed::check_heap_uses`).
+    if env.managed {
+        let uses = env.heap_uses.borrow().clone();
+        managed::check_heap_uses(&uses, &|name: &str| {
+            managed::decl_facts(&records, &sums, &declared_drops, name)
+        })?;
+    }
 
     Ok(tir::Program {
         structs: records,
@@ -12507,7 +12552,7 @@ fn check_fn_literal_pass(
                     span,
                 }
             }
-        } else if ctx.note_capture(name).is_some() {
+        } else if ctx.note_capture(name, span).is_some() {
             // The name belongs to the environment of the literal this one was
             // written inside — so the enclosing literal captures it too, and
             // this literal copies it out of that environment. Moving it out
@@ -13016,7 +13061,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // read is recorded here, once per distinct name, in the order the
             // body first names them, which is the environment's field order.
             if ctx.in_fn_literal {
-                if let Some(ty) = ctx.note_capture(name) {
+                if let Some(ty) = ctx.note_capture(name, *span) {
                     let index = ctx
                         .captures
                         .iter()
@@ -13580,6 +13625,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 checked.push(v);
             }
             let elem_ty = elem_ty.expect("an array literal has at least one element");
+            note_heap_use(&ctx.env, managed::HeapSlot::ArrayElement, &elem_ty, *span);
             if !crate::types::is_array_element(&elem_ty) {
                 return Err(TypeError {
                     message: array_element_error(&elem_ty),
@@ -13695,6 +13741,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     span: *span,
                 });
             }
+            note_heap_use(&ctx.env, managed::HeapSlot::ArrayElement, &elem_ty, *span);
             if !crate::types::is_array_element(&elem_ty) {
                 return Err(TypeError {
                     message: array_element_error(&elem_ty),
@@ -18888,6 +18935,7 @@ fn open_container_from_call(
             };
             let Some(arg) = arg else { return Ok(None) };
             let value = check_deciding_element(&arg.value, ctx)?;
+            note_heap_use(&ctx.env, managed::HeapSlot::ListElement, &value.ty, arg.value.span());
             if !crate::types::is_list_element(&value.ty) {
                 return Err(TypeError {
                     message: list_element_error(&value.ty),
@@ -18906,6 +18954,7 @@ fn open_container_from_call(
             }
             let Some(arg) = args.first() else { return Ok(None) };
             let value = check_deciding_element(&arg.value, ctx)?;
+            note_heap_use(&ctx.env, managed::HeapSlot::BoxPayload, &value.ty, arg.value.span());
             if !crate::types::is_box_element(&value.ty) {
                 return Err(TypeError {
                     message: box_element_error(&value.ty),
@@ -18926,6 +18975,7 @@ fn open_container_from_call(
                 return Ok(None);
             };
             let value = check_deciding_element(&value_arg.value, ctx)?;
+            note_heap_use(&ctx.env, managed::HeapSlot::MapValue, &value.ty, value_arg.value.span());
             if !crate::types::is_map_element(&value.ty) {
                 return Err(TypeError {
                     message: map_element_error(&value.ty),
@@ -18936,6 +18986,7 @@ fn open_container_from_call(
             // is the one key type a call site cannot spell from the argument
             // alone: a `String` key takes `"a"`, and `"a"` is a `str`.
             let key = check_expr(&key_arg.value, ctx, None)?;
+            note_heap_use(&ctx.env, managed::HeapSlot::MapKey, &key.ty, key_arg.value.span());
             let key_ty = if is_str_like(&key.ty) {
                 Ty::String
             } else if crate::types::is_map_key_with(&key.ty, &ctx.keyable_set()) {
@@ -20631,6 +20682,12 @@ fn check_container_associated(
                 });
             }
             let value = check_expr(&args[0].value, ctx, expected_elem.as_ref())?;
+            let slot = match container {
+                "List" => managed::HeapSlot::ListElement,
+                "Map" => managed::HeapSlot::MapValue,
+                _ => managed::HeapSlot::BoxPayload,
+            };
+            note_heap_use(&ctx.env, slot, &value.ty, args[0].value.span());
             let allowed = if container == "List" {
                 crate::types::is_list_element(&value.ty)
             } else if container == "Map" {

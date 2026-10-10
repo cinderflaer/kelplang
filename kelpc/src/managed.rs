@@ -261,7 +261,7 @@ pub fn check_heap_slot(
         ResourceKind::Memory => Ok(()),
         ResourceKind::Resource => Err(Diagnostic::new(
             format!(
-                "'{ty_name}' is a resource and cannot be {} in managed mode: a resource never enters the collected heap, because its drop has to run at scope end. Keep it in a local, a parameter or a field of a stack value, and let it drop there",
+                "'{ty_name}' cannot be {} in managed mode: '{ty_name}' is a resource, and a resource never enters the collected heap, because its drop has to run at scope end. Keep it in a local, a parameter or a field of a stack value, and let it drop there",
                 slot.describe()
             ),
             at,
@@ -276,6 +276,61 @@ pub fn check_heap_slot(
             "",
         )),
     }
+}
+
+/// One value the checker saw go into a heap slot. The checker records these
+/// while it runs and `check_heap_uses` decides them after the pass, when every
+/// declaration's facts are known (a `datac` may name one declared later in the
+/// same program, which a check made mid-pass could not see).
+#[derive(Debug, Clone)]
+pub struct HeapUse {
+    pub slot: HeapSlot,
+    pub ty: Ty,
+    pub span: Span,
+}
+
+/// The facts of the program's own `datac` or `enum` called `name`, read from
+/// the checked declarations. `None` for a name the program does not declare.
+pub fn decl_facts(
+    structs: &[crate::types::StructDef],
+    enums: &[crate::types::EnumDef],
+    drops: &std::collections::HashSet<String>,
+    name: &str,
+) -> Option<DeclFacts> {
+    let has_user_drop = drops.contains(name);
+    // An enum is also listed among the structs, with no fields, so the enum
+    // table is read first.
+    if let Some(e) = enums.iter().find(|e| e.name == name) {
+        return Some(DeclFacts {
+            has_user_drop,
+            fields: e
+                .variants
+                .iter()
+                .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
+                .collect(),
+        });
+    }
+    let s = structs.iter().find(|s| s.name == name)?;
+    Some(DeclFacts {
+        has_user_drop,
+        fields: s.fields.iter().map(|f| f.ty.clone()).collect(),
+    })
+}
+
+/// Decides every recorded heap use against the program's declarations, and
+/// returns the first refusal in source order. `decls` answers for each user
+/// `datac` or `enum` by canonical name.
+pub fn check_heap_uses(
+    uses: &[HeapUse],
+    decls: &dyn Fn(&str) -> Option<DeclFacts>,
+) -> Result<(), Diagnostic> {
+    let mut ordered: Vec<&HeapUse> = uses.iter().collect();
+    ordered.sort_by_key(|u| u.span.start);
+    for u in ordered {
+        let kind = resolve(&u.ty, decls);
+        check_heap_slot(u.slot, &u.ty.display(), kind, u.span)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
