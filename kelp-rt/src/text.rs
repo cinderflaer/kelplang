@@ -29,7 +29,7 @@ pub unsafe extern "C" fn kelp_buf_reserve(data: *mut *mut u8, len: usize, cap: *
         while want < len + extra {
             want *= 2;
         }
-        let p = libc_realloc(*data, want + 1);
+        let p = grow(*data, len, want);
         if p.is_null() {
             kelp_panic(c"out of memory".as_ptr());
         }
@@ -39,6 +39,33 @@ pub unsafe extern "C" fn kelp_buf_reserve(data: *mut *mut u8, len: usize, cap: *
     }
 }
 
+/// The new buffer for a grown string: hosted, `realloc` (which may move it);
+/// managed, a fresh collected buffer with the live bytes copied, since the
+/// collector does not grow in place and the old one is its to reclaim.
+///
+/// # Safety
+/// `data` must be null or a live buffer holding `len` bytes.
+#[cfg(not(feature = "managed"))]
+unsafe fn grow(data: *mut u8, _len: usize, want: usize) -> *mut u8 {
+    unsafe { libc_realloc(data, want + 1) }
+}
+
+/// See the hosted [`grow`].
+///
+/// # Safety
+/// As the hosted form.
+#[cfg(feature = "managed")]
+unsafe fn grow(data: *mut u8, len: usize, want: usize) -> *mut u8 {
+    unsafe {
+        let p = buf_alloc(want + 1);
+        if len > 0 {
+            ptr::copy_nonoverlapping(data, p, len);
+        }
+        p
+    }
+}
+
+#[cfg(not(feature = "managed"))]
 unsafe fn libc_realloc(p: *mut u8, n: usize) -> *mut u8 {
     unsafe { libc::realloc(p.cast(), n).cast() }
 }

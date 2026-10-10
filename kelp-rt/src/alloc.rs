@@ -145,11 +145,13 @@ pub unsafe extern "C" fn kelp_box_free(p: *mut c_void, size: usize, align: usize
 }
 
 /// The buffer allocator the owned `String` and `Bytes` types use. Hosted, it
-/// is malloc; the managed build replaces it with the collector (see `gc.rs`).
+/// is malloc; a managed build (`--features managed`) takes its buffers from the
+/// collector, which zeroes them and reclaims them without a free.
 ///
 /// # Safety
 /// The result is `n` bytes of storage, or null on failure; free it with
 /// [`buf_free`].
+#[cfg(not(feature = "managed"))]
 pub unsafe fn buf_alloc(n: usize) -> *mut u8 {
     unsafe { libc::malloc(n).cast() }
 }
@@ -158,8 +160,76 @@ pub unsafe fn buf_alloc(n: usize) -> *mut u8 {
 ///
 /// # Safety
 /// `p` must be null or a buffer from [`buf_alloc`] not yet freed.
+#[cfg(not(feature = "managed"))]
 pub unsafe fn buf_free(p: *mut u8) {
     unsafe { libc::free(p.cast()) }
+}
+
+/// The type descriptor of a byte buffer: a noscan array of `u8`, with the
+/// reserved id the program's own table never hands out (`kelp_rt.c`
+/// `KELP_RT_BYTES_TYPE_ID`). Mirrors `kelp_gc_type` in `kelpc/gc/include`.
+#[cfg(feature = "managed")]
+#[repr(C)]
+struct GcType {
+    id: u32,
+    size: u32,
+    align: u32,
+    flags: u32,
+    n_ptrs: u32,
+    ptr_off: *const u32,
+    tag_off: u32,
+    n_variants: u32,
+    variants: *const c_void,
+}
+
+#[cfg(feature = "managed")]
+unsafe impl Sync for GcType {}
+
+#[cfg(feature = "managed")]
+const KELP_GC_NOSCAN: u32 = 0x1;
+#[cfg(feature = "managed")]
+const BYTES_TYPE_ID: u32 = 0xFFFF0;
+
+#[cfg(feature = "managed")]
+static BYTES_DESCR: GcType = GcType {
+    id: BYTES_TYPE_ID,
+    size: 1,
+    align: 1,
+    flags: KELP_GC_NOSCAN,
+    n_ptrs: 0,
+    ptr_off: ptr::null(),
+    tag_off: 0,
+    n_variants: 0,
+    variants: ptr::null(),
+};
+
+#[cfg(feature = "managed")]
+unsafe extern "C" {
+    fn kelp_gc_alloc_array(elem: *const GcType, count: usize) -> *mut c_void;
+}
+
+/// Frees nothing: the collector reclaims a managed buffer once no path reaches it.
+///
+/// # Safety
+/// `p` is unused.
+#[cfg(feature = "managed")]
+pub unsafe fn buf_free(p: *mut u8) {
+    let _ = p;
+}
+
+/// `n` zeroed bytes from the collector. Panics `out of memory` when it fails.
+///
+/// # Safety
+/// The result belongs to the collector.
+#[cfg(feature = "managed")]
+pub unsafe fn buf_alloc(n: usize) -> *mut u8 {
+    unsafe {
+        let p = kelp_gc_alloc_array(&raw const BYTES_DESCR, n).cast::<u8>();
+        if p.is_null() {
+            crate::panic::kelp_panic(c"out of memory".as_ptr());
+        }
+        p
+    }
 }
 
 /// The allocation primitive `std/mem` wraps: an owned, zero-filled,
