@@ -383,9 +383,13 @@ pub fn compile(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     freestanding: Option<&Freestanding>,
+    managed: Option<&Managed>,
     incremental: bool,
     timings: &mut Timings,
 ) -> Result<(), String> {
+    if managed.is_some() && incremental {
+        return Err("a managed build is not split per unit yet: the collector's descriptors and init are whole-program".to_string());
+    }
     if let Some(fs) = freestanding {
         llvm_ffi::initialize_target_for(&fs.triple)?;
     } else {
@@ -447,6 +451,7 @@ pub fn compile(
         freestanding,
         None,
         None,
+        managed.map(|m| m.heap_max_mib << 20),
         timings,
     )?;
 
@@ -490,18 +495,105 @@ pub fn compile(
     };
 
     let link_start = Instant::now();
-    let linked = crate::driver::link_llvm_object(
-        &object_path,
-        program_object.as_deref(),
-        out_path,
-        opt,
-        link_libs,
-        library_dirs,
-        pkg_config_flags,
-        crate::cdecl::uses_tls(program),
-    );
+    let linked = match managed {
+        Some(m) => crate::driver::link_managed_object(
+            &object_path,
+            program_object.as_deref(),
+            &m.gc_archive,
+            out_path,
+            opt,
+            link_libs,
+            library_dirs,
+            pkg_config_flags,
+            crate::cdecl::uses_tls(program),
+        ),
+        None => crate::driver::link_llvm_object(
+            &object_path,
+            program_object.as_deref(),
+            out_path,
+            opt,
+            link_libs,
+            library_dirs,
+            pkg_config_flags,
+            crate::cdecl::uses_tls(program),
+        ),
+    };
     timings.link += link_start.elapsed();
     linked.map_err(|e| e.message)
+}
+
+/// A managed build's settings (WP2): the heap cap in MiB that `kelp_gc_init`
+/// receives as its maximum, and the collector archive the link takes.
+#[derive(Debug, Clone)]
+pub struct Managed {
+    pub heap_max_mib: u64,
+    pub gc_archive: PathBuf,
+}
+
+/// Lower a whole program and return the IR text, without linking, in the hosted
+/// (`managed = None`) or managed (`Some(heap cap in bytes)`) form. The object is written
+/// beside the IR, as every lowering does, so the tests can check that the IR
+/// also verifies and emits. Only the tests call this: a real build goes through
+/// `compile`.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn compile_ir(
+    program: &Program,
+    drops: &DropPlan,
+    sources: &SourceMap,
+    managed: Option<u64>,
+    ir_path: &Path,
+    object_path: &Path,
+) -> Result<String, String> {
+    llvm_ffi::initialize_native_target()?;
+    let triple = llvm_ffi::default_target_triple();
+    let ctx = Context::new();
+    let machine = TargetMachine::for_host_at(OptLevel::O0.codegen_level())?;
+    let layout = machine.data_layout();
+    let mut timings = Timings::new();
+    lower_to_object(
+        program,
+        drops,
+        sources,
+        &ctx,
+        &machine,
+        &layout,
+        &triple,
+        "kelp",
+        ir_path,
+        object_path,
+        OptLevel::O0,
+        None,
+        None,
+        None,
+        managed,
+        &mut timings,
+    )?;
+    std::fs::read_to_string(ir_path)
+        .map_err(|e| format!("could not read generated IR '{}': {e}", ir_path.display()))
+}
+
+/// The layout facts `gc_descr` reads, answered from the same LLVM types and
+/// target layout the function bodies use.
+impl<'a> crate::gc_descr::GcLayout for Gen<'a> {
+    fn struct_fields(&self, name: &str) -> Result<Vec<Ty>, String> {
+        let s = self
+            .program
+            .structs
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| format!("managed mode does not describe the enum '{name}' in a GC object yet"))?;
+        if !matches!(s.repr, crate::ast::Repr::C) {
+            return Err(format!(
+                "managed mode describes only `repr(c)` datac layouts; '{name}' is not one"
+            ));
+        }
+        Ok(s.fields.iter().map(|f| f.ty.clone()).collect())
+    }
+
+    fn size_align(&self, ty: &Ty) -> Result<(u64, u64), String> {
+        let t = self.lty2(ty)?;
+        Ok((self.layout.abi_size_of(t), self.layout.abi_alignment_of(t) as u64))
+    }
 }
 
 /// Lower one module and write its object: the per-module half of the backend.
@@ -536,6 +628,7 @@ fn lower_to_object(
     freestanding: Option<&Freestanding>,
     unit: Option<Unit>,
     cache: Option<&Cache>,
+    managed: Option<u64>,
     timings: &mut Timings,
 ) -> Result<Option<String>, String> {
     let started = Instant::now();
@@ -557,6 +650,7 @@ fn lower_to_object(
         opt.is_optimized(),
         freestanding.cloned(),
         unit,
+        managed,
     )?;
     lowering.declare()?;
     lowering.emit_const_data()?;
@@ -949,6 +1043,7 @@ fn compile_units(
                                     None,
                                     Some(unit.clone()),
                                     Some(&cache),
+                                    None,
                                     &mut local,
                                 )?;
                                 if let Some(dir) = &dump_dir {
@@ -2076,6 +2171,18 @@ struct Gen<'a> {
     /// for the whole-program single module every build had before the mode
     /// existed. See [`Gen::defines_function`] for what it decides.
     unit: Option<Unit>,
+    /// Whether this is a managed build (WP3): heap objects are GC allocations,
+    /// frees are dropped, and a drop runs only where a resource needs one.
+    managed: bool,
+    /// The managed heap's cap in bytes, from the manifest's `heap_max`. `kelp_gc_init`
+    /// receives it as its maximum. `None` in every other build.
+    managed_heap_max: Option<u64>,
+    /// The managed build's LLVM descriptors and collector entry points
+    /// (`gc_descr`), declared once per module. `None` in every other build.
+    gc: Option<crate::gc_descr::GcTypes<'a>>,
+    /// The `datac` and `enum` names that hold a resource (`gc_descr::resource_types`).
+    /// Empty in every other build.
+    resources: HashSet<String>,
 }
 
 /// Every container instantiation a program mentions, the mirror of
@@ -2127,6 +2234,7 @@ impl<'a> Gen<'a> {
         optimized: bool,
         freestanding: Option<Freestanding>,
         unit: Option<Unit>,
+        managed: Option<u64>,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
         // The one libc symbol this slice reaches: `printf`, for `print` and
@@ -2232,6 +2340,10 @@ impl<'a> Gen<'a> {
             pd_init_scope: None,
             freestanding,
             unit,
+            managed: managed.is_some(),
+            managed_heap_max: managed,
+            gc: managed.map(|_| crate::gc_descr::GcTypes::declare(ctx, module)),
+            resources: if managed.is_some() { crate::gc_descr::resource_types(program) } else { HashSet::new() },
         })
     }
 
@@ -3594,7 +3706,9 @@ impl<'a> Gen<'a> {
     fn declare_drop_fns(&mut self) {
         let owned = owned_types(&self.program.structs, &self.program.enums, &self.program.drop_types);
         for s in &self.program.structs {
-            if !needs_drop(&Ty::Struct(s.name.clone()), &owned) {
+            if !needs_drop(&Ty::Struct(s.name.clone()), &owned)
+                || !self.managed_drop(&Ty::Struct(s.name.clone()))
+            {
                 continue;
             }
             let name = format!("kelp_drop_{}", crate::types::c_ident(&s.name));
@@ -3607,7 +3721,9 @@ impl<'a> Gen<'a> {
         // An `enum` whose own name is in `owned` has at least one variant with
         // an owned payload field, so its drop has at least one case.
         for e in &self.program.enums {
-            if !needs_drop(&Ty::Struct(e.name.clone()), &owned) {
+            if !needs_drop(&Ty::Struct(e.name.clone()), &owned)
+                || !self.managed_drop(&Ty::Struct(e.name.clone()))
+            {
                 continue;
             }
             let name = format!("kelp_drop_{}", crate::types::c_ident(&e.name));
@@ -3749,6 +3865,11 @@ impl<'a> Gen<'a> {
     /// per-`datac` drop. A type that owns nothing has no call, which is the same
     /// silence `codegen_c.rs` keeps for a dropless field.
     fn call_drop(&self, ptr: Value<'a>, ty: &Ty) -> Result<(), String> {
+        // A managed build calls no drop for memory alone: the collector reclaims
+        // it, so the drop of a memory-only value is no call at all.
+        if !self.managed_drop(ty) {
+            return Ok(());
+        }
         let (func, fty) = match ty {
             Ty::Bytes | Ty::String => {
                 let symbol = drop_fn_name(ty);
@@ -4082,6 +4203,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // directly; the slots a referencing function gets are bound below for
         // every other function.
         if self.fn_name == "main" {
+            // Managed: the collector starts first (paper 3.4), with the minimum
+            // heap and the manifest's `heap_max` as the maximum.
+            if let (Some(gc), Some(cap)) = (&self.g.gc, self.g.managed_heap_max) {
+                let (init, ity) = gc.init;
+                let min = self.g.ctx.const_int(self.g.ctx.i64(), crate::gc_descr::DEFAULT_HEAP_MIN, false);
+                let max = self.g.ctx.const_int(self.g.ctx.i64(), cap, false);
+                self.g.builder.build_call(init, ity, &[min, max], "");
+            }
             if let Some(init) = self.g.init_pds_fn {
                 let ty = self.g.ctx.fn_type(self.g.ctx.void(), &[], false);
                 self.g.builder.build_call(init, ty, &[], "");
@@ -4500,6 +4629,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self.g.builder.build_load(lty, slot, "drop.val"))
     }
 
+    /// A managed build's safepoint poll at the current position (paper 5.1):
+    /// one call to `kelp_gc_safepoint`, which the collector answers with one
+    /// load when no collection is requested. Nothing in a hosted build.
+    fn gc_poll(&self) {
+        if let Some(gc) = &self.g.gc {
+            let (func, fty) = gc.safepoint;
+            self.g.builder.build_call(func, fty, &[], "");
+        }
+    }
+
     fn emit_while(&mut self, cond: &Expr, body: &Block) -> Result<(), String> {
         let header = self.cur_fn.append_block("while.cond");
         let body_bb = self.cur_fn.append_block("while.body");
@@ -4523,6 +4662,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.loops.pop();
         body?;
         if !self.terminated {
+            // Managed: a safepoint poll on every back edge (paper 5.1), so a
+            // loop with no call still lets a collection stop this thread.
+            self.gc_poll();
             let back = self.g.builder.build_br(header);
             // A loop whose bound is a small literal is unrolled in full, so its
             // body is the straight line of steps the SLP vectorizer packs `nbody`
@@ -7853,6 +7995,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
         ret: &Ty,
         span: Span,
     ) -> Result<Option<Value<'a>>, String> {
+        // Managed: a safepoint poll before every call (paper 5.1).
+        self.gc_poll();
         if callee == "std.source.file" {
             let path = self
                 .g
@@ -9670,6 +9814,26 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// Whether a value of `ty` owes a drop call in this build. Every build but
+    /// a managed one answers yes, which keeps its drops as they were. A managed
+    /// build answers yes only for a resource (`gc_descr::managed_needs_drop`).
+    fn managed_drop(&self, ty: &Ty) -> bool {
+        !self.managed || crate::gc_descr::managed_needs_drop(ty, &self.resources)
+    }
+
+    /// One zeroed GC object of `elem` (the managed form of `malloc_for`): the
+    /// call names the element's descriptor, so the collector knows its pointer
+    /// slots. Only meaningful in a managed build.
+    fn alloc_elem(&self, elem: &Ty, elem_ty: Type<'a>) -> Result<Value<'a>, String> {
+        if !self.managed {
+            return self.malloc_for(elem_ty);
+        }
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let descr = gc.descriptor(self.ctx, self.module, self, elem)?;
+        let (func, fty) = gc.alloc;
+        Ok(self.call(func, fty, &[descr], "gc"))
+    }
+
     /// `malloc(sizeof(<ty>))` lowered to a constant byte count, through the
     /// project's own allocator when the manifest configured one.
     fn malloc_for(&self, ty: Type<'a>) -> Result<Value<'a>, String> {
@@ -9779,6 +9943,12 @@ impl<'a> Gen<'a> {
     /// MK9-S5-M1). The result is nullable; the caller runs `check_alloc`, which
     /// routes a null to the project's panic handler with "out of memory".
     fn heap_alloc(&self, bytes: Value<'a>, align: u64) -> Result<Value<'a>, String> {
+        if self.managed {
+            // Managed mode allocates only typed objects (`alloc_elem`). An
+            // untyped byte allocation has no descriptor, and a noscan one would
+            // hide the pointers a `List` or `Map` buffer holds from the collector.
+            return Err("managed mode: this container allocation has no GC type descriptor yet (WP3 follow-up)".to_string());
+        }
         match &self.alloc_fns {
             Some(a) => {
                 let align = self.v_i64(align);
@@ -9801,6 +9971,10 @@ impl<'a> Gen<'a> {
         bytes: Value<'a>,
         align: u64,
     ) -> Result<(), String> {
+        if self.managed {
+            // The collector reclaims the object; a managed build emits no free.
+            return Ok(());
+        }
         match &self.alloc_fns {
             Some(a) => {
                 let align = self.v_i64(align);
@@ -9825,6 +9999,9 @@ impl<'a> Gen<'a> {
         bytes: Value<'a>,
         align: Value<'a>,
     ) -> Result<(), String> {
+        if self.managed {
+            return Ok(());
+        }
         match &self.alloc_fns {
             Some(a) => {
                 self.call(a.dealloc.0, a.dealloc.1, &[ptr, bytes, align], "");
@@ -9851,6 +10028,9 @@ impl<'a> Gen<'a> {
         align: u64,
         func: LlvmFunction<'a>,
     ) -> Result<Value<'a>, String> {
+        if self.managed {
+            return Err("managed mode: this container growth has no GC type descriptor yet (WP3 follow-up)".to_string());
+        }
         match &self.alloc_fns {
             Some(a) => {
                 if let Some((realloc, rty)) = a.realloc {
@@ -13949,7 +14129,11 @@ impl<'a> Gen<'a> {
             let (f, _) = self.start(&format!("{base}__of"), "entry")?;
             let v = f.get_param(0);
             let b = self.builder.build_alloca(box_ty, "b");
-            let p = self.box_alloc_in(f, elem_ty)?;
+            let p = if self.managed {
+                self.alloc_elem(elem, elem_ty)?
+            } else {
+                self.box_alloc_in(f, elem_ty)?
+            };
             self.check_alloc(p, f)?;
             self.st(v, p);
             self.st(p, self.fld(box_ty, b, 0, "value"));
@@ -14004,7 +14188,11 @@ impl<'a> Gen<'a> {
             let stored = self.block(f, "store");
             self.builder.build_cond_br(empty, null_bb, have_bb);
             self.builder.position_at_end(null_bb);
-            let p = self.box_alloc_in(f, elem_ty)?;
+            let p = if self.managed {
+                self.alloc_elem(elem, elem_ty)?
+            } else {
+                self.box_alloc_in(f, elem_ty)?
+            };
             self.check_alloc(p, f)?;
             self.st(p, slot);
             self.builder.build_br(stored);
