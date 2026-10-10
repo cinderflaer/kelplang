@@ -1,0 +1,27 @@
+[package]
+name = "kelp-rt"
+# The runtime is versioned with the compiler that embeds it. It is not a
+# published crate: `kelpc/build.rs` builds its static library and `kelpc`
+# reads the layout constants through a path dependency.
+version = "26.10.5"
+edition = "2024"
+publish = false
+description = "The Kelp runtime, a no_std Rust static library (stage 1 of the C removal)"
+
+[lib]
+# The rlib is what `kelpc` links for the layout table. The static library is
+# requested by `kelpc/build.rs` with `cargo rustc --crate-type staticlib`, not
+# here: a staticlib needs a `#[panic_handler]`, which a rlib linked into a std
+# program must not carry.
+crate-type = ["rlib"]
+
+[features]
+# Enables the `#[panic_handler]`. Only the nested static-library build in
+# `kelpc/build.rs` turns it on; a rlib linked into a std program (the layout
+# constants read by `kelpc`) must not carry a second panic handler.
+panic-handler = []
+
+[dependencies]
+# Already in the root Cargo.lock; pinned exactly so the lock file is the only
+# source of the version.
+libc = "=0.2.189"

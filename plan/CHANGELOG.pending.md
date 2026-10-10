@@ -30,6 +30,7 @@ empty on release.
 
 - The C text the `llvm` backend still emits (runtime headers, `extern fun` declarations, callback glue) moved from `codegen_c.rs` to `cdecl.rs`. Emitted output is unchanged.
 - `kelpc` now finds `ld.lld` (`KELPC_LLD`, then PATH) and has the hosted link argv builder in `sysroot.rs`. No link line has changed yet: builds still use `cc`.
+- `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C. Programs are unchanged: the C runtime is still the one linked.
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
 - `kelpc doc --text` prints the documentation as plain text (on branch lighthouse-support, not merged).
 - `kelpc` builtin listing is available as JSON (on branch lighthouse-support, not merged).
