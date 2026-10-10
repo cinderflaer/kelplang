@@ -5169,7 +5169,7 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // digit cannot reach `String.push(u8)` and a `u8` byte cannot index
         // with `usize` without one. Widening is exact; a conversion that can
         // lose a value is a checked narrowing that panics with the call's own
-        // name (v1 has no `Option`), which the removed C backend emits inline.
+        // name (v1 has no `Option`), which the removed C backend emitted inline.
         const INT_TYPES: &[&str] =
             &["i32", "i64", "u32", "u64", "u8", "u16", "usize", "isize"];
         for src in INT_TYPES {
@@ -5691,7 +5691,7 @@ fn container_sig(
 /// The `[T; N]` builtins (A-18), instantiated for one element type. The
 /// surface is deliberately small, and `len` is not a function of the length
 /// here at all: the length is part of the type, so the signature only has to
-/// say that `.len()` is a `usize`; the removed C backend emits the constant.
+/// say that `.len()` is a `usize`; the removed C backend emitted the constant.
 ///
 /// `get` follows `List.get` exactly: a `Copy` element is handed back by value,
 /// an owned one by shared borrow (`infer.rs` roots that borrow at the receiver
@@ -11034,7 +11034,7 @@ fn check_function(
         .is_some_and(|_| f.name == crate::types::DROP_METHOD);
     // Passdowns this function references become trailing hidden parameters
     // (see `PdInfo::arg` for the call-site side). `main` is the exception
-    // downstream, not here: the removed C backend emits a fixed `main(argc, argv)`
+    // downstream, not here: the removed C backend emitted a fixed `main(argc, argv)`
     // regardless of parameters, and the body's `pd#...` identifiers then
     // resolve to the file-scope globals — which is why the hidden name and
     // the global name are the same string.
@@ -11134,11 +11134,11 @@ fn check_function(
             }
         }
         ast::FunctionBody::Extern => {
-            // No `.kp` body. Either the removed C backend writes the
+            // No `.kp` body. Either the removed C backend wrote the
             // compiler-supplied C (see `externs.rs`, stdlib modules only), or
             // — MK9-S1-M1, roadmap B-1 — this module has its own
             // `coral.toml` `[extern."<module id>"]` entry, in which case
-            // the removed C backend writes a direct-call trampoline to the native
+            // the removed C backend wrote a direct-call trampoline to the native
             // symbol instead, gated the same way a stdlib extern is (see
             // `resolve.rs::domain_of_with_extern` and the `gated` map it
             // feeds). Confirm one of the two actually admits this

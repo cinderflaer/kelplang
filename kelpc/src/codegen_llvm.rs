@@ -48,7 +48,7 @@
 //! - the builtin `Bytes`/`String`/`View` methods, and `print`/templates reading
 //!   a buffer or a view as `%.*s` from its own length and pointer
 //! - an owned `datac` field, the generated per-`datac` drop, and the
-//!   `borrowck::DropPlan` emitted at the same points the removed C backend emits it:
+//!   `borrowck::DropPlan` emitted at the same points the removed C backend emitted it:
 //!   end of block, before a `return`, and before an assignment overwrites an
 //!   owned binding. A move clears its source slot, so the drop a binding still
 //!   owes on a path that did not move it frees nothing
@@ -691,7 +691,7 @@ fn lower_to_object(
     }
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
-    // the removed C backend writes each typedef and its drop routine in. The container
+    // the removed C backend wrote each typedef and its drop routine in. The container
     // function sets come next, because a container's own drop calls the
     // element's (MK7 §3.2: one monomorphized set per instantiation, generated
     // into the module). In the incremental mode only the `_support` unit gets
@@ -2024,7 +2024,7 @@ struct Gen<'a> {
     /// same text into one translation unit.
     runtime: HashMap<String, RtFn<'a>>,
     /// The generated per-`datac` drop functions (`kelp_drop_<name>`), the mirror
-    /// of the ones the removed C backend emits beside each typedef.
+    /// of the ones the removed C backend emitted beside each typedef.
     drop_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
     /// The `datac`/`enum` names that own memory, so `types::needs_drop` can
     /// answer for a type without re-walking the declarations.
@@ -3703,7 +3703,7 @@ impl<'a> Gen<'a> {
     }
 
     /// Declare one drop function per `datac` or `enum` that owns memory
-    /// (`types::needs_drop`), the mirror of the routine the removed C backend writes
+    /// (`types::needs_drop`), the mirror of the routine the removed C backend wrote
     /// beside each typedef. The plan's targets call them by name.
     fn declare_drop_fns(&mut self) {
         let owned = owned_types(&self.program.structs, &self.program.enums, &self.program.drop_types);
@@ -5256,7 +5256,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// A call through a function value (S2E): a plain function pointer is the
     /// callee, and a closure is the fat pointer, so the call names its code
     /// pointer and passes the environment as the hidden first argument
-    /// (`(c.fn)(c.env, ...)`, the shape the removed C backend writes).
+    /// (`(c.fn)(c.env, ...)`, the shape the removed C backend wrote).
     fn emit_indirect_call(
         &mut self,
         callee: &Expr,
@@ -6065,7 +6065,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// Load a binding. A load at a move site also clears the source slot: the
     /// value is copied out and the binding is zeroed, so a drop the binding
     /// still owes on a path that did not move it frees nothing rather than a
-    /// second copy (MK7 §3.4; the removed C backend writes `({0})` for the same
+    /// second copy (MK7 §3.4; the removed C backend wrote `({0})` for the same
     /// reason). A binding moved on every path gets no `at_move` entry, so this
     /// leaves its slot alone and nothing drops it.
     fn load_ident(&mut self, e: &Expr, name: &str) -> Result<Value<'a>, String> {

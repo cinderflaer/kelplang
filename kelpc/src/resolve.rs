@@ -192,7 +192,7 @@ impl Project {
     }
 
     /// Every C header named across the project's `[extern.*]` sections,
-    /// deduplicated and sorted. the removed C backend emits one `#include <header>`
+    /// deduplicated and sorted. the removed C backend emitted one `#include <header>`
     /// line per entry after the fixed preamble, so a project that names none
     /// gets exactly the C text it got before the key existed.
     pub fn extern_headers(&self) -> Vec<String> {
@@ -412,7 +412,7 @@ pub struct ExternModuleDecl {
     /// unique, so `symbol_of` resolves one unambiguously.
     pub symbols: Vec<String>,
     /// The C header this module's symbols are declared in, when the section
-    /// names one. the removed C backend emits it as `#include <header>` after the
+    /// names one. the removed C backend emitted it as `#include <header>` after the
     /// fixed preamble, so a `extern fun` whose native symbol the runtime does
     /// not already declare has a prototype instead of an implicit one.
     header: Option<String>,

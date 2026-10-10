@@ -736,14 +736,14 @@ pub fn closure_c_type(params: &[Ty], ret: &Ty) -> String {
 
 /// The name of one field of a literal's environment (`c0`, `c1`, …). One
 /// place names them, because `infer.rs` writes the environment's field list
-/// and the removed C backend emits the reads.
+/// and the removed C backend emitted the reads.
 pub fn capture_field(index: usize) -> String {
     format!("c{index}")
 }
 
 /// The generated C struct tag for a literal's environment, and the function
 /// that frees it (A-4 phase E). One place names both, because `infer.rs`
-/// records them on the generated function and the removed C backend emits them.
+/// records them on the generated function and the removed C backend emitted them.
 pub fn env_struct_name(literal_key: &str) -> String {
     format!("kelp_Env__{}", c_ident(literal_key))
 }
@@ -1119,7 +1119,7 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 /// the container's own element type is decided: an element lives in the list's
 /// own buffer, so the element type has to be a complete, droppable C type with
 /// a name, and a container that still carries the open-container marker has
-/// neither. `container_depth` in the removed C backend emits a nested container
+/// neither. `container_depth` in the removed C backend emitted a nested container
 /// before the one that contains it, so every typedef and every function the
 /// outer list calls already exists. A `Map` stays out because a map value is
 /// not a container either.
@@ -2129,7 +2129,7 @@ pub struct StructDef {
     /// `datac` *and* `enum` (A-1). A field or payload may only name an
     /// earlier declaration by value, so this order is a valid topological
     /// order — for `owned_types`' single pass and for the C typedefs
-    /// the removed C backend emits.
+    /// the removed C backend emitted.
     pub order: usize,
 }
 

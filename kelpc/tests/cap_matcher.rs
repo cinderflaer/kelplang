@@ -12,7 +12,7 @@
 //!     as the reference. It is no longer emitted into programs, and this test
 //!     compiles it directly, which is the reason it is a file rather than a
 //!     `const` inside the compiler.
-//!   * `kelpc/std/rt.kp` — the Kelp the checks run now, compiled by the LLVM
+//!   * `kelpc/std/rt.kp`: the Kelp the checks run now, compiled by the LLVM
 //!     backend into a driver that prints one verdict per case.
 //!
 //! Both drivers are generated from the same `Vec<Case>`, so a mismatch is

@@ -490,7 +490,7 @@ impl Context {
     /// The type starts *opaque* (no body), which is what lets a `datac` be
     /// named before its fields' own types exist: `struct_set_body` fills it in
     /// once every field type does. LLVM's layout, not this wrapper's, is what
-    /// makes the result agree with the C struct the removed C backend writes, natural
+    /// makes the result agree with the C struct the removed C backend wrote, natural
     /// alignment included.
     pub fn struct_type(&self, name: &str) -> Type<'_> {
         let name = cstring(name);
