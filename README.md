@@ -108,12 +108,10 @@ directory with a
 to LLVM IR, runs LLVM's own pass pipeline over the module, emits an object and
 hands it to `cc -lm`. There is no backend to choose.
 
-The **`c` backend** is kept, maintained and run in CI as the project's own
-oracle. It transpiles to C and hands the file to `cc -O2 -fwrapv -lm`, and the
-fixture suite, the differential sweep and the fuzzer compare every `llvm` build
-against it. It is the reference backend rather than a second opinion, and it is
-not a user surface: no flag and no environment variable selects it, and the
-project's own test suite reaches it through an internal switch.
+The C backend was removed on 2026-10-10. It was the project's differential
+oracle until then, and its answers for the corpus are kept as the golden set in
+`kelpc/tests/golden/`. Sanitizers (`--sanitize=`, `[build] sanitize`) went with
+it, so a build that asks for one is refused.
 
 `build` and `run` take an optimization level: `-O0`, `-O1`, `-O2`, `-O3` or `-Os`,
 with `-O2` the default. One level is one level for the whole build: it selects the
@@ -168,7 +166,7 @@ directory is not followed.
 | `kelpc/src/` | the compiler: `lexer`, `preprocess`, `parser`, `infer` (types, generics, capabilities), `borrowck` (moves, drops), `codegen_c`, `driver` |
 | `kelpc/std/` | the standard library, written in Kelp and embedded into the compiler |
 | `kelpc/runtime/` | the reviewed C that is still C: the capability glue `codegen_c.rs` emits (`cap_glue.c`), and the C matcher/normalizer the §8 differential tests compare the Kelp versions against |
-| `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and `run-all-backends.sh` |
+| `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and the corpus goldens |
 | `examples/` | `hello.kp`, `fib.kp`, `download.kp` |
 | `bench/speed/` | four workloads written in four languages, with checksums |
 | `plan/` | the design, syntax, plan and milestone documents (see Documentation) |
@@ -191,14 +189,11 @@ directory is not followed.
 ```sh
 cargo test                                   # unit tests + the fixture suite, on the default `llvm` backend
 cargo test --test fmt                        # the formatter's corpus and properties
-./kelpc/tests/run-all-backends.sh            # the suite once per backend, `llvm` and the `c` oracle
 ```
 
-The fixture suite is backend-agnostic by construction: it compiles a fixture, runs
-the result, and compares stdout, so it exercises any backend by being pointed at
-it. It runs `llvm` by default and the `c` oracle through an internal switch the
-project's own suite sets, which is not a user surface;
-`./kelpc/tests/run-all-backends.sh` runs both on every change. Two heavier checks
+The fixture suite compiles a fixture, runs the result, and compares stdout with a
+literal an author wrote. The corpus goldens in `kelpc/tests/golden/` are the
+reference for every corpus program. Two heavier checks
 exist and are `#[ignore]`d so the default run stays fast:
 
 ```sh

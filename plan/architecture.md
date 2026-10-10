@@ -51,7 +51,7 @@ x/
       infer.rs                # type inference / checking, stdlib overload resolution, trait/impl validation and bound checks (A-12 slice 2)
       tir.rs                  # typed IR; every node carries its resolved Ty and Span
       borrowck.rs              # move checker (MK1-S3-M1), borrow checker (MK1-S4-M1), drop (MK3)
-      codegen_c.rs             # typed IR -> C source text
+      codegen_c.rs             # typed IR -> C source text (removed 2026-10-10, stage 2 step A; the C text the LLVM backend still needs lives in cdecl.rs)
       driver.rs                # orchestrates pipeline, invokes `cc`
       resolve.rs              # project/manifest loading, `impl` imports, module naming (MK2-S1-M1), capability gating (MK4-S1-M1); `impl Trait for Type` methods are merged here with `Self` substituted
       deprecated.rs           # the register of outdated syntax, and the `outdated:` finding (open item 74)

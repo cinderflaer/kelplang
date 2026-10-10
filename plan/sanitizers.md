@@ -1,3 +1,7 @@
+> **Removed 2026-10-10.** The C backend that built sanitized programs was removed
+> in stage 2 step A. `--sanitize=` and `[build] sanitize` are now refused, and
+> the text below describes the retired C-backend path.
+
 # Sanitizer builds
 
 ```text
