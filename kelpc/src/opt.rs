@@ -21,7 +21,7 @@
 //!
 //! `-Os` is offered because both `cc` and LLVM accept it. `-Oz` is not: it is
 //! a clang-only spelling and the C backend's `cc` may be gcc, whose refusal
-//! would make the oracle and the LLVM backend unable to speak one vocabulary
+//! would make the `cc` calls and the LLVM backend unable to speak one vocabulary
 //! (`-Oz` is out for that reason, §4.3).
 
 use llvm_sys::target_machine::LLVMCodeGenOptLevel;
@@ -124,8 +124,7 @@ impl OptLevel {
     /// command line, including the `-O`, because the diagnostic names exactly
     /// what the user typed.
     ///
-    /// The error text is the point of this function, the same way
-    /// `Backend::parse`'s is: an out-of-range level must not read as a default,
+    /// The error text is the point of this function: an out-of-range level must not read as a default,
     /// and `-Oz` must say why it is refused rather than read as a typo.
     pub fn parse(arg: &str) -> Result<OptLevel, String> {
         let suffix = arg.strip_prefix("-O").unwrap_or("");

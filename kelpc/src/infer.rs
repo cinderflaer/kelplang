@@ -1133,7 +1133,7 @@ impl Ctx {
     /// returns its type, or `None` when the name is not an enclosing binding
     /// (A-4 phase E). One per distinct name, in the order the body first
     /// names them, because that order is the environment's field order: the
-    /// body's `ExprKind::Capture` indices and the environment `codegen_c.rs`
+    /// body's `ExprKind::Capture` indices and the environment the removed C backend
     /// writes have to agree.
     fn note_capture(&mut self, name: &str, span: Span) -> Option<Ty> {
         let ty = self.outer_bindings.get(name).cloned()?;
@@ -4170,7 +4170,7 @@ fn function_value_at(
         // site: without the capability the name does not resolve at all.
         ctx.check_capability(key, span)?;
         // Holding the domain is not enough. The pattern half of the gate is
-        // emitted from the *call's* own callee key (`codegen_c.rs::cap_plan`),
+        // emitted from the *call's* own callee key (the removed C backend's `cap_plan`),
         // and a call through a function value names the pointer, not the
         // gated item: the check would be skipped and the pointer would reach
         // the resource on the domain gate's say-so alone, which makes a
@@ -4891,7 +4891,7 @@ fn sig_key_for(f: &ast::FunctionDecl, prefix: &str, params: &[(String, Ty)]) -> 
 
 /// A compiler-provided function (M6). These live in `sigs`' namespace (keyed
 /// `Type#name`, exactly like a receiver method) but their bodies are emitted
-/// by `codegen_c.rs` from the fixed runtime preamble, so nothing about call
+/// by the removed C backend from the fixed runtime preamble, so nothing about call
 /// resolution, argument matching, or passdown wiring needs to know they are
 /// special — only codegen, and only in that the C function it names already
 /// exists.
@@ -5169,7 +5169,7 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // digit cannot reach `String.push(u8)` and a `u8` byte cannot index
         // with `usize` without one. Widening is exact; a conversion that can
         // lose a value is a checked narrowing that panics with the call's own
-        // name (v1 has no `Option`), which `codegen_c.rs` emits inline.
+        // name (v1 has no `Option`), which the removed C backend emits inline.
         const INT_TYPES: &[&str] =
             &["i32", "i64", "u32", "u64", "u8", "u16", "usize", "isize"];
         for src in INT_TYPES {
@@ -5691,7 +5691,7 @@ fn container_sig(
 /// The `[T; N]` builtins (A-18), instantiated for one element type. The
 /// surface is deliberately small, and `len` is not a function of the length
 /// here at all: the length is part of the type, so the signature only has to
-/// say that `.len()` is a `usize`; `codegen_c.rs` emits the constant.
+/// say that `.len()` is a `usize`; the removed C backend emits the constant.
 ///
 /// `get` follows `List.get` exactly: a `Copy` element is handed back by value,
 /// an owned one by shared borrow (`infer.rs` roots that borrow at the receiver
@@ -6850,8 +6850,7 @@ fn collect_statics(
         // meaningful when mutable: one shared copy per CPU that no code may
         // write is an ordinary `static` with extra address space (kernel
         // stage 8). Both are checked here, before any backend is named, so
-        // `kelpc check` and `kelpc build` refuse identically and the C oracle
-        // refuses for the same reason the LLVM backend does.
+        // `kelpc check` and `kelpc build` refuse identically.
         if decl.percpu && !decl.mutable {
             return Err(Diagnostic::new(
                 format!(
@@ -7187,7 +7186,7 @@ fn value_of(e: &tir::Expr) -> Option<ConstResult> {
 }
 
 /// Turns a folded value into the literal node a use site substitutes. The
-/// typed C literal comes out of `codegen_c.rs`'s ordinary literal path, so a
+/// typed C literal comes out of the removed C backend's ordinary literal path, so a
 /// `const` adds no code path of its own.
 fn literal_for(value: &ConstValue, declared: &Ty) -> std::result::Result<tir::Expr, String> {
     use ConstValue::*;
@@ -8822,7 +8821,7 @@ fn check_program_pass(
     };
     let mut structs = HashMap::new();
     // Structs are resolved in declaration order, which is also the order
-    // `codegen_c.rs` must emit their C typedefs in: a `datac` may only name
+    // the removed C backend must emit their C typedefs in: a `datac` may only name
     // `datac`s declared before it (see `TypeScope::later_datacs`), so
     // declaration order is a valid topological order. Emitting them from a
     // `HashMap`'s iteration order instead — which is what this did before —
@@ -9097,7 +9096,7 @@ fn check_program_pass(
             .resolve(&f.ty, false)
             .map_err(|e| e.in_module(&d.module))?;
             // An owned field (`Bytes`, `String`, or a `datac` holding one) is
-            // allowed from M6.2 on: `codegen_c.rs` generates a drop function
+            // allowed from M6.2 on: the removed C backend generates a drop function
             // per datac, so dropping a struct recurses into its fields.
             if matches!(ty, Ty::Ref { .. } | Ty::Dyn { .. }) {
                 return Err(Diagnostic::new(
@@ -9662,7 +9661,7 @@ fn check_program_pass(
         .map_err(|e| e.in_module(&f.module))?;
         functions.push(checked);
     }
-    // The capability data `codegen_c.rs` compiles in: each module's
+    // The capability data the removed C backend compiles in: each module's
     // patterns per domain, and which functions are gated (M7). Sorted, because
     // `Project::caps` is a map and a backend that emitted its entries in
     // iteration order would produce different IR for the same sources on two
@@ -9719,7 +9718,7 @@ fn check_program_pass(
     functions.extend(variadic_wrappers.iter().map(|(_, f)| f.clone()));
     // The native symbol each user-declared `extern fun` binds to
     // (MK9-S1-M1, roadmap B-1), keyed by the function's full, prefixed name —
-    // `codegen_c.rs::write_extern` reads this instead of `externs.rs` when a
+    // the removed C backend's `write_extern` reads this instead of `externs.rs` when a
     // function's module has no compiler-supplied body, and writes a
     // direct-call trampoline to the symbol. The map holds the renamed C
     // symbol when the manifest entry is `"kelp_name=c_symbol"`. Only a
@@ -9879,11 +9878,6 @@ fn check_program_pass(
         drop_types: (*declared_drops).clone(),
         extern_ffi_symbols,
         extern_headers: project.extern_headers(),
-        handles: {
-            let mut names: Vec<String> = program.extern_types.iter().map(|e| e.name.clone()).collect();
-            names.sort();
-            names
-        },
         const_data,
         statics: static_decls,
         dyn_vtables,
@@ -10564,7 +10558,7 @@ fn is_printable_buffer(ty: &Ty) -> bool {
 /// `print`/templates read an owned buffer without consuming it, so a *named*
 /// one is borrowed here rather than passed by value (which would be a move).
 ///
-/// A temporary is passed through as the owned value it is: `codegen_c.rs`
+/// A temporary is passed through as the owned value it is: the removed C backend
 /// hoists it into a C temporary and frees it right after the `printf`, which
 /// is what makes `print(str.to_upper(s))` allocate once, print, and free
 /// (M6.3 — until then this was a diagnostic telling the author to bind a
@@ -10613,7 +10607,7 @@ fn is_tir_place(expr: &tir::Expr) -> bool {
 /// is what a returned borrow and an exclusive borrow both need.
 ///
 /// `is_tir_place` is the weaker question, "can an address be taken?", and
-/// a field of a temporary answers yes: `codegen_c.rs` stages the temporary so
+/// a field of a temporary answers yes: the removed C backend stages the temporary so
 /// the field has an address. That address dies with the statement, though, so
 /// `mkName().name.as_str()` is a borrow of a temporary the same way
 /// `String.from_str("x").as_str()` is, one projection deeper, and it needs the
@@ -11040,7 +11034,7 @@ fn check_function(
         .is_some_and(|_| f.name == crate::types::DROP_METHOD);
     // Passdowns this function references become trailing hidden parameters
     // (see `PdInfo::arg` for the call-site side). `main` is the exception
-    // downstream, not here: `codegen_c.rs` emits a fixed `main(argc, argv)`
+    // downstream, not here: the removed C backend emits a fixed `main(argc, argv)`
     // regardless of parameters, and the body's `pd#...` identifiers then
     // resolve to the file-scope globals — which is why the hidden name and
     // the global name are the same string.
@@ -11140,11 +11134,11 @@ fn check_function(
             }
         }
         ast::FunctionBody::Extern => {
-            // No `.kp` body. Either `codegen_c.rs` writes the
+            // No `.kp` body. Either the removed C backend writes the
             // compiler-supplied C (see `externs.rs`, stdlib modules only), or
             // — MK9-S1-M1, roadmap B-1 — this module has its own
             // `coral.toml` `[extern."<module id>"]` entry, in which case
-            // `codegen_c.rs` writes a direct-call trampoline to the native
+            // the removed C backend writes a direct-call trampoline to the native
             // symbol instead, gated the same way a stdlib extern is (see
             // `resolve.rs::domain_of_with_extern` and the `gated` map it
             // feeds). Confirm one of the two actually admits this
@@ -16113,7 +16107,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
             // A *shared* borrow may be taken of a temporary (`str.join(parts
             // = str.split(s, sep), sep = "-")`): the temporary lives for the
             // whole enclosing expression, which is exactly how long a
-            // call-scoped borrow lasts, and `codegen_c.rs` hoists it into a C
+            // call-scoped borrow lasts, and the removed C backend hoists it into a C
             // temporary to take its address. An *exclusive* borrow still
             // needs a place to write into, and `is_durable_place` is the
             // question: a temp staged for the call would swallow the write,
@@ -17552,7 +17546,7 @@ fn check_claim_argument(
 /// passes a given list of extra-argument types, and every later call with the
 /// same list names the same one. The wrapper's own parameters are the extern's
 /// declared parameters followed by one per extra argument, so
-/// `codegen_c.rs::write_user_extern` forwards all of them to the native symbol
+/// the removed C backend's `write_user_extern` forwards all of them to the native symbol
 /// unchanged — the C compiler then applies the default argument promotions a
 /// real variadic call gets.
 fn register_variadic_wrapper(
@@ -20081,7 +20075,7 @@ fn lower_dyn_call(
 /// Only the pairs whose plain `to_<T>` twin can lose a value have a twin at
 /// all: a widening cannot fail, so `u8.try_to_u64()` is deliberately not a
 /// method. `Ty::int_bounds` is the one place that decides, and it is the same
-/// bound table `codegen_c.rs` uses to decide whether `to_<T>` needs a check, so
+/// bound table the removed C backend uses to decide whether `to_<T>` needs a check, so
 /// the two can never disagree about which conversions are fallible.
 fn try_to_pair(receiver: &Ty, method: &str) -> Option<(Ty, Ty)> {
     let src = Ty::from_name(builtin_type_name(receiver)?)?;

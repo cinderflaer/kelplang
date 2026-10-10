@@ -322,7 +322,7 @@ pub struct DatacDecl {
     /// Declaration index within this file, across `datac`s *and* `enum`s, so
     /// `resolve.rs` can rebuild one merged declaration order out of two
     /// lists (A-1). A field may only name an earlier type by value, and
-    /// `codegen_c.rs` emits typedefs in that same order.
+    /// the removed C backend emits typedefs in that same order.
     pub order: usize,
     /// Canonical id of the module this was declared in: `""` for the entry
     /// module, otherwise its path relative to `src/` without the `.kp`
@@ -354,7 +354,7 @@ pub struct EnumDecl {
     /// Declaration index within this file, across `datac`s *and* `enum`s, so
     /// `resolve.rs` can rebuild one merged declaration order out of two
     /// lists (A-1). A field or payload may only name an earlier type by
-    /// value, and `codegen_c.rs` emits typedefs in that same order.
+    /// value, and the removed C backend emits typedefs in that same order.
     pub order: usize,
     /// See `DatacDecl::module`.
     pub module: String,
@@ -502,7 +502,7 @@ pub enum FunctionBody {
     /// `fun f(...).return: T = expr` — sugar checked/lowered as if it were
     /// `fun f(...).return: T { return expr }`.
     Expr(Expr),
-    /// `extern fun f(...)` — no body in `.kp` at all; `codegen_c.rs` writes
+    /// `extern fun f(...)` — no body in `.kp` at all; the removed C backend writes
     /// the compiler-supplied C body instead. Never reaches `check_function`'s
     /// block/expression paths.
     Extern,

@@ -58,7 +58,7 @@ pub enum Ty {
     /// end of the owning scope — its elements first, then its buffer. The
     /// element type is part of the type, and codegen monomorphizes: one C
     /// struct plus one set of functions per element type actually used (see
-    /// `codegen_c.rs::write_list`).
+    /// the removed C backend's `write_list`).
     List(Box<Ty>),
     /// The builtin owning pointer (M8): `Box<T>` holds one `T` on the heap,
     /// or nothing at all (`Box.empty()`), which is what makes a recursive
@@ -143,7 +143,7 @@ pub enum Ty {
     /// owns the heap environment the captures were moved into, and it drops
     /// that environment when it dies. A `Ty::Fn` stays a plain C function
     /// pointer: a declared function, and a literal that captured nothing,
-    /// have no environment to carry (see `codegen_c.rs::write_closure`).
+    /// have no environment to carry (see the removed C backend's `write_closure`).
     ///
     /// Calling one goes through `tir::ExprKind::IndirectCall`, exactly as a
     /// `Ty::Fn` does; codegen is what knows a closure's call spelling
@@ -457,7 +457,7 @@ impl Ty {
     /// signed type can express its own floor, `max` unsigned so `u64`/`usize`
     /// can express theirs. `None` for anything that is not an integer.
     ///
-    /// Two passes need this and they have to agree: `codegen_c.rs` uses it to
+    /// Two passes need this and they have to agree: the removed C backend uses it to
     /// decide whether a `to_<T>` conversion needs a range check, and
     /// `infer.rs` uses it to decide which conversions *have* a `try_to_<T>`
     /// twin and what that twin tests.
@@ -664,10 +664,10 @@ impl Ty {
 
 /// `ret (*)(params)`'s parameter half: `void` for none, the C parameter types
 /// otherwise. Shared with `c_decl`, since a declarator and a bare function
-/// pointer type differ only in where the name goes, and with `codegen_c.rs`,
+/// pointer type differ only in where the name goes, and with the removed C backend,
 /// which writes the same list for a function that returns a function value. A
 /// `unit` parameter is not written, for the same reason a `unit` parameter of
-/// a `fun` declaration is not (`codegen_c.rs::write_params`): no value crosses
+/// a `fun` declaration is not (the removed C backend's `write_params`): no value crosses
 /// for it, so a pointer to such a function takes exactly the parameters the
 /// callee's own definition takes.
 pub(crate) fn fn_params_c(params: &[Ty]) -> String {
@@ -711,16 +711,6 @@ pub fn closure_parts(ty: &Ty) -> Option<(&[Ty], &Ty)> {
     }
 }
 
-/// The mangled signature fragment of a closure-shaped type. Shared by the
-/// closure machinery and the `Mutex.lock` body, which is one body per
-/// signature whichever spelling produced it (B-5).
-pub fn closure_mangle_of(ty: &Ty) -> String {
-    match closure_parts(ty) {
-        Some((params, ret)) => closure_mangle(params, ret),
-        None => unreachable!("not a closure signature: {}", ty.display()),
-    }
-}
-
 /// The `Ty::Closure` spelling of a closure-shaped signature, so the body emitted
 /// for a `scoped fun(...)` block shares the key a thread's `closure(...)` entry
 /// uses (B-5).
@@ -746,14 +736,14 @@ pub fn closure_c_type(params: &[Ty], ret: &Ty) -> String {
 
 /// The name of one field of a literal's environment (`c0`, `c1`, …). One
 /// place names them, because `infer.rs` writes the environment's field list
-/// and `codegen_c.rs` emits the reads.
+/// and the removed C backend emits the reads.
 pub fn capture_field(index: usize) -> String {
     format!("c{index}")
 }
 
 /// The generated C struct tag for a literal's environment, and the function
 /// that frees it (A-4 phase E). One place names both, because `infer.rs`
-/// records them on the generated function and `codegen_c.rs` emits them.
+/// records them on the generated function and the removed C backend emits them.
 pub fn env_struct_name(literal_key: &str) -> String {
     format!("kelp_Env__{}", c_ident(literal_key))
 }
@@ -1055,7 +1045,7 @@ pub const ORD_TRAIT: &str = "std.ops.Ord";
 pub const DISPLAY_TRAIT: &str = "std.fmt.Display";
 
 /// The emitted symbol of a type's declared destructor, the same spelling on
-/// both backends (`codegen_c.rs::write_signature` and
+/// both backends (the removed C backend's `write_signature` and
 /// `codegen_llvm.rs::symbol_name` both mangle the `Type#name` key the same
 /// way). The generated `kelp_drop_<T>` calls this at the top of its body.
 pub fn user_drop_fn_name(type_name: &str) -> String {
@@ -1084,7 +1074,7 @@ pub fn needs_drop(ty: &Ty, owned_structs: &std::collections::HashSet<String>) ->
 }
 
 /// The C function that frees a value of `ty`, taking a pointer to it.
-/// Generated per `datac` by `codegen_c.rs`; the builtins are in the fixed
+/// Generated per `datac` by the removed C backend; the builtins are in the fixed
 /// runtime preamble.
 pub fn drop_fn_name(ty: &Ty) -> String {
     match ty {
@@ -1129,7 +1119,7 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 /// the container's own element type is decided: an element lives in the list's
 /// own buffer, so the element type has to be a complete, droppable C type with
 /// a name, and a container that still carries the open-container marker has
-/// neither. `container_depth` in `codegen_c.rs` emits a nested container
+/// neither. `container_depth` in the removed C backend emits a nested container
 /// before the one that contains it, so every typedef and every function the
 /// outer list calls already exists. A `Map` stays out because a map value is
 /// not a container either.
@@ -1454,7 +1444,7 @@ pub fn is_ptr_element(ty: &Ty) -> bool {
 /// a byte-order access from the older `Bytes` methods (`get`, `set`, ...) that
 /// go through the runtime object.
 ///
-/// The name itself carries the whole answer, so the frontend, `codegen_c.rs`
+/// The name itself carries the whole answer, so the frontend, the removed C backend
 /// and `codegen_llvm.rs` read one table rather than each parsing the name and
 /// disagreeing about a width.
 pub fn bytes_endian_access(op: &str) -> Option<(usize, bool, Ty)> {
@@ -1819,8 +1809,8 @@ pub fn tuple_struct_def(name: &str, elems: &[Ty]) -> StructDef {
 /// The size and alignment of one type, in bytes, as the C compiler lays it out
 /// on the x86-64 target this compiler builds for. It is what `size_of`,
 /// `align_of` and `offset_of` report, and it exists so the LLVM backend and the
-/// C oracle can be checked against the same numbers rather than each assuming
-/// the other agrees (kernel stage 2).
+/// C text it writes can be checked against the same numbers rather than each
+/// assuming the other agrees (kernel stage 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
     pub size: u64,
@@ -2070,12 +2060,6 @@ pub fn dyn_c_type(trait_name: &str) -> String {
     format!("kelp_Dyn__{}", c_ident(trait_name))
 }
 
-/// The C typedef name of one trait's vtable struct: one field per method, the
-/// supertraits' methods first (`plan/traits.md` 9.4).
-pub fn dyn_vtable_c_type(trait_name: &str) -> String {
-    format!("kelp_VTable__{}", c_ident(trait_name))
-}
-
 /// The emitted symbol of one `(trait, type)` vtable, the same name in both
 /// backends so a diagnostic or a `nm` line reads the same either way.
 pub fn dyn_vtable_symbol(trait_name: &str, type_name: &str) -> String {
@@ -2139,13 +2123,13 @@ pub struct StructDef {
     pub fields: Vec<FieldDef>,
     /// The `repr(...)` clause, or `Repr::C` for the default C layout
     /// (kernel stage 2). It decides the field offsets and the type's own
-    /// alignment, in this backend and in the C oracle alike.
+    /// alignment, in this backend and in the C text it writes alike.
     pub repr: Repr,
     /// Position in the program's merged declaration order, across every
     /// `datac` *and* `enum` (A-1). A field or payload may only name an
     /// earlier declaration by value, so this order is a valid topological
     /// order — for `owned_types`' single pass and for the C typedefs
-    /// `codegen_c.rs` emits.
+    /// the removed C backend emits.
     pub order: usize,
 }
 

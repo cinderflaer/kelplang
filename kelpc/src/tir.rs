@@ -1,5 +1,5 @@
 //! Typed intermediate representation produced by `infer.rs` and consumed by
-//! `codegen_c.rs` (and, from M3 onward, `borrowck.rs`).
+//! the removed C backend (and, from M3 onward, `borrowck.rs`).
 
 use crate::ast::{AsmOperandKind, BinOp, UnOp};
 use crate::lexer::Span;
@@ -9,19 +9,19 @@ use crate::types::{EnumDef, StructDef, Ty};
 pub struct Program {
     pub structs: Vec<StructDef>,
     /// `enum` declarations (A-1), in the same merged declaration order as
-    /// `structs` — each carries its `order`, so `codegen_c.rs` can emit the
+    /// `structs` — each carries its `order`, so the removed C backend can emit the
     /// two kinds in one interleaved sequence. An `enum` value is a
     /// `Ty::Struct` at the type level; this table is what makes it a tagged
     /// union instead of a record.
     pub enums: Vec<EnumDef>,
     /// Passdowns (M5.2) in initialization order — module load order, then
-    /// declaration order within a module. `codegen_c.rs` emits one global
+    /// declaration order within a module. the removed C backend emits one global
     /// per entry plus a generated init function that runs before `main`'s
     /// body.
     pub pds: Vec<Pd>,
     pub functions: Vec<Function>,
     /// Capability grants, one per (module, domain) that holds any (M7).
-    /// `codegen_c.rs` emits each as constant data and checks the arguments of
+    /// the removed C backend emits each as constant data and checks the arguments of
     /// every gated call against it.
     pub caps: Vec<CapsGrant>,
     /// Function key -> the capability domain of the module that declares it.
@@ -46,25 +46,20 @@ pub struct Program {
     pub drop_types: std::collections::HashSet<String>,
     /// Full (prefixed) function name -> the bare native symbol it binds to,
     /// for a *user*-declared `extern fun` (MK9-S1-M1, roadmap B-1) —
-    /// `codegen_c.rs::write_extern` reads this instead of `externs.rs` when a
+    /// the removed C backend's `write_extern` reads this instead of `externs.rs` when a
     /// function's module has no compiler-supplied body, and writes a
     /// direct-call trampoline to the symbol rather than looking up compiled-in
     /// C text. Empty for a program that declares no user FFI, which behaves
     /// exactly as before this feature existed.
     pub extern_ffi_symbols: std::collections::HashMap<String, String>,
     /// The C headers the project's `[extern.*] header` keys name,
-    /// deduplicated and sorted. `codegen_c.rs` emits one `#include <header>`
+    /// deduplicated and sorted. the removed C backend emits one `#include <header>`
     /// line per entry after the fixed preamble, and `codegen_llvm.rs` writes
     /// the same lines into the separately-compiled extern object, so a native
     /// symbol the runtime does not already declare has a prototype. Empty
     /// when no section names a header, which leaves the generated C text
     /// byte-for-byte what it was before the key existed.
     pub extern_headers: Vec<String>,
-    /// The canonical names of the program's `extern type` handles (gap 1),
-    /// sorted so both backends emit the same order. Each one is `void*`
-    /// behind its own C typedef, emitted with the other type definitions; a
-    /// program that declares none leaves the generated output unchanged.
-    pub handles: Vec<String>,
     /// The top-level integer-array `const`s that carry a `section("...")`
     /// clause (kernel stage 4), sorted by name so both backends emit them in
     /// one order. Each is emitted as read-only data in its section so a linker
@@ -232,7 +227,7 @@ pub struct Function {
     /// `Span` is only meaningful inside its own file).
     pub module: String,
     /// `extern fun` (M6.2): the body below is synthetic (empty) and
-    /// `codegen_c.rs` writes the compiler-supplied C for it instead.
+    /// the removed C backend writes the compiler-supplied C for it instead.
     pub extern_: bool,
     /// The environment this function receives, when it is a `fun` literal that
     /// captured something (A-4 phase E): `Some` makes the generated C
@@ -572,7 +567,7 @@ pub enum ExprKind {
         expr: Box<Expr>,
     },
     /// A `print`/`print!` of an interpolated string template, kept as its
-    /// pieces so `codegen_c.rs` can emit exactly one `printf` with one
+    /// pieces so the removed C backend can emit exactly one `printf` with one
     /// generated format string (rather than concatenating anything, which v1
     /// has no owned string type to do).
     Template {

@@ -69,13 +69,11 @@ pub const FENCE_FN: &str = "std.thread.fence";
 pub const SPAWN_FN: &str = "std.thread.spawn";
 pub const JOIN_FN: &str = "std.thread.join";
 
-/// The declaration `ThreadErr`'s name and the one field it carries, in the
-/// shipped `std/thread` module. Both backends build the `Err` arm of
-/// `thread.join`'s result at the call site, and they spell the `datac` and its
-/// field through these, so a rename in the module cannot leave one of them
-/// constructing a struct the declaration no longer has.
+/// The declaration `ThreadErr`'s name in the shipped `std/thread` module. The
+/// backend builds the `Err` arm of `thread.join`'s result at the call site and
+/// spells the `datac` through this, so a rename in the module cannot leave the
+/// call site constructing a struct the declaration no longer has.
 pub const THREAD_ERR_NAME: &str = "ThreadErr";
-pub const THREAD_ERR_MESSAGE_FIELD: &str = "message";
 
 /// Whether `key` is one of the two thread calls above. One predicate rather
 /// than a `matches!` at each of the two sites that recognize them, because the

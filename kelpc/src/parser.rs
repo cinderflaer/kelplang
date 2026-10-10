@@ -4348,7 +4348,7 @@ impl Parser {
     ///
     /// - `when { cond -> value, ..., else -> value }` — no scrutinee, so it
     ///   is desugared here and now to a nested `if`/`else` chain; `infer.rs`
-    ///   and `codegen_c.rs` never see this form at all.
+    ///   and the removed C backend never see this form at all.
     /// - `when expr { Variant(bind) -> value, ..., else -> value }` — a
     ///   pattern match (A-1), kept as `Expr::When` because only `infer.rs`
     ///   knows the scrutinee's type, and therefore which variants exist.
