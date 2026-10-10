@@ -1,0 +1,14 @@
+[package]
+name = "gc-alloc-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Own workspace: built by its own cargo command, not by kelpc.
+[workspace]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+debug = false
