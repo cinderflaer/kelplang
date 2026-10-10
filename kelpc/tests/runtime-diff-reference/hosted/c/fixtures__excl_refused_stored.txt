@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/excl_refused_stored.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: this is a scoped function value: it may only be passed to another 'scoped fun(...)' parameter, because it may not outlive the call it was written in — a plain function or closure parameter could store it or return it
-  --> <root>/kelpc/tests/fixtures/excl_refused_stored.kp:7:24
-run-status: not run

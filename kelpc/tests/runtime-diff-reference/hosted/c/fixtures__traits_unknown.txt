@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_unknown.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'impl Shape for Circle' names no declared trait: declare 'trait Shape { ... }' first (or import the module that does)
-  --> <root>/kelpc/tests/fixtures/traits_unknown.kp:4:1
-run-status: not run

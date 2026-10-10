@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/elision_wrong_param.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot return a borrow of 'b': '&str' borrows from its first reference parameter 'a', so the returned value must be derived from 'a'
-  --> <root>/kelpc/tests/fixtures/elision_wrong_param.kp:3:43
-run-status: not run

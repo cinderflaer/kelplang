@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/list_insert_open_list.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'List<unit>' cannot be a 'List' element: a container whose element type is not decided yet has no element type to name, so push a value into it (or write its element type) before using it as an element
-  --> <root>/kelpc/tests/fixtures/list_insert_open_list.kp:6:18
-run-status: not run

@@ -1,8 +1,0 @@
-unit: kelpc/tests/projects/std_internal_import/main.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'impl "std/internal/cache"' names the compiler-reserved std/internal namespace
-  --> <root>/kelpc/tests/projects/std_internal_import/main.kp:1:1
-run-status: not run

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/partial_move_enum_payload_from_borrow.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: return type mismatch: expected 'String', found '&String'
-  --> <root>/kelpc/tests/fixtures/partial_move_enum_payload_from_borrow.kp:11:9
-run-status: not run

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/unknown_escape.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: unknown escape '\q' in a string literal: the escapes are \n, \t, \r, \", \\, \$ and \xNN
-  --> <root>/kelpc/tests/fixtures/unknown_escape.kp:4:11
-run-status: not run

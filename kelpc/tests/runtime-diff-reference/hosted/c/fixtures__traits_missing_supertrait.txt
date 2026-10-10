@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_missing_supertrait.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'impl Named for C' is missing its supertrait: 'Named' needs 'impl Shape for C' as well, because trait 'Named' inherits from 'Shape'
-  --> <root>/kelpc/tests/fixtures/traits_missing_supertrait.kp:13:1
-run-status: not run

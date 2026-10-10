@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/repr_align_not_power_of_two.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'repr(align(3))' needs a power of two: 1, 2, 4, 8, 16, ... are the alignments a type can have
-  --> <root>/kelpc/tests/fixtures/repr_align_not_power_of_two.kp:2:12
-run-status: not run

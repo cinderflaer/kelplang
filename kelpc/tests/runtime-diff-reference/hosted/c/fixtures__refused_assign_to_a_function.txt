@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/refused_assign_to_a_function.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot assign to this expression: it is not a variable, a field or an element
-  --> <root>/kelpc/tests/fixtures/refused_assign_to_a_function.kp:6:5
-run-status: not run

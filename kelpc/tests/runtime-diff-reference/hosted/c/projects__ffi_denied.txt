@@ -1,8 +1,0 @@
-unit: kelpc/tests/projects/ffi_denied
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'sys.getpid' needs the 'process' capability, which module 'util' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(process = ["<pattern>"])`)
-  --> <root>/kelpc/tests/projects/ffi_denied/src/util.kp:7:34
-run-status: not run

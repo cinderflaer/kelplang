@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/cursor_mut_alias.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot borrow 'a': already borrowed exclusively
-  --> <root>/kelpc/tests/fixtures/cursor_mut_alias.kp:9:13
-run-status: not run

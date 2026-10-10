@@ -1,9 +1,0 @@
-unit: kelpc/tests/fixtures/bytes_write_oob.kp
-backend: c
-build-status: 0
---- build stdout
---- build stderr
-run-status: 1
---- stdout
---- stderr
-panic: Bytes.write_u16_be: offset out of bounds

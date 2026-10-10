@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/hex_escape_needs_two_digits.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a hex escape is written '\xNN', with two hex digits
-  --> <root>/kelpc/tests/fixtures/hex_escape_needs_two_digits.kp:4:13
-run-status: not run

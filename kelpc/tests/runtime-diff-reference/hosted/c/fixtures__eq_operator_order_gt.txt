@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/eq_operator_order_gt.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot compare 'P' values with '>': a datac has no generated equality
-  --> <root>/kelpc/tests/fixtures/eq_operator_order_gt.kp:10:11
-run-status: not run

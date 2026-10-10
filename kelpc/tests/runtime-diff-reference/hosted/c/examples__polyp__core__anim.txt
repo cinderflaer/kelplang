@@ -1,8 +1,0 @@
-unit: examples/polyp/core/anim.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: no 'main' function found
-  --> <root>/examples/polyp/core/anim.kp:1:1
-run-status: not run

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/atomic_ordering_reserved.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'Acquire' is not a variant of enum 'std.atomic.Ordering' — the variants are 'SeqCst'
-  --> <root>/kelpc/tests/fixtures/atomic_ordering_reserved.kp:10:26
-run-status: not run

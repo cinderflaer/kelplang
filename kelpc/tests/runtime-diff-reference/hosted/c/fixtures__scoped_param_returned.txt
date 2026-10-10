@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/scoped_param_returned.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: return type mismatch: expected 'fun(i32)', found 'scoped fun(i32)'
-  --> <root>/kelpc/tests/fixtures/scoped_param_returned.kp:4:5
-run-status: not run

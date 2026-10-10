@@ -1,7 +1,0 @@
-unit: kelpc/tests/projects/ffi_bad_rename
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: coral.toml C symbol for '[extern."sys"] symbols' must be a C identifier, found 'get-pid'
-run-status: not run

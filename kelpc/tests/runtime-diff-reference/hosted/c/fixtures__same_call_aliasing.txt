@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/same_call_aliasing.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot borrow 'c': already borrowed exclusively
-  --> <root>/kelpc/tests/fixtures/same_call_aliasing.kp:7:22
-run-status: not run

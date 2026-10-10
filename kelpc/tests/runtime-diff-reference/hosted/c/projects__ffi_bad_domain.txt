@@ -1,7 +1,0 @@
-unit: kelpc/tests/projects/ffi_bad_domain
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'disk' is not a capability domain; v1 has fs, net, process, env, time, rand, ui, mmio, irq, frames
-run-status: not run

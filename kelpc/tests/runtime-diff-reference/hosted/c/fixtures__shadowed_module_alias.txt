@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/shadowed_module_alias.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: datac 'str' has no method 'join' 'path' is a local binding here, so 'path.join' is not the module 'path'; rename the binding
-  --> <root>/kelpc/tests/fixtures/shadowed_module_alias.kp:9:11
-run-status: not run

@@ -1,9 +1,0 @@
-unit: kelpc/tests/projects/freestanding_print
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'print' is unavailable in a freestanding build: it writes through the hosted runtime's 'printf'
-  --> <root>/kelpc/tests/projects/freestanding_print/src/main.kp:5:5
---- nm -u
-(no image)

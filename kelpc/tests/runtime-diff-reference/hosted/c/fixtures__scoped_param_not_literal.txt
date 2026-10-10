@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/scoped_param_not_literal.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: argument 'f' has type 'fun(i32)', expected 'scoped fun(i32)': a scoped parameter accepts only a function literal or a trailing block written at this call site, never a stored value
-  --> <root>/kelpc/tests/fixtures/scoped_param_not_literal.kp:12:10
-run-status: not run

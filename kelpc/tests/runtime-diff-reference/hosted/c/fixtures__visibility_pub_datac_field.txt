@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/visibility_pub_datac_field.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'Boxed' is exported but its signature names 'Hidden', which module 'visibility_pub_datac_field' does not export: add 'pub' to 'Hidden', or make 'Boxed' private
-  --> <root>/kelpc/tests/fixtures/visibility_pub_datac_field.kp:5:24
-run-status: not run

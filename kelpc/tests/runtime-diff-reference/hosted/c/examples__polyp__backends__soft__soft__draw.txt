@@ -1,8 +1,0 @@
-unit: examples/polyp/backends/soft/soft/draw.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot find module 'deps/polyp/backends/soft/soft/fb': expected '<root>/examples/polyp/backends/soft/soft/deps/polyp/backends/soft/soft/fb.kp'
-  --> <root>/examples/polyp/backends/soft/soft/draw.kp:24:1
-run-status: not run

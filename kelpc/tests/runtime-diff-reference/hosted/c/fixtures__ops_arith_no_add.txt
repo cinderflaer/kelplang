@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/ops_arith_no_add.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot use '+' on 'P': it does not implement 'Add' from 'std/ops' (write 'impl Add for P { fun Self.add(rhs: &Self).return: P }', importing 'std/ops')
-  --> <root>/kelpc/tests/fixtures/ops_arith_no_add.kp:11:12
-run-status: not run

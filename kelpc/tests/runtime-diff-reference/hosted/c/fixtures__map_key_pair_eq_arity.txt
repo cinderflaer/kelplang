@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/map_key_pair_eq_arity.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'Key.eq' takes exactly one parameter, a shared borrow of 'Key', so write 'fun Key.eq(other: &Key).return: bool'
-  --> <root>/kelpc/tests/fixtures/map_key_pair_eq_arity.kp:7:1
-run-status: not run

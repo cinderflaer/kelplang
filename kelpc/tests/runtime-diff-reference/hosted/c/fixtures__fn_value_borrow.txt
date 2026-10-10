@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/fn_value_borrow.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'mut' cannot be written on the function type 'fun(i32).return: i32' — a function value is Copy (it is a plain function pointer), so there is nothing to write through; write the type without 'mut'
-  --> <root>/kelpc/tests/fixtures/fn_value_borrow.kp:5:17
-run-status: not run

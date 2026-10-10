@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/fn_literal_tail_type.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: this 'fun' literal is declared to return 'i32' but its body evaluates to 'unit'
-  --> <root>/kelpc/tests/fixtures/fn_literal_tail_type.kp:4:13
-run-status: not run

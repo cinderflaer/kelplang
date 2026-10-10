@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/array_repeat_owns_memory.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the repeat form '[x; N]' needs an element that owns nothing, and 'String' owns memory. Copying it into 4 slots would make 4 owners of the same buffer; write the elements out ('[a, b, c]') instead
-  --> <root>/kelpc/tests/fixtures/array_repeat_owns_memory.kp:6:27
-run-status: not run

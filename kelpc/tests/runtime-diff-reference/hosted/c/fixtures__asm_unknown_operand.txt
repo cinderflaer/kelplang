@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/asm_unknown_operand.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: unknown asm operand kind 'sideways': expected 'in', 'out', 'inout' or 'clobber'
-  --> <root>/kelpc/tests/fixtures/asm_unknown_operand.kp:7:20
-run-status: not run

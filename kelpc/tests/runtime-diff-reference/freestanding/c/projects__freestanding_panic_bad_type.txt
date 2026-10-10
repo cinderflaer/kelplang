@@ -1,9 +1,0 @@
-unit: kelpc/tests/projects/freestanding_panic_bad_type
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the freestanding panic handler 'kp_panic' must be a 'fun(msg: str)' or a 'fun(msg: str, file: str, line: u32)', with no return, which are the shapes the compiler's checks call
-  --> <root>/kelpc/tests/projects/freestanding_panic_bad_type/src/main.kp:9:1
---- nm -u
-(no image)

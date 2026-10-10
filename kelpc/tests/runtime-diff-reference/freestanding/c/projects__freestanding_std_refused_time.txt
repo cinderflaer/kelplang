@@ -1,9 +1,0 @@
-unit: kelpc/tests/projects/freestanding_std_refused_time
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the module 'std/time' is unavailable in a freestanding build: it needs a hosted runtime (libc or the 'kelp_rt' helpers); the std modules a freestanding project may implement are std/arena, std/atomic, std/convert, std/frame, std/irq, std/iter, std/list, std/math, std/ops, std/option, std/regex, std/result, std/str
-  --> <root>/kelpc/tests/projects/freestanding_std_refused_time/src/std/time.kp:1:1
---- nm -u
-(no image)

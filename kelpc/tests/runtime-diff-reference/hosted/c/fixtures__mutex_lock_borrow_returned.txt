@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/mutex_lock_borrow_returned.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: return type mismatch: expected 'unit', found 'mut i64'
-  --> <root>/kelpc/tests/fixtures/mutex_lock_borrow_returned.kp:6:9
-run-status: not run

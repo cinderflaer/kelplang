@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_inherent_collision.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'impl Shape for Circle' declares 'Circle.area', which 'Circle' already has as an explicit method: a trait method and an explicit method cannot share a name, so rename one of them
-  --> <root>/kelpc/tests/fixtures/traits_inherent_collision.kp:11:5
-run-status: not run

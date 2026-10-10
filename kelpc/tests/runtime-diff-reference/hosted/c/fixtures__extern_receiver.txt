@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/extern_receiver.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'extern' cannot be used on a receiver method — declare it as a free function
-  --> <root>/kelpc/tests/fixtures/extern_receiver.kp:3:8
-run-status: not run

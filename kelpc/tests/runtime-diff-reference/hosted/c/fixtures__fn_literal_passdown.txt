@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/fn_literal_passdown.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a 'fun' literal cannot read passdown 'base' — a passdown is passed to the function that names it as a hidden argument, and a function value is a plain pointer to code; pass the value as a parameter instead
-  --> <root>/kelpc/tests/fixtures/fn_literal_passdown.kp:6:43
-run-status: not run

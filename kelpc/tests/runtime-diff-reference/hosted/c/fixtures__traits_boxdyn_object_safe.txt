@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_boxdyn_object_safe.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'Box<dyn Maker>' is not allowed: method 'make' returns 'Self', and a trait object does not know the concrete type it would build
-  --> <root>/kelpc/tests/fixtures/traits_boxdyn_object_safe.kp:7:17
-run-status: not run

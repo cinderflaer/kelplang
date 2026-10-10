@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/enum_datac_scrutinee.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'when' with a scrutinee matches an 'enum', but 'Point' is a datac — read its fields with '.' instead
-  --> <root>/kelpc/tests/fixtures/enum_datac_scrutinee.kp:3:37
-run-status: not run

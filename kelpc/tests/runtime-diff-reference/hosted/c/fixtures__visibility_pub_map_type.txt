@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/visibility_pub_map_type.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'tally' is exported but its signature names 'Hidden', which module 'visibility_pub_map_type' does not export: add 'pub' to 'Hidden', or make 'tally' private
-  --> <root>/kelpc/tests/fixtures/visibility_pub_map_type.kp:5:22
-run-status: not run

@@ -1,9 +1,0 @@
-unit: kelpc/tests/fixtures/view_of_temporary.kp
-backend: c
-build-status: 0
---- build stdout
---- build stderr
-run-status: 0
---- stdout
-x
---- stderr

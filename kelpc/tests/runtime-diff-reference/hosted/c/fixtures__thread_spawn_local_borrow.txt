@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/thread_spawn_local_borrow.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'thread.spawn' cannot send '&Atomic<i64>': a shared borrow may cross to a worker only when the place it borrows has process lifetime, which in v1 means a 'pd' global, and this one borrows a frame local that ends before the worker does; share a 'pd' value instead, or move an owned value in
-  --> <root>/kelpc/tests/fixtures/thread_spawn_local_borrow.kp:14:34
-run-status: not run

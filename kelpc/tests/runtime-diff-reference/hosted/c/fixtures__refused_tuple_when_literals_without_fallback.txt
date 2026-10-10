@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/refused_tuple_when_literals_without_fallback.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a position matched by literals needs an arm that matches anything there: add an arm with a name or '_' in that position, or 'else'
-  --> <root>/kelpc/tests/fixtures/refused_tuple_when_literals_without_fallback.kp:3:9
-run-status: not run

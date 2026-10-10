@@ -1,9 +1,0 @@
-unit: kelpc/tests/fixtures/int_conversion_overflow.kp
-backend: c
-build-status: 0
---- build stdout
---- build stderr
-run-status: 1
---- stdout
---- stderr
-panic: i64.to_u8: value out of range

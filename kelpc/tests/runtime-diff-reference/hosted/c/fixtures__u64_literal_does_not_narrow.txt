@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/u64_literal_does_not_narrow.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '18446744073709551615' does not fit 'i32': write a type that holds it, as in 'val big: u64 = 18446744073709551615'
-  --> <root>/kelpc/tests/fixtures/u64_literal_does_not_narrow.kp:6:22
-run-status: not run

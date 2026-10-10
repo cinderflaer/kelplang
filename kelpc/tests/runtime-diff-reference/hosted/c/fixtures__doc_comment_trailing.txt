@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/doc_comment_trailing.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '//!' is a documentation comment and must start a line: a '//!' after code on the same line documents nothing and is refused; write '//' for a note beside the code
-  --> <root>/kelpc/tests/fixtures/doc_comment_trailing.kp:4:14
-run-status: not run

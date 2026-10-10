@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/visibility_pub_fun_return.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'make' is exported but its signature names 'Secret', which module 'visibility_pub_fun_return' does not export: add 'pub' to 'Secret', or make 'make' private
-  --> <root>/kelpc/tests/fixtures/visibility_pub_fun_return.kp:5:30
-run-status: not run

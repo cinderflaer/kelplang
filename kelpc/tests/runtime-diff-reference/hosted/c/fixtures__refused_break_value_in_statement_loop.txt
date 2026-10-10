@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/refused_break_value_in_statement_loop.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: only a 'loop' used as a value can 'break' with one: write 'val x = loop { ... break value ... }'
-  --> <root>/kelpc/tests/fixtures/refused_break_value_in_statement_loop.kp:5:9
-run-status: not run

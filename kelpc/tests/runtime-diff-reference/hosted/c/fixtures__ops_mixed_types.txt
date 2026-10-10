@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/ops_mixed_types.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot use '+' on 'A' and 'B': the operands must have the same type
-  --> <root>/kelpc/tests/fixtures/ops_mixed_types.kp:20:12
-run-status: not run

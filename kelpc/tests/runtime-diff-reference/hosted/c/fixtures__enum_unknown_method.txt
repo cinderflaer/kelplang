@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/enum_unknown_method.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: enum 'Shape' has no method 'label'
-  --> <root>/kelpc/tests/fixtures/enum_unknown_method.kp:10:11
-run-status: not run

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/cursor_branch_join.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot assign to 'a' while it is borrowed
-  --> <root>/kelpc/tests/fixtures/cursor_branch_join.kp:11:5
-run-status: not run

@@ -1,7 +1,0 @@
-unit: kelpc/tests/projects/caps_entry_restricted
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_entry_restricted/**' must start with '/'
-run-status: not run

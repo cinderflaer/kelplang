@@ -1,8 +1,0 @@
-unit: kelpc/tests/projects/bad_path/main.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'my-util' is not a valid module name — use snake_case identifiers with no dashes or dots
-  --> <root>/kelpc/tests/projects/bad_path/main.kp:1:1
-run-status: not run

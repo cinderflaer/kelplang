@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/map_borrow_key.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '&i32' cannot be a container element: an element has to outlive the container that holds it, and v1 has no lifetime syntax to say so; use the owned type
-  --> <root>/kelpc/tests/fixtures/map_borrow_key.kp:5:16
-run-status: not run

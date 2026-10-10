@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/static_heap_type.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'String' cannot be a static's type: a static holds a Copy scalar, an integer/'bool'/'char' array, a 'datac' of those, or an 'Atomic<T>' — a heap type, a borrow, a 'View', a function value, a 'Ptr<T>' and an 'extern type' handle are all refused
-  --> <root>/kelpc/tests/fixtures/static_heap_type.kp:4:1
-run-status: not run

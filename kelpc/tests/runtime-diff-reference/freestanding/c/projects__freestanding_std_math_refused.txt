@@ -1,9 +1,0 @@
-unit: kelpc/tests/projects/freestanding_std_math_refused
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the call to 'std.math.sqrt' is unavailable in a freestanding build: it needs the hosted runtime, which 'std/math' reaches for everything but abs, clamp, max, min
-  --> <root>/kelpc/tests/projects/freestanding_std_math_refused/src/main.kp:4:18
---- nm -u
-(no image)

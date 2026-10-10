@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/refused_generic_impl_bound.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the call to 'show' needs 'Pair<i32, bool>' to implement the trait 'Describe': its impl needs 'bool' ('Pair' is parameter 'B') to implement 'Describe', and it does not
-  --> <root>/kelpc/tests/fixtures/refused_generic_impl_bound.kp:10:11
-run-status: not run

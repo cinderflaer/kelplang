@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/eq_operator_type_mismatch.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot compare 'A' with 'B'
-  --> <root>/kelpc/tests/fixtures/eq_operator_type_mismatch.kp:9:11
-run-status: not run

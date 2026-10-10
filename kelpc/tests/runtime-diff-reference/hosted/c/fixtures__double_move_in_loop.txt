@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/double_move_in_loop.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: use of moved value 'p'
-  --> <root>/kelpc/tests/fixtures/double_move_in_loop.kp:9:17
-run-status: not run

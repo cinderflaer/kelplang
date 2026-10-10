@@ -1,8 +1,0 @@
-unit: examples/polyp/backends/gtk/queue.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: no 'main' function found
-  --> <root>/examples/polyp/backends/gtk/queue.kp:1:1
-run-status: not run

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/map_move.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: use of moved value 'a'
-  --> <root>/kelpc/tests/fixtures/map_move.kp:6:11
-run-status: not run

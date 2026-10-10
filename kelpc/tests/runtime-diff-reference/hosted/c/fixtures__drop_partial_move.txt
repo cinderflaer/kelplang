@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/drop_partial_move.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot move field 'leaf' out of 'h' by value: it is a type with a destructor, and a partial move zeroes the slot it came from, so the base's own drop would run that destructor a second time; take the whole value by moving it, or use it through a borrow
-  --> <root>/kelpc/tests/fixtures/drop_partial_move.kp:13:17
-run-status: not run

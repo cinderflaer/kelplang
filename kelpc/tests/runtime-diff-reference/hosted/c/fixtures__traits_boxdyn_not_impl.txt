@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_boxdyn_not_impl.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: expected 'Box<dyn Shape>', found 'Box<i32>': 'i32' does not implement 'Shape', so write 'impl Shape for i32' first
-  --> <root>/kelpc/tests/fixtures/traits_boxdyn_not_impl.kp:10:10
-run-status: not run

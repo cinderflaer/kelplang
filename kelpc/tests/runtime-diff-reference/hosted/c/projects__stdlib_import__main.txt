@@ -1,8 +1,0 @@
-unit: kelpc/tests/projects/stdlib_import/main.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'impl "std/zzz_unshipped"' — stdlib module 'zzz_unshipped' is not implemented yet (shipped today: std/mem, std/str, std/path, std/math, std/fs, std/time, std/source, std/sys, std/trace, std/rand, std/env, std/fmt, std/io, std/process, std/net, std/tls, std/tlsfile, std/http, std/ws, std/encoding, std/list, std/option, std/result, std/iter, std/convert, std/ops, std/atomic, std/thread, std/pool, std/arena, std/sync, std/irq, std/frame, std/regex, std/tz; the rest land in M6.3/M7)
-  --> <root>/kelpc/tests/projects/stdlib_import/main.kp:7:1
-run-status: not run

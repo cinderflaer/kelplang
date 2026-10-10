@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/static_assign_immutable.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot assign to 'static X': it is not declared 'static mut'
-  --> <root>/kelpc/tests/fixtures/static_assign_immutable.kp:6:5
-run-status: not run

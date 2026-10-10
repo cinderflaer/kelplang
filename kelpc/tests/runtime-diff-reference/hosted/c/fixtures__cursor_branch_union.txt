@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/cursor_branch_union.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot assign to 'b' while it is borrowed
-  --> <root>/kelpc/tests/fixtures/cursor_branch_union.kp:13:5
-run-status: not run

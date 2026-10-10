@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/refused_value_loop_without_break_value.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a 'loop' used as a value needs a 'break value' to produce one
-  --> <root>/kelpc/tests/fixtures/refused_value_loop_without_break_value.kp:3:13
-run-status: not run

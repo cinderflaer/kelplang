@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/refused_field_shared_then_write.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot borrow 's.items' as exclusive: already borrowed as shared
-  --> <root>/kelpc/tests/fixtures/refused_field_shared_then_write.kp:5:5
-run-status: not run

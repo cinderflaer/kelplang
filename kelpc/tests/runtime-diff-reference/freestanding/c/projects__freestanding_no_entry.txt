@@ -1,9 +1,0 @@
-unit: kelpc/tests/projects/freestanding_no_entry
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: no entry function 'kmain' found: coral.toml's '[target] entry' names a `fun` with no parameters and no return in the entry module
-  --> <root>/kelpc/tests/projects/freestanding_no_entry/src/main.kp:1:1
---- nm -u
-(no image)

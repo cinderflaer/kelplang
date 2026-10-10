@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_assoc_extra.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'type Out' is not declared by trait 'Src': an 'impl' binds exactly the trait's associated types, so remove it or add 'type Out' to the trait
-  --> <root>/kelpc/tests/fixtures/traits_assoc_extra.kp:10:5
-run-status: not run

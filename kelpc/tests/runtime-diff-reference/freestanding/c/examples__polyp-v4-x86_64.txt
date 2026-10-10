@@ -1,8 +1,0 @@
-unit: examples/polyp-v4-x86_64
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'examples/polyp-v4-x86_64' sets '[target] mode = "freestanding"', which only the llvm backend can build: the C backend's runtime preamble is libc (the KELPC_ORACLE switch cannot build a freestanding project)
---- nm -u
-(no image)

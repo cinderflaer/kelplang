@@ -1,8 +1,0 @@
-unit: kelpc/tests/projects/ffi_handle_print
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot pass a value of type 'mem.Buffer' to 'print': an 'extern type' is an opaque native handle with no printable value
-  --> <root>/kelpc/tests/projects/ffi_handle_print/src/main.kp:7:5
-run-status: not run

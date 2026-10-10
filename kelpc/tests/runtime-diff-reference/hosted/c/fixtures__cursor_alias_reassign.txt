@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/cursor_alias_reassign.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot assign to 'list' while it is borrowed
-  --> <root>/kelpc/tests/fixtures/cursor_alias_reassign.kp:13:5
-run-status: not run
