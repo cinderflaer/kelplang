@@ -1,0 +1,6 @@
+name = "t69_main_panic_no_drop"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[target]
+mode = "managed"

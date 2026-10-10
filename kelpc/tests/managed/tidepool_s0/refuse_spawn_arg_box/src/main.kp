@@ -1,0 +1,15 @@
+impl "std/thread"
+impl "std/result"
+// Step 0 (Tidepool R26, T20): a spawn argument that holds collected memory is
+// refused in managed mode, because the start record that holds it is not a root.
+fun take(b: move Box<i64>) {
+    print(b.get())
+}
+
+fun main() {
+    val t = thread.spawn(take, Box.of(5))
+    when thread.join(t) {
+        Ok(_) -> print("joined")
+        Err(e) -> print(e.message)
+    }
+}

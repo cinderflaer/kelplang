@@ -1,0 +1,1 @@
+'thread.spawn' cannot take a closure that captures values

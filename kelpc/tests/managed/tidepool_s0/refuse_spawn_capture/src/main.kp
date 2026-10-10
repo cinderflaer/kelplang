@@ -1,0 +1,13 @@
+impl "std/thread"
+impl "std/result"
+// Step 0 (Tidepool R27, T20): a closure that captures a value keeps its
+// environment in the collected heap, in a record the collector does not scan.
+fun main() {
+    val k: i64 = 3
+    val f = fun(x: i64).return: i64 = x + k
+    val t = thread.spawn(f, 2)
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}
