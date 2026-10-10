@@ -28,6 +28,13 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { sys::abort() }
 }
 
+/// The personality routine that core's unwinding code names. This crate builds
+/// with `panic = "abort"`, so no frame is ever unwound and this is never called.
+/// It exists only so the staticlib links without the unwinder.
+#[cfg(not(test))]
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_eh_personality() {}
+
 #[cfg(test)]
 #[path = "../../tests/gc/mod.rs"]
 mod tests;
