@@ -28,14 +28,21 @@ pub const KELP_GC_NOSCAN: u64 = 1;
 /// lands, the stub in `tests/managed_lower/gc_stub.rs` fixes the same
 /// signatures, and the golden test checks the IR against that stub.
 pub const GC_ALLOC: &str = "kelp_gc_alloc";
+pub const GC_ALLOC_ARRAY: &str = "kelp_gc_alloc_array";
 pub const GC_INIT: &str = "kelp_gc_init";
 pub const GC_SAFEPOINT: &str = "kelp_gc_safepoint";
+pub const GC_THREAD_ATTACH: &str = "kelp_gc_thread_attach";
+pub const GC_THREAD_DETACH: &str = "kelp_gc_thread_detach";
 
 /// The heap cap a managed program gets when its manifest names none: 256 MiB,
 /// paper 3.4 and the `heap_max` default. The minimum (the collection trigger
 /// floor) is 8 MiB.
 pub const DEFAULT_HEAP_MIN: u64 = 8 << 20;
 pub const DEFAULT_HEAP_MAX: u64 = 256 << 20;
+
+/// The descriptor id reserved for the noscan `u8` byte buffer (`String`,
+/// `Bytes`). The lowering's own table counts up from 1 and must stay below it.
+pub const U8_BUFFER_DESCR_ID: u64 = 0xFFFF0;
 
 /// The layout facts descriptor emission needs from the program. `codegen_llvm`
 /// implements it on its own state, so this module never reaches into `Gen`.
@@ -257,12 +264,23 @@ pub struct GcTypes<'a> {
     pub descr_ty: Type<'a>,
     /// `void* kelp_gc_alloc(const kelp_gc_type* t)`.
     pub alloc: (LlvmFunction<'a>, FnType<'a>),
-    /// `int32 kelp_gc_init(size_t heap_min, size_t heap_max)`, called once from
+    /// `void kelp_gc_init(size_t heap_min, size_t heap_max)`, called once from
     /// `main` before anything else (paper 3.4).
     pub init: (LlvmFunction<'a>, FnType<'a>),
+    /// `void* kelp_gc_alloc_array(const kelp_gc_type* elem, size_t count)`: a
+    /// zeroed array of `count` elements, the form every container buffer takes
+    /// (paper 3.4).
+    pub alloc_array: (LlvmFunction<'a>, FnType<'a>),
     /// `void kelp_gc_safepoint(void)`, a poll at loop back edges and call sites
     /// (paper 5.1).
     pub safepoint: (LlvmFunction<'a>, FnType<'a>),
+    /// `void kelp_gc_thread_attach(void)`: called once by `main` after
+    /// `kelp_gc_init`, and at the top of every spawned thread body, before its
+    /// first allocation.
+    pub thread_attach: (LlvmFunction<'a>, FnType<'a>),
+    /// `void kelp_gc_thread_detach(void)`: called before a spawned thread body
+    /// returns.
+    pub thread_detach: (LlvmFunction<'a>, FnType<'a>),
     cache: RefCell<HashMap<String, Value<'a>>>,
 }
 
@@ -278,15 +296,23 @@ impl<'a> GcTypes<'a> {
         );
         let alloc_ty = ctx.fn_type(ptr, &[ptr], false);
         let alloc = (module.add_function(GC_ALLOC, alloc_ty), alloc_ty);
+        let array_ty = ctx.fn_type(ptr, &[ptr, ctx.i64()], false);
+        let alloc_array = (module.add_function(GC_ALLOC_ARRAY, array_ty), array_ty);
         let init_ty = ctx.fn_type(ctx.void(), &[ctx.i64(), ctx.i64()], false);
         let init = (module.add_function(GC_INIT, init_ty), init_ty);
         let poll_ty = ctx.fn_type(ctx.void(), &[], false);
         let safepoint = (module.add_function(GC_SAFEPOINT, poll_ty), poll_ty);
+        let thread_ty = ctx.fn_type(ctx.void(), &[], false);
+        let thread_attach = (module.add_function(GC_THREAD_ATTACH, thread_ty), thread_ty);
+        let thread_detach = (module.add_function(GC_THREAD_DETACH, thread_ty), thread_ty);
         GcTypes {
             descr_ty,
             alloc,
+            alloc_array,
             init,
             safepoint,
+            thread_attach,
+            thread_detach,
             cache: RefCell::new(HashMap::new()),
         }
     }
@@ -346,6 +372,7 @@ impl<'a> GcTypes<'a> {
             (arr, offsets.len() as u64)
         };
         let id = self.cache.borrow().len() as u64 + 1;
+        assert!(id < U8_BUFFER_DESCR_ID, "descriptor table reached the reserved u8 buffer id");
         let fields = [
             ctx.const_int(i32t, id, false),
             ctx.const_int(i32t, size, false),
@@ -420,7 +447,7 @@ mod tests {
         ir.replace(&dir.display().to_string(), "@FIXTURE_DIR@")
     }
 
-    fn check_golden(actual: &str, golden: &str) {
+    pub(super) fn check_golden(actual: &str, golden: &str) {
         let path = fixture(golden);
         let actual = normalize(actual);
         if std::env::var("KELPC_WRITE_GOLDEN").as_deref() == Ok("1") {
@@ -469,7 +496,7 @@ mod tests {
     /// Lower a managed fixture, link it against the collector archive named by
     /// `KELP_GC_LIB` and run it. Returns the program's stdout. The archive is
     /// built from branch `gc-core` (`kelpc/gc`, `cargo build --release`).
-    fn link_and_run(name: &str) -> String {
+    pub(super) fn link_and_run(name: &str) -> String {
         let archive = std::env::var("KELP_GC_LIB").expect("KELP_GC_LIB names libkelp_gc.a");
         lower(name, true).expect("managed lowering");
         let stem = name.trim_end_matches(".kp");
@@ -621,5 +648,41 @@ mod container_layout {
         let mut out = Vec::new();
         pointer_offsets(&Fixed, &closure, 0, &mut out).unwrap();
         assert_eq!(out, vec![CLOSURE_ENV_OFFSET]);
+    }
+}
+
+#[cfg(test)]
+mod container_lowering {
+    //! The container fixture (`managed_lower/containers.kp`): each heap
+    //! container's allocation names the descriptor of its element, or of its
+    //! entry record or environment, in managed mode.
+    use super::tests::{check_golden, link_and_run, lower};
+
+    #[test]
+    fn containers_allocate_with_their_descriptors() {
+        let ir = lower("containers.kp", true).expect("managed lowering of containers.kp");
+        check_golden(&ir, "containers.managed.ll");
+        // The List<String> buffer is an array of String: one pointer slot at 0.
+        assert!(ir.contains("call ptr @kelp_gc_alloc_array(ptr @kelp_gc_type_String, i64"), "{ir}");
+        // The Map entries are an array of the entry record { String, Item, live }:
+        // the key's buffer at 0 and the value's name buffer at 24, size 64.
+        assert!(ir.contains("@kelp_gc_type_map_entry."), "{ir}");
+        assert!(ir.contains("i32 64, i32 8, i32 0, i32 2, ptr"), "{ir}");
+        // The Map index is a noscan u32 array: no pointer slots.
+        assert!(ir.contains("call ptr @kelp_gc_alloc_array(ptr @kelp_gc_type_u32, i64"), "{ir}");
+        // The capturing literal's environment names its Box capture.
+        assert!(ir.contains("@\"kelp_gc_type_env."), "{ir}");
+        assert!(ir.contains("call ptr @kelp_gc_alloc(ptr @\"kelp_gc_type_env."), "{ir}");
+        // Main joins the collector once, right after it starts (paper 5.1).
+        assert!(ir.contains("call void @kelp_gc_thread_attach()"), "{ir}");
+        // Managed containers never reach libc's allocator or free.
+        assert!(!ir.contains("call ptr @malloc"), "{ir}");
+        assert!(!ir.lines().any(|l| l.contains("call") && l.contains("@free(")), "{ir}");
+    }
+
+    #[test]
+    #[ignore = "links WP1's kelp_gc static library: set KELP_GC_LIB and run with --ignored; the managed run comparison stays ignored until the collector links"]
+    fn link_smoke_containers_prints_under_the_collector() {
+        assert_eq!(link_and_run("containers.kp"), "1\n42");
     }
 }

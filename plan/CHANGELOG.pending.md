@@ -23,3 +23,4 @@ empty on release.
 - Managed mode: GC type descriptors for `Map` headers and entries, closure environments and closure values are defined in `kelpc/src/gc_descr.rs`. Nothing emits them yet; the managed lowering still allocates through the stub path.
 - Managed builds (`-DKELP_GC_MANAGED`) allocate String and Bytes buffers from the collector and free nothing; hosted runtime output is byte-identical.
 - Managed mode tests: refusal fixtures for a Box and a Map value; a containers fixture (List of Strings, Map of datacs, a closure capturing a Box) whose managed run is ignored until the collector is linked.
+- Managed mode: List buffers, Map entry and index buffers and capturing closure environments allocate through `kelp_gc_alloc_array` and `kelp_gc_alloc` with their element, entry or environment descriptors; main and spawned threads call `kelp_gc_thread_attach`, and threads detach on exit. Hosted output is unchanged.
