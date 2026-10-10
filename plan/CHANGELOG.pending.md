@@ -27,6 +27,7 @@ empty on release.
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
 - `kelpc doc --text` prints the documentation as plain text (on branch lighthouse-support, not merged).
 - `kelpc` builtin listing is available as JSON (on branch lighthouse-support, not merged).
+- The LLVM backend takes the builtin heap layouts and the runtime prototypes from one table (stage 1 WP5); no language change.
 
 ## stdlib
 

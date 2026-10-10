@@ -2115,22 +2115,15 @@ impl<'a> Gen<'a> {
         // helpers instead of defined here.
         let printf_ty = ctx.fn_type(ctx.i32(), &[ptr], true);
         let printf_fn = module.add_function("printf", printf_ty);
-        // The builtin heap layouts, field for field the structs `kelp_rt.c`
-        // defines: a pointer, then a length, then a capacity (a `View` has no
-        // capacity). Keeping the order and the widths identical is what lets a
-        // pointer to one cross into the runtime (MK7 §3.3); the runtime's
-        // functions all take the pair by pointer or by value through the same
-        // C ABI the object was compiled for.
-        let mut structs = HashMap::new();
-        let bytes_ty = ctx.struct_type("kelp_Bytes");
-        ctx.struct_set_body(bytes_ty, &[ptr, ctx.i64(), ctx.i64()]);
-        structs.insert("Bytes".to_string(), bytes_ty);
-        let string_ty = ctx.struct_type("kelp_String");
-        ctx.struct_set_body(string_ty, &[ptr, ctx.i64(), ctx.i64()]);
-        structs.insert("String".to_string(), string_ty);
-        let view_ty = ctx.struct_type("kelp_View");
-        ctx.struct_set_body(view_ty, &[ptr, ctx.i64()]);
-        structs.insert("View".to_string(), view_ty);
+        // The builtin heap layouts, from `LAYOUTS`, the one table the C prelude
+        // and the runtime's own struct spellings are also checked against
+        // (MK7 §3.3). Keeping the order and the widths identical is what lets a
+        // pointer to one cross into the runtime; the runtime's functions all take
+        // the pair by pointer or by value through the same C ABI.
+        let mut structs = builtin_struct_types(ctx);
+        let bytes_ty = structs["Bytes"];
+        let string_ty = structs["String"];
+        let view_ty = structs["View"];
         // The widening's one-field environment (S2E): `{ ptr f }`, where `f` is
         // the code pointer a thunk calls through. One type for every signature,
         // since a pointer is a pointer here.
@@ -14864,6 +14857,142 @@ const E_KEY: u32 = 0;
 const E_VALUE: u32 = 1;
 const E_LIVE: u32 = 2;
 
+// ---- The builtin heap layouts: one source of truth (WP5, stage 1 plan 3.2) ----
+//
+// `LAYOUTS` and `PROTOTYPES` are the single list of the runtime's shared shapes.
+// The IR struct bodies (`Gen::new`, through `builtin_struct_types`) and the C
+// prelude (`program_c_source`) are both generated from them, so the two sides
+// of the LLVM backend cannot disagree. They use only `core` types and
+// `&'static` data, no kelpc types, so the Rust runtime's `abi` module can take
+// this block verbatim when WP0 lands `kelp-rt/src/abi.rs`; kelpc then reads the
+// table through its path dependency on that module instead of this copy.
+//
+// `runtime/kelp_rt.c` still spells the same structs for the C oracle until WP7.
+// `layout_tests` pins that copy against this table.
+
+/// The IR width of one field: `Ptr` is an opaque pointer, `I64` a 64-bit integer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldKind {
+    Ptr,
+    I64,
+}
+
+/// One field of a builtin layout: its IR width, and its C declaration exactly as
+/// the prelude writes it, without the trailing semicolon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Field {
+    pub kind: FieldKind,
+    pub c: &'static str,
+}
+
+/// One builtin heap layout: the key the compiler indexes it by, the C typedef
+/// name, and its fields in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub name: &'static str,
+    pub c_name: &'static str,
+    pub fields: &'static [Field],
+}
+
+/// The builtin heap layouts, field for field the structs `runtime/kelp_rt.c`
+/// defines (MK7 3.3): a pointer, a length and a capacity for `Bytes` and
+/// `String`, and a pointer and a length for `View`.
+pub const LAYOUTS: &[Layout] = &[
+    Layout {
+        name: "Bytes",
+        c_name: "kelp_Bytes",
+        fields: &[
+            Field { kind: FieldKind::Ptr, c: "unsigned char* data" },
+            Field { kind: FieldKind::I64, c: "size_t len" },
+            Field { kind: FieldKind::I64, c: "size_t cap" },
+        ],
+    },
+    Layout {
+        name: "String",
+        c_name: "kelp_String",
+        fields: &[
+            Field { kind: FieldKind::Ptr, c: "unsigned char* data" },
+            Field { kind: FieldKind::I64, c: "size_t len" },
+            Field { kind: FieldKind::I64, c: "size_t cap" },
+        ],
+    },
+    Layout {
+        name: "View",
+        c_name: "kelp_View",
+        fields: &[
+            Field { kind: FieldKind::Ptr, c: "const char* ptr" },
+            Field { kind: FieldKind::I64, c: "size_t len" },
+        ],
+    },
+];
+
+/// The C declarations the prelude writes for the runtime's helpers and process
+/// globals, in the order it writes them. A body that reaches a helper missing
+/// from this list fails `cc` (`-Werror=implicit-function-declaration`).
+pub const PROTOTYPES: &[&str] = &[
+    "void kelp_panic(const char* msg);",
+    "void kelp_panic_at(const char* msg, int p);",
+    "void kelp_panic_errno(const char* msg);",
+    "void kelp_panic_gai(const char* msg, int rc);",
+    "void kelp_panic_tls(const char* msg, const char* reason);",
+    "void kelp_io_flush_stdio(int fd);",
+    "bool kelp_utf8_valid(const unsigned char* p, size_t n);",
+    "kelp_Bytes kelp_bytes_alloc_raw(size_t n);",
+    "void kelp_bytes_drop(kelp_Bytes* b);",
+    "kelp_String kelp_String__empty(void);",
+    "kelp_String kelp_String__from_str(const char* text);",
+    "kelp_String kelp_String__from_bytes(kelp_Bytes b);",
+    "int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);",
+    "const char* kelp_env_lookup(const char* name);",
+    "int kelp_env_set(const char* name, const char* value);",
+    "int kelp_env_unset(const char* name);",
+    "void kelp_child_add(int pid);",
+    "bool kelp_child_has(int pid);",
+    "void kelp_child_remove(int pid);",
+    "extern _Thread_local int kelp_listen_loopback;",
+    "extern int kelp_argc;",
+    "extern char** kelp_argv;",
+];
+
+/// The C typedef of one layout, as the prelude writes it.
+fn c_typedef(layout: &Layout) -> String {
+    let mut out = String::from("typedef struct { ");
+    for field in layout.fields {
+        out.push_str(field.c);
+        out.push_str("; ");
+    }
+    out.push_str("} ");
+    out.push_str(layout.c_name);
+    out.push(';');
+    out
+}
+
+/// Every builtin layout's C typedef, one per line, in `LAYOUTS` order.
+fn c_layout_typedefs() -> String {
+    LAYOUTS.iter().map(|layout| c_typedef(layout) + "\n").collect()
+}
+
+/// The IR struct type of every builtin layout, keyed by `Layout::name`, with its
+/// body set. The names are the C typedef names, so a pointer to one crosses into
+/// the runtime with the layout the object was compiled for (MK7 3.3).
+fn builtin_struct_types<'a>(ctx: &'a Context) -> HashMap<String, Type<'a>> {
+    let mut out = HashMap::new();
+    for layout in LAYOUTS {
+        let ty = ctx.struct_type(layout.c_name);
+        let fields: Vec<Type<'a>> = layout
+            .fields
+            .iter()
+            .map(|field| match field.kind {
+                FieldKind::Ptr => ctx.opaque_ptr(),
+                FieldKind::I64 => ctx.i64(),
+            })
+            .collect();
+        ctx.struct_set_body(ty, &fields);
+        out.insert(layout.name.to_string(), ty);
+    }
+    out
+}
+
 /// The C translation unit carrying the compiler-supplied `extern fun` bodies
 /// this program reaches and the capability check's own C half (MK7 S3,
 /// plan §3.2 and §5), or `None` when it needs neither.
@@ -14947,11 +15076,9 @@ fn program_c_source(program: &Program) -> Option<String> {
     out.push_str(
         "/* The builtin heap layouts of `runtime/kelp_rt.c`: the extern bodies\n   \
          read and return these by value, so their field order and widths have to\n   \
-         be the runtime's own (MK7 3.3). */\n\
-         typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_Bytes;\n\
-         typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_String;\n\
-         typedef struct { const char* ptr; size_t len; } kelp_View;\n",
+         be the runtime's own (MK7 3.3). */\n",
     );
+    out.push_str(&c_layout_typedefs());
 
     // A body whose signature names a Kelp type needs that type to exist in this
     // file: the monomorphized containers and arrays it already repeated
@@ -14985,30 +15112,12 @@ fn program_c_source(program: &Program) -> Option<String> {
     // invented signature.
     out.push_str(
         "\n/* The runtime's own functions and process globals, defined in the\n   \
-         object `build.rs` compiles from `runtime/kelp_rt.c`. */\n\
-         void kelp_panic(const char* msg);\n\
-         void kelp_panic_at(const char* msg, int p);\n\
-         void kelp_panic_errno(const char* msg);\n\
-         void kelp_panic_gai(const char* msg, int rc);\n\
-         void kelp_panic_tls(const char* msg, const char* reason);\n\
-         void kelp_io_flush_stdio(int fd);\n\
-         bool kelp_utf8_valid(const unsigned char* p, size_t n);\n\
-         kelp_Bytes kelp_bytes_alloc_raw(size_t n);\n\
-         void kelp_bytes_drop(kelp_Bytes* b);\n\
-         kelp_String kelp_String__empty(void);\n\
-         kelp_String kelp_String__from_str(const char* text);\n\
-         kelp_String kelp_String__from_bytes(kelp_Bytes b);\n\
-         int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);\n\
-         const char* kelp_env_lookup(const char* name);\n\
-         int kelp_env_set(const char* name, const char* value);\n\
-         int kelp_env_unset(const char* name);\n\
-         void kelp_child_add(int pid);\n\
-         bool kelp_child_has(int pid);\n\
-         void kelp_child_remove(int pid);\n\
-         extern _Thread_local int kelp_listen_loopback;\n\
-         extern int kelp_argc;\n\
-         extern char** kelp_argv;\n",
+         object `build.rs` compiles from `runtime/kelp_rt.c`. */\n",
     );
+    for decl in PROTOTYPES {
+        out.push_str(decl);
+        out.push('\n');
+    }
 
     // The Kelp half of the runtime (`std/rt`), declared with the C backend's
     // own prototype writer. Only `path.normalize` calls into it today, and the
@@ -15925,7 +16034,7 @@ fn no_value(what: &str) -> String {
 
 #[cfg(test)]
 mod layout_tests {
-    use super::program_c_source;
+    use super::{builtin_struct_types, c_typedef, program_c_source, FieldKind, LAYOUTS, PROTOTYPES};
     use crate::lexer::Span;
     use crate::llvm_ffi::{Context, Module};
     use crate::tir::{Block, Function, Program};
@@ -15995,72 +16104,72 @@ mod layout_tests {
         };
         let source = program_c_source(&program).expect("one extern fun is one body");
 
-        // The layout text, written once in the prelude and once in the runtime.
+        // The layout text: the prelude's typedefs come from `LAYOUTS`, and the
+        // oracle's copy in `runtime/kelp_rt.c` must still define the same shapes.
         let runtime = strip_c_comments(include_str!("../runtime/kelp_rt.c"));
         let squeeze = |text: &str| text.split_whitespace().collect::<String>();
         let runtime = squeeze(&runtime);
-        let layouts = [
-            "typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_Bytes;",
-            "typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_String;",
-            "typedef struct { const char* ptr; size_t len; } kelp_View;",
-        ];
-        for want in layouts {
+        for layout in LAYOUTS {
+            let want = c_typedef(layout);
             assert!(
-                source.contains(want),
+                source.contains(&want),
                 "the extern prelude does not declare '{want}':\n{source}"
             );
             assert!(
-                runtime.contains(&squeeze(want)),
+                runtime.contains(&squeeze(&want)),
                 "'runtime/kelp_rt.c' does not define '{want}'"
             );
         }
 
-        // Every declared helper and global: named here so a body that starts
-        // calling a new one has to add it to both places at once.
-        let declarations = [
-            "void kelp_panic(const char* msg);",
-            "void kelp_panic_at(const char* msg, int p);",
-            "void kelp_panic_errno(const char* msg);",
-            "void kelp_panic_gai(const char* msg, int rc);",
-            "void kelp_panic_tls(const char* msg, const char* reason);",
-            "void kelp_io_flush_stdio(int fd);",
-            "bool kelp_utf8_valid(const unsigned char* p, size_t n);",
-            "kelp_Bytes kelp_bytes_alloc_raw(size_t n);",
-            "void kelp_bytes_drop(kelp_Bytes* b);",
-            "kelp_String kelp_String__empty(void);",
-            "kelp_String kelp_String__from_str(const char* text);",
-            "kelp_String kelp_String__from_bytes(kelp_Bytes b);",
-            "int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);",
-        ];
-        for decl in declarations {
+        // Every declared helper and global comes from `PROTOTYPES`: each one is
+        // written verbatim, and each helper is one `runtime/kelp_rt.c` defines.
+        for decl in PROTOTYPES {
             assert!(
                 source.contains(decl),
                 "the extern prelude does not declare '{decl}':\n{source}"
             );
-            let name = decl
-                .split_whitespace()
-                .nth(1)
-                .and_then(|rest| rest.split('(').next())
-                .expect("a declaration has a name");
-            assert!(
-                runtime.contains(&format!("{name}(")),
-                "'runtime/kelp_rt.c' does not define '{name}'"
-            );
+            if decl.contains('(') {
+                let name = c_decl_name(decl);
+                assert!(
+                    runtime.contains(&format!("{name}(")),
+                    "'runtime/kelp_rt.c' does not define '{name}'"
+                );
+            }
         }
-        // The two process globals: `build.rs` strips `static`, so the object
-        // defines them with the external linkage the prelude declares.
-        for decl in ["extern int kelp_argc;", "extern char** kelp_argv;"] {
-            assert!(
-                source.contains(decl),
-                "the extern prelude does not declare '{decl}':\n{source}"
-            );
-        }
-        for want in ["int kelp_argc = 0;", "char** kelp_argv = NULL;"] {
+        // The process globals: `build.rs` strips `static`, so the object defines
+        // them with the external linkage the prelude declares.
+        for want in [
+            "int kelp_argc = 0;",
+            "char** kelp_argv = NULL;",
+            "int kelp_listen_loopback = 0;",
+        ] {
             assert!(
                 runtime.contains(&squeeze(want)),
                 "'runtime/kelp_rt.c' does not define '{want}'"
             );
         }
+        // The loopback accessors (stage 1 plan 3.4) that the Rust cap glue calls
+        // in place of the variable. They are not in the prelude yet.
+        for want in [
+            "int kelp_listen_loopback_set(int v)",
+            "int kelp_listen_loopback_take(void)",
+        ] {
+            assert!(
+                runtime.contains(&squeeze(want)),
+                "'runtime/kelp_rt.c' does not define '{want}'"
+            );
+        }
+    }
+
+    /// The name a C declaration in `PROTOTYPES` declares: the identifier before
+    /// the parameter list, or before the semicolon for a global.
+    fn c_decl_name(decl: &str) -> &str {
+        let head = decl.split('(').next().expect("a declaration has a head");
+        let head = head.trim_end_matches(';');
+        head.split_whitespace()
+            .last()
+            .expect("a declaration names something")
+            .trim_start_matches('*')
     }
 
     /// The IR's builtin heap layouts must match the C structs in
@@ -16071,20 +16180,28 @@ mod layout_tests {
     /// bytes; this pins the agreement where it is made.
     #[test]
     fn the_builtin_heap_layouts_match_the_c_runtime() {
+        // The table itself: three layouts, and the field kinds the IR and the C
+        // typedefs are both written from.
+        let names: Vec<(&str, usize)> = LAYOUTS
+            .iter()
+            .map(|layout| (layout.name, layout.fields.len()))
+            .collect();
+        assert_eq!(names, [("Bytes", 3), ("String", 3), ("View", 2)]);
+        let bytes = LAYOUTS[0];
+        assert_eq!(
+            bytes.fields.iter().map(|f| f.kind).collect::<Vec<_>>(),
+            [FieldKind::Ptr, FieldKind::I64, FieldKind::I64]
+        );
+
         let ctx = Context::new();
         let module = Module::new(&ctx, "layout");
         let ptr = ctx.opaque_ptr();
-        let bytes = ctx.struct_type("kelp_Bytes");
-        ctx.struct_set_body(bytes, &[ptr, ctx.i64(), ctx.i64()]);
-        let string = ctx.struct_type("kelp_String");
-        ctx.struct_set_body(string, &[ptr, ctx.i64(), ctx.i64()]);
-        let view = ctx.struct_type("kelp_View");
-        ctx.struct_set_body(view, &[ptr, ctx.i64()]);
+        let types = builtin_struct_types(&ctx);
         // A named type is only printed once something references it, so one
         // declaration each is what puts the bodies into the module text.
-        module.add_function("probe_bytes", ctx.fn_type(bytes, &[ptr], false));
-        module.add_function("probe_string", ctx.fn_type(string, &[ptr], false));
-        module.add_function("probe_view", ctx.fn_type(view, &[ptr], false));
+        module.add_function("probe_bytes", ctx.fn_type(types["Bytes"], &[ptr], false));
+        module.add_function("probe_string", ctx.fn_type(types["String"], &[ptr], false));
+        module.add_function("probe_view", ctx.fn_type(types["View"], &[ptr], false));
         let ir = module.to_ir_string();
         assert!(
             ir.contains("%kelp_Bytes = type { ptr, i64, i64 }"),
