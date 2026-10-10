@@ -526,7 +526,7 @@ mod tests {
     /// with the collector archive `KELP_GC_LIB` names), then run it. Returns the
     /// program's stdout. The archive is built from branch `gc-core`
     /// (`kelpc/gc`, `cargo build --release`).
-    fn link_and_run(name: &str) -> String {
+    pub(super) fn link_and_run(name: &str) -> String {
         let mut sources = SourceMap::new();
         let loaded = resolve::load(&fixture(name), &mut sources, None, None).expect("load fixture");
         let typed = infer::check_program(&loaded.program, &loaded.project).expect("check fixture");
