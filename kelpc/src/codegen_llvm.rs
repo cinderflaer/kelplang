@@ -9953,7 +9953,7 @@ impl<'a> Gen<'a> {
     /// lists: the default libc allocator only, since a project's own allocator
     /// and a freestanding program keep their existing path.
     fn box_pooled(&self) -> bool {
-        self.alloc_fns.is_none() && self.freestanding.is_none()
+        !self.managed && self.alloc_fns.is_none() && self.freestanding.is_none()
     }
 
     /// The `Box<T>` allocation of `ty` in function `f`. Pooled, a block of a
@@ -10002,6 +10002,10 @@ impl<'a> Gen<'a> {
     /// inline; otherwise `kelp_box_free` runs, which also registers the thread.
     /// Unpooled, it is `heap_dealloc`.
     fn box_free_in(&self, f: LlvmFunction<'a>, ptr: Value<'a>, size: u64, align: u64) -> Result<(), String> {
+        // A managed build frees nothing: the collector reclaims the block.
+        if self.managed {
+            return Ok(());
+        }
         if !self.box_pooled() {
             return self.heap_dealloc(ptr, self.v_i64(size), align);
         }
@@ -10812,7 +10816,9 @@ impl<'a> Gen<'a> {
             let size = self.ld(i64t, size_slot, "size");
             let align_slot = self.builder.build_struct_gep(table_ty, table, 3, "align");
             let align = self.ld(i64t, align_slot, "align");
-            if self.box_pooled() {
+            if self.managed {
+                // The collector reclaims the block; only the drop above ran.
+            } else if self.box_pooled() {
                 let (free, fty) = self.libc_fn("kelp_box_free")?;
                 self.call(free, fty, &[data, size, align], "");
             } else {
