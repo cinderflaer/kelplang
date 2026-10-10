@@ -21,3 +21,4 @@ empty on release.
 - Managed mode: the checker now refuses a resource (a `Thread`, `Mutex`, `datac` holding one) in a `Box`, `List`, `Map`, array or closure environment, by name. The heap-slot hook runs after the pass; hosted builds are unchanged.
 - Managed mode: GC type descriptors for `Map` headers and entries, closure environments and closure values are defined in `kelpc/src/gc_descr.rs`. Nothing emits them yet; the managed lowering still allocates through the stub path.
 - Managed builds (`-DKELP_GC_MANAGED`) allocate String and Bytes buffers from the collector and free nothing; hosted runtime output is byte-identical.
+- Managed mode tests: refusal fixtures for a Box and a Map value; a containers fixture (List of Strings, Map of datacs, a closure capturing a Box) whose managed run is ignored until the collector is linked.

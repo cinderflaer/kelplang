@@ -1,0 +1,9 @@
+// A datac that owns a mutex is a resource. Managed mode refuses it by name as
+// a Map value.
+datac Gate(val m: Mutex<i32>)
+
+fun keep(g: Map<String, Gate>) {
+}
+
+fun main() {
+}

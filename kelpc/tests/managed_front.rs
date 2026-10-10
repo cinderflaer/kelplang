@@ -42,3 +42,20 @@ fn a_thread_in_a_list_is_refused_by_name_in_a_managed_project() {
     let msg = text(&out);
     assert!(msg.contains("'Thread<i32>' cannot be"), "{msg}");
 }
+
+#[test]
+fn a_datac_holding_a_thread_is_refused_in_a_box_by_name() {
+    let out = check("refuse_thread_in_box");
+    assert!(!out.status.success(), "a resource in a Box must be refused");
+    let msg = text(&out);
+    assert!(msg.contains("'Worker' cannot be the payload of a Box"), "{msg}");
+    assert!(msg.contains("'Worker' is a resource"), "{msg}");
+}
+
+#[test]
+fn a_datac_holding_a_mutex_is_refused_as_a_map_value_by_name() {
+    let out = check("refuse_mutex_in_map_value");
+    assert!(!out.status.success(), "a resource as a Map value must be refused");
+    let msg = text(&out);
+    assert!(msg.contains("'Gate' cannot be a Map value"), "{msg}");
+}
