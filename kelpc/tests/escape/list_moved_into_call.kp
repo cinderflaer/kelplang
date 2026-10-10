@@ -1,0 +1,15 @@
+// T94 refusal: the List is moved into a parameter of another function. A plain
+// List parameter is a shared borrow, so the move is written with 'move'.
+fun consume(xs: move List<i32>) {
+    print(xs.len())
+}
+
+fun run(n: i32) {
+    var xs: List<i32> = List.empty()
+    xs.push(n)
+    consume(xs)
+}
+
+fun main() {
+    run(2)
+}

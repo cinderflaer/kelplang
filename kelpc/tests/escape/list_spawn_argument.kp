@@ -1,0 +1,16 @@
+// T94 refusal: the List is passed to a thread spawn, which crosses to a worker.
+impl "std/thread"
+impl "std/result"
+fun worker(xs: move List<i32>).return: i32 {
+    return xs.get(0)
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(4)
+    val h = thread.spawn(worker, xs)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(_) -> print(0)
+    }
+}

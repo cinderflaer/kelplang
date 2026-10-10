@@ -1,0 +1,12 @@
+// T94 refusal: the List is captured by a closure literal, whose environment is
+// shared-pool memory.
+fun make(n: i32) {
+    var xs: List<i32> = List.empty()
+    xs.push(n)
+    val f = fun() .return: usize = xs.len()
+    print(f())
+}
+
+fun main() {
+    make(3)
+}

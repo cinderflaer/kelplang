@@ -1,0 +1,15 @@
+// T94 and T95 refusal: the List is borrowed mutably by a call, which could
+// grow it outside the block's checks (rule 2, the mutable-borrow sink).
+fun fill(xs: mut List<i32>, n: i32) {
+    xs.push(n)
+}
+
+fun run(n: i32) {
+    var xs: List<i32> = List.empty()
+    fill(xs, n)
+    print(xs.len())
+}
+
+fun main() {
+    run(2)
+}

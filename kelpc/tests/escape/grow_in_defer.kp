@@ -1,0 +1,11 @@
+// T95 refusal: a grow call on the List is the action of a defer, which has no
+// place to report a failed growth (R60).
+fun fill(n: i32) {
+    var xs: List<i32> = List.empty()
+    defer xs.push(n)
+    print(xs.len())
+}
+
+fun main() {
+    fill(1)
+}

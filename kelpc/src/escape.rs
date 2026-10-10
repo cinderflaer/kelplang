@@ -12,27 +12,33 @@
 //! - `Box.of(v)`, the block constructor of D8. Only this kind can be accepted.
 //! - `Box.set(v)`, which allocates the element of an empty box. D8 names no
 //!   block constructor for it, so it is refused.
-//! - A `List`, `Map`, `String` or `Bytes` value made by a constructor. Rule 4
-//!   refuses a container-valued allocation inside a block.
+//! - A `List`, `Map`, `String` or `Bytes` value made by a constructor. Step 2b
+//!   (R57, Q1, Q3, Q7, Q9) accepts a `List` or `Map` of numbers made with
+//!   `new`, `empty`, `with_capacity` or `of`. `String` and `Bytes` wait for the
+//!   byte buffer path (Q7).
 //! - A `fun` literal that captures something. Its environment is shared-pool
 //!   memory and D8 names no block constructor for it, so it is refused.
 //!
 //! The walk gives every expression a carry: the set of sites whose value may
 //! flow into it. A carry that reaches a sink (section 6, rule 2) refuses each
-//! site in it, and the sink is recorded by name. A site is accepted when it is
-//! a `Box.of` site that no sink reached.
+//! site in it, and the sink is recorded by name. A site is accepted when no
+//! sink reached it and no refusal was decided at the site (for a container,
+//! the form, the String and Bytes rule and the element rule).
 //!
 //! Known limits of this count (they make it a conservative estimate, not an
 //! exact one): sites inside shipped stdlib bodies are not counted, the
-//! implicit growth of a container on `push` is not a site, a call that takes a
-//! borrow is trusted not to keep it past the call (section 6, rule 2, which the
-//! writer must confirm in `borrowck.rs`), and an address-producing call is
-//! recognised by its name.
+//! implicit growth of a container on `push` is not a site, a container made by
+//! a method (`slice`, `keys`, `copy_range`) is not a site, a call that takes a
+//! shared borrow is trusted not to keep it past the call (section 6, rule 2,
+//! which the writer must confirm in `borrowck.rs`), an address-producing call
+//! is recognised by its name, and a `defer` is found by its line in the source
+//! text (the lowering in `defer.rs` leaves no mark in the typed program).
 
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::collections::{BTreeMap, HashMap};
 
+use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::stdlib;
 use crate::tir::{Block, Expr, ExprKind, Function, Program, Stmt};
@@ -92,6 +98,11 @@ pub enum Sink {
     SpawnArgument,
     /// An operand of inline asm.
     InlineAsm,
+    /// A container mutably borrowed by a call other than the container's own
+    /// method (R60, Q5): the call could grow it outside the block's checks.
+    MutableBorrowIntoCall,
+    /// A grow call (`push`, `insert` and the like) written in a defer (R60).
+    GrowInDefer,
 }
 
 impl Sink {
@@ -109,9 +120,20 @@ impl Sink {
             Sink::CapturedByScope => "captured by a scoped literal",
             Sink::SpawnArgument => "passed to a thread spawn",
             Sink::InlineAsm => "passed to inline asm",
+            Sink::MutableBorrowIntoCall => "mutably borrowed by a call",
+            Sink::GrowInDefer => "grown in a defer",
         }
     }
 }
+
+/// Refusal texts decided at a container site, before any sink is read.
+const REFUSE_FORM: &str = "Q3 and Q9: this form has no block constructor";
+const REFUSE_BYTES: &str = "Q7: String and Bytes wait for the byte buffer path";
+const REFUSE_ELEMENT: &str = "R57: the element holds a pointer, a resource or a usize";
+
+/// The container owners and their methods that can grow a buffer.
+const CONTAINER_OWNERS: [&str; 4] = ["List", "Map", "String", "Bytes"];
+const GROW_METHODS: [&str; 5] = ["push", "insert", "push_str", "append", "reserve"];
 
 /// One allocation site the analysis found in a program body.
 #[derive(Debug, Clone)]
@@ -120,25 +142,42 @@ pub struct Site {
     pub span: Span,
     pub kind: SiteKind,
     pub callee: String,
+    /// The constructor form: the name after `#` in the callee (`new`, `of`, ...).
+    pub form: String,
+    /// The element type of a container site, as the type displays it.
+    pub element: String,
+    /// A refusal decided at the site itself (container form, Q7, R57).
+    pub refused: Option<&'static str>,
+    /// The grow calls that reach this container (counted, not part of the share).
+    pub grows: usize,
     pub sinks: Vec<Sink>,
 }
 
 impl Site {
-    /// Accepted: a `Box.of` site that no sink reached.
+    /// Accepted: a `Box.of` site that no sink reached, or a container site
+    /// with no refusal at the site and no sink.
     pub fn accepted(&self) -> bool {
-        self.kind == SiteKind::BoxOf && self.sinks.is_empty()
+        match self.kind {
+            SiteKind::BoxOf => self.sinks.is_empty(),
+            SiteKind::Container => self.refused.is_none() && self.sinks.is_empty(),
+            SiteKind::BoxSet | SiteKind::Closure => false,
+        }
     }
 
     /// The reason a site is refused, in the words the dry run prints. An
     /// accepted site returns `"accepted"`.
     pub fn reason(&self) -> &'static str {
         match self.kind {
-            SiteKind::Container => "rule 4: container buffer",
             SiteKind::BoxSet | SiteKind::Closure => "not a block constructor (D8)",
-            SiteKind::BoxOf => match self.sinks.first() {
-                Some(sink) => sink.name(),
-                None => "accepted",
-            },
+            SiteKind::BoxOf | SiteKind::Container => {
+                if let Some(why) = self.refused {
+                    return why;
+                }
+                match self.sinks.first() {
+                    Some(sink) => sink.name(),
+                    None => "accepted",
+                }
+            }
         }
     }
 }
@@ -171,14 +210,10 @@ impl Report {
         map
     }
 
-    /// The sites that would be accepted if rule 4 (containers) were lifted:
-    /// every `Box.of` and container site that no sink reached. Informational
-    /// only; rule 4 stands in version 1.
-    pub fn accepted_without_rule_4(&self) -> usize {
-        self.sites
-            .iter()
-            .filter(|s| matches!(s.kind, SiteKind::BoxOf | SiteKind::Container) && s.sinks.is_empty())
-            .count()
+    /// The grow calls that reach an accepted container, counted once per
+    /// accepted site they reach. Printed beside the share, not part of it.
+    pub fn grow_calls_on_accepted(&self) -> usize {
+        self.sites.iter().filter(|s| s.accepted()).map(|s| s.grows).sum()
     }
 
     /// The number of refused sites for each reason.
@@ -191,13 +226,28 @@ impl Report {
     }
 }
 
-/// Runs the escape analysis over every body the program defines itself.
-pub fn analyze(program: &Program) -> Report {
+/// Runs the escape analysis over every body the program defines itself. The
+/// source texts are read only to find the `defer` lines (R60).
+pub fn analyze(program: &Program, sources: &SourceMap) -> Report {
     let structs: HashMap<&str, &StructDef> =
         program.structs.iter().map(|s| (s.name.as_str(), s)).collect();
     let enums: HashMap<&str, &EnumDef> =
         program.enums.iter().map(|e| (e.name.as_str(), e)).collect();
-    let mut cx = Cx { structs, enums, sites: Vec::new(), scopes: Vec::new(), function: String::new() };
+    let mut defers: HashMap<String, Vec<Span>> = HashMap::new();
+    for f in &program.functions {
+        defers
+            .entry(f.module.clone())
+            .or_insert_with(|| sources.text(&f.module).map(defer_spans).unwrap_or_default());
+    }
+    let mut cx = Cx {
+        structs,
+        enums,
+        sites: Vec::new(),
+        scopes: Vec::new(),
+        function: String::new(),
+        module: String::new(),
+        defers,
+    };
     for f in &program.functions {
         if f.extern_ || stdlib::source(&f.module).is_some() {
             continue;
@@ -224,6 +274,10 @@ struct Cx<'a> {
     sites: Vec<Site>,
     scopes: Vec<Vec<Binding>>,
     function: String,
+    /// The module of the body being walked, which names its source text.
+    module: String,
+    /// The byte ranges of the `defer` statements of each module.
+    defers: HashMap<String, Vec<Span>>,
 }
 
 /// Where an assignment target lives, for the sink it may reach.
@@ -236,6 +290,7 @@ enum Root {
 impl<'a> Cx<'a> {
     fn function(&mut self, f: &Function) {
         self.function = f.name.clone();
+        self.module = f.module.clone();
         self.scopes = vec![f
             .params
             .iter()
@@ -313,14 +368,43 @@ impl<'a> Cx<'a> {
     }
 
     fn site(&mut self, span: Span, kind: SiteKind, callee: &str) -> usize {
+        let form = callee.split_once('#').map(|(_, f)| f).unwrap_or("").to_string();
         self.sites.push(Site {
             function: self.function.clone(),
             span,
             kind,
             callee: callee.to_string(),
+            form,
+            element: String::new(),
+            refused: None,
+            grows: 0,
             sinks: Vec::new(),
         });
         self.sites.len() - 1
+    }
+
+    /// Whether a span starts inside a `defer` statement of the body's module.
+    fn in_defer(&self, at: Span) -> bool {
+        self.defers
+            .get(&self.module)
+            .is_some_and(|spans| spans.iter().any(|d| d.start <= at.start && at.start < d.end))
+    }
+
+    /// The sites of a carry that are containers.
+    fn container_sites(&self, carry: &Carry) -> Carry {
+        carry.iter().copied().filter(|&id| self.sites[id].kind == SiteKind::Container).collect()
+    }
+
+    /// A grow call on the containers of `carry` (R60): each container counts
+    /// the call, and a call written in a defer is a sink.
+    fn grow(&mut self, carry: &Carry, at: Span) {
+        let containers = self.container_sites(carry);
+        for &id in &containers {
+            self.sites[id].grows += 1;
+        }
+        if self.in_defer(at) {
+            self.sink(&containers, Sink::GrowInDefer);
+        }
     }
 
     fn expr(&mut self, e: &Expr) -> Carry {
@@ -476,6 +560,11 @@ impl<'a> Cx<'a> {
             // shared-pool memory; a borrowed argument (a `self` of `clone`) is
             // only read.
             let id = self.site(e.span, kind, callee);
+            if kind == SiteKind::Container {
+                let (element, refused) = container_check(&self.sites[id].form, &e.ty);
+                self.sites[id].element = element;
+                self.sites[id].refused = refused;
+            }
             for a in args {
                 let ac = self.expr(a);
                 if !is_borrow_ty(&a.ty) {
@@ -506,7 +595,10 @@ impl<'a> Cx<'a> {
         let spawn = callee.ends_with("spawn");
         // A method of a shared-pool container stores its by-value arguments.
         let owner = callee.split_once('#').map(|(o, _)| o).unwrap_or("");
+        let method = callee.split_once('#').map(|(_, m)| m).unwrap_or("");
         let shared = matches!(owner, "List" | "Map" | "Box" | "String" | "Bytes");
+        let own_container = CONTAINER_OWNERS.contains(&owner);
+        let grows = own_container && GROW_METHODS.contains(&method);
         let by_value_sink = if spawn {
             Sink::SpawnArgument
         } else if shared {
@@ -516,10 +608,20 @@ impl<'a> Cx<'a> {
         };
         let mut borrowed = receiver;
         let mut address = Carry::new();
-        for a in args {
+        for (i, a) in args.iter().enumerate() {
             let c = self.expr(a);
+            // The receiver of a container's own method is not a call that
+            // grows the container from outside: the method is the growth.
+            let own_receiver = i == 0 && own_container;
+            if own_receiver && grows {
+                self.grow(&c, e.span);
+            }
             if c.is_empty() {
                 continue;
+            }
+            if matches!(a.ty, Ty::Ref { mutable: true, .. }) && !own_receiver {
+                let containers = self.container_sites(&c);
+                self.sink(&containers, Sink::MutableBorrowIntoCall);
             }
             let is_borrow = is_borrow_ty(&a.ty);
             if is_borrow {
@@ -587,6 +689,10 @@ fn may_hold(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Box(_)
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::String
+            | Ty::Bytes
             | Ty::BoxDyn { .. }
             | Ty::Ref { .. }
             | Ty::Dyn { .. }
@@ -603,6 +709,74 @@ fn may_hold(ty: &Ty) -> bool {
             | Ty::RwLock(_)
             | Ty::Atomic(_)
     )
+}
+
+/// The element type of a container site, and the refusal decided at the site.
+/// The form is checked first (Q3, Q9), then the owner (Q7), then the element
+/// (R57, Q1).
+fn container_check(form: &str, ty: &Ty) -> (String, Option<&'static str>) {
+    let element = match ty {
+        Ty::List(inner) => inner.display(),
+        Ty::Map(k, v) => format!("{}, {}", k.display(), v.display()),
+        other => other.display(),
+    };
+    if !matches!(form, "new" | "empty" | "with_capacity" | "of") {
+        return (element, Some(REFUSE_FORM));
+    }
+    let numbers = match ty {
+        Ty::List(inner) => number_element(inner),
+        Ty::Map(k, v) => number_element(k) && number_element(v),
+        _ => return (element, Some(REFUSE_BYTES)),
+    };
+    if numbers { (element, None) } else { (element, Some(REFUSE_ELEMENT)) }
+}
+
+/// R57 with Q1: a number, a bool or a char holds no pointer and no resource.
+/// A `usize` or `isize` may hold an address, so it is refused. Structs and
+/// enums are refused too, because the resource check of a struct (D19) is
+/// not in this analysis.
+fn number_element(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::F32 | Ty::F64 | Ty::Bool | Ty::Char | Ty::U8 | Ty::U16
+    )
+}
+
+/// The byte ranges of the `defer` statements in one source text. A statement
+/// runs from its line to the line where its brackets close, so a `defer { ... }`
+/// block is covered in full.
+fn defer_spans(text: &str) -> Vec<Span> {
+    let mut out = Vec::new();
+    let mut depth: i64 = 0;
+    let mut start = 0;
+    let mut inside = false;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if !inside {
+            let body = line.trim_start();
+            let is_defer = body.strip_prefix("defer").is_some_and(|r| r.starts_with(char::is_whitespace));
+            if !is_defer {
+                offset += line.len();
+                continue;
+            }
+            inside = true;
+            start = offset;
+            depth = 0;
+        }
+        for ch in line.chars() {
+            match ch {
+                '{' | '(' | '[' => depth += 1,
+                '}' | ')' | ']' => depth -= 1,
+                _ => {}
+            }
+        }
+        offset += line.len();
+        if depth <= 0 {
+            out.push(Span::new(start, offset));
+            inside = false;
+        }
+    }
+    out
 }
 
 fn keep(carry: Carry, ty: &Ty) -> Carry {
@@ -664,7 +838,7 @@ mod tests {
         let mut sources = SourceMap::new();
         let loaded = resolve::load(path, &mut sources, None, None).map_err(|d| format!("{d:?}"))?;
         let typed = infer::check_program(&loaded.program, &loaded.project).map_err(|d| format!("{d:?}"))?;
-        Ok(analyze(&typed))
+        Ok(analyze(&typed, &sources))
     }
 
     fn fixture(name: &str) -> PathBuf {
@@ -702,6 +876,33 @@ mod tests {
         }
     }
 
+    /// Every container site of one fixture is refused, and one of them reaches
+    /// the named sink (the T94 and T95 refusals).
+    fn assert_container_refused_by(name: &str, sink: Sink) {
+        let report = analyze_file(&fixture(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let containers: Vec<_> = report.sites.iter().filter(|s| s.kind == SiteKind::Container).collect();
+        assert!(!containers.is_empty(), "{name}: the fixture must have a container site");
+        for s in &containers {
+            assert!(!s.accepted(), "{name}: accepted at byte {}", s.span.start);
+        }
+        assert!(
+            containers.iter().any(|s| s.sinks.contains(&sink)),
+            "{name}: expected '{}', got {:?}",
+            sink.name(),
+            containers.iter().map(|s| &s.sinks).collect::<Vec<_>>()
+        );
+    }
+
+    /// Every container site of one fixture is accepted (the T95 twins).
+    fn assert_container_accepted(name: &str) {
+        let report = analyze_file(&fixture(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let containers: Vec<_> = report.sites.iter().filter(|s| s.kind == SiteKind::Container).collect();
+        assert!(!containers.is_empty(), "{name}: the twin must have a container site");
+        for s in containers {
+            assert!(s.accepted(), "{name}: refused as '{}' at byte {}", s.reason(), s.span.start);
+        }
+    }
+
     #[test]
     fn t45_a_block_that_returns_a_number_is_accepted() {
         assert_accepted("twin_returns_number.kp");
@@ -720,6 +921,56 @@ mod tests {
     #[test]
     fn t45_a_number_stored_in_an_outer_variable_is_accepted() {
         assert_accepted("twin_number_outer.kp");
+    }
+
+    #[test]
+    fn t94_a_list_returned_from_its_body_is_refused() {
+        assert_container_refused_by("list_returned.kp", Sink::Returned);
+    }
+
+    #[test]
+    fn t94_b_list_moved_into_a_call_is_refused() {
+        assert_container_refused_by("list_moved_into_call.kp", Sink::MovedIntoCall);
+    }
+
+    #[test]
+    fn t94_c_list_mutably_borrowed_by_a_call_is_refused() {
+        assert_container_refused_by("list_mut_borrow_into_call.kp", Sink::MutableBorrowIntoCall);
+    }
+
+    #[test]
+    fn t94_d_list_captured_by_a_closure_is_refused() {
+        assert_container_refused_by("list_captured.kp", Sink::CapturedByClosure);
+    }
+
+    #[test]
+    fn t94_e_list_stored_in_a_shared_pool_list_is_refused() {
+        assert_container_refused_by("list_stored_in_shared_pool.kp", Sink::StoredInSharedPool);
+    }
+
+    #[test]
+    fn t94_f_list_passed_to_a_thread_spawn_is_refused() {
+        assert_container_refused_by("list_spawn_argument.kp", Sink::SpawnArgument);
+    }
+
+    #[test]
+    fn t95_a_grow_call_in_a_defer_is_refused() {
+        assert_container_refused_by("grow_in_defer.kp", Sink::GrowInDefer);
+    }
+
+    #[test]
+    fn t95_b_mutable_borrow_into_a_call_is_refused() {
+        assert_container_refused_by("list_mut_borrow_into_call.kp", Sink::MutableBorrowIntoCall);
+    }
+
+    #[test]
+    fn t95_c_shared_borrow_with_a_plain_result_is_accepted() {
+        assert_container_accepted("list_borrow_twin.kp");
+    }
+
+    #[test]
+    fn t95_d_grow_call_in_the_owning_block_is_accepted() {
+        assert_container_accepted("list_block_twin.kp");
     }
 
     #[test]
@@ -772,7 +1023,9 @@ mod tests {
         let report = analyze_file(&fixture("kinds.kp")).unwrap_or_else(|e| panic!("{e}"));
         let mut seen = std::collections::BTreeSet::new();
         for s in &report.sites {
-            assert!(!s.accepted() || s.kind == SiteKind::BoxOf, "{s:?}");
+            // A container of numbers may be accepted (R57); a closure and a
+            // Box.set never are.
+            assert!(!s.accepted() || matches!(s.kind, SiteKind::BoxOf | SiteKind::Container), "{s:?}");
             seen.insert(s.kind);
         }
         assert!(seen.contains(&SiteKind::BoxSet), "{seen:?}");
@@ -785,13 +1038,15 @@ mod tests {
         assert_eq!(box_reasons("sink_returned.kp"), vec![Sink::Returned.name()]);
     }
 
-    /// The dry run of step 2a. It prints the count per program and fails only
-    /// when a program does not check. The gate line is judged by the caller.
-    /// Run with: `cargo test -p kelpc dry_run_bench_sites -- --ignored --nocapture`.
-    #[test]
-    #[ignore]
-    fn dry_run_bench_sites() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("bench");
+    /// The bench directory the dry run reads.
+    fn bench_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("bench")
+    }
+
+    /// The programs the dry run counts: every suite program, the speed program
+    /// and the 20 GB write program.
+    fn bench_programs() -> Vec<PathBuf> {
+        let root = bench_root();
         let mut programs: Vec<PathBuf> = Vec::new();
         for entry in std::fs::read_dir(root.join("suite")).expect("bench/suite") {
             let dir = entry.expect("entry").path();
@@ -807,6 +1062,67 @@ mod tests {
         programs.push(root.join("speed").join("speed.kp"));
         programs.push(root.join("write_20gb").join("write20gb.kp"));
         programs.sort();
+        programs
+    }
+
+    /// The 16 sites of the step 2a dry run (commit 0646ae4): program, function,
+    /// callee and the byte where the site starts. T103 checks the denominator
+    /// against this list, so it cannot change between runs.
+    const BASELINE: [(&str, &str, &str, usize); 16] = [
+        ("suite/binary-trees/binary-trees.kp", "make", "Box#of", 675),
+        ("suite/binary-trees/binary-trees.kp", "make", "Box#of", 704),
+        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 510),
+        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 549),
+        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 589),
+        ("suite/hashmap/hashmap.kp", "main", "Map#new", 650),
+        ("suite/json-tokenizer/json-tokenizer.kp", "main", "String#empty", 1220),
+        ("suite/matmul/matmul.kp", "main", "List#empty", 566),
+        ("suite/matmul/matmul.kp", "main", "List#empty", 602),
+        ("suite/matmul/matmul.kp", "main", "List#empty", 638),
+        ("suite/sort/sort.kp", "main", "List#empty", 2108),
+        ("suite/sort-builtin/sort-builtin.kp", "main", "List#empty", 603),
+        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1341),
+        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1377),
+        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1415),
+        ("suite/strings/strings.kp", "main", "String#empty", 549),
+    ];
+
+    /// T103: the gate counts the same 16 sites, each container site records its
+    /// form and its element type, and the refusals add up to the total.
+    #[test]
+    fn t103_the_gate_counts_the_same_sites_and_its_total_adds_up() {
+        let root = bench_root();
+        let mut found: Vec<(String, String, String, usize)> = Vec::new();
+        let mut total = Report::default();
+        for p in bench_programs() {
+            let name = p.strip_prefix(&root).unwrap_or(&p).display().to_string();
+            let report = analyze_file(&p).unwrap_or_else(|e| panic!("{name}: {e}"));
+            for s in &report.sites {
+                found.push((name.clone(), s.function.clone(), s.callee.clone(), s.span.start));
+            }
+            total.sites.extend(report.sites);
+        }
+        found.sort();
+        let mut expected: Vec<_> =
+            BASELINE.iter().map(|(p, f, c, b)| (p.to_string(), f.to_string(), c.to_string(), *b)).collect();
+        expected.sort();
+        assert_eq!(found, expected, "the denominator changed since 0646ae4");
+        for s in total.sites.iter().filter(|s| s.kind == SiteKind::Container) {
+            assert!(!s.form.is_empty() && !s.element.is_empty(), "{s:?}");
+        }
+        let refused: usize = total.refused_by_reason().values().sum();
+        assert_eq!(total.total(), total.accepted() + refused);
+    }
+
+    /// The dry run of step 2a, kept for step 2b. It prints the count per
+    /// program and fails only when a program does not check. The gate line is
+    /// judged by the caller. Run with:
+    /// `cargo test -p kelpc --bin kelpc escape -- --include-ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn dry_run_bench_sites() {
+        let root = bench_root();
+        let programs = bench_programs();
 
         let mut total = Report::default();
         let (mut sites, mut accepted) = (0usize, 0usize);
@@ -825,7 +1141,7 @@ mod tests {
                         report.accepted(),
                         share
                     );
-                    eprintln!("DRYRUN   informational, rule 4 lifted: accepted {}", report.accepted_without_rule_4());
+                    eprintln!("DRYRUN   grow calls on accepted containers: {}", report.grow_calls_on_accepted());
                     for (kind, (n, a)) in report.by_kind() {
                         eprintln!("DRYRUN   kind {kind}: sites {n} accepted {a}");
                     }
@@ -849,7 +1165,7 @@ mod tests {
             }
         }
         let share = 100.0 * accepted as f64 / sites.max(1) as f64;
-        eprintln!("DRYRUN TOTAL informational, rule 4 lifted: accepted {}", total.accepted_without_rule_4());
+        eprintln!("DRYRUN TOTAL grow calls on accepted containers: {}", total.grow_calls_on_accepted());
         eprintln!("DRYRUN TOTAL: programs {} sites {sites} accepted {accepted} share {share:.1}%", programs.len());
         for (reason, n) in total.refused_by_reason() {
             eprintln!("DRYRUN TOTAL refused {n}: {reason}");
