@@ -50,6 +50,7 @@ empty on release.
 - Polyp changelog: a new page at `libraries/polyp-changelog.md` (9ec46bc, merged into main by c90a24b).
 - Owner name changed from Juniper to Lilly (d813b32 on unreleased, merged into main by 82ec21c).
 - Finished wiki lane branches deleted on the remote and locally; origin keeps only main and unreleased.
+- Wiki reorganised for finding pages: examples named by what they do, changelog pages under `changelog/`, a sidebar order file, and old paths kept as redirect stubs.
 
 ## Plans not in the repo
 
