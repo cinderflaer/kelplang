@@ -1,4 +1,77 @@
 // ---- Kelp runtime (M6) -------------------------------------------------------
+/* ---- Box small-block free lists (speed-alloc) ----------------------------
+   The LLVM backend's `Box<T>` allocates through these when the project has no
+   allocator of its own. A block of up to KELP_BOX_POOL_MAX bytes, at an align
+   of at most 16, is taken from a per-thread free list for its 16-byte size
+   class (`(size - 1) / 16`; a zero size shares class 0), and a freed block
+   joins the freeing thread's list, so a tree that is built and dropped again
+   reuses its own blocks. Every block is still its own malloc, so a thread's
+   list is handed back to free() when the thread exits. Bigger or more aligned
+   blocks go straight to malloc and free. Alloc and free must pass the same
+   size and align, which the Box lowering does (an owned trait object reads
+   both from the vtable its box was allocated with). */
+#define KELP_BOX_POOL_MAX 64
+#define KELP_BOX_POOL_CLASSES (KELP_BOX_POOL_MAX / 16)
+typedef struct kelp_BoxBlock { struct kelp_BoxBlock* next; } kelp_BoxBlock;
+static _Thread_local kelp_BoxBlock* kelp_box_free_heads[KELP_BOX_POOL_CLASSES];
+static _Thread_local int kelp_box_registered = 0;
+static pthread_once_t kelp_box_key_once = PTHREAD_ONCE_INIT;
+static pthread_key_t kelp_box_key;
+
+static void kelp_box_drain(void* unused) {
+    (void)unused;
+    for (size_t c = 0; c < KELP_BOX_POOL_CLASSES; c++) {
+        kelp_BoxBlock* b = kelp_box_free_heads[c];
+        while (b != NULL) {
+            kelp_BoxBlock* next = b->next;
+            free(b);
+            b = next;
+        }
+        kelp_box_free_heads[c] = NULL;
+    }
+    kelp_box_registered = 0;
+}
+
+static void kelp_box_key_make(void) {
+    (void)pthread_key_create(&kelp_box_key, kelp_box_drain);
+}
+
+static void kelp_box_register(void) {
+    pthread_once(&kelp_box_key_once, kelp_box_key_make);
+    kelp_box_registered = 1;
+    (void)pthread_setspecific(kelp_box_key, (void*)1);
+}
+
+void* kelp_box_alloc(size_t size, size_t align) {
+    if (align > 16 || size > KELP_BOX_POOL_MAX) {
+        return malloc(size);
+    }
+    size_t c = size == 0 ? 0 : (size - 1) / 16;
+    kelp_BoxBlock* b = kelp_box_free_heads[c];
+    if (b != NULL) {
+        kelp_box_free_heads[c] = b->next;
+        return b;
+    }
+    return malloc((c + 1) * 16);
+}
+
+void kelp_box_free(void* p, size_t size, size_t align) {
+    if (p == NULL) {
+        return;
+    }
+    if (align > 16 || size > KELP_BOX_POOL_MAX) {
+        free(p);
+        return;
+    }
+    size_t c = size == 0 ? 0 : (size - 1) / 16;
+    kelp_BoxBlock* b = (kelp_BoxBlock*)p;
+    b->next = kelp_box_free_heads[c];
+    kelp_box_free_heads[c] = b;
+    if (!kelp_box_registered) {
+        kelp_box_register();
+    }
+}
+
 typedef struct {
     unsigned char* data;
     size_t len;

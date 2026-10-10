@@ -8928,6 +8928,10 @@ fn declare_libc<'a>(
     decl("malloc", ptr, &[i64t]);
     decl("realloc", ptr, &[ptr, i64t]);
     decl("free", void, &[ptr]);
+    // The Box small-block free lists (speed-alloc, kelp_rt.c): the runtime
+    // object defines them, so they are declared with the libc surface.
+    decl("kelp_box_alloc", ptr, &[i64t, i64t]);
+    decl("kelp_box_free", void, &[ptr, i64t, i64t]);
     decl("memcpy", ptr, &[ptr, ptr, i64t]);
     decl("memcmp", i32t, &[ptr, ptr, i64t]);
     decl("memset", ptr, &[ptr, i32t, i64t]);
@@ -9487,6 +9491,38 @@ impl<'a> Gen<'a> {
         let size = self.layout.abi_size_of(ty);
         let align = self.layout.abi_alignment_of(ty);
         self.heap_alloc(self.v_i64(size), align as u64)
+    }
+
+    /// Whether a `Box<T>` block goes through the runtime's small-block free
+    /// lists (`kelp_box_alloc` / `kelp_box_free`): the default libc allocator
+    /// only, since a project's own allocator and a freestanding program keep
+    /// their existing path.
+    fn box_pooled(&self) -> bool {
+        self.alloc_fns.is_none() && self.freestanding.is_none()
+    }
+
+    /// The `Box<T>` allocation: `kelp_box_alloc(sizeof T, alignof T)` when
+    /// `box_pooled`, else `malloc_for`.
+    fn box_alloc_for(&self, ty: Type<'a>) -> Result<Value<'a>, String> {
+        if !self.box_pooled() {
+            return self.malloc_for(ty);
+        }
+        let size = self.layout.abi_size_of(ty);
+        let align = self.layout.abi_alignment_of(ty) as u64;
+        let (func, fty) = self.libc_fn("kelp_box_alloc")?;
+        Ok(self.call(func, fty, &[self.v_i64(size), self.v_i64(align)], "box"))
+    }
+
+    /// The `Box<T>` release for a value of `elem_size` bytes and `elem_align`
+    /// alignment: `kelp_box_free` when `box_pooled`, else `heap_dealloc`.
+    fn box_dealloc(&self, ptr: Value<'a>, size: Value<'a>, align: u64) -> Result<(), String> {
+        if !self.box_pooled() {
+            return self.heap_dealloc(ptr, size, align);
+        }
+        let (func, fty) = self.libc_fn("kelp_box_free")?;
+        let align = self.v_i64(align);
+        self.call(func, fty, &[ptr, size, align], "");
+        Ok(())
     }
 
     /// One byte-copy or zero-fill primitive: this module's own definition in a
@@ -10239,7 +10275,12 @@ impl<'a> Gen<'a> {
             let size = self.ld(i64t, size_slot, "size");
             let align_slot = self.builder.build_struct_gep(table_ty, table, 3, "align");
             let align = self.ld(i64t, align_slot, "align");
-            self.heap_dealloc_dyn(data, size, align)?;
+            if self.box_pooled() {
+                let (free, fty) = self.libc_fn("kelp_box_free")?;
+                self.call(free, fty, &[data, size, align], "");
+            } else {
+                self.heap_dealloc_dyn(data, size, align)?;
+            }
             self.st(self.ctx.const_null(self.pty()), data_slot);
             self.builder.build_br(done);
             self.builder.position_at_end(done);
@@ -13668,7 +13709,7 @@ impl<'a> Gen<'a> {
             let (f, _) = self.start(&format!("{base}__of"), "entry")?;
             let v = f.get_param(0);
             let b = self.builder.build_alloca(box_ty, "b");
-            let p = self.malloc_for(elem_ty)?;
+            let p = self.box_alloc_for(elem_ty)?;
             self.check_alloc(p, f)?;
             self.st(v, p);
             self.st(p, self.fld(box_ty, b, 0, "value"));
@@ -13723,7 +13764,7 @@ impl<'a> Gen<'a> {
             let stored = self.block(f, "store");
             self.builder.build_cond_br(empty, null_bb, have_bb);
             self.builder.position_at_end(null_bb);
-            let p = self.malloc_for(elem_ty)?;
+            let p = self.box_alloc_for(elem_ty)?;
             self.check_alloc(p, f)?;
             self.st(p, slot);
             self.builder.build_br(stored);
@@ -13752,7 +13793,7 @@ impl<'a> Gen<'a> {
             self.emit_panic("Box.take: the box is empty")?;
             self.builder.position_at_end(ok);
             let v = self.ld(elem_ty, value, "take");
-            self.heap_dealloc(value, self.v_i64(elem_size), elem_align)?;
+            self.box_dealloc(value, self.v_i64(elem_size), elem_align)?;
             self.st(null, slot);
             self.builder.build_ret(v);
         }
@@ -13771,7 +13812,7 @@ impl<'a> Gen<'a> {
             if drop_elem {
                 self.call_drop(value, elem)?;
             }
-            self.heap_dealloc(value, self.v_i64(elem_size), elem_align)?;
+            self.box_dealloc(value, self.v_i64(elem_size), elem_align)?;
             self.st(null, slot);
             self.builder.build_br(done);
             self.builder.position_at_end(done);

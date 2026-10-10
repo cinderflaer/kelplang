@@ -22,6 +22,8 @@ empty on release.
 
 - The Polyp examples use the Polyp v5 impl ids (`deps/polyp/core/core`, `deps/polyp/backends/gtk/polyp/lib`, `deps/polyp/backends/gtk/gtk`, `deps/polyp/backends/gtk/queue`, `deps/polyp/backends/soft/...`). The `polyp` namespace is unchanged. The v0 examples are frozen.
 
+- `Box<T>` blocks of up to 64 bytes are recycled through per-thread free lists instead of malloc and free (about 3x less allocator time on binary-trees). Programs with their own allocator are unchanged.
+
 ## compiler
 
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
