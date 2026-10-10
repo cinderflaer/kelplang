@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/atomic_list_element.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Atomic<i32>' cannot be a 'List' element: the container's own routines read and write it as a plain location, and every access to an atomic has to be one atomic operation. Keep the atomic in a place of its own ('val c = AtomicI64.new(0)') and put its value in the container
+  --> <root>/kelpc/tests/fixtures/atomic_list_element.kp:9:18
+run-status: not run

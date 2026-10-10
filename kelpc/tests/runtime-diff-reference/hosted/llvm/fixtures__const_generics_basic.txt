@@ -1,0 +1,18 @@
+unit: kelpc/tests/fixtures/const_generics_basic.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+3
+3
+6
+100
+7
+3
+0
+15
+1
+5
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/list_moved_element.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: use of moved value 's'
+  --> <root>/kelpc/tests/fixtures/list_moved_element.kp:7:11
+run-status: not run

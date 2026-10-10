@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/try_to_without_option.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'i64.try_to_u8' hands back 'Option<u8>', which 'std.option.Option' declares: add `impl "std/option"` to the file that writes the call
+  --> <root>/kelpc/tests/fixtures/try_to_without_option.kp:5:11
+run-status: not run

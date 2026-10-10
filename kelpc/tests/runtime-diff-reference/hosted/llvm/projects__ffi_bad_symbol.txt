@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/ffi_bad_symbol
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: extern function 'getpid' is not in this module's coral.toml '[extern."sys"]' symbol allowlist — add it there before declaring 'extern fun getpid'
+  --> <root>/kelpc/tests/projects/ffi_bad_symbol/src/sys.kp:7:12
+run-status: not run

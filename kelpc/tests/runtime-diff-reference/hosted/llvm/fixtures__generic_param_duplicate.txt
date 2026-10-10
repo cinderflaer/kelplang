@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_param_duplicate.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: type parameter 'T' is declared more than once
+  --> <root>/kelpc/tests/fixtures/generic_param_duplicate.kp:2:17
+run-status: not run

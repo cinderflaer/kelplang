@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/defer_try_exit.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: defer with an early `?` exit is not supported yet
+  --> <root>/kelpc/tests/fixtures/defer_try_exit.kp:9:5
+  note: this `?` leaves the function, which would skip the deferred action
+  --> <root>/kelpc/tests/fixtures/defer_try_exit.kp:10:13
+run-status: not run

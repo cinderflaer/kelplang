@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_needs_args.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Pair' is a generic type — it needs 2 type argument(s): 'Pair<A, B>'
+  --> <root>/kelpc/tests/fixtures/generic_needs_args.kp:6:12
+run-status: not run

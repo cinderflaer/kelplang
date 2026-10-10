@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/caps_star_mixing.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: `caps(*)` already means every domain, so nothing can stand beside the `*`: write `caps(*)` alone, or name the domains it needs (`caps(net = ["host:port"])`, `caps(fs = ["/a/**"], env = ["HOME"])`)
+  --> <root>/kelpc/tests/fixtures/caps_star_mixing.kp:4:20
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/template_not_printed.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a string template can only be printed: pass it to 'print(...)' or 'print!(...)'; a template is not a value, so build the text with 'str.concat', 'fmt.*' or a 'String'
+  --> <root>/kelpc/tests/fixtures/template_not_printed.kp:4:13
+run-status: not run

@@ -1,0 +1,9 @@
+unit: kelpc/tests/fixtures/tls_truncated.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+--- stderr
+panic: List.get: index out of bounds

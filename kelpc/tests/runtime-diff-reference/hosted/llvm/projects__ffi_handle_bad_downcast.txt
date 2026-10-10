@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/ffi_handle_bad_downcast
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: function 'mem.down' declared to return 'mem.Buffer' but body evaluates to 'mem.Block'
+  --> <root>/kelpc/tests/projects/ffi_handle_bad_downcast/src/mem.kp:9:5
+run-status: not run

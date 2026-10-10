@@ -1,0 +1,13 @@
+unit: kelpc/tests/fixtures/mutex_share_swap.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+6
+6
+40
+a
+0
+--- stderr

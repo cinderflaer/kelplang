@@ -1,0 +1,8 @@
+unit: examples/polyp-v0/lib.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot find module 'deps/polyp/gtk': expected '<root>/examples/polyp-v0/deps/polyp/gtk.kp'
+  --> <root>/examples/polyp-v0/lib.kp:21:1
+run-status: not run

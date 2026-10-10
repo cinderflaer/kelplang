@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/str_comparison.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot compare 'str' values with '==': a 'str' is a borrowed pointer, so this would compare addresses rather than text — use 'str.eq', or compare bytes with 'str.len'/'str.byte'
+  --> <root>/kelpc/tests/fixtures/str_comparison.kp:6:11
+run-status: not run

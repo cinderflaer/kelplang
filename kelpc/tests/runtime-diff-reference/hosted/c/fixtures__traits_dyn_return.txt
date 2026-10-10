@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_dyn_return.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: '&dyn Shape' cannot be a return type: a borrowed trait object points at a value the caller owns, and a return would have to name how long that borrow lives; take it as a parameter, or return an owned value
+  --> <root>/kelpc/tests/fixtures/traits_dyn_return.kp:10:31
+run-status: not run

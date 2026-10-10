@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_extra_method.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'shrink' is not declared by trait 'Shape': an 'impl' implements exactly the trait's methods, so remove it or add the signature to the trait
+  --> <root>/kelpc/tests/fixtures/traits_extra_method.kp:8:1
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/list_unsortable_element.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: List<Bucket>.sort is not defined: 'Bucket' has no order, and a 'datac'/'enum' takes one from its fields, so every field it holds has to have it too — use an element whose fields all do
+  --> <root>/kelpc/tests/fixtures/list_unsortable_element.kp:11:5
+run-status: not run

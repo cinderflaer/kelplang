@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_ptr_alloc
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Ptr#alloc' is unavailable in a freestanding build: it allocates through the hosted runtime's 'malloc'
+  --> <root>/kelpc/tests/projects/freestanding_ptr_alloc/src/main.kp:5:26
+--- nm -u
+(no image)

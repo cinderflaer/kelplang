@@ -97,6 +97,13 @@ list_units() {
     find kelpc/tests/fixtures -name '*.kp' | sort
     find kelpc/tests -maxdepth 1 -name '*.kp' | sort
     find kelpc/tests/projects examples -name coral.toml | sed 's#/coral.toml$##' | sort
+    # Projects without a manifest are built from their main.kp.
+    for d in kelpc/tests/projects/*/; do
+        d=${d%/}
+        if [ ! -f "$d/coral.toml" ] && [ -f "$d/main.kp" ]; then
+            echo "$d/main.kp"
+        fi
+    done | sort
     find examples -name '*.kp' | while read -r f; do
         dir=$(dirname "$f")
         inproj=0

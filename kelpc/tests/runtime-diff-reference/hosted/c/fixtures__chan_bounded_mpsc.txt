@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/chan_bounded_mpsc.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+1000
+124500
+--- stderr

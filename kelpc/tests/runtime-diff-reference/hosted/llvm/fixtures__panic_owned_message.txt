@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/panic_owned_message.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+before
+--- stderr
+panic: 7

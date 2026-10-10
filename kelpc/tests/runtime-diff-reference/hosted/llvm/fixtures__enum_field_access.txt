@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/enum_field_access.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: enum 'Shape' has no field 'r' — match it with 'when Shape { ... }' to read a payload
+  --> <root>/kelpc/tests/fixtures/enum_field_access.kp:8:11
+run-status: not run

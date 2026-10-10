@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/move_param_use_after.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: use of moved value 'a'
+  --> <root>/kelpc/tests/fixtures/move_param_use_after.kp:8:11
+run-status: not run

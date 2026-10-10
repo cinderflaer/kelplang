@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_assoc_no_bound.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: in 'pick<A>': 'I::Item' is not a known associated type: bind 'I' with a trait that carries 'type Item' ('trait ... { type Item }'), so the projection names the type an impl supplies
+  --> <root>/kelpc/tests/fixtures/traits_assoc_no_bound.kp:10:13
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_key_pair_only_hash.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Half' declares 'hash' but not 'eq': a declared `Map` key needs both halves, 'fun Half.hash().return: u64' and 'fun Half.eq(other: &Half).return: bool'
+  --> <root>/kelpc/tests/fixtures/map_key_pair_only_hash.kp:6:1
+run-status: not run

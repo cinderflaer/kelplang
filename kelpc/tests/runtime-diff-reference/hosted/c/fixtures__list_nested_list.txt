@@ -1,0 +1,16 @@
+unit: kelpc/tests/fixtures/list_nested_list.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+2
+1
+2
+3
+9
+2
+1
+0
+--- stderr

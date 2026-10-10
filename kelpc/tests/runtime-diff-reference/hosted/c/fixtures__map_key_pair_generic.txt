@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_key_pair_generic.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Pair.hash' cannot have type parameters: a key pair is declared on the type itself, so write it on 'Pair' rather than on the generic template
+  --> <root>/kelpc/tests/fixtures/map_key_pair_generic.kp:6:1
+run-status: not run

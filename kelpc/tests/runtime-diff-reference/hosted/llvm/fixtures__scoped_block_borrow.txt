@@ -1,0 +1,12 @@
+unit: kelpc/tests/fixtures/scoped_block_borrow.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+row
+row
+203
+row
+--- stderr

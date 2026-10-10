@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/visibility_pub_late_type.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'describe' is exported but its signature names 'Hidden', which module 'visibility_pub_late_type' does not export: add 'pub' to 'Hidden', or make 'describe' private
+  --> <root>/kelpc/tests/fixtures/visibility_pub_late_type.kp:4:21
+run-status: not run

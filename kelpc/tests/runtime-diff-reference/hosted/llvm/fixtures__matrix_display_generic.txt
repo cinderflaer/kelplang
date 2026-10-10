@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/matrix_display_generic.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+<1,2>
+#9
+<1,2> <1,2>
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/array_literal_length_mismatch.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: an array of 3 element(s) is expected here, and this literal has 2
+  --> <root>/kelpc/tests/fixtures/array_literal_length_mismatch.kp:4:24
+run-status: not run

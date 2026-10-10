@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/ffi_ui_pattern
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: patterns are not enforceable in the 'ui' domain yet: a display call carries no argument to match a grant against, so only `ui = ["*"]` is accepted (see plan/ffi-display-domain.md)
+  --> <root>/kelpc/tests/projects/ffi_ui_pattern/src/main.kp:4:21
+run-status: not run

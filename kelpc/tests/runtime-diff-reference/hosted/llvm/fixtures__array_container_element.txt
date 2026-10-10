@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/array_container_element.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'List<i32>' cannot be an array element: an array holds its elements inline and is fixed-size, so a 'List'/'Box'/'Map' element is refused here (a container finds its home in a 'List' or a 'Box' instead); use a scalar, 'String', 'Bytes', a 'datac', an 'enum', or a nested array
+  --> <root>/kelpc/tests/fixtures/array_container_element.kp:5:13
+run-status: not run

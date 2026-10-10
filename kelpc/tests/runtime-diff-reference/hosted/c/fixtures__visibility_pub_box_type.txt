@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/visibility_pub_box_type.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'stash' is exported but its signature names 'Hidden', which module 'visibility_pub_box_type' does not export: add 'pub' to 'Hidden', or make 'stash' private
+  --> <root>/kelpc/tests/fixtures/visibility_pub_box_type.kp:5:35
+run-status: not run

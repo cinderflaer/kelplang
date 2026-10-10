@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/for_mutates_iterated_field.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot mutate 'self.items' while iterating over it
+  --> <root>/kelpc/tests/fixtures/for_mutates_iterated_field.kp:5:14
+run-status: not run

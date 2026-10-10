@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/caps_raw_ungranted/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'std.fs.read_raw' needs the 'fs' capability, which module 'util' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(fs = ["<pattern>"])`)
+  --> <root>/kelpc/tests/projects/caps_raw_ungranted/util.kp:3:33
+run-status: not run

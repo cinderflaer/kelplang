@@ -1,0 +1,43 @@
+unit: kelpc/tests/fixtures/bytes_endian.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+10
+4b50
+504b
+102
+201
+deadbeef
+efbeadde
+1f90
+901f
+-559038737
+-272716322
+807060504030201
+102030405060708
+578437695752307201
+504b0102
+2014b50
+504b0102deadbeef
+1f90
+deadbeef
+50 4b 01 02 de ad be ef 90 1f
+true
+11223344
+44332211
+102030405060708
+807060504030201
+102030405060708
+807060504030201
+-2
+feffffff
+-1
+ffffffff
+-2
+-72057594037927937
+-2
+feffffffffffffff
+--- stderr

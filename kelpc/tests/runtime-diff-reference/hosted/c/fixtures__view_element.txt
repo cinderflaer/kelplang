@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/view_element.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'View' is a borrowed view: a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', an 'enum', another 'List', or a 'Box'
+  --> <root>/kelpc/tests/fixtures/view_element.kp:4:21
+run-status: not run

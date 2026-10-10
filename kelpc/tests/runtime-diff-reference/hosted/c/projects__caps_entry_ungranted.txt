@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/caps_entry_ungranted
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'std.fs.exists' needs the 'fs' capability, which module 'main' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(fs = ["<pattern>"])`)
+  --> <root>/kelpc/tests/projects/caps_entry_ungranted/src/main.kp:12:11
+run-status: not run

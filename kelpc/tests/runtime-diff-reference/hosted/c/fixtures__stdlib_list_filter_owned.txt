@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/stdlib_list_filter_owned.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: argument 'v' has type '&String', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()') — this is inside the shipped standard library ('std/list'), so the instantiation you asked for is one it does not offer: a helper that hands a value out is written for a 'Copy' payload or element, and the module's header says which
+  --> <root>/kelpc/tests/fixtures/std/list.kp:43:22
+run-status: not run

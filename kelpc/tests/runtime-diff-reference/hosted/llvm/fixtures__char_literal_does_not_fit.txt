@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/char_literal_does_not_fit.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the character '中' (U+4E2D) does not fit in 'u8'
+  --> <root>/kelpc/tests/fixtures/char_literal_does_not_fit.kp:4:17
+run-status: not run

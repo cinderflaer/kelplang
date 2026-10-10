@@ -1,0 +1,11 @@
+unit: kelpc/tests/projects/caps_env/main.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+true
+true
+true
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/cursor_root_moved.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot move 'list' while it is borrowed
+  --> <root>/kelpc/tests/fixtures/cursor_root_moved.kp:9:17
+run-status: not run

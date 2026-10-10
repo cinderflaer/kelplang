@@ -1,0 +1,55 @@
+unit: examples/polyp-soft-test
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+fill_rect
+60
+0
+stroke_rect
+60
+0
+fill_round_rect
+60
+0
+stroke_round_rect
+60
+0
+line
+60
+0
+blend
+40
+0
+blit_mask8
+30
+0
+draw_text
+40
+0
+clip_stack
+40
+0
+edges
+13
+0
+damage
+200
+8
+0
+cap
+16
+true
+static_fb
+5870808570317741093
+scene shapes
+14814842095218757869
+scene text
+15225207939037777876
+scene blend
+3376705936528111333
+failures
+0
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/traits_builtin_orphan
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'impl shape.Doubler for i32' is written in module 'bad', but 'i32' is a builtin type, which has no module: implement a trait for a builtin in the trait's own module ('shape')
+  --> <root>/kelpc/tests/projects/traits_builtin_orphan/src/bad.kp:5:1
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/visibility_private_hint/main.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: call to undefined function 'Thing'
+  --> <root>/kelpc/tests/projects/visibility_private_hint/main.kp:4:13
+run-status: not run

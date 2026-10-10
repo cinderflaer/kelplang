@@ -1,0 +1,16 @@
+unit: kelpc/tests/fixtures/repr_packed.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+7
+1
+0
+1
+5
+7
+287454020
+21862
+--- stderr

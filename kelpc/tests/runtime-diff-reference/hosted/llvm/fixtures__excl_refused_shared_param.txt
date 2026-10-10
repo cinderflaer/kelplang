@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_shared_param.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot write to captured 's': it is a shared borrow in the enclosing function, so a block cannot write through it; take it as a 'mut' parameter there
+  --> <root>/kelpc/tests/fixtures/excl_refused_shared_param.kp:10:9
+run-status: not run

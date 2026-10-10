@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/owned_statement.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: this expression produces an owned 'String' value that is never used — bind it to a 'val' or 'var', print it, or pass it to something that takes it by value
+  --> <root>/kelpc/tests/fixtures/owned_statement.kp:6:5
+run-status: not run

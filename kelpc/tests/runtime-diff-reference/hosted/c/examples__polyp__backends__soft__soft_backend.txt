@@ -1,0 +1,8 @@
+unit: examples/polyp/backends/soft/soft_backend.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot find module 'deps/polyp/core/anim': expected '<root>/examples/polyp/backends/soft/deps/polyp/core/anim.kp'
+  --> <root>/examples/polyp/backends/soft/soft_backend.kp:20:1
+run-status: not run

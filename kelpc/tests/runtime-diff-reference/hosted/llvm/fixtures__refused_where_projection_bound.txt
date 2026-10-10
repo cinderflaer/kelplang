@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_where_projection_bound.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the call to 'show_all' needs 'I::Item', which is 'Plain' for 'Plains', to implement the trait 'fmt.Display', and it does not: write 'impl fmt.Display for Plain { ... }' in the trait's module or in the type's
+  --> <root>/kelpc/tests/fixtures/refused_where_projection_bound.kp:32:11
+run-status: not run

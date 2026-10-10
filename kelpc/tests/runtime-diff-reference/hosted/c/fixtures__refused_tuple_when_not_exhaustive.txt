@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_tuple_when_not_exhaustive.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: this 'when' is not exhaustive: 'None' of enum 'std.option.Option<i32>' has no arm — add an arm, or an 'else' arm
+  --> <root>/kelpc/tests/fixtures/refused_tuple_when_not_exhaustive.kp:3:12
+run-status: not run

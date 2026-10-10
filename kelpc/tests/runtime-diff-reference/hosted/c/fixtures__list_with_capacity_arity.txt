@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/list_with_capacity_arity.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'List.with_capacity' takes exactly 1 argument (the element count), found 2
+  --> <root>/kelpc/tests/fixtures/list_with_capacity_arity.kp:3:25
+run-status: not run

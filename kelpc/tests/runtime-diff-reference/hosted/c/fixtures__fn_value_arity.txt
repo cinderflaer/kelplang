@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/fn_value_arity.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a call through 'f' takes 1 argument(s), found 2
+  --> <root>/kelpc/tests/fixtures/fn_value_arity.kp:6:11
+run-status: not run

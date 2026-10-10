@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/matrix_generic_trait_operator.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: trait 'std.ops.Add' takes no type arguments, and 'impl std.ops.Add for Vec2' writes 1: write 'impl std.ops.Add for Vec2' (an operator trait's right-hand side is always '&Self', so there is no 'Add<Other>')
+  --> <root>/kelpc/tests/fixtures/matrix_generic_trait_operator.kp:8:1
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/explicit_destructor_call.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Leaf.drop' cannot be called: an explicit destructor call is an error, because the value's own drop already runs when its owner dies
+  --> <root>/kelpc/tests/fixtures/explicit_destructor_call.kp:9:5
+run-status: not run

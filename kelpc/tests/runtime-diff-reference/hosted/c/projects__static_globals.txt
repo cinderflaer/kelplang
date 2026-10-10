@@ -1,0 +1,16 @@
+unit: kelpc/tests/projects/static_globals
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+5
+50
+100
+1
+2
+100
+4
+8
+--- stderr

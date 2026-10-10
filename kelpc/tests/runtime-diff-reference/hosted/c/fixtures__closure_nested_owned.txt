@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/closure_nested_owned.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot capture 'text' into this literal: it belongs to the enclosing closure's environment, which is not a local this frame owns, so there is no owned place to move it out of; capture an owned value from the frame that owns it, or copy a `Copy` one
+  --> <root>/kelpc/tests/fixtures/closure_nested_owned.kp:7:21
+run-status: not run

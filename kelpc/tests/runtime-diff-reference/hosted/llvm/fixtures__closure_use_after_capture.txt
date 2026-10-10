@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/closure_use_after_capture.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: use of moved value 'text'
+  --> <root>/kelpc/tests/fixtures/closure_use_after_capture.kp:7:11
+run-status: not run

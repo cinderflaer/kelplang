@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/result_unit_payload.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+ok
+1
+7
+--- stderr

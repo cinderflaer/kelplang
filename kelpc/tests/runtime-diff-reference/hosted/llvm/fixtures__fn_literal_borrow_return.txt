@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/fn_literal_borrow_return.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a 'fun' literal cannot return a borrow ('&str') — an indirect call has no parameter an elided lifetime could bind to; return an owned value instead
+  --> <root>/kelpc/tests/fixtures/fn_literal_borrow_return.kp:5:34
+run-status: not run

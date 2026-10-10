@@ -1,0 +1,39 @@
+unit: kelpc/tests/fixtures/str_search_edges.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+4
+0
+none
+0
+none
+0
+2
+2
+7
+0
+2
+0
+none
+none
+999
+none
+true
+true
+true
+false
+true
+a+b+c
+ba
+abc
+
+hello
+
+xyz
+ab
+3000
+1000
+--- stderr

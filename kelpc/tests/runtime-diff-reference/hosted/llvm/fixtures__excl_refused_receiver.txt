@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_receiver.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's.count' as exclusive: already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/excl_refused_receiver.kp:12:12
+run-status: not run

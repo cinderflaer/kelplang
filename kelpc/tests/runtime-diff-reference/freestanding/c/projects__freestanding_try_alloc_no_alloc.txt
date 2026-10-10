@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_try_alloc_no_alloc
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Ptr#try_alloc' is unavailable in a freestanding build: it needs an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions
+  --> <root>/kelpc/tests/projects/freestanding_try_alloc_no_alloc/src/main.kp:6:26
+--- nm -u
+(no image)

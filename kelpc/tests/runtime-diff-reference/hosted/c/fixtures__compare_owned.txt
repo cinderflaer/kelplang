@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/compare_owned.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot compare 'String' values with '==': v1 has no equality for owned values
+  --> <root>/kelpc/tests/fixtures/compare_owned.kp:8:11
+run-status: not run

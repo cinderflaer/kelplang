@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/pd_forward_read.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: undefined variable 'late' — a 'pd' initializer can only use passdowns declared before it
+  --> <root>/kelpc/tests/fixtures/pd_forward_read.kp:1:16
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_plain_break_in_value_loop.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: this 'loop' produces a value, so every 'break' out of it carries one: 'break value'
+  --> <root>/kelpc/tests/fixtures/refused_plain_break_in_value_loop.kp:3:9
+run-status: not run

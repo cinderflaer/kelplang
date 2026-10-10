@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/fn_value_amp.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: '&' cannot be written on the function type 'fun(i32).return: i32' — a function value is Copy (it is a plain function pointer), so a borrowed one would be a pointer to a pointer; write the type without '&'
+  --> <root>/kelpc/tests/fixtures/fn_value_amp.kp:4:20
+run-status: not run

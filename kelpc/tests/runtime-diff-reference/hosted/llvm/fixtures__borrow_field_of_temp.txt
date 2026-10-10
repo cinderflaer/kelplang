@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/borrow_field_of_temp.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow a temporary value
+  --> <root>/kelpc/tests/fixtures/borrow_field_of_temp.kp:13:13
+run-status: not run

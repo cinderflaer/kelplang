@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/int_literal_out_of_range.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: '4294967295' does not fit 'i32', the type a literal takes when nothing determines one: write the type it needs, as in 'val big: u32 = 4294967295'
+  --> <root>/kelpc/tests/fixtures/int_literal_out_of_range.kp:5:15
+run-status: not run

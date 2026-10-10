@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/eq_operator_bad_signature.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'P.eq' takes exactly one parameter, a shared borrow of 'P', so write 'fun P.eq(other: &P).return: bool'
+  --> <root>/kelpc/tests/fixtures/eq_operator_bad_signature.kp:5:1
+run-status: not run

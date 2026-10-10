@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/list_remove_bounds.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+1
+0
+--- stderr
+panic: List.remove: index out of bounds

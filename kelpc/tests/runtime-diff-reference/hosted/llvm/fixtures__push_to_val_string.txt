@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/push_to_val_string.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot assign to 's': not declared 'var'
+  --> <root>/kelpc/tests/fixtures/push_to_val_string.kp:5:5
+run-status: not run

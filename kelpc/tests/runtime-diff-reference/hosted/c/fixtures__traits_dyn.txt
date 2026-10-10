@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_dyn.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'dyn Shape' is not a type on its own: an owned trait object is written 'Box<dyn Shape>', and a borrowed one '&dyn Shape'
+  --> <root>/kelpc/tests/fixtures/traits_dyn.kp:7:13
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/nll_borrow_used_next_iteration.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 'names' as exclusive: already borrowed as shared
+  --> <root>/kelpc/tests/fixtures/nll_borrow_used_next_iteration.kp:12:9
+run-status: not run

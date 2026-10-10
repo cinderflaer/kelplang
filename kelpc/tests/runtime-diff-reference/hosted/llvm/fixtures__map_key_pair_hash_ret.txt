@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_key_pair_hash_ret.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Key.hash' must return 'u64', found 'i32': the `Map` probe folds the hash of every key through 'kelp_map_combine'
+  --> <root>/kelpc/tests/fixtures/map_key_pair_hash_ret.kp:5:1
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/owned_field_read.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: use of moved value 'bag.xs'
+  --> <root>/kelpc/tests/fixtures/owned_field_read.kp:11:5
+run-status: not run

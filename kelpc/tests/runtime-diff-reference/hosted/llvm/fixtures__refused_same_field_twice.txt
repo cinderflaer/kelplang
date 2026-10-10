@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_same_field_twice.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's.count': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/refused_same_field_twice.kp:5:18
+run-status: not run

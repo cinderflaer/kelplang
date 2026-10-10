@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/move_while_borrowed.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot move 'p' while it is borrowed
+  --> <root>/kelpc/tests/fixtures/move_while_borrowed.kp:6:13
+run-status: not run

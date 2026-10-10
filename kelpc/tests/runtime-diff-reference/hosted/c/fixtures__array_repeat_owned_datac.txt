@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/array_repeat_owned_datac.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the repeat form '[x; N]' needs an element that owns nothing, and 'Name' owns memory. Copying it into 2 slots would make 2 owners of the same buffer; write the elements out ('[a, b, c]') instead
+  --> <root>/kelpc/tests/fixtures/array_repeat_owned_datac.kp:7:25
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/const_generics_char_arithmetic.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: in 'make<'a'>': 'C' is a const parameter, and arithmetic on one in a type ('[T; C + 1]') is not in this slice: write the length the instantiation binds ('[T; C]'), or compute it from a 'const' ('const M: usize = ...')
+  --> <root>/kelpc/tests/fixtures/const_generics_char_arithmetic.kp:6:11
+run-status: not run

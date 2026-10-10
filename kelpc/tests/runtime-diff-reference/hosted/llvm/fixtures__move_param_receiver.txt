@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/move_param_receiver.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'move' cannot be written on a receiver — a method always borrows its receiver; a move-taking parameter is written 'name: move T'
+  --> <root>/kelpc/tests/fixtures/move_param_receiver.kp:5:5
+run-status: not run

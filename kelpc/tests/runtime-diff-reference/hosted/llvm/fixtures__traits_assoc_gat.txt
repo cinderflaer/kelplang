@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_assoc_gat.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a generic associated type is not in this slice: 'type Item' declares a plain type, so parameters wait for a later slice
+  --> <root>/kelpc/tests/fixtures/traits_assoc_gat.kp:4:14
+run-status: not run

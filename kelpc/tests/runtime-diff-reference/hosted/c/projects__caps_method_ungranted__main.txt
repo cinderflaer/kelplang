@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/caps_method_ungranted/main.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'std.process.Child' wraps an operating-system descriptor, so building one from a number needs the 'process' capability, which module 'util' was not granted; a module that holds no grant can only use the handles it is given
+  --> <root>/kelpc/tests/projects/caps_method_ungranted/util.kp:5:13
+run-status: not run

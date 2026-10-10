@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/enum_self_by_value.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Loop' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next: Box<Loop>', or a 'List<Loop>' for many)
+  --> <root>/kelpc/tests/fixtures/enum_self_by_value.kp:2:20
+run-status: not run

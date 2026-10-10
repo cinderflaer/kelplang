@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/impl_trait_field_refused.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'impl Shape' is only legal as a whole parameter type of a declared function: write 'fun f(x: impl Shape)', and name a type parameter where a stored, returned or container type belongs
+  --> <root>/kelpc/tests/fixtures/impl_trait_field_refused.kp:7:25
+run-status: not run

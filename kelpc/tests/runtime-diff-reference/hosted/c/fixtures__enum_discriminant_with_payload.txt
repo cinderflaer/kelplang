@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/enum_discriminant_with_payload.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: enum 'E' has a variant with a payload, so no variant may have an explicit discriminant: a discriminant is a value with no data beside it, so it is written only on a field-less enum
+  --> <root>/kelpc/tests/fixtures/enum_discriminant_with_payload.kp:2:1
+run-status: not run
