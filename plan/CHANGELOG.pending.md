@@ -16,6 +16,7 @@ empty on release.
 
 ## Compiler
 
+- Managed GC core hardening: attach check, stop timeout naming the stuck thread, type-id and enum-tag limits, panic hook, heap verifier, stress mode, cyclic-graph live-set test (`kelpc/gc`).
 - Managed GC core: measurement tests for large-object waste and heap-lock contention (`kelpc/gc`).
 - Managed-mode GC core (`kelpc/gc`, Rust staticlib `libkelp_gc.a`): C ABI header and descriptor layout for WP3; not yet linked by the compiler.
 - Managed GC core: mark-region allocator, mark and sweep, safepoints, native state and stack scan (`kelpc/gc`).

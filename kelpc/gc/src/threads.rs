@@ -1,12 +1,16 @@
 //! Thread registry, safepoints, native state, root regions, and the
 //! stop-the-world handshake. All state here is guarded by G_MUTEX.
+//!
+//! Each attached thread's record is found through a pthread key that holds
+//! its registry index, so the allocator and the safepoint poll never scan the
+//! table. The record is trusted only if its thread id matches the caller.
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use core::sync::atomic::Ordering::{Acquire, Release};
 
 use crate::mark;
 use crate::state::*;
-use crate::sys::{self, PthreadAttr};
+use crate::sys::{self, Msg, PthreadAttr};
 use crate::types::*;
 
 pub const RUNNING: u32 = 0;
@@ -54,13 +58,26 @@ unsafe fn thr(i: usize) -> *mut ThreadRec {
     (THREADS.get() as *mut ThreadRec).add(i)
 }
 
+/// Registry index of the calling thread, or None if it is not attached.
+/// Lock-free: the record is written only by its own thread (attach, detach)
+/// or by reset, and the thread id check rejects a stale key.
+pub unsafe fn my_index() -> Option<usize> {
+    let v = sys::pthread_getspecific(st().tls_key) as usize;
+    if v == 0 {
+        return None;
+    }
+    let i = v - 1;
+    let t = thr(i);
+    if (*t).used && (*t).tid == sys::pthread_self() as u64 {
+        Some(i)
+    } else {
+        None
+    }
+}
+
 /// Index of the calling thread's record. Registry lock held.
 unsafe fn find_me() -> Option<usize> {
-    let tid = sys::pthread_self() as u64;
-    (0..MAX_THREADS).find(|&i| {
-        let t = thr(i);
-        (*t).used && (*t).tid == tid
-    })
+    my_index()
 }
 
 #[inline(never)]
@@ -150,7 +167,7 @@ pub unsafe fn attach() {
     if find_me().is_none() {
         let slot = (0..MAX_THREADS).find(|&i| !(*thr(i)).used);
         let Some(i) = slot else {
-            sys::fatal(b"gc: too many attached threads\0");
+            Msg::new().s(b"gc: more than ").dec(MAX_THREADS).s(b" attached threads").die();
         };
         let mut attr = PthreadAttr([0; 8]);
         if sys::pthread_getattr_np(sys::pthread_self(), &mut attr) != 0 {
@@ -168,6 +185,7 @@ pub unsafe fn attach() {
             sp: 0,
             regs: [0; 6],
         };
+        sys::pthread_setspecific(st().tls_key, (i + 1) as *const core::ffi::c_void);
     }
     unlock();
 }
@@ -181,12 +199,33 @@ pub unsafe fn detach() {
             wait();
         }
         (*thr(i)).used = false;
+        sys::pthread_setspecific(st().tls_key, core::ptr::null());
+        broadcast();
     }
     unlock();
 }
 
-unsafe fn others_running(me: usize) -> bool {
-    (0..MAX_THREADS).any(|i| i != me && (*thr(i)).used && (*thr(i)).state == RUNNING)
+/// The first attached thread other than `me` that is still running, if any.
+unsafe fn first_running(me: usize) -> Option<usize> {
+    (0..MAX_THREADS).find(|&i| i != me && (*thr(i)).used && (*thr(i)).state == RUNNING)
+}
+
+/// Every other attached thread must be parked or in native state, with a
+/// recorded stack pointer inside its stack, before any marking starts.
+unsafe fn check_stopped(me: usize) {
+    for i in 0..MAX_THREADS {
+        let t = thr(i);
+        if i == me || !(*t).used {
+            continue;
+        }
+        if (*t).state == RUNNING || (*t).sp == 0 || (*t).sp > (*t).hi {
+            Msg::new()
+                .s(b"gc: attached thread ")
+                .hex((*t).tid as usize)
+                .s(b" is not stopped at a safepoint at mark time")
+                .die();
+        }
+    }
 }
 
 /// Run a full stop-the-world cycle. Returns true if this call collected; false
@@ -208,9 +247,24 @@ pub unsafe fn collect() -> bool {
     let Some(me) = find_me() else {
         sys::fatal(b"gc: collecting thread is not attached (call kelp_gc_thread_attach)\0");
     };
-    while others_running(me) {
-        wait();
+    let timeout = st().stop_timeout_ms;
+    let deadline = sys::deadline_after_ms(timeout);
+    while let Some(i) = first_running(me) {
+        let rc = sys::pthread_cond_timedwait(G_COND.get(), G_MUTEX.get(), &deadline);
+        if rc == sys::ETIMEDOUT && first_running(me).is_some() {
+            let j = first_running(me).unwrap_or(i);
+            Msg::new()
+                .s(b"gc: thread ")
+                .hex((*thr(j)).tid as usize)
+                .s(b" did not reach a safepoint within ")
+                .dec(timeout)
+                .s(b" ms (registry slot ")
+                .dec(j)
+                .s(b"); a loop must poll kelp_gc_safepoint or enter native state")
+                .die();
+        }
     }
+    check_stopped(me);
     record_stop(me, RUNNING);
     mark::collect_locked();
     st().collecting = false;
@@ -224,7 +278,7 @@ pub unsafe fn collect() -> bool {
 pub unsafe fn scan_roots() {
     for i in 0..MAX_THREADS {
         let t = thr(i);
-        if !(*t).used {
+        if !(*t).used || !st().scan_stacks {
             continue;
         }
         mark::scan_range_conservative((*t).sp, (*t).hi);
@@ -265,5 +319,5 @@ pub unsafe fn unregister_root(base: usize) {
 pub unsafe fn init_locks() {
     sys::pthread_mutex_init(G_MUTEX.get(), core::ptr::null());
     sys::pthread_cond_init(G_COND.get(), core::ptr::null());
+    sys::pthread_key_create(&mut st().tls_key, core::ptr::null());
 }
-

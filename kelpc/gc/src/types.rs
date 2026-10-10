@@ -16,8 +16,13 @@ pub const HDR_COUNT_SHIFT: u32 = 32;
 
 /// Largest type id the 24-bit header field can hold.
 pub const TYPE_ID_MAX: u32 = (1 << 24) - 1;
-/// Ids the v1 type table can hold (table is 8 MiB of virtual memory).
+/// Ids the v1 type table can hold (table is 8 MiB of virtual memory). Ids at
+/// or above this are a fatal error at registration. Mirrors
+/// KELP_GC_TYPE_ID_V1_LIMIT in the header.
 pub const TYPE_TABLE_IDS: usize = 1 << 20;
+/// Width of the enum tag the descriptor reads (u32 at tag_off). Mirrors
+/// KELP_GC_ENUM_TAG_BYTES in the header.
+pub const KELP_GC_ENUM_TAG_BYTES: usize = 4;
 
 #[repr(C)]
 pub struct KelpGcVariant {
