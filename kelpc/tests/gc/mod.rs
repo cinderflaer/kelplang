@@ -615,11 +615,24 @@ fn stack_only_object_of_a_native_thread_survives_collections() {
     unsafe { kelp_gc_thread_detach() };
 }
 
+/// Exit the test binary if `what` has not finished within `secs`. A stop-the-
+/// world deadlock would otherwise hang the build queue until a person kills it.
+fn watchdog(what: &'static str, secs: u64) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+        eprintln!("deadlock: {what} did not finish within {secs} s");
+        std::process::exit(2);
+    });
+}
+
 /// Threads allocate and keep a short live list on their own stacks, poll
 /// safepoints, and enter native state. The main thread collects repeatedly.
+/// A worker that detaches while a collection waits for it must wake the
+/// collector (the lost-wakeup deadlock this test caught in gc-core).
 #[test]
 fn threads_stop_the_world_and_keep_their_roots() {
     let _g = serial();
+    watchdog("threads_stop_the_world_and_keep_their_roots", 120);
     unsafe {
         reset();
         kelp_gc_thread_attach();
