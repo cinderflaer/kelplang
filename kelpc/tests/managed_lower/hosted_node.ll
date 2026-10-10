@@ -9,6 +9,8 @@ target triple = "x86_64-unknown-linux-gnu"
 %tag_Node = type { %kelp_Box__Node, %kelp_Box__Node }
 %kelp_Box__Node = type { ptr }
 
+@kelp_box_free_heads = external thread_local(initialexec) global [4 x ptr]
+@kelp_box_registered = external thread_local(initialexec) global i32
 @kelp_argc = external global i32
 @kelp_argv = external global ptr
 @kelp_caps_node_env = external global ptr
@@ -380,6 +382,10 @@ declare ptr @realloc(ptr, i64)
 
 declare void @free(ptr)
 
+declare ptr @kelp_box_alloc(i64, i64)
+
+declare void @kelp_box_free(ptr, i64, i64)
+
 declare ptr @memcpy(ptr, ptr, i64)
 
 declare i32 @memcmp(ptr, ptr, i64)
@@ -423,18 +429,32 @@ entry:
 define internal %kelp_Box__Node @kelp_Box__Node__of(%tag_Node %0) {
 entry:
   %b = alloca %kelp_Box__Node, align 8
-  %heap = call ptr @malloc(i64 16)
-  %oom = icmp eq ptr %heap, null
-  br i1 %oom, label %oom1, label %alloc.ok
+  %box.head = load ptr, ptr @kelp_box_free_heads, align 8
+  %box.empty = icmp eq ptr %box.head, null
+  br i1 %box.empty, label %box.new, label %box.pop
 
-oom1:                                             ; preds = %entry
+box.pop:                                          ; preds = %entry
+  %box.next = load ptr, ptr %box.head, align 8
+  store ptr %box.next, ptr @kelp_box_free_heads, align 8
+  br label %box.join
+
+box.new:                                          ; preds = %entry
+  %box.new1 = call ptr @kelp_box_alloc(i64 16, i64 8)
+  br label %box.join
+
+box.join:                                         ; preds = %box.new, %box.pop
+  %box = phi ptr [ %box.head, %box.pop ], [ %box.new1, %box.new ]
+  %oom = icmp eq ptr %box, null
+  br i1 %oom, label %oom2, label %alloc.ok
+
+oom2:                                             ; preds = %box.join
   call void @kelp_panic(ptr @panic.msg.3)
   unreachable
 
-alloc.ok:                                         ; preds = %entry
-  store %tag_Node %0, ptr %heap, align 8
+alloc.ok:                                         ; preds = %box.join
+  store %tag_Node %0, ptr %box, align 8
   %value = getelementptr inbounds nuw %kelp_Box__Node, ptr %b, i32 0, i32 0
-  store ptr %heap, ptr %value, align 8
+  store ptr %box, ptr %value, align 8
   %of = load %kelp_Box__Node, ptr %b, align 8
   ret %kelp_Box__Node %of
 }
@@ -470,25 +490,39 @@ entry:
   br i1 %empty, label %alloc, label %have
 
 alloc:                                            ; preds = %entry
-  %heap = call ptr @malloc(i64 16)
-  %oom = icmp eq ptr %heap, null
-  br i1 %oom, label %oom2, label %alloc.ok
+  %box.head = load ptr, ptr @kelp_box_free_heads, align 8
+  %box.empty = icmp eq ptr %box.head, null
+  br i1 %box.empty, label %box.new, label %box.pop
 
 have:                                             ; preds = %entry
   call void @kelp_drop_Node(ptr %value1)
   br label %store
 
 store:                                            ; preds = %have, %alloc.ok
-  %value3 = load ptr, ptr %value, align 8
-  store %tag_Node %1, ptr %value3, align 8
+  %value4 = load ptr, ptr %value, align 8
+  store %tag_Node %1, ptr %value4, align 8
   ret void
 
-oom2:                                             ; preds = %alloc
+box.pop:                                          ; preds = %alloc
+  %box.next = load ptr, ptr %box.head, align 8
+  store ptr %box.next, ptr @kelp_box_free_heads, align 8
+  br label %box.join
+
+box.new:                                          ; preds = %alloc
+  %box.new2 = call ptr @kelp_box_alloc(i64 16, i64 8)
+  br label %box.join
+
+box.join:                                         ; preds = %box.new, %box.pop
+  %box = phi ptr [ %box.head, %box.pop ], [ %box.new2, %box.new ]
+  %oom = icmp eq ptr %box, null
+  br i1 %oom, label %oom3, label %alloc.ok
+
+oom3:                                             ; preds = %box.join
   call void @kelp_panic(ptr @panic.msg.5)
   unreachable
 
-alloc.ok:                                         ; preds = %alloc
-  store ptr %heap, ptr %value, align 8
+alloc.ok:                                         ; preds = %box.join
+  store ptr %box, ptr %value, align 8
   br label %store
 }
 
@@ -505,7 +539,21 @@ empty2:                                           ; preds = %entry
 
 take:                                             ; preds = %entry
   %take3 = load %tag_Node, ptr %value1, align 8
-  call void @free(ptr %value1)
+  %box.reg = load i32, ptr @kelp_box_registered, align 4
+  %box.ready = icmp ne i32 %box.reg, 0
+  br i1 %box.ready, label %box.push, label %box.free
+
+box.push:                                         ; preds = %take
+  %box.head = load ptr, ptr @kelp_box_free_heads, align 8
+  store ptr %box.head, ptr %value1, align 8
+  store ptr %value1, ptr @kelp_box_free_heads, align 8
+  br label %box.freed
+
+box.free:                                         ; preds = %take
+  call void @kelp_box_free(ptr %value1, i64 16, i64 8)
+  br label %box.freed
+
+box.freed:                                        ; preds = %box.free, %box.push
   store ptr null, ptr %value, align 8
   ret %tag_Node %take3
 }
@@ -517,12 +565,26 @@ entry:
   %empty = icmp eq ptr %value1, null
   br i1 %empty, label %ret, label %live
 
-ret:                                              ; preds = %live, %entry
+ret:                                              ; preds = %box.freed, %entry
   ret void
 
 live:                                             ; preds = %entry
   call void @kelp_drop_Node(ptr %value1)
-  call void @free(ptr %value1)
+  %box.reg = load i32, ptr @kelp_box_registered, align 4
+  %box.ready = icmp ne i32 %box.reg, 0
+  br i1 %box.ready, label %box.push, label %box.free
+
+box.push:                                         ; preds = %live
+  %box.head = load ptr, ptr @kelp_box_free_heads, align 8
+  store ptr %box.head, ptr %value1, align 8
+  store ptr %value1, ptr @kelp_box_free_heads, align 8
+  br label %box.freed
+
+box.free:                                         ; preds = %live
+  call void @kelp_box_free(ptr %value1, i64 16, i64 8)
+  br label %box.freed
+
+box.freed:                                        ; preds = %box.free, %box.push
   store ptr null, ptr %value, align 8
   br label %ret
 }

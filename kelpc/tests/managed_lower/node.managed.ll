@@ -10,6 +10,8 @@ target triple = "x86_64-unknown-linux-gnu"
 %kelp_Box__Node = type { ptr }
 %tag_Node = type { %kelp_Box__Node, %kelp_Box__Node }
 
+@kelp_box_free_heads = external thread_local(initialexec) global [4 x ptr]
+@kelp_box_registered = external thread_local(initialexec) global i32
 @kelp_argc = external global i32
 @kelp_argv = external global ptr
 @kelp_caps_node_env = external global ptr
@@ -382,6 +384,10 @@ declare ptr @malloc(i64)
 declare ptr @realloc(ptr, i64)
 
 declare void @free(ptr)
+
+declare ptr @kelp_box_alloc(i64, i64)
+
+declare void @kelp_box_free(ptr, i64, i64)
 
 declare ptr @memcpy(ptr, ptr, i64)
 
