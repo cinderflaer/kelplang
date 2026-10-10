@@ -1,0 +1,13 @@
+name = "an_extern_callback_collects"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[target]
+mode = "managed"
+
+[extern."helper"]
+domain = "env"
+library = "c"
+symbols = ["kelp_call_twice"]
+header = "kelp_cb_helper.h"
+include_dirs = ["include"]

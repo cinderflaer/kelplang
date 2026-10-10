@@ -182,3 +182,44 @@ fn t60_a_failed_pthread_create_names_the_return_code() {
         "panic: thread.spawn: pthread_create failed\n  errno 11: Resource temporarily unavailable\n"
     );
 }
+
+/// Copies a fixture directory (sources, manifest and include files) into `to`.
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("create scratch dir");
+    for entry in std::fs::read_dir(from).expect("read fixture dir") {
+        let entry = entry.expect("fixture entry");
+        let dest = to.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_dir(&entry.path(), &dest);
+        } else {
+            std::fs::copy(entry.path(), &dest).expect("copy fixture file");
+        }
+    }
+}
+
+/// Step 0 (D53, check C4): a closure that captures a heap value crosses to C
+/// through a `move closure(...)` parameter for the duration of one call. The
+/// callback runs collections (stress and verify), then reads the capture. The
+/// managed build uses the LLVM backend, the only one with a collector.
+#[test]
+#[ignore = "needs KELP_GC_LIB: the collector archive from kelpc/gc"]
+fn an_extern_callback_reads_its_capture_after_a_collection() {
+    assert!(std::env::var_os("KELP_GC_LIB").is_some(), "set KELP_GC_LIB to libkelp_gc.a");
+    let name = "an_extern_callback_collects";
+    let dir = std::env::temp_dir().join(format!("kelpc-tidepool-s0-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(&fixture(name), &dir);
+    let bin = dir.join(name);
+    let out = kelpc()
+        .arg("build")
+        .arg(&dir)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(out.status.success(), "the managed build of {name} failed:\n{}", text(&out));
+    let out = run(&bin, "export KELP_GC_STRESS=1 KELP_GC_VERIFY=1; ");
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(out.status.success(), "{name}: exit {:?}, stderr: {stderr}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected(name), "{name}: stdout");
+}
