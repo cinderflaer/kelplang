@@ -1,0 +1,26 @@
+[package]
+name = "kelp_gc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "KelpScript managed-mode garbage collector core (non-moving mark-region, phase 1)"
+
+# Own workspace: the kelpc workspace root lists only `kelpc`, and this crate is
+# built by its own `cargo test` and by the driver that embeds the staticlib.
+[workspace]
+
+[lib]
+# staticlib: the archive the compiler links next to kelp_rt.o. Unit tests run from the cfg(test) build of this same crate.
+
+crate-type = ["staticlib"]
+name = "kelp_gc"
+
+[dependencies]
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+debug = false
+
+[profile.dev]
+panic = "abort"
