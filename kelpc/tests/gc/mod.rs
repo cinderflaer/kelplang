@@ -414,7 +414,7 @@ fn churn_ten_million_sixteen_byte_cells_keeps_heap_bounded() {
         kelp_gc_thread_attach();
         const N: usize = 10_000_000;
         for i in 0..N {
-            let p = kelp_gc_alloc(&NODE) as usize;
+            let p = kelp_gc_alloc(&LINK) as usize;
             assert_eq!(p % 8, 0);
             wr_scalar(p, i);
         }
@@ -588,7 +588,7 @@ fn stack_only_object_of_a_native_thread_survives_collections() {
     static DONE: AtomicBool = AtomicBool::new(false);
     let worker = std::thread::spawn(|| unsafe {
         kelp_gc_thread_attach();
-        let p = kelp_gc_alloc(&NODE) as usize;
+        let p = kelp_gc_alloc(&LINK) as usize;
         core::ptr::write((p + 8) as *mut usize, 4242);
         READY.store(true, SeqCst);
         kelp_gc_enter_native();
@@ -889,7 +889,7 @@ unsafe fn churn_run(threads: usize, per: usize) -> (f64, usize, usize) {
         handles.push(std::thread::spawn(move || {
             unsafe { kelp_gc_thread_attach() };
             for i in 0..per {
-                let p = unsafe { kelp_gc_alloc(&NODE) } as usize;
+                let p = unsafe { kelp_gc_alloc(&LINK) } as usize;
                 unsafe { wr_scalar(p, i) };
             }
             unsafe { kelp_gc_thread_detach() };
