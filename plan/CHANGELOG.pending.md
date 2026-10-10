@@ -16,30 +16,28 @@ empty on release.
 
 ## Added
 
-- `[build] emit = "html"` writes a Polyp view as a static HTML file. `[build] emit_entry` names the program that builds it. A Polyp HTML build needs no env grant.
+- Managed mode: `[target] mode = "managed"` builds a program whose heap is collected by a GC instead of freed by hand. It needs the LLVM backend, refuses `--incremental`, and reads the collector archive from `KELP_GC_LIB`. `[target] heap_max` sets the heap cap in MiB (1 to 65536, default 256). A resource value (a file, socket or capability) in a heap slot is refused by name (on branch round-gc, not merged).
 
 ## Changed
-
-- The Polyp examples use the Polyp v5 impl ids (`deps/polyp/core/core`, `deps/polyp/backends/gtk/polyp/lib`, `deps/polyp/backends/gtk/gtk`, `deps/polyp/backends/gtk/queue`, `deps/polyp/backends/soft/...`). The `polyp` namespace is unchanged. The v0 examples are frozen.
 
 - `Box<T>` blocks of up to 64 bytes are recycled through per-thread free lists instead of malloc and free (binary-trees runs about 1.9x faster). Programs with their own allocator are unchanged.
 - The `Box` free lists read their per-thread state with the initial-exec TLS model, so each allocation skips a `__tls_get_addr` call.
 - A pooled `Box` allocation or release is inline in the generated code: a call into the runtime only when a size class is empty or a thread is new.
+- The `[target]` error for a missing `mode` now also names `managed`, and `heap_max` is refused unless `mode = "managed"` (on branch round-gc, not merged).
 
 ## compiler
 
 - The C text the `llvm` backend still emits (runtime headers, `extern fun` declarations, callback glue) moved from `codegen_c.rs` to `cdecl.rs`. Emitted output is unchanged.
 - `kelpc` now finds `ld.lld` (`KELPC_LLD`, then PATH) and has the hosted link argv builder in `sysroot.rs`. No link line has changed yet: builds still use `cc`.
 - `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C. Programs are unchanged: the C runtime is still the one linked.
-- `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
-- `kelpc doc --text` prints the documentation as plain text (on branch lighthouse-support, not merged).
-- `kelpc` builtin listing is available as JSON (on branch lighthouse-support, not merged).
+- `kelpc doc --format json` writes the documentation as JSON: declarations, spans, imports, trait impls and the compiler's builtin members (on branch lighthouse-support, not merged).
+- `kelpc doc --text` reads one file's source from stdin in place of the file, for editor tools; it does not print text (on branch lighthouse-support, not merged).
 - The LLVM backend checks a `List` index of `x.to_usize()` (signed `x`) with one bounds branch instead of two; the same panics and messages, faster `List.get` and `List.set` in tight loops.
 - The capability checks are ported from C to Rust in `kelp-rt/src/cap.rs` (stage 1, not yet linked into `kelpc`); the checks behave as before.
 
 ## stdlib
 
-- `kelpc stdlib --json` lists the standard library as JSON (on branch lighthouse-support, not merged).
+- `kelpc stdlib --json --dir <dir>` writes the shipped std sources to `<dir>` and prints the module list with a SHA-256 per file as JSON (on branch lighthouse-support, not merged).
 
 ## fixes
 
@@ -49,7 +47,8 @@ empty on release.
 
 ## limits
 
-- Managed lowering is a WIP commit, not compiled or verified (on branch gc-lowering, not merged).
+- Managed lowering is WIP: its first commit (7b24451) was not compiled or verified; later commits add tests and the enum and safepoint lowering (on branch round-gc, not merged).
+- Managed mode does not describe an enum stored inside a `datac` yet; such a build is a compile error (on branch round-gc, not merged).
 - A-11 borrow checking is a WIP commit, not finished (on branch a11-checker, not merged).
 
 ## Wiki and docs
