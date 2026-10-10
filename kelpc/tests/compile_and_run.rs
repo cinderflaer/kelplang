@@ -16,42 +16,16 @@ fn kelpc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kelpc"))
 }
 
-/// The backend this run of the suite is validating.
-///
-/// The suite is backend-agnostic by construction: it compiles a fixture, runs
-/// the result, and compares stdout, so it never names a code generator. Which
-/// one runs is therefore a property of the *invocation*, not of the test, and
-/// the project's oracle switch (`KELPC_ORACLE`) is the only input that varies
-/// it (the MK7 record in `plan/done.md`). The switch names only the C backend, and
-/// unset means the compiler's own default (`Backend::DEFAULT`), which since MK7
-/// S7 is `llvm`, so an unqualified run exercises what an unqualified
-/// `kelpc build` does and `KELPC_ORACLE=c` points the whole suite at the oracle
-/// instead, which is how the C backend stays covered. `the_default_backend_is_llvm`
-/// below pins the compiler's side of that agreement by reading which
-/// intermediate a build with no backend setting writes.
-fn backend() -> String {
-    match std::env::var("KELPC_ORACLE").as_deref() {
-        Ok("c") => "c".to_string(),
-        _ => "llvm".to_string(),
-    }
-}
-
-/// A `kelpc` invocation pinned to the backend under test.
-///
-/// The oracle switch is passed explicitly rather than inherited so that the
-/// suite's child processes cannot disagree with `backend()` about which backend
-/// is being exercised; an inherited value that differs from this one would make
-/// a failure impossible to attribute. The retired `KELPC_BACKEND` is stripped
-/// for the same reason: a developer's stale export must not turn every build in
-/// the run into the refusal that variable now earns.
+/// A `kelpc` invocation. The suite compiles a fixture, runs the result and
+/// compares stdout, so it never names a code generator: `kelpc` has one, the
+/// LLVM backend. The retired variables (`KELPC_BACKEND` and the `KELPC_ORACLE`
+/// switch, removed with the C backend on 2026-10-10) are stripped so a
+/// developer's stale export cannot turn every build in the run into the refusal
+/// those variables now earn.
 fn kelpc() -> Command {
     let mut cmd = Command::new(kelpc_bin());
     cmd.env_remove("KELPC_BACKEND");
-    if backend() == "c" {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
+    cmd.env_remove("KELPC_ORACLE");
     cmd
 }
 
@@ -63,18 +37,12 @@ fn out_path(name: &str) -> PathBuf {
     let mut p = PathBuf::from(std::env::var("CARGO_TARGET_TMPDIR").unwrap_or_else(|_| {
         std::env::temp_dir().to_string_lossy().to_string()
     }));
-    // The backend is part of the path because a second backend produces a
-    // different binary from the same fixture. Without it, two backends running
-    // concurrently (or one leaving an artifact behind) would race for the same
-    // file, and the loser's binary would be executed in the winner's place.
-    //
-    // The name of the test is part of it for the same reason inside one
-    // backend: two tests may build one fixture, and a second test's `exec` of a
-    // file the first is still writing fails with `Text file busy`
-    // (BUG-r4Nc8). libtest names each test's thread after the test, so the
-    // thread name is the test name.
+    // The name of the test is part of the path: two tests may build one
+    // fixture, and a second test's `exec` of a file the first is still writing
+    // fails with `Text file busy` (BUG-r4Nc8). libtest names each test's thread
+    // after the test, so the thread name is the test name.
     let test = std::thread::current().name().unwrap_or("main").to_string();
-    p.push(format!("kelpc_test_{}_{test}_{name}", backend()));
+    p.push(format!("kelpc_test_{test}_{name}"));
     p
 }
 
@@ -194,79 +162,6 @@ fn assignment_to_val_field_is_rejected() {
 #[test]
 fn when_desugars_to_if_else_chain() {
     assert_compiles_and_runs("tests/fixtures/when_expr.kp", "pos\nneg\nzero\n");
-}
-
-/// Source mapping is the one property of the C backend that only the *generated
-/// file* can answer: a `#line` marker is what the C compiler reads, so no
-/// program's stdout asserts it. Everything else in this file is asserted by
-/// running a program; this test reads `build/<name>.c` on purpose (roadmap open
-/// item 20, and A-16's source-mapping half).
-///
-/// A marker **per statement** is the point: it names the `.kp` file and the line
-/// the statement is written on, and a multi-file build names each module's own
-/// file rather than the entry module's.
-#[test]
-fn the_generated_c_maps_statements_back_to_their_kp_lines() {
-    // `KELPC_ORACLE=c` explicitly: the file this reads is one only that
-    // backend writes, so the test must not follow the suite's default.
-    let source = fixture("tests/fixtures/when_expr.kp");
-    let bin = out_path("line_markers_single");
-    let build = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .args(["build"])
-        .arg(&source)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'when_expr.kp' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    let generated = std::fs::read_to_string(bin.with_extension("c"))
-        .expect("the generated C sits beside the binary");
-    // Lines 8 and 10 are `print(classify(5))` and `print(classify(0))`; the
-    // marker has to name the statement's own line, which is the difference
-    // between "bisect the function" and "read the expression".
-    for line in [8, 10] {
-        let marker = format!("#line {line} \"{}\"", source.display());
-        assert!(
-            generated.contains(&marker),
-            "the generated C has no '{marker}' directive:\n{generated}"
-        );
-    }
-
-    // A multi-file build: `shapes` is `main.kp`, `geom.kp` and
-    // `shapes/circle.kp`, and a statement in each has to be mapped to the file
-    // it was written in.
-    let root = project("shapes").join("src");
-    let bin = out_path("line_markers_project");
-    let build = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .args(["build"])
-        .arg(root.join("main.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected the 'shapes' project to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    let generated = std::fs::read_to_string(bin.with_extension("c"))
-        .expect("the generated C sits beside the binary");
-    for (module, line) in [("main.kp", 5usize), ("geom.kp", 1), ("shapes/circle.kp", 5)] {
-        let marker = format!("#line {line} \"{}\"", root.join(module).display());
-        assert!(
-            generated.contains(&marker),
-            "no '{marker}' directive: the imported module's statements are not \
-             mapped to '{module}'"
-        );
-    }
 }
 
 #[test]
@@ -2264,256 +2159,6 @@ fn a_delegated_wildcard_lets_the_import_reach_every_resource() {
 }
 
 #[test]
-fn a_full_grant_elides_the_runtime_path_check_but_a_narrow_one_keeps_it() {
-    // A path domain's whole-resource pattern (`/**`) matches any string
-    // unconditionally in `glob_match` (`std/rt.kp`), so when a module's own
-    // compiled-in pattern list for `fs` holds that literal pattern, the
-    // `kelp_cap_check_path` call at a gated call site is provably always
-    // going to pass and `cap_plan` drops it before codegen rather than
-    // emitting a runtime call that can only ever succeed
-    // (`codegen_c.rs::Gen::cap_plan`, `codegen_llvm.rs`'s mirror). This is a
-    // codegen-shape assertion, so it reads the generated C the way
-    // `the_generated_c_maps_statements_back_to_their_kp_lines` does, and pins
-    // `KELPC_ORACLE=c` explicitly for the same reason that test does: the
-    // artifact under test is one only that backend writes.
-    //
-    // `caps_elide_full_grant` (`util` holds `caps(fs = ["/**"])` outright) is
-    // the positive case: its one `fs.read_text` call site must compile to no
-    // `kelp_cap_check_path` call at all, while still reading the file
-    // correctly. It uses its own scratch directory, not one another test also
-    // writes to, so there is no cross-test race on the setup.
-    let full = caps_scratch("elide_full_grant");
-    std::fs::write(full.join("note.txt"), "hello caps").unwrap();
-
-    let bin = out_path("caps_elide_full_grant");
-    let build = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .arg("build")
-        .arg(caps_project("caps_elide_full_grant").join("main.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'caps_elide_full_grant' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let run = Command::new(&bin).output().expect("failed to run the binary");
-    assert!(
-        run.status.success(),
-        "expected 'caps_elide_full_grant' to run cleanly"
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "hello caps\n",
-        "the elided check must not change the program's observable result"
-    );
-    let generated = std::fs::read_to_string(bin.with_extension("c"))
-        .expect("the generated C sits beside the binary");
-    assert!(
-        !generated.contains("kelp_cap_check_path(\""),
-        "a module holding the full '/**' grant for 'fs' must have no \
-         'kelp_cap_check_path' call left at its call sites, since every one \
-         of them is provably going to pass:\n{generated}"
-    );
-
-    // The negative case: `caps_elide_narrow_grant`'s `util` module holds a
-    // narrower pattern (not `/**`), so its call to `fs.read_text` still has
-    // to carry the runtime check. Eliding it there would be the correctness
-    // hole this task exists to avoid: a narrower grant silently starting to
-    // admit everything.
-    //
-    // Denial itself, for a narrower grant, is already covered by
-    // `a_path_outside_the_grant_is_denied_at_a_primitive_too` (project
-    // `caps_raw_denied`), so this only re-proves the check is still *emitted*
-    // rather than duplicating that denial test.
-    let narrow = caps_scratch("elide_narrow_grant");
-    std::fs::write(narrow.join("note.txt"), "hello caps").unwrap();
-    let bin2 = out_path("caps_elide_narrow_grant");
-    let build2 = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .arg("build")
-        .arg(caps_project("caps_elide_narrow_grant").join("main.kp"))
-        .arg("-o")
-        .arg(&bin2)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build2.status.success(),
-        "expected 'caps_elide_narrow_grant' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build2.stderr)
-    );
-    let generated2 = std::fs::read_to_string(bin2.with_extension("c"))
-        .expect("the generated C sits beside the binary");
-    assert!(
-        generated2.contains("kelp_cap_check_path(\""),
-        "a module holding a narrower-than-'/**' grant for 'fs' must keep its \
-         runtime 'kelp_cap_check_path' call:\n{generated2}"
-    );
-
-    let _ = std::fs::remove_dir_all(&full);
-    let _ = std::fs::remove_dir_all(&narrow);
-}
-
-#[test]
-fn a_whole_resource_name_grant_elides_the_defining_modules_own_check() {
-    // A name domain's wrapper calls its own gated `extern fun` (`std/env`'s
-    // `has` over `has_raw`, one line each), and that inner call carries a
-    // `CapCheck::Name` against `std/env`'s own granted list. When that list is
-    // exactly the domain's whole-resource `*`, the inner check is provably
-    // going to pass for every name its callers can reach: an `env` grant may
-    // not name a `/` (`resolve.rs::validate_cap_pattern` refuses one) and `*`
-    // crosses none, so the call site's own check has already admitted the
-    // name. `cap_plan` drops it before codegen, in both backends
-    // (`codegen_c.rs::Gen::cap_plan` and its mirror in `codegen_llvm.rs`).
-    //
-    // This is a codegen-shape assertion, so it reads the generated C the way
-    // the path-domain elision test above does, and pins `KELPC_ORACLE=c`
-    // explicitly for the same reason: the artifact under test is one only that
-    // backend writes. The expected count is exact and stated: ONE
-    // `kelp_cap_check_name` call for the `env.has` access, the entry module's
-    // own. Without the elision there are five, the four inside `std/env`'s
-    // wrappers included, which the narrow case below pins.
-    let bin = out_path("caps_elide_name_full");
-    let build = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .arg("build")
-        .arg(project("caps_elide_name_full").join("main.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'caps_elide_name_full' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let run = Command::new(&bin).output().expect("failed to run the binary");
-    assert!(
-        run.status.success(),
-        "expected 'caps_elide_name_full' to run cleanly"
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "true\n",
-        "the elided check must not change the program's observable result"
-    );
-    let generated = std::fs::read_to_string(bin.with_extension("c"))
-        .expect("the generated C sits beside the binary");
-    assert_eq!(
-        generated.matches("kelp_cap_check_name(\"").count(),
-        1,
-        "a whole-resource ('*') grant to 'std/env' must leave exactly one \
-         'kelp_cap_check_name' call for this access, the entry module's own:\n{generated}"
-    );
-    assert!(
-        generated.contains("kelp_cap_check_name(\"env\", \"PATH\", kelp_caps_main_env"),
-        "the one check left must be the entry module's own, against its own \
-         pattern list:\n{generated}"
-    );
-    assert!(
-        !generated.contains("kelp_cap_check_name(\"env\", kelp_name, kelp_caps_std_env_env"),
-        "the check the elision removes is the one inside 'std/env' itself, \
-         against 'std/env's own list:\n{generated}"
-    );
-
-    // The negative control: `std/env` holds a narrower list than `*`, so its
-    // own internal check is the effective gate for what its wrappers may read
-    // and is kept. The entry module holds `*`, which admits `HOME`, so this
-    // check is the only thing that can deny it, and the denial names
-    // `std/env` rather than the entry module.
-    let bin2 = out_path("caps_elide_name_narrow");
-    let build2 = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .arg("build")
-        .arg(project("caps_elide_name_narrow").join("main.kp"))
-        .arg("-o")
-        .arg(&bin2)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build2.status.success(),
-        "expected 'caps_elide_name_narrow' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build2.stderr)
-    );
-    let generated2 = std::fs::read_to_string(bin2.with_extension("c"))
-        .expect("the generated C sits beside the binary");
-    assert_eq!(
-        generated2.matches("kelp_cap_check_name(\"").count(),
-        5,
-        "a narrower grant to 'std/env' must keep all four internal \
-         'kelp_cap_check_name' calls beside the entry module's own:\n{generated2}"
-    );
-    let run2 = Command::new(&bin2).output().expect("failed to run the binary");
-    assert!(
-        !run2.status.success(),
-        "expected 'caps_elide_name_narrow' to be denied at runtime"
-    );
-    let stderr2 = String::from_utf8_lossy(&run2.stderr);
-    assert!(
-        stderr2.contains("'HOME' is outside the env capability granted to module 'std/env'"),
-        "expected the denial to name 'std/env' and the refused name, got:\n{stderr2}"
-    );
-    assert!(
-        stderr2.contains("PATH"),
-        "expected the denial to name the granted pattern, got:\n{stderr2}"
-    );
-}
-
-#[test]
-fn a_wildcard_caller_outside_the_domain_module_keeps_its_own_check() {
-    // The safety boundary, and the test that would catch the elision being
-    // broadened past the domain's own defining module: `util` holds the
-    // whole-resource `*` for `env` and is not `std/env`, so its own
-    // `CapCheck::Name` is emitted exactly as before, and its own
-    // `*`-does-not-cross-`/` rule is what denies the slashy name. `std/env`
-    // holds `*` in this same program, so the elision is active: if it had
-    // reached `util` too, there would be no check left at all and this run
-    // would succeed. Never an exact literal grant: an `env` pattern may not
-    // contain a `/` at all, which
-    // `an_env_grant_cannot_name_a_slashy_variable` pins as a refusal.
-    let bin = out_path("caps_elide_name_wild_caller");
-    let build = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .arg("build")
-        .arg(project("caps_elide_name_wild_caller").join("main.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'caps_elide_name_wild_caller' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let generated = std::fs::read_to_string(bin.with_extension("c"))
-        .expect("the generated C sits beside the binary");
-    assert_eq!(
-        generated.matches("kelp_cap_check_name(\"").count(),
-        1,
-        "'std/env's own checks are elided here, and 'util's own is not: \
-         exactly one 'kelp_cap_check_name' call is left:\n{generated}"
-    );
-    assert!(
-        generated.contains("kelp_cap_check_name(\"env\", \"has/nested\", kelp_caps_util_env"),
-        "the one check left must be the ordinary '*' holder's own, not an \
-         elided one:\n{generated}"
-    );
-    let run = Command::new(&bin).output().expect("failed to run the binary");
-    assert!(
-        !run.status.success(),
-        "a name with a '/' in it reached only through a '*' grant must still \
-         be denied"
-    );
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(
-        stderr.contains("'has/nested' is outside the env capability granted to module 'util'"),
-        "expected 'util's own check to refuse the slashy name, got:\n{stderr}"
-    );
-}
-
-#[test]
 fn an_env_grant_cannot_name_a_slashy_variable() {
     // The scenario the elision was approved on was an exact, literal grant for
     // a name that contains a `/`, which `std/env`'s own wildcard could never
@@ -2673,7 +2318,7 @@ fn a_pointer_to_an_owned_type_is_rejected() {
 // default, now guaranteed), `repr(packed)`, `repr(align(N))`, the compile-time
 // queries `size_of`/`align_of`/`offset_of`, and explicit discriminants on a
 // field-less enum with `to_int`/`from_int`. Every fixture here runs on the
-// default (LLVM) backend and on the C oracle, because the suite is run twice.
+// default (LLVM) backend.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -2765,8 +2410,7 @@ fn a_packed_datac_crosses_to_a_c_helper_and_the_two_layouts_agree() {
 // integer byte-order conversions (`swap_bytes`, `to_be`/`to_le` and the static
 // `u32.from_be`/`u32.from_le`), the bounds-checked byte-order readers and
 // writers on a `Bytes`, and `Ptr.read_unaligned`/`write_unaligned`. Every
-// fixture here runs on the default (LLVM) backend and on the C oracle, because
-// the suite is run twice.
+// fixture here runs on the default (LLVM) backend.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -3053,18 +2697,14 @@ fn printing_an_ffi_opaque_handle_is_rejected() {
 }
 
 /// Gap 4: a user `extern fun`'s `move closure(...)` parameter expands into the
-/// native `(func, user_data, destroy_notify)` triple. The C backend is the one
-/// that emits the expansion, so this pins `KELPC_ORACLE=c` and runs it even
-/// when the suite's backend is LLVM (which refuses the shape by name, see the
-/// test below). The helper calls the callback twice and then its `destroy`
+/// native `(func, user_data, destroy_notify)` triple. The LLVM backend builds the expansion, and the shape it refuses by name is covered by the test below. The helper calls the callback twice and then its `destroy`
 /// notify, so the printed order proves the thunk reordered the arguments, and
-/// the AddressSanitizer rebuild proves the environment was freed exactly once.
+/// the destroy notify runs exactly once.
 #[test]
 fn an_ffi_callback_closure_crosses_to_native_code() {
     let target = project("ffi_callback");
     let bin = out_path("ffi_callback");
     let build = Command::new(kelpc_bin())
-        .env("KELPC_ORACLE", "c")
         .arg("build")
         .arg(&target)
         .arg("-o")
@@ -3073,7 +2713,7 @@ fn an_ffi_callback_closure_crosses_to_native_code() {
         .expect("failed to spawn kelpc");
     assert!(
         build.status.success(),
-        "expected 'ffi_callback' to compile on the C backend, but it failed:\n{}",
+        "expected 'ffi_callback' to compile, but it failed:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
     let run = Command::new(&bin).output().expect("failed to run compiled binary");
@@ -3086,67 +2726,6 @@ fn an_ffi_callback_closure_crosses_to_native_code() {
         String::from_utf8_lossy(&run.stdout),
         "2\n3\n2\n4\n2\n8\n9\n2\n",
         "unexpected stdout for 'ffi_callback'"
-    );
-
-    // The callback's boxed environment is the one allocation the fixture makes,
-    // so a missed `destroy` is a leak and a double one is a use-after-free.
-    // Rebuild the generated C with AddressSanitizer, which reports both at
-    // exit; the project's own include dir is what finds the helper.
-    let asan_bin = out_path("ffi_callback_asan");
-    let cc = Command::new("cc")
-        .arg("-fsanitize=address")
-        .arg("-O1")
-        .arg("-I")
-        .arg(target.join("include"))
-        .arg("-o")
-        .arg(&asan_bin)
-        .arg(bin.with_extension("c"))
-        .output()
-        .expect("failed to spawn cc");
-    if cc.status.success() {
-        let asan_run = Command::new(&asan_bin)
-            .output()
-            .expect("failed to run the instrumented binary");
-        assert!(
-            asan_run.status.success(),
-            "AddressSanitizer flagged 'ffi_callback':\n{}",
-            String::from_utf8_lossy(&asan_run.stderr)
-        );
-    }
-}
-
-/// The same project on the default (LLVM) backend, the one a program is built
-/// with unless the oracle switch says otherwise. It must print exactly what the
-/// C backend prints: the closure crosses as a pointer to the caller's slot, the
-/// per-program C object boxes it, and the thunk and destructor are the same
-/// generated text.
-#[test]
-fn an_llvm_ffi_callback_closure_crosses_to_native_code() {
-    let target = project("ffi_callback");
-    let bin = out_path("ffi_callback_llvm");
-    let build = Command::new(kelpc_bin())
-        .env_remove("KELPC_ORACLE")
-        .arg("build")
-        .arg(&target)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'ffi_callback' to compile on the default backend, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let run = Command::new(&bin).output().expect("failed to run compiled binary");
-    assert!(
-        run.status.success(),
-        "expected the llvm 'ffi_callback' binary to exit successfully, got:\n{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "2\n3\n2\n4\n2\n8\n9\n2\n",
-        "the llvm build must print what the C build prints"
     );
 }
 
@@ -3180,73 +2759,9 @@ fn an_ffi_variadic_extern_accepts_extra_arguments() {
     assert_project_runs("ffi_variadic", &project("ffi_variadic"), "0\n7\n6\n11\n");
 }
 
-/// The same project on the default (LLVM) backend, whose per-program C object
-/// carries the wrappers that the generated C calls. It must print exactly what
-/// the C backend prints; pinning LLVM here keeps the wrappers covered even
-/// when the suite is pointed at the oracle.
-#[test]
-fn an_llvm_ffi_variadic_extern_accepts_extra_arguments() {
-    let target = project("ffi_variadic");
-    let bin = out_path("ffi_variadic_llvm");
-    let build = Command::new(kelpc_bin())
-        .env_remove("KELPC_ORACLE")
-        .arg("build")
-        .arg(&target)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'ffi_variadic' to compile on the default backend, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let run = Command::new(&bin).output().expect("failed to run compiled binary");
-    assert!(
-        run.status.success(),
-        "expected the llvm 'ffi_variadic' binary to exit successfully, got:\n{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "0\n7\n6\n11\n",
-        "the llvm build must print what the C build prints"
-    );
-}
-
 #[test]
 fn an_ffi_extern_accepts_function_pointers() {
     assert_project_runs("ffi_fn_pointer", &project("ffi_fn_pointer"), "41\n42\n");
-}
-
-#[test]
-fn an_llvm_ffi_extern_accepts_function_pointers() {
-    let target = project("ffi_fn_pointer");
-    let bin = out_path("ffi_fn_pointer_llvm");
-    let build = Command::new(kelpc_bin())
-        .env_remove("KELPC_ORACLE")
-        .arg("build")
-        .arg(&target)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'ffi_fn_pointer' to compile on the default backend, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let run = Command::new(&bin).output().expect("failed to run compiled binary");
-    assert!(
-        run.status.success(),
-        "expected the llvm 'ffi_fn_pointer' binary to exit successfully, got:\n{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "41\n42\n",
-        "the llvm build must print what the C build prints"
-    );
 }
 
 #[test]
@@ -3303,8 +2818,7 @@ fn a_symlink_inside_the_grant_pointing_outside_is_denied() {
 
 #[test]
 fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
-    // The C backend's capability check used to re-evaluate the resource
-    // argument, so the check admitted one path and the call read another. This
+    // The capability check used to re-evaluate the resource argument, so the check admitted one path and the call read another. This
     // project pins both halves of that fix in one run.
     //
     // `util.inside_once()` is the fail-open shape: `mk()` names a path inside
@@ -3914,8 +3428,7 @@ fn byte_literals_are_u8_and_carry_hex_escapes() {
     );
 }
 
-/// `isize` is `ptrdiff_t`, and the C backend emitted that name without
-/// including `<stddef.h>`, so every shape of the type failed to compile. One
+/// `isize` is `ptrdiff_t`, and a backend that emitted that name without including `<stddef.h>` failed every shape of the type to compile. One
 /// shape per way a type can appear, which is why this is a fixture and not a
 /// one-line repro: a local, a parameter, a return, a `datac` field and a `List`
 /// element.
@@ -4156,8 +3669,7 @@ fn a_const_may_call_a_function_and_the_call_is_evaluated_at_compile_time() {
 
 // ---------------------------------------------------------------------------
 // A-20: const type parameters, and `impl Trait` in argument position. Every
-// fixture here runs on the default (LLVM) backend and on the C oracle, because
-// the suite is run twice.
+// fixture here runs on the default (LLVM) backend.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -4277,16 +3789,11 @@ fn impl_trait_in_a_field_is_refused() {
     );
 }
 
-/// The two instantiations of one const-generic buffer are two copies, read
-/// back out of the generated C: this is a codegen-shape assertion, so it pins
-/// `KELPC_ORACLE=c`, whose `<out>.c` is the artifact under test. The LLVM half
-/// of the same claim is the freestanding `llvm-nm` test below, which finds both
-/// mangled names in the bare-metal image.
+/// The two instantiations of one const-generic buffer are two copies, read back out of the emitted IR. The freestanding `llvm-nm` test below finds both mangled names in the bare-metal image.
 #[test]
 fn a_const_generics_two_instantiations_emit_two_copies() {
     let bin = out_path("const_generics_two_copies");
     let build = kelpc()
-        .env("KELPC_ORACLE", "c")
         .arg("build")
         .arg(fixture("tests/fixtures/const_generics_two_sizes.kp"))
         .arg("-o")
@@ -4295,11 +3802,11 @@ fn a_const_generics_two_instantiations_emit_two_copies() {
         .expect("failed to spawn kelpc");
     assert!(
         build.status.success(),
-        "expected the ring fixture to compile on the oracle, but it failed:\n{}",
+        "expected the ring fixture to compile, but it failed:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let generated = std::fs::read_to_string(bin.with_extension("c"))
-        .expect("the generated C sits beside the binary");
+    let generated = std::fs::read_to_string(bin.with_extension("ll"))
+        .expect("the generated IR sits beside the binary");
     for name in [
         "kelp_Ring__push__l__4__g__",
         "kelp_Ring__push__l__8__g__",
@@ -4330,7 +3837,6 @@ fn a_freestanding_const_generic_buffer_links_with_no_undefined_symbols() {
     let bin = out_path("freestanding_constgen");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_constgen"))
         .arg("-o")
@@ -4375,356 +3881,6 @@ fn a_modules_own_items_are_reachable_bare_inside_it() {
         &project("self_call").join("main.kp"),
         "12\n3\n",
     );
-}
-
-/// The M6 gate, run rather than argued: every `Bytes` fixture is rebuilt with
-/// AddressSanitizer and executed, so a double free, a use-after-free, or a
-/// leak fails the suite. If `cc` has no AddressSanitizer the check is skipped
-/// — the one place in this suite that depends on a toolchain feature.
-///
-/// It works by rebuilding `kelpc`'s generated `.c` with `cc -fsanitize=address`,
-/// so it is specific to the C backend: another backend writes no `.c` for it to
-/// instrument, and `memory_gate.rs`'s valgrind sweep is the gate that covers a
-/// backend writing its own object instead.
-#[test]
-fn heap_fixtures_are_double_free_and_leak_clean() {
-    let fixtures = [
-        "heap_bytes",
-        "heap_move_then_rebind",
-        "heap_returned",
-        "heap_scope_drop",
-        "heap_drops_in_control_flow",
-        "heap_drops_in_desugared_blocks",
-        "heap_reassign",
-        "heap_branches",
-        "heap_param_borrow",
-        "string_basic",
-        "string_build",
-        "bytes_build",
-        "stdlib_build",
-        "stdlib_parse",
-        "stdlib_fmt",
-        "string_field",
-        "datac_owned_fields",
-        "pd_owned",
-        // A passdown forwarded through a caller that does not name it: the
-        // hidden argument is the global's address there, while an owned
-        // passdown still has to be freed at exit by exactly one handler.
-        "pd_argument_forwarding",
-        "stdlib_mem",
-        "stdlib_str",
-        "stdlib_path",
-        "stdlib_math",
-        "stdlib_encoding",
-        "string_views",
-        "path_parts",
-        "view_released_at_scope_end",
-        "heap_temporary_print",
-        // MK7 §5's temporary-drop slice: the field of an owned temporary, read
-        // in `print` position, as a call argument, as a method receiver and
-        // through a `move` parameter, with a `List` field as well as `String`
-        // ones. Every read has to free the whole temporary exactly once, so
-        // this is the fixture the staged-and-freed path is leak-checked by.
-        "heap_field_of_owned_temporary",
-        // The same staged-and-freed temporary as a `when`/`if let` scrutinee,
-        // where the field read is the *matched* one and a second owned field
-        // is never named at all, so only the staged root's own drop can free
-        // it.
-        "scrutinee_field_of_temporary",
-        // A borrow of a chain that steps through a borrow: nothing is staged
-        // for it, so the only thing under test is that the pointee's own drop
-        // still frees the `String` exactly once.
-        "borrow_chain_through_a_borrow",
-        // MK7 §5's print slice: the same staged-and-freed temporary, but one
-        // per buffer piece and with a scalar, a float and a second buffer
-        // behind the first — the register-numbering case.
-        "template_buffer_pieces",
-        "list_basic",
-        "list_owned",
-        "list_field",
-        "stdlib_list",
-        "borrow_temp_arg",
-        "list_datac_element",
-        "closure_datac_borrow_param",
-        "stdlib_sort",
-        "list_slice_insert",
-        // MISSING-7: the whole-list copy, over a `Copy` element and an owned
-        // one, with the original mutated after the clone, so a second handle
-        // would free the buffer twice.
-        "list_clone",
-        // MISSING-jL9tE: the derived deep copy, with the original cleared
-        // before the clone is read, so a shared buffer is a use-after-free and
-        // a shallow `sort` that lost an element's buffer is a leak. The enum
-        // half of the same fixture is the switch-on-tag clone.
-        "list_datac_clone_sort",
-        // MK7 §5's sort/contains/slice slice: the element kinds neither of the
-        // two above reaches — a signed and an unsigned integer and `Bytes`,
-        // whose comparator is a length-aware `memcmp` — plus a slice of a
-        // `Copy` element and a slice of an owned one.
-        "list_sort_kinds",
-        // MK7: the list paths a shift or a replacement could get wrong —
-        // `insert`/`remove`/`reverse` over owned elements, six `realloc`s
-        // that move every element, and `set` freeing the element it replaces.
-        "list_insert_remove_shifts",
-        "list_growth_and_rebuild",
-        "list_owned_replacement",
-        // A-18: an array is a by-value struct, so its drop has to free what it
-        // holds. `array_owned` is the one that owns something: three
-        // `String`s with one replaced through `set`, a `datac` array, and a
-        // `Box<[i32; 3]>`, and `array_basic` is the scalar and nested case
-        // that must free *nothing* (a spurious drop there would be a free of
-        // stack memory).
-        "array_owned",
-        "array_basic",
-        // A-18's float element and its `MEMORY`-class widths: the second is
-        // where a byte count that is off by one would read or write past the
-        // end of a frame slot, and it is a value that travels in memory rather
-        // than through a register, so ASAN can see it.
-        "array_wide_and_float",
-        "path_polish",
-        "box_basic",
-        "box_recursive",
-        "recursive_datac",
-        "box_field_take",
-        "box_owned_elements",
-        "map_basic",
-        "map_owned",
-        "map_datac",
-        // MISSING-qM4Zx: `get_or`/`values` deep-copy a `datac` value out of
-        // the map, so the value's own `String` is cloned into the result and
-        // the map keeps its own. A shallow copy would be a double free at
-        // scope exit and a missing one would leak.
-        "map_datac_value_clone",
-        // A-6: a `datac` key with an owned `String` field and an `enum` key
-        // with an owned `String` payload. The entry owns a deep copy of the
-        // key, so a drop that missed it is a leak and a double drop is a
-        // use-after-free.
-        "map_nested_datac_key",
-        "map_enum_key",
-        // A-12: a declared key pair, whose type holds a `f64` (outside the
-        // derived set) and an owned `String` the declared `hash` and `eq`
-        // walk. The entry owns a deep copy of the key, so a drop that missed
-        // it is a leak and a double drop is a use-after-free.
-        "map_declared_key",
-        "map_declared_key_enum",
-        "io_stdio",
-        "io_streams",
-        "process_spawn",
-        "net_loopback",
-        "net_poll",
-        "net_resolve",
-        // A-1: an owned payload, a recursive `Box` chain, and an enum inside
-        // `List`/`Map` — each one a place a tag switch could free the wrong
-        // variant or leak one.
-        "enum_owned",
-        "enum_recursive",
-        "enum_container",
-        // MK7 §5's enum slice: the same tag switch reached through a `List`
-        // element, a `Map` value and a `Box` element, plus an enum nested
-        // inside an enum — each one a generated drop calling another one.
-        "enum_in_containers",
-        // MK7 §5's enum slice: a pre-existing staging bug (a shared slot for a
-        // staged aggregate value), found by `generic_recursive` once an `enum`
-        // no longer refused it. This fixture owns three nested `Box` chains.
-        "nested_literal_staging",
-        // A-2: an owned payload in a generic instantiation, and a generic
-        // type that recurses through a `Box` — the instantiation's generated
-        // drop and the recursive drop path.
-        "generic_owned",
-        "generic_recursive",
-        // A-2: a generic *function* instantiated over an owned type, so the
-        // per-instantiation body owns and drops like any other function.
-        "generic_function_owned",
-        // A-2: a generic *method* over an instantiation holding an owned
-        // payload, a tree of instantiations built by nested inference, and a
-        // map keyed by a scalar while holding owned values.
-        "generic_method_basic",
-        "generic_nested_inference",
-        "map_key_types",
-        // MK5-S6-M1: an owned payload bound by `if let`, owned payloads
-        // moved through `?`, and a frame that owns a local it propagates a
-        // failure past (`?`'s early return must free the frame).
-        "if_let_basic",
-        "if_let_chain_same_scrutinee",
-        "try_operator",
-        "try_drops_frame",
-        // MK7 §5's enum slice: the same `?`-frees-the-frame shape as the line
-        // above, without the `fun` literal that this backend refuses.
-        "try_frame_drops",
-        // MK7 §5's enum slice, fixed after: the two wrong-width aggregate
-        // loads (a one-eightbyte field out of a `Box` block, a one-eightbyte
-        // element out of a `List` buffer) and the `?` whose success payload is
-        // a one-eightbyte `datac`. Each one owns a buffer, so each is
-        // leak-checked here as well as under valgrind.
-        "heap_narrow_fields",
-        "list_narrow_element_pop",
-        "try_narrow_payload",
-        "stdlib_option_result",
-        // A-4: a `move T` parameter owns what it is handed, so each buffer is
-        // freed exactly once by whichever function owns it at scope exit.
-        "move_param",
-        "move_param_return",
-        // A-4: a function value for a `move` parameter hands a buffer to a
-        // callee that frees it, and a passdown function value reads a global.
-        "fn_value",
-        // A-4: a `fun` literal whose `move` parameter owns and frees a buffer.
-        "fn_literal",
-        // A-4 phase D: `option`/`result`/`list` callbacks over owned payloads.
-        "stdlib_combinators",
-        "stdlib_list_callbacks",
-        // A-5: `for` over a list of owned elements, plus a call iterable the
-        // desugared block owns and frees once.
-        "for_loop",
-        // A-4 phase E: a closure owns its environment, and the fixture below
-        // frees exactly one per capture; `closure_move` covers the three drop
-        // points (block end, early `return`, one per loop iteration), and the
-        // stdlib fixture hands environments to the shipped callbacks.
-        "closure_basic",
-        // Trap 1 and trap 8 of MK7 §5 item 6: a two-field environment of
-        // differently aligned captures, and an indirect call whose callee
-        // returns a `MEMORY`-class value while carrying an environment.
-        "closure_env_wide_ret",
-        "closure_move",
-        "closure_two_captures",
-        "closure_value_widening",
-        "stdlib_closure_callbacks",
-        // M6: the drop-plan defect's own two fixtures. A move only one path
-        // takes used to remove the binding from every drop set, so the path
-        // that kept the value leaked it; both fixtures are here as well as
-        // under `memory_gate.rs`'s valgrind sweep because the leak was
-        // *invisible* under AddressSanitizer on the C backend's `-O2` build
-        // (clang deletes an allocation nothing reads), and valgrind is the
-        // gate that saw it.
-        "owned_conditional_move",
-        "owned_move_in_loop",
-        // BUG-n7Wq3: one spelling as two owned bindings, in one block and in a
-        // nested one. Both drops name the binding that owns the buffer, so a
-        // build that frees the newest binding twice, or frees only one of
-        // them, fails here. Both fixtures read the earlier buffer before the
-        // rebind or the shadow, so a missing drop also leaks at the level the
-        // valgrind sweep runs, not only below -O2 where an optimizer can still
-        // see that nothing reads the allocation.
-        "owned_rebind",
-        // BUG-tV9qH: a `move` parameter and the body's own owned local are
-        // dropped at one block end, including when the local shadows the
-        // parameter. One list written over the other leaked a buffer on both
-        // backends.
-        "move_param_and_body_local",
-        "move_param_shadowed_by_a_local",
-        // A-11: a partial move zeroes the field's slot, so the binding's own
-        // drop frees the field that stayed and nothing where the moved value
-        // now lives. A double free of the moved buffer fails here.
-        "partial_move_field",
-        "partial_move_conditional",
-        "partial_move_reassign",
-        "partial_move_move_param",
-        // The enum-payload half of A-11, and the stdlib helpers that had to
-        // take their receiver with `move` for it: each read moves an owned
-        // payload out and clears the slot it came from.
-        "partial_move_enum_payload_owned",
-        "option_unwrap_owned",
-        "result_map_owned",
-        // MK9-S3-M1 stage A1: an `Atomic<T>` needs no drop, so this is the
-        // "must free *nothing*" half of the list, like `array_basic`. Its cell
-        // is a `pd val`, so a spurious drop would be a free of a global, and
-        // the `compare_exchange` result is a `Result` an owned-value drop plan
-        // could get wrong. ASAN is what sees either.
-        "atomic_counter",
-        "atomic_bool",
-        // MISSING-z2bB9: a tuple is a derived record, so its positions own and
-        // drop exactly as a `datac` field does. The first is the deep copy of
-        // an owned element out of a `List` (the original is cleared first), the
-        // second a `String` taken over by a `move` parameter, and the third a
-        // `String` dropped as a `Result` payload. Each is a drop the tuple
-        // record, rather than a declared type, decided.
-        "tuple_derived_copy_sort",
-        "tuple_param",
-        "tuple_try",
-        // MISSING-w9Kda: a fallible dial builds its reason text on the failure
-        // path and frees the caller's previous buffer with it, so the error
-        // arm owns exactly one allocation and the success arm still owns the
-        // empty one it was given. Both arms are leak-checked here and under
-        // valgrind. `ws_try_connect` is deliberately absent: it reads a port
-        // from `argv`, so on this gate's no-argument run it would panic before
-        // reaching either error arm, and the list holds only fixtures that
-        // exit 0.
-        "net_try_connect",
-        "net_try_connect_retry",
-        // roadmap open item 15, cases 2 and 3: an assignment through a
-        // dereferenced borrow and to an owned field used to leak the value
-        // they overwrote, because `DropPlan::at_assign` had no way to key a
-        // drop to anything but a plain binding.
-        "assign_through_deref",
-        "assign_owned_field",
-        // Kernel stage 9, MK9-S6-M1: a destructor type that owns a `String`,
-        // so the generated `kelp_drop_<T>` must free the field exactly once
-        // after the user body runs, and the container/`enum` drops must reach
-        // the same place.
-        "drop_owned_field",
-        "drop_order",
-        "drop_control_flow",
-        "drop_container",
-        "drop_enum",
-        "drop_map",
-        // A guard owned by a thread closure's heap environment: a worker that
-        // never freed the environment would leave its box behind at exit.
-        "drop_thread_closure",
-        // B-5: the single-threaded mutex paths. The runtime record and its
-        // value slot are malloc'd, the block's value is copied out, and
-        // `into_inner` moves an owned `List` out and frees the record without
-        // dropping the value, so ASAN sees a leak or a double free either way.
-        "mutex_lock_value",
-        "mutex_lock_return",
-        "mutex_into_inner",
-        // `std/tz`: a parsed zone owns five `List`s and a `String` table per
-        // time type, the formatter builds a `String` per call, and the
-        // synthetic fixture builds and drops a dozen `Bytes`. Under
-        // AddressSanitizer a double free or a leak in any of them fails here.
-        "stdlib_tz_synthetic",
-        "stdlib_tz_zones",
-        "owned_return_endless_loop",
-    ];
-    for name in fixtures {
-        let source = format!("tests/fixtures/{name}.kp");
-        // A distinct output path: the individually-run fixture tests build
-        // the same names, and racing them for one file makes the binary
-        // unreadable to whichever loses.
-        let bin = out_path(&format!("{name}_asan_src"));
-        let build = kelpc()
-            .arg("build")
-            .arg(fixture(&source))
-            .arg("-o")
-            .arg(&bin)
-            .output()
-            .expect("failed to spawn kelpc");
-        assert!(
-            build.status.success(),
-            "expected '{source}' to compile, but it failed:\n{}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-
-        let asan_bin = out_path(&format!("{name}_asan"));
-        let cc = Command::new("cc")
-            .arg("-fsanitize=address")
-            .arg("-O1")
-            .arg("-o")
-            .arg(&asan_bin)
-            .arg(bin.with_extension("c"))
-            .output()
-            .expect("failed to spawn cc");
-        if !cc.status.success() {
-            continue; // no AddressSanitizer here
-        }
-
-        let run = Command::new(&asan_bin)
-            .output()
-            .expect("failed to run the instrumented binary");
-        assert!(
-            run.status.success(),
-            "AddressSanitizer flagged '{name}':\n{}",
-            String::from_utf8_lossy(&run.stderr)
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4819,10 +3975,7 @@ fn a_float_field_is_written_through_the_xmm_file() {
 ///
 /// Both backends stage the temporary for the field's address and free *it*
 /// after the read, so the fixture builds, runs and compares on either one.
-/// (The C backend used to emit `&(rvalue).field` and reject the whole shape,
-/// which is why this test used to be written the way its fixture was: the
-/// refusal under every other backend is what `heap_field_of_owned_temporary`
-/// no longer asserts.) This is the fixture the leak was found in: without a
+/// (A C backend once emitted `&(rvalue).field` and rejected the whole shape, which is why this test was written the way its fixture is.) This is the fixture the leak was found in: without a
 /// test here under *either* backend, the loop below was committed
 /// non-terminating and nothing said so. The only thing that noticed was
 /// `memory_gate`'s 60 s timeout, which reads as a valgrind finding.
@@ -5330,10 +4483,7 @@ fn a_bare_list_settles_on_a_nested_element() {
 
 /// The open-container marker (`Unit` where an element type goes) is not an
 /// element at any depth. `List.of` over a bare `List.empty()` would give the
-/// outer list the marker as its element, and both backends then have no element
-/// type to name: the C backend emits a `void` element and the `llvm` backend
-/// refuses the instantiation as an internal error, so they disagree. The gate
-/// refuses first, and says what to do about it.
+/// outer list the marker as its element, and there is then no element type to name. The gate refuses first, and says what to do about it.
 #[test]
 fn a_container_of_an_undecided_element_cannot_be_a_list_element() {
     assert_rejected_with(
@@ -6317,7 +5467,6 @@ fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
     let bin = out_path("freestanding_dyn");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_dyn"))
         .arg("-o")
@@ -6475,7 +5624,6 @@ fn a_freestanding_image_owns_trait_objects_and_frees_them_through_the_vtable() {
     let bin = out_path("freestanding_boxdyn");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_boxdyn"))
         .arg("-o")
@@ -6796,8 +5944,7 @@ fn path_absolute_resolves_a_relative_argument_against_a_base() {
 /// MK7 §5 item 7 step 1's other half: a call whose wide return value is
 /// discarded. A return wider than one eightbyte is written by the callee
 /// through a hidden pointer, so the caller supplies the storage even when the
-/// value is dead, which is the compiler temporary the C backend passes at the
-/// same site. The gated fixtures needed the `unit` body's tail shape
+/// value is dead, which is the compiler temporary passed at the same site. The gated fixtures needed the `unit` body's tail shape
 /// (`fun main() { fs.read(p) }`); this fixture pins that plus the statement and
 /// function-value shapes no fixture reached before.
 #[test]
@@ -8653,167 +7800,6 @@ fn a_hundred_kib_header_block_survives_std_http() {
         1,
         &format!("200\n{}\ndone\n", big.len()),
     );
-}
-
-/// The C backend's `kelpc`, whatever backend the enclosing run exercises: the
-/// AddressSanitizer gate below needs the generated `.c` to instrument, and only
-/// the C backend writes one.
-fn kelpc_c() -> Command {
-    let mut cmd = Command::new(kelpc_bin());
-    cmd.env_remove("KELPC_BACKEND");
-    cmd.env("KELPC_ORACLE", "c");
-    cmd
-}
-
-/// Builds `tests/fixtures/<name>.kp` through the C backend, rebuilds its generated
-/// `.c` with AddressSanitizer, runs it with `args` and `env`, and returns its
-/// stdout. A report from AddressSanitizer or LeakSanitizer fails the test; a
-/// non-zero exit that is the program's own typed-error path is fine.
-fn asan_tls_fixture(name: &str, args: &[String], env: &[(&str, &str)]) -> String {
-    let bin = out_path(&format!("{name}_asan_src"));
-    let build = kelpc_c()
-        .arg("build")
-        .arg(fixture(&format!("tests/fixtures/{name}.kp")))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected '{name}' to compile through the C backend, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let asan_bin = out_path(&format!("{name}_asan"));
-    let cc = Command::new("cc")
-        .arg("-fsanitize=address")
-        .arg("-O1")
-        .arg("-o")
-        .arg(&asan_bin)
-        .arg(bin.with_extension("c"))
-        .args(["-fwrapv", "-pthread", "-lm", "-lssl", "-lcrypto"])
-        .output()
-        .expect("failed to spawn cc");
-    assert!(
-        cc.status.success(),
-        "the AddressSanitizer build of '{name}' failed:\n{}",
-        String::from_utf8_lossy(&cc.stderr)
-    );
-    let mut cmd = Command::new(&asan_bin);
-    for a in args {
-        cmd.arg(a);
-    }
-    cmd.env_remove("SSL_CERT_FILE");
-    cmd.env_remove("SSL_CERT_DIR");
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    cmd.env("ASAN_OPTIONS", "detect_leaks=1");
-    let run = cmd.output().expect("failed to run the instrumented binary");
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(
-        !stderr.contains("AddressSanitizer") && !stderr.contains("LeakSanitizer"),
-        "AddressSanitizer flagged '{name}':\n{stderr}"
-    );
-    String::from_utf8_lossy(&run.stdout).to_string()
-}
-
-#[test]
-fn tls_handshakes_free_their_openssl_objects_under_address_sanitizer() {
-    // The leak gate for `SSL*`/`SSL_CTX*`: every handshake path, on the way out
-    // and on the way down, is run under AddressSanitizer's leak checker. It is
-    // the closest thing to `memory_gate.rs` this machine has (there is no
-    // valgrind here), and it is the C backend's generated translation unit that
-    // gets instrumented, which is the same C the LLVM backend compiles into its
-    // per-program object.
-    //
-    // The success path first: every `try_` operation, one connection.
-    {
-        let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO, BODY_200_HELLO]));
-        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
-        let stdout = asan_tls_fixture(
-            "tls_try_ok",
-            &[server.port.to_string()],
-            &[("SSL_CERT_FILE", ssl.as_str())],
-        );
-        server.finish();
-        assert_eq!(stdout, "true\ntrue\ntrue\ntrue\ntrue\n");
-    }
-
-    // The pooled path's own free: `Pool.close_all` ends each kept-alive
-    // connection, which is the only thing that frees the `SSL*` a pooled
-    // handshake allocated.
-    {
-        let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO, BODY_200_HELLO]));
-        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
-        let stdout = asan_tls_fixture(
-            "tls_pool_close",
-            &[server.port.to_string()],
-            &[("SSL_CERT_FILE", ssl.as_str())],
-        );
-        server.finish();
-        assert_eq!(stdout, "200\ntrue\n1\n200\n1\n0\n");
-        assert_eq!(server.accepted(), 1, "the pooled client opened more than one connection");
-    }
-
-    // A handshake that fails halfway: the certificate is not in the store, so
-    // `SSL_connect` fails and the object it built has to be freed.
-    {
-        let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO]));
-        let stdout = asan_tls_fixture(
-            "tls_error",
-            &[server.port.to_string(), "127.0.0.1".to_string()],
-            &[],
-        );
-        server.finish();
-        assert_eq!(stdout, "untrusted\n");
-    }
-
-    // A handshake that times out: the socket deadline fires inside `SSL_connect`.
-    {
-        let mut server = RudeTlsServer::start(TlsBehavior::NeverHandshake);
-        let stdout = asan_tls_fixture("tls_timeout_handshake", &[server.port.to_string()], &[]);
-        server.finish();
-        assert_eq!(stdout, "timeout\n");
-    }
-
-    // A peer that resets during the handshake.
-    {
-        let mut server = RudeTlsServer::start(TlsBehavior::ResetHandshake);
-        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
-        let stdout = asan_tls_fixture(
-            "tls_reset_handshake",
-            &[server.port.to_string()],
-            &[("SSL_CERT_FILE", ssl.as_str())],
-        );
-        server.finish();
-        assert!(!stdout.trim().is_empty(), "the reset handshake fixture printed nothing");
-    }
-
-    // A peer that truncates after a successful handshake, and one that alerts
-    // mid-stream: the `SSL*` a successful handshake allocated is freed by
-    // `try_shutdown` on the reader's way out.
-    {
-        let mut server = RudeTlsServer::start(TlsBehavior::Truncate);
-        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
-        let stdout = asan_tls_fixture(
-            "tls_truncated",
-            &[server.port.to_string()],
-            &[("SSL_CERT_FILE", ssl.as_str())],
-        );
-        server.finish();
-        assert_eq!(stdout, "peer_closed_uncleanly\n");
-    }
-    {
-        let mut server = RudeTlsServer::start(TlsBehavior::CorruptRecord);
-        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
-        let stdout = asan_tls_fixture(
-            "tls_bad_record",
-            &[server.port.to_string()],
-            &[("SSL_CERT_FILE", ssl.as_str())],
-        );
-        server.finish();
-        assert!(!stdout.trim().is_empty(), "the bad-record fixture printed nothing");
-    }
 }
 
 /// Compiles a project, runs it with the canned server's port as `argv[1]`,
@@ -10813,31 +9799,23 @@ fn an_unknown_command_prints_the_usage_and_fails() {
 // ---------------------------------------------------------------------------
 // The backend seam. The user-facing selector is gone (the MK7 record in
 // `plan/done.md`), so what is asserted end-to-end here is the shape that replaced it: every
-// build gets `llvm`, the retired flag and the retired environment variable are
-// refused by name, and the project's one remaining switch points at the C
-// oracle. These are end-to-end rather than only `backend.rs` unit tests because
-// what matters is that the refusal and the switch reach the compiler.
+// build gets `llvm`, and the retired flag and the retired environment variables
+// are refused by name. These are end-to-end rather than only `backend.rs` unit
+// tests because what matters is that the refusal reaches the compiler.
 // ---------------------------------------------------------------------------
 
-/// Which code generator a build used is visible in the intermediate it writes
-/// beside the artifact: the C backend keeps `<out>.c`, the LLVM backend its
-/// textual IR as `<out>.ll` (MK7 §4.4). Both backends build this fixture and
-/// print the same bytes, so the intermediate is the only place the choice
-/// shows, and it is what these tests read.
+/// The LLVM backend writes its textual IR beside the artifact as `<out>.ll` (MK7 §4.4). The program prints the same bytes whichever code generator built it, so the intermediate is where a build's backend shows, and it is what these tests read.
 fn build_is_llvm(bin: &Path) -> bool {
     bin.with_extension("ll").is_file()
 }
 
-/// A build that names no backend must use the compiler's default, and since
-/// MK7 S7 that default is `llvm`. The artifact is not enough to assert this:
-/// both backends print `55`, so the test also pins the backend by the
-/// intermediate only `llvm` writes. This is the compiler's side of the
-/// agreement `backend()` above keeps on the harness's side.
+/// A build has one backend, the LLVM backend, and it writes the textual IR beside
+/// the artifact. The artifact is not enough to assert this on its own, because
+/// the program prints the same thing whichever code generator built it.
 #[test]
 fn the_default_backend_is_llvm() {
     let bin = out_path("backend_default");
     let _ = std::fs::remove_file(bin.with_extension("ll"));
-    let _ = std::fs::remove_file(bin.with_extension("c"));
     let out = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
         .env_remove("KELPC_ORACLE")
@@ -10856,37 +9834,6 @@ fn the_default_backend_is_llvm() {
         build_is_llvm(&bin),
         "a build with no backend setting should have used the llvm default, \
          which writes <out>.ll beside the artifact"
-    );
-    let run = Command::new(&bin).output().expect("failed to run the binary");
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");
-}
-
-/// The C backend is what every other test in this file is written against, so
-/// it has to stay reachable after the user-facing choice is removed: the
-/// project's oracle switch still selects it. The `.c` intermediate is asserted
-/// so a fallback to the default cannot pass by accident.
-#[test]
-fn the_oracle_switch_selects_the_c_backend() {
-    let bin = out_path("backend_oracle");
-    let _ = std::fs::remove_file(bin.with_extension("c"));
-    let _ = std::fs::remove_file(bin.with_extension("ll"));
-    let out = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .args(["build"])
-        .arg(fixture("tests/fixtures/while_accumulator.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        out.status.success(),
-        "the oracle switch should select the C backend, got:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        bin.with_extension("c").is_file(),
-        "KELPC_ORACLE=c should have used the C backend, which writes <out>.c \
-         beside the artifact"
     );
     let run = Command::new(&bin).output().expect("failed to run the binary");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");
@@ -10941,11 +9888,9 @@ fn a_build_with_no_output_path_lands_in_build() {
         );
     }
     // The backend's own intermediate follows the artifact, so it is inside
-    // `build/` too rather than beside it in the working directory: the C backend
-    // keeps its `.c`, and the LLVM backend its textual IR. Asserting `.c` alone
-    // made this the one test `BACKENDS=llvm ./kelpc/tests/run-all-backends.sh`
-    // could not pass, so the suite could not be pointed at both backends.
-    let intermediate = if backend() == "llvm" { "ll" } else { "c" };
+    // `build/` too rather than beside it in the working directory: the LLVM
+    // backend writes its textual IR there.
+    let intermediate = "ll";
     assert!(
         built.with_extension(intermediate).is_file(),
         "expected the generated .{intermediate} beside the artifact"
@@ -10960,8 +9905,9 @@ fn a_build_with_no_output_path_lands_in_build() {
 /// retired spellings are reported with. An exact comparison, not a search: a
 /// message that drifted into "unknown flag" while a test only looked for the
 /// word "backend" would keep passing while telling the caller the wrong thing.
-const FLAG_GONE: &str = "--backend is gone: kelpc builds every program with the llvm backend, and the C backend is kept as the project's own oracle rather than as a user choice";
-const ENV_GONE: &str = "KELPC_BACKEND is gone: kelpc builds every program with the llvm backend, and the C backend is kept as the project's own oracle rather than as a user choice";
+const FLAG_GONE: &str = "--backend is gone: kelpc builds every program with the llvm backend, which is the only backend since the C backend was removed on 2026-10-10";
+const ENV_GONE: &str = "KELPC_BACKEND is gone: kelpc builds every program with the llvm backend, which is the only backend since the C backend was removed on 2026-10-10";
+const ORACLE_GONE: &str = "KELPC_ORACLE is gone: the C backend it selected was removed on 2026-10-10, and kelpc builds every program with the llvm backend";
 
 /// A caller who still passes `--backend=c` is asking for a choice that no longer
 /// exists. The refusal names the change and says which backend the build gets,
@@ -10984,10 +9930,7 @@ fn the_backend_flag_is_gone() {
     );
 }
 
-/// A shell that still exports `KELPC_BACKEND` is the case silence would get
-/// wrong: its builds would use `llvm` while the export says the C backend. The
-/// variable is refused by name whatever it holds, so the caller learns the
-/// truth instead of measuring the wrong backend.
+/// A shell that still exports `KELPC_BACKEND` is the case silence would get wrong: it would believe its builds used another backend. The variable is refused by name whatever it holds, so the caller learns the truth.
 #[test]
 fn the_backend_environment_variable_is_gone() {
     for value in ["c", "llvm"] {
@@ -11012,59 +9955,39 @@ fn the_backend_environment_variable_is_gone() {
     }
 }
 
-/// The oracle switch is not a choice: a value that is not the C backend's name
-/// is refused by name, so a suite run cannot believe it measured the oracle and
-/// measure the default instead.
+/// `KELPC_ORACLE` selected the C backend, which was removed on 2026-10-10. A set
+/// variable is refused by name whatever it holds, because a suite run or a
+/// script that still exports it would otherwise believe it measured another
+/// backend.
 #[test]
-fn a_non_oracle_value_for_the_oracle_switch_is_refused() {
-    for value in ["llvm", "own", "rust"] {
+fn the_oracle_environment_variable_is_gone() {
+    for value in ["c", "llvm", "own", ""] {
         let out = kelpc()
             .args(["build"])
             .arg(fixture("tests/fixtures/while_accumulator.kp"))
             .arg("-o")
-            .arg(out_path("backend_oracle_bad"))
+            .arg(out_path("backend_oracle_gone"))
             .env("KELPC_ORACLE", value)
             .output()
             .expect("failed to spawn kelpc");
         assert!(
             !out.status.success(),
-            "KELPC_ORACLE={value} must be refused"
+            "KELPC_ORACLE={value:?} must be refused"
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            stderr.contains(&format!("KELPC_ORACLE names '{value}'"))
-                && stderr.contains("accepts only 'c'"),
-            "KELPC_ORACLE={value} should be refused with the one value it accepts, got:\n{stderr}"
+        assert_eq!(
+            stderr.trim_end(),
+            format!("error: {ORACLE_GONE}"),
+            "the refusal for KELPC_ORACLE={value:?} should name the change"
         );
     }
-}
-
-/// An empty value is a mistake, not an instruction to use the default: a script
-/// that computes the value and produces an empty string must fail rather than
-/// silently measure the default backend.
-#[test]
-fn an_empty_oracle_value_is_reported_rather_than_defaulted() {
-    let out = kelpc()
-        .args(["build"])
-        .arg(fixture("tests/fixtures/while_accumulator.kp"))
-        .arg("-o")
-        .arg(out_path("backend_oracle_empty"))
-        .env("KELPC_ORACLE", "")
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        !out.status.success(),
-        "an empty oracle value must be reported"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("KELPC_ORACLE is set but empty"), "{stderr}");
 }
 
 // ---------------------------------------------------------------------------
 // A local binding: a second `val`/`var` of one name in a block is a shadow.
 // ---------------------------------------------------------------------------
 
-/// BUG-v6Qe0: the C backend turns each local into a C variable named after the
+/// BUG-v6Qe0: a backend that turned each local into a C variable named after the
 /// binding, so a rebinding in one block reached `cc` as a redefinition of
 /// `kelp_a`. Every shape the report named is in the fixture: a scalar, a `str`,
 /// a `datac` and a container, and each read after the shadow has to see the
@@ -11209,10 +10132,9 @@ fn a_thread_fence_compiles_runs_and_changes_no_stdout() {
     assert_compiles_and_runs("tests/fixtures/thread_fence.kp", "0\n0\n7\n0\n");
 }
 
-/// The instruction `thread.fence` lowers to, in the artifact the backend under
-/// test wrote: `__atomic_thread_fence(__ATOMIC_SEQ_CST)` in the generated C and
-/// `fence seq_cst` in the emitted IR (MK9 section 6, stage A2). Both files sit
-/// beside the binary, which is the one place either backend's own output is
+/// The instruction `thread.fence` lowers to, in the artifact the backend wrote:
+/// `fence seq_cst` in the emitted IR (MK9 section 6, stage A2). The file sits
+/// beside the binary, which is the one place the backend's own output is
 /// readable, so a program that merely printed the same stdout cannot pass this.
 #[test]
 fn a_thread_fence_lowers_to_the_fence_instruction_of_its_backend() {
@@ -11231,23 +10153,13 @@ fn a_thread_fence_lowers_to_the_fence_instruction_of_its_backend() {
         String::from_utf8_lossy(&build.stderr)
     );
 
-    // The C backend spells the fence as the C builtin at the call site; the
-    // LLVM backend emits the instruction.
-    let (artifact, want) = match backend().as_str() {
-        "c" => (bin.with_extension("c"), "__atomic_thread_fence(__ATOMIC_SEQ_CST)"),
-        _ => (bin.with_extension("ll"), "fence seq_cst"),
-    };
+    let artifact = bin.with_extension("ll");
     let generated = std::fs::read_to_string(&artifact).unwrap_or_else(|e| {
-        panic!(
-            "the {} backend writes no '{}': {e}",
-            backend(),
-            artifact.display()
-        )
+        panic!("the LLVM backend writes no '{}': {e}", artifact.display())
     });
     assert!(
-        generated.contains(want),
-        "the {} backend's artifact has no '{want}':\n{generated}",
-        backend()
+        generated.contains("fence seq_cst"),
+        "the LLVM backend's artifact has no 'fence seq_cst':\n{generated}"
     );
 }
 
@@ -12475,7 +11387,6 @@ fn boot_and_capture(
     let bin = out_path(name);
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -12556,7 +11467,6 @@ fn build_freestanding_object(name: &str, project_dir: &str) -> PathBuf {
     let bin = out_path(name);
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project(project_dir))
         .arg("-o")
@@ -12610,8 +11520,7 @@ fn a_section_clause_places_code_and_data_without_changing_the_result() {
 
 /// `print` is `printf`, and a freestanding build has no libc: the front end
 /// refuses the construct by name. The check runs before either backend is
-/// named, so the C oracle refuses for the same reason and with the same
-/// message.
+/// named, so every build refuses for the same reason and with the same message.
 #[test]
 fn print_is_rejected_in_a_freestanding_project() {
     assert_rejected_with(
@@ -12629,29 +11538,6 @@ fn a_missing_freestanding_entry_is_rejected() {
         "tests/projects/freestanding_no_entry",
         "no entry function 'kmain' found",
     );
-}
-
-/// The C backend's runtime preamble is libc, so it cannot express a
-/// freestanding project at all. A build asked for the oracle anyway refuses
-/// with a message that says which mode and which backend.
-#[test]
-fn the_c_backend_refuses_a_freestanding_project() {
-    let bin = out_path("freestanding_oracle_refusal");
-    let build = kelpc()
-        .env("KELPC_ORACLE", "c")
-        .arg("build")
-        .arg(project("freestanding_min"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        !build.status.success(),
-        "the C backend should not build a freestanding project"
-    );
-    let stderr = String::from_utf8_lossy(&build.stderr);
-    assert!(stderr.contains("freestanding"), "{stderr}");
-    assert!(stderr.contains("llvm"), "{stderr}");
 }
 
 /// `Ptr.alloc` and `Ptr.free` are the hosted `malloc`/`free`, so they are
@@ -12690,7 +11576,6 @@ fn freestanding_min_builds_a_riscv_elf_with_no_undefined_symbols() {
     let bin = out_path("freestanding_min");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_min"))
         .arg("-o")
@@ -12753,7 +11638,6 @@ fn a_freestanding_project_can_walk_a_range() {
     let bin = out_path("freestanding_iter");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_iter"))
         .arg("-o")
@@ -12799,7 +11683,6 @@ fn a_freestanding_project_can_use_the_operator_traits() {
     let bin = out_path("freestanding_ops");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_ops"))
         .arg("-o")
@@ -12833,8 +11716,7 @@ fn a_freestanding_project_can_use_the_operator_traits() {
 // Kernel stage 5 (MK9-S7-M1/M3, roadmap B-9/B-16): inline `asm` and `naked
 // fun`. The templates in these fixtures are x86-64 assembly in Intel syntax,
 // which is the dialect the compiler selects for an x86 target on both backends
-// (`plan/inline-asm.md`), so the fixtures run on both the default LLVM backend
-// and the C oracle.
+// (`plan/inline-asm.md`), so the fixtures run on the default LLVM backend.
 // ---------------------------------------------------------------------------
 
 /// `inout` is read then written, and `in` is read: `add {0}, {1}` accumulates
@@ -12930,7 +11812,6 @@ fn inline_asm_assembles_csrr_and_wfi_for_riscv64() {
     let bin = out_path("asm_riscv");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("asm_riscv"))
         .arg("-o")
@@ -13038,7 +11919,6 @@ fn a_freestanding_panic_handler_may_take_a_location() {
         let target = fixture(&format!("../examples/{name}"));
         let check = Command::new(kelpc_bin())
             .env_remove("KELPC_BACKEND")
-            .env_remove("KELPC_ORACLE")
             .arg("check")
             .arg(&target)
             .output()
@@ -13090,7 +11970,6 @@ fn kernel0_panic2_names_each_checks_message_and_location() {
         .arg(&script)
         .env("KELPC", kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .output()
         .expect("failed to spawn the kernel0-panic2 run script");
     assert!(
@@ -13175,9 +12054,7 @@ fn a_hosted_panic_is_still_exactly_its_message() {
 
 /// Kernel stage 7's hosted half: the `str` operations a freestanding build
 /// lowers itself (`len`, `byte`, `eq`, `starts_with` and `ptr`) behave exactly
-/// as they did before the stage, on both backends. The suite runs this under
-/// the default backend and under `KELPC_ORACLE=c`, so the two answers are
-/// compared against one literal.
+/// as they did before the stage. The run is compared with one literal.
 #[test]
 fn the_hosted_str_core_operations_are_unchanged() {
     assert_compiles_and_runs(
@@ -13199,9 +12076,7 @@ fn the_str_search_and_replace_edges_are_unchanged() {
 }
 
 /// Kernel stage 7's rejection half: `std/str` is only partly on the freestanding
-/// allowed set, so its other functions are refused at the call, by name. The
-/// check runs before either backend is named, so the C oracle refuses with the
-/// same message `kelpc build` gives.
+/// allowed set, so its other functions are refused at the call, by name. The check runs before any backend is named, so the message is the one `kelpc build` gives.
 #[test]
 fn a_std_str_function_outside_the_freestanding_five_is_refused() {
     assert_rejected_with(
@@ -13228,7 +12103,6 @@ fn freestanding_str_builds_the_five_operations_with_no_undefined_symbols() {
     let bin = out_path("freestanding_str");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_str"))
         .arg("-o")
@@ -13295,7 +12169,6 @@ fn every_admitted_std_module_builds_with_no_undefined_symbols() {
         let bin = out_path(dir);
         let build = Command::new(kelpc_bin())
             .env_remove("KELPC_BACKEND")
-            .env_remove("KELPC_ORACLE")
             .arg("build")
             .arg(project(dir))
             .arg("-o")
@@ -13362,7 +12235,6 @@ fn a_hosted_std_module_is_refused_by_name_with_the_allowed_list() {
         let bin = out_path(dir);
         let build = Command::new(kelpc_bin())
             .env_remove("KELPC_BACKEND")
-            .env_remove("KELPC_ORACLE")
             .arg("build")
             .arg(project(dir))
             .arg("-o")
@@ -13420,7 +12292,7 @@ fn a_std_option_callback_without_an_allocator_is_refused() {
 // Kernel stage 7: global `static` data. A `static` is one object with a stable
 // address, `static mut` is the audited mutable form, and an `Atomic<T>` static
 // is the safe shared mutable. Every run test here passes on the default LLVM
-// backend and on the C oracle, because the suite is run twice; the freestanding
+// backend; the freestanding
 // and kernel tests are LLVM-only by design and skip in a shell without the
 // tools.
 // ---------------------------------------------------------------------------
@@ -13514,7 +12386,6 @@ fn freestanding_statics_land_in_data_rodata_and_bss() {
     let bin = out_path("freestanding_statics");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_statics"))
         .arg("-o")
@@ -13595,8 +12466,7 @@ fn kernel0_statics_boots_and_prints_its_counter() {
 }
 
 /// Kernel stage 8 (MK9-S3-M3): `percpu` is a freestanding-only storage class,
-/// so a hosted project that declares one is refused by the front end, before
-/// either backend is named, which is why the oracle refuses it the same way.
+/// so a hosted project that declares one is refused by the front end, before any backend is named.
 #[test]
 fn a_percpu_static_is_rejected_outside_freestanding() {
     assert_rejected_with(
@@ -13749,8 +12619,7 @@ fn kernel0_percpu_boots_with_two_harts_and_shows_the_other_copy() {
 
 /// The two capability values as plain hosted values: with no `[caps]` section
 /// the entry holds the whole resource, so a constant claim is admitted and the
-/// value it carries is the number the compiler checked. The C oracle computes
-/// the same literal.
+/// value it carries is the number the compiler checked.
 #[test]
 fn an_irq_line_and_a_frame_are_values_a_hosted_program_can_claim() {
     assert_compiles_and_runs(
@@ -13793,9 +12662,7 @@ fn kernel0_caps_claims_one_line_and_one_frame_and_prints_them() {
 
 /// Kernel stage 10's hosted half: the Sv39 VPN split, the PTE encoder and the
 /// `satp` encoder, copied out of `examples/kernel0-vm/src/vm.kp` into a project
-/// both backends build and run. The suite's `KELPC_ORACLE=c` pass compares the
-/// same literal, so the C oracle pins what the LLVM-default freestanding image
-/// computes.
+/// the build runs. The suite compares the output with one literal, so the literal pins what the freestanding image computes.
 #[test]
 fn the_sv39_vpn_split_and_pte_and_satp_encoders_are_the_specs() {
     assert_project_runs(
@@ -13814,7 +12681,6 @@ fn assert_no_undefined_symbols(name: &str, target: &Path) {
     let bin = out_path(name);
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -14021,7 +12887,6 @@ fn kernel0_sched_preempts_three_tasks_on_the_machine_timer() {
         .arg(&script)
         .env("KELPC", kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .output()
         .expect("failed to spawn the kernel0-sched run script");
     assert!(
@@ -14077,8 +12942,7 @@ fn a_private_static_is_not_reachable_from_another_module() {
 // Kernel stage 6 (MK9-S6-M1, roadmap B-8): `defer`. `defer.rs` lowers every
 // deferred action to ordinary code at each exit of its block, so the fixtures
 // below are ordinary programs by the time either backend sees them: LLVM is the
-// default and these run there, and the suite's `KELPC_ORACLE=c` pass runs the
-// same programs through the C oracle.
+// default and these run there.
 // ---------------------------------------------------------------------------
 
 /// The deferred actions of one block run last-in-first-out, after the block's
@@ -14300,7 +13164,6 @@ fn a_freestanding_project_can_release_a_lock_with_a_defer() {
     let bin = out_path("freestanding_defer");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_defer"))
         .arg("-o")
@@ -14338,9 +13201,7 @@ fn a_freestanding_project_can_release_a_lock_with_a_defer() {
 // Kernel stage 9 (MK9-S6-M1, roadmap B-8): the second half of stage 6, a user
 // `Drop`. `fun mut T.drop()` is the destructor; the generated `kelp_drop_<T>`
 // calls it first and drops the fields after, so every drop point the plan
-// already has reaches it. The fixtures run on both backends: LLVM is the
-// default and the suite's `KELPC_ORACLE=c` pass runs the same programs through
-// the C oracle.
+// already has reaches it. The fixtures run on the LLVM backend.
 // ---------------------------------------------------------------------------
 
 /// The user destructor runs before the fields, fields drop in declaration
@@ -14519,7 +13380,6 @@ fn a_freestanding_project_can_release_a_lock_with_a_destructor() {
     let bin = out_path("freestanding_drop");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_drop"))
         .arg("-o")
@@ -14589,7 +13449,6 @@ fn freestanding_containers_allocate_through_the_project_allocator() {
     let bin = out_path("freestanding_alloc");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_alloc"))
         .arg("-o")
@@ -14679,7 +13538,6 @@ fn kernel0_string_builds_on_the_project_allocator_with_no_undefined_symbols() {
     let bin = out_path("kernel0_string");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(fixture("../examples/kernel0-string"))
         .arg("-o")
@@ -14769,7 +13627,6 @@ fn kernel0_eq_builds_with_no_undefined_symbols() {
     let bin = out_path("kernel0_eq");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(fixture("../examples/kernel0-eq"))
         .arg("-o")
@@ -14906,7 +13763,6 @@ fn a_freestanding_view_slice_and_eq_build_without_an_allocator() {
     let bin = out_path("freestanding_view");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_view"))
         .arg("-o")
@@ -14967,7 +13823,7 @@ fn hosted_containers_still_allocate_through_libc() {
     assert!(run.status.success(), "the hosted list fixture failed to run");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "6\n");
 
-    if backend() == "llvm" {
+    {
         let ir = std::fs::read_to_string(bin.with_extension("ll"))
             .expect("the LLVM backend writes textual IR beside the object");
         // `List.reserve` grows through `realloc` (a null pointer on the first
@@ -14988,7 +13844,7 @@ fn hosted_containers_still_allocate_through_libc() {
 // `[__bss_start, __bss_end)`, and the compiler defines the five `mem*`
 // routines an aggregate copy calls, weakly and as loops. Freestanding is
 // LLVM-only by design (the C backend's preamble is libc), so these tests build
-// through the default backend with the oracle switch removed; they need
+// through the default backend; they need
 // `ld.lld` and the llvm tools from `dev-kernel.nix`.
 // ---------------------------------------------------------------------------
 
@@ -15012,7 +13868,6 @@ fn build_freestanding(name: &str, target: &Path) -> PathBuf {
     let bin = out_path(name);
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -15841,12 +14696,8 @@ fn only_a_tls_program_links_openssl() {
     }
     let name = "fs_path_family";
     let generated = out_path(name);
-    let source = std::fs::read_to_string(if backend() == "c" {
-        generated.with_extension("c")
-    } else {
-        generated.with_extension("externs.c")
-    })
-    .expect("the generated C source");
+    let source = std::fs::read_to_string(generated.with_extension("externs.c"))
+        .expect("the generated C source");
     assert!(
         !source.contains("#include <openssl/"),
         "a program without std/tls includes OpenSSL's headers"
@@ -15950,7 +14801,6 @@ fn freestanding_arena_builds_with_no_undefined_symbols() {
     let bin = out_path("freestanding_arena");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_arena"))
         .arg("-o")
@@ -16020,7 +14870,6 @@ fn freestanding_try_alloc_builds_with_no_undefined_symbols() {
     let bin = out_path("freestanding_try_alloc");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_try_alloc"))
         .arg("-o")
@@ -16099,7 +14948,6 @@ fn freestanding_big_frames_probe_every_page() {
     let bin = out_path("kernel0_stack_probe");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(fixture("../examples/kernel0-stack"))
         .arg("-o")
@@ -16224,14 +15072,9 @@ fn kernel0_stack_overflows_into_the_guard_page() {
 /// artifact, so this check is LLVM-only.
 #[test]
 fn hosted_functions_carry_no_stack_probe() {
-    if backend() == "c" {
-        println!("skipping the hosted probe check: the C backend writes no IR artifact");
-        return;
-    }
     let bin = out_path("hosted_no_probe");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(fixture("tests/fixtures/array_basic.kp"))
         .arg("-o")
@@ -16518,8 +15361,7 @@ fn parallel_and_serial_builds_match_the_whole_program_build() {
 /// Equivalence (roadmap A-14 slice 1): a program built with the per-unit split
 /// prints what the whole-program build prints and exits the same way. The list
 /// is the features the split can break, one fixture each plus the multi-module
-/// projects, and it runs on whatever backend the suite is pointed at: under the
-/// C oracle the flag is ignored, which this test then proves by construction.
+/// projects, and it compares the two builds made by the LLVM backend.
 #[test]
 fn incremental_builds_match_the_whole_program_build() {
     let mut failures: Vec<String> = Vec::new();
@@ -16551,10 +15393,6 @@ fn incremental_builds_match_the_whole_program_build() {
 /// the equivalence test covers it on every other target.
 #[test]
 fn a_manifest_turns_the_per_unit_split_on() {
-    if backend() == "c" {
-        println!("skipping: the C oracle keeps its one translation unit");
-        return;
-    }
     let bin = out_path("inc_manifest_units");
     let build = kelpc()
         .arg("build")
@@ -16606,10 +15444,6 @@ fn a_manifest_turns_the_per_unit_split_on() {
 /// writes each unit's unoptimized IR to `<dir>/<unit>.ll`.
 #[test]
 fn two_incremental_builds_produce_identical_unit_ir() {
-    if backend() == "c" {
-        println!("skipping: the C oracle writes no unit IR");
-        return;
-    }
     let base = out_path("inc_determinism");
     let mut dumps = Vec::new();
     for pass in ["a", "b"] {
@@ -16669,10 +15503,6 @@ fn two_incremental_builds_produce_identical_unit_ir() {
 /// or silently ignored.
 #[test]
 fn incremental_is_refused_for_a_freestanding_project() {
-    if backend() == "c" {
-        println!("skipping: the C oracle refuses a freestanding project already");
-        return;
-    }
     let bin = out_path("inc_freestanding");
     let build = kelpc()
         .arg("build")
@@ -16693,40 +15523,6 @@ fn incremental_is_refused_for_a_freestanding_project() {
     );
 }
 
-/// The C oracle ignores the flag (roadmap A-14 slice 1): it is the suite's other
-/// answer to the same question, so it stays one translation unit, and a build
-/// with the flag writes the same `.c` artifact it always did.
-#[test]
-fn the_c_oracle_ignores_the_incremental_flag() {
-    let bin = out_path("inc_oracle");
-    let build = Command::new(kelpc_bin())
-        .env_remove("KELPC_BACKEND")
-        .env("KELPC_ORACLE", "c")
-        .arg("build")
-        .arg(fixture("tests/fixtures/datac_basic.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .arg("--incremental")
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "the oracle build with --incremental failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        bin.with_extension("c").exists(),
-        "the oracle did not write its one generated C file"
-    );
-    assert!(
-        !bin.with_extension("units").exists(),
-        "the oracle split its single translation unit"
-    );
-    let run = Command::new(&bin).output().expect("failed to run the oracle binary");
-    assert!(run.status.success());
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n4\n25\n11\n");
-}
-
 // Roadmap A-14 slice 2: the unit object cache
 // ---------------------------------------------------------------------------
 //
@@ -16734,8 +15530,7 @@ fn the_c_oracle_ignores_the_incremental_flag() {
 // machine settings it was compiled for (`plan/incremental-compilation.md`).
 // These tests drive the real compiler and read its stderr: `KELPC_CACHE_STATS=1`
 // prints one hit/miss/store line per build, and `--timings` prints one
-// `hit`/`miss` line per unit. The C oracle ignores `--incremental`, so every
-// test here is llvm-only and skips under the oracle.
+// `hit`/`miss` line per unit. Every test here is llvm-only.
 
 /// One cache-enabled build's result, with the cache lines parsed out of stderr.
 struct CacheBuild {
@@ -16936,10 +15731,6 @@ fn is_complete_elf(path: &Path) -> bool {
 
 #[test]
 fn incremental_builds_write_generated_module_interfaces() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("interfaces");
     let cache = out_path("cache_interfaces");
     let bin = out_path("cache_interfaces_bin");
@@ -16955,10 +15746,6 @@ fn incremental_builds_write_generated_module_interfaces() {
 
 #[test]
 fn timings_report_front_end_interface_hits_and_misses() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("iface_timings");
     let cache = out_path("cache_iface_timings");
     let _ = std::fs::remove_dir_all(&cache);
@@ -16980,10 +15767,6 @@ fn timings_report_front_end_interface_hits_and_misses() {
 
 #[test]
 fn an_unchanged_project_is_all_hits_on_the_second_build() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("unchanged");
     let cache = out_path("cache_unchanged");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17016,10 +15799,6 @@ fn an_unchanged_project_is_all_hits_on_the_second_build() {
 
 #[test]
 fn changing_one_body_misses_only_its_unit() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("onebody");
     let cache = out_path("cache_onebody");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17074,10 +15853,6 @@ fn changing_one_body_misses_only_its_unit() {
 
 #[test]
 fn changing_a_callee_signature_misses_the_caller_too() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = out_path("cache_signature");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).expect("create the project directory");
@@ -17129,10 +15904,6 @@ fn changing_a_callee_signature_misses_the_caller_too() {
 
 #[test]
 fn different_optimization_levels_never_share_entries() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("optlevel");
     let cache = out_path("cache_optlevel");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17156,10 +15927,6 @@ fn different_optimization_levels_never_share_entries() {
 
 #[test]
 fn a_truncated_entry_is_a_miss_and_is_rewritten() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("truncate");
     let cache = out_path("cache_truncate");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17188,10 +15955,6 @@ fn a_truncated_entry_is_a_miss_and_is_rewritten() {
 
 #[test]
 fn concurrent_builds_share_a_cache_without_partial_files() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("concurrent");
     let cache = out_path("cache_concurrent");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17257,10 +16020,6 @@ fn concurrent_builds_share_a_cache_without_partial_files() {
 
 #[test]
 fn the_size_cap_evicts_the_oldest_entry() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("cap");
     let cache = out_path("cache_cap");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17310,10 +16069,6 @@ fn the_size_cap_evicts_the_oldest_entry() {
 
 #[test]
 fn cache_off_writes_nothing() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("off");
     let cache = out_path("cache_off");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17337,10 +16092,6 @@ fn cache_off_writes_nothing() {
 
 #[test]
 fn the_cache_command_reports_and_clears() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("command");
     let cache = out_path("cache_command");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17416,10 +16167,6 @@ fn unit_dir_files(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
 /// object.
 #[test]
 fn serial_and_parallel_builds_write_byte_identical_units() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let target = project("shapes");
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut bins: Vec<PathBuf> = Vec::new();
@@ -17487,10 +16234,6 @@ fn serial_and_parallel_builds_write_byte_identical_units() {
 /// without the hook misses only the failed unit and hits the rest.
 #[test]
 fn a_failed_unit_names_itself_and_leaves_the_others_cached() {
-    if backend() == "c" {
-        println!("skipping: the C oracle ignores --incremental");
-        return;
-    }
     let dir = cache_project("failedunit");
     let cache = out_path("cache_failedunit");
     let _ = std::fs::remove_dir_all(&cache);
@@ -17554,9 +16297,7 @@ fn a_failed_unit_names_itself_and_leaves_the_others_cached() {
 // first stdout line. Every program ends by itself after the number of requests
 // it was told to answer, runs under `ulimit -v`/`ulimit -t` and `timeout`, and
 // every socket here has a read timeout, so a hang is a failed assertion, not a
-// stuck suite. The suite is backend-agnostic like the rest of this file: the
-// program is built by `kelpc()`, so `KELPC_ORACLE=c` runs the same cases on the
-// C oracle.
+// stuck suite. The programs are built by `kelpc()`, with the LLVM backend.
 // ---------------------------------------------------------------------------
 
 /// The hazard program `name`, built once per test process (the builds of two
@@ -18268,98 +17009,6 @@ fn http_listen_follows_the_net_grant_port() {
     );
 }
 
-/// The hazard program `name` built through the C backend and rebuilt from its
-/// generated `.c` with AddressSanitizer (as `asan_tls_fixture` does for a
-/// fixture).
-fn http_hazard_asan_bin(name: &str) -> PathBuf {
-    let bin = out_path(&format!("hazard_{name}_asan_src"));
-    let build = kelpc_c()
-        .arg("build")
-        .arg(fixture(&format!("tests/hazards/{name}.kp")))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected hazard '{name}' to compile through the C backend:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let asan_bin = out_path(&format!("hazard_{name}_asan"));
-    let cc = Command::new("cc")
-        .arg("-fsanitize=address")
-        .arg("-O1")
-        .arg("-o")
-        .arg(&asan_bin)
-        .arg(bin.with_extension("c"))
-        .args(["-fwrapv", "-pthread", "-lm", "-lssl", "-lcrypto"])
-        .output()
-        .expect("failed to spawn cc");
-    assert!(
-        cc.status.success(),
-        "the AddressSanitizer build of '{name}' failed:\n{}",
-        String::from_utf8_lossy(&cc.stderr)
-    );
-    asan_bin
-}
-
-#[test]
-fn http_server_frees_everything_under_address_sanitizer() {
-    // The leak and double-close gate for the server: every kind of connection
-    // end (a keep-alive run, a refused request, a chunked body, `HEAD`, a client
-    // that vanishes mid-body, one that resets mid-response, an idle timeout)
-    // runs under AddressSanitizer's leak checker, and the server's own
-    // descriptor count before and after is compared as well.
-    let bin = http_hazard_asan_bin("http_server");
-    let args = ["7", "1000", "10000", "10000", "300", "100"];
-    let server = HttpServer::start_bin(&bin, &args, false);
-    let mut c = server.client();
-    c.send(b"GET / HTTP/1.1\r\nHost: t\r\n\r\n");
-    assert_eq!(c.read_response(false).text(), "hello");
-    c.send(b"POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 3\r\n\r\nabc");
-    assert_eq!(c.read_response(false).text(), "abc");
-    c.send(b"HEAD /seg/x HTTP/1.1\r\nHost: t\r\n\r\n");
-    assert_eq!(c.read_response(true).status, 200);
-    c.send(b"POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\nT: 1\r\n\r\n");
-    assert_eq!(c.read_response(false).text(), "hi");
-    // Idle: the server closes this connection by itself (no answer, no count).
-    assert!(c.at_eof());
-    {
-        let mut c = server.client();
-        c.send(b"POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 50\r\n\r\nshort");
-    }
-    let mut c = server.client();
-    c.send(b"POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 5000\r\n\r\n");
-    assert_eq!(c.read_response(false).status, 413);
-    assert!(c.at_eof());
-    {
-        let mut c = server.client();
-        c.send(b"GET /big HTTP/1.1\r\nHost: t\r\n\r\n");
-        assert!(c.fill());
-    }
-    let mut c = server.client();
-    c.send(b"GET /nope HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
-    assert_eq!(c.read_response(false).status, 404);
-    assert_eq!(server.finish().0, 7);
-    // The worker threads too: each one's connections and the shared listener.
-    let bin = http_hazard_asan_bin("http_server_threaded");
-    let server = HttpServer::start_bin(&bin, &["3", "1000"], false);
-    let port = server.port;
-    let clients: Vec<_> = (0..5)
-        .map(|_| {
-            thread::spawn(move || {
-                let mut c = HttpClient::connect(port);
-                c.send(b"GET /id HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
-                c.read_response(false).status
-            })
-        })
-        .collect();
-    for h in clients {
-        assert_eq!(h.join().unwrap(), 200);
-    }
-    assert_eq!(server.finish().0, 5);
-}
-
 #[test]
 fn http_server_low_level_api_and_accessors_work_in_one_process() {
     // The defaults, the request accessors (`path_segments`, `query_param` with
@@ -18942,7 +17591,6 @@ fn polyp_fb_riscv64_shows_its_framebuffer_on_a_real_display() {
     let bin = out_path(name);
     let build = kelpc()
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(fixture("../examples/polyp-fb-riscv64"))
         .arg("-o")
@@ -19243,7 +17891,7 @@ allocs
 ///
 /// `examples/polyp-bench` runs the five scenarios in `plan/polyp-v3.md`'s table. The test sets
 /// `POLYP_BENCH_QUICK`, which shortens every scenario to one frame per run, so the whole run fits
-/// in the bounded runner on the slower C oracle; the counts it pins are the same numbers the full
+/// in the bounded runner; the counts it pins are the same numbers the full
 /// run's table carries. The wall-clock columns are the host's and are only checked to be numbers.
 #[test]
 fn polyp_bench_prints_a_bounded_table() {
@@ -19541,19 +18189,11 @@ fn matrix_ord_never_decides_map_key_identity() {
     );
 }
 
-/// Builds `fixture` with the named backend (`"c"` for the oracle, anything
-/// else for the default) and returns the build and the run, so a test can pin
-/// both backends in one go regardless of which one the suite is pointed at.
-fn build_and_run_on(fixture_name: &str, oracle: bool) -> (std::process::Output, Option<std::process::Output>) {
-    let tag = if oracle { "c" } else { "llvm" };
-    let bin = out_path(&format!("{fixture_name}_{tag}"));
+/// Builds `fixture` with the default backend and returns the build and the run.
+fn build_and_run(fixture_name: &str) -> (std::process::Output, Option<std::process::Output>) {
+    let bin = out_path(fixture_name);
     let mut cmd = Command::new(kelpc_bin());
     cmd.env_remove("KELPC_BACKEND");
-    if oracle {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
     let build = cmd
         .arg("build")
         .arg(fixture(&format!("tests/fixtures/{fixture_name}.kp")))
@@ -19571,42 +18211,38 @@ fn build_and_run_on(fixture_name: &str, oracle: bool) -> (std::process::Output, 
 /// Shifts (`tl7`): an in-range shift and the `wrapping_shl`/`wrapping_shr`
 /// escapes print the same on both backends.
 #[test]
-fn shifts_in_range_and_wrapping_shifts_agree_on_both_backends() {
+fn shifts_in_range_and_wrapping_shifts_are_checked() {
     let expected = "128\n1\n240\n32768\n1\n2147483648\n1\n-2147483648\n-1\n-4\n9223372036854775808\n1\n4611686018427387904\n-1\n48\n5\n2\n1\n2147483648\n268435456\n2\n2\n-8\n-2147483648\n";
-    for oracle in [false, true] {
-        let (build, run) = build_and_run_on("shift_checked", oracle);
-        let run = run.unwrap_or_else(|| {
-            panic!("shift_checked failed to build:\n{}", String::from_utf8_lossy(&build.stderr))
-        });
-        assert!(run.status.success(), "shift_checked (oracle={oracle}) failed:\n{}", String::from_utf8_lossy(&run.stderr));
-        assert_eq!(String::from_utf8_lossy(&run.stdout), expected, "oracle={oracle}");
-    }
+    let (build, run) = build_and_run("shift_checked");
+    let run = run.unwrap_or_else(|| {
+        panic!("shift_checked failed to build:\n{}", String::from_utf8_lossy(&build.stderr))
+    });
+    assert!(run.status.success(), "shift_checked failed:\n{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), expected);
 }
 
 /// Shifts (`tl7`): a shift by the width or more, or a negative amount, panics
 /// with the same message on both backends, at every width, and the legal shift
 /// printed before it still appears.
 #[test]
-fn a_shift_by_the_width_or_more_panics_on_both_backends() {
+fn a_shift_by_the_width_or_more_panics() {
     for (name, first) in [
         ("shift_panic_u32", "2147483648\n"),
         ("shift_panic_u8_right", "1\n"),
         ("shift_panic_negative", "-8\n"),
         ("shift_panic_u64", "9223372036854775808\n"),
     ] {
-        for oracle in [false, true] {
-            let (build, run) = build_and_run_on(name, oracle);
-            let run = run.unwrap_or_else(|| {
-                panic!("{name} failed to build:\n{}", String::from_utf8_lossy(&build.stderr))
-            });
-            assert!(!run.status.success(), "{name} (oracle={oracle}) should panic");
-            assert_eq!(String::from_utf8_lossy(&run.stdout), first, "{name} oracle={oracle}");
-            let stderr = String::from_utf8_lossy(&run.stderr);
-            assert!(
-                stderr.contains("shift amount out of range"),
-                "{name} (oracle={oracle}) panicked with:\n{stderr}"
-            );
-        }
+        let (build, run) = build_and_run(name);
+        let run = run.unwrap_or_else(|| {
+            panic!("{name} failed to build:\n{}", String::from_utf8_lossy(&build.stderr))
+        });
+        assert!(!run.status.success(), "{name} should panic");
+        assert_eq!(String::from_utf8_lossy(&run.stdout), first, "{name}");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            stderr.contains("shift amount out of range"),
+            "{name} panicked with:\n{stderr}"
+        );
     }
 }
 
@@ -19614,16 +18250,14 @@ fn a_shift_by_the_width_or_more_panics_on_both_backends() {
 /// compile error that names the type and the amount, on both backends.
 #[test]
 fn a_shift_by_a_constant_at_or_past_the_width_is_a_compile_error() {
-    for oracle in [false, true] {
-        for (name, needle) in [
-            ("shift_const_too_wide", "a shift by 33 is not defined for a 'u32'"),
-            ("shift_const_named_too_wide", "a shift by 8 is not defined for a 'u8'"),
-        ] {
-            let (build, run) = build_and_run_on(name, oracle);
-            assert!(run.is_none(), "{name} (oracle={oracle}) should be rejected");
-            let stderr = String::from_utf8_lossy(&build.stderr);
-            assert!(stderr.contains(needle), "{name}: expected '{needle}', got:\n{stderr}");
-        }
+    for (name, needle) in [
+        ("shift_const_too_wide", "a shift by 33 is not defined for a 'u32'"),
+        ("shift_const_named_too_wide", "a shift by 8 is not defined for a 'u8'"),
+    ] {
+        let (build, run) = build_and_run(name);
+        assert!(run.is_none(), "{name} should be rejected");
+        let stderr = String::from_utf8_lossy(&build.stderr);
+        assert!(stderr.contains(needle), "{name}: expected '{needle}', got:\n{stderr}");
     }
 }
 
@@ -19642,7 +18276,6 @@ fn a_freestanding_shift_out_of_range_reaches_the_projects_panic_handler() {
     let bin = out_path("freestanding_shift");
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(project("freestanding_shift"))
         .arg("-o")
@@ -19682,9 +18315,7 @@ fn eval_order_template_interpolations_run_left_to_right() {
 
 #[test]
 fn ordered_binary_conditions_are_c_expressions() {
-    // The C backend stages the left operand of an effectful binary operation.
-    // In a condition the resulting GNU statement expression needs its own
-    // parentheses, rather than borrowing `if` or `while`'s opening parenthesis.
+    // An effectful binary operation evaluates its left operand first. In a condition that has to hold whatever the operand's shape.
     assert_compiles_and_runs("tests/fixtures/eval_order_condition.kp", "12\n1234\n");
 }
 
