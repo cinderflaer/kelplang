@@ -1,0 +1,11 @@
+hello
+
+2
+No such file or directory
+hello
+
+0
+fs.try_read_text: input is not valid utf-8
+true
+22
+2

@@ -1,0 +1,7 @@
+attempt 1: net.connect: connection failed
+  errno 111: Connection refused
+attempt 2: net.connect: connection failed
+  errno 111: Connection refused
+attempt 3: net.connect: connection failed
+  errno 111: Connection refused
+gave up
