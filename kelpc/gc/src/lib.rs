@@ -12,6 +12,7 @@ pub mod state;
 pub mod sys;
 pub mod threads;
 pub mod types;
+pub mod verify;
 
 use core::sync::atomic::Ordering::{Acquire, Release};
 
@@ -27,6 +28,13 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { sys::abort() }
 }
 
+/// The personality routine that core's unwinding code names. This crate builds
+/// with `panic = "abort"`, so no frame is ever unwound and this is never called.
+/// It exists only so the staticlib links without the unwinder.
+#[cfg(not(test))]
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_eh_personality() {}
+
 #[cfg(test)]
 #[path = "../../tests/gc/mod.rs"]
 mod tests;
@@ -37,48 +45,14 @@ unsafe fn do_init(heap_min: usize, heap_max: usize) {
     let max = if heap_max == 0 { DEFAULT_HEAP_MAX } else { heap_max };
     let nblocks = core::cmp::max(4, max.div_ceil(BLOCK));
     let region_bytes = nblocks * BLOCK;
-    let raw = sys::mmap(
-        core::ptr::null_mut(),
-        region_bytes + BLOCK,
-        sys::PROT_READ | sys::PROT_WRITE,
-        sys::MAP_PRIVATE | sys::MAP_ANONYMOUS | sys::MAP_NORESERVE,
-        -1,
-        0,
-    ) as usize;
-    if raw == usize::MAX || raw == 0 {
-        sys::fatal(b"out of memory\0");
-    }
+    let raw = map(region_bytes + BLOCK);
     let meta_bytes = nblocks * core::mem::size_of::<BlockMeta>();
-    let meta = sys::mmap(
-        core::ptr::null_mut(),
-        meta_bytes,
-        sys::PROT_READ | sys::PROT_WRITE,
-        sys::MAP_PRIVATE | sys::MAP_ANONYMOUS | sys::MAP_NORESERVE,
-        -1,
-        0,
-    ) as usize;
+    let meta = map(meta_bytes);
     let types_bytes = TYPE_TABLE_IDS * 8;
-    let types = sys::mmap(
-        core::ptr::null_mut(),
-        types_bytes,
-        sys::PROT_READ | sys::PROT_WRITE,
-        sys::MAP_PRIVATE | sys::MAP_ANONYMOUS | sys::MAP_NORESERVE,
-        -1,
-        0,
-    ) as usize;
+    let types = map(types_bytes);
     // One mark entry per possible object (minimum 16 bytes each).
     let mark_cap = region_bytes / 16;
-    let mark = sys::mmap(
-        core::ptr::null_mut(),
-        mark_cap * 8,
-        sys::PROT_READ | sys::PROT_WRITE,
-        sys::MAP_PRIVATE | sys::MAP_ANONYMOUS | sys::MAP_NORESERVE,
-        -1,
-        0,
-    ) as usize;
-    if meta == usize::MAX || types == usize::MAX || mark == usize::MAX {
-        sys::fatal(b"out of memory\0");
-    }
+    let mark = map(mark_cap * 8);
     s.region = (raw + BLOCK - 1) & !(BLOCK - 1);
     s.region_bytes = region_bytes;
     s.nblocks = nblocks;
@@ -90,17 +64,50 @@ unsafe fn do_init(heap_min: usize, heap_max: usize) {
     s.heap_min = if heap_min == 0 { DEFAULT_HEAP_MIN } else { heap_min };
     s.trigger = s.heap_min;
     s.epoch = 0;
-    let stress = sys::getenv(b"KELP_GC_STRESS\0".as_ptr() as *const _);
-    if !stress.is_null() {
-        let mut n = 0usize;
-        let mut p = stress as *const u8;
-        while *p >= b'0' && *p <= b'9' {
-            n = n * 10 + (*p - b'0') as usize;
-            p = p.add(1);
-        }
-        s.stress_n = n;
-    }
+    s.stress_n = env_usize(b"KELP_GC_STRESS\0").unwrap_or(0);
+    s.verify = env_usize(b"KELP_GC_VERIFY\0").unwrap_or(0) != 0;
+    s.scan_stacks = true;
+    s.stop_timeout_ms = env_usize(b"KELP_GC_STOP_TIMEOUT_MS\0").unwrap_or(DEFAULT_STOP_TIMEOUT_MS);
+    s.large_cap = region_bytes / LARGE_MIN + 1;
+    s.large = map(s.large_cap * 8);
     threads::init_locks();
+}
+
+/// Decimal value of an environment variable, if set and numeric.
+pub unsafe fn env_usize(name: &[u8]) -> Option<usize> {
+    let p = sys::getenv(name.as_ptr() as *const _);
+    if p.is_null() {
+        return None;
+    }
+    let mut n = 0usize;
+    let mut q = p as *const u8;
+    if *q == 0 {
+        return None;
+    }
+    while *q >= b'0' && *q <= b'9' {
+        n = n.checked_mul(10)?.checked_add((*q - b'0') as usize)?;
+        q = q.add(1);
+    }
+    if *q != 0 {
+        return None;
+    }
+    Some(n)
+}
+
+/// Anonymous, zeroed, lazily committed mapping. Aborts the process on failure.
+unsafe fn map(bytes: usize) -> usize {
+    let p = sys::mmap(
+        core::ptr::null_mut(),
+        bytes,
+        sys::PROT_READ | sys::PROT_WRITE,
+        sys::MAP_PRIVATE | sys::MAP_ANONYMOUS | sys::MAP_NORESERVE,
+        -1,
+        0,
+    ) as usize;
+    if p == usize::MAX || p == 0 {
+        sys::fatal(b"out of memory\0");
+    }
+    p
 }
 
 unsafe fn init_once(heap_min: usize, heap_max: usize) {
@@ -129,6 +136,9 @@ unsafe fn ensure_init() {
 /// Allocate one object or array. Returns the payload pointer.
 unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *mut u8 {
     ensure_init();
+    if threads::my_index().is_none() {
+        sys::fatal(b"gc: allocation on a thread that is not attached (call kelp_gc_thread_attach before the first allocation)\0");
+    }
     let desc = &*d;
     if desc.align > 8 {
         sys::fatal(b"gc: type alignment above 8 is not supported in v1\0");
@@ -173,11 +183,13 @@ unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *m
             if total > LARGE_MIN {
                 hdr |= HDR_LARGE;
             }
+
             // New objects carry the unmarked value: the epoch's complement.
             hdr |= (s.epoch ^ 1) as u64;
             wr(h, hdr);
             core::ptr::write_bytes((h + 8) as *mut u8, 0, total - 8);
             s.bytes_since += total;
+            s.allocs += 1;
             unlock_heap();
             return (h + 8) as *mut u8;
         }
@@ -214,16 +226,19 @@ pub unsafe extern "C" fn kelp_gc_collect() {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_gc_safepoint() {
+    ensure_init();
     threads::safepoint();
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_gc_enter_native() {
+    ensure_init();
     threads::enter_native();
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_gc_leave_native() {
+    ensure_init();
     threads::leave_native();
 }
 

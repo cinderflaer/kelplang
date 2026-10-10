@@ -27,14 +27,19 @@ unsafe fn mark_obj(h: usize) {
     wr(h, (hdr & !HDR_MARK) | s.epoch as u64);
     let total = object_total(h);
     s.live += total;
+    let off = h - s.region;
     if hdr & HDR_LARGE == 0 {
         // Small objects sit inside one block; mark every line they cover.
-        let off = h - s.region;
         let b = off >> BLOCK_SHIFT;
         let first = (off & (BLOCK - 1)) >> LINE_SHIFT;
         let last = ((off & (BLOCK - 1)) + total - 1) >> LINE_SHIFT;
         for l in first..=last {
             (*blk(b)).lines[l] = 1;
+        }
+    } else {
+        // A run-space object may cross blocks. Its blocks stay in use whole.
+        for b in (off >> BLOCK_SHIFT)..=((off + total - 1) >> BLOCK_SHIFT) {
+            (*blk(b)).lines = [1; LINES];
         }
     }
     if hdr & HDR_NOSCAN == 0 {
@@ -111,6 +116,7 @@ pub unsafe fn collect_locked() {
     for b in 0..s.nblocks {
         (*blk(b)).lines = [0; LINES];
     }
+    sort_large();
     crate::threads::scan_roots();
     drain();
     lock_heap();
@@ -124,4 +130,10 @@ pub unsafe fn collect_locked() {
     s.alloc_line = 0;
     s.cursor = 0;
     s.limit = 0;
+    s.run_cur = 0;
+    s.run_end = 0;
+    s.run_scan = 0;
+    if s.verify {
+        crate::verify::heap_check();
+    }
 }
