@@ -19,3 +19,4 @@ empty on release.
 
 - Managed-mode lowering (WP3, WIP): GC descriptors, typed Box allocation, drop gating; not yet compiled or verified.
 - Managed mode: the checker now refuses a resource (a `Thread`, `Mutex`, `datac` holding one) in a `Box`, `List`, `Map`, array or closure environment, by name. The heap-slot hook runs after the pass; hosted builds are unchanged.
+- Managed mode: GC type descriptors for `Map` headers and entries, closure environments and closure values are defined in `kelpc/src/gc_descr.rs`. Nothing emits them yet; the managed lowering still allocates through the stub path.
