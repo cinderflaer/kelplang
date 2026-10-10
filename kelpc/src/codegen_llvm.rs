@@ -383,9 +383,13 @@ pub fn compile(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     freestanding: Option<&Freestanding>,
+    managed: Option<&Managed>,
     incremental: bool,
     timings: &mut Timings,
 ) -> Result<(), String> {
+    if managed.is_some() && incremental {
+        return Err("a managed build is not split per unit yet: the collector's descriptors and init are whole-program".to_string());
+    }
     if let Some(fs) = freestanding {
         llvm_ffi::initialize_target_for(&fs.triple)?;
     } else {
@@ -447,7 +451,7 @@ pub fn compile(
         freestanding,
         None,
         None,
-        false,
+        managed.map(|m| m.heap_max_mib << 20),
         timings,
     )?;
 
@@ -491,31 +495,52 @@ pub fn compile(
     };
 
     let link_start = Instant::now();
-    let linked = crate::driver::link_llvm_object(
-        &object_path,
-        program_object.as_deref(),
-        out_path,
-        opt,
-        link_libs,
-        library_dirs,
-        pkg_config_flags,
-        crate::codegen_c::uses_tls(program),
-    );
+    let linked = match managed {
+        Some(m) => crate::driver::link_managed_object(
+            &object_path,
+            program_object.as_deref(),
+            &m.gc_archive,
+            out_path,
+            opt,
+            link_libs,
+            library_dirs,
+            pkg_config_flags,
+            crate::codegen_c::uses_tls(program),
+        ),
+        None => crate::driver::link_llvm_object(
+            &object_path,
+            program_object.as_deref(),
+            out_path,
+            opt,
+            link_libs,
+            library_dirs,
+            pkg_config_flags,
+            crate::codegen_c::uses_tls(program),
+        ),
+    };
     timings.link += link_start.elapsed();
     linked.map_err(|e| e.message)
 }
 
+/// A managed build's settings (WP2): the heap cap in MiB that `kelp_gc_init`
+/// receives as its maximum, and the collector archive the link takes.
+#[derive(Debug, Clone)]
+pub struct Managed {
+    pub heap_max_mib: u64,
+    pub gc_archive: PathBuf,
+}
+
 /// Lower a whole program and return the IR text, without linking, in the hosted
-/// (`managed = false`) or managed (`managed = true`) form. The object is written
+/// (`managed = None`) or managed (`Some(heap cap in bytes)`) form. The object is written
 /// beside the IR, as every lowering does, so the tests can check that the IR
-/// also verifies and emits. Only the tests call this: the managed build's driver
-/// is WP2's, so nothing in a real build reaches it yet.
+/// also verifies and emits. Only the tests call this: a real build goes through
+/// `compile`.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn compile_ir(
     program: &Program,
     drops: &DropPlan,
     sources: &SourceMap,
-    managed: bool,
+    managed: Option<u64>,
     ir_path: &Path,
     object_path: &Path,
 ) -> Result<String, String> {
@@ -603,7 +628,7 @@ fn lower_to_object(
     freestanding: Option<&Freestanding>,
     unit: Option<Unit>,
     cache: Option<&Cache>,
-    managed: bool,
+    managed: Option<u64>,
     timings: &mut Timings,
 ) -> Result<Option<String>, String> {
     let started = Instant::now();
@@ -1018,7 +1043,7 @@ fn compile_units(
                                     None,
                                     Some(unit.clone()),
                                     Some(&cache),
-                                    false,
+                                    None,
                                     &mut local,
                                 )?;
                                 if let Some(dir) = &dump_dir {
@@ -2129,6 +2154,9 @@ struct Gen<'a> {
     /// Whether this is a managed build (WP3): heap objects are GC allocations,
     /// frees are dropped, and a drop runs only where a resource needs one.
     managed: bool,
+    /// The managed heap's cap in bytes, from the manifest's `heap_max`. `kelp_gc_init`
+    /// receives it as its maximum. `None` in every other build.
+    managed_heap_max: Option<u64>,
     /// The managed build's LLVM descriptors and collector entry points
     /// (`gc_descr`), declared once per module. `None` in every other build.
     gc: Option<crate::gc_descr::GcTypes<'a>>,
@@ -2186,7 +2214,7 @@ impl<'a> Gen<'a> {
         optimized: bool,
         freestanding: Option<Freestanding>,
         unit: Option<Unit>,
-        managed: bool,
+        managed: Option<u64>,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
         // The one libc symbol this slice reaches: `printf`, for `print` and
@@ -2283,9 +2311,10 @@ impl<'a> Gen<'a> {
             pd_init_scope: None,
             freestanding,
             unit,
-            managed,
-            gc: if managed { Some(crate::gc_descr::GcTypes::declare(ctx, module)) } else { None },
-            resources: if managed { crate::gc_descr::resource_types(program) } else { HashSet::new() },
+            managed: managed.is_some(),
+            managed_heap_max: managed,
+            gc: managed.map(|_| crate::gc_descr::GcTypes::declare(ctx, module)),
+            resources: if managed.is_some() { crate::gc_descr::resource_types(program) } else { HashSet::new() },
         })
     }
 
@@ -4145,12 +4174,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // directly; the slots a referencing function gets are bound below for
         // every other function.
         if self.fn_name == "main" {
-            // Managed: the collector starts first, with the default heap bounds
-            // (paper 3.4). The manifest's `heap_max` is not read yet (WP2).
-            if let Some(gc) = &self.g.gc {
+            // Managed: the collector starts first (paper 3.4), with the minimum
+            // heap and the manifest's `heap_max` as the maximum.
+            if let (Some(gc), Some(cap)) = (&self.g.gc, self.g.managed_heap_max) {
                 let (init, ity) = gc.init;
                 let min = self.g.ctx.const_int(self.g.ctx.i64(), crate::gc_descr::DEFAULT_HEAP_MIN, false);
-                let max = self.g.ctx.const_int(self.g.ctx.i64(), crate::gc_descr::DEFAULT_HEAP_MAX, false);
+                let max = self.g.ctx.const_int(self.g.ctx.i64(), cap, false);
                 self.g.builder.build_call(init, ity, &[min, max], "");
             }
             if let Some(init) = self.g.init_pds_fn {

@@ -255,28 +255,56 @@ pub fn link_llvm_object(
 }
 
 /// Links a managed build's object (WP3): the program's object, the embedded
-/// runtime, then the collector archive `gc_archive` (WP1's `kelpc/gc` static
-/// library, which defines `kelp_gc_*`), then `-ldl` for the Rust side of that
-/// archive. Only the managed case calls this; every other build links exactly
-/// as before. The archive takes the slot a `extern fun` object takes, after the
-/// runtime, so the program's `kelp_gc_*` references resolve against it.
-#[allow(dead_code)] // WP2 wires the managed link; the link smoke test is the first caller.
+/// runtime, the program's `extern fun` object when there is one, then the
+/// collector archive `gc_archive` (`kelpc/gc`'s static library, which defines
+/// `kelp_gc_*`), then the libraries the manifest names and `-ldl` for the Rust
+/// side of that archive. Only a managed build calls this; hosted and
+/// freestanding builds link exactly as before.
+///
+/// The archive comes after the program's objects so their `kelp_gc_*`
+/// references resolve against it. `managed_archive` finds the archive.
 pub fn link_managed_object(
     object_path: &Path,
+    externs_object: Option<&Path>,
     gc_archive: &Path,
     out_path: &Path,
     opt: OptLevel,
+    link_libs: &[String],
+    library_dirs: &[String],
+    pkg_config_flags: &[String],
+    tls: bool,
 ) -> Result<(), CompileError> {
-    link_llvm_objects(
+    let mut libs = link_libs.to_vec();
+    libs.push("dl".to_string());
+    link_llvm_objects_with_archive(
         std::slice::from_ref(&object_path.to_path_buf()),
+        externs_object,
         Some(gc_archive),
         out_path,
         opt,
-        &["dl".to_string()],
-        &[],
-        &[],
-        false,
+        &libs,
+        library_dirs,
+        pkg_config_flags,
+        tls,
     )
+}
+
+/// The collector archive a managed build links: the path in `KELP_GC_LIB`,
+/// which must name an existing file. A managed build with no archive is an
+/// error that names the variable, never a link that fails on `kelp_gc_init`.
+pub fn managed_archive() -> Result<PathBuf, CompileError> {
+    let path = std::env::var_os("KELP_GC_LIB").map(PathBuf::from).ok_or_else(|| CompileError {
+        message: "a managed build links the collector archive, and KELP_GC_LIB does not name it: set KELP_GC_LIB to the libkelp_gc.a built from kelpc/gc (cargo build --release)".to_string(),
+    })?;
+    if !path.is_file() {
+        return Err(CompileError {
+            message: format!(
+                "KELP_GC_LIB names '{}', which is not a file: build the collector archive from kelpc/gc",
+                path.display()
+            ),
+        });
+    }
+    Ok(path)
 }
 
 /// Links several objects into the final binary: the incremental mode's
@@ -294,6 +322,32 @@ pub fn link_managed_object(
 pub fn link_llvm_objects(
     objects: &[PathBuf],
     externs_object: Option<&Path>,
+    out_path: &Path,
+    opt: OptLevel,
+    link_libs: &[String],
+    library_dirs: &[String],
+    pkg_config_flags: &[String],
+    tls: bool,
+) -> Result<(), CompileError> {
+    link_llvm_objects_with_archive(
+        objects,
+        externs_object,
+        None,
+        out_path,
+        opt,
+        link_libs,
+        library_dirs,
+        pkg_config_flags,
+        tls,
+    )
+}
+
+/// [`link_llvm_objects`] with the managed build's collector archive, which
+/// goes after the program's `extern fun` object and before `-lm`.
+fn link_llvm_objects_with_archive(
+    objects: &[PathBuf],
+    externs_object: Option<&Path>,
+    gc_archive: Option<&Path>,
     out_path: &Path,
     opt: OptLevel,
     link_libs: &[String],
@@ -327,6 +381,9 @@ pub fn link_llvm_objects(
         .arg("-pthread");
     if let Some(externs) = externs_object {
         command.arg(externs);
+    }
+    if let Some(archive) = gc_archive {
+        command.arg(archive);
     }
     command.arg("-lm");
     for flag in dir_flags(&[], library_dirs) {

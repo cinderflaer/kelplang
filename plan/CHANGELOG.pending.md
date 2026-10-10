@@ -16,4 +16,5 @@ empty on release.
 
 ## compiler
 - Managed-mode lowering (WP3, WIP): GC descriptors, typed Box allocation, drop gating, safepoint polls at calls and loop back edges; golden IR and hosted identity pass, link smoke blocked until the collector defines rust_eh_personality.
-- `[target] mode = "managed"` is accepted by the manifest, with `heap_max = N` (a whole number of MiB, default 256) for the managed heap cap. Hosted and freestanding are unchanged. The memory or resource classifier is in `kelpc/src/managed.rs`; the heap refusal is not yet wired into the checker, and a managed build still takes the hosted path.
+- `[target] mode = "managed"` is accepted by the manifest, with `heap_max = N` (a whole number of MiB, default 256) for the managed heap cap. Hosted and freestanding are unchanged. The memory or resource classifier is in `kelpc/src/managed.rs`; the heap refusal is not yet wired into the checker.
+- A managed build (`[target] mode = "managed"`) is lowered through the managed path: `kelp_gc_init` gets the 8 MiB minimum and the manifest `heap_max` as its maximum, and the collector archive named by `KELP_GC_LIB` is linked in. Hosted and freestanding builds are unchanged. The link still fails until the collector defines `rust_eh_personality`, so a managed program does not run yet.

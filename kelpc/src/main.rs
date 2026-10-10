@@ -534,6 +534,38 @@ fn build(
     // this mode. A freestanding project is refused by name for now: its image
     // is one ELF with one entry stub and one panic state, which is a slice of
     // its own (`plan/incremental-compilation.md`).
+    // A managed build (WP2) takes the LLVM backend only: the C oracle has no
+    // collector. It is whole-program too, since `kelp_gc_init` and the
+    // descriptors are one module's. Its archive is looked up here, before any
+    // code is generated, so a missing archive is named before a link fails.
+    let managed = if loaded.project.target().is_managed() {
+        if backend == Backend::C {
+            eprintln!(
+                "error: '{}' sets '[target] mode = \"managed\"', which only the llvm backend can build: the C oracle has no collector (KELPC_ORACLE=c cannot build a managed project)",
+                path
+            );
+            return false;
+        }
+        if incremental_flag || loaded.project.incremental() {
+            eprintln!(
+                "error: '{}' sets '[target] mode = \"managed\"', which '--incremental' cannot build yet: the collector's descriptors and init are whole-program",
+                path
+            );
+            return false;
+        }
+        match driver::managed_archive() {
+            Ok(gc_archive) => Some(codegen_llvm::Managed {
+                heap_max_mib: loaded.project.target().heap_max_mib(),
+                gc_archive,
+            }),
+            Err(e) => {
+                eprintln!("error: {}", e.message);
+                return false;
+            }
+        }
+    } else {
+        None
+    };
     let incremental = incremental_flag || loaded.project.incremental();
     if incremental && *freestanding_out && backend == Backend::Llvm {
         eprintln!(
@@ -624,6 +656,7 @@ fn build(
                 &library_dirs,
                 &pkg_config_flags,
                 freestanding.as_ref(),
+                managed.as_ref(),
                 incremental,
                 &mut timing,
             ) {

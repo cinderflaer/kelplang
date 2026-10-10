@@ -42,3 +42,19 @@ fn a_thread_in_a_list_is_refused_by_name_in_a_managed_project() {
     let msg = text(&out);
     assert!(msg.contains("'Thread<i32>' cannot be"), "{msg}");
 }
+
+#[test]
+fn a_managed_project_with_heap_max_64_checks_clean() {
+    let out = check("heap_max_64");
+    assert!(out.status.success(), "{}", text(&out));
+}
+
+#[test]
+fn managed_heap_max_out_of_range_is_refused_by_name() {
+    for name in ["heap_max_zero", "heap_max_too_big"] {
+        let out = check(name);
+        assert!(!out.status.success(), "{name}: a bad heap_max must be refused");
+        let msg = text(&out);
+        assert!(msg.contains("'[target] heap_max'"), "{name}: {msg}");
+    }
+}

@@ -31,11 +31,10 @@ pub const GC_ALLOC: &str = "kelp_gc_alloc";
 pub const GC_INIT: &str = "kelp_gc_init";
 pub const GC_SAFEPOINT: &str = "kelp_gc_safepoint";
 
-/// The heap cap a managed program gets when its manifest names none: 256 MiB,
-/// paper 3.4 and the `heap_max` default. The minimum (the collection trigger
-/// floor) is 8 MiB.
+/// The minimum heap a managed program starts with (the collection trigger
+/// floor), 8 MiB, paper 3.4. The maximum is the manifest's `heap_max`, in
+/// `managed::DEFAULT_HEAP_MAX_MIB` when it names none.
 pub const DEFAULT_HEAP_MIN: u64 = 8 << 20;
-pub const DEFAULT_HEAP_MAX: u64 = 256 << 20;
 
 /// The layout facts descriptor emission needs from the program. `codegen_llvm`
 /// implements it on its own state, so this module never reaches into `Gen`.
@@ -289,6 +288,36 @@ mod tests {
             .join(name)
     }
 
+    /// A project under `tests/managed/`, the same directory `kelpc build` reads.
+    fn project(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("managed").join(name)
+    }
+
+    /// Lower a project's entry module to IR text with the collector cap its
+    /// manifest names, the value `kelpc build` hands `codegen_llvm::compile`.
+    /// A hosted project gets no cap.
+    pub(super) fn lower_project(dir: &Path) -> Result<String, String> {
+        let mut sources = SourceMap::new();
+        let loaded = resolve::load(dir, &mut sources, None, None).map_err(|d| format!("{d:?}"))?;
+        let typed = infer::check_program(&loaded.program, &loaded.project).map_err(|d| format!("{d:?}"))?;
+        let drops = borrowck::check_program(&typed).map_err(|d| format!("{d:?}"))?;
+        let cap = loaded
+            .project
+            .target()
+            .is_managed()
+            .then(|| loaded.project.target().heap_max_mib() << 20);
+        let out = std::env::temp_dir().join(format!("kelpc-gc-project-{}", std::process::id()));
+        std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+        codegen_llvm::compile_ir(
+            &typed,
+            &drops,
+            &sources,
+            cap,
+            &out.join("main.ll"),
+            &out.join("main.o"),
+        )
+    }
+
     /// Lower one fixture to IR text. `managed` picks the managed branch; the
     /// hosted branch is the same code with the flag off.
     pub(super) fn lower(name: &str, managed: bool) -> Result<String, String> {
@@ -309,7 +338,7 @@ mod tests {
             &typed,
             &drops,
             &sources,
-            managed,
+            managed.then_some(crate::managed::DEFAULT_HEAP_MAX_MIB << 20),
             &dir.join(format!("{stem}.ll")),
             &dir.join(format!("{stem}.o")),
         )
@@ -372,24 +401,39 @@ mod tests {
         assert!(!body.contains("call"), "{body}");
     }
 
-    /// Lower a managed fixture, link it against the collector archive named by
-    /// `KELP_GC_LIB` and run it. Returns the program's stdout. The archive is
-    /// built from branch `gc-core` (`kelpc/gc`, `cargo build --release`).
+    /// Build a managed fixture through the real build path (`codegen_llvm::compile`
+    /// with the collector archive `KELP_GC_LIB` names), then run it. Returns the
+    /// program's stdout. The archive is built from branch `gc-core`
+    /// (`kelpc/gc`, `cargo build --release`).
     fn link_and_run(name: &str) -> String {
-        let archive = std::env::var("KELP_GC_LIB").expect("KELP_GC_LIB names libkelp_gc.a");
-        lower(name, true).expect("managed lowering");
-        let stem = name.trim_end_matches(".kp");
+        let mut sources = SourceMap::new();
+        let loaded = resolve::load(&fixture(name), &mut sources, None, None).expect("load fixture");
+        let typed = infer::check_program(&loaded.program, &loaded.project).expect("check fixture");
+        let drops = borrowck::check_program(&typed).expect("borrowck fixture");
         let dir = std::env::temp_dir().join(format!("kelpc-gc-test-{}-managed", std::process::id()));
-        let object = dir.join(format!("{stem}.o"));
+        std::fs::create_dir_all(&dir).expect("test dir");
+        let stem = name.trim_end_matches(".kp");
         let exe = dir.join(stem);
-        crate::driver::link_managed_object(
-            &object,
-            Path::new(&archive),
+        let managed = codegen_llvm::Managed {
+            heap_max_mib: crate::managed::DEFAULT_HEAP_MAX_MIB,
+            gc_archive: crate::driver::managed_archive().map_err(|e| e.message).expect("KELP_GC_LIB"),
+        };
+        codegen_llvm::compile(
+            &typed,
+            &drops,
+            &sources,
             &exe,
             crate::opt::OptLevel::O0,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            Some(&managed),
+            false,
+            &mut crate::timings::Timings::new(),
         )
-        .map_err(|e| e.message)
-        .expect("managed link");
+        .expect("managed build");
         let output = std::process::Command::new(&exe).output().expect("run managed program");
         assert!(output.status.success(), "exit {:?}", output.status);
         String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -398,7 +442,10 @@ mod tests {
     /// Known blocker: the archive from `gc-core` references
     /// `rust_eh_personality` without defining it (a `panic = "abort"` staticlib),
     /// so these fail to link until the collector defines that symbol. The fix
-    /// belongs in `kelpc/gc`, not in the link line.
+    /// belongs in `kelpc/gc`, not in the link line. The managed build path
+    /// itself (`codegen_llvm::compile` with `Managed`) is wired and calls
+    /// `driver::link_managed_object`; only the collector's missing export stops
+    /// the link.
     ///
     /// The node fixture prints `false`, because `tree.left` is the non-empty box.
     #[test]
@@ -412,6 +459,25 @@ mod tests {
     #[ignore = "links WP1's kelp_gc static library: set KELP_GC_LIB and run with --ignored"]
     fn link_smoke_hello_prints_under_the_collector() {
         assert_eq!(link_and_run("hello.kp"), "hello from the managed build");
+    }
+
+    /// `[target] heap_max = 64` reaches `kelp_gc_init` as the maximum: 64 MiB in
+    /// bytes, with the minimum still the 8 MiB default.
+    #[test]
+    fn managed_project_initialises_the_collector_to_its_heap_max() {
+        let ir = lower_project(&project("heap_max_64")).expect("managed lowering of heap_max_64");
+        assert!(ir.contains("call void @kelp_gc_init(i64 8388608, i64 67108864)"), "{ir}");
+        assert!(!ir.contains("i64 268435456)"), "the default cap must not be emitted: {ir}");
+    }
+
+    /// The manifest's `heap_max` is refused at load, so a bad cap never reaches
+    /// lowering. The named error is the manifest's own.
+    #[test]
+    fn managed_bad_heap_max_is_refused_before_lowering() {
+        for dir in ["heap_max_zero", "heap_max_too_big"] {
+            let err = lower_project(&project(dir)).expect_err("a bad heap_max must be refused");
+            assert!(err.contains("'[target] heap_max'"), "{dir}: {err}");
+        }
     }
 
     #[test]
