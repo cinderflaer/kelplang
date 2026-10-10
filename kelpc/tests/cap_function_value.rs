@@ -4,7 +4,7 @@
 //! The gate has two halves. The *domain* half lives at the naming site: a
 //! module without the capability cannot name the item at all. The *pattern*
 //! half is a runtime check emitted from the call's own callee key
-//! (`codegen_c.rs::cap_plan`), because which argument is the resource is a
+//! (the removed C backend's `cap_plan`), because which argument is the resource is a
 //! property of the callee's signature. A call through a function value names
 //! the pointer, not the gated item, so no check is emitted for it: a module
 //! that *holds* the domain could name `fs.read` as a value and read any path
@@ -91,18 +91,10 @@ fn shapes(item: &str) -> [(&'static str, String); 4] {
     ]
 }
 
-/// Builds `dir/main.kp` with one backend. `c` is pinned through the project's
-/// oracle switch; any other name is the default `llvm` backend, so the helper
-/// keeps naming the backend its call sites ask for without a user surface.
-fn build(dir: &Path, backend: &str, bin_name: &str) -> Output {
+/// Builds `dir/main.kp` with the default backend (LLVM, the only one).
+fn build(dir: &Path, bin_name: &str) -> Output {
     let mut cmd = kelpc();
     cmd.arg("build");
-    cmd.env_remove("KELPC_BACKEND");
-    if backend == "c" {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
     cmd.arg(dir.join("main.kp"))
         .arg("-o")
         .arg(dir.join(bin_name))
@@ -118,7 +110,7 @@ fn refused(name: &str, import_line: &str, body: &str, item: &str, needle: &str) 
     let dir = scratch(name);
     project(&dir, import_line, body);
 
-    let c = build(&dir, "c", "c.bin");
+    let c = build(&dir, "c.bin");
     assert!(
         !c.status.success(),
         "expected the build to refuse '{item}' named in {name}, but it built"
@@ -155,7 +147,7 @@ fn a_granted_module_cannot_name_a_gated_item_as_a_function_value() {
 
 /// The domain half, unchanged: with no grant the item is refused for the
 /// capability rather than for the shape of the value. Both spellings, all four
-/// shapes, both backends.
+/// shapes, 
 #[test]
 fn an_ungranted_module_cannot_name_a_gated_item_as_a_function_value() {
     for item in ["fs.read", "fs.read_raw"] {
@@ -185,7 +177,7 @@ fn a_function_literal_over_a_gated_call_is_still_checked() {
         "fun leak().return: usize {\n    val f = fun(p: &str).return: Bytes = fs.read(p)\n    return f(\"/etc/hostname\").len()\n}",
     );
 
-    let build = build(&dir, "c", "c.bin");
+    let build = build(&dir, "c.bin");
     assert!(
         build.status.success(),
         "expected a function literal over 'fs.read' to build:\n{}",
@@ -230,7 +222,7 @@ fn an_ungated_function_is_still_a_value_in_a_local_a_field_and_a_parameter() {
     let dir = scratch("ungated");
     fs::write(dir.join("main.kp"), UNGATED).expect("write main.kp");
 
-    let build = build(&dir, "c", "c.bin");
+    let build = build(&dir, "c.bin");
     assert!(
         build.status.success(),
         "expected an ungated function value to build:\n{}",

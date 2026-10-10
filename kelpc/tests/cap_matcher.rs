@@ -9,11 +9,11 @@
 //! So one corpus goes through two implementations:
 //!
 //!   * `kelpc/runtime/cap_matcher_ref.c` — the C the checks ran before §8, kept
-//!     as the oracle. It is no longer emitted into programs, and this test
+//!     as the reference. It is no longer emitted into programs, and this test
 //!     compiles it directly, which is the reason it is a file rather than a
 //!     `const` inside the compiler.
-//!   * `kelpc/std/rt.kp` — the Kelp the checks run now, compiled by the C backend
-//!     into a driver that prints one verdict per case.
+//!   * `kelpc/std/rt.kp` — the Kelp the checks run now, compiled by the LLVM
+//!     backend into a driver that prints one verdict per case.
 //!
 //! Both drivers are generated from the same `Vec<Case>`, so a mismatch is
 //! reportable as the exact case that differs rather than as a diff of two large
@@ -80,7 +80,7 @@ struct Case {
     text: String,
 }
 
-fn c_bin() -> PathBuf {
+fn kelpc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kelpc"))
 }
 
@@ -334,7 +334,7 @@ fn kelp_driver(cases: &[Case]) -> String {
     out
 }
 
-/// Builds the C oracle: `cc` on the generated driver, which includes the
+/// Builds the C reference: `cc` on the generated driver, which includes the
 /// reference implementation from `kelpc/runtime/`.
 fn build_c_driver(cases: &[Case]) -> PathBuf {
     let src = tmp("cap_matcher_c.c");
@@ -354,19 +354,14 @@ fn build_c_driver(cases: &[Case]) -> PathBuf {
     bin
 }
 
-/// Builds the Kelp side with the C backend.
-///
-/// The backend is pinned to the C oracle rather than taken from the suite's
-/// default: this test is about the matcher, not about which backend is under
-/// test. Pinning makes the corpus run once per suite invocation with the same
-/// result.
+/// Builds the Kelp side with the default backend (LLVM). This test is about the
+/// matcher, not about the backend.
 fn build_kelp_driver(cases: &[Case]) -> PathBuf {
     let src = tmp("cap_matcher_kelp.kp");
     let bin = tmp("cap_matcher_kelp");
     std::fs::write(&src, kelp_driver(cases)).expect("writing the Kelp driver");
-    let out = Command::new(c_bin())
+    let out = Command::new(kelpc_bin())
         .arg("build")
-        .env("KELPC_ORACLE", "c")
         .arg(&src)
         .arg("-o")
         .arg(&bin)
@@ -415,14 +410,14 @@ fn the_kelp_matcher_agrees_with_the_c_reference_on_the_whole_corpus() {
 
     let c_bin = build_c_driver(&cases);
     let kelp_bin = build_kelp_driver(&cases);
-    let oracle = run_driver(&c_bin, "C reference");
+    let reference = run_driver(&c_bin, "C reference");
     let port = run_driver(&kelp_bin, "Kelp");
 
     assert_eq!(
-        oracle.len(),
+        reference.len(),
         cases.len(),
         "the C driver printed {} verdicts for {} cases",
-        oracle.len(),
+        reference.len(),
         cases.len()
     );
     assert_eq!(
@@ -435,12 +430,12 @@ fn the_kelp_matcher_agrees_with_the_c_reference_on_the_whole_corpus() {
 
     // The corpus has to decide both ways, per kind, or agreement is worthless:
     // a matcher that answered "false" to everything would pass a corpus of
-    // denials. This is checked against the *oracle*, so a corpus that stopped
+    // denials. This is checked against the C reference, so a corpus that stopped
     // covering the accepting side fails here rather than silently weakening the
     // test.
     let mut allowed = [0usize; 3];
     let mut denied = [0usize; 3];
-    for (case, verdict) in cases.iter().zip(&oracle) {
+    for (case, verdict) in cases.iter().zip(&reference) {
         let slot = match case.kind {
             Kind::Glob => 0,
             Kind::HostGlob => 1,
@@ -461,7 +456,7 @@ fn the_kelp_matcher_agrees_with_the_c_reference_on_the_whole_corpus() {
         );
     }
 
-    for (i, (case, (want, got))) in cases.iter().zip(oracle.iter().zip(&port)).enumerate() {
+    for (i, (case, (want, got))) in cases.iter().zip(reference.iter().zip(&port)).enumerate() {
         assert_eq!(
             want,
             got,
@@ -473,20 +468,18 @@ fn the_kelp_matcher_agrees_with_the_c_reference_on_the_whole_corpus() {
     }
 }
 
-/// A second, smaller assertion that the *checks* reach the matcher at all: the C
+/// A second, smaller assertion that the *checks* reach the matcher at all: the
 /// backend's glue has to call the Kelp symbol, or the corpus above would be
-/// testing a function nothing uses while the checks kept running the C one.
+/// testing a function nothing uses while the checks kept running another one.
 ///
-/// This reads the generated C for a fixture that holds a capability domain. The
-/// driver keeps that file next to the binary, which is what makes it readable
-/// here — see `driver.rs`.
+/// This reads the LLVM IR for a fixture that holds a capability domain. The
+/// backend keeps that file next to the binary.
 #[test]
 fn the_generated_capability_check_calls_the_kelp_matcher() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/caps_time_rand.kp");
     let bin = tmp("cap_matcher_wiring");
-    let out = Command::new(c_bin())
+    let out = Command::new(kelpc_bin())
         .arg("build")
-        .env("KELPC_ORACLE", "c")
         .arg(&fixture)
         .arg("-o")
         .arg(&bin)
@@ -498,19 +491,19 @@ fn the_generated_capability_check_calls_the_kelp_matcher() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let generated = std::fs::read_to_string(bin.with_extension("c")).expect("the generated C");
+    let generated = std::fs::read_to_string(bin.with_extension("ll")).expect("the generated IR");
     assert!(
-        generated.contains("kelp_std__rt__glob_match(patterns[i], resolved)"),
+        generated.contains("call") && generated.contains("@kelp_std__rt__glob_match("),
         "the capability check does not call the Kelp matcher"
     );
     assert!(
-        generated.contains("kelp_std__rt__host_glob(pat, host)"),
+        generated.contains("@kelp_std__rt__host_glob("),
         "the host check does not call the Kelp matcher"
     );
     // The C matcher must not be *emitted* any more; only the reference file,
     // which this test compiles itself, still defines it.
     assert!(
-        !generated.contains("static bool kelp_glob_match"),
+        !generated.contains("@kelp_glob_match("),
         "the C matcher is still emitted into the program"
     );
 }

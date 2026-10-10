@@ -1,39 +1,22 @@
 //! Link smoke for the Kelp runtime (stage 1 WP6).
 //!
-//! Each case builds an existing fixture with the default backend and with the C
-//! oracle (`KELPC_ORACLE=c`), runs both binaries, and checks that each one's exit
-//! status, stdout and stderr equal the text recorded from the oracle at baseline
-//! (`origin/main` f3c5a0d, see `kelpc/tests/runtime-diff-reference/`). The cases
+//! Each case builds an existing fixture with the LLVM backend, runs the binary,
+//! and checks that its exit status, stdout and stderr equal the text recorded
+//! from the C oracle at baseline before that backend was removed (`origin/main`
+//! f3c5a0d, see `kelpc/tests/runtime-diff-reference/`). The cases
 //! are the runtime paths the stage 1 plan names: strings and maps, threads with
 //! mutex, rwlock and condvar, env set/unset/lookup under threads, a loopback
 //! listen and connect, a worker panic seen by `thread.join`, poisoning, an
 //! uncaught panic, and a denied capability check.
 //!
 //! The Kelp sources are the fixtures themselves, so this file adds no Kelp code
-//! of its own. A failure names the case, the backend, and the field that differs.
+//! of its own. A failure names the case and the field that differs.
 //! Stderr from a capability denial contains the absolute repository path, so that
 //! case checks the stable part of the message instead of the whole line.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Backend {
-    /// The compiler's default backend: LLVM, linking the runtime.
-    Default,
-    /// The C oracle (`KELPC_ORACLE=c`), which compiles the runtime's C text.
-    Oracle,
-}
-
-impl Backend {
-    fn name(self) -> &'static str {
-        match self {
-            Backend::Default => "default",
-            Backend::Oracle => "oracle",
-        }
-    }
-}
 
 /// One smoke case. `unit` is relative to `kelpc/tests`, a `.kp` file or a
 /// project's `main.kp`.
@@ -119,29 +102,22 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// Builds `unit` with `backend` into `dir`, and returns the binary's path.
-fn build(unit: &str, backend: Backend, dir: &Path, tag: &str) -> PathBuf {
-    let bin = dir.join(format!("{tag}-{}", backend.name()));
-    let mut cmd = Command::new(kelpc_bin());
-    cmd.current_dir(kelpc_tests().join(".."))
+/// Builds `unit` into `dir`, and returns the binary's path.
+fn build(unit: &str, dir: &Path, tag: &str) -> PathBuf {
+    let bin = dir.join(tag);
+    let out = Command::new(kelpc_bin())
+        .current_dir(kelpc_tests().join(".."))
         .arg("build")
         .arg(kelpc_tests().join(unit))
         .arg("-o")
         .arg(&bin)
-        .env_remove("KELPC_BACKEND");
-    match backend {
-        Backend::Oracle => {
-            cmd.env("KELPC_ORACLE", "c");
-        }
-        Backend::Default => {
-            cmd.env_remove("KELPC_ORACLE");
-        }
-    }
-    let out = cmd.output().expect("failed to spawn kelpc");
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .output()
+        .expect("failed to spawn kelpc");
     assert!(
         out.status.success(),
-        "{tag}: `kelpc build {unit}` failed with the {} backend:\n{}",
-        backend.name(),
+        "{tag}: `kelpc build {unit}` failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     bin
@@ -154,8 +130,8 @@ fn run(bin: &Path) -> Output {
         .expect("failed to run the built binary")
 }
 
-fn check(case: &Case, backend: Backend, out: &Output) {
-    let tag = format!("{} [{}]", case.name, backend.name());
+fn check(case: &Case, out: &Output) {
+    let tag = case.name;
     assert_eq!(out.status.code(), Some(case.status), "{tag}: exit status");
     assert_eq!(String::from_utf8_lossy(&out.stdout), case.stdout, "{tag}: stdout");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -164,51 +140,49 @@ fn check(case: &Case, backend: Backend, out: &Output) {
 
 fn run_case(case: &Case) {
     let dir = scratch(case.name);
-    for backend in [Backend::Oracle, Backend::Default] {
-        let bin = build(case.unit, backend, &dir, case.name);
-        let out = run(&bin);
-        check(case, backend, &out);
-    }
+    let bin = build(case.unit, &dir, case.name);
+    let out = run(&bin);
+    check(case, &out);
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn strings_and_maps_match_the_oracle() {
+fn strings_and_maps_match_the_recorded_text() {
     run_case(&CASES[0]);
 }
 
 #[test]
-fn condvar_handshake_matches_the_oracle() {
+fn condvar_handshake_matches_the_recorded_text() {
     run_case(&CASES[1]);
 }
 
 #[test]
-fn env_under_threads_matches_the_oracle() {
+fn env_under_threads_matches_the_recorded_text() {
     run_case(&CASES[2]);
 }
 
 #[test]
-fn loopback_listen_connect_matches_the_oracle() {
+fn loopback_listen_connect_matches_the_recorded_text() {
     run_case(&CASES[3]);
 }
 
 #[test]
-fn worker_panic_is_seen_by_join_in_both_backends() {
+fn worker_panic_is_seen_by_join() {
     run_case(&CASES[4]);
 }
 
 #[test]
-fn a_poisoned_mutex_panics_in_both_backends() {
+fn a_poisoned_mutex_panics() {
     run_case(&CASES[5]);
 }
 
 #[test]
-fn a_poisoned_rwlock_panics_in_both_backends() {
+fn a_poisoned_rwlock_panics() {
     run_case(&CASES[6]);
 }
 
 #[test]
-fn an_uncaught_panic_exits_one_with_the_panic_line_in_both_backends() {
+fn an_uncaught_panic_exits_one_with_the_panic_line() {
     run_case(&CASES[7]);
 }
 
@@ -217,13 +191,13 @@ fn an_uncaught_panic_exits_one_with_the_panic_line_in_both_backends() {
 /// depends on where the repository is checked out, so only the stable part is
 /// compared.
 #[test]
-fn a_denied_net_capability_exits_one_in_both_backends() {
+fn a_denied_net_capability_exits_one() {
     let unit = "projects/caps_net_denied/main.kp";
     let dir = scratch("caps-net-denied");
-    for backend in [Backend::Oracle, Backend::Default] {
-        let bin = build(unit, backend, &dir, "caps-net-denied");
+    {
+        let bin = build(unit, &dir, "caps-net-denied");
         let out = run(&bin);
-        let tag = format!("caps_net_denied [{}]", backend.name());
+        let tag = "caps_net_denied";
         assert_eq!(out.status.code(), Some(1), "{tag}: exit status");
         assert!(out.stdout.is_empty(), "{tag}: stdout should be empty");
         let stderr = String::from_utf8_lossy(&out.stderr);

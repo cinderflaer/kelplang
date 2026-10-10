@@ -1,10 +1,8 @@
 //! MK7 S4: the DWARF debug locations of the `llvm` backend
 //! (the MK7 record in `plan/done.md`).
 //!
-//! The C backend maps a generated statement back to a `.kp` line with one
-//! `#line` directive (`codegen_c.rs::write_line_marker`), which is what makes a
-//! `cc` diagnostic name the `.kp` source. This file is the same claim for the
-//! `llvm` backend, whose equivalent is DWARF: a compile unit named in
+//! The debug information maps a generated statement back to a `.kp` line. This
+//! file checks that claim for the `llvm` backend, through DWARF: a compile unit named in
 //! `llvm.dbg.cu`, one `DIFile` per `.kp` source, one `DISubprogram` per function
 //! with its own declaration line, and a `DILocation` per statement, all built
 //! through `llvm_ffi::DebugBuilder`.
@@ -58,10 +56,9 @@ fn out_path(name: &str) -> PathBuf {
 /// backtrace and the finding is reported rather than papered over.
 const LEVELS: &[&str] = &["-O0", "-O2"];
 
-/// Build the faulting fixture with the `llvm` backend at `level`. The oracle
-/// switch is removed, so a run of the suite that points itself at the C oracle
-/// cannot quietly check the C backend's `#line` behavior instead of DWARF; the
-/// retired `KELPC_BACKEND` is removed for the same reason. The level is pinned
+/// Build the faulting fixture with the `llvm` backend at `level`. The retired
+/// `KELPC_BACKEND` and `KELPC_ORACLE` are removed, so an inherited value cannot
+/// change what is built. The level is pinned
 /// by flag because one level cannot stand in for another. `tag` names the
 /// calling test, and it and the level both go into the artifact path: libtest
 /// runs these tests in parallel threads, and two builds of one fixture that
@@ -70,7 +67,6 @@ fn build_fault(level: &str, tag: &str) -> PathBuf {
     let source = fixture("fault.kp");
     let bin = out_path(&format!("fault{level}_{tag}"));
     let build = Command::new(env!("CARGO_BIN_EXE_kelpc"))
-        .env_remove("KELPC_ORACLE")
         .env_remove("KELPC_BACKEND")
         .args(["build", level])
         .arg(&source)
@@ -121,9 +117,8 @@ fn the_line_table_names_the_kp_file_and_its_statement_lines() {
         // `divide` (15) and `main` (19), which are the lines their subprograms
         // and their entry blocks start under, and the two statements the fault
         // walks through, `return dividend / divisor` (16) and
-        // `print(divide(10, zero))` (21). Those two are the spans
-        // `codegen_c.rs::write_stmt` writes a `#line` from, so the two backends
-        // name the same line for the same statement.
+        // `print(divide(10, zero))` (21). Those two are the statements the
+        // fault walks through, so each must name its own line.
         for line in ["15", "16", "19", "21"] {
             let named = dump.lines().any(|row| {
                 let mut fields = row.split_whitespace();

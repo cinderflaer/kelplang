@@ -8,19 +8,11 @@
 //! certificate, a second CA with its own client certificate, an expired server
 //! certificate); a machine without the CLI prints one line and passes.
 //!
-//! The backend follows the suite's switch: `KELPC_ORACLE=c` runs the C oracle,
-//! unset runs the default LLVM backend. Both must print the same lines.
+//! The programs are built by the LLVM backend, the only backend.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
-
-fn backend() -> &'static str {
-    match std::env::var("KELPC_ORACLE").as_deref() {
-        Ok("c") => "c",
-        _ => "llvm",
-    }
-}
 
 fn kelpc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kelpc"))
@@ -29,11 +21,7 @@ fn kelpc_bin() -> PathBuf {
 fn kelpc() -> Command {
     let mut cmd = Command::new(kelpc_bin());
     cmd.env_remove("KELPC_BACKEND");
-    if backend() == "c" {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
+    cmd.env_remove("KELPC_ORACLE");
     cmd
 }
 
@@ -231,11 +219,11 @@ fn make_certs(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The reload program, built once per process for the backend under test.
+/// The reload program, built once per process.
 fn reload_bin() -> &'static PathBuf {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
-        let bin = scratch(&format!("reload_{}", backend()));
+        let bin = scratch("reload");
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hazards/tls_reload_matrix.kp");
         let out = kelpc().arg("build").arg(&src).arg("-o").arg(&bin).output().expect("failed to spawn kelpc");
         assert!(
@@ -272,7 +260,7 @@ fn run_reload(mode: &str) -> Option<Vec<String>> {
 
 fn expect_reload(mode: &str, want: &[&str]) {
     if let Some(got) = run_reload(mode) {
-        assert_eq!(got, want, "scenario '{mode}' on the {} backend", backend());
+        assert_eq!(got, want, "scenario '{mode}' failed");
     }
 }
 
@@ -318,11 +306,11 @@ fn listen_on_binds_the_named_host() {
     expect_reload("listen_on", &["listen_on loopback accepted"]);
 }
 
-/// The matrix program, built once per process for the backend under test.
+/// The matrix program, built once per process.
 fn matrix_bin() -> &'static PathBuf {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
-        let bin = scratch(&format!("matrix_{}", backend()));
+        let bin = scratch("matrix");
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hazards/tls_server_matrix.kp");
         let out = kelpc().arg("build").arg(&src).arg("-o").arg(&bin).output().expect("failed to spawn kelpc");
         assert!(
@@ -362,7 +350,7 @@ fn run(mode: &str) -> Option<Vec<String>> {
 
 fn expect(mode: &str, want: &[&str]) {
     if let Some(got) = run(mode) {
-        assert_eq!(got, want, "scenario '{mode}' on the {} backend", backend());
+        assert_eq!(got, want, "scenario '{mode}' failed");
     }
 }
 
