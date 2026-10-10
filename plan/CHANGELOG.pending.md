@@ -16,6 +16,8 @@ empty on release.
 
 ## Added
 
+- `[target] mode = "managed"` builds a program whose heap is collected by a tracing garbage collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (threads, mutexes, rwlocks, condvars) still drop at scope end, and the checker refuses one in the heap by name. Not yet: an enum held by value inside a `datac` is refused at build time, and incremental (per-unit) builds are refused.
+- `[target] heap_max = N` sets a managed program's heap cap in MiB (1 to 65536, default 256). A program that needs more fails with "out of memory".
 - `[build] emit = "html"` writes a Polyp view as a static HTML file. `[build] emit_entry` names the program that builds it. A Polyp HTML build needs no env grant.
 
 ## Changed

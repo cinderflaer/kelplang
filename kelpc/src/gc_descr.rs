@@ -730,6 +730,10 @@ mod hosted_identity {
             .join("tests")
             .join("managed_lower");
         let normalized = actual.replace(&dir.display().to_string(), "@FIXTURE_DIR@");
+        if std::env::var("KELPC_WRITE_GOLDEN").as_deref() == Ok("1") {
+            std::fs::write(dir.join("hosted_node.ll"), &normalized).expect("write hosted golden");
+            return;
+        }
         let golden = std::fs::read_to_string(dir.join("hosted_node.ll")).expect("read hosted fixture");
         assert_eq!(normalized, golden, "hosted IR differs from origin/main");
     }
