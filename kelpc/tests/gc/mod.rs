@@ -488,6 +488,24 @@ fn mark_keeps_rooted_cycle_and_frees_garbage_cycle() {
     }
 }
 
+/// Two enum roots: `a` (variant 0, pointing at `x`) and `b` (variant 1, with a
+/// stale pointer `y` in its payload that must not be traced). Returns `x` and
+/// `y` as addresses only, so the caller holds no live pointer to either.
+#[inline(never)]
+unsafe fn build_enum_roots() -> (usize, usize) {
+    let x = kelp_gc_alloc(&LINK) as usize;
+    let y = kelp_gc_alloc(&LINK) as usize;
+    let a = kelp_gc_alloc(&ENUM) as usize;
+    let b = kelp_gc_alloc(&ENUM) as usize;
+    core::ptr::write(a as *mut usize, x);
+    core::ptr::write((a + 8) as *mut u32, 0);
+    core::ptr::write(b as *mut usize, y);
+    core::ptr::write((b + 8) as *mut u32, 1);
+    (*ENUM_ROOTS.0.get())[0] = a;
+    (*ENUM_ROOTS.0.get())[1] = b;
+    (x, y)
+}
+
 /// Item 6: the enum tag is a u32 at `tag_off`. Variant 0 keeps its pointer
 /// alive; variant 1 has no pointer slots, so its pointer is not traced.
 #[test]
@@ -499,16 +517,8 @@ fn enum_tag_is_read_as_u32_and_selects_the_variant() {
         kelp_gc_thread_attach();
         kelp_gc_register_root_region(ENUM_ROOTS.0.get() as *mut u8, &ROOT_PTR);
         kelp_gc_register_root_region((ENUM_ROOTS.0.get() as *mut usize).add(1) as *mut u8, &ROOT_PTR);
-        let x = kelp_gc_alloc(&LINK) as usize;
-        let y = kelp_gc_alloc(&LINK) as usize;
-        let a = kelp_gc_alloc(&ENUM) as usize;
-        let b = kelp_gc_alloc(&ENUM) as usize;
-        core::ptr::write(a as *mut usize, x);
-        core::ptr::write((a + 8) as *mut u32, 0);
-        core::ptr::write(b as *mut usize, y);
-        core::ptr::write((b + 8) as *mut u32, 1);
-        (*ENUM_ROOTS.0.get())[0] = a;
-        (*ENUM_ROOTS.0.get())[1] = b;
+        let (x, y) = build_enum_roots();
+        clobber_stack();
         kelp_gc_collect();
         assert_eq!(kelp_gc_is_heap_ptr(x as *const u8), 1, "variant 0 pointer traced");
         assert_eq!(kelp_gc_is_heap_ptr(y as *const u8), 0, "variant 1 pointer not traced");
