@@ -10091,6 +10091,42 @@ fn if_let_else_chain_reads_its_scrutinee_more_than_once() {
 }
 
 #[test]
+fn let_else_binds_through_option_and_enum() {
+    // plan/syntax.md 4.1: a matched let-else binds for the rest of the block,
+    // and a missed one runs its else block (return, or continue in a loop).
+    assert_compiles_and_runs(
+        "tests/fixtures/let_else.kp",
+        "40\n80\n-1\n2.000000\n0.000000\n4\n0\n30\n",
+    );
+}
+
+#[test]
+fn let_else_else_block_drops_the_enclosing_scope() {
+    // The else block's `return` drops the local declared before the `let`,
+    // the same drop a plain `return` makes, before the caller prints.
+    assert_compiles_and_runs(
+        "tests/fixtures/let_else_drops.kp",
+        "guard\n0\n-1\nguard\n3\n33\n",
+    );
+}
+
+#[test]
+fn let_else_refusals_name_the_rule() {
+    assert_rejected_with(
+        "tests/fixtures/let_else_falls_through.kp",
+        "let-else: the else block falls through",
+    );
+    assert_rejected_with(
+        "tests/fixtures/let_else_plain_name.kp",
+        "is a plain name, which always matches",
+    );
+    assert_rejected_with(
+        "tests/fixtures/let_else_type_mismatch.kp",
+        "let-else: the pattern 'Circle' must match the expression's type",
+    );
+}
+
+#[test]
 fn if_let_misuse_is_rejected() {
     for name in ["if_let_unknown_variant", "if_let_bind_count"] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));

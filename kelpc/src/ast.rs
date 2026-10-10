@@ -1165,6 +1165,11 @@ pub enum Expr {
         scrutinee: Box<Expr>,
         arms: Vec<WhenArm>,
         span: Span,
+        /// `true` for the `when` a `let PATTERN = EXPR else { BLOCK }` statement
+        /// desugars to (`plan/syntax.md` 4.1): arm one is the pattern over the
+        /// rest of the block, arm two is the `else` block. `infer.rs` checks
+        /// the form under the let-else rules, so its refusals name the rule.
+        let_else: bool,
     },
     /// `[a, b, c]`: an array value (A-18). Its length is the number of
     /// elements written, and its type is `[T; n]` for the element type the

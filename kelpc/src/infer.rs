@@ -11279,7 +11279,14 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
                 if matches!(expected_tail, Some(Ty::Unit)) {
                     refuse_dropped_must_use(&checked, ctx, expr.span())?;
                 }
-                tail = Some(Box::new(checked));
+                // A let-else that leaves on every path has no value to hand
+                // back, so it stays a statement: the block then has no tail
+                // for the declared return type to be checked against.
+                if let_else_leaves(expr) {
+                    stmts.push(tir::Stmt::Expr(checked));
+                } else {
+                    tail = Some(Box::new(checked));
+                }
             }
         } else {
             let checked = check_stmt(stmt, ctx)?;
@@ -12012,6 +12019,7 @@ fn desugar_iterator_for(
             },
         ],
         span,
+        let_else: false,
     };
     let while_body = ast::Block {
         stmts: vec![ast::Stmt::Expr { expr: when, span }],
@@ -13535,7 +13543,8 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             scrutinee,
             arms,
             span,
-        } => check_when_scrutinee(scrutinee, arms, *span, ctx, expected),
+            let_else,
+        } => check_when_scrutinee(scrutinee, arms, *span, *let_else, ctx, expected),
         // `[a, b, c]`: an array literal (A-18). Every element takes the
         // array's element type, which is either the one the context named or,
         // when nothing constrains it, the first element's own type.
@@ -13721,11 +13730,12 @@ fn check_when_scrutinee(
     scrutinee: &ast::Expr,
     arms: &[ast::WhenArm],
     span: Span,
+    let_else: bool,
     ctx: &mut Ctx,
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
     let Some(root) = ast::temporary_root(scrutinee).cloned() else {
-        return check_when(scrutinee, arms, span, ctx, expected);
+        return check_when(scrutinee, arms, span, let_else, ctx, expected);
     };
     ctx.when_temps += 1;
     let tmp = format!("{}{}", WHEN_TEMP_PREFIX, ctx.when_temps - 1);
@@ -13737,7 +13747,7 @@ fn check_when_scrutinee(
     // what keeps a nested `when` from resolving its own temporary to this one.
     ctx.scopes.push(HashMap::new());
     ctx.define(&tmp, bind_ty.clone(), false);
-    let inner = check_when(&rebased, arms, span, ctx, expected);
+    let inner = check_when(&rebased, arms, span, let_else, ctx, expected);
     ctx.scopes.pop();
     let inner = inner?;
     let ty = inner.ty.clone();
@@ -14659,14 +14669,72 @@ fn check_enum_construction(
 /// stages a temporary into a local of its own first. That is what makes the
 /// payload borrows below outlive their arms, and what makes an owned payload of
 /// a temporary scrutinee bind by value out of that staged local.
+/// Whether a block's last statement leaves the enclosing code on every path:
+/// `return`, `break`, `continue`, or `panic(...)`. A let-else leaves when its
+/// pattern arm (the rest of the block) and its else block both leave.
+fn ast_block_leaves(block: &ast::Block) -> bool {
+    match block.stmts.last() {
+        Some(ast::Stmt::Return { .. } | ast::Stmt::Break { .. } | ast::Stmt::Continue { .. }) => true,
+        Some(ast::Stmt::Expr { expr: ast::Expr::Call { callee, .. }, .. }) => callee == "panic",
+        Some(ast::Stmt::Expr { expr, .. }) => let_else_leaves(expr),
+        _ => false,
+    }
+}
+
+/// Whether an expression is a let-else whose both arms leave (see
+/// `ast_block_leaves`). Such a statement is no tail: it has no value, and the
+/// function it ends does not fall off its end.
+fn let_else_leaves(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::When { let_else: true, arms, .. } => arms.iter().all(|a| match &a.body {
+            ast::Expr::Block(b) => ast_block_leaves(b),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+/// The let-else rules (`plan/syntax.md` 4.1) that are checked before the
+/// desugared `when` is: the else block must end in a diverging statement, and
+/// the pattern's enum must be the expression's type. The variant lookup is
+/// left to `check_when`, which names the let-else rule in its own refusal.
+fn check_let_else_form(scrut: &tir::Expr, arms: &[ast::WhenArm]) -> Result<()> {
+    if let Some(ast::WhenArm { body: ast::Expr::Block(block), span, pattern: None }) = arms.get(1) {
+        if !ast_block_leaves(block) {
+            return Err(TypeError {
+                message: "let-else: the else block falls through. Its last statement must leave the enclosing code (return, break, continue, or panic(...)), because the code after the let runs only when the pattern matched".to_string(),
+                span: *span,
+            });
+        }
+    }
+    if struct_name_of(&scrut.ty).is_none() {
+        let pattern = match arms.first().and_then(|a| a.pattern.as_ref()) {
+            Some(p) => p.variant.clone(),
+            None => String::new(),
+        };
+        return Err(TypeError {
+            message: format!(
+                "let-else: the pattern '{pattern}' must match the expression's type, and '{}' is not an enum, so no variant can match it. Fix: give the expression the enum type the pattern names",
+                scrut.ty.display()
+            ),
+            span: scrut.span,
+        });
+    }
+    Ok(())
+}
+
 fn check_when(
     scrutinee: &ast::Expr,
     arms: &[ast::WhenArm],
     span: Span,
+    let_else: bool,
     ctx: &mut Ctx,
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
     let scrut = check_expr(scrutinee, ctx, None)?;
+    if let_else {
+        check_let_else_form(&scrut, arms)?;
+    }
     let Some(ename) = struct_name_of(&scrut.ty).map(|s| s.to_string()) else {
         return Err(TypeError {
             message: format!(
@@ -14718,6 +14786,16 @@ fn check_when(
                         .iter()
                         .map(|v| format!("'{}'", v.name))
                         .collect();
+                    if let_else {
+                        return Err(TypeError {
+                            message: format!(
+                                "let-else: the pattern '{}' must match the expression's type, and '{ename}' has no such variant (the variants are {}). Fix: name a variant of the expression's enum, or change the expression to the enum the pattern names",
+                                p.variant,
+                                names.join(", ")
+                            ),
+                            span: p.span,
+                        });
+                    }
                     return Err(TypeError {
                         message: format!(
                             "'{}' is not a variant of enum '{ename}' — the variants are {}",

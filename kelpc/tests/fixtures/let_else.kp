@@ -1,0 +1,65 @@
+// plan/syntax.md 4.1, let-else: `let PATTERN = EXPR else { BLOCK }` binds the
+// pattern's names for the rest of the block when EXPR matches. When it does
+// not, BLOCK runs and leaves the enclosing code, so the rest never sees an
+// unmatched value.
+impl "std/option"
+
+enum Shape {
+    Circle(val r: f64)
+    Rect(val w: f64, val h: f64)
+    Empty
+}
+
+enum Token {
+    Word(val text: String)
+    Blank
+}
+
+fun find(id: i32).return: option.Option<i32> {
+    if id > 0 {
+        return option.Option.Some(value = id * 10)
+    }
+    return option.Option.None
+}
+
+// The else block returns when the lookup misses.
+fun doubled(id: i32).return: i32 {
+    let Some(user) = find(id) else { return -1 }
+    print(user)
+    return user * 2
+}
+
+// The else block is a `return` too, on a borrow of an enum.
+fun radius(s: &Shape).return: f64 {
+    let Circle(r) = s else { return 0.0 }
+    return r
+}
+
+fun width(t: Token).return: usize {
+    let Word(text) = t else {
+        return 0
+    }
+    return text.len()
+}
+
+// `continue` leaves the loop body, so the else block can end an iteration.
+fun total(ids: [i32; 4]).return: i32 {
+    var sum = 0
+    for id in ids {
+        let Some(v) = find(id) else {
+            continue
+        }
+        sum += v
+    }
+    return sum
+}
+
+fun main() {
+    print(doubled(id = 4))
+    print(doubled(id = 0))
+    print(radius(s = Shape.Circle(r = 2.0)))
+    print(radius(s = Shape.Empty))
+    print(width(t = Token.Word(text = String.from_str(s = "four"))))
+    print(width(t = Token.Blank))
+    print(total(ids = [1, 0, 2, 0]))
+}

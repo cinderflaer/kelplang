@@ -511,6 +511,30 @@ refuses an owned one, the rule a field of a borrow already follows (10.2).
 of a moved value. Two positions that write the same name are ordinary shadowing,
 exactly as two `val` declarations of one name in one block are.
 
+### 4.1 `let` with a pattern: let-else
+
+A `let` followed by a variant pattern and an `else` block binds the pattern's names when the value matches, and runs the `else` block when it does not. The `else` block has to leave the enclosing code.
+
+```kelp
+fun user_name(id: i32).return: Result<String, String> {
+    let Some(user) = find(id) else { return Err("missing") }
+    return Ok(user.name)     // `user` is bound for the rest of the block
+}
+```
+
+- The pattern is a variant of an `enum`, written the way `if let` writes one: `Some(user)`, `Circle(r)`, `Blank`, with `_` for a payload that is not needed. A payload binds exactly as it does under `if let` and `when` (9.2): a copy when it is `Copy`, by value out of an owned place, and a shared borrow otherwise.
+- The names are bound for the rest of the enclosing block, and they are immutable, as an `if let` name is.
+- The pattern's variant has to belong to the enum that the expression has. The expression is evaluated once.
+- The `else` block must end in `return`, `break`, `continue` or `panic(...)`. When it does not end in one of those, the `let` is refused. Its drops run first: when the `else` block leaves through `return`, `break` or `continue`, the locals of the enclosing scope are dropped in the same order a plain `return` drops them.
+
+The refusals name the rule and the fix:
+
+- **A plain name always matches.** `let user = find(id) else { return }` is refused: the else block could never run. Write `val user = find(id)` with no `else` for a plain binding, or match a variant such as `Some(user)`.
+- **A tuple pattern always matches.** `let (a, b) = pair() else { return }` is refused for the same reason. Write `val (a, b) = pair()` with no `else`.
+- **The else block falls through.** A block that ends in a plain statement is refused, because the code after the `let` would run with the pattern unmatched. End the block with `return`, `break`, `continue` or `panic(...)`, or use `if let` when the no-match case needs no exit.
+- **The types do not match.** `let Circle(r) = find(id) else { return }` is refused when `find` returns an `Option`, because `Circle` is not a variant of that enum. Match a variant of the expression's own enum, or change the expression to the enum the pattern names.
+- **No `else` at all.** `let Some(user) = find(id)` is refused. Use `if let Some(user) = find(id) { ... }` when the no-match case needs no exit.
+
 ## 5. Operators and expressions
 
 **Evaluation order.** Kelp evaluates strictly left to right: the arguments of a call (after its receiver), the interpolations of a string template, the two operands of a binary operator (`&&` and `||` short-circuit as usual), the fields of a `datac`/`enum` constructor and the elements of an array literal. This holds on both backends; the C backend binds order-dependent operands to temporaries because C itself leaves the order of call arguments and operands unspecified. `tests/fixtures/eval_order_*.kp` pin it.

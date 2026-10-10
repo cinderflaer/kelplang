@@ -1,0 +1,28 @@
+// plan/syntax.md 4.1, let-else: the else block leaves through the same drop
+// plan a `return` uses, so a local declared before the let is dropped first.
+impl "std/option"
+
+datac Guard(val tag: i32)
+
+fun mut Guard.drop() {
+    print("guard")
+    print(self.tag)
+}
+
+fun find(id: i32).return: option.Option<i32> {
+    if id > 0 {
+        return option.Option.Some(value = id * 10)
+    }
+    return option.Option.None
+}
+
+fun check(id: i32).return: i32 {
+    val g = Guard(tag = id)
+    let Some(v) = find(id) else { return -1 }
+    return v + g.tag
+}
+
+fun main() {
+    print(check(id = 0))
+    print(check(id = 3))
+}
