@@ -10,6 +10,10 @@ use crate::opt::OptLevel;
 /// link time, so `kelpc` needs nothing beside its own binary and does not depend
 /// on its install location (MK7 §3.2).
 static RUNTIME_OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kelp_rt.o"));
+/// The Rust runtime archive, built from `kelp-rt/` by `build.rs`. Embedded but not
+/// linked yet: the link switches to it in stage 1 WP7.
+#[allow(dead_code)]
+static RUNTIME_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libkelp_rt.a"));
 
 /// Makes the temporary runtime object's name unique within one process: several
 /// compilations can run at once (the test suite does), and two of them must not

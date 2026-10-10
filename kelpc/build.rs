@@ -17,7 +17,7 @@
 //! `kelp_panic` becomes a single external definition, so the LLVM lowering must
 //! declare it rather than define a second copy.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// `YYYY-MM-DD` (UTC) for a Unix timestamp, by the civil-from-days algorithm, so
@@ -81,8 +81,161 @@ fn bake_build_info() {
     println!("cargo:rustc-env=KELPC_LLVM_VERSION={llvm}");
 }
 
+/// The variables a nested cargo must not inherit from this build script. The
+/// outer build's flags and per-package metadata would otherwise leak into the
+/// runtime's profile, features and target directory.
+fn is_outer_build_variable(name: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_TARGET_DIR",
+        "CARGO_MANIFEST_DIR",
+        "CARGO_MANIFEST_LINKS",
+        "OUT_DIR",
+        "HOST",
+        "TARGET",
+        "PROFILE",
+        "OPT_LEVEL",
+        "DEBUG",
+        "NUM_JOBS",
+    ];
+    EXACT.contains(&name)
+        || name.starts_with("CARGO_PKG_")
+        || name.starts_with("CARGO_CFG_")
+        || name.starts_with("CARGO_FEATURE_")
+}
+
+/// Builds the Rust runtime (`kelp-rt/`) into `$OUT_DIR/libkelp_rt.a`.
+///
+/// The primary path is a nested `cargo rustc --crate-type staticlib --locked
+/// --offline` with its own
+/// target directory, so `libc` resolves from the root `Cargo.lock` and the nested
+/// build never waits on the outer build's target lock. If that fails, the
+/// fallback calls `rustc --crate-type staticlib` directly with the `libc` rlib
+/// the nested build left behind.
+fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path) {
+    let repo = manifest_dir
+        .parent()
+        .expect("kelpc sits in the repository root's child directory");
+    let rt_dir = repo.join("kelp-rt");
+    let target = std::env::var("TARGET").expect("TARGET is set by cargo");
+    let nested_dir = out_dir.join("kelp-rt");
+    let archive_out = out_dir.join("libkelp_rt.a");
+
+    println!("cargo:rerun-if-changed={}", rt_dir.join("src").display());
+    println!("cargo:rerun-if-changed={}", rt_dir.join("Cargo.toml").display());
+    println!("cargo:rerun-if-changed={}", repo.join("Cargo.lock").display());
+
+    // Remap the source roots so the archive does not carry this checkout's
+    // absolute paths; the same commit then builds the same bytes anywhere.
+    let mut remaps = vec![
+        format!("--remap-path-prefix={}=.", repo.display()),
+        format!("--remap-path-prefix={}=.", out_dir.display()),
+    ];
+    if let Some(home) = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+    {
+        remaps.push(format!("--remap-path-prefix={}=/cargo", home.display()));
+    }
+    let mut rustflags = vec![
+        "-C".to_string(),
+        "force-unwind-tables=yes".to_string(),
+        "-C".to_string(),
+        "relocation-model=pic".to_string(),
+    ];
+    rustflags.extend(remaps.iter().cloned());
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let mut cmd = Command::new(cargo);
+    cmd.current_dir(repo)
+        .args(["rustc", "-p", "kelp-rt", "--lib", "--release", "--locked", "--offline"])
+        .args(["--crate-type", "staticlib"])
+        .args(["--features", "panic-handler", "--target", &target, "--target-dir"])
+        .arg(&nested_dir)
+        .env("CARGO_PROFILE_RELEASE_PANIC", "abort")
+        .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "2")
+        .env("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1")
+        .env("CARGO_PROFILE_RELEASE_DEBUG", "0")
+        .env("CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS", "false")
+        .env("CARGO_ENCODED_RUSTFLAGS", rustflags.join("\x1f"));
+    for (name, _) in std::env::vars_os() {
+        if let Some(name) = name.to_str() {
+            if is_outer_build_variable(name) {
+                cmd.env_remove(name);
+            }
+        }
+    }
+
+    let nested_archive = nested_dir.join(&target).join("release").join("libkelp_rt.a");
+    let nested_ok = match cmd.output() {
+        Ok(out) if out.status.success() => nested_archive.exists(),
+        Ok(out) => {
+            println!(
+                "cargo:warning=nested cargo build of kelp-rt failed, trying rustc: {}",
+                String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
+            );
+            false
+        }
+        Err(e) => {
+            println!("cargo:warning=could not run cargo for kelp-rt: {e}");
+            false
+        }
+    };
+    if nested_ok {
+        std::fs::copy(&nested_archive, &archive_out)
+            .expect("could not copy the nested kelp-rt archive into OUT_DIR");
+        return;
+    }
+
+    // Fallback: rustc directly. It needs the `libc` rlib, which the nested
+    // build leaves under its deps directory; a missing rlib means the nested
+    // build did not get that far, and the build stops with the reason.
+    let deps = nested_dir.join(&target).join("release").join("deps");
+    let libc_rlib = std::fs::read_dir(&deps).ok().and_then(|entries| {
+        entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("liblibc-") && n.ends_with(".rlib"))
+            })
+    });
+    let libc_rlib = libc_rlib.expect(
+        "kelp-rt could not be built: cargo failed and no libc rlib exists for the rustc fallback",
+    );
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let mut fb = Command::new(rustc);
+    fb.args(["--edition", "2024", "--crate-type", "staticlib", "--crate-name", "kelp_rt"])
+        .args(["--cfg", "feature=\"panic-handler\"", "--target", &target])
+        .args(["-C", "opt-level=2", "-C", "panic=abort", "-C", "codegen-units=1"])
+        .args(["-C", "debuginfo=0", "-C", "overflow-checks=off"])
+        .args(["-C", "force-unwind-tables=yes", "-C", "relocation-model=pic"])
+        .arg("--extern")
+        .arg(format!("libc={}", libc_rlib.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", deps.display()))
+        .arg("-o")
+        .arg(&archive_out)
+        .arg(rt_dir.join("src/lib.rs"));
+    for r in &remaps {
+        fb.arg(r);
+    }
+    let status = fb
+        .status()
+        .expect("could not invoke rustc for the kelp-rt fallback");
+    assert!(status.success(), "rustc failed to build the kelp-rt fallback archive");
+}
+
 fn main() {
     bake_build_info();
+    build_rust_runtime(
+        &PathBuf::from(
+            std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"),
+        ),
+        &PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo")),
+    );
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"),
     );

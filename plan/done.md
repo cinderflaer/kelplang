@@ -2117,6 +2117,13 @@ alongside `clang 21.1.8`.
     the C backend survives: with one backend, "correct" means "matches the author's
     intent"; with two, it is a measurement over the corpus. A backend that is never
     run is how a second backend becomes unmaintained, so the oracle is run.
+
+  - **Amendment, 2026-10-10 (owner decision): C is removed in stage 2.** The
+    runtime moves to Rust in stage 1 (`kelp-rt/`, see `stage1-runtime-plan.md`),
+    and stage 2 deletes the C backend, `codegen_c.rs`. The bullet above that keeps
+    `codegen_c.rs` and the C oracle permanently is superseded from stage 2 on. Until
+    stage 2 lands, the C backend stays in place and stays in the suite, as written
+    above.
 - **The backend seam.** `backend.rs` keeps its shape: the names, `Backend::DEFAULT`,
   and the one `match` that calls a generator. `llvm` is the name the seam carries,
   and since MK7 S7 it is what `Backend::DEFAULT` names. The user-facing selector

@@ -30,6 +30,11 @@ path = "src/main.rs"
 # start without it, the same way the system `clang` does not).
 llvm-sys = { version = "211.1", features = ["prefer-dynamic"] }
 
+# The Kelp runtime. `build.rs` builds its static library; the rlib is read for the
+# ABI layout constants (`kelp_rt::abi`) so the compiler and the runtime share one
+# table.
+kelp-rt = { path = "../kelp-rt" }
+
 [dev-dependencies]
 # `std/tls`'s own test coverage (MK5-S4b-M1, open item 37) needs a TLS server
 # to test the client against, the same way the plain HTTP fixtures in
