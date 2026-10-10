@@ -688,6 +688,36 @@ static kelp_View kelp_str__view(const char* s) {
     return v;
 }
 
+/* ---- Managed byte buffers (GC integration, managed builds only) -------------
+   A managed build (`KELP_GC_MANAGED`, set by the driver) allocates String and
+   Bytes buffers from the collector, and its drops free nothing: the collector
+   reclaims a buffer once no path reaches it. Hosted builds compile the macros
+   below to the malloc, realloc and free calls they always were, so the object
+   code of a hosted build does not change. Kept apart from the rest of this file
+   so the stage 1 runtime port can take it as one unit. */
+#ifdef KELP_GC_MANAGED
+#include "kelp_gc.h"
+/* The descriptor of a byte buffer: a noscan array of u8. The id is a reserved
+   one, above every id the program's own descriptor table hands out. */
+#define KELP_RT_BYTES_TYPE_ID 0xFFFF0u
+static const kelp_gc_type kelp_rt_bytes_descr = {
+    KELP_RT_BYTES_TYPE_ID, 1, 1, KELP_GC_NOSCAN, 0, NULL, 0, 0, NULL
+};
+/* `n` zeroed bytes from the collector. */
+static unsigned char* kelp_rt_bytes_alloc(size_t n) {
+    unsigned char* p = (unsigned char*)kelp_gc_alloc_array(&kelp_rt_bytes_descr, n);
+    if (p == NULL) {
+        kelp_panic("out of memory");
+    }
+    return p;
+}
+#define KELP_RT_BUF_ALLOC(n) kelp_rt_bytes_alloc(n)
+#define KELP_RT_BUF_FREE(p) ((void)(p))
+#else
+#define KELP_RT_BUF_ALLOC(n) malloc(n)
+#define KELP_RT_BUF_FREE(p) free(p)
+#endif
+
 /* The one growth routine both owned buffers share: make room for `extra`
    more bytes past `len`, doubling (or jumping to 8) so appending is
    amortized O(1), and re-terminate. `data`/`cap` are passed by pointer
@@ -700,10 +730,22 @@ static void kelp_buf_reserve(unsigned char** data, size_t len, size_t* cap, size
     while (want < len + extra) {
         want *= 2;
     }
+#ifdef KELP_GC_MANAGED
+    /* A collected buffer does not grow in place: copy the live bytes into a
+       new one, and the old buffer is the collector's to reclaim. */
+    unsigned char* p = kelp_rt_bytes_alloc(want + 1);
+    if (p == NULL) {
+        kelp_panic("out of memory");
+    }
+    if (len > 0) {
+        memcpy(p, *data, len);
+    }
+#else
     unsigned char* p = (unsigned char*)realloc(*data, want + 1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }
+#endif
     *data = p;
     *cap = want;
     p[len] = 0;
@@ -740,7 +782,7 @@ static kelp_Bytes kelp_Bytes__empty(void) {
        still has a valid NUL terminator at `data[0]`: that is the same
        invariant every non-empty buffer keeps (`data[len] == 0`), and it means
        `as_str()` and `printf("%s")` can never be handed NULL. */
-    unsigned char* p = (unsigned char*)malloc(1);
+    unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }
@@ -754,7 +796,7 @@ static kelp_Bytes kelp_Bytes__empty(void) {
 
 static kelp_Bytes kelp_Bytes__from_str(const char* s) {
     size_t n = strlen(s);
-    unsigned char* p = (unsigned char*)malloc(n + 1);
+    unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(n + 1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }
@@ -789,7 +831,7 @@ static void kelp_Bytes__set(kelp_Bytes* self, size_t i, uint8_t value) {
 }
 
 static kelp_Bytes kelp_Bytes__clone(const kelp_Bytes* self) {
-    unsigned char* p = (unsigned char*)malloc(self->len + 1);
+    unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(self->len + 1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }
@@ -830,7 +872,7 @@ static void kelp_Bytes__clear(kelp_Bytes* self) {
 }
 
 static void kelp_bytes_drop(kelp_Bytes* b) {
-    free(b->data);
+    KELP_RT_BUF_FREE(b->data);
     b->data = NULL;
     b->len = 0;
 }
@@ -848,7 +890,7 @@ typedef struct {
 
 static kelp_String kelp_String__empty(void) {
     /* As `kelp_Bytes__empty`: an empty string points at a NUL byte, never NULL. */
-    unsigned char* p = (unsigned char*)malloc(1);
+    unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }
@@ -862,7 +904,7 @@ static kelp_String kelp_String__empty(void) {
 
 static kelp_String kelp_String__from_str(const char* text) {
     size_t n = strlen(text);
-    unsigned char* p = (unsigned char*)malloc(n + 1);
+    unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(n + 1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }
@@ -915,7 +957,7 @@ static size_t kelp_String__char_count(const kelp_String* self) {
 }
 
 static kelp_String kelp_String__clone(const kelp_String* self) {
-    unsigned char* p = (unsigned char*)malloc(self->len + 1);
+    unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(self->len + 1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }
@@ -964,7 +1006,7 @@ static kelp_String kelp_String__with_capacity(size_t n) {
            same rule `kelp_String__empty` and `kelp_Bytes__empty` follow, and
            the reason `strlen`, `%s` and `as_str` are never handed NULL. `cap`
            stays 0, which is what an empty string's capacity is. */
-        unsigned char* p = (unsigned char*)malloc(1);
+        unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(1);
         if (p == NULL) {
             kelp_panic("out of memory");
         }
@@ -1003,7 +1045,7 @@ static kelp_View kelp_String__view(const kelp_String* self) {
    the conversion is not the `String.from_str` an implicit one would use. It
    lives here, after `kelp_String`, because it builds one. */
 static kelp_String kelp_View__to_string(kelp_View self) {
-    unsigned char* p = (unsigned char*)malloc(self.len + 1);
+    unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(self.len + 1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }
@@ -1026,7 +1068,7 @@ static const char* kelp_Bytes__as_str(const kelp_Bytes* self) {
 }
 
 static void kelp_string_drop(kelp_String* s) {
-    free(s->data);
+    KELP_RT_BUF_FREE(s->data);
     s->data = NULL;
     s->len = 0;
 }
@@ -1076,7 +1118,7 @@ static uint64_t kelp_map_combine(uint64_t h, uint64_t x) {
 /* The allocation primitive `std/mem` wraps (M6.2): an owned, zero-filled,
    NUL-terminated buffer of `n` bytes. */
 static kelp_Bytes kelp_bytes_alloc_raw(size_t n) {
-    unsigned char* p = (unsigned char*)malloc(n + 1);
+    unsigned char* p = (unsigned char*)KELP_RT_BUF_ALLOC(n + 1);
     if (p == NULL) {
         kelp_panic("out of memory");
     }

@@ -1,0 +1,42 @@
+// churn-map-datac-values: a Map<String, Rec> where Rec is a datac holding an i64 and a String.
+// Keys are built from strings. Each round inserts 20000 keys, replaces every third one, removes
+// half, and sums what is left. 8 rounds.
+impl "std/str"
+
+datac Rec(val n: i64, val tag: String)
+
+fun main() {
+    var total: i64 = 0
+    var round: i64 = 0
+    while round < 8 {
+        var m: Map<String, Rec> = Map.empty()
+        var i: i64 = 0
+        while i < 20000 {
+            val key = str.from_i64(i)
+            val tag = str.from_i64(i * 3)
+            m.insert(key = key.as_str(), v = Rec(n = i, tag = String.from_str(tag.as_str())))
+            i = i + 1
+        }
+        i = 0
+        while i < 20000 {
+            if i % 3 == 0 {
+                val key = str.from_i64(i)
+                val tag = str.from_i64(i + round)
+                m.insert(key = key.as_str(), v = Rec(n = i + round, tag = String.from_str(tag.as_str())))
+            }
+            i = i + 1
+        }
+        i = 0
+        while i < 20000 {
+            if i % 2 == 0 {
+                val key = str.from_i64(i)
+                val old = m.remove(key = key.as_str())
+                total = (total + old.n + old.tag.len().to_i64()) % 1000000007
+            }
+            i = i + 1
+        }
+        total = (total + m.len().to_i64()) % 1000000007
+        round = round + 1
+    }
+    print("churn-map-datac-values rounds=8 checksum=$total")
+}

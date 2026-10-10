@@ -355,4 +355,25 @@ fn main() {
         status.success(),
         "cc failed to build the Kelp runtime object from runtime/kelp_rt.c"
     );
+
+    // The managed variant (`KELP_GC_MANAGED`): the same text, with its String
+    // and Bytes buffers allocated from the collector through `kelp_gc.h`. A
+    // managed link takes this object instead of the hosted one.
+    let managed_object = out_dir.join("kelp_rt_managed.o");
+    let gc_include = manifest_dir.join("gc").join("include");
+    let status = Command::new("cc")
+        .args(["-c", "-O2", "-fPIC", "-fwrapv", "-pthread", "-DKELP_GC_MANAGED"])
+        .arg(format!("-I{}", gc_include.display()))
+        .arg(format!("-ffile-prefix-map={}=.", out_dir.display()))
+        .arg(format!("-ffile-prefix-map={}=.", manifest_dir.display()))
+        .arg("-o")
+        .arg(&managed_object)
+        .arg(&wrapper)
+        .status()
+        .expect("could not invoke 'cc' to build the managed Kelp runtime object");
+    assert!(
+        status.success(),
+        "cc failed to build the managed Kelp runtime object from runtime/kelp_rt.c"
+    );
+    println!("cargo:rerun-if-changed={}", gc_include.join("kelp_gc.h").display());
 }

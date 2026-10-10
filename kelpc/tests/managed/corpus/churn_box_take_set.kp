@@ -1,0 +1,26 @@
+// churn-box-take-set: a datac that owns a Box<List<i64>> and a Box<String>. The List is moved out
+// with take(), grown, and put back with set(), 40000 times, and the String is replaced each time.
+// Freed exactly once per replacement.
+impl "std/str"
+
+datac Bag(val xs: Box<List<i64>>, val label: Box<String>)
+
+fun main() {
+    var bag = Bag(xs = Box.of(List.of(1)), label = Box.of(String.from_str("x")))
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < 40000 {
+        var taken = bag.xs.take()
+        taken.push(i)
+        if taken.len() > 64 {
+            taken.clear()
+        }
+        total = (total + taken.len().to_i64()) % 1000000007
+        bag.xs.set(taken)
+        val num = str.from_i64(i)
+        bag.label.set(String.from_str(num.as_str()))
+        total = (total + bag.label.get().len().to_i64()) % 1000000007
+        i = i + 1
+    }
+    print("churn-box-take-set iters=40000 checksum=$total")
+}

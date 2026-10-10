@@ -1,0 +1,19 @@
+// WP3 containers fixture: a List of Strings, a Map of Strings to datacs and a
+// closure that captures a Box. The List buffer is an array of the String
+// descriptor, the Map entries are an array of the entry descriptor (key and
+// value slots), the Map index is a noscan u32 array, and the closure
+// environment names the Box slot. Nothing in the managed build frees memory.
+datac Item(val name: String, val n: i32)
+
+fun main() {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    print(names.len())
+
+    var items: Map<String, Item> = Map.new()
+    items.insert("a", Item(name = String.from_str("alpha"), n = 1))
+
+    val b = Box.of(41)
+    val add = fun(x: i32).return: i32 = x + b.get()
+    print(add(1))
+}

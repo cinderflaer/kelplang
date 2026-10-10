@@ -1,0 +1,25 @@
+// Managed mode, end to end, with enums: each pass builds a three-cell list of
+// an `enum` whose cells sit in `Box`es, sums it through a borrow, and drops it.
+// The heap cap is 16 MiB, so the collector must trace enum descriptors (the
+// tag selects the live variant's pointer slot) to finish. The total is
+// sum over i of (i + 5), for N = 300000 passes.
+enum IntList {
+    Nil
+    Cons(val head: i64, val tail: Box<IntList>)
+}
+
+fun sum(xs: &IntList).return: i64 = when xs {
+    Nil -> 0
+    Cons(head, tail) -> head + sum(tail.get())
+}
+
+fun main() {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < 300000 {
+        val three = IntList.Cons(head = i, tail = Box.of(IntList.Cons(head = 2, tail = Box.of(IntList.Cons(head = 3, tail = Box.of(IntList.Nil))))))
+        total = total + sum(three)
+        i = i + 1
+    }
+    print(total)
+}
