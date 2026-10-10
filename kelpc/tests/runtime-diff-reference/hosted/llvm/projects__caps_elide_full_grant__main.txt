@@ -1,0 +1,10 @@
+unit: kelpc/tests/projects/caps_elide_full_grant/main.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+--- stderr
+panic: fs.read: cannot open file
+  errno 2: No such file or directory

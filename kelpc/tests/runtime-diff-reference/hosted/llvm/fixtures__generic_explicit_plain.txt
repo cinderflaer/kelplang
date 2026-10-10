@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_explicit_plain.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Point' does not take type arguments
+  --> <root>/kelpc/tests/fixtures/generic_explicit_plain.kp:5:13
+run-status: not run

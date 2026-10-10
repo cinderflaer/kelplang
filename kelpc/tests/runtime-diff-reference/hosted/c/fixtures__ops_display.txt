@@ -1,0 +1,14 @@
+unit: kelpc/tests/fixtures/ops_display.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+v = (3, 4)
+(3, 4)
+3
+line = (3, 4) -> (5, 6)
+(3, 4) -> (5, 6)
+(3, 4) -> (5, 6)
+--- stderr

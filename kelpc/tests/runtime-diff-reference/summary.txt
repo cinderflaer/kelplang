@@ -1,0 +1,4 @@
+hosted c: records=1140 built=632 build-failed=508
+hosted llvm: records=1140 built=632 build-failed=508
+freestanding c: records=84 built=0 build-failed=84
+freestanding llvm: records=84 built=0 build-failed=84

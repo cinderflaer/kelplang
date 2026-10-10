@@ -1,0 +1,21 @@
+unit: kelpc/tests/fixtures/map_replace_drops_old_value.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+2
+2
+ONE
+2
+1
+TWO
+2
+TWO
+two again
+2
+2
+1
+two again
+--- stderr

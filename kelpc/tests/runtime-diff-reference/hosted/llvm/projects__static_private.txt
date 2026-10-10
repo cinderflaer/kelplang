@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/static_private
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'state.HIDDEN' is private: 'HIDDEN' is declared in module 'state' without 'pub', so only that module can name it; add 'pub' to its declaration to export it
+  --> <root>/kelpc/tests/projects/static_private/src/main.kp:4:11
+run-status: not run

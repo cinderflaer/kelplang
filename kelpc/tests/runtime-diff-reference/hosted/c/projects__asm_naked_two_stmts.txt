@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/asm_naked_two_stmts
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a 'naked fun' body must be exactly one 'asm(...)' statement: nothing else can be emitted around it
+  --> <root>/kelpc/tests/projects/asm_naked_two_stmts/src/main.kp:3:7
+run-status: not run

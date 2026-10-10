@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/if_let_unknown_variant.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Circle' is not a variant of enum 'Shape' — the variants are 'Empty'
+  --> <root>/kelpc/tests/fixtures/if_let_unknown_variant.kp:7:12
+run-status: not run

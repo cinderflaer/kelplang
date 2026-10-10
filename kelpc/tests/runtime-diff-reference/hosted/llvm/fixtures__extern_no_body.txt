@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/extern_no_body.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: extern function 'not_a_real_primitive' has no compiler-supplied body — only compiler-shipped stdlib modules may declare 'extern fun', unless this module has its own coral.toml '[extern."extern_no_body"]' section naming 'not_a_real_primitive' in its 'symbols' allowlist
+  --> <root>/kelpc/tests/fixtures/extern_no_body.kp:4:8
+run-status: not run

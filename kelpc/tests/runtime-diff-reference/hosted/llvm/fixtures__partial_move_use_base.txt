@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/partial_move_use_base.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot use 'bag' as a whole value: its field 'xs' was moved out
+  --> <root>/kelpc/tests/fixtures/partial_move_use_base.kp:10:17
+run-status: not run

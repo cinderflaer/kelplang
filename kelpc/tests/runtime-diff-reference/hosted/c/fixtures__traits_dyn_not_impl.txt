@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_dyn_not_impl.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: expected '&dyn Shape', found '&Other': 'Other' does not implement 'Shape', so write 'impl Shape for Other' first
+  --> <root>/kelpc/tests/fixtures/traits_dyn_not_impl.kp:15:10
+run-status: not run

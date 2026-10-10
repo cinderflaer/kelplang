@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/ffi_variadic_bad_arg
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: extra argument 1 of 'helper.kelp_va_sum' has type 'String', which a variadic 'extern fun' cannot pass: use an integer, 'bool', 'f32', 'f64', 'str' or an opaque handle
+  --> <root>/kelpc/tests/projects/ffi_variadic_bad_arg/src/main.kp:5:33
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_key_pair_no_deep_copy.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'WithList' declares its own key pair, but the map clones a key in and 'WithList' has no deep copy: a key may not hold a field that cannot be copied, so a `List`, `Map` or `Box` field (or a `datac`/`enum` that holds one) is refused
+  --> <root>/kelpc/tests/fixtures/map_key_pair_no_deep_copy.kp:7:1
+run-status: not run

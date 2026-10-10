@@ -1,0 +1,33 @@
+unit: kelpc/tests/fixtures/stdlib_fmt.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+0
+-1234
+4294967295
+3.142
+1.5
+0
+ff
+beef
+007
+long
+7..
+61 62
+
+007!
+0
+999
+1,000
+1,234,567
+18,446,744,073,709,551,615
+-1,234,567
+0 B
+1023 B
+1.00 KiB
+1.50 KiB
+1.00 TiB
+--- stderr

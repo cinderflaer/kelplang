@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/heap_drops_in_desugared_blocks.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+1
+1
+--- stderr

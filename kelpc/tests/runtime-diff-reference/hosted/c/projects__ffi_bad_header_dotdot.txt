@@ -1,0 +1,7 @@
+unit: kelpc/tests/projects/ffi_bad_header_dotdot
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: coral.toml value for '[extern."ctype"] header' must not contain '"', '<', '>', a newline or '..'
+run-status: not run

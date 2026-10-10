@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/percpu_hosted
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the per-CPU static 'SLOT' is only legal in a freestanding build: one copy per CPU needs a bare-metal target whose CPU index register the kernel sets, so '[target] mode = "freestanding"' and a '[target] cpus' are required
+  --> <root>/kelpc/tests/projects/percpu_hosted/src/main.kp:1:8
+run-status: not run

@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/panic_bound_message.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+before
+--- stderr
+panic: bound message

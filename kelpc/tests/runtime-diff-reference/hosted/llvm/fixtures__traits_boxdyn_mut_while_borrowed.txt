@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_boxdyn_mut_while_borrowed.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 'b' as exclusive: already borrowed as shared
+  --> <root>/kelpc/tests/fixtures/traits_boxdyn_mut_while_borrowed.kp:21:5
+run-status: not run

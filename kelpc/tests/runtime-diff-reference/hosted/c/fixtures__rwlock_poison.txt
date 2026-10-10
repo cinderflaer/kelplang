@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/rwlock_poison.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+writer exploded
+--- stderr
+panic: rwlock poisoned

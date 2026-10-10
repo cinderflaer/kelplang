@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/u64_literal_needs_a_context.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: '18446744073709551615' does not fit 'i32', the type a literal takes when nothing determines one: write the type it needs, as in 'val big: u64 = 18446744073709551615'
+  --> <root>/kelpc/tests/fixtures/u64_literal_needs_a_context.kp:5:19
+run-status: not run

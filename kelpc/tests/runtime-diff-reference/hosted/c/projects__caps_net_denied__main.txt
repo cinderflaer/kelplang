@@ -1,0 +1,11 @@
+unit: kelpc/tests/projects/caps_net_denied/main.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+--- stderr
+<root>/kelpc/tests/projects/caps_net_denied/util.kp:9:13: panic: 'localhost:1' is outside the net capability granted to module 'util'
+  granted:
+    127.0.0.1:*

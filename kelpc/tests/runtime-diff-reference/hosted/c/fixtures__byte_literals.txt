@@ -1,0 +1,29 @@
+unit: kelpc/tests/fixtures/byte_literals.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+10
+13
+9
+34
+92
+39
+0
+32
+255
+true
+true
+true
+false
+4
+Abc
+true
+233
+true
+48
+49
+50
+--- stderr

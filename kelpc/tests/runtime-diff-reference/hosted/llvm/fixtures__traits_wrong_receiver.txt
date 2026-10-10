@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_wrong_receiver.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: method 'grow' takes its receiver differently than trait 'Grow' declares it: the trait writes 'fun mut Self.grow(by: f64)', the impl writes 'fun Circle.grow(by: f64)'
+  --> <root>/kelpc/tests/fixtures/traits_wrong_receiver.kp:9:5
+run-status: not run

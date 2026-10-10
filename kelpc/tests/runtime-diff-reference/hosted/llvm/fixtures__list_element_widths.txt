@@ -1,0 +1,24 @@
+unit: kelpc/tests/fixtures/list_element_widths.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+3
+5000000002
+15000000003
+7
+3
+2
+false
+3
+4
+9
+10
+7
+5
+2
+9
+0
+--- stderr

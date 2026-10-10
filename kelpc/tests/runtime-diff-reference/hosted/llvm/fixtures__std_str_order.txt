@@ -1,0 +1,29 @@
+unit: kelpc/tests/fixtures/std_str_order.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+true
+false
+false
+true
+false
+true
+false
+true
+true
+true
+true
+true
+false
+false
+false
+false
+12
+2
+apple
+fig
+pear
+--- stderr

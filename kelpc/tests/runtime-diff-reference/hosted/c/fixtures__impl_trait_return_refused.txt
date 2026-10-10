@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/impl_trait_return_refused.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'impl Trait' is not allowed in return position: write a named type parameter and bound it ('fun f<T: Trait>(...).return: T') when the caller needs a concrete type, or return the owning value ('Box<dyn Trait>')
+  --> <root>/kelpc/tests/fixtures/impl_trait_return_refused.kp:13:20
+run-status: not run

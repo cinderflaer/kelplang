@@ -1,0 +1,12 @@
+unit: kelpc/tests/fixtures/env_thread_churn.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+200000
+200000
+3000
+3000
+--- stderr

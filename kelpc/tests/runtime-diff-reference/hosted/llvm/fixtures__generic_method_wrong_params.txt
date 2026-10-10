@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_method_wrong_params.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: receiver 'Pair' must write the type's own type parameters, in order: 'fun Pair<A, B>.first_of(...)'
+  --> <root>/kelpc/tests/fixtures/generic_method_wrong_params.kp:5:1
+run-status: not run

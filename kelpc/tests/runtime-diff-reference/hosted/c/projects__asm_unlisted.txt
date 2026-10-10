@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/asm_unlisted
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: module 'main' is not listed in coral.toml [unsafe] modules
+  --> <root>/kelpc/tests/projects/asm_unlisted/src/main.kp:5:5
+run-status: not run

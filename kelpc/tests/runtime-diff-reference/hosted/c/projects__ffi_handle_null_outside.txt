@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/ffi_handle_null_outside
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'mem.Buffer.null()' is only legal in a module with a coral.toml '[extern."<module id>"]' section, because only there can a native handle exist
+  --> <root>/kelpc/tests/projects/ffi_handle_null_outside/src/main.kp:6:27
+run-status: not run

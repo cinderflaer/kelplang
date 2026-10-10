@@ -1,0 +1,24 @@
+unit: kelpc/tests/fixtures/bitwise.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+8
+14
+6
+243
+16
+64
+32
+false
+true
+228
+184
+173
+true
+1
+-1
+-4
+--- stderr

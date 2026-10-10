@@ -1,0 +1,32 @@
+unit: kelpc/tests/fixtures/int_narrow_width_arithmetic.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+44
+100
+156
+32
+2
+0
+64
+236
+172
+32
+50
+55
+255
+44464
+24064
+5535
+10000
+88
+244
+smaller
+44
+32
+4
+4
+--- stderr

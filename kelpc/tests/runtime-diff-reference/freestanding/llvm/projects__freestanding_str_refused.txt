@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_str_refused
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the call to 'std.str.char_count' is unavailable in a freestanding build: it needs the hosted runtime, which 'std/str' reaches for everything but byte, eq, len, ptr, starts_with
+  --> <root>/kelpc/tests/projects/freestanding_str_refused/src/main.kp:8:17
+--- nm -u
+(no image)

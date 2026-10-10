@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/rwlock_read_borrow_stored.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a 'fun' literal cannot capture 'v': it is a borrow ('&i64'), and the environment it would be stored in outlives the frame the borrow points into — capture an owned value, or pass it as a parameter of the literal
+  --> <root>/kelpc/tests/fixtures/rwlock_read_borrow_stored.kp:6:17
+run-status: not run

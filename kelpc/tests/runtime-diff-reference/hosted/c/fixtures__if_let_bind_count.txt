@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/if_let_bind_count.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: pattern 'Circle(a, b)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s) (r)
+  --> <root>/kelpc/tests/fixtures/if_let_bind_count.kp:9:12
+run-status: not run

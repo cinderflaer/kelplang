@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/view_pins_owner.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot move 's' while it is borrowed
+  --> <root>/kelpc/tests/fixtures/view_pins_owner.kp:8:17
+run-status: not run

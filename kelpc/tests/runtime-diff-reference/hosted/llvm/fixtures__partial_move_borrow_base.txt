@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/partial_move_borrow_base.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot use 'bag' as a whole value: its field 'name' was moved out
+  --> <root>/kelpc/tests/fixtures/partial_move_borrow_base.kp:14:21
+run-status: not run

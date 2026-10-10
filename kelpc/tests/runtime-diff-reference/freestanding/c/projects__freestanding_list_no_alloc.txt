@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_list_no_alloc
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the binding 'xs' has type 'List', which needs an allocator in a freestanding build: set '[target] alloc' and '[target] dealloc' to the project's own functions
+  --> <root>/kelpc/tests/projects/freestanding_list_no_alloc/src/main.kp:3:25
+--- nm -u
+(no image)

@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/caps_elide_name_slashy_grant/main.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'has/slash' is not a variable name — 'env' patterns name variables ('HOME', 'LANG*', or '*' for any)
+  --> <root>/kelpc/tests/projects/caps_elide_name_slashy_grant/main.kp:5:18
+run-status: not run

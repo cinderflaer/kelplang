@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/panic_not_a_message.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot pass a value of type 'i32' to 'panic': a panic message is a 'str' or an owned 'String'
+  --> <root>/kelpc/tests/fixtures/panic_not_a_message.kp:5:5
+run-status: not run

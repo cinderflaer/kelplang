@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/for_not_a_list.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'for' walks a 'List<T>' or a type that implements 'Iterator', and 'i32' is neither: implement 'std.iter.Iterator' for it ('type Item' and 'fun mut Self.next().return: option.Option<Self::Item>'), or walk a 'List' by index
+  --> <root>/kelpc/tests/fixtures/for_not_a_list.kp:6:5
+run-status: not run

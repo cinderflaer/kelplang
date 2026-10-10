@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_supertrait_cycle.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the supertrait relation is cyclic: B inherits from A inherits from B: a trait cannot inherit from itself
+  --> <root>/kelpc/tests/fixtures/traits_supertrait_cycle.kp:7:1
+run-status: not run

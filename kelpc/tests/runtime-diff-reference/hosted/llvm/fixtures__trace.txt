@@ -1,0 +1,12 @@
+unit: kelpc/tests/fixtures/trace.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+done
+--- stderr
+trace	event	75465488712776	<root>/kelpc/tests/fixtures/trace.kp:5	ready\tset
+trace	begin	75465488751255	<root>/kelpc/tests/fixtures/trace.kp:6	work
+trace	end	75465488760543	<root>/kelpc/tests/fixtures/trace.kp:7	work	9378

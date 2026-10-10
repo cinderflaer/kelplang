@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_std_option_no_alloc
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the call to 'std.option.map<i32, i32>' is unavailable in a freestanding build: it needs an allocator: set '[target] alloc' and '[target] dealloc' to the project's own functions
+  --> <root>/kelpc/tests/projects/freestanding_std_option_no_alloc/src/main.kp:5:13
+--- nm -u
+(no image)

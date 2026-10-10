@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/receiver_mut_on_val.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot assign to 'c': not declared 'var'
+  --> <root>/kelpc/tests/fixtures/receiver_mut_on_val.kp:9:5
+run-status: not run

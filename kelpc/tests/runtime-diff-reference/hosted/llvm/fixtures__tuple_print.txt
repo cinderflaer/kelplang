@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/tuple_print.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot pass a value of type '(i32, i32)' to 'print': it does not implement 'Display' (write 'impl fmt.Display for (i32, i32) { fun Self.to_text().return: String }', importing 'std/fmt')
+  --> <root>/kelpc/tests/fixtures/tuple_print.kp:6:5
+run-status: not run

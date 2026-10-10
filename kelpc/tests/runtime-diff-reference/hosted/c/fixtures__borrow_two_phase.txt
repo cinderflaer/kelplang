@@ -1,0 +1,12 @@
+unit: kelpc/tests/fixtures/borrow_two_phase.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+2
+2
+42
+3
+--- stderr

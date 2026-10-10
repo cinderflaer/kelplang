@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_container_value.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'List<i32>' cannot be a 'Map' value: the value set is a scalar, 'String', 'Bytes', a 'datac', or an 'enum', which is narrower than a list's (that also takes a 'List' or a 'Box'). A container, an array, a borrow or a view, an atomic, a function value, and 'unit' are refused
+  --> <root>/kelpc/tests/fixtures/map_container_value.kp:4:16
+run-status: not run

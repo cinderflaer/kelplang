@@ -1,0 +1,18 @@
+unit: kelpc/tests/fixtures/tuple_derived_copy_sort.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+3
+a
+1
+a
+3
+b
+2
+0
+7
+kept
+--- stderr

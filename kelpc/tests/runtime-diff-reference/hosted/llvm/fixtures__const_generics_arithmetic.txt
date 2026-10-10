@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/const_generics_arithmetic.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'N' is a const parameter, and arithmetic on one in a type ('[T; N + 1]') is not in this slice: write the length the instantiation binds ('[T; N]'), or compute it from a 'const' ('const M: usize = ...')
+  --> <root>/kelpc/tests/fixtures/const_generics_arithmetic.kp:3:51
+run-status: not run

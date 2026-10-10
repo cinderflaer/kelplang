@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/pd_module_scope/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'shared' is a passdown of module 'util' — a passdown is only visible inside the module that declares it
+  --> <root>/kelpc/tests/projects/pd_module_scope/main.kp:5:11
+run-status: not run

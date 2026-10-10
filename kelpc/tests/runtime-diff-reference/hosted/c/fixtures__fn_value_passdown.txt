@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/fn_value_passdown.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'uses_greeting' reads a passdown, so it cannot be a function value — a passdown is passed to the callee as a hidden argument, and a function value is a plain C function pointer; call it directly instead
+  --> <root>/kelpc/tests/fixtures/fn_value_passdown.kp:12:13
+run-status: not run

@@ -1,0 +1,15 @@
+unit: kelpc/tests/fixtures/passdown_globals.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+10 20 0
+1 2 3
+10 20 2
+1 2 3
+10 20 12
+1 2 3
+3
+--- stderr

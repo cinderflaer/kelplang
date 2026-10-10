@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/unsafe_not_listed
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: module 'main' is not listed in coral.toml [unsafe] modules
+  --> <root>/kelpc/tests/projects/unsafe_not_listed/src/main.kp:4:5
+run-status: not run

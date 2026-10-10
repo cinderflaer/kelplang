@@ -1,0 +1,11 @@
+unit: kelpc/tests/projects/caps_name_literal_prefix_denied/main.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+--- stderr
+<root>/kelpc/tests/projects/caps_name_literal_prefix_denied/util.kp:3:32: panic: 'PATHX' is outside the env capability granted to module 'util'
+  granted:
+    PATH

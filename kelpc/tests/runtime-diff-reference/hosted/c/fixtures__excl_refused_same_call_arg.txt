@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_same_call_arg.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's.count': already borrowed exclusively
+  --> <root>/kelpc/tests/fixtures/excl_refused_same_call_arg.kp:13:12
+run-status: not run

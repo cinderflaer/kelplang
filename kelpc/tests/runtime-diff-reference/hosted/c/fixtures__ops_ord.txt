@@ -1,0 +1,18 @@
+unit: kelpc/tests/fixtures/ops_ord.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+true
+false
+false
+true
+1
+9
+2
+0
+2
+1
+--- stderr

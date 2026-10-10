@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/thread_spawn_list_element.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Thread<i64>' cannot be a 'List' element: a handle names one running worker and is joined once, while a container's own routines copy and drop an element like a plain location. Keep the handle in a local or a field ('val h = thread.spawn(...)') and join it there
+  --> <root>/kelpc/tests/fixtures/thread_spawn_list_element.kp:8:18
+run-status: not run

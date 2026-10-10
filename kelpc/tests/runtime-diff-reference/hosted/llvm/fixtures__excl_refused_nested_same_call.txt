@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_nested_same_call.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 'a captured value.count' as exclusive: this call also uses it, and a block that writes through a captured exclusive borrow needs the call's other arguments to leave it alone
+  --> <root>/kelpc/tests/fixtures/excl_refused_nested_same_call.kp:16:23
+run-status: not run

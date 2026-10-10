@@ -1,0 +1,21 @@
+unit: kelpc/tests/fixtures/str_to_string_coercion.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+a literal
+assigned
+t
+b
+pushed
+v
+then
+some
+a title
+hey!
+7
+true
+1
+--- stderr

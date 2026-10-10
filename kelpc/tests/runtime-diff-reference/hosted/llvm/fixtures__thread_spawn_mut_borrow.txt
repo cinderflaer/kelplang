@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/thread_spawn_mut_borrow.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'thread.spawn' cannot send '&mut Atomic<i64>': an exclusive borrow promises that no other path reaches the value, and the worker outlives the frame that made the borrow, so the promise cannot cross the thread boundary; move an owned value in, or share a '&Atomic<T>'
+  --> <root>/kelpc/tests/fixtures/thread_spawn_mut_borrow.kp:16:34
+run-status: not run

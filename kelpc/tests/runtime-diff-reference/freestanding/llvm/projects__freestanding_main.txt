@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_main
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'main' is unavailable in a freestanding build: there is no C runtime to call it, so the manifest's '[target] entry' names the entry function instead
+  --> <root>/kelpc/tests/projects/freestanding_main/src/main.kp:10:1
+--- nm -u
+(no image)

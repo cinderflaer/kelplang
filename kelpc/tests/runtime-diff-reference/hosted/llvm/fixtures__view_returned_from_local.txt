@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/view_returned_from_local.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot return this value as 'View': with no reference parameter to borrow from, only a 'str' literal can be returned (its storage is static)
+  --> <root>/kelpc/tests/fixtures/view_returned_from_local.kp:6:12
+run-status: not run

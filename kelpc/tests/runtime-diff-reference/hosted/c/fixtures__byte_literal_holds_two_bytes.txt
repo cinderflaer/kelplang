@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/byte_literal_holds_two_bytes.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a byte literal holds exactly one byte
+  --> <root>/kelpc/tests/fixtures/byte_literal_holds_two_bytes.kp:4:13
+run-status: not run

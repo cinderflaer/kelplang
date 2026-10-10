@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/ffi_callback_two
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'helper.kelp_call_twice' takes 2 callback closures, but a user 'extern fun' can expand at most one 'move closure(...)' parameter in this pass
+  --> <root>/kelpc/tests/projects/ffi_callback_two/src/helper.kp:3:12
+run-status: not run

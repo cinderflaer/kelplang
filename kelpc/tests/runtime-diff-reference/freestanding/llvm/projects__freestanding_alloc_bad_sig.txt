@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_alloc_bad_sig
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the allocator function 'alloc' named by coral.toml's '[target]' has the wrong signature: it must be 'fun alloc(usize, usize).return: Ptr<u8>'
+  --> <root>/kelpc/tests/projects/freestanding_alloc_bad_sig/src/main.kp:3:1
+--- nm -u
+(no image)

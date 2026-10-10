@@ -1,0 +1,69 @@
+unit: kelpc/tests/fixtures/stdlib_regex_api.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+true
+false
+find: 4..7 'abc'
+find_at 7: 8..11 'def'
+find_at 11: none
+find_at past end: none
+anchor sees the whole text: none
+word boundary sees the whole text: 3..4 'b'
+0
+3
+4
+group 0: '12-345'
+group 1: '12'
+group 2: '345'
+group 3: none
+group 4: none
+span 2: 6..9 '345'
+true
+true
+words[0]: 0..3 'one'
+words[1]: 5..8 'two'
+words[2]: 9..14 'three'
+words: 3 matches
+a*[0]: 0..0 ''
+a*[1]: 1..3 'aa'
+a*[2]: 3..3 ''
+a*[3]: 4..4 ''
+a*: 4 matches
+none: 0 matches
+empty[0]: 0..0 ''
+empty[1]: 1..1 ''
+empty[2]: 2..2 ''
+empty: 3 matches
+a<1>b22c333
+a<1>b<22>c<333>
+a[1]b[22]c[333]
+a$b$c$
+a$b$c$
+a$-b$-c$-
+nodigits
+world hello bar foo
+worldhelloworld
+[a||][|b|]
+-b--c-
+.a.b.c.
+ a b 
+ihgfedcba
+split[0]: 'a'
+split[1]: 'b'
+split[2]: 'c'
+split[3]: 'd'
+1
+3
+5
+every[0]: ''
+every[1]: 'a'
+every[2]: 'b'
+every[3]: 'c'
+every[4]: ''
+true
+false
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_blanket_projection_bound.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the call to 'first' bounds 'I::Item' with 'Describe', but 'i32' binds no associated type 'Item': a projection bound needs a type that binds it, such as an iterator
+  --> <root>/kelpc/tests/fixtures/refused_blanket_projection_bound.kp:16:11
+run-status: not run

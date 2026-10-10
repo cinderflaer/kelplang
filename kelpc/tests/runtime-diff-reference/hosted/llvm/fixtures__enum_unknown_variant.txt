@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/enum_unknown_variant.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Square' is not a variant of enum 'Shape' — the variants are 'Circle', 'Empty'
+  --> <root>/kelpc/tests/fixtures/enum_unknown_variant.kp:8:5
+run-status: not run

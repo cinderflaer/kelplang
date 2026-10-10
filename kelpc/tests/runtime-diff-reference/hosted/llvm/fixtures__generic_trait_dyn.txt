@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_trait_dyn.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: '&dyn convert.From' is not allowed: the trait takes type parameters ('T'), and a trait object has no vtable slot for one; use a bounded type parameter ('<T: std.convert.From<...>>') instead
+  --> <root>/kelpc/tests/fixtures/generic_trait_dyn.kp:5:13
+run-status: not run

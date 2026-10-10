@@ -1,0 +1,13 @@
+unit: kelpc/tests/fixtures/break_and_continue.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+warning: break_and_continue.kp:6:11: loop not unrolled: the optimizer was unable to perform the requested transformation; the transformation might be disabled or specified as part of an unsupported transformation ordering
+run-status: 0
+--- stdout
+1
+2
+4
+5
+--- stderr

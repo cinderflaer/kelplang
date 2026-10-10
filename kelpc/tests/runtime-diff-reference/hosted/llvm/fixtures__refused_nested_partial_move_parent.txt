@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_nested_partial_move_parent.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: use of moved value 'p.name'
+  --> <root>/kelpc/tests/fixtures/refused_nested_partial_move_parent.kp:9:16
+run-status: not run

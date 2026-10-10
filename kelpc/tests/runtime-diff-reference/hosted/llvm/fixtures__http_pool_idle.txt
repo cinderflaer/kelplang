@@ -1,0 +1,16 @@
+unit: kelpc/tests/fixtures/http_pool_idle.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+warm 4
+closed fresh 0
+kept 4
+closed all 4
+left 0
+false
+after stale checkout 0
+done
+--- stderr

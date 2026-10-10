@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/hex_literal_without_digits.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a hexadecimal literal needs at least one hex digit, for example '0x1f'
+  --> <root>/kelpc/tests/fixtures/hex_literal_without_digits.kp:4:13
+run-status: not run

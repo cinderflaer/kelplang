@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/array_of_a_borrow.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: '&i32' cannot be a container element: an element has to outlive the container that holds it, and v1 has no lifetime syntax to say so; use the owned type
+  --> <root>/kelpc/tests/fixtures/array_of_a_borrow.kp:5:14
+run-status: not run

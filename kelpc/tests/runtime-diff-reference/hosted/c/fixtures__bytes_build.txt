@@ -1,0 +1,22 @@
+unit: kelpc/tests/fixtures/bytes_build.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+0
+2
+1
+2
+5
+97
+98
+99
+7
+false
+0
+true
+1
+9
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/visibility_pub_enum_payload.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Shape' is exported but its signature names 'Hidden', which module 'visibility_pub_enum_payload' does not export: add 'pub' to 'Hidden', or make 'Shape' private
+  --> <root>/kelpc/tests/fixtures/visibility_pub_enum_payload.kp:6:20
+run-status: not run

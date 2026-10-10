@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/visibility_const_type/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'LIMIT' is exported but its signature names 'lib.Hidden', which module 'lib' does not export: add 'pub' to 'Hidden', or make 'LIMIT' private
+  --> <root>/kelpc/tests/projects/visibility_const_type/main.kp:8:18
+run-status: not run

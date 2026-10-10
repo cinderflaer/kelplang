@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/matrix_iter_const_generic.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: an impl for a generic type writes the type's parameters, in order, as its own: 'impl<T: Bound> Trait for Type<T>'; an impl for one instantiation ('Type<i32>') is not supported - implement the trait for a non-generic wrapper, or give the type an inherent method
+  --> <root>/kelpc/tests/fixtures/matrix_iter_const_generic.kp:10:30
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/closure_use_after_move.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: use of moved value 'g'
+  --> <root>/kelpc/tests/fixtures/closure_use_after_move.kp:10:11
+run-status: not run

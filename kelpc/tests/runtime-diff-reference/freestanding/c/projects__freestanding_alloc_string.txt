@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_alloc_string
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the call to 'String#char_count' is unavailable in a freestanding build: it needs the hosted runtime
+  --> <root>/kelpc/tests/projects/freestanding_alloc_string/src/main.kp:16:13
+--- nm -u
+(no image)

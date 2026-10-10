@@ -1,0 +1,23 @@
+unit: kelpc/tests/fixtures/map_key_widths.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+2
+1000000007
+1000000009
+2
+2000000011
+2000000013
+2
+3000000017
+3000000019
+2
+4000000023
+4000000029
+2
+5000000031
+5000000037
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'main' cannot take type parameters — it is the program entry point
+  --> <root>/kelpc/tests/fixtures/generic_main.kp:2:1
+run-status: not run

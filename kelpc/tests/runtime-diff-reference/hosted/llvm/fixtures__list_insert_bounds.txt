@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/list_insert_bounds.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+2
+--- stderr
+panic: List.insert: index out of bounds

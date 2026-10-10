@@ -1,0 +1,8 @@
+unit: examples/polyp/backends/soft/soft/ppm_platform.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot find module 'deps/polyp/backends/soft/soft/damage': expected '<root>/examples/polyp/backends/soft/soft/deps/polyp/backends/soft/soft/damage.kp'
+  --> <root>/examples/polyp/backends/soft/soft/ppm_platform.kp:7:1
+run-status: not run

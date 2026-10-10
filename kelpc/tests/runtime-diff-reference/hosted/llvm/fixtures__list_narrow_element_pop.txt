@@ -1,0 +1,22 @@
+unit: kelpc/tests/fixtures/list_narrow_element_pop.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+4
+111
+987
+321
+1
+4
+98
+76
+2
+4
+10101
+90807
+30201
+1
+--- stderr

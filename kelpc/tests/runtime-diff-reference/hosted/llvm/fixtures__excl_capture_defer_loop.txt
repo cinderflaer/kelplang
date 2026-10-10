@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/excl_capture_defer_loop.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+3
+30
+--- stderr
