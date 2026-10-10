@@ -1,0 +1,56 @@
+// strings (gc bench 3): string-heavy work. Each round builds one long string of n comma-separated
+// pieces, splits it into n owned strings, folds every byte of every piece into a hash, and joins
+// the pieces back. Size = n pieces (default 1000000), rounds fixed at 6. Prints one checksum line.
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).return: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+fun round(n: i64, salt: i64).return: u64 {
+    var s = String.empty()
+    var i: i64 = 0
+    while i < n {
+        s.push_str("p")
+        val num = str.from_i64(i + salt)
+        s.push_str(num.as_str())
+        s.push_str(",")
+        i = i + 1
+    }
+    val pieces = str.split(s.as_str(), ",")
+    var h: u64 = 0
+    var k: usize = 0
+    while k < pieces.len() {
+        val p = pieces.get(k).as_str()
+        val len = str.len(p)
+        var b: usize = 0
+        while b < len {
+            h = h * 31 + str.byte(p, b).to_u64()
+            b = b + 1
+        }
+        k = k + 1
+    }
+    val joined = str.join(pieces, ";")
+    return h + joined.len().to_u64()
+}
+
+fun main() {
+    val n = size_arg(1000000)
+    var total: u64 = 0
+    var r: i64 = 0
+    while r < 6 {
+        total = total + round(n, r * 1000003)
+        r = r + 1
+    }
+    print("strings $n $total")
+}

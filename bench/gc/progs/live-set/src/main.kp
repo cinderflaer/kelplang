@@ -1,0 +1,48 @@
+// live-set (gc bench 2): a large live set that marking must visit on every cycle. A List of N
+// boxes is kept alive; each round replaces a pseudo-random subset with fresh boxes (so the old
+// boxes become garbage while the rest stay live), then reads every box. Size = N (default
+// 2000000), rounds fixed at 20. Prints the checksum of the final contents.
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).return: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+datac Cell(val v: i64)
+
+fun main() {
+    val n = size_arg(2000000)
+    var xs: List<Box<Cell>> = List.with_capacity(n.to_usize())
+    var i: i64 = 0
+    while i < n {
+        xs.push(Box.of(Cell(v = i)))
+        i = i + 1
+    }
+    var round: i64 = 1
+    while round <= 20 {
+        var k: i64 = 0
+        while k < n {
+            val j = (k * 7919 + round * 104729) % n
+            xs.set(j.to_usize(), Box.of(Cell(v = k + round)))
+            k = k + 2
+        }
+        round = round + 1
+    }
+    var sum: i64 = 0
+    var r: i64 = 0
+    while r < n {
+        sum = sum + xs.get(r.to_usize()).get().v
+        r = r + 1
+    }
+    print("live-set $n $sum")
+}

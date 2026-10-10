@@ -1,0 +1,48 @@
+// heap-pressure (gc bench 5): a live set of about 12 MiB of boxes plus steady churn. The same
+// program is built with heap_max = 16, 64 and 256 MiB (managed) and once unmanaged. Each round
+// replaces every fourth box, so the heap stays near its live size while garbage keeps coming.
+// Size = live boxes (default 500000), rounds fixed at 400. Prints the checksum, or aborts with the
+// collector's out-of-memory panic when the cap is too small (the exit status records that).
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun size_arg(default: i64).return: i64 {
+    if process.arg_count() < 2 {
+        return default
+    }
+    val args = process.args()
+    val r = str.parse_i64(args.get(1).as_str())
+    return when r {
+        Ok(v) -> v
+        Err(e) -> default
+    }
+}
+
+datac Cell(val v: i64)
+
+fun main() {
+    val n = size_arg(500000)
+    var xs: List<Box<Cell>> = List.with_capacity(n.to_usize())
+    var i: i64 = 0
+    while i < n {
+        xs.push(Box.of(Cell(v = i)))
+        i = i + 1
+    }
+    var round: i64 = 1
+    while round <= 400 {
+        var k: i64 = round % 4
+        while k < n {
+            xs.set(k.to_usize(), Box.of(Cell(v = k * round)))
+            k = k + 4
+        }
+        round = round + 1
+    }
+    var sum: i64 = 0
+    var r: i64 = 0
+    while r < n {
+        sum = sum + xs.get(r.to_usize()).get().v
+        r = r + 1
+    }
+    print("heap-pressure $n $sum")
+}

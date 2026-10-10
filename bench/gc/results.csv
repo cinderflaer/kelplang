@@ -1,0 +1,13 @@
+bench,variant,status,gc_linked,runs,wall_s_median,wall_s_min,wall_s_max,wall_spread_pct,user_s_median,sys_s_median,rss_kb_median,collections_median,pause_total_ms_median,pause_max_ms_median,output
+binary-trees,managed,NO-GC,no,3,1.720,1.710,1.730,1.2,1.690,0.030,67860,,,,binary-trees 18 68332206
+binary-trees,unmanaged,ok,no,3,1.730,1.720,1.750,1.7,1.690,0.020,67868,,,,binary-trees 18 68332206
+live-set,managed,NO-GC,no,3,3.870,3.860,3.960,2.6,3.820,0.030,80320,,,,live-set 2000000 2000037000000
+live-set,unmanaged,ok,no,3,3.930,3.820,3.970,3.8,3.850,0.040,80316,,,,live-set 2000000 2000037000000
+strings,managed,NO-GC,no,3,1.450,1.440,1.460,1.4,1.260,0.170,81788,,,,strings 1000000 4520446541216952489
+strings,unmanaged,ok,no,3,1.440,1.440,1.450,0.7,1.260,0.170,81732,,,,strings 1000000 4520446541216952489
+mixed-pool,managed,NO-GC,no,3,0.750,0.740,0.750,1.3,2.030,0.080,6704,,,,mixed-pool 41814680 0
+mixed-pool,unmanaged,ok,no,3,0.740,0.730,0.760,4.1,2.030,0.070,6804,,,,mixed-pool 41814680 0
+heap-pressure,managed-16,NO-GC,no,3,0.880,0.880,0.880,0.0,0.870,0.010,21592,,,,heap-pressure 500000 49812400250000
+heap-pressure,managed-64,NO-GC,no,3,0.860,0.850,0.880,3.5,0.850,0.010,21672,,,,heap-pressure 500000 49812400250000
+heap-pressure,managed-256,NO-GC,no,3,0.850,0.850,0.860,1.2,0.840,0.000,21612,,,,heap-pressure 500000 49812400250000
+heap-pressure,unmanaged,ok,no,3,0.860,0.850,0.860,1.2,0.840,0.010,21680,,,,heap-pressure 500000 49812400250000
