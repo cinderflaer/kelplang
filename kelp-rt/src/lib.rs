@@ -22,3 +22,4 @@ pub mod map;
 pub mod net;
 pub mod proc;
 pub mod text;
+pub mod thread;
