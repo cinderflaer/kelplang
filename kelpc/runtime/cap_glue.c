@@ -24,7 +24,7 @@
 //
 // This file is emitted into every program that contains a gated call, spliced
 // together with prototypes for the `std/rt` functions it calls; see
-// `codegen_c.rs`. It relies on the generated program's own `#include` block
+// `cdecl.rs`. It relies on the generated program's own `#include` block
 // (`stdio.h`, `stdlib.h`, `string.h`, `limits.h`, and the rest).
 // ---- end emission note ------------------------------------------------------
 

@@ -163,9 +163,9 @@ directory is not followed.
 
 | path | what is there |
 | --- | --- |
-| `kelpc/src/` | the compiler: `lexer`, `preprocess`, `parser`, `infer` (types, generics, capabilities), `borrowck` (moves, drops), `codegen_c`, `driver` |
+| `kelpc/src/` | the compiler: `lexer`, `preprocess`, `parser`, `infer` (types, generics, capabilities), `borrowck` (moves, drops), `codegen_llvm`, `driver` |
 | `kelpc/std/` | the standard library, written in Kelp and embedded into the compiler |
-| `kelpc/runtime/` | the reviewed C that is still C: the capability glue `codegen_c.rs` emits (`cap_glue.c`), and the C matcher/normalizer the §8 differential tests compare the Kelp versions against |
+| `kelpc/runtime/` | the reviewed C that is still C: the capability glue the LLVM backend emits (`cap_glue.c`), and the C matcher/normalizer the §8 differential tests compare the Kelp versions against |
 | `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and the corpus goldens |
 | `examples/` | `hello.kp`, `fib.kp`, `download.kp` |
 | `bench/speed/` | four workloads written in four languages, with checksums |
