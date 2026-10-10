@@ -16,6 +16,7 @@ empty on release.
 
 ## Compiler
 
+- Managed GC core: measurement tests for large-object waste and heap-lock contention (`kelpc/gc`).
 - Managed-mode GC core (`kelpc/gc`, Rust staticlib `libkelp_gc.a`): C ABI header and descriptor layout for WP3; not yet linked by the compiler.
 - Managed GC core: mark-region allocator, mark and sweep, safepoints, native state and stack scan (`kelpc/gc`).
 - Managed GC core tests: header layout, type-id round trip, 8-byte alignment, 10M-cell churn, cyclic mark, 256 MiB cap, and stop-the-world with threads.

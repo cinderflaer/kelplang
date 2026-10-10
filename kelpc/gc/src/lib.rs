@@ -178,6 +178,7 @@ unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *m
             wr(h, hdr);
             core::ptr::write_bytes((h + 8) as *mut u8, 0, total - 8);
             s.bytes_since += total;
+            s.allocs += 1;
             unlock_heap();
             return (h + 8) as *mut u8;
         }

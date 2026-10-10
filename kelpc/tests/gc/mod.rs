@@ -132,6 +132,7 @@ unsafe fn reset() {
     s.epoch = 0;
     s.mark_len = 0;
     s.cycles = 0;
+    s.allocs = 0;
     REQUEST.store(0, core::sync::atomic::Ordering::SeqCst);
 }
 
@@ -398,4 +399,82 @@ unsafe fn kelp_gc_enter_native_test() {
 }
 unsafe fn kelp_gc_leave_native_test() {
     crate::kelp_gc_leave_native();
+}
+
+// ---- Measurements (hardening items 3 and 4). They print numbers and assert
+// only that the runs stay correct. ----
+
+/// Churn `total_bytes` of `count`-byte arrays, all garbage, and report the
+/// footprint waste: 1 - (bytes placed per cycle) / (peak blocks in use).
+#[test]
+fn measure_large_object_waste_4k_and_16k() {
+    let _g = serial();
+    for (label, count) in [("4 KiB", 4096usize), ("16 KiB", 16384usize)] {
+        unsafe {
+            reset();
+            kelp_gc_thread_attach();
+            let per = crate::heap::total_for(count);
+            let n = (64usize << 20) / per;
+            for _ in 0..n {
+                black_box(kelp_gc_alloc_array(&BYTES, count));
+            }
+            let s = st();
+            let cycles = s.cycles.max(1);
+            let placed_per_cycle = (n * per) as f64 / cycles as f64;
+            let footprint = (s.peak_blocks * BLOCK) as f64;
+            let waste = 100.0 * (1.0 - placed_per_cycle / footprint);
+            eprintln!(
+                "waste {label}: {n} objects of {per} bytes; cycles {cycles}; peak {} blocks; waste {waste:.1} per cent",
+                s.peak_blocks
+            );
+            kelp_gc_thread_detach();
+        }
+    }
+}
+
+/// Run `threads` workers that each allocate `per` nodes. Returns the wall time
+/// in seconds, the allocation count and the contended heap-lock acquisitions.
+unsafe fn churn_run(threads: usize, per: usize) -> (f64, usize, usize) {
+    reset();
+    CONTENDED.store(0, core::sync::atomic::Ordering::SeqCst);
+    let start = std::time::Instant::now();
+    let mut handles = Vec::new();
+    for _ in 0..threads {
+        handles.push(std::thread::spawn(move || {
+            kelp_gc_thread_attach();
+            for i in 0..per {
+                let p = kelp_gc_alloc(&NODE) as usize;
+                wr_scalar(p, i);
+            }
+            kelp_gc_thread_detach();
+        }));
+    }
+    for h in handles {
+        h.join().expect("churn worker");
+    }
+    let secs = start.elapsed().as_secs_f64();
+    (secs, st().allocs, CONTENDED.load(core::sync::atomic::Ordering::SeqCst))
+}
+
+/// Four-thread churn against one thread: if the global heap lock were the
+/// bottleneck, the four-thread rate would fall far below the single-thread rate.
+#[test]
+fn measure_heap_lock_contention_four_threads() {
+    let _g = serial();
+    unsafe {
+        kelp_gc_init(0, 0);
+        let (t1, a1, c1) = churn_run(1, 1_000_000);
+        let (t4, a4, c4) = churn_run(4, 1_000_000);
+        let rate1 = a1 as f64 / t1 / 1e6;
+        let rate4 = a4 as f64 / t4 / 1e6;
+        eprintln!(
+            "lock: 1 thread {rate1:.2} M alloc/s ({:.1} ns each), contended {c1} of {a1}; \
+             4 threads {rate4:.2} M alloc/s aggregate ({:.1} ns each), contended {c4} of {a4} ({:.2} per cent); scaling {:.2}x",
+            1000.0 / rate1,
+            1000.0 / rate4,
+            100.0 * c4 as f64 / a4 as f64,
+            rate4 / rate1
+        );
+        assert_eq!(a4, 4_000_000, "every allocation counted");
+    }
 }

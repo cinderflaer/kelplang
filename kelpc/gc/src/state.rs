@@ -56,6 +56,7 @@ pub struct State {
     pub oom_hook: usize,    // 0 or an `extern "C" fn(*const u8)` address
     pub collecting: bool,
     pub cycles: usize,
+    pub allocs: usize,
 }
 
 pub struct Global<T>(pub UnsafeCell<T>);
@@ -77,6 +78,8 @@ pub unsafe fn st() -> &'static mut State {
 /// 0 = uninitialized, 1 = initializing, 2 = ready.
 pub static INIT: AtomicU32 = AtomicU32::new(0);
 pub static HEAP_LOCK: AtomicBool = AtomicBool::new(false);
+/// Heap lock acquisitions that found the lock held (measurement only).
+pub static CONTENDED: AtomicUsize = AtomicUsize::new(0);
 /// Nonzero while a collection has asked every mutator to stop.
 pub static REQUEST: AtomicUsize = AtomicUsize::new(0);
 
@@ -85,6 +88,10 @@ pub static G_COND: Global<Opaque> = Global(UnsafeCell::new(unsafe { core::mem::z
 
 pub fn lock_heap() {
     use core::sync::atomic::Ordering::{Acquire, Relaxed};
+    if HEAP_LOCK.compare_exchange(false, true, Acquire, Relaxed).is_ok() {
+        return;
+    }
+    CONTENDED.fetch_add(1, Relaxed);
     while HEAP_LOCK
         .compare_exchange_weak(false, true, Acquire, Relaxed)
         .is_err()
