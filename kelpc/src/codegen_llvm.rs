@@ -1855,6 +1855,21 @@ const DATAC_ALIGN_FIELD: &str = "#align";
 
 /// Module-level state: the context, the module, the builder, and the runtime
 /// symbols every function shares. Per-function state lives in [`FnGen`].
+/// The Box pool's geometry, mirrored from `kelp_rt.c` (`KELP_BOX_POOL_MAX` and
+/// `KELP_BOX_POOL_CLASSES`): blocks of up to 64 bytes at an alignment of 16 or
+/// less are pooled in 16-byte size classes, and every other block is malloc.
+const BOX_POOL_CLASSES: u64 = 4;
+
+/// The pool class of a `size`-byte, `align`-aligned Box block, or `None` when
+/// the block is not pooled. Class 0 holds sizes 0 to 16, class 1 holds 17 to 32,
+/// and so on, which is `(size - 1) / 16` with a zero size in class 0.
+fn box_pool_class(size: u64, align: u64) -> Option<u64> {
+    if align > 16 || size > BOX_POOL_CLASSES * 16 {
+        return None;
+    }
+    Some(if size == 0 { 0 } else { (size - 1) / 16 })
+}
+
 struct Gen<'a> {
     ctx: &'a Context,
     module: &'a Module<'a>,
@@ -2011,6 +2026,11 @@ struct Gen<'a> {
     /// runtime object defines them, exactly as it does for the C backend's
     /// generated `main`.
     argc_global: Value<'a>,
+    /// The runtime's per-thread Box free-list heads and registered flag
+    /// (`kelp_rt.c`, initial-exec TLS), read inline by the pooled Box alloc
+    /// and free (speed-alloc).
+    box_heads: Value<'a>,
+    box_registered: Value<'a>,
     argv_global: Value<'a>,
     /// The source map, which `cap_plan` reads for the `.kp` call site a
     /// capability denial names. The C backend reads the same map for the same
@@ -2137,6 +2157,13 @@ impl<'a> Gen<'a> {
         let coerce_env_ty = ctx.struct_type("kelp_ClosureCoerceEnv");
         ctx.struct_set_body(coerce_env_ty, &[ptr]);
         let runtime = declare_runtime(ctx, module, bytes_ty, string_ty, view_ty);
+        let box_heads = module.add_external_global(
+            "kelp_box_free_heads",
+            ctx.array_type(ctx.opaque_ptr(), BOX_POOL_CLASSES),
+        );
+        box_heads.set_thread_local_initial_exec();
+        let box_registered = module.add_external_global("kelp_box_registered", ctx.i32());
+        box_registered.set_thread_local_initial_exec();
         let panic = *runtime
             .get("kelp_panic")
             .expect("kelp_panic is declared with the runtime");
@@ -2194,6 +2221,8 @@ impl<'a> Gen<'a> {
             init_pds_fn: None,
             drop_pds_fn: None,
             argc_global: module.add_external_global("kelp_argc", ctx.i32()),
+            box_heads,
+            box_registered,
             argv_global: module.add_external_global("kelp_argv", ctx.opaque_ptr()),
             sources,
             cap_arrays: HashMap::new(),
@@ -9084,6 +9113,10 @@ fn declare_libc<'a>(
     decl("malloc", ptr, &[i64t]);
     decl("realloc", ptr, &[ptr, i64t]);
     decl("free", void, &[ptr]);
+    // The Box small-block free lists (speed-alloc, kelp_rt.c): the runtime
+    // object defines them, so they are declared with the libc surface.
+    decl("kelp_box_alloc", ptr, &[i64t, i64t]);
+    decl("kelp_box_free", void, &[ptr, i64t, i64t]);
     decl("memcpy", ptr, &[ptr, ptr, i64t]);
     decl("memcmp", i32t, &[ptr, ptr, i64t]);
     decl("memset", ptr, &[ptr, i32t, i64t]);
@@ -9643,6 +9676,93 @@ impl<'a> Gen<'a> {
         let size = self.layout.abi_size_of(ty);
         let align = self.layout.abi_alignment_of(ty);
         self.heap_alloc(self.v_i64(size), align as u64)
+    }
+
+    /// Whether a `Box<T>` block goes through the runtime's small-block free
+    /// lists: the default libc allocator only, since a project's own allocator
+    /// and a freestanding program keep their existing path.
+    fn box_pooled(&self) -> bool {
+        self.alloc_fns.is_none() && self.freestanding.is_none()
+    }
+
+    /// The `Box<T>` allocation of `ty` in function `f`. Pooled, a block of a
+    /// size class with a free block is popped from the thread's list inline;
+    /// otherwise, or when the list is empty, `kelp_box_alloc` runs. Unpooled, it
+    /// is `malloc_for`. The result is nullable, as `malloc` is.
+    fn box_alloc_in(&self, f: LlvmFunction<'a>, ty: Type<'a>) -> Result<Value<'a>, String> {
+        if !self.box_pooled() {
+            return self.malloc_for(ty);
+        }
+        let size = self.layout.abi_size_of(ty);
+        let align = self.layout.abi_alignment_of(ty) as u64;
+        let Some(class) = box_pool_class(size, align) else {
+            return self.box_alloc_call(size, align);
+        };
+        let slot = self.builder.build_gep(self.pty(), self.box_heads, self.v_i64(class), "box.slot");
+        let head = self.ld(self.pty(), slot, "box.head");
+        let null = self.ctx.const_null(self.pty());
+        let empty = self.builder.build_icmp(IntCmp::Eq, head, null, "box.empty");
+        let pop = self.block(f, "box.pop");
+        let slow = self.block(f, "box.new");
+        let join = self.block(f, "box.join");
+        self.builder.build_cond_br(empty, slow, pop);
+        self.builder.position_at_end(pop);
+        let next = self.ld(self.pty(), head, "box.next");
+        self.st(next, slot);
+        self.builder.build_br(join);
+        self.builder.position_at_end(slow);
+        let fresh = self.box_alloc_call(size, align)?;
+        self.builder.build_br(join);
+        self.builder.position_at_end(join);
+        let out = self.builder.build_phi(self.pty(), "box");
+        self.builder.add_incoming(out, &[(head, pop), (fresh, slow)]);
+        Ok(out)
+    }
+
+    /// `kelp_box_alloc(size, align)`: the runtime's slow path, which refills
+    /// a class from malloc or hands out a block for a size it does not pool.
+    fn box_alloc_call(&self, size: u64, align: u64) -> Result<Value<'a>, String> {
+        let (func, fty) = self.libc_fn("kelp_box_alloc")?;
+        Ok(self.call(func, fty, &[self.v_i64(size), self.v_i64(align)], "box.new"))
+    }
+
+    /// The `Box<T>` release of a `size`-byte, `align`-aligned value in function
+    /// `f`. Pooled, a registered thread pushes the block onto its class list
+    /// inline; otherwise `kelp_box_free` runs, which also registers the thread.
+    /// Unpooled, it is `heap_dealloc`.
+    fn box_free_in(&self, f: LlvmFunction<'a>, ptr: Value<'a>, size: u64, align: u64) -> Result<(), String> {
+        if !self.box_pooled() {
+            return self.heap_dealloc(ptr, self.v_i64(size), align);
+        }
+        let Some(class) = box_pool_class(size, align) else {
+            return self.box_free_call(ptr, size, align);
+        };
+        let reg = self.ld(self.ctx.i32(), self.box_registered, "box.reg");
+        let zero = self.ctx.const_null(self.ctx.i32());
+        let ready = self.builder.build_icmp(IntCmp::Ne, reg, zero, "box.ready");
+        let push = self.block(f, "box.push");
+        let slow = self.block(f, "box.free");
+        let join = self.block(f, "box.freed");
+        self.builder.build_cond_br(ready, push, slow);
+        self.builder.position_at_end(push);
+        let slot = self.builder.build_gep(self.pty(), self.box_heads, self.v_i64(class), "box.slot");
+        let head = self.ld(self.pty(), slot, "box.head");
+        self.st(head, ptr);
+        self.st(ptr, slot);
+        self.builder.build_br(join);
+        self.builder.position_at_end(slow);
+        self.box_free_call(ptr, size, align)?;
+        self.builder.build_br(join);
+        self.builder.position_at_end(join);
+        Ok(())
+    }
+
+    /// `kelp_box_free(ptr, size, align)`: the runtime's free for a block the
+    /// inline path does not take, or for a thread that is not registered yet.
+    fn box_free_call(&self, ptr: Value<'a>, size: u64, align: u64) -> Result<(), String> {
+        let (func, fty) = self.libc_fn("kelp_box_free")?;
+        self.call(func, fty, &[ptr, self.v_i64(size), self.v_i64(align)], "");
+        Ok(())
     }
 
     /// One byte-copy or zero-fill primitive: this module's own definition in a
@@ -10395,7 +10515,12 @@ impl<'a> Gen<'a> {
             let size = self.ld(i64t, size_slot, "size");
             let align_slot = self.builder.build_struct_gep(table_ty, table, 3, "align");
             let align = self.ld(i64t, align_slot, "align");
-            self.heap_dealloc_dyn(data, size, align)?;
+            if self.box_pooled() {
+                let (free, fty) = self.libc_fn("kelp_box_free")?;
+                self.call(free, fty, &[data, size, align], "");
+            } else {
+                self.heap_dealloc_dyn(data, size, align)?;
+            }
             self.st(self.ctx.const_null(self.pty()), data_slot);
             self.builder.build_br(done);
             self.builder.position_at_end(done);
@@ -13824,7 +13949,7 @@ impl<'a> Gen<'a> {
             let (f, _) = self.start(&format!("{base}__of"), "entry")?;
             let v = f.get_param(0);
             let b = self.builder.build_alloca(box_ty, "b");
-            let p = self.malloc_for(elem_ty)?;
+            let p = self.box_alloc_in(f, elem_ty)?;
             self.check_alloc(p, f)?;
             self.st(v, p);
             self.st(p, self.fld(box_ty, b, 0, "value"));
@@ -13879,7 +14004,7 @@ impl<'a> Gen<'a> {
             let stored = self.block(f, "store");
             self.builder.build_cond_br(empty, null_bb, have_bb);
             self.builder.position_at_end(null_bb);
-            let p = self.malloc_for(elem_ty)?;
+            let p = self.box_alloc_in(f, elem_ty)?;
             self.check_alloc(p, f)?;
             self.st(p, slot);
             self.builder.build_br(stored);
@@ -13908,7 +14033,7 @@ impl<'a> Gen<'a> {
             self.emit_panic("Box.take: the box is empty")?;
             self.builder.position_at_end(ok);
             let v = self.ld(elem_ty, value, "take");
-            self.heap_dealloc(value, self.v_i64(elem_size), elem_align)?;
+            self.box_free_in(f, value, elem_size, elem_align)?;
             self.st(null, slot);
             self.builder.build_ret(v);
         }
@@ -13927,7 +14052,7 @@ impl<'a> Gen<'a> {
             if drop_elem {
                 self.call_drop(value, elem)?;
             }
-            self.heap_dealloc(value, self.v_i64(elem_size), elem_align)?;
+            self.box_free_in(f, value, elem_size, elem_align)?;
             self.st(null, slot);
             self.builder.build_br(done);
             self.builder.position_at_end(done);
