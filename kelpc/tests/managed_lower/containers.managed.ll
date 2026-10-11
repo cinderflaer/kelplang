@@ -16,8 +16,6 @@ target triple = "x86_64-unknown-linux-gnu"
 %kelp_Closure__i32__i32 = type { ptr, ptr, ptr }
 %kelp_Env____funlit1 = type { %kelp_Box__i32 }
 
-@kelp_box_free_heads = external thread_local(initialexec) global [4 x ptr]
-@kelp_box_registered = external thread_local(initialexec) global i32
 @kelp_argc = external global i32
 @kelp_argv = external global ptr
 @kelp_caps_containers_env = external global ptr
@@ -418,6 +416,8 @@ declare ptr @malloc(i64)
 declare ptr @realloc(ptr, i64)
 
 declare void @free(ptr)
+
+declare ptr @kelp_box_pool()
 
 declare ptr @kelp_box_alloc(i64, i64)
 
