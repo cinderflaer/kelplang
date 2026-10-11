@@ -23,6 +23,7 @@ pub mod io;
 pub mod map;
 pub mod net;
 pub mod proc;
+pub mod stdlib;
 pub mod text;
 pub mod thread;
 pub mod tls;
