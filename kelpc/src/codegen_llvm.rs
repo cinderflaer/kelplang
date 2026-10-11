@@ -647,13 +647,6 @@ fn lower_to_object(
     // offset uses the module's layout, and LLVM's default is not the host's (it
     // aligns an `i64` to 4). See `Module::set_data_layout`.
     module.set_data_layout(layout);
-    // A hosted program's functions carry unwind tables, as C functions do by
-    // default on x86-64: a worker's panic unwinds them with `pthread_exit`
-    // (see `kelp-rt/src/panic.rs`). A freestanding image has no thread to end.
-    if freestanding.is_none() {
-        module.set_unwind_tables();
-    }
-
     let mut lowering = Gen::new(
         ctx,
         &module,
@@ -827,6 +820,14 @@ fn lower_to_object(
     // pipeline rather than only before it.
     module.verify()?;
 
+    // A hosted program's functions carry unwind tables, as C functions do by
+    // default on x86-64: a worker's panic unwinds them with `pthread_exit`
+    // (see `kelp-rt/src/panic.rs`). Set here, after the IR the snapshots compare
+    // is final, so the text of the lowered module does not change; a freestanding
+    // image has no thread to end and keeps none.
+    if freestanding.is_none() {
+        module.set_unwind_tables();
+    }
     machine.emit_object(&module, object_path)?;
     let compile_elapsed = compile_start.elapsed();
     if let Some(cache) = cache {
@@ -852,7 +853,11 @@ fn lower_to_object(
 /// private global plus a copy instead of an aggregate value (MISSING-Nf3Rb).
 const BIG_ARRAY_LITERAL: usize = 256;
 
-const DEBUG_INFO_SETTING: &str = "dwarf";
+/// The object-level settings the cache key names: the debug info format, and
+/// that a hosted object carries unwind tables (`set_unwind_tables`), which the
+/// IR text does not show. An object cached before that was added must not be
+/// reused for a hosted program.
+const DEBUG_INFO_SETTING: &str = "dwarf+uwtable";
 
 /// The compiler's identity for the cache key: this `kelpc`'s version and the
 /// LLVM that wrote the object. Both matter: an object is the IR run through a
@@ -16765,7 +16770,7 @@ mod layout_tests {
                 "the extern prelude does not declare '{want}':\n{source}"
             );
             assert!(
-                rust_runtime.contains(&format!("pub struct {}", &layout.name["kelp_".len()..])),
+                rust_runtime.contains(&format!("pub struct {}", layout.name.trim_start_matches("kelp_"))),
                 "'kelp-rt' does not define the struct '{}'",
                 layout.name
             );
