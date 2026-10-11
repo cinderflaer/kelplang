@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/from_no_impl.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '?' cannot convert a failure: 'std.result.Result<i32, IoErr>' carries 'IoErr' and the enclosing function returns 'std.result.Result<i32, AppErr>', whose failure carries 'AppErr' — write 'impl From<IoErr> for AppErr { fun from(value: IoErr).return: AppErr { ... } }' so the operator has a conversion to call
-  --> <root>/kelpc/tests/fixtures/from_no_impl.kp:18:13
-run-status: not run

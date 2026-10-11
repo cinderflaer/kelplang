@@ -24,7 +24,7 @@ fi
 
 cd "$ROOT"
 
-# The default backend, whatever the invoking shell exported: the oracle switch
+# The default backend, whatever the invoking shell exported: the retired backend variables
 # belongs to the compiler's own suite, not to this proof.
 unset KELPC_ORACLE KELPC_BACKEND
 

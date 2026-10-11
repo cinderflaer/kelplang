@@ -1,9 +1,0 @@
-unit: kelpc/tests/fixtures/array_bounds_set.kp
-backend: c
-build-status: 0
---- build stdout
---- build stderr
-run-status: 1
---- stdout
---- stderr
-panic: Array.get: index out of bounds

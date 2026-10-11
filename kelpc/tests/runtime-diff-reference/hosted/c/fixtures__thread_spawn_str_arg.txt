@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/thread_spawn_str_arg.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'thread.spawn' cannot send a 'str': it is a borrowed view of text somebody else owns, and the worker outlives the frame that owns the text; pass an owned 'String' or 'Bytes' instead, or share a 'pd' value
-  --> <root>/kelpc/tests/fixtures/thread_spawn_str_arg.kp:12:34
-run-status: not run

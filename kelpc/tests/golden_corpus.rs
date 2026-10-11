@@ -1,11 +1,12 @@
 //! The golden output of the corpus, frozen from the C oracle (stage 2, WP-1 of
-//! `stage2-oracle-plan.md`, option A).
+//! `stage2-oracle-plan.md`, option A) before the C backend was removed.
 //!
-//! The C backend is the oracle the `llvm` backend was checked against for the
-//! whole of MK7. Before it is removed, its answers are written down: for every
-//! corpus target the C backend builds, the exit status, the first line of
-//! stderr and the stdout itself. The `llvm` backend is then checked against
-//! those files, with no C compiler in the comparison (the link still uses `cc`).
+//! The C backend was the oracle the `llvm` backend was checked against for the
+//! whole of MK7. Its answers were written down before it was removed on
+//! 2026-10-10 (stage 2, step A): for every corpus target the C backend built,
+//! the exit status, the first line of stderr and the stdout itself. The `llvm`
+//! backend is checked against those files now, with no C compiler in the
+//! comparison (the link still uses `cc`). The goldens are the reference.
 //!
 //! The frozen set was taken at release `v26.10.5` (commit `387dc450`), not from
 //! `main`, because that is the release the plan names. The files are in
@@ -15,7 +16,7 @@
 //!   per candidate target: `tag`, `status` (`ran`, `c-refused` or `excluded`),
 //!   `exit` (the run's exit code), the first stderr line, and the SHA-256 of the
 //!   stdout. A `c-refused` target is a compile-error fixture the C backend
-//!   rejects by design; it has no golden, the way `backend_coverage.rs` skips it.
+//!   rejected by design; it has no golden, the way `backend_coverage.rs` skips it.
 //! * `<tag>.out` is the frozen stdout of each `ran` target, byte for byte.
 //!
 //! Targets that are not defined by the language are not frozen, because a
@@ -31,10 +32,6 @@
 //! * `llvm_matches_every_golden` (`#[ignore]`) builds every `ran` target with the
 //!   default backend and compares exit status, stdout and the first stderr line
 //!   with the frozen values.
-//! * `oracle_freeze` (`#[ignore]`) rewrites the golden set from the C backend. It
-//!   refuses to run without `KELPC_FREEZE=1`, and it runs in a worktree of the
-//!   frozen tag, not in the tree that is being tested. The procedure is in the
-//!   commit message that adds this file.
 //!
 //! ```text
 //! # the default checks (cheap):
@@ -178,18 +175,13 @@ fn scratch_bin(backend: &str, tag: &str) -> PathBuf {
     dir.join(tag)
 }
 
-/// Builds one target. `oracle` selects the C backend through the project's
-/// internal switch (the same switch `backend_coverage.rs` uses), and the
-/// retired `KELPC_BACKEND` is always removed so it cannot change the answer.
-fn build(oracle: bool, source: &Path, bin: &Path) -> std::process::Output {
+/// Builds one target with the default backend (LLVM). The retired variables
+/// are stripped, so an inherited value cannot change the answer.
+fn build(source: &Path, bin: &Path) -> std::process::Output {
     let mut command = Command::new(kelpc_bin());
     command.arg("build");
     command.env_remove("KELPC_BACKEND");
-    if oracle {
-        command.env("KELPC_ORACLE", "c");
-    } else {
-        command.env_remove("KELPC_ORACLE");
-    }
+    command.env_remove("KELPC_ORACLE");
     command
         .arg(source)
         .arg("-o")
@@ -228,18 +220,6 @@ impl Run {
             (None, None) => "an unknown termination".to_string(),
         }
     }
-}
-
-/// The stable part of a refusal: `error: <kind>`, without the names after the
-/// second colon. A cyclic-supertrait refusal lists the traits in an order that
-/// changes between runs, so recording the whole line made the freeze
-/// non-reproducible.
-fn refusal_kind(stderr: &[u8]) -> String {
-    first_line(stderr)
-        .split(": ")
-        .take(2)
-        .collect::<Vec<_>>()
-        .join(": ")
 }
 
 /// The first line of a stderr, with tabs and carriage returns made spaces so it
@@ -309,7 +289,7 @@ fn read_index() -> Index {
     let path = golden_dir().join(INDEX_NAME);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "the golden index '{}' is missing ({e}); it is written by oracle_freeze",
+            "the golden index '{}' is missing ({e})",
             path.display()
         )
     });
@@ -363,43 +343,8 @@ fn read_index() -> Index {
     }
 }
 
-fn write_index(dir: &Path, rows: &[Row]) {
-    let count = |s: Status| rows.iter().filter(|r| r.status == s).count();
-    let mut out = String::new();
-    out.push_str("# kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by oracle_freeze.\n");
-    out.push_str(&format!(
-        "# counts candidates={} ran={} c_refused={} excluded={}\n",
-        rows.len(),
-        count(Status::Ran),
-        count(Status::CRefused),
-        count(Status::Excluded),
-    ));
-    out.push_str(INDEX_COLUMNS);
-    out.push('\n');
-    for row in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\n",
-            row.tag,
-            row.status.label(),
-            row.exit,
-            row.stderr_first,
-            row.sha256,
-        ));
-    }
-    let path = dir.join(INDEX_NAME);
-    std::fs::write(&path, out)
-        .unwrap_or_else(|e| panic!("could not write '{}': {e}", path.display()));
-}
-
 fn golden_file(tag: &str) -> PathBuf {
     golden_dir().join(format!("{tag}.out"))
-}
-
-fn excluded_reason(tag: &str) -> Option<&'static str> {
-    EXCLUDED
-        .iter()
-        .find(|(t, _)| *t == tag)
-        .map(|(_, reason)| *reason)
 }
 
 // ---------------------------------------------------------------------------
@@ -482,200 +427,6 @@ fn sha256(data: &[u8]) -> String {
 // ---------------------------------------------------------------------------
 // The freeze.
 // ---------------------------------------------------------------------------
-
-/// Rewrites the golden set from the C backend. Run it in the worktree of the
-/// frozen tag (`v26.10.5`, `387dc450`), with this file copied in, so the oracle
-/// is the release's code and not whatever this tree has become:
-///
-/// ```text
-/// KELPC_FREEZE=1 KELPC_ORACLE=c cargo test --release -p kelpc --test golden_corpus \
-///   -- --ignored oracle_freeze --nocapture
-/// ```
-///
-/// A target the C backend rejects is recorded as `c-refused` and has no golden.
-/// A target that dies from a signal, on either side of the build, is a panic
-/// and not a golden: a crash is not an answer to freeze.
-#[test]
-#[ignore = "rewrites tests/golden from the C backend; needs KELPC_FREEZE=1"]
-fn oracle_freeze() {
-    if std::env::var("KELPC_FREEZE").as_deref() != Ok("1") {
-        println!("KELPC_FREEZE is not 1: nothing is written to '{}'", golden_dir().display());
-        return;
-    }
-
-    let dir = golden_dir();
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)
-            .unwrap_or_else(|e| panic!("could not clear '{}': {e}", dir.display()));
-    }
-    std::fs::create_dir_all(&dir)
-        .unwrap_or_else(|e| panic!("could not create '{}': {e}", dir.display()));
-
-    let (rows, crashes) = freeze_into(&dir);
-
-    assert!(
-        crashes.is_empty(),
-        "{} target(s) crashed under the C oracle, so the golden set was not frozen \
-         (the index is not written):\n{}",
-        crashes.len(),
-        crashes.join("\n"),
-    );
-
-    // Every non-zero exit is frozen as it is and listed here, so each one is a
-    // deliberate choice visible in the report, never a silent skip.
-    let nonzero: Vec<String> = rows
-        .iter()
-        .filter(|r| r.status == Status::Ran && r.exit != "exit 0")
-        .map(|r| format!("{}: {} ({:?})", r.tag, r.exit, r.stderr_first))
-        .collect();
-    println!("non-zero exits frozen as they are ({}):", nonzero.len());
-    for line in &nonzero {
-        println!("  {line}");
-    }
-    let ran = rows.iter().filter(|r| r.status == Status::Ran).count();
-    println!(
-        "golden freeze: {} candidate targets; {ran} ran and frozen, {} c-refused, {} excluded",
-        rows.len(),
-        rows.iter().filter(|r| r.status == Status::CRefused).count(),
-        rows.iter().filter(|r| r.status == Status::Excluded).count(),
-    );
-}
-
-/// The freeze-twice check the plan asks for: two freezes of the same tree must
-/// produce byte-identical indexes and byte-identical stdout files. A target
-/// whose output changes between runs (a timestamp, a thread race, an address)
-/// is reported by name, and belongs in [`EXCLUDED`] with a reason.
-#[test]
-#[ignore = "builds the corpus with the C oracle twice; run with --ignored"]
-fn the_freeze_is_reproducible() {
-    let base = PathBuf::from(
-        std::env::var("CARGO_TARGET_TMPDIR")
-            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string()),
-    )
-    .join("golden_repro");
-    let first = base.join("first");
-    let second = base.join("second");
-    for d in [&first, &second] {
-        if d.exists() {
-            std::fs::remove_dir_all(d)
-                .unwrap_or_else(|e| panic!("could not clear '{}': {e}", d.display()));
-        }
-        std::fs::create_dir_all(d)
-            .unwrap_or_else(|e| panic!("could not create '{}': {e}", d.display()));
-    }
-
-    let (_, crashes_a) = freeze_into(&first);
-    let (_, crashes_b) = freeze_into(&second);
-    assert!(
-        crashes_a.is_empty() && crashes_b.is_empty(),
-        "a freeze crashed:\n{}\n{}",
-        crashes_a.join("\n"),
-        crashes_b.join("\n"),
-    );
-
-    let index_a = std::fs::read(first.join(INDEX_NAME)).expect("first index");
-    let index_b = std::fs::read(second.join(INDEX_NAME)).expect("second index");
-    let mut differing: Vec<String> = Vec::new();
-    if index_a != index_b {
-        differing.push("index.tsv".to_string());
-        let a_text = String::from_utf8_lossy(&index_a).to_string();
-        let b_text = String::from_utf8_lossy(&index_b).to_string();
-        for (la, lb) in a_text.lines().zip(b_text.lines()) {
-            if la != lb {
-                println!("index row differs:\n  first:  {la}\n  second: {lb}");
-            }
-        }
-    }
-    for entry in std::fs::read_dir(&first).expect("first dir").flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".out") {
-            continue;
-        }
-        let a = std::fs::read(first.join(&name)).unwrap_or_default();
-        let b = std::fs::read(second.join(&name)).unwrap_or_default();
-        if a != b {
-            differing.push(name);
-        }
-    }
-    differing.sort();
-    println!(
-        "reproducibility: {} file(s) differ between two freezes{}",
-        differing.len(),
-        if differing.is_empty() {
-            String::new()
-        } else {
-            format!(": {}", differing.join(", "))
-        },
-    );
-    assert!(
-        differing.is_empty(),
-        "the freeze is not reproducible; differing: {}",
-        differing.join(", "),
-    );
-}
-
-/// The freeze body, writing into `dir`. Returns one row per candidate target
-/// and the crash messages. A signal death is never a row; it is returned as a
-/// crash so the caller fails.
-fn freeze_into(dir: &Path) -> (Vec<Row>, Vec<String>) {
-    let all = targets();
-    let mut rows = Vec::new();
-    let mut crashes = Vec::new();
-
-    for (n, target) in all.iter().enumerate() {
-        let tag = &target.tag;
-        if let Some(reason) = excluded_reason(tag) {
-            println!("[{}/{}] {tag}: excluded ({reason})", n + 1, all.len());
-            rows.push(Row {
-                tag: tag.clone(),
-                status: Status::Excluded,
-                exit: String::new(),
-                stderr_first: reason.to_string(),
-                sha256: String::new(),
-            });
-            continue;
-        }
-
-        let bin = scratch_bin("c", tag);
-        let built = build(true, &target.source, &bin);
-        if !built.status.success() {
-            if built.status.code().is_none() {
-                crashes.push(format!("the C build of '{tag}' was killed by a signal"));
-                continue;
-            }
-            println!("[{}/{}] {tag}: c-refused", n + 1, all.len());
-            rows.push(Row {
-                tag: tag.clone(),
-                status: Status::CRefused,
-                exit: String::new(),
-                stderr_first: refusal_kind(&built.stderr),
-                sha256: String::new(),
-            });
-            continue;
-        }
-
-        let finished = run(&bin);
-        if finished.signal.is_some() {
-            crashes.push(format!("the C binary for '{tag}' was {}", finished.exit()));
-            continue;
-        }
-
-        let digest = sha256(&finished.stdout);
-        std::fs::write(dir.join(format!("{tag}.out")), &finished.stdout)
-            .unwrap_or_else(|e| panic!("could not write golden for '{tag}': {e}"));
-        println!("[{}/{}] {tag}: {} ({} bytes)", n + 1, all.len(), finished.exit(), finished.stdout.len());
-        rows.push(Row {
-            tag: tag.clone(),
-            status: Status::Ran,
-            exit: finished.exit(),
-            stderr_first: finished.stderr_first,
-            sha256: digest,
-        });
-    }
-
-    write_index(dir, &rows);
-    (rows, crashes)
-}
 
 // ---------------------------------------------------------------------------
 // The checks.
@@ -789,7 +540,7 @@ fn llvm_matches_every_golden() {
             .unwrap_or_else(|| panic!("no corpus source for '{}'", row.tag));
         let bin = scratch_bin("llvm", &row.tag);
 
-        let built = build(false, source, &bin);
+        let built = build(source, &bin);
         if !built.status.success() {
             failures.push(format!(
                 "'{}': the llvm backend did not build it ({}):\n{}",

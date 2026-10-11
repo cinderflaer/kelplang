@@ -490,7 +490,7 @@ impl Context {
     /// The type starts *opaque* (no body), which is what lets a `datac` be
     /// named before its fields' own types exist: `struct_set_body` fills it in
     /// once every field type does. LLVM's layout, not this wrapper's, is what
-    /// makes the result agree with the C struct `codegen_c.rs` writes, natural
+    /// makes the result agree with the C struct the removed C backend wrote, natural
     /// alignment included.
     pub fn struct_type(&self, name: &str) -> Type<'_> {
         let name = cstring(name);
@@ -1690,7 +1690,7 @@ impl<'ctx> Builder<'ctx> {
     /// a `.kp` line reaches the line table of the object without the lowering
     /// touching every `build_*` call (MK7 §4.4). The location stays current
     /// until the next call to this or to [`clear_debug_location`], so the
-    /// lowering sets it where the C backend writes its `#line` marker.
+    /// lowering sets it at each statement.
     ///
     /// [`clear_debug_location`]: Builder::clear_debug_location
     pub fn set_debug_location(&self, location: Metadata<'ctx>) {
@@ -3281,7 +3281,7 @@ mod tests {
         });
         assert!(object.is_file(), "emit_object wrote no object file");
 
-        // Exactly how driver.rs::compile_c finishes today: hand `cc` the file.
+        // Hand `cc` the file, as the link step does.
         let link = Command::new("cc")
             .arg(&object)
             .arg("-o")

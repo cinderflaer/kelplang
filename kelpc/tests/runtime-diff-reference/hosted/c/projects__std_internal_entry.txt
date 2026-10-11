@@ -1,7 +1,0 @@
-unit: kelpc/tests/projects/std_internal_entry
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: module 'std/internal/main' is below the compiler-reserved std/internal namespace
-run-status: not run

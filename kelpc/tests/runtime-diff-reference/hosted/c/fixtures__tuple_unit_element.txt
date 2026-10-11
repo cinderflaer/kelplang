@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/tuple_unit_element.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: element 2 of the tuple is 'unit': 'unit' is the absent value and cannot be stored, exactly as a datac field cannot be
-  --> <root>/kelpc/tests/fixtures/tuple_unit_element.kp:5:28
-run-status: not run

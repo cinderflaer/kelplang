@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/try_shape_mismatch.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '?' here propagates a carrying failure, but the enclosing function returns 'Option<i32>' — the two have to be the same shape; match the value instead (`when r { Ok(v) -> ..., Err(e) -> return <your failure> }`), or make the function return the same kind of enum
-  --> <root>/kelpc/tests/fixtures/try_shape_mismatch.kp:16:13
-run-status: not run

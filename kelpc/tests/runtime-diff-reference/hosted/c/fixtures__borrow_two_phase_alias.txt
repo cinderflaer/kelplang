@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/borrow_two_phase_alias.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot borrow 'p' as exclusive: already borrowed as shared
-  --> <root>/kelpc/tests/fixtures/borrow_two_phase_alias.kp:12:5
-run-status: not run

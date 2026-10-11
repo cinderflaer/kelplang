@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/drop_two_impls.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: method 'Leaf.drop' is defined more than once
-  --> <root>/kelpc/tests/fixtures/drop_two_impls.kp:7:1
-run-status: not run

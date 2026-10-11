@@ -1,15 +1,12 @@
 //! The valgrind memory gate (MK7 §5's definition of done).
 //!
-//! The AddressSanitizer gate in `compile_and_run.rs`
-//! (`heap_fixtures_are_double_free_and_leak_clean`) rebuilds the *generated C*
-//! with `cc -fsanitize=address`, so it has nothing to instrument once a backend
-//! writes its own object instead of C. Valgrind runs any binary, so it is the
-//! gate a backend that emits its own code can actually be judged by.
+//! The C backend's AddressSanitizer gate was removed with the C backend on
+//! 2026-10-10. Valgrind runs any binary, so it is the gate that judges the
+//! LLVM backend's own code: the binaries the compiler ships.
 //!
 //! What one sweep does, for every `tests/fixtures/*.kp`:
 //!
-//! - build the fixture through the project's internal oracle switch, which is
-//!   the only way to reach the C backend now. A fixture the C backend itself
+//! - build the fixture with the default backend. A fixture the compiler
 //!   rejects has no binary and is skipped.
 //! - run each binary under valgrind with leak checking and error detection
 //!   on: `--leak-check=full --show-leak-kinds=all
@@ -107,21 +104,14 @@ fn fixture_names() -> Vec<String> {
     names
 }
 
-/// Builds one fixture with one backend, pinned by the oracle switch rather than
-/// by the retired `KELPC_BACKEND`: `c` sets the switch and any other name is the
-/// default `llvm` backend with the switch removed. The retired variable is
-/// stripped in either case, so an inherited value cannot turn a build into its
-/// refusal and cannot change what this file measures.
-fn build(backend: &str, name: &str, bin: &Path) -> bool {
+/// Builds one fixture with the default backend (LLVM). The retired variables
+/// are stripped, so an inherited value cannot turn a build into its refusal.
+fn build(name: &str, bin: &Path) -> bool {
     let source = fixture_dir().join(format!("{name}.kp"));
     let mut cmd = Command::new(kelpc_bin());
     cmd.arg("build");
     cmd.env_remove("KELPC_BACKEND");
-    if backend == "c" {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
+    cmd.env_remove("KELPC_ORACLE");
     let out = cmd
         .arg(&source)
         .arg("-o")
@@ -409,10 +399,10 @@ fn run_under_valgrind(backend: &'static str, name: &str, bin: &Path, dir: &Path)
 
 /// Everything one sweep measured.
 struct Sweep {
-    /// Fixtures the C backend builds, each run under valgrind.
-    c_checked: Vec<Check>,
-    /// Fixtures the C backend itself rejects: there is no binary to check.
-    c_rejected: usize,
+    /// Fixtures the LLVM backend builds, each run under valgrind.
+    llvm_checked: Vec<Check>,
+    /// Fixtures the LLVM backend rejects: there is no binary to check.
+    llvm_rejected: usize,
     /// How many `*.kp` files the sweep looked at.
     fixtures: usize,
     elapsed: Duration,
@@ -425,23 +415,23 @@ fn run_sweep() -> Sweep {
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("failed to create '{}': {e}", dir.display()));
 
-    let mut c_checked = Vec::new();
-    let mut c_rejected = 0;
+    let mut llvm_checked = Vec::new();
+    let mut llvm_rejected = 0;
 
     for name in &names {
-        let c_bin = dir.join(format!("c_{name}"));
-        if !build("c", name, &c_bin) {
-            // The C backend is the oracle and the compile-error fixtures are
-            // rejected by design, so there is no binary to run.
-            c_rejected += 1;
+        let bin = dir.join(format!("llvm_{name}"));
+        if !build(name, &bin) {
+            // The compile-error fixtures are rejected by design, so there is no
+            // binary to run.
+            llvm_rejected += 1;
             continue;
         }
-        c_checked.push(run_under_valgrind("c", name, &c_bin, &dir));
+        llvm_checked.push(run_under_valgrind("llvm", name, &bin, &dir));
     }
 
     Sweep {
-        c_checked,
-        c_rejected,
+        llvm_checked,
+        llvm_rejected,
         fixtures: names.len(),
         elapsed: started.elapsed(),
     }
@@ -474,12 +464,12 @@ fn print_summary(sweep: &Sweep, version: &str) {
         "memory gate: {version} over kelpc/tests/fixtures ({} .kp files)",
         sweep.fixtures,
     );
-    println!("{}", backend_summary("c", &sweep.c_checked, ""));
+    println!("{}", backend_summary("llvm", &sweep.llvm_checked, ""));
     println!(
-        "  {} fixture(s) the C backend itself rejects were skipped: there is no binary to check",
-        sweep.c_rejected,
+        "  {} fixture(s) the LLVM backend rejects were skipped: there is no binary to check",
+        sweep.llvm_rejected,
     );
-    for check in &sweep.c_checked {
+    for check in &sweep.llvm_checked {
         let children: Vec<Process> = check
             .processes()
             .into_iter()
@@ -495,14 +485,14 @@ fn print_summary(sweep: &Sweep, version: &str) {
             );
         }
     }
-    let runs = sweep.c_checked.len();
+    let runs = sweep.llvm_checked.len();
     let non_zero = sweep
-        .c_checked
+        .llvm_checked
         .iter()
         .filter(|check| check.exit != Some(0))
         .count();
     let panics = sweep
-        .c_checked
+        .llvm_checked
         .iter()
         .filter(|check| check.program_stderr.starts_with("panic:"))
         .count();
@@ -517,7 +507,7 @@ fn print_summary(sweep: &Sweep, version: &str) {
     );
 }
 
-/// The gate itself: every fixture the C backend builds, each run under
+/// The gate itself: every fixture the LLVM backend builds, each run under
 /// valgrind. A leak, a double free, an invalid read or an invalid write, in the
 /// process valgrind was launched on or in a child it forked, fails this test,
 /// and the failure quotes valgrind's own lines for it.
@@ -539,13 +529,13 @@ fn no_fixture_leaks_or_touches_freed_memory_under_valgrind() {
     print_summary(&sweep, &version);
 
     assert!(
-        !sweep.c_checked.is_empty(),
-        "the C backend built no fixture at all, so the sweep measured nothing",
+        !sweep.llvm_checked.is_empty(),
+        "the LLVM backend built no fixture at all, so the sweep measured nothing",
     );
 
     let mut report = Vec::new();
     let mut findings = 0;
-    for check in &sweep.c_checked {
+    for check in &sweep.llvm_checked {
         for (pid, lines) in check.findings() {
             findings += 1;
             match pid {
@@ -558,7 +548,7 @@ fn no_fixture_leaks_or_touches_freed_memory_under_valgrind() {
     assert!(
         report.is_empty(),
         "valgrind reported {findings} finding(s) over {} runs:\n{}",
-        sweep.c_checked.len(),
+        sweep.llvm_checked.len(),
         report.join("\n"),
     );
 }
@@ -635,8 +625,8 @@ const LLVM_CONTAINER_FIXTURES: &[&str] = &[
     "stdlib_sort",
     // A-11: a partial move clears the field's or payload's slot in generated
     // IR, so the binding's own generated drop frees the projection that stayed
-    // and nothing where the moved value now lives. The C sweep covers the
-    // oracle; these are here because the clear and the drop are IR this backend
+    // and nothing where the moved value now lives. The sweep covers every
+    // fixture; these are here because the clear and the drop are IR this backend
     // emits, and the last three carry the enum-payload half out through the
     // stdlib helpers that take their receiver with `move`.
     "partial_move_field",
@@ -667,7 +657,7 @@ const LLVM_EXTERN_FIXTURES: &[&str] = &[
 ];
 
 /// The S3A half of the memory gate: every extern-body binary the LLVM backend
-/// builds, run under valgrind. The bodies themselves are C and the C sweep
+/// builds, run under valgrind. The bodies themselves are C and the sweep
 /// covers them, but the *calls* to them, the `String.from_bytes` adapter and the
 /// buffers the bodies allocate and adopt move memory across that boundary, so
 /// this is where a buffer freed twice or handed over without an owner shows up.
@@ -689,7 +679,7 @@ fn the_llvm_extern_binaries_are_valgrind_clean() {
     let mut rejected = Vec::new();
     for name in LLVM_EXTERN_FIXTURES {
         let bin = dir.join(format!("llvm_{name}"));
-        if build("llvm", name, &bin) {
+        if build(name, &bin) {
             checked.push(run_under_valgrind("llvm", name, &bin, &dir));
         } else {
             rejected.push(*name);
@@ -730,7 +720,7 @@ fn the_llvm_extern_binaries_are_valgrind_clean() {
 }
 
 /// The S2D half of the memory gate: every container binary the LLVM backend
-/// builds, run under valgrind. The C sweep above covers the oracle; this one
+/// builds, run under valgrind. The sweep above covers every fixture; this one
 /// covers the code the LLVM backend generates *instead* of C, which is the
 /// part another backend cannot check for it: a container's drop, its growth
 /// (`realloc`), a map's tombstone reuse and an `[T; N]`'s element drops all
@@ -754,7 +744,7 @@ fn the_llvm_container_binaries_are_valgrind_clean() {
     let mut rejected = Vec::new();
     for name in LLVM_CONTAINER_FIXTURES {
         let bin = dir.join(format!("llvm_{name}"));
-        if build("llvm", name, &bin) {
+        if build(name, &bin) {
             checked.push(run_under_valgrind("llvm", name, &bin, &dir));
         } else {
             rejected.push(*name);
@@ -814,7 +804,7 @@ const LLVM_CLOSURE_FIXTURES: &[&str] = &[
 ];
 
 /// The S2E half of the memory gate: every closure binary the LLVM backend
-/// builds, run under valgrind. The C sweep above covers the oracle; this covers
+/// builds, run under valgrind. The sweep above covers every fixture; this covers
 /// the environment the LLVM backend generates the allocation, the capture stores
 /// and the destructor for, which is exactly the code another backend cannot
 /// check for it.
@@ -836,7 +826,7 @@ fn the_llvm_closure_binaries_are_valgrind_clean() {
     let mut rejected = Vec::new();
     for name in LLVM_CLOSURE_FIXTURES {
         let bin = dir.join(format!("llvm_{name}"));
-        if build("llvm", name, &bin) {
+        if build(name, &bin) {
             checked.push(run_under_valgrind("llvm", name, &bin, &dir));
         } else {
             rejected.push(*name);
@@ -929,7 +919,7 @@ const LLVM_PD_CAP_FIXTURES: &[&str] = &[
 
 /// The S3 half of the memory gate: every `pd` and capability binary the LLVM
 /// backend builds, run under valgrind. `pd` storage and the capability glue are
-/// the two places this slice touches memory across a boundary the C sweep
+/// the two places this slice touches memory across a boundary the sweep
 /// cannot see: the `atexit` drop is registered by generated IR, and the check
 /// calls into the C glue through the per-program object.
 #[test]
@@ -950,7 +940,7 @@ fn the_llvm_passdown_and_capability_binaries_are_valgrind_clean() {
     let mut rejected = Vec::new();
     for name in LLVM_PD_CAP_FIXTURES {
         let bin = dir.join(format!("llvm_{name}"));
-        if build("llvm", name, &bin) {
+        if build(name, &bin) {
             checked.push(run_under_valgrind("llvm", name, &bin, &dir));
         } else {
             rejected.push(*name);
@@ -1004,7 +994,7 @@ fn the_sweep_reports_what_it_would_cover() {
     match valgrind_version() {
         Some(version) => println!(
             "memory gate: {version} is on PATH; the ignored sweep builds every one of these {fixtures} \
-             fixtures with `--backend=c`, then runs each binary under `--leak-check=full`. Run it with:\n    \
+             fixtures, then runs each binary under `--leak-check=full`. Run it with:\n    \
              cargo test --test memory_gate -- --ignored --nocapture"
         ),
         None => println!(

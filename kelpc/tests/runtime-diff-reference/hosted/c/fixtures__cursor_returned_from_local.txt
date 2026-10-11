@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/cursor_returned_from_local.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot return a borrow of 'local': '&Node' borrows from its first reference parameter 'start', so the returned value must be derived from 'start'
-  --> <root>/kelpc/tests/fixtures/cursor_returned_from_local.kp:10:12
-run-status: not run

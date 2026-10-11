@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/literal_const_is_not_a_literal.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: operator requires matching numeric operands, found 'i32' and 'u32'
-  --> <root>/kelpc/tests/fixtures/literal_const_is_not_a_literal.kp:8:11
-run-status: not run

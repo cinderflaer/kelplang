@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/tuple_later_element.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'Later' is declared after this type — a type may only name types declared before it by value; behind a 'Box' or 'List' it may name any type, including itself
-  --> <root>/kelpc/tests/fixtures/tuple_later_element.kp:4:25
-run-status: not run

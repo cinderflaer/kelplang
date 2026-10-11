@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/fn_value_element.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'fun(i32).return: i32' cannot be a 'List' element yet — a function value is a plain inline value, but a container's generated C type names its element type as a name prefix, and a function pointer has no such spelling (the name goes inside its declarator); hold it in a one-field 'datac' instead
-  --> <root>/kelpc/tests/fixtures/fn_value_element.kp:6:18
-run-status: not run

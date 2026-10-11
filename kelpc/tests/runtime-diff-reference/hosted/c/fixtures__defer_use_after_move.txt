@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/defer_use_after_move.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: use of moved value 's'
-  --> <root>/kelpc/tests/fixtures/defer_use_after_move.kp:13:17
-run-status: not run

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_missing_method.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: trait 'Shape' declares 'fun Self.name().return: str', and 'impl Shape for Circle' does not implement it: add 'fun Self.name().return: str { ... }' to the block
-  --> <root>/kelpc/tests/fixtures/traits_missing_method.kp:9:1
-run-status: not run

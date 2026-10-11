@@ -19,8 +19,7 @@
 #   - one entry widget was ever built, and it still shows the last text typed
 #     into it even though the model cleared its draft.
 #
-# Both backends run: the default (`llvm`) one and the C oracle, and their output
-# has to pass the same checks.
+# The LLVM backend runs, and its output has to pass the checks.
 #
 # The toolchain lives in the GTK shell next to this repository. Without
 # POLYP_IN_SHELL this script re-enters it; POLYP_DEV_GTK overrides the path.
@@ -36,7 +35,7 @@ fi
 
 cd "$ROOT"
 
-# The default backend, whatever the invoking shell exported: the oracle switch
+# The default backend, whatever the invoking shell exported: the retired backend variables
 # belongs to the compiler's own suite, not to this proof.
 unset KELPC_ORACLE KELPC_BACKEND
 
@@ -131,4 +130,3 @@ run() {
 }
 
 run llvm
-KELPC_ORACLE=c run c-oracle

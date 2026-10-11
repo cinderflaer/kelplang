@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # The MK7 S6 measurement: what each optimization level costs to compile and to
-# run, for both backends, on `speed.kp`'s four workloads.
+# run, on `speed.kp`'s four workloads.
 #
-# `run.sh` compares four languages at one level. This compares one language's two
-# backends across the levels `-O` accepts (MK7 section 4.3), which is the table
-# the S6 decision is written from. The C backend's `-O0` column is new here: until
-# S6 that backend was fixed at `cc -O2`.
+# `run.sh` compares four languages at one level. This compares the LLVM backend
+# across the levels `-O` accepts (MK7 section 4.3), which is the table the S6
+# decision is written from.
 #
 # Method:
 #
@@ -35,19 +34,12 @@ OUT="$DIR/build/optlevels"
 REPORT="$DIR/results-optlevels.txt"
 ROUNDS="${BENCH_ROUNDS:-9}"
 LEVELS="${BENCH_LEVELS:--O0 -O1 -O2 -O3 -Os}"
-BACKENDS="${BENCH_BACKENDS:-c llvm}"
+BACKENDS="${BENCH_BACKENDS:-llvm}"
 
-# `KELPC_ORACLE` is the project's one backend switch, and it names only the C
-# oracle; unsetting it selects the default `llvm` backend. This wrapper keeps the
-# measurement's two-backend shape now that the user-facing selector is gone. The
-# retired `KELPC_BACKEND` is stripped either way, so a stale export cannot refuse
-# a build.
+# The retired `KELPC_BACKEND` and `KELPC_ORACLE` are stripped, so a stale export
+# cannot refuse a build.
 build_backend() {
-    if [ "$backend" = "c" ]; then
-        env -u KELPC_BACKEND KELPC_ORACLE=c "$KELPC" build "$DIR/speed.kp" "$level" -o "$bin"
-    else
-        env -u KELPC_BACKEND -u KELPC_ORACLE "$KELPC" build "$DIR/speed.kp" "$level" -o "$bin"
-    fi
+    env -u KELPC_BACKEND -u KELPC_ORACLE "$KELPC" build "$DIR/speed.kp" "$level" -o "$bin"
 }
 
 mkdir -p "$OUT"
@@ -58,8 +50,8 @@ now() { date +%s%N; }
 echo "building kelpc (not counted)..." >&2
 if [ -n "${KELPC:-}" ]; then
     # A prebuilt binary, so the measurement can run where LLVM's build half is
-    # not present (outside `nix-shell`). The C backend's compiler is whatever
-    # `cc` is on that PATH, and the report says which it was.
+    # not present (outside `nix-shell`). The C compiler used at link time is
+    # whatever `cc` is on that PATH, and the report says which it was.
     echo "using KELPC=$KELPC" >&2
 else
     ( cd "$ROOT" && cargo build -q --release -p kelpc ) >/dev/null 2>&1 || {

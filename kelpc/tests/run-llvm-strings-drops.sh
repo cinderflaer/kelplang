@@ -6,7 +6,7 @@
 # was its plain-record slice; **S2B is its runtime and heap slice**: the C
 # runtime object `runtime/kelp_rt.c` compiled once and linked into every LLVM
 # binary, the `str`/`String`/`Bytes`/`View` representations, a `datac` with an
-# owned field, and the drop plan emitted at the same points `codegen_c.rs`
+# owned field, and the drop plan emitted at the same points the removed C backend
 # emits it. Its exit criterion is byte-identical stdout and exit status on the
 # fixtures that use only those, plus the runtime's own panic and assertion
 # paths.
@@ -37,17 +37,10 @@ cd "$(dirname "$0")/../.."
 
 BACKEND="${BACKEND:-llvm}"
 
-# KELPC_ORACLE is the project's one backend switch, and it names only the C
-# oracle; unsetting it selects the default llvm backend. This wrapper keeps the
-# gate's one-backend-at-a-time shape now that the user-facing selector is gone:
-# BACKEND=c sets the switch and anything else removes it. The retired
-# KELPC_BACKEND is stripped either way, so a stale export cannot refuse a build.
+# The retired KELPC_BACKEND and KELPC_ORACLE are stripped, so a stale export
+# cannot refuse a build.
 backend_env() {
-    if [ "$BACKEND" = "c" ]; then
-        env -u KELPC_BACKEND KELPC_ORACLE=c "$@"
-    else
-        env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
-    fi
+    env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
 }
 
 # The S1 scalar fixtures, the S2A `datac` fixtures, and the S2B heap fixtures.

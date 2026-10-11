@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/box_borrow_element.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '&str' cannot be a container element: an element has to outlive the container that holds it, and v1 has no lifetime syntax to say so; use the owned type
-  --> <root>/kelpc/tests/fixtures/box_borrow_element.kp:4:16
-run-status: not run

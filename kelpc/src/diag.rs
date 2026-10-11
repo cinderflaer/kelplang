@@ -128,45 +128,23 @@ impl SourceMap {
     }
 
     /// `file:line:col` for a span in a module, when the module's text is
-    /// known. Used by `codegen_c.rs` for capability denials, whose message has
-    /// to name the `.kp` call site at runtime (M7). The generated C does carry
-    /// `#line` directives now (`line_directive` below), but this is still the
-    /// one that answers that call: a denial names the *column* as well, and it
-    /// is a compile-time constant rather than a runtime `__FILE__`/`__LINE__`
-    /// that would have to be formatted into a string before the panic.
+    /// known. Used for capability denials, whose message has to name the `.kp`
+    /// call site at runtime (M7): a denial names the *column* as well, and it is
+    /// a compile-time constant rather than a runtime `__FILE__`/`__LINE__` that
+    /// would have to be formatted into a string before the panic.
     pub fn locate(&self, module: &str, span: Span) -> Option<String> {
         let f = self.files.get(module)?;
         let (line, col) = line_col(&f.text, span.start);
         Some(format!("{}:{line}:{col}", f.path.display()))
     }
 
-    /// The `#line` directive that points the C compiler at `module`'s source at
-    /// `span` (roadmap open item 20), or `None` when the module's text was
-    /// never registered.
-    ///
-    /// `codegen_c.rs` emits one before the statements it renders from `.kp`, so
-    /// a diagnostic from `cc` on the generated C names the `.kp` file and line
-    /// the statement came from instead of a line of generated C. Source mapping
-    /// is worth only what it is exact about, so the line is the span's own;
-    /// codegen never guesses one.
-    pub fn line_directive(&self, module: &str, span: Span) -> Option<String> {
-        let f = self.files.get(module)?;
-        let (line, _) = line_col(&f.text, span.start);
-        Some(format!(
-            "#line {line} \"{}\"",
-            c_string_body(&f.path.to_string_lossy())
-        ))
-    }
-
     /// The path, line and column of `span` in `module`, when the module's
     /// text is known.
     ///
-    /// [`SourceMap::locate`] and [`SourceMap::line_directive`] are this value
-    /// formatted two ways; the LLVM backend's DWARF needs the three parts
-    /// apart, because a `DIFile` carries the path while a `DILocation` carries
+    /// [`SourceMap::locate`] is this value formatted one way; the LLVM backend's
+    /// DWARF needs the three parts apart, because a `DIFile` carries the path while a `DILocation` carries
     /// the numbers. All three go through one `line_col` call, so the line a
-    /// `#line` directive names and the line a debug location names cannot
-    /// drift.
+    /// debug location names is computed one way.
     pub fn path_line_col(&self, module: &str, span: Span) -> Option<(&Path, u32, u32)> {
         let f = self.files.get(module)?;
         let (line, col) = line_col(&f.text, span.start);
@@ -315,37 +293,6 @@ fn json_string(s: &str) -> String {
         }
     }
     out.push('"');
-    out
-}
-
-/// A path as the contents of a C string literal: the quote and the backslash
-/// are escaped, every control byte is escaped (the three with a short escape
-/// spelled that way, the rest as fixed-width `\NNN` octal), and any other byte
-/// is written through. A `.kp` path holding a quote, a backslash or a control
-/// byte is unusual but has to be right anyway: the text of a `#line` directive
-/// is the same string literal a `printf` would take, and `cc` rejects a `#line`
-/// whose file name holds a newline. `codegen_c.rs` reaches for it too, for the
-/// `at` location, the module name and the domain a capability denial bakes into
-/// the generated C.
-///
-/// The octal escape is fixed at three digits because a shorter one would run on
-/// into a following octal digit, the same failure `\xNN` has with a following
-/// hex digit.
-pub(crate) fn c_string_body(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
-    for c in path.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            '\r' => out.push_str("\\r"),
-            c if (c as u32) < 0x20 || c as u32 == 0x7F => {
-                out.push_str(&format!("\\{:03o}", c as u32))
-            }
-            c => out.push(c),
-        }
-    }
     out
 }
 

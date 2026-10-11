@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_bound_second.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the call to 'grow_and_measure' needs 'OnlyShape' to implement the trait 'Grow', and it does not: write 'impl Grow for OnlyShape { ... }' in the trait's module or in the type's
-  --> <root>/kelpc/tests/fixtures/traits_bound_second.kp:24:11
-run-status: not run

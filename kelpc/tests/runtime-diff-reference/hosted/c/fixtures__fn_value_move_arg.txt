@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/fn_value_move_arg.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: argument 1 has type '&String', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()')
-  --> <root>/kelpc/tests/fixtures/fn_value_move_arg.kp:7:14
-run-status: not run

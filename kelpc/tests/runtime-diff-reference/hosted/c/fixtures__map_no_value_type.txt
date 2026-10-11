@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/map_no_value_type.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the element type of 'm' is still open: nothing said what 'Map.new()' holds, and 'm.insert(k, v)' is what decides it. Write it on the binding instead ('var m: Map<String, i32> = Map.new()')
-  --> <root>/kelpc/tests/fixtures/map_no_value_type.kp:4:11
-run-status: not run

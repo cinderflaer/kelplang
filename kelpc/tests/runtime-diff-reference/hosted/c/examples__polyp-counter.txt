@@ -1,8 +1,0 @@
-unit: examples/polyp-counter
-backend: c
-build-status: 0
---- build stdout
---- build stderr
-run-status: 124
---- stdout
---- stderr

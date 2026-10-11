@@ -1,4 +1,4 @@
-//! The LLVM backend: lower `tir` to LLVM IR, a peer of `codegen_c.rs`.
+//! The LLVM backend: lower `tir` to LLVM IR, a peer of the removed C backend.
 //!
 //! MK7 §3.1 names this module as the whole of the new work: the front half of the
 //! compiler is unchanged and already backend-complete, so the lowering walks the
@@ -48,7 +48,7 @@
 //! - the builtin `Bytes`/`String`/`View` methods, and `print`/templates reading
 //!   a buffer or a view as `%.*s` from its own length and pointer
 //! - an owned `datac` field, the generated per-`datac` drop, and the
-//!   `borrowck::DropPlan` emitted at the same points `codegen_c.rs` emits it:
+//!   `borrowck::DropPlan` emitted at the same points the removed C backend emitted it:
 //!   end of block, before a `return`, and before an assignment overwrites an
 //!   owned binding. A move clears its source slot, so the drop a binding still
 //!   owes on a path that did not move it frees nothing
@@ -63,7 +63,7 @@
 //!
 //! # What S2C adds (MK7 S2, the tagged-union slice)
 //!
-//! An `enum` lowers to the `{ tag, union }` shape `codegen_c.rs::write_enum`
+//! An `enum` lowers to the `{ tag, union }` shape the removed C backend's `write_enum`
 //! emits today (MK7 §3.1), with the same tag width and the same payload
 //! offsets:
 //!
@@ -99,7 +99,7 @@
 //!
 //! `List<T>`, `Map<K, V>`, `Box<T>` and `[T; N]`. MK7 §3.2 names the one
 //! exception to "the runtime stays C": the monomorphized container code, which
-//! `codegen_c.rs` generates per element or value type and which therefore cannot
+//! the removed C backend generates per element or value type and which therefore cannot
 //! live in a fixed C file. So it is generated into the module, as IR, one
 //! function set per instantiation, with the same function names, the same bodies
 //! and the same panics the C backend writes:
@@ -149,7 +149,7 @@
 //!   and `syntax.md` 10.2's borrowed return are the same one-pointer transport
 //! - the panic tail (BUG-b2Ldp): a body whose tail is a `panic` diverges, so it
 //!   is emitted as a statement that ends the block with `unreachable` rather
-//!   than asked for a value it does not have. `codegen_c.rs::write_function_body`
+//!   than asked for a value it does not have. the removed C backend's `write_function_body`
 //!   draws the same line, and without it the backend reported its own
 //!   "internal error" for `move_param_return` and `panic_tail`.
 //!
@@ -159,7 +159,7 @@
 //!
 //! # What S2E adds (MK7 S2, the closure slice)
 //!
-//! Function values and closures, mirrored from `codegen_c.rs`: a declared `fun`
+//! Function values and closures, mirrored from the removed C backend: a declared `fun`
 //! named as a value, a `fun` literal (with and without captures), a call through
 //! a value, and a closure or a function value as a local, a parameter, a return
 //! value, a `datac` field and a `Box` element.
@@ -210,7 +210,7 @@
 //!   helpers use: the declaration and the call are the same IR shape whether the
 //!   callee's text is in `kelp_rt.c` or in the program's own object.
 //! - that object is built per program from `<out>.externs.c`, which holds the
-//!   bodies `codegen_c.rs::write_extern` writes, the capability glue, and the
+//!   bodies the removed C backend's `write_extern` writes, the capability glue, and the
 //!   `std/rt` prototypes `runtime_prototypes` writes, so the C text is the C
 //!   backend's own (see `program_c_source` for why it cannot be a fixed object
 //!   like `kelp_rt.o`).
@@ -230,7 +230,7 @@
 //!   A function that received no hidden parameter names the global directly,
 //!   which is what `main` and another `pd`'s initializer are.
 //! - a gated call site is guarded by the same runtime allowlist check the C
-//!   backend emits. `cap_plan` mirrors `codegen_c.rs::Gen::cap_plan` site for
+//!   backend emits. `cap_plan` mirrors `the removed C backend's `Gen`::cap_plan` site for
 //!   site: the same domain, the same resource arguments, the same pattern
 //!   count, the same `.kp` call site. Every checked argument is evaluated
 //!   **once** into a value the check and the call share (BUG-Kf7Rn), and the
@@ -242,18 +242,17 @@
 //!   text is the same bytes in both backends. The matcher and the path
 //!   normalizer stay Kelp (`std/rt`) and are lowered like any other code.
 //!
-//! The whole fixture corpus now lowers: `Backend::DEFAULT` is `llvm` since MK7
-//! S7, and the `llvm` backend builds every one of the 223 corpus targets the C
-//! backend builds, with an empty refusal ranking (MK7 §4.1), and the
-//! differential sweep records no disagreement between the two. The differential
+//! The whole fixture corpus now lowers: the `llvm` backend is the only backend,
+//! and it builds every one of the 223 corpus targets the C backend built before
+//! its removal, with an empty refusal ranking (MK7 §4.1). The differential
 //! fuzzer (`kelpc/tests/differential_fuzz.rs`, MK7 S5) covers the surface the
 //! curated corpus does not, and found the two shapes the sweep's fixtures were
 //! missing.
 //!
 //! What remains in this file is **refused by name** with a clean diagnostic,
 //! never miscompiled and never a panic, for a shape the frontend does not
-//! currently produce: MK7 §2 keeps the C backend as the project's own oracle,
-//! so a refusal names the construct and says the shortfall is the backend's. A
+//! currently produce, and a refusal names the construct and says the shortfall
+//! is the backend's. A
 //! wrong lowering is worse than a refusal, which is why the guards stay.
 //!
 //! # The rules this lowering keeps
@@ -262,7 +261,7 @@
 //! own statement of them:
 //!
 //! - A narrow `IntLit` (an `i128` in `tir`) is cut to the *expression's* type
-//!   before the operation, exactly as `codegen_c.rs` casts its literal text, so a
+//!   before the operation, exactly as the removed C backend casts its literal text, so a
 //!   `u64`-wide literal in an `i32` context is truncated first.
 //! - Signedness comes from `Ty`: `sdiv`/`udiv`, `srem`/`urem`, `ashr`/`lshr`,
 //!   `icmp slt` vs `ult`. `Shr` on a signed type is arithmetic.
@@ -277,9 +276,9 @@
 //!   constant folding in the frontend, and this backend mirrors that: a `sdiv` by
 //!   zero is UB in LLVM exactly as it is in C.
 //! - `print` and templates call libc `printf`, with the same format string and the
-//!   same C ABI widths `codegen_c.rs::printf_piece_with` uses. A vararg narrower
+//!   same C ABI widths the removed C backend's `printf_piece_with` uses. A vararg narrower
 //!   than `int` is promoted here, because LLVM, unlike C, does not promote it.
-//! - The numeric conversions mirror `codegen_c.rs::numeric_conversion`: a widening
+//! - The numeric conversions mirror the removed C backend's `numeric_conversion`: a widening
 //!   is a plain cast, a narrowing that can lose a value is a range check that
 //!   panics with the call's own `.kp` spelling.
 //!
@@ -289,7 +288,7 @@
 //! MK7 §4.4 states this as an exit criterion rather than a nice-to-have: a crash
 //! report that points into generated IR instead of a Kelp source line is the
 //! difference between actionable and not, and the C backend buys the same
-//! resolution with one `#line` per statement (`codegen_c.rs::write_line_marker`).
+//! resolution with one `#line` per statement (the removed C backend's `write_line_marker`).
 //!
 //! - one compile unit for the module, named in `llvm.dbg.cu` and marked by the
 //!   `Debug Info Version` module flag: the two halves are what make the object
@@ -300,7 +299,7 @@
 //!   `Function::span`, which S4 added for exactly this)
 //! - one `DILocation` per statement and per block tail, given to LLVM's builder
 //!   so every instruction the statement emits carries it. The spans are the four
-//!   `codegen_c.rs::write_stmt` writes its `#line` from, and the line and column
+//!   the removed C backend's `write_stmt` writes its `#line` from, and the line and column
 //!   are read through the accessor both backends share
 //!   (`diag::SourceMap::path_line_col`), so the two cannot name different lines
 //!   for one statement
@@ -357,7 +356,7 @@ use crate::types::{
 /// The artifact contract mirrors the C path's `<out>.c`: this writes `<out>.ll`
 /// (MK7 §4.4) so the IR is inspectable next to the binary, and keeps the object
 /// it hands `cc` as `<out>.o`. Linking itself is `driver::link_llvm_object`, the
-/// sibling of `driver::compile_c`.
+/// counterpart of the linker step in `driver`.
 ///
 /// `opt` is the S6 optimization level (MK7 §4.3). It is one level for two
 /// things: the `default<O<n>>` pass pipeline `run_passes` runs over the module,
@@ -692,7 +691,7 @@ fn lower_to_object(
     }
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
-    // `codegen_c.rs` writes each typedef and its drop routine in. The container
+    // the removed C backend wrote each typedef and its drop routine in. The container
     // function sets come next, because a container's own drop calls the
     // element's (MK7 §3.2: one monomorphized set per instantiation, generated
     // into the module). In the incremental mode only the `_support` unit gets
@@ -1845,7 +1844,7 @@ struct RtFn<'a> {
 }
 
 /// One gated call site's check plan, the mirror of what
-/// `codegen_c.rs::Gen::cap_plan` returns: the domain to match against, how many
+/// `the removed C backend's `Gen`::cap_plan` returns: the domain to match against, how many
 /// patterns the calling module holds for it, the call site as written, and
 /// which arguments are resource names.
 struct CapPlan {
@@ -1856,7 +1855,7 @@ struct CapPlan {
     /// whether a `CapCheck::Name` here is one of the two fast-path shapes
     /// `cap_glue.c`'s own `kelp_cap_check_name` already fast-paths (the lone
     /// `*`, or a literal with no `*`), which can be hand-built as inline IR
-    /// instead of a call into that separately-compiled object. `codegen_c.rs`
+    /// instead of a call into that separately-compiled object. the removed C backend
     /// needs no equivalent field: the C backend gets this optimization for
     /// free from `cc`'s own inlining of the spliced text.
     patterns: Vec<String>,
@@ -1899,7 +1898,7 @@ fn name_fast_path(patterns: &[String]) -> Option<NameFastPath<'_>> {
 }
 
 /// One `enum`'s LLVM layout, mirroring the `{ tag, union }` typedef
-/// `codegen_c.rs::write_enum` emits (MK7 §3.1).
+/// the removed C backend's `write_enum` emits (MK7 §3.1).
 #[derive(Clone)]
 struct EnumInfo<'a> {
     /// The outer struct: field 0 is the tag, field 1 the union.
@@ -2013,7 +2012,7 @@ struct Gen<'a> {
     /// resolves its field to the struct index a `getelementptr` needs without
     /// re-walking `program.structs`.
     field_index: HashMap<String, Vec<String>>,
-    /// The `DropPlan`, keyed by the same node identity `codegen_c.rs` reads, so
+    /// The `DropPlan`, keyed by the same node identity the removed C backend reads, so
     /// the two backends free the same set of owned locals at the same points
     /// (MK7 §3.4).
     drops: &'a DropPlan,
@@ -2025,7 +2024,7 @@ struct Gen<'a> {
     /// same text into one translation unit.
     runtime: HashMap<String, RtFn<'a>>,
     /// The generated per-`datac` drop functions (`kelp_drop_<name>`), the mirror
-    /// of the ones `codegen_c.rs` emits beside each typedef.
+    /// of the ones the removed C backend emitted beside each typedef.
     drop_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
     /// The `datac`/`enum` names that own memory, so `types::needs_drop` can
     /// answer for a type without re-walking the declarations.
@@ -2095,15 +2094,15 @@ struct Gen<'a> {
     /// bodies still need a byte copy and a zero fill.
     mem: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
     /// Every container instantiation the program mentions, so the module emits
-    /// exactly the sets it uses (mirrors `codegen_c::Instantiations`).
+    /// exactly the sets it uses (mirrors the removed C backend's `Instantiations`).
     instantiations: Instantiations,
     /// The user types whose value can be deep-copied, the same fixpoint
-    /// `codegen_c.rs` computes for `List.clone`/`List.slice`.
+    /// the removed C backend computes for `List.clone`/`List.slice`.
     clonable: HashSet<String>,
     /// The user types whose value has a derived order, for `List.sort`.
     sortable: HashSet<String>,
     /// The user types whose value is a key, for `Map<K, V>` with a user key
-    /// (A-6): the same fixpoint `codegen_c.rs` computes for `kelp_hash_<T>`
+    /// (A-6): the same fixpoint the removed C backend computes for `kelp_hash_<T>`
     /// and `kelp_eq_<T>`.
     keyable: HashSet<String>,
     /// One module-scope global per `pd` (MK7 §3.1 and §5), keyed by the
@@ -2115,7 +2114,7 @@ struct Gen<'a> {
     /// The generated `kelp_init_pds` and `kelp_drop_pds`, present only for a
     /// program that declares a passdown. The init function is what `main`
     /// calls first; the drop function is what `atexit` registers, the only
-    /// drop point an owned passdown has (`codegen_c.rs::write_pd_globals`).
+    /// drop point an owned passdown has (the removed C backend's `write_pd_globals`).
     init_pds_fn: Option<LlvmFunction<'a>>,
     drop_pds_fn: Option<LlvmFunction<'a>>,
     /// One module-scope global per `static` (kernel stage 7), keyed by the
@@ -2138,7 +2137,7 @@ struct Gen<'a> {
     argv_global: Value<'a>,
     /// The source map, which `cap_plan` reads for the `.kp` call site a
     /// capability denial names. The C backend reads the same map for the same
-    /// text (`codegen_c.rs::cap_plan`), so the two cannot name different
+    /// text (the removed C backend's `cap_plan`), so the two cannot name different
     /// places.
     sources: &'a SourceMap,
     /// The compiled-in allowlist array of each `(module, domain)` grant, keyed
@@ -2195,7 +2194,7 @@ struct Gen<'a> {
 }
 
 /// Every container instantiation a program mentions, the mirror of
-/// `codegen_c::Instantiations` (MK7 S2D). Kept separate from the `datac` table
+/// the removed C backend's `Instantiations` (MK7 S2D). Kept separate from the `datac` table
 /// because a container is lowered as a *function set*, one per element or value
 /// type, exactly as the C backend writes one C function set per instantiation.
 #[derive(Default, Clone)]
@@ -2970,13 +2969,12 @@ impl<'a> Gen<'a> {
     /// Nothing here is a source *location* yet. The locations are given to the
     /// builder as each statement is emitted (`FnGen::locate`), which is what
     /// puts the statement, not only the function, in the line table: the same
-    /// resolution one `#line` per statement buys the C backend
-    /// (`codegen_c.rs::write_line_marker`).
+    /// resolution one `#line` per statement bought the removed C backend
+    /// (its `write_line_marker`).
     ///
-    /// The line and column come from the same `Span`s the C backend feeds to
-    /// `diag::SourceMap::line_directive`, through the one accessor both share
-    /// (`diag::SourceMap::path_line_col`), so the two backends cannot name
-    /// different lines for one statement.
+    /// The line and column come from the same `Span`s the statements carry,
+    /// through `diag::SourceMap::path_line_col`, the one accessor the debug
+    /// information reads.
     ///
     /// A program whose sources were never registered gets no compile unit and
     /// no subprogram at all, and every instruction then carries no location.
@@ -3107,7 +3105,7 @@ impl<'a> Gen<'a> {
     /// `scope`, so every instruction emitted until the next call to this
     /// carries it (MK7 S4, §4.4).
     ///
-    /// The LLVM half of `codegen_c.rs::write_line_marker`: `codegen_llvm.rs`
+    /// The LLVM half of the removed C backend's `write_line_marker`: `codegen_llvm.rs`
     /// calls it from the same places, with the same spans, so the two backends
     /// put a statement at the same source line.
     ///
@@ -3133,7 +3131,7 @@ impl<'a> Gen<'a> {
     }
 
     /// Declare one module-scope global per `pd`, plus the two generated
-    /// functions `codegen_c.rs::write_pd_globals` emits beside them (MK7 §3.1,
+    /// functions the removed C backend's `write_pd_globals` emits beside them (MK7 §3.1,
     /// §5).
     ///
     /// Each global has internal linkage and a zero initializer, which is C's
@@ -3263,7 +3261,7 @@ impl<'a> Gen<'a> {
     }
 
     /// The gated-call plan for one call site, or `None` when the call is not a
-    /// checked one. The mirror of `codegen_c.rs::Gen::cap_plan`, field for
+    /// checked one. The mirror of `the removed C backend's `Gen`::cap_plan`, field for
     /// field on purpose: which calls are checked, against which domain, with
     /// which arguments and which pattern count, is the security-relevant
     /// decision, and two backends answering it differently would be a hole in
@@ -3301,7 +3299,7 @@ impl<'a> Gen<'a> {
         // (`read`, not `fs.read`), the qualified key being what `gated` holds.
         let bare = callee.rsplit('.').next().unwrap_or(callee);
         let mut checks = crate::stdlib::checked_args(domain, bare, &arg_is_str);
-        // Mirror of `codegen_c.rs::Gen::cap_plan`'s elision, field for field:
+        // Mirror of `the removed C backend's `Gen`::cap_plan`'s elision, field for field:
         // a path domain's whole-resource pattern (`/**`) matches any string
         // unconditionally in `glob_match` (`std/rt.kp`, the `**` branch's
         // `if rest == plen { return true }` fast path), so when the calling
@@ -3316,7 +3314,7 @@ impl<'a> Gen<'a> {
         {
             checks.retain(|c| !matches!(c, crate::stdlib::CapCheck::Path(_)));
         }
-        // Mirror of the name-domain elision in `codegen_c.rs::Gen::cap_plan`,
+        // Mirror of the name-domain elision in `the removed C backend's `Gen`::cap_plan`,
         // field for field: a domain-declaring module's own forwarding call (the
         // thin wrapper over its `extern fun`) needs no `CapCheck::Name` when its
         // own list for the domain is exactly the whole-resource `*`, because an
@@ -3583,7 +3581,7 @@ impl<'a> Gen<'a> {
         decls.sort_by_key(|(order, _)| *order);
         // An array field is held *by value*, so its body has to be set before the
         // `datac` or payload that names it. `emit_array_body` recurses into the
-        // arrays nested inside it, innermost first, exactly as `codegen_c.rs`
+        // arrays nested inside it, innermost first, exactly as the removed C backend
         // emits them just before the declaration that needs them.
         let mut emitted_arrays: HashSet<Ty> = HashSet::new();
         for (_, decl) in decls {
@@ -3705,7 +3703,7 @@ impl<'a> Gen<'a> {
     }
 
     /// Declare one drop function per `datac` or `enum` that owns memory
-    /// (`types::needs_drop`), the mirror of the routine `codegen_c.rs` writes
+    /// (`types::needs_drop`), the mirror of the routine the removed C backend wrote
     /// beside each typedef. The plan's targets call them by name.
     fn declare_drop_fns(&mut self) {
         let owned = owned_types(&self.program.structs, &self.program.enums, &self.program.drop_types);
@@ -3867,7 +3865,7 @@ impl<'a> Gen<'a> {
 
     /// Free the value at `ptr`: the runtime's builtin free, or the generated
     /// per-`datac` drop. A type that owns nothing has no call, which is the same
-    /// silence `codegen_c.rs` keeps for a dropless field.
+    /// silence the removed C backend keeps for a dropless field.
     fn call_drop(&self, ptr: Value<'a>, ty: &Ty) -> Result<(), String> {
         // A managed build calls no drop for memory alone: the collector reclaims
         // it, so the drop of a memory-only value is no call at all.
@@ -3914,7 +3912,7 @@ impl<'a> Gen<'a> {
             // A `Thread<T>` handle owns the worker record, and its drop is the
             // runtime's: detach the worker and free nothing (MK9-S3-M1 stage
             // C1). It takes the address of the slot holding the handle, exactly
-            // as `codegen_c.rs::drop_call` passes `&h`.
+            // as the removed C backend's `drop_call` passes `&h`.
             Ty::Thread(_) => {
                 let symbol = drop_fn_name(ty);
                 let rt = self
@@ -4090,7 +4088,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// passdown's own global.
     ///
     /// `fn_name` is empty and the module is the declaring one, exactly as
-    /// `codegen_c.rs::write_pd_globals` builds its `Gen`: the drop plan has no
+    /// the removed C backend's `write_pd_globals` builds its `Gen`: the drop plan has no
     /// entry keyed to a `pd` (`borrowck.rs` keys by function, and an initializer
     /// is not one), and a gated call inside the initializer is checked against
     /// the module that declared it, which is the only carrier of that module.
@@ -4131,7 +4129,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// Aim the builder at the `.kp` line `span` names, so every instruction
     /// emitted until the next call to this carries it (MK7 S4, §4.4).
     ///
-    /// This is the LLVM half of `codegen_c.rs::write_line_marker`, called from
+    /// This is the LLVM half of the removed C backend's `write_line_marker`, called from
     /// the same places with the same span, so the two backends put a statement
     /// at the same source line. A span the source map cannot resolve, or a
     /// function with no subprogram, clears the location instead: an instruction
@@ -4200,7 +4198,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // `main` runs the passdown initializers before its first statement,
-        // exactly where `codegen_c.rs::write_function` inserts
+        // exactly where the removed C backend's `write_function` inserts
         // `kelp_init_pds();`, and saves its own `argc`/`argv` into the
         // runtime's globals, where `process.args()` reads them. `main`
         // receives no hidden parameter, so it reads the generated globals
@@ -4305,11 +4303,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let drops = self.drops_at_block_end(block);
         if let Some(tail) = &block.tail {
             // The tail is an expression in statement position here, and the C
-            // backend marks it as one (`codegen_c.rs::write_block_body`).
+            // backend marks it as one (the removed C backend's `write_block_body`).
             self.locate(tail.span);
             // A body whose tail is a `panic` diverges: `infer.rs` accepts it
             // against any declared return type, so it is a statement rather
-            // than a returned value (`codegen_c.rs::write_function_body`
+            // than a returned value (the removed C backend's `write_function_body`
             // draws the same line). The call ends the block itself, so no
             // `ret` and no drop follows it.
             if is_diverging_tail(tail) {
@@ -4389,7 +4387,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // One location per statement, from the span the statement itself
         // carries: a `Let` is the initializer's span (its first token *is* the
         // `val`), a `Return` carries its own, a `While` its condition's. The
-        // same four spans `codegen_c.rs::write_stmt` writes its `#line` from.
+        // same four spans the removed C backend's `write_stmt` wrote its `#line` from.
         match stmt {
             Stmt::Let { init, .. } => self.locate(init.span),
             Stmt::Return { span, .. } => self.locate(*span),
@@ -4617,7 +4615,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// Evaluate `e`, store it in a temporary, then run `drops`. A returned or
     /// block-tailed value may read through a local being freed, so it has to be
-    /// read first (`codegen_c.rs::write_temp_then_drops`). An expression that
+    /// read first (the removed C backend's `write_temp_then_drops`). An expression that
     /// diverged leaves nothing to store and no drop to run.
     fn value_of_then_drops(
         &mut self,
@@ -4827,7 +4825,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::Deref { expr: sub } => {
                 // `*p` on a `&str` is the view itself: a `str` is already the
                 // pointer, so there is no second indirection to load
-                // (`codegen_c.rs::expr_value` returns `expr_value(sub)` for the
+                // (the removed C backend's `expr_value` returns `expr_value(sub)` for the
                 // same node). This is the shape a `pd` of type `str` reads
                 // through, and a `&str` parameter read too.
                 if e.ty == Ty::Str {
@@ -5015,7 +5013,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // read out of that copy, the temporary is dropped, and the value is
         // handed on, so the temporary and every buffer its other fields own die
         // at the end of the expression that read through it. This is
-        // `codegen_c.rs::staged_field_value`, and it is the reason a two-owned-
+        // the removed C backend's `staged_field_value`, and it is the reason a two-owned-
         // field `datac` is the interesting case: the drop is at the temporary,
         // not at the field.
         //
@@ -5258,7 +5256,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// A call through a function value (S2E): a plain function pointer is the
     /// callee, and a closure is the fat pointer, so the call names its code
     /// pointer and passes the environment as the hidden first argument
-    /// (`(c.fn)(c.env, ...)`, the shape `codegen_c.rs` writes).
+    /// (`(c.fn)(c.env, ...)`, the shape the removed C backend wrote).
     fn emit_indirect_call(
         &mut self,
         callee: &Expr,
@@ -5805,7 +5803,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// place, or the pointer a `datac` or heap borrow names.
     ///
     /// An rvalue base (`mk().field`, a literal's field) has no address, so it is
-    /// stored into a temporary slot first, exactly as `codegen_c.rs` hoists one.
+    /// stored into a temporary slot first, exactly as the removed C backend hoists one.
     /// The temporary is handed back to the caller, which is what frees it: this
     /// slice's `datac`s can own, so a staged temporary's drop is the caller's
     /// business, not silently dropped here.
@@ -5915,7 +5913,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// One call argument. An explicit borrow of an owned *temporary* is staged
     /// into a slot of its own and handed back in `held` for the caller to free
-    /// after the call, which is what `codegen_c.rs::stage_argument` does; every
+    /// after the call, which is what the removed C backend's `stage_argument` does; every
     /// other argument is its own value.
     fn arg_value(
         &mut self,
@@ -5935,7 +5933,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// temporary is copied into a slot of its own, the field's address is taken
     /// inside that copy, and the slot is handed back in `held` for the caller to
     /// free after its operation (the call or the `printf`). This is
-    /// `codegen_c.rs::stage_argument`'s borrow arm and
+    /// the removed C backend's `stage_argument`'s borrow arm and
     /// `stage_borrowed_field`, which stage the *whole* temporary and not the
     /// field, so a `datac` that owns two buffers frees both.
     ///
@@ -6042,7 +6040,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let lty = self.lty(ty)?;
         // Cut the `i128` literal to the expression's own type. `LLVMConstInt`
         // takes the low 64 bits and truncates to the type's width, which is the
-        // same narrowing `codegen_c.rs` spells as a C cast; the sign flag is
+        // same narrowing the removed C backend spells as a C cast; the sign flag is
         // irrelevant for a value already in two's complement.
         Ok(self.g.ctx.const_int(lty, value as u64, false))
     }
@@ -6067,7 +6065,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// Load a binding. A load at a move site also clears the source slot: the
     /// value is copied out and the binding is zeroed, so a drop the binding
     /// still owes on a path that did not move it frees nothing rather than a
-    /// second copy (MK7 §3.4; `codegen_c.rs` writes `({0})` for the same
+    /// second copy (MK7 §3.4; the removed C backend wrote `({0})` for the same
     /// reason). A binding moved on every path gets no `at_move` entry, so this
     /// leaves its slot alone and nothing drops it.
     fn load_ident(&mut self, e: &Expr, name: &str) -> Result<Value<'a>, String> {
@@ -6700,7 +6698,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// resource, the module's compiled-in pattern array and its count, the
     /// calling module and the `.kp` call site.
     ///
-    /// This is `codegen_c.rs::cap_checked_call`'s statement expression without
+    /// This is the removed C backend's `cap_checked_call`'s statement expression without
     /// the statement: the same symbols, the same argument order, and the same
     /// strings, because the deny path's text is pinned by the tests and the two
     /// backends must produce it byte for byte.
@@ -6987,7 +6985,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
             // The fallible twin (kernel stage 13): the allocator's own null is
             // the result rather than a panic. The byte count is checked for
-            // wrap first, on the same rule `codegen_c.rs::ptr_call` writes as
+            // wrap first, on the same rule the removed C backend's `ptr_call` writes as
             // C, so a huge count never reaches the allocator as a small block;
             // both outcomes land in one slot so the expression has one value
             // and the allocator is only called on the non-wrapping path.
@@ -7172,7 +7170,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// A byte-order read or write on a `Bytes` (kernel stage 3, MK9-S8).
     ///
     /// The bounds check is the same wrapped-add test
-    /// `codegen_c.rs::bytes_endian_call` writes, and the access is an `align 1`
+    /// the removed C backend's `bytes_endian_call` writes, and the access is an `align 1`
     /// load or store, so the offset needs no alignment. A field whose order is
     /// not the target's swaps on the way in or out; one whose order already
     /// matches is a plain load or store.
@@ -7369,7 +7367,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// worker with the generated body for this signature. The handle's element
     /// is the entry's *return* type, which is the value the worker hands its
     /// joiner, so `sizeof` that type is the result slot. The C twin is
-    /// `codegen_c.rs::thread_spawn_value`, runtime call for runtime call.
+    /// the removed C backend's `thread_spawn_value`, runtime call for runtime call.
     fn emit_thread_spawn(&mut self, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
         let Ty::Thread(elem) = ret else {
             unreachable!("thread.spawn hands back a Thread<T> handle")
@@ -7467,7 +7465,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// A `Mutex<T>` operation (B-5, `std/sync`): `new` builds the runtime record,
     /// `lock` runs the generated block body while the lock is held, and
     /// `into_inner` moves the value out and frees the record. The C twin is
-    /// `codegen_c.rs::mutex_call`, runtime call for runtime call.
+    /// the removed C backend's `mutex_call`, runtime call for runtime call.
     fn emit_mutex_call(&mut self, op: &str, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
         let ptr = self.g.pty();
         match op {
@@ -7623,7 +7621,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// `RwLock<T>` operations (`std/sync`). The C twin is
-    /// `codegen_c.rs::rwlock_call`, runtime call for runtime call.
+    /// the removed C backend's `rwlock_call`, runtime call for runtime call.
     fn emit_rwlock_call(
         &mut self,
         op: &str,
@@ -7723,7 +7721,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// `Condvar` operations (`std/sync`): the constructor and the two
     /// notifies, one runtime call each. The C twin is
-    /// `codegen_c.rs::condvar_call`.
+    /// the removed C backend's `condvar_call`.
     fn emit_condvar_call(
         &mut self,
         op: &str,
@@ -7761,7 +7759,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// `Mutex#wait_while` / `wait_while_timeout` (`std/sync`). The C twin is
-    /// `codegen_c.rs::mutex_wait_value`: the runtime calls the predicate body
+    /// the removed C backend's `mutex_wait_value`: the runtime calls the predicate body
     /// while the lock is held, releases it around each sleep, then calls the
     /// block body; the timed form returns `Option`.
     fn emit_mutex_wait(
@@ -7856,7 +7854,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// build `Result<T, ThreadErr>` from the result slot or the message the
     /// worker panicked with. The result slot is read only on the success path,
     /// because a worker that panicked never wrote it; the handle is freed once
-    /// the value is out of it. The C twin is `codegen_c.rs::thread_join_value`.
+    /// the value is out of it. The C twin is the removed C backend's `thread_join_value`.
     fn emit_thread_join(&mut self, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
         let handle_arg = args
             .first()
@@ -8113,7 +8111,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // `n.to_u8()` and friends: the key is `"<src>#to_<dst>"`, the same shape
-        // `codegen_c.rs::call_value` matches.
+        // the removed C backend's `call_value` matches.
         if let Some((src, dst)) = callee.split_once("#to_") {
             if let (Some(from), Some(to)) = (Ty::from_name(src), Ty::from_name(dst)) {
                 if from.is_integer() && (to.is_integer() || to.is_float()) {
@@ -8137,7 +8135,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // Byte-order conversion (kernel stage 3, MK9-S8): `x.swap_bytes()`,
         // `x.to_be()`, `x.to_le()` and the static `u32.from_be(x)`/
         // `u32.from_le(x)`. One `llvm.bswap.*` intrinsic, or nothing when the
-        // direction is the target's own, exactly as `codegen_c.rs::endian_call`
+        // direction is the target's own, exactly as the removed C backend's `endian_call`
         // emits one `__builtin_bswap*` or the identity.
         if let Some((src, op)) = callee.split_once('#') {
             if let Some(ty) = Ty::from_name(src) {
@@ -8164,14 +8162,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // A `Ptr<T>` operation (MK9-S2 stage 1): one instruction, or one libc
-        // allocation, per operation. `codegen_c.rs::ptr_call` writes the same
+        // allocation, per operation. the removed C backend's `ptr_call` writes the same
         // operations as C.
         if let Some(op) = callee.strip_prefix("Ptr#") {
             return self.emit_ptr_call(op, args, ret);
         }
 
         // `thread.fence` (MK9-S3-M1 stage A2): one `fence seq_cst` instruction,
-        // the same shape the atomic operations above take. `codegen_c.rs`
+        // the same shape the atomic operations above take. the removed C backend
         // spells the same operation as its one-line C builtin at the call site,
         // and this side emits the LLVM instruction, because a fence is a
         // memory-model operation each backend states in its own terms. The
@@ -8185,7 +8183,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
         // `thread.spawn` / `thread.join` (MK9-S3-M1 stage C1): the runtime owns
         // the thread and the panic policy, and each call site is the handle
-        // build or the result build around it. `codegen_c.rs::call_value`
+        // build or the result build around it. the removed C backend's `call_value`
         // dispatches the same two keys to the same shape in C.
         if callee == crate::stdlib::SPAWN_FN {
             return self.emit_thread_spawn(args, ret);
@@ -8195,7 +8193,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // A `Mutex<T>` operation (B-5, `std/sync`): three runtime calls, the
-        // same three `codegen_c.rs::mutex_call` writes in C.
+        // same three the removed C backend's `mutex_call` writes in C.
         if let Some(op) = callee.strip_prefix("Mutex#") {
             if op == "wait_while" || op == "wait_while_timeout" {
                 return self.emit_mutex_wait(op, args, ret);
@@ -8244,7 +8242,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             let name = if yields_value { "call" } else { "" };
             let v = self.g.builder.build_call(info.func, info.ty, &values, name);
             // An owned temporary staged for the argument is freed *after* the
-            // call, as `codegen_c.rs::hoisted_call` frees it.
+            // call, as the removed C backend's `hoisted_call` frees it.
             for (slot, ty) in held {
                 self.g.call_drop(slot, &ty)?;
             }
@@ -8626,7 +8624,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The `print` path for one value: `printf` with the specifier and promotion
-    /// `codegen_c.rs::printf_piece_with` uses, so stdout is byte-identical. An
+    /// the removed C backend's `printf_piece_with` uses, so stdout is byte-identical. An
     /// owned temporary is freed right after the `printf`, exactly where the C
     /// backend frees it.
     fn emit_template_print(&mut self, newline: bool, arg: &Expr) -> Result<(), String> {
@@ -8651,7 +8649,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// A template: one `printf` whose format string is the literal chunks (with
     /// `%` doubled) plus each interpolated value's specifier. The C backend
-    /// builds the same format string in `codegen_c.rs`'s `Template` arm; an
+    /// builds the same format string in the removed C backend's `Template` arm; an
     /// interpolated owned temporary is freed after the `printf`, as `print`'s is.
     fn emit_template(
         &mut self,
@@ -8716,7 +8714,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 // A borrow of a field of an owned temporary (`panic(mk().msg)`)
                 // stages the temporary the way every other borrow argument
                 // does. Nothing is freed afterwards: a panic does not return, so
-                // the drop would be unreachable (`codegen_c.rs` leaves it out for
+                // the drop would be unreachable (the removed C backend leaves it out for
                 // the same reason).
                 let ptr = self.borrow_place(arg, &mut Vec::new())?;
                 let lty = self.lty(inner)?;
@@ -8783,7 +8781,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The format specifier and the already-promoted variadic arguments for one
-    /// value, mirroring `codegen_c.rs::printf_piece_with` exactly. A heap buffer
+    /// value, mirroring the removed C backend's `printf_piece_with` exactly. A heap buffer
     /// or a view contributes `%.*s` with an `int` length and a pointer, so the
     /// specifier comes back with two arguments; the third slot carries a
     /// temporary the caller frees after the `printf`.
@@ -8885,7 +8883,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 // The containers (MK7 S2D): `List<T>`, `Map<K, V>`, `Box<T>` and `[T; N]`.
 //
 // MK7 §3.2 names the exception this section exists for: the fixed runtime stays
-// C, but the monomorphized container code cannot, because `codegen_c.rs`
+// C, but the monomorphized container code cannot, because the removed C backend
 // generates one function set per element or value type. So this backend
 // generates the same sets into the module, one per instantiation, with the same
 // function names and the same bodies the C backend writes. A container's header
@@ -8906,7 +8904,7 @@ fn is_x86_triple(triple: &str) -> bool {
 }
 
 /// The `(name, each field's type)` pairs of every declaration, for the derived
-/// clone/order fixpoints. The mirror of `codegen_c::type_decls`.
+/// clone/order fixpoints. The mirror of the removed C backend's `type_decls`.
 fn type_decls(
     structs: &[crate::types::StructDef],
     enums: &[crate::types::EnumDef],
@@ -8932,7 +8930,7 @@ fn type_decls(
 }
 
 /// Every container instantiation a program mentions, the mirror of
-/// `codegen_c::collect_containers`. Over-collecting is harmless (an unused set
+/// the removed C backend's `collect_containers`. Over-collecting is harmless (an unused set
 /// is unused code), under-collecting is not, so every expression's own type and
 /// every declaration's fields are noted, and a `Map` also notes the `List<K>`
 /// and `List<V>` its `keys`/`values` return.
@@ -9198,7 +9196,7 @@ fn collect_instantiations(program: &Program) -> Instantiations {
 /// the ones `<stdlib.h>`/`<string.h>` declare, on the ABI this machine uses:
 /// `size_t` is `i64` and `int` is `i32`.
 /// The argument indices one capability check reads, in the order the check
-/// reads them. `codegen_c.rs::checked_arg_flags` enumerates the same set; this
+/// reads them. the removed C backend's `checked_arg_flags` enumerates the same set; this
 /// one keeps the order, which is what the two-argument `HostPort` check needs.
 fn cap_check_indices(check: &crate::stdlib::CapCheck) -> Vec<usize> {
     use crate::stdlib::CapCheck;
@@ -9209,7 +9207,7 @@ fn cap_check_indices(check: &crate::stdlib::CapCheck) -> Vec<usize> {
 }
 
 /// The symbol of the compiled-in allowlist array for one `(module, domain)`
-/// grant, spelled exactly as `codegen_c.rs::CapTable::symbol` spells it: the
+/// grant, spelled exactly as `the removed C backend's `CapTable`::symbol` spells it: the
 /// array is C data in the per-program object, and the IR declaration here has to
 /// name the same symbol the object defines.
 fn cap_array_symbol(module: &str, domain: &str) -> String {
@@ -9284,7 +9282,7 @@ fn declare_libc<'a>(
     decl("memset", ptr, &[ptr, i32t, i64t]);
     decl("strlen", i64t, &[ptr]);
     // The one registration an owned `pd` has: its drop point is process exit
-    // (`codegen_c.rs::write_pd_globals`), so the generated `kelp_init_pds`
+    // (the removed C backend's `write_pd_globals`), so the generated `kelp_init_pds`
     // hands `kelp_drop_pds` to `atexit`. Declared unconditionally like every
     // other libc symbol here; an unused declaration costs nothing.
     decl("atexit", i32t, &[ptr]);
@@ -10186,7 +10184,7 @@ impl<'a> Gen<'a> {
 // ===========================================================================
 // The closures (MK7 S2E): function values and the fat pointer a capturing
 // `fun` literal becomes. The C backend's shape is mirrored member for member
-// (see `codegen_c.rs::write_closure_typedef` and its neighbours): the value is
+// (see the removed C backend's `write_closure_typedef` and its neighbours): the value is
 // `{ fn, env, drop }`, the code pointer takes the environment first, the
 // environment and the widening's one-field wrapper are heap, and the only
 // function in a signature's own set is the drop. Per-instantiation code is
@@ -10884,7 +10882,7 @@ fn closure_mangle_of(ty: &Ty) -> String {
 }
 
 /// The generated names of the widening's two halves and of the shim, mirroring
-/// `codegen_c.rs::coerce_thunk_name`/`coerce_drop_name`/`coerce_shim_name`.
+/// the removed C backend's `coerce_thunk_name`/`coerce_drop_name`/`coerce_shim_name`.
 fn coerce_thunk_symbol(ty: &Ty) -> String {
     format!("kelp_coerce__{}", closure_mangle_of(ty))
 }
@@ -10898,7 +10896,7 @@ fn shim_symbol(key: &str, ty: &Ty) -> String {
 }
 
 /// The symbol of one spawn signature's worker body (MK9-S3-M1 stage C1), the
-/// same name `codegen_c.rs::thread_body_name` gives the C body: the runtime's
+/// same name the removed C backend's `thread_body_name` gives the C body: the runtime's
 /// trampoline is the one caller of either.
 fn thread_body_symbol(sig: &Ty) -> String {
     format!("kelp_thread_body__{}", closure_mangle_of(sig))
@@ -10926,7 +10924,7 @@ fn closure_is_unit(sig: &Ty) -> bool {
 }
 
 /// How deeply containers nest, used to emit a container after the containers it
-/// contains. The mirror of `codegen_c::container_depth`.
+/// contains. The mirror of the removed C backend's `container_depth`.
 fn container_depth(ty: &Ty) -> usize {
     match ty {
         Ty::List(elem) | Ty::Box(elem) => 1 + container_depth(elem),
@@ -11021,7 +11019,7 @@ impl<'a> Gen<'a> {
 
     /// Deep-copy one element value (a `String`/`Bytes` clone, a `datac`'s
     /// generated clone, or a plain copy) into caller storage that owns nothing
-    /// yet. The mirror of `codegen_c::write_field_clone` for a container slot.
+    /// yet. The mirror of the removed C backend's `write_field_clone` for a container slot.
     fn clone_into(&self, src: Value<'a>, dst: Value<'a>, elem: &Ty) -> Result<(), String> {
         match elem {
             Ty::String => self.sret_call("kelp_String__clone", dst, &[src]),
@@ -11679,7 +11677,7 @@ impl<'a> Gen<'a> {
     /// separate compilation unit from the code generated here, so LLVM's
     /// optimizer can never see into `kelp_map_mix`'s body and inline it, no
     /// matter how small it is. `cc` already inlines the same three
-    /// instructions for the C oracle backend by splicing `kelp_rt.c`'s text
+    /// instructions by splicing `kelp_rt.c`'s text
     /// into the same file, so this reaches parity by building the same
     /// instructions here instead. Matches the C reference operation for
     /// operation, including the unsigned (logical) right shift both times,
@@ -11704,7 +11702,7 @@ impl<'a> Gen<'a> {
     /// `kelp_map_hash`'s FNV-1a loop over `data[0..len]`, hand-built as
     /// inline IR in `cur_fn` for the same reason `emit_map_mix` is: a call
     /// into `kelp_rt.o` is opaque to LLVM's optimizer, a splice into the
-    /// same file (what the C oracle backend gets from `cc`) is not. Built in
+    /// same file (what the runtime's C text gets from `cc`) is not. Built in
     /// this file's usual byte-scanning-loop shape (an `alloca`-based index,
     /// `loop_header`, `gep`/`ld` per byte, `build_cond_br`), the same shape
     /// the capability name fast paths and `rehash`'s own walk above use.
@@ -11767,7 +11765,7 @@ impl<'a> Gen<'a> {
 
     /// One field's own hash before it is folded in: a `String` field's byte
     /// hash, a scalar's mix, and a nested keyable `datac`/`enum`'s own hash.
-    /// The mirror of `codegen_c::write_field_hash`. `cur_fn` is the
+    /// The mirror of the removed C backend's `write_field_hash`. `cur_fn` is the
     /// enclosing hash function being built, threaded through only for the
     /// `String` case's `emit_map_hash` loop, which needs a function to
     /// append its blocks to.
@@ -11803,7 +11801,7 @@ impl<'a> Gen<'a> {
     /// One field's equality in a derived key equality. A `String` field reuses
     /// the runtime's stored-key comparison, so the byte-length-aware rule is
     /// the one the `String` key path already uses. The mirror of
-    /// `codegen_c::write_field_eq`.
+    /// the removed C backend's `write_field_eq`.
     fn emit_field_eq(
         &self,
         ty: &Ty,
@@ -12009,7 +12007,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// One `List<T>` function set, the mirror of `codegen_c::write_list` and
+    /// One `List<T>` function set, the mirror of the removed C backend's `write_list` and
     /// `write_list_s1`. The list is `{ data, len, cap }`, the element's size and
     /// drop decide the bodies, and every bounds check panics with the C
     /// backend's own text.
@@ -14221,7 +14219,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// One `Box<T>` function set, the mirror of `codegen_c::write_box`. The box
+    /// One `Box<T>` function set, the mirror of the removed C backend's `write_box`. The box
     /// holds one pointer or `NULL`; `take` moves the value out, which is what
     /// makes a recursive `datac` expressible without `Option`.
     fn emit_box_bodies(&self, elem: &Ty) -> Result<(), String> {
@@ -14370,7 +14368,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// One `[T; N]` function set, the mirror of `codegen_c::write_array`. The
+    /// One `[T; N]` function set, the mirror of the removed C backend's `write_array`. The
     /// array is `{ T v[N] }` held inline, so nothing here allocates; `len()` is
     /// the type's own constant and `get`/`set` are the same bounds check
     /// `List` uses.
@@ -14759,7 +14757,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// One `Map<K, V>` function set, the mirror of `codegen_c::write_map`.
+    /// One `Map<K, V>` function set, the mirror of the removed C backend's `write_map`.
     /// Entries sit in insertion order in a dense array and a separate
     /// open-addressed index of `entry index + 1` in a `u32` (`0` empty,
     /// `UINT32_MAX` tombstone) does the lookup.
@@ -15479,7 +15477,7 @@ const E_LIVE: u32 = 2;
 // this block verbatim when WP0 lands `kelp-rt/src/abi.rs`; kelpc then reads the
 // table through its path dependency on that module instead of this copy.
 //
-// `runtime/kelp_rt.c` still spells the same structs for the C oracle until WP7.
+// `runtime/kelp_rt.c` still spells the same structs for its C text until WP7.
 // `layout_tests` pins that copy against this table.
 
 /// The IR width of one field: `Ptr` is an opaque pointer, `I64` a 64-bit integer.
@@ -15613,7 +15611,7 @@ fn builtin_struct_types<'a>(ctx: &'a Context) -> HashMap<String, Type<'a>> {
 /// `clock_gettime`, a raw `read` on a descriptor) is allowed to live, and their
 /// text is what the C backend compiles into each generated program. Every byte
 /// of that text here comes from the same emitters the C backend uses:
-/// `codegen_c.rs::write_extern` writes the signature and the body, and
+/// the removed C backend's `write_extern` writes the signature and the body, and
 /// `runtime_prototypes` declares the Kelp half of the runtime
 /// (`std/rt`) that one body calls. A second copy of either would be the drift
 /// this slice has to avoid.
@@ -15656,7 +15654,7 @@ fn builtin_struct_types<'a>(ctx: &'a Context) -> HashMap<String, Type<'a>> {
 /// declares them with (`declare_cap_fns`).
 ///
 /// The allowlist arrays are emitted here too, as C data, with the C backend's
-/// own escaper (`codegen_c.rs::c_string_literal`). They are not `static`: the IR
+/// own escaper (the removed C backend's `c_string_literal`). They are not `static`: the IR
 /// names them by symbol (`cap_array_symbol`), and a static array would have no
 /// symbol to name.
 fn program_c_source(program: &Program) -> Option<String> {
@@ -15672,7 +15670,7 @@ fn program_c_source(program: &Program) -> Option<String> {
         "/* Generated by the llvm backend: the compiler-supplied `extern fun`\n   \
          bodies this program reaches (MK7 S3, the record in plan/done.md).\n   \
          The bodies are C text in `kelpc/src/externs.rs`; the signatures come\n   \
-         from `codegen_c.rs::write_extern`, so this file is the C backend's\n   \
+         from the removed C backend's `write_extern`, so this file is the C backend's\n   \
          copy of the same functions. */\n",
     );
     out.push_str(crate::cdecl::C_HEADERS);
@@ -15762,7 +15760,7 @@ fn program_c_source(program: &Program) -> Option<String> {
 
     if cap_glue {
         // Each module's granted patterns, as constant data, exactly as
-        // `codegen_c.rs::generate` writes them. An empty pattern list is `{
+        // the removed C backend's `generate` writes them. An empty pattern list is `{
         // NULL }` rather than omitted: a module can hold a domain with no
         // patterns, and a call that names a resource still has to have an array
         // to deny against.
@@ -15777,7 +15775,7 @@ fn program_c_source(program: &Program) -> Option<String> {
                     .collect::<String>()
             ));
         }
-        out.push_str("\n/* The capability check's C half, the text `codegen_c.rs`\n   \
+        out.push_str("\n/* The capability check's C half, the text the removed C backend\n   \
             splices into a generated program. `#define static` gives its\n   \
             functions the external linkage the IR calls them with; the C\n   \
             backend's own copy stays static, where the call sites are in the\n   \
@@ -16318,7 +16316,7 @@ fn is_diverging_tail(tail: &Expr) -> bool {
 }
 
 /// Whether an expression has stable storage, mirroring the subset of
-/// `codegen_c.rs::is_place` this slice lowers.
+/// the removed C backend's `is_place` this slice lowers.
 /// The largest bound a `while` condition may state literally and still have
 /// its loop fully unrolled by LLVM (`llvm_ffi::Context::mark_loop_unroll_full`).
 ///
@@ -16364,7 +16362,7 @@ fn is_place_expr(e: &Expr) -> bool {
 /// storage already: the C backend's `temporary_root`, minus the rows this slice
 /// does not lower. `None` for a place, `Some(root)` for a chain rooted at an
 /// rvalue. An `enum` payload field is part of a chain exactly as a `datac` field
-/// is (`codegen_c.rs` walks the two the same way).
+/// is (the removed C backend walks the two the same way).
 fn temporary_root(expr: &Expr) -> Option<&Expr> {
     let mut cur = expr;
     loop {
@@ -16402,7 +16400,7 @@ fn round_up(size: u64, align: u32) -> u64 {
 }
 
 /// The mangled symbol of the monomorphized function a builtin container method
-/// resolves to, mirroring `codegen_c.rs::call_value`'s name construction: the
+/// resolves to, mirroring the removed C backend's `call_value`'s name construction: the
 /// element type comes from the receiver argument (or, for the associated
 /// `List.of(v)`/`Box.of(v)`, from `v` itself, and for `empty`/`Map.new()` from
 /// the call's own result type). `get` has two spellings, by value for a `Copy`
@@ -16537,7 +16535,7 @@ fn read_only_expr(e: &Expr) -> bool {
     }
 }
 
-/// A symbol name for a LLVM function, mirroring `codegen_c.rs::c_name` without
+/// A symbol name for a LLVM function, mirroring the removed C backend's `c_name` without
 /// reaching into that (private) helper: `main` keeps its name because the C
 /// runtime requires it, everything else gets the `kelp_` prefix and the same
 /// sanitizing mangler, so the name is a valid symbol and cannot collide with a
@@ -16743,7 +16741,6 @@ mod layout_tests {
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
-            handles: Vec::new(),
             const_data: Vec::new(),
             statics: Vec::new(),
             dyn_vtables: Vec::new(),
@@ -16774,7 +16771,7 @@ mod layout_tests {
         let source = program_c_source(&program).expect("one extern fun is one body");
 
         // The layout text: the prelude's typedefs come from `LAYOUTS`, and the
-        // oracle's copy in `runtime/kelp_rt.c` must still define the same shapes.
+        // copy in `runtime/kelp_rt.c` must still define the same shapes.
         let runtime = strip_c_comments(include_str!("../runtime/kelp_rt.c"));
         let squeeze = |text: &str| text.split_whitespace().collect::<String>();
         let runtime = squeeze(&runtime);
@@ -16957,7 +16954,7 @@ mod layout_tests {
     }
 
     /// The container headers the module builds must match the C typedefs in
-    /// `codegen_c.rs::write_container_typedef` field for field, because a
+    /// the removed C backend's `write_container_typedef` field for field, because a
     /// container's own runtime helpers and the `kelp_rt.c` entry points read
     /// the same fields by the same offsets. The verifier cannot see the object
     /// and a Kelp-only fixture cannot see a reordered field that both sides of
@@ -17199,7 +17196,6 @@ mod layout_tests {
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
-            handles: Vec::new(),
             const_data: Vec::new(),
             statics: Vec::new(),
             dyn_vtables: Vec::new(),
@@ -17348,7 +17344,6 @@ mod layout_tests {
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
-            handles: Vec::new(),
             const_data: Vec::new(),
             statics: Vec::new(),
             dyn_vtables: Vec::new(),

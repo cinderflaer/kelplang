@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/excl_refused_val.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot write to captured 's': it is not declared 'var' in the enclosing function; declare it 'var' so a scoped block can write it
-  --> <root>/kelpc/tests/fixtures/excl_refused_val.kp:11:9
-run-status: not run

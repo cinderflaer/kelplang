@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/const_generics_trait_refused.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a trait cannot take a const parameter ('const C'): a const parameter is a value on a type or a function (A-20), and a trait is implemented for a type
-  --> <root>/kelpc/tests/fixtures/const_generics_trait_refused.kp:3:20
-run-status: not run

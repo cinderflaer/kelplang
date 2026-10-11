@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/tls_handle_not_forged.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: function 'forge' declared to return 'std.tls.TlsHandle' but body evaluates to 'i32'
-  --> <root>/kelpc/tests/fixtures/tls_handle_not_forged.kp:7:1
-run-status: not run

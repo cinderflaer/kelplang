@@ -1,8 +1,0 @@
-name = "sanitizeroob"
-
-# A deliberate out-of-bounds write and read through a raw `Ptr<u8>` into a
-# 4-byte array, and a signed shift past the width: what the sanitizers exist to
-# see. It lives under hazards/ because a normal build of it has undefined
-# behavior; `sanitizers.rs` builds it with the C oracle and expects the report.
-[unsafe]
-modules = ["main"]

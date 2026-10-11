@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/try_wrong_shape.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '?' needs an enum with an 'Ok' and an 'Err' variant (or a 'Some' and a 'None'), but 'Shape' has 'Circle', 'Empty'
-  --> <root>/kelpc/tests/fixtures/try_wrong_shape.kp:11:13
-run-status: not run

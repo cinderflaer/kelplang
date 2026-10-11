@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/type_mismatch.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot assign value of type 'str' to 'x' declared as 'i32'
-  --> <root>/kelpc/tests/fixtures/type_mismatch.kp:2:5
-run-status: not run

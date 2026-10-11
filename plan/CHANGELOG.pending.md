@@ -56,6 +56,9 @@ empty on release.
 - The runtime's panic, I/O flush, env cache, child table and dial are ported to Rust in the new `kelp-rt` crate (stage 1, WP2). Not linked by `kelpc` yet; behaviour is unchanged.
 - The LLVM backend takes the builtin heap layouts and the runtime prototypes from one table (stage 1 WP5); no language change.
 
+- The C backend is removed (2026-10-10): `kelpc` builds every program with the `llvm` backend. The `KELPC_ORACLE` switch no longer exists, and a set `KELPC_ORACLE` is refused by name, the same way `KELPC_BACKEND` and `--backend` already are.
+- `--sanitize=` and `[build] sanitize` are refused: the sanitizers were built by the C backend, so no build can be sanitized now.
+
 ## stdlib
 
 - `kelpc stdlib --json --dir <dir>` writes the shipped std sources to `<dir>` and prints the module list with a SHA-256 per file as JSON (on branch lighthouse-support, not merged).

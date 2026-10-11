@@ -1,4 +1,4 @@
 // MK9-S1-M1 (roadmap B-1): the declared Kelp name is "process_id", but the
-// manifest binds it to the libc symbol "getpid". `codegen_c.rs` calls the
+// manifest binds it to the libc symbol "getpid". the removed C backend called the
 // right-hand side, so the C symbol never appears in Kelp source.
 pub extern fun process_id().return: i32

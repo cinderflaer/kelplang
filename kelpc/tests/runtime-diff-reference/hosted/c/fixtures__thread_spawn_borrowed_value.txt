@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/thread_spawn_borrowed_value.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: field 'text' stores a borrowed 'View', so construct it from a string literal or from an earlier String/Bytes field in this datac
-  --> <root>/kelpc/tests/fixtures/thread_spawn_borrowed_value.kp:14:34
-run-status: not run

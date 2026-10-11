@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/refused_whole_while_field_borrowed.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot move 's' while it is borrowed
-  --> <root>/kelpc/tests/fixtures/refused_whole_while_field_borrowed.kp:5:13
-run-status: not run

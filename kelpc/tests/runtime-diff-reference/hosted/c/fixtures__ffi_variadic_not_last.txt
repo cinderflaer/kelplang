@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/ffi_variadic_not_last.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '...' must be the last parameter of an 'extern fun': nothing may follow it
-  --> <root>/kelpc/tests/fixtures/ffi_variadic_not_last.kp:6:43
-run-status: not run

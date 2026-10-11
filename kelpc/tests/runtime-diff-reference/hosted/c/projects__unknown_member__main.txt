@@ -1,8 +1,0 @@
-unit: kelpc/tests/projects/unknown_member/main.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: module 'prov' has no item 'Nope'
-  --> <root>/kelpc/tests/projects/unknown_member/main.kp:4:13
-run-status: not run

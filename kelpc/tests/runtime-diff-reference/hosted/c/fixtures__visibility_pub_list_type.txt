@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/visibility_pub_list_type.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'lookup' is exported but its signature names 'Hidden', which module 'visibility_pub_list_type' does not export: add 'pub' to 'Hidden', or make 'lookup' private
-  --> <root>/kelpc/tests/fixtures/visibility_pub_list_type.kp:5:25
-run-status: not run

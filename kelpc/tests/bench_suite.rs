@@ -2,7 +2,7 @@
 //! `<name>.c`, `<name>.rs`) that must do the same work and print the same checksum line. Timing
 //! the three is `bench/run.sh`'s job and takes minutes; this test is the fast half that keeps the
 //! three honest: every benchmark takes its size as the first argument, so each is built once and
-//! run at a tiny size, and the Kelp program (default LLVM backend and the C oracle) and the Rust
+//! run at a tiny size, and the Kelp program (built by the LLVM backend) and the Rust
 //! program must print exactly the C program's line. A second size is also run to prove the size is
 //! a parameter and not a constant in the source.
 //!
@@ -64,14 +64,9 @@ fn run_bounded(bin: &Path, arg: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-fn build_kelp(src: &Path, bin: &Path, oracle_c: bool) -> Result<(), String> {
+fn build_kelp(src: &Path, bin: &Path) -> Result<(), String> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kelpc"));
     cmd.env_remove("KELPC_BACKEND");
-    if oracle_c {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
     let out = cmd
         .arg("build")
         .arg("-O2")
@@ -111,9 +106,9 @@ fn check_one(name: &str, size: &str, size2: &str, rustc_ok: bool) -> Result<(), 
     }
 
     let mut problems = Vec::new();
-    for (label, oracle) in [("kelp-llvm", false), ("kelp-c", true)] {
+    for label in ["kelp-llvm"] {
         let bin = tmp.join(format!("{name}.{label}"));
-        match build_kelp(&dir.join(format!("{name}.kp")), &bin, oracle) {
+        match build_kelp(&dir.join(format!("{name}.kp")), &bin) {
             Err(e) => problems.push(e),
             Ok(()) => {
                 for (sz, expect) in [(size, &want), (size2, &want2)] {

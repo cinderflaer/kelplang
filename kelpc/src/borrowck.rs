@@ -44,7 +44,7 @@
 //!
 //! The same walk decides where owned heap values (`Bytes`) are freed, and
 //! returns that as a `DropPlan` — a side table keyed by *node identity*, so
-//! `codegen_c.rs` can look up "which locals die here" as it writes each
+//! the removed C backend can look up "which locals die here" as it writes each
 //! block and each `return` without the two passes having to walk in
 //! lockstep. Keying on identity also sidesteps the one place the two walks
 //! genuinely differ: `while` bodies are checked twice (M3's double-move
@@ -211,7 +211,7 @@ impl MoveState {
 
 /// Where every owned local is freed, per function.
 ///
-/// Keyed by node identity rather than by position because `codegen_c.rs` walks
+/// Keyed by node identity rather than by position because the removed C backend walks
 /// the same tree independently: a block identifies its own end-of-scope drops,
 /// and a `return` statement identifies the drops that run before it returns.
 /// See the module doc for why a source span cannot serve as that key.
@@ -222,7 +222,7 @@ pub struct DropPlan {
 
 /// The identity of one `tir` node, for the plan's key.
 ///
-/// `borrowck.rs` and `codegen_c.rs` walk the same `tir::Program`, so the same
+/// `borrowck.rs` and the removed C backend walk the same `tir::Program`, so the same
 /// node is reached by both, and its address is a stable key for as long as the
 /// plan outlives the walk: nothing moves or copies the tree between the two
 /// passes, and every block is reached through a `Box` or a `Vec` buffer, so the

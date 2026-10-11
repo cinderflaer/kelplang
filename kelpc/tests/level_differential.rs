@@ -1,5 +1,4 @@
-//! The optimization-level differential of the `llvm` backend (stage 2 WP-2,
-//! option B of `stage2-oracle-plan.md`). No C backend is involved.
+//! The optimization-level differential of the `llvm` backend (stage 2 WP-2).
 //!
 //! A pass pipeline is the first thing that can exploit IR Kelp emitted without
 //! a licence for it, and it was the cause of two recorded bugs: a module with no
@@ -166,13 +165,12 @@ fn scratch_bin(level: &str, tag: &str) -> PathBuf {
 }
 
 /// Builds one target with the `llvm` backend at one level. Both the retired
-/// `KELPC_BACKEND` and the internal oracle switch are removed, so nothing
-/// inherited from the environment can select the C backend.
+/// `KELPC_BACKEND` and `KELPC_ORACLE` are removed, so nothing inherited from
+/// the environment can change what is built.
 fn build(source: &Path, bin: &Path, level: &str) -> Output {
     Command::new(kelpc_bin())
         .arg("build")
         .env_remove("KELPC_BACKEND")
-        .env_remove("KELPC_ORACLE")
         .arg(source)
         .arg("-o")
         .arg(bin)

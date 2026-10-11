@@ -2,8 +2,8 @@
 //!
 //! Every test writes one large, generated program (a long method chain, deeply
 //! nested calls, a long `+` chain, ...) and runs `check`, `fmt`, `lint`, `doc`
-//! and `build` on both backends over it, then runs both binaries and compares
-//! what they print with the answer the generator knows. A step that takes
+//! and `build` over it, then runs the binary and compares what it prints with
+//! the answer the generator knows. A step that takes
 //! longer than `STEP_LIMIT` fails the test: the limit is far above what a linear
 //! pass needs, so only a super-linear pass (the exponential one this file was
 //! written for was a method receiver checked twice per link) can trip it.
@@ -67,8 +67,8 @@ fn step(what: &str, shape: &str, cmd: &mut Command) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// Writes `source`, pushes it through every command, both backends, and checks
-/// the printed answer.
+/// Writes `source`, pushes it through every command, builds and runs it, and
+/// checks the printed answer.
 fn run_shape(shape: &str, source: &str, expected: &str) {
     let dir = scratch(shape);
     let file = dir.join("main.kp");
@@ -85,17 +85,12 @@ fn run_shape(shape: &str, source: &str, expected: &str) {
         kelpc().arg("doc").arg(&path).arg("-o").arg(&docs),
     );
 
-    for (backend, oracle) in [("llvm", false), ("c", true)] {
-        let exe = dir.join(format!("main-{backend}"));
-        let mut build = kelpc();
-        build.arg("build").arg(&path).arg("-o").arg(&exe);
-        if oracle {
-            build.env("KELPC_ORACLE", "c");
-        }
-        step(&format!("build ({backend})"), shape, &mut build);
-        let printed = step(&format!("run ({backend})"), shape, &mut Command::new(&exe));
-        assert_eq!(printed.trim_end(), expected, "{shape}: {backend} printed the wrong answer");
-    }
+    let exe = dir.join("main");
+    let mut build = kelpc();
+    build.arg("build").arg(&path).arg("-o").arg(&exe);
+    step("build", shape, &mut build);
+    let printed = step("run", shape, &mut Command::new(&exe));
+    assert_eq!(printed.trim_end(), expected, "{shape}: printed the wrong answer");
 }
 
 /// The text of `n` copies of `piece`.

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_boxdyn_use_after_move.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: use of moved value 'b'
-  --> <root>/kelpc/tests/fixtures/traits_boxdyn_use_after_move.kp:17:11
-run-status: not run

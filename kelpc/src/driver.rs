@@ -23,9 +23,10 @@ static RUNTIME_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libkel
 /// write the same path.
 static RUNTIME_TMP: AtomicU64 = AtomicU64::new(0);
 
-/// A sanitizer the C backend can build a program with (`--sanitize=` or
-/// `[build] sanitize`). The LLVM backend links no sanitizer passes, so the flag
-/// is refused there and the C oracle is the way to sanitize.
+/// A sanitizer named by `[build] sanitize`. The C backend that built sanitized
+/// programs was removed on 2026-10-10, and the LLVM backend links no sanitizer
+/// passes, so the manifest key is refused at build time. The type stays so the
+/// manifest still parses and the refusal can name the kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sanitizer {
     Address,
@@ -56,115 +57,13 @@ pub struct CompileError {
     pub message: String,
 }
 
-/// Writes `c_source` to `<out_path>.c` (kept alongside the binary, not
-/// deleted, so a generated-C debugging session is a simple `gdb ./foo`
-/// against a file that's actually there) and shells out to `cc -O<n>` to
-/// produce the native binary at `out_path`.
-///
-/// `opt` is the selected optimization level, and it is the same `-O` the LLVM
-/// backend and the final link get: one level means one level for both backends
-/// (MK7 S6, the record in `plan/done.md`), so the differential sweep compares
-/// them at one level rather than two.
-///
-/// This is the C backend's *finishing* step, and the only place in the
-/// compiler that invokes an external tool. A later backend does not call it: it
-/// writes its own object and links it, and this file's whole dependency on a
-/// system C compiler ends at this function.
-pub fn compile_c(
-    c_source: &str,
-    out_path: &Path,
-    opt: OptLevel,
-    link_libs: &[String],
-    include_dirs: &[String],
-    library_dirs: &[String],
-    pkg_config_flags: &[String],
-    tls: bool,
-    sanitize: Option<Sanitizer>,
-) -> Result<(), CompileError> {
-    let c_path = out_path.with_extension("c");
-    std::fs::write(&c_path, c_source).map_err(|e| CompileError {
-        message: format!("could not write generated C to '{}': {e}", c_path.display()),
-    })?;
-
-    let mut command = Command::new("cc");
-    command
-        .arg(opt.cc_flag())
-        .arg("-o")
-        .arg(out_path)
-        .arg(&c_path)
-        // `-fwrapv` makes signed overflow wrap instead of being UB, which is
-        // what the plan's arithmetic-overflow section promises. `-lm` is for
-        // `std/math`'s externs (an unused library is free to link). `-pthread`
-        // is for the generated program's `thread.spawn`/`thread.join`, whose
-        // runtime half is part of the generated C (MK9-S3-M1 stage C1).
-        .arg("-fwrapv")
-        .arg("-pthread")
-        .arg("-lm");
-    // `-fsanitize=<kind>` both instruments the translation unit and makes `cc`
-    // link the sanitizer runtime. `-g` and the frame pointer are what make a
-    // report name a line instead of an address. `-fwrapv` stays, so signed
-    // overflow is defined (and UBSan does not report it) exactly as in a normal
-    // build of the same program.
-    if let Some(kind) = sanitize {
-        command
-            .arg(format!("-fsanitize={}", kind.name()))
-            .arg("-fno-omit-frame-pointer")
-            .arg("-g");
-        // UBSan's default is to print and carry on, which a test cannot tell
-        // from success; make a finding stop the program with a nonzero status.
-        if kind == Sanitizer::Undefined {
-            command.arg("-fno-sanitize-recover=undefined");
-        }
-    }
-    for flag in dir_flags(include_dirs, library_dirs) {
-        command.arg(flag);
-    }
-    // The flags one `pkg-config --cflags --libs` produced for every package a
-    // `coral.toml` `[extern."<module id>"]` section named (MK9-S1-M1): the
-    // `-I`/`-L`/`-l` a package supplies reach the compile and the link, which
-    // on this backend are the same `cc` invocation.
-    for flag in pkg_config_flags {
-        command.arg(flag);
-    }
-    // `-lssl -lcrypto` are for `std/tls`'s externs, and only a program that
-    // reaches them links the system OpenSSL: an unused library is not free,
-    // because the linker has to find it (BUG-x7Qmd).
-    if tls {
-        command.arg("-lssl").arg("-lcrypto");
-    }
-    // `-l<name>` for every native library a `coral.toml` `[extern."<module
-    // id>"]` section named (MK9-S1-M1, roadmap B-1): a user FFI module's
-    // trampoline calls straight into it, and this is the one place that
-    // makes the symbol actually resolve at link time rather than relying on
-    // whatever the compiler's own default flags happen to already cover.
-    for lib in link_libs {
-        command.arg(format!("-l{lib}"));
-    }
-    let output = command.guarded_output().map_err(|e| CompileError {
-        message: format!("could not invoke 'cc': {e}"),
-    })?;
-
-    if !output.status.success() {
-        return Err(CompileError {
-            message: format!(
-                "cc failed:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        });
-    }
-
-    Ok(())
-}
-
-/// Compiles one generated C translation unit into an object, the way
-/// [`compile_c`] compiles a whole program's generated C. The LLVM backend needs
-/// it for the `extern fun` bodies, which stay C (MK7 §3.2) but whose object is
-/// emitted per program: see `codegen_llvm::externs_c_source` for why a fixed
+/// Compiles one generated C translation unit into an object. The LLVM backend
+/// needs it for the `extern fun` bodies, which stay C (MK7 §3.2) but whose object
+/// is emitted per program: see `codegen_llvm::externs_c_source` for why a fixed
 /// object cannot carry them.
 ///
-/// The flags are the ones the C backend compiles under at the same level
-/// (`-O<n> -fwrapv`), so a body that does arithmetic at the edge of a signed
-/// range wraps the way the C backend's `-O<n> -fwrapv` compiled copy of it does.
+/// The flags are `-O<n> -fwrapv`, so a body that does arithmetic at the edge of a
+/// signed range wraps the way the rest of the program does.
 /// `-Werror=implicit-function-declaration` is the one extra: the bodies call the
 /// runtime helpers through prototypes written out beside them, and C99 makes an
 /// undeclared call a warning, so a helper whose prototype went missing would be
@@ -219,16 +118,12 @@ pub fn compile_c_object(
 }
 
 /// Links the object `codegen_llvm` wrote into the final binary: the LLVM
-/// backend's *finishing* step, the sibling of [`compile_c`].
-///
-/// The same `cc` invocation as `compile_c`, and for the same reason (MK7 §1.3
-/// keeps the C linker, so `glibc_lib_dir()` and the `crt1.o` lookup stay
-/// unchanged), with two differences: there is no `-fwrapv` here, and the runtime
-/// object the compiler embeds is written to a temporary file and linked
-/// alongside. `-fwrapv` is a C-frontend flag that pins signed overflow; the LLVM
-/// backend emits plain `add`/`sub`/`mul` IR, which wraps by definition, so the
-/// guarantee is already in the object and the flag would be inert. `-lm` is for
-/// `std/math`'s externs and is free whether or not they are used.
+/// backend's *finishing* step. The C linker is kept (MK7 §1.3), so
+/// `glibc_lib_dir()` and the `crt1.o` lookup stay unchanged. The runtime object
+/// the compiler embeds is written to a temporary file and linked alongside.
+/// There is no `-fwrapv` here: the LLVM backend emits plain `add`/`sub`/`mul`
+/// IR, which wraps by definition. `-lm` is for `std/math`'s externs and is free
+/// whether or not they are used.
 ///
 /// `externs_object` is the object [`compile_c_object`] built from the program's
 /// `extern fun` bodies, or `None` when the program reaches none of them. It is
@@ -237,8 +132,8 @@ pub fn compile_c_object(
 /// it and one that calls `sqrt` resolves against the library below.
 ///
 /// `opt` is the selected level's `-O` flag on the link line. At link time it is
-/// inert without LTO, but it is the same flag `compile_c` passes, so the two
-/// backends' finishing steps stay one vocabulary (MK7 S6).
+/// inert without LTO, but it is the same vocabulary the per-program object's `cc` call takes
+/// (MK7 S6).
 pub fn link_llvm_object(
     object_path: &Path,
     externs_object: Option<&Path>,
@@ -398,20 +293,17 @@ fn link_llvm_objects_with_archive(
     for flag in dir_flags(&[], library_dirs) {
         command.arg(flag);
     }
-    // See `compile_c`'s matching loop: a package's `-L`/`-l` has to be on the
-    // LLVM backend's link line too, or its build would miss a library the C
-    // backend resolves (MK9-S1-M1).
+    // A package's `-L`/`-l` has to be on the link line too (MK9-S1-M1).
     for flag in pkg_config_flags {
         command.arg(flag);
     }
-    // `std/tls`'s externs need the system OpenSSL; see `compile_c`.
+    // `std/tls`'s externs need the system OpenSSL.
     if tls {
         command.arg("-lssl").arg("-lcrypto");
     }
-    // See `compile_c`'s matching loop: a `coral.toml` `[extern."<module
-    // id>"]` section's `library` (MK9-S1-M1) has to be on this link line too,
-    // not only the C backend's, or an LLVM-backend build of the same program
-    // would fail with an undefined symbol the C backend resolves.
+    // A `coral.toml` `[extern."<module id>"]` section's `library` (MK9-S1-M1)
+    // has to be on this link line too, or the build would fail with an
+    // undefined symbol.
     for lib in link_libs {
         command.arg(format!("-l{lib}"));
     }

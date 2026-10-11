@@ -1,9 +1,0 @@
-unit: kelpc/tests/projects/freestanding_condvar
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the binding 'cv' has type 'Condvar', whose runtime half is a pthread condition variable: a freestanding program has no threads and no libc, so a kernel would use a wait queue over an `Atomic<T>` instead
-  --> <root>/kelpc/tests/projects/freestanding_condvar/src/main.kp:4:23
---- nm -u
-(no image)

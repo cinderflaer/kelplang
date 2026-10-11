@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/tls_handle_not_an_integer.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'usize'
-  --> <root>/kelpc/tests/fixtures/tls_handle_not_an_integer.kp:7:5
-run-status: not run

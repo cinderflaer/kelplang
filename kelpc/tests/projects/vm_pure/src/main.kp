@@ -1,7 +1,7 @@
 // Kernel stage 10, the hosted half: the parts of `examples/kernel0-vm/src/vm.kp`
 // that are pure arithmetic and need no QEMU, copied here so both backends run
 // them and one literal pins the answers. A freestanding project is LLVM-only by
-// design, so this is where the C oracle covers the Sv39 encoders.
+// design, so this is where the Sv39 encoders are checked by a run.
 
 const PAGE_SIZE: usize = 4096
 const ENTRIES: usize = 512

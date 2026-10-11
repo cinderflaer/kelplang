@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/fn_value_main.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot reference 'main': it is the program entry point
-  --> <root>/kelpc/tests/fixtures/fn_value_main.kp:3:13
-run-status: not run

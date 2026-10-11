@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/for_missing_in.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: expected 'in' between the 'for' binding and what it iterates, found 'xs'
-  --> <root>/kelpc/tests/fixtures/for_missing_in.kp:5:11
-run-status: not run

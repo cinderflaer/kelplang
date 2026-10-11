@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/closure_capture_by_value.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot read a captured value out of the closure's environment by value: the environment is not a local this frame owns, so the read would give two owners of the same buffer; use it through a borrow (read a field of it, call a method on it, pass it to a parameter), or capture a `Copy` value instead
-  --> <root>/kelpc/tests/fixtures/closure_capture_by_value.kp:7:37
-run-status: not run

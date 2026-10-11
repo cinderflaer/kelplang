@@ -11,15 +11,16 @@ The critical path, the MK/S/M naming scheme, the marks at a glance, the open ite
 
 ## Current state
 
-The compiler exists and runs. `kelpc/` implements the language end-to-end (lexer → preprocess → parser → type check → move/borrow check → LLVM and C-oracle code generation), and the milestone record in `done.md` reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once the plan absorbed it; do not recreate it).
+The compiler exists and runs. `kelpc/` implements the language end-to-end (lexer → preprocess → parser → type check → move/borrow check → LLVM code generation; the C backend was removed on 2026-10-10, stage 2 step A), and the milestone record in `done.md` reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once the plan absorbed it; do not recreate it).
 
 ### 26.10.0: current state and the next work
 
 **`v26.10.0` is the current release (2026-10-04).** It completes the critical
-path below and is the release that announces the LLVM flip. The user-facing
-compiler builds through LLVM; the C backend remains an internal differential
-oracle. A release build requires LLVM 21 at run time and a C compiler for
-linking.
+path below and is the release that announces the LLVM flip. The compiler
+builds through LLVM only: the C backend, which was the differential oracle
+until then, was removed on 2026-10-10 (stage 2, step A). Its golden outputs
+stay in `kelpc/tests/golden/`. A release build requires LLVM 21 at run time and
+a C compiler for linking.
 
 The release also closes the previously scheduled TLS, unsafe, freestanding and
 device-capability work: client and server TLS (including typed fallible errors,

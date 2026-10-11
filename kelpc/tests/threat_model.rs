@@ -82,14 +82,9 @@ impl Lab {
         self.src("util.kp", &util);
     }
 
-    fn build(&self, oracle: bool) -> Output {
+    fn build(&self) -> Output {
         let mut cmd = kelpc();
         cmd.arg("build").env_remove("KELPC_BACKEND");
-        if oracle {
-            cmd.env("KELPC_ORACLE", "c");
-        } else {
-            cmd.env_remove("KELPC_ORACLE");
-        }
         let entry = if self.root.join("coral.toml").exists() {
             self.root.clone()
         } else {
@@ -97,14 +92,14 @@ impl Lab {
         };
         cmd.arg(entry)
             .arg("-o")
-            .arg(self.root.join(if oracle { "prog_c" } else { "prog_llvm" }))
+            .arg(self.root.join("prog"))
             .current_dir(&self.root)
             .output()
             .expect("spawn kelpc")
     }
 
-    fn run(&self, oracle: bool, args: &[&str]) -> Output {
-        let prog = if oracle { "prog_c" } else { "prog_llvm" };
+    fn run(&self, args: &[&str]) -> Output {
+        let prog = "prog";
         Command::new("sh")
             .arg("-c")
             .arg(format!(
@@ -120,7 +115,7 @@ impl Lab {
 
     /// The program must not compile; the message holds every needle.
     fn refused(&self, needles: &[&str]) {
-        let out = self.build(false);
+        let out = self.build();
         let text = String::from_utf8_lossy(&out.stderr).to_string();
         assert!(!out.status.success(), "expected a compile refusal, but it built");
         for n in needles {
@@ -129,54 +124,50 @@ impl Lab {
         self.assert_untouched();
     }
 
-    /// The program compiles with both backends and every run fails with a
+    /// The program compiles and every run fails with a
     /// message holding the needle; nothing leaked.
     fn denied(&self, needle: &str) {
-        for oracle in [false, true] {
-            let b = self.build(oracle);
-            assert!(
-                b.status.success(),
-                "expected the build to succeed (oracle={oracle}):\n{}",
-                String::from_utf8_lossy(&b.stderr)
-            );
-            let out = self.run(oracle, &[]);
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            assert!(!stdout.contains(TOKEN), "the secret leaked (oracle={oracle}): {stdout}");
-            assert!(
-                !out.status.success() && stderr.contains(needle),
-                "expected a denial containing '{needle}' (oracle={oracle}), got status {:?}\nstdout:{stdout}\nstderr:{stderr}",
-                out.status.code()
-            );
-        }
+        let b = self.build();
+        assert!(
+            b.status.success(),
+            "expected the build to succeed:\n{}",
+            String::from_utf8_lossy(&b.stderr)
+        );
+        let out = self.run(&[]);
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(!stdout.contains(TOKEN), "the secret leaked: {stdout}");
+        assert!(
+            !out.status.success() && stderr.contains(needle),
+            "expected a denial containing '{needle}', got status {:?}\nstdout:{stdout}\nstderr:{stderr}",
+            out.status.code()
+        );
         self.assert_untouched();
     }
 
-    /// The program compiles with both backends and runs; the output is
+    /// The program compiles and runs; the output is
     /// returned (per backend) for the test to check.
-    fn runs(&self, args: &[&str]) -> Vec<(bool, Output)> {
+    fn runs(&self, args: &[&str]) -> Vec<Output> {
         let mut all = Vec::new();
-        for oracle in [false, true] {
-            let b = self.build(oracle);
-            assert!(
-                b.status.success(),
-                "expected the build to succeed (oracle={oracle}):\n{}",
-                String::from_utf8_lossy(&b.stderr)
-            );
-            all.push((oracle, self.run(oracle, args)));
-        }
+        let b = self.build();
+        assert!(
+            b.status.success(),
+            "expected the build to succeed:\n{}",
+            String::from_utf8_lossy(&b.stderr)
+        );
+        all.push(self.run(args));
         all
     }
 
-    /// The program runs on both backends and prints exactly `want`.
+    /// The program runs and prints exactly `want`.
     fn prints(&self, want: &str) {
-        for (oracle, out) in self.runs(&[]) {
+        for out in self.runs(&[]) {
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
             let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            assert!(!stdout.contains(TOKEN), "the secret leaked (oracle={oracle}): {stdout}");
+            assert!(!stdout.contains(TOKEN), "the secret leaked: {stdout}");
             assert!(
                 out.status.success() && stdout == want,
-                "expected '{want}' (oracle={oracle}), got status {:?}\nstdout:{stdout}\nstderr:{stderr}",
+                "expected '{want}', got status {:?}\nstdout:{stdout}\nstderr:{stderr}",
                 out.status.code()
             );
         }
@@ -284,18 +275,16 @@ fn f03_a_sibling_sharing_the_prefix_is_outside_the_grant() {
 fn f04_a_relative_path_is_never_matched_against_the_cwd() {
     let lab = Lab::new("f04");
     lab.simple(&data_grant(&lab), FS, &read_prog("\"ok.txt\""));
-    for oracle in [false, true] {
-        assert!(lab.build(oracle).status.success());
-        let out = Command::new(lab.root.join(if oracle { "prog_c" } else { "prog_llvm" }))
-            .current_dir(lab.root.join("data"))
-            .output()
-            .unwrap();
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            !out.status.success() && stderr.contains("is outside the fs capability"),
-            "a relative path was accepted (oracle={oracle}): {stderr}"
-        );
-    }
+    assert!(lab.build().status.success());
+    let out = Command::new(lab.root.join("prog"))
+        .current_dir(lab.root.join("data"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("is outside the fs capability"),
+        "a relative path was accepted: {stderr}"
+    );
 }
 
 /// F5: case is significant: `DATA` is not `data` on a case-sensitive
@@ -322,11 +311,11 @@ fn f06_an_embedded_nul_cannot_hide_a_second_path() {
     // Either the check sees the whole text (outside: denied) or the NUL ends
     // both views (inside: reads ok.txt); the one thing it must not do is read
     // the secret, which `denied`/`prints` both assert.
-    let b = lab.build(false);
+    let b = lab.build();
     assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
-    for (oracle, out) in lab.runs(&[]) {
+    for out in lab.runs(&[]) {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(!stdout.contains(TOKEN), "the secret leaked (oracle={oracle})");
+        assert!(!stdout.contains(TOKEN), "the secret leaked");
     }
     lab.assert_untouched();
 }
@@ -495,7 +484,7 @@ fn f15_a_grant_pattern_cannot_contain_dotdot_or_be_relative() {
         let lab = Lab::new("f15");
         let grant = format!("fs = [\"{}\"]", pat.replace("__T__", &lab.root.to_string_lossy()));
         lab.simple(&grant, FS, "    print(1)");
-        let out = lab.build(false);
+        let out = lab.build();
         assert!(!out.status.success(), "the grant '{pat}' was accepted");
     }
 }
@@ -567,7 +556,7 @@ fn f19_walk_and_remove_all_do_not_follow_links_out() {
     lab.simple(&data_grant(&lab), FS, "    fs.remove_all(\"__T__/data\")\n    print(\"gone\")");
     // `remove_all` panics on the link out of the grant or unlinks it; either
     // way the secret is untouched (checked by the helper).
-    for (_, out) in lab.runs(&[]) {
+    for out in lab.runs(&[]) {
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(!stdout.contains(TOKEN));
         // recreate what the first run removed, for the second backend
@@ -736,7 +725,7 @@ fn p06_argument_injection_is_inert() {
             &["; sh __T__/tools/evil.sh", "$(sh __T__/tools/evil.sh)", "`sh __T__/tools/evil.sh`", "| sh __T__/tools/evil.sh"],
         ),
     );
-    for (_, out) in lab.runs(&[]) {
+    for out in lab.runs(&[]) {
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert!(stdout.starts_with("0\nok ; sh "), "the arguments were not literal: {stdout}");
@@ -774,17 +763,15 @@ fn p08_kill_reaches_only_children_this_program_started() {
         "    val args = process.args()\n    val pid = result.expect(r = str.parse_u64(args.get(1).as_str()), message = \"pid\")\n    process.kill_raw(pid.to_i32(), 0)\n    print(\"signalled a process that is not a child\")",
     );
     let pid = std::process::id().to_string();
-    for oracle in [false, true] {
-        let b = lab.build(oracle);
-        assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
-        let out = lab.run(oracle, &[&pid]);
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            !out.status.success() && !stdout.contains("signalled") && stderr.contains("not a child"),
-            "kill reached a process this program did not start (oracle={oracle}): {stdout}{stderr}"
-        );
-    }
+    let b = lab.build();
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    let out = lab.run(&[&pid]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && !stdout.contains("signalled") && stderr.contains("not a child"),
+        "kill reached a process this program did not start: {stdout}{stderr}"
+    );
 }
 
 /// P9: a forged `Child` handle carries the same fate as P8: `Child.kill` goes
@@ -800,17 +787,15 @@ fn p09_a_forged_child_handle_cannot_signal_a_foreign_pid() {
         "    val args = process.args()\n    val pid = result.expect(r = str.parse_u64(args.get(1).as_str()), message = \"pid\")\n    val c = process.Child(pid = pid.to_i32(), stdin = io.File(fd = -1), stdout = io.File(fd = -1), stderr = io.File(fd = -1), exited = false, code = 0, signal = 0)\n    c.kill(0)\n    print(\"signalled a process that is not a child\")",
     );
     let pid = std::process::id().to_string();
-    for oracle in [false, true] {
-        let b = lab.build(oracle);
-        assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
-        let out = lab.run(oracle, &[&pid]);
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            !out.status.success() && !stdout.contains("signalled") && stderr.contains("not a child"),
-            "a forged handle signalled a foreign pid (oracle={oracle}): {stdout}{stderr}"
-        );
-    }
+    let b = lab.build();
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    let out = lab.run(&[&pid]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && !stdout.contains("signalled") && stderr.contains("not a child"),
+        "a forged handle signalled a foreign pid: {stdout}{stderr}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,7 +1004,7 @@ fn n05_a_loopback_grant_binds_loopback_only() {
             &["std/net", "std/fs", "std/io"],
             "    val l = net.listen(0)\n    print(l.port())\n    val f = fs.open(\"/proc/net/tcp\", \"r\")\n    print(String.from_bytes(f.read_all()))\n    l.close()",
         );
-        for (oracle, out) in lab.runs(&[]) {
+        for out in lab.runs(&[]) {
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
             assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
             let port: u16 = stdout.lines().next().unwrap().trim().parse().unwrap();
@@ -1028,7 +1013,7 @@ fn n05_a_loopback_grant_binds_loopback_only() {
             assert_eq!(
                 line.split(':').next().unwrap(),
                 want,
-                "grant '{grant}' bound {line} (oracle={oracle})"
+                "grant '{grant}' bound {line}"
             );
         }
     }
@@ -1047,12 +1032,12 @@ fn n05b_the_http_server_binds_loopback_under_a_loopback_grant() {
         "probe.kp",
         "impl \"std/fs\"\nimpl \"std/io\"\n\npub fun table().return: String {\n    val f = fs.open(\"/proc/net/tcp\", \"r\")\n    return String.from_bytes(f.read_all())\n}\n",
     );
-    for (oracle, out) in lab.runs(&[]) {
+    for out in lab.runs(&[]) {
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let port: u16 = stdout.lines().next().unwrap().trim().parse().unwrap();
         let line = listener_line(&stdout, port).expect("a LISTEN line");
-        assert_eq!(line.split(':').next().unwrap(), "0100007F", "oracle={oracle}: {line}");
+        assert_eq!(line.split(':').next().unwrap(), "0100007F", "{line}");
     }
 }
 
@@ -1140,9 +1125,9 @@ fn n07_a_redirect_to_an_unlisted_host_is_refused() {
         );
         let (port, server) = redirect_server(location);
         let url = format!("http://127.0.0.1:{port}/start");
-        let b = lab.build(false);
+        let b = lab.build();
         assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
-        let out = lab.run(false, &[&url]);
+        let out = lab.run(&[&url]);
         let taken = server.join().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
@@ -1192,7 +1177,7 @@ fn n09_a_net_only_module_cannot_name_a_ca_path() {
     ] {
         let lab = Lab::new("n09a");
         lab.simple("net = [\"127.0.0.1:9\"]", &["std/net", "std/tls"], body);
-        let out = lab.build(false);
+        let out = lab.build();
         assert!(!out.status.success(), "a CA path option compiled: {body}");
         lab.assert_untouched();
     }
@@ -1336,9 +1321,9 @@ fn h03_a_granted_module_can_read_a_descriptor_another_module_opened() {
         "impl \"std/fs\"\nimpl \"std/io\"\n\npub fun go() {\n    var i: i32 = 3\n    while i < 40 {\n        val f = io.File(fd = i)\n        if f.is_open() {\n            print(String.from_bytes(f.read(16)))\n        }\n        i = i + 1\n    }\n}\n",
     );
     // The attack is expected to be refused; today it leaks.
-    let b = lab.build(false);
+    let b = lab.build();
     if b.status.success() {
-        let out = lab.run(false, &[]);
+        let out = lab.run(&[]);
         assert!(
             !String::from_utf8_lossy(&out.stdout).contains(TOKEN),
             "the secret leaked through a forged descriptor"
@@ -1838,7 +1823,7 @@ fn d04_module_ids_cannot_escape_or_shadow_the_library() {
     for id in ["../outside", "/etc/passwd", "a\\\\b", "std/../std/fs", "util/../util"] {
         let lab = Lab::new("d04a");
         lab.src("main.kp", &format!("impl \"{id}\"\n\nfun main() {{\n}}\n"));
-        let out = lab.build(false);
+        let out = lab.build();
         assert!(!out.status.success(), "the module id '{id}' was accepted");
     }
     let lab = Lab::new("d04b");

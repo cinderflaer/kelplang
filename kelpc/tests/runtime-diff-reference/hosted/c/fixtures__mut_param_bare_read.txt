@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/mut_param_bare_read.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: operator requires matching numeric operands, found 'mut i64' and 'i32'; 'sink' is a borrow ('mut i64'), so the operator reads the reference itself; write '*sink' to read through it
-  --> <root>/kelpc/tests/fixtures/mut_param_bare_read.kp:5:5
-run-status: not run

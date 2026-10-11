@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/nll_scoped_block_mutates_owner.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot borrow 's' as exclusive: already borrowed as shared
-  --> <root>/kelpc/tests/fixtures/nll_scoped_block_mutates_owner.kp:14:10
-run-status: not run

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_associated_type.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a default associated type is not in this slice: write 'type Item' in the trait and bind it in every 'impl' ('type Item = i32'), because a default type would let an impl inherit a type it never names
-  --> <root>/kelpc/tests/fixtures/traits_associated_type.kp:5:15
-run-status: not run

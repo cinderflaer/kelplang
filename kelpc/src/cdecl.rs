@@ -4,9 +4,9 @@
 //! and the two string helpers (`asm_operand_text`, `c_string_literal`) shared
 //! with the LLVM backend's own escaping.
 //!
-//! Moved here out of `codegen_c.rs` (stage 2, WP-3) without a change to any
+//! Moved here out of the removed C backend (stage 2, WP-3) without a change to any
 //! emitted byte, so the C generator can be deleted later without losing the
-//! text the LLVM backend depends on. Nothing in this module is the oracle.
+//! text the LLVM backend depends on.
 
 use crate::tir::*;
 use crate::types::{clone_fn_name, cmp_fn_name, drop_fn_name, eq_fn_name, hash_fn_name, needs_drop, EnumDef, StructDef, Ty};

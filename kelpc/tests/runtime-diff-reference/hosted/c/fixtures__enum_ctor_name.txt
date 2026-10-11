@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/enum_ctor_name.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'Shape' is an enum — construct one of its variants: 'Shape.Circle'
-  --> <root>/kelpc/tests/fixtures/enum_ctor_name.kp:6:13
-run-status: not run

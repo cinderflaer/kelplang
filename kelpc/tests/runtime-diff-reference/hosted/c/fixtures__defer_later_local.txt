@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/defer_later_local.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: this 'defer' names 'x', which is declared later in the block: a deferred action sees only the locals already in scope where the 'defer' is written
-  --> <root>/kelpc/tests/fixtures/defer_later_local.kp:6:5
-run-status: not run

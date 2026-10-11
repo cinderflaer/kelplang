@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/enum_method.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: an 'enum' method is called on a value, not on a variant path; bind the variant first, as in: val e = E.A  then  e.tag()
-  --> <root>/kelpc/tests/fixtures/enum_method.kp:15:11
-run-status: not run

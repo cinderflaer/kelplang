@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/visibility_pub_borrow.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'peek' is exported but its signature names 'Hidden', which module 'visibility_pub_borrow' does not export: add 'pub' to 'Hidden', or make 'peek' private
-  --> <root>/kelpc/tests/fixtures/visibility_pub_borrow.kp:5:17
-run-status: not run

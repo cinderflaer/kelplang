@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/static_not_constant.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: the initializer is not constant: a 'i32' static is initialized with a literal, an array literal or repeat, a datac constructor with constant arguments, 'Atomic.new(<const>)', or another const
-  --> <root>/kelpc/tests/fixtures/static_not_constant.kp:3:1
-run-status: not run

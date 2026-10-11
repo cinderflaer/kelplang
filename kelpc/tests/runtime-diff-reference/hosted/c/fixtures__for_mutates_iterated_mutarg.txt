@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/for_mutates_iterated_mutarg.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot mutate 'xs' while iterating over it
-  --> <root>/kelpc/tests/fixtures/for_mutates_iterated_mutarg.kp:9:14
-run-status: not run

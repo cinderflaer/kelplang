@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/array_length_is_a_constant.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'k' is not a constant here: a compile-time expression (an array length, or a 'const' initializer) can only use literals, 'const's declared before it, and the locals of the 'fun' it is evaluating; a 'val' from the enclosing function is not one
-  --> <root>/kelpc/tests/fixtures/array_length_is_a_constant.kp:8:19
-run-status: not run

@@ -88,7 +88,7 @@ fun scenario_name(id: i32).return: str {
 }
 
 // The count the test suite uses: `POLYP_BENCH_QUICK` shortens every scenario to a single frame so
-// the whole run fits in the bounded runner on the slower C oracle too. The doc's table is a full
+// the whole run fits in the bounded runner. The doc's table is a full
 // run with the variable unset.
 fun quick().return: bool {
     val v = env.get("POLYP_BENCH_QUICK")

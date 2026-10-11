@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/fn_value_named_args.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a call through 'f' cannot use named arguments — a function type has no parameter names, so every argument is positional
-  --> <root>/kelpc/tests/fixtures/fn_value_named_args.kp:7:17
-run-status: not run

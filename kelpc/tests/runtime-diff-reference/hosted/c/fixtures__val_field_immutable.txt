@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/val_field_immutable.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot write to 'x': declared 'val'
-  --> <root>/kelpc/tests/fixtures/val_field_immutable.kp:5:5
-run-status: not run

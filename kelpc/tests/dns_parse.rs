@@ -13,7 +13,7 @@
 //!   * `kelpc/runtime/dns_parse_ref.c`: the C reference. Nothing includes it
 //!     but this test, which compiles it directly.
 //!   * `kelpc/runtime/dns_parse.kp`: the same parser in Kelp, compiled by the
-//!     C backend. It is not a std module and is not shipped yet.
+//!     LLVM backend. It is not a std module and is not shipped yet.
 //!
 //! Both are fed the same corpus and each prints one line per case; the test
 //! compares the two line streams exactly (same count, same text, same order).
@@ -742,9 +742,8 @@ fn build_c_driver(cases: &[Case]) -> PathBuf {
     bin
 }
 
-/// Builds the Kelp side with the C backend. The backend is pinned for the same
-/// reason `cap_matcher.rs` pins it: this test is about the parser, not about
-/// which backend is under test.
+/// Builds the Kelp side with the default backend (LLVM). This test is about the
+/// parser, not about the backend.
 ///
 /// The generated driver is written into a directory of its own with a copy of
 /// `dns_parse.kp`, because `impl "..."` resolves against the entry file's
@@ -763,7 +762,6 @@ fn build_kelp_driver(cases: &[Case]) -> PathBuf {
     let out = Command::new(kelpc_bin())
         .arg("build")
         .env_remove("KELPC_BACKEND")
-        .env("KELPC_ORACLE", "c")
         .arg(&src)
         .arg("-o")
         .arg(&bin)
@@ -799,14 +797,14 @@ fn the_kelp_dns_parser_agrees_with_the_c_reference_on_the_whole_corpus() {
         cases.len()
     );
 
-    let oracle = run_driver(&build_c_driver(&cases), "C reference");
+    let reference = run_driver(&build_c_driver(&cases), "C reference");
     let port = run_driver(&build_kelp_driver(&cases), "Kelp");
 
     assert_eq!(
-        oracle.len(),
+        reference.len(),
         cases.len(),
         "the C driver printed {} lines for {} cases",
-        oracle.len(),
+        reference.len(),
         cases.len()
     );
     assert_eq!(
@@ -824,14 +822,14 @@ fn the_kelp_dns_parser_agrees_with_the_c_reference_on_the_whole_corpus() {
         let Some(want) = case.expect else { continue };
         if want == "ok" {
             assert!(
-                oracle[i].starts_with("ok "),
+                reference[i].starts_with("ok "),
                 "case {i} ({}): the reference says {:?}, expected an accepted line",
                 case.what,
-                oracle[i]
+                reference[i]
             );
         } else {
             assert_eq!(
-                oracle[i], want,
+                reference[i], want,
                 "case {i} ({}): the reference disagrees with the pinned expectation",
                 case.what
             );
@@ -844,7 +842,7 @@ fn the_kelp_dns_parser_agrees_with_the_c_reference_on_the_whole_corpus() {
     let mut accepted = 0usize;
     let mut rejected = 0usize;
     let mut seen: Vec<&str> = Vec::new();
-    for line in &oracle {
+    for line in &reference {
         if line.starts_with("ok ") {
             accepted += 1;
         } else if let Some(reason) = line.strip_prefix("reject ") {
@@ -877,7 +875,7 @@ fn the_kelp_dns_parser_agrees_with_the_c_reference_on_the_whole_corpus() {
         seen.len()
     );
 
-    for (i, (case, (want, got))) in cases.iter().zip(oracle.iter().zip(&port)).enumerate() {
+    for (i, (case, (want, got))) in cases.iter().zip(reference.iter().zip(&port)).enumerate() {
         assert_eq!(
             want, got,
             "case {i} ({}) disagrees:\n  C    {want}\n  Kelp {got}",

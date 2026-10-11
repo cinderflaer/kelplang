@@ -1,4 +1,4 @@
-# kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by oracle_freeze.
+# kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
 # counts candidates=1076 ran=549 c_refused=494 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433

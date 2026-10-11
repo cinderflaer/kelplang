@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/chan_select_mixed.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: argument 'b' has type '&std.sync.Receiver<String>', expected '&std.sync.Receiver<i64>'
-  --> <root>/kelpc/tests/fixtures/chan_select_mixed.kp:8:38
-run-status: not run

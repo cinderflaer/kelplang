@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/heap_use_after_move.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: use of moved value 'a'
-  --> <root>/kelpc/tests/fixtures/heap_use_after_move.kp:5:11
-run-status: not run

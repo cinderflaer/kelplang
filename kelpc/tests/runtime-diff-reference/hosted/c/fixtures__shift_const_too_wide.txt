@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/shift_const_too_wide.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a shift by 33 is not defined for a 'u32', whose width is 32 bits: the amount has to be in 0..32 (use wrapping_shl/wrapping_shr to mask it)
-  --> <root>/kelpc/tests/fixtures/shift_const_too_wide.kp:5:11
-run-status: not run

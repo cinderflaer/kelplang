@@ -1,61 +1,43 @@
-//! Coverage, refusal ranking and the differential sweep for the `llvm` backend
-//! (the MK7 record in `plan/done.md`).
+//! Coverage, refusal ranking and the crash check for the `llvm` backend (the
+//! MK7 record in `plan/done.md`).
 //!
 //! `kelpc/tests/compile_and_run.rs` is backend-agnostic by construction: it
-//! compiles a fixture with whichever backend its run is pointed at and compares
-//! the run to a literal an author wrote. This file is the other half. It always
-//! builds *both* backends, so the C backend is an oracle rather than a second
-//! opinion, and it records how much of the corpus the `llvm` backend accepts so
-//! the number cannot drift silently. It carries no expected-output table,
-//! because the C backend's output is the expected output.
+//! compiles a fixture and compares the run to a literal an author wrote. The
+//! frozen golden set (`kelpc/tests/golden_corpus.rs`) is the reference for the
+//! corpus. The C backend that was the differential oracle was removed on
+//! 2026-10-10 (stage 2, step A), so this file no longer compares two backends.
+//! It records how much of the corpus the `llvm` backend accepts so the number
+//! cannot drift silently, and it reports the refusals.
 //!
 //! The corpus is the one the suite uses: `kelpc/tests/fixtures/*.kp`, the
 //! project directories under `kelpc/tests/projects/` that carry a `coral.toml`
 //! (the directory is the source, its manifest names the entry point), and
-//! `kelpc/examples/*.kp`. A target the C backend rejects is skipped, because a
-//! compile-error fixture is rejected by design and C defines what the corpus is.
+//! `kelpc/examples/*.kp`. A target the compiler rejects by design (a compile-error
+//! fixture) is recorded as a refusal, not a failure.
 //!
-//! Four things live here, and a fifth was added at MK7 S6:
+//! Three things live here:
 //!
-//! 1. The differential sweep. Every target the C backend builds is built with
-//!    the default backend too (`llvm`; the oracle side is reached through the
-//!    project's `KELPC_ORACLE` switch, not a user flag). For every target both backends build, both binaries
-//!    are run and their stdout and exit status must be byte-identical, and a
-//!    mismatch fails with the target named and both outputs shown. A target the
-//!    `llvm` backend refuses is recorded with its message rather than failed: a
-//!    partial backend refuses by name, and every refusal names the MK7 stage
-//!    that lifts it.
-//! 2. The crash check. A build or a run that dies from a signal (SIGSEGV,
-//!    SIGABRT, killed) is a failure, because a partial backend refuses with a
-//!    diagnostic and never crashes. A clean nonzero exit that does not begin
-//!    with a diagnostic is treated the same way.
-//! 3. The ratchet. [`LLVM_BUILT_BASELINE`] is the count of corpus targets the
+//! 1. The crash check. A build or a run that dies from a signal (SIGSEGV,
+//!    SIGABRT, killed) is a failure, because a refusal is a diagnostic and never
+//!    a crash. A failed build whose first line is not a diagnostic is treated the
+//!    same way.
+//! 2. The ratchet. [`LLVM_BUILT_BASELINE`] is the count of corpus targets the
 //!    `llvm` backend built when the number was last recorded. It may only rise;
 //!    [`RERECORD_ENV`] re-records it.
-//! 4. The ranking report. The refusals grouped by their exact message, so the
+//! 3. The ranking report. The refusals grouped by their exact message, so the
 //!    slice each one waits on is visible in the output. It is a `println!` and
 //!    never an assertion, so a refusal moving between messages cannot break a
 //!    run.
-//! 5. The optimization-level sweep (S6, §4.3). The corpus is swept again at each
-//!    of `-O0`, `-O1`, `-O2`, `-O3` and `-Os`, both backends at that level, and
-//!    the same crash and disagreement assertions apply at every one. A level
-//!    that changes behavior is a bug, not a tuning choice: a pass pipeline is the
-//!    first thing here that can exploit IR Kelp emitted without a licence for it
-//!    (§7).
 //!
-//! The sweep compiles the whole corpus twice, which is close to a minute, so it
-//! is `#[ignore]`d and the default suite runs only the cheap plumbing check at
-//! the bottom of this file. Run the instrument explicitly, in `--release` as
-//! the rest of the suite is:
+//! The sweep compiles the whole corpus, which takes minutes, so it is `#[ignore]`d
+//! and the default suite runs only the cheap plumbing check at the bottom of this
+//! file. Run the instrument explicitly, in `--release` as the rest of the suite is:
 //!
 //! ```text
 //! cargo test --release --test backend_coverage -- --ignored --nocapture
 //! ```
 //!
-//! The compiler is invoked through the project's internal oracle switch rather
-//! than the retired `KELPC_BACKEND`: `c` sets the switch and any other backend
-//! name is the default `llvm` backend with the switch removed, so the
-//! environment cannot change what is measured.
+//! The optimization levels are checked by `level_differential.rs`.
 
 use std::collections::BTreeMap;
 use std::os::unix::process::ExitStatusExt;
@@ -371,59 +353,27 @@ fn kelpc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kelpc"))
 }
 
-/// Where one backend's artifact for one target is written, rooted in
-/// `CARGO_TARGET_TMPDIR` the way `compile_and_run.rs::out_path` is, with the
-/// backend and the level in the path so the two builds of one target, and two
-/// levels' builds of one target, cannot race for one file. `slot` is the level
-/// label [`level_slot`] makes.
-fn out_path(slot: &str, backend: &str, tag: &str) -> PathBuf {
+/// Where the artifact for one target is written, rooted in `CARGO_TARGET_TMPDIR`
+/// the way `compile_and_run.rs::out_path` is.
+fn out_path(tag: &str) -> PathBuf {
     let mut dir = PathBuf::from(
         std::env::var("CARGO_TARGET_TMPDIR")
             .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string()),
     );
     dir.push("kelpc_backend_coverage");
-    dir.push(slot);
-    dir.push(backend);
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("could not create '{}': {e}", dir.display()));
     dir.join(tag)
 }
 
-/// The directory label for a sweep at one level: the flag without its leading
-/// dash, or `default` for the run that passes no flag (which is `-O2` too, but
-/// is the run the suite has always made and stays distinguishable).
-fn level_slot(level: Option<&str>) -> &'static str {
-    match level {
-        None => "default",
-        Some("-O0") => "O0",
-        Some("-O1") => "O1",
-        Some("-O2") => "O2",
-        Some("-O3") => "O3",
-        Some("-Os") => "Os",
-        Some(other) => panic!("level_slot has no label for '{other}'"),
-    }
-}
-
-/// Builds one target with one backend, pinned by the oracle switch rather than
-/// by the retired `KELPC_BACKEND` so the sweep's two halves cannot disagree
-/// about which backend produced which binary. `c` sets the switch; any other
-/// name is the default `llvm` backend, with the switch removed so an inherited
-/// value cannot change what is measured. `level` is the `-O` flag for a level
-/// sweep, or `None` for the default run (which passes no flag, the way the suite
-/// always has).
-fn build(backend: &str, source: &Path, bin: &Path, level: Option<&str>) -> Output {
+/// Builds one target with the default backend. The retired variables are
+/// stripped, so an inherited value cannot change what is measured.
+fn build(source: &Path, bin: &Path) -> Output {
     let mut command = Command::new(kelpc_bin());
     command.arg("build");
     command.env_remove("KELPC_BACKEND");
-    if backend == "c" {
-        command.env("KELPC_ORACLE", "c");
-    } else {
-        command.env_remove("KELPC_ORACLE");
-    }
+    command.env_remove("KELPC_ORACLE");
     command.arg(source).arg("-o").arg(bin);
-    if let Some(level) = level {
-        command.arg(level);
-    }
     command
         .output()
         .unwrap_or_else(|e| panic!("failed to spawn kelpc to build '{}': {e}", source.display()))
@@ -431,7 +381,6 @@ fn build(backend: &str, source: &Path, bin: &Path, level: Option<&str>) -> Outpu
 
 struct Run {
     code: Option<i32>,
-    stdout: Vec<u8>,
 }
 
 fn run(bin: &Path) -> Run {
@@ -440,7 +389,6 @@ fn run(bin: &Path) -> Run {
         .unwrap_or_else(|e| panic!("failed to run '{}': {e}", bin.display()));
     Run {
         code: out.status.code(),
-        stdout: out.stdout,
     }
 }
 
@@ -473,82 +421,51 @@ fn first_line(stderr: &[u8]) -> String {
 /// (see `sweep`). Nothing here is asserted against on its own, because the same
 /// data backs three tests and each one cares about a different field.
 struct Sweep {
-    /// Targets the C backend builds, sorted.
-    c_built: Vec<String>,
-    /// Targets the `llvm` backend also builds, sorted.
+    /// Targets the `llvm` backend builds, sorted.
     llvm_built: Vec<String>,
-    /// Targets the C backend rejects, which are outside the corpus definition.
-    c_rejected: usize,
-    /// `(target, first stderr line)` for every target the C backend builds and
-    /// the `llvm` backend refuses.
+    /// `(target, first stderr line)` for every target the `llvm` backend refuses
+    /// with a diagnostic.
     refusals: Vec<(String, String)>,
     /// One line per build or run that died from a signal, or that failed without
-    /// a diagnostic, on either backend.
+    /// a diagnostic.
     crashes: Vec<String>,
-    /// One multi-line entry per target both backends build but disagree on.
-    disagreements: Vec<String>,
 }
 
 /// The sweep, run at most once per process. The heavy tests all need the same
 /// expensive data and libtest runs tests in parallel threads in one process, so
-/// this is what keeps `--ignored` from compiling the corpus three times.
-///
-/// This is the default run, with no `-O` flag: it is what the suite has always
-/// measured, and the level sweeps below are separate runs so their additions do
-/// not change it.
+/// this is what keeps `--ignored` from compiling the corpus more than once.
 fn sweep() -> &'static Sweep {
     static SWEEP: OnceLock<Sweep> = OnceLock::new();
-    SWEEP.get_or_init(|| run_sweep(None))
+    SWEEP.get_or_init(run_sweep)
 }
 
-fn run_sweep(level: Option<&str>) -> Sweep {
-    let slot = level_slot(level);
-    let mut c_built = Vec::new();
+fn run_sweep() -> Sweep {
     let mut llvm_built = Vec::new();
-    let mut c_rejected = 0;
     let mut refusals = Vec::new();
     let mut crashes = Vec::new();
-    let mut disagreements = Vec::new();
 
     for target in targets() {
         let tag = target.tag;
 
-        let c_bin = out_path(slot, "c", &tag);
-        let c_build = build("c", &target.source, &c_bin, level);
-        if !c_build.status.success() {
-            c_rejected += 1;
-            // The C backend is the oracle and the corpus definition, so a crash
-            // here would mean the corpus is not defined; it is a failure rather
-            // than a skip, because skipping it would quietly shrink the sweep.
-            if c_build.status.code().is_none() {
-                crashes.push(format!(
-                    "the 'c' backend was {} while building '{tag}'",
-                    ending(c_build.status)
-                ));
-            }
-            continue;
-        }
-        c_built.push(tag.clone());
-
-        let llvm_bin = out_path(slot, "llvm", &tag);
-        let llvm_build = build("llvm", &target.source, &llvm_bin, level);
-        if !llvm_build.status.success() {
-            if llvm_build.status.code().is_none() {
+        let bin = out_path(&tag);
+        let built = build(&target.source, &bin);
+        if !built.status.success() {
+            if built.status.code().is_none() {
                 crashes.push(format!(
                     "the 'llvm' backend was {} while building '{tag}':\n{}",
-                    ending(llvm_build.status),
-                    String::from_utf8_lossy(&llvm_build.stderr).trim_end()
+                    ending(built.status),
+                    String::from_utf8_lossy(&built.stderr).trim_end()
                 ));
                 continue;
             }
-            let message = first_line(&llvm_build.stderr);
+            let message = first_line(&built.stderr);
             // A failed build whose first line is not a diagnostic is a crash
             // reported as an exit code, and it must be as visible as a signal.
             if !message.starts_with("error:") {
                 crashes.push(format!(
                     "the 'llvm' backend failed '{tag}' without a diagnostic ({}):\n{}",
-                    ending(llvm_build.status),
-                    String::from_utf8_lossy(&llvm_build.stderr).trim_end()
+                    ending(built.status),
+                    String::from_utf8_lossy(&built.stderr).trim_end()
                 ));
                 continue;
             }
@@ -557,46 +474,16 @@ fn run_sweep(level: Option<&str>) -> Sweep {
         }
         llvm_built.push(tag.clone());
 
-        let c_run = run(&c_bin);
-        let llvm_run = run(&llvm_bin);
-        for (backend, finished) in [("c", &c_run), ("llvm", &llvm_run)] {
-            if finished.code.is_none() {
-                crashes.push(format!(
-                    "the '{backend}' binary for '{tag}' was killed by a signal"
-                ));
-            }
-        }
-        if c_run.stdout != llvm_run.stdout {
-            disagreements.push(format!(
-                "'{tag}': the 'c' and 'llvm' backends print different stdout\n  \
-                 c    ({}): {:?}\n  llvm ({}): {:?}",
-                c_run
-                    .code
-                    .map_or("signal".to_string(), |c| format!("exit {c}")),
-                String::from_utf8_lossy(&c_run.stdout),
-                llvm_run
-                    .code
-                    .map_or("signal".to_string(), |c| format!("exit {c}")),
-                String::from_utf8_lossy(&llvm_run.stdout),
-            ));
-        } else if c_run.code != llvm_run.code {
-            disagreements.push(format!(
-                "'{tag}': the 'c' and 'llvm' backends exit with status {:?} and {:?}, \
-                 and print the same stdout {:?}",
-                c_run.code,
-                llvm_run.code,
-                String::from_utf8_lossy(&c_run.stdout),
-            ));
+        let finished = run(&bin);
+        if finished.code.is_none() {
+            crashes.push(format!("the 'llvm' binary for '{tag}' was killed by a signal"));
         }
     }
 
     Sweep {
-        c_built,
         llvm_built,
-        c_rejected,
         refusals,
         crashes,
-        disagreements,
     }
 }
 
@@ -604,48 +491,32 @@ fn run_sweep(level: Option<&str>) -> Sweep {
 /// always carries the state of the backend with it.
 fn report(s: &Sweep) {
     println!(
-        "llvm coverage sweep: {} of {} corpus targets built by the 'c' backend \
-         ({} rejected by it), {} also built by the 'llvm' backend, {} refused, \
-         {} mismatch(es), {} crash(es)",
-        s.c_built.len(),
-        s.c_built.len() + s.c_rejected,
-        s.c_rejected,
+        "llvm coverage sweep: {} corpus targets built by the 'llvm' backend, {} refused, \
+         {} crash(es)",
         s.llvm_built.len(),
         s.refusals.len(),
-        s.disagreements.len(),
         s.crashes.len(),
     );
 }
 
 // ---------------------------------------------------------------------------
-// The differential sweep and the crash check.
+// The crash check.
 // ---------------------------------------------------------------------------
 
-/// The whole point of a second backend, run rather than argued: for every target
-/// the C backend builds, the `llvm` backend either builds it too and agrees with
-/// the C binary byte for byte on stdout and exit status, or refuses it with a
-/// diagnostic. A mismatch is a failure with both outputs shown, because a wrong
-/// literal and a wrong backend agree with each other and the fixture literals in
-/// `compile_and_run.rs` cannot see that; the C backend can.
+/// The `llvm` backend never crashes. A refusal is a named diagnostic, and a
+/// binary it builds runs to an exit code. A build or a run that dies from a
+/// signal, or a failed build with no diagnostic, fails here with the target
+/// named.
 #[test]
-#[ignore = "the sweep compiles the whole corpus twice; the default suite runs only the plumbing check"]
-fn the_llvm_backend_agrees_with_the_c_backend_or_refuses_by_name() {
+#[ignore = "the sweep compiles the whole corpus; the default suite runs only the plumbing check"]
+fn the_llvm_backend_never_crashes_on_the_corpus() {
     let s = sweep();
     report(s);
-
     assert!(
         s.crashes.is_empty(),
         "{} build or run(s) crashed instead of failing with a diagnostic:\n{}",
         s.crashes.len(),
         s.crashes.join("\n"),
-    );
-
-    assert!(
-        s.disagreements.is_empty(),
-        "the two backends do not agree on {} of the {} targets both build:\n{}",
-        s.disagreements.len(),
-        s.llvm_built.len(),
-        s.disagreements.join("\n\n"),
     );
 }
 
@@ -660,7 +531,7 @@ fn the_llvm_backend_agrees_with_the_c_backend_or_refuses_by_name() {
 /// Growing the count is fine and expected: growth is reported with the command
 /// that re-records it. The failure direction is one-sided on purpose.
 #[test]
-#[ignore = "the sweep compiles the whole corpus twice; the default suite runs only the plumbing check"]
+#[ignore = "the sweep compiles the whole corpus; the default suite runs only the plumbing check"]
 fn the_llvm_backend_builds_at_least_the_recorded_baseline() {
     let s = sweep();
     report(s);
@@ -691,74 +562,6 @@ fn the_llvm_backend_builds_at_least_the_recorded_baseline() {
 }
 
 // ---------------------------------------------------------------------------
-// The optimization-level sweep (MK7 S6, the record in `plan/done.md`).
-// ---------------------------------------------------------------------------
-
-/// Every level `-O` accepts, both backends, swept over the whole corpus.
-///
-/// A pass pipeline is the first thing in this project that can exploit IR Kelp
-/// emitted without a licence for it (MK7 §7), so a level that changes a
-/// program's stdout or exit status is a bug rather than a tuning choice, and the
-/// same is true of a level whose C backend builds a target its LLVM backend
-/// refuses. This is the gate for that claim.
-///
-/// Each level is its own sweep with the flag pinned on the command line, so the
-/// C backend is the oracle *at that level* and the comparison is one level
-/// against one level. `-O2` is the default too, but it is passed explicitly here
-/// so its row cannot be confused with the no-flag run the tests above make.
-#[test]
-#[ignore = "the sweep compiles the whole corpus twice per level; the default suite runs only the plumbing check"]
-fn every_level_agrees_with_the_c_backend() {
-    for level in ["-O0", "-O1", "-O2", "-O3", "-Os"] {
-        let s = run_sweep(Some(level));
-        report_at(level, &s);
-        assert!(
-            s.crashes.is_empty(),
-            "at {level}, {} build or run(s) crashed instead of failing with a \
-             diagnostic:\n{}",
-            s.crashes.len(),
-            s.crashes.join("\n"),
-        );
-        assert!(
-            s.disagreements.is_empty(),
-            "at {level}, the two backends do not agree on {} of the {} targets both \
-             build:\n{}",
-            s.disagreements.len(),
-            s.llvm_built.len(),
-            s.disagreements.join("\n\n"),
-        );
-        assert!(
-            s.refusals.is_empty(),
-            "at {level}, the 'llvm' backend refused {} target(s) the 'c' backend \
-             built:\n{}",
-            s.refusals.len(),
-            s.refusals
-                .iter()
-                .map(|(tag, message)| format!("  {tag}: {message}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
-    }
-}
-
-/// The same numbers as [`report`], with the level named, so a run of the level
-/// sweep reads as a table.
-fn report_at(level: &str, s: &Sweep) {
-    println!(
-        "llvm coverage sweep at {level}: {} of {} corpus targets built by the 'c' \
-         backend ({} rejected by it), {} also built by the 'llvm' backend, {} refused, \
-         {} mismatch(es), {} crash(es)",
-        s.c_built.len(),
-        s.c_built.len() + s.c_rejected,
-        s.c_rejected,
-        s.llvm_built.len(),
-        s.refusals.len(),
-        s.disagreements.len(),
-        s.crashes.len(),
-    );
-}
-
-// ---------------------------------------------------------------------------
 // The ranking report.
 // ---------------------------------------------------------------------------
 
@@ -771,7 +574,7 @@ fn report_at(level: &str, s: &Sweep) {
 /// `--nocapture` is what makes this visible; without it the harness swallows
 /// stdout and the report never reaches the terminal.
 #[test]
-#[ignore = "the sweep compiles the whole corpus twice; the default suite runs only the plumbing check"]
+#[ignore = "the sweep compiles the whole corpus; the default suite runs only the plumbing check"]
 fn the_refusals_rank_by_their_message() {
     let s = sweep();
     report(s);
@@ -785,9 +588,9 @@ fn the_refusals_rank_by_their_message() {
     groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(b.0)));
 
     println!(
-        "'llvm' backend refusal ranking ({} refused of the {} targets the 'c' backend builds)",
+        "'llvm' backend refusal ranking ({} refused of {} corpus targets)",
         s.refusals.len(),
-        s.c_built.len(),
+        s.llvm_built.len() + s.refusals.len(),
     );
     for (message, tags) in &groups {
         println!("  {:>3}  {message}", tags.len());
@@ -817,40 +620,23 @@ fn the_refusals_rank_by_their_message() {
 // The cheap plumbing check, for the default suite.
 // ---------------------------------------------------------------------------
 
-/// Builds one pinned fixture with both backends and compares it, so a change to
-/// this file's own helpers breaks the default suite instead of the explicit
-/// sweep. `if_expr.kp` is the first fixture the S1 subset gate names, so a
-/// failure here is a real failure and not a corpus choice.
+/// Builds one pinned fixture and runs it, so a change to this file's own helpers
+/// breaks the default suite instead of the explicit sweep. `if_expr.kp` is the
+/// first fixture the S1 subset gate names, so a failure here is a real failure
+/// and not a corpus choice.
 #[test]
-fn the_differential_helpers_agree_on_one_pinned_fixture() {
+fn the_helpers_build_and_run_one_pinned_fixture() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("fixtures")
         .join("if_expr.kp");
-    let c_bin = out_path("default", "c", "plumbing_if_expr");
-    let llvm_bin = out_path("default", "llvm", "plumbing_if_expr");
-
-    let c_build = build("c", &source, &c_bin, None);
+    let bin = out_path("plumbing_if_expr");
+    let built = build(&source, &bin);
     assert!(
-        c_build.status.success(),
-        "'if_expr.kp' was rejected by the 'c' backend:\n{}",
-        String::from_utf8_lossy(&c_build.stderr),
-    );
-    let llvm_build = build("llvm", &source, &llvm_bin, None);
-    assert!(
-        llvm_build.status.success(),
+        built.status.success(),
         "'if_expr.kp' was refused by the 'llvm' backend:\n{}",
-        String::from_utf8_lossy(&llvm_build.stderr),
+        String::from_utf8_lossy(&built.stderr),
     );
-
-    let c_run = run(&c_bin);
-    let llvm_run = run(&llvm_bin);
-    assert_eq!(
-        c_run.code, llvm_run.code,
-        "'if_expr.kp' exits with different statuses on the two backends",
-    );
-    assert_eq!(
-        c_run.stdout, llvm_run.stdout,
-        "'if_expr.kp' prints different stdout on the two backends",
-    );
+    let finished = run(&bin);
+    assert_eq!(finished.code, Some(0), "'if_expr.kp' did not exit 0");
 }

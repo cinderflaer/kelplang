@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/excl_refused_two_blocks.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot borrow 's.count': already borrowed exclusively
-  --> <root>/kelpc/tests/fixtures/excl_refused_two_blocks.kp:11:40
-run-status: not run

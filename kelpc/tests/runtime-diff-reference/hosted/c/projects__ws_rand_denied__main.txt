@@ -1,8 +1,0 @@
-unit: kelpc/tests/projects/ws_rand_denied/main.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'std.rand.bytes' needs the 'rand' capability, which module 'std/ws' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(rand = ["<pattern>"])`)
-  --> <root>/kelpc/tests/projects/ws_rand_denied/std/ws.kp:512:15
-run-status: not run

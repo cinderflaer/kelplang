@@ -3,7 +3,6 @@ mod backend;
 mod borrowck;
 mod cache;
 mod cdecl;
-mod codegen_c;
 mod codegen_llvm;
 mod deprecated;
 mod derive;
@@ -32,7 +31,6 @@ mod timings;
 mod tir;
 mod types;
 
-use backend::Backend;
 use diag::{Diagnostic, Severity, SourceMap};
 use fmt::RefusalKind;
 use opt::OptLevel;
@@ -86,8 +84,8 @@ const BUILD_DIR: &str = "build";
 
 fn usage() {
     eprintln!(
-        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings] [--sanitize=address|undefined|thread]\n       \
-         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings] [--sanitize=address|undefined|thread]\n       \
+        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
+         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
          {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated] [--text]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
@@ -113,22 +111,15 @@ fn usage() {
          the backend's output into one compilation unit per source module and\n\
          links the unit objects together: separate compilation, with no\n\
          cross-unit inlining. It is off by default and produces the same\n\
-         program either way. The C oracle (KELPC_ORACLE=c) ignores it and\n\
-         keeps its one translation unit, and a freestanding project is\n\
-         refused by name for now (plan/incremental-compilation.md).\n\n\
+         program either way. A freestanding project is refused by name for\n\
+         now (plan/incremental-compilation.md).\n\n\
          Cache misses are compiled on worker threads, each unit in its own\n\
          LLVM context. KELPC_JOBS names the worker count (a positive integer;\n\
          the default is 2, not the CPU count); more workers than units spawns\n\
          one per unit.\n\n\
-         --sanitize=address|undefined|thread (or '[build] sanitize = \"address\"'\n\
-         in coral.toml; the flag wins) builds the program with that sanitizer\n\
-         and links its runtime. Only the C backend can do it, so the build is\n\
-         refused on the default LLVM backend with a message naming the way:\n\
-         run it as KELPC_ORACLE=c kelpc run --sanitize=address file.kp. address\n\
-         catches out-of-bounds and use-after-free through unsafe, Ptr<T>, FFI\n\
-         and asm, and leaks; undefined stops the program at the first undefined\n\
-         C behavior; thread reports data races between spawned threads\n\
-         (plan/sanitizers.md).\n\n\
+         --sanitize=... is refused. The sanitizers were built by the C backend,\n\
+         which was removed on 2026-10-10, and the LLVM backend links no\n\
+         sanitizer passes (plan/sanitizers.md).\n\n\
          --timings prints per-phase wall times (parse, resolve, infer,\n\
          borrowck, codegen, unit compile, link) and, for an --incremental\n\
          build, one line per unit with hit or miss, to stderr.\n\n\
@@ -422,20 +413,16 @@ fn default_cache_dir() -> PathBuf {
 /// reports those findings as errors and stops, before anything is generated.
 ///
 /// `opt` is the `-O` level (MK7 S6, the record in `plan/done.md`). It is
-/// passed to whichever backend runs below, and to the `cc` calls each one makes,
-/// so one level is one level for both backends.
+/// passed to the LLVM backend and to the `cc` calls it makes.
 ///
-/// Everything before `backend` is backend-independent, which is why the suite
-/// that exercises it does not care which backend is selected; the seam is the
-/// one `match` below, and it is the only place a code generator is named.
+/// The LLVM backend is the only code generator, and it is called from the one
+/// place below.
 fn build(
     path: &str,
     out_path: &Path,
-    backend: Backend,
     deny_outdated: bool,
     opt: OptLevel,
     incremental_flag: bool,
-    sanitize_flag: Option<driver::Sanitizer>,
     freestanding_out: &mut bool,
     emit_out: &mut resolve::Emit,
     print_timings: bool,
@@ -501,54 +488,31 @@ fn build(
     };
     timing.borrowck = borrow_start.elapsed();
 
-    // Kernel stage 4: a freestanding project has no hosted runtime to build
-    // against, so the C backend's libc preamble cannot express it. The refusal
-    // is here, before either generator runs, rather than at the `cc` failure a
-    // C build would produce.
-    if loaded.project.target().is_freestanding() && backend == Backend::C {
-        eprintln!(
-            "error: '{}' sets '[target] mode = \"freestanding\"', which only the llvm backend can build: the C backend's runtime preamble is libc (the KELPC_ORACLE switch cannot build a freestanding project)",
-            path
-        );
-        return false;
-    }
     *freestanding_out = loaded.project.target().is_freestanding();
     *emit_out = loaded.project.emit();
 
-    // The sanitizer: the flag wins over the manifest. Only the C backend can
-    // build one (the LLVM backend links no sanitizer passes), so the default
-    // backend refuses by name and points at the oracle switch.
-    let sanitize = sanitize_flag.or(loaded.project.sanitize());
-    if let Some(kind) = sanitize {
-        if backend == Backend::Llvm {
-            eprintln!(
-                "error: sanitizer '{}' is not available on the LLVM backend, which links no sanitizer passes; build with the C backend instead, which supports address, undefined and thread: KELPC_ORACLE=c {BIN_NAME} build --sanitize={} {path}",
-                kind.name(),
-                kind.name()
-            );
-            return false;
-        }
+    // The sanitizers were built by the C backend, which was removed on
+    // 2026-10-10. The manifest key still parses, so a project that names one
+    // gets the refusal here rather than a silent build without it. The
+    // `--sanitize=` flag is refused where it is read.
+    if let Some(kind) = loaded.project.sanitize() {
+        eprintln!(
+            "error: '{}' sets '[build] sanitize = \"{}\"', and sanitizers are not available: the C backend that built them was removed on 2026-10-10, and the LLVM backend links no sanitizer passes",
+            path,
+            kind.name()
+        );
+        return false;
     }
 
     // Roadmap A-14 slice 1: the backend's per-unit split. `--incremental` and
-    // the manifest's `[build] incremental = true` both turn it on, and the C
-    // oracle ignores it, because the C backend's one translation unit is the
-    // other answer to the same question rather than a second implementation of
-    // this mode. A freestanding project is refused by name for now: its image
+    // the manifest's `[build] incremental = true` both turn it on. A freestanding project is refused by name for now: its image
     // is one ELF with one entry stub and one panic state, which is a slice of
     // its own (`plan/incremental-compilation.md`).
-    // A managed build (WP2) takes the LLVM backend only: the C oracle has no
-    // collector. It is whole-program too, since `kelp_gc_init` and the
-    // descriptors are one module's. Its archive is looked up here, before any
-    // code is generated, so a missing archive is named before a link fails.
+    // A managed build (WP2): the collector is linked in from its archive, which
+    // is looked up here, before any code is generated, so a missing archive is
+    // named before a link fails. It is whole-program too, since `kelp_gc_init`
+    // and the descriptors are one module's.
     let managed = if loaded.project.target().is_managed() {
-        if backend == Backend::C {
-            eprintln!(
-                "error: '{}' sets '[target] mode = \"managed\"', which only the llvm backend can build: the C oracle has no collector (KELPC_ORACLE=c cannot build a managed project)",
-                path
-            );
-            return false;
-        }
         if incremental_flag || loaded.project.incremental() {
             eprintln!(
                 "error: '{}' sets '[target] mode = \"managed\"', which '--incremental' cannot build yet: the collector's descriptors and init are whole-program",
@@ -570,13 +534,12 @@ fn build(
         None
     };
     let incremental = incremental_flag || loaded.project.incremental();
-    if incremental && *freestanding_out && backend == Backend::Llvm {
+    if incremental && *freestanding_out {
         eprintln!(
             "error: '--incremental' is not implemented for a freestanding project yet: its image is one ELF with a single entry stub and one panic state, so the per-unit split is its own slice (plan/incremental-compilation.md)"
         );
         return false;
     }
-    let incremental = incremental && backend == Backend::Llvm;
     if incremental {
         let cache = cache::Cache::for_build(out_path);
         if let Err(message) = cache.store_interfaces(&loaded.interfaces) {
@@ -587,9 +550,8 @@ fn build(
     }
 
     // One `pkg-config` invocation for every package the manifest's `[extern.*]`
-    // sections named (MK9-S1-M1), shared by both backends. It runs before the
-    // backend seam because a package that cannot be resolved is a build error,
-    // not a per-backend one, and the same flags have to reach both.
+    // sections named (MK9-S1-M1). A package that cannot be resolved is a build
+    // error, and the flags reach the LLVM backend's `cc` calls.
     let pkg_config_flags =
         match driver::pkg_config_flags(&loaded.project.extern_pkg_config_packages()) {
             Ok(flags) => flags,
@@ -599,75 +561,47 @@ fn build(
             }
         };
 
-    // The backend seam, and the only place a code generator is named. Both arms
-    // are live: `llvm` is what every build gets, and `c` is reached only through
-    // the project's oracle switch (`backend::ORACLE_ENV`), which is how the
-    // suite builds the fixtures it compares an `llvm` build against.
-    match backend {
-        Backend::C => {
-            let c_source = codegen_c::generate(&typed, &drops, &sources);
-            let link_libs = loaded.project.extern_libraries();
-            let include_dirs = loaded.project.extern_include_dirs();
-            let library_dirs = loaded.project.extern_library_dirs();
-            if let Err(e) = driver::compile_c(
-                &c_source,
-                out_path,
-                opt,
-                &link_libs,
-                &include_dirs,
-                &library_dirs,
-                &pkg_config_flags,
-                codegen_c::uses_tls(&typed),
-                sanitize,
-            ) {
-                eprintln!("error: {}", e.message);
-                return false;
-            }
-        }
-        Backend::Llvm => {
-            let freestanding = if loaded.project.target().is_freestanding() {
-                let target = loaded.project.target();
-                let root = loaded.project.root.clone().unwrap_or_default();
-                let script = root.join(target.linker_script().unwrap_or_default());
-                Some(codegen_llvm::Freestanding {
-                    triple: target.triple().unwrap_or_default().to_string(),
-                    entry: target.entry().unwrap_or_default().to_string(),
-                    panic: target.panic().map(str::to_string),
-                    linker_script: script.to_string_lossy().into_owned(),
-                    alloc: target.alloc().map(str::to_string),
-                    dealloc: target.dealloc().map(str::to_string),
-                    realloc: target.realloc().map(str::to_string),
-                    cpus: target.cpus(),
-                })
-            } else {
-                None
-            };
-            // The LLVM backend builds its own module, writes the textual IR
-            // beside the binary, and links the object itself; the C source
-            // string the arm above writes has no counterpart here.
-            let link_libs = loaded.project.extern_libraries();
-            let include_dirs = loaded.project.extern_include_dirs();
-            let library_dirs = loaded.project.extern_library_dirs();
-            if let Err(message) = codegen_llvm::compile(
-                &typed,
-                &drops,
-                &sources,
-                out_path,
-                opt,
-                &link_libs,
-                &include_dirs,
-                &library_dirs,
-                &pkg_config_flags,
-                freestanding.as_ref(),
-                managed.as_ref(),
-                incremental,
-                &mut timing,
-            ) {
-                eprintln!("error: {message}");
-                return false;
-            }
-        }
+    // The LLVM backend is the only code generator. It builds its own module,
+    // writes the textual IR beside the binary and links the object itself.
+    let freestanding = if loaded.project.target().is_freestanding() {
+        let target = loaded.project.target();
+        let root = loaded.project.root.clone().unwrap_or_default();
+        let script = root.join(target.linker_script().unwrap_or_default());
+        Some(codegen_llvm::Freestanding {
+            triple: target.triple().unwrap_or_default().to_string(),
+            entry: target.entry().unwrap_or_default().to_string(),
+            panic: target.panic().map(str::to_string),
+            linker_script: script.to_string_lossy().into_owned(),
+            alloc: target.alloc().map(str::to_string),
+            dealloc: target.dealloc().map(str::to_string),
+            realloc: target.realloc().map(str::to_string),
+            cpus: target.cpus(),
+        })
+    } else {
+        None
+    };
+    let link_libs = loaded.project.extern_libraries();
+    let include_dirs = loaded.project.extern_include_dirs();
+    let library_dirs = loaded.project.extern_library_dirs();
+    if let Err(message) = codegen_llvm::compile(
+        &typed,
+        &drops,
+        &sources,
+        out_path,
+        opt,
+        &link_libs,
+        &include_dirs,
+        &library_dirs,
+        &pkg_config_flags,
+        freestanding.as_ref(),
+        managed.as_ref(),
+        incremental,
+        &mut timing,
+    ) {
+        eprintln!("error: {message}");
+        return false;
     }
+
 
     if print_timings {
         timing.print();
@@ -1600,7 +1534,6 @@ fn real_main() -> ExitCode {
     let mut out: Option<PathBuf> = None;
     let mut deny_outdated = false;
     let mut incremental = false;
-    let mut sanitize: Option<driver::Sanitizer> = None;
     let mut print_timings = false;
     let mut opt = OptLevel::DEFAULT;
     let mut i = 2;
@@ -1634,19 +1567,12 @@ fn real_main() -> ExitCode {
             // Roadmap A-14 slice 2: per-phase and per-unit wall times on stderr.
             print_timings = true;
             i += 1;
-        } else if let Some(value) = arg.strip_prefix("--sanitize=") {
-            match driver::Sanitizer::parse(value) {
-                Some(kind) => sanitize = Some(kind),
-                None => {
-                    eprintln!(
-                        "error: '--sanitize={value}' is not a sanitizer; expected address, undefined or thread"
-                    );
-                    return ExitCode::FAILURE;
-                }
-            }
-            i += 1;
-        } else if arg == "--sanitize" {
-            eprintln!("error: '--sanitize' takes its value as '--sanitize=address|undefined|thread'");
+        } else if arg == "--sanitize" || arg.starts_with("--sanitize=") {
+            // Refused by name: the sanitizers were built by the C backend, which
+            // was removed on 2026-10-10, and the LLVM backend links no passes.
+            eprintln!(
+                "error: sanitizers are not available: the C backend that built them was removed on 2026-10-10, and the LLVM backend links no sanitizer passes"
+            );
             return ExitCode::FAILURE;
         } else if arg == "--incremental" {
             // Roadmap A-14 slice 1: the backend's per-unit split. Refused for
@@ -1684,20 +1610,16 @@ fn real_main() -> ExitCode {
         }
     };
 
-    // The backend. `KELPC_BACKEND` is gone, and a set one is refused rather than
-    // ignored; the only switch left is the project's oracle switch
-    // (`backend::ORACLE_ENV`), which accepts only the C backend. Presence, not
-    // the value, is what makes a stale `KELPC_BACKEND` a refusal, so even a
-    // non-UTF-8 one is reported.
-    let retired_set = std::env::var_os(backend::RETIRED_ENV).is_some();
-    let env_oracle = std::env::var(backend::ORACLE_ENV).ok();
-    let backend = match backend::resolve(retired_set, env_oracle.as_deref()) {
-        Ok(b) => b,
-        Err(message) => {
-            eprintln!("error: {message}");
-            return ExitCode::FAILURE;
-        }
-    };
+    // The retired backend variables are refused rather than ignored: a shell
+    // that still exports one would believe its builds used another backend.
+    // Presence, not the value, is what counts, so a non-UTF-8 value is reported.
+    if let Err(message) = backend::check_retired_env(
+        std::env::var_os(backend::BACKEND_ENV).is_some(),
+        std::env::var_os(backend::ORACLE_ENV).is_some(),
+    ) {
+        eprintln!("error: {message}");
+        return ExitCode::FAILURE;
+    }
 
     // The default output path is a directory this tool owns, so it is created
     // on demand; an explicit `-o` is a path the *caller* chose, and a missing
@@ -1717,11 +1639,9 @@ fn real_main() -> ExitCode {
     if !build(
         &path,
         &out_path,
-        backend,
         deny_outdated,
         opt,
         incremental,
-        sanitize,
         &mut freestanding,
         &mut emit,
         print_timings,

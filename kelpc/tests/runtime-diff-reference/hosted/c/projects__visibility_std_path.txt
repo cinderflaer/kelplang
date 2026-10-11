@@ -1,8 +1,0 @@
-unit: kelpc/tests/projects/visibility_std_path
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: unknown type 'Hidden'
-  --> <root>/kelpc/tests/projects/visibility_std_path/src/other.kp:3:16
-run-status: not run

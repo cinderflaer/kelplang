@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/alias_unknown.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: unknown alias '%*nope*%'
-  --> <root>/kelpc/tests/fixtures/alias_unknown.kp:3:11
-run-status: not run

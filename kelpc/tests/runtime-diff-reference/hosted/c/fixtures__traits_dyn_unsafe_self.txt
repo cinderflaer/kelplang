@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_dyn_unsafe_self.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: '&dyn Cloneable' is not allowed: method 'dup' returns 'Self', and a trait object does not know the concrete type it would build
-  --> <root>/kelpc/tests/fixtures/traits_dyn_unsafe_self.kp:9:13
-run-status: not run

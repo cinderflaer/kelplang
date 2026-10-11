@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/pd_val_write.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot assign to passdown 'fixed': it is declared 'pd val' (only a 'pd var' can be assigned inside a function)
-  --> <root>/kelpc/tests/fixtures/pd_val_write.kp:6:5
-run-status: not run

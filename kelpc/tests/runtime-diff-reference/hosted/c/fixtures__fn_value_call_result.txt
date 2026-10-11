@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/fn_value_call_result.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: expected ')', found LParen
-  --> <root>/kelpc/tests/fixtures/fn_value_call_result.kp:9:17
-run-status: not run

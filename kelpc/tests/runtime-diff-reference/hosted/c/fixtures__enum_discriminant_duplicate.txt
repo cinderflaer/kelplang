@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/enum_discriminant_duplicate.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: variant 'A' of enum 'E' repeats the discriminant 1: every variant of a field-less enum has its own value
-  --> <root>/kelpc/tests/fixtures/enum_discriminant_duplicate.kp:2:1
-run-status: not run

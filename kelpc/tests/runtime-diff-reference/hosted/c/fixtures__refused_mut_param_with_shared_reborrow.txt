@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/refused_mut_param_with_shared_reborrow.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot borrow 's': already borrowed exclusively
-  --> <root>/kelpc/tests/fixtures/refused_mut_param_with_shared_reborrow.kp:8:18
-run-status: not run

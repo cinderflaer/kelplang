@@ -67,7 +67,7 @@ impl "std/str"
    only caller that wants "no handle" is `std/http`/`std/ws`, and they carry
    an `Option<TlsHandle>` whose `None` is that value. */
 
-// The `TlsError` codes the C classifiers (`codegen_c::C_HEADERS`) write
+// The `TlsError` codes the C classifiers (`cdecl::C_HEADERS`) write
 // through `err_code`. They are the wire between the extern bodies and
 // `error_from`, so the two have to agree; the names are the mapping.
 const ERR_UNTRUSTED: i32 = 1

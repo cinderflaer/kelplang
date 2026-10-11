@@ -1,8 +1,0 @@
-unit: examples/polyp/backends/headless/headless_backend.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot find module 'deps/polyp/core/core': expected '<root>/examples/polyp/backends/headless/deps/polyp/core/core.kp'
-  --> <root>/examples/polyp/backends/headless/headless_backend.kp:11:1
-run-status: not run

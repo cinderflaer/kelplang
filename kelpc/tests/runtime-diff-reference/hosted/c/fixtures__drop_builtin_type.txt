@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/drop_builtin_type.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'i32' is a builtin type — its methods are provided by the compiler and cannot be declared
-  --> <root>/kelpc/tests/fixtures/drop_builtin_type.kp:3:1
-run-status: not run

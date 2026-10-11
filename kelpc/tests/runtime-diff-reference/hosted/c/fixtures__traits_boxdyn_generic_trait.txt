@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_boxdyn_generic_trait.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'Box<dyn convert.From>' is not allowed: the trait takes type parameters ('T'), and a trait object has no vtable slot for one; use a bounded type parameter ('<T: std.convert.From<...>>') instead
-  --> <root>/kelpc/tests/fixtures/traits_boxdyn_generic_trait.kp:6:17
-run-status: not run

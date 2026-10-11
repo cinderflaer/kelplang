@@ -88,7 +88,7 @@ pub struct Project {
     caps: HashMap<String, HashMap<String, Vec<String>>>,
     /// Per function key: the capability domain of the module that declares
     /// it, for the gated modules only. `infer.rs` gates resolution on it and
-    /// `codegen_c.rs` inserts the runtime check because of it.
+    /// the removed C backend inserts the runtime check because of it.
     gated: HashMap<String, String>,
     /// Per module: its `coral.toml` `[extern."<module id>"]` entry (MK9-S1-M1,
     /// roadmap B-1), when it has one. This is what lets a *user* module's own
@@ -148,7 +148,7 @@ impl Project {
     /// The native library and symbol allowlist a `[extern."<module id>"]`
     /// section declared for `module`, if it has one. `infer.rs` checks a
     /// declared `extern fun`'s bare name against `symbols`;
-    /// `codegen_c.rs`/`codegen_llvm.rs` use it to write the direct-call
+    /// the removed C backend/`codegen_llvm.rs` use it to write the direct-call
     /// trampoline instead of looking the body up in `externs.rs`.
     pub fn extern_ffi_of(&self, module: &str) -> Option<&ExternModuleDecl> {
         self.extern_modules.get(module)
@@ -171,8 +171,7 @@ impl Project {
     }
 
     /// Whether the manifest asked for the backend's per-unit split (roadmap
-    /// A-14 slice 1). `kelpc build` ORs this with its own `--incremental` flag;
-    /// the C oracle ignores both.
+    /// A-14 slice 1). `kelpc build` ORs this with its own `--incremental` flag.
     pub fn incremental(&self) -> bool {
         self.incremental
     }
@@ -193,7 +192,7 @@ impl Project {
     }
 
     /// Every C header named across the project's `[extern.*]` sections,
-    /// deduplicated and sorted. `codegen_c.rs` emits one `#include <header>`
+    /// deduplicated and sorted. the removed C backend emitted one `#include <header>`
     /// line per entry after the fixed preamble, so a project that names none
     /// gets exactly the C text it got before the key existed.
     pub fn extern_headers(&self) -> Vec<String> {
@@ -408,12 +407,12 @@ pub struct ExternModuleDecl {
     library: Option<String>,
     /// The exact native symbols this module's `extern fun` declarations may
     /// bind to, each written as it appeared in `symbols`: either
-    /// `"kelp_name"` (the Kelp name *is* the symbol `codegen_c.rs` calls), or
+    /// `"kelp_name"` (the Kelp name *is* the symbol the removed C backend calls), or
     /// `"kelp_name=c_symbol"` when the two differ. Every entry's Kelp name is
     /// unique, so `symbol_of` resolves one unambiguously.
     pub symbols: Vec<String>,
     /// The C header this module's symbols are declared in, when the section
-    /// names one. `codegen_c.rs` emits it as `#include <header>` after the
+    /// names one. the removed C backend emitted it as `#include <header>` after the
     /// fixed preamble, so a `extern fun` whose native symbol the runtime does
     /// not already declare has a prototype instead of an implicit one.
     header: Option<String>,
@@ -1036,7 +1035,7 @@ pub fn load(
     // One merged declaration order across `datac`s and `enum`s (A-1). Each
     // declaration carries its index *within its own file*, and the module
     // list is already in load order, so renumbering here is what gives
-    // `types::owned_types` and `codegen_c` a single sequence to walk: a
+    // `types::owned_types` and the removed C backend a single sequence to walk: a
     // field or payload may only name a type declared before it by value, and
     // the two declaration lists are separate vectors.
     let mut merged_order = 0usize;

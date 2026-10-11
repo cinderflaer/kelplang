@@ -1,19 +1,14 @@
 //! A capability denial bakes its source location, its module name and its
-//! domain into the generated C as a string literal, and a `.kp` path may hold
+//! domain into the generated code as a string literal, and a `.kp` path may hold
 //! a backslash or a double quote, or a control byte such as a newline. Passed
-//! through raw, the backslash is eaten as a C escape (the denial prints the path
-//! with the byte dropped), the quote closes the literal (the generated C does
-//! not compile at all), and the newline breaks the `#line` directive that points
-//! `cc` at the `.kp` file, so the C backend fails to build the project. The C
-//! backend must escape the bytes it interns, and the denial must still print the
-//! path as it is on disk.
+//! through raw, the backslash is eaten as an escape (the denial prints the path
+//! with the byte dropped), and the quote closes the literal (the generated
+//! program does not build at all). The compiler must escape the bytes it
+//! interns, and the denial must still print the path as it is on disk.
 //!
 //! The shape comes from the source *directory* name rather than the file name,
 //! because that is how the fuzzing lane measured it and because a directory is
-//! the untrusted part of the path the compiler is handed. A build with the C
-//! backend succeeding is itself the `#line` case: without the escape, `cc`
-//! refuses the broken directive. The denial the binary prints is the `at`
-//! location case.
+//! the untrusted part of the path the compiler is handed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,28 +48,21 @@ fun main() {
 }
 ";
 
-/// Builds `dir/main.kp` with one backend, asserts the build succeeds, runs the
-/// binary and returns the denial it printed on stderr. `c` is pinned through the
-/// project's oracle switch; any other name is the default `llvm` backend.
+/// Builds `dir/main.kp`, asserts the build succeeds, runs the binary and
+/// returns the denial it printed on stderr.
 ///
 /// `NIX_CC_USE_RESPONSE_FILE=0` is set because the Nix `cc` wrapper hands its
 /// arguments to clang through a response file it quotes with bash `%q`, and
 /// clang mis-parses that `$'...'` form when a control byte is in the path: it
-/// fails to find the generated C before the `#line` this test is about is even
-/// read. The variable makes the wrapper `exec` clang with the arguments
+/// fails to find the generated C file the backend hands it. The variable makes the wrapper `exec` clang with the arguments
 /// directly, so the test measures kelp's escaper rather than the wrapper's
 /// quoting. A `cc` that is not the wrapper ignores it.
-fn denial(dir: &Path, backend: &str, bin_name: &str) -> Vec<u8> {
+fn denial(dir: &Path, bin_name: &str) -> Vec<u8> {
     let bin = dir.join(bin_name);
     let mut cmd = kelpc();
     cmd.arg("build");
     cmd.env_remove("KELPC_BACKEND");
     cmd.env("NIX_CC_USE_RESPONSE_FILE", "0");
-    if backend == "c" {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
     let build = cmd
         .arg(dir.join("main.kp"))
         .arg("-o")
@@ -83,7 +71,7 @@ fn denial(dir: &Path, backend: &str, bin_name: &str) -> Vec<u8> {
         .expect("failed to spawn kelpc");
     assert!(
         build.status.success(),
-        "the {backend} backend failed to build a project under '{}':\n{}",
+        "failed to build a project under '{}':\n{}",
         dir.display(),
         String::from_utf8_lossy(&build.stderr)
     );
@@ -93,7 +81,7 @@ fn denial(dir: &Path, backend: &str, bin_name: &str) -> Vec<u8> {
     assert_eq!(
         run.status.code(),
         Some(1),
-        "the {backend} backend's denial for '{}' did not exit 1; stderr was:\n{}",
+        "the denial for '{}' did not exit 1; stderr was:\n{}",
         dir.display(),
         String::from_utf8_lossy(&run.stderr)
     );
@@ -101,14 +89,14 @@ fn denial(dir: &Path, backend: &str, bin_name: &str) -> Vec<u8> {
 }
 
 /// The same project under one shape of special byte in its directory name: the
-/// C backend compiles it, the binary denies the call, and the denial names the
+/// compiler builds it, the binary denies the call, and the denial names the
 /// directory as it is on disk.
 fn the_denial_names_the_source_directory(shape: &str) {
     let dir = scratch(shape);
     fs::write(dir.join("u.kp"), UNIT).expect("write u.kp");
     fs::write(dir.join("main.kp"), MAIN).expect("write main.kp");
 
-    let c = denial(&dir, "c", "c.bin");
+    let c = denial(&dir, "main.bin");
 
     let c_text = String::from_utf8_lossy(&c);
     assert!(

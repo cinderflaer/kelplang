@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/move_param_mut_conflict.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: 'mut' and 'move' cannot be combined on one parameter — 'mut T' is an exclusive borrow, 'move T' takes ownership
-  --> <root>/kelpc/tests/fixtures/move_param_mut_conflict.kp:3:20
-run-status: not run

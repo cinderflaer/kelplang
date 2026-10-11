@@ -1,9 +1,0 @@
-unit: kelpc/tests/fixtures/map_remove_missing.kp
-backend: c
-build-status: 0
---- build stdout
---- build stderr
-run-status: 1
---- stdout
---- stderr
-panic: Map.remove: key not found

@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/traits_default_wrong_override.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: method 'describe' does not match trait 'Shape': the trait declares 'fun Self.describe().return: i32', the impl writes 'fun C.describe().return: i64'
-  --> <root>/kelpc/tests/fixtures/traits_default_wrong_override.kp:11:5
-run-status: not run

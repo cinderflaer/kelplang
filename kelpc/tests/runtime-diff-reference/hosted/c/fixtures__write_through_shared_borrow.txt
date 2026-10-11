@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/write_through_shared_borrow.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: cannot write to 'c': it is a shared borrow, not 'mut'
-  --> <root>/kelpc/tests/fixtures/write_through_shared_borrow.kp:4:5
-run-status: not run

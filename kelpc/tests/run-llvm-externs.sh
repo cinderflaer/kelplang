@@ -113,17 +113,10 @@ cd "$(dirname "$0")/../.."
 
 BACKEND="${BACKEND:-llvm}"
 
-# KELPC_ORACLE is the project's one backend switch, and it names only the C
-# oracle; unsetting it selects the default llvm backend. This wrapper keeps the
-# gate's one-backend-at-a-time shape now that the user-facing selector is gone:
-# BACKEND=c sets the switch and anything else removes it. The retired
-# KELPC_BACKEND is stripped either way, so a stale export cannot refuse a build.
+# The retired KELPC_BACKEND and KELPC_ORACLE are stripped, so a stale export
+# cannot refuse a build.
 backend_env() {
-    if [ "$BACKEND" = "c" ]; then
-        env -u KELPC_BACKEND KELPC_ORACLE=c "$@"
-    else
-        env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
-    fi
+    env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
 }
 
 # The S1 scalar fixtures, the S2A `datac` fixtures, the S2B runtime fixtures,
@@ -508,14 +501,7 @@ fi
 
 # A gated call that *names a resource* is no longer refused: the MK7 S3 rest
 # slice lowers the runtime allowlist check, and `kelpc/tests/run-llvm-pd-caps.sh`
-# is its gate. The assertion that used to sit here (that the `llvm` backend
-# refused `caps_env` by name) moved there as the deny-path diff, which builds the
-# same programs under both backends and compares stderr and the exit status.
-if ! KELPC_ORACLE=c ./target/release/kelpc build \
-    kelpc/tests/projects/caps_env/main.kp -o "$REF_OUT/caps_env_c" >/dev/null; then
-    echo "the C backend no longer builds 'caps_env', which the S3 gate builds too" >&2
-    exit 1
-fi
+# is its gate.
 if ! backend_env ./target/release/kelpc build \
     kelpc/tests/projects/caps_env/main.kp -o "$REF_OUT/caps_env" >/dev/null; then
     echo "the $BACKEND backend refuses 'caps_env', whose gated call the S3 rest slice lowers" >&2

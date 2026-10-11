@@ -1,8 +1,0 @@
-unit: kelpc/tests/fixtures/string_hex_escape_is_not_text.kp
-backend: c
-build-status: 1
---- build stdout
---- build stderr
-error: a string literal is UTF-8: '\xFF' is not a text character. Write the character itself, or build the bytes with 'Bytes'
-  --> <root>/kelpc/tests/fixtures/string_hex_escape_is_not_text.kp:5:11
-run-status: not run

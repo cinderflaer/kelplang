@@ -3,7 +3,7 @@
 //! `irq.claim` / `frame.claim` build, checked against the calling module's
 //! grant (`plan/irq-frame-caps.md`). Every refusal runs `kelpc check` (front
 //! end only, so no `ld.lld` and no QEMU); the accepting cases build and run as
-//! ordinary hosted programs, so both backends see them.
+//! ordinary hosted programs, built by the LLVM backend.
 //!
 //! The cases are throwaway projects under the workspace's
 //! `target/irq-frame-tests` rather than `tests/projects/*` directories, for the
@@ -23,11 +23,7 @@ use std::process::{Command, Output};
 fn kelpc() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kelpc"));
     cmd.env_remove("KELPC_BACKEND");
-    if std::env::var("KELPC_ORACLE").as_deref() == Ok("c") {
-        cmd.env("KELPC_ORACLE", "c");
-    } else {
-        cmd.env_remove("KELPC_ORACLE");
-    }
+    cmd.env_remove("KELPC_ORACLE");
     cmd
 }
 
@@ -101,8 +97,7 @@ fn build(dir: &Path) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir())
         .join(format!(
-            "irq_frames_{}_{}",
-            std::env::var("KELPC_ORACLE").unwrap_or_else(|_| "llvm".to_string()),
+            "irq_frames_{}",
             std::thread::current().name().unwrap_or("main").replace("::", "_")
         ));
     let out = kelpc()
