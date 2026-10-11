@@ -73,6 +73,7 @@ empty on release.
 - `kelpc stdlib --json --dir <dir>` writes the shipped std sources to `<dir>` and prints the module list with a SHA-256 per file as JSON (on branch lighthouse-support, not merged).
 - `kelpc stdlib --json` lists the standard library as JSON (on branch lighthouse-support, not merged).
 - The runtime differential `kelpc/tests/run-runtime-diff.sh` and its recorded baseline from origin/main are in place, with runtime link smoke tests (on branch stage1-wp6, not merged).
+- `str.split` checks the first byte of the separator before comparing the whole separator, so splitting a long string does less work per position.
 
 ## fixes
 

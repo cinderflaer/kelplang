@@ -520,10 +520,13 @@ fun split(s: &str, sep: &str).return: List<String> {
         out.push(String.from_str(s))
         return out
     }
+    // The first byte of `sep` is compared before the call: almost every position fails there,
+    // and the full comparison is a call with a bounds-checked loop per position.
+    val first = nv.get(0)
     var start: usize = 0
     var i: usize = 0
     while i + lsep <= ls {
-        if view_starts_with_at(sv, nv, i) {
+        if sv.get(i) == first && view_starts_with_at(sv, nv, i) {
             out.push(sv.slice(start, i).to_string())
             i = i + lsep
             start = i
