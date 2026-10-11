@@ -67,6 +67,36 @@ fn state(h: *mut WorkerHandle) -> &'static AtomicI32 {
     unsafe { AtomicI32::from_ptr(&raw mut (*h).state) }
 }
 
+/// `pthread_mutex_lock` as a blocking native call: the thread is marked native
+/// around the lock only, so a collection on another thread does not wait for
+/// it. Nothing that can panic runs inside the bracket.
+unsafe fn blk_lock(m: *mut libc::pthread_mutex_t) -> c_int {
+    gc::native_enter();
+    let rc = unsafe { libc::pthread_mutex_lock(m) };
+    gc::native_leave();
+    rc
+}
+
+/// `pthread_cond_wait` as a blocking native call (see [`blk_lock`]).
+unsafe fn blk_wait(c: *mut libc::pthread_cond_t, m: *mut libc::pthread_mutex_t) -> c_int {
+    gc::native_enter();
+    let rc = unsafe { libc::pthread_cond_wait(c, m) };
+    gc::native_leave();
+    rc
+}
+
+/// `pthread_cond_timedwait` as a blocking native call (see [`blk_lock`]).
+unsafe fn blk_timedwait(
+    c: *mut libc::pthread_cond_t,
+    m: *mut libc::pthread_mutex_t,
+    deadline: *const libc::timespec,
+) -> c_int {
+    gc::native_enter();
+    let rc = unsafe { libc::pthread_cond_timedwait(c, m, deadline) };
+    gc::native_leave();
+    rc
+}
+
 /// The entry point `pthread_create` is given. `libc` takes a safe function
 /// pointer, so the unsafe trampoline is called from here.
 extern "C" fn tramp_entry(raw: *mut c_void) -> *mut c_void {
@@ -152,7 +182,9 @@ pub unsafe extern "C" fn kelp_thread_start(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_thread_wait(h: *mut WorkerHandle) -> c_int {
     unsafe {
+        gc::native_enter();
         libc::pthread_join((*h).tid, ptr::null_mut());
+        gc::native_leave();
         (*h).panicked
     }
 }
@@ -272,7 +304,7 @@ unsafe extern "C" fn mutex_guard_release(raw: *mut c_void) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_mutex_run(m: *mut Mutex, body: Option<Body>, code: *mut c_void, env: *mut c_void, out: *mut c_void) {
     unsafe {
-        libc::pthread_mutex_lock(&raw mut (*m).lock);
+        blk_lock(&raw mut (*m).lock);
         let mut frame = CleanupFrame {
             run: mutex_guard_release,
             arg: m.cast(),
@@ -313,7 +345,7 @@ fn atomic_i32<'a>(p: *mut c_int) -> &'a AtomicI32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_mutex_swap(m: *mut Mutex, input: *const c_void, out: *mut c_void) {
     unsafe {
-        libc::pthread_mutex_lock(&raw mut (*m).lock);
+        blk_lock(&raw mut (*m).lock);
         if (*m).poisoned != 0 {
             libc::pthread_mutex_unlock(&raw mut (*m).lock);
             kelp_panic(c"mutex poisoned".as_ptr());
@@ -418,7 +450,7 @@ pub unsafe extern "C" fn kelp_rwlock_new(value: *const c_void, size: usize, drop
 unsafe extern "C" fn rwlock_read_end(raw: *mut c_void) {
     unsafe {
         let rw = raw.cast::<RwLock>();
-        libc::pthread_mutex_lock(&raw mut (*rw).lock);
+        blk_lock(&raw mut (*rw).lock);
         (*rw).readers -= 1;
         if (*rw).readers == 0 {
             libc::pthread_cond_signal(&raw mut (*rw).writers_ok);
@@ -431,7 +463,7 @@ unsafe extern "C" fn rwlock_read_end(raw: *mut c_void) {
 unsafe extern "C" fn rwlock_write_end(raw: *mut c_void) {
     unsafe {
         let rw = raw.cast::<RwLock>();
-        libc::pthread_mutex_lock(&raw mut (*rw).lock);
+        blk_lock(&raw mut (*rw).lock);
         (*rw).writer = 0;
         libc::pthread_cond_signal(&raw mut (*rw).writers_ok);
         libc::pthread_cond_broadcast(&raw mut (*rw).readers_ok);
@@ -443,7 +475,7 @@ unsafe extern "C" fn rwlock_write_end(raw: *mut c_void) {
 unsafe extern "C" fn rwlock_write_poison(raw: *mut c_void) {
     unsafe {
         let rw = raw.cast::<RwLock>();
-        libc::pthread_mutex_lock(&raw mut (*rw).lock);
+        blk_lock(&raw mut (*rw).lock);
         (*rw).poisoned = 1;
         (*rw).writer = 0;
         libc::pthread_cond_signal(&raw mut (*rw).writers_ok);
@@ -472,13 +504,13 @@ unsafe fn rwlock_read_locked(rw: *mut RwLock, body: Body, code: *mut c_void, env
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_rwlock_read(rw: *mut RwLock, body: Option<Body>, code: *mut c_void, env: *mut c_void, out: *mut c_void) {
     unsafe {
-        libc::pthread_mutex_lock(&raw mut (*rw).lock);
+        blk_lock(&raw mut (*rw).lock);
         if (*rw).poisoned != 0 {
             libc::pthread_mutex_unlock(&raw mut (*rw).lock);
             kelp_panic(c"rwlock poisoned".as_ptr());
         }
         while (*rw).writer != 0 || (*rw).writers_waiting > 0 {
-            libc::pthread_cond_wait(&raw mut (*rw).readers_ok, &raw mut (*rw).lock);
+            blk_wait(&raw mut (*rw).readers_ok, &raw mut (*rw).lock);
         }
         (*rw).readers += 1;
         libc::pthread_mutex_unlock(&raw mut (*rw).lock);
@@ -491,14 +523,14 @@ pub unsafe extern "C" fn kelp_rwlock_read(rw: *mut RwLock, body: Option<Body>, c
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_rwlock_write(rw: *mut RwLock, body: Option<Body>, code: *mut c_void, env: *mut c_void, out: *mut c_void) {
     unsafe {
-        libc::pthread_mutex_lock(&raw mut (*rw).lock);
+        blk_lock(&raw mut (*rw).lock);
         if (*rw).poisoned != 0 {
             libc::pthread_mutex_unlock(&raw mut (*rw).lock);
             kelp_panic(c"rwlock poisoned".as_ptr());
         }
         (*rw).writers_waiting += 1;
         while (*rw).writer != 0 || (*rw).readers > 0 {
-            libc::pthread_cond_wait(&raw mut (*rw).writers_ok, &raw mut (*rw).lock);
+            blk_wait(&raw mut (*rw).writers_ok, &raw mut (*rw).lock);
         }
         (*rw).writers_waiting -= 1;
         (*rw).writer = 1;
@@ -522,7 +554,7 @@ pub unsafe extern "C" fn kelp_rwlock_write(rw: *mut RwLock, body: Option<Body>, 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_rwlock_try_read(rw: *mut RwLock, body: Option<Body>, code: *mut c_void, env: *mut c_void, out: *mut c_void) -> c_int {
     unsafe {
-        libc::pthread_mutex_lock(&raw mut (*rw).lock);
+        blk_lock(&raw mut (*rw).lock);
         if (*rw).poisoned != 0 {
             libc::pthread_mutex_unlock(&raw mut (*rw).lock);
             kelp_panic(c"rwlock poisoned".as_ptr());
@@ -543,7 +575,7 @@ pub unsafe extern "C" fn kelp_rwlock_try_read(rw: *mut RwLock, body: Option<Body
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_rwlock_try_write(rw: *mut RwLock, body: Option<Body>, code: *mut c_void, env: *mut c_void, out: *mut c_void) -> c_int {
     unsafe {
-        libc::pthread_mutex_lock(&raw mut (*rw).lock);
+        blk_lock(&raw mut (*rw).lock);
         if (*rw).poisoned != 0 {
             libc::pthread_mutex_unlock(&raw mut (*rw).lock);
             kelp_panic(c"rwlock poisoned".as_ptr());
@@ -708,7 +740,7 @@ pub unsafe extern "C" fn kelp_mutex_wait_while(
     out: *mut c_void,
 ) {
     unsafe {
-        libc::pthread_mutex_lock(&raw mut (*m).lock);
+        blk_lock(&raw mut (*m).lock);
         let mut frame = CleanupFrame {
             run: mutex_guard_release,
             arg: m.cast(),
@@ -727,7 +759,7 @@ pub unsafe extern "C" fn kelp_mutex_wait_while(
             if keep == 0 {
                 break;
             }
-            libc::pthread_cond_wait(&raw mut (*cv).cond, &raw mut (*m).lock);
+            blk_wait(&raw mut (*cv).cond, &raw mut (*m).lock);
         }
         let body = body.expect("Mutex.wait_while: no body");
         body(code, env, (&raw mut value_slot).cast(), out);
@@ -757,7 +789,7 @@ pub unsafe extern "C" fn kelp_mutex_wait_while_timeout(
     out: *mut c_void,
 ) -> c_int {
     unsafe {
-        libc::pthread_mutex_lock(&raw mut (*m).lock);
+        blk_lock(&raw mut (*m).lock);
         let mut timed_out = false;
         let mut frame = CleanupFrame {
             run: mutex_guard_release,
@@ -786,7 +818,7 @@ pub unsafe extern "C" fn kelp_mutex_wait_while_timeout(
             if keep == 0 {
                 break;
             }
-            if libc::pthread_cond_timedwait(&raw mut (*cv).cond, &raw mut (*m).lock, &raw const deadline)
+            if blk_timedwait(&raw mut (*cv).cond, &raw mut (*m).lock, &raw const deadline)
                 == libc::ETIMEDOUT
             {
                 let mut keep2: u8 = 0;
