@@ -81,6 +81,45 @@ lands.
   fill in the arm. Do not add a catch-all, `todo!()` or `unreachable!()` to make it
   build.
 
+## Finishing a lane: merge it yourself
+
+- A lane is finished when its work is on the landing branch (`main`). Merge it in
+  the same session, once its tests pass. Do not leave lanes unmerged for a later
+  cleanup: unmerged lanes conflict with each other once main has moved on.
+- Rebase or merge onto the current landing branch, resolve conflicts keeping the
+  intent of both sides, run the suite, then push the landing branch as a
+  fast-forward. If the push is rejected, fetch and repeat.
+- If the suite fails: fix it in the lane. If the failure is known and recorded
+  (for example a documented platform gap), name the failing tests in the merge
+  commit body and in your report. Do not land a lane with unexplained failures
+  without asking.
+- Never force-push. Never delete a remote branch without the owner's approval.
+  After a lane lands, remove its worktree and its local branch.
+
+## Builds and tests
+
+- Run heavy builds and tests through the shared build queue when one is set up,
+  not directly on the machine you are working on. Normal work uses the default
+  priority; the queue's setup notes say how.
+- Run builds and tests inside the repository's nix shell (`nix-shell shell.nix
+  --run '...'`) on any machine where the system linker is not on the path.
+- Tidepool work (any job whose name or working directory mentions tidepool) runs
+  at the highest queue priority, always.
+- Do not share one `CARGO_TARGET_DIR` between worktrees.
+
+## Changelog and commits
+
+- Every user-visible change gets one line in `plan/CHANGELOG.pending.md`, however
+  small the change.
+- Commit with the owner's configured git identity. One sentence in the message,
+  no trailers, staged by path.
+
+## Machine setup
+
+Machine names, hosts, queue locations and token file locations are not kept in
+this repository. They live in the owner's own setup notes, which every session
+reads before it builds or pushes.
+
 ## Version scheme
 
 Every piece of Kelp software is numbered `YY.MM.N`: two-digit year, two-digit
