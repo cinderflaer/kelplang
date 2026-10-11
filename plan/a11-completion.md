@@ -10,11 +10,14 @@ relaxation of moves or aliasing.*
 
 1. **Complete:** a `mut` reference cannot be forwarded to two
    exclusive parameters in one call. `refused_mut_param_reborrow_twice.kp`
-   pins it, with a paired shared-reborrow acceptance fixture.
+   pins it, with a paired shared-reborrow acceptance fixture. The fixture pair has
+   not been re-run on the merge that carries it.
 2. **Complete:** a move from a nested owned place has one projection path, clears exactly its
    final owning slot, and makes every prefix unusable as a whole until that
    path is reinitialised. Both backends and ASAN/valgrind must cover a nested
-   record, a conditional move and a reinitialisation.
+   record, a conditional move and a reinitialisation. (Execution of the nested
+   fixtures has not been re-run on the merge that carries them; the C backend
+   named here was removed on 2026-10-10.)
 3. **Implemented, deliberately narrow:** a direct `as_str()` or `view()` binding
    whose receiver is a temporary is promoted to a named compiler temporary.
    The temporary lasts for the binding's scope; escaping through a return,

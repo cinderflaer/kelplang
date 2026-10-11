@@ -11,6 +11,12 @@ The critical path, the MK/S/M naming scheme, the marks at a glance, the open ite
 
 ## Current state
 
+> **A-11 completion (2026-10-04, provisional).** `borrowck.rs` checks forwarded `&mut`
+> reborrows at call arguments and nested owned-place partial moves (`NestedField`). The
+> temporary-promotion and stored-borrow representation work is still open and tracked in
+> `plan/a11-completion.md`. The compiler and sanitizer gates for these fixtures have not been
+> re-run on the merge that carries them.
+
 The compiler exists and runs. `kelpc/` implements the language end-to-end (lexer → preprocess → parser → type check → move/borrow check → LLVM code generation; the C backend was removed on 2026-10-10, stage 2 step A), and the milestone record in `done.md` reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once the plan absorbed it; do not recreate it).
 
 ### 26.10.0: current state and the next work
