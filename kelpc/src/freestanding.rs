@@ -134,9 +134,9 @@ const RESULT_WITH_ALLOCATOR: &[&str] = &["map", "map_err", "and_then", "or_else"
 /// `std/math`'s integer functions: one-line Kelp comparisons, against the
 /// module's sixteen libm externs and its `f64` overloads, which are the rest of
 /// it. Names are matched through the overload suffix (`std.math.min@i32,i32`),
-/// and every overload that mentions `f64` is refused by name in
-/// `item_is_callable`: on riscv64 a `f64` comparison is a soft-float libcall
-/// (`__ltdf2`), which no bare-metal image has.
+/// and every overload that mentions `f32` or `f64` is refused by name in
+/// `item_is_callable`: on riscv64 a float comparison is a soft-float libcall
+/// (`__ltdf2`, `__ltsf2`), which no bare-metal image has.
 const MATH_CALLABLE: &[&str] = &["abs", "min", "max", "clamp"];
 
 /// The table. Every id `stdlib::shipped()` returns has a row here (a unit test
@@ -216,9 +216,10 @@ pub fn item_is_callable(module: &str, item: &str, allocator: bool) -> bool {
         } => {
             // An overloaded name is declared once per numeric type, and a call
             // names the one it picked (`std.math.min@i32,i32`), so the table's
-            // bare name is what matches. Every `f64` overload is refused
-            // whatever the table says: a `f64` comparison on the kernel's
-            // riscv64 triple is a soft-float libcall, not an instruction. A
+            // bare name is what matches. Every float overload is refused
+            // whatever the table says: a `f32` or `f64` comparison on the
+            // kernel's riscv64 triple is a soft-float libcall, not an
+            // instruction. A
             // receiver method's call key carries its type (`Range#next`),
             // while the table names the method (`next`), so the receiver is
             // stripped too.
@@ -226,10 +227,21 @@ pub fn item_is_callable(module: &str, item: &str, allocator: bool) -> bool {
             let base = item.split('@').next().unwrap_or(item);
             let allowed = callable.contains(&base) || helpers.contains(&base);
             let allocator_only = allocator && with_allocator.contains(&base);
-            (allowed || allocator_only) && !(module == "std/math" && item.contains("f64"))
+            (allowed || allocator_only) && !(module == "std/math" && is_float_overload(item))
         }
         StdAdmission::Present | StdAdmission::Hosted => false,
     }
+}
+
+/// Whether a parameter or type name is a hardware-float type, whose comparisons
+/// are soft-float libcalls on a target without the F/D extensions.
+fn is_float_type(ty: &str) -> bool {
+    ty == "f32" || ty == "f64"
+}
+
+/// Whether an overload key (`min@f32,f32`) names a float overload.
+fn is_float_overload(item: &str) -> bool {
+    item.contains("f32") || item.contains("f64")
 }
 
 /// Whether `item` of `module` would be callable if an allocator were
@@ -618,11 +630,12 @@ pub fn prune(program: &mut ast::Program, allocator: bool) {
                     return true;
                 }
                 // The AST keeps one declaration per overload under the same
-                // name (`std/math` has three `abs`s), so a `f64` overload is
-                // told apart by its parameters rather than its key; a `f64`
-                // comparison on the kernel's riscv64 triple is a soft-float
-                // libcall (`__ltdf2`), so none of them is emitted.
-                if f.module == "std/math" && f.params.iter().any(|p| p.ty.display() == "f64") {
+                // name (`std/math` has three `abs`s), so a `f32` or `f64`
+                // overload is told apart by its parameters rather than its key;
+                // a float comparison on the kernel's riscv64 triple is a
+                // soft-float libcall (`__ltdf2`, `__ltsf2`), so none of them is
+                // emitted.
+                if f.module == "std/math" && f.params.iter().any(|p| is_float_type(&p.ty.display())) {
                     return false;
                 }
                 item_is_callable(&f.module, item_name(&f.name), allocator)
@@ -1310,6 +1323,8 @@ mod tests {
         assert!(!item_needs_allocator("std/math", "abs@i32"));
         assert!(item_is_callable("std/math", "abs@i32", false));
         assert!(!item_is_callable("std/math", "abs@f64", false));
+        assert!(!item_is_callable("std/math", "min@f32,f32", false));
+        assert!(!item_is_callable("std/math", "clamp@f32,f32,f32", false));
         assert!(!item_is_callable("std/math", "sign", false));
         // A generic call key names its declaration through `item_name`.
         assert_eq!(item_name("std.math.abs@i32"), "abs@i32");
