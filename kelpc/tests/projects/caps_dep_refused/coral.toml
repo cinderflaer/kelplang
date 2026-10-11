@@ -1,0 +1,10 @@
+name = "caps_dep_refused"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[caps]
+fs = ["/var/log/**"]
+
+[dependencies]
+polyp = { source = "fpl/polyp", caps = ["ui"] }
+tidy = "fpl/tidy"

@@ -1,0 +1,12 @@
+// `main` holds `fs` under /var/log (its [caps] section) and delegates narrower
+// grants: `util` gets one directory, and the `polyp` dependency gets the same.
+// `tidy` is a plain-string dependency, so it is granted nothing.
+impl "util" caps(fs = ["/var/log/app/**"])
+impl "deps/polyp/lib" caps(fs = ["/var/log/app/**"])
+impl "deps/tidy/lib"
+
+fun main() {
+    print(util.read_note())
+    print(polyp.load("/var/log/app/app.log"))
+    print(tidy.shout("quiet"))
+}

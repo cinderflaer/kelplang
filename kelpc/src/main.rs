@@ -1,6 +1,7 @@
 mod ast;
 mod backend;
 mod borrowck;
+mod caps_report;
 mod cache;
 mod cdecl;
 mod codegen_llvm;
@@ -87,6 +88,7 @@ fn usage() {
         "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
          {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
          {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated] [--text]\n       \
+         {BIN_NAME} caps <file.{EXT}|project dir>\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
          {BIN_NAME} fmt --check <path>...\n       \
@@ -223,6 +225,7 @@ fn front_end(
         return (findings, !deny_outdated);
     }
 
+    let _ = infer::take_cap_uses();
     let typed = match infer::check_program(&loaded.program, &loaded.project) {
         Ok(p) => p,
         Err(d) => {
@@ -230,6 +233,15 @@ fn front_end(
             return (findings, false);
         }
     };
+
+    // The `[dependencies] caps` check (`caps_report.rs`): a dependency that
+    // reaches a domain its manifest entry does not list fails the build here,
+    // so `check`, `build` and `run` all refuse it.
+    let uses = infer::take_cap_uses();
+    if let Err(d) = caps_report::check_dependencies(&loaded.project, &uses, sources) {
+        findings.push((Severity::Error, d));
+        return (findings, false);
+    }
 
     if let Err(d) = borrowck::check_program(&typed) {
         findings.push((Severity::Error, d));
@@ -324,6 +336,55 @@ fn check_command(args: &[String]) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// `kelpc caps <project dir or entry file>`: the capability report. One line per
+/// project module (what it holds, what it reaches, what it grants to its
+/// imports), then one line per `[dependencies]` entry. Sorted, so a CI job can
+/// diff it. Nothing is written to stdout when the program does not check, and
+/// the refusal is the one `kelpc check` would print.
+fn caps_command(args: &[String]) -> ExitCode {
+    let mut path: Option<&str> = None;
+    for arg in args {
+        match arg.as_str() {
+            other if other.starts_with('-') && other != "-" => {
+                eprintln!("error: unknown flag '{other}'; 'caps' takes no flags");
+                return ExitCode::FAILURE;
+            }
+            other if path.is_none() => path = Some(other),
+            other => {
+                eprintln!("error: unexpected argument '{other}'");
+                usage();
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let Some(path) = path else {
+        eprintln!("error: 'caps' needs a .{EXT} file or a project directory", EXT = resolve::EXT);
+        usage();
+        return ExitCode::FAILURE;
+    };
+
+    let mut sources = SourceMap::new();
+    let loaded = match resolve::load(Path::new(path), &mut sources, None, None) {
+        Ok(l) => l,
+        Err(d) => {
+            sources.report(&d);
+            return ExitCode::FAILURE;
+        }
+    };
+    let _ = infer::take_cap_uses();
+    if let Err(d) = infer::check_program(&loaded.program, &loaded.project) {
+        sources.report(&d);
+        return ExitCode::FAILURE;
+    }
+    let uses = infer::take_cap_uses();
+    if let Err(d) = caps_report::check_dependencies(&loaded.project, &uses, &sources) {
+        sources.report(&d);
+        return ExitCode::FAILURE;
+    }
+    print!("{}", caps_report::render(&loaded.project, &uses));
+    ExitCode::SUCCESS
 }
 
 /// `kelpc cache stats|clear [--dir <dir>]`: inspect or empty the object cache
@@ -449,6 +510,7 @@ fn build(
     // refused by name, and that needs the declaration it names to still be
     // there. The check is a no-op for a hosted project.
     let infer_start = Instant::now();
+    let _ = infer::take_cap_uses();
     let mut typed = match infer::check_program(&loaded.program, &loaded.project) {
         Ok(p) => p,
         Err(d) => {
@@ -457,6 +519,13 @@ fn build(
         }
     };
     timing.infer += infer_start.elapsed();
+    // The `[dependencies] caps` check (`caps_report.rs`), on the uses this first
+    // check recorded, before any later pass can add to them.
+    let uses = infer::take_cap_uses();
+    if let Err(d) = caps_report::check_dependencies(&loaded.project, &uses, &sources) {
+        sources.report(&d);
+        return false;
+    }
     if let Err(d) = freestanding::check(&typed, &loaded.project) {
         sources.report(&d);
         return false;
@@ -1667,6 +1736,7 @@ fn real_main() -> ExitCode {
         Some("doc") => return doc_command(&args[2..]),
         Some("stdlib") => return stdlib_command(&args[2..]),
         Some("check") => return check_command(&args[2..]),
+        Some("caps") => return caps_command(&args[2..]),
         Some("cache") => return cache_command(&args[2..]),
         Some(c @ ("build" | "run")) => {
             guard::start();

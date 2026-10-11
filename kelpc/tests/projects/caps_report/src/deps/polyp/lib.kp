@@ -1,0 +1,3 @@
+impl "std/fs"
+
+pub fun load(path: str).return: String = fs.read_text(path)

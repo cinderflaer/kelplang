@@ -1213,9 +1213,6 @@ impl Ctx {
         let Some(domain) = self.gated.get(key) else {
             return Ok(());
         };
-        if self.caps.contains_key(domain) {
-            return Ok(());
-        }
         // A module's own items are reachable from inside it with no grant:
         // the gate exists to stop *other* modules from naming the resource,
         // and a gated stdlib module has to be able to call its own helpers
@@ -1223,7 +1220,16 @@ impl Ctx {
         // want the same shape). Nothing outside the compiler can declare a
         // gated item - `stdlib::domain_of` only knows stdlib ids - so this
         // exemption cannot widen a user module's authority.
-        if !self.prefix.is_empty() && key.starts_with(self.prefix.as_str()) {
+        let own = !self.prefix.is_empty() && key.starts_with(self.prefix.as_str());
+        if self.caps.contains_key(domain) {
+            // Recorded for `kelpc caps` and the `[dependencies] caps` check. The
+            // gate's answer is the same with or without the record.
+            if !own {
+                record_cap_use(&self.module, domain, key, span);
+            }
+            return Ok(());
+        }
+        if own {
             return Ok(());
         }
         Err(TypeError {
@@ -21843,6 +21849,46 @@ fn check_if(
         ty,
         span,
     })
+}
+
+/// One gated item a module reaches, as the capability gate admitted it: the
+/// module holds `domain` and names `callee` (a key of a gated module) at `span`.
+/// `kelpc caps` reports these per module, and the `[dependencies] caps` check
+/// refuses one whose domain the dependency's manifest entry does not allow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapUse {
+    pub module: String,
+    pub domain: String,
+    pub callee: String,
+    pub span: Span,
+}
+
+thread_local! {
+    // The uses of the program being checked on this thread. `check_program`
+    // runs on the compiler's one worker thread, so the list is the uses of the
+    // one program the caller just checked, drained by `take_cap_uses`.
+    static CAP_USES: std::cell::RefCell<Vec<CapUse>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn record_cap_use(module: &str, domain: &str, callee: &str, span: Span) {
+    CAP_USES.with(|uses| {
+        uses.borrow_mut().push(CapUse {
+            module: module.to_string(),
+            domain: domain.to_string(),
+            callee: display_callee(callee).to_string(),
+            span,
+        })
+    });
+}
+
+/// Drains the gated uses recorded by `check_program` on this thread, sorted and
+/// without duplicates (a generic or overloaded body is checked more than once).
+pub fn take_cap_uses() -> Vec<CapUse> {
+    let mut uses = CAP_USES.with(|uses| std::mem::take(&mut *uses.borrow_mut()));
+    let key = |u: &CapUse| (u.module.clone(), u.domain.clone(), u.callee.clone(), u.span.start, u.span.end);
+    uses.sort_by_key(key);
+    uses.dedup();
+    uses
 }
 
 #[cfg(test)]

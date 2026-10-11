@@ -59,6 +59,16 @@ pub struct ModuleInfo {
     pub aliases: HashMap<String, String>,
 }
 
+/// One `impl "target" caps(domain = [patterns])` clause as the loader saw it:
+/// the module that wrote it, the module it names, and the grant.
+#[derive(Debug, Clone)]
+pub struct GrantRecord {
+    pub importer: String,
+    pub target: String,
+    pub domain: String,
+    pub patterns: Vec<String>,
+}
+
 pub struct Project {
     /// Directory containing `coral.toml`, when there is one. A loose `.kp` file
     /// with no manifest still compiles; it is then its own module root.
@@ -90,6 +100,16 @@ pub struct Project {
     /// it, for the gated modules only. `infer.rs` gates resolution on it and
     /// the removed C backend inserts the runtime check because of it.
     gated: HashMap<String, String>,
+    /// The `[dependencies]` entries of `coral.toml`, in manifest order. A
+    /// dependency's modules are the ones under `deps/<key>/` (Coral copies each
+    /// dependency into `src/deps/<key>/`), which is how the capability check
+    /// finds them.
+    dependencies: Vec<DependencyDecl>,
+    /// Every `impl "target" caps(domain = [...])` clause, in load order, for
+    /// `kelpc caps`'s grant lines.
+    grants: Vec<GrantRecord>,
+    /// Every `impl "target" caps(*)` clause as (importer, target), in load order.
+    wildcard_grants: Vec<(String, String)>,
     /// Per module: its `coral.toml` `[extern."<module id>"]` entry (MK9-S1-M1,
     /// roadmap B-1), when it has one. This is what lets a *user* module's own
     /// `extern fun` declarations exist at all: `domain_of` below folds this
@@ -509,6 +529,21 @@ impl Project {
     pub fn gated(&self) -> &HashMap<String, String> {
         &self.gated
     }
+
+    /// The `[dependencies]` entries of `coral.toml`, in manifest order.
+    pub fn dependencies(&self) -> &[DependencyDecl] {
+        &self.dependencies
+    }
+
+    /// Every `caps(domain = [...])` clause, in load order.
+    pub fn grants(&self) -> &[GrantRecord] {
+        &self.grants
+    }
+
+    /// Every `caps(*)` clause as (importer, target), in load order.
+    pub fn wildcard_grants(&self) -> &[(String, String)] {
+        &self.wildcard_grants
+    }
 }
 
 pub struct Loaded {
@@ -576,6 +611,7 @@ pub fn load(
         manifest_emit,
         manifest_alias,
         manifest_alias_source,
+        manifest_dependencies,
     ) = if given.is_dir() {
             let manifest_path = given.join(MANIFEST_NAME);
             let text = fs::read_to_string(&manifest_path).map_err(|_| {
@@ -635,6 +671,7 @@ pub fn load(
                 manifest.emit,
                 manifest.alias,
                 manifest.alias_source,
+                manifest.dependencies,
             )
         } else {
             match find_manifest_root(&given) {
@@ -670,6 +707,7 @@ pub fn load(
                         manifest.emit,
                         manifest.alias,
                         manifest.alias_source,
+                        manifest.dependencies,
                     )
                 }
                 None => {
@@ -693,6 +731,7 @@ pub fn load(
                         Emit::Binary,
                         Vec::new(),
                         None,
+                        Vec::new(),
                     )
                 }
             }
@@ -1327,6 +1366,22 @@ pub fn load(
         incremental: manifest_incremental,
         sanitize: manifest_sanitize,
         emit: manifest_emit,
+        dependencies: manifest_dependencies,
+        grants: loader
+            .grants
+            .iter()
+            .map(|g| GrantRecord {
+                importer: g.importer.clone(),
+                target: g.target.clone(),
+                domain: g.domain.clone(),
+                patterns: g.patterns.clone(),
+            })
+            .collect(),
+        wildcard_grants: loader
+            .all_grants
+            .iter()
+            .map(|g| (g.importer.clone(), g.target.clone()))
+            .collect(),
     };
     if let Some(sink) = &mut timings {
         sink.resolve = resolve_start.elapsed();
@@ -1948,6 +2003,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         emit_entry: None,
         alias: Vec::new(),
         alias_source: None,
+        dependencies: Vec::new(),
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -2020,6 +2076,8 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                 parse_build_line(&mut manifest, line, at)?;
             } else if name == "alias" {
                 parse_alias_line(&mut manifest, line, line_offset)?;
+            } else if name == "dependencies" {
+                parse_dependency_line(&mut manifest, line, at)?;
             }
             continue;
         }
@@ -2355,6 +2413,130 @@ struct Manifest {
     /// `[build] emit_entry = "<file under src/>"`: the entry compiled when `emit`
     /// is `Html`. Required for `Html`, ignored for `Binary`.
     emit_entry: Option<String>,
+    /// `[dependencies]` (Coral's section): every dependency key, with the
+    /// `caps` list its inline-table entry may carry. Read here only for the
+    /// capability check (`caps_report.rs`); Coral still fetches the sources.
+    dependencies: Vec<DependencyDecl>,
+}
+
+/// One `[dependencies]` entry of `coral.toml`. `caps` is `None` for the plain
+/// string form (`name = "fpl/name"`), which carries no extra check, and the
+/// allowed domains for `name = { source = "...", caps = ["ui"] }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencyDecl {
+    pub key: String,
+    pub caps: Option<Vec<String>>,
+}
+
+/// One `[dependencies]` line: `key = "source"` or
+/// `key = { source = "...", caps = ["domain", ...] }`. Only the `caps` list is
+/// read; `source` is Coral's to check, and any other key of the inline table
+/// is Coral's too, so it is skipped rather than refused. A `caps` value that is
+/// not a list of known domains is refused by name, because a manifest that
+/// writes one has asked for the check and must get it.
+fn parse_dependency_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
+    let Some((key, value)) = line.split_once('=') else {
+        return Ok(());
+    };
+    let key = key.trim();
+    let value = value.trim();
+    if key.is_empty() || key.contains(['"', '{', '}', '[', ']']) {
+        return Ok(());
+    }
+    let caps = if let Some(inner) = value.strip_prefix('{').and_then(|v| v.strip_suffix('}')) {
+        let mut found = None;
+        for part in split_top_level(inner) {
+            let Some((field, field_value)) = part.split_once('=') else {
+                continue;
+            };
+            if field.trim() != "caps" {
+                continue;
+            }
+            found = Some(parse_dependency_caps(key, field_value.trim(), at)?);
+        }
+        found
+    } else {
+        None
+    };
+    if manifest.dependencies.iter().any(|d| d.key == key) {
+        return Err(Diagnostic::new(
+            format!("dependency '{key}' appears more than once in {MANIFEST_NAME}'s [dependencies] section"),
+            at,
+            "",
+        ));
+    }
+    manifest.dependencies.push(DependencyDecl {
+        key: key.to_string(),
+        caps,
+    });
+    Ok(())
+}
+
+/// Splits `a = 1, b = ["x", "y"]` at the commas outside brackets and quotes.
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut start = 0;
+    for (i, c) in text.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            '[' if !quoted => depth += 1,
+            ']' if !quoted => depth = depth.saturating_sub(1),
+            ',' if !quoted && depth == 0 => {
+                parts.push(text[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let rest = text[start..].trim();
+    if !rest.is_empty() {
+        parts.push(rest);
+    }
+    parts
+}
+
+/// The `["domain", ...]` list of a `caps` field in a `[dependencies]` entry.
+fn parse_dependency_caps(key: &str, value: &str, at: Span) -> Result<Vec<String>, Diagnostic> {
+    let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME} value for dependency '{key}' caps must be a bracketed list of domain names, found '{value}'"
+            ),
+            at,
+            "",
+        ));
+    };
+    let mut domains: Vec<String> = Vec::new();
+    for part in split_top_level(inner) {
+        let domain = part
+            .strip_prefix('"')
+            .and_then(|p| p.strip_suffix('"'))
+            .ok_or_else(|| {
+                Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} caps entry for dependency '{key}' must be a double-quoted domain name, found '{part}'"
+                    ),
+                    at,
+                    "",
+                )
+            })?;
+        if !crate::stdlib::is_domain(domain) {
+            return Err(Diagnostic::new(
+                format!(
+                    "'{domain}' is not a capability domain, so it cannot be in dependency '{key}' caps; v1 has {}",
+                    crate::stdlib::DOMAINS.join(", ")
+                ),
+                at,
+                "",
+            ));
+        }
+        if !domains.iter().any(|d| d == domain) {
+            domains.push(domain.to_string());
+        }
+    }
+    Ok(domains)
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
