@@ -1,0 +1,7 @@
+name = "text_poll"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[target]
+mode = "managed"
+heap_max = 1024
