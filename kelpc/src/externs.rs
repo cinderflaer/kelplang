@@ -667,11 +667,6 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     // so every body classifies the same way.
     (
         "std/tls",
-        "handshake_try_raw",
-        include_str!("externs/tls_handshake_try.c"),
-    ),
-    (
-        "std/tls",
         "set_timeout_raw",
         "    SSL* ssl = (SSL*)kelp_handle;\n    int fd = SSL_get_fd(ssl);\n    if (fd < 0) {\n        kelp_panic(\"tls.set_timeout: the TLS handle has no socket\");\n    }\n    /* A `ms` of 0 is the socket's own \"wait forever\", which the zero\n       `timeval` below is too, so neither value needs a special case. */\n    struct timeval tv;\n    tv.tv_sec = (time_t)(kelp_ms / 1000);\n    tv.tv_usec = (suseconds_t)((kelp_ms % 1000) * 1000);\n    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"tls.set_timeout: cannot set the receive timeout\");\n    }\n    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"tls.set_timeout: cannot set the send timeout\");\n    }\n",
     ),
@@ -700,72 +695,66 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "shutdown_try_raw",
         "    /* One `SSL_shutdown` (a return of 0 means `close_notify` went out but\n       the peer's set has not arrived yet, which is not a failure), then the\n       handle is always freed: the caller has no second chance to end the\n       session and the socket close follows either way. */\n    SSL* ssl = (SSL*)kelp_handle;\n    int rc = KELP_NO_SIGPIPE(SSL_shutdown(ssl));\n    *kelp_err_code = 0;\n    if (rc < 0) {\n        int err = SSL_get_error(ssl, rc);\n        char text[256];\n        int code = kelp_tls_classify_error(ssl, err, text, sizeof text);\n        *kelp_err_code = code;\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    SSL_free(ssl);\n",
     ),
-    (
-        "std/tls",
-        "server_ctx_try_raw",
-        include_str!("externs/tls_server_ctx_try.c"),
-    ),
-    (
-        "std/net",
-        "listen_on_raw",
-        include_str!("externs/net_listen_on.c"),
-    ),
-    (
-        "std/tls",
-        "reload_try_raw",
-        include_str!("externs/tls_reload_try.c"),
-    ),
-    (
-        "std/tls",
-        "accept_try_raw",
-        include_str!("externs/tls_accept_try.c"),
-    ),
-    (
-        "std/tls",
-        "ctx_free_raw",
-        include_str!("externs/tls_ctx_free.c"),
-    ),
-    (
-        "std/tls",
-        "alpn_raw",
-        include_str!("externs/tls_alpn.c"),
-    ),
-    (
-        "std/tls",
-        "peer_subject_raw",
-        include_str!("externs/tls_peer_subject.c"),
-    ),
-    (
-        "std/tls",
-        "pending_raw",
-        include_str!("externs/tls_pending.c"),
-    ),
 ];
 
-/// The C body for an `extern fun` in `module`, or `None` when the compiler
-/// has no body for it. `qualified_name` is the function's `tir::Function`
+/// The externs whose body is the Rust runtime's export of the same name
+/// (`kelp-rt/src/tls.rs` and `net.rs`), so no C text is written for them. The
+/// LLVM call resolves against `libkelp_rt.a` as `kelp_` plus the mangled
+/// qualified name. Ported from the C bodies in `kelpc/src/externs/`.
+static RUST_PORTED: &[(&str, &str)] = &[
+    ("std/tls", "handshake_try_raw"),
+    ("std/tls", "server_ctx_try_raw"),
+    ("std/net", "listen_on_raw"),
+    ("std/tls", "reload_try_raw"),
+    ("std/tls", "accept_try_raw"),
+    ("std/tls", "ctx_free_raw"),
+    ("std/tls", "alpn_raw"),
+    ("std/tls", "peer_subject_raw"),
+    ("std/tls", "pending_raw"),
+];
+
+/// The name `module` writes in its own `extern fun` declarations for
+/// `qualified_name`: the module prefix comes off the function's `tir::Function`
 /// key, which `resolve.rs` has already prefixed with the module path.
-pub fn body(module: &str, qualified_name: &str) -> Option<&'static str> {
+fn bare_name<'a>(module: &str, qualified_name: &'a str) -> &'a str {
     let prefix = if module.is_empty() {
         String::new()
     } else {
         format!("{}.", module.replace('/', "."))
     };
-    let bare = qualified_name
+    qualified_name
         .strip_prefix(prefix.as_str())
-        .unwrap_or(qualified_name);
+        .unwrap_or(qualified_name)
+}
+
+/// The C body for an `extern fun` in `module`, or `None` when the compiler
+/// has no C body for it. `qualified_name` is the function's `tir::Function`
+/// key. A Rust-ported extern has no C body either: see [`is_rust_ported`].
+pub fn body(module: &str, qualified_name: &str) -> Option<&'static str> {
+    let bare = bare_name(module, qualified_name);
     EXTERNS
         .iter()
         .find(|(m, n, _)| *m == module && *n == bare)
         .map(|(_, _, body)| *body)
 }
 
-/// Whether the compiler ships a body for this `(module, bare name)` pair.
-/// Used by `infer.rs` to reject an `extern` declaration it cannot honor.
+/// Whether the extern is provided by the Rust runtime archive instead of a C
+/// body in the program's object.
+pub fn is_rust_ported(module: &str, qualified_name: &str) -> bool {
+    let bare = bare_name(module, qualified_name);
+    RUST_PORTED.iter().any(|(m, n)| *m == module && *n == bare)
+}
+
+/// Whether the compiler ships a body for this `(module, bare name)` pair, in
+/// C or in the Rust runtime. Used by `infer.rs` to reject an `extern`
+/// declaration it cannot honor.
 pub fn has_body(module: &str, bare_name: &str) -> bool {
     EXTERNS
         .iter()
         .any(|(m, n, _)| *m == module && *n == bare_name)
+        || RUST_PORTED
+            .iter()
+            .any(|(m, n)| *m == module && *n == bare_name)
 }
 
 #[cfg(test)]

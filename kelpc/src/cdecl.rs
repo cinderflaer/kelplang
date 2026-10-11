@@ -168,7 +168,6 @@ static inline int kelp_tls_classify_error(SSL* ssl, int err, char* text, size_t 
     snprintf(text, text_len, \"TLS operation failed (SSL_get_error returned %d)\", err);\n\
     return 8;\n\
 }\n\n",
-    include_str!("externs/tls_helpers.c")
 );
 
 /// The `#include <...>` lines a project's `[extern.*] header` keys ask for,
@@ -244,6 +243,12 @@ pub(crate) fn write_extern(
 ) {
     if let Some(symbol) = extern_ffi_symbols.get(&f.name) {
         write_user_extern(out, f, symbol, closure_by_ref);
+        return;
+    }
+    // A Rust-ported extern is a call to the runtime archive's export of the
+    // same name, so this object defines nothing for it.
+    if crate::externs::is_rust_ported(&f.module, &f.name) {
+        writeln!(out, "// extern '{}' is provided by the Rust runtime archive", f.name).unwrap();
         return;
     }
     let body = crate::externs::body(&f.module, &f.name)
