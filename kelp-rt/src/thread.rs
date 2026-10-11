@@ -18,7 +18,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::cleanup::{CleanupFrame, cleanup_pop, cleanup_push};
 use crate::gc;
-use crate::panic::{WorkerHandle, kelp_panic, set_worker_handle};
+use crate::panic::{WorkerHandle, kelp_panic, kelp_panic_at, set_worker_handle};
 
 /// `void (*)(void* code, void* env, void* arg, void* out)`: the generated
 /// per-signature body the runtime calls.
@@ -170,7 +170,17 @@ pub unsafe extern "C" fn kelp_thread_start(
         });
         let rc = libc::pthread_create(&raw mut (*h).tid, ptr::null(), tramp_entry, s.cast());
         if rc != 0 {
-            kelp_panic(c"thread.spawn: pthread_create failed".as_ptr());
+            // Nothing was started, so nothing else owns the start record, the
+            // handle or its slots: release them, then report the return code.
+            // pthread_create does not set errno, so the code is passed in.
+            if !env.is_null() {
+                if let Some(drop_env) = env_drop {
+                    drop_env(env);
+                }
+            }
+            libc::free(s.cast());
+            kelp_thread_dispose(h);
+            kelp_panic_at(c"thread.spawn: pthread_create failed".as_ptr(), rc);
         }
     }
 }
