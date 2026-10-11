@@ -1,0 +1,17 @@
+//! A circle and the trait it implements.
+
+/// Something with an area.
+pub trait Shape {
+    /// The area.
+    fun Self.area().return: f64
+}
+
+/// A circle.
+pub datac Circle(
+    /// The radius.
+    val r: f64
+)
+
+impl Shape for Circle {
+    fun Self.area().return: f64 = self.r * self.r
+}

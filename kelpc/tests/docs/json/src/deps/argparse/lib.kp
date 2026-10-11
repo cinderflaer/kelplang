@@ -1,0 +1,4 @@
+//! Argument parsing.
+
+/// Parses `args`.
+pub fun parse(args: &str).return: i32 = 0
