@@ -1,0 +1,17 @@
+// A `String` lends its text to a `str` parameter for the call. In the same
+// argument list the `String` is moved into `take`, so the borrow would outlive
+// the move. The borrow rules refuse it, as they refuse the explicit `.as_str()`.
+impl "std/str"
+fun take(s: move String).return: i32 {
+    return 1
+}
+
+fun show(text: str, n: i32) {
+    print(text)
+    print(n)
+}
+
+fun main() {
+    val name = String.from_str("kelp")
+    show(name, take(name))
+}

@@ -14337,6 +14337,37 @@ fn an_errdefer_naming_a_later_local_is_refused() {
     );
 }
 
+// A `String` passed to a `str` parameter is borrowed for the call, as `.as_str()`
+// would borrow it (`plan/syntax.md`, 11.2).
+
+/// A `String` argument for a `str` parameter prints the text the callee sees and
+/// returns its length, exactly as the explicit `.as_str()` form does.
+#[test]
+fn a_string_argument_is_borrowed_for_a_str_parameter() {
+    assert_compiles_and_runs("tests/fixtures/string_to_str_arg.kp", "kelp\n4\n4\n");
+}
+
+/// A `String` moved into a call in the same argument list as its borrow is
+/// refused by the borrow rules, as the explicit `.as_str()` form is.
+#[test]
+fn a_string_borrowed_for_a_str_parameter_cannot_be_moved_in_the_same_call() {
+    assert_rejected_with("tests/fixtures/string_to_str_move.kp", "cannot move 'name' while it is borrowed");
+}
+
+/// Only a `str` parameter borrows a `String`: any other parameter type keeps the
+/// ordinary mismatch error.
+#[test]
+fn a_string_for_a_non_str_parameter_is_refused() {
+    assert_rejected_with("tests/fixtures/string_to_str_non_str.kp", "argument 'n' has type 'String', expected 'i32'");
+}
+
+/// A `str` parameter of a generic function takes no implicit borrow, and the
+/// refusal names the function and the `.as_str()` fix.
+#[test]
+fn a_string_for_a_str_parameter_of_a_generic_function_is_refused_by_name() {
+    assert_rejected_with("tests/fixtures/string_to_str_generic.kp", "generic function 'label' takes no implicit borrow");
+}
+
 /// `break`/`continue` are ordinary loop control in a written `while`
 /// (`plan/iterators.md`).
 #[test]

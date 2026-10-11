@@ -1,0 +1,13 @@
+// A `String` passed where a `str` parameter is expected is borrowed for the
+// call, exactly as `.as_str()` would borrow it. No conversion call is made.
+impl "std/str"
+fun shout(text: str).return: usize {
+    print(text)
+    return str.len(text)
+}
+
+fun main() {
+    val name = String.from_str("kelp")
+    print(shout(name))
+    print(str.len(name))
+}

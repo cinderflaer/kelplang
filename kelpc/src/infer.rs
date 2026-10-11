@@ -860,6 +860,12 @@ struct Ctx {
     /// only when its type is exactly the one the argument is then expected to
     /// have, and is dropped when used.
     probes: Vec<(*const ast::Expr, Span, tir::Expr)>,
+    /// Set by the one call that is about to match its arguments against a
+    /// signature (`match_args_split` takes it at once): whether a `String`
+    /// argument for a `str` parameter is borrowed for the call, or refused by
+    /// name. Unset means no such conversion, as for a constructor or a trait
+    /// static call.
+    str_arg_site: Option<StrArgSite>,
     /// How many `unsafe { ... }` blocks enclose the expression being checked
     /// (MK9-S2 stage 1). Non-zero means the unsafe-only operations are legal;
     /// the body of an `unsafe fun` starts at 1.
@@ -10175,6 +10181,7 @@ fn base_ctx(
         tuple_temps: 0,
         defer_empty_container: false,
         probes: Vec::new(),
+        str_arg_site: None,
         unsafe_depth: 0,
         unsafe_fns: project.unsafe_fns().clone(),
         must_use_fns: project.must_use_fns().clone(),
@@ -15945,6 +15952,7 @@ fn match_args_split<'a>(
     ctx: &mut Ctx,
     variadic: bool,
 ) -> Result<(Vec<tir::Expr>, Vec<&'a ast::CallArg>)> {
+    let site = ctx.str_arg_site.take();
     if args.len() != params.len() && !(variadic && args.len() > params.len()) {
         return Err(TypeError {
             message: format!("{what} expects {} argument(s), found {}", params.len(), args.len()),
@@ -15976,7 +15984,7 @@ fn match_args_split<'a>(
         };
         // The label the diagnostics use: a declared parameter is quoted by
         // name, which is what a call site can see.
-        result.push(check_call_arg(&format!("'{pname}'"), pty, &arg.value, ctx)?);
+        result.push(check_call_arg_in(&format!("'{pname}'"), pty, &arg.value, ctx, site.as_ref())?);
     }
 
     if let Some((&leftover, _)) = named.iter().next() {
@@ -16064,6 +16072,28 @@ fn check_expr_or_memo(
 /// declared parameter, `1` for the position in a call through a function value
 /// (a function *type* has no parameter names).
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
+    check_call_arg_in(pname, pty, arg_expr, ctx, None)
+}
+
+/// What a `String` argument for a `str` parameter does at one call. `Implicit`
+/// borrows it exactly as `.as_str()` would (plan/syntax.md 11.2); `Refused`
+/// names the callee that takes no implicit borrow (a generic function, or a
+/// trait method) and asks for the explicit `.as_str()`.
+#[derive(Clone)]
+enum StrArgSite {
+    Implicit,
+    Refused(String),
+}
+
+/// `check_call_arg` with the call's `String`-to-`str` policy. `None` keeps the
+/// old rule: a `String` against a `str` parameter is a type mismatch.
+fn check_call_arg_in(
+    pname: &str,
+    pty: &Ty,
+    arg_expr: &ast::Expr,
+    ctx: &mut Ctx,
+    site: Option<&StrArgSite>,
+) -> Result<tir::Expr> {
     let memo = ctx.take_probe(arg_expr);
     // A `scoped fun(...)` parameter accepts only a `fun` literal or a trailing
     // block written at this call site (`plan/scoped-blocks.md`), never a
@@ -16097,6 +16127,24 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
     let Ty::Ref { mutable, inner } = pty else {
         let checked = check_expr_or_memo(memo, arg_expr, ctx, pty)?;
         refuse_open_arg(&checked.ty, arg_expr)?;
+        if *pty == Ty::Str && checked.ty == Ty::String {
+            match site {
+                Some(StrArgSite::Implicit) => {
+                    // The same expression `arg.as_str()` would type to: the
+                    // receiver is checked again, as a method receiver always is.
+                    return check_method_call(arg_expr, "as_str", &[], &[], arg_expr.span(), ctx, None);
+                }
+                Some(StrArgSite::Refused(callee)) => {
+                    return Err(TypeError {
+                        message: format!(
+                            "argument {pname} has type 'String', expected 'str': {callee} takes no implicit borrow of a 'String' for a 'str' parameter; write `.as_str()` on the argument"
+                        ),
+                        span: arg_expr.span(),
+                    })
+                }
+                None => {}
+            }
+        }
         // A `&str` view and a `str` are the same value (both are the flat
         // borrowed view type), so a view satisfies a `str` parameter
         // directly — that is what makes `str.len(s.as_str())` work (M6.3).
@@ -16188,6 +16236,12 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
             span: arg_expr.span(),
         }),
     }
+}
+
+/// Whether some trait declares a method of this name. A `str` parameter of
+/// such a method takes no implicit borrow (`StrArgSite::Refused`).
+fn trait_declares_method(ctx: &Ctx, method: &str) -> bool {
+    ctx.env.traits.values().any(|t| t.methods.iter().any(|m| m.name == method))
 }
 
 /// The one widening a function value gets (A-4 phase E): a plain `fun` value
@@ -17315,6 +17369,7 @@ fn check_call(
     // name, `pub` or not (A-13).
     let names_a_module = callee.contains('.');
     let owned_key = ctx.qualify_own(callee);
+    let generic_callee = func_template_named(ctx, callee, &owned_key).is_some();
     let direct = ctx.sig_of(&owned_key).map(|s| (owned_key.clone(), s)).or_else(|| {
         if !names_a_module {
             return None;
@@ -17418,6 +17473,11 @@ fn check_call(
     // so two call sites that pass the same types share one.
     let variadic = ctx.variadic_externs.contains_key(&key);
     let what = format!("function '{}'", display_callee(&key));
+    ctx.str_arg_site = Some(if generic_callee {
+        StrArgSite::Refused(format!("generic function '{callee}'"))
+    } else {
+        StrArgSite::Implicit
+    });
     let (mut checked, extra_args) = if variadic {
         match_args_split(&what, &sig.params, args, span, ctx, true)?
     } else {
@@ -19886,6 +19946,11 @@ fn check_method_call(
     let mut checked_args = Vec::with_capacity(sig.params.len());
     ctx.keep_probe(receiver, probe);
     checked_args.push(check_call_arg("'self'", &sig.params[0].1, receiver, ctx)?);
+    ctx.str_arg_site = Some(if key.contains('<') || trait_declares_method(ctx, method) {
+        StrArgSite::Refused(format!("method '{owner}.{method}'"))
+    } else {
+        StrArgSite::Implicit
+    });
     checked_args.extend(match_args(&format!("method '{owner}.{method}'"), &sig.params[1..], args, span, ctx)?);
     // A method whose result borrows from its receiver (`s.as_str()`) has the
     // same rule as a free function.

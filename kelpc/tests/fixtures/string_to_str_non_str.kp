@@ -1,0 +1,11 @@
+// A `String` passed to a parameter of any type other than `str` keeps the
+// ordinary mismatch error. Only a `str` parameter borrows a `String`.
+impl "std/str"
+fun width(n: i32).return: i32 {
+    return n
+}
+
+fun main() {
+    val name = String.from_str("kelp")
+    print(width(name))
+}
