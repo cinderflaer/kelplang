@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1076 ran=549 c_refused=494 excluded=33
+# counts candidates=1098 ran=557 c_refused=508 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -162,6 +162,13 @@ fixture_defer_then_branch	ran	exit 0		6d9652f32617631409d8ba893aa69b930d491827bd
 fixture_defer_try_exit	c-refused		error: defer with an early `?` exit is not supported yet	
 fixture_defer_use_after_move	c-refused		error: use of moved value 's'	
 fixture_defer_value_block	ran	exit 0		6d51b24299994492c2c153297d560ef24a8f5f228d6d6ff5f5c3479c56ec6de9
+fixture_derive_map_key_datac	ran	exit 0		e694259eaa6c406eaeb2a2650624fc0f1c51061894e001f90c23514badfa0a8f
+fixture_derive_map_key_enum	ran	exit 0		743422ce17caa12cb9f950e44796c2e8add34add9bdb928dc58284b968d1f043
+fixture_derive_refuse_bad_name	c-refused		error: 'derive' can derive 'eq' and 'hash', not 'show'	
+fixture_derive_refuse_field_without_eq	c-refused		error: derive(eq) on 'Outer' cannot compare field 'inner' of type 'Inner'	
+fixture_derive_refuse_float_field	c-refused		error: derive(hash) on 'Sample' cannot hash field 'ratio' of type 'f64'	
+fixture_derive_refuse_generic_field	c-refused		error: derive(eq) on generic 'Wrap' cannot check field 'item' of type 'T'	
+fixture_derive_refuse_hand_written	c-refused		error: derive(eq) on 'Point' would declare 'fun Point.eq' a second time, and the hand-written 'fun Point.eq' already declares it. Fix	
 fixture_discard_wide_return	ran	exit 0		c652f3dc9fbb7d67758198c696e30a7ecf47ebc92151183514e296929cb1e6fd
 fixture_doc_comment_trailing	c-refused		error: '//!' is a documentation comment and must start a line	
 fixture_doc_no_dashes	c-refused		error: trait 'Reading' declares 'type Unit', and 'impl Reading for Gauge' does not bind it	
@@ -223,6 +230,10 @@ fixture_eq_operator_order	c-refused		error: cannot compare 'P' values with '<'
 fixture_eq_operator_order_gt	c-refused		error: cannot compare 'P' values with '>'	
 fixture_eq_operator_type_mismatch	c-refused		error: cannot compare 'A' with 'B'	
 fixture_eq_operator_view	ran	exit 0		d827616f56e6af1faa3da3a51a50629fc2cedc2af4e9e59d9383c9309a4cf51a
+fixture_errdefer_error_path	ran	exit 0		140daf8d771000359b0a1a77d8ee3337ac888cd618041f812d3c0a1514ed2a0b
+fixture_errdefer_later_local	c-refused		error: this 'errdefer' names 'later', which is declared later in the block	
+fixture_errdefer_non_result	c-refused		error: an 'errdefer' runs only on the error path, so it needs a function that returns Result or Option, and this one does not	
+fixture_errdefer_second_try	ran	exit 0		82bae79e9b31ea64da315a8231c0d64a6113ac0006a22d0587005e63f0c82ab6
 fixture_escape_dollar	ran	exit 0		296a180a46f76a98090d0f9054a43d19b3008feacf83421206a17b0f7fea42c1
 fixture_escapes	ran	exit 0		057a17adcd3331eac51a0db8a76cbcbe656b536089c2a08c328510458c870220
 fixture_eval_order_basic	ran	exit 0		b51fb92cbbabc5e6cf9fbb770768632ec5f5c3e03aec6287c266282d7f8f82a1
@@ -415,6 +426,11 @@ fixture_iter_consumers	ran	exit 0		506ace5a56bfc422b3fbfcf20598087fc08777f4de3fb
 fixture_iter_list_take_skip	ran	exit 0		14f2d0d77f246883e2097c861d1f50add0faac40afb3e1f581e87d9f108401e7
 fixture_language_tour_all	ran	exit 0		3d03156e316b826a3932bf0e209e767fcd9ac06616dbec8b8c2222ab8e0a921f
 fixture_layout_query_in_a_constant	ran	exit 0		1148b48a8d116c35a6fe09da0adbed1bf2af70e320113f326bff674e84f9c3ab
+fixture_let_else	ran	exit 0		244f3c336600d5cbaf22c99472cc091bda894ff0471d7025506111894200270d
+fixture_let_else_drops	ran	exit 0		87b2001284c72792e93616a1db7c000be1b9d8280abcbd26f55e0e2b2be07ffc
+fixture_let_else_falls_through	c-refused		error: let-else	
+fixture_let_else_plain_name	c-refused		error: let-else	
+fixture_let_else_type_mismatch	c-refused		error: let-else	
 fixture_line_continuation_after_operator	ran	exit 0		ae78f04a41517bdd9853439dee50a432988fc5300b6167db80d0e2d7e1344d65
 fixture_list_basic	ran	exit 0		cbdc47dc0c9f3771907f8d7aa0eb2f16bcb29cdf4b10a9152114c767a3882109
 fixture_list_borrow_element	c-refused		error: '&str' cannot be a container element	
@@ -739,6 +755,10 @@ fixture_string_basic	ran	exit 0		e881ceece0e103272396ef9d5e84887e48d2c14965163eb
 fixture_string_build	ran	exit 0		2dce4e78c1b59e92a3ace1e250a8fcf78ff23f05401d27399be2fc3062490346
 fixture_string_field	ran	exit 0		13ede09df8d88cb5c57ee388a90d685bbd2eeb57d01be30aed14ed2a5697b151
 fixture_string_hex_escape_is_not_text	c-refused		error: a string literal is UTF-8	
+fixture_string_to_str_arg	ran	exit 0		4e757a4690f7f29696aa377ff1873224564d2f16ca9a303865a4540332aa76cc
+fixture_string_to_str_generic	c-refused		error: argument 'text' has type 'String', expected 'str'	
+fixture_string_to_str_move	c-refused		error: cannot move 'name' while it is borrowed	
+fixture_string_to_str_non_str	c-refused		error: argument 'n' has type 'String', expected 'i32'	
 fixture_string_view_basic	ran	exit 0		b6edbd53e9f6586d9bc50623601f3f33d74f7c3f60f8f114532c790dc1a2865b
 fixture_string_views	ran	exit 0		df4b4510ed899ba009ecc26b34168aea5f7f4beafebf2c05b3de90887f506ed8
 fixture_string_with_capacity_zero	ran	exit 0		71a6c8cae4c328ec8cb583dc0793b03028661497db4efe3ccadb1aa71f6b2a33
@@ -939,9 +959,11 @@ project_asm_out	ran	exit 0		88dcc3fa6ee7c472c426748ec197df6a2c7e39e320515c68d09e
 project_asm_outside_unsafe	c-refused		error: 'asm' is an unsafe operation	
 project_asm_riscv	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/asm_riscv' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_asm_unlisted	c-refused		error: module 'main' is not listed in coral.toml [unsafe] modules	
+project_caps_dep_refused	c-refused		error: module 'deps/polyp/lib' uses the 'fs' capability at line 3 ('std.fs.read_text'), which dependency 'polyp' is not allowed	
 project_caps_entry_pattern_denied	c-refused		error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_entry_pattern_denied/**' must start with '/'	
 project_caps_entry_restricted	c-refused		error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_entry_restricted/**' must start with '/'	
 project_caps_entry_ungranted	c-refused		error: 'std.fs.exists' needs the 'fs' capability, which module 'main' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(fs = ["<pattern>"])`)	
+project_caps_report	ran	exit 1	panic: fs.read: cannot open file	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 project_closure_datac_param	ran	exit 0		9898479bfabd961cde3c91327af8e70831a1eb0d93a55681d0c47b67ce3b0508
 project_convert_cross	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
 project_ffi_bad_domain	c-refused		error: 'disk' is not a capability domain; v1 has fs, net, process, env, time, rand, ui, mmio, irq, frames	

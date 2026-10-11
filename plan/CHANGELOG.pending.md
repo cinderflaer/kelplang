@@ -86,6 +86,7 @@ empty on release.
 - A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
 - The Rust runtime leaves the collector when a worker ends (also on a panic), waits in join, locks and condition waits as native, polls the collector in long text and map scans, frees a spawn whose thread cannot start and reports its errno, and the collector's personality routine lets a worker's forced unwind finish (landed with the rt-gaps lane).
 - A freestanding build refuses the `f32` overloads of `std` and `math` as it refuses the `f64` ones, so no soft-float compare routine is linked (`ld.lld` failed with an undefined `__ltsf2` on riscv).
+- The golden corpus index has a row for every fixture again: the 20 fixtures added after the C oracle was removed are decided by the llvm backend (`kelpc/tests/golden/regen_llvm.py`), and the hosted IR golden follows the pooled Box lowering on main. Internal test data only.
 
 ## limits
 

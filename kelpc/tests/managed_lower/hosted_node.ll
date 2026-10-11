@@ -9,8 +9,6 @@ target triple = "x86_64-unknown-linux-gnu"
 %tag_Node = type { %kelp_Box__Node, %kelp_Box__Node }
 %kelp_Box__Node = type { ptr }
 
-@kelp_box_free_heads = external thread_local(initialexec) global [4 x ptr]
-@kelp_box_registered = external thread_local(initialexec) global i32
 @kelp_argc = external global i32
 @kelp_argv = external global ptr
 @kelp_caps_node_env = external global ptr
@@ -382,6 +380,8 @@ declare ptr @realloc(ptr, i64)
 
 declare void @free(ptr)
 
+declare ptr @kelp_box_pool()
+
 declare ptr @kelp_box_alloc(i64, i64)
 
 declare void @kelp_box_free(ptr, i64, i64)
@@ -429,13 +429,15 @@ entry:
 define internal %kelp_Box__Node @kelp_Box__Node__of(%tag_Node %0) {
 entry:
   %b = alloca %kelp_Box__Node, align 8
-  %box.head = load ptr, ptr @kelp_box_free_heads, align 8
+  %box.pool = call ptr @kelp_box_pool()
+  %box.slot = getelementptr ptr, ptr %box.pool, i64 0
+  %box.head = load ptr, ptr %box.slot, align 8
   %box.empty = icmp eq ptr %box.head, null
   br i1 %box.empty, label %box.new, label %box.pop
 
 box.pop:                                          ; preds = %entry
   %box.next = load ptr, ptr %box.head, align 8
-  store ptr %box.next, ptr @kelp_box_free_heads, align 8
+  store ptr %box.next, ptr %box.slot, align 8
   br label %box.join
 
 box.new:                                          ; preds = %entry
@@ -490,7 +492,9 @@ entry:
   br i1 %empty, label %alloc, label %have
 
 alloc:                                            ; preds = %entry
-  %box.head = load ptr, ptr @kelp_box_free_heads, align 8
+  %box.pool = call ptr @kelp_box_pool()
+  %box.slot = getelementptr ptr, ptr %box.pool, i64 0
+  %box.head = load ptr, ptr %box.slot, align 8
   %box.empty = icmp eq ptr %box.head, null
   br i1 %box.empty, label %box.new, label %box.pop
 
@@ -505,7 +509,7 @@ store:                                            ; preds = %have, %alloc.ok
 
 box.pop:                                          ; preds = %alloc
   %box.next = load ptr, ptr %box.head, align 8
-  store ptr %box.next, ptr @kelp_box_free_heads, align 8
+  store ptr %box.next, ptr %box.slot, align 8
   br label %box.join
 
 box.new:                                          ; preds = %alloc
@@ -539,21 +543,11 @@ empty2:                                           ; preds = %entry
 
 take:                                             ; preds = %entry
   %take3 = load %tag_Node, ptr %value1, align 8
-  %box.reg = load i32, ptr @kelp_box_registered, align 4
-  %box.ready = icmp ne i32 %box.reg, 0
-  br i1 %box.ready, label %box.push, label %box.free
-
-box.push:                                         ; preds = %take
-  %box.head = load ptr, ptr @kelp_box_free_heads, align 8
+  %box.pool = call ptr @kelp_box_pool()
+  %box.slot = getelementptr ptr, ptr %box.pool, i64 0
+  %box.head = load ptr, ptr %box.slot, align 8
   store ptr %box.head, ptr %value1, align 8
-  store ptr %value1, ptr @kelp_box_free_heads, align 8
-  br label %box.freed
-
-box.free:                                         ; preds = %take
-  call void @kelp_box_free(ptr %value1, i64 16, i64 8)
-  br label %box.freed
-
-box.freed:                                        ; preds = %box.free, %box.push
+  store ptr %value1, ptr %box.slot, align 8
   store ptr null, ptr %value, align 8
   ret %tag_Node %take3
 }
@@ -565,26 +559,16 @@ entry:
   %empty = icmp eq ptr %value1, null
   br i1 %empty, label %ret, label %live
 
-ret:                                              ; preds = %box.freed, %entry
+ret:                                              ; preds = %live, %entry
   ret void
 
 live:                                             ; preds = %entry
   call void @kelp_drop_Node(ptr %value1)
-  %box.reg = load i32, ptr @kelp_box_registered, align 4
-  %box.ready = icmp ne i32 %box.reg, 0
-  br i1 %box.ready, label %box.push, label %box.free
-
-box.push:                                         ; preds = %live
-  %box.head = load ptr, ptr @kelp_box_free_heads, align 8
+  %box.pool = call ptr @kelp_box_pool()
+  %box.slot = getelementptr ptr, ptr %box.pool, i64 0
+  %box.head = load ptr, ptr %box.slot, align 8
   store ptr %box.head, ptr %value1, align 8
-  store ptr %value1, ptr @kelp_box_free_heads, align 8
-  br label %box.freed
-
-box.free:                                         ; preds = %live
-  call void @kelp_box_free(ptr %value1, i64 16, i64 8)
-  br label %box.freed
-
-box.freed:                                        ; preds = %box.free, %box.push
+  store ptr %value1, ptr %box.slot, align 8
   store ptr null, ptr %value, align 8
   br label %ret
 }
