@@ -48,6 +48,11 @@ empty on release.
 - `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C. Programs are unchanged: the C runtime is still the one linked.
 - `kelpc doc --format json` writes the documentation as JSON: declarations, spans, imports, trait impls and the compiler's builtin members (on branch lighthouse-support, not merged).
 - `kelpc doc --text` reads one file's source from stdin in place of the file, for editor tools; it does not print text (on branch lighthouse-support, not merged).
+- `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C.
+- The C runtime is removed: `kelpc` links the Rust runtime into every LLVM-built program. A hosted program links `libkelp_rt.a` and a managed program links `kelp_rt_managed.o` beside the collector archive. The runtime's symbol names, signatures and struct layouts are unchanged, so a program that calls a runtime helper links as before.
+- The C compile of the runtime is gone from the compiler's build, and the link no longer needs a C object for it; `cc` still compiles the `extern fun` bodies that `kelpc` writes in C.
+- The capability checks run in the runtime (`kelp-rt/src/cap.rs`) rather than from C text spliced into each program with a gated call. The checks and their denial messages are unchanged.
+- A pooled `Box<T>` allocation or release calls the runtime once for the calling thread's free lists, where it used to read a thread-local array inline. Results are unchanged; a pooled Box costs one call more.
 - The corpus has golden outputs frozen from the C oracle at v26.10.5 (`kelpc/tests/golden/`), and the `llvm` backend is checked at five optimization levels against `-O0` with no C in the comparison.
 
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
@@ -75,6 +80,7 @@ empty on release.
 - The dev shell (`shell.nix`) adds `gdb`, so the debug-info test (`llvm_debug_info`) can resolve its fault backtrace.
 - A managed program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
 - A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
+- The Rust runtime leaves the collector when a worker ends (also on a panic), waits in join, locks and condition waits as native, polls the collector in long text and map scans, frees a spawn whose thread cannot start and reports its errno, and the collector's personality routine lets a worker's forced unwind finish (landed with the rt-gaps lane).
 
 ## limits
 

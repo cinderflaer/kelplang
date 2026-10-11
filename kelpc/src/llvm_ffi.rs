@@ -1476,6 +1476,29 @@ impl<'ctx> Module<'ctx> {
         };
     }
 
+    /// Sets the `uwtable` module flag to the async kind, so every function the
+    /// module defines carries an unwind table. A worker that panics ends its
+    /// thread with `pthread_exit`, which unwinds the worker's frames; glibc
+    /// aborts when a frame has no table to unwind by, and a function the IR
+    /// defines has none unless it is asked for. C functions carry one by default
+    /// on x86-64, which is why the C backend never needed this.
+    pub fn set_unwind_tables(&self) {
+        const KEY: &str = "uwtable";
+        let key = cstring(KEY);
+        // SAFETY: the context is live, the key outlives the call, and the value
+        // is an `i32` constant in that context, the shape the flag requires.
+        unsafe {
+            let value = LLVMConstInt(LLVMInt32TypeInContext(self.context), 2, 0);
+            LLVMAddModuleFlag(
+                self.raw,
+                LLVMModuleFlagBehavior::LLVMModuleFlagBehaviorOverride,
+                key.as_ptr(),
+                KEY.len(),
+                LLVMValueAsMetadata(value),
+            )
+        };
+    }
+
     /// The module as textual LLVM IR (`LLVMPrintModuleToString`).
     ///
     /// This is the `--emit-ir` text of MK7 §4.4, and the binary already has an

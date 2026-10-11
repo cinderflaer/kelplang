@@ -647,7 +647,6 @@ fn lower_to_object(
     // offset uses the module's layout, and LLVM's default is not the host's (it
     // aligns an `i64` to 4). See `Module::set_data_layout`.
     module.set_data_layout(layout);
-
     let mut lowering = Gen::new(
         ctx,
         &module,
@@ -821,6 +820,14 @@ fn lower_to_object(
     // pipeline rather than only before it.
     module.verify()?;
 
+    // A hosted program's functions carry unwind tables, as C functions do by
+    // default on x86-64: a worker's panic unwinds them with `pthread_exit`
+    // (see `kelp-rt/src/panic.rs`). Set here, after the IR the snapshots compare
+    // is final, so the text of the lowered module does not change; a freestanding
+    // image has no thread to end and keeps none.
+    if freestanding.is_none() {
+        module.set_unwind_tables();
+    }
     machine.emit_object(&module, object_path)?;
     let compile_elapsed = compile_start.elapsed();
     if let Some(cache) = cache {
@@ -846,7 +853,11 @@ fn lower_to_object(
 /// private global plus a copy instead of an aggregate value (MISSING-Nf3Rb).
 const BIG_ARRAY_LITERAL: usize = 256;
 
-const DEBUG_INFO_SETTING: &str = "dwarf";
+/// The object-level settings the cache key names: the debug info format, and
+/// that a hosted object carries unwind tables (`set_unwind_tables`), which the
+/// IR text does not show. An object cached before that was added must not be
+/// reused for a hosted program.
+const DEBUG_INFO_SETTING: &str = "dwarf+uwtable";
 
 /// The compiler's identity for the cache key: this `kelpc`'s version and the
 /// LLVM that wrote the object. Both matter: an object is the IR run through a
@@ -2129,11 +2140,6 @@ struct Gen<'a> {
     /// runtime object defines them, exactly as it does for the C backend's
     /// generated `main`.
     argc_global: Value<'a>,
-    /// The runtime's per-thread Box free-list heads and registered flag
-    /// (`kelp_rt.c`, initial-exec TLS), read inline by the pooled Box alloc
-    /// and free (speed-alloc).
-    box_heads: Value<'a>,
-    box_registered: Value<'a>,
     argv_global: Value<'a>,
     /// The source map, which `cap_plan` reads for the `.kp` call site a
     /// capability denial names. The C backend reads the same map for the same
@@ -2256,7 +2262,7 @@ impl<'a> Gen<'a> {
         // (MK7 §3.3). Keeping the order and the widths identical is what lets a
         // pointer to one cross into the runtime; the runtime's functions all take
         // the pair by pointer or by value through the same C ABI.
-        let mut structs = builtin_struct_types(ctx);
+        let structs = builtin_struct_types(ctx);
         let bytes_ty = structs["Bytes"];
         let string_ty = structs["String"];
         let view_ty = structs["View"];
@@ -2266,13 +2272,6 @@ impl<'a> Gen<'a> {
         let coerce_env_ty = ctx.struct_type("kelp_ClosureCoerceEnv");
         ctx.struct_set_body(coerce_env_ty, &[ptr]);
         let runtime = declare_runtime(ctx, module, bytes_ty, string_ty, view_ty);
-        let box_heads = module.add_external_global(
-            "kelp_box_free_heads",
-            ctx.array_type(ctx.opaque_ptr(), BOX_POOL_CLASSES),
-        );
-        box_heads.set_thread_local_initial_exec();
-        let box_registered = module.add_external_global("kelp_box_registered", ctx.i32());
-        box_registered.set_thread_local_initial_exec();
         let panic = *runtime
             .get("kelp_panic")
             .expect("kelp_panic is declared with the runtime");
@@ -2330,8 +2329,6 @@ impl<'a> Gen<'a> {
             init_pds_fn: None,
             drop_pds_fn: None,
             argc_global: module.add_external_global("kelp_argc", ctx.i32()),
-            box_heads,
-            box_registered,
             argv_global: module.add_external_global("kelp_argv", ctx.opaque_ptr()),
             sources,
             cap_arrays: HashMap::new(),
@@ -9275,6 +9272,7 @@ fn declare_libc<'a>(
     decl("free", void, &[ptr]);
     // The Box small-block free lists (speed-alloc, kelp_rt.c): the runtime
     // object defines them, so they are declared with the libc surface.
+    decl("kelp_box_pool", ptr, &[]);
     decl("kelp_box_alloc", ptr, &[i64t, i64t]);
     decl("kelp_box_free", void, &[ptr, i64t, i64t]);
     decl("memcpy", ptr, &[ptr, ptr, i64t]);
@@ -9947,6 +9945,15 @@ impl<'a> Gen<'a> {
         !self.managed && self.alloc_fns.is_none() && self.freestanding.is_none()
     }
 
+    /// The calling thread's Box pool (`kelp_box_pool` in `kelp-rt`): one call
+    /// per pooled Box operation, which returns the per-class list heads at its
+    /// base. The pool is created on the thread's first use, so the inline pop
+    /// and push below never see a missing pool (speed-alloc).
+    fn box_pool(&self) -> Result<Value<'a>, String> {
+        let (func, fty) = self.libc_fn("kelp_box_pool")?;
+        Ok(self.call(func, fty, &[], "box.pool"))
+    }
+
     /// The `Box<T>` allocation of `ty` in function `f`. Pooled, a block of a
     /// size class with a free block is popped from the thread's list inline;
     /// otherwise, or when the list is empty, `kelp_box_alloc` runs. Unpooled, it
@@ -9960,7 +9967,8 @@ impl<'a> Gen<'a> {
         let Some(class) = box_pool_class(size, align) else {
             return self.box_alloc_call(size, align);
         };
-        let slot = self.builder.build_gep(self.pty(), self.box_heads, self.v_i64(class), "box.slot");
+        let pool = self.box_pool()?;
+        let slot = self.builder.build_gep(self.pty(), pool, self.v_i64(class), "box.slot");
         let head = self.ld(self.pty(), slot, "box.head");
         let null = self.ctx.const_null(self.pty());
         let empty = self.builder.build_icmp(IntCmp::Eq, head, null, "box.empty");
@@ -9989,10 +9997,9 @@ impl<'a> Gen<'a> {
     }
 
     /// The `Box<T>` release of a `size`-byte, `align`-aligned value in function
-    /// `f`. Pooled, a registered thread pushes the block onto its class list
-    /// inline; otherwise `kelp_box_free` runs, which also registers the thread.
-    /// Unpooled, it is `heap_dealloc`.
-    fn box_free_in(&self, f: LlvmFunction<'a>, ptr: Value<'a>, size: u64, align: u64) -> Result<(), String> {
+    /// `f`. Pooled, the block is pushed onto the thread's class list inline;
+    /// otherwise `kelp_box_free` runs. Unpooled, it is `heap_dealloc`.
+    fn box_free_in(&self, _f: LlvmFunction<'a>, ptr: Value<'a>, size: u64, align: u64) -> Result<(), String> {
         // A managed build frees nothing: the collector reclaims the block.
         if self.managed {
             return Ok(());
@@ -10003,28 +10010,16 @@ impl<'a> Gen<'a> {
         let Some(class) = box_pool_class(size, align) else {
             return self.box_free_call(ptr, size, align);
         };
-        let reg = self.ld(self.ctx.i32(), self.box_registered, "box.reg");
-        let zero = self.ctx.const_null(self.ctx.i32());
-        let ready = self.builder.build_icmp(IntCmp::Ne, reg, zero, "box.ready");
-        let push = self.block(f, "box.push");
-        let slow = self.block(f, "box.free");
-        let join = self.block(f, "box.freed");
-        self.builder.build_cond_br(ready, push, slow);
-        self.builder.position_at_end(push);
-        let slot = self.builder.build_gep(self.pty(), self.box_heads, self.v_i64(class), "box.slot");
+        let pool = self.box_pool()?;
+        let slot = self.builder.build_gep(self.pty(), pool, self.v_i64(class), "box.slot");
         let head = self.ld(self.pty(), slot, "box.head");
         self.st(head, ptr);
         self.st(ptr, slot);
-        self.builder.build_br(join);
-        self.builder.position_at_end(slow);
-        self.box_free_call(ptr, size, align)?;
-        self.builder.build_br(join);
-        self.builder.position_at_end(join);
         Ok(())
     }
 
     /// `kelp_box_free(ptr, size, align)`: the runtime's free for a block the
-    /// inline path does not take, or for a thread that is not registered yet.
+    /// inline path does not take, a size the pool does not keep.
     fn box_free_call(&self, ptr: Value<'a>, size: u64, align: u64) -> Result<(), String> {
         let (func, fty) = self.libc_fn("kelp_box_free")?;
         self.call(func, fty, &[ptr, self.v_i64(size), self.v_i64(align)], "");
@@ -15559,7 +15554,7 @@ pub const PROTOTYPES: &[&str] = &[
     "void kelp_child_add(int pid);",
     "bool kelp_child_has(int pid);",
     "void kelp_child_remove(int pid);",
-    "extern _Thread_local int kelp_listen_loopback;",
+    "int kelp_listen_loopback_take(void);",
     "extern int kelp_argc;",
     "extern char** kelp_argv;",
 ];
@@ -15775,13 +15770,6 @@ fn program_c_source(program: &Program) -> Option<String> {
                     .collect::<String>()
             ));
         }
-        out.push_str("\n/* The capability check's C half, the text the removed C backend\n   \
-            splices into a generated program. `#define static` gives its\n   \
-            functions the external linkage the IR calls them with; the C\n   \
-            backend's own copy stays static, where the call sites are in the\n   \
-            same translation unit. */\n#define static\n");
-        out.push_str(crate::cdecl::CAP_GLUE);
-        out.push_str("\n#undef static\n");
     }
     Some(out)
 }
@@ -16707,24 +16695,24 @@ mod layout_tests {
     use crate::tir::{Block, Function, Program};
     use crate::types::Ty;
 
-    /// C comments removed, so a struct laid out over several commented lines in
-    /// `runtime/kelp_rt.c` can be compared with the one-line typedef the extern
-    /// prelude writes.
-    fn strip_c_comments(text: &str) -> String {
-        let mut out = String::new();
-        let mut rest = text;
-        while let Some(start) = rest.find("/*") {
-            out.push_str(&rest[..start]);
-            match rest[start..].find("*/") {
-                Some(end) => rest = &rest[start + end + 2..],
-                None => {
-                    rest = "";
-                    break;
-                }
-            }
-        }
-        out.push_str(rest);
-        out
+    /// The Rust runtime's sources, read at compile time: the prelude test
+    /// checks what it declares against what `kelp-rt` exports.
+    fn runtime_rust_source() -> String {
+        [
+            include_str!("../../kelp-rt/src/abi.rs"),
+            include_str!("../../kelp-rt/src/alloc.rs"),
+            include_str!("../../kelp-rt/src/cap.rs"),
+            include_str!("../../kelp-rt/src/cleanup.rs"),
+            include_str!("../../kelp-rt/src/env.rs"),
+            include_str!("../../kelp-rt/src/io.rs"),
+            include_str!("../../kelp-rt/src/map.rs"),
+            include_str!("../../kelp-rt/src/net.rs"),
+            include_str!("../../kelp-rt/src/panic.rs"),
+            include_str!("../../kelp-rt/src/proc.rs"),
+            include_str!("../../kelp-rt/src/text.rs"),
+            include_str!("../../kelp-rt/src/thread.rs"),
+        ]
+        .concat()
     }
 
     /// The extern prelude repeats the builtin struct layouts and declares every
@@ -16770,11 +16758,10 @@ mod layout_tests {
         };
         let source = program_c_source(&program).expect("one extern fun is one body");
 
-        // The layout text: the prelude's typedefs come from `LAYOUTS`, and the
-        // copy in `runtime/kelp_rt.c` must still define the same shapes.
-        let runtime = strip_c_comments(include_str!("../runtime/kelp_rt.c"));
-        let squeeze = |text: &str| text.split_whitespace().collect::<String>();
-        let runtime = squeeze(&runtime);
+        // The layout text: the prelude's typedefs come from `LAYOUTS`; the
+        // Rust runtime's `#[repr(C)]` structs are checked against the same
+        // table by `kelp-rt`'s own layout tests.
+        let rust_runtime = runtime_rust_source();
         for layout in LAYOUTS {
             let want = c_typedef(layout);
             assert!(
@@ -16782,13 +16769,14 @@ mod layout_tests {
                 "the extern prelude does not declare '{want}':\n{source}"
             );
             assert!(
-                runtime.contains(&squeeze(&want)),
-                "'runtime/kelp_rt.c' does not define '{want}'"
+                rust_runtime.contains(&format!("pub struct {}", layout.name.trim_start_matches("kelp_"))),
+                "'kelp-rt' does not define the struct '{}'",
+                layout.name
             );
         }
 
         // Every declared helper and global comes from `PROTOTYPES`: each one is
-        // written verbatim, and each helper is one `runtime/kelp_rt.c` defines.
+        // written verbatim, and each helper is one the Rust runtime exports.
         for decl in PROTOTYPES {
             assert!(
                 source.contains(decl),
@@ -16797,32 +16785,26 @@ mod layout_tests {
             if decl.contains('(') {
                 let name = c_decl_name(decl);
                 assert!(
-                    runtime.contains(&format!("{name}(")),
-                    "'runtime/kelp_rt.c' does not define '{name}'"
+                    rust_runtime.contains(&format!("fn {name}(")),
+                    "'kelp-rt' does not export '{name}'"
                 );
             }
         }
-        // The process globals: `build.rs` strips `static`, so the object defines
-        // them with the external linkage the prelude declares.
-        for want in [
-            "int kelp_argc = 0;",
-            "char** kelp_argv = NULL;",
-            "int kelp_listen_loopback = 0;",
-        ] {
+        // The process globals: exported statics the prelude declares.
+        for want in ["static mut kelp_argc:", "static mut kelp_argv:"] {
             assert!(
-                runtime.contains(&squeeze(want)),
-                "'runtime/kelp_rt.c' does not define '{want}'"
+                rust_runtime.contains(want),
+                "'kelp-rt' does not export '{want}'"
             );
         }
-        // The loopback accessors (stage 1 plan 3.4) that the Rust cap glue calls
-        // in place of the variable. They are not in the prelude yet.
+        // The loopback accessors that replaced the thread-local variable.
         for want in [
-            "int kelp_listen_loopback_set(int v)",
-            "int kelp_listen_loopback_take(void)",
+            "fn kelp_listen_loopback_set(",
+            "fn kelp_listen_loopback_take(",
         ] {
             assert!(
-                runtime.contains(&squeeze(want)),
-                "'runtime/kelp_rt.c' does not define '{want}'"
+                rust_runtime.contains(want),
+                "'kelp-rt' does not export '{want}'"
             );
         }
     }

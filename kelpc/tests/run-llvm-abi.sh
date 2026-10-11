@@ -27,9 +27,9 @@
 #     for, and it is what catches the next crossing (`pd` globals, or an
 #     `extern fun` whose body takes a `datac`).
 #
-# The runtime object the relink needs is the one `build.rs` compiles into
-# `kelpc` (`target/release/build/kelpc-*/out/kelp_rt.o`), because the Kelp
-# object references `kelp_panic`, `kelp_Bytes__set` and the rest of it.
+# The runtime the relink needs is the archive `build.rs` builds from `kelp-rt/`
+# (`target/release/build/kelpc-*/out/libkelp_rt.a`), because the Kelp object
+# references `kelp_panic`, `kelp_Bytes__set` and the rest of it.
 #
 # `cargo build --release` runs first, and every command is bounded by the
 # project's own `timeout 2400` when this is run through the shell it needs:
@@ -112,9 +112,9 @@ if [ "$("$T/abi_prog")" != "" ]; then
     exit 1
 fi
 
-RT="$(find target/release/build -name kelp_rt.o | head -n 1)"
+RT="$(find target/release/build -name libkelp_rt.a | head -n 1)"
 if [ -z "$RT" ]; then
-    echo "no kelp_rt.o under target/release/build: run this inside the project shell" >&2
+    echo "no libkelp_rt.a under target/release/build: run this inside the project shell" >&2
     exit 1
 fi
 
@@ -122,7 +122,7 @@ fi
 # extern body with the pointer-spelled ABI. The compiler's generated
 # `abi_prog.externs.o` is deliberately left out, so the C object is the only
 # definition of the body.
-"$CC" -O2 -o "$T/abi_prog_ours" "$T/abi_prog.o" "$T/abi.o" "$RT" -lm
+"$CC" -O2 -o "$T/abi_prog_ours" "$T/abi_prog.o" "$T/abi.o" "$RT" -lm -lpthread
 GOT="$("$T/abi_prog_ours")"
 echo "the C object's 24-byte return, printed by the Kelp program: '$GOT'"
 if [ "$GOT" != "ZY" ]; then

@@ -1,0 +1,31 @@
+// Managed mode: the main thread blocks in `thread.join` while the worker
+// allocates enough to collect. The collection stops every attached thread, so
+// the blocked main thread must be in a native bracket, or it never reaches a
+// safepoint and the collection stops at the stop timeout.
+impl "std/thread"
+impl "std/result"
+
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(n: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    total
+}
+
+fun worker(n: i64).return: i64 {
+    churn(n)
+}
+
+fun main() {
+    val t = thread.spawn(worker, 2000000)
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

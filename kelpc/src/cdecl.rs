@@ -13,12 +13,6 @@ use crate::types::{clone_fn_name, cmp_fn_name, drop_fn_name, eq_fn_name, hash_fn
 use std::collections::HashSet;
 use std::fmt::Write;
 
-/// Where the capability check's own half lives (MK7 §8): the deny path, the
-/// buffered plumbing, and the allowlist loops. The *matching* and the *path
-/// normalization* it calls are Kelp (`std/rt`), declared just before this text
-/// is emitted — see `runtime_prototypes` and `kelpc/runtime/cap_glue.c`.
-pub(crate) const CAP_GLUE: &str = include_str!("../runtime/cap_glue.c");
-
 /// The C headers a generated program (and the `extern fun` bodies the LLVM
 /// backend compiles separately, MK7 §3.2) relies on. Included unconditionally:
 /// `std/math`'s externs call the C library directly, and an unused declaration

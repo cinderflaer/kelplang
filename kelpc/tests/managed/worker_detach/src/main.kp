@@ -1,0 +1,34 @@
+// Managed mode: a worker that allocates and then panics. A panic ends the
+// thread with `pthread_exit`, which skips the body's own detach, so the worker
+// must leave the collector in the runtime's cleanup handler. A worker left
+// attached never reaches a safepoint, and the churn on the main thread stops
+// at the stop timeout.
+impl "std/thread"
+impl "std/result"
+
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun work(k: i64).return: i64 {
+    val c = Cell(n = k, next = Box.of(Cell(n = k + 1, next = Box.empty())))
+    panic("worker exploded")
+}
+
+fun churn(n: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    total
+}
+
+fun main() {
+    val t = thread.spawn(work, 7)
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    print(churn(2000000))
+}

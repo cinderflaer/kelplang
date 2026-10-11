@@ -28,12 +28,26 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { sys::abort() }
 }
 
-/// The personality routine that core's unwinding code names. This crate builds
-/// with `panic = "abort"`, so no frame is ever unwound and this is never called.
-/// It exists only so the staticlib links without the unwinder.
+/// The personality routine the unwind tables name. This crate builds with
+/// `panic = "abort"`, so there is nothing to catch, but a worker's `pthread_exit`
+/// is a forced unwind that calls the personality of every frame with unwind
+/// info. Each frame must answer `_URC_CONTINUE_UNWIND` (8): any other answer,
+/// such as the empty return this stub used to give, makes glibc abort the thread
+/// before the collector's detach can finish the process cleanly. The signature
+/// matches `kelp-rt`'s personality.
 #[cfg(not(test))]
 #[unsafe(no_mangle)]
-pub extern "C" fn rust_eh_personality() {}
+pub extern "C" fn rust_eh_personality(
+    _version: i32,
+    _actions: i32,
+    _class: u64,
+    _exception: *mut core::ffi::c_void,
+    _context: *mut core::ffi::c_void,
+) -> i32 {
+    /// `_URC_CONTINUE_UNWIND`.
+    const CONTINUE_UNWIND: i32 = 8;
+    CONTINUE_UNWIND
+}
 
 #[cfg(test)]
 #[path = "../../tests/gc/mod.rs"]

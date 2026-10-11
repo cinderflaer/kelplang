@@ -13,9 +13,15 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod abi;
+pub mod alloc;
+pub mod cap;
 pub mod cleanup;
 pub mod panic;
 pub mod env;
+pub mod gc;
 pub mod io;
+pub mod map;
 pub mod net;
 pub mod proc;
+pub mod text;
+pub mod thread;

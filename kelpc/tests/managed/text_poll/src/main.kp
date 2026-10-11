@@ -1,0 +1,39 @@
+// Managed mode: the main thread scans a 512 MiB string in a runtime loop
+// (`char_count`) while a worker allocates enough to collect. The scan polls the
+// collector every 64 KiB, so the collection stops the main thread inside the
+// scan rather than at the stop timeout.
+impl "std/thread"
+impl "std/result"
+impl "std/str"
+
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(n: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    total
+}
+
+fun worker(n: i64).return: i64 {
+    churn(n)
+}
+
+fun main() {
+    val big = str.repeat("abcdefgh", 67108864)
+    val t = thread.spawn(worker, 2000000)
+    var i: i64 = 0
+    while i < 8 {
+        val k = big.char_count()
+        i = i + 1
+    }
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    print(big.char_count())
+}

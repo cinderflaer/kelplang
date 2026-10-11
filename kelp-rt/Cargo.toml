@@ -20,6 +20,10 @@ crate-type = ["rlib"]
 # `kelpc/build.rs` turns it on; a rlib linked into a std program (the layout
 # constants read by `kelpc`) must not carry a second panic handler.
 panic-handler = []
+# The managed build: byte buffers come from the collector in `kelpc/gc`, and
+# the crate calls its `kelp_gc_alloc_array`. The collector supplies the panic
+# handler in that link, so this feature does not enable `panic-handler`.
+managed = []
 
 [dependencies]
 # Already in the root Cargo.lock; pinned exactly so the lock file is the only
