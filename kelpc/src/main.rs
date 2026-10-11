@@ -584,14 +584,23 @@ fn build(
     // in from its archive, which is looked up here, before any code is
     // generated, so a missing archive is named before a link fails. It is
     // whole-program too, since `kelp_gc_init` and the descriptors are one module's.
-    let managed = if loaded.project.target().has_shared_pool() {
-        if incremental_flag || loaded.project.incremental() {
-            eprintln!(
-                "error: '{}' is a hosted build, which has the shared pool, and '--incremental' cannot build that yet: the collector's descriptors and init are whole-program",
-                path
-            );
-            return false;
-        }
+    let hosted = loaded.project.target().has_shared_pool();
+    if hosted && incremental_flag {
+        eprintln!(
+            "error: '{}' is a hosted build, which has the shared pool, and '--incremental' cannot build that yet: the collector's descriptors and init are whole-program",
+            path
+        );
+        return false;
+    }
+    // A hosted project whose manifest sets `[build] incremental = true` falls
+    // back to the whole-program build, with a warning that names the reason.
+    if hosted && loaded.project.incremental() {
+        eprintln!(
+            "warning: '{}' sets '[build] incremental = true', but a hosted build is whole-program for now: the collector's descriptor ids are per unit, so a per-unit split cannot share them. Building the whole program.",
+            path
+        );
+    }
+    let managed = if hosted {
         match driver::managed_archive() {
             Ok(gc_archive) => Some(codegen_llvm::Managed {
                 heap_max_mib: loaded.project.target().heap_max_mib(),
@@ -605,7 +614,7 @@ fn build(
     } else {
         None
     };
-    let incremental = incremental_flag || loaded.project.incremental();
+    let incremental = incremental_flag || (loaded.project.incremental() && !hosted);
     if incremental && *freestanding_out {
         eprintln!(
             "error: '--incremental' is not implemented for a freestanding project yet: its image is one ELF with a single entry stub and one panic state, so the per-unit split is its own slice (plan/incremental-compilation.md)"

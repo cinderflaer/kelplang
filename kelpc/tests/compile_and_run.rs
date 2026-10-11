@@ -15474,14 +15474,15 @@ fn incremental_builds_match_the_whole_program_build() {
     );
 }
 
-/// Unit assignment (roadmap A-14 slice 1): a project that sets
-/// `[build] incremental = true` is split into one unit per source module plus
-/// `_support`, and the cross-unit call and `pub static` read in it still work.
-/// The manifest is the turn-on here; `--incremental` is the other spelling and
-/// the equivalence test covers it on every other target.
+/// Unit assignment (roadmap A-14 slice 1), hosted fallback: a hosted project
+/// that sets `[build] incremental = true` is built whole-program, because the
+/// collector's descriptor ids are per unit. The build succeeds, warns and names
+/// the reason, writes no per-unit output, and the program still runs.
+/// `--incremental` on a hosted build stays refused (see `a_hosted_build_refuses_the_flag`).
 #[test]
-fn a_manifest_turns_the_per_unit_split_on() {
-    let bin = out_path("inc_manifest_units");
+fn a_hosted_manifest_incremental_falls_back_to_whole_program() {
+    let bin = out_path("inc_manifest_fallback");
+    let _ = std::fs::remove_dir_all(bin.with_extension("units"));
     let build = kelpc()
         .arg("build")
         .arg(project("incremental_units"))
@@ -15491,40 +15492,42 @@ fn a_manifest_turns_the_per_unit_split_on() {
         .expect("failed to spawn kelpc");
     assert!(
         build.status.success(),
-        "the manifest-enabled split failed to build:\n{}",
+        "the hosted manifest build failed:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
-    // One unit per module id, plus the one unit that owns the generated helpers.
-    let units = bin.with_extension("units");
-    for unit in ["main", "state", "_support"] {
-        let ir = units.join(format!("{unit}.ll"));
-        let object = units.join(format!("{unit}.o"));
-        assert!(ir.exists(), "'{}' was not written", ir.display());
-        assert!(object.exists(), "'{}' was not written", object.display());
-    }
-    // `main` is the entry module's unit, `state` owns the other module's
-    // function, static and datac, and the two are linked into one binary.
-    let main_ir = std::fs::read_to_string(units.join("main.ll")).expect("main.ll");
+    let stderr = String::from_utf8_lossy(&build.stderr);
     assert!(
-        main_ir.contains("define i32 @main("),
-        "the entry module's unit does not define main"
-    );
-    let state_ir = std::fs::read_to_string(units.join("state.ll")).expect("state.ll");
-    assert!(
-        state_ir.contains("@kelp_state__LIMIT = constant"),
-        "the owning unit does not define the static"
+        stderr.contains("warning:") && stderr.contains("incremental = true") && stderr.contains("whole-program"),
+        "the fallback did not warn and name the reason:\n{stderr}"
     );
     assert!(
-        state_ir.contains("define i64 @kelp_state__double("),
-        "the owning unit does not define the cross-unit callee"
+        !bin.with_extension("units").exists(),
+        "a hosted build wrote per-unit output"
     );
-    assert!(
-        main_ir.contains("@kelp_state__LIMIT = external") && !main_ir.contains("@kelp_state__LIMIT = constant"),
-        "the user unit should only declare the static"
-    );
-    let run = Command::new(&bin).output().expect("failed to run the split binary");
-    assert!(run.status.success(), "the split binary failed");
+    let run = Command::new(&bin).output().expect("failed to run the fallback binary");
+    assert!(run.status.success(), "the fallback binary failed");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n3\n7\n");
+}
+
+/// A hosted build refuses the explicit `--incremental` flag, even though the
+/// manifest key falls back. The refusal names the hosted shared pool.
+#[test]
+fn a_hosted_build_refuses_the_flag() {
+    let bin = out_path("inc_flag_refused_hosted");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("incremental_units"))
+        .arg("-o")
+        .arg(&bin)
+        .arg("--incremental")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(!build.status.success(), "a hosted build accepted --incremental");
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("which has the shared pool") && stderr.contains("cannot build that yet"),
+        "the refusal did not name the shared pool:\n{stderr}"
+    );
 }
 
 /// Determinism (roadmap A-14 slice 1): the same sources produce byte-identical
