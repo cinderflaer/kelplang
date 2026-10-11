@@ -927,7 +927,6 @@ kelpc/tests/fixtures/ws_gate.kp
 kelpc/tests/fixtures/ws_try_connect.kp
 kelpc/tests/fixtures/ws_wss.kp
 kelpc/tests/fixtures/ws_wss_parse.kp
-kelpc/tests/abi_aggregate.kp
 examples/kernel0
 examples/kernel0-aarch64
 examples/kernel0-bss

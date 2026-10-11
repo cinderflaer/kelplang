@@ -1,9 +1,0 @@
-unit: kelpc/tests/abi_aggregate.kp
-backend: llvm
-build-status: 0
---- build stdout
---- build stderr
-run-status: 0
---- stdout
-
---- stderr
