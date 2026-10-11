@@ -1,8 +1,12 @@
 # Server-side TLS, client certificates and ALPN in `std/tls` (standard library lane, task st3)
 
 *Same OpenSSL as the client (`plan/tls-hardening.md`, `plan/tls-handle.md`): the system library, linked only by a
-program that reaches `std/tls` (`uses_tls`), hosted only. The C bodies live in `kelpc/src/externs/tls_*.c` (included
-by `externs.rs`) and the shared C helpers in `kelpc/src/externs/tls_helpers.c` (appended to `OPENSSL_HEADERS`).*
+program that reaches `std/tls` (`uses_tls`), hosted only. The server bodies (`handshake_try_raw`, `server_ctx_try_raw`,
+`reload_try_raw`, `accept_try_raw`, `ctx_free_raw`, `alpn_raw`, `peer_subject_raw`, `pending_raw`) and the listener
+body `net.listen_on_raw` are Rust, in `kelp-rt/src/tls.rs`, and their rows are in the `PROTOTYPES` table of
+`kelp-rt/src/abi.rs`. The rest of `std/tls` (the stream bodies) is still inline C in the `EXTERNS` table of
+`kelpc/src/externs.rs`, with the classifiers in `OPENSSL_HEADERS` (`kelpc/src/cdecl.rs`). The remaining inline C bodies
+are listed in `kelpc/src/externs.rs`; the cc-removal lane is moving them to Rust, so that list will change.*
 
 ## API
 
@@ -64,7 +68,7 @@ Choices the spec left open:
 - Verification cannot be turned off on either side: the client keeps `SSL_VERIFY_PEER` and the hostname check, the
   server only ever adds `SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT` when a client CA is given.
 - A peer that ends without `close_notify` is `PeerClosedUncleanly` on a server stream too (same read paths).
-- A private key is never logged or put in an error text: the C code reports fixed sentences for key problems
+- A private key is never logged or put in an error text: the Rust port reports fixed sentences for key problems
   ("the private key is malformed", "the private key does not match the certificate"), never OpenSSL's own text for
   those calls, and the OpenSSL error queue is cleared after them.
 - **Key file permissions are not checked by the library.** A key readable by other users is the operator's problem;
@@ -87,6 +91,7 @@ goes on; the limits, status table and per-connection rules are those of `plan/ht
 
 `kelpc/tests/tls_server.rs` generates a throwaway CA, a `localhost` server certificate, a client certificate, a
 certificate from a second CA and an expired certificate with the `openssl` CLI into a scratch directory (it prints
-`skipped: no openssl` and passes when the CLI is missing). The programs are in `kelpc/tests/hazards/tls_server_*.kp`
-(they need paths and wait on sockets, so not fixtures): one program runs server and client on two threads over
-`127.0.0.1` on an ephemeral port. Both backends run the same tests (`KELPC_ORACLE=c` selects the oracle).
+`skipped: no openssl` and passes when the CLI is missing). The programs are in `kelpc/tests/hazards/tls_server_matrix.kp`
+and `kelpc/tests/hazards/tls_reload_matrix.kp` (they need paths and wait on sockets, so not fixtures): one program runs
+server and client on two threads over `127.0.0.1` on an ephemeral port. The programs are built by the LLVM backend,
+the only backend; setting `KELPC_ORACLE` is an error, since the C oracle is gone.
