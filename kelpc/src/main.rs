@@ -647,7 +647,7 @@ fn emit_html(out_path: &Path) -> ExitCode {
     };
     if !html.starts_with("<!doctype html>") {
         eprintln!(
-            "error: '{}' printed no HTML document for '[build] emit = \"html\"': the [build] emit_entry must call polyp.emit_html (examples/polyp/lib.kp)",
+            "error: '{}' printed no HTML document for '[build] emit = \"html\"': the [build] emit_entry must call polyp.emit_html (examples/polyp/backends/gtk/polyp/lib.kp)",
             abs_out.display()
         );
         return ExitCode::FAILURE;
