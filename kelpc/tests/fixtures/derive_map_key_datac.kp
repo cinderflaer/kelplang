@@ -1,0 +1,24 @@
+// lang-derive-eq: `derive(eq, hash)` on a `datac` writes the `eq` and `hash`
+// methods a `Map` key needs, field by field in declaration order, so the
+// program writes neither by hand. The fields cover a `String` (compared and
+// hashed through its bytes), a `bool`, a `char` and an integer, and `==` gets
+// the derived `eq` as well.
+derive(eq, hash)
+datac Tag(val name: String, val on: bool, val mark: char, val n: i32)
+
+fun main() {
+    var m: Map<Tag, i32> = Map.new()
+    m.insert(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1), v = 10)
+    m.insert(key = Tag(name = String.from_str(s = "alpha"), on = false, mark = 'x', n = 1), v = 20)
+    print(m.len())
+    print(m.get(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1)))
+    print(m.has(key = Tag(name = String.from_str(s = "alph"), on = true, mark = 'x', n = 1)))
+    // An equal key overwrites without growing the map.
+    m.insert(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1), v = 99)
+    print(m.len())
+    print(m.get(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1)))
+    print(Tag(name = String.from_str(s = "a"), on = true, mark = 'y', n = 1) == Tag(name = String.from_str(s = "a"), on = true, mark = 'x', n = 1))
+    print(m.remove(key = Tag(name = String.from_str(s = "alpha"), on = true, mark = 'x', n = 1)))
+    print(m.len())
+    print(m.has(key = Tag(name = String.from_str(s = "alpha"), on = false, mark = 'x', n = 1)))
+}

@@ -1,0 +1,10 @@
+// lang-derive-eq: a type that already declares `eq` by hand cannot also derive
+// it. The refusal names the hand-written method.
+derive(eq, hash)
+datac Point(val x: i32)
+
+fun Point.eq(other: &Point).return: bool = self.x == other.x
+
+fun main() {
+    print(Point(x = 1).x)
+}

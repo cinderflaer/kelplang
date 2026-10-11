@@ -6,6 +6,7 @@ mod cdecl;
 mod codegen_c;
 mod codegen_llvm;
 mod deprecated;
+mod derive;
 mod defer;
 mod diag;
 mod doc;

@@ -1,0 +1,8 @@
+// lang-derive-eq: a float field has `==` but no hash, because `nan != nan`
+// would make an inserted key unfindable. `derive(hash)` refuses it by name.
+derive(eq, hash)
+datac Sample(val ratio: f64, val tag: i32)
+
+fun main() {
+    print(Sample(ratio = 1.5, tag = 1).tag)
+}

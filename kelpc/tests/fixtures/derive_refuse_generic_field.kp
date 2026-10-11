@@ -1,0 +1,8 @@
+// lang-derive-eq: a generic type whose field has a type parameter cannot be
+// checked by derive, because derive cannot tell what a `T` is compared as.
+derive(eq, hash)
+datac Wrap<T>(val item: T)
+
+fun main() {
+    print(Wrap(item = 1).item)
+}
