@@ -402,7 +402,7 @@ fun https_mode(dir: &str) {
     val server = http.listen(0)
     server.set_accept_timeout(10000)
     val port = server.port()
-    val job = HttpJob(fd = server.fd, dir = String.from_str(dir), mtls = false)
+    val job = HttpJob(fd = server.fd, mtls = false)
     val h = thread.spawn(https_server, job)
     val pt = fmt.uint(port.to_u64())
     val url = join3("https://localhost:", pt.as_str(), "/hello?x=1")
@@ -456,7 +456,7 @@ fun https_mtls_mode(dir: &str) {
     val server = http.listen(0)
     server.set_accept_timeout(10000)
     val port = server.port()
-    val job = HttpJob(fd = server.fd, dir = String.from_str(dir), mtls = true)
+    val job = HttpJob(fd = server.fd, mtls = true)
     val h = thread.spawn(https_server, job)
     val pt = fmt.uint(port.to_u64())
     val url = join3("https://localhost:", pt.as_str(), "/hello")
@@ -505,7 +505,9 @@ fun https_mtls_mode(dir: &str) {
     server.close()
 }
 
-datac HttpJob(val fd: i32, val dir: String, val mtls: bool)
+// Only scalars cross into the thread. The certificate directory is read from
+// the thread's own argv, because a String cannot be a thread's argument.
+datac HttpJob(val fd: i32, val mtls: bool)
 
 fun hello(req: &http.ServerRequest).return: http.ServerResponse {
     if str.eq(req.path.as_str(), "/hello") {
@@ -515,24 +517,26 @@ fun hello(req: &http.ServerRequest).return: http.ServerResponse {
 }
 
 fun https_server(job: move HttpJob).return: u64 {
-    return when https_options(&job) {
-        Ok(o) -> https_with_options(&o, &job)
+    val args = process.args()
+    val dir = args.get(2).clone()
+    return when https_options(&job, dir.as_str()) {
+        Ok(o) -> https_with_options(&o, &job, dir.as_str())
         Err(_) -> 0
     }
 }
 
-fun https_options(job: &HttpJob).return: result.Result<tls.ServerOptions, tls.TlsError> {
+fun https_options(job: &HttpJob, dir: &str).return: result.Result<tls.ServerOptions, tls.TlsError> {
     val o = tls.server_options()
     if job.mtls {
-        val ca = path(job.dir.as_str(), "ca.pem")
+        val ca = path(dir, "ca.pem")
         return require_client_cert(&o, ca.as_str())
     }
     return result.Result.Ok(value = o)
 }
 
-fun https_with_options(o: &tls.ServerOptions, job: &HttpJob).return: u64 {
-    val cert = path(job.dir.as_str(), "server.pem")
-    val key = path(job.dir.as_str(), "server.key")
+fun https_with_options(o: &tls.ServerOptions, job: &HttpJob, dir: &str).return: u64 {
+    val cert = path(dir, "server.pem")
+    val key = path(dir, "server.key")
     return when server_config_with(cert.as_str(), key.as_str(), o) {
         Ok(c) -> https_serve(c, job)
         Err(_) -> 0
@@ -567,14 +571,31 @@ fun main() {
     var lm = net.Listener(fd = l.fd)
     lm.set_timeout(10000)
     val port = l.port()
+    // The client runs on the thread and prints its own line before it returns,
+    // so the join puts the client line first. The server runs here and its line
+    // is printed after the join. A thread may take only scalars and may return
+    // only a number, so the thread reads the mode and directory from its argv.
+    val h = thread.spawn(client_thread, ClientJob(port = port))
     val job = Job(mode = mode.clone(), dir = dir.clone(), fd = l.fd)
-    val h = thread.spawn(server_main, job)
-    val client_line = client_main(mode.as_str(), dir.as_str(), port)
-    val server_line = when thread.join(h) {
-        Ok(s) -> s
-        Err(_) -> String.from_str("server: thread failed")
+    val server_line = server_main(job)
+    when thread.join(h) {
+        Ok(_) -> {
+        }
+        Err(_) -> {
+            say("client: thread failed")
+        }
     }
-    say(client_line.as_str())
     say(server_line.as_str())
     l.close()
+}
+
+datac ClientJob(val port: u16)
+
+fun client_thread(job: move ClientJob).return: u64 {
+    val args = process.args()
+    val mode = args.get(1).clone()
+    val dir = args.get(2).clone()
+    val line = client_main(mode.as_str(), dir.as_str(), job.port)
+    say(line.as_str())
+    return 0
 }

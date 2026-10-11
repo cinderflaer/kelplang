@@ -28,7 +28,9 @@ impl "std/thread"
     * **The pool.** `http_pool` in `coral.toml` is how many kept-alive connections
       per `host:port` a program keeps (default 4; `0` disables pooling). The
       ceiling is spliced in by the compiler at the `const` below, and the pool
-      is lazy: nothing connects until a request needs it.
+      is lazy: nothing connects until a request needs it. The pool keeps plain
+      connections only; a TLS connection is closed on release, because its
+      handle is a resource that cannot be held in the pool.
 
    A `Lease` is a *ticket*, not an owner. The pool holds every descriptor; a
    lease is permission to use one for one exchange, and `release` consumes it.
@@ -188,8 +190,11 @@ datac Pool(
     val size: usize,
     /// The timeout for each exchange, in milliseconds.
     val timeout_ms: u64,
-    /// The idle connections ready for reuse.
-    var idle: List<Conn>,
+    /// The descriptors of the idle plain connections ready for reuse. A `Conn`
+    /// is a resource, and a resource never enters the collected heap, so the
+    /// pool holds the bare descriptor. A TLS connection is never kept: its
+    /// `SSL*` handle is a resource too, so it is closed on release.
+    var idle: List<i32>,
     /// When each idle connection went idle, `net.mono_ms` time, in step with
     /// `idle` (same length, same order).
     var idle_since: List<i64>,
@@ -1349,9 +1354,9 @@ fun pool(host: &str, port: u16).return: Pool = Pool(
     idle_ms = 0,
 )
 
-/// An empty idle-connection list.
-fun empty_idle().return: List<Conn> {
-    var l: List<Conn> = List.empty()
+/// An empty idle-descriptor list.
+fun empty_idle().return: List<i32> {
+    var l: List<i32> = List.empty()
     return l
 }
 
@@ -1377,6 +1382,9 @@ fun Lease.conn().return: Conn = Conn(fd = fd, tls_handle = tls_handle)
 /// `host:port`, so warming has no request to read it from the way `checkout`
 /// does; the caller says how it means to use the pool.
 ///
+/// Only plain connections are kept, so with `use_tls` true there is nothing to
+/// warm and this returns at once.
+///
 /// The pool's fields are copied into locals first and the idle count is read
 /// inside a block. That is not decoration: a shared borrow created in a *binding
 /// initializer* stays live to the end of the block (the lexical lifetimes open
@@ -1384,6 +1392,9 @@ fun Lease.conn().return: Conn = Conn(fd = fd, tls_handle = tls_handle)
 ///
 /// Panics: if a connection fails.
 fun mut Pool.warm(use_tls: bool) {
+    if use_tls {
+        return
+    }
     val h = host.clone()
     val p = port
     val t = timeout_ms
@@ -1393,8 +1404,8 @@ fun mut Pool.warm(use_tls: bool) {
         i = idle.len()
     }
     while i < cap {
-        val c = connect_configured(h.as_str(), p, t, use_tls)
-        idle.push(c)
+        val c = connect_configured(h.as_str(), p, t, false)
+        idle.push(c.fd)
         idle_since.push(net.mono_ms())
         i = i + 1
     }
@@ -1422,16 +1433,18 @@ fun mut Pool.checkout(use_tls: bool).return: Lease {
 ///
 /// Panics: if the capability denies the host.
 fun mut Pool.try_checkout(use_tls: bool).return: result.Result<Lease, HttpErr> {
+    val none: option.Option<tls.TlsHandle> = option.Option.None
     while !idle.is_empty() {
-        val c = idle.pop()
+        val fd = idle.pop()
         val since = idle_since.pop()
         // Past the idle timeout the peer has probably closed it, and reusing it
-        // would cost one failed request: close it and look at the next.
+        // would cost one failed request: close it and look at the next. A kept
+        // connection is plain, so one asked for TLS is never reused.
         val stale = idle_ms > 0 && (net.mono_ms() - since) >= idle_ms.to_i64()
-        if !stale && c.is_tls() == use_tls {
-            return result.Result.Ok(value = Lease(fd = c.fd, tls_handle = c.tls_handle, reused = true))
+        if !stale && !use_tls {
+            return result.Result.Ok(value = Lease(fd = fd, tls_handle = none, reused = true))
         }
-        conn_close(c)
+        net.close(net.Socket(fd = fd))
     }
     val h = host.clone()
     val p = port
@@ -1447,12 +1460,18 @@ fun mut Pool.try_checkout(use_tls: bool).return: result.Result<Lease, HttpErr> {
 ///
 /// Panics: if closing a connection fails.
 fun mut Pool.release(lease: Lease, reusable: bool) {
-    if reusable && idle.len() < size {
-        idle.push(lease.conn())
+    if reusable && !lease.is_tls() && idle.len() < size {
+        idle.push(lease.fd)
         idle_since.push(net.mono_ms())
     } else {
         conn_close(lease.conn())
     }
+}
+
+/// Whether a lease holds a TLS connection.
+fun Lease.is_tls().return: bool = when tls_handle {
+    Some(_) -> true
+    None -> false
 }
 
 /// Panics: if closing a connection fails.
@@ -1462,11 +1481,18 @@ fun mut Pool.close_all() {
         if idle.is_empty() {
             going = false
         } else {
-            val c = idle.pop()
+            val fd = idle.pop()
             val since = idle_since.pop()
-            conn_close(c)
+            net.close(net.Socket(fd = fd))
         }
     }
+}
+
+/// Closes the kept connections when the pool goes out of scope. The idle list
+/// holds bare descriptors, which have no drop of their own, so without this a
+/// pool that is dropped would leak them.
+fun mut Pool.drop() {
+    self.close_all()
 }
 
 /// From now on `checkout` closes a kept connection that has been idle for
@@ -1487,23 +1513,23 @@ fun mut Pool.set_idle_timeout(ms: u64) {
 /// Panics: if closing a connection fails.
 fun mut Pool.close_idle(after_ms: u64).return: usize {
     val now = net.mono_ms()
-    var kept_conns: List<Conn> = List.empty()
+    var kept_fds: List<i32> = List.empty()
     var kept_since: List<i64> = List.empty()
     var closed: usize = 0
     // Popping is newest first, so the survivors are pushed back in reverse.
     while !idle.is_empty() {
-        val c = idle.pop()
+        val fd = idle.pop()
         val since = idle_since.pop()
         if (now - since) >= after_ms.to_i64() {
-            conn_close(c)
+            net.close(net.Socket(fd = fd))
             closed = closed + 1
         } else {
-            kept_conns.push(c)
+            kept_fds.push(fd)
             kept_since.push(since)
         }
     }
-    while !kept_conns.is_empty() {
-        idle.push(kept_conns.pop())
+    while !kept_fds.is_empty() {
+        idle.push(kept_fds.pop())
         idle_since.push(kept_since.pop())
     }
     return closed
@@ -3239,11 +3265,13 @@ fun serve_tls_n(port: u16, config: &tls.ServerConfig, handler: fun(&ServerReques
 
 /// What a worker thread is handed: the shared listener's descriptor and its own
 /// copy of the limits. The handler is a plain function value, so nothing
-/// borrowed crosses the thread boundary.
-datac Worker(val fd: i32, val handler: fun(&ServerRequest).return: ServerResponse, val limits: Limits)
+/// borrowed crosses the thread boundary. It is not a `Worker` resource: a thread
+/// may take a resource as its argument only if the collector can see it, and
+/// this carries nothing but the descriptor number, a function and plain limits.
+datac WorkerStart(val fd: i32, val handler: fun(&ServerRequest).return: ServerResponse, val limits: Limits)
 
 /// The loop one server worker thread runs.
-fun worker_main(w: move Worker).return: u64 {
+fun worker_main(w: move WorkerStart).return: u64 {
     val s = Server(fd = w.fd)
     return serve_on(&s, w.handler, &w.limits, 0)
 }
@@ -3255,7 +3283,7 @@ fun run_workers(n: usize, fd: i32, handler: fun(&ServerRequest).return: ServerRe
     if n == 0 {
         return 0
     }
-    val h = thread.spawn(worker_main, Worker(fd = fd, handler = handler, limits = limits.dup()))
+    val h = thread.spawn(worker_main, WorkerStart(fd = fd, handler = handler, limits = limits.dup()))
     val rest = run_workers(n - 1, fd, handler, limits)
     val mine = when thread.join(h) {
         Ok(v) -> v
