@@ -1644,3 +1644,51 @@ fn m7_median(v: &[f64]) -> f64 {
 #[path = "tidepool_step1_fixb.rs"]
 mod tidepool_step1_fixb;
 mod bench_clear;
+// Tidepool step 2, T40 (R36): trigger arithmetic, in bytes, as a pure function.
+// The function does not exist yet. The signatures this module expects, in
+// `crate::trigger` (kelpc/gc/src/trigger.rs, not written):
+//
+//   pub fn first_trigger(heap_min: usize, start_low: usize, start_high: usize, headroom_pct: usize) -> usize
+//       // midpoint(start_low, start_high) * (100 + headroom_pct) / 100; heap_min is not used
+//   pub fn next_trigger(heap_min: usize, live_earlier: usize, live_latest: usize, headroom_pct: usize) -> usize
+//       // max(heap_min, max(live_earlier, live_latest) * (100 + headroom_pct) / 100)
+//
+// Integer division rounds down. The spec gives 1.8 MiB for case (c), which is
+// 1887436.8 bytes; the value 1_887_436 assumes the rounding is down.
+//
+// Red result: this module does not compile (E0432, unresolved import
+// `crate::trigger`), so the whole `kelp_gc` test target fails to build.
+// RED (job 59c3aa60): the four T40 tests below do not compile (E0432, unresolved import
+// `crate::trigger`), so the kelp_gc test target fails to build.
+mod trigger_t40 {
+    use crate::trigger::{first_trigger, next_trigger};
+
+    const MIB: usize = 1 << 20;
+
+    #[test]
+    fn t40a_first_trigger_is_3_mib_for_1_and_4_mib_at_headroom_20() {
+        assert_eq!(first_trigger(8 * MIB, MIB, 4 * MIB, 20), 3 * MIB);
+    }
+
+    #[test]
+    fn t40b_first_trigger_is_2_5_mib_at_headroom_0() {
+        assert_eq!(first_trigger(8 * MIB, MIB, 4 * MIB, 0), 2_621_440);
+    }
+
+    #[test]
+    fn t40c_first_trigger_is_1_8_mib_not_8_mib_for_1_and_2_mib_with_heap_min_8() {
+        let t = first_trigger(8 * MIB, MIB, 2 * MIB, 20);
+        assert_eq!(t, 1_887_436);
+        assert_ne!(t, 8 * MIB, "heap_min must not set the first trigger");
+    }
+
+    #[test]
+    fn t40d_next_trigger_uses_the_larger_of_the_two_latest_live_sizes() {
+        // A (earlier) = 10 MiB, B (latest) = 20 MiB: max(8, 20 * 1.2) = 24 MiB.
+        assert_eq!(next_trigger(8 * MIB, 10 * MIB, 20 * MIB, 20), 24 * MIB);
+        // A = 30 MiB, B = 20 MiB: max(8, 30 * 1.2) = 36 MiB.
+        assert_eq!(next_trigger(8 * MIB, 30 * MIB, 20 * MIB, 20), 36 * MIB);
+        // A = 1 MiB, B = 2 MiB: heap_min is the floor, 8 MiB.
+        assert_eq!(next_trigger(8 * MIB, MIB, 2 * MIB, 20), 8 * MIB);
+    }
+}

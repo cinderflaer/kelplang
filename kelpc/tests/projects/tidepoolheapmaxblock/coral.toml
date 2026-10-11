@@ -1,0 +1,6 @@
+name = "tidepoolheapmaxblock"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[tidepool]
+heap_max = 64

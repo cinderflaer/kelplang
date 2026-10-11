@@ -18356,3 +18356,108 @@ fn escape_twin_borrowing_method_with_a_plain_result() {
 fn escape_twin_number_stored_in_an_outer_variable() {
     assert_compiles_and_runs("tests/escape/twin_number_outer.kp", "5\n");
 }
+
+// Tidepool step 2, T34: manifest refusals. The `[tidepool]` block is not read
+// yet, so each project below builds, and every test here fails until step 5.
+// The needles are the golden texts of the design, section 14.7 (G14).
+// RED (job 59c3aa60): build succeeds; [tidepool] is skipped by parse_manifest.
+#[test]
+fn tidepool_heap_max_under_tidepool_is_refused_by_name() {
+    assert_project_rejected(
+        "tidepoolheapmaxblock",
+        &project("tidepoolheapmaxblock"),
+        "coral.toml's [tidepool] key 'heap_max' belongs in [target]; move it there",
+    );
+}
+
+// RED (job 59c3aa60): build succeeds; unknown header [TIDEPOOL] is skipped silently.
+#[test]
+fn tidepool_misspelled_header_is_refused_with_a_did_you_mean_line() {
+    assert_project_rejected(
+        "tidepoolmisspelled",
+        &project("tidepoolmisspelled"),
+        "unknown section '[TIDEPOOL]' in coral.toml; did you mean '[tidepool]'?",
+    );
+}
+
+// RED (job 59c3aa60): build succeeds; unknown header [gc] is skipped silently.
+#[test]
+fn tidepool_old_gc_header_is_refused_with_a_did_you_mean_line() {
+    assert_project_rejected(
+        "tidepoolstaleheader",
+        &project("tidepoolstaleheader"),
+        "unknown section '[gc]' in coral.toml; did you mean '[tidepool]'?",
+    );
+}
+
+// Tidepool step 2, T41: `heap_max` parsing (R37). The refusals already exist
+// on this branch (`parse_target_line` in kelpc/src/resolve.rs), so these three
+// may pass; they are kept as guards. The default of 256 MiB is the marker below.
+// GREEN on this branch (job 59c3aa60): the refusal exists in parse_target_line; kept as a guard.
+#[test]
+fn tidepool_heap_max_quoted_value_is_refused() {
+    assert_project_rejected(
+        "tidepoolheapmaxquoted",
+        &project("tidepoolheapmaxquoted"),
+        "coral.toml value for '[target] heap_max' must be a whole number of MiB between 1 and 65536, found '\"64\"'",
+    );
+}
+
+// GREEN on this branch (job 59c3aa60): the refusal exists in parse_target_line; kept as a guard.
+#[test]
+fn tidepool_heap_max_zero_is_refused() {
+    assert_project_rejected(
+        "tidepoolheapmaxzero",
+        &project("tidepoolheapmaxzero"),
+        "coral.toml value for '[target] heap_max' must be between 1 and 65536 MiB, found 0",
+    );
+}
+
+// GREEN on this branch (job 59c3aa60): the refusal exists in parse_target_line; kept as a guard.
+#[test]
+fn tidepool_heap_max_65537_is_refused() {
+    assert_project_rejected(
+        "tidepoolheapmax65537",
+        &project("tidepoolheapmax65537"),
+        "coral.toml value for '[target] heap_max' must be between 1 and 65536 MiB, found 65537",
+    );
+}
+
+// Marker (job 59c3aa60): reported as ignored; it has no body to run yet.
+#[test]
+#[ignore = "Tidepool step 2 marker: the 256 MiB default is observed through the budget, which needs step 1's kelp-gc-stats hook"]
+fn tidepool_default_heap_max_is_256_mib() {
+    unimplemented!("needs step 1's kelp-gc-stats hook; no test body yet");
+}
+
+// Tidepool step 2, T42: `[tidepool]` key checks (R38). Each message is G14 in
+// section 14.7.
+// RED (job 59c3aa60): build succeeds; unknown [tidepool] key is not read.
+#[test]
+fn tidepool_key_one_letter_off_is_refused_by_name() {
+    assert_project_rejected(
+        "tidepoolkeytypo",
+        &project("tidepoolkeytypo"),
+        "unknown key 'headrom_pct' in coral.toml's [tidepool] section; its keys are 'headroom_pct', 'start_low_mib' and 'start_high_mib'",
+    );
+}
+
+// RED (job 59c3aa60): build succeeds; [tidepool] values are not read.
+#[test]
+fn tidepool_string_value_is_refused() {
+    assert_project_rejected(
+        "tidepoolstringvalue",
+        &project("tidepoolstringvalue"),
+        "coral.toml's [tidepool] key 'headroom_pct' must be a whole number, found '\"20\"'",
+    );
+}
+
+// RED (job 59c3aa60): build succeeds; [tidepool] values are not read.
+#[test]
+fn tidepool_start_low_zero_is_refused() {
+    assert_project_rejected(
+        "tidepoolstartlowzero",
+        &project("tidepoolstartlowzero"),
+        "coral.toml's [tidepool] key 'start_low_mib' must be at least 1, found '0'",
+    );
+}
