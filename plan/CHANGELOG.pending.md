@@ -33,7 +33,11 @@ empty on release.
 - The C text the `llvm` backend still emits (runtime headers, `extern fun` declarations, callback glue) moved from `codegen_c.rs` to `cdecl.rs`. Emitted output is unchanged.
 - The link step uses `ld.lld`, not `cc`: a build with no `cc` can link, and `KELPC_LLD` selects the `ld.lld` binary (otherwise the first one on PATH). `cc` still compiles the `extern fun` C bodies.
 - A TLS program finds OpenSSL's `libssl.so` and `libcrypto.so` through `pkg-config openssl` (then the build-time record, then the system directories), so a Nix build links without a hand-set library path.
-- `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C. Programs are unchanged: the C runtime is still the one linked.
+- `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C.
+- The C runtime is removed: `kelpc` links the Rust runtime into every LLVM-built program. A hosted program links `libkelp_rt.a` and a managed program links `kelp_rt_managed.o` beside the collector archive. The runtime's symbol names, signatures and struct layouts are unchanged, so a program that calls a runtime helper links as before.
+- The C compile of the runtime is gone from the compiler's build, and the link no longer needs a C object for it; `cc` still compiles the `extern fun` bodies that `kelpc` writes in C.
+- The capability checks run in the runtime (`kelp-rt/src/cap.rs`) rather than from C text spliced into each program with a gated call. The checks and their denial messages are unchanged.
+- A pooled `Box<T>` allocation or release calls the runtime once for the calling thread's free lists, where it used to read a thread-local array inline. Results are unchanged; a pooled Box costs one call more.
 - The corpus has golden outputs frozen from the C oracle at v26.10.5 (`kelpc/tests/golden/`), and the `llvm` backend is checked at five optimization levels against `-O0` with no C in the comparison.
 
 - `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
