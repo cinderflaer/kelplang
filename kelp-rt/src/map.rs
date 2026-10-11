@@ -6,6 +6,7 @@
 use core::ffi::c_char;
 
 use crate::abi::String as KString;
+use crate::gc::{self, POLL_BYTES};
 
 /// FNV-1a over `len` bytes at `data`.
 ///
@@ -14,7 +15,12 @@ use crate::abi::String as KString;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_map_hash(data: *const c_char, len: usize) -> u64 {
     let mut h: u64 = 1469598103934665603;
+    let mut next_poll = POLL_BYTES;
     for i in 0..len {
+        if i >= next_poll {
+            gc::safepoint();
+            next_poll = i + POLL_BYTES;
+        }
         // SAFETY: the caller guarantees `len` readable bytes at `data`.
         let b = unsafe { *data.add(i) } as u8;
         h ^= b as u64;

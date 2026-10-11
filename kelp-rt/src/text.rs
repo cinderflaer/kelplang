@@ -11,6 +11,7 @@ use core::ptr;
 
 use crate::abi::{Bytes, String as KString, View};
 use crate::alloc::{buf_alloc, buf_free};
+use crate::gc::{self, POLL_BYTES};
 use crate::panic::kelp_panic;
 
 /// Grows `*data` so `extra` more bytes fit past `len`, doubling (or starting
@@ -79,7 +80,12 @@ unsafe fn libc_realloc(p: *mut u8, n: usize) -> *mut u8 {
 pub unsafe extern "C" fn kelp_utf8_valid(p: *const u8, n: usize) -> bool {
     unsafe {
         let mut i = 0usize;
+        let mut next_poll = POLL_BYTES;
         while i < n {
+            if i >= next_poll {
+                gc::safepoint();
+                next_poll = i + POLL_BYTES;
+            }
             let c = *p.add(i);
             let extra: usize;
             let mut cp: u64;
@@ -541,7 +547,12 @@ pub unsafe extern "C" fn kelp_String__char_count(this: *const KString) -> usize 
     unsafe {
         let s = &*this;
         let mut n = 0;
+        let mut next_poll = POLL_BYTES;
         for i in 0..s.len {
+            if i >= next_poll {
+                gc::safepoint();
+                next_poll = i + POLL_BYTES;
+            }
             if *s.data.add(i) & 0xC0 != 0x80 {
                 n += 1;
             }

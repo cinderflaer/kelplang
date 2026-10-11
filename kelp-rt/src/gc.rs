@@ -7,6 +7,7 @@ unsafe extern "C" {
     fn kelp_gc_thread_detach();
     fn kelp_gc_enter_native();
     fn kelp_gc_leave_native();
+    fn kelp_gc_safepoint();
 }
 
 /// Leaves the collector on a worker's exit. Detaching a thread that never
@@ -41,3 +42,18 @@ pub fn native_enter() {}
 /// A hosted build has no collector to hold up.
 #[cfg(not(feature = "managed"))]
 pub fn native_leave() {}
+
+/// Polls the collector from a long runtime loop, so a collection on another
+/// thread stops this one at the poll rather than at the stop timeout.
+#[cfg(feature = "managed")]
+pub fn safepoint() {
+    unsafe { kelp_gc_safepoint() }
+}
+
+/// A hosted build has no collector, so the poll does nothing.
+#[cfg(not(feature = "managed"))]
+pub fn safepoint() {}
+
+/// The byte interval between two safepoint polls in a runtime scan, the same as
+/// the C runtime's `KELP_POLL_BYTES`.
+pub const POLL_BYTES: usize = 64 * 1024;
