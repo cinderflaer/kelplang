@@ -62,6 +62,7 @@ empty on release.
 - The roadmap says channels and Mutex ship now, and the download row says when it was true (landed on main, be51d2e).
 - The KelpScript proposal moves to `plan/kelpscript.md` (on branch kelpscript-plan, not merged).
 - The dev shell (`shell.nix`) adds `gdb`, so the debug-info test (`llvm_debug_info`) can resolve its fault backtrace.
+- The Rust runtime leaves the collector when a worker ends (also on a panic), waits in join, locks and condition waits as native, polls the collector in long text and map scans, frees a spawn whose thread cannot start and reports its errno, and the collector's personality routine lets a worker's forced unwind finish (landed with the rt-gaps lane).
 
 ## limits
 
