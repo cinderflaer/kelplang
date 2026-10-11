@@ -1,0 +1,10 @@
+// An `errdefer` runs only on the error path, so it needs a function that
+// returns Result or Option. This function returns an i32, so it is refused.
+fun f().return: i32 {
+    errdefer print("never")
+    return 1
+}
+
+fun main() {
+    print(f())
+}

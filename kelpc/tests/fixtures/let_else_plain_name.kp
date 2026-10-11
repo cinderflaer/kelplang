@@ -1,0 +1,14 @@
+// plan/syntax.md 4.1: a plain name always matches, so a let-else with one is
+// refused. A plain binding takes no else: write `val` with no `else`.
+impl "std/option"
+
+fun find(id: i32).return: option.Option<i32> {
+    return option.Option.Some(value = id)
+}
+
+fun main() {
+    let user = find(id = 1) else {
+        return
+    }
+    print(user)
+}

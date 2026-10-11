@@ -1,0 +1,20 @@
+// plan/syntax.md 4.1: the pattern's variant has to belong to the enum EXPR
+// has. `Circle` is a variant of `Shape`, not of the `Option` that `find`
+// returns, so the let-else is refused.
+impl "std/option"
+
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun find(id: i32).return: option.Option<i32> {
+    return option.Option.Some(value = id)
+}
+
+fun main() {
+    let Circle(r) = find(id = 1) else {
+        return
+    }
+    print(r)
+}

@@ -1,0 +1,32 @@
+// `errdefer` runs on the error path only. The first call succeeds, so its
+// `errdefer` is skipped and `main` prints the value; the second fails at `?`,
+// so the `errdefer` runs before the function returns its `Err`.
+impl "std/result"
+
+enum Bad {
+    Oops
+}
+
+fun step(fail: bool).return: result.Result<i32, Bad> {
+    if fail {
+        return result.Result.Err(error = Bad.Oops)
+    }
+    return result.Result.Ok(value = 7)
+}
+
+fun run(fail: bool).return: result.Result<i32, Bad> {
+    errdefer print("cleanup")
+    val v = step(fail)?
+    return result.Result.Ok(value = v + 1)
+}
+
+fun main() {
+    when run(false) {
+        Ok(v) -> print(v)
+        Err(_) -> print("err")
+    }
+    when run(true) {
+        Ok(v) -> print(v)
+        Err(_) -> print("err")
+    }
+}

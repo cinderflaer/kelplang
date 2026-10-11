@@ -511,6 +511,30 @@ refuses an owned one, the rule a field of a borrow already follows (10.2).
 of a moved value. Two positions that write the same name are ordinary shadowing,
 exactly as two `val` declarations of one name in one block are.
 
+### 4.1 `let` with a pattern: let-else
+
+A `let` followed by a variant pattern and an `else` block binds the pattern's names when the value matches, and runs the `else` block when it does not. The `else` block has to leave the enclosing code.
+
+```kelp
+fun user_name(id: i32).return: Result<String, String> {
+    let Some(user) = find(id) else { return Err("missing") }
+    return Ok(user.name)     // `user` is bound for the rest of the block
+}
+```
+
+- The pattern is a variant of an `enum`, written the way `if let` writes one: `Some(user)`, `Circle(r)`, `Blank`, with `_` for a payload that is not needed. A payload binds exactly as it does under `if let` and `when` (9.2): a copy when it is `Copy`, by value out of an owned place, and a shared borrow otherwise.
+- The names are bound for the rest of the enclosing block, and they are immutable, as an `if let` name is.
+- The pattern's variant has to belong to the enum that the expression has. The expression is evaluated once.
+- The `else` block must end in `return`, `break`, `continue` or `panic(...)`. When it does not end in one of those, the `let` is refused. Its drops run first: when the `else` block leaves through `return`, `break` or `continue`, the locals of the enclosing scope are dropped in the same order a plain `return` drops them.
+
+The refusals name the rule and the fix:
+
+- **A plain name always matches.** `let user = find(id) else { return }` is refused: the else block could never run. Write `val user = find(id)` with no `else` for a plain binding, or match a variant such as `Some(user)`.
+- **A tuple pattern always matches.** `let (a, b) = pair() else { return }` is refused for the same reason. Write `val (a, b) = pair()` with no `else`.
+- **The else block falls through.** A block that ends in a plain statement is refused, because the code after the `let` would run with the pattern unmatched. End the block with `return`, `break`, `continue` or `panic(...)`, or use `if let` when the no-match case needs no exit.
+- **The types do not match.** `let Circle(r) = find(id) else { return }` is refused when `find` returns an `Option`, because `Circle` is not a variant of that enum. Match a variant of the expression's own enum, or change the expression to the enum the pattern names.
+- **No `else` at all.** `let Some(user) = find(id)` is refused. Use `if let Some(user) = find(id) { ... }` when the no-match case needs no exit.
+
 ## 5. Operators and expressions
 
 **Evaluation order.** Kelp evaluates strictly left to right: the arguments of a call (after its receiver), the interpolations of a string template, the two operands of a binary operator (`&&` and `||` short-circuit as usual), the fields of a `datac`/`enum` constructor and the elements of an array literal. This holds on both backends; the C backend binds order-dependent operands to temporaries because C itself leaves the order of call arguments and operands unspecified. `tests/fixtures/eval_order_*.kp` pin it.
@@ -865,6 +889,38 @@ This is the shape every accessor over an owned payload ends with, and it is the 
 The message is a `str`, or an owned `String` read without being consumed: `panic(built_up_string)` and `panic(fmt.int(n))` both work, so an error path does not have to bind a `val` or spell `.as_str()` first.
 
 That is the whole of the divergence rule: it applies to a function body's tail and nowhere else, so a `panic` cannot be the arm of an `if`/`when` used as a value. It exists because it is what makes a "this cannot happen" accessor expressible at all (`std/option`'s `unwrap` is the first one).
+
+### 6.5 `errdefer`
+
+`errdefer EXPR` is a statement, written like `defer` (`plan/defer.md`), whose action runs only when the function leaves through its **error variant**. An error exit is either:
+
+- a `return` whose value is the failure variant: `Err(..)` of a `Result`, or `None` of an `Option`; or
+- a `?` that propagates that failure.
+
+```kelp
+fun open_pair(a: str, b: str).return: Result<Pair, IoErr> {
+    val first = open(a)?
+    errdefer close(first)
+    val second = open(b)?      // if this fails, first is closed
+    Ok(Pair(first, second))
+}
+```
+
+- **Positional.** Like `defer`, an `errdefer` is active only once control has reached its statement. Here the `?` on `open(a)` fails before the `errdefer` exists, so `close` is not run.
+- **Order.** On an error exit the errdefers of every block being left run first, the innermost block first. Within a block the errdefers run newest first, and then that block's ordinary defers run newest first. A value whose drop was registered before the `errdefer` is then dropped by the drop plan (10.3) after the action has run, unless the action moved it.
+- **Ordinary exits.** A `return` of a success value (`Ok`, `Some`, or any other value), and falling off the end of the function, run the ordinary defers only. The errdefers do not run.
+- **Panic.** A `panic` runs neither errdefers nor defers. This is the rule `defer` already has (`plan/defer.md`): a panic never returns, so nothing is unwound.
+- **Option.** For an `Option`, the failure variant is `None`, so a `None` return or a `?` on `None` is an error exit.
+- **`?` and `defer`.** The refusal of a `defer` in a block that has a `?` (`plan/defer.md`) still applies. An `errdefer` alone does not refuse a `?`.
+
+Refusals, each by name:
+
+- **Return type.** An `errdefer` in a function whose return type is not `Result<..>` or `Option<..>` is refused: "an 'errdefer' runs only on the error path, so it needs a function that returns Result or Option". Fix: declare the return type as `Result` or `Option` (a type alias to one is refused too, since the check reads the name), or write a `defer` if the cleanup should run on every exit.
+- **Later locals.** An `errdefer` that names a local declared after it is refused: "this 'errdefer' names 'x', which is declared later in the block". It sees only the locals already in scope where it is written, as a `defer` does.
+- **Action contents.** The action may not contain `return`, `?`, `break` or `continue`, since it runs while the function is already leaving on an error.
+- **Closures.** An `errdefer` inside a `fun` literal is refused. The literal's own return is its error exit, and a literal has no declared failure shape here.
+
+The lowering is in `defer.rs` and needs no new form after that pass: a return or a `?` on an error exit becomes a `when` on the returned value, whose failure arm runs the errdefers and the ordinary defers, and whose other arm runs the ordinary defers only. The `return` or `?` is then taken as written, so the `From` conversion of `?` and the drop plan apply unchanged.
 
 ## 7. Functions
 

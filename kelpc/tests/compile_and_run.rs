@@ -10091,6 +10091,42 @@ fn if_let_else_chain_reads_its_scrutinee_more_than_once() {
 }
 
 #[test]
+fn let_else_binds_through_option_and_enum() {
+    // plan/syntax.md 4.1: a matched let-else binds for the rest of the block,
+    // and a missed one runs its else block (return, or continue in a loop).
+    assert_compiles_and_runs(
+        "tests/fixtures/let_else.kp",
+        "40\n80\n-1\n2.000000\n0.000000\n4\n0\n30\n",
+    );
+}
+
+#[test]
+fn let_else_else_block_drops_the_enclosing_scope() {
+    // The else block's `return` drops the local declared before the `let`,
+    // the same drop a plain `return` makes, before the caller prints.
+    assert_compiles_and_runs(
+        "tests/fixtures/let_else_drops.kp",
+        "guard\n0\n-1\nguard\n3\n33\n",
+    );
+}
+
+#[test]
+fn let_else_refusals_name_the_rule() {
+    assert_rejected_with(
+        "tests/fixtures/let_else_falls_through.kp",
+        "let-else: the else block falls through",
+    );
+    assert_rejected_with(
+        "tests/fixtures/let_else_plain_name.kp",
+        "is a plain name, which always matches",
+    );
+    assert_rejected_with(
+        "tests/fixtures/let_else_type_mismatch.kp",
+        "let-else: the pattern 'Circle' must match the expression's type",
+    );
+}
+
+#[test]
 fn if_let_misuse_is_rejected() {
     for name in ["if_let_unknown_variant", "if_let_bind_count"] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));
@@ -14252,6 +14288,51 @@ fn a_deferred_action_reading_a_moved_local_is_refused() {
 fn a_defer_naming_a_later_local_is_refused() {
     assert_rejected_with(
         "tests/fixtures/defer_later_local.kp",
+        "declared later in the block",
+    );
+}
+
+// Kernel stage 6 `errdefer` (`plan/syntax.md`, errdefer): an action that runs
+// only when the function leaves through its error variant. `defer.rs` lowers the
+// returned value's test into a `when`, so the error path runs the errdefers and
+// the other paths do not.
+
+/// On the error path the `errdefer` runs before the function returns its `Err`;
+/// on the success path it does not run.
+#[test]
+fn an_errdefer_runs_on_the_error_path_only() {
+    assert_compiles_and_runs(
+        "tests/fixtures/errdefer_error_path.kp",
+        "8\ncleanup\nerr\n",
+    );
+}
+
+/// A `?` that fails after an `errdefer` has been written runs it, with the
+/// locals bound before it still in scope; a `?` that succeeds does not.
+#[test]
+fn an_errdefer_runs_when_a_later_question_mark_fails() {
+    assert_compiles_and_runs(
+        "tests/fixtures/errdefer_second_try.kp",
+        "3\n1\nerr\n",
+    );
+}
+
+/// An `errdefer` in a function whose return type is neither Result nor Option is
+/// refused, because there is no error variant for it to run on.
+#[test]
+fn an_errdefer_in_a_function_that_does_not_return_result_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/errdefer_non_result.kp",
+        "an 'errdefer' runs only on the error path",
+    );
+}
+
+/// An `errdefer` naming a local declared after it is refused by name, as a
+/// `defer` is.
+#[test]
+fn an_errdefer_naming_a_later_local_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/errdefer_later_local.kp",
         "declared later in the block",
     );
 }

@@ -109,6 +109,9 @@ pub enum TokenKind {
     /// is left (kernel stage 6, `plan/defer.md`). `defer.rs` rewrites it away
     /// before name resolution, so no later pass knows this form exists.
     Defer,
+    /// `errdefer EXPR`: a `defer` that runs only on an error exit
+    /// (`plan/syntax.md`). `defer.rs` rewrites it away before name resolution.
+    Errdefer,
     Return,
     True,
     False,
@@ -911,6 +914,7 @@ impl<'a> Lexer<'a> {
                         "for" => TokenKind::For,
                         "when" => TokenKind::When,
                         "defer" => TokenKind::Defer,
+                        "errdefer" => TokenKind::Errdefer,
                         "return" => TokenKind::Return,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,

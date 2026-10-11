@@ -1,0 +1,34 @@
+// The first `?` succeeds and the second fails. The `errdefer` written after the
+// first binding is already in scope for the second `?`, so it runs and prints
+// the first value. The `errdefer` is not active for the first `?`, so it cannot
+// run there.
+impl "std/result"
+
+enum Bad {
+    Oops
+}
+
+fun open(n: i32).return: result.Result<i32, Bad> {
+    if n > 0 {
+        return result.Result.Ok(value = n)
+    }
+    return result.Result.Err(error = Bad.Oops)
+}
+
+fun pair(second: i32).return: result.Result<i32, Bad> {
+    val first = open(1)?
+    errdefer print(first)
+    val other = open(second)?
+    return result.Result.Ok(value = first + other)
+}
+
+fun main() {
+    when pair(2) {
+        Ok(v) -> print(v)
+        Err(_) -> print("err")
+    }
+    when pair(0) {
+        Ok(v) -> print(v)
+        Err(_) -> print("err")
+    }
+}

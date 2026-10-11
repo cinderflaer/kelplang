@@ -2861,8 +2861,65 @@ impl Parser {
     fn parse_block_body_inner(&mut self, start: Span) -> PResult<Block> {
         let saved = std::mem::replace(&mut self.no_trailing_block, false);
         self.skip_newlines();
+        let stmts = self.parse_stmts_to_rbrace()?;
+        let end = self.expect(TokenKind::RBrace, "'}'")?.span;
+        self.no_trailing_block = saved;
+        Ok(Block {
+            stmts,
+            span: start.to(end),
+        })
+    }
+
+    /// The statements of a block up to, not including, its closing `}`.
+    ///
+    /// A `let PATTERN = EXPR else { BLOCK }` takes every statement after it
+    /// into its pattern arm, so the rest of the block is parsed here, by a
+    /// recursive call, and the statement becomes a `when` whose pattern arm
+    /// is that rest and whose `else` arm is the else block (`plan/syntax.md`
+    /// 4.1). The `when` is the last statement of the block, so its value is
+    /// the rest's value, and every existing rule for `when` arms, drops and
+    /// divergence applies to the let-else unchanged.
+    fn parse_stmts_to_rbrace(&mut self) -> PResult<Vec<Stmt>> {
         let mut stmts = Vec::new();
         while !self.check(&TokenKind::RBrace) {
+            if self.at_let_else() {
+                let (pattern, init, else_block, span) = self.parse_let_else_head()?;
+                if !self.check(&TokenKind::RBrace) {
+                    if !self.check(&TokenKind::Newline) {
+                        return Err(ParseError {
+                            message: format!(
+                                "expected a newline or '}}' after a statement, found {:?}",
+                                self.peek_kind()
+                            ),
+                            span: self.peek().span,
+                        });
+                    }
+                    self.skip_newlines();
+                }
+                let rest = self.parse_stmts_to_rbrace()?;
+                let else_span = else_block.span;
+                stmts.push(Stmt::Expr {
+                    expr: Expr::When {
+                        scrutinee: Box::new(init),
+                        arms: vec![
+                            WhenArm {
+                                pattern: Some(pattern),
+                                body: Expr::Block(Block { stmts: rest, span }),
+                                span,
+                            },
+                            WhenArm {
+                                pattern: None,
+                                body: Expr::Block(else_block),
+                                span: else_span,
+                            },
+                        ],
+                        span,
+                        let_else: true,
+                    },
+                    span,
+                });
+                return Ok(stmts);
+            }
             let stmt = self.parse_stmt()?;
             stmts.push(stmt);
             if !self.check(&TokenKind::RBrace) {
@@ -2878,12 +2935,7 @@ impl Parser {
                 self.skip_newlines();
             }
         }
-        let end = self.expect(TokenKind::RBrace, "'}'")?.span;
-        self.no_trailing_block = saved;
-        Ok(Block {
-            stmts,
-            span: start.to(end),
-        })
+        Ok(stmts)
     }
 
     fn parse_stmt(&mut self) -> PResult<Stmt> {
@@ -2912,6 +2964,7 @@ impl Parser {
                 self.parse_loop_construct(Some(label))
             }
             TokenKind::Defer => self.parse_defer_stmt(),
+            TokenKind::Errdefer => self.parse_errdefer_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
             // `break` and `continue` are read as ordinary names everywhere
             // else, so a bare one here (the statement ends after it) is the
@@ -3406,6 +3459,13 @@ impl Parser {
         let expr = self.parse_head_expr()?;
         let span = start.to(expr.span());
         Ok(Stmt::Defer { expr, span })
+    }
+
+    fn parse_errdefer_stmt(&mut self) -> PResult<Stmt> {
+        let start = self.expect(TokenKind::Errdefer, "'errdefer'")?.span;
+        let expr = self.parse_head_expr()?;
+        let span = start.to(expr.span());
+        Ok(Stmt::Errdefer { expr, span })
     }
 
     fn parse_return_stmt(&mut self) -> PResult<Stmt> {
@@ -4217,9 +4277,9 @@ impl Parser {
     /// what makes a temporary legal here, since the pattern form of `when`
     /// requires a *place* (an owned payload binds as a borrow of it, and a
     /// borrow of a temporary would not outlive the arm).
-    fn parse_if_let(&mut self, start: Span) -> PResult<Expr> {
-        self.advance(); // `let`
-        let (variant, vspan) = self.expect_ident()?;
+    /// The payload binds of `Variant(a, _, c)` after the variant name has been
+    /// read: the parenthesised list is optional, so `Empty` binds nothing.
+    fn parse_variant_binds(&mut self, variant: String, vspan: Span) -> PResult<VariantPattern> {
         let mut binds = Vec::new();
         if self.check(&TokenKind::LParen) {
             self.advance();
@@ -4234,11 +4294,57 @@ impl Parser {
             }
             self.expect(TokenKind::RParen, "')'")?;
         }
-        let pattern = VariantPattern {
+        Ok(VariantPattern {
             variant,
             binds,
             span: vspan,
-        };
+        })
+    }
+
+    /// `let PATTERN = EXPR else { BLOCK }` (`plan/syntax.md` 4.1), read up to
+    /// and including the else block. The statement is only ever a `let` that
+    /// starts a statement and is followed by a name or a parenthesis.
+    fn at_let_else(&self) -> bool {
+        matches!(self.peek_kind(), TokenKind::Ident(name) if name == "let")
+            && matches!(self.peek2_kind(), TokenKind::Ident(_) | TokenKind::LParen)
+    }
+
+    fn parse_let_else_head(&mut self) -> PResult<(VariantPattern, Expr, Block, Span)> {
+        let start = self.advance().span; // `let`
+        if self.check(&TokenKind::LParen) {
+            return Err(ParseError {
+                message: "let-else: a tuple pattern always matches, so the else block could never run. Fix: write 'val (a, b) = ...' with no else, or match an enum variant such as 'Some(x)' here".to_string(),
+                span: self.peek().span,
+            });
+        }
+        let (name, nspan) = self.expect_ident()?;
+        if !self.check(&TokenKind::LParen) && self.check(&TokenKind::Eq) {
+            return Err(ParseError {
+                message: format!(
+                    "let-else: '{name}' is a plain name, which always matches, so the else block could never run. Fix: write 'val {name} = ...' with no else, or match an enum variant such as 'Some({name})' here"
+                ),
+                span: nspan,
+            });
+        }
+        let pattern = self.parse_variant_binds(name, nspan)?;
+        self.expect(TokenKind::Eq, "'=' after the pattern")?;
+        let init = self.parse_head_expr()?;
+        if !self.check(&TokenKind::Else) {
+            return Err(ParseError {
+                message: "let-else: a 'let' with a pattern needs an 'else' block that leaves the enclosing code. Fix: add 'else { return ... }' (or break, continue, panic), or use 'if let' when the no-match case needs no exit".to_string(),
+                span: self.peek().span,
+            });
+        }
+        self.advance();
+        let block = self.parse_block()?;
+        let span = start.to(block.span);
+        Ok((pattern, init, block, span))
+    }
+
+    fn parse_if_let(&mut self, start: Span) -> PResult<Expr> {
+        self.advance(); // `let`
+        let (variant, vspan) = self.expect_ident()?;
+        let pattern = self.parse_variant_binds(variant, vspan)?;
         self.expect(TokenKind::Eq, "'=' after the pattern")?;
         let scrutinee = self.parse_head_expr()?;
         let scrutinee_span = scrutinee.span();
@@ -4309,6 +4415,7 @@ impl Parser {
                     },
                 ],
                 span,
+                let_else: false,
             },
             span,
         };
@@ -4500,6 +4607,7 @@ impl Parser {
             scrutinee: Box::new(scrutinee),
             arms,
             span: start.to(end),
+            let_else: false,
         })
     }
 
@@ -4839,6 +4947,7 @@ impl Parser {
             scrutinee: Box::new(cols[c].clone()),
             arms,
             span,
+            let_else: false,
         })
     }
 
