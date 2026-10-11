@@ -97,6 +97,7 @@ fn exported_kelp_symbols() -> BTreeSet<String> {
     );
     String::from_utf8_lossy(&out.stdout)
         .lines()
+        .filter(|line| !line.trim_end().ends_with(':'))
         .filter_map(|line| line.split_whitespace().last())
         .filter(|name| name.starts_with("kelp_"))
         .map(|name| name.to_string())
