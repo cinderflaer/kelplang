@@ -59,6 +59,7 @@ empty on release.
 - Owner name changed from Juniper to Lilly (d813b32 on unreleased, merged into main by 82ec21c).
 - Finished wiki lane branches deleted on the remote and locally; origin keeps only main and unreleased.
 - Wiki: new section "Working without the garbage collector" (`memory.md` and `memory/`, on kelp-wiki branch `wiki-manual-memory`, not merged); its managed comparison is a placeholder until the managed build is measured.
+- Wiki reorganised for finding pages: examples named by what they do, changelog pages under `changelog/`, a sidebar order file, and old paths kept as redirect stubs.
 
 ## Plans not in the repo
 
