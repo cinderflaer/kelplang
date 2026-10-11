@@ -58,6 +58,7 @@ empty on release.
 - Polyp changelog: a new page at `libraries/polyp-changelog.md` (9ec46bc, merged into main by c90a24b).
 - Owner name changed from Juniper to Lilly (d813b32 on unreleased, merged into main by 82ec21c).
 - Finished wiki lane branches deleted on the remote and locally; origin keeps only main and unreleased.
+- Wiki: new section "Working without the garbage collector" (`memory.md` and `memory/`, on kelp-wiki branch `wiki-manual-memory`, not merged); its managed comparison is a placeholder until the managed build is measured.
 
 ## Plans not in the repo
 
