@@ -18,6 +18,7 @@ pub mod cap;
 pub mod cleanup;
 pub mod panic;
 pub mod env;
+pub mod gc;
 pub mod io;
 pub mod map;
 pub mod net;

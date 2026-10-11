@@ -17,6 +17,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::cleanup::{CleanupFrame, cleanup_pop, cleanup_push};
+use crate::gc;
 use crate::panic::{WorkerHandle, kelp_panic, set_worker_handle};
 
 /// `void (*)(void* code, void* env, void* arg, void* out)`: the generated
@@ -47,6 +48,12 @@ unsafe extern "C" fn thread_release(raw: *mut c_void) {
                 drop_env((*s).env);
             }
         }
+        // Leave the collector on every exit, after the environment's drop (it
+        // may read collected values) and before the record is freed. A panicking
+        // worker never reaches the end of its body, so this is the one place
+        // that detaches it: a worker left attached holds a collection up until
+        // the stop timeout.
+        gc::thread_detach();
         libc::free(s.cast());
         // The worker's last touch of the handle. If the owner already dropped
         // it unjoined, nobody else will free it.
