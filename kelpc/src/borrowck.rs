@@ -2,7 +2,7 @@
 //!
 //! ## Moves (M3)
 //!
-//! Rule: primitives (and `&str`, which has no owned-string type to move —
+//! Rule: primitives (and `&str`, which has no owned-string type to move -
 //! it's just a borrowed pointer) are `Copy`; `datac` values are not. A bare
 //! `Ident` read of a non-Copy value moves it out of its binding; a `.field`
 //! read walks through a place chain without consuming anything, except the one
@@ -12,7 +12,7 @@
 //! ## Borrowing (M4)
 //!
 //! Per `plan/syntax.md` §5, a `datac`-typed function parameter is an
-//! implicit shared borrow unless `mut`-marked (exclusive) — `infer.rs`
+//! implicit shared borrow unless `mut`-marked (exclusive) - `infer.rs`
 //! resolves this into `Ty::Ref` and, at call sites, synthesizes the
 //! `tir::ExprKind::Ref` node itself (callers never write `&`). There is no
 //! move-taking parameter spelling in v1: a `datac` is only ever moved by
@@ -24,7 +24,7 @@
 //!   list (an auto-borrow, or an explicit `&expr` written as the argument
 //!   itself). All borrows for one call's argument list are started
 //!   *before any of them are released*, so `start_borrow`'s own conflict
-//!   check catches a same-call aliasing violation (`f(&mut c, &c)`) — not
+//!   check catches a same-call aliasing violation (`f(&mut c, &c)`) - not
 //!   a separate pass. They're released together right after the call.
 //! - **Scope-durable**: a borrow that's the direct initializer of a
 //!   `val`/`var` (`val p = &c`) lives until that binding's enclosing scope
@@ -32,7 +32,7 @@
 //!
 //! No surface syntax lets a function return a `Ty::Ref` (`infer.rs`'s
 //! `resolve_type` never produces one for a `.return: T` clause), so a borrow can
-//! never escape the call frame that created it — that's what makes
+//! never escape the call frame that created it - that's what makes
 //! call-scoped release sound without real lifetime inference. Aliasing:
 //! exclusive excludes everything else; any number of shared borrows may
 //! coexist. Moving or reassigning a variable while it's actively borrowed
@@ -43,7 +43,7 @@
 //! ## Drops (M6)
 //!
 //! The same walk decides where owned heap values (`Bytes`) are freed, and
-//! returns that as a `DropPlan` — a side table keyed by *node identity*, so
+//! returns that as a `DropPlan`  -  a side table keyed by *node identity*, so
 //! the removed C backend can look up "which locals die here" as it writes each
 //! block and each `return` without the two passes having to walk in
 //! lockstep. Keying on identity also sidesteps the one place the two walks
@@ -55,25 +55,25 @@
 //! (`if let`'s empty `else` block carries the `then` block's span; a `for`
 //! loop's element block and its `while` body both carry the loop body's span),
 //! and a span-keyed plan then handed one block's drops to another block that
-//! merely shared its span — which is how an owned local declared in an `if
+//! merely shared its span - which is how an owned local declared in an `if
 //! let` arm or a `for` body got a second, out-of-frame drop emitted on the
 //! path where its name is not even declared (BUG-1). Both passes walk the very
 //! same `tir::Program`, so the node's address is a stable and exact key.
 //!
 //! A local is dropped at the end of the block that declared it, if it is
-//! still live there — moved out, and its new owner is responsible for it.
+//! still live there - moved out, and its new owner is responsible for it.
 //! Every `return` first drops the frame's live owned locals (the value being
 //! returned was itself checked before that, so a returned local is already
 //! marked moved and is not in the set). Assignment to an owned `var` frees
 //! the old value before the new one is stored (`DropPlan::at_assign`),
 //! except for `b = b` (the value being stored *is* the old value) and
 //! except when the value expression already moved the binding out
-//! (`x = f(x)`, where `f` takes `x` by value) — there the free belongs to
+//! (`x = f(x)`, where `f` takes `x` by value) - there the free belongs to
 //! whichever path still holds the old value, not to this assignment. The
 //! same freeing now also covers an assignment through a dereferenced borrow
 //! (`*p = value`) and to an owned field (`h.name = value`), which have no
 //! binding to key a `DropTarget` to at all (roadmap open item 15, cases 2
-//! and 3) — see `DropTarget::binding`'s doc.
+//! and 3) - see `DropTarget::binding`'s doc.
 //!
 //! One owned entry is kept per *binding*, not per spelling: two `var a`
 //! declarations in one block own two values, so each declaration keeps its own
@@ -144,9 +144,9 @@ pub struct DropTarget {
     /// an assignment to a `pd`'s storage, which name resolution reaches like
     /// any global (`name` is still that global's spelling then); and an
     /// `at_assign` entry for a `*p = value` or `p.field = value` /
-    /// `h.name = value` target (`FieldAccess`/`Deref` — roadmap open item 15,
+    /// `h.name = value` target (`FieldAccess`/`Deref` - roadmap open item 15,
     /// cases 2 and 3), where `name` is empty and there is no binding *or*
-    /// global to fall back to at all — codegen has to recompute the target's
+    /// global to fall back to at all - codegen has to recompute the target's
     /// own place expression a second time instead of resolving a name.
     pub binding: Option<BindingId>,
     pub name: String,
@@ -187,7 +187,7 @@ enum MoveState {
     /// Moved out on every path that reaches here. A new owner holds the
     /// value, this binding is dead, and nothing frees it here.
     Moved,
-    /// Moved out on some path and not on another — a branch or a loop body
+    /// Moved out on some path and not on another - a branch or a loop body
     /// that moved it joined with one that did not. The binding still has to
     /// be freed (the moved path cleared its slot, so that free is of the
     /// zero value), and the value is no longer readable: the borrow state
@@ -256,7 +256,7 @@ pub enum BindingId {
     Param(usize),
 }
 
-/// The identity of one `tir::Expr` node, for the move-site key — the same
+/// The identity of one `tir::Expr` node, for the move-site key - the same
 /// identity argument as `block_id`, and for the same reason.
 fn expr_id(expr: &tir::Expr) -> NodeId {
     expr as *const tir::Expr as NodeId
@@ -277,7 +277,7 @@ pub struct FnDrops {
     at_continue: HashMap<Span, Vec<DropTarget>>,
     /// The expressions that *move* an owned binding's value out of it and
     /// therefore have to clear the binding's slot after copying the value out
-    /// — one entry per moved expression, so codegen can ask about the node it
+    /// - one entry per moved expression, so codegen can ask about the node it
     /// is already rendering. Only bindings that some path leaves live get an
     /// entry: a binding moved on every path is dropped nowhere, so its slot's
     /// contents are never read again and clearing it would be dead code.
@@ -322,7 +322,7 @@ impl DropPlan {
     /// Two shapes: an `Ident` target's entry names a `binding` codegen
     /// resolves the usual way, and a `FieldAccess`/`Deref` target's entry
     /// (`*p = value`, `p.field = value`, `h.name = value`; roadmap open item
-    /// 15, cases 2 and 3) has `binding: None` and an empty `name` — there is
+    /// 15, cases 2 and 3) has `binding: None` and an empty `name` - there is
     /// no declaration to key to, only a place, so codegen recomputes the
     /// target expression's own address again rather than looking one up.
     pub fn at_assign(&self, function: &str, span: Span) -> &[DropTarget] {
@@ -337,7 +337,7 @@ impl DropPlan {
     /// *only*. `expr?` is a `return` in disguise: the failure value is rebuilt
     /// in the enclosing function's return type and returned from the function
     /// the expression sits in, so every owned local still live in the frame has
-    /// to be freed first — the same set and the same order a written `return`
+    /// to be freed first - the same set and the same order a written `return`
     /// uses (see `at_return`). Without this, `?` leaked the whole frame on
     /// every failure, which for a recursive-descent parser is every rejected
     /// document.
@@ -369,7 +369,7 @@ impl DropPlan {
     }
 
     /// Whether the value read at `expr` is a move out of an owned binding
-    /// whose slot codegen has to clear — copy the value out, then zero the
+    /// whose slot codegen has to clear - copy the value out, then zero the
     /// binding. See the module doc's "a move clears its source".
     pub fn moves_at(&self, function: &str, expr: &tir::Expr) -> bool {
         self.functions
@@ -412,8 +412,8 @@ struct VarState {
     moved_at: Option<Span>,
     /// A pending exclusive borrow, taken for a method call's receiver and not
     /// yet committed (MISSING-n4Bz7). While it is set the place may still be
-    /// *read* and shared-borrowed — that is what lets
-    /// `counts.insert(k, counts.get_or(..) + 1)` type-check — but not moved
+    /// *read* and shared-borrowed - that is what lets
+    /// `counts.insert(k, counts.get_or(..) + 1)` type-check - but not moved
     /// or exclusively borrowed again, and committing turns it into
     /// `borrow = Exclusive`, which fails if a shared borrow taken meanwhile is
     /// still live (`f(&mut c, &c)`).
@@ -509,7 +509,7 @@ struct Scope {
     /// statement its borrowing binding is last used at (see `plan/nll.md`).
     scope_borrows: Vec<ScopeBorrow>,
     /// Owned (heap-owning) locals declared in this scope, in declaration
-    /// order — the candidates for this block's end-of-scope drops.
+    /// order - the candidates for this block's end-of-scope drops.
     owned: Vec<OwnedVar>,
 }
 
@@ -570,7 +570,7 @@ impl Scope {
 struct Ctx {
     scopes: Vec<Scope>,
     plan: FnDrops,
-    /// Which `datac`s own heap memory (transitively) — `Ty::Struct(_)`
+    /// Which `datac`s own heap memory (transitively) - `Ty::Struct(_)`
     /// cannot answer that on its own, so the struct table decision is made
     /// once in `check_program` and threaded here.
     owned_structs: std::collections::HashSet<String>,
@@ -732,7 +732,7 @@ impl Ctx {
         }
     }
 
-    /// Every live owned local in *every* enclosing scope, innermost first —
+    /// Every live owned local in *every* enclosing scope, innermost first -
     /// what a `return` from here would have to free before leaving.
     fn live_drops_in_frame(&self) -> Vec<DropTarget> {
         let mut out = Vec::new();
@@ -759,7 +759,7 @@ impl Ctx {
     /// `binding`: codegen clears that binding's slot there, which is what lets
     /// the binding still be dropped on the path that did not move it. A value
     /// that is not an owned local (a `pd` global's storage, a `str`, a borrow)
-    /// is not recorded — nothing frees it, so nothing can double-free.
+    /// is not recorded - nothing frees it, so nothing can double-free.
     fn mark_move_site(&mut self, binding: BindingId, expr: &tir::Expr) {
         let entry = self.move_sites.entry(binding).or_default();
         let id = expr_id(expr);
@@ -825,7 +825,7 @@ impl Ctx {
     /// }
     /// ```
     ///
-    /// `v.x.as_str()` — the same borrow written out — is already accepted, so
+    /// `v.x.as_str()` - the same borrow written out - is already accepted, so
     /// refusing the pattern form was a missed edge and not a soundness rule:
     /// the payload binding is a shared borrow of `v`'s payload, and returning a
     /// view of it is exactly as safe as returning a view of a field of `v`.
@@ -1114,7 +1114,7 @@ impl Ctx {
         // A `Copy` value is never moved, so neither check below applies: a
         // read of one is a copy, and copying a pointer while a borrow of it is
         // live is exactly what a borrow is for. Checking the borrow first made
-        // the diagnostic a lie — it reported "cannot move 'self' while it is
+        // the diagnostic a lie - it reported "cannot move 'self' while it is
         // borrowed" about a `&mut Parser`, which is not moved by the read at
         // all, and it did so for the ordinary shape of a receiver method that
         // names a field:
@@ -1149,7 +1149,7 @@ impl Ctx {
     }
 
     /// Like `use_value`, but also tells the drop planner that the binding's
-    /// value now lives somewhere else — and, when it does, records the read as
+    /// value now lives somewhere else - and, when it does, records the read as
     /// a move site so codegen clears the binding's slot (see the module doc).
     fn use_value_moving(&mut self, name: &str, expr: &tir::Expr) -> Result<()> {
         let was_copy = self
@@ -1207,7 +1207,7 @@ impl Ctx {
     }
 
     /// Like `reinit`, but also re-arms the drop (the fresh value needs
-    /// freeing; the old one is leaked — see the module doc).
+    /// freeing; the old one is leaked - see the module doc).
     fn reinit_moving(&mut self, name: &str, span: Span) -> Result<()> {
         self.reinit(name, span)?;
         self.mark_owned_again(name);
@@ -1628,7 +1628,7 @@ impl Ctx {
     /// index `at` onwards. `at` is a length taken before a statement was
     /// checked, so this is "the borrows that statement took". A mark may be
     /// past the end by the time it is used (a branch merge rebuilds the scope
-    /// and drops its borrow list), so it is clamped — releasing only what is
+    /// and drops its borrow list), so it is clamped - releasing only what is
     /// still recorded is the honest answer.
     fn release_borrows_since(&mut self, at: usize) {
         let Some(scope) = self.scopes.last_mut() else {
@@ -1686,7 +1686,7 @@ impl Ctx {
     /// that declares a borrowed return type: the value must be derived from
     /// the first reference parameter (or be a `str` literal, whose storage is
     /// static). This is what makes `&str` return elision sound without real
-    /// lifetime inference — the caller keeps the owner borrowed for as long
+    /// lifetime inference - the caller keeps the owner borrowed for as long
     /// as the view lives (see `check_call`), and the callee cannot hand back
     /// anything that did not come from that same owner.
     fn check_return_borrow(&mut self, value: &tir::Expr) -> Result<()> {
@@ -1768,7 +1768,7 @@ impl Ctx {
         self.recompute_pins();
         // A binding whose two paths disagree now has a *conditional* move, so
         // its move sites have to clear its slot even though it is still
-        // dropped — see the module doc.
+        // dropped - see the module doc.
         for scope in &self.scopes {
             for owned in &scope.owned {
                 if owned.state == MoveState::MaybeMoved {
@@ -1896,7 +1896,7 @@ fn partial_move_target<'a>(base: &'a tir::Expr, ctx: &Ctx) -> Option<(&'a str, V
 }
 
 /// The drops for a set of owned locals: reverse declaration order, live ones
-/// only. Reverse order matches the lexical nesting of the bindings — a value
+/// only. Reverse order matches the lexical nesting of the bindings - a value
 /// moved out of an earlier binding into a later one is freed exactly once,
 /// by the later one, and before the earlier one would have been. "Live"
 /// includes a `MaybeMoved` binding: its slot holds either the value or the
@@ -1921,8 +1921,8 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
         tir::ExprKind::FieldAccess { base, .. } => tir_root_ident(base),
         tir::ExprKind::EnumField { base, .. } => tir_root_ident(base),
         tir::ExprKind::Deref { expr: inner } => tir_root_ident(inner),
-        // A `pd` read in `main`/an initializer is `Deref(Ref(global))` — the
-        // explicit borrow of the generated global — so the chain has to
+        // A `pd` read in `main`/an initializer is `Deref(Ref(global))` - the
+        // explicit borrow of the generated global - so the chain has to
         // descend through that `Ref` for the borrow to be tracked at all
         // (M6.4).
         tir::ExprKind::Ref { expr: inner, .. } => tir_root_ident(inner),
@@ -2186,7 +2186,7 @@ fn check_function(
         fn_mut_params: fn_mut_params.clone(),
         capture_footprints: capture_footprints.clone(),
         // A borrowed return type borrows from the first reference
-        // parameter — `infer.rs` has already rejected a function that
+        // parameter - `infer.rs` has already rejected a function that
         // returns one without taking any.
         ret_borrow_param: if crate::infer::is_borrowed_value(&f.ret) {
             crate::infer::borrow_root_param(&f.params).map(|i| f.params[i].0.clone())
@@ -2216,7 +2216,7 @@ fn check_function(
     }
     // A passdown the function does not receive as a hidden parameter is
     // still reachable storage (`main` writes the globals directly), so it
-    // gets a binding of its own value type — unless a parameter of the same
+    // gets a binding of its own value type - unless a parameter of the same
     // hidden name already claimed the slot, which is the normal case for
     // every function other than `main`.
     for (hidden, value_ty) in globals {
@@ -2227,7 +2227,7 @@ fn check_function(
     check_block(&f.body, &mut ctx)?;
 
     // A tail expression is the function's returned value, so it is bound by
-    // the same elision rule an explicit `return` is — unless it diverges, in
+    // the same elision rule an explicit `return` is - unless it diverges, in
     // which case the function does not return through it at all. `infer.rs`
     // has always said so for the *type*; this is the same predicate, so the
     // two passes cannot disagree about which expression is the returned value.
@@ -2256,8 +2256,8 @@ fn check_function(
 
     // The move sites whose binding some path leaves live. Each of them has to
     // clear its binding's slot after copying the value out, because that
-    // binding is still in a drop set — at a block end, a `return`, a `?` or an
-    // assignment — and the free has to find nothing on the path that moved.
+    // binding is still in a drop set - at a block end, a `return`, a `?` or an
+    // assignment - and the free has to find nothing on the path that moved.
     // A binding moved on *every* path is in no drop set, so its move sites are
     // deliberately left out: clearing a slot nothing will ever free is dead
     // code, and an `if`/`loop` merge is the only thing that can leave one
@@ -2295,7 +2295,7 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
     match stmt {
         tir::Stmt::Let { name, ty, init } => {
             // A borrow taken *inside* the initializer is dead once the value is
-            // bound — unless the bound value **is** the borrow. `val back =
+            // bound - unless the bound value **is** the borrow. `val back =
             // str.parse_f64(cand.as_str())` borrows `cand` for the length of
             // one call and keeps nothing of it (`Result<f64, _>` owns all its
             // data), so the borrow must end with the statement; holding it to
@@ -2304,7 +2304,7 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
             //
             // `val v = l.get(0)`, by contrast, binds the borrow itself, and
             // the caller has to keep the owner pinned for as long as `v`
-            // lives — so the distinction is the *binding's* type, not the
+            // lives - so the distinction is the *binding's* type, not the
             // initializer's shape. This is deliberately the same rule the
             // `Stmt::Expr` arm below applies to a statement's temporary, one
             // level up: lexical lifetimes with a statement-sized exception for
@@ -2375,15 +2375,15 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
             Ok(())
         }
         tir::Stmt::Expr(e) => {
-            // A borrow produced by a statement's *temporary* — `print(l.get(0))`,
-            // where the view is consumed inside the statement — is released at
+            // A borrow produced by a statement's *temporary* - `print(l.get(0))`,
+            // where the view is consumed inside the statement - is released at
             // the end of that statement, not at the end of the block. Scope
             // lifetimes are otherwise lexical (plan's known limitation: no
             // NLL), and holding every temporary to the end of the block makes
             // ordinary list code fail (`print(l.get(0)); l.push(x)` would
             // conflict with a view that is already dead). A *bound* borrow
             // (`val p = l.get(0)`) still lives as long as its binding, because
-            // a `Let` is not this arm — it is the arm above, which applies the
+            // a `Let` is not this arm - it is the arm above, which applies the
             // same rule to the borrows an initializer takes.
             let mark = ctx.scopes.len();
             let at = ctx.scopes.last().map(|s| s.scope_borrows.len()).unwrap_or(0);
@@ -2739,7 +2739,7 @@ fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()>
 }
 
 /// Every live owned local declared inside the innermost loop, innermost scope
-/// first — what a `break`/`continue` there has to free (`plan/iterators.md`).
+/// first - what a `break`/`continue` there has to free (`plan/iterators.md`).
 /// The mark is `scopes.len()` when `check_while` started, so the slice from it
 /// holds the loop body's own scope and every scope nested inside it, and
 /// nothing declared outside the loop.
@@ -2779,7 +2779,7 @@ fn check_if(then_block: &tir::Block, else_block: &Option<tir::Block>, ctx: &mut 
 
 /// Checks an expression used as a whole value: a bare `Ident` here moves a
 /// non-Copy binding, and `*p` here (not just read *through*) is rejected
-/// when the pointee is non-Copy — mirrors Rust's "cannot move out of a
+/// when the pointee is non-Copy - mirrors Rust's "cannot move out of a
 /// shared reference."
 fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &expr.kind {
@@ -2896,7 +2896,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // the only place a scoped literal can be written.
         tir::ExprKind::ScopedClosureLit { .. } => Ok(()),
         // A plain function value widened into a closure (A-4 phase E): the
-        // value being wrapped is read as a whole value — a `fun` is `Copy`, so
+        // value being wrapped is read as a whole value - a `fun` is `Copy`, so
         // that moves nothing, and the wrapper itself is an owned temporary
         // exactly like a closure literal.
         tir::ExprKind::FnToClosure { func } => check_value(func, ctx),
@@ -2917,9 +2917,9 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         }
         tir::ExprKind::Call { .. } | tir::ExprKind::VariadicCall { .. } => check_call(expr, ctx),
         // A call through a function value (A-4): the callee is read as a
-        // *place*, not as a whole value — a function value is `Copy`, and a
+        // *place*, not as a whole value - a function value is `Copy`, and a
         // closure is called through a borrow of the binding that holds it, so
-        // calling one must not move it — and the arguments follow exactly the
+        // calling one must not move it - and the arguments follow exactly the
         // rule a named call's do.
         tir::ExprKind::IndirectCall { callee, args } => {
             check_place(callee, ctx)?;
@@ -2970,7 +2970,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         tir::ExprKind::Try { expr: sub, .. } => {
             check_value(sub, ctx)?;
             // `?`'s failure arm leaves the function, so it has the same drop
-            // obligation a written `return` has — and it needs its own plan
+            // obligation a written `return` has - and it needs its own plan
             // entry, because codegen renders that early return inside a C
             // statement-expression and never sees a `Stmt::Return` to look the
             // drops up by. Recorded *after* the operand is checked, so a local
@@ -3090,7 +3090,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             check_assign_target(target, ctx)?;
             // Assigning a fresh value into an owned binding frees the old one
             // (it has no other owner and v1 has no user destructors, so
-            // nothing could observe it either way — freeing it is simply the
+            // nothing could observe it either way - freeing it is simply the
             // honest thing). Skipped for `b = b`, where the value being
             // stored *is* the old value.
             if let tir::ExprKind::Ident(name) = &target.kind {
@@ -3118,13 +3118,13 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             // Roadmap open item 15, cases 2 and 3: an assignment through a
             // dereferenced borrow (`*p = value`, or `p.field = value` where
-            // `p` is a borrow — `FieldAccess`'s base need not be a local this
+            // `p` is a borrow - `FieldAccess`'s base need not be a local this
             // frame owns) or to an owned field of a directly-owned local
             // (`h.name = s`) overwrites a place the drop plan cannot express
-            // as a `BindingId` at all — there is no declaration to key it to,
+            // as a `BindingId` at all - there is no declaration to key it to,
             // only an address. `binding: None` here is exactly that: codegen
             // reads the target's own place expression again (its address is
-            // idempotent to recompute — nothing between the two evaluations
+            // idempotent to recompute - nothing between the two evaluations
             // writes it) rather than resolving a binding.
             //
             // No `self_assign`/`moved_by_value` guard is needed here the way
@@ -3136,7 +3136,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             // `h.name = wrap(h.name)`) is a partial move of that field, and a
             // partial move's slot is *unconditionally* zeroed at the read
             // (`field_move_sites`/`at_clear` keeps every field move, not only
-            // the ones a branch merge left ambiguous — contrast `at_move`,
+            // the ones a branch merge left ambiguous - contrast `at_move`,
             // which is why *that* arm needs the guard). So by the time this
             // drop runs, the place holds either the genuine old value or the
             // zero a move already left there, and freeing zero is the same
@@ -3293,7 +3293,7 @@ fn check_assign_target(target: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 /// A call's argument list: every direct `Ref` argument (an auto-borrow or
 /// an explicit `&expr` written by the caller) is started *before any of
 /// them are released*, so `start_borrow`'s own conflict check catches a
-/// same-call aliasing violation like `f(&mut c, &c)` — not a separate
+/// same-call aliasing violation like `f(&mut c, &c)` - not a separate
 /// pass. All of them release together right after.
 ///
 /// The one exception is a call that *returns* a borrow (M6.3): the argument

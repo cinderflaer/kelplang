@@ -35,7 +35,7 @@ pub enum Ty {
     /// It exists because `str` is a bare `const char*`: it has no length, so
     /// every scan re-derives one with `str.len` (a `strlen`), every slice
     /// allocates a `String` (`str.copy_range`), and a `datac` cannot hold one
-    /// at all — which is why the JSON reader in this repository copied its
+    /// at all - which is why the JSON reader in this repository copied its
     /// whole input before parsing. A `View` carries its length, so a slice is
     /// a pointer and a subtraction.
     ///
@@ -55,20 +55,20 @@ pub enum Ty {
     /// The builtin owned growable sequence (collections milestone):
     /// `List<T>`, where `T` is a scalar, `String`, `Bytes`, or a `datac`.
     /// Non-`Copy`: assigning or passing one moves it, and it is freed at the
-    /// end of the owning scope — its elements first, then its buffer. The
+    /// end of the owning scope - its elements first, then its buffer. The
     /// element type is part of the type, and codegen monomorphizes: one C
     /// struct plus one set of functions per element type actually used (see
     /// the removed C backend's `write_list`).
     List(Box<Ty>),
     /// The builtin owning pointer (M8): `Box<T>` holds one `T` on the heap,
     /// or nothing at all (`Box.empty()`), which is what makes a recursive
-    /// `datac` expressible — `datac Node(val next: Box<Node>)` would be
+    /// `datac` expressible - `datac Node(val next: Box<Node>)` would be
     /// infinitely sized by value, and a pointer is the only way out.
     /// Non-`Copy`; dropping it drops the value it holds and frees the box.
     /// Like `List`, monomorphized: one C struct plus one function set per
     /// element type actually used.
     Box(Box<Ty>),
-    /// The builtin owned keyed container (MK5-S5): `Map<K, V>` — a key type
+    /// The builtin owned keyed container (MK5-S5): `Map<K, V>` - a key type
     /// and a value type, both monomorphized. `Map<V>` is the shorthand for a
     /// `String` key, which is what every pre-A-2 use site writes, and the two
     /// spellings are the same `Ty`. A key must be hashable and comparable by
@@ -82,13 +82,13 @@ pub enum Ty {
     /// value set is narrower than the `List` element set, which since A-10
     /// slice 1 also takes a `List` or a `Box`.
     Map(Box<Ty>, Box<Ty>),
-    /// A borrow of a value of type `inner` — shared (`mutable: false`) or
+    /// A borrow of a value of type `inner` - shared (`mutable: false`) or
     /// exclusive (`mutable: true`). Never appears as a function's declared
-    /// return type in M4 (no surface syntax produces one there — see
+    /// return type in M4 (no surface syntax produces one there - see
     /// `infer::resolve_type`), so a borrow can never escape the call frame
     /// that created it; that's what makes the borrow checker's call-scoped
     /// release sound without real lifetime tracking. A reference is always
-    /// Copy regardless of `inner` — copying a pointer doesn't move what it
+    /// Copy regardless of `inner` - copying a pointer doesn't move what it
     /// points at.
     Ref { mutable: bool, inner: Box<Ty> },
     /// A borrowed trait object (A-12 slice 4): `&dyn Name` / `&mut dyn Name`,
@@ -119,7 +119,7 @@ pub enum Ty {
     /// container element, a parameter, a return and a local.
     BoxDyn { trait_name: String },
     /// A function value (A-4): a plain C function pointer, with no captured
-    /// environment — so it is `Copy`, it owns nothing, and it needs no drop.
+    /// environment - so it is `Copy`, it owns nothing, and it needs no drop.
     /// `params` are the *declared* parameter types, already through the
     /// parameter rule (an owned type is a borrow unless the type was written
     /// `move T`), which is what makes a written function type and a
@@ -134,12 +134,12 @@ pub enum Ty {
     Fn { params: Vec<Ty>, ret: Box<Ty> },
     /// A function value that carries an environment (A-4 phase E): what a
     /// `fun` literal whose body names a binding from the enclosing scope
-    /// becomes. Written `closure(T).return: U` — the same shape as a function
+    /// becomes. Written `closure(T).return: U` - the same shape as a function
     /// type, under the `closure` keyword, because it is called the same way.
     ///
     /// The representation differs from `Ty::Fn` in exactly the ways that
-    /// matter to every pass: a closure is `{ fn, env, drop }` — a *fat*
-    /// pointer, monomorphized per signature — so it is **not `Copy`**, it
+    /// matter to every pass: a closure is `{ fn, env, drop }` - a *fat*
+    /// pointer, monomorphized per signature - so it is **not `Copy`**, it
     /// owns the heap environment the captures were moved into, and it drops
     /// that environment when it dies. A `Ty::Fn` stays a plain C function
     /// pointer: a declared function, and a literal that captured nothing,
@@ -170,7 +170,7 @@ pub enum Ty {
     /// plus a pointer to a stack environment that is alive for the call, so
     /// copying it inside the callee is copying two pointers, and the one
     /// entry point a parameter rule would otherwise add (an implicit `&`) is
-    /// not wanted — the callee holds the fat pointer itself.
+    /// not wanted - the callee holds the fat pointer itself.
     ScopedFn { params: Vec<Ty>, ret: Box<Ty> },
     /// A **fixed-size array** (A-18): `[T; N]`, with `N` a compile-time
     /// constant. The storage is inline: one `N`-element block on whatever
@@ -397,7 +397,7 @@ impl Ty {
 
     /// Whether this type *itself* owns heap memory, ignoring whether a
     /// `datac` does. Use `needs_drop` below when the struct table is
-    /// available — a `datac` with an owned field owns memory too, and out of
+    /// available - a `datac` with an owned field owns memory too, and out of
     /// context `Ty::Struct(_)` cannot know that.
     pub fn owns_heap(&self) -> bool {
         match self {
@@ -531,7 +531,7 @@ impl Ty {
             }
             // A closure is an ordinary C struct (a fat pointer), so it is
             // named by its typedef and never needs the declarator trick
-            // above — including in a return position, which is why a
+            // above - including in a return position, which is why a
             // function may return a closure but not a bare function value. A
             // scoped function value has the same fat-pointer shape, so it is
             // spelled by the same typedef.
@@ -617,7 +617,7 @@ impl Ty {
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
             Ty::Fn { params, ret } => {
                 // The return is written `.return: T` exactly as a declaration
-                // writes it, and a `Unit` return is left off — so a written
+                // writes it, and a `Unit` return is left off - so a written
                 // function type and a signature read the same way.
                 let mut s = format!("fun({})", join_types(params));
                 if **ret != Ty::Unit {
@@ -648,8 +648,8 @@ impl Ty {
     /// The C declaration of a variable called `name` with this type: the C
     /// type followed by the name, except for a function value, where the name
     /// goes *inside* the pointer declarator (`int32_t (*kelp_f)(int32_t)`).
-    /// Every declaration site — a parameter, a `val`/`var`, a `datac` field,
-    /// an enum payload, a passdown — goes through this rather than pairing
+    /// Every declaration site - a parameter, a `val`/`var`, a `datac` field,
+    /// an enum payload, a passdown - goes through this rather than pairing
     /// `c_type()` with a name by hand, because a function type is the one type
     /// where that pairing does not produce valid C.
     pub fn c_decl(&self, name: &str) -> String {
@@ -690,7 +690,7 @@ fn join_types(types: &[Ty]) -> String {
 
 /// The mangled signature fragment a closure instantiation is named by:
 /// `i32__i32` is `closure(i32).return: i32`. Parameters first, in order, then the
-/// return — the same order `ty_mangle`'s function-type arm uses, under a
+/// return - the same order `ty_mangle`'s function-type arm uses, under a
 /// different prefix.
 pub fn closure_mangle(params: &[Ty], ret: &Ty) -> String {
     format!(
@@ -757,7 +757,7 @@ pub fn env_drop_name(literal_key: &str) -> String {
 /// field owns memory, or an `enum` with one such payload in any variant.
 ///
 /// A type may only name a type declared before it *by value* (open item 12),
-/// so one pass in merged declaration order is already a valid fixpoint — no
+/// so one pass in merged declaration order is already a valid fixpoint - no
 /// repeating until stable. Merged order matters here for the first time in
 /// A-1: a `datac` and an `enum` may each name the other's earlier-declared
 /// half, so the two declaration lists have to be walked as one sequence.
@@ -810,7 +810,7 @@ pub fn owned_types(
 
 /// Whether a `List<T>` element type has an order, so `List.sort` means
 /// something. Numbers and `bool` compare by value; `String`/`Bytes` compare
-/// byte-wise (length-aware, not `strcmp` — an embedded NUL is possible). A
+/// byte-wise (length-aware, not `strcmp` - an embedded NUL is possible). A
 /// `datac` element has no defined order, and a borrow can never be an element
 /// at all.
 pub fn list_sortable_elem(ty: &Ty) -> bool {
@@ -1061,7 +1061,7 @@ pub fn is_drop_type(ty: &Ty, drop_types: &std::collections::HashSet<String>) -> 
     matches!(ty, Ty::Struct(name) if drop_types.contains(name))
 }
 
-/// Whether a value of `ty` has to be freed — the builtin owned types, or a
+/// Whether a value of `ty` has to be freed - the builtin owned types, or a
 /// `datac` that (transitively) holds one.
 pub fn needs_drop(ty: &Ty, owned_structs: &std::collections::HashSet<String>) -> bool {
     match ty {
@@ -1239,7 +1239,7 @@ pub fn is_box_element(ty: &Ty) -> bool {
     match ty {
         // A closure is an ordinary C struct, and it is emitted before every
         // `Box` instantiation that names one (A-4 phase E), so a box is the
-        // one container that can hold a closure — `Box<closure().return: i32>` is
+        // one container that can hold a closure - `Box<closure().return: i32>` is
         // how an *optional* callback is written (`Box.empty()`).
         Ty::Bytes
         | Ty::String
@@ -1262,7 +1262,7 @@ pub fn is_box_element(ty: &Ty) -> bool {
         // would be a `void` element the generated routines cannot name.
         Ty::List(_) | Ty::Box(_) => !contains_open_container(ty),
         // A `View` is a borrow of text that outlives the box, with nowhere to
-        // put the lifetime — the same reason `str` is refused (A-8).
+        // put the lifetime - the same reason `str` is refused (A-8).
         Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::Dyn { .. } => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
@@ -1314,7 +1314,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         ),
         // A closure signature mangles the same way, under its own prefix, so
         // a program using both spellings of one signature gets two distinct C
-        // types — which is the point: one is a pointer, the other owns an
+        // types - which is the point: one is a pointer, the other owns an
         // environment.
         Ty::Closure { params, ret } => closure_mangle(params, ret),
         // A scoped signature is the same fat pointer, so it shares the
@@ -1326,7 +1326,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         // *not* survive is a module-qualified inner type: `&json.Item` came
         // out `refjson.Item`, a name with a `.` in it, so the closure typedef
         // for `closure(&Item)` declared inside the `json` module itself was
-        // `kelp_Closure__refjson.Item__unit` — not a C identifier at all, and
+        // `kelp_Closure__refjson.Item__unit` - not a C identifier at all, and
         // every generated use of it failed to compile. That is the shape a
         // library hits when it offers a callback over its own type, which is
         // why the fallback goes through `c_ident`, the one mangling every
@@ -1495,7 +1495,7 @@ pub fn ptr_element_error(ty: &Ty) -> String {
     }
 }
 
-/// The element type of a `Ptr<T>`, looking through a borrow — `p.read()` arrives
+/// The element type of a `Ptr<T>`, looking through a borrow - `p.read()` arrives
 /// with the receiver typed `&Ptr<T>` (the receiver may be a borrow of a place).
 pub fn ptr_elem_of(ty: &Ty) -> Option<&Ty> {
     match ty {
@@ -1584,7 +1584,7 @@ pub fn atomic_elem_of(ty: &Ty) -> Option<&Ty> {
 }
 
 /// The `List<T>` or `Box<T>` behind an expression's type, looking through a
-/// borrow — `l.push(x)` and `b.get()` both arrive with the receiver typed
+/// borrow - `l.push(x)` and `b.get()` both arrive with the receiver typed
 /// `&List<T>`/`&Box<T>` (a container parameter is a borrow, and a method
 /// receiver is auto-borrowed).
 pub fn list_elem_of(ty: &Ty) -> Option<&Ty> {
@@ -1662,7 +1662,7 @@ pub fn box_elem_of(ty: &Ty) -> Option<&Ty> {
     }
 }
 
-/// As `list_elem_of`, for `Map<K, V>` — the *value* type. The key is what the
+/// As `list_elem_of`, for `Map<K, V>` - the *value* type. The key is what the
 /// call-site argument has to match, and everything else about a map method
 /// (`get`, `insert`, `remove`, …) is keyed on the value.
 pub fn map_elem_of(ty: &Ty) -> Option<&Ty> {
@@ -1710,7 +1710,7 @@ pub fn array_len_of(ty: &Ty) -> Option<u64> {
 /// A borrow of a `datac` has to name the tag too, and for the same reason: a
 /// closure typedef is emitted before the `datac`s as well (a `datac` field may
 /// hold a closure, so the closure type has to exist first), and a callback
-/// parameter of a module's own type — `closure(&Item)` — is exactly a `datac`
+/// parameter of a module's own type - `closure(&Item)` - is exactly a `datac`
 /// behind a pointer. Falling back to `c_type()` there spelled it
 /// `const struct_Item*`, a typedef name that is not declared until after the
 /// closure typedef that uses it (BUG-2). `&str` keeps its own spelling, since
@@ -1987,7 +1987,7 @@ pub fn is_variadic_abi_ty(ty: &Ty) -> bool {
 /// Mangles an `.kp` top-level name into a valid C identifier.
 ///
 /// M5 prefixes every module's items with their module path
-/// (`shapes.circle.Circle`), and a receiver method is keyed `Type#name` —
+/// (`shapes.circle.Circle`), and a receiver method is keyed `Type#name` -
 /// neither `.` nor `#` is legal in a C identifier, so both become `__`.
 /// M6.3's stdlib overloads add `name@i32` keys, so `@` becomes `__ov_` and
 /// the `,` between parameter types becomes `_`. A-2's instantiation keys add
@@ -2041,7 +2041,7 @@ fn is_ident_byte(b: u8) -> bool {
 
 /// Whether `ty` is a *borrowed* type in the sense that matters for a `datac`
 /// field or an `enum` payload: it points at data somebody else owns, so it
-/// cannot be stored. (`Box`, `List` and `Map` are not reached here — they
+/// cannot be stored. (`Box`, `List` and `Map` are not reached here - they
 /// *own* what they point at.)
 ///
 /// One predicate rather than a `matches!` at each of the four sites that
@@ -2128,7 +2128,7 @@ pub struct StructDef {
     /// Position in the program's merged declaration order, across every
     /// `datac` *and* `enum` (A-1). A field or payload may only name an
     /// earlier declaration by value, so this order is a valid topological
-    /// order — for `owned_types`' single pass and for the C typedefs
+    /// order  -  for `owned_types`' single pass and for the C typedefs
     /// the removed C backend emitted.
     pub order: usize,
 }
@@ -2244,7 +2244,7 @@ impl VariantDef {
     /// The fields this variant actually stores: every declared field except
     /// one typed `unit`, which carries no runtime representation
     /// (`MISSING-r7Wqb`). `Ok`/`Some` instantiated with a `unit` type
-    /// argument — the shape `thread.join` builds for a `Thread<unit>` — is
+    /// argument - the shape `thread.join` builds for a `Thread<unit>` - is
     /// declared with one field, and that field stores nothing.
     pub fn real_fields(&self) -> impl Iterator<Item = &FieldDef> {
         self.fields.iter().filter(|f| f.ty != Ty::Unit)

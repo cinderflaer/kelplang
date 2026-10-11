@@ -14,7 +14,7 @@ pub struct Program {
     /// `Ty::Struct` at the type level; this table is what makes it a tagged
     /// union instead of a record.
     pub enums: Vec<EnumDef>,
-    /// Passdowns (M5.2) in initialization order — module load order, then
+    /// Passdowns (M5.2) in initialization order  -  module load order, then
     /// declaration order within a module. the removed C backend emitted one global
     /// per entry plus a generated init function that runs before `main`'s
     /// body.
@@ -45,7 +45,7 @@ pub struct Program {
     /// that function.
     pub drop_types: std::collections::HashSet<String>,
     /// Full (prefixed) function name -> the bare native symbol it binds to,
-    /// for a *user*-declared `extern fun` (MK9-S1-M1, roadmap B-1) —
+    /// for a *user*-declared `extern fun` (MK9-S1-M1, roadmap B-1)  - 
     /// the removed C backend's `write_extern` reads this instead of `externs.rs` when a
     /// function's module has no compiler-supplied body, and writes a
     /// direct-call trampoline to the symbol rather than looking up compiled-in
@@ -133,7 +133,7 @@ pub struct Static {
     /// prefix-relative and the entry module's prefix is empty.
     pub module: String,
     pub ty: Ty,
-    /// `static mut NAME` — every access is `unsafe`.
+    /// `static mut NAME` - every access is `unsafe`.
     pub mutable: bool,
     /// `percpu static mut NAME` (kernel stage 8): the static is one object per
     /// CPU. The backends emit it as the manifest's `[target] cpus` copies in
@@ -156,15 +156,15 @@ pub enum StaticInit {
     Float(f64),
     Bool(bool),
     Char(u32),
-    /// `[a, b, c]` — one entry per element, in order.
+    /// `[a, b, c]` - one entry per element, in order.
     Array(Vec<StaticInit>),
-    /// `[v; N]` — the same value repeated. Kept apart from `Array` so a 4096-byte
+    /// `[v; N]` - the same value repeated. Kept apart from `Array` so a 4096-byte
     /// zero buffer stays one `zeroinitializer` (or one `= { 0 }`), not 4096
     /// entries the code generators would each have to spell.
     Repeat { value: Box<StaticInit>, len: u64 },
     /// A `datac` constructor's fields, in declaration order.
     Struct(Vec<StaticInit>),
-    /// `Atomic.new(v)` — the cell's one member.
+    /// `Atomic.new(v)` - the cell's one member.
     Atomic(Box<StaticInit>),
 }
 
@@ -222,7 +222,7 @@ pub struct Function {
     /// line: the C backend's diagnostics and the LLVM backend's `DISubprogram`
     /// both resolve it through `diag::SourceMap`.
     pub span: Span,
-    /// Canonical id of the module this function was declared in — needed so
+    /// Canonical id of the module this function was declared in - needed so
     /// `borrowck.rs` can tag its diagnostics with the right source file (a
     /// `Span` is only meaningful inside its own file).
     pub module: String,
@@ -335,7 +335,7 @@ pub enum Stmt {
 pub struct Expr {
     pub kind: ExprKind,
     pub ty: Ty,
-    /// Source span of the surface-syntax expression this was checked from —
+    /// Source span of the surface-syntax expression this was checked from -
     /// needed for borrowck's "value moved here" / "used here" diagnostics.
     pub span: Span,
 }
@@ -346,7 +346,7 @@ pub enum ExprKind {
     /// `u64`'s range is representable; codegen cuts it to the expression's own
     /// type, which is what makes the width the type's rather than the literal's.
     IntLit(i128),
-    /// `'a'` — the code point, already checked against the type
+    /// `'a'` - the code point, already checked against the type
     /// `infer.rs` resolved for it. Codegen casts it to that type's C
     /// spelling, so a `'0'` in a `u8` position emits a `uint8_t`.
     CharLit(u32),
@@ -377,7 +377,7 @@ pub enum ExprKind {
     /// needs from it (the capability domain, the diagnostic name) is keyed by
     /// that name; `args` holds the fixed arguments and then the extra ones.
     /// `wrapper` is the key of the generated fixed-arity C function the call
-    /// actually makes, one per distinct list of extra-argument types — the
+    /// actually makes, one per distinct list of extra-argument types - the
     /// typechecker picks it, so neither backend ever emits a variadic call
     /// itself and the C compiler's default promotions do the rest.
     VariadicCall {
@@ -403,7 +403,7 @@ pub enum ExprKind {
         variant: usize,
         fields: Vec<Expr>,
     },
-    /// Whether the scrutinee's live tag is `variant` — the test that a
+    /// Whether the scrutinee's live tag is `variant` - the test that a
     /// `when` arm lowers to. `ty` is `bool`.
     EnumTag {
         expr: Box<Expr>,
@@ -419,7 +419,7 @@ pub enum ExprKind {
         variant: usize,
         field: usize,
     },
-    /// `expr?` — propagate the failure of an enum shaped `Ok`/`Err` or
+    /// `expr?` - propagate the failure of an enum shaped `Ok`/`Err` or
     /// `Some`/`None` out of the enclosing function (MK5-S6-M1). `expr` is the
     /// operand, whose own type names the *source* enum; `target` is the
     /// enclosing function's return type, which the failure value is rebuilt
@@ -454,12 +454,12 @@ pub enum ExprKind {
     },
     Block(Block),
     /// A named function used as a *value* (A-4): `val f = double`. The key is
-    /// the declaration's canonical name, so codegen emits `kelp_double` — a
+    /// the declaration's canonical name, so codegen emits `kelp_double` - a
     /// function reference carries no environment, so the C function *is* the
     /// value and there is nothing to allocate or drop.
     FnRef(String),
     /// A `fun` literal that captured something (A-4 phase E): the value is a
-    /// *closure* — a function pointer, the heap environment its captures were
+    /// *closure* - a function pointer, the heap environment its captures were
     /// moved into, and the environment's drop. `key` names the generated
     /// function (whose signature starts with the hidden environment
     /// parameter), and `captures` holds one initializer per environment field,
@@ -483,7 +483,7 @@ pub enum ExprKind {
     /// A read of one field of the enclosing closure's environment (A-4 phase
     /// E), inside the generated function that literal became. It is a *place*
     /// (the environment owns the value), which is what lets an owned capture
-    /// be borrowed — calling a method on it, passing it to a parameter — while
+    /// be borrowed - calling a method on it, passing it to a parameter - while
     /// reading it out as a whole value is the partial move `borrowck.rs`
     /// refuses.
     Capture { index: usize },
@@ -492,8 +492,8 @@ pub enum ExprKind {
     /// `Holder(cb = fun(x: i32).return: i32 = x)` mean what they read as. A `fun`
     /// value is a bare code pointer with no environment, so the value is
     /// wrapped in a one-field environment holding the pointer, plus a thunk
-    /// generated per signature that calls through it. The alternative — a
-    /// hidden first parameter on every declared function — is not C's calling
+    /// generated per signature that calls through it. The alternative - a
+    /// hidden first parameter on every declared function - is not C's calling
     /// convention, so a wrapper is the honest cost of one type.
     FnToClosure { func: Box<Expr> },
     /// A call through a function value: `f(x)`, where `f` is a local (or,
@@ -507,7 +507,7 @@ pub enum ExprKind {
     /// A borrow: either an explicit `&expr`/`&mut expr` from the surface
     /// syntax, or one synthesized by `infer::check_call_arg` when a plain
     /// place is passed to a `Ty::Ref`-typed parameter (call sites never
-    /// need to write `&` themselves — the callee's signature decides).
+    /// need to write `&` themselves - the callee's signature decides).
     Ref {
         mutable: bool,
         expr: Box<Expr>,

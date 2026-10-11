@@ -40,6 +40,7 @@ empty on release.
 - When a thread cannot start, `thread.spawn` panics with the `pthread_create` return code (`errno N: ...`) and frees what it built, where it used to leak it.
 
 ## compiler
+- Compiler messages and source comments use plain hyphens and commas, with no em or en dashes.
 
 - The C text the `llvm` backend still emits (runtime headers, `extern fun` declarations, callback glue) moved from `codegen_c.rs` to `cdecl.rs`. Emitted output is unchanged.
 - The link step uses `ld.lld`, not `cc`: a build with no `cc` can link, and `KELPC_LLD` selects the `ld.lld` binary (otherwise the first one on PATH). `cc` still compiles the `extern fun` C bodies.

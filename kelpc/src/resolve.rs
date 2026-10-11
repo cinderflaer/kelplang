@@ -62,13 +62,13 @@ pub struct ModuleInfo {
 pub struct Project {
     /// Directory containing `coral.toml`, when there is one. A loose `.kp` file
     /// with no manifest still compiles; it is then its own module root.
-    #[allow(dead_code)] // not read yet — later milestones (`pd` wiring, `kelpc fmt`) will.
+    #[allow(dead_code)] // not read yet - later milestones (`pd` wiring, `kelpc fmt`) will.
     pub root: Option<PathBuf>,
     /// Base directory `impl` paths are resolved against (`<root>/src`, or
     /// the entry file's own directory when there is no manifest).
     #[allow(dead_code)]
     pub src_dir: PathBuf,
-    /// Module id of the entry module — the one whose `main` is the program
+    /// Module id of the entry module - the one whose `main` is the program
     /// entry point, and the only module whose symbols are unprefixed.
     pub entry: String,
     #[allow(dead_code)]
@@ -82,8 +82,8 @@ pub struct Project {
     /// `infer.rs` needs to qualify `circle.Item`).
     alias_prefixes: HashMap<String, HashMap<String, String>>,
     /// Per module: capability domain -> the patterns it holds (M7). The entry
-    /// module holds `/**` for every domain — the plan's "main implicitly
-    /// holds the full set" — and every other module holds exactly what its
+    /// module holds `/**` for every domain - the plan's "main implicitly
+    /// holds the full set" - and every other module holds exactly what its
     /// importers delegated to it, never more.
     caps: HashMap<String, HashMap<String, Vec<String>>>,
     /// Per function key: the capability domain of the module that declares
@@ -397,7 +397,7 @@ impl TargetDecl {
 /// One `[extern."<module id>"]` section's contents (MK9-S1-M1, roadmap B-1):
 /// the native library and exact symbol set a user module's `extern fun`
 /// declarations may bind to, once `domain` has also assigned it one of
-/// `stdlib::DOMAINS`. `domain`/`library` are `Option` only while parsing —
+/// `stdlib::DOMAINS`. `domain`/`library` are `Option` only while parsing -
 /// `parse_manifest` refuses a section that finishes with either still unset,
 /// so every entry a caller sees has both.
 #[derive(Debug, Clone, Default)]
@@ -826,7 +826,7 @@ pub fn load(
         for e in &parsed.enums {
             let mut e = e.clone();
             // The enum's name is prefixed like a `datac`'s, and each variant
-            // is addressed as `Enum.Variant` at the surface — the same
+            // is addressed as `Enum.Variant` at the surface - the same
             // `Type.member` shape a method call has, which is what makes
             // construction parse without a new expression form (A-1).
             e.name = format!("{}{}", m.prefix, e.name);
@@ -1067,14 +1067,14 @@ pub fn load(
     // A module's set is *received*, never self-declared, with one exception:
     // the entry module's set. By default it still holds everything (`/**`/
     // `*`, every domain), but `coral.toml`'s `[caps]` section (C-2) lets a
-    // project restrict it to exactly what is declared there — the natural
+    // project restrict it to exactly what is declared there - the natural
     // fix for open item 18, since `main` cannot write a `caps(...)` clause on
     // itself. `manifest_caps` is `None` whenever the section is absent (no
     // manifest at all, or a manifest that does not have one), which is what
     // keeps every `coral.toml` written before this existed behaving exactly
     // as before. Every other module holds exactly what its importers granted
-    // it. That makes the no-escalation rule checkable — a module can
-    // delegate less than it has, never more — and is what keeps an ungranted
+    // it. That makes the no-escalation rule checkable - a module can
+    // delegate less than it has, never more - and is what keeps an ungranted
     // `fs.read` a resolution error instead of a runtime check.
     let mut caps: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     let entry_caps = manifest_caps.unwrap_or_else(|| {
@@ -1210,7 +1210,7 @@ pub fn load(
                 // line to change is the `impl` in whoever imported this
                 // module, which wrote no grant at all. The entry module is the
                 // one importer with no such line, and its grant is the
-                // manifest's `[caps]` section — the common case for `mmio`,
+                // manifest's `[caps]` section - the common case for `mmio`,
                 // the one domain the entry module does not hold by default.
                 let missing = if !held.is_empty() {
                     String::new()
@@ -1448,7 +1448,7 @@ fn leaks_body(text: &str, scan: &crate::doc::Scan) -> bool {
 
 struct Loader<'a> {
     src_dir: PathBuf,
-    /// Module id of the entry module — the only one with an empty prefix.
+    /// Module id of the entry module - the only one with an empty prefix.
     entry: String,
     /// The entry module's text, when it comes from a buffer (`kelpc check
     /// --text`, MISSING-b6Ytr) rather than from disk. Taken the first time
@@ -1463,7 +1463,7 @@ struct Loader<'a> {
     manifest_alias_source: Option<(PathBuf, String)>,
     /// The manifest's `http_pool` ceiling (S4), or the compiler default when
     /// there is no manifest. Threaded into the loader because the value is
-    /// spliced into `std/http`'s *source text* before it is lexed — the one
+    /// spliced into `std/http`'s *source text* before it is lexed - the one
     /// configuration value the shipped stdlib reads.
     http_pool: usize,
     sources: &'a mut SourceMap,
@@ -1533,9 +1533,9 @@ impl Loader<'_> {
     /// Two phases, because the two halves of M5.3 need each other: an `impl`
     /// path may contain `%*alias*%`, so the file graph is only knowable after
     /// expansion, while the alias table is only complete once every file is
-    /// known. Discovery therefore tolerates what it cannot yet resolve — a
+    /// known. Discovery therefore tolerates what it cannot yet resolve - a
     /// file that fails to expand or parse is skipped, an unresolvable import
-    /// is ignored — and just collects aliases; the final strict round runs
+    /// is ignored - and just collects aliases; the final strict round runs
     /// against the complete table, where every failure is a real error.
     fn load_project(&mut self) -> Result<(), Diagnostic> {
         self.load_manifest_aliases()?;
@@ -1583,7 +1583,7 @@ impl Loader<'_> {
 
     /// A round is one full load attempt: the discovery pass, then the strict
     /// pass that decides the round. Everything a round produced is discarded
-    /// here so that the last round is the only one anything reads — including
+    /// here so that the last round is the only one anything reads - including
     /// the deprecations, which both passes collect. Leaving them in printed
     /// every outdated finding twice, once for the discovery pass and once for
     /// the strict one.
@@ -1616,7 +1616,7 @@ impl Loader<'_> {
         let depth = self.stack.len();
         let result = self.visit_body(id, at, from, strict);
         if result.is_err() {
-            // A failed visit must not leave the module looking half-loaded —
+            // A failed visit must not leave the module looking half-loaded -
             // a sibling import should be free to try it again.
             self.stack.truncate(depth);
             self.state.remove(id);
@@ -1632,8 +1632,8 @@ impl Loader<'_> {
             return Ok(tokens.clone());
         }
         // A `std/...` id comes from the compiler's own shipped sources (M6.2)
-        // instead of the project directory; everything downstream — lexing,
-        // aliases, parsing, prefixing — is identical.
+        // instead of the project directory; everything downstream - lexing,
+        // aliases, parsing, prefixing - is identical.
         let (path, text) = match crate::stdlib::source_configured(id, self.http_pool) {
             Some(text) => (self.src_dir.join(id).with_extension(EXT), text),
             None => {
@@ -1697,8 +1697,8 @@ impl Loader<'_> {
 
         if !strict {
             // Discovery. Imports come straight off the raw token stream, so a
-            // file whose body cannot expand yet — it uses an alias another
-            // file has still to contribute — nevertheless contributes its own
+            // file whose body cannot expand yet - it uses an alias another
+            // file has still to contribute - nevertheless contributes its own
             // aliases and its unaliased imports. Unresolvable paths are
             // skipped here and become real errors in the strict round.
             self.state.insert(id.to_string(), 1);
@@ -1749,7 +1749,7 @@ impl Loader<'_> {
                 if !crate::stdlib::is_domain(&grant.domain) {
                     return Err(Diagnostic::new(
                         format!(
-                            "'{}' is not a capability domain — v1 has {}",
+                            "'{}' is not a capability domain - v1 has {}",
                             grant.domain,
                             crate::stdlib::DOMAINS.join(", ")
                         ),
@@ -1780,8 +1780,8 @@ impl Loader<'_> {
             // makes generated code call the capability matcher, and
             // `std/path`'s own `normalize` calls the normalizer; both live in
             // Kelp (`std/rt`) rather than in C text emitted into the program.
-            // Injecting it at the import that needs it — keyed on the same
-            // conditions as the calls themselves — is what keeps the runtime out
+            // Injecting it at the import that needs it - keyed on the same
+            // conditions as the calls themselves - is what keeps the runtime out
             // of programs that use neither, and what makes the module the
             // emitted C calls into always present.
             if domain_of_with_extern(&target, &self.extern_modules).is_some() || target == "std/path" {
@@ -1968,8 +1968,8 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         // `name`, `version`, `entry`, `http_pool` and `naming_case` must
         // appear before the first one. `[caps]` (C-2) and `[extern."<module
         // id>"]` (MK9-S1-M1, roadmap B-1) are the sections kelpc itself
-        // reads — the entry module's own capability grant, and a user
-        // module's own domain/library/symbol assignment — so they do not
+        // reads - the entry module's own capability grant, and a user
+        // module's own domain/library/symbol assignment - so they do not
         // simply stop here; every other section (`[tasks]`, `[dependencies]`,
         // …) is Coral's manifest surface, and this loop skips its lines
         // rather than rejecting them.
@@ -2307,8 +2307,8 @@ struct Manifest {
     /// `[caps]` (C-2): the entry module's own capability grant, domain ->
     /// patterns, in the same vocabulary a `caps(domain = [...])` clause on an
     /// `impl` line uses. `None` means the section is absent, which keeps the
-    /// long-standing default — the entry module holds the whole resource of
-    /// every domain (`/**`/`*`) — so a `coral.toml` written before this
+    /// long-standing default - the entry module holds the whole resource of
+    /// every domain (`/**`/`*`) - so a `coral.toml` written before this
     /// section existed, or one that simply omits it, behaves exactly as
     /// before. `Some(map)` may still omit a domain entirely: that domain is
     /// then *not* granted to the entry module at all, a resolution error at
@@ -2377,7 +2377,7 @@ fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), 
     if !crate::stdlib::is_domain(domain) {
         return Err(Diagnostic::new(
             format!(
-                "'{domain}' is not a capability domain — v1 has {}",
+                "'{domain}' is not a capability domain - v1 has {}",
                 crate::stdlib::DOMAINS.join(", ")
             ),
             at,
@@ -3353,7 +3353,7 @@ fn module_id_of(file: &Path, src_dir: &Path) -> Result<String, Diagnostic> {
 /// Deliberately syntactic and conservative: either the two patterns are
 /// identical, or the held one ends in `/**` and the delegated one is inside
 /// that root. Glob-to-glob inclusion is undecidable in general, and being
-/// conservative here can only under-grant — never let a module hand out more
+/// conservative here can only under-grant - never let a module hand out more
 /// than it holds. `net` and `env` are name domains: the only pattern that
 /// covers another one is the whole-resource `*`.
 fn pattern_covered(held: &str, granted: &str, domain: &str) -> bool {
@@ -3487,7 +3487,7 @@ fn whole_range_phrase(domain: &str) -> &'static str {
 ///
 /// `fs` (and `net`/`process`) name paths, so a pattern is an absolute path,
 /// glob-only: `*` inside one segment, `**` as a whole segment, and no `..`
-/// anywhere — a pattern that could name its way out of its own root is
+/// anywhere - a pattern that could name its way out of its own root is
 /// rejected at the `impl` line, at compile time. `env` names variables, so
 /// its patterns are names (`HOME`, `LANG*`, or `*` for any). `time` and
 /// `rand` have no named resource at all, so their pattern list is unused and
@@ -3510,20 +3510,20 @@ fn validate_cap_pattern(
     if !crate::stdlib::patterns_are_paths(domain) {
         if domain == "env" && pattern.contains('/') {
             return err(format!(
-                "'{pattern}' is not a variable name — 'env' patterns name variables ('HOME', 'LANG*', or '*' for any)"
+                "'{pattern}' is not a variable name - 'env' patterns name variables ('HOME', 'LANG*', or '*' for any)"
             ));
         }
         return Ok(());
     }
     if !pattern.starts_with('/') {
         return err(format!(
-            "capability patterns are absolute paths — '{pattern}' must start with '/'"
+            "capability patterns are absolute paths - '{pattern}' must start with '/'"
         ));
     }
     for seg in pattern.split('/') {
         if seg == ".." {
             return err(format!(
-                "capability pattern '{pattern}' contains a '..' segment — a grant must not be able to name its way out of its own root"
+                "capability pattern '{pattern}' contains a '..' segment - a grant must not be able to name its way out of its own root"
             ));
         }
         if seg.contains("**") && seg != "**" {
@@ -3536,7 +3536,7 @@ fn validate_cap_pattern(
 }
 
 /// `net`'s vocabulary: `host`, `host:port`, `*.host`, `*:port`, `*`. The host
-/// is split from the port at the **last** `:` — so a host can never contain
+/// is split from the port at the **last** `:` - so a host can never contain
 /// one, which makes an IPv6 literal unexpressible rather than ambiguous, and
 /// the message says so. `*` matches within one label (it does not cross `.`
 /// or `:`); a lone `*` is the whole-resource wildcard the entry module holds.
@@ -3544,11 +3544,11 @@ fn validate_net_pattern(pattern: &str) -> Result<(), String> {
     let vocabulary = "a 'net' pattern names a host and an optional port \
         ('api.example.com:443', '*.example.com', '*:8080', or '*')";
     if pattern.contains('/') || pattern.contains(char::is_whitespace) {
-        return Err(format!("'{pattern}' is not a host — {vocabulary}"));
+        return Err(format!("'{pattern}' is not a host - {vocabulary}"));
     }
     if pattern.contains("**") {
         return Err(format!(
-            "'**' has no meaning in a 'net' pattern — write '*' ('{pattern}')"
+            "'**' has no meaning in a 'net' pattern - write '*' ('{pattern}')"
         ));
     }
     let (host, port) = match pattern.rsplit_once(':') {
@@ -3556,22 +3556,22 @@ fn validate_net_pattern(pattern: &str) -> Result<(), String> {
         None => (pattern, None),
     };
     if host.is_empty() {
-        return Err(format!("'{pattern}' has no host — {vocabulary}"));
+        return Err(format!("'{pattern}' has no host - {vocabulary}"));
     }
     if host.contains(':') {
         return Err(format!(
-            "'{pattern}' has more than one ':' — an IPv6 literal is not expressible as a 'net' pattern, because the ':' is what separates the port ({vocabulary})"
+            "'{pattern}' has more than one ':' - an IPv6 literal is not expressible as a 'net' pattern, because the ':' is what separates the port ({vocabulary})"
         ));
     }
     if host != "*" && (host.starts_with('.') || host.ends_with('.') || host.contains("..")) {
         return Err(format!(
-            "'{pattern}' is not a host name — no label of it may be empty"
+            "'{pattern}' is not a host name - no label of it may be empty"
         ));
     }
     if let Some(port) = port {
         if port.is_empty() {
             return Err(format!(
-                "'{pattern}' names a port after ':' — write the number, or '*' for any ({vocabulary})"
+                "'{pattern}' names a port after ':' - write the number, or '*' for any ({vocabulary})"
             ));
         }
         if port != "*" {
@@ -3596,7 +3596,7 @@ fn validate_impl_path(path: &str, span: Span, module: &str) -> Result<(), Diagno
     let ext = format!(".{EXT}");
     if path.ends_with(&ext) {
         return err(format!(
-            "'impl' paths omit the '.{EXT}' extension — write \"{}\"",
+            "'impl' paths omit the '.{EXT}' extension - write \"{}\"",
             path.trim_end_matches(&ext)
         ));
     }
@@ -3619,7 +3619,7 @@ fn validate_impl_path(path: &str, span: Span, module: &str) -> Result<(), Diagno
             return Ok(());
         }
         return err(format!(
-            "'impl \"{path}\"' — stdlib module '{}' is not implemented yet (shipped today: {}; the rest land in M6.3/M7)",
+            "'impl \"{path}\"' - stdlib module '{}' is not implemented yet (shipped today: {}; the rest land in M6.3/M7)",
             path.trim_start_matches("std/"),
             crate::stdlib::shipped().join(", ")
         ));
@@ -3633,7 +3633,7 @@ fn validate_impl_path(path: &str, span: Span, module: &str) -> Result<(), Diagno
         }
         if !is_ident(seg) {
             return err(format!(
-                "'{seg}' is not a valid module name — use snake_case identifiers with no dashes or dots"
+                "'{seg}' is not a valid module name - use snake_case identifiers with no dashes or dots"
             ));
         }
     }

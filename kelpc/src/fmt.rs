@@ -1,4 +1,4 @@
-//! `kelpc fmt` — a whitespace and comment-preserving source reformatter.
+//! `kelpc fmt` - a whitespace and comment-preserving source reformatter.
 //!
 //! The formatter is token-level, and that is the whole design. It lexes the
 //! raw source with comments kept as tokens ([`Lexer::tokenize_with_trivia`])
@@ -18,7 +18,7 @@
 //!   printer has to re-encode them; copying the source slice cannot lose a
 //!   byte.
 //!
-//! Two lists in this file — [`RULES`] and [`REFUSALS`] — are the single source
+//! Two lists in this file - [`RULES`] and [`REFUSALS`] - are the single source
 //! of truth for what the formatter enforces and for when it refuses a file. The
 //! prose that describes them is checked against them: the bullet list under
 //! *Rules* is the rule list's own statements verbatim, the bullet list under
@@ -27,7 +27,7 @@
 //! line names that rule back. The formatter declines a file by naming a variant
 //! of [`RefusalKind`], and a unit test
 //! (`the_refusal_enumeration_and_the_refusal_data_agree`) compares
-//! [`RefusalKind::all`] — the chain `next()` walks from the first variant —
+//! [`RefusalKind::all`] - the chain `next()` walks from the first variant -
 //! against [`REFUSALS`], same names, same order, same count. A variant `next()`
 //! leaves off that chain is in neither list, and the comparison reads only the
 //! variants it reaches. A rule with no
@@ -55,29 +55,29 @@
 //! a space a rule removes is put back where removing it would change the token
 //! sequence ([`space-suppression-never-relexes`]). The 100-column limit, the part
 //! of the canonical declaration order the parser does not already reject, and
-//! the naming/case rules are deliberately not touched — see the design report for
+//! the naming/case rules are deliberately not touched - see the design report for
 //! why each is a lint, not a format.
 //!
-//! - **indent-four-spaces** — A line the formatter re-indents is written with four spaces per brace level, recomputed from the source's own brace depth.
-//! - **no-tabs-in-emitted-indentation** — Every indentation the formatter writes is spaces: a tab in a line's leading whitespace never survives (the line is re-indented, or a tab on a continuation line becomes four spaces), while a tab inside a comment or a literal is that token's own byte and is copied verbatim.
-//! - **continuation-line-keeps-author-indent** — A line inside an open `(` or `[` keeps the author's own leading whitespace instead of the brace depth's, spaces as written and each tab as four spaces.
-//! - **blank-lines-at-most-one** — At most one blank line is kept between top-level declarations, a run inside a block keeps the author's grouping, and a blank line the author did not write is never inserted.
-//! - **trailing-whitespace-outside-comments** — Trailing whitespace is removed from a line of code, while whitespace inside a comment is the comment's own text and is kept.
-//! - **crlf-line-endings-become-lf** — A CRLF line ending is written as LF, because the `\r` before a newline is whitespace to the lexer and never reaches the output.
-//! - **single-trailing-newline** — The output ends with exactly one newline, and a source whose bytes are all whitespace is emitted empty.
-//! - **comments-verbatim-bytes** — Comment text is copied byte-for-byte, a `///` doc comment and a `/* … */` block comment included, so no byte inside a comment is rewritten or dropped — a block comment's own newlines and inner indentation among them.
-//! - **comment-keeps-its-line** — A comment stays on the line the author wrote it on, with the gap around it normalised like any other gap.
-//! - **one-space-around-binary-and-assignment** — One space goes before and after a binary operator and an `=`.
-//! - **one-space-after-comma** — One space goes after a `,` and none goes before it.
-//! - **no-space-before-suffix-token** — No space goes before `,` `:` `.` `::` `)` `]` or `?`.
-//! - **brace-spacing** — `{` takes one space before it, except after a token that takes no space after itself (as `(` does in `foo({ 1 })`) and between the two braces of `{}`.
-//! - **no-space-after-open-paren** — `(` and `[` attach to a token that ends an expression (`f(x)`, `a[i]`) and take a space after one that does not (`= (a + b)`), and nothing follows `(` `[` `.` or `::` with a space.
-//! - **prefix-operator-binds** — A prefix operator (`!`, `~`, and `-` `+` `*` `&` with nothing that ends an expression before them) binds to its operand with no space.
-//! - **space-suppression-never-relexes** — A space is dropped only where the two atoms re-lex to exactly their own tokens, so `& &` keeps its space instead of becoming `&&`.
-//! - **alias-declaration-and-reference-atomic** — An inline `alias %*n*% = …` declaration is one atom copied to the end of its line, and a `%*name*%` reference is one atom whose five tokens stay adjacent.
-//! - **template-run-atomic** — A string template run is one atom, copied verbatim, so its `StrChunk` text and the layout inside it are never re-spaced.
-//! - **angle-brackets-keep-author-spacing** — `<` `>` `<=` and `>=` keep the author's spacing, attached in `List<T>` and spaced in `a > b`, because a token-level formatter cannot tell a generic from a comparison.
-//! - **default-one-space-between-atoms** — Two atoms that share a line get one space between them unless another rule here removes it, so no pair outside these rules is ever run together.
+//! - **indent-four-spaces** - A line the formatter re-indents is written with four spaces per brace level, recomputed from the source's own brace depth.
+//! - **no-tabs-in-emitted-indentation** - Every indentation the formatter writes is spaces: a tab in a line's leading whitespace never survives (the line is re-indented, or a tab on a continuation line becomes four spaces), while a tab inside a comment or a literal is that token's own byte and is copied verbatim.
+//! - **continuation-line-keeps-author-indent** - A line inside an open `(` or `[` keeps the author's own leading whitespace instead of the brace depth's, spaces as written and each tab as four spaces.
+//! - **blank-lines-at-most-one** - At most one blank line is kept between top-level declarations, a run inside a block keeps the author's grouping, and a blank line the author did not write is never inserted.
+//! - **trailing-whitespace-outside-comments** - Trailing whitespace is removed from a line of code, while whitespace inside a comment is the comment's own text and is kept.
+//! - **crlf-line-endings-become-lf** - A CRLF line ending is written as LF, because the `\r` before a newline is whitespace to the lexer and never reaches the output.
+//! - **single-trailing-newline** - The output ends with exactly one newline, and a source whose bytes are all whitespace is emitted empty.
+//! - **comments-verbatim-bytes** - Comment text is copied byte-for-byte, a `///` doc comment and a `/* … */` block comment included, so no byte inside a comment is rewritten or dropped - a block comment's own newlines and inner indentation among them.
+//! - **comment-keeps-its-line** - A comment stays on the line the author wrote it on, with the gap around it normalised like any other gap.
+//! - **one-space-around-binary-and-assignment** - One space goes before and after a binary operator and an `=`.
+//! - **one-space-after-comma** - One space goes after a `,` and none goes before it.
+//! - **no-space-before-suffix-token** - No space goes before `,` `:` `.` `::` `)` `]` or `?`.
+//! - **brace-spacing** - `{` takes one space before it, except after a token that takes no space after itself (as `(` does in `foo({ 1 })`) and between the two braces of `{}`.
+//! - **no-space-after-open-paren** - `(` and `[` attach to a token that ends an expression (`f(x)`, `a[i]`) and take a space after one that does not (`= (a + b)`), and nothing follows `(` `[` `.` or `::` with a space.
+//! - **prefix-operator-binds** - A prefix operator (`!`, `~`, and `-` `+` `*` `&` with nothing that ends an expression before them) binds to its operand with no space.
+//! - **space-suppression-never-relexes** - A space is dropped only where the two atoms re-lex to exactly their own tokens, so `& &` keeps its space instead of becoming `&&`.
+//! - **alias-declaration-and-reference-atomic** - An inline `alias %*n*% = …` declaration is one atom copied to the end of its line, and a `%*name*%` reference is one atom whose five tokens stay adjacent.
+//! - **template-run-atomic** - A string template run is one atom, copied verbatim, so its `StrChunk` text and the layout inside it are never re-spaced.
+//! - **angle-brackets-keep-author-spacing** - `<` `>` `<=` and `>=` keep the author's spacing, attached in `List<T>` and spaced in `a > b`, because a token-level formatter cannot tell a generic from a comparison.
+//! - **default-one-space-between-atoms** - Two atoms that share a line get one space between them unless another rule here removes it, so no pair outside these rules is ever run together.
 //!
 //! ## What is checked, and what is refused
 //!
@@ -100,7 +100,7 @@
 //! That boundary is narrower than "the alias table a file is parsed under is
 //! the one `kelpc build` uses": the resolver runs only for a file whose own gate
 //! refuses, and it is asked only about that file. So for a file whose own gate
-//! *accepts* it — one that references no unresolvable alias — the resolver
+//! *accepts* it - one that references no unresolvable alias - the resolver
 //! never runs, and `fmt` neither loads the project's alias configuration nor
 //! diagnoses it: a cyclic or malformed `[alias]` section, or an imported module
 //! with a syntax error, is something `kelpc build` exits 1 on and reports,
@@ -120,8 +120,8 @@
 //! file. The bullet list below is its conditions verbatim, in its order, and a
 //! unit test compares the two, so a bullet cannot say anything the data does not.
 //! The formatter names a variant of [`RefusalKind`] when it declines a file, and
-//! the same unit test checks [`RefusalKind::all`] against [`REFUSALS`] — same
-//! names, same order, same count — over the variants that chain reaches; a
+//! the same unit test checks [`RefusalKind::all`] against [`REFUSALS`] - same
+//! names, same order, same count - over the variants that chain reaches; a
 //! refusal raised outside it, or a variant the chain omits, is not compared.
 //!
 //! Only `lone-carriage-return` declines a file whose *program* `kelpc build`
@@ -136,17 +136,17 @@
 //! link that names a *directory* is `not-a-regular-file`, because the file the
 //! link names is a directory.
 //!
-//! - **`not-a-regular-file`** — the path, or the file a link names, is a FIFO, a socket, a device or a directory
-//! - **`path-names-nothing`** — the path cannot be read at all (`stat` on it fails), so there is no file to format
-//! - **`dangling-symlink`** — the path is a symbolic link whose target cannot be read, so there is no file to format
-//! - **`unreadable-file`** — the bytes cannot be read, or are not UTF-8 text
-//! - **`lex-error`** — the source does not lex
-//! - **`syntax-error`** — the preprocessed source does not parse, by this module's own gate or by the resolver that `main.rs` consults after that gate refuses
-//! - **`unresolvable-alias`** — a `%*name*%` reference that neither the file's own declarations nor the project's alias table defines
-//! - **`lone-carriage-return`** — a carriage return in the whitespace between tokens that is not part of a CRLF pair
-//! - **`token-fidelity-internal-error`** — the emitted text's significant tokens differ from the input's
-//! - **`write-failed`** — the temporary could not be written, or the rename over the target failed
-//! - **`check-found-unformatted`** — `--check` found the file differs from its formatted form
+//! - **`not-a-regular-file`** - the path, or the file a link names, is a FIFO, a socket, a device or a directory
+//! - **`path-names-nothing`** - the path cannot be read at all (`stat` on it fails), so there is no file to format
+//! - **`dangling-symlink`** - the path is a symbolic link whose target cannot be read, so there is no file to format
+//! - **`unreadable-file`** - the bytes cannot be read, or are not UTF-8 text
+//! - **`lex-error`** - the source does not lex
+//! - **`syntax-error`** - the preprocessed source does not parse, by this module's own gate or by the resolver that `main.rs` consults after that gate refuses
+//! - **`unresolvable-alias`** - a `%*name*%` reference that neither the file's own declarations nor the project's alias table defines
+//! - **`lone-carriage-return`** - a carriage return in the whitespace between tokens that is not part of a CRLF pair
+//! - **`token-fidelity-internal-error`** - the emitted text's significant tokens differ from the input's
+//! - **`write-failed`** - the temporary could not be written, or the rename over the target failed
+//! - **`check-found-unformatted`** - `--check` found the file differs from its formatted form
 //!
 //! ## Five limits that remain
 //!
@@ -165,8 +165,8 @@
 //!   return.** A `\r` in the whitespace *between* tokens is blank trivia to the
 //!   lexer (`Lexer::skip_ws`), never a line break, so the formatter cannot see a
 //!   line ending there. Where the byte was standing in for a line break, the two
-//!   sides of it are laid out on one line; anywhere else — leading whitespace,
-//!   trailing whitespace, or whitespace inside a line — it separates nothing and
+//!   sides of it are laid out on one line; anywhere else - leading whitespace,
+//!   trailing whitespace, or whitespace inside a line - it separates nothing and
 //!   is dropped like any other whitespace, and nothing is joined. The refusal
 //!   states which of the two happened for the byte it names. This is the only
 //!   input shape in which `fmt` declines a program `kelpc build` accepts: the
@@ -174,12 +174,12 @@
 //!   would change it. (`not-a-regular-file` declines a node rather than a
 //!   program; a `\r` *inside* a string or character literal is that literal's
 //!   own byte, is copied verbatim like every other token byte, and does not
-//!   trigger this refusal.) A lexer limit, not a formatting rule — CRLF files
+//!   trigger this refusal.) A lexer limit, not a formatting rule - CRLF files
 //!   are ordinary input and are formatted normally (their line endings become
 //!   LF, which `tests/fmt_corpus/crlf.*.kp` pins).
 //! - **The rewrite replaces the file's inode.** `-w` writes a temporary beside
 //!   the target and renames it into place, so a reader sees the old bytes or the
-//!   new ones and never a mixture (`write_atomic` in `main.rs`) — and the file
+//!   new ones and never a mixture (`write_atomic` in `main.rs`) - and the file
 //!   that lands is a *new inode*. A hard link to the formatted file therefore
 //!   keeps the old bytes, and so does a file descriptor another process already
 //!   holds. The temporary is created by the writing process, and `write_atomic`
@@ -190,7 +190,7 @@
 //!   group was checked by hand in an earlier round, before that assertion
 //!   existed); the
 //!   owner cannot be varied without privilege, so it rests on reading
-//!   `write_atomic`; ACLs and extended attributes rest on the same reading —
+//!   `write_atomic`; ACLs and extended attributes rest on the same reading -
 //!   `set_permissions` with mode bits has nowhere to put either, and no test
 //!   measures them. The new file's
 //!   modification time is the write's own. Preserving the inode would mean
@@ -236,7 +236,7 @@ struct Rule {
     name: &'static str,
     /// What the rule does, in one line.
     statement: &'static str,
-    /// Stems of the `tests/fmt_corpus/<stem>.kp` pairs that declare this rule —
+    /// Stems of the `tests/fmt_corpus/<stem>.kp` pairs that declare this rule -
     /// the pair's own first line names the rule, and the tests check that name
     /// against this list, not that the pair exercises the rule.
     pins: &'static [&'static str],
@@ -298,7 +298,7 @@ const RULES: &[Rule] = &[
         name: "comments-verbatim-bytes",
         statement: "Comment text is copied byte-for-byte, a `///` doc comment and a \
                     `/* … */` block comment included, so no byte inside a comment is \
-                    rewritten or dropped — a block comment's own newlines and inner \
+                    rewritten or dropped - a block comment's own newlines and inner \
                     indentation among them.",
         pins: &["doc_comment", "block_comment"],
     },
@@ -495,7 +495,7 @@ const REFUSALS: &[Refusal] = &[
 /// matches below have no wildcard, so a new variant stops the compiler until
 /// `name` and `next` name it; the unit test
 /// `the_refusal_enumeration_and_the_refusal_data_agree`
-/// compares [`RefusalKind::all`] — the chain `next` walks — against [`REFUSALS`],
+/// compares [`RefusalKind::all`] - the chain `next` walks - against [`REFUSALS`],
 /// so an entry `REFUSALS` omits for a variant on that chain, or an entry for no
 /// such variant, is a test failure. A variant `next` leaves off the chain is not
 /// compared, and a refusal the command prints as a raw string names no variant.
@@ -578,7 +578,7 @@ impl RefusalKind {
 }
 
 /// Module id the gate's expanded copy is attributed to. It is never a real
-/// module — the gate only asks whether the copy parses — so it cannot collide
+/// module - the gate only asks whether the copy parses - so it cannot collide
 /// with one.
 const FMT_MODULE: &str = "<fmt>";
 
@@ -607,7 +607,7 @@ impl FmtError {
 /// a lex error, an unresolvable alias or a parse error is returned as it is.
 ///
 /// This is the gate for a caller that holds one file's text and nothing else
-/// — the unit tests, and the first check the CLI applies to every file. An
+/// - the unit tests, and the first check the CLI applies to every file. An
 /// alias a *different* module declares is not visible here, so a file that
 /// uses one is refused even though it is valid Kelp; `format_after_resolve` is
 /// the entry point for a file the compiler's resolver has accepted.
@@ -622,8 +622,8 @@ pub fn format(src: &str) -> Result<String, FmtError> {
 /// alias table and parses the result, where this module's gate can only see
 /// the declarations the file itself holds.
 ///
-/// Emission is unchanged either way — every token is copied from its own source
-/// slice — and the token-fidelity post-condition below still runs, so this can
+/// Emission is unchanged either way - every token is copied from its own source
+/// slice - and the token-fidelity post-condition below still runs, so this can
 /// only ever skip a *refusal*, never a check that the output is the same
 /// program.
 pub fn format_after_resolve(src: &str) -> Result<String, FmtError> {
@@ -658,8 +658,8 @@ pub fn format_after_resolve(src: &str) -> Result<String, FmtError> {
 /// instead of this one.
 ///
 /// Reading the spans has one visible consequence: a `\r` inside the whitespace
-/// run that a `Newline` token already covers — the bytes right after a real
-/// line break — is not flagged, because it is not ending a line that has not
+/// run that a `Newline` token already covers - the bytes right after a real
+/// line break - is not flagged, because it is not ending a line that has not
 /// already ended, and the formatter drops it with the rest of that gap.
 fn reject_lone_carriage_returns(src: &str, tokens: &[Token]) -> Result<(), FmtError> {
     let bytes = src.as_bytes();
@@ -685,8 +685,8 @@ fn reject_lone_carriage_returns(src: &str, tokens: &[Token]) -> Result<(), FmtEr
     for (from, to) in gaps {
         for i in from..to {
             // The `\n` that pairs a `\r` may be the first byte of the next
-            // token — a `Newline` token starts *at* the `\n`, after the `\r`
-            // has been skipped as whitespace — so the pair is read from the
+            // token - a `Newline` token starts *at* the `\n`, after the `\r`
+            // has been skipped as whitespace - so the pair is read from the
             // whole source, not from the gap.
             if bytes[i] == b'\r' && bytes.get(i + 1) != Some(&b'\n') {
                 return Err(lone_cr_error(src, i));
@@ -698,9 +698,9 @@ fn reject_lone_carriage_returns(src: &str, tokens: &[Token]) -> Result<(), FmtEr
 
 /// The refusal for a lone `\r` at byte `at`.
 ///
-/// It names the condition that fired — a carriage return in whitespace that is
+/// It names the condition that fired - a carriage return in whitespace that is
 /// not part of a token and is not part of a CRLF pair, the whitespace the lexer
-/// skips between tokens (and before the first one and after the last) — and then
+/// skips between tokens (and before the first one and after the last) - and then
 /// only the consequence that really applies: the byte stands between text on both
 /// sides of it on its own line, so that text is laid out on one line; or it has
 /// nothing on one side of it (leading whitespace, trailing whitespace, or a file
@@ -729,8 +729,8 @@ fn lone_cr_error(src: &str, at: usize) -> FmtError {
     FmtError::refusal(
         RefusalKind::LoneCarriageReturn,
         format!(
-            "a carriage return sits in the whitespace between tokens — or before the first \
-             one, or after the last — and is not part of a CRLF pair: the Kelp lexer reads \
+            "a carriage return sits in the whitespace between tokens - or before the first \
+             one, or after the last - and is not part of a CRLF pair: the Kelp lexer reads \
              such a byte as whitespace, never as a line ending, so no line break it was \
              written to make is visible to the formatter, and {consequence}. Convert the \
              file's line endings to LF (or CRLF) and format the file again"
@@ -750,8 +750,8 @@ fn lone_cr_error(src: &str, at: usize) -> FmtError {
 /// same rule as every other file instead of bypassing the gate.
 ///
 /// The table built here holds this file's inline declarations and nothing
-/// else, so a reference they cannot resolve is a refusal — the diagnostic is
-/// `preprocess`'s own `unknown alias '%*n*%'`, the one `kelpc build` prints —
+/// else, so a reference they cannot resolve is a refusal - the diagnostic is
+/// `preprocess`'s own `unknown alias '%*n*%'`, the one `kelpc build` prints -
 /// and never a substitution of placeholder text. That substitution is what used
 /// to let two files through: one whose alias was undefined, and one whose alias
 /// another module declares with an expansion that does not parse. In both, the
@@ -772,7 +772,7 @@ fn parse_gate(src: &str) -> Result<(), FmtError> {
         .map_err(|e| FmtError::refusal(RefusalKind::SyntaxError, e.message, e.span))
 }
 
-/// Expands the aliases one file declares, using `preprocess` — the same scanner
+/// Expands the aliases one file declares, using `preprocess` - the same scanner
 /// and the same expansion `kelpc build` runs. Every failure is the gate's
 /// refusal: an unresolvable reference, an alias cycle, alias text that does not
 /// lex, or a declaration with no replacement text.
@@ -792,7 +792,7 @@ fn expand_own_aliases(src: &str, raw: &[Token]) -> Result<Vec<Token>, FmtError> 
 /// sequence must never be able to do so silently, so after emitting, the
 /// significant token sequence (kind and exact source slice, trivia excluded)
 /// of the result is compared with the input's. Any difference is an internal
-/// error that stops the write — the formatter's contract is that it never
+/// error that stops the write - the formatter's contract is that it never
 /// changes the program, and this is what makes that true rather than claimed.
 fn check_token_fidelity(src: &str, out: &str) -> Result<(), FmtError> {
     let before = significant_tokens(src)
@@ -883,7 +883,7 @@ impl Lead {
                     | TokenKind::RBracket
                     | TokenKind::RBrace
                     | TokenKind::Question
-                    // `closure(&T)` — the keyword is a type constructor, always
+                    // `closure(&T)` - the keyword is a type constructor, always
                     // followed by its parenthesized argument list, so it
                     // attaches like a name.
                     | TokenKind::Closure
@@ -938,7 +938,7 @@ fn atom<'a>(src: &'a str, tokens: &[Token], i: usize) -> Atom<'a> {
         };
     }
 
-    // `%*name*%` — copied verbatim, so its five tokens stay adjacent.
+    // `%*name*%` - copied verbatim, so its five tokens stay adjacent.
     if let Some(len) = alias_ref_len(tokens, i) {
         let start = tokens[i].span.start;
         let end = tokens[i + len - 1].span.end;
@@ -951,7 +951,7 @@ fn atom<'a>(src: &'a str, tokens: &[Token], i: usize) -> Atom<'a> {
         };
     }
 
-    // An inline `alias ...` declaration — the whole line, verbatim.
+    // An inline `alias ...` declaration - the whole line, verbatim.
     if is_alias_decl(tokens, i) {
         let start = tok.span.start;
         let term = alias_decl_end(tokens, i);
@@ -1124,7 +1124,7 @@ fn is_prefix(lead: &Lead, prev_ends_expr: bool) -> bool {
 /// (returning `false`) are what remove space; the default is one space, so a
 /// pair the table does not name is never run together.
 fn needs_space(prev: &Lead, prev_prefix: bool, cur: &Lead, gap_ws: bool) -> bool {
-    // `{}` — an empty block, never `{ }`.
+    // `{}` - an empty block, never `{ }`.
     if matches!(prev, Lead::Tok(TokenKind::LBrace)) && matches!(cur, Lead::Tok(TokenKind::RBrace)) {
         return false;
     }
@@ -1170,8 +1170,8 @@ fn needs_space(prev: &Lead, prev_prefix: bool, cur: &Lead, gap_ws: bool) -> bool
     if prev_prefix {
         return false;
     }
-    // `(`/`[` attach to a callee or index base, but open a group — with a
-    // space — after an operator, `=`, `return`, or anything else that is not
+    // `(`/`[` attach to a callee or index base, but open a group - with a
+    // space - after an operator, `=`, `return`, or anything else that is not
     // the end of an expression.
     if matches!(
         cur,
@@ -1259,7 +1259,7 @@ fn alias_decl_end(tokens: &[Token], i: usize) -> usize {
 /// two atoms' tokens, in order. The emitter drops a space only when this
 /// holds, so no suppression can merge `&` and `&` into `&&`, turn `/ /` into a
 /// comment, or otherwise change the token sequence. The expected tokens are
-/// read from the input stream, not from lexing each atom in isolation — the
+/// read from the input stream, not from lexing each atom in isolation - the
 /// lexer folds `print!(` into one identifier, so an atom's text can lex
 /// differently on its own than it does in context. Stating the rule over the
 /// exact tokens is what makes it need no list of operators and miss no pair.
@@ -1365,7 +1365,7 @@ mod tests {
                 Ok(text) => text,
                 // A file the gate refuses is exercised by the refusal tests
                 // instead: a deliberate error fixture in one of these dirs, or
-                // a file whose `%*alias*%` another module declares — this gate
+                // a file whose `%*alias*%` another module declares - this gate
                 // reads one file's text, so it cannot see that module and is
                 // right to refuse rather than substitute a placeholder.
                 Err(_) => continue,
@@ -1485,7 +1485,7 @@ mod tests {
     fn a_carriage_return_inside_a_literal_is_not_a_line_terminator() {
         // Defect 11: the refusal fired on any `\r` anywhere in the bytes, and
         // its diagnostic claimed the file "would be formatted as a single
-        // line" — false on both counts for these inputs, which are multi-line,
+        // line" - false on both counts for these inputs, which are multi-line,
         // are accepted by `kelpc build`, and format safely. The rule is about a
         // `\r` used as a line ending, and a literal's own bytes are not that.
         let string_lit = "fun main() {\n    print(\"a\rb\")\n}\n";
@@ -1602,13 +1602,13 @@ mod tests {
         &section[..end]
     }
 
-    /// The `- **name** — statement` bullets of a prose section, in order.
+    /// The `- **name** - statement` bullets of a prose section, in order.
     fn bullet_list(section: &str) -> Vec<(&str, &str)> {
         section
             .lines()
             .filter_map(|line| {
                 let rest = line.trim_start().strip_prefix("- **")?;
-                let (name, statement) = rest.split_once("** — ")?;
+                let (name, statement) = rest.split_once("** - ")?;
                 Some((name, statement.trim_end()))
             })
             .collect()
@@ -1753,8 +1753,8 @@ mod tests {
     }
 
     /// The header's refusal bullets are [`REFUSALS`] itself: same names, same
-    /// conditions, same order. A bullet whose text the data does not carry — a
-    /// false statement kept alive by its backticked name — fails here, which is
+    /// conditions, same order. A bullet whose text the data does not carry - a
+    /// false statement kept alive by its backticked name - fails here, which is
     /// what the older name-only check could not catch.
     #[test]
     fn the_header_refusal_bullets_are_the_refusal_list_verbatim() {

@@ -2481,12 +2481,12 @@ impl Drop for Builder<'_> {
 }
 
 /// The portable architecture baseline `LLVMCreateTargetMachine` is given as
-/// its CPU name for `triple` (MISSING-hV6qL). Not the host's actual CPU —
+/// its CPU name for `triple` (MISSING-hV6qL). Not the host's actual CPU -
 /// that is `LLVMGetHostCPUName`, which is `-march=native` and makes the
 /// object non-portable, a different and unrelated thing. This just names
 /// the architecture's own floor, the same baseline `clang -O2` (with no
 /// `-march`) targets, so LLVM's X86 subtarget stops falling back to `i586`
-/// tuning for an empty CPU string — a fallback with a real, cited FIXME in
+/// tuning for an empty CPU string - a fallback with a real, cited FIXME in
 /// LLVM's own source, not a deliberate choice anyone made for that string.
 ///
 /// An architecture this doesn't know keeps the old empty-string behavior:
@@ -2594,7 +2594,7 @@ impl TargetMachine {
     /// an empty CPU string makes LLVM's X86 subtarget fall back to tuning for
     /// `i586`, whose scheduling model has no micro-op buffer, which silently
     /// turns off partial loop unrolling for every program this backend
-    /// builds — not a feature choice, an LLVM fallback with no legitimate use
+    /// builds - not a feature choice, an LLVM fallback with no legitimate use
     /// here. Features are still left empty: no CPU-specific instruction-set
     /// extension is assumed, only the architecture's own baseline name is
     /// given, so this stays as portable as the old empty string was and is
@@ -2704,7 +2704,7 @@ impl TargetMachine {
         let features = cstring(features);
         // SAFETY: the target came from the call above and is registered; LLVM
         // copies both strings. `cpu` is a portable architecture baseline (see
-        // `baseline_cpu`), never the host's own CPU — that would be
+        // `baseline_cpu`), never the host's own CPU - that would be
         // `-march=native` and make the object non-portable, which this is
         // not.
         let raw = unsafe {
