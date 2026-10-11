@@ -93,6 +93,9 @@ lands.
   (for example a documented platform gap), name the failing tests in the merge
   commit body and in your report. Do not land a lane with unexplained failures
   without asking.
+- Every lane closes into a landing branch: `main` for kelp, coral, lighthouse and polyp; `unreleased` for
+  kelp-wiki and fpl. No lane may leave a branch behind on origin. When a lane has landed, delete its own
+  branch. Do not open a new long-lived branch for work that can merge the same day.
 - Never force-push. Never delete a remote branch without the owner's approval.
   After a lane lands, remove its worktree and its local branch.
 
