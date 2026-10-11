@@ -1,0 +1,8 @@
+// lang-derive-eq: `derive` writes only `eq` and `hash`. Any other name is
+// refused by name.
+derive(eq, show)
+datac Point(val x: i32)
+
+fun main() {
+    print(Point(x = 1).x)
+}

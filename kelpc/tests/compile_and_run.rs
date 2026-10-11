@@ -5733,6 +5733,54 @@ fn an_enum_that_declares_hash_and_eq_is_a_map_key() {
 }
 
 #[test]
+fn a_datac_with_derived_eq_and_hash_is_a_map_key() {
+    // lang-derive-eq: `derive(eq, hash)` writes the pair field by field, so the
+    // `String`, `bool`, `char` and `i32` fields are the key, and `==` uses the
+    // same derived `eq`. The last line is the removed entry's value and then
+    // the map's length, and the probe with `on = false` finds nothing.
+    assert_compiles_and_runs(
+        "tests/fixtures/derive_map_key_datac.kp",
+        "2\n10\nfalse\n2\n99\nfalse\n99\n1\ntrue\n",
+    );
+}
+
+#[test]
+fn an_enum_with_derived_eq_and_hash_is_a_map_key() {
+    // lang-derive-eq: the same rule for an `enum`. Two variants with the same
+    // payload fields are different keys, and a unit variant is one key.
+    assert_compiles_and_runs(
+        "tests/fixtures/derive_map_key_enum.kp",
+        "4\n2\nfalse\ntrue\n4\n5\n3\n3\n",
+    );
+}
+
+#[test]
+fn derive_refuses_what_it_cannot_check() {
+    // lang-derive-eq: each refusal names the field or the method, not a vague
+    // "not a key" at a `Map` use site.
+    assert_rejected_with(
+        "tests/fixtures/derive_refuse_field_without_eq.kp",
+        "field 'inner' of type 'Inner'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/derive_refuse_float_field.kp",
+        "cannot hash field 'ratio' of type 'f64'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/derive_refuse_hand_written.kp",
+        "the hand-written 'fun Point.eq' already declares it",
+    );
+    assert_rejected_with(
+        "tests/fixtures/derive_refuse_generic_field.kp",
+        "cannot check field 'item' of type 'T'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/derive_refuse_bad_name.kp",
+        "'derive' can derive 'eq' and 'hash', not 'show'",
+    );
+}
+
+#[test]
 fn a_datac_that_declares_eq_gets_the_equality_operator() {
     // H-5: `a == b` lowers to `a.eq(&b)` and `a != b` to `!a.eq(&b)`, with
     // `eq` alone enough for the operator. The fixture also pins that each

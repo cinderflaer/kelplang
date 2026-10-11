@@ -395,7 +395,23 @@ impl Parser {
         // uses to rebuild a single merged declaration order from the two
         // lists (A-1).
         let mut type_order = 0usize;
+        // `derive(eq, hash)` (lang-derive-eq) is a line on its own above the
+        // `datac` or `enum` it applies to. It is read here and attached to the
+        // type when that type is parsed; the methods are made after the file.
+        let mut derives: Vec<crate::derive::DeriveRequest> = Vec::new();
+        let mut pending_derive: Option<crate::derive::DeriveRequest> = None;
         while !matches!(self.peek_kind(), TokenKind::Eof) {
+            if let Some(req) = self.parse_derive_clause()? {
+                if let Some(earlier) = &pending_derive {
+                    return Err(ParseError {
+                        message: "a 'derive(...)' line applies to the 'datac' or 'enum' right under it, and this one follows another with nothing between".to_string(),
+                        span: earlier.span,
+                    });
+                }
+                pending_derive = Some(req);
+                self.skip_newlines();
+                continue;
+            }
             // `repr(...)` is an optional leading clause on a `datac`/`enum`
             // (kernel stage 2), `section("...")` one on a `const`/`fun`
             // (kernel stage 4), and `pub` is an optional leading token on the
@@ -461,6 +477,14 @@ impl Parser {
                     span: self.peek().span,
                 });
             }
+            if let Some(req) = &pending_derive {
+                if !self.check(&TokenKind::Datac) && !self.check(&TokenKind::Enum) {
+                    return Err(ParseError {
+                        message: "'derive(...)' applies to the 'datac' or 'enum' on the line under it".to_string(),
+                        span: req.span,
+                    });
+                }
+            }
             if section.is_some() && !self.check(&TokenKind::Const) && !self.check(&TokenKind::Static) && !self.at_function_decl() {
                 return Err(ParseError {
                     message: format!(
@@ -524,11 +548,19 @@ impl Parser {
                 let mut d = self.parse_datac_decl(is_pub, repr)?;
                 d.order = type_order;
                 type_order += 1;
+                if let Some(mut req) = pending_derive.take() {
+                    req.type_name = d.name.clone();
+                    derives.push(req);
+                }
                 datacs.push(d);
             } else if self.check(&TokenKind::Enum) {
                 let mut e = self.parse_enum_decl(is_pub, repr)?;
                 e.order = type_order;
                 type_order += 1;
+                if let Some(mut req) = pending_derive.take() {
+                    req.type_name = e.name.clone();
+                    derives.push(req);
+                }
                 enums.push(e);
             } else if self.check(&TokenKind::Extern)
                 && matches!(self.peek2_kind(), TokenKind::Ident(ref n) if n == "type")
@@ -556,6 +588,13 @@ impl Parser {
             }
             self.skip_newlines();
         }
+        if let Some(req) = pending_derive {
+            return Err(ParseError {
+                message: "'derive(...)' is written on a line of its own above a 'datac' or 'enum', and nothing follows it".to_string(),
+                span: req.span,
+            });
+        }
+        functions.extend(crate::derive::expand(&derives, &datacs, &enums, &functions)?);
         Ok(Program {
             impls,
             consts,
@@ -1277,6 +1316,47 @@ impl Parser {
             module: String::new(),
             span: start.to(end),
         })
+    }
+
+    /// `derive(eq, hash)` (lang-derive-eq): the names of a derive clause, or
+    /// `None` when the next tokens are not one. Only `eq` and `hash` are names;
+    /// any other name is refused by name.
+    fn parse_derive_clause(&mut self) -> PResult<Option<crate::derive::DeriveRequest>> {
+        if !matches!(self.peek_kind(), TokenKind::Ident(n) if n == "derive")
+            || !matches!(self.peek2_kind(), TokenKind::LParen)
+        {
+            return Ok(None);
+        }
+        let start = self.advance().span;
+        self.expect(TokenKind::LParen, "'(' after 'derive'")?;
+        let mut names = Vec::new();
+        while !self.check(&TokenKind::RParen) {
+            let (name, span) = self.expect_ident()?;
+            if name != "eq" && name != "hash" {
+                return Err(ParseError {
+                    message: format!(
+                        "'derive' can derive 'eq' and 'hash', not '{name}': a 'datac' or 'enum' gets '==' and a 'Map' key from those two methods"
+                    ),
+                    span,
+                });
+            }
+            names.push((name, span));
+            if !self.check(&TokenKind::RParen) {
+                self.expect(TokenKind::Comma, "',' between the derive names")?;
+            }
+        }
+        let end = self.expect(TokenKind::RParen, "')' after the derive names")?.span;
+        if names.is_empty() {
+            return Err(ParseError {
+                message: "'derive()' names nothing: write 'derive(eq, hash)', or one of the two".to_string(),
+                span: start,
+            });
+        }
+        Ok(Some(crate::derive::DeriveRequest {
+            type_name: String::new(),
+            names,
+            span: Span::new(start.start, end.end),
+        }))
     }
 
     /// A `repr(c)` / `repr(packed)` / `repr(align(N))` / `repr(u8)` clause, or

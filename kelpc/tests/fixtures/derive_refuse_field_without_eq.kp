@@ -1,0 +1,12 @@
+// lang-derive-eq: a field whose type has no `eq` or `hash` of its own is
+// refused by name. `Inner` is a `datac` of this file with no derive and no
+// hand-written methods, so `Outer` cannot hash its `inner` field.
+datac Inner(val v: i32)
+
+derive(eq, hash)
+datac Outer(val inner: Inner, val n: i32)
+
+fun main() {
+    val o = Outer(inner = Inner(v = 1), n = 2)
+    print(o.n)
+}
