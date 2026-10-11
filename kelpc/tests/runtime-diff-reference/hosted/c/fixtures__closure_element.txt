@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/closure_element.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'closure().return: i32' cannot be a 'List' element yet — a closure owns the environment its captures were moved into, and a container's elements are held inline; put it in a 'Box' or a one-field 'datac' instead
+  --> <root>/kelpc/tests/fixtures/closure_element.kp:6:18
+run-status: not run

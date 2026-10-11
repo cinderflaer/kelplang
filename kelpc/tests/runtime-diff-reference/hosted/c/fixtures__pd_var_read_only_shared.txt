@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/pd_var_read_only_shared.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+shapes
+shapes
+shapes
+--- stderr

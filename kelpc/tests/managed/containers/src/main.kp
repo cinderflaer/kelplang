@@ -1,0 +1,23 @@
+// Managed mode, containers: a List of Strings, a Map of Strings to datacs and
+// a closure that captures a Box. The managed build must print what the hosted
+// build prints; tests/managed_containers.rs runs both and compares them.
+datac Item(val name: String, val n: i32)
+
+fun main() {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    names.push(String.from_str("beta"))
+    print(names.len())
+    print(names.get(1).as_str())
+
+    var items: Map<String, Item> = Map.new()
+    items.insert("a", Item(name = String.from_str("alpha"), n = 1))
+    items.insert("b", Item(name = String.from_str("beta"), n = 2))
+    val held = items.get("b")
+    print(held.n)
+    print(held.name.as_str())
+
+    val b = Box.of(41)
+    val add = fun(x: i32).return: i32 = x + b.get()
+    print(add(1))
+}

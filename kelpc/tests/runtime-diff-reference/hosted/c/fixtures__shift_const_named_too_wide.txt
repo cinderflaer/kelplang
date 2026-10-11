@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/shift_const_named_too_wide.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a shift by 8 is not defined for a 'u8', whose width is 8 bits: the amount has to be in 0..8 (use wrapping_shl/wrapping_shr to mask it)
+  --> <root>/kelpc/tests/fixtures/shift_const_named_too_wide.kp:6:11
+run-status: not run

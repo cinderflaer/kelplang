@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/asm_outside_unsafe
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'asm' is an unsafe operation: it can only be used inside 'unsafe { ... }' or in a function declared 'unsafe fun'
+  --> <root>/kelpc/tests/projects/asm_outside_unsafe/src/main.kp:6:5
+run-status: not run

@@ -1,0 +1,12 @@
+// Step 0 (T69, section 18.12): a main-thread panic runs no drops. The standard
+// error is exactly the panic line, and the exit status is 1.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() {
+    print("leaf")
+}
+
+fun main() {
+    val l = Leaf(tag = 1)
+    panic("stop")
+}

@@ -1,0 +1,30 @@
+// churn-box-tree: build and drop binary trees through Box fields. Each round builds a tree of
+// depth 10 to 13, checks it, and drops it at the end of the round. Prints a checksum.
+impl "std/str"
+
+datac Node(val left: Box<Node>, val right: Box<Node>)
+
+fun make(d: i32).return: Node {
+    if d == 0 {
+        return Node(left = Box.empty(), right = Box.empty())
+    }
+    return Node(left = Box.of(make(d - 1)), right = Box.of(make(d - 1)))
+}
+
+fun check(n: &Node).return: i64 {
+    if n.left.is_empty() {
+        return 1
+    }
+    return 1 + check(n.left.get()) + check(n.right.get())
+}
+
+fun main() {
+    var total: i64 = 0
+    var round: i32 = 0
+    while round < 60 {
+        val t = make(10 + round % 4)
+        total = (total + check(t) * (round.to_i64() + 1)) % 1000000007
+        round = round + 1
+    }
+    print("churn-box-tree rounds=60 checksum=$total")
+}

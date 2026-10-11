@@ -1,0 +1,15 @@
+impl "std/thread"
+impl "std/result"
+// Step 0 (Tidepool R26, T21, T50): a thread's result that holds collected memory
+// is refused in managed mode, because the result slot is not a root.
+fun make(n: i64).return: Box<i64> {
+    return Box.of(n)
+}
+
+fun main() {
+    val t = thread.spawn(make, 5)
+    when thread.join(t) {
+        Ok(v) -> print(v.get())
+        Err(e) -> print(e.message)
+    }
+}

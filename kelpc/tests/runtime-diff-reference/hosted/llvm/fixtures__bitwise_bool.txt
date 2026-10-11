@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/bitwise_bool.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: operator requires matching integer operands, found 'bool' and 'bool'
+  --> <root>/kelpc/tests/fixtures/bitwise_bool.kp:7:11
+run-status: not run

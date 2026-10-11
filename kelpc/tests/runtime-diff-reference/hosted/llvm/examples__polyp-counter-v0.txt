@@ -1,0 +1,8 @@
+unit: examples/polyp-counter-v0
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 124
+--- stdout
+--- stderr

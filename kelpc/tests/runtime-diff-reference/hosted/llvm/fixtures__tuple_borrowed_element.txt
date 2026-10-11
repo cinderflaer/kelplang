@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/tuple_borrowed_element.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: element 1 of the tuple is a borrowed type ('str'): a tuple holds owned data only in v1, exactly as a datac field does, so a '&str', 'View' or reference element is not expressible; an owned 'String' is the way to keep text in one
+  --> <root>/kelpc/tests/fixtures/tuple_borrowed_element.kp:5:23
+run-status: not run

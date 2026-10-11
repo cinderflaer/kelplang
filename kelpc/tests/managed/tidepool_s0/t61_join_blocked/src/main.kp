@@ -1,0 +1,28 @@
+impl "std/thread"
+impl "std/result"
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(count: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < count {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    return total
+}
+
+// Step 0 (T61, section 18.13): main is blocked in join while the worker
+// collects. The join must not hold the collection up until the stop timeout.
+fun worker(n: i64).return: i64 {
+    return churn(n)
+}
+
+fun main() {
+    val t = thread.spawn(worker, 200000)
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

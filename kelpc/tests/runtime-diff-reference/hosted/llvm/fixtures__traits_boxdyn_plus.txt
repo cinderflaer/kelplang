@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_boxdyn_plus.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: `dyn` names one trait: write `dyn A`, and make a trait that combines them (`trait Both: A + B { ... }`) when both sets of methods are wanted
+  --> <root>/kelpc/tests/fixtures/traits_boxdyn_plus.kp:12:23
+run-status: not run

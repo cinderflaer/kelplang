@@ -1,0 +1,16 @@
+impl "std/thread"
+impl "std/result"
+// Step 0 (T60, section 18.11): pthread_create fails when the process may not
+// start another thread. The panic names the return code. The run is made with
+// a process limit of one.
+fun quiet(n: i64) {
+    print(n)
+}
+
+fun main() {
+    val t = thread.spawn(quiet, 1)
+    when thread.join(t) {
+        Ok(_) -> print("ok")
+        Err(e) -> print(e.message)
+    }
+}

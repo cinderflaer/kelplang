@@ -1,0 +1,9 @@
+unit: kelpc/tests/fixtures/for_iter_nested.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+0 1 2 10 11 12 20 21 22 
+--- stderr

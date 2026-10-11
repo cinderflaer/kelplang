@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_dyn_unknown.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: '&dyn Nope' names no declared trait: declare 'trait Nope { ... }' first (or import the module that does)
+  --> <root>/kelpc/tests/fixtures/traits_dyn_unknown.kp:4:13
+run-status: not run

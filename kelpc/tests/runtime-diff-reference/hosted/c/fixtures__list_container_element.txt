@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/list_container_element.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Map<String, i32>' cannot be a 'List' element: a 'Map', an array, a borrow or a view, an atomic, a function value, and 'unit' are refused. A list holds its elements in its own buffer, so a 'List' or a 'Box' element is fine; use a scalar, 'String', 'Bytes', a 'datac', an 'enum', another 'List', or a 'Box'
+  --> <root>/kelpc/tests/fixtures/list_container_element.kp:5:18
+run-status: not run

@@ -1,0 +1,38 @@
+impl "std/thread"
+impl "std/result"
+pd val gate: Mutex<Gate> = Mutex.new(Gate(value = 0))
+
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(count: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < count {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    return total
+}
+
+datac Gate(var value: i64)
+
+// Step 0 (T61, section 18.13): the worker waits for a Mutex that main holds
+// while main collects inside the lock. The waiting thread must be in the native
+// state, or the collection stops at the timeout. The worker adds 5 and main adds
+// 100, so the total is 105 whichever thread takes the lock first.
+fun grab(g: &Mutex<Gate>) {
+    g.lock { v -> v.value = v.value + 5 }
+}
+
+fun main() {
+    val t = thread.spawn(grab, &gate)
+    gate.lock { v ->
+        val total = churn(300000)
+        v.value = v.value + 100
+    }
+    when thread.join(t) {
+        Ok(_) -> print(gate.lock { v -> v.value })
+        Err(e) -> print(e.message)
+    }
+}

@@ -1,0 +1,47 @@
+unit: examples/polyp-v4-demo
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+step 0 t 0 checksum 0xf5aaae4ca8007ee2 dirty 1 wants 0 ticks 0 memo 0/3
+step 1 t 0 checksum 0xf5aaae4ca8007ee2 dirty 0 wants 0 ticks 0 memo 0/3
+step 2 t 40 checksum 0xf5aaae4ca8007ee2 dirty 1 wants 1 ticks 0 memo 3/3
+step 3 t 100 checksum 0x55ff7fb078c7e8b0 dirty 2 wants 1 ticks 1 memo 6/3
+step 4 t 200 checksum 0xb94175a5b3f8c234 dirty 3 wants 1 ticks 2 memo 12/3
+step 5 t 300 checksum 0xc8a6a222ceb2c55c dirty 3 wants 1 ticks 3 memo 15/3
+step 6 t 550 checksum 0xc4ae47b79dbb2098 dirty 3 wants 0 ticks 4 memo 18/3
+step 7 t 700 checksum 0x7188c75c11330e3a dirty 1 wants 0 ticks 5 memo 21/3
+step 8 t 1200 checksum 0x4be03c9250f603c2 dirty 1 wants 0 ticks 6 memo 24/3
+step 9 t 2200 checksum 0x17b0ab67f692c1da dirty 1 wants 0 ticks 7 memo 27/3
+step 10 t 2300 checksum 0x87b7e0b7ca5e3fa2 dirty 2 wants 0 ticks 8 memo 32/4
+step 11 t 2400 checksum 0xbcafad9dea47df52 dirty 2 wants 0 ticks 9 memo 37/5
+step 12 t 2500 checksum 0x246459d346fe5926 dirty 2 wants 0 ticks 10 memo 42/6
+-- a11y --
+region "" state=[] bounds=0,0,320,200 actions=[] id=0
+  label "Polyp v4 · héllo → ✓" state=[] bounds=8,8,304,7 actions=[] id=1
+  region "" state=[] bounds=0,29,320,20 actions=[] id=2
+    button "start" state=[] bounds=0,29,40,20 actions=[press,focus] id=3
+    button "toast" state=[] bounds=48,29,40,20 actions=[press,focus] id=4
+    label "ticks 10" state=[] bounds=96,29,48,20 actions=[] id=5
+  progress "" value="1000" state=[] bounds=0,55,320,8 actions=[] id=6
+  region "" state=[] bounds=0,69,320,12 actions=[] id=7
+    region "" state=[] bounds=0,69,320,12 actions=[] id=8
+      checkbox "alpha" value="false" state=[] bounds=0,69,18,12 actions=[press,focus] id=9
+      label "alpha" state=[] bounds=26,69,30,12 actions=[] id=10
+  region "" state=[] bounds=0,87,320,12 actions=[] id=11
+    region "" state=[] bounds=0,87,320,12 actions=[] id=12
+      checkbox "βήτα" value="false" state=[] bounds=0,87,18,12 actions=[press,focus] id=13
+      label "βήτα" state=[] bounds=26,87,24,12 actions=[] id=14
+  region "" state=[] bounds=0,105,320,12 actions=[] id=15
+    region "" state=[] bounds=0,105,320,12 actions=[] id=16
+      checkbox "Привет €" value="true" state=[checked] bounds=0,105,18,12 actions=[press,focus] id=17
+      label "Привет €" state=[] bounds=26,105,48,12 actions=[] id=18
+-- demo --
+10
+5
+started
+no toast
+end
+--- stderr

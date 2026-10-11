@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/map_list_key.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'List<i32>' cannot be a Map key: the key has to be 'String', an integer, 'bool' or 'char', or a 'datac'/'enum' whose every field is one of those, because the compiler derives the key's hash and its equality from the fields; a 'datac' or 'enum' outside that set becomes a key by declaring 'fun T.hash().return: u64' and 'fun T.eq(other: &T).return: bool'
+  --> <root>/kelpc/tests/fixtures/map_list_key.kp:4:16
+run-status: not run

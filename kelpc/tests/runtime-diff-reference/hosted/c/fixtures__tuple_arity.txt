@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/tuple_arity.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: this pattern has 3 position(s), and the tuple it destructures ('(i32, i32)') has 2
+  --> <root>/kelpc/tests/fixtures/tuple_arity.kp:5:5
+run-status: not run

@@ -1,0 +1,9 @@
+unit: kelpc/tests/projects/freestanding_rwlock
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the binding 'rw' has type 'RwLock', whose runtime half is pthread condition variables: a freestanding program has no threads and no libc, so a kernel would use a spin lock over an `Atomic<T>` instead
+  --> <root>/kelpc/tests/projects/freestanding_rwlock/src/main.kp:6:27
+--- nm -u
+(no image)

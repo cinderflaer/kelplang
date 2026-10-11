@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/fn_type_borrow_return.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a function type cannot return a borrow ('&Point') — the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a function *type* is called through a pointer where there is none; return an owned value instead
+  --> <root>/kelpc/tests/fixtures/fn_type_borrow_return.kp:9:26
+run-status: not run

@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/defer_break_inside.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a deferred action cannot contain 'break' or 'continue': the action runs while the block is being left, so it cannot leave the loop again
+  --> <root>/kelpc/tests/fixtures/defer_break_inside.kp:7:13
+  note: the 'defer' whose action this is
+  --> <root>/kelpc/tests/fixtures/defer_break_inside.kp:6:9
+run-status: not run

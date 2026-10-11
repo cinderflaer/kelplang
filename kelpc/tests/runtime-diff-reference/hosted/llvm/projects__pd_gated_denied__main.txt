@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/pd_gated_denied/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_pd_gated_denied/**' must start with '/'
+  --> <root>/kelpc/tests/projects/pd_gated_denied/main.kp:6:18
+run-status: not run

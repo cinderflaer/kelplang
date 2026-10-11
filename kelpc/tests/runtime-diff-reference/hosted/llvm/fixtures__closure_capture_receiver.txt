@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/closure_capture_receiver.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a 'fun' literal cannot capture 'n': it is a field of 'Counter', and the receiver is a borrow, so its field is not this frame's to move out; bind a `Copy` field to a local first (`val n0 = n`) and capture that, or take the whole receiver as a 'move' parameter
+  --> <root>/kelpc/tests/fixtures/closure_capture_receiver.kp:7:34
+run-status: not run

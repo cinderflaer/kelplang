@@ -1,0 +1,8 @@
+unit: examples/polyp-v0/queue.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: no 'main' function found
+  --> <root>/examples/polyp-v0/queue.kp:1:1
+run-status: not run

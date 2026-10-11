@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/const_generics_string_refused.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'const S' has type 'String': a const parameter's type is one of 'usize', 'u8', 'u16', 'u32', 'u64', 'i32', 'i64', 'bool' or 'char'
+  --> <root>/kelpc/tests/fixtures/const_generics_string_refused.kp:3:17
+run-status: not run

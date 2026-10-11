@@ -1,0 +1,36 @@
+// churn-datac-lists: a datac record that owns a List<String> and a Box<Node>. Build 15000 records
+// per round, check each one, and drop the whole List. 10 rounds.
+impl "std/str"
+
+datac Node(val weight: i64, val kid: Box<Node>)
+
+datac Record(val id: i64, val tags: List<String>, val chain: Box<Node>)
+
+fun main() {
+    var total: i64 = 0
+    var round: i64 = 0
+    while round < 10 {
+        var recs: List<Record> = List.empty()
+        var i: i64 = 0
+        while i < 15000 {
+            var tags: List<String> = List.empty()
+            tags.push(String.from_str("t"))
+            val num = str.from_i64(i)
+            tags.push(String.from_str(num.as_str()))
+            val leaf = Node(weight = i, kid = Box.empty())
+            val top = Node(weight = i + round, kid = Box.of(leaf))
+            recs.push(Record(id = i, tags = tags, chain = Box.of(top)))
+            i = i + 1
+        }
+        var k: usize = 0
+        while k < recs.len() {
+            val r = recs.get(k)
+            val kid = r.chain.get()
+            total = (total + r.tags.len().to_i64() + kid.weight + kid.kid.get().weight) % 1000000007
+            k = k + 1
+        }
+        recs.clear()
+        round = round + 1
+    }
+    print("churn-datac-lists rounds=10 checksum=$total")
+}

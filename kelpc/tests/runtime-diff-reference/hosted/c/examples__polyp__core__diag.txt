@@ -1,0 +1,8 @@
+unit: examples/polyp/core/diag.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot find module 'deps/polyp/core/core': expected '<root>/examples/polyp/core/deps/polyp/core/core.kp'
+  --> <root>/examples/polyp/core/diag.kp:9:1
+run-status: not run

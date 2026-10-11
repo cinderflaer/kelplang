@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/const_not_constant.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'print' cannot be called in a constant expression: only a plain 'fun' whose own body a constant can evaluate is in reach, and this is not one (a builtin, an 'extern', a method and a generic function are all out of reach)
+  --> <root>/kelpc/tests/fixtures/const_not_constant.kp:8:5
+run-status: not run

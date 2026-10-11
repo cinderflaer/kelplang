@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_self_value.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: in 'Bad<i32>': 'Bad<i32>' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next: Box<Bad<i32>>', or a 'List<Bad<i32>>' for many)
+  --> <root>/kelpc/tests/fixtures/generic_self_value.kp:6:12
+run-status: not run

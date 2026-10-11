@@ -1,0 +1,26 @@
+// churn-list-pop-datac: a List of datac records that own a String. Push 40000 records, pop half
+// of them into a local that drops each iteration, then clear the rest. Repeats 8 rounds.
+impl "std/str"
+
+datac Rec(val id: i64, val name: String)
+
+fun main() {
+    var total: i64 = 0
+    var round: i64 = 0
+    while round < 8 {
+        var xs: List<Rec> = List.empty()
+        var i: i64 = 0
+        while i < 40000 {
+            val nm = str.from_i64(i + round)
+            xs.push(Rec(id = i, name = String.from_str(nm.as_str())))
+            i = i + 1
+        }
+        while xs.len() > 20000 {
+            val r = xs.pop()
+            total = (total + r.id * 3 + r.name.len().to_i64()) % 1000000007
+        }
+        xs.clear()
+        round = round + 1
+    }
+    print("churn-list-pop-datac rounds=8 checksum=$total")
+}

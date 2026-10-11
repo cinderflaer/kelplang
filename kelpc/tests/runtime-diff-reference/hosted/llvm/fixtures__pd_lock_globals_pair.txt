@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/pd_lock_globals_pair.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+10
+21
+32
+--- stderr

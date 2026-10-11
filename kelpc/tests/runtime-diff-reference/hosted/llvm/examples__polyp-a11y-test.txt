@@ -1,0 +1,75 @@
+unit: examples/polyp-a11y-test
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+dump
+region "" state=[] bounds=0,0,320,200 actions=[] id=0
+  region "" state=[] bounds=12,12,296,20 actions=[] id=1
+    entry "" value="hi" state=[] bounds=12,12,262,20 actions=[focus,set_value] id=2
+    button "add" state=[] bounds=280,12,28,20 actions=[press,focus] id=3
+  list "" state=[] bounds=0,61,320,123 actions=[] id=5
+    list_item "" state=[] bounds=9,70,296,20 actions=[] id=6
+      checkbox "alpha" value="false" state=[] bounds=9,70,18,20 actions=[press,focus] id=7
+      label "alpha" state=[] bounds=33,70,228,20 actions=[] id=8
+      button "^" state=[] bounds=267,70,16,20 actions=[press,focus] id=9
+      button "x" state=[] bounds=289,70,16,20 actions=[press,focus] id=10
+    list_item "" state=[] bounds=5,98,304,20 actions=[] id=11
+      checkbox "beta" value="true" state=[checked] bounds=5,98,18,20 actions=[press,focus] id=12
+      label "beta" state=[] bounds=29,98,236,20 actions=[] id=13
+      button "^" state=[] bounds=271,98,16,20 actions=[press,focus] id=14
+      button "x" state=[] bounds=293,98,16,20 actions=[press,focus] id=15
+  progress "" value="500" state=[] bounds=0,192,320,8 actions=[] id=16
+
+16
+press
+click
+1
+
+1
+true
+tree
+acted
+1
+
+1
+true
+focus
+-1
+true
+0
+1
+false
+false
+set_value
+true
+typed by a screen reader
+false
+toggle
+true
+false
+true
+true
+true
+5
+disabled
+region "" state=[] bounds=0,0,200,120 actions=[] id=0
+  button "live" state=[] bounds=0,0,34,20 actions=[press,focus] id=1
+  button "dead" state=[disabled] bounds=0,20,34,20 actions=[] id=2
+  entry "" value="x" state=[disabled] bounds=0,40,90,20 actions=[] id=3
+  button "live2" state=[] bounds=0,60,40,20 actions=[press,focus] id=4
+
+false
+false
+false
+0
+0
+0
+-1
+1
+0
+3
+0
+--- stderr

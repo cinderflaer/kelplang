@@ -1,0 +1,43 @@
+unit: examples/polyp-todo-soft
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+step 0 checksum 0x3fe9bf4f4c216435 dirty 1
+step 1 checksum 0x0b75e67efe727df5 dirty 1
+step 2 checksum 0x30a73f0b7686ae98 dirty 1
+step 3 checksum 0x5ea79458670ced5c dirty 2
+step 4 checksum 0xd765bd454cf40665 dirty 1
+step 5 checksum 0x6e014703e561504c dirty 2
+step 6 checksum 0x133d1ca6e8e276a5 dirty 1
+step 7 checksum 0x8e17675a724b10fd dirty 2
+step 8 checksum 0xfa3d5e46fb8b2113 dirty 2
+step 9 checksum 0x89b8f7d6bd68e19b dirty 2
+step 10 checksum 0x12d8cf35c1606b27 dirty 3
+step 11 checksum 0x12d8cf35c1606b27 dirty 0
+display 0xc33211c98befabd7
+-- todo --
+2
+alpha
+false
+beta
+true
+7
+12
+17
+22
+22
+22
+22
+10
+5
+17
+true
+true
+1
+gamma
+
+end
+--- stderr

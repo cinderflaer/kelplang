@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/must_use_user_dropped.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: the result of 'check' must be used: it reports a failure or hands a value back. Branch on it, or write 'val _r = ...' to discard it on purpose
+  --> <root>/kelpc/tests/fixtures/must_use_user_dropped.kp:5:5
+run-status: not run

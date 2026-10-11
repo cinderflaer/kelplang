@@ -1,0 +1,7 @@
+// Link smoke test: a managed program that allocates a Box through the
+// collector, reads it back and prints. It links against the collector archive
+// and must print the line below and exit 0.
+fun main() {
+    val text = Box.of(String.from_str("hello from the managed build"))
+    print(text.get().as_str())
+}

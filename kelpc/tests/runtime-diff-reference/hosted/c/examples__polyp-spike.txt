@@ -1,0 +1,9 @@
+unit: examples/polyp-spike
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 139
+--- stdout
+--- stderr
+timeout: the monitored command dumped core

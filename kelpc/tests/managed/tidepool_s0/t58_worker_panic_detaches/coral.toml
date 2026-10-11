@@ -1,0 +1,6 @@
+name = "t58_worker_panic_detaches"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[target]
+mode = "managed"

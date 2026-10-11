@@ -383,9 +383,13 @@ pub fn compile(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     freestanding: Option<&Freestanding>,
+    managed: Option<&Managed>,
     incremental: bool,
     timings: &mut Timings,
 ) -> Result<(), String> {
+    if managed.is_some() && incremental {
+        return Err("a managed build is not split per unit yet: the collector's descriptors and init are whole-program".to_string());
+    }
     if let Some(fs) = freestanding {
         llvm_ffi::initialize_target_for(&fs.triple)?;
     } else {
@@ -447,6 +451,7 @@ pub fn compile(
         freestanding,
         None,
         None,
+        managed.map(|m| m.heap_max_mib << 20),
         timings,
     )?;
 
@@ -490,18 +495,114 @@ pub fn compile(
     };
 
     let link_start = Instant::now();
-    let linked = crate::driver::link_llvm_object(
-        &object_path,
-        program_object.as_deref(),
-        out_path,
-        opt,
-        link_libs,
-        library_dirs,
-        pkg_config_flags,
-        crate::cdecl::uses_tls(program),
-    );
+    let linked = match managed {
+        Some(m) => crate::driver::link_managed_object(
+            &object_path,
+            program_object.as_deref(),
+            &m.gc_archive,
+            out_path,
+            opt,
+            link_libs,
+            library_dirs,
+            pkg_config_flags,
+            crate::cdecl::uses_tls(program),
+        ),
+        None => crate::driver::link_llvm_object(
+            &object_path,
+            program_object.as_deref(),
+            out_path,
+            opt,
+            link_libs,
+            library_dirs,
+            pkg_config_flags,
+            crate::cdecl::uses_tls(program),
+        ),
+    };
     timings.link += link_start.elapsed();
     linked.map_err(|e| e.message)
+}
+
+/// A managed build's settings (WP2): the heap cap in MiB that `kelp_gc_init`
+/// receives as its maximum, and the collector archive the link takes.
+#[derive(Debug, Clone)]
+pub struct Managed {
+    pub heap_max_mib: u64,
+    pub gc_archive: PathBuf,
+}
+
+/// Lower a whole program and return the IR text, without linking, in the hosted
+/// (`managed = None`) or managed (`Some(heap cap in bytes)`) form. The object is written
+/// beside the IR, as every lowering does, so the tests can check that the IR
+/// also verifies and emits. Only the tests call this: a real build goes through
+/// `compile`.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn compile_ir(
+    program: &Program,
+    drops: &DropPlan,
+    sources: &SourceMap,
+    managed: Option<u64>,
+    ir_path: &Path,
+    object_path: &Path,
+) -> Result<String, String> {
+    llvm_ffi::initialize_native_target()?;
+    let triple = llvm_ffi::default_target_triple();
+    let ctx = Context::new();
+    let machine = TargetMachine::for_host_at(OptLevel::O0.codegen_level())?;
+    let layout = machine.data_layout();
+    let mut timings = Timings::new();
+    lower_to_object(
+        program,
+        drops,
+        sources,
+        &ctx,
+        &machine,
+        &layout,
+        &triple,
+        "kelp",
+        ir_path,
+        object_path,
+        OptLevel::O0,
+        None,
+        None,
+        None,
+        managed,
+        &mut timings,
+    )?;
+    std::fs::read_to_string(ir_path)
+        .map_err(|e| format!("could not read generated IR '{}': {e}", ir_path.display()))
+}
+
+/// The layout facts `gc_descr` reads, answered from the same LLVM types and
+/// target layout the function bodies use.
+impl<'a> crate::gc_descr::GcLayout for Gen<'a> {
+    fn struct_fields(&self, name: &str) -> Result<Vec<Ty>, String> {
+        let s = self
+            .program
+            .structs
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| format!("managed mode does not describe the enum '{name}' in a GC object yet"))?;
+        if !matches!(s.repr, crate::ast::Repr::C) {
+            return Err(format!(
+                "managed mode describes only `repr(c)` datac layouts; '{name}' is not one"
+            ));
+        }
+        Ok(s.fields.iter().map(|f| f.ty.clone()).collect())
+    }
+
+    fn size_align(&self, ty: &Ty) -> Result<(u64, u64), String> {
+        let t = self.lty2(ty)?;
+        Ok((self.layout.abi_size_of(t), self.layout.abi_alignment_of(t) as u64))
+    }
+
+    fn enum_variants(&self, name: &str) -> Option<Vec<Vec<Ty>>> {
+        self.program.enums.iter().find(|e| e.name == name).map(|e| {
+            e.variants
+                .iter()
+                .map(|v| v.fields.iter().map(|f| f.ty.clone()).collect())
+                .collect()
+        })
+    }
 }
 
 /// Lower one module and write its object: the per-module half of the backend.
@@ -536,6 +637,7 @@ fn lower_to_object(
     freestanding: Option<&Freestanding>,
     unit: Option<Unit>,
     cache: Option<&Cache>,
+    managed: Option<u64>,
     timings: &mut Timings,
 ) -> Result<Option<String>, String> {
     let started = Instant::now();
@@ -557,6 +659,7 @@ fn lower_to_object(
         opt.is_optimized(),
         freestanding.cloned(),
         unit,
+        managed,
     )?;
     lowering.declare()?;
     lowering.emit_const_data()?;
@@ -949,6 +1052,7 @@ fn compile_units(
                                     None,
                                     Some(unit.clone()),
                                     Some(&cache),
+                                    None,
                                     &mut local,
                                 )?;
                                 if let Some(dir) = &dump_dir {
@@ -2076,6 +2180,18 @@ struct Gen<'a> {
     /// for the whole-program single module every build had before the mode
     /// existed. See [`Gen::defines_function`] for what it decides.
     unit: Option<Unit>,
+    /// Whether this is a managed build (WP3): heap objects are GC allocations,
+    /// frees are dropped, and a drop runs only where a resource needs one.
+    managed: bool,
+    /// The managed heap's cap in bytes, from the manifest's `heap_max`. `kelp_gc_init`
+    /// receives it as its maximum. `None` in every other build.
+    managed_heap_max: Option<u64>,
+    /// The managed build's LLVM descriptors and collector entry points
+    /// (`gc_descr`), declared once per module. `None` in every other build.
+    gc: Option<crate::gc_descr::GcTypes<'a>>,
+    /// The `datac` and `enum` names that hold a resource (`gc_descr::resource_types`).
+    /// Empty in every other build.
+    resources: HashSet<String>,
 }
 
 /// Every container instantiation a program mentions, the mirror of
@@ -2127,6 +2243,7 @@ impl<'a> Gen<'a> {
         optimized: bool,
         freestanding: Option<Freestanding>,
         unit: Option<Unit>,
+        managed: Option<u64>,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
         // The one libc symbol this slice reaches: `printf`, for `print` and
@@ -2135,22 +2252,15 @@ impl<'a> Gen<'a> {
         // helpers instead of defined here.
         let printf_ty = ctx.fn_type(ctx.i32(), &[ptr], true);
         let printf_fn = module.add_function("printf", printf_ty);
-        // The builtin heap layouts, field for field the structs `kelp_rt.c`
-        // defines: a pointer, then a length, then a capacity (a `View` has no
-        // capacity). Keeping the order and the widths identical is what lets a
-        // pointer to one cross into the runtime (MK7 §3.3); the runtime's
-        // functions all take the pair by pointer or by value through the same
-        // C ABI the object was compiled for.
-        let mut structs = HashMap::new();
-        let bytes_ty = ctx.struct_type("kelp_Bytes");
-        ctx.struct_set_body(bytes_ty, &[ptr, ctx.i64(), ctx.i64()]);
-        structs.insert("Bytes".to_string(), bytes_ty);
-        let string_ty = ctx.struct_type("kelp_String");
-        ctx.struct_set_body(string_ty, &[ptr, ctx.i64(), ctx.i64()]);
-        structs.insert("String".to_string(), string_ty);
-        let view_ty = ctx.struct_type("kelp_View");
-        ctx.struct_set_body(view_ty, &[ptr, ctx.i64()]);
-        structs.insert("View".to_string(), view_ty);
+        // The builtin heap layouts, from `LAYOUTS`, the one table the C prelude
+        // and the runtime's own struct spellings are also checked against
+        // (MK7 §3.3). Keeping the order and the widths identical is what lets a
+        // pointer to one cross into the runtime; the runtime's functions all take
+        // the pair by pointer or by value through the same C ABI.
+        let mut structs = builtin_struct_types(ctx);
+        let bytes_ty = structs["Bytes"];
+        let string_ty = structs["String"];
+        let view_ty = structs["View"];
         // The widening's one-field environment (S2E): `{ ptr f }`, where `f` is
         // the code pointer a thunk calls through. One type for every signature,
         // since a pointer is a pointer here.
@@ -2232,6 +2342,10 @@ impl<'a> Gen<'a> {
             pd_init_scope: None,
             freestanding,
             unit,
+            managed: managed.is_some(),
+            managed_heap_max: managed,
+            gc: managed.map(|_| crate::gc_descr::GcTypes::declare(ctx, module)),
+            resources: if managed.is_some() { crate::gc_descr::resource_types(program) } else { HashSet::new() },
         })
     }
 
@@ -3417,7 +3531,9 @@ impl<'a> Gen<'a> {
             let llvm_ty = ctx.struct_type(&struct_tag(&e.name));
             self.structs.insert(e.name.clone(), llvm_ty);
             let union_ty = ctx.struct_type(&enum_union_name(&e.name));
-            let (tag_bytes, tag_signed) = e.tag_storage();
+            // A managed build's enum tag is always an i32 (`kelp_gc.h`: the
+            // descriptor reads a u32 at tag_off), whatever `repr` names.
+            let (tag_bytes, tag_signed) = if self.managed { (4, true) } else { e.tag_storage() };
             let tag_ty = enum_tag_llvm_type(ctx, tag_bytes);
             let variants = e
                 .variants
@@ -3594,7 +3710,9 @@ impl<'a> Gen<'a> {
     fn declare_drop_fns(&mut self) {
         let owned = owned_types(&self.program.structs, &self.program.enums, &self.program.drop_types);
         for s in &self.program.structs {
-            if !needs_drop(&Ty::Struct(s.name.clone()), &owned) {
+            if !needs_drop(&Ty::Struct(s.name.clone()), &owned)
+                || !self.managed_drop(&Ty::Struct(s.name.clone()))
+            {
                 continue;
             }
             let name = format!("kelp_drop_{}", crate::types::c_ident(&s.name));
@@ -3607,7 +3725,9 @@ impl<'a> Gen<'a> {
         // An `enum` whose own name is in `owned` has at least one variant with
         // an owned payload field, so its drop has at least one case.
         for e in &self.program.enums {
-            if !needs_drop(&Ty::Struct(e.name.clone()), &owned) {
+            if !needs_drop(&Ty::Struct(e.name.clone()), &owned)
+                || !self.managed_drop(&Ty::Struct(e.name.clone()))
+            {
                 continue;
             }
             let name = format!("kelp_drop_{}", crate::types::c_ident(&e.name));
@@ -3749,6 +3869,11 @@ impl<'a> Gen<'a> {
     /// per-`datac` drop. A type that owns nothing has no call, which is the same
     /// silence `codegen_c.rs` keeps for a dropless field.
     fn call_drop(&self, ptr: Value<'a>, ty: &Ty) -> Result<(), String> {
+        // A managed build calls no drop for memory alone: the collector reclaims
+        // it, so the drop of a memory-only value is no call at all.
+        if !self.managed_drop(ty) {
+            return Ok(());
+        }
         let (func, fty) = match ty {
             Ty::Bytes | Ty::String => {
                 let symbol = drop_fn_name(ty);
@@ -4082,6 +4207,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // directly; the slots a referencing function gets are bound below for
         // every other function.
         if self.fn_name == "main" {
+            // Managed: the collector starts first (paper 3.4), with the minimum
+            // heap and the manifest's `heap_max` as the maximum.
+            if let (Some(gc), Some(cap)) = (&self.g.gc, self.g.managed_heap_max) {
+                let (init, ity) = gc.init;
+                let min = self.g.ctx.const_int(self.g.ctx.i64(), crate::gc_descr::DEFAULT_HEAP_MIN, false);
+                let max = self.g.ctx.const_int(self.g.ctx.i64(), cap, false);
+                self.g.builder.build_call(init, ity, &[min, max], "");
+                let (attach, aty) = gc.thread_attach;
+                self.g.builder.build_call(attach, aty, &[], "");
+            }
             if let Some(init) = self.g.init_pds_fn {
                 let ty = self.g.ctx.fn_type(self.g.ctx.void(), &[], false);
                 self.g.builder.build_call(init, ty, &[], "");
@@ -4500,6 +4635,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self.g.builder.build_load(lty, slot, "drop.val"))
     }
 
+    /// A managed build's safepoint poll at the current position (paper 5.1):
+    /// one call to `kelp_gc_safepoint`, which the collector answers with one
+    /// load when no collection is requested. Nothing in a hosted build.
+    fn gc_poll(&self) {
+        if let Some(gc) = &self.g.gc {
+            let (func, fty) = gc.safepoint;
+            self.g.builder.build_call(func, fty, &[], "");
+        }
+    }
+
     fn emit_while(&mut self, cond: &Expr, body: &Block) -> Result<(), String> {
         let header = self.cur_fn.append_block("while.cond");
         let body_bb = self.cur_fn.append_block("while.body");
@@ -4523,6 +4668,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.loops.pop();
         body?;
         if !self.terminated {
+            // Managed: a safepoint poll on every back edge (paper 5.1), so a
+            // loop with no call still lets a collection stop this thread.
+            self.gc_poll();
             let back = self.g.builder.build_br(header);
             // A loop whose bound is a small literal is unrolled in full, so its
             // body is the straight line of steps the SLP vectorizer packs `nbody`
@@ -4999,7 +5147,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .env_types
             .get(key)
             .ok_or_else(|| no_value(&format!("the environment of '{key}'")))?;
-        let env = self.g.malloc_for(env_ty)?;
+        let env = if self.g.managed {
+            let descr = self.g.closure_env_descr(key)?;
+            let (func, fty) = self.g.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?.alloc;
+            self.g.call(func, fty, &[descr], "env")
+        } else {
+            self.g.malloc_for(env_ty)?
+        };
         self.cur = self.g.check_alloc(env, self.cur_fn)?;
         for (index, init) in captures.iter().enumerate() {
             let value = self.value_of(init)?;
@@ -5079,7 +5233,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         let code = self.value_of(func)?;
         let env_ty = self.g.coerce_env_ty;
-        let env = self.g.malloc_for(env_ty)?;
+        let env = if self.g.managed {
+            let descr = self.g.coerce_env_descr()?;
+            let (func, fty) = self.g.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?.alloc;
+            self.g.call(func, fty, &[descr], "env")
+        } else {
+            self.g.malloc_for(env_ty)?
+        };
         self.cur = self.g.check_alloc(env, self.cur_fn)?;
         let slot = self
             .g
@@ -7853,6 +8013,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
         ret: &Ty,
         span: Span,
     ) -> Result<Option<Value<'a>>, String> {
+        // Managed: a safepoint poll before every call (paper 5.1).
+        self.gc_poll();
         if callee == "std.source.file" {
             let path = self
                 .g
@@ -9670,6 +9832,108 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// Whether a value of `ty` owes a drop call in this build. Every build but
+    /// a managed one answers yes, which keeps its drops as they were. A managed
+    /// build answers yes only for a resource (`gc_descr::managed_needs_drop`).
+    fn managed_drop(&self, ty: &Ty) -> bool {
+        !self.managed || crate::gc_descr::managed_needs_drop(ty, &self.resources)
+    }
+
+    /// One zeroed GC object of `elem` (the managed form of `malloc_for`): the
+    /// call names the element's descriptor, so the collector knows its pointer
+    /// slots. Only meaningful in a managed build.
+    fn alloc_elem(&self, elem: &Ty, elem_ty: Type<'a>) -> Result<Value<'a>, String> {
+        if !self.managed {
+            return self.malloc_for(elem_ty);
+        }
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let descr = gc.descriptor(self.ctx, self.module, self, elem)?;
+        let (func, fty) = gc.alloc;
+        Ok(self.call(func, fty, &[descr], "gc"))
+    }
+
+    /// The GC descriptor of one element of a container buffer (`gc_descr`):
+    /// a `List` buffer is an array of its element's descriptor, so the
+    /// collector reads the element's pointer slots at each stride. Managed only.
+    fn elem_descr(&self, elem: &Ty) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        gc.descriptor(self.ctx, self.module, self, elem)
+    }
+
+    /// `kelp_gc_alloc_array(descr, count)`: a zeroed GC array of `count`
+    /// elements of the descriptor's type. Managed only.
+    fn gc_array(&self, descr: Value<'a>, count: Value<'a>) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let (func, fty) = gc.alloc_array;
+        Ok(self.call(func, fty, &[descr, count], "gc.arr"))
+    }
+
+    /// Managed growth of a container buffer: a fresh GC array of `count`
+    /// elements with the first `old_bytes` of the old buffer copied over. The
+    /// old block is not freed; the collector reclaims it once unreachable.
+    fn gc_grow(
+        &self,
+        old: Value<'a>,
+        old_bytes: Value<'a>,
+        descr: Value<'a>,
+        count: Value<'a>,
+        func: LlvmFunction<'a>,
+    ) -> Result<Value<'a>, String> {
+        let buf = self.gc_array(descr, count)?;
+        self.check_alloc(buf, func)?;
+        let (memcpy, mty) = self.mem_fn("memcpy")?;
+        self.call(memcpy, mty, &[buf, old, old_bytes], "");
+        Ok(buf)
+    }
+
+    /// The descriptor of a `Map`'s entry record `{ key, value, live }`, which
+    /// is the element type of its entries buffer (`gc_descr::map_entry_layout`).
+    /// `name` is the map's C name, so each map gets one global. Managed only.
+    fn map_entry_descr(&self, key: &Ty, value: &Ty, name: &str) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let (size, align, offsets) = crate::gc_descr::map_entry_layout(self, key, value)?;
+        Ok(gc.descriptor_raw(
+            self.ctx,
+            self.module,
+            &format!("map_entry.{name}"),
+            size,
+            align,
+            &offsets,
+        ))
+    }
+
+    /// The environment descriptor of a capturing literal, one per literal
+    /// (`gc_descr::env_layout` over its captures). Managed only.
+    fn closure_env_descr(&self, fn_name: &str) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let env = self
+            .program
+            .functions
+            .iter()
+            .find(|f| f.name == fn_name)
+            .and_then(|f| f.env.as_ref())
+            .ok_or_else(|| no_value(&format!("the environment of '{fn_name}'")))?;
+        let captures: Vec<Ty> = env.fields.iter().map(|(_, ty)| ty.clone()).collect();
+        let (size, align, offsets) = crate::gc_descr::env_layout(self, &captures)?;
+        Ok(gc.descriptor_raw(
+            self.ctx,
+            self.module,
+            &format!("env.{fn_name}"),
+            size,
+            align,
+            &offsets,
+        ))
+    }
+
+    /// The one-field environment of a widened function value. It holds a code
+    /// pointer, which is not a GC pointer, so its descriptor is noscan.
+    fn coerce_env_descr(&self) -> Result<Value<'a>, String> {
+        let gc = self.gc.as_ref().ok_or_else(|| no_value("the managed GC runtime"))?;
+        let size = self.layout.abi_size_of(self.coerce_env_ty);
+        let align = self.layout.abi_alignment_of(self.coerce_env_ty) as u64;
+        Ok(gc.descriptor_raw(self.ctx, self.module, "coerce_env", size, align, &[]))
+    }
+
     /// `malloc(sizeof(<ty>))` lowered to a constant byte count, through the
     /// project's own allocator when the manifest configured one.
     fn malloc_for(&self, ty: Type<'a>) -> Result<Value<'a>, String> {
@@ -9682,7 +9946,7 @@ impl<'a> Gen<'a> {
     /// lists: the default libc allocator only, since a project's own allocator
     /// and a freestanding program keep their existing path.
     fn box_pooled(&self) -> bool {
-        self.alloc_fns.is_none() && self.freestanding.is_none()
+        !self.managed && self.alloc_fns.is_none() && self.freestanding.is_none()
     }
 
     /// The `Box<T>` allocation of `ty` in function `f`. Pooled, a block of a
@@ -9731,6 +9995,10 @@ impl<'a> Gen<'a> {
     /// inline; otherwise `kelp_box_free` runs, which also registers the thread.
     /// Unpooled, it is `heap_dealloc`.
     fn box_free_in(&self, f: LlvmFunction<'a>, ptr: Value<'a>, size: u64, align: u64) -> Result<(), String> {
+        // A managed build frees nothing: the collector reclaims the block.
+        if self.managed {
+            return Ok(());
+        }
         if !self.box_pooled() {
             return self.heap_dealloc(ptr, self.v_i64(size), align);
         }
@@ -9779,6 +10047,12 @@ impl<'a> Gen<'a> {
     /// MK9-S5-M1). The result is nullable; the caller runs `check_alloc`, which
     /// routes a null to the project's panic handler with "out of memory".
     fn heap_alloc(&self, bytes: Value<'a>, align: u64) -> Result<Value<'a>, String> {
+        if self.managed {
+            // Managed mode allocates only typed objects (`alloc_elem`). An
+            // untyped byte allocation has no descriptor, and a noscan one would
+            // hide the pointers a `List` or `Map` buffer holds from the collector.
+            return Err("managed mode: this container allocation has no GC type descriptor yet (WP3 follow-up)".to_string());
+        }
         match &self.alloc_fns {
             Some(a) => {
                 let align = self.v_i64(align);
@@ -9801,6 +10075,10 @@ impl<'a> Gen<'a> {
         bytes: Value<'a>,
         align: u64,
     ) -> Result<(), String> {
+        if self.managed {
+            // The collector reclaims the object; a managed build emits no free.
+            return Ok(());
+        }
         match &self.alloc_fns {
             Some(a) => {
                 let align = self.v_i64(align);
@@ -9825,6 +10103,9 @@ impl<'a> Gen<'a> {
         bytes: Value<'a>,
         align: Value<'a>,
     ) -> Result<(), String> {
+        if self.managed {
+            return Ok(());
+        }
         match &self.alloc_fns {
             Some(a) => {
                 self.call(a.dealloc.0, a.dealloc.1, &[ptr, bytes, align], "");
@@ -9851,6 +10132,9 @@ impl<'a> Gen<'a> {
         align: u64,
         func: LlvmFunction<'a>,
     ) -> Result<Value<'a>, String> {
+        if self.managed {
+            return Err("managed mode: this container growth has no GC type descriptor yet (WP3 follow-up)".to_string());
+        }
         match &self.alloc_fns {
             Some(a) => {
                 if let Some((realloc, rty)) = a.realloc {
@@ -10268,6 +10552,12 @@ impl<'a> Gen<'a> {
         let env = func.get_param(1);
         let arg_ptr = func.get_param(2);
         let out_ptr = func.get_param(3);
+        // Managed: the runtime thread joins the collector before its first
+        // allocation. It leaves in the runtime's cleanup handler.
+        if let Some(gc) = &self.gc {
+            let (attach, aty) = gc.thread_attach;
+            self.builder.build_call(attach, aty, &[], "");
+        }
         let arg_ty = self.lty2(&params[0])?;
         let arg = self.builder.build_load(arg_ty, arg_ptr, "arg");
         let ret_lty = llvm_ret_type(self.ctx, &self.structs, &self.containers, ret)?;
@@ -10280,6 +10570,9 @@ impl<'a> Gen<'a> {
         if yields {
             self.builder.build_store(value, out_ptr);
         }
+        // The thread leaves the collector in the runtime's cleanup handler
+        // (`kelp_thread_release`), which runs on a normal return and on a
+        // worker's panic alike, after the environment's drop.
         self.builder.build_ret_void();
         Ok(())
     }
@@ -10515,7 +10808,9 @@ impl<'a> Gen<'a> {
             let size = self.ld(i64t, size_slot, "size");
             let align_slot = self.builder.build_struct_gep(table_ty, table, 3, "align");
             let align = self.ld(i64t, align_slot, "align");
-            if self.box_pooled() {
+            if self.managed {
+                // The collector reclaims the block; only the drop above ran.
+            } else if self.box_pooled() {
                 let (free, fty) = self.libc_fn("kelp_box_free")?;
                 self.call(free, fty, &[data, size, align], "");
             } else {
@@ -11775,7 +12070,12 @@ impl<'a> Gen<'a> {
                 .builder
                 .build_int_binop(IntBinOp::Mul, cap, self.v_i64(elem_size), "old.bytes");
             let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
-            let buf = self.heap_realloc(data, old_size, size, elem_align, f)?;
+            let buf = if self.managed {
+                let descr = self.elem_descr(elem)?;
+                self.gc_grow(data, old_size, descr, final_cap, f)?
+            } else {
+                self.heap_realloc(data, old_size, size, elem_align, f)?
+            };
             self.st(buf, self.fld(list_ty, self_p, L_DATA, "data"));
             self.st(final_cap, self.fld(list_ty, self_p, L_CAP, "cap"));
             self.builder.build_br(done);
@@ -13949,7 +14249,11 @@ impl<'a> Gen<'a> {
             let (f, _) = self.start(&format!("{base}__of"), "entry")?;
             let v = f.get_param(0);
             let b = self.builder.build_alloca(box_ty, "b");
-            let p = self.box_alloc_in(f, elem_ty)?;
+            let p = if self.managed {
+                self.alloc_elem(elem, elem_ty)?
+            } else {
+                self.box_alloc_in(f, elem_ty)?
+            };
             self.check_alloc(p, f)?;
             self.st(v, p);
             self.st(p, self.fld(box_ty, b, 0, "value"));
@@ -14004,7 +14308,11 @@ impl<'a> Gen<'a> {
             let stored = self.block(f, "store");
             self.builder.build_cond_br(empty, null_bb, have_bb);
             self.builder.position_at_end(null_bb);
-            let p = self.box_alloc_in(f, elem_ty)?;
+            let p = if self.managed {
+                self.alloc_elem(elem, elem_ty)?
+            } else {
+                self.box_alloc_in(f, elem_ty)?
+            };
             self.check_alloc(p, f)?;
             self.st(p, slot);
             self.builder.build_br(stored);
@@ -14498,7 +14806,12 @@ impl<'a> Gen<'a> {
             self.builder.build_cond_br(zerocap, empty, sized);
             self.builder.position_at_end(sized);
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, cap, self.v_i64(entry_size), "bytes");
-            let entries = self.heap_alloc(bytes, entry_align)?;
+            let entries = if self.managed {
+                let descr = self.map_entry_descr(key, value, &base)?;
+                self.gc_array(descr, cap)?
+            } else {
+                self.heap_alloc(bytes, entry_align)?
+            };
             self.check_alloc(entries, f)?;
             self.st(entries, self.fld(map_ty, m, M_ENTRIES, "entries"));
             self.st(cap, self.fld(map_ty, m, M_ENTRY_CAP, "entry_cap"));
@@ -14614,7 +14927,13 @@ impl<'a> Gen<'a> {
             let old = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
             self.heap_dealloc(old, old_bytes, index_align)?;
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, final_cap, self.v_i64(4), "bytes");
-            let buf = self.heap_alloc(bytes, index_align)?;
+            let buf = if self.managed {
+                // The index is `u32` slots: a noscan array, so the collector never reads it.
+                let descr = self.elem_descr(&Ty::U32)?;
+                self.gc_array(descr, final_cap)?
+            } else {
+                self.heap_alloc(bytes, index_align)?
+            };
             self.check_alloc(buf, f)?;
             let (memset, sety) = self.mem_fn("memset")?;
             self.call(memset, sety, &[buf, self.v_i32(0), bytes], "");
@@ -14859,7 +15178,12 @@ impl<'a> Gen<'a> {
             let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, new_cap, self.v_i64(entry_size), "bytes");
             let old_bytes = self.builder.build_int_binop(IntBinOp::Mul, ecap, self.v_i64(entry_size), "old.bytes");
-            let new_entries = self.heap_realloc(entries, old_bytes, bytes, entry_align, f)?;
+            let new_entries = if self.managed {
+                let descr = self.map_entry_descr(key, value, &base)?;
+                self.gc_grow(entries, old_bytes, descr, new_cap, f)?
+            } else {
+                self.heap_realloc(entries, old_bytes, bytes, entry_align, f)?
+            };
             self.st(new_entries, self.fld(map_ty, self_p, M_ENTRIES, "entries"));
             self.st(new_cap, self.fld(map_ty, self_p, M_ENTRY_CAP, "entry_cap"));
             self.builder.build_br(have_space);
@@ -15145,6 +15469,142 @@ const E_KEY: u32 = 0;
 const E_VALUE: u32 = 1;
 const E_LIVE: u32 = 2;
 
+// ---- The builtin heap layouts: one source of truth (WP5, stage 1 plan 3.2) ----
+//
+// `LAYOUTS` and `PROTOTYPES` are the single list of the runtime's shared shapes.
+// The IR struct bodies (`Gen::new`, through `builtin_struct_types`) and the C
+// prelude (`program_c_source`) are both generated from them, so the two sides
+// of the LLVM backend cannot disagree. They use only `core` types and
+// `&'static` data, no kelpc types, so the Rust runtime's `abi` module can take
+// this block verbatim when WP0 lands `kelp-rt/src/abi.rs`; kelpc then reads the
+// table through its path dependency on that module instead of this copy.
+//
+// `runtime/kelp_rt.c` still spells the same structs for the C oracle until WP7.
+// `layout_tests` pins that copy against this table.
+
+/// The IR width of one field: `Ptr` is an opaque pointer, `I64` a 64-bit integer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldKind {
+    Ptr,
+    I64,
+}
+
+/// One field of a builtin layout: its IR width, and its C declaration exactly as
+/// the prelude writes it, without the trailing semicolon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Field {
+    pub kind: FieldKind,
+    pub c: &'static str,
+}
+
+/// One builtin heap layout: the key the compiler indexes it by, the C typedef
+/// name, and its fields in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub name: &'static str,
+    pub c_name: &'static str,
+    pub fields: &'static [Field],
+}
+
+/// The builtin heap layouts, field for field the structs `runtime/kelp_rt.c`
+/// defines (MK7 3.3): a pointer, a length and a capacity for `Bytes` and
+/// `String`, and a pointer and a length for `View`.
+pub const LAYOUTS: &[Layout] = &[
+    Layout {
+        name: "Bytes",
+        c_name: "kelp_Bytes",
+        fields: &[
+            Field { kind: FieldKind::Ptr, c: "unsigned char* data" },
+            Field { kind: FieldKind::I64, c: "size_t len" },
+            Field { kind: FieldKind::I64, c: "size_t cap" },
+        ],
+    },
+    Layout {
+        name: "String",
+        c_name: "kelp_String",
+        fields: &[
+            Field { kind: FieldKind::Ptr, c: "unsigned char* data" },
+            Field { kind: FieldKind::I64, c: "size_t len" },
+            Field { kind: FieldKind::I64, c: "size_t cap" },
+        ],
+    },
+    Layout {
+        name: "View",
+        c_name: "kelp_View",
+        fields: &[
+            Field { kind: FieldKind::Ptr, c: "const char* ptr" },
+            Field { kind: FieldKind::I64, c: "size_t len" },
+        ],
+    },
+];
+
+/// The C declarations the prelude writes for the runtime's helpers and process
+/// globals, in the order it writes them. A body that reaches a helper missing
+/// from this list fails `cc` (`-Werror=implicit-function-declaration`).
+pub const PROTOTYPES: &[&str] = &[
+    "void kelp_panic(const char* msg);",
+    "void kelp_panic_at(const char* msg, int p);",
+    "void kelp_panic_errno(const char* msg);",
+    "void kelp_panic_gai(const char* msg, int rc);",
+    "void kelp_panic_tls(const char* msg, const char* reason);",
+    "void kelp_io_flush_stdio(int fd);",
+    "bool kelp_utf8_valid(const unsigned char* p, size_t n);",
+    "kelp_Bytes kelp_bytes_alloc_raw(size_t n);",
+    "void kelp_bytes_drop(kelp_Bytes* b);",
+    "kelp_String kelp_String__empty(void);",
+    "kelp_String kelp_String__from_str(const char* text);",
+    "kelp_String kelp_String__from_bytes(kelp_Bytes b);",
+    "int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);",
+    "const char* kelp_env_lookup(const char* name);",
+    "int kelp_env_set(const char* name, const char* value);",
+    "int kelp_env_unset(const char* name);",
+    "void kelp_child_add(int pid);",
+    "bool kelp_child_has(int pid);",
+    "void kelp_child_remove(int pid);",
+    "extern _Thread_local int kelp_listen_loopback;",
+    "extern int kelp_argc;",
+    "extern char** kelp_argv;",
+];
+
+/// The C typedef of one layout, as the prelude writes it.
+fn c_typedef(layout: &Layout) -> String {
+    let mut out = String::from("typedef struct { ");
+    for field in layout.fields {
+        out.push_str(field.c);
+        out.push_str("; ");
+    }
+    out.push_str("} ");
+    out.push_str(layout.c_name);
+    out.push(';');
+    out
+}
+
+/// Every builtin layout's C typedef, one per line, in `LAYOUTS` order.
+fn c_layout_typedefs() -> String {
+    LAYOUTS.iter().map(|layout| c_typedef(layout) + "\n").collect()
+}
+
+/// The IR struct type of every builtin layout, keyed by `Layout::name`, with its
+/// body set. The names are the C typedef names, so a pointer to one crosses into
+/// the runtime with the layout the object was compiled for (MK7 3.3).
+fn builtin_struct_types<'a>(ctx: &'a Context) -> HashMap<String, Type<'a>> {
+    let mut out = HashMap::new();
+    for layout in LAYOUTS {
+        let ty = ctx.struct_type(layout.c_name);
+        let fields: Vec<Type<'a>> = layout
+            .fields
+            .iter()
+            .map(|field| match field.kind {
+                FieldKind::Ptr => ctx.opaque_ptr(),
+                FieldKind::I64 => ctx.i64(),
+            })
+            .collect();
+        ctx.struct_set_body(ty, &fields);
+        out.insert(layout.name.to_string(), ty);
+    }
+    out
+}
+
 /// The C translation unit carrying the compiler-supplied `extern fun` bodies
 /// this program reaches and the capability check's own C half (MK7 S3,
 /// plan §3.2 and §5), or `None` when it needs neither.
@@ -15228,11 +15688,9 @@ fn program_c_source(program: &Program) -> Option<String> {
     out.push_str(
         "/* The builtin heap layouts of `runtime/kelp_rt.c`: the extern bodies\n   \
          read and return these by value, so their field order and widths have to\n   \
-         be the runtime's own (MK7 3.3). */\n\
-         typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_Bytes;\n\
-         typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_String;\n\
-         typedef struct { const char* ptr; size_t len; } kelp_View;\n",
+         be the runtime's own (MK7 3.3). */\n",
     );
+    out.push_str(&c_layout_typedefs());
 
     // A body whose signature names a Kelp type needs that type to exist in this
     // file: the monomorphized containers and arrays it already repeated
@@ -15266,30 +15724,12 @@ fn program_c_source(program: &Program) -> Option<String> {
     // invented signature.
     out.push_str(
         "\n/* The runtime's own functions and process globals, defined in the\n   \
-         object `build.rs` compiles from `runtime/kelp_rt.c`. */\n\
-         void kelp_panic(const char* msg);\n\
-         void kelp_panic_at(const char* msg, int p);\n\
-         void kelp_panic_errno(const char* msg);\n\
-         void kelp_panic_gai(const char* msg, int rc);\n\
-         void kelp_panic_tls(const char* msg, const char* reason);\n\
-         void kelp_io_flush_stdio(int fd);\n\
-         bool kelp_utf8_valid(const unsigned char* p, size_t n);\n\
-         kelp_Bytes kelp_bytes_alloc_raw(size_t n);\n\
-         void kelp_bytes_drop(kelp_Bytes* b);\n\
-         kelp_String kelp_String__empty(void);\n\
-         kelp_String kelp_String__from_str(const char* text);\n\
-         kelp_String kelp_String__from_bytes(kelp_Bytes b);\n\
-         int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);\n\
-         const char* kelp_env_lookup(const char* name);\n\
-         int kelp_env_set(const char* name, const char* value);\n\
-         int kelp_env_unset(const char* name);\n\
-         void kelp_child_add(int pid);\n\
-         bool kelp_child_has(int pid);\n\
-         void kelp_child_remove(int pid);\n\
-         extern _Thread_local int kelp_listen_loopback;\n\
-         extern int kelp_argc;\n\
-         extern char** kelp_argv;\n",
+         object `build.rs` compiles from `runtime/kelp_rt.c`. */\n",
     );
+    for decl in PROTOTYPES {
+        out.push_str(decl);
+        out.push('\n');
+    }
 
     // The Kelp half of the runtime (`std/rt`), declared with the C backend's
     // own prototype writer. Only `path.normalize` calls into it today, and the
@@ -16263,7 +16703,7 @@ fn no_value(what: &str) -> String {
 
 #[cfg(test)]
 mod layout_tests {
-    use super::program_c_source;
+    use super::{builtin_struct_types, c_typedef, program_c_source, FieldKind, LAYOUTS, PROTOTYPES};
     use crate::lexer::Span;
     use crate::llvm_ffi::{Context, Module};
     use crate::tir::{Block, Function, Program};
@@ -16333,72 +16773,72 @@ mod layout_tests {
         };
         let source = program_c_source(&program).expect("one extern fun is one body");
 
-        // The layout text, written once in the prelude and once in the runtime.
+        // The layout text: the prelude's typedefs come from `LAYOUTS`, and the
+        // oracle's copy in `runtime/kelp_rt.c` must still define the same shapes.
         let runtime = strip_c_comments(include_str!("../runtime/kelp_rt.c"));
         let squeeze = |text: &str| text.split_whitespace().collect::<String>();
         let runtime = squeeze(&runtime);
-        let layouts = [
-            "typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_Bytes;",
-            "typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_String;",
-            "typedef struct { const char* ptr; size_t len; } kelp_View;",
-        ];
-        for want in layouts {
+        for layout in LAYOUTS {
+            let want = c_typedef(layout);
             assert!(
-                source.contains(want),
+                source.contains(&want),
                 "the extern prelude does not declare '{want}':\n{source}"
             );
             assert!(
-                runtime.contains(&squeeze(want)),
+                runtime.contains(&squeeze(&want)),
                 "'runtime/kelp_rt.c' does not define '{want}'"
             );
         }
 
-        // Every declared helper and global: named here so a body that starts
-        // calling a new one has to add it to both places at once.
-        let declarations = [
-            "void kelp_panic(const char* msg);",
-            "void kelp_panic_at(const char* msg, int p);",
-            "void kelp_panic_errno(const char* msg);",
-            "void kelp_panic_gai(const char* msg, int rc);",
-            "void kelp_panic_tls(const char* msg, const char* reason);",
-            "void kelp_io_flush_stdio(int fd);",
-            "bool kelp_utf8_valid(const unsigned char* p, size_t n);",
-            "kelp_Bytes kelp_bytes_alloc_raw(size_t n);",
-            "void kelp_bytes_drop(kelp_Bytes* b);",
-            "kelp_String kelp_String__empty(void);",
-            "kelp_String kelp_String__from_str(const char* text);",
-            "kelp_String kelp_String__from_bytes(kelp_Bytes b);",
-            "int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);",
-        ];
-        for decl in declarations {
+        // Every declared helper and global comes from `PROTOTYPES`: each one is
+        // written verbatim, and each helper is one `runtime/kelp_rt.c` defines.
+        for decl in PROTOTYPES {
             assert!(
                 source.contains(decl),
                 "the extern prelude does not declare '{decl}':\n{source}"
             );
-            let name = decl
-                .split_whitespace()
-                .nth(1)
-                .and_then(|rest| rest.split('(').next())
-                .expect("a declaration has a name");
-            assert!(
-                runtime.contains(&format!("{name}(")),
-                "'runtime/kelp_rt.c' does not define '{name}'"
-            );
+            if decl.contains('(') {
+                let name = c_decl_name(decl);
+                assert!(
+                    runtime.contains(&format!("{name}(")),
+                    "'runtime/kelp_rt.c' does not define '{name}'"
+                );
+            }
         }
-        // The two process globals: `build.rs` strips `static`, so the object
-        // defines them with the external linkage the prelude declares.
-        for decl in ["extern int kelp_argc;", "extern char** kelp_argv;"] {
-            assert!(
-                source.contains(decl),
-                "the extern prelude does not declare '{decl}':\n{source}"
-            );
-        }
-        for want in ["int kelp_argc = 0;", "char** kelp_argv = NULL;"] {
+        // The process globals: `build.rs` strips `static`, so the object defines
+        // them with the external linkage the prelude declares.
+        for want in [
+            "int kelp_argc = 0;",
+            "char** kelp_argv = NULL;",
+            "int kelp_listen_loopback = 0;",
+        ] {
             assert!(
                 runtime.contains(&squeeze(want)),
                 "'runtime/kelp_rt.c' does not define '{want}'"
             );
         }
+        // The loopback accessors (stage 1 plan 3.4) that the Rust cap glue calls
+        // in place of the variable. They are not in the prelude yet.
+        for want in [
+            "int kelp_listen_loopback_set(int v)",
+            "int kelp_listen_loopback_take(void)",
+        ] {
+            assert!(
+                runtime.contains(&squeeze(want)),
+                "'runtime/kelp_rt.c' does not define '{want}'"
+            );
+        }
+    }
+
+    /// The name a C declaration in `PROTOTYPES` declares: the identifier before
+    /// the parameter list, or before the semicolon for a global.
+    fn c_decl_name(decl: &str) -> &str {
+        let head = decl.split('(').next().expect("a declaration has a head");
+        let head = head.trim_end_matches(';');
+        head.split_whitespace()
+            .last()
+            .expect("a declaration names something")
+            .trim_start_matches('*')
     }
 
     /// The IR's builtin heap layouts must match the C structs in
@@ -16409,20 +16849,28 @@ mod layout_tests {
     /// bytes; this pins the agreement where it is made.
     #[test]
     fn the_builtin_heap_layouts_match_the_c_runtime() {
+        // The table itself: three layouts, and the field kinds the IR and the C
+        // typedefs are both written from.
+        let names: Vec<(&str, usize)> = LAYOUTS
+            .iter()
+            .map(|layout| (layout.name, layout.fields.len()))
+            .collect();
+        assert_eq!(names, [("Bytes", 3), ("String", 3), ("View", 2)]);
+        let bytes = LAYOUTS[0];
+        assert_eq!(
+            bytes.fields.iter().map(|f| f.kind).collect::<Vec<_>>(),
+            [FieldKind::Ptr, FieldKind::I64, FieldKind::I64]
+        );
+
         let ctx = Context::new();
         let module = Module::new(&ctx, "layout");
         let ptr = ctx.opaque_ptr();
-        let bytes = ctx.struct_type("kelp_Bytes");
-        ctx.struct_set_body(bytes, &[ptr, ctx.i64(), ctx.i64()]);
-        let string = ctx.struct_type("kelp_String");
-        ctx.struct_set_body(string, &[ptr, ctx.i64(), ctx.i64()]);
-        let view = ctx.struct_type("kelp_View");
-        ctx.struct_set_body(view, &[ptr, ctx.i64()]);
+        let types = builtin_struct_types(&ctx);
         // A named type is only printed once something references it, so one
         // declaration each is what puts the bodies into the module text.
-        module.add_function("probe_bytes", ctx.fn_type(bytes, &[ptr], false));
-        module.add_function("probe_string", ctx.fn_type(string, &[ptr], false));
-        module.add_function("probe_view", ctx.fn_type(view, &[ptr], false));
+        module.add_function("probe_bytes", ctx.fn_type(types["Bytes"], &[ptr], false));
+        module.add_function("probe_string", ctx.fn_type(types["String"], &[ptr], false));
+        module.add_function("probe_view", ctx.fn_type(types["View"], &[ptr], false));
         let ir = module.to_ir_string();
         assert!(
             ir.contains("%kelp_Bytes = type { ptr, i64, i64 }"),

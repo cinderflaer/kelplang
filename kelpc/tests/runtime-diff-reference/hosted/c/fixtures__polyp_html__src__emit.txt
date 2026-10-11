@@ -1,0 +1,27 @@
+unit: kelpc/tests/fixtures/polyp_html/src/emit.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polyp</title>
+<style>
+body { margin: 16px; font-family: sans-serif; }
+.polyp-column { display: flex; flex-direction: column; align-items: flex-start; }
+.polyp-row { display: flex; flex-direction: row; align-items: center; }
+.polyp-text { margin: 4px 0; }
+.polyp-bold { font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="polyp-column" style="gap:6px" data-kind="column"><p class="polyp-text" data-kind="text">Hello from Polyp</p><p class="polyp-text" data-kind="text">the count is 2</p><div style="height:6px" data-kind="spacer"></div><button type="button" data-kind="button">+1</button></div>
+</body>
+</html>
+
+--- stderr

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/byte_literal_is_not_ascii.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a byte literal is one ASCII character or a '\xNN' escape, and 'é' is not one: a non-ASCII character is a code point, so it belongs in a character literal
+  --> <root>/kelpc/tests/fixtures/byte_literal_is_not_ascii.kp:5:13
+run-status: not run

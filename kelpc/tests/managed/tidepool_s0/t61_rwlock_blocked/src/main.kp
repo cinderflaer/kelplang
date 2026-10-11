@@ -1,0 +1,36 @@
+impl "std/thread"
+impl "std/result"
+pd val table: RwLock<Gate> = RwLock.new(Gate(value = 0))
+
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(count: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < count {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    return total
+}
+
+// Step 0 (T61, section 18.13): a reader waits for a writer that collects inside
+// the write block. The wait is a native bracket, so the collection goes on.
+datac Gate(var value: i64)
+
+fun reader(t: &RwLock<Gate>).return: i64 {
+    return t.read { v -> v.value }
+}
+
+fun main() {
+    val t = thread.spawn(reader, &table)
+    table.write { v ->
+        val total = churn(300000)
+        v.value = 7
+    }
+    when thread.join(t) {
+        Ok(v) -> print("read")
+        Err(e) -> print(e.message)
+    }
+}

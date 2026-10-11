@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/enum_duplicate_arm.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: variant 'Circle' is matched more than once
+  --> <root>/kelpc/tests/fixtures/enum_duplicate_arm.kp:8:5
+run-status: not run

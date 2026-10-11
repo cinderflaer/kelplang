@@ -1,0 +1,6 @@
+name = "t62_caller_data_poll"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[target]
+mode = "managed"

@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/shift_panic_negative.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+-8
+--- stderr
+panic: shift amount out of range

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/datac_self_value.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Bad' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next: Box<Bad>', or a 'List<Bad>' for many)
+  --> <root>/kelpc/tests/fixtures/datac_self_value.kp:3:21
+run-status: not run

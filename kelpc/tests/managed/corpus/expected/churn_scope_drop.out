@@ -1,0 +1,9 @@
+drop token
+0
+drop token
+5000
+drop token
+10000
+drop token
+15000
+churn-scope-drop iters=20000 checksum=200138890

@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/visibility_bare_call/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: call to undefined function 'helper'
+  --> <root>/kelpc/tests/projects/visibility_bare_call/lib.kp:4:41
+run-status: not run

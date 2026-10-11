@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/scoped_param_stored.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: this is a scoped function value: it may only be passed to another 'scoped fun(...)' parameter, because it may not outlive the call it was written in — a plain function or closure parameter could store it or return it
+  --> <root>/kelpc/tests/fixtures/scoped_param_stored.kp:11:22
+run-status: not run

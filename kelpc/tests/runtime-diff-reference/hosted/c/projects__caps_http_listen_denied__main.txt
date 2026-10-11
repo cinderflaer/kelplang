@@ -1,0 +1,11 @@
+unit: kelpc/tests/projects/caps_http_listen_denied/main.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 1
+--- stdout
+--- stderr
+<root>/kelpc/tests/projects/caps_http_listen_denied/std/http.kp:2211:13: panic: '*:38917' is outside the net capability granted to module 'std/http'
+  granted:
+    127.0.0.1:1

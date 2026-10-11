@@ -1,0 +1,7 @@
+// Step 0 (Tidepool R17, T19, T50): a static mut of a heap type is refused, as a
+// static is, because the collector never scans module-scope values.
+static mut S: String = String.from_str("x")
+
+fun main() {
+    print(1)
+}

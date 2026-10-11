@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/try_in_main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: '?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' — it returns 'unit'
+  --> <root>/kelpc/tests/fixtures/try_in_main.kp:11:13
+run-status: not run

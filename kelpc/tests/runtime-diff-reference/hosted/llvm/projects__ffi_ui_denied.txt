@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/ffi_ui_denied
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'display.getpid' needs the 'ui' capability, which module 'util' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(ui = ["<pattern>"])`)
+  --> <root>/kelpc/tests/projects/ffi_ui_denied/src/util.kp:6:34
+run-status: not run

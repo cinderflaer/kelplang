@@ -1,0 +1,9 @@
+// A datac that owns a thread is a resource, even though hosted accepts it in a
+// Box. Managed mode refuses it by name in the Box.
+datac Worker(val t: Thread<i32>)
+
+fun keep(w: Box<Worker>) {
+}
+
+fun main() {
+}

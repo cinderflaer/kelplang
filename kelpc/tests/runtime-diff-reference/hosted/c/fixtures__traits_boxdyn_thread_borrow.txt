@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_boxdyn_thread_borrow.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'thread.spawn' cannot send '&dyn Shape': a borrowed trait object points at a value the frame owns, and the worker outlives that frame; move an owned 'Box<dyn Shape>' in instead, or share a 'pd' value
+  --> <root>/kelpc/tests/fixtures/traits_boxdyn_thread_borrow.kp:21:35
+run-status: not run

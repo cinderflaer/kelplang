@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/fn_value_mismatch.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: argument 'f' has type 'fun(i32).return: i32', expected 'fun(f64).return: f64'
+  --> <root>/kelpc/tests/fixtures/fn_value_mismatch.kp:8:17
+run-status: not run

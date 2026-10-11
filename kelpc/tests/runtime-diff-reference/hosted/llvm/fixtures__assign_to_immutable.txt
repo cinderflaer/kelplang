@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/assign_to_immutable.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot assign to 'x': not declared 'var'
+  --> <root>/kelpc/tests/fixtures/assign_to_immutable.kp:3:5
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/chan_send_a_lock.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: in 'std.sync.bounded<Mutex<i64>>': in 'std.sync.Sender<Mutex<i64>>': 'Mutex<i64>' cannot be a 'List' element: a mutex owns a runtime record and is reached by borrowing it, while a container's own routines move and drop an element like a plain location. Keep the mutex in a local or a field ('val m = Mutex.new(0)') and lock it there
+  --> <root>/kelpc/tests/fixtures/chan_send_a_lock.kp:7:20
+run-status: not run

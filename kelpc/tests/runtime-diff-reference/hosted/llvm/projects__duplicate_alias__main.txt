@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/duplicate_alias/main.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: alias 'circle' is already used by another import in this module
+  --> <root>/kelpc/tests/projects/duplicate_alias/main.kp:2:1
+run-status: not run

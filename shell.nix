@@ -38,7 +38,9 @@ pkgs.mkShell {
   # `ld.lld` (LLVM 21, the same line as `llvm` above). Stage 3's lookup in
   # `kelpc/src/sysroot.rs` finds it here; the hosted link switches to it in a
   # later change. This adds only the lld binaries and does not touch `cc`.
-  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config pkgs.gtk4.dev pkgs.llvmPackages_21.lld ];
+  # `gdb` is the debugger the debug-info test (`kelpc/tests/llvm_debug_info.rs`) runs
+  # to resolve a SIGFPE backtrace to a `.kp` line. Without it that test fails.
+  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config pkgs.gtk4.dev pkgs.llvmPackages_21.lld pkgs.gdb ];
 
   LLVM_SYS_211_PREFIX = llvmPrefix;
 }

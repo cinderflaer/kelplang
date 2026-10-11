@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/const_generics_mismatch.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: argument 'a' has type '[i32; 3]', expected '[i32; 4]' — an array's length is part of its type; pass an array of the expected length, or declare the parameter over any length (`fun f<const N: usize>(a: &[T; N])`)
+  --> <root>/kelpc/tests/fixtures/const_generics_mismatch.kp:8:20
+run-status: not run

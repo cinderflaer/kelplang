@@ -1,0 +1,29 @@
+// churn-scope-drop: a memory-only datac with a user drop. A drop on a memory-only type runs at
+// scope end. Each loop iteration creates a Token, a Box<String> and a List, and the drop prints
+// only every 5000th token id, so the output stays short. 20000 iterations.
+impl "std/str"
+
+datac Token(val id: i64, val text: String)
+
+fun mut Token.drop() {
+    if self.id % 5000 == 0 {
+        print("drop token")
+        print(self.id)
+    }
+}
+
+fun main() {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < 20000 {
+        val num = str.from_i64(i)
+        val t = Token(id = i, text = String.from_str(num.as_str()))
+        val boxed = Box.of(String.from_str("box"))
+        var xs: List<i64> = List.empty()
+        xs.push(i)
+        xs.push(t.text.len().to_i64())
+        total = (total + xs.get(0) + xs.get(1) + boxed.get().len().to_i64()) % 1000000007
+        i = i + 1
+    }
+    print("churn-scope-drop iters=20000 checksum=$total")
+}

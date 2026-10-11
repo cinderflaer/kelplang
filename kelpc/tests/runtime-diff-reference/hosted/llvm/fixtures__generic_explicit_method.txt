@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_explicit_method.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'first_of' does not take type arguments — a method's type parameters come from its receiver
+  --> <root>/kelpc/tests/fixtures/generic_explicit_method.kp:9:11
+run-status: not run

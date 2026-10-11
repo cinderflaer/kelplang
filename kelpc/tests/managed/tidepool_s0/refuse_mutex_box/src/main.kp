@@ -1,0 +1,8 @@
+// Step 0 (Tidepool R16, T22, T50): a Mutex value that holds collected memory is
+// refused in managed mode, because the malloc'd record that holds it is not a root.
+
+pd val gate: Mutex<Box<i64>> = Mutex.new(Box.of(1))
+
+fun main() {
+    gate.lock { v -> print(1) }
+}

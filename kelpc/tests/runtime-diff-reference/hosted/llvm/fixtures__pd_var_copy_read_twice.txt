@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/pd_var_copy_read_twice.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+2
+20
+--- stderr

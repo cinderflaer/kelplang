@@ -1,0 +1,24 @@
+impl "std/thread"
+impl "std/result"
+// Step 0 (T62, section 18.14): a runtime loop over 64 MiB of caller data (the
+// UTF-8 check in String.from_bytes) polls the collector every 64 KiB, so a
+// collection on the main thread does not wait for it to end.
+fun check(n: i64) {
+    var b = Bytes.empty()
+    var i: i64 = 0
+    while i < n {
+        b.push(65)
+        i = i + 1
+    }
+    val s = String.from_bytes(b)
+    print(s.len())
+}
+
+fun main() {
+    val t = thread.spawn(check, 67108864)
+    print("main")
+    when thread.join(t) {
+        Ok(_) -> print("done")
+        Err(e) -> print(e.message)
+    }
+}

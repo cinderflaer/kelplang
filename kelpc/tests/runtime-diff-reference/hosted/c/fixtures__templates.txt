@@ -1,0 +1,12 @@
+unit: kelpc/tests/fixtures/templates.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+100% of {nothing} is 50%
+area = 12.566360
+r=2.000000 doubled=4.000000
+no newline here!
+--- stderr

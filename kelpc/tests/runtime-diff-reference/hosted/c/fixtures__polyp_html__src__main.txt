@@ -1,0 +1,6 @@
+unit: kelpc/tests/fixtures/polyp_html/src/main.kp
+backend: c
+build-status: 124
+--- build stdout
+--- build stderr
+run-status: not run

@@ -1,0 +1,7 @@
+unit: kelpc/tests/projects/caps_entry_pattern_denied
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_entry_pattern_denied/**' must start with '/'
+run-status: not run

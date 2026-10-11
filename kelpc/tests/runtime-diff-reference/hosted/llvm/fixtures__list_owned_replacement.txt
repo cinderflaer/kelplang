@@ -1,0 +1,18 @@
+unit: kelpc/tests/fixtures/list_owned_replacement.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+1
+solo
+replacement
+replacement
+other
+b
+2
+0
+2
+0
+--- stderr

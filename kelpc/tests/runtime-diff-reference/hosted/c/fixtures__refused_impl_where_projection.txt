@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/refused_impl_where_projection.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the call to 'std.iter.count' needs 'Keep<Plains>' to implement the trait 'Iterator': its impl needs 'I::Item' to implement 'std.fmt.Display', and it does not
+  --> <root>/kelpc/tests/fixtures/refused_impl_where_projection.kp:32:11
+run-status: not run

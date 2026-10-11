@@ -1,0 +1,10 @@
+unit: kelpc/tests/fixtures/defer_return_inside.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: a deferred action cannot contain 'return': the action runs while the block is being left, so it cannot leave it again
+  --> <root>/kelpc/tests/fixtures/defer_return_inside.kp:6:9
+  note: the 'defer' whose action this is
+  --> <root>/kelpc/tests/fixtures/defer_return_inside.kp:5:5
+run-status: not run

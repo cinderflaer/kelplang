@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/traits_dyn_unsafe_param.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: '&dyn Comparable' is not allowed: method 'same_as' takes a 'Self' parameter, which a trait object cannot pass (the vtable erases the concrete type); make the parameter a borrow of a concrete type, or use a generic function instead
+  --> <root>/kelpc/tests/fixtures/traits_dyn_unsafe_param.kp:9:13
+run-status: not run

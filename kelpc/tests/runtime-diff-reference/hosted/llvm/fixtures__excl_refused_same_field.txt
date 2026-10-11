@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_same_field.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's.items' as exclusive: already borrowed as shared
+  --> <root>/kelpc/tests/fixtures/excl_refused_same_field.kp:11:19
+run-status: not run

@@ -1,0 +1,11 @@
+unit: kelpc/tests/projects/ffi_unknown_pkg_config
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: pkg-config failed for kelp-nonexistent-pkg-9zz:
+Package kelp-nonexistent-pkg-9zz was not found in the pkg-config search path.
+Perhaps you should add the directory containing `kelp-nonexistent-pkg-9zz.pc'
+to the PKG_CONFIG_PATH environment variable
+No package 'kelp-nonexistent-pkg-9zz' found
+run-status: not run

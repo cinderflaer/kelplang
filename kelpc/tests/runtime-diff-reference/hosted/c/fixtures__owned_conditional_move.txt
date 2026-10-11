@@ -1,0 +1,11 @@
+unit: kelpc/tests/fixtures/owned_conditional_move.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+live
+fresh
+fresh
+--- stderr

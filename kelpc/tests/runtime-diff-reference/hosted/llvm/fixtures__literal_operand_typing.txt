@@ -1,0 +1,22 @@
+unit: kelpc/tests/fixtures/literal_operand_typing.kp
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+true
+4
+4
+3000000005
+3000000005
+-2
+-2
+false
+240
+240
+positive
+55
+55
+241
+--- stderr

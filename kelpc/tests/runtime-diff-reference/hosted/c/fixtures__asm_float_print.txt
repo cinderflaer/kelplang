@@ -1,0 +1,18 @@
+unit: kelpc/tests/fixtures/asm_float_print.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+2.500000
+0.250000
+0.125000
+n=7 half=2.500000 ok=false s=kelp
+2.500000 0.250000
+18446744073709551616.000000
+9223372036854775808.000000
+9223372036854775808.000000
+kelp
+w=kelp
+--- stderr

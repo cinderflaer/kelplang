@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_cannot_infer.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot infer type parameter 'T' of 'Option' here — annotate the binding (e.g. 'val x: Option<T> = ...') or pass an argument that determines it
+  --> <root>/kelpc/tests/fixtures/generic_cannot_infer.kp:9:16
+run-status: not run

@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/list_no_element_type.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: the element type of 'xs' is still open: nothing said what 'List.empty()' holds, and 'xs.push(v)' is what decides it. Write it on the binding instead ('var xs: List<i32> = List.empty()')
+  --> <root>/kelpc/tests/fixtures/list_no_element_type.kp:5:11
+run-status: not run

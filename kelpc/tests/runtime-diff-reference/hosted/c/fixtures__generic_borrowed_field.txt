@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_borrowed_field.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: in 'Holder<str>': field 'x' is a borrowed type ('str') — a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible — an owned 'String' is the way to keep text in one
+  --> <root>/kelpc/tests/fixtures/generic_borrowed_field.kp:6:12
+run-status: not run

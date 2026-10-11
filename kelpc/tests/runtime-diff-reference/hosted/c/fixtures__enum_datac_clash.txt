@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/enum_datac_clash.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Shape' is used for both a datac and an enum
+  --> <root>/kelpc/tests/fixtures/enum_datac_clash.kp:3:1
+run-status: not run

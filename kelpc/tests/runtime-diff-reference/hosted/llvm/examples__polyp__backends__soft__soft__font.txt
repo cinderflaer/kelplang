@@ -1,0 +1,8 @@
+unit: examples/polyp/backends/soft/soft/font.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot find module 'deps/polyp/backends/soft/soft/draw': expected '<root>/examples/polyp/backends/soft/soft/deps/polyp/backends/soft/soft/draw.kp'
+  --> <root>/examples/polyp/backends/soft/soft/font.kp:30:1
+run-status: not run

@@ -1,0 +1,27 @@
+unit: kelpc/tests/projects/x86_idt_layout
+backend: llvm
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+16
+0
+2
+4
+5
+6
+8
+12
+10
+0
+2
+160
+0
+8
+120
+128
+136
+144
+152
+--- stderr

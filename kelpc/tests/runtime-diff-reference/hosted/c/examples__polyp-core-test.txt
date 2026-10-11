@@ -1,0 +1,79 @@
+unit: examples/polyp-core-test
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+identical
+0
+0
+0
+0
+text
+0
+1
+0
+0
+reorder
+0
+0
+0
+2
+insert
+2
+0
+0
+0
+remove
+0
+0
+1
+0
+kind
+1
+0
+1
+0
+-- todo --
+2
+alpha
+false
+beta
+true
+7
+12
+17
+22
+22
+22
+22
+10
+5
+17
+true
+true
+1
+gamma
+
+end
+-- tree --
+column
+  row
+    entry id=0 "gamma"
+    button id=1 "add"
+  separator
+  scrolled
+    row #1
+      checkbox id=2 unchecked
+      text "alpha"
+      button id=3 "^"
+      button id=4 "x"
+    row #2
+      checkbox id=5 checked
+      text "beta"
+      button id=6 "^"
+      button id=7 "x"
+  progress 0.500
+
+--- stderr

@@ -1,0 +1,15 @@
+// Managed mode, end to end: a loop that allocates far more than the initial
+// 8 MiB heap holds. Each pass builds a two-cell chain on the heap and drops
+// it, so the collector must run to finish. The sum is N * N for N passes.
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun main() {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < 2000000 {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    print(total)
+}

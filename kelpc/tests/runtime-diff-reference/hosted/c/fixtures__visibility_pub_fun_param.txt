@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/visibility_pub_fun_param.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'describe' is exported but its signature names 'Hidden', which module 'visibility_pub_fun_param' does not export: add 'pub' to 'Hidden', or make 'describe' private
+  --> <root>/kelpc/tests/fixtures/visibility_pub_fun_param.kp:6:21
+run-status: not run

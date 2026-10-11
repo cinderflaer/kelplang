@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/try_borrowed.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: '?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value, not '&Option<i32>' — match it with 'when' or 'if let' instead
+  --> <root>/kelpc/tests/fixtures/try_borrowed.kp:9:13
+run-status: not run

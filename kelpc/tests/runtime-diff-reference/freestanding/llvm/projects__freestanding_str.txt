@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/freestanding_str
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: could not invoke 'ld.lld': No such file or directory (os error 2); a freestanding build needs 'ld.lld' on PATH
+--- nm -u
+(no image)

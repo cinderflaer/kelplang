@@ -1,0 +1,19 @@
+impl "std/thread"
+impl "std/result"
+// Step 0: scalar values in a thread and a lock stay accepted in managed mode.
+pd val gate: Mutex<Gate> = Mutex.new(Gate(value = 0))
+
+datac Gate(var value: i64)
+
+
+fun grab(g: &Mutex<Gate>).return: i64 {
+    return g.lock { v -> v.value + 5 }
+}
+
+fun main() {
+    val t = thread.spawn(grab, &gate)
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

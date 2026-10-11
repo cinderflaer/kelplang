@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/closure_capture_borrow.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a 'fun' literal cannot capture 's': it is a borrow ('str'), and the environment it would be stored in outlives the frame the borrow points into — capture an owned value, or pass it as a parameter of the literal
+  --> <root>/kelpc/tests/fixtures/closure_capture_borrow.kp:8:13
+run-status: not run

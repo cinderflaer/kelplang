@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/excl_refused_shared_arg.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot borrow 's.count' as exclusive: already borrowed as shared
+  --> <root>/kelpc/tests/fixtures/excl_refused_shared_arg.kp:12:18
+run-status: not run

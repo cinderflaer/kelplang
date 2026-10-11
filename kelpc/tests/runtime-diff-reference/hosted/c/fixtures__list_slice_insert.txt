@@ -1,0 +1,21 @@
+unit: kelpc/tests/fixtures/list_slice_insert.kp
+backend: c
+build-status: 0
+--- build stdout
+--- build stderr
+run-status: 0
+--- stdout
+apple
+fig
+pear
+true
+false
+2
+fig
+4
+fig
+apple
+fig
+3
+pear
+--- stderr

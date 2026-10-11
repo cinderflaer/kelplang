@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/caps_cwd/main.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: capability patterns are absolute paths — '__KELP_SCRATCH__/kelp_caps_cwd/**' must start with '/'
+  --> <root>/kelpc/tests/projects/caps_cwd/main.kp:4:18
+run-status: not run

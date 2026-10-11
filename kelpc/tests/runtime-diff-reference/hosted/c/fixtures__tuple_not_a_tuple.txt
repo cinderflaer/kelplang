@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/tuple_not_a_tuple.kp
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: a destructuring binding takes one tuple value apart, and this initializer is a 'i32': 'val (lo, hi) = ...' needs a tuple here ('(i32, i32)'), and a single value is bound with an ordinary 'val name = ...'
+  --> <root>/kelpc/tests/fixtures/tuple_not_a_tuple.kp:4:18
+run-status: not run

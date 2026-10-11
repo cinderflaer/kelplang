@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/unsafe_outside_block
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Ptr.read' is an unsafe operation: it can only be used inside 'unsafe { ... }' or in a function declared 'unsafe fun'
+  --> <root>/kelpc/tests/projects/unsafe_outside_block/src/main.kp:5:11
+run-status: not run

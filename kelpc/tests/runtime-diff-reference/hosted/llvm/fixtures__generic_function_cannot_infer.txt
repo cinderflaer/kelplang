@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/generic_function_cannot_infer.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: cannot infer type parameter 'T' of 'empty_of' here — annotate the binding (e.g. 'val x: empty_of<T> = ...') or pass an argument that determines it
+  --> <root>/kelpc/tests/fixtures/generic_function_cannot_infer.kp:5:14
+run-status: not run

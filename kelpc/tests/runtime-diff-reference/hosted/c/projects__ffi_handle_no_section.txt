@@ -1,0 +1,8 @@
+unit: kelpc/tests/projects/ffi_handle_no_section
+backend: c
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'extern type Buffer' is only legal in a module with a coral.toml '[extern."mem"]' section
+  --> <root>/kelpc/tests/projects/ffi_handle_no_section/src/mem.kp:4:5
+run-status: not run

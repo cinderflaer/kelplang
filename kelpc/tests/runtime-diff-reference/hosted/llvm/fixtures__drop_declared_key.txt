@@ -1,0 +1,8 @@
+unit: kelpc/tests/fixtures/drop_declared_key.kp
+backend: llvm
+build-status: 1
+--- build stdout
+--- build stderr
+error: 'Leaf.hash' cannot be declared: a type with a destructor is not deep-copyable, and a key pair is cloned into the map, so the resource would be freed twice (kernel stage 9, MK9-S6-M1)
+  --> <root>/kelpc/tests/fixtures/drop_declared_key.kp:8:1
+run-status: not run

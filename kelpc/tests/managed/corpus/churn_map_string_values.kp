@@ -1,0 +1,41 @@
+// churn-map-string-values: a Map<i64, String>. Insert 30000 keys, remove every odd key, insert
+// them again with new values (which replaces and drops the old String), then read back a sample.
+// 10 rounds.
+impl "std/str"
+
+fun main() {
+    var total: i64 = 0
+    var round: i64 = 0
+    while round < 10 {
+        var m: Map<i64, String> = Map.empty()
+        var i: i64 = 0
+        while i < 30000 {
+            val num = str.from_i64(i)
+            m.insert(key = i, v = String.from_str(num.as_str()))
+            i = i + 1
+        }
+        i = 1
+        while i < 30000 {
+            val gone = m.remove(key = i)
+            total = (total + gone.len().to_i64()) % 1000000007
+            i = i + 2
+        }
+        i = 1
+        while i < 30000 {
+            val num = str.from_i64(i + round)
+            m.insert(key = i, v = String.from_str(num.as_str()))
+            i = i + 2
+        }
+        i = 0
+        while i < 30000 {
+            if m.has(key = i) {
+                val v = m.get(key = i)
+                total = (total + v.len().to_i64() + i) % 1000000007
+            }
+            i = i + 7
+        }
+        total = (total + m.len().to_i64()) % 1000000007
+        round = round + 1
+    }
+    print("churn-map-string-values rounds=10 checksum=$total")
+}
