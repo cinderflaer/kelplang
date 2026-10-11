@@ -121,3 +121,5 @@ empty on release.
 - `path.split` slices each component from the view it already holds; a 20000-component split runs about 20 times faster.
 - `base64` and `base32` map each character by range instead of a `str.byte` lookup; about 2x and 1.7x faster on 2 MB buffers.
 - `str.from_f64` (and so `fmt.float`) formats once into a stack buffer when the text fits in 128 bytes; about 2x faster on 400000 two-decimal values.
+
+- `kelpc doc --format json` (with `--text` for stdin) and `kelpc stdlib --json --dir <dir>` give editor tools the declarations, spans, import aliases, trait impls, builtin members and shipped std sources as data.

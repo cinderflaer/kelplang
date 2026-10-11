@@ -202,6 +202,65 @@ pub fn shipped() -> &'static [&'static str] {
     ]
 }
 
+/// A declaration the compiler checks without a `.kp` body. `std/thread`
+/// documents its three calls in its source rather than declaring them (their
+/// signatures depend on what crosses the thread boundary), so a listing of the
+/// module's names has to get them from here.
+pub struct SyntheticItem {
+    /// The shipped module that the call belongs to.
+    pub module: &'static str,
+    pub name: &'static str,
+    /// `fun` for each call listed today.
+    pub kind: &'static str,
+    /// The signature as the module's source documents it.
+    pub sig: &'static str,
+}
+
+/// The synthetic declarations of every shipped module. Adding or changing one
+/// changes `build_id`, so a cache keyed by it is never read for a new table.
+pub const SYNTHETIC_ITEMS: &[SyntheticItem] = &[
+    SyntheticItem {
+        module: THREAD_MODULE,
+        name: "fence",
+        kind: "fun",
+        sig: "fun fence(order: Ordering)",
+    },
+    SyntheticItem {
+        module: THREAD_MODULE,
+        name: "spawn",
+        kind: "fun",
+        sig: "fun spawn<t, r>(entry: closure(move t).return: r, arg: move t).return: Thread<r>",
+    },
+    SyntheticItem {
+        module: THREAD_MODULE,
+        name: "join",
+        kind: "fun",
+        sig: "fun join<t>(handle: move Thread<t>).return: Result<t, ThreadErr>",
+    },
+];
+
+/// The synthetic declarations of `module`, in the table's order.
+pub fn synthetic_items(module: &str) -> Vec<&'static SyntheticItem> {
+    SYNTHETIC_ITEMS.iter().filter(|i| i.module == module).collect()
+}
+
+/// The identity of the stdlib table as this compiler ships it: the compiler's
+/// version, every shipped module's id and source hash, and the synthetic
+/// declarations. A change to any of them is a new build id (a 64-digit hex
+/// SHA-256), so the directory a listing writes to is never reused for a
+/// different table.
+pub fn build_id() -> String {
+    let mut text = format!("kelpc {}\n", env!("CARGO_PKG_VERSION"));
+    for id in shipped() {
+        let source = source(id).unwrap_or_default();
+        text.push_str(&format!("module {id} {}\n", crate::sha256::sha256_hex(source.as_bytes())));
+    }
+    for i in SYNTHETIC_ITEMS {
+        text.push_str(&format!("synthetic {} {} {} {}\n", i.module, i.name, i.kind, i.sig));
+    }
+    crate::sha256::sha256_hex(text.as_bytes())
+}
+
 /// The shipped modules the compiler's own audit list admits to `unsafe`
 /// (kernel stage 13), the stdlib's `[unsafe] modules`. A project's manifest is
 /// the list for its own modules; a module that ships *with* the compiler cannot

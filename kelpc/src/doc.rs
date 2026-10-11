@@ -86,6 +86,12 @@ pub struct Member {
     pub doc: Option<String>,
     /// 1-based line of the member in the file as written.
     pub line: usize,
+    /// 1-based line the member ends on.
+    pub end_line: usize,
+    /// Byte offsets `[start, end)` of the member's name in the source.
+    pub name_span: (usize, usize),
+    /// A method's own `pub`; a field or variant takes its declaration's.
+    pub is_pub: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -103,12 +109,25 @@ pub struct Item {
     /// The capability domains the body names through an imported gated module.
     pub body_domains: BTreeSet<String>,
     pub line: usize,
+    /// 1-based line the declaration ends on.
+    pub end_line: usize,
+    /// Byte offsets `[start, end)` of the declaration's name in the source.
+    pub name_span: (usize, usize),
 }
 
 #[derive(Clone, Debug)]
 pub struct Import {
     /// The line as written, `impl "std/fs" caps(fs = ["/tmp/**"])`.
     pub text: String,
+    /// The path between the quotes, `deps/argparse/lib`.
+    pub path: String,
+    /// The name the module is reached by: `default_alias(path)`, the rule
+    /// dependency resolution uses (`resolve.rs`).
+    pub alias: String,
+    /// 1-based line of the `impl`.
+    pub line: usize,
+    /// Byte offsets `[start, end)` of the whole import statement.
+    pub span: (usize, usize),
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +137,10 @@ pub struct TraitImpl {
     /// The implementing type, as written.
     pub ty: String,
     pub members: Vec<Member>,
+    /// 1-based line of the `impl`.
+    pub line: usize,
+    /// 1-based line the impl's closing brace is on.
+    pub end_line: usize,
 }
 
 #[derive(Debug, Default)]
@@ -490,6 +513,41 @@ impl<'a> Scanner<'a> {
         self.line_of(self.start(i)) + 1
     }
 
+    /// Byte offsets of the token at `i`.
+    fn tok_span(&self, i: usize) -> (usize, usize) {
+        (self.start(i), self.end(i))
+    }
+
+    /// Byte offset where the last real token before `end` (exclusive) ends.
+    fn last_end(&self, from: usize, end: usize) -> usize {
+        let mut e = end.min(self.toks.len());
+        while e > from
+            && matches!(self.kind(e - 1), TokenKind::Newline | TokenKind::Comma | TokenKind::Eof)
+        {
+            e -= 1;
+        }
+        if e <= from {
+            return self.start(from);
+        }
+        self.end(e - 1)
+    }
+
+    /// The 1-based line the last real token before `end` (exclusive) ends on,
+    /// skipping the newlines, commas and end of file that trail it. `from` is
+    /// the declaration's first token, the answer when nothing precedes `end`.
+    fn end_line_before(&self, from: usize, end: usize) -> usize {
+        let mut e = end.min(self.toks.len());
+        while e > from
+            && matches!(self.kind(e - 1), TokenKind::Newline | TokenKind::Comma | TokenKind::Eof)
+        {
+            e -= 1;
+        }
+        if e <= from {
+            return self.line1(from);
+        }
+        self.line_of(self.end(e - 1).saturating_sub(1)) + 1
+    }
+
     fn run(mut self) -> Scan {
         let mut scan = Scan::default();
         self.module_doc(&mut scan);
@@ -636,6 +694,8 @@ impl<'a> Scanner<'a> {
                     members: Vec::new(),
                     body_domains,
                     line,
+                    end_line: self.end_line_before(first, f.next),
+                    name_span: self.tok_span(f.name_at),
                 });
                 f.next
             }
@@ -654,7 +714,9 @@ impl<'a> Scanner<'a> {
                 let sig = self.text(first, close);
                 let doc = self.doc_above(first);
                 let members = self.fields(k + 1, close.saturating_sub(1));
-                scan.items.push(simple_item(Kind::Datac, name, sig, doc, is_pub, members, line));
+                let span = self.tok_span(j + 1);
+                let end_line = self.end_line_before(first, close);
+                scan.items.push(simple_item(Kind::Datac, name, sig, doc, is_pub, members, line, span, end_line));
                 close
             }
             TokenKind::Enum => {
@@ -668,7 +730,9 @@ impl<'a> Scanner<'a> {
                 let sig = self.text(first, open);
                 let doc = self.doc_above(first);
                 let members = self.variants(open + 1, close.saturating_sub(1));
-                scan.items.push(simple_item(Kind::Enum, name, sig, doc, is_pub, members, line));
+                let span = self.tok_span(j + 1);
+                let end_line = self.end_line_before(first, close);
+                scan.items.push(simple_item(Kind::Enum, name, sig, doc, is_pub, members, line, span, end_line));
                 close
             }
             TokenKind::Trait => {
@@ -682,7 +746,9 @@ impl<'a> Scanner<'a> {
                 let sig = self.text(first, open);
                 let doc = self.doc_above(first);
                 let members = self.block_members(open + 1, close.saturating_sub(1), true);
-                scan.items.push(simple_item(Kind::Trait, name, sig, doc, is_pub, members, line));
+                let span = self.tok_span(j + 1);
+                let end_line = self.end_line_before(first, close);
+                scan.items.push(simple_item(Kind::Trait, name, sig, doc, is_pub, members, line, span, end_line));
                 close
             }
             TokenKind::Extern if self.is_ident(j + 1, "type") => {
@@ -692,6 +758,8 @@ impl<'a> Scanner<'a> {
                 let end = self.skip_to_line_end(j);
                 let sig = self.text(first, end);
                 let doc = self.doc_above(first);
+                let span = self.tok_span(j + 2);
+                let end_line = self.end_line_before(first, end);
                 scan.items.push(simple_item(
                     Kind::ExternType,
                     name,
@@ -700,6 +768,8 @@ impl<'a> Scanner<'a> {
                     is_pub,
                     Vec::new(),
                     line,
+                    span,
+                    end_line,
                 ));
                 end
             }
@@ -725,7 +795,9 @@ impl<'a> Scanner<'a> {
                     }
                 }
                 let doc = self.doc_above(first);
-                scan.items.push(simple_item(kind, name, sig, doc, is_pub, Vec::new(), line));
+                let span = self.tok_span(k);
+                let end_line = self.end_line_before(first, end);
+                scan.items.push(simple_item(kind, name, sig, doc, is_pub, Vec::new(), line, span, end_line));
                 end
             }
             _ => self.skip_to_line_end(j),
@@ -750,9 +822,16 @@ impl<'a> Scanner<'a> {
             let text = self.text(j, end);
             let alias = path.rsplit('/').next().unwrap_or(&path).to_string();
             if let Some(d) = domain_of_module(&path) {
-                aliases.insert(alias, d.to_string());
+                aliases.insert(alias.clone(), d.to_string());
             }
-            scan.imports.push(Import { text });
+            let span = (self.start(j), self.last_end(j, end));
+            scan.imports.push(Import {
+                text,
+                alias: crate::resolve::default_alias(&path),
+                path,
+                line: self.line1(j),
+                span,
+            });
             return end;
         }
         let Some(open) = self.find_open_brace(j + 1) else {
@@ -766,6 +845,8 @@ impl<'a> Scanner<'a> {
                 trait_name: self.text(j + 1, f),
                 ty: self.text(f + 1, open),
                 members,
+                line: self.line1(j),
+                end_line: self.end_line_before(j, close),
             });
         }
         close
@@ -794,6 +875,9 @@ impl<'a> Scanner<'a> {
                     sig: self.text(first, end),
                     doc,
                     line: self.line1(first),
+                    end_line: self.end_line_before(first, end),
+                    name_span: self.tok_span(j + 1),
+                    is_pub: false,
                 });
                 j = end;
                 continue;
@@ -808,14 +892,19 @@ impl<'a> Scanner<'a> {
             if matches!(self.kind(k), TokenKind::Fun) {
                 if let Some(f) = self.function(first, k) {
                     let doc = self.doc_above(first);
+                    let is_pub = (first..k).any(|m| matches!(self.kind(m), TokenKind::Pub));
+                    let next = f.next.min(to).max(first + 1);
                     out.push(Member {
                         kind: MemberKind::Method,
                         name: f.name,
                         sig: f.sig,
                         doc,
                         line: self.line1(first),
+                        end_line: self.end_line_before(first, next),
+                        name_span: self.tok_span(f.name_at),
+                        is_pub,
                     });
-                    j = f.next.min(to).max(first + 1);
+                    j = next;
                     continue;
                 }
             }
@@ -872,6 +961,9 @@ impl<'a> Scanner<'a> {
                 sig: self.text(first, j),
                 doc,
                 line: self.line1(first),
+                end_line: self.end_line_before(first, j),
+                name_span: self.tok_span(k),
+                is_pub: false,
             });
         }
         out
@@ -909,6 +1001,9 @@ impl<'a> Scanner<'a> {
                 sig: self.text(first, j),
                 doc,
                 line: self.line1(first),
+                end_line: self.end_line_before(first, j),
+                name_span: self.tok_span(first),
+                is_pub: false,
             });
         }
         out
@@ -922,11 +1017,13 @@ impl<'a> Scanner<'a> {
             k += 1;
         }
         let a = self.ident_at(k)?;
+        let mut name_at = k;
         k += 1;
         if matches!(self.kind(k), TokenKind::Lt) {
             k = self.skip_angles(k);
         }
         let (name, receiver) = if matches!(self.kind(k), TokenKind::Dot) {
+            name_at = k + 1;
             (self.ident_at(k + 1)?, Some(a))
         } else {
             (a, None)
@@ -936,6 +1033,7 @@ impl<'a> Scanner<'a> {
         let unsafe_ = (first..fun_at).any(|m| self.is_ident(m, "unsafe"));
         Some(ParsedFun {
             name,
+            name_at,
             receiver,
             sig: self.text(first, header_end),
             header_end,
@@ -947,6 +1045,8 @@ impl<'a> Scanner<'a> {
 
 struct ParsedFun {
     name: String,
+    /// The token index of the name (after the receiver's dot, if any).
+    name_at: usize,
     receiver: Option<String>,
     sig: String,
     header_end: usize,
@@ -954,16 +1054,28 @@ struct ParsedFun {
     unsafe_: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn simple_item(
     kind: Kind,
     name: String,
     sig: String,
     doc: Option<String>,
     is_pub: bool,
-    members: Vec<Member>,
+    mut members: Vec<Member>,
     line: usize,
+    name_span: (usize, usize),
+    end_line: usize,
 ) -> Item {
+    // A datac's fields, an enum's variants and a trait's methods are public
+    // exactly when the declaration is.
+    if matches!(kind, Kind::Datac | Kind::Enum | Kind::Trait) {
+        for m in &mut members {
+            m.is_pub = is_pub;
+        }
+    }
     Item {
+        end_line,
+        name_span,
         kind,
         name,
         sig,
@@ -997,6 +1109,8 @@ pub struct Module {
 pub enum Format {
     Markdown,
     Html,
+    /// The declaration dump a tool reads (`json_document`), not a page set.
+    Json,
 }
 
 impl Format {
@@ -1004,6 +1118,7 @@ impl Format {
         match self {
             Format::Markdown => "md",
             Format::Html => "html",
+            Format::Json => "json",
         }
     }
 }
@@ -1680,8 +1795,143 @@ pub fn render(modules: &[Module], opts: &Options) -> Vec<(String, String)> {
                 out.push((p.file.clone(), render_html(p, &index)));
             }
         }
+        Format::Json => {
+            let builtins = crate::infer::builtin_signatures();
+            out.push(("doc.json".to_string(), json_document(modules, &builtins)));
+        }
     }
     out.into_iter().map(|(name, text)| (name, no_dashes(&text))).collect()
+}
+
+/// The `--format json` document: every module's declarations, members,
+/// imports and trait impls, and the compiler's builtin members, as one object.
+///
+/// Everything in it is in a fixed order: modules by id, declarations and
+/// imports in source order, builtins by key. Private items are included, with
+/// `is_pub` saying which they are, because a tool that completes or navigates
+/// needs every name. Spans are byte offsets into the file's text; lines are
+/// 1-based. A member's `is_pub` is its own `pub` for a method, and its
+/// declaration's for a field, a variant or a trait method.
+pub fn json_document(modules: &[Module], builtins: &[crate::infer::BuiltinSig]) -> String {
+    let mut sorted: Vec<&Module> = modules.iter().collect();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut o = String::from("{\"schema\":1,\"modules\":[");
+    for (i, m) in sorted.iter().enumerate() {
+        if i > 0 {
+            o.push(',');
+        }
+        let scan = &m.scan;
+        o.push_str(&format!(
+            "{{\"id\":{},\"file\":{},\"doc\":{},\"items\":[",
+            json_str(&m.id),
+            json_str(&m.path),
+            json_opt(scan.module_doc.as_deref()),
+        ));
+        for (k, item) in scan.items.iter().enumerate() {
+            if k > 0 {
+                o.push(',');
+            }
+            o.push_str(&format!(
+                "{{\"kind\":{},\"name\":{},\"receiver\":{},\"name_span\":{},\"line\":{},\"end_line\":{},\"sig\":{},\"doc\":{},\"is_pub\":{},\"members\":{}}}",
+                json_str(item.kind.word()),
+                json_str(&item.name),
+                json_opt(item.receiver.as_deref()),
+                json_span(item.name_span),
+                item.line,
+                item.end_line,
+                json_str(&item.sig),
+                json_opt(item.doc.as_deref()),
+                item.is_pub,
+                json_members(&item.members),
+            ));
+        }
+        o.push_str("],\"imports\":[");
+        for (k, im) in scan.imports.iter().enumerate() {
+            if k > 0 {
+                o.push(',');
+            }
+            o.push_str(&format!(
+                "{{\"path\":{},\"alias\":{},\"text\":{},\"line\":{},\"span\":{}}}",
+                json_str(&im.path),
+                json_str(&im.alias),
+                json_str(&im.text),
+                im.line,
+                json_span(im.span),
+            ));
+        }
+        o.push_str("],\"trait_impls\":[");
+        for (k, imp) in scan.impls.iter().enumerate() {
+            if k > 0 {
+                o.push(',');
+            }
+            o.push_str(&format!(
+                "{{\"trait\":{},\"target\":{},\"line\":{},\"end_line\":{},\"members\":{}}}",
+                json_str(&imp.trait_name),
+                json_str(&imp.ty),
+                imp.line,
+                imp.end_line,
+                json_members(&imp.members),
+            ));
+        }
+        o.push_str("]}");
+    }
+    o.push_str("],\"builtins\":[");
+    for (k, b) in builtins.iter().enumerate() {
+        if k > 0 {
+            o.push(',');
+        }
+        let params: Vec<String> = b
+            .params
+            .iter()
+            .map(|(name, ty)| format!("{{\"name\":{},\"ty\":{}}}", json_str(name), json_str(ty)))
+            .collect();
+        o.push_str(&format!(
+            "{{\"key\":{},\"type\":{},\"name\":{},\"associated\":{},\"params\":[{}],\"ret\":{}}}",
+            json_str(&b.key),
+            json_str(&b.type_name),
+            json_str(&b.name),
+            b.associated,
+            params.join(","),
+            json_str(&b.ret),
+        ));
+    }
+    o.push_str("]}\n");
+    o
+}
+
+fn json_members(members: &[Member]) -> String {
+    let rows: Vec<String> = members
+        .iter()
+        .map(|m| {
+            format!(
+                "{{\"kind\":{},\"name\":{},\"name_span\":{},\"line\":{},\"end_line\":{},\"sig\":{},\"doc\":{},\"is_pub\":{}}}",
+                json_str(m.kind.word()),
+                json_str(&m.name),
+                json_span(m.name_span),
+                m.line,
+                m.end_line,
+                json_str(&m.sig),
+                json_opt(m.doc.as_deref()),
+                m.is_pub,
+            )
+        })
+        .collect();
+    format!("[{}]", rows.join(","))
+}
+
+fn json_str(s: &str) -> String {
+    crate::diag::json_string(s)
+}
+
+fn json_opt(s: Option<&str>) -> String {
+    match s {
+        Some(s) => json_str(s),
+        None => "null".to_string(),
+    }
+}
+
+fn json_span((start, end): (usize, usize)) -> String {
+    format!("[{start},{end}]")
 }
 
 /// Replaces every en dash and em dash in a generated page with a hyphen, and
