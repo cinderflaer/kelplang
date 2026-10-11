@@ -8,7 +8,7 @@ numbers for the shipped backend slices are at the end of this file.*
 ## The decision
 
 The measured cost of `kelpc build` is almost all backend: LLVM optimization,
-code generation and the `cc` link. The front end (parse, check, borrow-check) is
+code generation and the link (`ld.lld` since 2026-10-10; `cc` before that). The front end (parse, check, borrow-check) is
 3 to 4 ms on the whole corpus. Slices 1 to 3 therefore keep the front end
 **whole-program** and split the backend into units:
 
@@ -390,7 +390,7 @@ path and `<cache>` a cache directory:
   is 133 to 136 ms; a cold incremental build is 141 to 156 ms, and the warm and
   one-line-edit builds are within about 10 ms of whole-program (128 to 142 ms,
   which is this host's noise plus or minus a few ms). A build that small is the
-  `cc` link plus a fixed per-unit overhead; there is almost no backend work to
+  link (`cc` at the time of the measurement, `ld.lld` since 2026-10-10) plus a fixed per-unit overhead; there is almost no backend work to
   save, and splitting one module into a unit plus `_support` adds two pieces of
   work where there was one. The mode is off by default for exactly this shape.
 - **It starts to pay once a program pulls in heavy `std` modules.** A ~100-line

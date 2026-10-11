@@ -1,6 +1,6 @@
 # The Kelp language
 
-Kelp is a small compiled language. `kelpc` lexes and parses a Kelp source tree, checks types and ownership, emits C, and calls `cc` to produce a native binary. Programs link nothing beyond libc, have no garbage collector, and reach the outside world only through capabilities a module declares.
+Kelp is a small compiled language. `kelpc` lexes and parses a Kelp source tree, checks types and ownership, emits C, and calls `ld.lld` to link a native binary (since 2026-10-10; before that it called `cc`). Programs link nothing beyond libc, have no garbage collector, and reach the outside world only through capabilities a module declares.
 
 This file is the language reference. It is written to be read start to finish by someone who wants to write a program, so it starts with the toolchain and ends with a complete example. Where another plan file disagrees with this one about syntax or style, this file is correct.
 
@@ -32,7 +32,7 @@ kelpc version                                     # the compiler's version
 
 The version `kelpc version` prints is the crate's `[package] version`, read at compile time, so it always names the release the binary was built from.
 
-The compiler needs a C compiler on `PATH` (`cc`, or `clang` through `CC`). The C stage is how a binary is produced today.
+The compiler needs `ld.lld` on `PATH` (or `KELPC_LLD` set to its path) to link a binary, as of 2026-10-10. The `extern fun` bodies are C, so a program that has one also needs a C compiler (`cc`, or `clang` through `CC`).
 
 ### 1.2 Hello world
 

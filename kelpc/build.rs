@@ -81,6 +81,23 @@ fn bake_build_info() {
     println!("cargo:rustc-env=KELPC_LLVM_VERSION={llvm}");
 }
 
+/// The directory holding OpenSSL's `libssl.so`: the `libdir` that `pkg-config`
+/// reports for `openssl`, when it holds the library. `cc -print-file-name` is the
+/// fallback, but on Nix the cc wrapper echoes the bare name for `libssl.so`
+/// (it does not search `NIX_LDFLAGS`), so `pkg-config` is the route that works there.
+fn tls_lib_dir() -> String {
+    let from_pkg_config = first_line(
+        Command::new("pkg-config")
+            .args(["--variable=libdir", "openssl"])
+            .output()
+            .ok(),
+    )
+    .map(PathBuf::from)
+    .filter(|d| d.join("libssl.so").is_file())
+    .map(|d| d.display().to_string());
+    from_pkg_config.unwrap_or_else(|| cc_file_dir("libssl.so"))
+}
+
 /// The directory holding `name` as `cc` sees it (`cc -print-file-name=<name>`),
 /// or `None` when `cc` does not know the file. The result is empty, not an
 /// error, so a build without a usable `cc` still succeeds: `sysroot.rs` then
@@ -99,17 +116,22 @@ fn cc_file_dir(name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Records the glibc crt, libc and gcc library directories for `sysroot.rs`
-/// (`KELPC_CRT_DIR`, `KELPC_LIBC_DIR`, `KELPC_GCC_LIB_DIR`). Build time only:
-/// kelpc itself does not run `cc` to find them.
+/// Records the glibc crt, libc, gcc library and libgcc_s directories for `sysroot.rs`
+/// (`KELPC_CRT_DIR`, `KELPC_LIBC_DIR`, `KELPC_GCC_LIB_DIR`, `KELPC_LIBGCC_S_DIR`).
+/// Build time only: kelpc itself does not run `cc` to find them.
 fn bake_sysroot_dirs() {
     println!("cargo:rerun-if-env-changed=CC");
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
     let crt = cc_file_dir("crti.o");
     let libc = cc_file_dir("libc.so");
     let gcc = cc_file_dir("crtbeginS.o");
+    let libgcc_s = cc_file_dir("libgcc_s.so");
+    let tls = tls_lib_dir();
     println!("cargo:rustc-env=KELPC_CRT_DIR={crt}");
     println!("cargo:rustc-env=KELPC_LIBC_DIR={libc}");
     println!("cargo:rustc-env=KELPC_GCC_LIB_DIR={gcc}");
+    println!("cargo:rustc-env=KELPC_LIBGCC_S_DIR={libgcc_s}");
+    println!("cargo:rustc-env=KELPC_TLS_LIB_DIR={tls}");
 }
 
 /// The variables a nested cargo must not inherit from this build script. The

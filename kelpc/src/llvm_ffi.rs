@@ -3281,19 +3281,20 @@ mod tests {
         });
         assert!(object.is_file(), "emit_object wrote no object file");
 
-        // Hand `cc` the file, as the link step does.
-        let link = Command::new("cc")
-            .arg(&object)
-            .arg("-o")
-            .arg(&executable)
-            .output()
-            .expect("could not invoke 'cc' to link the object");
-        assert!(
-            link.status.success(),
-            "cc failed linking '{}':\n{}",
-            object.display(),
-            String::from_utf8_lossy(&link.stderr)
-        );
+        // Link it the way a Kelp program is linked: `ld.lld` with the sysroot argv.
+        crate::driver::link_llvm_objects(
+            std::slice::from_ref(&object),
+            None,
+            &executable,
+            crate::opt::OptLevel::O0,
+            &[],
+            &[],
+            &[],
+            false,
+        )
+        .unwrap_or_else(|e| {
+            panic!("ld.lld failed linking '{}': {}", object.display(), e.message)
+        });
 
         let run = Command::new(&executable)
             .output()

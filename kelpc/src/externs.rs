@@ -807,6 +807,8 @@ mod tests {
         let bin = dir.join("recv_zero");
         let source_path = dir.join("recv_zero.c");
         std::fs::write(&source_path, &source).expect("the harness source is written");
+        // `cc` stays here on purpose: this is a C compile, not a link. `ld.lld` only
+        // links, and the harness is C source.
         let built = Command::new("cc")
             .args(["-O0", "-fwrapv", "-pthread", "-o"])
             .arg(&bin)

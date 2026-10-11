@@ -42,7 +42,8 @@ empty on release.
 ## compiler
 
 - The C text the `llvm` backend still emits (runtime headers, `extern fun` declarations, callback glue) moved from `codegen_c.rs` to `cdecl.rs`. Emitted output is unchanged.
-- `kelpc` now finds `ld.lld` (`KELPC_LLD`, then PATH) and has the hosted link argv builder in `sysroot.rs`. No link line has changed yet: builds still use `cc`.
+- The link step uses `ld.lld`, not `cc`: a build with no `cc` can link, and `KELPC_LLD` selects the `ld.lld` binary (otherwise the first one on PATH). `cc` still compiles the `extern fun` C bodies.
+- A TLS program finds OpenSSL's `libssl.so` and `libcrypto.so` through `pkg-config openssl` (then the build-time record, then the system directories), so a Nix build links without a hand-set library path.
 - `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C. Programs are unchanged: the C runtime is still the one linked.
 - `kelpc doc --format json` writes the documentation as JSON: declarations, spans, imports, trait impls and the compiler's builtin members (on branch lighthouse-support, not merged).
 - `kelpc doc --text` reads one file's source from stdin in place of the file, for editor tools; it does not print text (on branch lighthouse-support, not merged).

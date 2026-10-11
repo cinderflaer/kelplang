@@ -79,6 +79,8 @@ pub fn compile_c_object(
     std::fs::write(c_path, c_source).map_err(|e| CompileError {
         message: format!("could not write generated C to '{}': {e}", c_path.display()),
     })?;
+    // `cc` stays here on purpose: this is a C compile, not a link. `ld.lld` only
+    // links, and the `extern fun` bodies are C source that needs a C compiler.
     let mut command = Command::new("cc");
     command
         .arg("-c")
@@ -219,8 +221,8 @@ pub fn managed_archive() -> Result<PathBuf, CompileError> {
 /// program's `extern fun` object when there is one, then the libraries.
 ///
 /// `objects` must not be empty: a build that produced no object has nothing to
-/// link, and the caller reports that as its own error rather than letting `cc`
-/// invent a linker message for it.
+/// link, and the caller reports that as its own error rather than letting
+/// `ld.lld` invent a linker message for it.
 pub fn link_llvm_objects(
     objects: &[PathBuf],
     externs_object: Option<&Path>,
@@ -257,6 +259,8 @@ fn link_llvm_objects_with_archive(
     pkg_config_flags: &[String],
     tls: bool,
 ) -> Result<(), CompileError> {
+    // Found before anything is written, so a missing `ld.lld` leaves no temp file.
+    let sys = crate::sysroot::discover_here().map_err(|message| CompileError { message })?;
     let runtime_path = std::env::temp_dir().join(format!(
         "kelp_rt_{}_{}.o",
         std::process::id(),
@@ -270,54 +274,34 @@ fn link_llvm_objects_with_archive(
             runtime_path.display()
         ),
     })?;
-    let mut command = Command::new("cc");
-    command
-        .arg(opt.cc_flag())
-        .arg("-o")
-        .arg(out_path);
-    for object in objects {
-        command.arg(object);
-    }
-    command
-        .arg(&runtime_path)
-        // The runtime object holds `pthread_create`/`pthread_join` now (MK9-S3-M1
-        // stage C1), so the link has to name the threading library.
-        .arg("-pthread");
-    if let Some(externs) = externs_object {
-        command.arg(externs);
-    }
-    if let Some(archive) = gc_archive {
-        command.arg(archive);
-    }
-    command.arg("-lm");
-    for flag in dir_flags(&[], library_dirs) {
-        command.arg(flag);
-    }
-    // A package's `-L`/`-l` has to be on the link line too (MK9-S1-M1).
-    for flag in pkg_config_flags {
-        command.arg(flag);
-    }
-    // `std/tls`'s externs need the system OpenSSL.
-    if tls {
-        command.arg("-lssl").arg("-lcrypto");
-    }
-    // A `coral.toml` `[extern."<module id>"]` section's `library` (MK9-S1-M1)
-    // has to be on this link line too, or the build would fail with an
-    // undefined symbol.
-    for lib in link_libs {
-        command.arg(format!("-l{lib}"));
-    }
-    let output = command.guarded_output().map_err(|e| CompileError {
-        message: format!("could not invoke 'cc': {e}"),
-    })?;
-    // The object is embedded in `kelpc`; the file was only a place for `cc` to
-    // read from, and leaving one per compile behind would be litter.
+    // `cc` took `-O<n>` here, which does nothing at link time; `ld.lld` has no such flag.
+    let _ = opt;
+    let argv = crate::sysroot::hosted_link_argv(
+        &sys,
+        &crate::sysroot::HostedLink {
+            out: out_path,
+            objects,
+            runtime_obj: &runtime_path,
+            externs_obj: externs_object,
+            gc_archive,
+            library_dirs,
+            pkg_config_flags,
+            tls,
+            link_libs,
+        },
+    );
+    let output = Command::new(&sys.ld_lld).args(&argv).guarded_output();
+    // The object is embedded in `kelpc`; the file was only a place for the linker
+    // to read from, and leaving one per compile behind would be litter.
     let _ = std::fs::remove_file(&runtime_path);
+    let output = output.map_err(|e| CompileError {
+        message: format!("could not invoke '{}': {e}", sys.ld_lld.display()),
+    })?;
 
     if !output.status.success() {
         return Err(CompileError {
             message: format!(
-                "cc failed:\n{}",
+                "ld.lld failed:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ),
         });
@@ -342,7 +326,13 @@ pub fn link_freestanding_object(
     linker_script: &Path,
     out_path: &Path,
 ) -> Result<(), CompileError> {
-    let output = Command::new("ld.lld")
+    // The same `ld.lld` lookup as a hosted link: `KELPC_LLD`, then PATH.
+    let lld = crate::sysroot::find_ld_lld(
+        std::env::var_os(crate::sysroot::LLD_ENV).as_deref(),
+        std::env::var_os("PATH").as_deref(),
+    )
+    .map_err(|message| CompileError { message })?;
+    let output = Command::new(&lld)
         .arg("-T")
         .arg(linker_script)
         .arg("-o")
@@ -352,7 +342,8 @@ pub fn link_freestanding_object(
         .guarded_output()
         .map_err(|e| CompileError {
             message: format!(
-                "could not invoke 'ld.lld': {e}; a freestanding build needs 'ld.lld' on PATH"
+                "could not invoke '{}': {e}; a freestanding build needs 'ld.lld' (on PATH, or set KELPC_LLD)",
+                lld.display()
             ),
         })?;
     if !output.status.success() {

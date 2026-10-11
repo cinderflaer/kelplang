@@ -1,11 +1,10 @@
-#![allow(dead_code)] // Additive: no caller until the stage 3 link switch lands.
-
 //! Finds what a hosted link needs without running `cc`: the `ld.lld` program,
 //! the glibc crt and libc directories, the gcc library directory and the
 //! dynamic loader. It also builds the `ld.lld` argv for a hosted program.
 //!
-//! This module is additive. Nothing calls it yet; the link paths in `driver.rs`
-//! still run `cc` (hosted) and `ld.lld` (freestanding) exactly as before.
+//! Every hosted link (a Kelp program, a managed program or a test program)
+//! runs `ld.lld` with the argv from [`hosted_link_argv`]. The freestanding link
+//! runs the same `ld.lld` binary, found by the same lookup.
 //!
 //! Lookup order for `ld.lld`: `KELPC_LLD` (an absolute path to a file), then
 //! `ld.lld` on `PATH`, then a named error. For the crt, libc and gcc directories:
@@ -16,6 +15,9 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::guard::GuardedOutput;
 
 /// Environment variable that names an `ld.lld` binary to use instead of PATH.
 pub const LLD_ENV: &str = "KELPC_LLD";
@@ -28,6 +30,11 @@ pub struct Sysroot {
     pub crt_dir: PathBuf,
     /// Holds `crtbeginS.o`, `crtendS.o` and `libgcc.a` (the gcc library directory).
     pub gcc_lib_dir: PathBuf,
+    /// Holds `libgcc_s.so`. On Nix it is in gcc's `lib` output, not beside `crtbeginS.o`.
+    pub libgcc_s_dir: PathBuf,
+    /// Holds `libssl.so` and `libcrypto.so`, when the system has them. A TLS link
+    /// with `None` here gets no `-L` for them, and the linker names the missing library.
+    pub tls_lib_dir: Option<PathBuf>,
     /// Holds `libc.so` and `libm.so`.
     pub libc_dir: PathBuf,
     /// The dynamic loader, passed as `--dynamic-linker`.
@@ -45,6 +52,12 @@ pub struct Search {
     /// Directories `build.rs` recorded, tried first. Each is checked like any other candidate.
     pub baked_crt_dir: Option<PathBuf>,
     pub baked_gcc_lib_dir: Option<PathBuf>,
+    /// The directory holding `libgcc_s.so`, tried before the others.
+    pub baked_libgcc_s_dir: Option<PathBuf>,
+    /// The `libdir` `pkg-config` reports for `openssl`, tried before the baked one.
+    pub pkg_config_tls_dir: Option<PathBuf>,
+    /// The directory `build.rs` recorded for OpenSSL's `libssl.so` and `libcrypto.so`.
+    pub baked_tls_lib_dir: Option<PathBuf>,
     pub baked_libc_dir: Option<PathBuf>,
     /// Directories searched after the baked ones, in order.
     pub system_dirs: Vec<PathBuf>,
@@ -58,6 +71,8 @@ pub struct Search {
 const CRT_FILES: &[&str] = &["Scrt1.o", "crti.o", "crtn.o"];
 const GCC_FILES: &[&str] = &["crtbeginS.o", "crtendS.o", "libgcc.a"];
 const LIBC_FILES: &[&str] = &["libc.so", "libm.so"];
+const LIBGCC_S_FILES: &[&str] = &["libgcc_s.so"];
+const TLS_FILES: &[&str] = &["libssl.so", "libcrypto.so"];
 const LOADER: &str = "ld-linux-x86-64.so.2";
 
 /// The `ld.lld` lookup with its inputs passed in. An override that is set and
@@ -133,9 +148,23 @@ pub fn discover(search: &Search) -> Result<Sysroot, String> {
     }
     let gcc_lib_dir = find_dir(&gcc_candidates, GCC_FILES, "gcc library")?;
 
+    let mut libgcc_candidates: Vec<PathBuf> = search.baked_libgcc_s_dir.iter().cloned().collect();
+    libgcc_candidates.extend(gcc_candidates.iter().cloned());
+    libgcc_candidates.extend(search.system_dirs.iter().cloned());
+    let libgcc_s_dir = find_dir(&libgcc_candidates, LIBGCC_S_FILES, "libgcc_s")?;
+
     let ld_linux = find_loader(&libc_dir, &search.ld_linux_fallbacks)?;
 
-    Ok(Sysroot { ld_lld, crt_dir, gcc_lib_dir, libc_dir, ld_linux })
+    // Optional: only a TLS link needs it, so a missing OpenSSL is not an error here.
+    let tls_candidates: Vec<PathBuf> = search
+        .pkg_config_tls_dir
+        .iter()
+        .cloned()
+        .chain(with_baked(&search.baked_tls_lib_dir, &search.system_dirs))
+        .collect();
+    let tls_lib_dir = find_dir(&tls_candidates, TLS_FILES, "OpenSSL").ok();
+
+    Ok(Sysroot { ld_lld, crt_dir, gcc_lib_dir, libgcc_s_dir, tls_lib_dir, libc_dir, ld_linux })
 }
 
 /// `discover` with the real environment and the usual Linux locations.
@@ -146,6 +175,9 @@ pub fn discover_here() -> Result<Sysroot, String> {
         path: std::env::var_os("PATH"),
         baked_crt_dir: dir(option_env!("KELPC_CRT_DIR")),
         baked_gcc_lib_dir: dir(option_env!("KELPC_GCC_LIB_DIR")),
+        baked_libgcc_s_dir: dir(option_env!("KELPC_LIBGCC_S_DIR")),
+        pkg_config_tls_dir: pkg_config_libdir("openssl"),
+        baked_tls_lib_dir: dir(option_env!("KELPC_TLS_LIB_DIR")),
         baked_libc_dir: dir(option_env!("KELPC_LIBC_DIR")),
         system_dirs: [
             "/usr/lib/x86_64-linux-gnu",
@@ -165,6 +197,20 @@ pub fn discover_here() -> Result<Sysroot, String> {
             .collect(),
     };
     discover(&search)
+}
+
+/// The `libdir` `pkg-config` reports for `pkg`, or `None` when `pkg-config` is
+/// absent or does not know the package. Spawns one process, at discovery time only.
+fn pkg_config_libdir(pkg: &str) -> Option<PathBuf> {
+    let out = Command::new("pkg-config")
+        .args(["--variable=libdir", pkg])
+        .guarded_output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!text.is_empty()).then(|| PathBuf::from(text))
 }
 
 fn with_baked(baked: &Option<PathBuf>, system: &[PathBuf]) -> Vec<PathBuf> {
@@ -195,7 +241,7 @@ fn is_executable(path: &Path) -> bool {
 }
 
 /// The inputs of one hosted link, the same ones `driver.rs::link_llvm_objects`
-/// receives today.
+/// receives.
 pub struct HostedLink<'a> {
     pub out: &'a Path,
     /// The unit objects, in order.
@@ -203,6 +249,9 @@ pub struct HostedLink<'a> {
     /// The runtime object's path (written to a temp file by the caller).
     pub runtime_obj: &'a Path,
     pub externs_obj: Option<&'a Path>,
+    /// The managed build's collector archive, after the externs object and
+    /// before `-lm`. `None` for an unmanaged build.
+    pub gc_archive: Option<&'a Path>,
     /// `coral.toml` library directories, as `-L` values.
     pub library_dirs: &'a [String],
     /// Package flags from pkg-config. Only `-L` and `-l` survive; compile-only
@@ -219,7 +268,8 @@ pub struct HostedLink<'a> {
 /// that would add them is not in the path.
 ///
 /// Differences from the `cc` argv: no `-O<n>` (it does nothing at link time)
-/// and no `-pthread` on the link, which becomes `-lpthread`.
+/// and no `-pthread` on the link, which becomes `-lpthread`. The collector
+/// archive, when there is one, goes after the externs object.
 pub fn hosted_link_argv(sys: &Sysroot, link: &HostedLink) -> Vec<OsString> {
     let mut a: Vec<OsString> = Vec::new();
     let push = |a: &mut Vec<OsString>, s: &str| a.push(OsString::from(s));
@@ -244,12 +294,19 @@ pub fn hosted_link_argv(sys: &Sysroot, link: &HostedLink) -> Vec<OsString> {
     if let Some(externs) = link.externs_obj {
         a.push(externs.as_os_str().to_owned());
     }
+    if let Some(archive) = link.gc_archive {
+        a.push(archive.as_os_str().to_owned());
+    }
 
     let mut lib_dirs: Vec<PathBuf> = vec![
         sys.crt_dir.clone(),
         sys.gcc_lib_dir.clone(),
+        sys.libgcc_s_dir.clone(),
         sys.libc_dir.clone(),
     ];
+    if link.tls {
+        lib_dirs.extend(sys.tls_lib_dir.iter().cloned());
+    }
     lib_dirs.extend(link.library_dirs.iter().map(PathBuf::from));
     for dir in &lib_dirs {
         let mut flag = OsString::from("-L");
@@ -281,8 +338,15 @@ pub fn hosted_link_argv(sys: &Sysroot, link: &HostedLink) -> Vec<OsString> {
     a.push(sys.gcc_lib_dir.join("crtendS.o").into_os_string());
     a.push(sys.crt_dir.join("crtn.o").into_os_string());
 
+    // Package `-L` directories count too: the cc wrapper gave those an rpath
+    // as well, so a binary runs without `LD_LIBRARY_PATH`.
+    let package_dirs: Vec<PathBuf> = link
+        .pkg_config_flags
+        .iter()
+        .filter_map(|flag| flag.strip_prefix("-L").map(PathBuf::from))
+        .collect();
     let mut rpaths: Vec<&Path> = Vec::new();
-    for dir in &lib_dirs {
+    for dir in lib_dirs.iter().chain(package_dirs.iter()) {
         if dir.starts_with("/nix/store") && !rpaths.contains(&dir.as_path()) {
             rpaths.push(dir.as_path());
         }
@@ -330,7 +394,7 @@ mod tests {
         fn new(name: &str) -> Tree {
             let root = scratch(name);
             touch(&root.join("glibc/lib"), &["Scrt1.o", "crti.o", "crtn.o", "libc.so", "libm.so", LOADER]);
-            touch(&root.join("gcc/lib/gcc/x86_64/15"), &["crtbeginS.o", "crtendS.o", "libgcc.a"]);
+            touch(&root.join("gcc/lib/gcc/x86_64/15"), &["crtbeginS.o", "crtendS.o", "libgcc.a", "libgcc_s.so"]);
             fs::create_dir_all(root.join("bin")).unwrap();
             make_exec(&root.join("bin/ld.lld"));
             Tree { root }
@@ -413,6 +477,7 @@ mod tests {
         assert_eq!(sys.crt_dir, t.glibc());
         assert_eq!(sys.libc_dir, t.glibc());
         assert_eq!(sys.gcc_lib_dir, t.gcc_root().join("15"));
+        assert_eq!(sys.libgcc_s_dir, t.gcc_root().join("15"));
         assert_eq!(sys.ld_linux, t.glibc().join(LOADER));
         t.drop_tree();
     }
@@ -449,6 +514,47 @@ mod tests {
         t.drop_tree();
     }
 
+    #[test]
+    fn sysroot_tls_dir_order_is_pkg_config_then_baked_then_system() {
+        let t = Tree::new("tls-order");
+        let pc = t.root.join("pkgconfig-lib");
+        let baked = t.root.join("baked-lib");
+        let system = t.root.join("system-lib");
+        for d in [&pc, &baked, &system] {
+            touch(d, &["libssl.so", "libcrypto.so"]);
+        }
+        let base = Search {
+            system_dirs: vec![system.clone()],
+            pkg_config_tls_dir: Some(pc.clone()),
+            baked_tls_lib_dir: Some(baked.clone()),
+            ..t.search()
+        };
+        assert_eq!(discover(&base).unwrap().tls_lib_dir, Some(pc.clone()));
+        let no_pc = Search { pkg_config_tls_dir: None, ..base.clone() };
+        assert_eq!(discover(&no_pc).unwrap().tls_lib_dir, Some(baked.clone()));
+        let no_baked = Search { baked_tls_lib_dir: None, ..no_pc };
+        assert_eq!(discover(&no_baked).unwrap().tls_lib_dir, Some(system.clone()));
+        let none = Search { system_dirs: vec![], ..no_baked };
+        assert_eq!(discover(&none).unwrap().tls_lib_dir, None);
+        t.drop_tree();
+    }
+
+    #[test]
+    fn sysroot_tls_dir_from_pkg_config_is_skipped_when_it_lacks_the_library() {
+        let t = Tree::new("tls-pc-missing");
+        let pc = t.root.join("pkgconfig-empty");
+        fs::create_dir_all(&pc).unwrap();
+        let baked = t.root.join("baked-lib");
+        touch(&baked, &["libssl.so", "libcrypto.so"]);
+        let search = Search {
+            pkg_config_tls_dir: Some(pc),
+            baked_tls_lib_dir: Some(baked.clone()),
+            ..t.search()
+        };
+        assert_eq!(discover(&search).unwrap().tls_lib_dir, Some(baked));
+        t.drop_tree();
+    }
+
     fn sample_sysroot(nix: bool) -> Sysroot {
         let base = if nix { "/nix/store/aaa-glibc/lib" } else { "/usr/lib/x86_64-linux-gnu" };
         let gcc = if nix { "/nix/store/bbb-gcc/lib/gcc/x86_64/15" } else { "/usr/lib/gcc/x86_64-linux-gnu/15" };
@@ -456,6 +562,8 @@ mod tests {
             ld_lld: PathBuf::from("/usr/bin/ld.lld"),
             crt_dir: PathBuf::from(base),
             gcc_lib_dir: PathBuf::from(gcc),
+            libgcc_s_dir: PathBuf::from(gcc),
+            tls_lib_dir: None,
             libc_dir: PathBuf::from(base),
             ld_linux: PathBuf::from(format!("{base}/{LOADER}")),
         }
@@ -477,6 +585,7 @@ mod tests {
             objects: &objects,
             runtime_obj: Path::new("/tmp/rt.o"),
             externs_obj: None,
+            gc_archive: None,
             library_dirs: &dirs,
             pkg_config_flags: &pkg,
             tls: false,
@@ -512,6 +621,7 @@ mod tests {
             objects: &objects,
             runtime_obj: Path::new("/tmp/rt.o"),
             externs_obj: Some(Path::new("/tmp/prog.externs.o")),
+            gc_archive: None,
             library_dirs: &dirs,
             pkg_config_flags: &pkg,
             tls: true,
@@ -547,6 +657,7 @@ mod tests {
             objects: &objects,
             runtime_obj: Path::new("/tmp/rt.o"),
             externs_obj: None,
+            gc_archive: None,
             library_dirs: &dirs,
             pkg_config_flags: &pkg,
             tls: false,
@@ -570,5 +681,28 @@ mod tests {
                 "/usr/lib/x86_64-linux-gnu/crtn.o",
             ]
         );
+    }
+
+    #[test]
+    fn sysroot_gc_archive_sits_after_the_externs_object_and_before_libm() {
+        let sys = sample_sysroot(false);
+        let objects = vec![PathBuf::from("/tmp/unit.o")];
+        let (dirs, pkg, libs): (Vec<String>, Vec<String>, Vec<String>) = Default::default();
+        let link = HostedLink {
+            out: Path::new("/tmp/managed"),
+            objects: &objects,
+            runtime_obj: Path::new("/tmp/rt.o"),
+            externs_obj: Some(Path::new("/tmp/managed.externs.o")),
+            gc_archive: Some(Path::new("/tmp/libkelp_gc.a")),
+            library_dirs: &dirs,
+            pkg_config_flags: &pkg,
+            tls: false,
+            link_libs: &libs,
+        };
+        let argv = strings(&hosted_link_argv(&sys, &link));
+        let ext = argv.iter().position(|a| a == "/tmp/managed.externs.o").unwrap();
+        let gc = argv.iter().position(|a| a == "/tmp/libkelp_gc.a").unwrap();
+        let libm = argv.iter().position(|a| a == "-lm").unwrap();
+        assert!(ext < gc && gc < libm, "{argv:?}");
     }
 }

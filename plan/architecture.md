@@ -52,7 +52,7 @@ x/
       tir.rs                  # typed IR; every node carries its resolved Ty and Span
       borrowck.rs              # move checker (MK1-S3-M1), borrow checker (MK1-S4-M1), drop (MK3)
       codegen_c.rs             # typed IR -> C source text (removed 2026-10-10, stage 2 step A; the C text the LLVM backend still needs lives in cdecl.rs)
-      driver.rs                # orchestrates pipeline, invokes `cc`
+      driver.rs                # orchestrates pipeline, invokes `ld.lld` to link (since 2026-10-10; `cc` only compiles the `extern fun` C bodies)
       resolve.rs              # project/manifest loading, `impl` imports, module naming (MK2-S1-M1), capability gating (MK4-S1-M1); `impl Trait for Type` methods are merged here with `Self` substituted
       deprecated.rs           # the register of outdated syntax, and the `outdated:` finding (open item 74)
       diag.rs                 # cross-file diagnostics: module id -> file/line/col (MK2-S1-M1)
@@ -759,7 +759,7 @@ The rejected alternative: emit stdlib bodies directly from `codegen_c.rs` as C s
 
 Details:
 - Stdlib version is pinned to the compiler version. No `[stdlib]` section in `coral.toml`, no registry, no third-party deps in v1.
-- Externals are linked through `cc`; `math` needs `-lm`.
+- Externals are linked through `ld.lld` (since 2026-10-10, with the argv in `kelpc/src/sysroot.rs`); `math` needs `-lm`.
 - Generated C for stdlib is cached per compiler build, not per user build.
 
 ### Naming and style rules for the stdlib

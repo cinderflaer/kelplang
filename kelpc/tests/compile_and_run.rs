@@ -14786,43 +14786,43 @@ fn the_x86_idt_gate_and_frame_offsets_are_what_the_gates_hardcode() {
     );
 }
 
-/// Builds `source` with a `cc` shim first on `PATH` that records every
-/// invocation's arguments, and returns the recorded lines.
-fn build_recording_cc_lines(source: &str) -> Vec<String> {
+/// Builds `source` with an `ld.lld` shim named by `KELPC_LLD` that records every
+/// invocation's arguments and then runs the real `ld.lld`. Returns the recorded
+/// lines, one per link.
+fn build_recording_ld_lld_lines(source: &str) -> Vec<String> {
     use std::os::unix::fs::PermissionsExt;
 
-    let real_cc = String::from_utf8(
+    let real_lld = String::from_utf8(
         Command::new("sh")
-            .args(["-c", "command -v cc"])
+            .args(["-c", "command -v ld.lld"])
             .output()
-            .expect("failed to look up cc")
+            .expect("failed to look up ld.lld")
             .stdout,
     )
     .unwrap()
     .trim()
     .to_string();
-    assert!(!real_cc.is_empty(), "no cc on PATH");
+    assert!(!real_lld.is_empty(), "no ld.lld on PATH");
 
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
     let bin = out_path(&name);
     let dir = bin.with_extension("shim");
     std::fs::create_dir_all(&dir).unwrap();
-    let log = dir.join("cc.log");
+    let log = dir.join("ld.log");
     let _ = std::fs::remove_file(&log);
-    let shim = dir.join("cc");
+    let shim = dir.join("ld-lld");
     std::fs::write(
         &shim,
         format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\nexec '{real_cc}' \"$@\"\n",
+            "#!/bin/sh\necho \"$@\" >> '{}'\nexec '{real_lld}' \"$@\"\n",
             log.display()
         ),
     )
     .unwrap();
     std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default());
 
     let build = kelpc()
-        .env("PATH", path)
+        .env("KELPC_LLD", &shim)
         .arg("build")
         .arg(fixture(source))
         .arg("-o")
@@ -14835,10 +14835,16 @@ fn build_recording_cc_lines(source: &str) -> Vec<String> {
         String::from_utf8_lossy(&build.stderr)
     );
     std::fs::read_to_string(&log)
-        .expect("the cc shim was never called")
+        .expect("the ld.lld shim was never called")
         .lines()
         .map(str::to_string)
         .collect()
+}
+
+/// True when `flag` is one of the whitespace-separated arguments of a recorded
+/// ld.lld line.
+fn has_arg(line: &str, flag: &str) -> bool {
+    line.split_whitespace().any(|a| a == flag)
 }
 
 /// BUG-x7Qmd: a program that does not reach `std/tls` neither links OpenSSL nor
@@ -14846,11 +14852,11 @@ fn build_recording_cc_lines(source: &str) -> Vec<String> {
 /// files. A program that does reach it links both libraries.
 #[test]
 fn only_a_tls_program_links_openssl() {
-    let plain = build_recording_cc_lines("tests/fixtures/fs_path_family.kp");
-    assert!(!plain.is_empty());
+    let plain = build_recording_ld_lld_lines("tests/fixtures/fs_path_family.kp");
+    assert!(!plain.is_empty(), "no ld.lld link was recorded");
     for line in &plain {
         assert!(
-            !line.contains("-lssl") && !line.contains("-lcrypto"),
+            !has_arg(line, "-lssl") && !has_arg(line, "-lcrypto"),
             "a program without std/tls linked OpenSSL: {line}"
         );
     }
@@ -14863,9 +14869,10 @@ fn only_a_tls_program_links_openssl() {
         "a program without std/tls includes OpenSSL's headers"
     );
 
-    let tls = build_recording_cc_lines("tests/fixtures/https_try_dial.kp");
+    let tls = build_recording_ld_lld_lines("tests/fixtures/https_try_dial.kp");
+    assert!(!tls.is_empty(), "no ld.lld link was recorded for std/tls");
     assert!(
-        tls.iter().any(|l| l.contains("-lssl") && l.contains("-lcrypto")),
+        tls.iter().any(|l| has_arg(l, "-lssl") && has_arg(l, "-lcrypto")),
         "a program that reaches std/tls did not link OpenSSL: {tls:?}"
     );
 }
