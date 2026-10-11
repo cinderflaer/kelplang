@@ -1,6 +1,6 @@
-//! Managed mode, front end: `[target] mode = "managed"` is accepted by
-//! `kelpc check`, and a resource that would enter a container is refused by
-//! name. The fixtures live in `tests/managed/`.
+//! Front end of the shared pool: a project with no mode line (every hosted
+//! build) is accepted by `kelpc check`, and a resource that would enter a
+//! container is refused by name. The fixtures live in `tests/managed/`.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};

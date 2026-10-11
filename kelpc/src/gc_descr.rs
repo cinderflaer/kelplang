@@ -522,7 +522,7 @@ mod tests {
 
     /// Lower a project's entry module to IR text with the collector cap its
     /// manifest names, the value `kelpc build` hands `codegen_llvm::compile`.
-    /// A hosted project gets no cap.
+    /// A freestanding project gets no cap.
     pub(super) fn lower_project(dir: &Path) -> Result<String, String> {
         let mut sources = SourceMap::new();
         let loaded = resolve::load(dir, &mut sources, None, None).map_err(|d| format!("{d:?}"))?;
@@ -531,7 +531,7 @@ mod tests {
         let cap = loaded
             .project
             .target()
-            .is_managed()
+            .has_shared_pool()
             .then(|| loaded.project.target().heap_max_mib() << 20);
         let out = std::env::temp_dir().join(format!("kelpc-gc-project-{}", std::process::id()));
         std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;

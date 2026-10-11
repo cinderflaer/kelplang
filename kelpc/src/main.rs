@@ -580,14 +580,14 @@ fn build(
     // the manifest's `[build] incremental = true` both turn it on. A freestanding project is refused by name for now: its image
     // is one ELF with one entry stub and one panic state, which is a slice of
     // its own (`plan/incremental-compilation.md`).
-    // A managed build (WP2): the collector is linked in from its archive, which
-    // is looked up here, before any code is generated, so a missing archive is
-    // named before a link fails. It is whole-program too, since `kelp_gc_init`
-    // and the descriptors are one module's.
-    let managed = if loaded.project.target().is_managed() {
+    // Every hosted build has the shared pool (Tidepool): the collector is linked
+    // in from its archive, which is looked up here, before any code is
+    // generated, so a missing archive is named before a link fails. It is
+    // whole-program too, since `kelp_gc_init` and the descriptors are one module's.
+    let managed = if loaded.project.target().has_shared_pool() {
         if incremental_flag || loaded.project.incremental() {
             eprintln!(
-                "error: '{}' sets '[target] mode = \"managed\"', which '--incremental' cannot build yet: the collector's descriptors and init are whole-program",
+                "error: '{}' is a hosted build, which has the shared pool, and '--incremental' cannot build that yet: the collector's descriptors and init are whole-program",
                 path
             );
             return false;

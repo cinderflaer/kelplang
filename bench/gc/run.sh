@@ -80,7 +80,6 @@ make_project() {
         echo
         echo "[target]"
         if [ -n "$mode" ]; then
-            echo "mode = \"$mode\""
             echo "heap_max = $heap"
         else
             echo "mode = \"hosted\""
@@ -212,7 +211,7 @@ END {
     print ""
     print "- Machine: " cpu ", " mem " RAM, " host
     print "- kelpc: " kelpc
-    print "- Build: `kelpc build -O2` on the default LLVM backend. Managed rows set `mode = \"managed\"` and `heap_max` (MiB). Unmanaged rows have no mode line."
+    print "- Build: `kelpc build -O2` on the default LLVM backend. Managed rows set `heap_max` (MiB). Unmanaged rows set `mode = \"hosted\"`. Since the managed mode was removed, both kinds of row build the same shared-pool program."
     print "- Run wrapper: `( ulimit -v 2097152; ulimit -t 60; timeout 120 ... )`."
     print ""
     print "| bench | variant | status | wall s (median) | spread % | user s | sys s | peak RSS MiB | collections | pause total ms | pause max ms | managed / unmanaged wall |"

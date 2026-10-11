@@ -1,6 +1,3 @@
 name = "refuse_spawn_result_box"
 version = "0.1.0"
 entry = "src/main.kp"
-
-[target]
-mode = "managed"

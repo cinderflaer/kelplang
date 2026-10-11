@@ -29,6 +29,7 @@ empty on release.
 
 ## Changed
 
+- The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named, every hosted file may use `block` regions with ordinary code beside them, and the collector runs in every hosted build. Delete the mode line; `heap_max` is read in every hosted build.
 - A `String` argument is accepted where a `str` parameter is expected: it is borrowed for the call exactly as `.as_str()` would borrow it (11.2). A generic function or trait method's `str` parameter still needs `.as_str()`, and the compiler says so by name.
 
 - The Polyp examples use the Polyp v5 impl ids (`deps/polyp/core/core`, `deps/polyp/backends/gtk/polyp/lib`, `deps/polyp/backends/gtk/gtk`, `deps/polyp/backends/gtk/queue`, `deps/polyp/backends/soft/...`). The `polyp` namespace is unchanged. The v0 examples are frozen.

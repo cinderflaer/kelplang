@@ -8824,7 +8824,7 @@ fn check_program_pass(
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
         declared_keys: declared_keys.clone(),
         declared_drops: declared_drops.clone(),
-        managed: project.target().is_managed(),
+        managed: project.target().has_shared_pool(),
         heap_uses: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         exported: std::rc::Rc::new(collect_exports(program)),
         // `resolve.rs` has prefixed every handle name, so the set is already
