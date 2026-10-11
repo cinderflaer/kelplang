@@ -338,6 +338,42 @@ fn build_rust_runtime(manifest_dir: &Path, out_dir: &Path, variant: &RuntimeVari
     assert!(status.success(), "rustc failed to build the kelp-rt fallback archive");
 }
 
+/// Builds the collector archive `kelpc/gc` (crate `kelp_gc`, a staticlib with
+/// its own workspace) into `$OUT_DIR/kelp-gc/release/libkelp_gc.a`, and bakes
+/// that path in as `KELPC_GC_ARCHIVE`. A managed build links this archive when
+/// `KELP_GC_LIB` is not set, so no build environment needs the variable.
+fn build_collector(manifest_dir: &Path, out_dir: &Path) {
+    let gc_dir = manifest_dir.join("gc");
+    let target_dir = out_dir.join("kelp-gc");
+    let archive = target_dir.join("release").join("libkelp_gc.a");
+
+    for path in ["src", "include", "Cargo.toml", "Cargo.lock"] {
+        println!("cargo:rerun-if-changed={}", gc_dir.join(path).display());
+    }
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let mut cmd = Command::new(cargo);
+    cmd.current_dir(&gc_dir)
+        .args(["build", "--release", "--locked", "--offline", "--target-dir"])
+        .arg(&target_dir);
+    for (name, _) in std::env::vars_os() {
+        if let Some(name) = name.to_str() {
+            if is_outer_build_variable(name) {
+                cmd.env_remove(name);
+            }
+        }
+    }
+    let out = cmd
+        .output()
+        .expect("could not run cargo for the collector archive kelpc/gc");
+    assert!(
+        out.status.success() && archive.is_file(),
+        "kelpc/gc (libkelp_gc.a) failed to build: {}",
+        String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
+    );
+    println!("cargo:rustc-env=KELPC_GC_ARCHIVE={}", archive.display());
+}
+
 fn main() {
     bake_build_info();
     bake_sysroot_dirs();
@@ -347,5 +383,6 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
     build_rust_runtime(&manifest_dir, &out_dir, &HOSTED);
     build_rust_runtime(&manifest_dir, &out_dir, &MANAGED);
+    build_collector(&manifest_dir, &out_dir);
     println!("cargo:rerun-if-changed=build.rs");
 }

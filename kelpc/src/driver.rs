@@ -190,17 +190,20 @@ pub fn link_managed_object(
     )
 }
 
-/// The collector archive a managed build links: the path in `KELP_GC_LIB`,
-/// which must name an existing file. A managed build with no archive is an
-/// error that names the variable, never a link that fails on `kelp_gc_init`.
+/// The collector archive a managed build links. `KELP_GC_LIB` overrides it when
+/// set; otherwise it is the `libkelp_gc.a` that `build.rs` built from `kelpc/gc`
+/// (`KELPC_GC_ARCHIVE`). The path must name an existing file, so a managed build
+/// with no archive is an error that names the path and the variable, never a
+/// link that fails on `kelp_gc_init`.
 pub fn managed_archive() -> Result<PathBuf, CompileError> {
-    let path = std::env::var_os("KELP_GC_LIB").map(PathBuf::from).ok_or_else(|| CompileError {
-        message: "a managed build links the collector archive, and KELP_GC_LIB does not name it: set KELP_GC_LIB to the libkelp_gc.a built from kelpc/gc (cargo build --release)".to_string(),
-    })?;
+    let (path, source) = match std::env::var_os("KELP_GC_LIB") {
+        Some(p) => (PathBuf::from(p), "KELP_GC_LIB names"),
+        None => (PathBuf::from(env!("KELPC_GC_ARCHIVE")), "the build-time archive is"),
+    };
     if !path.is_file() {
         return Err(CompileError {
             message: format!(
-                "KELP_GC_LIB names '{}', which is not a file: build the collector archive from kelpc/gc",
+                "a managed build links the collector archive, and {source} '{}', which is not a file: set KELP_GC_LIB to a libkelp_gc.a built from kelpc/gc (cargo build --release in kelpc/gc)",
                 path.display()
             ),
         });
