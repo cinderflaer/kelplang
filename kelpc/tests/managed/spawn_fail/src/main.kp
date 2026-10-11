@@ -1,0 +1,17 @@
+// Managed mode: spawns sleeping workers until pthread_create fails under the
+// test's address-space cap. The panic must say which errno the create returned,
+// and the spawn must release its own record first.
+impl "std/thread"
+
+fun nap(n: i64).return: i64 {
+    thread.sleep_ms(60000)
+    n
+}
+
+fun main() {
+    var i: i64 = 0
+    while i < 100000 {
+        val t = thread.spawn(nap, i)
+        i = i + 1
+    }
+}
