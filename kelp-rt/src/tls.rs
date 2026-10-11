@@ -226,11 +226,24 @@ unsafe fn say(text: *mut c_char, len: usize, msg: &CStr) {
     }
 }
 
-/// Replaces `*reason` with a fresh Kelp string holding `text`, freeing the old
+/// Releases the buffer of a Kelp string this module is replacing. A hosted
+/// buffer comes from `buf_alloc` (malloc), so it is freed here. A managed
+/// buffer lives in the collector's heap, which `free` must never see: the
+/// collector reclaims it once nothing refers to it (decision 10d).
+unsafe fn release_kelp_buf(data: *mut u8) {
+    #[cfg(not(feature = "managed"))]
+    unsafe {
+        crate::alloc::buf_free(data);
+    }
+    #[cfg(feature = "managed")]
+    let _ = data;
+}
+
+/// Replaces `*reason` with a fresh Kelp string holding `text`, releasing the old
 /// buffer first, as every failing body does.
 unsafe fn set_reason(reason: *mut KString, text: *const c_char) {
     unsafe {
-        libc::free((*reason).data as *mut c_void);
+        release_kelp_buf((*reason).data);
         *reason = kelp_String__from_str(text);
     }
 }
@@ -1044,7 +1057,7 @@ pub unsafe extern "C" fn kelp_std__tls__alpn_raw(handle: *mut c_void, out: *mut 
         }
         core::ptr::copy_nonoverlapping(data, text, len as usize);
         *text.add(len as usize) = 0;
-        libc::free((*out).data as *mut c_void);
+        release_kelp_buf((*out).data);
         *out = kelp_String__from_str(text as *const c_char);
         libc::free(text as *mut c_void);
         true
@@ -1078,7 +1091,7 @@ pub unsafe extern "C" fn kelp_std__tls__peer_subject_raw(handle: *mut c_void, ou
         *text.add(n as usize) = 0;
         BIO_free(bio);
         X509_free(cert);
-        libc::free((*out).data as *mut c_void);
+        release_kelp_buf((*out).data);
         *out = kelp_String__from_str(text);
         libc::free(text as *mut c_void);
         true
