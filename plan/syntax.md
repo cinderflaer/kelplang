@@ -638,7 +638,7 @@ What *does* convert, and what does not:
 
 - It fires on an **exact `String` expectation**, and nowhere else. `str.len(s)`, `str.eq(a, b)`, `fs.write_text(path, text)` and every other `str` parameter keep taking a borrowed view with no allocation.
 - A `str` or a `View` each copy the right number of bytes: a `View` may be a *slice* with no NUL after it, so it is copied by its length (`View.to_string`), never with `strlen`.
-- **Nothing converts the other way.** `String` -> `str` is a borrow with a lifetime, so it is written out: `s.as_str()`. `str` -> `View` and `String` -> `View` are written `s.view()`. `print(x)` (22.4) accepting a `String` directly is not an exception to this — `print` is its own builtin that takes a scalar, `str`, `String`, `Bytes` or `View` outright, not a call whose parameter converts; a declared function's `str` parameter still needs `.as_str()` from a `String` argument, the same as `str.concat`, `str.eq`, or anything else in the stdlib.
+- **Nothing converts the other way, except one call argument.** `String` -> `str` is a borrow with a lifetime. It is written `s.as_str()`, or passed directly as the argument of a `str` parameter (11.2), which borrows it exactly as `.as_str()` would. `str` -> `View` and `String` -> `View` are written `s.view()`. `print(x)` (22.4) accepting a `String` directly is not an exception to this, because `print` is its own builtin that takes a scalar, `str`, `String`, `Bytes` or `View` outright, not a call whose parameter converts.
 - A `View` is not a `str`: a slice has no NUL after it, so passing one where a `str` is expected is an error rather than a silent `strlen` past the end. Take `v.to_string()` when you need an owned `String`, or keep the `View` and use the length-aware operations (11.5).
 
 #### The `?` operator
@@ -1771,14 +1771,29 @@ print(c.area())          // the result of a call
 
 `str` is a borrowed view with a NUL terminator: string literals, slices of a `String`, and the return of `str.substring`. `String` is an owned UTF-8 buffer that must be built (11.3). `Bytes` is an owned raw buffer.
 
-A `String` never converts to `str` implicitly. Write `.as_str()`:
+A `String` becomes a `str` in one place: the argument of a call whose parameter type is exactly `str`. The argument is borrowed for the call, shared, exactly as `.as_str()` would borrow it, so the call is checked as if `.as_str()` had been written:
 
 ```kelp
+fun shout(text: str).return: usize {
+    print(text)
+    return str.len(text)
+}
+
 val s = String.from_str("hello")
-print(str.len(s.as_str()))          // ok
-print(str.len(s))                   // error: expected 'str', found 'String'
+print(shout(s))                     // ok: the same as shout(s.as_str())
+print(str.len(s))                   // ok: str.len takes a str
 val b = s.as_str()                  // b borrows s and cannot outlive it
+val c: str = s                      // error: expected 'str', found 'String' (not a call argument)
 ```
+
+The rule is narrow:
+
+- **Only a call's argument.** A `let`, an assignment, a `return`, a field or element, and a `datac`/`enum` constructor argument take no conversion. `val c: str = s` is refused, and so is a `String` inside a `datac` field of type `str`.
+- **Only a parameter of type exactly `str`.** `&str` and `View` parameters are not covered. A `View` passed to a `str` parameter is still refused (see 5.1).
+- **Only a plain function or method.** A `str` parameter of a generic function (`fun label<T>(v: T, text: str)`) or of a trait method is refused by name, with the fix: `argument 'text' has type 'String', expected 'str': generic function 'label' takes no implicit borrow of a 'String' for a 'str' parameter; write `.as_str()` on the argument`. The builtin `str` functions (`str.len`, `str.concat`, `str.eq`) and an ordinary method are plain calls, so they take it.
+- **Any other parameter type is unchanged.** `fun width(n: i32)` called as `width(s)` is refused with the ordinary mismatch: `argument 'n' has type 'String', expected 'i32'`.
+- **The same lifetime rule as an explicit borrow.** The borrow lasts for the call and nothing else. A call whose result borrows that argument (a function returning `&str`) needs the argument to be a variable or a field, exactly as `.as_str()` does: `f(make().as_str())` is refused for the same reason `f(make())` would be.
+- **A move in the same argument list is refused.** `show(s, take(s))`, where `take` takes `move String`, moves `s` while `show`'s argument still borrows it. The borrow rules refuse it, the same as `show(s.as_str(), take(s))`. Bind a copy first (`val t = s.clone()`) and pass `t` to `take` if both are needed.
 
 `Bytes` and `String` are validated on the way in: `String.from_bytes` and `Bytes.as_str` panic if the bytes are not valid UTF-8. `Bytes` is the type for binary data, and `fs.read`/`fs.write` use it so a file never goes through UTF-8 validation.
 
