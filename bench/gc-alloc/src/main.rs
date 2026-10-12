@@ -86,7 +86,15 @@ fn main() {
     // cycle, so the figure is the allocation path alone.
     let args: Vec<String> = std::env::args().collect();
     let nogc = args.get(1).map(|s| s == "nogc").unwrap_or(false);
-    let n: usize = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(if nogc { 1_500_000 } else { 10_000_000 });
+    // The optional second argument sets the count for every row. Without it, the
+    // nogc gate row (cell16) runs about 100 ms per round. The other two rows keep
+    // 1.5M: 8M objects of 72 B would not fit the 512 MiB heap cap.
+    let forced: Option<usize> = args.get(2).and_then(|a| a.parse().ok());
+    let (n_cell, n_other) = match (forced, nogc) {
+        (Some(n), _) => (n, n),
+        (None, true) => (8_000_000, 1_500_000),
+        (None, false) => (10_000_000, 10_000_000),
+    };
     let rounds = 3;
     unsafe {
         if nogc {
@@ -106,10 +114,10 @@ fn main() {
             // Warm up: map the blocks and the type table once.
             black_box(run_cell16(100_000));
         }
-        for (label, f) in [
-            ("cell16 (24 B)", run_cell16 as unsafe fn(usize) -> usize),
-            ("array8x8 (72 B)", run_array8x8 as unsafe fn(usize) -> usize),
-            ("obj200 (208 B)", run_obj200 as unsafe fn(usize) -> usize),
+        for (label, f, n) in [
+            ("cell16 (24 B)", run_cell16 as unsafe fn(usize) -> usize, n_cell),
+            ("array8x8 (72 B)", run_array8x8 as unsafe fn(usize) -> usize, n_other),
+            ("obj200 (208 B)", run_obj200 as unsafe fn(usize) -> usize, n_other),
         ] {
             let mut best = f64::MAX;
             for _ in 0..rounds {
@@ -122,5 +130,53 @@ fn main() {
             }
             report(label, n, best);
         }
+        if nogc {
+            // Untimed: the same work as the timed rows, checked. Every object must
+            // be distinct and hold the value written into it; the checksum of the
+            // values read back must match between the two binaries.
+            check_case("cell16 (24 B)", n_cell, alloc_cell);
+            check_case("array8x8 (72 B)", n_other, alloc_array8);
+            check_case("obj200 (208 B)", n_other, alloc_obj200);
+        }
     }
+}
+
+unsafe fn alloc_cell(_i: usize) -> *mut u8 {
+    unsafe { kelp_gc_alloc(&CELL16) }
+}
+
+unsafe fn alloc_array8(_i: usize) -> *mut u8 {
+    unsafe { kelp_gc_alloc_array(&ELEM8, 8) }
+}
+
+unsafe fn alloc_obj200(_i: usize) -> *mut u8 {
+    unsafe { kelp_gc_alloc(&OBJ200) }
+}
+
+/// Allocates `n` objects through `alloc`, writes each index into its object,
+/// then reads them all back. Prints `values_ok` (every read-back equals its
+/// index), `distinct` (no two objects share an address) and a checksum of the
+/// read-back values in allocation order. Runs after the timed rounds.
+unsafe fn check_case(label: &str, n: usize, alloc: unsafe fn(usize) -> *mut u8) {
+    unsafe { kelp_gc_collect() };
+    let mut ptrs: Vec<usize> = Vec::with_capacity(n);
+    for i in 0..n {
+        let p = unsafe { alloc(i) };
+        unsafe { (p as *mut usize).write(i) };
+        ptrs.push(p as usize);
+    }
+    let mut values_ok = true;
+    let mut sum: u64 = 0;
+    for (i, &p) in ptrs.iter().enumerate() {
+        let v = unsafe { (p as *const usize).read() };
+        values_ok &= v == i;
+        sum = sum.wrapping_mul(1_000_003).wrapping_add(v as u64);
+    }
+    let mut sorted = ptrs.clone();
+    sorted.sort_unstable();
+    let distinct = sorted.windows(2).all(|w| w[0] != w[1]);
+    println!(
+        "check {label:<22} n={n} values_ok={} distinct={} checksum={sum:#018x}",
+        values_ok as u8, distinct as u8
+    );
 }
