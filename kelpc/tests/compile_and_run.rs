@@ -1657,12 +1657,7 @@ fn fs_has_fallible_read_and_open() {
     // than a panic, and the invalid-UTF-8 case carries errno 0 because no
     // syscall failed. `try_open`'s mode is not a path argument: the `"r"`
     // below would be denied by the capability check if it were.
-    for stale in [
-        reroute_tmp("/tmp/kelp_fs_try_read.txt"),
-        reroute_tmp("/tmp/kelp_fs_try_read.bin"),
-    ] {
-        let _ = std::fs::remove_file(stale);
-    }
+    let _scratch = TestScratch::new();
     let target = rerouted_copy(&fixture("tests/fixtures/fs_fallible.kp"), "fs_fallible_src");
     assert_project_runs(
         "fs_fallible",
@@ -1675,7 +1670,7 @@ fn fs_has_fallible_read_and_open() {
 fn fs_mutators_have_fallible_twins() {
     // MISSING-k7Rwq: `None` is success, a failure is an `io.IoErr`, and the run
     // goes on after each one (ENOENT 2, EEXIST 17, ENOTDIR 20).
-    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_try_mut"));
+    let _scratch = TestScratch::new();
     let target = rerouted_copy(&fixture("tests/fixtures/fs_try_mutators.kp"), "fs_try_mutators_src");
     assert_project_runs(
         "fs_try_mutators",
@@ -1976,23 +1971,52 @@ fn scratch_root() -> &'static Path {
     })
 }
 
+/// The scratch directory of the running test. It sits under `scratch_root()`,
+/// so it is unique to this process, and it is named after the test (libtest
+/// names each test's thread after the test), so no two tests share it.
+fn test_scratch() -> PathBuf {
+    let test = std::thread::current().name().unwrap_or("main").to_string();
+    scratch_root().join(test)
+}
+
+/// Owns the running test's scratch directory. It is cleared when the test
+/// starts and removed when the guard drops, so a test leaves nothing behind
+/// whether it passes or panics. The process's scratch root is not removed: other
+/// tests in the same process may be creating their directories under it at
+/// the same moment, so the root is left for the OS temp cleanup.
+struct TestScratch(PathBuf);
+
+impl TestScratch {
+    fn new() -> Self {
+        let dir = test_scratch();
+        let _ = std::fs::remove_dir_all(&dir);
+        TestScratch(dir)
+    }
+}
+
+impl Drop for TestScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// The `std/fs` fixtures name their scratch paths as literal `/tmp/kelp_fs_*`
 /// text. Two suites running at once share the host's `/tmp`, so one suite's
 /// run could delete or read another's files, and the `fs_breadth` and
 /// `fs_set_mode` tests failed that way. `reroute_tmp` moves those paths under
-/// `scratch_root()`, which is unique to
-/// this process. Each fixture keeps its `/tmp` text on disk, so it still runs
-/// as written (the ignored golden sweep builds it that way).
+/// `test_scratch()`, so each test writes only under its own directory. Each
+/// fixture keeps its `/tmp` text on disk, so it still runs as written (the
+/// ignored golden sweep builds it that way).
 fn reroute_tmp(text: &str) -> String {
-    text.replace("/tmp/kelp_fs_", &format!("{}/kelp_fs_", scratch_root().display()))
+    text.replace("/tmp/kelp_fs_", &format!("{}/kelp_fs_", test_scratch().display()))
 }
 
 /// Writes a copy of `src` (a fixture file, or a project's `main.kp`) into a
 /// fresh directory named `dir_name` under `out_path`, with its scratch paths
-/// rerouted by `reroute_tmp`, and returns the copy to build. The scratch root
-/// is created first, so the program can write under it.
+/// rerouted by `reroute_tmp`, and returns the copy to build. The test's
+/// scratch directory is created first, so the program can write under it.
 fn rerouted_copy(src: &Path, dir_name: &str) -> PathBuf {
-    std::fs::create_dir_all(scratch_root()).expect("could not create the scratch root");
+    std::fs::create_dir_all(test_scratch()).expect("could not create the test's scratch directory");
     let dir = out_path(dir_name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("could not create the rerouted fixture directory");
@@ -5924,12 +5948,12 @@ fn fs_breadth_creates_walks_stats_copies_opens_and_removes_under_one_grant() {
     // string is not a path), `touch`, `walk`, `temp_path`, `remove_all`, all
     // behind the one `fs` grant, all in a scratch directory the program
     // creates and removes itself.
+    let _scratch = TestScratch::new();
     let target = rerouted_copy(&project("caps_fs_breadth").join("main.kp"), "caps_fs_breadth_src");
     let expected = reroute_tmp(
         "2\nline one\nline two\n18\ntrue\nfalse\ntrue\nfalse\ntop\ntrue\n7\n/tmp/kelp_fs_breadth_test/a/b/c/note.txt\ntrue\ntrue\nfalse\n",
     );
     assert_project_runs("caps_fs_breadth", &target, &expected);
-    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_breadth_test"));
 }
 
 #[test]
@@ -5981,16 +6005,13 @@ fn a_symlink_is_seen_reported_and_left_alone_by_the_walk() {
     // the link back to the root terminates the walk), and `remove_all` unlinks
     // a link instead of walking into it (BUG-a9Km4: the target's own file
     // survives).
-    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_symlink_kind"));
-    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_symlink_kind_target"));
+    let _scratch = TestScratch::new();
     let target = rerouted_copy(&fixture("tests/fixtures/fs_symlink_kind.kp"), "fs_symlink_kind_src");
     assert_project_runs(
         "fs_symlink_kind",
         &target,
         &reroute_tmp("true\ntrue\ntrue\nfalse\n/tmp/kelp_fs_symlink_kind/note.txt\ntrue\nfalse\n8\nfalse\ntrue\nfalse\n"),
     );
-    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_symlink_kind"));
-    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_symlink_kind_target"));
 }
 
 // ---------------------------------------------------------------------------
@@ -6007,23 +6028,21 @@ fn the_fs_path_family_reads_writes_and_walks() {
     // `write`, `read`, `symlink`, `read_link`, `list` and `remove`. The listing
     // is sorted by `alphasort`, and the link is reported without being
     // descended into.
-    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_path_family"));
+    let _scratch = TestScratch::new();
     let target = rerouted_copy(&fixture("tests/fixtures/fs_path_family.kp"), "fs_path_family_src");
     assert_project_runs(
         "fs_path_family",
         &target,
         &reroute_tmp("false\ntrue\nfalse\n6\nhello\n\ntrue\nxyz\ntrue\ntrue\nfalse\n/tmp/kelp_fs_path_family/a.txt\nfalse\na.txt\nlink\nsub\nfalse\n"),
     );
-    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_path_family"));
 }
 
 #[test]
 fn fs_set_mode_changes_the_bits_metadata_reports() {
     // 420 is octal 644 and 493 is octal 755.
-    let _ = std::fs::remove_file(reroute_tmp("/tmp/kelp_fs_set_mode.txt"));
+    let _scratch = TestScratch::new();
     let target = rerouted_copy(&fixture("tests/fixtures/fs_set_mode.kp"), "fs_set_mode_src");
     assert_project_runs("fs_set_mode", &target, "420\n493\n");
-    let _ = std::fs::remove_file(reroute_tmp("/tmp/kelp_fs_set_mode.txt"));
 }
 
 // ---------------------------------------------------------------------------
