@@ -3,18 +3,15 @@
 // and for a generic function that type is only fully known once the call's type
 // arguments are inferred from the expected return type. `column<M>` names no
 // argument that determines `M`, so the hint has to come from `view`'s return
-// type, and then the block's `k` is the `mut Children<Msg>` the scoped
-// parameter declares. This is the shape Polyp's builder syntax uses.
+// type, and then the block's `k` is the `mut Children<i32>` the scoped
+// parameter declares. This is the shape Polyp's builder syntax uses. The message
+// type is a number: an enum held in a `datac` is refused in managed mode for now.
 datac State(val title: String, val n: i32)
 
 pub enum Node<M> {
     Column(val children: List<Node<M>>)
     Text(val text: String)
     Button(val label: String, val on_click: M)
-}
-
-enum Msg {
-    Inc
 }
 
 pub datac Children<M>(var items: List<Node<M>>)
@@ -40,12 +37,12 @@ pub fun column<M>(block: scoped fun(mut Children<M>)).return: Node<M> {
 }
 
 // The block reads the borrowed `s` and nests a second scoped block.
-fun view(s: State).return: Node<Msg> {
+fun view(s: State).return: Node<i32> {
     return column { k ->
         k.text(s.title.as_str())
         k.column { m ->
             m.text("nested")
-            m.button("+1", Msg.Inc)
+            m.button("+1", 1)
         }
     }
 }

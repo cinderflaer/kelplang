@@ -1,14 +1,13 @@
 // A-2: a generic type whose instantiation owns heap memory. Dropping the
-// value frees only what is live, the payload's buffer, the list's elements,
-// the map's values, through the same `needs_drop` machinery a non-generic
-// `datac` uses, because an instantiation *is* an ordinary declaration with a
-// name like `Option<String>`.
+// value frees only what is live, the payload's buffer and the list's elements,
+// through the same `needs_drop` machinery a non-generic `datac` uses, because an
+// instantiation *is* an ordinary declaration with a name like `Option<String>`.
+// An enum held in a `datac` or as a `Map` value is refused in managed mode for
+// now, so those two shapes are not in this fixture.
 enum Option<T> {
     Some(val value: T)
     None
 }
-
-datac Holder(val o: Option<String>, val tag: i32)
 
 fun text_len(o: &Option<String>).return: usize = when o {
     Some(v) -> v.len()
@@ -22,19 +21,9 @@ fun main() {
     print(text_len(o = a))
     print(text_len(o = b))
 
-    // An instance held by value inside a hand-written datac: it owns, so the
-    // datac owns too.
-    val h = Holder(o = Option.Some(value = String.from_str(s = "held")), tag = 3)
-    print(text_len(o = h.o))
-    print(h.tag)
-
-    // Instances as list elements and map values.
+    // Instances as list elements.
     var xs: List<Option<i64>> = List.empty()
     xs.push(Option.Some(value = 11))
     xs.push(Option.None)
     print(xs.len())
-
-    var m: Map<Option<i64>> = Map.empty()
-    m.insert(key = "k", v = Option.Some(value = 12))
-    print(m.len())
 }

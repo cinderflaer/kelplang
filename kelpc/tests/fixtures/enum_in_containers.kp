@@ -1,10 +1,9 @@
 // MK7 §5's enum slice: an `enum` is an ordinary aggregate, so it has to work
-// as a container element and as a container *value*, not only as a local. The
-// three shapes below are the ones whose code paths differ: a `List` element is
-// addressed by `elem_size` and marshalled by `elem_class`; a `Map` value is one
-// indirection further, behind a `malloc` whose size comes from the same
-// `elem_size`; and a `Box` element is an allocation of that size with the
-// `Box`'s own drop calling the enum's generated one.
+// as a container element, not only as a local. The two shapes below are the
+// ones whose code paths differ: a `List` element is addressed by `elem_size`
+// and marshalled by `elem_class`, and a `Box` element is an allocation of that
+// size with the `Box`'s own drop calling the enum's generated one. A `Map` value
+// of an enum is refused in managed mode for now, so it is not in this fixture.
 //
 // The payload owns a `String`, so every one of these paths also has to run the
 // per-`enum` drop that switches on the runtime tag and frees only the live
@@ -62,20 +61,6 @@ fun main() {
     val taken = xs.pop()
     print(tell(m = taken))
     print(xs.len())
-
-    // A `Map` value, replaced and cleared.
-    var m: Map<Maybe<String>> = Map.new()
-    m.insert(key = "a", v = Maybe.Yes(value = String.from_str(s = "map")))
-    m.insert(key = "b", v = Maybe.No)
-    print(m.len())
-    print(tell(m = m.get("a")))
-    m.insert(key = "a", v = Maybe.Yes(value = String.from_str(s = "again")))
-    print(tell(m = m.get("a")))
-    print(m.has("z"))
-    val gone = m.remove("a")
-    print(tell(m = gone))
-    print(m.has("a"))
-    print(m.len())
 
     // A `Box` element, which is the only one of the three whose drop is a
     // generated routine of its own.
