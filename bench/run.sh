@@ -1,16 +1,16 @@
 #!/bin/sh
-# Kelp vs C vs Rust benchmark harness. Run it inside the dev shell (it needs cc, rustc, cargo and the
+# Kelp vs Rust benchmark harness. Run it inside the dev shell (it needs cc, rustc, cargo and the
 # LLVM build half that kelpc links against):
 #
 #   nix-shell overnight/dev.nix --run 'sh bench/run.sh'
 #
 # What it does:
 #   1. builds kelpc (release) unless $KELPC names a prebuilt one;
-#   2. builds every bench/suite/<name>/<name>.{c,rs,kp} with each toolchain, 3 builds each, and
+#   2. builds every bench/suite/<name>/<name>.{rs,kp} with each toolchain, 3 builds each, and
 #      records the median build time;
 #   3. runs every binary once as a discarded warm-up and then 7 times, each run under
 #      `( ulimit -v 4194304; ulimit -t 300; timeout 300 ... )`, recording wall time, peak RSS and
-#      whether stdout equals the C (gcc) version's checksum line; also records the stripped binary
+#      whether stdout equals the Rust version's checksum line; also records the stripped binary
 #      size and the 1-minute load average before and after each block of runs;
 #   4. writes bench/results.csv (raw, long form: bench,variant,metric,idx,value) and bench/RESULTS.md
 #      (machine, tool versions, one table per metric, then bench/notes.md and, when present, the
@@ -67,12 +67,7 @@ fi
 # kelpc's object cache is opt-in (--incremental), so a plain `build` never reuses an earlier object
 # and the three builds are three real builds.
 
-HAVE_CLANG=0
-command -v clang >/dev/null 2>&1 && HAVE_CLANG=1
-
-VARIANTS="c-gcc"
-[ "$HAVE_CLANG" = 1 ] && VARIANTS="$VARIANTS c-clang"
-VARIANTS="$VARIANTS rust kelp-llvm"
+VARIANTS="rust kelp-llvm"
 
 [ -n "$REPORT_ONLY" ] || : > "$CSV"
 csv() { printf '%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$4" "$5" >> "$CSV"; }
@@ -81,8 +76,6 @@ csv() { printf '%s,%s,%s,%s,%s\n' "$1" "$2" "$3" "$4" "$5" >> "$CSV"; }
 build_one() {
     v=$1; d=$2; n=$3; bin=$4
     case "$v" in
-        c-gcc)     cc -O2 -o "$bin" "$d/$n.c" -lm ;;
-        c-clang)   clang -O2 -o "$bin" "$d/$n.c" -lm ;;
         rust)      rustc -C opt-level=3 -o "$bin" "$d/$n.rs" ;;
         kelp-llvm) "$KELPC" build -O2 "$d/$n.kp" -o "$bin" ;;
     esac
@@ -115,17 +108,11 @@ if [ -z "$REPORT_ONLY" ]; then
     echo "- Memory: $(awk '/MemTotal/ { printf "%.1f GB", $2 / 1048576 }' /proc/meminfo) total, $(awk '/SwapTotal/ { printf "%.1f GB", $2 / 1048576 }' /proc/meminfo) swap"
     echo "- Kernel: $(uname -srm)"
     echo "- Load average at start: $(cut -d' ' -f1-3 /proc/loadavg)"
-    echo "- gcc: $(cc --version 2>&1 | head -1)"
-    if [ "$HAVE_CLANG" = 1 ]; then
-        echo "- clang: $(clang --version 2>&1 | head -1)"
-    else
-        echo "- clang: not available on this machine, so no C (clang) rows"
-    fi
     echo "- rustc: $(rustc --version 2>&1 | head -1)"
     echo "- kelpc: $("$KELPC" version 2>&1 | head -1) ($("$KELPC" version --verbose 2>&1 | grep -i -m1 -E 'commit|git|rev' || echo 'no commit info'))"
-    echo "- Builds: C \`cc -O2\`; Rust \`rustc -C opt-level=3\` (bounds checks and overflow wrapping as in the source; no cargo, no LTO); Kelp \`kelpc build -O2\` on the LLVM backend (\`kelp-llvm\`). No \`-march=native\`, no \`-ffast-math\`, no SIMD intrinsics."
-    echo "- Bounds checks: ON in Kelp and in Rust (indexing); OFF in C. This is a stated asymmetry in C's favour."
-    echo "- Method: each benchmark is built ${BUILD_RUNS} times (median build time), then run once as a discarded warm-up and ${RUNS} times, always with the full default size (first-argument override: \`${SIZE_ARG:-none}\`), each run under \`( ulimit -v 4194304; ulimit -t 300; timeout 300 time nice -n 0 ... )\`. Wall time is read with \`date +%s%N\` around the whole wrapper (includes about 1-3 ms of fork/exec of \`timeout\`/\`time\`/\`nice\`, the same for every row), peak RSS from GNU \`time %M\`. A row's checksum status compares the program's stdout with the gcc C version's stdout on every run."
+    echo "- Builds: Rust \`rustc -C opt-level=3\` (bounds checks and overflow wrapping as in the source; no cargo, no LTO); Kelp \`kelpc build -O2\` on the LLVM backend (\`kelp-llvm\`). No \`-march=native\`, no \`-ffast-math\`, no SIMD intrinsics."
+    echo "- Bounds checks: ON in Kelp and in Rust (indexing)."
+    echo "- Method: each benchmark is built ${BUILD_RUNS} times (median build time), then run once as a discarded warm-up and ${RUNS} times, always with the full default size (first-argument override: \`${SIZE_ARG:-none}\`), each run under \`( ulimit -v 4194304; ulimit -t 300; timeout 300 time nice -n 0 ... )\`. Wall time is read with \`date +%s%N\` around the whole wrapper (includes about 1-3 ms of fork/exec of \`timeout\`/\`time\`/\`nice\`, the same for every row), peak RSS from GNU \`time %M\`. A row's checksum status compares the program's stdout with the Rust version's stdout on every run."
     echo "- Noise: other processes run on this host (a Minecraft server, other agents' builds). The 1-minute load average is read before and after each block of runs; a row is flagged NOISY when it changed by more than 1.0. Nothing is stopped or throttled to quiet the host."
     echo
 } > "$BUILD/header.md"
@@ -185,7 +172,7 @@ for n in $BENCHES; do
                 case "$RUN_RC" in 124|137|152) status="TIMEOUT(300s limit)" ;; esac
                 break
             fi
-            if [ "$v" = "c-gcc" ] && [ "$i" -eq 0 ]; then
+            if [ "$v" = "rust" ] && [ "$i" -eq 0 ]; then
                 cp "$BUILD/$n/$v.out.0" "$BUILD/$n/reference.out"
                 ref="$BUILD/$n/reference.out"
             fi
@@ -223,7 +210,7 @@ function median(key,   n, i, j, t, a) {
 function minv(key,   i, m) { m = val[key, 1]; for (i = 2; i <= cnt[key]; i++) if (val[key, i] < m) m = val[key, i]; return m }
 function maxv(key,   i, m) { m = val[key, 1]; for (i = 2; i <= cnt[key]; i++) if (val[key, i] > m) m = val[key, i]; return m }
 function ratio(b, v, metric,   m, r) {
-    r = b SUBSEP "c-gcc" SUBSEP metric
+    r = b SUBSEP "rust" SUBSEP metric
     m = b SUBSEP v SUBSEP metric
     if (cnt[m] == 0 || cnt[r] == 0 || median(r) == 0) return "n/a"
     return sprintf("%.2f", median(m) / median(r))
@@ -235,7 +222,7 @@ function noisy(b, v,   d) {
 }
 function table(metric, title, unit, scale, fmt,   bi, vi, b, v, k, m) {
     print "### " title; print ""
-    print "| benchmark | variant | median " unit " | min | max | ratio to C (gcc) | checksum | load |"
+    print "| benchmark | variant | median " unit " | min | max | ratio to Rust | checksum | load |"
     print "| --- | --- | ---: | ---: | ---: | ---: | --- | --- |"
     for (bi = 1; bi <= nb; bi++) for (vi = 1; vi <= nv; vi++) {
         b = B[bi]; v = V[vi]; k = b SUBSEP v SUBSEP metric
@@ -246,7 +233,7 @@ function table(metric, title, unit, scale, fmt,   bi, vi, b, v, k, m) {
 }
 function onecol(metric, title, unit, scale, fmt,   bi, vi, b, v, k) {
     print "### " title; print ""
-    print "| benchmark | variant | " unit " | ratio to C (gcc) | checksum |"
+    print "| benchmark | variant | " unit " | ratio to Rust | checksum |"
     print "| --- | --- | ---: | ---: | --- |"
     for (bi = 1; bi <= nb; bi++) for (vi = 1; vi <= nv; vi++) {
         b = B[bi]; v = V[vi]; k = b SUBSEP v SUBSEP metric
@@ -265,7 +252,7 @@ BEGIN { nb = split(benches, B, " "); nv = split(variants, V, " ") }
     cnt[k]++; val[k, cnt[k]] = x + 0
 }
 END {
-    print "## Summary: wall time relative to C (gcc -O2), median of " runs " runs"; print ""
+    print "## Summary: wall time relative to Rust (rustc -O3), median of " runs " runs"; print ""
     printf "| benchmark |"; for (vi = 1; vi <= nv; vi++) printf " %s |", V[vi]; print ""
     printf "| --- |"; for (vi = 1; vi <= nv; vi++) printf " ---: |"; print ""
     for (bi = 1; bi <= nb; bi++) {

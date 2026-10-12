@@ -1,13 +1,13 @@
-//! The benchmark suite under `bench/suite/` keeps three programs per benchmark (`<name>.kp`,
-//! `<name>.c`, `<name>.rs`) that must do the same work and print the same checksum line. Timing
-//! the three is `bench/run.sh`'s job and takes minutes; this test is the fast half that keeps the
-//! three honest: every benchmark takes its size as the first argument, so each is built once and
-//! run at a tiny size, and the Kelp program (built by the LLVM backend) and the Rust
-//! program must print exactly the C program's line. A second size is also run to prove the size is
+//! The benchmark suite under `bench/suite/` keeps two programs per benchmark (`<name>.kp` and
+//! `<name>.rs`) that must do the same work and print the same checksum line. Timing the two is
+//! `bench/run.sh`'s job and takes minutes; this test is the fast half that keeps the two honest:
+//! every benchmark takes its size as the first argument, so each is built once and run at a tiny
+//! size. The Rust program (built by `rustc`) is the reference, and the Kelp program (built by the
+//! LLVM backend) must print exactly the Rust line. A second size is also run to prove the size is
 //! a parameter and not a constant in the source.
 //!
-//! Needs `cc` (always) and `rustc` (skipped with a note when absent) on the PATH, which the dev
-//! shell provides. Every program runs under `ulimit -v`/`-t` and `timeout`.
+//! Needs `rustc` on the PATH, which the dev shell provides. Every program runs under `ulimit -v`/`-t`
+//! and `timeout`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -82,63 +82,38 @@ fn build_kelp(src: &Path, bin: &Path) -> Result<(), String> {
     }
 }
 
-fn check_one(name: &str, size: &str, size2: &str, rustc_ok: bool) -> Result<(), String> {
+fn check_one(name: &str, size: &str, size2: &str) -> Result<(), String> {
     let dir = suite_dir().join(name);
     let tmp = scratch();
-    let c_bin = tmp.join(format!("{name}.c"));
-    let cc = Command::new("cc")
-        .args(["-O2", "-o"])
-        .arg(&c_bin)
-        .arg(dir.join(format!("{name}.c")))
-        .arg("-lm")
+    let rs_bin = tmp.join(format!("{name}.rs"));
+    let rc = Command::new("rustc")
+        .args(["-C", "opt-level=3", "-o"])
+        .arg(&rs_bin)
+        .arg(dir.join(format!("{name}.rs")))
         .output()
-        .map_err(|e| format!("spawn cc: {e}"))?;
-    if !cc.status.success() {
-        return Err(format!("cc failed for {name}: {}", String::from_utf8_lossy(&cc.stderr)));
+        .map_err(|e| format!("spawn rustc: {e}"))?;
+    if !rc.status.success() {
+        return Err(format!("rustc failed for {name}: {}", String::from_utf8_lossy(&rc.stderr)));
     }
-    let want = run_bounded(&c_bin, size)?;
+    let want = run_bounded(&rs_bin, size)?;
     if !want.starts_with(name) || want.lines().count() != 1 {
-        return Err(format!("{name}: the C version printed {want:?}, expected one line starting with the name"));
+        return Err(format!("{name}: the Rust version printed {want:?}, expected one line starting with the name"));
     }
-    let want2 = run_bounded(&c_bin, size2)?;
+    let want2 = run_bounded(&rs_bin, size2)?;
     if want == want2 {
         return Err(format!("{name}: sizes {size} and {size2} print the same line, so the size is not a parameter"));
     }
 
     let mut problems = Vec::new();
-    for label in ["kelp-llvm"] {
-        let bin = tmp.join(format!("{name}.{label}"));
-        match build_kelp(&dir.join(format!("{name}.kp")), &bin) {
-            Err(e) => problems.push(e),
-            Ok(()) => {
-                for (sz, expect) in [(size, &want), (size2, &want2)] {
-                    match run_bounded(&bin, sz) {
-                        Err(e) => problems.push(e),
-                        Ok(got) if &got != expect => problems.push(format!(
-                            "{name} [{label}] size {sz}: got {got:?}, the C version printed {expect:?}"
-                        )),
-                        Ok(_) => {}
-                    }
-                }
-            }
-        }
-    }
-    if rustc_ok {
-        let bin = tmp.join(format!("{name}.rs"));
-        let rc = Command::new("rustc")
-            .args(["-C", "opt-level=3", "-o"])
-            .arg(&bin)
-            .arg(dir.join(format!("{name}.rs")))
-            .output()
-            .map_err(|e| format!("spawn rustc: {e}"))?;
-        if !rc.status.success() {
-            problems.push(format!("rustc failed for {name}: {}", String::from_utf8_lossy(&rc.stderr)));
-        } else {
+    let bin = tmp.join(format!("{name}.kelp-llvm"));
+    match build_kelp(&dir.join(format!("{name}.kp")), &bin) {
+        Err(e) => problems.push(e),
+        Ok(()) => {
             for (sz, expect) in [(size, &want), (size2, &want2)] {
                 match run_bounded(&bin, sz) {
                     Err(e) => problems.push(e),
                     Ok(got) if &got != expect => problems.push(format!(
-                        "{name} [rust] size {sz}: got {got:?}, the C version printed {expect:?}"
+                        "{name} [kelp-llvm] size {sz}: got {got:?}, the Rust version printed {expect:?}"
                     )),
                     Ok(_) => {}
                 }
@@ -153,15 +128,11 @@ fn check_one(name: &str, size: &str, size2: &str, rustc_ok: bool) -> Result<(), 
 }
 
 #[test]
-fn every_benchmark_agrees_across_languages_and_backends_at_a_tiny_size() {
-    assert!(have("cc"), "the benchmark suite test needs `cc` on the PATH (run it inside the dev shell)");
-    let rustc_ok = have("rustc");
-    if !rustc_ok {
-        eprintln!("bench_suite: rustc not found, the Rust versions are not checked");
-    }
+fn every_benchmark_agrees_with_rust_on_the_llvm_backend_at_a_tiny_size() {
+    assert!(have("rustc"), "the benchmark suite test needs `rustc` on the PATH (run it inside the dev shell)");
     let mut failures = Vec::new();
     for (name, size, size2) in BENCHES {
-        if let Err(e) = check_one(name, size, size2, rustc_ok) {
+        if let Err(e) = check_one(name, size, size2) {
             failures.push(e);
         }
     }
@@ -169,7 +140,7 @@ fn every_benchmark_agrees_across_languages_and_backends_at_a_tiny_size() {
 }
 
 #[test]
-fn the_suite_directory_holds_exactly_the_listed_benchmarks_in_three_languages() {
+fn the_suite_directory_holds_exactly_the_listed_benchmarks_in_two_languages() {
     let mut on_disk: Vec<String> = std::fs::read_dir(suite_dir())
         .expect("bench/suite exists")
         .filter_map(|e| e.ok())
@@ -181,7 +152,7 @@ fn the_suite_directory_holds_exactly_the_listed_benchmarks_in_three_languages() 
     listed.sort();
     assert_eq!(on_disk, listed, "bench/suite and BENCHES in this test disagree");
     for (name, _, _) in BENCHES {
-        for ext in ["kp", "c", "rs"] {
+        for ext in ["kp", "rs"] {
             let f = suite_dir().join(name).join(format!("{name}.{ext}"));
             assert!(f.is_file(), "missing {}", f.display());
         }

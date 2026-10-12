@@ -10,7 +10,7 @@
 # Environment: KELPC_HOSTED (default: 26.10.5 release asset), KELPC_MANAGED, MANAGED_FLAGS (empty
 # until WP2/WP3 define the managed build flag), RUNS (timed runs, default 7), WARMUP (default 1),
 # BT_DEPTH (binary-trees max depth, default 16; the managed runs use 20 per the design paper, so
-# BT_DEPTH=20 measures that), OUT_DIR (default bench/managed/out), SKIP_C=1 drops the C reference.
+# BT_DEPTH=20 measures that), OUT_DIR (default bench/managed/out).
 #
 # Also checks G-C for each row: every run's stdout must equal the first hosted run's stdout.
 # Writes results.csv (bench,variant,run,wall_s,rss_kb) and gate.md (the table) to OUT_DIR.
@@ -26,7 +26,6 @@ MANAGED_FLAGS=${MANAGED_FLAGS:-}
 RUNS=${RUNS:-7}
 WARMUP=${WARMUP:-1}
 BT_DEPTH=${BT_DEPTH:-16}
-SKIP_C=${SKIP_C:-}
 OUT_DIR=${OUT_DIR:-$HERE/out}
 LOCK=${LOCK:-/home/juniper/Projects/kelp-work/.build.lock}
 export PATH=/nix/store/79mr0jw3qccq7hhf1hh62knxd88dwazc-gcc-wrapper-15.3.0/bin:$PATH
@@ -80,9 +79,6 @@ bench_row() {
     if [ "$managed_ok" = 1 ]; then
         flock "$LOCK" timeout 300 "$KELPC_MANAGED" build $MANAGED_FLAGS -O2 "$src" -o "$OUT_DIR/build/$name.managed" > "$OUT_DIR/build/$name.managed.build" 2>&1 || { echo "build failed: $name managed" >&2; return 1; }
         variants="$variants managed"
-    fi
-    if [ -z "$SKIP_C" ] && [ -f "$d/$name.c" ]; then
-        cc -O2 -o "$OUT_DIR/build/$name.c" "$d/$name.c" -lm && variants="$variants c" || echo "C build failed: $name" >&2
     fi
     ref="$OUT_DIR/build/$name.ref.out"
     rm -f "$ref"
