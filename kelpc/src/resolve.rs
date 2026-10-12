@@ -1954,6 +1954,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         alias: Vec::new(),
         alias_source: None,
         dependencies: Vec::new(),
+        tidepool: TidepoolDecl::default(),
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -2005,6 +2006,16 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                     .extern_modules
                     .insert(module_id.to_string(), ExternModuleDecl::default());
             }
+            // A header that is almost `[tidepool]` (any case, or a `tid`
+            // prefix) or the old name `[gc]` is refused by name. Skipping it
+            // would give every Tidepool setting its default without a word.
+            if name != "tidepool" && (name == "gc" || name.to_ascii_lowercase().starts_with("tid")) {
+                return Err(Diagnostic::new(
+                    format!("unknown section '[{name}]' in {MANIFEST_NAME}; did you mean '[tidepool]'?"),
+                    at,
+                    "",
+                ));
+            }
             if name == "target" {
                 manifest.target_seen = true;
             }
@@ -2028,6 +2039,8 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                 parse_alias_line(&mut manifest, line, line_offset)?;
             } else if name == "dependencies" {
                 parse_dependency_line(&mut manifest, line, at)?;
+            } else if name == "tidepool" {
+                parse_tidepool_line(&mut manifest, line, at)?;
             }
             continue;
         }
@@ -2255,7 +2268,108 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
     if !manifest.alias.is_empty() {
         manifest.alias_source = Some((path.to_path_buf(), text.to_string()));
     }
+    // `start_high_mib` is checked against `heap_max` here, after the whole
+    // file is read, because `[target]` may come after `[tidepool]`. A larger
+    // start guess would set a first trigger the shared pool can never reach.
+    if let Some(high) = manifest.tidepool.start_high_mib {
+        let heap_max = manifest.target.heap_max_mib();
+        if high > heap_max {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME}'s [tidepool] key 'start_high_mib' must not exceed [target] heap_max ({heap_max} MiB), found '{high}'"
+                ),
+                at,
+                "",
+            ));
+        }
+    }
     Ok(manifest)
+}
+
+/// `[tidepool]` (Tidepool step 2, design section 14.2 and 14.4): the first
+/// clearing's two start guesses and the headroom percent. Each is a bare
+/// whole number of MiB (or percent). `None` takes the default.
+#[derive(Default)]
+pub struct TidepoolDecl {
+    /// `headroom_pct`, from 0 to 1000.
+    pub headroom_pct: Option<u64>,
+    /// `start_low_mib`, at least 1.
+    pub start_low_mib: Option<u64>,
+    /// `start_high_mib`, at least 1 and no more than `heap_max`.
+    pub start_high_mib: Option<u64>,
+}
+
+/// Parse one `key = <whole number>` line of `[tidepool]`. Every key takes a
+/// bare number, so a quoted value is refused, and `heap_max` is refused with
+/// the section it belongs in.
+fn parse_tidepool_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
+    let Some((key, value)) = line.split_once('=') else {
+        return Err(Diagnostic::new(
+            format!("expected 'key = <whole number>' in {MANIFEST_NAME}'s [tidepool] section, found '{line}'"),
+            at,
+            "",
+        ));
+    };
+    let key = key.trim();
+    let value = value.trim();
+    if key == "heap_max" {
+        return Err(Diagnostic::new(
+            format!("{MANIFEST_NAME}'s [tidepool] key 'heap_max' belongs in [target]; move it there"),
+            at,
+            "",
+        ));
+    }
+    let (slot, min, max) = match key {
+        "headroom_pct" => (&mut manifest.tidepool.headroom_pct, 0u64, 1000u64),
+        "start_low_mib" => (&mut manifest.tidepool.start_low_mib, 1, u64::MAX),
+        "start_high_mib" => (&mut manifest.tidepool.start_high_mib, 1, u64::MAX),
+        other => {
+            return Err(Diagnostic::new(
+                format!(
+                    "unknown key '{other}' in {MANIFEST_NAME}'s [tidepool] section; its keys are 'headroom_pct', 'start_low_mib' and 'start_high_mib'"
+                ),
+                at,
+                "",
+            ))
+        }
+    };
+    if slot.is_some() {
+        return Err(Diagnostic::new(
+            format!("'{key}' appears more than once in {MANIFEST_NAME}'s [tidepool] section"),
+            at,
+            "",
+        ));
+    }
+    if value.is_empty() || !value.chars().all(|c| c.is_ascii_digit()) {
+        return Err(Diagnostic::new(
+            format!("{MANIFEST_NAME}'s [tidepool] key '{key}' must be a whole number, found '{value}'"),
+            at,
+            "",
+        ));
+    }
+    let Ok(n) = value.parse::<u64>() else {
+        return Err(Diagnostic::new(
+            format!("{MANIFEST_NAME}'s [tidepool] key '{key}' is out of range: '{value}'"),
+            at,
+            "",
+        ));
+    };
+    if n < min {
+        return Err(Diagnostic::new(
+            format!("{MANIFEST_NAME}'s [tidepool] key '{key}' must be at least {min}, found '{value}'"),
+            at,
+            "",
+        ));
+    }
+    if n > max {
+        return Err(Diagnostic::new(
+            format!("{MANIFEST_NAME}'s [tidepool] key '{key}' must be from {min} to {max}, found '{value}'"),
+            at,
+            "",
+        ));
+    }
+    *slot = Some(n);
+    Ok(())
 }
 
 struct Manifest {
@@ -2297,6 +2411,8 @@ struct Manifest {
     alias: Vec<preprocess::AliasDef>,
     /// The manifest's path and text, set only when `alias` is non-empty.
     alias_source: Option<(PathBuf, String)>,
+    /// The `[tidepool]` section (Tidepool step 2), all `None` when absent.
+    tidepool: TidepoolDecl,
     /// Whether a `[target]` section header was seen at all (kernel stage 4).
     /// Distinct from the fields below being unset, because a `[target]` section
     /// that names no `mode` is an error rather than the hosted default.
