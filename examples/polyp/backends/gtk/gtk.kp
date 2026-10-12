@@ -74,6 +74,14 @@ pub extern fun gtk_separator_new(orientation: i32).return: Widget
 // is what lets the scroll offset survive a patch.
 pub extern fun gtk_scrolled_window_new().return: ScrolledWindow
 pub extern fun gtk_scrolled_window_set_child(window: ScrolledWindow, child: Widget)
+pub extern fun gtk_scrolled_window_get_child(window: ScrolledWindow).return: Widget
+
+// Reading the tree back. The backend keeps no widget values: a widget is found from its parent by
+// its position among the parent's children, which GTK keeps in the order the tree was built in. These
+// three return a child or the null widget, and the window's own child.
+pub extern fun gtk_window_get_child(win: Window).return: Widget
+pub extern fun gtk_widget_get_first_child(widget: Widget).return: Widget
+pub extern fun gtk_widget_get_next_sibling(widget: Widget).return: Widget
 
 // Text input. `gtk_entry_new` returns a `GtkWidget*`; the `GtkEditable`
 // set/get pair is the interface on it.
@@ -155,3 +163,24 @@ pub fun null_widget().return: Widget = Widget.null()
 pub fun is_null_widget(widget: Widget).return: bool = widget.is_null()
 pub fun as_box(widget: Widget).return: BoxWidget = BoxWidget.cast(widget)
 pub fun as_scrolled(widget: Widget).return: ScrolledWindow = ScrolledWindow.cast(widget)
+
+// The box a scrolled area holds its children in: the child the loop set on it.
+pub fun scrolled_child(widget: Widget).return: Widget = gtk_scrolled_window_get_child(as_scrolled(widget))
+
+// The `index`-th child of a container in GTK's own order, or the null widget when there is no such
+// child (or no container). A walk of the sibling chain, so it costs a step per child before it.
+pub fun nth_child(parent: Widget, index: usize).return: Widget {
+    if parent.is_null() {
+        return Widget.null()
+    }
+    var w: Widget = gtk_widget_get_first_child(parent)
+    var i: usize = 0
+    while i < index {
+        if w.is_null() {
+            return w
+        }
+        w = gtk_widget_get_next_sibling(w)
+        i += 1
+    }
+    return w
+}

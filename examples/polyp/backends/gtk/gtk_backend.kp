@@ -4,6 +4,12 @@
 // real signal handlers and the counters; it never sees a `Node`, only the `Props` a patch carries,
 // so the loop above it has no idea a display is involved at all. `gtk.kp` is the binding and
 // `queue.kp` the message ring the signal handlers post into.
+//
+// A widget handle is never stored. Managed mode refuses a resource value inside a `List`, so the
+// tree keeps only scalars: a node's kind, handler, interactive id, key, classes and children. A
+// node's widget is found by the scalar that names it, its index among its parent's children, which
+// GTK keeps in the order the tree was built in. Every handle is a local, read from the live tree
+// when a patch needs it.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/gtk/gtk"
 impl "deps/polyp/backends/gtk/queue"
@@ -32,13 +38,11 @@ const PRIORITY_APP: u32 = 600
 // id has to be some *other* negative number: slot ids start at 0 and only grow.
 pub const QUIT_ID: i32 = -2
 
-// One live widget and what a patch needs to reach it: what it is, its handler id so a
-// programmatic write can be signal-blocked, its interactive id (-1 when it cannot post), its key,
-// the box inside a scrolled area, the CSS classes currently on it, and its children.
+// One live node: what it is, its handler id so a programmatic write can be signal-blocked, its
+// interactive id (-1 when it cannot post), its key, the CSS classes currently on it, and its
+// children. The widget itself is not here; it is the child at this node's position in its parent.
 pub datac Mount(
     var kind: i32,
-    var widget: gtk.Widget,
-    var inner: gtk.Widget,
     var handler: u64,
     var slot: i32,
     var key: Box<core.Key>,
@@ -46,15 +50,9 @@ pub datac Mount(
     var classes: List<String>,
 )
 
-// The interactive widget ids in creation order, which is how a posted id reaches its widget. An id
-// is never reused, and a removed widget stays in the list: `path_of` resolves against the live tree
-// instead, so a stale id resolves to nothing rather than to a different widget.
-pub datac WidgetSlot(val id: i32, val widget: gtk.Widget)
-
 pub datac GtkBackend(
     var win: gtk.Window,
     var root: List<Mount>,
-    var slots: List<WidgetSlot>,
     var next_slot: i32,
     var created: i32,
     var updated: i32,
@@ -75,7 +73,6 @@ pub fun open(title: str, width: i32, height: i32).return: GtkBackend {
     return GtkBackend(
         win = win,
         root = List.empty(),
-        slots = List.empty(),
         next_slot = 0,
         created = 0,
         updated = 0,
@@ -205,12 +202,13 @@ fun key_of_path(path: &core.Path).return: core.Key {
     }
 }
 
-// The box a node's children live in: a scrolled area's implicit box, or the widget itself.
-fun box_of(rec: &Mount).return: gtk.BoxWidget {
-    if !gtk.is_null_widget(rec.inner) {
-        return gtk.as_box(rec.inner)
+// The box a node's children live in, given the node's own widget: a scrolled area's child box, or
+// the widget itself.
+fun box_of(w: gtk.Widget, rec: &Mount).return: gtk.Widget {
+    if rec.kind == core.KIND_SCROLLED {
+        return gtk.scrolled_child(w)
     }
-    return gtk.as_box(rec.widget)
+    return w
 }
 
 fun kid_index(kids: &List<Mount>, seg: &core.Seg).return: i32 {
@@ -234,16 +232,28 @@ fun count_nodes(node: &Mount).return: i32 {
     return n
 }
 
-// The widget to insert after so that the new node lands at index `at`: the sibling before it, or
-// the null handle, which GTK reads as "at the front".
-fun sibling_before(kids: &List<Mount>, at: i32).return: gtk.Widget {
+// The widget a new child goes after so that it lands at position `index`: the child at `index - 1`
+// in GTK's order, or the null widget, which GTK reads as "at the front". Appending (`index` equal to
+// the child count) goes after the last child.
+fun after_index(box: gtk.Widget, index: i32).return: gtk.Widget {
+    if index <= 0 {
+        return gtk.null_widget()
+    }
+    return gtk.nth_child(box, (index - 1).to_usize())
+}
+
+// The widget a moved child goes after, when it is moved to position `at` of the list it has been
+// taken out of. `moved` is the child's position before it was taken out, so the list's index `at - 1`
+// is GTK's index `at - 1` when it comes before `moved`, and `at` when it comes after.
+fun move_after(box: gtk.Widget, moved: i32, at: i32).return: gtk.Widget {
     if at <= 0 {
         return gtk.null_widget()
     }
-    if at.to_usize() >= kids.len() {
-        return gtk.null_widget()
+    var g = at - 1
+    if g >= moved {
+        g += 1
     }
-    return kids.get((at - 1).to_usize()).widget
+    return gtk.nth_child(box, g.to_usize())
 }
 
 fun copy_strings(xs: &List<String>).return: List<String> {
@@ -317,12 +327,12 @@ fun apply_classes(w: gtk.Widget, old: &List<String>, new: &List<String>) {
     }
 }
 
-// The freshly built widget for a node, with its slot taken and its handler connected. A container's
-// children arrive as their own patches, so this builds one widget and nothing below it.
-fun make_widget(be: mut GtkBackend, kind: i32, props: &core.Props).return: Mount {
+// The freshly built widget for a node. Its interactive id and handler are written into `rec`, and
+// the widget is returned to the caller, which places it in the tree. A container's children arrive as
+// their own patches, so this builds one widget and nothing below it.
+fun make_widget(be: mut GtkBackend, kind: i32, props: &core.Props, rec: mut Mount).return: gtk.Widget {
     var slot: i32 = -1
     var handler: u64 = 0
-    var inner: gtk.Widget = gtk.null_widget()
     var w: gtk.Widget = gtk.null_widget()
     if kind == core.KIND_COLUMN {
         w = gtk.gtk_box_new(VERTICAL, props.spacing)
@@ -339,19 +349,16 @@ fun make_widget(be: mut GtkBackend, kind: i32, props: &core.Props).return: Mount
         handler = gtk.connect(w, "changed", post_handler(slot), 0)
         gtk.gtk_editable_set_text(w, props.text.as_str())
         be.entry_builds += 1
-        be.slots.push(WidgetSlot(id = slot, widget = w))
     } else if kind == core.KIND_BUTTON {
         w = gtk.gtk_button_new_with_label(props.label.as_str())
         slot = be.next_slot
         be.next_slot += 1
         handler = gtk.connect(w, "clicked", post_handler(slot), 0)
-        be.slots.push(WidgetSlot(id = slot, widget = w))
     } else if kind == core.KIND_CHECKBOX {
         w = checkbox_widget(props)
         slot = be.next_slot
         be.next_slot += 1
         handler = gtk.connect(w, "toggled", post_handler(slot), 0)
-        be.slots.push(WidgetSlot(id = slot, widget = w))
     } else if kind == core.KIND_PROGRESS {
         w = progress_widget(props)
     } else if kind == core.KIND_SEPARATOR {
@@ -363,27 +370,18 @@ fun make_widget(be: mut GtkBackend, kind: i32, props: &core.Props).return: Mount
         val b = gtk.gtk_box_new(VERTICAL, props.spacing)
         gtk.gtk_scrolled_window_set_child(sw, b)
         w = sw
-        inner = b
     }
     apply_opts(w, props)
     val none = no_classes()
     apply_classes(w, none, props.classes)
-    return Mount(
-        kind = kind,
-        widget = w,
-        inner = inner,
-        handler = handler,
-        slot = slot,
-        key = Box.of(core.Key.None),
-        kids = List.empty(),
-        classes = copy_strings(props.classes),
-    )
+    rec.slot = slot
+    rec.handler = handler
+    return w
 }
 
 // A matched widget, told the new properties in place. `kind` is known to agree, so only the
 // properties that can change are written.
-fun apply_props_to(rec: mut Mount, props: &core.Props, focus: gtk.Widget) {
-    val w = rec.widget
+fun apply_props_to(rec: mut Mount, w: gtk.Widget, props: &core.Props, focus: gtk.Widget) {
     if rec.kind == core.KIND_COLUMN {
         gtk.gtk_box_set_spacing(gtk.as_box(w), props.spacing)
     } else if rec.kind == core.KIND_ROW {
@@ -413,7 +411,7 @@ fun apply_props_to(rec: mut Mount, props: &core.Props, focus: gtk.Widget) {
     } else if rec.kind == core.KIND_PROGRESS {
         gtk.gtk_progress_bar_set_fraction(w, fraction_of(props.permille))
     } else if rec.kind == core.KIND_SCROLLED {
-        gtk.gtk_box_set_spacing(gtk.as_box(rec.inner), props.spacing)
+        gtk.gtk_box_set_spacing(gtk.as_box(gtk.scrolled_child(w)), props.spacing)
     }
     apply_opts(w, props)
     apply_classes(w, rec.classes, props.classes)
@@ -421,9 +419,9 @@ fun apply_props_to(rec: mut Mount, props: &core.Props, focus: gtk.Widget) {
 }
 
 // The writes are remove, recurse, insert back, so a write through a `mut` borrow never has to move
-// a field out of the value it is written through. `depth` is how far into `path` the sibling list
-// passed in sits.
-fun insert_into(kids: mut List<Mount>, path: &core.Path, depth: usize, at: i32, node: move Mount, box: gtk.BoxWidget) {
+// a field out of the value it is written through. `box` is the container the sibling list `kids`
+// sits in, and `depth` is how far into `path` that list sits.
+fun insert_into(kids: mut List<Mount>, path: &core.Path, depth: usize, at: i32, node: move Mount, node_w: gtk.Widget, box: gtk.Widget) {
     if depth + 1 == path.segs.len() {
         var i = at
         if i < 0 {
@@ -432,27 +430,30 @@ fun insert_into(kids: mut List<Mount>, path: &core.Path, depth: usize, at: i32, 
         if i > kids.len().to_i32() {
             i = kids.len().to_i32()
         }
-        gtk.gtk_box_insert_child_after(box, node.widget, sibling_before(kids, i))
+        gtk.gtk_box_insert_child_after(gtk.as_box(box), node_w, after_index(box, i))
         kids.insert(i.to_usize(), node)
         return
     }
     val idx = kid_index(kids, path.segs.get(depth)).to_usize()
     var child = kids.remove(idx)
-    val inner_box = box_of(child)
-    insert_into(child.kids, path, depth + 1, at, node, inner_box)
+    val child_w = gtk.nth_child(box, idx)
+    val inner_box = box_of(child_w, child)
+    insert_into(child.kids, path, depth + 1, at, node, node_w, inner_box)
     kids.insert(idx, child)
 }
 
-fun patch_into(kids: mut List<Mount>, path: &core.Path, depth: usize, props: &core.Props, focus: gtk.Widget, n: mut i32) {
+fun patch_into(kids: mut List<Mount>, path: &core.Path, depth: usize, props: &core.Props, focus: gtk.Widget, box: gtk.Widget, n: mut i32) {
     val idx = kid_index(kids, path.segs.get(depth)).to_usize()
     var child = kids.remove(idx)
+    val child_w = gtk.nth_child(box, idx)
     if depth + 1 == path.segs.len() {
         *n += 1
-        apply_props_to(child, props, focus)
+        apply_props_to(child, child_w, props, focus)
         kids.insert(idx, child)
         return
     }
-    patch_into(child.kids, path, depth + 1, props, focus, n)
+    val inner_box = box_of(child_w, child)
+    patch_into(child.kids, path, depth + 1, props, focus, inner_box, n)
     kids.insert(idx, child)
 }
 
@@ -460,28 +461,30 @@ datac Gone(var count: i32)
 
 // The list passed in is the children of the node one level up, so the box to detach from is the one
 // the caller descended with.
-fun drop_into(kids: mut List<Mount>, path: &core.Path, depth: usize, box: gtk.BoxWidget, gone: mut Gone) {
+fun drop_into(kids: mut List<Mount>, path: &core.Path, depth: usize, box: gtk.Widget, gone: mut Gone) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 {
         return
     }
     var child = kids.remove(idx.to_usize())
+    val child_w = gtk.nth_child(box, idx.to_usize())
     if depth + 1 == path.segs.len() {
         gone.count += count_nodes(child)
-        gtk.gtk_box_remove(box, child.widget)
+        gtk.gtk_box_remove(gtk.as_box(box), child_w)
         return
     }
-    val inner_box = box_of(child)
+    val inner_box = box_of(child_w, child)
     drop_into(child.kids, path, depth + 1, inner_box, gone)
     kids.insert(idx.to_usize(), child)
 }
 
-fun move_into(kids: mut List<Mount>, path: &core.Path, depth: usize, to_index: i32, box: gtk.BoxWidget) {
+fun move_into(kids: mut List<Mount>, path: &core.Path, depth: usize, to_index: i32, box: gtk.Widget) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 {
         return
     }
     var child = kids.remove(idx.to_usize())
+    val child_w = gtk.nth_child(box, idx.to_usize())
     if depth + 1 == path.segs.len() {
         var at = to_index
         if at < 0 {
@@ -490,11 +493,11 @@ fun move_into(kids: mut List<Mount>, path: &core.Path, depth: usize, to_index: i
         if at > kids.len().to_i32() {
             at = kids.len().to_i32()
         }
-        gtk.gtk_box_reorder_child_after(box, child.widget, sibling_before(kids, at))
+        gtk.gtk_box_reorder_child_after(gtk.as_box(box), child_w, move_after(box, idx, at))
         kids.insert(at.to_usize(), child)
         return
     }
-    val inner_box = box_of(child)
+    val inner_box = box_of(child_w, child)
     move_into(child.kids, path, depth + 1, to_index, inner_box)
     kids.insert(idx.to_usize(), child)
 }
@@ -530,15 +533,57 @@ fun find_path(kids: &List<Mount>, base: &core.Path, id: i32).return: option.Opti
     return option.Option.None
 }
 
-fun widget_of(be: &GtkBackend, id: i32).return: gtk.Widget {
+// The widget of the node whose interactive id is `id`, searched from the children of `box`, or the
+// null widget when no live node has that id.
+fun slot_widget_in(kids: &List<Mount>, box: gtk.Widget, id: i32).return: gtk.Widget {
     var i: usize = 0
-    while i < be.slots.len() {
-        if be.slots.get(i).id == id {
-            return be.slots.get(i).widget
+    while i < kids.len() {
+        val n = kids.get(i)
+        val w = gtk.nth_child(box, i)
+        if n.slot == id {
+            return w
+        }
+        val found = slot_widget_in(n.kids, box_of(w, n), id)
+        if !gtk.is_null_widget(found) {
+            return found
         }
         i += 1
     }
     return gtk.null_widget()
+}
+
+// The interactive id of the node whose widget is an ancestor of `focused` (or is `focused`), searched
+// from the children of `box`. A focused entry's text widget is inside the entry, so the test is
+// ancestry, not identity.
+fun focus_in(kids: &List<Mount>, box: gtk.Widget, focused: gtk.Widget).return: option.Option<i32> {
+    var i: usize = 0
+    while i < kids.len() {
+        val n = kids.get(i)
+        val w = gtk.nth_child(box, i)
+        if n.slot >= 0 && gtk.gtk_widget_is_ancestor(focused, w) != 0 {
+            return option.Option.Some(value = n.slot)
+        }
+        when focus_in(n.kids, box_of(w, n), focused) {
+            Some(found) -> {
+                return option.Option.Some(value = found)
+            }
+            None -> {}
+        }
+        i += 1
+    }
+    return option.Option.None
+}
+
+fun widget_of(be: &GtkBackend, id: i32).return: gtk.Widget {
+    if id < 0 || be.root.len() == 0 {
+        return gtk.null_widget()
+    }
+    val top = be.root.get(0)
+    val top_w = gtk.gtk_window_get_child(be.win)
+    if top.slot == id {
+        return top_w
+    }
+    return slot_widget_in(top.kids, box_of(top_w, top), id)
 }
 
 impl core.Backend for GtkBackend {
@@ -549,16 +594,24 @@ impl core.Backend for GtkBackend {
     }
 
     fun mut Self.make(path: &core.Path, at: i32, kind: i32, props: &core.Props) {
-        var rec = make_widget(self, kind, props)
+        var rec = Mount(
+            kind = kind,
+            handler = 0,
+            slot = -1,
+            key = Box.of(core.Key.None),
+            kids = List.empty(),
+            classes = copy_strings(props.classes),
+        )
         rec.key.set(key_of_path(path))
+        val w = make_widget(self, kind, props, rec)
         if path.segs.len() == 0 {
-            gtk.gtk_window_set_child(win, rec.widget)
+            gtk.gtk_window_set_child(win, w)
             root.clear()
             root.push(rec)
         } else {
             var top = root.remove(0)
-            val top_box = box_of(top)
-            insert_into(top.kids, path, 0, at, rec, top_box)
+            val top_box = box_of(gtk.gtk_window_get_child(win), top)
+            insert_into(top.kids, path, 0, at, rec, w, top_box)
             root.insert(0, top)
         }
         created += 1
@@ -570,13 +623,14 @@ impl core.Backend for GtkBackend {
         if path.segs.len() == 0 {
             if root.len() > 0 {
                 var top = root.remove(0)
-                apply_props_to(top, props, focused)
+                apply_props_to(top, gtk.gtk_window_get_child(win), props, focused)
                 root.insert(0, top)
                 n = 1
             }
         } else {
             var top = root.remove(0)
-            patch_into(top.kids, path, 0, props, focused, n)
+            val top_box = box_of(gtk.gtk_window_get_child(win), top)
+            patch_into(top.kids, path, 0, props, focused, top_box, n)
             root.insert(0, top)
         }
         updated += n
@@ -594,7 +648,7 @@ impl core.Backend for GtkBackend {
         }
         var gone = Gone(count = 0)
         var top = root.remove(0)
-        val top_box = box_of(top)
+        val top_box = box_of(gtk.gtk_window_get_child(win), top)
         drop_into(top.kids, path, 0, top_box, gone)
         root.insert(0, top)
         removed += gone.count
@@ -605,7 +659,7 @@ impl core.Backend for GtkBackend {
             return
         }
         var top = root.remove(0)
-        val top_box = box_of(top)
+        val top_box = box_of(gtk.gtk_window_get_child(win), top)
         move_into(top.kids, path, 0, to_index, top_box)
         root.insert(0, top)
     }
@@ -652,16 +706,15 @@ impl core.Backend for GtkBackend {
         if gtk.is_null_widget(focused) {
             return option.Option.None
         }
-        var i: usize = 0
-        while i < slots.len() {
-            // GTK points the toplevel at an entry's inner text widget rather than at the entry, so
-            // the test is ancestry, not identity.
-            if gtk.gtk_widget_is_ancestor(focused, slots.get(i).widget) != 0 {
-                return option.Option.Some(value = slots.get(i).id)
-            }
-            i += 1
+        if root.len() == 0 {
+            return option.Option.None
         }
-        return option.Option.None
+        val top = root.get(0)
+        val top_w = gtk.gtk_window_get_child(win)
+        if top.slot >= 0 && gtk.gtk_widget_is_ancestor(focused, top_w) != 0 {
+            return option.Option.Some(value = top.slot)
+        }
+        return focus_in(top.kids, box_of(top_w, top), focused)
     }
 
     fun mut Self.set_focus(id: i32) {
