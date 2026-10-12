@@ -1,6 +1,6 @@
 # Pending changes
 
-Scratch file for changes that are not released yet. Gitignored, never committed.
+Scratch file for changes that are not released yet. It is tracked on origin/main (it is not gitignored), so an edit to it is committed and pushed like any other file.
 
 Add a line here when a user-visible change lands in `kelp`. **Do not touch
 `wiki/changelog.md` until a version is released**: the changelog page carries
@@ -17,135 +17,62 @@ empty on release.
 ## Added
 
 - `kelpc caps <project>` prints each module's capabilities and the caps each dependency reaches, sorted for CI diffs. A `[dependencies]` entry whose modules reach a domain its `coral.toml` list does not name is refused at build time.
-- Managed mode: `[target] mode = "managed"` builds a program whose heap is collected by a GC instead of freed by hand. It needs the LLVM backend, refuses `--incremental`, and reads the collector archive from `KELP_GC_LIB`. `[target] heap_max` sets the heap cap in MiB (1 to 65536, default 256). A resource value (a file, socket or capability) in a heap slot is refused by name (on branch round-gc, not merged).
-- `[target] mode = "managed"` builds a program whose heap is collected by a tracing garbage collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (threads, mutexes, rwlocks, condvars) still drop at scope end, and the checker refuses one in the heap by name. Not yet: an enum held by value inside a `datac` is refused at build time, and incremental (per-unit) builds are refused.
-- `[target] heap_max = N` sets a managed program's heap cap in MiB (1 to 65536, default 256). A program that needs more fails with "out of memory".
+- `[target] heap_max = N` sets a hosted program's heap cap in MiB (1 to 65536, default 256). A program that needs more stops with `out of memory`. A freestanding build refuses the key.
 - `[build] emit = "html"` writes a Polyp view as a static HTML file. `[build] emit_entry` names the program that builds it. A Polyp HTML build needs no env grant.
 - `let Some(user) = find(id) else { return Err("missing") }` (let-else) binds an enum variant's payload for the rest of the block when it matches. The else block must end in return, break, continue or panic.
-
 - `errdefer EXPR` (6.5) runs its action only when the function leaves through its `Err` (or `None`), by `return` or `?`. A function that does not return `Result` or `Option` refuses it.
-
 - `derive(eq, hash)` on a `datac` or `enum` writes its `eq` and `hash` methods field by field, so it is a `Map` key with no hand-written pair, and a field that has no `eq` or `hash` is refused by name (12.2).
+- `kelpc doc --format json` writes the documentation as JSON: declarations, spans, imports, trait impls and builtin members.
+- `kelpc stdlib --json --dir <dir>` writes the shipped std sources to `<dir>` and prints the module list with a SHA-256 per file as JSON.
 
 ## Changed
 
-- The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named, every hosted file may use `block` regions with ordinary code beside them, and the collector runs in every hosted build. Delete the mode line; `heap_max` is read in every hosted build.
+- The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named. Every hosted build links the tracing collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (files, sockets, processes, threads, locks, channel ends, pools) still drop at scope end. Delete the mode line; every hosted file may use `block` regions beside ordinary code, and `heap_max` is read in every hosted build.
+- `kelpc` builds the collector archive itself from `kelpc/gc`, so a hosted build needs no `KELP_GC_LIB`. The variable, when set, names a different archive to link.
+- A resource (file, socket, process, channel end, pool, TLS stream or capability receipt) cannot go in a `Box`, `List`, `Map`, array or closure environment, or be a thread's argument: the checker refuses it by name in every hosted build.
+- A hosted build refuses `thread.spawn` of a closure that captures values, including one bound to a name first.
 - A hosted project whose `coral.toml` sets `[build] incremental = true` is built whole-program with a warning that names the reason (the collector's descriptor ids are per unit). The `--incremental` flag is still refused for a hosted build.
 - A `String` argument is accepted where a `str` parameter is expected: it is borrowed for the call exactly as `.as_str()` would borrow it (11.2). A generic function or trait method's `str` parameter still needs `.as_str()`, and the compiler says so by name.
-
+- The borrow checker refuses passing one `mut` parameter twice to one call, and reading a struct whole after one of its nested owned fields moved out (A-11, not finished).
+- `std.http` keeps only plain connections in its pool: a TLS connection is not reused after a request, so a TLS request always dials a new connection.
+- `Box<T>` blocks of up to 64 bytes are recycled through per-thread free lists instead of malloc and free (binary-trees runs about 1.9x faster). Programs with their own allocator are unchanged.
+- A pooled `Box<T>` allocation or release calls `kelp_box_pool` once for the calling thread's free lists, then pops or pushes the block inline; an empty size class goes to `kelp_box_alloc`. Results are unchanged.
+- When a thread cannot start, `thread.spawn` panics with the `pthread_create` return code (`errno N: ...`) and frees what it built, where it used to leak it.
+- The `header` and `include_dirs` keys of `[extern."<module id>"]` are refused by name, since no C is compiled and they did nothing (`library_dirs` is unchanged). The refusals that said "in managed mode" now say "in a hosted build", and `build/install.sh` checks for `ld.lld` instead of `cc`.
 - The Polyp HTML emit (`[build] emit = "html"`) imports `deps/polyp/backends/headless/polyp/lib`, so an HTML build needs no GTK binding and never builds the GTK widget tree.
 - The Polyp GTK backend no longer keeps a `gtk.Widget` in its node tree, so a GTK Polyp build compiles in hosted mode (the resource refusal is unchanged). Each node holds scalars only, and its widget is found by its position among its parent's children. A new child appended to the end of a container now lands last, not first.
 - The Polyp examples use the Polyp v5 impl ids (`deps/polyp/core/core`, `deps/polyp/backends/gtk/polyp/lib`, `deps/polyp/backends/gtk/gtk`, `deps/polyp/backends/gtk/queue`, `deps/polyp/backends/soft/...`). The `polyp` namespace is unchanged. The v0 examples are frozen.
-
-- `Box<T>` blocks of up to 64 bytes are recycled through per-thread free lists instead of malloc and free (binary-trees runs about 1.9x faster). Programs with their own allocator are unchanged.
-- The `Box` free lists read their per-thread state with the initial-exec TLS model, so each allocation skips a `__tls_get_addr` call.
-- A pooled `Box` allocation or release is inline in the generated code: a call into the runtime only when a size class is empty or a thread is new.
-- The `[target]` error for a missing `mode` now also names `managed`, and `heap_max` is refused unless `mode = "managed"` (on branch round-gc, not merged).
-- A managed build refuses `thread.spawn` of a closure that captures values, including one bound to a name first. A thread's argument or result, and a `Mutex` or `RwLock` value, that holds a `Box`, `String`, `List`, `Map` or `Bytes` is refused by name, because the collector does not scan those records yet.
-- When a thread cannot start, `thread.spawn` panics with the `pthread_create` return code (`errno N: ...`) and frees what it built, where it used to leak it.
-- Managed GC collection (`kelpc/gc`, 128 MiB heap cap, 42 cycles): binary-trees total stop-the-world time 217 ms to 131 ms (-39%); a 1.5 M-node live set 880 ms to 633 ms (-28%), longest pause 42 ms to 30 ms. Wall time 11-12% lower on both (medians of 5 runs, same job).
-
-- The `header` and `include_dirs` keys of `[extern."<module id>"]` are refused by name, since no C is compiled and they did nothing (`library_dirs` is unchanged). The refusals that said "in managed mode" now say "in a hosted build", and `build/install.sh` checks for `ld.lld` instead of `cc`.
+- The Polyp examples' message queue is Kelp code now, so their `coral.toml` files name no C header.
 
 ## compiler
-- Compiler messages and source comments use plain hyphens and commas, with no em or en dashes.
 
-- The C text the `llvm` backend still emits (runtime headers, `extern fun` declarations, callback glue) moved from `codegen_c.rs` to `cdecl.rs`. Emitted output is unchanged.
-- The link step uses `ld.lld`, not `cc`: a build with no `cc` can link, and `KELPC_LLD` selects the `ld.lld` binary (otherwise the first one on PATH). `cc` still compiles the `extern fun` C bodies.
+- The link step uses `ld.lld`, not `cc`: a build with no `cc` can link, and `KELPC_LLD` selects the `ld.lld` binary (otherwise the first one on PATH).
 - A TLS program finds OpenSSL's `libssl.so` and `libcrypto.so` through `pkg-config openssl` (then the build-time record, then the system directories), so a Nix build links without a hand-set library path.
-- `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C. Programs are unchanged: the C runtime is still the one linked.
-- `kelpc doc --format json` writes the documentation as JSON: declarations, spans, imports, trait impls and the compiler's builtin members (on branch lighthouse-support, not merged).
-- `kelpc doc --text` reads one file's source from stdin in place of the file, for editor tools; it does not print text (on branch lighthouse-support, not merged).
-- `kelp-rt/`, a Rust `no_std` runtime library, is added and built by `kelpc/build.rs` as the first step of moving the runtime off C.
-- The C runtime is removed: `kelpc` links the Rust runtime into every LLVM-built program. A hosted program links `libkelp_rt.a` and a managed program links `kelp_rt_managed.o` beside the collector archive. The runtime's symbol names, signatures and struct layouts are unchanged, so a program that calls a runtime helper links as before.
-- The C compile of the runtime is gone from the compiler's build, and the link no longer needs a C object for it; `cc` still compiles the `extern fun` bodies that `kelpc` writes in C.
-- The capability checks run in the runtime (`kelp-rt/src/cap.rs`) rather than from C text spliced into each program with a gated call. The checks and their denial messages are unchanged.
-- A pooled `Box<T>` allocation or release calls the runtime once for the calling thread's free lists, where it used to read a thread-local array inline. Results are unchanged; a pooled Box costs one call more.
-- The corpus has golden outputs frozen from the C oracle at v26.10.5 (`kelpc/tests/golden/`), and the `llvm` backend is checked at five optimization levels against `-O0` with no C in the comparison.
-
-- `kelpc doc --format json` writes the documentation as JSON (on branch lighthouse-support, not merged).
-- `kelpc doc --text` prints the documentation as plain text (on branch lighthouse-support, not merged).
-- `kelpc` builtin listing is available as JSON (on branch lighthouse-support, not merged).
+- The C runtime is removed: `kelp-rt/`, a Rust `no_std` crate built by `kelpc/build.rs`, is linked into every LLVM-built program. Its symbol names, signatures and struct layouts are unchanged, so a program that calls a runtime helper links as before.
+- The runtime's panic, I/O flush, env cache, child table, dial and capability checks are Rust (`kelp-rt/src/`), not C text spliced into each program; behaviour and denial messages are unchanged.
+- The hosted build no longer compiles any C: the `extern fun` trampolines, the native-callback glue and the capability allowlists are LLVM IR in `<out>.externs.o`, written by the program's own target machine. A user `extern fun` that takes or returns a struct by value is refused for now.
+- `kelpc doc --text` reads one file's source from stdin in place of the file, for editor tools.
+- `kelpc doc` output has no em or en dashes: dashes copied from doc comments become hyphens.
 - The LLVM backend checks a `List` index of `x.to_usize()` (signed `x`) with one bounds branch instead of two; the same panics and messages, faster `List.get` and `List.set` in tight loops.
-- The capability checks are ported from C to Rust in `kelp-rt/src/cap.rs` (stage 1, not yet linked into `kelpc`); the checks behave as before.
-- The runtime's panic, I/O flush, env cache, child table and dial are ported to Rust in the new `kelp-rt` crate (stage 1, WP2). Not linked by `kelpc` yet; behaviour is unchanged.
-- The LLVM backend takes the builtin heap layouts and the runtime prototypes from one table (stage 1 WP5); no language change.
-
 - The C backend is removed (2026-10-10): `kelpc` builds every program with the `llvm` backend. The `KELPC_ORACLE` switch no longer exists, and a set `KELPC_ORACLE` is refused by name, the same way `KELPC_BACKEND` and `--backend` already are.
 - `--sanitize=` and `[build] sanitize` are refused: the sanitizers were built by the C backend, so no build can be sanitized now.
-
 - The TLS and network externs (the `std/tls` handshake, server context, accept and ALPN calls, and `std/net` listen) no longer need a C compiler: they are part of the Rust runtime.
 
 ## stdlib
 
-- `kelpc stdlib --json --dir <dir>` writes the shipped std sources to `<dir>` and prints the module list with a SHA-256 per file as JSON (on branch lighthouse-support, not merged).
-- `kelpc stdlib --json` lists the standard library as JSON (on branch lighthouse-support, not merged).
-- The runtime differential `kelpc/tests/run-runtime-diff.sh` and its recorded baseline from origin/main are in place, with runtime link smoke tests (on branch stage1-wp6, not merged).
 - `str.split` checks the first byte of the separator before comparing the whole separator, so splitting a long string does less work per position.
 
 ## fixes
 
-- The roadmap no longer carries a release schedule, and ISSUES no longer has release slots (landed on main, c87fb51).
-- The roadmap says channels and Mutex ship now, and the download row says when it was true (landed on main, be51d2e).
-- The KelpScript proposal moves to `plan/kelpscript.md` (on branch kelpscript-plan, not merged).
 - The dev shell (`shell.nix`) adds `gdb`, so the debug-info test (`llvm_debug_info`) can resolve its fault backtrace.
-- A managed program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
+- A hosted program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
 - A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
-- The Rust runtime leaves the collector when a worker ends (also on a panic), waits in join, locks and condition waits as native, polls the collector in long text and map scans, frees a spawn whose thread cannot start and reports its errno, and the collector's personality routine lets a worker's forced unwind finish (landed with the rt-gaps lane).
+- The Rust runtime leaves the collector when a worker ends (also on a panic), waits in join, locks and condition waits as native, polls the collector in long text and map scans, frees a spawn whose thread cannot start and reports its errno, and the collector's personality routine lets a worker's forced unwind finish.
 - A freestanding build refuses the `f32` overloads of `std` and `math` as it refuses the `f64` ones, so no soft-float compare routine is linked (`ld.lld` failed with an undefined `__ltsf2` on riscv).
-- A `Mutex` or `RwLock` holding a `datac` of scalars is accepted in managed mode: the classifier reads the fields of each struct, so `std.sync.ChanMeta` no longer counts as collected memory. A `Mutex` of a `List`, or a struct with a `List` field, is still refused.
-- The golden corpus index has a row for every fixture again: the 20 fixtures added after the C oracle was removed are decided by the llvm backend (`kelpc/tests/golden/regen_llvm.py`), and the hosted IR golden follows the pooled Box lowering on main. Internal test data only.
-
+- A `Mutex` or `RwLock` holding a `datac` of scalars is accepted in a hosted build: the classifier reads the fields of each struct, so `std.sync.ChanMeta` no longer counts as collected memory. A `Mutex` of a `List`, or a struct with a `List` field, is still refused.
 - The Polyp GTK backend reads a scrolled area's content box through the viewport GTK puts around it, so the todo example no longer prints GTK CRITICAL warnings; a keyed reorder emits the moves that reach the new order (old [a,b,c,d] to new [c,b,d,a] used to end [c,d,b,a]); a mount that disagrees with the view stops the program instead of writing into nothing; and `examples/polyp-todo/smoke.sh` fails on any CRITICAL line.
 
 ## limits
 
-- Managed lowering is WIP: its first commit (7b24451) was not compiled or verified; later commits add tests and the enum and safepoint lowering (on branch round-gc, not merged).
-- Managed mode does not describe an enum stored inside a `datac` yet; such a build is a compile error (on branch round-gc, not merged).
-- A-11 borrow checking is a WIP commit, not finished (on branch a11-checker, not merged).
-
-## Wiki and docs
-
-- Homepage: the current release line is 26.10.5 (fbdb951, merged into main by 02f7db4).
-- Coral changelog: a 26.10.5 entry and a table row (9ec46bc, merged into main by c90a24b).
-- Polyp changelog: a new page at `libraries/polyp-changelog.md` (9ec46bc, merged into main by c90a24b).
-- Owner name changed from Juniper to Lilly (d813b32 on unreleased, merged into main by 82ec21c).
-- Finished wiki lane branches deleted on the remote and locally; origin keeps only main and unreleased.
-- Wiki: new section "Working without the garbage collector" (`memory.md` and `memory/`, on kelp-wiki branch `wiki-manual-memory`, not merged); its managed comparison is a placeholder until the managed build is measured.
-- Wiki reorganised for finding pages: examples named by what they do, changelog pages under `changelog/`, a sidebar order file, and old paths kept as redirect stubs.
-- Docs: the wiki no longer says a feature works "on both backends" (the C backend is gone, LLVM is the only one), and no em or en dashes remain in the repo text; the comments, docs and test fixtures were reworded with commas, colons and plain hyphens, with no change to behaviour.
-
-## Plans not in the repo
-
-- `/home/juniper/Projects/kelp-work/stage1-runtime-plan.md`
-- `/home/juniper/Projects/kelp-work/stage2-oracle-plan.md`
-- `/home/juniper/Projects/kelp-work/stage3-lld-plan.md`
-- `/home/juniper/Projects/kelp-work/kelpscript-gc-paper.md`
-- `/home/juniper/Projects/kelp-work/ckp-plan.md`
-
-## Decisions
-
-- C is removed from the compiler in three stages (see the stage plans above).
-- Every change, however small, gets one line in its repo's pending changelog.
-
-## Compiler
-
-- `for x in xs.iter()` and `for (k, v) in m.iter()` run the same walk as `for x in xs` and `for (k, v) in m`; no iterator value is built, and the body may not mutate the walked list.
-
-## Added
-
-- `sync.rendezvous<T>()` makes a zero-capacity channel: a send completes only once a receive takes the value. `sync.bounded(0)` still panics.
-- `sync.select2` and `sync.select3` wait on receive cases over one element type and return `Pick.Got(index, value)` or `Pick.Closed(index)`; a closed, empty channel counts as ready.
-
-## Standard library
-
-- `str.to_upper` and `str.to_lower` apply Unicode 16.0.0 simple (one-to-one) case mappings to every codepoint; multi-character mappings such as U+00DF are not applied.
-- `str.slice(s, from, to)` takes byte offsets, which must start a codepoint or be the end of the string; an offset inside a codepoint panics.
-- `str.index_of` and `str.replace` measure the haystack once; a search over a 4000-piece haystack runs about 85 times faster.
-- `path.split` slices each component from the view it already holds; a 20000-component split runs about 20 times faster.
-- `base64` and `base32` map each character by range instead of a `str.byte` lookup; about 2x and 1.7x faster on 2 MB buffers.
-- `str.from_f64` (and so `fmt.float`) formats once into a stack buffer when the text fits in 128 bytes; about 2x faster on 400000 two-decimal values.
-
-- `kelpc doc --format json` (with `--text` for stdin) and `kelpc stdlib --json --dir <dir>` give editor tools the declarations, spans, import aliases, trait impls, builtin members and shipped std sources as data.
-
-- The hosted build no longer compiles any C: the `extern fun` trampolines, the native-callback glue and the capability allowlists are LLVM IR in `<out>.externs.o`, written by the program's own target machine, so the C compiler is not run and no `.c` file is written. A user `extern fun` that takes or returns a struct by value is refused for now.
+- A hosted build refuses an enum stored inside a `datac`: the collector does not describe that layout yet, so such a program is a compile error.
+- A-11 (full borrow checking) is not finished.
