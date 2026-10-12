@@ -11,6 +11,7 @@ pub mod mark;
 pub mod state;
 pub mod sys;
 pub mod threads;
+pub mod trigger;
 pub mod tls;
 pub mod types;
 pub mod verify;
