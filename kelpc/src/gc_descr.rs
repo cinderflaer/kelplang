@@ -165,7 +165,7 @@ pub fn pointer_offsets(
         Ty::Struct(name) => {
             if layout.enum_variants(name).is_some() {
                 return Err(format!(
-                    "managed mode describes the enum '{name}' only as a heap object (a Box payload or a List element); an enum stored inside a datac is not described yet"
+                    "a hosted build describes the enum '{name}' only as a heap object (a Box payload or a List element); an enum stored inside a datac is not described yet"
                 ));
             }
             let fields = layout.struct_fields(name)?;
@@ -199,7 +199,7 @@ pub fn pointer_offsets(
         | Ty::Handle(_) => {}
         other => {
             return Err(format!(
-                "managed mode does not describe a value of type `{}` in a GC object yet",
+                "a hosted build does not describe a value of type `{}` in a GC object yet",
                 ty_mangle(other)
             ));
         }

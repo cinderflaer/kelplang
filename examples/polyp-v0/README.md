@@ -153,7 +153,7 @@ packaging limitation, not a design choice:
    spell that location, so the copy has to land exactly there.
 
 2. **Paste the `[extern.*]` sections into the consumer's `coral.toml`.** A
-   library has no manifest of its own, so the native symbols, the header, the
+   library has no manifest of its own, so the native symbols, the
    `pkg-config` package and the capability domain live in the consumer's
    manifest. The module ids are the same `impl` paths as above:
 
@@ -161,7 +161,6 @@ packaging limitation, not a design choice:
    [extern."deps/polyp/gtk"]
    domain = "ui"
    library = "gtk-4"
-   header = "gtk/gtk.h"
    pkg_config = "gtk4"
    symbols = ["gtk_init", "gtk_window_new", "gtk_window_set_title", "gtk_window_set_default_size", "gtk_window_set_child", "gtk_window_present", "gtk_box_new", "gtk_box_append", "gtk_label_new", "gtk_button_new_with_label", "g_object_unref", "g_main_context_iteration", "g_timeout_add_full", "connect=g_signal_connect_data", "connect_ret=g_signal_connect_data"]
    ```

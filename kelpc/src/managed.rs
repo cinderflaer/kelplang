@@ -280,7 +280,7 @@ pub fn check_heap_slot(
         ResourceKind::Memory => Ok(()),
         ResourceKind::Resource => Err(Diagnostic::new(
             format!(
-                "'{ty_name}' cannot be {} in managed mode: '{ty_name}' is a resource, and a resource never enters the collected heap, because its drop has to run at scope end. Keep it in a local, a parameter or a field of a stack value, and let it drop there",
+                "'{ty_name}' cannot be {} in a hosted build: '{ty_name}' is a resource, and a resource never enters the collected heap, because its drop has to run at scope end. Keep it in a local, a parameter or a field of a stack value, and let it drop there",
                 slot.describe()
             ),
             at,
@@ -288,7 +288,7 @@ pub fn check_heap_slot(
         )),
         ResourceKind::Declared => Err(Diagnostic::new(
             format!(
-                "'{ty_name}' cannot be {} in managed mode: its declaration was not found, so it cannot be classified as memory",
+                "'{ty_name}' cannot be {} in a hosted build: its declaration was not found, so it cannot be classified as memory",
                 slot.describe()
             ),
             at,
@@ -362,7 +362,7 @@ pub fn check_heap_uses(
 fn runtime_record_diagnostic(slot: HeapSlot, ty_name: &str, at: Span) -> Diagnostic {
     Diagnostic::new(
         format!(
-            "'{ty_name}' cannot be {} in managed mode: the collector does not yet scan the values a thread or a lock holds outside the heap, so a collection could free '{ty_name}' while the program still uses it. Use a number or a resource there",
+            "'{ty_name}' cannot be {} in a hosted build: the collector does not yet scan the values a thread or a lock holds outside the heap, so a collection could free '{ty_name}' while the program still uses it. Use a number or a resource there",
             slot.describe()
         ),
         at,
@@ -792,7 +792,7 @@ mod tests {
         .expect_err("a resource must be refused");
         assert!(err.message.contains("'std.net.Socket' is a resource"), "{}", err.message);
         assert!(err.message.contains("the payload of a Box"), "{}", err.message);
-        assert!(err.message.contains("managed mode"), "{}", err.message);
+        assert!(err.message.contains("a hosted build"), "{}", err.message);
     }
 
     #[test]

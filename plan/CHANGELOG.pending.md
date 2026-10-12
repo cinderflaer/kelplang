@@ -45,6 +45,7 @@ empty on release.
 - When a thread cannot start, `thread.spawn` panics with the `pthread_create` return code (`errno N: ...`) and frees what it built, where it used to leak it.
 - Managed GC collection (`kelpc/gc`, 128 MiB heap cap, 42 cycles): binary-trees total stop-the-world time 217 ms to 131 ms (-39%); a 1.5 M-node live set 880 ms to 633 ms (-28%), longest pause 42 ms to 30 ms. Wall time 11-12% lower on both (medians of 5 runs, same job).
 
+- The `header` and `include_dirs` keys of `[extern."<module id>"]` are refused by name, since no C is compiled and they did nothing (`library_dirs` is unchanged). The refusals that said "in managed mode" now say "in a hosted build", and `build/install.sh` checks for `ld.lld` instead of `cc`.
 
 ## compiler
 - Compiler messages and source comments use plain hyphens and commas, with no em or en dashes.

@@ -10,4 +10,3 @@ name = "ffiheader"
 domain = "env"
 library = "c"
 symbols = ["toupper"]
-header = "ctype.h"

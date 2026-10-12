@@ -6,5 +6,4 @@ name = "ffihandlenull"
 [extern."file"]
 domain = "process"
 library = "c"
-header = "stdio.h"
 symbols = ["fopen"]

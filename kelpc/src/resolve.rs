@@ -212,8 +212,8 @@ impl Project {
     }
 
     /// Every library directory named across the project's `[extern.*]`
-    /// sections, resolved like `extern_include_dirs`. `driver.rs` passes each
-    /// one to `cc` as `-L<dir>`.
+    /// sections, resolved against the `coral.toml` directory. The link takes
+    /// each one as `-L<dir>`.
     pub fn extern_library_dirs(&self) -> Vec<String> {
         collect_extern_dirs(&self.extern_modules, self.root.as_deref(), |e| e.library_dirs())
     }
@@ -236,7 +236,7 @@ fn collect_extern_pkg_config(extern_modules: &HashMap<String, ExternModuleDecl>)
     packages
 }
 
-/// The shared body of `extern_include_dirs` and `extern_library_dirs`: each
+/// The shared body of `extern_library_dirs`: each
 /// section's entries are resolved against the directory holding `coral.toml`
 /// (an absolute entry is left as written, since `Path::join` keeps it), then
 /// the union is deduplicated and sorted.
@@ -401,15 +401,6 @@ pub struct ExternModuleDecl {
     /// `"kelp_name=c_symbol"` when the two differ. Every entry's Kelp name is
     /// unique, so `symbol_of` resolves one unambiguously.
     pub symbols: Vec<String>,
-    /// The C header this module's symbols are declared in, when the section
-    /// names one. the removed C backend emitted it as `#include <header>` after the
-    /// fixed preamble, so a `extern fun` whose native symbol the runtime does
-    /// not already declare has a prototype instead of an implicit one.
-    header: Option<String>,
-    /// The include directories the section names, as written. No C is compiled
-    /// now, so nothing reads them; the key is still validated.
-    #[allow(dead_code)]
-    include_dirs: Vec<String>,
     /// The directories `-L<dir>` names on the link line, resolved the same
     /// way.
     library_dirs: Vec<String>,
@@ -423,20 +414,6 @@ impl ExternModuleDecl {
     /// The native library this module's symbols are declared to live in.
     pub fn library(&self) -> &str {
         self.library.as_deref().unwrap_or_default()
-    }
-
-    /// The C header this module's symbols are declared in, if the section
-    /// named one. No lowering reads it now that no C is compiled: the key is
-    /// still validated, so a manifest that names a bad header is refused as before.
-    #[allow(dead_code)]
-    pub fn header(&self) -> Option<&str> {
-        self.header.as_deref()
-    }
-
-    /// The include directories this section named, as written.
-    #[allow(dead_code)]
-    pub fn include_dirs(&self) -> &[String] {
-        &self.include_dirs
     }
 
     /// The library directories this section named, as written.
@@ -2998,47 +2975,22 @@ fn parse_extern_line(
             entry.library = Some(library.to_string());
         }
         "header" => {
-            let Some(header) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
-                return Err(Diagnostic::new(
-                    format!(
-                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] header' must be a double-quoted string"
-                    ),
-                    at,
-                    "",
-                ));
-            };
-            if header.is_empty() {
-                return Err(Diagnostic::new(
-                    format!(
-                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] header' must not be empty"
-                    ),
-                    at,
-                    "",
-                ));
-            }
-            // The value is spliced into an `#include <...>` line, so it may
-            // not close the angle brackets or leave the include path. `..` is
-            // refused for the same reason `impl` paths refuse it: a manifest
-            // is not a way around the project boundary.
-            if header.contains('"')
-                || header.contains('<')
-                || header.contains('>')
-                || header.contains('\n')
-                || header.contains('\r')
-                || header.contains("..")
-            {
-                return Err(Diagnostic::new(
-                    format!(
-                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] header' must not contain '\"', '<', '>', a newline or '..'"
-                    ),
-                    at,
-                    "",
-                ));
-            }
-            entry.header = Some(header.to_string());
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME}'s '[extern.\"{module_id}\"] header' was removed: delete the header line. No C is compiled now, so the key does nothing"
+                ),
+                at,
+                "",
+            ));
         }
         "include_dirs" => {
-            entry.include_dirs = parse_dir_list(value, module_id, "include_dirs", at)?;
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME}'s '[extern.\"{module_id}\"] include_dirs' was removed: delete the include_dirs line. No C is compiled now, so include directories do nothing; library_dirs is still read"
+                ),
+                at,
+                "",
+            ));
         }
         "library_dirs" => {
             entry.library_dirs = parse_dir_list(value, module_id, "library_dirs", at)?;
@@ -3172,7 +3124,7 @@ fn parse_extern_line(
     Ok(())
 }
 
-/// The `include_dirs`/`library_dirs` value of a `[extern."<module id>"]`
+/// The `library_dirs` value of a `[extern."<module id>"]`
 /// section: a bracketed list of double-quoted paths, kept as written (the
 /// relative ones are resolved against the manifest's directory when
 /// `collect_extern_dirs` reads them). Each entry becomes a `-I<dir>` or
@@ -3876,27 +3828,13 @@ mod tests {
     }
 
     #[test]
-    fn a_header_that_is_not_a_quoted_string_is_rejected() {
-        let text = format!("name = \"x\"\n{}", extern_section("a", "zlib.h"));
-        let err = manifest_err(&text);
-        assert!(err.message.contains("header' must be a double-quoted string"));
-    }
-
-    #[test]
-    fn an_empty_header_is_rejected() {
-        let text = format!("name = \"x\"\n{}", extern_section("a", "\"\""));
-        let err = manifest_err(&text);
-        assert!(err.message.contains("header' must not be empty"));
-    }
-
-    #[test]
-    fn a_header_with_a_forbidden_character_is_rejected() {
-        for bad in ["\"gtk/gtk.h>\"", "\"../evil.h\"", "\"a<b\"", "\"a\\\"b\""] {
-            let text = format!("name = \"x\"\n{}", extern_section("a", bad));
+    fn a_header_key_is_refused_as_removed_whatever_its_value() {
+        for value in ["\"zlib.h\"", "zlib.h", "\"\"", "\"../evil.h\""] {
+            let text = format!("name = \"x\"\n{}", extern_section("a", value));
             let err = manifest_err(&text);
             assert!(
-                err.message.contains("header' must not contain"),
-                "expected '{bad}' to be refused, got: {}",
+                err.message.contains("'[extern.\"a\"] header' was removed"),
+                "{value}: {}",
                 err.message
             );
         }
@@ -3980,52 +3918,50 @@ mod tests {
     }
 
     #[test]
-    fn include_and_library_dirs_are_parsed_as_written() {
-        let parsed = manifest(&extern_dirs_section(
-            "a",
-            "include_dirs",
-            "[\"include\", \"/opt/inc\"]",
-        ));
-        let decl = parsed.extern_modules.get("a").expect("extern section");
-        assert_eq!(
-            decl.include_dirs(),
-            ["include".to_string(), "/opt/inc".to_string()].as_slice()
+    fn an_include_dirs_key_is_refused_as_removed() {
+        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "[\"include\"]"));
+        assert!(
+            err.message.contains("'[extern.\"a\"] include_dirs' was removed"),
+            "{}",
+            err.message
         );
-        assert!(decl.library_dirs().is_empty());
+    }
 
-        let parsed = manifest(&extern_dirs_section("a", "library_dirs", "[\"lib\"]"));
+    #[test]
+    fn library_dirs_are_parsed_as_written() {
+        let parsed = manifest(&extern_dirs_section("a", "library_dirs", "[\"lib\", \"/opt/lib\"]"));
         assert_eq!(
             parsed
                 .extern_modules
                 .get("a")
                 .expect("extern section")
                 .library_dirs(),
-            ["lib".to_string()].as_slice()
+            ["lib".to_string(), "/opt/lib".to_string()].as_slice()
         );
     }
 
     #[test]
     fn a_dir_entry_that_is_not_a_bracketed_list_is_rejected() {
-        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "include"));
-        assert!(err.message.contains("include_dirs' must be a bracketed list"), "{}", err.message);
+        let err = manifest_err(&extern_dirs_section("a", "library_dirs", "include"));
+        assert!(err.message.contains("library_dirs' must be a bracketed list"), "{}", err.message);
     }
 
     #[test]
     fn a_dir_entry_that_is_not_double_quoted_is_rejected() {
-        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "[include]"));
-        assert!(err.message.contains("include_dirs' must be double-quoted"), "{}", err.message);
+        let err = manifest_err(&extern_dirs_section("a", "library_dirs", "[include]"));
+        assert!(err.message.contains("library_dirs' must be double-quoted"), "{}", err.message);
     }
 
     #[test]
     fn an_empty_dir_entry_is_rejected() {
-        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "[\"\"]"));
-        assert!(err.message.contains("include_dirs' must not be empty"), "{}", err.message);
+        let err = manifest_err(&extern_dirs_section("a", "library_dirs", "[\"\"]"));
+        assert!(err.message.contains("library_dirs' must not be empty"), "{}", err.message);
     }
 
     #[test]
     fn a_dir_entry_with_a_forbidden_character_is_rejected() {
         for bad in ["\"a\"b\"", "\"a\nb\"", "\"a\0b\""] {
-            let err = parse_dir_list(&format!("[{bad}]"), "a", "include_dirs", Span::new(0, 0))
+            let err = parse_dir_list(&format!("[{bad}]"), "a", "library_dirs", Span::new(0, 0))
                 .expect_err("expected a forbidden character to be refused");
             assert!(err.message.contains("must not contain"), "{bad:?}");
         }
@@ -4033,23 +3969,23 @@ mod tests {
 
     #[test]
     fn a_dir_entry_starting_with_a_dash_is_rejected() {
-        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "[\"-I/usr/include\"]"));
-        assert!(err.message.contains("include_dirs' must not start with '-'"), "{}", err.message);
+        let err = manifest_err(&extern_dirs_section("a", "library_dirs", "[\"-I/usr/include\"]"));
+        assert!(err.message.contains("library_dirs' must not start with '-'"), "{}", err.message);
     }
 
     #[test]
     fn extern_dirs_are_resolved_deduplicated_and_sorted() {
         let text = format!(
             "{}{}",
-            extern_dirs_section("a", "include_dirs", "[\"include\", \"/opt/inc\"]"),
-            extern_dirs_section("b", "include_dirs", "[\"include\"]"),
+            extern_dirs_section("a", "library_dirs", "[\"include\", \"/opt/inc\"]"),
+            extern_dirs_section("b", "library_dirs", "[\"include\"]"),
         );
         let parsed = manifest(&text);
         assert_eq!(
             collect_extern_dirs(
                 &parsed.extern_modules,
                 Some(Path::new("/proj")),
-                |e| e.include_dirs()
+                |e| e.library_dirs()
             ),
             ["/opt/inc".to_string(), "/proj/include".to_string()].as_slice()
         );

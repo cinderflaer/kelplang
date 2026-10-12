@@ -5,5 +5,4 @@ name = "ffiuidenied"
 [extern."display"]
 domain = "ui"
 library = "c"
-header = "unistd.h"
 symbols = ["getpid"]

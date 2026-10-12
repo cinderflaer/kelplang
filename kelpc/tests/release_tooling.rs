@@ -176,7 +176,7 @@ fn missing_dependencies_are_named() {
     let dir = scratch("deps");
     let (file, hex) = stub(&dir);
     let prefix = dir.join("prefix");
-    // A PATH holding only `tr` and `cat` finds no `cc`: the message must say so.
+    // A PATH holding only `tr` and `cat` finds no `ld.lld`: the message must say so.
     let tools = dir.join("tools");
     fs::create_dir_all(&tools).unwrap();
     for tool in ["tr", "cat"] {
@@ -195,7 +195,7 @@ fn missing_dependencies_are_named() {
         .unwrap();
     assert!(!out.status.success(), "{}", text(&out));
     let msg = text(&out);
-    assert!(msg.contains("missing runtime dependencies") && msg.contains("cc"), "{msg}");
+    assert!(msg.contains("missing runtime dependencies") && msg.contains("ld.lld"), "{msg}");
     assert!(msg.contains("Debian/Ubuntu") && msg.contains("NixOS") && msg.contains("Fedora"), "{msg}");
     let _ = fs::remove_dir_all(&dir);
 }

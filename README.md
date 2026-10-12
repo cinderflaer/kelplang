@@ -106,7 +106,7 @@ directory with a
 
 `kelpc` builds every program with one backend, **`llvm`**: it lowers the typed IR
 to LLVM IR, runs LLVM's own pass pipeline over the module, emits an object and
-hands it to `cc -lm`. There is no backend to choose.
+links it with `ld.lld`. There is no backend to choose.
 
 The C backend was removed on 2026-10-10. It was the project's differential
 oracle until then, and its answers for the corpus are kept as the golden set in
@@ -180,8 +180,10 @@ directory is not followed.
   trade-offs.
 - A `kelpc` built this way links `libLLVM-21.so` dynamically and needs it at
   runtime.
-- A C compiler and glibc: `cc` is still the linker, and it builds the runtime
-  object and the per-program `extern` bodies.
+- The glibc development files and the gcc runtime files (`crtbeginS.o`,
+  `libgcc.a`), which the link reads. No C compiler is run to compile or link a
+  Kelp program. Building kelpc from source also needs `cc`: cargo uses it as the
+  Rust linker, and `build.rs` queries it.
 - Optional: `valgrind`, for the memory gate.
 
 ## Tests

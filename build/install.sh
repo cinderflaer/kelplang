@@ -16,7 +16,7 @@
 #
 # Test-only environment overrides (the release tests use them, nothing else
 # should): KELP_INSTALL_PLATFORM="<uname -s> <uname -m>" fakes the platform;
-# KELP_INSTALL_SKIP_CHECKS=1 skips the cc/libLLVM check and the hello-world run.
+# KELP_INSTALL_SKIP_CHECKS=1 skips the ld.lld/libLLVM check and the hello-world run.
 set -eu
 
 prog=install.sh
@@ -87,7 +87,11 @@ fi
 # (b) runtime dependencies
 if [ "${KELP_INSTALL_SKIP_CHECKS:-0}" != 1 ]; then
     missing=""
-    command -v cc >/dev/null 2>&1 || missing="$missing cc"
+    if [ -n "${KELPC_LLD:-}" ]; then
+        [ -f "$KELPC_LLD" ] || missing="$missing ld.lld"
+    else
+        command -v ld.lld >/dev/null 2>&1 || missing="$missing ld.lld"
+    fi
     have_llvm=0
     if command -v ldconfig >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q 'libLLVM-21\.so'; then
         have_llvm=1
@@ -103,10 +107,12 @@ if [ "${KELP_INSTALL_SKIP_CHECKS:-0}" != 1 ]; then
     if [ -n "$missing" ]; then
         cat >&2 <<MSG
 $prog: error: missing runtime dependencies:$missing
-kelpc needs a C compiler (cc) and the LLVM 21 shared library (libLLVM-21.so). Get them with:
-  Debian/Ubuntu: sudo apt install build-essential llvm-21      (llvm-21 is in apt.llvm.org if your release lacks it)
-  Fedora:        sudo dnf install gcc llvm21-libs
-  NixOS:         nix-shell -p gcc llvmPackages_21.libllvm       (or add both to environment.systemPackages)
+kelpc needs the lld linker (ld.lld) and the LLVM 21 shared library (libLLVM-21.so).
+Linking a program also reads the glibc development files and the gcc runtime files
+(crtbeginS.o, libgcc.a). No C compiler is run. Get them with:
+  Debian/Ubuntu: sudo apt install lld llvm-21 libc6-dev   (llvm-21 is in apt.llvm.org if your release lacks it; the gcc runtime files come with libgcc-<version>-dev)
+  Fedora:        sudo dnf install lld llvm21-libs glibc-devel libgcc
+  NixOS:         nix-shell -p lld llvmPackages_21.libllvm   (add the glibc dev output and the gcc runtime if the link cannot find them)
 Programs that use std/tls also need the OpenSSL runtime libraries (libssl, libcrypto).
 MSG
         exit 1

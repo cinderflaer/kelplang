@@ -1,4 +1,5 @@
-//! The LLVM backend: lower `tir` to LLVM IR, a peer of the removed C backend.
+//! The LLVM backend: lower `tir` to LLVM IR. It is the only backend. The C backend
+//! that was its differential oracle was removed on 2026-10-10.
 //!
 //! MK7 §3.1 names this module as the whole of the new work: the front half of the
 //! compiler is unchanged and already backend-complete, so the lowering walks the
@@ -40,11 +41,10 @@
 //!
 //! # What S2B adds (MK7 S2, the runtime and heap slice)
 //!
-//! - the C runtime object: `runtime/kelp_rt.c` (the same text the C backend
-//!   emits) compiled once by `build.rs` and linked into every LLVM binary, with
-//!   the helpers reached by declaration, never re-implemented in IR
+//! - the runtime object, built from the `kelp-rt` crate and linked into every
+//!   LLVM binary, with the helpers reached by declaration, never re-implemented in IR
 //! - `String` and `Bytes` as an identified `{ ptr, i64, i64 }` and `View` as
-//!   `{ ptr, i64 }`, field for field the structs `kelp_rt.c` defines (MK7 §3.3)
+//!   `{ ptr, i64 }`, field for field the structs `kelp-rt` defines (MK7 §3.3)
 //! - the builtin `Bytes`/`String`/`View` methods, and `print`/templates reading
 //!   a buffer or a view as `%.*s` from its own length and pointer
 //! - an owned `datac` field, the generated per-`datac` drop, and the
@@ -350,12 +350,11 @@ use crate::types::{
 };
 
 /// Build the whole program, verify it, write the textual IR beside the binary,
-/// run the level's pass pipeline, emit the object and link it with `cc`.
+/// run the level's pass pipeline, emit the object and link it with `ld.lld`.
 ///
-/// The artifact contract mirrors the C path's `<out>.c`: this writes `<out>.ll`
-/// (MK7 §4.4) so the IR is inspectable next to the binary, and keeps the object
-/// it hands `cc` as `<out>.o`. Linking itself is `driver::link_llvm_object`, the
-/// counterpart of the linker step in `driver`.
+/// This writes `<out>.ll` (MK7 §4.4) so the IR is inspectable next to the
+/// binary, and keeps the object it hands the linker as `<out>.o`. Linking itself
+/// is `driver::link_llvm_object`, the counterpart of the linker step in `driver`.
 ///
 /// `opt` is the S6 optimization level (MK7 §4.3). It is one level for two
 /// things: the `default<O<n>>` pass pipeline `run_passes` runs over the module,
@@ -452,13 +451,11 @@ pub fn compile(
     )?;
 
     // The `extern fun` bodies this program reaches and the capability check's
-    // own C half, compiled into their own object (MK7 §3.2, §5). Keeping the C
-    // source beside the IR is the same artifact contract the C backend's
-    // `<out>.c` has: the text an author can read is the text that was compiled.
+    // own glue, compiled into their own object (MK7 §3.2, §5). That object is
+    // LLVM IR written by the program's own target machine.
     //
-    // A freestanding build never compiles it: that object's preamble is libc
-    // and the runtime object's helpers, which is the whole thing this mode
-    // excludes. A user `extern fun` therefore stays a bare declaration here and
+    // A freestanding build never compiles it: its trampolines call into the
+    // hosted runtime object, which is the whole thing this mode excludes. A user `extern fun` therefore stays a bare declaration here and
     // is the linker's to resolve against whatever the script or the build puts
     // beside this object.
     if let Some(fs) = freestanding {
@@ -563,10 +560,10 @@ impl<'a> crate::gc_descr::GcLayout for Gen<'a> {
             .structs
             .iter()
             .find(|s| s.name == name)
-            .ok_or_else(|| format!("managed mode does not describe the enum '{name}' in a GC object yet"))?;
+            .ok_or_else(|| format!("a hosted build does not describe the enum '{name}' in a GC object yet"))?;
         if !matches!(s.repr, crate::ast::Repr::C) {
             return Err(format!(
-                "managed mode describes only `repr(c)` datac layouts; '{name}' is not one"
+                "a hosted build describes only `repr(c)` datac layouts; '{name}' is not one"
             ));
         }
         Ok(s.fields.iter().map(|f| f.ty.clone()).collect())
@@ -975,8 +972,7 @@ fn compile_units(
         })?;
     }
     // The program's `extern fun` bodies, capability glue and cap arrays are one
-    // object for the whole program: the C text is the C backend's own, and it
-    // has no unit to belong to. It is generated here rather than at the link,
+    // object for the whole program, and it has no unit to belong to. It is generated here rather than at the link,
     // because the units must know which program items it names before they set
     // any linkage.
     // The externs object defines no Kelp function: a trampoline calls only the
@@ -9971,7 +9967,7 @@ impl<'a> Gen<'a> {
             // Managed mode allocates only typed objects (`alloc_elem`). An
             // untyped byte allocation has no descriptor, and a noscan one would
             // hide the pointers a `List` or `Map` buffer holds from the collector.
-            return Err("managed mode: this container allocation has no GC type descriptor yet (WP3 follow-up)".to_string());
+            return Err("a hosted build: this container allocation has no GC type descriptor yet (WP3 follow-up)".to_string());
         }
         match &self.alloc_fns {
             Some(a) => {
@@ -10053,7 +10049,7 @@ impl<'a> Gen<'a> {
         func: LlvmFunction<'a>,
     ) -> Result<Value<'a>, String> {
         if self.managed {
-            return Err("managed mode: this container growth has no GC type descriptor yet (WP3 follow-up)".to_string());
+            return Err("a hosted build: this container growth has no GC type descriptor yet (WP3 follow-up)".to_string());
         }
         match &self.alloc_fns {
             Some(a) => {

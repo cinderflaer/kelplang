@@ -6,5 +6,4 @@ name = "ffihandlenulloutside"
 [extern."mem"]
 domain = "process"
 library = "c"
-header = "stdlib.h"
 symbols = ["malloc"]

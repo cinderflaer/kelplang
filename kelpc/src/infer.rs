@@ -16716,7 +16716,7 @@ fn check_thread_spawn(
     // so the type catches a closure bound to a name too, not only a literal.
     if ctx.env.managed && matches!(entry.ty, Ty::Closure { .. }) {
         return Err(TypeError {
-            message: "'thread.spawn' cannot take a closure that captures values in managed mode: the closure's environment is kept in the collected heap, and the collector does not yet scan a thread's environment, so a collection could free it while the worker runs. Pass a number as the argument, or use a 'fun' that captures nothing".to_string(),
+            message: "'thread.spawn' cannot take a closure that captures values in a hosted build: the closure's environment is kept in the collected heap, and the collector does not yet scan a thread's environment, so a collection could free it while the worker runs. Pass a number as the argument, or use a 'fun' that captures nothing".to_string(),
             span: entry_arg.value.span(),
         });
     }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Kelp vs Rust benchmark harness. Run it inside the dev shell (it needs cc, rustc, cargo and the
+# Kelp vs Rust benchmark harness. Run it inside the dev shell (it needs rustc, cargo and the
 # LLVM build half that kelpc links against):
 #
 #   nix-shell overnight/dev.nix --run 'sh bench/run.sh'
