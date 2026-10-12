@@ -10446,7 +10446,7 @@ fn a_bounded_channel_carries_four_producers_to_one_consumer() {
 #[test]
 fn a_channel_closes_when_its_senders_or_its_receiver_drop() {
     // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_close", "'std.sync.ChanMeta' cannot be the value of a Mutex or RwLock");
+    assert_fixture_refused("chan_close", "'List<i64>' cannot be the value of a Mutex or RwLock");
 }
 
 /// A rendezvous send completes only when a receive takes its value; a receiver
@@ -10461,7 +10461,7 @@ fn a_rendezvous_send_completes_only_when_a_receive_takes_it() {
 #[test]
 fn a_select_takes_whichever_channel_is_ready() {
     // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_select", "'std.sync.ChanMeta' cannot be the value of a Mutex or RwLock");
+    assert_fixture_refused("chan_select", "'List<i64>' cannot be the value of a Mutex or RwLock");
 }
 
 /// `select3` with nothing ready waits for the one channel that sends.
@@ -10491,7 +10491,7 @@ fn a_channel_recv_timeout_times_out_and_then_receives() {
 #[test]
 fn a_zero_capacity_channel_panics() {
     // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_zero_capacity", "'std.sync.ChanMeta' cannot be the value of a Mutex or RwLock");
+    assert_fixture_refused("chan_zero_capacity", "'List<i64>' cannot be the value of a Mutex or RwLock");
 }
 
 /// A channel carries owned, movable values: a borrowed `str` and a lock are

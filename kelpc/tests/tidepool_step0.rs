@@ -109,6 +109,23 @@ fn a_static_mut_of_a_heap_type_is_refused_by_name() {
 }
 
 #[test]
+fn a_mutex_holding_a_struct_of_scalars_checks_clean() {
+    // The classifier walks the fields: a scalar-only struct (the shape of
+    // std.sync.ChanMeta) is memory, so the lock accepts it.
+    let out = kelpc()
+        .arg("check")
+        .arg(fixture("accept_scalar_struct_lock"))
+        .output()
+        .expect("failed to run kelpc check");
+    assert!(out.status.success(), "{}", text(&out));
+}
+
+#[test]
+fn a_mutex_holding_a_struct_with_a_list_field_is_refused_by_name() {
+    check_refused("refuse_list_struct_lock");
+}
+
+#[test]
 fn scalar_thread_and_lock_values_still_check_clean() {
     let out = kelpc()
         .arg("check")

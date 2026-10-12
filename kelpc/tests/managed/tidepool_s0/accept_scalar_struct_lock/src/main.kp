@@ -1,0 +1,9 @@
+// A struct of scalars in a Mutex is memory, and the lock accepts it: no field
+// holds collected memory. Same shape as std.sync.ChanMeta.
+pd val gate: Mutex<Meta> = Mutex.new(Meta(count = 0, senders = 1, open = true, cap = 4))
+
+datac Meta(var count: usize, var senders: i64, var open: bool, val cap: usize)
+
+fun main() {
+    gate.lock { v -> print(1) }
+}

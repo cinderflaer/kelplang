@@ -1,0 +1,9 @@
+// The same position as accept_scalar_struct_lock, but a List field makes the
+// struct hold collected memory, so the Mutex refuses it.
+pd val gate: Mutex<Queue> = Mutex.new(Queue(count = 0, items = List.empty()))
+
+datac Queue(var count: usize, var items: List<i64>)
+
+fun main() {
+    gate.lock { v -> print(1) }
+}
