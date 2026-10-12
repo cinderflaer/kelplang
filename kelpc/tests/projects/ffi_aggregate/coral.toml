@@ -9,12 +9,4 @@ name = "ffiaggregate"
 domain = "process"
 library = "kelpaggwit"
 library_dirs = ["native"]
-symbols = [
-    "agg_pair_bump",
-    "agg_mixed_bump",
-    "agg_wide_bump",
-    "agg_wide_total",
-    "agg_bytes_len",
-    "agg_bytes_make",
-    "agg_string_len",
-]
+symbols = ["agg_pair_bump", "agg_mixed_bump", "agg_wide_bump", "agg_wide_total", "agg_trio_scale", "agg_tag_next", "agg_bytes_len", "agg_bytes_make", "agg_string_len"]
