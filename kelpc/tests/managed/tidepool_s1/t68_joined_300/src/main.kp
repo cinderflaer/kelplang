@@ -1,0 +1,19 @@
+impl "std/thread"
+impl "std/result"
+
+// Step 1 (T68, section 18.8): 300 short threads, each joined before the next
+// starts, all run to the end. The spawner counts only the threads still open.
+fun double(n: i64).return: i64 = n * 2
+
+fun main() {
+    var i: i64 = 0
+    while i < 300 {
+        val t = thread.spawn(double, i)
+        when thread.join(t) {
+            Ok(v) -> print(v)
+            Err(e) -> print(e.message)
+        }
+        i = i + 1
+    }
+    print("done")
+}

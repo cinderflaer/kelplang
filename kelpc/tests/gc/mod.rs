@@ -14,18 +14,19 @@ use core::cell::UnsafeCell;
 use core::hint::black_box;
 use core::mem::{align_of, offset_of, size_of};
 use core::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Barrier, Mutex, MutexGuard};
 
 use crate::heap::{blk, desc_of, find_object, object_total, rd, total_for, FREE};
 use crate::state::*;
-use crate::threads::{ROOTS, THREADS};
+use crate::threads::THREADS;
 use crate::types::*;
 use crate::{
     env_usize, kelp_gc_alloc, kelp_gc_alloc_array, kelp_gc_collect, kelp_gc_enter_native,
     kelp_gc_init, kelp_gc_is_heap_ptr, kelp_gc_leave_native, kelp_gc_register_root_region,
     kelp_gc_safepoint, kelp_gc_set_panic_hook, kelp_gc_thread_attach, kelp_gc_thread_detach,
-    kelp_gc_unregister_root_region,
+    kelp_gc_unregister_root_region, kelp_gc_stats, KelpGcStats,
 };
 
 // ---- Layout (the ABI contract with WP3). ----
@@ -187,7 +188,8 @@ unsafe fn reset() {
     core::ptr::write_bytes(s.types as *mut u8, 0, TYPE_TABLE_IDS * 8);
     core::ptr::write_bytes(s.large as *mut u8, 0, s.large_cap * 8);
     core::ptr::write_bytes(THREADS.get() as *mut u8, 0, size_of::<[crate::threads::ThreadRec; MAX_THREADS]>());
-    core::ptr::write_bytes(ROOTS.get() as *mut u8, 0, size_of::<[crate::threads::RootRec; MAX_ROOTS]>());
+    crate::threads::reset_roots();
+    REGIONS.lock().unwrap().clear();
     s.large_n = 0;
     s.large_sorted = true;
     s.used_blocks = 0;
@@ -210,8 +212,8 @@ unsafe fn reset() {
     s.mark_len = 0;
     s.cycles = 0;
     s.allocs = 0;
-    s.pause_ns_total = 0;
-    s.pause_ns_max = 0;
+    s.pause_total_ns = 0;
+    s.pause_max_ns = 0;
     s.mark_ns_total = 0;
     s.sweep_ns_total = 0;
     s.scan_stacks = true;
@@ -270,6 +272,17 @@ fn child_entry() {
             }
             "stop_timeout" => child_stop_timeout(),
             "verify_mark" => child_verify_mark(),
+            "root_full" => child_root_full(),
+            "dup_id" => child_dup_id(),
+            "array_too_large" => {
+                kelp_gc_init(0, 0);
+                kelp_gc_thread_attach();
+                black_box(kelp_gc_alloc_array(&NODE, u32::MAX as usize + 1));
+            }
+            "noscan_with_pointers" => tidepool_step1_fixb::child_noscan_with_pointers(),
+            "array_overflows" => tidepool_step1_fixb::child_array_overflows(),
+            "foreign_thread" => tidepool_step1_fixb::child_foreign_thread(),
+            "panic_location" => crate::sys::report_and_abort("heap.rs", 42),
             other => panic!("unknown child mode {other}"),
         }
     }
@@ -277,7 +290,7 @@ fn child_entry() {
 
 /// Keep every node live until the heap cap is reached.
 unsafe fn fill_until_full() {
-    kelp_gc_register_root_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
+    root(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
     loop {
         let n = kelp_gc_alloc(&LINK) as usize;
         core::ptr::write(n as *mut usize, *ROOT_SLOT.0.get());
@@ -315,7 +328,7 @@ unsafe fn child_stop_timeout() {
 unsafe fn child_verify_mark() {
     kelp_gc_init(0, 0);
     kelp_gc_thread_attach();
-    kelp_gc_register_root_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
+    root(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
     let p = kelp_gc_alloc(&LINK) as usize;
     *ROOT_SLOT.0.get() = p;
     kelp_gc_collect();
@@ -469,7 +482,7 @@ fn mark_keeps_rooted_cycle_and_frees_garbage_cycle() {
     unsafe {
         reset();
         kelp_gc_thread_attach();
-        kelp_gc_register_root_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
+        let h = root(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
         build_cycles();
         clobber_stack();
         kelp_gc_collect();
@@ -486,7 +499,7 @@ fn mark_keeps_rooted_cycle_and_frees_garbage_cycle() {
         assert_eq!(kelp_gc_is_heap_ptr(d as *const u8), 0, "garbage cycle node d freed");
         assert_eq!(kelp_gc_is_heap_ptr(e as *const u8), 0, "garbage cycle node e freed");
         assert_eq!(st().live, 3 * 24, "exactly the three rooted nodes survive");
-        kelp_gc_unregister_root_region(ROOT_SLOT.0.get() as *mut u8);
+        assert_eq!(kelp_gc_unregister_root_region(h), KELP_GC_ROOT_OK);
         kelp_gc_thread_detach();
     }
 }
@@ -553,7 +566,7 @@ fn mark_counts_each_shared_object_once() {
         reset();
         kelp_gc_thread_attach();
         const N: usize = 4000;
-        kelp_gc_register_root_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
+        register_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
         *ROOT_SLOT.0.get() = build_shared_chain(N);
         clobber_stack();
         kelp_gc_collect();
@@ -567,7 +580,7 @@ fn mark_counts_each_shared_object_once() {
             p = core::ptr::read(p as *const usize);
         }
         assert_eq!(count, N, "whole chain intact");
-        kelp_gc_unregister_root_region(ROOT_SLOT.0.get() as *mut u8);
+        unregister_region(ROOT_SLOT.0.get() as *mut u8);
         kelp_gc_thread_detach();
     }
 }
@@ -604,7 +617,7 @@ fn sweep_clears_only_dead_starts_in_mixed_blocks() {
     unsafe {
         reset();
         kelp_gc_thread_attach();
-        kelp_gc_register_root_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
+        register_region(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
         const N: usize = 512;
         let head = build_interleaved(N);
         *ROOT_SLOT.0.get() = head;
@@ -622,7 +635,7 @@ fn sweep_clears_only_dead_starts_in_mixed_blocks() {
         for d in *DEAD_NODES.0.get() {
             assert_eq!(kelp_gc_is_heap_ptr(d as *const u8), 0, "dead node loses its start");
         }
-        kelp_gc_unregister_root_region(ROOT_SLOT.0.get() as *mut u8);
+        unregister_region(ROOT_SLOT.0.get() as *mut u8);
         kelp_gc_thread_detach();
     }
 }
@@ -664,8 +677,8 @@ fn enum_tag_is_read_as_u32_and_selects_the_variant() {
         reset();
         assert_eq!(KELP_GC_ENUM_TAG_BYTES, 4);
         kelp_gc_thread_attach();
-        kelp_gc_register_root_region(ENUM_ROOTS.0.get() as *mut u8, &ROOT_PTR);
-        kelp_gc_register_root_region((ENUM_ROOTS.0.get() as *mut usize).add(1) as *mut u8, &ROOT_PTR);
+        let h0 = root(ENUM_ROOTS.0.get() as *mut u8, &ROOT_PTR);
+        let h1 = root((ENUM_ROOTS.0.get() as *mut usize).add(1) as *mut u8, &ROOT_PTR);
         build_enum_roots();
         clobber_stack();
         kelp_gc_collect();
@@ -675,8 +688,8 @@ fn enum_tag_is_read_as_u32_and_selects_the_variant() {
         let y = core::ptr::read(b as *const usize);
         assert_eq!(kelp_gc_is_heap_ptr(x as *const u8), 1, "variant 0 pointer traced");
         assert_eq!(kelp_gc_is_heap_ptr(y as *const u8), 0, "variant 1 pointer not traced");
-        kelp_gc_unregister_root_region(ENUM_ROOTS.0.get() as *mut u8);
-        kelp_gc_unregister_root_region((ENUM_ROOTS.0.get() as *mut usize).add(1) as *mut u8);
+        assert_eq!(kelp_gc_unregister_root_region(h0), KELP_GC_ROOT_OK);
+        assert_eq!(kelp_gc_unregister_root_region(h1), KELP_GC_ROOT_OK);
         kelp_gc_thread_detach();
     }
 }
@@ -685,7 +698,7 @@ fn enum_tag_is_read_as_u32_and_selects_the_variant() {
 fn heap_cap_of_256_mib_fails_with_out_of_memory() {
     let (code, stderr) = child_result("cap", &[]);
     assert_eq!(code, Some(1), "stderr: {stderr}");
-    assert!(stderr.contains("panic: out of memory"), "expected 'panic: out of memory', got: {stderr}");
+    assert!(stderr.contains("panic: out of shared-pool memory: heap_max is 256 MiB, "), "got: {stderr}");
 }
 
 /// Item 7: the installed hook receives the message and its exit status is kept.
@@ -693,8 +706,8 @@ fn heap_cap_of_256_mib_fails_with_out_of_memory() {
 fn panic_hook_receives_the_out_of_memory_message() {
     let (code, stderr) = child_result("hook", &[]);
     assert_eq!(code, Some(3), "the hook exits 3; stderr: {stderr}");
-    assert!(stderr.contains("hooked: out of memory"), "stderr: {stderr}");
-    assert!(!stderr.contains("panic: out of memory"), "default text must not print when a hook is set");
+    assert!(stderr.contains("hooked: out of shared-pool memory: heap_max is 8 MiB, "), "stderr: {stderr}");
+    assert!(!stderr.contains("panic: out of shared-pool memory"), "default text must not print when a hook is set");
 }
 
 /// Item 1: an allocation on a thread that never attached fails loudly.
@@ -878,6 +891,7 @@ fn cyclic_graphs_across_four_threads_have_an_exact_live_set() {
     const GARBAGE: usize = 20_000;
     const NODE_TOTAL: usize = 24; // LINK: 16-byte payload plus the 8-byte header
 
+    static HANDLES: Slot<[u64; THREADS_N * RINGS]> = Slot(UnsafeCell::new([0; THREADS_N * RINGS]));
     static SLOTS: [Slot<[usize; RINGS]>; THREADS_N] = [
         Slot(UnsafeCell::new([0; RINGS])),
         Slot(UnsafeCell::new([0; RINGS])),
@@ -891,7 +905,8 @@ fn cyclic_graphs_across_four_threads_have_an_exact_live_set() {
         for t in 0..THREADS_N {
             for k in 0..RINGS {
                 let slot = (SLOTS[t].0.get() as *mut usize).add(k) as *mut u8;
-                kelp_gc_register_root_region(slot, &ROOT_PTR);
+                let h = root(slot, &ROOT_PTR);
+                (*HANDLES.0.get())[t * RINGS + k] = h;
             }
         }
         kelp_gc_thread_attach();
@@ -936,9 +951,11 @@ fn cyclic_graphs_across_four_threads_have_an_exact_live_set() {
             kelp_gc_leave_native();
         }
     }
+    unsafe { kelp_gc_enter_native() };
     for h in handles {
         h.join().expect("ring worker");
     }
+    unsafe { kelp_gc_leave_native() };
     unsafe {
         eprintln!(
             "rings: {} collections checked, {} ring heads, {} cycles in total, {} allocations",
@@ -949,11 +966,8 @@ fn cyclic_graphs_across_four_threads_have_an_exact_live_set() {
         );
         assert_eq!(checked, ROUNDS * THREADS_N * RINGS);
         kelp_gc_thread_detach();
-        for t in 0..THREADS_N {
-            for k in 0..RINGS {
-                let slot = (SLOTS[t].0.get() as *mut usize).add(k) as *mut u8;
-                kelp_gc_unregister_root_region(slot);
-            }
+        for h in (*HANDLES.0.get()).iter().copied() {
+            assert_eq!(kelp_gc_unregister_root_region(h), KELP_GC_ROOT_OK);
         }
     }
 }
@@ -1063,9 +1077,11 @@ unsafe fn churn_run(threads: usize, per: usize) -> (f64, usize, usize) {
             unsafe { kelp_gc_thread_detach() };
         }));
     }
+    unsafe { kelp_gc_enter_native() };
     for h in handles {
         h.join().expect("churn worker");
     }
+    unsafe { kelp_gc_leave_native() };
     let secs = start.elapsed().as_secs_f64();
     (secs, st().allocs, CONTENDED.load(SeqCst))
 }
@@ -1116,7 +1132,7 @@ unsafe fn register_pointer_roots(n: usize) -> *mut usize {
         variants: core::ptr::null(),
     }));
     let base = slots.as_mut_ptr();
-    kelp_gc_register_root_region(base as *mut u8, layout);
+    register_region(base as *mut u8, layout);
     base
 }
 
@@ -1163,7 +1179,7 @@ fn reused_memory_reads_as_zero_in_both_spaces() {
         assert_eq!(dirty, 0, "a reused object was not zeroed");
         let reused = (0..N).filter(|&i| *slots.add(i) == round1[i]).count();
         assert!(reused >= N / 2, "expected reuse of freed memory, got {reused} of {N} at the same address");
-        kelp_gc_unregister_root_region(slots as *mut u8);
+        unregister_region(slots as *mut u8);
         kelp_gc_thread_detach();
     }
 }
@@ -1179,10 +1195,10 @@ fn report_pauses(label: &str, wall: f64) {
         eprintln!(
             "BENCH {label}: wall {wall:.3} s; cycles {}; pause total {:.2} ms (mark {:.2}, sweep {:.2}); pause max {:.3} ms; peak blocks {}",
             s.cycles,
-            s.pause_ns_total as f64 / 1e6,
+            s.pause_total_ns as f64 / 1e6,
             s.mark_ns_total as f64 / 1e6,
             s.sweep_ns_total as f64 / 1e6,
-            s.pause_ns_max as f64 / 1e6,
+            s.pause_max_ns as f64 / 1e6,
             s.peak_blocks
         );
     }
@@ -1275,7 +1291,7 @@ fn every_allocation_is_reachable_and_no_two_overlap() {
         for w in ranges.windows(2) {
             assert!(w[0].1 <= w[1].0, "objects overlap: {:x?} and {:x?}", w[0], w[1]);
         }
-        kelp_gc_unregister_root_region(slots as *mut u8);
+        unregister_region(slots as *mut u8);
         kelp_gc_thread_detach();
     }
 }
@@ -1292,7 +1308,7 @@ fn bench_large_live_set() {
     unsafe {
         kelp_gc_init(8 << 20, 128 << 20);
         kelp_gc_thread_attach();
-        kelp_gc_register_root_region(LIVE_HEAD.0.get() as *mut u8, &ROOT_PTR);
+        register_region(LIVE_HEAD.0.get() as *mut u8, &ROOT_PTR);
         let start = std::time::Instant::now();
         for i in 0..LIVE {
             let n = kelp_gc_alloc(&LINK) as usize;
@@ -1310,7 +1326,7 @@ fn bench_large_live_set() {
             p = core::ptr::read(p as *const usize);
         }
         assert_eq!(count, LIVE, "live list intact");
-        kelp_gc_unregister_root_region(LIVE_HEAD.0.get() as *mut u8);
+        unregister_region(LIVE_HEAD.0.get() as *mut u8);
         report_pauses("large-live-set", start.elapsed().as_secs_f64());
         kelp_gc_thread_detach();
     }
@@ -1328,3 +1344,238 @@ static BYTES_16: KelpGcType = KelpGcType {
     n_variants: 0,
     variants: core::ptr::null(),
 };
+
+/// Regions registered through `register_region`, so `unregister_region` can
+/// find the handle of a base address.
+static REGIONS: Mutex<Vec<(usize, u64)>> = Mutex::new(Vec::new());
+
+/// Registers `base` with `layout` and remembers its handle under the base address.
+unsafe fn register_region(base: *mut u8, layout: *const KelpGcType) {
+    let h = root(base, layout);
+    REGIONS.lock().unwrap().push((base as usize, h));
+}
+
+/// Unregisters the region registered at `base` and checks that it was live.
+unsafe fn unregister_region(base: *mut u8) {
+    let h = {
+        let mut g = REGIONS.lock().unwrap();
+        let i = g.iter().rposition(|e| e.0 == base as usize).expect("a registered region");
+        g.remove(i).1
+    };
+    assert_eq!(kelp_gc_unregister_root_region(h), KELP_GC_ROOT_OK);
+}
+
+/// Registers `base` as a root with `layout` and returns its handle.
+unsafe fn root(base: *mut u8, layout: *const KelpGcType) -> u64 {
+    let mut h = 0u64;
+    assert_eq!(kelp_gc_register_root_region(base, layout, &mut h), KELP_GC_ROOT_OK);
+    assert_ne!(h, 0);
+    h
+}
+
+// ---- Step 1 (Tidepool): the growable root table, the counters and the messages. ----
+
+/// A descriptor whose noscan flag is set and whose one slot holds a pointer.
+/// The allocator refuses it (T51, a child-process test in tidepool_step1_fixb.rs).
+static NOSCAN_OFF: [u32; 1] = [0];
+static NOSCAN_PTR: KelpGcType = KelpGcType {
+    id: 6,
+    size: 8,
+    align: 8,
+    flags: DESC_NOSCAN,
+    n_ptrs: 1,
+    ptr_off: NOSCAN_OFF.as_ptr(),
+    tag_off: 0,
+    n_variants: 0,
+    variants: core::ptr::null(),
+};
+
+/// A second descriptor for id 1, the id of NODE (T52): a different layout under the same id.
+static DUP_ID: KelpGcType = KelpGcType {
+    id: 1,
+    size: 24,
+    align: 8,
+    flags: 0,
+    n_ptrs: 0,
+    ptr_off: core::ptr::null(),
+    tag_off: 0,
+    n_variants: 0,
+    variants: core::ptr::null(),
+};
+
+/// T2 (R2): a handle to an earlier entry does nothing once its slot is cleared
+/// and reused. Only the entry the handle names is cleared.
+#[test]
+fn a_stale_root_handle_does_nothing() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        let mut a = 0usize;
+        let mut b = 0usize;
+        let ha = root(&mut a as *mut usize as *mut u8, &ROOT_PTR);
+        assert_eq!(kelp_gc_unregister_root_region(ha), KELP_GC_ROOT_OK);
+        assert_eq!(kelp_gc_unregister_root_region(ha), KELP_GC_ROOT_STALE, "a second clear is stale");
+        let hb = root(&mut b as *mut usize as *mut u8, &ROOT_PTR);
+        assert_eq!((hb & 0xFFFF_FFFF), (ha & 0xFFFF_FFFF), "the freed slot is reused");
+        assert_ne!(hb, ha, "the reused slot carries a new generation");
+        assert_eq!(kelp_gc_unregister_root_region(ha), KELP_GC_ROOT_STALE, "the old handle names nothing");
+        let mut stats = KelpGcStats::default();
+        kelp_gc_stats(&mut stats);
+        assert_eq!(stats.roots, 1, "the stale clear did not touch the live entry");
+        assert_eq!(kelp_gc_unregister_root_region(hb), KELP_GC_ROOT_OK);
+        kelp_gc_stats(&mut stats);
+        assert_eq!(stats.roots, 0);
+        kelp_gc_thread_detach();
+    }
+}
+
+/// R10 and T14: when the table cannot grow, registration returns the named
+/// status, nothing is registered and no charge is taken. The child runs under an
+/// address-space limit that the next growth cannot fit.
+#[test]
+fn the_root_table_that_cannot_grow_says_so() {
+    let (code, stderr) = child_result("root_full", &[]);
+    assert_eq!(code, Some(0), "stderr: {stderr}");
+    assert!(stderr.contains("root table full at 1024 slots, charged 0"), "stderr: {stderr}");
+}
+
+#[repr(C)]
+struct RLimit {
+    cur: u64,
+    max: u64,
+}
+unsafe extern "C" {
+    fn setrlimit(resource: i32, rlim: *const RLimit) -> i32;
+}
+const RLIMIT_AS: i32 = 9;
+
+unsafe fn child_root_full() {
+    kelp_gc_init(0, 0);
+    kelp_gc_thread_attach();
+    // The first registration maps the first table (ROOT_CHUNK slots); the table
+    // then cannot grow, because the limit leaves less room than its next size.
+    // Every cell the loop needs is allocated before the limit is set.
+    let mut cells = vec![0usize; 4096];
+    let _first = root(cells.as_mut_ptr() as *mut u8, &ROOT_PTR);
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let vm_kb: u64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmSize:"))
+        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
+        .expect("VmSize");
+    let lim = RLimit { cur: vm_kb * 1024 + 16 * 1024, max: u64::MAX };
+    assert_eq!(setrlimit(RLIMIT_AS, &lim), 0);
+    let mut count = 1usize;
+    let mut h = 0u64;
+    loop {
+        let base = cells.as_mut_ptr().add(count) as *mut u8;
+        if kelp_gc_register_root_region(base, &ROOT_PTR, &mut h) != KELP_GC_ROOT_OK {
+            break;
+        }
+        count += 1;
+    }
+    let mut stats = KelpGcStats::default();
+    kelp_gc_stats(&mut stats);
+    assert_eq!(stats.roots as usize, count, "no slot was registered by the failed call");
+    assert_eq!(stats.charged_bytes, 0);
+    eprintln!("root table full at {count} slots, charged {}", stats.charged_bytes);
+}
+
+/// T52: two descriptors that share one id are still a fatal error.
+#[test]
+fn t52_two_descriptors_for_one_id_are_fatal() {
+    let (code, stderr) = child_result("dup_id", &[]);
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert_eq!(stderr, "panic: gc: two type descriptors share one id\n");
+}
+
+unsafe fn child_dup_id() {
+    kelp_gc_init(0, 0);
+    kelp_gc_thread_attach();
+    // NODE is registered by the first two allocations, so the duplicate meets
+    // the registered (fast) path as well as the first registration.
+    black_box(kelp_gc_alloc(&NODE));
+    black_box(kelp_gc_alloc(&NODE));
+    black_box(kelp_gc_alloc(&DUP_ID));
+}
+
+/// T64: an array above the element limit is refused with its own message.
+#[test]
+fn t64_an_array_above_the_element_limit_is_named() {
+    let (code, stderr) = child_result("array_too_large", &[]);
+    assert_eq!(code, Some(1), "stderr: {stderr}");
+    assert_eq!(
+        stderr,
+        "panic: array of 4294967296 elements is too large: a shared-pool array holds at most 4294967295 elements\n"
+    );
+}
+
+/// T74: a Rust panic in the collector names its location, then aborts.
+#[test]
+fn t74_a_rust_panic_in_the_collector_names_its_location() {
+    let (code, stderr) = child_result("panic_location", &[]);
+    assert_eq!(code, None, "the child must abort, not exit: {stderr}");
+    assert_eq!(stderr, "panic: gc: internal error at heap.rs:42\n");
+}
+
+/// The counter hook reports the live roots and the high-water index.
+#[test]
+fn the_stats_hook_reports_roots() {
+    let _g = serial();
+    unsafe {
+        reset();
+        kelp_gc_thread_attach();
+        let mut a = [0usize; 1];
+        let mut b = [0usize; 1];
+        let ha = root(a.as_mut_ptr() as *mut u8, &ROOT_PTR);
+        let hb = root(b.as_mut_ptr() as *mut u8, &ROOT_PTR);
+        let mut stats = KelpGcStats::default();
+        kelp_gc_stats(&mut stats);
+        assert_eq!(stats.roots, 2);
+        assert_eq!(stats.root_slots, 2);
+        assert_eq!(stats.charged_bytes, 0, "no block is charged in step 1");
+        assert_eq!(kelp_gc_unregister_root_region(ha), KELP_GC_ROOT_OK);
+        kelp_gc_stats(&mut stats);
+        assert_eq!(stats.roots, 1);
+        assert_eq!(kelp_gc_unregister_root_region(hb), KELP_GC_ROOT_OK);
+        kelp_gc_thread_detach();
+    }
+}
+
+/// C15 and T78: the Rust structs have the sizes and offsets the header and the
+/// metadata total assume, and the C compiler agrees with the header.
+
+#[test]
+#[ignore = "measurement (M7): run with --ignored --nocapture"]
+fn m7_scan_roots_with_one_and_with_1024_live_roots() {
+    let _g = serial();
+    unsafe {
+        for &n in &[1usize, 1024usize] {
+            reset();
+            kelp_gc_thread_attach();
+            // Measure the root table alone: thread stacks are scanned from the
+            // stop record, which this direct call does not take (scan_stacks is
+            // the existing test hook for that).
+            st().scan_stacks = false;
+            let mut cells = vec![0usize; n];
+            for c in cells.iter_mut() {
+                root(c as *mut usize as *mut u8, &ROOT_PTR);
+            }
+            let rounds = 200_000usize;
+            let t0 = std::time::Instant::now();
+            for _ in 0..rounds {
+                crate::threads::scan_roots();
+            }
+            let ns = t0.elapsed().as_nanos() as f64 / rounds as f64;
+            eprintln!("M7 scan_roots live_roots={n} ns_per_scan={ns:.1}");
+            kelp_gc_thread_detach();
+        }
+    }
+}
+
+// ---- Tidepool step 1 tests added by fixer B (T7, T25a, T25b, T30, T31, T39, T51, T70, T78). ----
+
+#[path = "tidepool_step1_fixb.rs"]
+mod tidepool_step1_fixb;
+mod bench_clear;

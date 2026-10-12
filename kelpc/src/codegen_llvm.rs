@@ -2194,7 +2194,7 @@ impl<'a> Gen<'a> {
         // since a pointer is a pointer here.
         let coerce_env_ty = ctx.struct_type("kelp_ClosureCoerceEnv");
         ctx.struct_set_body(coerce_env_ty, &[ptr]);
-        let runtime = declare_runtime(ctx, module, bytes_ty, string_ty, view_ty);
+        let runtime = declare_runtime(ctx, module, bytes_ty, string_ty, view_ty, managed.is_some());
         let panic = *runtime
             .get("kelp_panic")
             .expect("kelp_panic is declared with the runtime");
@@ -7328,6 +7328,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let env = self.g.builder.build_extract_value(closure, 1, "env");
         let drop = self.g.builder.build_extract_value(closure, 2, "drop");
         let arg_size = self.g.layout.abi_size_of(self.lty(&params[0])?);
+        // The roots of the argument and the result (managed only; null when the
+        // value holds no collected memory), so the record survives a clearing.
+
         // A worker that returns `unit` stores nothing: `unit` has no LLVM type
         // at all (`llvm_type` refuses it), and a handle on such a worker is one
         // `Thread<unit>` a program may drop but not read a result out of. The
@@ -7337,6 +7340,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         } else {
             self.g.layout.abi_size_of(self.lty(elem)?)
         };
+
         let new = self.g.rt("kelp_thread_new")?;
         let handle = self.g.call(
             new.func,
@@ -7350,14 +7354,31 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
         let moved = self.arg_value(arg, &mut held)?;
         self.g.builder.build_store(moved, arg_slot);
-        let start = self.g.rt("kelp_thread_start")?;
         let body = self.g.closure_symbol(&thread_body_symbol(&entry.ty))?;
-        self.g.call(
-            start.func,
-            start.ty,
-            &[handle, body.as_value(), code, env, drop],
-            "",
-        );
+        if self.g.managed {
+            // Managed: the spawn's argument and result are rooted (section 3).
+            let arg_descr = self.g.record_descr(&params[0])?;
+            let result_descr = if *elem.as_ref() == Ty::Unit {
+                self.g.ctx.const_null(self.g.pty())
+            } else {
+                self.g.record_descr(elem)?
+            };
+            let start = self.g.rt("kelp_thread_start_rooted")?;
+            self.g.call(
+                start.func,
+                start.ty,
+                &[handle, body.as_value(), code, env, drop, arg_descr, result_descr],
+                "",
+            );
+        } else {
+            let start = self.g.rt("kelp_thread_start")?;
+            self.g.call(
+                start.func,
+                start.ty,
+                &[handle, body.as_value(), code, env, drop],
+                "",
+            );
+        }
         for (slot, ty) in held {
             self.g.call_drop(slot, &ty)?;
         }
@@ -7423,13 +7444,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let drop = self
                     .drop_fn_value(elem)?
                     .unwrap_or_else(|| self.g.ctx.const_null(ptr));
-                let rt = self.g.rt("kelp_mutex_new")?;
-                let handle = self.g.call(
-                    rt.func,
-                    rt.ty,
-                    &[slot, self.g.v_i64(size), drop],
-                    "mutex",
-                );
+                let handle = if self.g.managed {
+                    let descr = self.g.record_descr(elem)?;
+                    let rt = self.g.rt("kelp_mutex_new_rooted")?;
+                    self.g.call(rt.func, rt.ty, &[slot, self.g.v_i64(size), drop, descr], "mutex")
+                } else {
+                    let rt = self.g.rt("kelp_mutex_new")?;
+                    self.g.call(rt.func, rt.ty, &[slot, self.g.v_i64(size), drop], "mutex")
+                };
                 self.cur = self.g.check_alloc(handle, self.cur_fn)?;
                 Ok(Some(handle))
             }
@@ -7584,13 +7606,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let drop = self
                     .drop_fn_value(elem)?
                     .unwrap_or_else(|| self.g.ctx.const_null(ptr));
-                let rt = self.g.rt("kelp_rwlock_new")?;
-                let handle = self.g.call(
-                    rt.func,
-                    rt.ty,
-                    &[slot, self.g.v_i64(size), drop],
-                    "rwlock",
-                );
+                let handle = if self.g.managed {
+                    let descr = self.g.record_descr(elem)?;
+                    let rt = self.g.rt("kelp_rwlock_new_rooted")?;
+                    self.g.call(rt.func, rt.ty, &[slot, self.g.v_i64(size), drop, descr], "rwlock")
+                } else {
+                    let rt = self.g.rt("kelp_rwlock_new")?;
+                    self.g.call(rt.func, rt.ty, &[slot, self.g.v_i64(size), drop], "rwlock")
+                };
                 self.cur = self.g.check_alloc(handle, self.cur_fn)?;
                 Ok(Some(handle))
             }
@@ -9825,6 +9848,17 @@ impl<'a> Gen<'a> {
         let (memcpy, mty) = self.mem_fn("memcpy")?;
         self.call(memcpy, mty, &[buf, old, old_bytes], "");
         Ok(buf)
+    }
+
+    /// The root descriptor of a runtime record that holds a value of `ty` (a
+    /// spawn's argument or result, a Mutex or RwLock value): the value's own
+    /// descriptor when it holds collected memory, and a null pointer otherwise.
+    /// A hosted build has no collector, so it is always null. Section 3.
+    fn record_descr(&self, ty: &Ty) -> Result<Value<'a>, String> {
+        if !self.managed || !crate::gc_descr::record_needs_root(self, ty)? {
+            return Ok(self.ctx.const_null(self.pty()));
+        }
+        self.elem_descr(ty)
     }
 
     /// The descriptor of a `Map`'s entry record `{ key, value, live }`, which
@@ -15602,6 +15636,7 @@ fn declare_runtime<'a>(
     bytes: Type<'a>,
     string: Type<'a>,
     view: Type<'a>,
+    managed: bool,
 ) -> HashMap<String, RtFn<'a>> {
     let ptr = ctx.opaque_ptr();
     let i1 = ctx.i1();
@@ -15653,6 +15688,10 @@ fn declare_runtime<'a>(
         false,
         false,
     );
+    if managed {
+        // The managed entry roots the spawn's values (section 3). Hosted IR does not name it.
+        decl(&mut out, "kelp_thread_start_rooted", void, &[ptr, ptr, ptr, ptr, ptr, ptr, ptr], false, false);
+    }
     decl(&mut out, "kelp_thread_wait", ctx.i32(), &[ptr], true, false);
     decl(&mut out, "kelp_thread_arg", ptr, &[ptr], true, false);
     decl(&mut out, "kelp_thread_result", ptr, &[ptr], true, false);
@@ -15664,6 +15703,9 @@ fn declare_runtime<'a>(
     // body runs, `kelp_mutex_into` moves the value out and frees it, and
     // `kelp_mutex_drop` is the slot's drop.
     decl(&mut out, "kelp_mutex_new", ptr, &[ptr, i64, ptr], true, false);
+    if managed {
+        decl(&mut out, "kelp_mutex_new_rooted", ptr, &[ptr, i64, ptr, ptr], true, false);
+    }
     decl(&mut out, "kelp_mutex_run", void, &[ptr, ptr, ptr, ptr, ptr], false, false);
     decl(&mut out, "kelp_mutex_into", void, &[ptr, ptr], false, false);
     decl(&mut out, "kelp_mutex_drop", void, &[ptr], false, false);
@@ -15672,6 +15714,9 @@ fn declare_runtime<'a>(
     decl(&mut out, "kelp_condvar_share", ptr, &[ptr], false, false);
     // The reader/writer lock and condition variable runtime (`std/sync`).
     decl(&mut out, "kelp_rwlock_new", ptr, &[ptr, i64, ptr], true, false);
+    if managed {
+        decl(&mut out, "kelp_rwlock_new_rooted", ptr, &[ptr, i64, ptr, ptr], true, false);
+    }
     decl(&mut out, "kelp_rwlock_read", void, &[ptr, ptr, ptr, ptr, ptr], false, false);
     decl(&mut out, "kelp_rwlock_write", void, &[ptr, ptr, ptr, ptr, ptr], false, false);
     decl(&mut out, "kelp_rwlock_try_read", ctx.i32(), &[ptr, ptr, ptr, ptr, ptr], true, false);
@@ -16467,7 +16512,7 @@ mod layout_tests {
         ctx.struct_set_body(string, &[ptr, ctx.i64(), ctx.i64()]);
         let view = ctx.struct_type("kelp_View");
         ctx.struct_set_body(view, &[ptr, ctx.i64()]);
-        declare_runtime(&ctx, &module, bytes, string, view);
+        declare_runtime(&ctx, &module, bytes, string, view, false);
         declare_cap_fns(&ctx, &module);
 
         // `declare_extern`'s half of the rule, with the two narrow shapes a

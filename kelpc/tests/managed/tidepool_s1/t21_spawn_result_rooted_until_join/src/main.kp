@@ -1,0 +1,38 @@
+impl "std/thread"
+impl "std/result"
+
+// Step 1 (T21, R26, section 3). The worker's result sits in a malloc'd slot
+// until the joiner reads it. The main thread churns the heap after the worker
+// has returned and before the join, so a clearing runs in that window.
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(count: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < count {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    return total
+}
+
+fun build(n: i64).return: List<String> {
+    var v: List<String> = List.empty()
+    var i: i64 = 0
+    while i < n {
+        v.push(String.from_str("item"))
+        i = i + 1
+    }
+    return v
+}
+
+fun main() {
+    val t = thread.spawn(build, 5)
+    val junk = churn(300000)
+    when thread.join(t) {
+        Ok(v) -> print(v.len())
+        Err(e) -> print(e.message)
+    }
+    print(junk > 0)
+}

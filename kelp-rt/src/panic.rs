@@ -84,6 +84,14 @@ pub struct WorkerHandle {
     pub result: *mut c_void,
     pub arg: *mut c_void,
     pub message: *const c_char,
+    /// Roots of the argument and the result slot (0 when the value holds no
+    /// collected memory). Cleared when the handle is disposed of.
+    pub arg_root: u64,
+    pub result_root: u64,
+    /// Test hold (`KELP_GC_TEST_SPAWN_PAUSE`): the worker waits for `gate`
+    /// before it attaches, while the spawner runs a clearing.
+    pub hold: c_int,
+    pub gate: c_int,
     pub state: c_int,
 }
 
@@ -278,6 +286,10 @@ mod tests {
                 result: ptr::null_mut(),
                 arg: ptr::null_mut(),
                 message: ptr::null(),
+                arg_root: 0,
+                result_root: 0,
+                hold: 0,
+                gate: 0,
                 state: 0,
             },
             body,

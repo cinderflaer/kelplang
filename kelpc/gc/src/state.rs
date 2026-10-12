@@ -15,7 +15,9 @@ pub const LINES: usize = BLOCK / LINE; // 256
 /// bump through free blocks, see heap.rs) instead of the line-hole allocator.
 pub const LARGE_MIN: usize = 8192;
 pub const MAX_THREADS: usize = 256;
-pub const MAX_ROOTS: usize = 1024;
+/// Slots the root table starts with. The table grows from here by doubling, so
+/// no count of roots is a fixed limit (section 3).
+pub const ROOT_CHUNK: usize = 1024;
 pub const DEFAULT_HEAP_MAX: usize = 256 << 20;
 pub const DEFAULT_HEAP_MIN: usize = 8 << 20;
 /// Default time a mutator may take to reach a safepoint before the collector
@@ -57,6 +59,11 @@ pub struct State {
     pub trigger: usize,
     pub live: usize,        // bytes marked in the current cycle
     pub used_blocks: usize,
+    /// First pool block index never handed out (high-water index). Blocks at or
+    /// above it have never been used, so their line tables are still zero.
+    pub pool_hw: usize,
+    /// Bytes left unused in a small-object hole or block when the cursor moved on (M9).
+    pub unused_tail: usize,
     pub peak_blocks: usize,
     pub alloc_block: usize,
     pub alloc_line: usize,
@@ -77,13 +84,22 @@ pub struct State {
     pub oom_hook: usize,    // 0 or an `extern "C" fn(*const u8)` address
     pub collecting: bool,
     pub cycles: usize,
-    /// Stop-the-world time in ns: total and the longest single pause (measurement).
-    pub pause_ns_total: u64,
-    pub pause_ns_max: u64,
     /// Time in root scan and mark, and in sweep, summed over cycles (measurement).
     pub mark_ns_total: u64,
     pub sweep_ns_total: u64,
     pub allocs: usize,
+    /// Pause counters: total and longest stop-the-world mark and sweep, in ns.
+    pub pause_total_ns: u64,
+    pub pause_max_ns: u64,
+    /// `KELP_GC_STATS=1`: print the counter line at exit and on a fatal exit.
+    pub stats_on: bool,
+    /// The counter line has been printed (it is printed once per process).
+    pub stats_printed: bool,
+    /// Bytes charged to live blocks against `heap_max`. Zero until blocks exist.
+    pub charged_bytes: usize,
+    /// Test hook (`KELP_GC_TEST_SPAWN_PAUSE=1`): a spawn holds its worker before
+    /// the worker attaches, and runs a clearing in that window.
+    pub spawn_pause: bool,
 }
 
 pub struct Global<T>(pub UnsafeCell<T>);

@@ -35,6 +35,65 @@ pub struct ThreadStart {
     code: *mut c_void,
     env: *mut c_void,
     env_drop: Option<Drop1>,
+    /// Root of `env`, the record's own pointer slot (0 when not rooted).
+    env_root: u64,
+}
+
+/// Spawns still open at once. The collector attaches at most 256 threads, so
+/// the spawner refuses the 257th (section 18.8 of the Tidepool design).
+#[cfg(feature = "managed")]
+const OPEN_WORKERS_MAX: c_int = 256;
+#[cfg(feature = "managed")]
+static OPEN_WORKERS: AtomicI32 = AtomicI32::new(0);
+
+/// Takes one open-worker slot, or returns false when all are taken.
+fn open_workers_take() -> bool {
+    #[cfg(feature = "managed")]
+    {
+        if OPEN_WORKERS.fetch_add(1, Ordering::AcqRel) >= OPEN_WORKERS_MAX {
+            OPEN_WORKERS.fetch_sub(1, Ordering::AcqRel);
+            return false;
+        }
+    }
+    true
+}
+
+/// Gives back a slot taken by [`open_workers_take`].
+fn open_workers_give() {
+    #[cfg(feature = "managed")]
+    {
+        OPEN_WORKERS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The descriptor of one pointer word: a spawn's environment is a collected
+/// object, so marking the word marks it, and the object's own descriptor scans
+/// its captures.
+#[cfg(feature = "managed")]
+static WORD_OFF: [u32; 1] = [0];
+#[cfg(feature = "managed")]
+static WORD_DESCR: crate::gc::GcType = crate::gc::GcType {
+    id: 0,
+    size: core::mem::size_of::<*mut c_void>() as u32,
+    align: core::mem::size_of::<*mut c_void>() as u32,
+    flags: 0,
+    n_ptrs: 1,
+    ptr_off: core::ptr::addr_of!(WORD_OFF).cast(),
+    tag_off: 0,
+    n_variants: 0,
+    variants: core::ptr::null(),
+};
+
+/// The descriptor a spawn's environment is rooted with (none when hosted).
+#[cfg(feature = "managed")]
+fn word_descr() -> *const c_void {
+    (&raw const WORD_DESCR).cast()
+}
+
+/// A hosted spawn roots nothing.
+#[cfg(not(feature = "managed"))]
+fn word_descr() -> *const c_void {
+    ptr::null()
 }
 
 /// The cleanup handler a worker runs on both ways out: frees the record and
@@ -48,12 +107,15 @@ unsafe extern "C" fn thread_release(raw: *mut c_void) {
                 drop_env((*s).env);
             }
         }
+        // The environment stays rooted through its drop, which may read it.
+        gc::root_drop((*s).env_root);
         // Leave the collector on every exit, after the environment's drop (it
         // may read collected values) and before the record is freed. A panicking
         // worker never reaches the end of its body, so this is the one place
         // that detaches it: a worker left attached holds a collection up until
         // the stop timeout.
         gc::thread_detach();
+        open_workers_give();
         libc::free(s.cast());
         // The worker's last touch of the handle. If the owner already dropped
         // it unjoined, nobody else will free it.
@@ -108,6 +170,13 @@ unsafe fn thread_tramp(raw: *mut c_void) -> *mut c_void {
     unsafe {
         let s = raw.cast::<ThreadStart>();
         set_worker_handle((*s).handle);
+        // Held by the test hook until the spawner has run its clearing (see
+        // `start_common`). Only a hold that was set is waited for.
+        let hold = AtomicI32::from_ptr(&raw mut (*(*s).handle).hold);
+        let gate = AtomicI32::from_ptr(&raw mut (*(*s).handle).gate);
+        while hold.load(Ordering::Acquire) != 0 && gate.load(Ordering::Acquire) == 0 {
+            libc::sched_yield();
+        }
         let mut frame = CleanupFrame {
             run: thread_release,
             arg: raw,
@@ -135,8 +204,13 @@ pub unsafe extern "C" fn kelp_thread_new(arg_size: usize, result_size: usize) ->
         (*h).panicked = 0;
         (*h).message = ptr::null();
         (*h).state = 0;
-        (*h).result = libc::malloc(if result_size == 0 { 1 } else { result_size });
-        (*h).arg = libc::malloc(if arg_size == 0 { 1 } else { arg_size });
+        (*h).arg_root = 0;
+        (*h).result_root = 0;
+        (*h).hold = 0;
+        (*h).gate = 0;
+        // Zeroed, so the collector never scans a stale word in a slot it roots.
+        (*h).result = libc::calloc(1, if result_size == 0 { 1 } else { result_size });
+        (*h).arg = libc::calloc(1, if arg_size == 0 { 1 } else { arg_size });
         if (*h).result.is_null() || (*h).arg.is_null() {
             kelp_panic(c"thread.spawn: out of memory".as_ptr());
         }
@@ -144,7 +218,7 @@ pub unsafe extern "C" fn kelp_thread_new(arg_size: usize, result_size: usize) ->
     }
 }
 
-/// Starts the worker on `h`.
+/// Starts the worker on `h` with no roots for its values (a hosted spawn).
 ///
 /// # Safety
 /// `h` must come from [`kelp_thread_new`] and not be started yet.
@@ -155,6 +229,66 @@ pub unsafe extern "C" fn kelp_thread_start(
     code: *mut c_void,
     env: *mut c_void,
     env_drop: Option<Drop1>,
+) {
+    unsafe { start_common(h, body, code, env, env_drop, ptr::null(), ptr::null()) }
+}
+
+/// Starts the worker on `h` and roots the spawn's values (a managed spawn):
+/// the environment, the argument slot described by `arg_descr` and the result
+/// slot described by `result_descr` (null when the value holds no collected
+/// memory).
+///
+/// # Safety
+/// As [`kelp_thread_start`]; the descriptors must describe the slots.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_thread_start_rooted(
+    h: *mut WorkerHandle,
+    body: Option<Body>,
+    code: *mut c_void,
+    env: *mut c_void,
+    env_drop: Option<Drop1>,
+    arg_descr: *const c_void,
+    result_descr: *const c_void,
+) {
+    unsafe { start_common(h, body, code, env, env_drop, arg_descr, result_descr) }
+}
+
+/// Frees what a spawn that did not start owns: its roots, the open-worker
+/// slot, the start record and the handle's slots. The environment's drop runs
+/// first, as it always did.
+///
+/// # Safety
+/// `h` and `s` must be the handle and start record of a spawn not started.
+unsafe fn spawn_abandon(h: *mut WorkerHandle, s: *mut ThreadStart, env: *mut c_void, env_drop: Option<Drop1>) {
+    unsafe {
+        gc::root_drop((*s).env_root);
+        gc::root_drop((*h).arg_root);
+        gc::root_drop((*h).result_root);
+        open_workers_give();
+        if !env.is_null() {
+            if let Some(drop_env) = env_drop {
+                drop_env(env);
+            }
+        }
+        libc::free(s.cast());
+        libc::free((*h).arg);
+        libc::free((*h).result);
+        libc::free(h.cast());
+    }
+}
+
+/// The shared body of both entry points.
+///
+/// # Safety
+/// As [`kelp_thread_start_rooted`].
+unsafe fn start_common(
+    h: *mut WorkerHandle,
+    body: Option<Body>,
+    code: *mut c_void,
+    env: *mut c_void,
+    env_drop: Option<Drop1>,
+    arg_descr: *const c_void,
+    result_descr: *const c_void,
 ) {
     unsafe {
         let s = libc::malloc(core::mem::size_of::<ThreadStart>()).cast::<ThreadStart>();
@@ -167,20 +301,69 @@ pub unsafe extern "C" fn kelp_thread_start(
             code,
             env,
             env_drop,
+            env_root: 0,
         });
-        let rc = libc::pthread_create(&raw mut (*h).tid, ptr::null(), tramp_entry, s.cast());
-        if rc != 0 {
-            // Nothing was started, so nothing else owns the start record, the
-            // handle or its slots: release them, then report the return code.
-            // pthread_create does not set errno, so the code is passed in.
+        // Refused before anything is rooted: the new thread never sees this,
+        // the spawner does.
+        if !open_workers_take() {
+            libc::free(s.cast());
             if !env.is_null() {
                 if let Some(drop_env) = env_drop {
                     drop_env(env);
                 }
             }
-            libc::free(s.cast());
-            kelp_thread_dispose(h);
+            libc::free((*h).arg);
+            libc::free((*h).result);
+            libc::free(h.cast());
+            kelp_panic(c"thread.spawn: 256 threads are already running; join or drop a thread before spawning another".as_ptr());
+        }
+        // Root the spawn's values before the worker can run. The three slots
+        // are malloc'd, so the collector cannot see them otherwise. A table
+        // that cannot grow is named here, after the roots already taken are
+        // released.
+        let mut rooted = true;
+        if !env.is_null() {
+            match gc::root_add((&raw mut (*s).env).cast(), word_descr()) {
+                Some(r) => (*s).env_root = r,
+                None => rooted = false,
+            }
+        }
+        if rooted && !arg_descr.is_null() {
+            match gc::root_add((*h).arg, arg_descr) {
+                Some(r) => (*h).arg_root = r,
+                None => rooted = false,
+            }
+        }
+        if rooted && !result_descr.is_null() {
+            match gc::root_add((*h).result, result_descr) {
+                Some(r) => (*h).result_root = r,
+                None => rooted = false,
+            }
+        }
+        if !rooted {
+            spawn_abandon(h, s, env, env_drop);
+            kelp_panic(c"thread.spawn: the collector's root table could not grow".as_ptr());
+        }
+        (*h).hold = gc::spawn_pause() as c_int;
+        let rc = libc::pthread_create(&raw mut (*h).tid, ptr::null(), tramp_entry, s.cast());
+        if rc != 0 {
+            // Nothing was started, so nothing else owns the start record, the
+            // handle or its slots: release them, then report the return code.
+            // pthread_create does not set errno, so the code is passed in.
+            spawn_abandon(h, s, env, env_drop);
             kelp_panic_at(c"thread.spawn: pthread_create failed".as_ptr(), rc);
+        }
+        if (*h).hold != 0 {
+            // Test window (section 9): the worker is held before its first use,
+            // the spawner clears the heap, and then reuses the freed memory, so
+            // any record the collector did not scan reads the wrong values. Only
+            // the handle is touched here, because the worker may already have
+            // ended and freed the start record.
+            gc::collect();
+            for _ in 0..64 {
+                let _ = crate::alloc::buf_alloc(65536);
+            }
+            AtomicI32::from_ptr(&raw mut (*h).gate).store(1, Ordering::Release);
         }
     }
 }
@@ -233,6 +416,8 @@ pub unsafe extern "C" fn kelp_thread_message(h: *mut WorkerHandle) -> *const c_c
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_thread_dispose(h: *mut WorkerHandle) {
     unsafe {
+        gc::root_drop((*h).arg_root);
+        gc::root_drop((*h).result_root);
         libc::free((*h).arg);
         libc::free((*h).result);
         libc::free(h.cast());
@@ -271,12 +456,24 @@ pub struct Mutex {
     size: usize,
     value: *mut c_void,
     drop: Option<Drop1>,
+    /// Root of `value` (0 when the element holds no collected memory).
+    root: u64,
 }
 
 /// # Safety
 /// `value` must be readable for `size` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_mutex_new(value: *const c_void, size: usize, drop: Option<Drop1>) -> *mut Mutex {
+    unsafe { kelp_mutex_new_rooted(value, size, drop, ptr::null()) }
+}
+
+/// A mutex whose value is rooted by `descr` (managed), or none when `descr`
+/// is null. The value stays a root until the mutex is dropped or taken apart.
+///
+/// # Safety
+/// `value` must be readable for `size` bytes; `descr` must describe the value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_mutex_new_rooted(value: *const c_void, size: usize, drop: Option<Drop1>, descr: *const c_void) -> *mut Mutex {
     unsafe {
         let m = libc::malloc(core::mem::size_of::<Mutex>()).cast::<Mutex>();
         if m.is_null() {
@@ -294,6 +491,18 @@ pub unsafe extern "C" fn kelp_mutex_new(value: *const c_void, size: usize, drop:
             kelp_panic(c"Mutex.new: out of memory".as_ptr());
         }
         libc::memcpy((*m).value, value, size);
+        (*m).root = 0;
+        if !descr.is_null() {
+            match gc::root_add((*m).value, descr) {
+                Some(r) => (*m).root = r,
+                None => {
+                    libc::pthread_mutex_destroy(&raw mut (*m).lock);
+                    libc::free((*m).value);
+                    libc::free(m.cast());
+                    kelp_panic(c"Mutex.new: the collector's root table could not grow".as_ptr());
+                }
+            }
+        }
         m
     }
 }
@@ -377,6 +586,7 @@ pub unsafe extern "C" fn kelp_mutex_into(m: *mut Mutex, out: *mut c_void) {
             kelp_panic(c"Mutex.into_inner: the mutex is shared with another handle".as_ptr());
         }
         libc::memcpy(out, (*m).value, (*m).size);
+        gc::root_drop((*m).root);
         libc::pthread_mutex_destroy(&raw mut (*m).lock);
         libc::free((*m).value);
         libc::free(m.cast());
@@ -402,6 +612,7 @@ pub unsafe extern "C" fn kelp_mutex_drop(slot: *mut *mut Mutex) {
         if let Some(drop_value) = (*m).drop {
             drop_value((*m).value);
         }
+        gc::root_drop((*m).root);
         libc::pthread_mutex_destroy(&raw mut (*m).lock);
         libc::free((*m).value);
         libc::free(m.cast());
@@ -424,12 +635,24 @@ pub struct RwLock {
     size: usize,
     value: *mut c_void,
     drop: Option<Drop1>,
+    /// Root of `value` (0 when the element holds no collected memory).
+    root: u64,
 }
 
 /// # Safety
 /// `value` must be readable for `size` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_rwlock_new(value: *const c_void, size: usize, drop: Option<Drop1>) -> *mut RwLock {
+    unsafe { kelp_rwlock_new_rooted(value, size, drop, ptr::null()) }
+}
+
+/// A reader/writer lock whose value is rooted by `descr` (managed), or none
+/// when `descr` is null (see [`kelp_mutex_new_rooted`]).
+///
+/// # Safety
+/// `value` must be readable for `size` bytes; `descr` must describe the value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_rwlock_new_rooted(value: *const c_void, size: usize, drop: Option<Drop1>, descr: *const c_void) -> *mut RwLock {
     unsafe {
         let rw = libc::malloc(core::mem::size_of::<RwLock>()).cast::<RwLock>();
         if rw.is_null() {
@@ -452,6 +675,20 @@ pub unsafe extern "C" fn kelp_rwlock_new(value: *const c_void, size: usize, drop
             kelp_panic(c"RwLock.new: out of memory".as_ptr());
         }
         libc::memcpy((*rw).value, value, size);
+        (*rw).root = 0;
+        if !descr.is_null() {
+            match gc::root_add((*rw).value, descr) {
+                Some(r) => (*rw).root = r,
+                None => {
+                    libc::pthread_mutex_destroy(&raw mut (*rw).lock);
+                    libc::pthread_cond_destroy(&raw mut (*rw).readers_ok);
+                    libc::pthread_cond_destroy(&raw mut (*rw).writers_ok);
+                    libc::free((*rw).value);
+                    libc::free(rw.cast());
+                    kelp_panic(c"RwLock.new: the collector's root table could not grow".as_ptr());
+                }
+            }
+        }
         rw
     }
 }
@@ -619,6 +856,7 @@ pub unsafe extern "C" fn kelp_rwlock_try_write(rw: *mut RwLock, body: Option<Bod
 pub unsafe extern "C" fn kelp_rwlock_into(rw: *mut RwLock, out: *mut c_void) {
     unsafe {
         libc::memcpy(out, (*rw).value, (*rw).size);
+        gc::root_drop((*rw).root);
         libc::pthread_mutex_destroy(&raw mut (*rw).lock);
         libc::pthread_cond_destroy(&raw mut (*rw).readers_ok);
         libc::pthread_cond_destroy(&raw mut (*rw).writers_ok);
@@ -641,6 +879,7 @@ pub unsafe extern "C" fn kelp_rwlock_drop(slot: *mut *mut RwLock) {
         if let Some(drop_value) = (*rw).drop {
             drop_value((*rw).value);
         }
+        gc::root_drop((*rw).root);
         libc::pthread_mutex_destroy(&raw mut (*rw).lock);
         libc::pthread_cond_destroy(&raw mut (*rw).readers_ok);
         libc::pthread_cond_destroy(&raw mut (*rw).writers_ok);

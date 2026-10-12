@@ -1,0 +1,12 @@
+// Step 1 (T63 and T80, sections 18.2 and 18.28): a program that exhausts a
+// 1 MiB shared pool fails with the three-number message, and with
+// KELP_GC_STATS=1 the counter line is printed before the panic.
+fun main() {
+    var names: List<String> = List.empty()
+    var i: i64 = 0
+    while i < 10000000 {
+        names.push(String.from_str("some text to keep alive"))
+        i = i + 1
+    }
+    print(names.len())
+}

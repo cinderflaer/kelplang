@@ -1,0 +1,18 @@
+// Step 1 (T55, R54, section 9): with KELP_GC_STATS=1 the runtime prints one
+// counter line to stderr at exit. The churn below runs at least one clearing.
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(count: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < count {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    return total
+}
+
+fun main() {
+    print(churn(2000000) > 0)
+}

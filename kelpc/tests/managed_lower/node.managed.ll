@@ -44,6 +44,8 @@ declare ptr @kelp_thread_new(i64, i64)
 
 declare void @kelp_thread_start(ptr, ptr, ptr, ptr, ptr)
 
+declare void @kelp_thread_start_rooted(ptr, ptr, ptr, ptr, ptr, ptr, ptr)
+
 declare i32 @kelp_thread_wait(ptr)
 
 declare ptr @kelp_thread_arg(ptr)
@@ -58,6 +60,8 @@ declare void @kelp_thread_drop(ptr)
 
 declare ptr @kelp_mutex_new(ptr, i64, ptr)
 
+declare ptr @kelp_mutex_new_rooted(ptr, i64, ptr, ptr)
+
 declare void @kelp_mutex_run(ptr, ptr, ptr, ptr, ptr)
 
 declare void @kelp_mutex_into(ptr, ptr)
@@ -71,6 +75,8 @@ declare void @kelp_mutex_swap(ptr, ptr, ptr)
 declare ptr @kelp_condvar_share(ptr)
 
 declare ptr @kelp_rwlock_new(ptr, i64, ptr)
+
+declare ptr @kelp_rwlock_new_rooted(ptr, i64, ptr, ptr)
 
 declare void @kelp_rwlock_read(ptr, ptr, ptr, ptr, ptr)
 

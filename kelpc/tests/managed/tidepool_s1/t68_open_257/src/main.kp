@@ -1,0 +1,29 @@
+impl "std/thread"
+
+// Step 1 (T68, section 18.8): 256 threads stay open while the spawner runs, and
+// the 257th spawn is refused by the spawner, not by the new thread. Each worker
+// runs a long loop, so none has ended when the 257th spawn is made; the process
+// ends with the spawner's message.
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(count: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < count {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    return total
+}
+
+fun busy(n: i64).return: i64 = churn(200000000)
+
+fun main() {
+    var i: i64 = 0
+    while i < 257 {
+        val t = thread.spawn(busy, i)
+        i = i + 1
+    }
+    print("spawned")
+}

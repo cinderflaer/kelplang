@@ -1,0 +1,3 @@
+name = "t77_bad_gc_env"
+version = "0.1.0"
+entry = "src/main.kp"

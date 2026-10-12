@@ -9,6 +9,7 @@
 use core::sync::atomic::Ordering::{Acquire, Release};
 
 use crate::mark;
+use crate::tls;
 use crate::state::*;
 use crate::sys::{self, Msg, PthreadAttr};
 use crate::types::*;
@@ -31,15 +32,89 @@ pub struct ThreadRec {
     pub regs: [usize; 6],
 }
 
+/// One slot of the root table. `gen` counts how many times the slot has been
+/// cleared, so a handle to an earlier entry no longer matches (R2). `next_free`
+/// links the free list: the index plus one of the next free slot, zero at the end.
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RootRec {
     pub used: bool,
+    pub generation: u32,
+    pub next_free: u32,
     pub base: usize,
     pub layout: usize,
 }
 
+/// A root handle: the slot index plus one in the low 32 bits, and the slot's
+/// generation in the high 32 bits. Zero is never a handle.
+pub type RootHandle = u64;
+
+/// Why a root could not be registered. The only one is a table that cannot grow
+/// (R10): the caller gets it back as a value and nothing is registered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RootError {
+    Full,
+}
+
+/// The root table: a mapped array of `cap` slots, of which the first `hw` have
+/// ever been used (the high-water index), with a free list of cleared slots.
+/// Guarded by `G_MUTEX`.
+pub struct RootTable {
+    pub recs: usize,
+    pub cap: usize,
+    pub hw: usize,
+    pub free_head: u32,
+    pub live: usize,
+    /// Used-slot bitmap: bit `i` is set while slot `i` holds a live root. One
+    /// u64 word covers 64 slots, so the scan skips cleared slots 64 at a time.
+    /// Mapped with `recs` and grown with it (`cap / 64` words).
+    pub used_bits: usize,
+}
+
+pub static ROOTS: Global<RootTable> = Global(core::cell::UnsafeCell::new(RootTable {
+    recs: 0,
+    cap: 0,
+    hw: 0,
+    free_head: 0,
+    live: 0,
+    used_bits: 0,
+}));
+
+#[inline]
+unsafe fn rec(i: usize) -> *mut RootRec {
+    ((*ROOTS.get()).recs as *mut RootRec).add(i)
+}
+
+/// Grow the table to `new_cap` slots, copying the used prefix. Registry lock
+/// held. Raw pointers only: a `&mut` to the table is never held across a call
+/// that also changes it.
+unsafe fn grow_roots(new_cap: usize) -> Result<(), RootError> {
+    let t = ROOTS.get();
+    let bytes = new_cap * core::mem::size_of::<RootRec>();
+    let bit_bytes = (new_cap / 64) * 8;
+    let Some(fresh) = sys::try_map(bytes) else {
+        return Err(RootError::Full);
+    };
+    let Some(fresh_bits) = sys::try_map(bit_bytes) else {
+        sys::munmap(fresh as *mut core::ffi::c_void, bytes);
+        return Err(RootError::Full);
+    };
+    let old = (*t).recs;
+    let old_cap = (*t).cap;
+    if old != 0 {
+        core::ptr::copy_nonoverlapping(old as *const RootRec, fresh as *mut RootRec, old_cap);
+        sys::munmap(old as *mut core::ffi::c_void, old_cap * core::mem::size_of::<RootRec>());
+        let old_bits = (*t).used_bits;
+        core::ptr::copy_nonoverlapping(old_bits as *const u64, fresh_bits as *mut u64, old_cap / 64);
+        sys::munmap(old_bits as *mut core::ffi::c_void, (old_cap / 64) * 8);
+    }
+    (*t).recs = fresh;
+    (*t).used_bits = fresh_bits;
+    (*t).cap = new_cap;
+    Ok(())
+}
+
 pub static THREADS: Global<[ThreadRec; MAX_THREADS]> = Global(core::cell::UnsafeCell::new(unsafe { core::mem::zeroed() }));
-pub static ROOTS: Global<[RootRec; MAX_ROOTS]> = Global(core::cell::UnsafeCell::new(unsafe { core::mem::zeroed() }));
 
 unsafe fn lock() {
     sys::pthread_mutex_lock(G_MUTEX.get());
@@ -58,10 +133,12 @@ unsafe fn thr(i: usize) -> *mut ThreadRec {
     (THREADS.get() as *mut ThreadRec).add(i)
 }
 
-/// Registry index of the calling thread, or None if it is not attached.
-/// Lock-free: the record is written only by its own thread (attach, detach)
-/// or by reset, and the thread id check rejects a stale key.
-pub unsafe fn my_index() -> Option<usize> {
+/// Whether the thread-local cache of section 7 is in use on this target.
+const CACHE: bool = cfg!(target_arch = "x86_64");
+
+/// Registry index of the calling thread found through the pthread key, the
+/// slow lookup. The record is trusted only if its thread id matches the caller.
+unsafe fn slow_index() -> Option<usize> {
     let v = sys::pthread_getspecific(st().tls_key) as usize;
     if v == 0 {
         return None;
@@ -73,6 +150,23 @@ pub unsafe fn my_index() -> Option<usize> {
     } else {
         None
     }
+}
+
+/// Registry index of the calling thread, or None if it is not attached.
+/// Lock-free. The fast path reads the thread-local cache (section 7) and does
+/// no pthread call. The cache is written only by its own thread, and detach
+/// clears it, so it can name a slot only while this thread owns that slot. In
+/// verify mode the cache is checked against the slow lookup on every use.
+pub unsafe fn my_index() -> Option<usize> {
+    if !CACHE {
+        return slow_index();
+    }
+    let v = tls::get();
+    let fast = if v != 0 && (*thr(v - 1)).used { Some(v - 1) } else { None };
+    if st().verify && fast != slow_index() {
+        Msg::new().s(b"gc: cached thread index disagrees with the registry").die();
+    }
+    fast
 }
 
 /// Index of the calling thread's record. Registry lock held.
@@ -186,6 +280,9 @@ pub unsafe fn attach() {
             regs: [0; 6],
         };
         sys::pthread_setspecific(st().tls_key, (i + 1) as *const core::ffi::c_void);
+        if CACHE {
+            tls::set(i + 1);
+        }
     }
     unlock();
 }
@@ -200,6 +297,9 @@ pub unsafe fn detach() {
         }
         (*thr(i)).used = false;
         sys::pthread_setspecific(st().tls_key, core::ptr::null());
+        if CACHE {
+            tls::set(0);
+        }
         broadcast();
     }
     unlock();
@@ -268,9 +368,9 @@ pub unsafe fn collect() -> bool {
     record_stop(me, RUNNING);
     let t0 = sys::now_ns();
     mark::collect_locked();
-    let dt = sys::now_ns() - t0;
-    st().pause_ns_total += dt;
-    st().pause_ns_max = core::cmp::max(st().pause_ns_max, dt);
+    let pause = sys::now_ns().saturating_sub(t0);
+    st().pause_total_ns += pause;
+    st().pause_max_ns = core::cmp::max(st().pause_max_ns, pause);
     st().collecting = false;
     REQUEST.store(0, Release);
     broadcast();
@@ -290,33 +390,126 @@ pub unsafe fn scan_roots() {
             mark::mark_word(r);
         }
     }
-    for i in 0..MAX_ROOTS {
-        let r = (ROOTS.get() as *mut RootRec).add(i);
-        if (*r).used {
-            let d = (*r).layout as *const KelpGcType;
-            mark::scan_root_value((*r).base, d);
+    // Only the slots up to the high-water index can be in use (section 3), and
+    // the used-slot bitmap skips the cleared ones 64 at a time (section 20.7).
+    let t = ROOTS.get();
+    let words = ((*t).hw + 63) / 64;
+    let bits = (*t).used_bits as *const u64;
+    for w in 0..words {
+        let mut m = *bits.add(w);
+        while m != 0 {
+            let i = w * 64 + m.trailing_zeros() as usize;
+            m &= m - 1;
+            let r = rec(i);
+            if (*r).used {
+                let d = (*r).layout as *const KelpGcType;
+                mark::scan_root_value((*r).base, d);
+            }
         }
     }
 }
 
-pub unsafe fn register_root(base: usize, layout: usize) {
+/// Register `base` as a root holding a value described by `layout`. Takes a
+/// slot from the free list, or the next unused one, growing the table when it
+/// is full. Returns the handle, or `RootError::Full` with nothing registered.
+pub unsafe fn register_root(base: usize, layout: usize) -> Result<RootHandle, RootError> {
     lock();
-    let slot = (0..MAX_ROOTS).find(|&i| !(*(ROOTS.get() as *mut RootRec).add(i)).used);
-    match slot {
-        Some(i) => *(ROOTS.get() as *mut RootRec).add(i) = RootRec { used: true, base, layout },
-        None => sys::fatal(b"gc: too many root regions\0"),
-    }
+    let r = register_locked(base, layout);
     unlock();
+    r
 }
 
-pub unsafe fn unregister_root(base: usize) {
-    lock();
-    for i in 0..MAX_ROOTS {
-        let r = (ROOTS.get() as *mut RootRec).add(i);
-        if (*r).used && (*r).base == base {
-            (*r).used = false;
+unsafe fn register_locked(base: usize, layout: usize) -> Result<RootHandle, RootError> {
+    let t = ROOTS.get();
+    let slot = if (*t).free_head != 0 {
+        let i = ((*t).free_head - 1) as usize;
+        (*t).free_head = (*rec(i)).next_free;
+        i
+    } else {
+        if (*t).hw == (*t).cap {
+            let next = if (*t).cap == 0 { ROOT_CHUNK } else { (*t).cap * 2 };
+            grow_roots(next)?;
         }
+        let i = (*t).hw;
+        (*t).hw += 1;
+        i
+    };
+    let slot_gen = (*rec(slot)).generation;
+    *rec(slot) = RootRec { used: true, generation: slot_gen, next_free: 0, base, layout };
+    set_used_bit(slot, true);
+    (*t).live += 1;
+    Ok(((slot_gen as u64) << 32) | (slot as u64 + 1))
+}
+
+/// Set or clear slot `i`'s bit in the used-slot bitmap. Registry lock held.
+#[inline]
+unsafe fn set_used_bit(i: usize, on: bool) {
+    let w = ((*ROOTS.get()).used_bits as *mut u64).add(i / 64);
+    let bit = 1u64 << (i % 64);
+    if on {
+        *w |= bit;
+    } else {
+        *w &= !bit;
     }
+}
+
+/// Clear the entry `h` names. A handle whose generation does not match (the
+/// entry was cleared, or the slot was reused) does nothing and returns false.
+pub unsafe fn unregister_root(h: RootHandle) -> bool {
+    lock();
+    let ok = unregister_locked(h);
+    unlock();
+    ok
+}
+
+unsafe fn unregister_locked(h: RootHandle) -> bool {
+    let t = ROOTS.get();
+    let slot_plus = (h & 0xFFFF_FFFF) as usize;
+    let want_gen = (h >> 32) as u32;
+    if slot_plus == 0 || slot_plus > (*t).hw {
+        return false;
+    }
+    let i = slot_plus - 1;
+    let r = rec(i);
+    if !(*r).used || (*r).generation != want_gen {
+        return false;
+    }
+    (*r).used = false;
+    set_used_bit(i, false);
+    (*r).generation = want_gen.wrapping_add(1);
+    (*r).base = 0;
+    (*r).layout = 0;
+    (*r).next_free = (*t).free_head;
+    (*t).free_head = (i + 1) as u32;
+    (*t).live -= 1;
+    true
+}
+
+/// Live entries and the high-water index, for the stats hook.
+pub unsafe fn root_counts() -> (usize, usize) {
+    let t = ROOTS.get();
+    ((*t).live, (*t).hw)
+}
+
+/// Empty the table without unmapping it (tests reset the heap between cases).
+pub unsafe fn reset_roots() {
+    let t = ROOTS.get();
+    for i in 0..(*t).hw {
+        *rec(i) = RootRec { used: false, generation: 0, next_free: 0, base: 0, layout: 0 };
+    }
+    for w in 0..((*t).hw + 63) / 64 {
+        *((*t).used_bits as *mut u64).add(w) = 0;
+    }
+    (*t).hw = 0;
+    (*t).free_head = 0;
+    (*t).live = 0;
+}
+
+/// The registry lock, for the stats hook (which reads several counters at once).
+pub unsafe fn lock_for_stats() {
+    lock();
+}
+pub unsafe fn unlock_for_stats() {
     unlock();
 }
 

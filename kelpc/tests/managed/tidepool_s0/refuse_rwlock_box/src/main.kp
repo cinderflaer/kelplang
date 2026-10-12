@@ -1,8 +1,0 @@
-// Step 0 (Tidepool R16, T50): an RwLock value that holds collected memory is
-// refused in managed mode, for the same reason as a Mutex.
-
-pd val table: RwLock<Box<i64>> = RwLock.new(Box.of(1))
-
-fun main() {
-    table.read { v -> print(1) }
-}

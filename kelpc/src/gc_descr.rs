@@ -207,6 +207,22 @@ pub fn pointer_offsets(
     Ok(())
 }
 
+/// Whether a runtime record that holds a value of `ty` must root it (section
+/// 3). A handle type owns no collected slot of its own: its record roots its own
+/// value, so the handle itself is not walked. Any other type is walked as an
+/// object would be, and a type the walk does not describe is an error, the same
+/// one its descriptor would give.
+pub fn record_needs_root(layout: &dyn GcLayout, ty: &Ty) -> Result<bool, String> {
+    match ty {
+        Ty::Mutex(_) | Ty::RwLock(_) | Ty::Thread(_) | Ty::Condvar | Ty::Unit => Ok(false),
+        _ => {
+            let mut offsets = Vec::new();
+            pointer_offsets(layout, ty, 0, &mut offsets)?;
+            Ok(!offsets.is_empty())
+        }
+    }
+}
+
 /// The types whose drop still matters in a managed build: a user destructor, a
 /// runtime record that has to be released (thread, mutex, rwlock, condvar), a
 /// trait object (its concrete type is unknown here, so the drop is kept), a

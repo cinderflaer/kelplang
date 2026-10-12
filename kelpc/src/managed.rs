@@ -131,14 +131,6 @@ impl HeapSlot {
             HeapSlot::LockValue => "the value of a Mutex or RwLock",
         }
     }
-
-    /// The runtime-record positions, where a memory value is refused as well as
-    /// a resource: the collector does not scan the malloc'd record that holds
-    /// the value, so a collection could free it. Until the dynamic root table
-    /// exists (Tidepool, section 3), the value must be a number or a resource.
-    fn is_runtime_record(self) -> bool {
-        matches!(self, HeapSlot::ThreadArgument | HeapSlot::ThreadResult | HeapSlot::LockValue)
-    }
 }
 
 /// How two parts of one type combine: a container is a resource when any part
@@ -348,70 +340,8 @@ pub fn check_heap_uses(
     for u in ordered {
         let kind = resolve(&u.ty, decls);
         check_heap_slot(u.slot, &u.ty.display(), kind, u.span)?;
-        if u.slot.is_runtime_record() && kind == ResourceKind::Memory && holds_collected(&u.ty, decls) {
-            return Err(runtime_record_diagnostic(u.slot, &u.ty.display(), u.span));
-        }
     }
     Ok(())
-}
-
-/// The refusal for a memory value that holds collected memory in a runtime
-/// record (a thread's argument or result, or a Mutex or RwLock value). The
-/// record is malloc'd, and the collector does not scan it, so a collection
-/// could free the value while the program still uses it.
-fn runtime_record_diagnostic(slot: HeapSlot, ty_name: &str, at: Span) -> Diagnostic {
-    Diagnostic::new(
-        format!(
-            "'{ty_name}' cannot be {} in a hosted build: the collector does not yet scan the values a thread or a lock holds outside the heap, so a collection could free '{ty_name}' while the program still uses it. Use a number or a resource there",
-            slot.describe()
-        ),
-        at,
-        "",
-    )
-}
-
-/// Whether a value of type `ty` holds collected memory somewhere in it: a
-/// `String`, `Bytes`, `List`, `Map`, `Box`, an array, a closure, or a
-/// declaration with one of those among its fields. A scalar, a borrow and a
-/// resource do not count here (a resource is refused by its own check). An
-/// unknown declaration counts, so an undecided type is never let in.
-pub fn holds_collected(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>) -> bool {
-    let mut path = Vec::new();
-    holds_walk(ty, decls, &mut path)
-}
-
-fn holds_walk(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>, path: &mut Vec<String>) -> bool {
-    match ty {
-        Ty::Bytes | Ty::String | Ty::View | Ty::List(_) | Ty::Map(_, _) | Ty::Box(_) | Ty::BoxDyn { .. } => true,
-        Ty::Closure { .. } => true,
-        Ty::Array(elem, _) => holds_walk(elem, decls, path),
-        Ty::Struct(name) => {
-            if STDLIB_RESOURCE_STRUCTS.contains(&name.as_str()) {
-                return false;
-            }
-            if path.iter().any(|p| p == name) {
-                // A recursive declaration reaches itself only through a
-                // container, which already answered true.
-                return false;
-            }
-            // Every struct, golden memory structs included, is judged by its
-            // fields: a `ChanMeta` of scalars holds nothing collected. A struct
-            // whose declaration is not known counts as holding memory.
-            let Some(facts) = decls(name.as_str()) else {
-                return true;
-            };
-            path.push(name.clone());
-            // A field that is not plain memory (a resource, or a type that cannot
-            // be classified) counts as holding memory, so it is never let in.
-            let held = facts
-                .fields
-                .iter()
-                .any(|f| holds_walk(f, decls, path) || resolve(f, decls) != ResourceKind::Memory);
-            path.pop();
-            held
-        }
-        _ => false,
-    }
 }
 
 #[cfg(test)]
@@ -677,93 +607,6 @@ mod tests {
             resolve(&Ty::Struct("Missing".into()), &decls),
             ResourceKind::Declared
         );
-    }
-
-    #[test]
-    fn a_value_holding_collected_memory_is_not_a_thread_or_lock_value() {
-        let none = |_: &str| -> Option<DeclFacts> { None };
-        assert!(!holds_collected(&Ty::I64, &none));
-        assert!(!holds_collected(&Ty::Thread(Box::new(Ty::I32)), &none));
-        assert!(holds_collected(&Ty::String, &none));
-        assert!(holds_collected(&list(Ty::I32), &none));
-        let d = runtime_record_diagnostic(HeapSlot::LockValue, "List<i32>", span());
-        assert!(d.message.contains("'List<i32>' cannot be the value of a Mutex or RwLock"), "{}", d.message);
-    }
-
-    fn facts(fields: Vec<Ty>) -> Option<DeclFacts> {
-        Some(DeclFacts { has_user_drop: false, fields })
-    }
-
-    #[test]
-    fn a_scalar_only_struct_holds_no_collected_memory() {
-        // The shape of `std.sync.ChanMeta`: counters, flags and sizes, no heap field.
-        let meta = |name: &str| match name {
-            "std.sync.ChanMeta" | "Meta" => {
-                facts(vec![Ty::Usize, Ty::I64, Ty::Bool, Ty::Usize, Ty::Bool, Ty::Bool, Ty::Usize, Ty::Usize])
-            }
-            _ => None,
-        };
-        assert!(!holds_collected(&Ty::Struct("std.sync.ChanMeta".into()), &meta));
-        assert!(!holds_collected(&Ty::Struct("Meta".into()), &meta));
-        // A Mutex of it is a Mutex of memory-free fields, so the lock accepts it.
-        assert_eq!(
-            check_heap_uses(
-                &[HeapUse { slot: HeapSlot::LockValue, ty: Ty::Struct("Meta".into()), span: span() }],
-                &meta
-            )
-            .map_err(|d| d.message),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn a_struct_holding_a_collected_field_is_not_a_scalar_struct() {
-        // A List field, directly or through another struct, counts as collected.
-        let decls = |name: &str| match name {
-            "Holder" => facts(vec![Ty::I64, list(Ty::I32)]),
-            "Outer" => facts(vec![Ty::I32, Ty::Struct("Inner".into())]),
-            "Inner" => facts(vec![Ty::Bool, Ty::String]),
-            "Plain" => facts(vec![Ty::I64, Ty::Struct("Leaf".into())]),
-            "Leaf" => facts(vec![Ty::U8, Ty::Usize]),
-            _ => None,
-        };
-        assert!(holds_collected(&Ty::Struct("Holder".into()), &decls));
-        assert!(holds_collected(&Ty::Struct("Outer".into()), &decls));
-        assert!(!holds_collected(&Ty::Struct("Plain".into()), &decls));
-        let refused = check_heap_uses(
-            &[HeapUse { slot: HeapSlot::LockValue, ty: Ty::Struct("Holder".into()), span: span() }],
-            &decls,
-        );
-        assert!(refused.is_err());
-    }
-
-    #[test]
-    fn a_struct_with_an_unclassifiable_or_resource_field_counts_as_holding_memory() {
-        let decls = |name: &str| match name {
-            // A field of an unknown declaration cannot be classified: counts as memory.
-            "Unknown" => facts(vec![Ty::I64, Ty::Struct("NotDeclared".into())]),
-            // A resource field inside a memory-looking struct never passes.
-            "WithLock" => facts(vec![Ty::Mutex(Box::new(Ty::I64))]),
-            _ => None,
-        };
-        assert!(holds_collected(&Ty::Struct("Unknown".into()), &decls));
-        assert!(holds_collected(&Ty::Struct("WithLock".into()), &decls));
-        // A golden memory struct whose declaration is not in the program counts as memory.
-        assert!(holds_collected(&Ty::Struct("std.http.Url".into()), &|_: &str| None));
-    }
-
-    #[test]
-    fn a_golden_memory_struct_is_judged_by_its_fields() {
-        let decls = |name: &str| match name {
-            "std.sync.ChanMeta" => facts(vec![Ty::Usize, Ty::I64]),
-            "std.http.Url" => facts(vec![Ty::String, Ty::U16]),
-            "std.http.Header" => facts(vec![Ty::Ref { mutable: false, inner: Box::new(Ty::Str) }]),
-            _ => None,
-        };
-        assert!(!holds_collected(&Ty::Struct("std.sync.ChanMeta".into()), &decls));
-        assert!(holds_collected(&Ty::Struct("std.http.Url".into()), &decls));
-        // A borrow owns nothing, so a header of borrows holds no collected memory.
-        assert!(!holds_collected(&Ty::Struct("std.http.Header".into()), &decls));
     }
 
     #[test]

@@ -179,7 +179,7 @@ pub unsafe fn collect_locked() {
     let s = st();
     s.live = 0;
     s.mark_len = 0;
-    for b in 0..s.nblocks {
+    for b in 0..s.pool_hw {
         (*blk(b)).lines = [0; LINES];
         (*blk(b)).live = 0;
     }

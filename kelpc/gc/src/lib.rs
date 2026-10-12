@@ -11,6 +11,7 @@ pub mod mark;
 pub mod state;
 pub mod sys;
 pub mod threads;
+pub mod tls;
 pub mod types;
 pub mod verify;
 
@@ -18,14 +19,19 @@ use core::sync::atomic::Ordering::{Acquire, Release};
 
 use heap::*;
 use state::*;
+use sys::Msg;
 use types::*;
 
-pub use types::{KelpGcType, KelpGcVariant};
+pub use types::{KelpGcStats, KelpGcType, KelpGcVariant, KELP_GC_ROOT_FULL, KELP_GC_ROOT_OK, KELP_GC_ROOT_STALE};
 
 #[cfg(not(test))]
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    unsafe { sys::abort() }
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // No unwinder: name the location and abort (section 18.20, T74).
+    match info.location() {
+        Some(loc) => sys::report_and_abort(loc.file(), loc.line()),
+        None => sys::report_and_abort("?", 0),
+    }
 }
 
 /// The personality routine the unwind tables name. This crate builds with
@@ -78,17 +84,32 @@ unsafe fn do_init(heap_min: usize, heap_max: usize) {
     s.heap_max = region_bytes;
     s.heap_min = if heap_min == 0 { DEFAULT_HEAP_MIN } else { heap_min };
     s.trigger = s.heap_min;
+    s.pool_hw = 0;
+    s.unused_tail = 0;
     s.epoch = 0;
     s.stress_n = env_usize(b"KELP_GC_STRESS\0").unwrap_or(0);
     s.verify = env_usize(b"KELP_GC_VERIFY\0").unwrap_or(0) != 0;
     s.scan_stacks = true;
-    s.stop_timeout_ms = env_usize(b"KELP_GC_STOP_TIMEOUT_MS\0").unwrap_or(DEFAULT_STOP_TIMEOUT_MS);
+    s.stop_timeout_ms = match env_usize(b"KELP_GC_STOP_TIMEOUT_MS\0") {
+        Some(0) => {
+            Msg::new().s(b"gc: KELP_GC_STOP_TIMEOUT_MS must be at least 1").emit_line();
+            DEFAULT_STOP_TIMEOUT_MS
+        }
+        Some(ms) => ms,
+        None => DEFAULT_STOP_TIMEOUT_MS,
+    };
+    s.stats_on = env_usize(b"KELP_GC_STATS\0").unwrap_or(0) != 0;
+    if s.stats_on {
+        sys::atexit(print_stats_at_exit);
+    }
+    s.spawn_pause = env_usize(b"KELP_GC_TEST_SPAWN_PAUSE\0").unwrap_or(0) != 0;
     s.large_cap = region_bytes / LARGE_MIN + 1;
     s.large = map(s.large_cap * 8);
     threads::init_locks();
 }
 
-/// Decimal value of an environment variable, if set and numeric.
+/// Decimal value of an environment variable. None when it is unset. A value
+/// that is not a whole number prints one notice and is ignored (section 18.24).
 pub unsafe fn env_usize(name: &[u8]) -> Option<usize> {
     let p = sys::getenv(name.as_ptr() as *const _);
     if p.is_null() {
@@ -96,17 +117,53 @@ pub unsafe fn env_usize(name: &[u8]) -> Option<usize> {
     }
     let mut n = 0usize;
     let mut q = p as *const u8;
-    if *q == 0 {
-        return None;
-    }
-    while *q >= b'0' && *q <= b'9' {
-        n = n.checked_mul(10)?.checked_add((*q - b'0') as usize)?;
+    let mut ok = *q != 0;
+    while ok && *q >= b'0' && *q <= b'9' {
+        match n.checked_mul(10).and_then(|v| v.checked_add((*q - b'0') as usize)) {
+            Some(v) => n = v,
+            None => ok = false,
+        }
         q = q.add(1);
     }
-    if *q != 0 {
-        return None;
+    if ok && *q == 0 {
+        return Some(n);
     }
-    Some(n)
+    let var = &name[..name.len() - 1];
+    let mut value = Msg::new().s(b"gc: ignored ").s(var).s(b"='");
+    let mut v = p as *const u8;
+    while *v != 0 {
+        value = value.s(core::slice::from_raw_parts(v, 1));
+        v = v.add(1);
+    }
+    value.s(b"': expected a whole number").emit_line();
+    None
+}
+
+/// The counter line of section 9 (`KELP_GC_STATS=1`): the harness parses it, so
+/// the first field keeps its name. Printed once, at exit or before a fatal exit.
+pub unsafe fn print_stats_once() {
+    let s = st();
+    if !s.stats_on || s.stats_printed {
+        return;
+    }
+    s.stats_printed = true;
+    let (roots, _) = threads::root_counts();
+    Msg::new()
+        .s(b"kelp-gc-stats: collections=")
+        .dec(s.cycles)
+        .s(b" pause_total_us=")
+        .dec((s.pause_total_ns / 1000) as usize)
+        .s(b" pause_max_us=")
+        .dec((s.pause_max_ns / 1000) as usize)
+        .s(b" roots=")
+        .dec(roots)
+        .s(b" charged_bytes=")
+        .dec(s.charged_bytes)
+        .emit_line();
+}
+
+unsafe extern "C" fn print_stats_at_exit() {
+    print_stats_once();
 }
 
 /// Anonymous, zeroed, lazily committed mapping. Aborts the process on failure.
@@ -148,6 +205,48 @@ unsafe fn ensure_init() {
     }
 }
 
+/// The shared pool is full after a clearing (section 18.2, T63): the three
+/// numbers a programmer needs, then the note that names the change.
+#[cold]
+#[inline(never)]
+unsafe fn out_of_shared_pool() -> ! {
+    let s = st();
+    Msg::new()
+        .s(b"out of shared-pool memory: heap_max is ")
+        .dec(s.heap_max >> 20)
+        .s(b" MiB, ")
+        .dec(s.live >> 20)
+        .s(b" MiB was live at the last clearing, and ")
+        .dec(s.charged_bytes >> 20)
+        .s(b" MiB is charged to live blocks\n  note: keep less data live, or raise heap_max in coral.toml's [target] section")
+        .die()
+}
+
+/// The array count is above the element limit (section 18.3). Kept out of
+/// `alloc_common` so its message buffer does not change that function's frame.
+#[cold]
+#[inline(never)]
+unsafe fn array_too_large(count: usize) -> ! {
+    Msg::new()
+        .s(b"array of ")
+        .dec(count)
+        .s(b" elements is too large: a shared-pool array holds at most 4294967295 elements")
+        .die()
+}
+
+/// The count times the element size overflows (section 18.3).
+#[cold]
+#[inline(never)]
+unsafe fn array_overflows(count: usize, size: usize) -> ! {
+    Msg::new()
+        .s(b"array size overflows: ")
+        .dec(count)
+        .s(b" elements of ")
+        .dec(size)
+        .s(b" bytes each")
+        .die()
+}
+
 /// Allocate one object or array. Returns the payload pointer.
 unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *mut u8 {
     ensure_init();
@@ -158,14 +257,20 @@ unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *m
     if desc.align > 8 {
         sys::fatal(b"gc: type alignment above 8 is not supported in v1\0");
     }
+    if desc.flags & DESC_NOSCAN != 0 && desc.n_ptrs != 0 {
+        sys::fatal(b"gc: noscan type descriptor has pointer slots\0");
+    }
     let payload = if is_array {
-        if count > u32::MAX as usize {
-            sys::fatal(b"out of memory\0");
-        }
-        match count.checked_mul(desc.size as usize) {
+        // Both checks run before any clearing: no clearing makes such a request fit (section 18.3).
+        // The product is checked first, so a count whose byte size overflows is named as such.
+        let bytes = match count.checked_mul(desc.size as usize) {
             Some(p) => p,
-            None => sys::fatal(b"out of memory\0"),
+            None => array_overflows(count, desc.size as usize),
+        };
+        if count > u32::MAX as usize {
+            array_too_large(count);
         }
+        bytes
     } else {
         desc.size as usize
     };
@@ -210,7 +315,7 @@ unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *m
         }
         unlock_heap();
         if collected_here {
-            sys::fatal(b"out of memory\0");
+            out_of_shared_pool();
         }
         collected_here = threads::collect();
     }
@@ -257,14 +362,53 @@ pub unsafe extern "C" fn kelp_gc_leave_native() {
     threads::leave_native();
 }
 
+/// Register a root. Returns KELP_GC_ROOT_OK and writes the
+/// handle to `out`, or KELP_GC_ROOT_FULL and writes nothing.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelp_gc_register_root_region(base: *mut u8, layout: *const KelpGcType) {
-    threads::register_root(base as usize, layout as usize);
+pub unsafe extern "C" fn kelp_gc_register_root_region(base: *mut u8, layout: *const KelpGcType, out: *mut u64) -> i32 {
+    ensure_init();
+    match threads::register_root(base as usize, layout as usize) {
+        Ok(h) => {
+            if !out.is_null() {
+                *out = h;
+            }
+            KELP_GC_ROOT_OK
+        }
+        Err(threads::RootError::Full) => KELP_GC_ROOT_FULL,
+    }
 }
 
+/// Clear the root `h` names. KELP_GC_ROOT_STALE when `h` is not a live entry.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelp_gc_unregister_root_region(base: *mut u8) {
-    threads::unregister_root(base as usize);
+pub unsafe extern "C" fn kelp_gc_unregister_root_region(h: u64) -> i32 {
+    if threads::unregister_root(h) { KELP_GC_ROOT_OK } else { KELP_GC_ROOT_STALE }
+}
+
+/// Fill `out` with the collector's counters. The counts are read
+/// under the registry lock.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_gc_stats(out: *mut KelpGcStats) {
+    ensure_init();
+    threads::lock_for_stats();
+    let s = st();
+    let (roots, root_slots) = threads::root_counts();
+    *out = KelpGcStats {
+        collections: s.cycles as u64,
+        pause_total_us: s.pause_total_ns / 1000,
+        pause_max_us: s.pause_max_ns / 1000,
+        roots: roots as u64,
+        root_slots: root_slots as u64,
+        charged_bytes: s.charged_bytes as u64,
+    };
+    threads::unlock_for_stats();
+}
+
+/// The test hook of section 9 (`KELP_GC_TEST_SPAWN_PAUSE`): nonzero when a spawn
+/// must run a clearing while its worker is held before it attaches.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_gc_test_spawn_pause() -> i32 {
+    ensure_init();
+    st().spawn_pause as i32
 }
 
 #[unsafe(no_mangle)]

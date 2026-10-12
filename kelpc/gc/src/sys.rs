@@ -34,6 +34,8 @@ unsafe extern "C" {
     pub fn abort() -> !;
     pub fn getenv(name: *const c_char) -> *const c_char;
     pub fn clock_gettime(clk: c_int, ts: *mut Timespec) -> c_int;
+    pub fn munmap(addr: *mut c_void, len: usize) -> c_int;
+    pub fn atexit(f: unsafe extern "C" fn()) -> c_int;
 
     pub fn pthread_self() -> c_ulong;
     pub fn pthread_getattr_np(thread: c_ulong, attr: *mut PthreadAttr) -> c_int;
@@ -53,7 +55,22 @@ unsafe extern "C" {
     pub fn pthread_cond_broadcast(c: *mut Opaque) -> c_int;
 }
 
-/// Monotonic nanoseconds (measurement only).
+/// Map `bytes` of anonymous memory, or None when the kernel refuses (for
+/// example under `RLIMIT_AS`). The growable tables use this, so a full address
+/// space is an error the caller returns, not a fatal exit.
+pub unsafe fn try_map(bytes: usize) -> Option<usize> {
+    let p = mmap(
+        core::ptr::null_mut(),
+        bytes,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+        -1,
+        0,
+    ) as usize;
+    if p == usize::MAX || p == 0 { None } else { Some(p) }
+}
+
+/// Nanoseconds on the monotonic clock, for the pause counters.
 pub fn now_ns() -> u64 {
     let mut t = Timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { clock_gettime(CLOCK_MONOTONIC, &mut t) };
@@ -126,6 +143,21 @@ impl Msg {
         self.buf[self.n] = 0;
         fatal(&self.buf[..self.n + 1])
     }
+    /// Write the message to stderr with no prefix and no newline added: the
+    /// caller puts those in the text. Used for the one-line notices of the
+    /// environment and the counter line.
+    pub fn emit(self) {
+        unsafe { write(2, self.buf.as_ptr() as *const c_void, self.n) };
+    }
+    /// Write the message to stderr followed by a newline.
+    pub fn emit_line(mut self) {
+        self = self.s(b"\n");
+        self.emit();
+    }
+    /// The message bytes so far.
+    pub fn bytes(&self) -> &[u8] {
+        &self.buf[..self.n]
+    }
 }
 
 /// Out-of-memory and internal-error exit. Calls the runtime's hook if one is
@@ -133,6 +165,9 @@ impl Msg {
 /// with status 1, the same shape kelp_rt prints on the main thread.
 /// `msg` must be NUL-terminated.
 pub fn fatal(msg: &[u8]) -> ! {
+    // The counter line comes first, so a failed run still shows its counts
+    // (section 18.28). It is printed at most once per process.
+    unsafe { crate::print_stats_once() };
     let hook = unsafe { crate::state::st().oom_hook };
     if hook != 0 {
         let f: unsafe extern "C" fn(*const u8) = unsafe { core::mem::transmute(hook) };
@@ -145,4 +180,17 @@ pub fn fatal(msg: &[u8]) -> ! {
         write(2, b"\n".as_ptr() as *const c_void, 1);
         exit(1);
     }
+}
+
+/// The Rust panic path of the collector. The `no_std` build has no unwinder, so
+/// it names the location and aborts (section 18.20).
+pub fn report_and_abort(file: &str, line: u32) -> ! {
+    Msg::new()
+        .s(b"panic: gc: internal error at ")
+        .s(file.as_bytes())
+        .s(b":")
+        .dec(line as usize)
+        .s(b"\n")
+        .emit();
+    unsafe { abort() }
 }

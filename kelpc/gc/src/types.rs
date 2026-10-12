@@ -43,6 +43,24 @@ pub struct KelpGcType {
     pub variants: *const KelpGcVariant,
 }
 
+/// Result codes of the root entry points (`kelp_gc_register_root_region` and
+/// `kelp_gc_unregister_root_region`).
+pub const KELP_GC_ROOT_OK: i32 = 0;
+pub const KELP_GC_ROOT_FULL: i32 = 1;
+pub const KELP_GC_ROOT_STALE: i32 = 2;
+
+/// The counters `kelp_gc_stats` fills. All fields are u64.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KelpGcStats {
+    pub collections: u64,
+    pub pause_total_us: u64,
+    pub pause_max_us: u64,
+    pub roots: u64,
+    pub root_slots: u64,
+    pub charged_bytes: u64,
+}
+
 // The descriptors are static data emitted by the compiler; the pointers they
 // hold are read-only, so sharing them across threads is sound.
 unsafe impl Sync for KelpGcType {}

@@ -1,0 +1,33 @@
+impl "std/thread"
+impl "std/result"
+
+// Step 1 (T22, R16, section 3): the value an RwLock holds sits in the record the
+// lock allocates. The record is a root, so a clearing while the lock is free
+// keeps the list alive.
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun churn(count: i64).return: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < count {
+        val c = Cell(n = i, next = Box.of(Cell(n = i + 1, next = Box.empty())))
+        total = total + c.n + c.next.get().n
+        i = i + 1
+    }
+    return total
+}
+
+fun make_names().return: List<String> {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    names.push(String.from_str("beta"))
+    names.push(String.from_str("gamma"))
+    return names
+}
+
+fun main() {
+    val gate = RwLock.new(make_names())
+    val junk = churn(300000)
+    gate.read { v -> print(v.len()) }
+    print(junk > 0)
+}

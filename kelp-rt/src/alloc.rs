@@ -166,24 +166,10 @@ pub unsafe fn buf_free(p: *mut u8) {
 }
 
 /// The type descriptor of a byte buffer: a noscan array of `u8`, with the
-/// reserved id the program's own table never hands out (`kelp_rt.c`
-/// `KELP_RT_BYTES_TYPE_ID`). Mirrors the `KelpGcType` layout in `kelpc/gc/src/types.rs`.
+/// reserved id the program's own table never hands out (`KELP_RT_BYTES_TYPE_ID`
+/// in the C runtime this replaces). The layout is [`crate::gc::GcType`].
 #[cfg(feature = "managed")]
-#[repr(C)]
-struct GcType {
-    id: u32,
-    size: u32,
-    align: u32,
-    flags: u32,
-    n_ptrs: u32,
-    ptr_off: *const u32,
-    tag_off: u32,
-    n_variants: u32,
-    variants: *const c_void,
-}
-
-#[cfg(feature = "managed")]
-unsafe impl Sync for GcType {}
+use crate::gc::GcType;
 
 #[cfg(feature = "managed")]
 const KELP_GC_NOSCAN: u32 = 0x1;

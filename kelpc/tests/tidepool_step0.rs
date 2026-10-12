@@ -1,8 +1,10 @@
 //! Tidepool step 0: the runtime and checker fixes that the block design
 //! depends on (`plan/` design, sections 9, 18.9, 18.11, 18.12, 18.13, 18.14 and
-//! 20.5). The refusal fixtures run on every `cargo test`. The run fixtures build
-//! a managed program and need the collector archive, so they are `#[ignore]`d
-//! and run with `KELP_GC_LIB` set to `libkelp_gc.a` and `--ignored`.
+//! 20.5). The refusals of a thread's argument, result, environment and lock
+//! values were lifted in step 1; their run tests are in `tidepool_s1.rs`. The
+//! refusal fixtures run on every `cargo test`. The run fixtures build a managed
+//! program and need the collector archive, so they are `#[ignore]`d and run with
+//! `KELP_GC_LIB` set to `libkelp_gc.a` and `--ignored`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -76,31 +78,6 @@ fn check_refused(name: &str) {
     let want = std::fs::read_to_string(fixture(name).join("refusal.txt")).expect("read refusal.txt");
     let msg = text(&out);
     assert!(msg.contains(want.trim_end()), "{name}: expected '{}' in:\n{msg}", want.trim_end());
-}
-
-#[test]
-fn a_thread_argument_holding_a_box_is_refused_by_name() {
-    check_refused("refuse_spawn_arg_box");
-}
-
-#[test]
-fn a_thread_result_holding_a_box_is_refused_by_name() {
-    check_refused("refuse_spawn_result_box");
-}
-
-#[test]
-fn a_capturing_thread_closure_is_refused_in_managed_mode() {
-    check_refused("refuse_spawn_capture");
-}
-
-#[test]
-fn a_mutex_holding_a_box_is_refused_by_name() {
-    check_refused("refuse_mutex_box");
-}
-
-#[test]
-fn an_rwlock_holding_a_box_is_refused_by_name() {
-    check_refused("refuse_rwlock_box");
 }
 
 #[test]

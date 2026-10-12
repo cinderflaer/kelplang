@@ -16708,18 +16708,6 @@ fn check_thread_spawn(
         });
     }
     let moved = params[0].clone();
-    // Managed (Tidepool, step 0): a closure that captures anything keeps its
-    // environment in the collected heap, in a malloc'd start record the
-    // collector does not scan, so a capturing entry is refused until the
-    // dynamic root table exists. A literal that captures nothing has the plain
-    // function type `Ty::Fn`, and a value with an environment has `Ty::Closure`,
-    // so the type catches a closure bound to a name too, not only a literal.
-    if ctx.env.managed && matches!(entry.ty, Ty::Closure { .. }) {
-        return Err(TypeError {
-            message: "'thread.spawn' cannot take a closure that captures values in a hosted build: the closure's environment is kept in the collected heap, and the collector does not yet scan a thread's environment, so a collection could free it while the worker runs. Pass a number as the argument, or use a 'fun' that captures nothing".to_string(),
-            span: entry_arg.value.span(),
-        });
-    }
     // A plain function value is widened into a closure here rather than at each
     // backend, so `entry` has one shape downstream: the ordinary A-4 phase E
     // widening, a `fun` value wrapped in the one-field environment a closure's

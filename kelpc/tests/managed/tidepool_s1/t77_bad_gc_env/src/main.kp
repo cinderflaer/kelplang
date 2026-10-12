@@ -1,0 +1,8 @@
+// Step 1 (T77, section 18.24): a bad KELP_GC_ value prints one line when the
+// collector starts, and the program runs with the default.
+datac Cell(val n: i64, val next: Box<Cell>)
+
+fun main() {
+    val c = Cell(n = 1, next = Box.empty())
+    print(c.n)
+}

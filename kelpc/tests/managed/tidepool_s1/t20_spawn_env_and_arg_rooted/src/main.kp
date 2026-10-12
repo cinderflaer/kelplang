@@ -1,0 +1,29 @@
+impl "std/thread"
+impl "std/result"
+impl "std/str"
+
+// Step 1 (T20, R26 and R27, section 3). The spawn's argument and its captured
+// environment sit in malloc'd records until the worker starts. With
+// KELP_GC_TEST_SPAWN_PAUSE=1 the spawner clears the heap in that window and
+// reuses the freed memory, so a record the collector does not scan reads the
+// wrong values.
+fun make_names().return: List<String> {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    names.push(String.from_str("beta"))
+    names.push(String.from_str("gamma"))
+    return names
+}
+
+fun weigh(s: String).return: usize = str.len(s.as_str())
+
+fun main() {
+    val names = make_names()
+    val tag = String.from_str("delta-epsilon")
+    val f = fun(s: move String).return: usize = names.len() * 100 + weigh(s)
+    val t = thread.spawn(f, tag)
+    when thread.join(t) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

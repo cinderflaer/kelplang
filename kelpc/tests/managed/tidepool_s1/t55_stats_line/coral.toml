@@ -1,0 +1,3 @@
+name = "t55_stats_line"
+version = "0.1.0"
+entry = "src/main.kp"

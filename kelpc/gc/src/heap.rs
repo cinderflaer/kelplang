@@ -133,6 +133,7 @@ unsafe fn next_hole() -> bool {
                 (*m).state = ACTIVE;
                 s.used_blocks += 1;
                 s.peak_blocks = core::cmp::max(s.peak_blocks, s.used_blocks);
+                s.pool_hw = core::cmp::max(s.pool_hw, b + 1);
                 s.cursor = base_of(b);
                 s.limit = base_of(b) + BLOCK;
                 s.alloc_block = b + 1;
@@ -174,6 +175,7 @@ unsafe fn try_small(total: usize) -> Option<usize> {
             s.cursor += total;
             return Some(h);
         }
+        s.unused_tail += s.limit - s.cursor;
         if !next_hole() {
             return None;
         }
@@ -203,6 +205,7 @@ unsafe fn take_run(total: usize) -> bool {
             }
             s.used_blocks += n;
             s.peak_blocks = core::cmp::max(s.peak_blocks, s.used_blocks);
+            s.pool_hw = core::cmp::max(s.pool_hw, b);
             s.run_cur = base_of(start);
             s.run_end = base_of(b);
             s.run_scan = b;
@@ -319,7 +322,7 @@ pub unsafe fn sweep() {
         }
     }
     s.large_n = keep;
-    for b in 0..s.nblocks {
+    for b in 0..s.pool_hw {
         let m = blk(b);
         match (*m).state {
             LARGE => {
