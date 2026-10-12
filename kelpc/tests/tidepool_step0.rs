@@ -98,8 +98,14 @@ fn a_mutex_holding_a_struct_of_scalars_checks_clean() {
 }
 
 #[test]
-fn a_mutex_holding_a_struct_with_a_list_field_is_refused_by_name() {
-    check_refused("refuse_list_struct_lock");
+fn a_mutex_holding_a_struct_with_a_list_field_checks_clean() {
+    // Step 1 roots the lock's value, so a struct with a List field is accepted here too.
+    let out = kelpc()
+        .arg("check")
+        .arg(fixture("accept_list_struct_lock"))
+        .output()
+        .expect("failed to run kelpc check");
+    assert!(out.status.success(), "{}", text(&out));
 }
 
 #[test]
