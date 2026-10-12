@@ -112,6 +112,7 @@ empty on release.
 - The `std/fs` tests write their scratch files under a directory unique to each test in each run, and remove it afterwards, so two kelpc suites running at once no longer delete each other's files.
 - A hosted build refuses an `Atomic` as a `List`, `Map`, `Box` or array element, because the container's own routines read and write an element as a plain location. A `datac` field of atomic type is accepted.
 - A hosted program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
+- The memory gate's `fs_*` fixtures write their scratch files under a directory unique to each run, not the shared `/tmp`, and remove it afterwards.
 - A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
 - The Rust runtime leaves the collector when a worker ends (also on a panic), waits in join, locks and condition waits as native, polls the collector in long text and map scans, frees a spawn whose thread cannot start and reports its errno, and the collector's personality routine lets a worker's forced unwind finish.
 - A freestanding build refuses the `f32` overloads of `std` and `math` as it refuses the `f64` ones, so no soft-float compare routine is linked (`ld.lld` failed with an undefined `__ltsf2` on riscv).
