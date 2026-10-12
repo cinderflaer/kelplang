@@ -211,21 +211,6 @@ impl Project {
         libs
     }
 
-    /// Every C header named across the project's `[extern.*]` sections,
-    /// deduplicated and sorted. the removed C backend emitted one `#include <header>`
-    /// line per entry after the fixed preamble, so a project that names none
-    /// gets exactly the C text it got before the key existed.
-    pub fn extern_headers(&self) -> Vec<String> {
-        collect_extern_headers(&self.extern_modules)
-    }
-
-    /// Every include directory named across the project's `[extern.*]`
-    /// sections, resolved against the manifest's directory, deduplicated and
-    /// sorted. `driver.rs` passes each one to `cc` as `-I<dir>`.
-    pub fn extern_include_dirs(&self) -> Vec<String> {
-        collect_extern_dirs(&self.extern_modules, self.root.as_deref(), |e| e.include_dirs())
-    }
-
     /// Every library directory named across the project's `[extern.*]`
     /// sections, resolved like `extern_include_dirs`. `driver.rs` passes each
     /// one to `cc` as `-L<dir>`.
@@ -249,16 +234,6 @@ fn collect_extern_pkg_config(extern_modules: &HashMap<String, ExternModuleDecl>)
     packages.sort();
     packages.dedup();
     packages
-}
-
-fn collect_extern_headers(extern_modules: &HashMap<String, ExternModuleDecl>) -> Vec<String> {
-    let mut headers: Vec<String> = extern_modules
-        .values()
-        .filter_map(|e| e.header().map(str::to_string))
-        .collect();
-    headers.sort();
-    headers.dedup();
-    headers
 }
 
 /// The shared body of `extern_include_dirs` and `extern_library_dirs`: each
@@ -431,9 +406,9 @@ pub struct ExternModuleDecl {
     /// fixed preamble, so a `extern fun` whose native symbol the runtime does
     /// not already declare has a prototype instead of an implicit one.
     header: Option<String>,
-    /// The directories `-I<dir>` names when the generated C is compiled, as
-    /// written: `collect_extern_dirs` resolves each against the manifest's
-    /// own directory when `Project::extern_include_dirs` reads them.
+    /// The include directories the section names, as written. No C is compiled
+    /// now, so nothing reads them; the key is still validated.
+    #[allow(dead_code)]
     include_dirs: Vec<String>,
     /// The directories `-L<dir>` names on the link line, resolved the same
     /// way.
@@ -451,12 +426,15 @@ impl ExternModuleDecl {
     }
 
     /// The C header this module's symbols are declared in, if the section
-    /// named one.
+    /// named one. No lowering reads it now that no C is compiled: the key is
+    /// still validated, so a manifest that names a bad header is refused as before.
+    #[allow(dead_code)]
     pub fn header(&self) -> Option<&str> {
         self.header.as_deref()
     }
 
     /// The include directories this section named, as written.
+    #[allow(dead_code)]
     pub fn include_dirs(&self) -> &[String] {
         &self.include_dirs
     }
@@ -3895,33 +3873,6 @@ mod tests {
              symbols = []\n\
              header = {header}\n"
         )
-    }
-
-    #[test]
-    fn extern_headers_are_deduplicated_and_sorted() {
-        let text = format!(
-            "name = \"x\"\n{}{}{}",
-            extern_section("b", "\"zlib.h\""),
-            extern_section("a", "\"stdlib.h\""),
-            extern_section("c", "\"zlib.h\""),
-        );
-        let manifest = manifest(&text);
-        assert_eq!(
-            collect_extern_headers(&manifest.extern_modules),
-            vec!["stdlib.h".to_string(), "zlib.h".to_string()]
-        );
-    }
-
-    #[test]
-    fn a_section_without_a_header_names_none() {
-        let text = format!(
-            "name = \"x\"\n[extern.\"a\"]\n\
-             domain = \"time\"\n\
-             library = \"c\"\n\
-             symbols = []\n"
-        );
-        let manifest = manifest(&text);
-        assert!(collect_extern_headers(&manifest.extern_modules).is_empty());
     }
 
     #[test]

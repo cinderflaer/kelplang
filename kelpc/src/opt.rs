@@ -54,7 +54,7 @@ impl OptLevel {
     ];
 
     /// The spelling without the `-O`, used by the round-trip test below; the
-    /// diagnostic path spells a level with `cc_flag`.
+    /// diagnostic path spells a level with `o_flag`.
     #[cfg(test)]
     pub fn name(self) -> &'static str {
         match self {
@@ -67,7 +67,7 @@ impl OptLevel {
     }
 
     /// The flag spelled the way `cc` and the command line take it.
-    pub fn cc_flag(self) -> &'static str {
+    pub fn o_flag(self) -> &'static str {
         match self {
             OptLevel::O0 => "-O0",
             OptLevel::O1 => "-O1",
@@ -116,7 +116,7 @@ impl OptLevel {
 
     /// The whole vocabulary as a diagnostic name, `-O0, -O1, -O2, -O3, -Os`.
     fn expected_list() -> String {
-        let names: Vec<&str> = Self::ALL.iter().map(|l| l.cc_flag()).collect();
+        let names: Vec<&str> = Self::ALL.iter().map(|l| l.o_flag()).collect();
         names.join(", ")
     }
 
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn the_default_is_o2() {
         assert_eq!(OptLevel::DEFAULT, OptLevel::O2);
-        assert_eq!(OptLevel::DEFAULT.cc_flag(), "-O2");
+        assert_eq!(OptLevel::DEFAULT.o_flag(), "-O2");
     }
 
     /// Every level that can be selected round-trips through the spelling the
@@ -164,8 +164,8 @@ mod tests {
     #[test]
     fn every_level_round_trips_through_its_flag() {
         for level in OptLevel::ALL {
-            assert_eq!(OptLevel::parse(level.cc_flag()).unwrap(), *level);
-            assert_eq!(level.cc_flag(), format!("-O{}", level.name()));
+            assert_eq!(OptLevel::parse(level.o_flag()).unwrap(), *level);
+            assert_eq!(level.o_flag(), format!("-O{}", level.name()));
         }
     }
 

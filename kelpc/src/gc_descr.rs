@@ -654,7 +654,6 @@ mod tests {
             &[],
             &[],
             &[],
-            &[],
             None,
             Some(&managed),
             false,

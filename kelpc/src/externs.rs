@@ -13,11 +13,6 @@
 //! `infer.rs`, not silently left undefined - which is also why user code cannot
 //! declare one: only compiler-shipped modules have bodies.
 
-/// No C bodies remain: every stdlib `extern fun` is a Rust export listed in
-/// [`RUST_PORTED`]. The table is kept empty so `body` keeps its shape for the
-/// user-FFI lane; the C text it used to hold is gone (owner decision 2026-10-12).
-static EXTERNS: &[(&str, &str, &str)] = &[];
-
 /// The externs whose body is the Rust runtime's export of the same name
 /// (`kelp-rt/src/stdlib/*.rs`, `kelp-rt/src/tls.rs`), so no C text is written
 /// for them. The LLVM call resolves against `libkelp_rt.a` as `kelp_` plus the
@@ -176,17 +171,6 @@ fn bare_name<'a>(module: &str, qualified_name: &'a str) -> &'a str {
         .unwrap_or(qualified_name)
 }
 
-/// The C body for an `extern fun` in `module`, or `None` when the compiler
-/// has no C body for it. `qualified_name` is the function's `tir::Function`
-/// key. A Rust-ported extern has no C body either: see [`is_rust_ported`].
-pub fn body(module: &str, qualified_name: &str) -> Option<&'static str> {
-    let bare = bare_name(module, qualified_name);
-    EXTERNS
-        .iter()
-        .find(|(m, n, _)| *m == module && *n == bare)
-        .map(|(_, _, body)| *body)
-}
-
 /// Whether the extern is provided by the Rust runtime archive instead of a C
 /// body in the program's object.
 pub fn is_rust_ported(module: &str, qualified_name: &str) -> bool {
@@ -195,13 +179,10 @@ pub fn is_rust_ported(module: &str, qualified_name: &str) -> bool {
 }
 
 /// Whether the compiler ships a body for this `(module, bare name)` pair, in
-/// C or in the Rust runtime. Used by `infer.rs` to reject an `extern`
-/// declaration it cannot honor.
+/// the Rust runtime. Used by `infer.rs` to reject an `extern` declaration it
+/// cannot honor.
 pub fn has_body(module: &str, bare_name: &str) -> bool {
-    EXTERNS
+    RUST_PORTED
         .iter()
-        .any(|(m, n, _)| *m == module && *n == bare_name)
-        || RUST_PORTED
-            .iter()
-            .any(|(m, n)| *m == module && *n == bare_name)
+        .any(|(m, n)| *m == module && *n == bare_name)
 }

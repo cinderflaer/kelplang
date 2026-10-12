@@ -14796,13 +14796,13 @@ fn only_a_tls_program_links_openssl() {
             "a program without std/tls linked OpenSSL: {line}"
         );
     }
+    // No C is written for a program at all: the `extern fun` trampolines and
+    // callback glue are LLVM IR in an object of their own (`extern_object.rs`).
     let name = "fs_path_family";
     let generated = out_path(name);
-    let source = std::fs::read_to_string(generated.with_extension("externs.c"))
-        .expect("the generated C source");
     assert!(
-        !source.contains("#include <openssl/"),
-        "a program without std/tls includes OpenSSL's headers"
+        !generated.with_extension("externs.c").exists(),
+        "a hosted build wrote a C source for its externs"
     );
 
     let tls = build_recording_ld_lld_lines("tests/fixtures/https_try_dial.kp");

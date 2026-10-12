@@ -3,7 +3,6 @@ mod backend;
 mod borrowck;
 mod caps_report;
 mod cache;
-mod cdecl;
 mod codegen_llvm;
 mod deprecated;
 mod derive;
@@ -11,12 +10,14 @@ mod defer;
 mod diag;
 mod doc;
 mod driver;
+mod extern_object;
 mod externs;
 mod fmt;
 mod freestanding;
 mod gc_descr;
 mod guard;
 mod infer;
+mod inline_asm;
 mod lexer;
 mod lint;
 mod managed;
@@ -662,7 +663,6 @@ fn build(
         None
     };
     let link_libs = loaded.project.extern_libraries();
-    let include_dirs = loaded.project.extern_include_dirs();
     let library_dirs = loaded.project.extern_library_dirs();
     if let Err(message) = codegen_llvm::compile(
         &typed,
@@ -671,7 +671,6 @@ fn build(
         out_path,
         opt,
         &link_libs,
-        &include_dirs,
         &library_dirs,
         &pkg_config_flags,
         freestanding.as_ref(),

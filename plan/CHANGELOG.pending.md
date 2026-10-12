@@ -142,3 +142,5 @@ empty on release.
 - `str.from_f64` (and so `fmt.float`) formats once into a stack buffer when the text fits in 128 bytes; about 2x faster on 400000 two-decimal values.
 
 - `kelpc doc --format json` (with `--text` for stdin) and `kelpc stdlib --json --dir <dir>` give editor tools the declarations, spans, import aliases, trait impls, builtin members and shipped std sources as data.
+
+- The hosted build no longer compiles any C: the `extern fun` trampolines, the native-callback glue and the capability allowlists are LLVM IR in `<out>.externs.o`, written by the program's own target machine, so the C compiler is not run and no `.c` file is written. A user `extern fun` that takes or returns a struct by value is refused for now.

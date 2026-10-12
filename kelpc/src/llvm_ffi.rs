@@ -91,7 +91,7 @@ use llvm_sys::core::{
     LLVMSetAlignment, LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer,
     LLVMSetLinkage, LLVMSetMetadata, LLVMSetOrdering, LLVMSetSection, LLVMSetTarget,
     LLVMSetThreadLocal, LLVMSetThreadLocalMode, LLVMSetVolatile,
-    LLVMConstArray2, LLVMIsConstant,
+    LLVMConstArray2, LLVMConstStringInContext2, LLVMIsConstant,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVectorType,
     LLVMVoidTypeInContext,
 };
@@ -691,6 +691,25 @@ impl Context {
     /// `i1`, which is what this wraps so the lowering does not have to spell it.
     pub fn const_bool(&self, value: bool) -> Value<'_> {
         self.const_int(self.i1(), u64::from(value), false)
+    }
+
+    /// The bytes followed by one NUL, as an `[n+1 x i8]` constant
+    /// (`LLVMConstStringInContext` with the terminator). A global takes it as
+    /// its initializer, so the text needs no builder position.
+    pub fn const_c_string(&self, bytes: &[u8]) -> Value<'_> {
+        Value {
+            // SAFETY: the context is live, and the pointer and length describe
+            // `bytes` for the call, which LLVM copies into the constant.
+            raw: unsafe {
+                LLVMConstStringInContext2(
+                    self.raw,
+                    bytes.as_ptr().cast(),
+                    bytes.len(),
+                    0,
+                )
+            },
+            context: PhantomData,
+        }
     }
 
     /// The constant array `[elem; values.len()]` (`LLVMConstArray2`), the

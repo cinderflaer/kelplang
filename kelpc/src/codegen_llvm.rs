@@ -209,11 +209,11 @@
 //! - a call to one is lowered as a call through the same table the runtime
 //!   helpers use: the declaration and the call are the same IR shape whether the
 //!   callee's text is in `kelp_rt.c` or in the program's own object.
-//! - that object is built per program from `<out>.externs.c`, which holds the
-//!   bodies the removed C backend's `write_extern` writes, the capability glue, and the
-//!   `std/rt` prototypes `runtime_prototypes` writes, so the C text is the C
-//!   backend's own (see `program_c_source` for why it cannot be a fixed object
-//!   like `kelp_rt.o`).
+//! - a user `extern fun` has no body in the program: its trampoline is written
+//!   per program as LLVM IR in `<out>.externs.o` (`extern_object.rs`), together
+//!   with the callback glue of its `move closure(...)` parameters and the
+//!   capability allowlist arrays. It is per program because it names the native
+//!   symbols the program allowlisted, and no fixed object could carry those.
 //!
 //! # What S3 adds (MK7 S3, `pd` globals and the capability check)
 //!
@@ -236,11 +236,10 @@
 //!   **once** into a value the check and the call share (BUG-Kf7Rn), and the
 //!   check is one `kelp_cap_check_path`/`_name`/`_host`/`_hostport`/`_port`
 //!   call against the module's compiled-in array.
-//! - that array is C data in the per-program object, escaped by the C backend's
-//!   own `c_string_literal`, and the check functions are the C backend's own
-//!   `runtime/cap_glue.c` with `#define static` around it, so the deny path's
-//!   text is the same bytes in both backends. The matcher and the path
-//!   normalizer stay Kelp (`std/rt`) and are lowered like any other code.
+//! - that array is data in the per-program externs object, and the check
+//!   functions are `kelp-rt`'s own (`kelp-rt/src/cap.rs`), so the deny path's
+//!   text is written once. The matcher and the path normalizer stay Kelp
+//!   (`std/rt`) and are lowered like any other code.
 //!
 //! The whole fixture corpus now lowers: the `llvm` backend is the only backend,
 //! and it builds every one of the 223 corpus targets the C backend built before
@@ -332,7 +331,7 @@ use std::time::{Duration, Instant};
 
 use crate::ast::{AsmOperandKind, BinOp, UnOp};
 use crate::cache::{Cache, KeyFields};
-use crate::cdecl::asm_operand_text;
+use crate::inline_asm::asm_operand_text;
 use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::llvm_ffi::{
     self, AtomicRmw, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
@@ -378,7 +377,6 @@ pub fn compile(
     out_path: &Path,
     opt: OptLevel,
     link_libs: &[String],
-    include_dirs: &[String],
     library_dirs: &[String],
     pkg_config_flags: &[String],
     freestanding: Option<&Freestanding>,
@@ -419,7 +417,6 @@ pub fn compile(
             out_path,
             opt,
             link_libs,
-            include_dirs,
             library_dirs,
             pkg_config_flags,
             timings,
@@ -475,23 +472,9 @@ pub fn compile(
         return linked.map_err(|e| e.message);
     }
 
-    let program_object = match program_c_source(program) {
-        Some(source) => {
-            let c_path = out_path.with_extension("externs.c");
-            let obj_path = out_path.with_extension("externs.o");
-            crate::driver::compile_c_object(
-                &source,
-                &c_path,
-                &obj_path,
-                opt,
-                include_dirs,
-                pkg_config_flags,
-            )
-            .map_err(|e| e.message)?;
-            Some(obj_path)
-        }
-        None => None,
-    };
+    let externs_path = out_path.with_extension("externs.o");
+    let program_object = crate::extern_object::lower_externs_object(program, &machine, &externs_path, true)?
+        .then_some(externs_path);
 
     let link_start = Instant::now();
     let linked = match managed {
@@ -504,7 +487,7 @@ pub fn compile(
             link_libs,
             library_dirs,
             pkg_config_flags,
-            crate::cdecl::uses_tls(program),
+            crate::extern_object::uses_tls(program),
         ),
         None => crate::driver::link_llvm_object(
             &object_path,
@@ -514,7 +497,7 @@ pub fn compile(
             link_libs,
             library_dirs,
             pkg_config_flags,
-            crate::cdecl::uses_tls(program),
+            crate::extern_object::uses_tls(program),
         ),
     };
     timings.link += link_start.elapsed();
@@ -970,7 +953,6 @@ fn compile_units(
     out_path: &Path,
     opt: OptLevel,
     link_libs: &[String],
-    include_dirs: &[String],
     library_dirs: &[String],
     pkg_config_flags: &[String],
     timings: &mut Timings,
@@ -997,12 +979,10 @@ fn compile_units(
     // has no unit to belong to. It is generated here rather than at the link,
     // because the units must know which program items it names before they set
     // any linkage.
-    let c_source = program_c_source(program);
-    let c_object_refs = c_source
-        .as_deref()
-        .map(|text| named_c_object_refs(program, text))
-        .unwrap_or_default();
-    let units = plan_units(program, &c_object_refs);
+    // The externs object defines no Kelp function: a trampoline calls only the
+    // native symbol and the runtime, and a callback thunk calls through the
+    // closure it was handed. So no unit's item is named by it.
+    let units = plan_units(program);
 
     // One slot per unit, filled by whichever worker claims that unit. A slot
     // left `None` means no worker reached it, which the caller treats as a
@@ -1151,26 +1131,15 @@ fn compile_units(
         return Err(message);
     }
 
-    // The program's `extern fun` bodies, capability glue and cap arrays are one
-    // object for the whole program, exactly as the whole-program build has them:
-    // the C text is the C backend's own, and it has no unit to belong to.
-    let program_object = match c_source {
-        Some(source) => {
-            let c_path = out_path.with_extension("externs.c");
-            let obj_path = out_path.with_extension("externs.o");
-            crate::driver::compile_c_object(
-                &source,
-                &c_path,
-                &obj_path,
-                opt,
-                include_dirs,
-                pkg_config_flags,
-            )
-            .map_err(|e| e.message)?;
-            Some(obj_path)
-        }
-        None => None,
-    };
+    // The program's `extern fun` trampolines, callback glue and capability
+    // arrays are one object for the whole program, exactly as the whole-program
+    // build has them: they belong to no unit.
+    // The incremental build has no machine of its own outside its workers, so
+    // the externs object is written with one made here, for the same target.
+    let machine = TargetMachine::for_host_at(opt.codegen_level())?;
+    let externs_path = out_path.with_extension("externs.o");
+    let program_object = crate::extern_object::lower_externs_object(program, &machine, &externs_path, true)?
+        .then_some(externs_path);
 
     let link_start = Instant::now();
     let linked = crate::driver::link_llvm_objects(
@@ -1181,7 +1150,7 @@ fn compile_units(
         link_libs,
         library_dirs,
         pkg_config_flags,
-        crate::cdecl::uses_tls(program),
+        crate::extern_object::uses_tls(program),
     );
     timings.link += link_start.elapsed();
     // A unit object that came from the cache and does not link is corrupt in a
@@ -1236,7 +1205,7 @@ const SUPPORT_UNIT: &str = "_support";
 /// unit the way it does in the whole-program build. Over-approximating the set
 /// is harmless (the symbol is merely visible); a missed reference is a link
 /// error rather than a miscompile, and the equivalence tests link real binaries.
-fn plan_units(program: &Program, c_object_refs: &HashSet<String>) -> Vec<Unit> {
+fn plan_units(program: &Program) -> Vec<Unit> {
     let mut modules: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for f in &program.functions {
         modules.insert(f.module.clone());
@@ -1272,11 +1241,6 @@ fn plan_units(program: &Program, c_object_refs: &HashSet<String>) -> Vec<Unit> {
     // though the reference that created it was written in the function's own
     // unit.
     for (key, _) in &collect_instantiations(program).shims {
-        note(key, SUPPORT_UNIT);
-    }
-    // The per-program C object (`program_c_source`) is outside every unit, so
-    // whatever it names has to be external too.
-    for key in c_object_refs {
         note(key, SUPPORT_UNIT);
     }
     for vtable in &program.dyn_vtables {
@@ -1339,43 +1303,6 @@ fn plan_units(program: &Program, c_object_refs: &HashSet<String>) -> Vec<Unit> {
         exported: HashSet::new(),
     });
     units
-}
-
-/// The program items the per-program C object names (roadmap A-14 slice 1).
-///
-/// That object is outside every compilation unit, so a `kelp_`-prefixed symbol
-/// in its text has to be external in whichever unit defines it: an `extern fun`
-/// body, the capability glue or the `std/rt` prototypes can call across the
-/// object boundary in C, which the typed IR cannot show. The scan is textual
-/// for that reason, and matches a token against a program item's emitted symbol
-/// name.
-fn named_c_object_refs(program: &Program, text: &str) -> HashSet<String> {
-    let mut by_symbol: HashMap<String, String> = HashMap::new();
-    for f in &program.functions {
-        by_symbol.insert(symbol_name(&f.name), f.name.clone());
-    }
-    for s in &program.statics {
-        by_symbol.insert(symbol_name(&s.name), s.name.clone());
-    }
-    let bytes = text.as_bytes();
-    let mut out = HashSet::new();
-    let mut i = 0;
-    while i + 5 <= bytes.len() {
-        if &bytes[i..i + 5] == b"kelp_" {
-            let start = i;
-            let mut j = i + 5;
-            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
-                j += 1;
-            }
-            if let Some(key) = by_symbol.get(&text[start..j]) {
-                out.insert(key.clone());
-            }
-            i = j;
-        } else {
-            i += 1;
-        }
-    }
-    out
 }
 
 /// A unit's name as a file name: a module id is a path (`shapes/circle`) and a
@@ -9207,7 +9134,7 @@ fn cap_check_indices(check: &crate::stdlib::CapCheck) -> Vec<usize> {
 /// grant, spelled exactly as `the removed C backend's `CapTable`::symbol` spells it: the
 /// array is C data in the per-program object, and the IR declaration here has to
 /// name the same symbol the object defines.
-fn cap_array_symbol(module: &str, domain: &str) -> String {
+pub(crate) fn cap_array_symbol(module: &str, domain: &str) -> String {
     format!(
         "kelp_caps_{}_{}",
         crate::types::c_ident(&module.replace('/', "_")),
@@ -15464,16 +15391,11 @@ const E_LIVE: u32 = 2;
 
 // ---- The builtin heap layouts: one source of truth (WP5, stage 1 plan 3.2) ----
 //
-// `LAYOUTS` and `PROTOTYPES` are the single list of the runtime's shared shapes.
-// The IR struct bodies (`Gen::new`, through `builtin_struct_types`) and the C
-// prelude (`program_c_source`) are both generated from them, so the two sides
-// of the LLVM backend cannot disagree. They use only `core` types and
-// `&'static` data, no kelpc types, so the Rust runtime's `abi` module can take
-// this block verbatim when WP0 lands `kelp-rt/src/abi.rs`; kelpc then reads the
-// table through its path dependency on that module instead of this copy.
-//
-// `runtime/kelp_rt.c` still spells the same structs for its C text until WP7.
-// `layout_tests` pins that copy against this table.
+// `LAYOUTS` is the single list of the runtime's shared shapes. The IR struct
+// bodies (`builtin_struct_types`) are generated from it. It uses only `core`
+// types and `&'static` data, no kelpc types, so the Rust runtime's `abi` module
+// can take this block verbatim; kelpc then reads the table through its path
+// dependency on that module instead of this copy.
 
 /// The IR width of one field: `Ptr` is an opaque pointer, `I64` a 64-bit integer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15482,20 +15404,18 @@ pub enum FieldKind {
     I64,
 }
 
-/// One field of a builtin layout: its IR width, and its C declaration exactly as
-/// the prelude writes it, without the trailing semicolon.
+/// One field of a builtin layout: its IR width.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Field {
     pub kind: FieldKind,
-    pub c: &'static str,
 }
 
-/// One builtin heap layout: the key the compiler indexes it by, the C typedef
-/// name, and its fields in order.
+/// One builtin heap layout: the key the compiler indexes it by, the name of its
+/// IR struct type, and its fields in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub name: &'static str,
-    pub c_name: &'static str,
+    pub ir_name: &'static str,
     pub fields: &'static [Field],
 }
 
@@ -15505,77 +15425,31 @@ pub struct Layout {
 pub const LAYOUTS: &[Layout] = &[
     Layout {
         name: "Bytes",
-        c_name: "kelp_Bytes",
+        ir_name: "kelp_Bytes",
         fields: &[
-            Field { kind: FieldKind::Ptr, c: "unsigned char* data" },
-            Field { kind: FieldKind::I64, c: "size_t len" },
-            Field { kind: FieldKind::I64, c: "size_t cap" },
+            Field { kind: FieldKind::Ptr },
+            Field { kind: FieldKind::I64 },
+            Field { kind: FieldKind::I64 },
         ],
     },
     Layout {
         name: "String",
-        c_name: "kelp_String",
+        ir_name: "kelp_String",
         fields: &[
-            Field { kind: FieldKind::Ptr, c: "unsigned char* data" },
-            Field { kind: FieldKind::I64, c: "size_t len" },
-            Field { kind: FieldKind::I64, c: "size_t cap" },
+            Field { kind: FieldKind::Ptr },
+            Field { kind: FieldKind::I64 },
+            Field { kind: FieldKind::I64 },
         ],
     },
     Layout {
         name: "View",
-        c_name: "kelp_View",
+        ir_name: "kelp_View",
         fields: &[
-            Field { kind: FieldKind::Ptr, c: "const char* ptr" },
-            Field { kind: FieldKind::I64, c: "size_t len" },
+            Field { kind: FieldKind::Ptr },
+            Field { kind: FieldKind::I64 },
         ],
     },
 ];
-
-/// The C declarations the prelude writes for the runtime's helpers and process
-/// globals, in the order it writes them. A body that reaches a helper missing
-/// from this list fails `cc` (`-Werror=implicit-function-declaration`).
-pub const PROTOTYPES: &[&str] = &[
-    "void kelp_panic(const char* msg);",
-    "void kelp_panic_at(const char* msg, int p);",
-    "void kelp_panic_errno(const char* msg);",
-    "void kelp_panic_gai(const char* msg, int rc);",
-    "void kelp_panic_tls(const char* msg, const char* reason);",
-    "void kelp_io_flush_stdio(int fd);",
-    "bool kelp_utf8_valid(const unsigned char* p, size_t n);",
-    "kelp_Bytes kelp_bytes_alloc_raw(size_t n);",
-    "void kelp_bytes_drop(kelp_Bytes* b);",
-    "kelp_String kelp_String__empty(void);",
-    "kelp_String kelp_String__from_str(const char* text);",
-    "kelp_String kelp_String__from_bytes(kelp_Bytes b);",
-    "int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);",
-    "const char* kelp_env_lookup(const char* name);",
-    "int kelp_env_set(const char* name, const char* value);",
-    "int kelp_env_unset(const char* name);",
-    "void kelp_child_add(int pid);",
-    "bool kelp_child_has(int pid);",
-    "void kelp_child_remove(int pid);",
-    "int kelp_listen_loopback_take(void);",
-    "extern int kelp_argc;",
-    "extern char** kelp_argv;",
-];
-
-/// The C typedef of one layout, as the prelude writes it.
-fn c_typedef(layout: &Layout) -> String {
-    let mut out = String::from("typedef struct { ");
-    for field in layout.fields {
-        out.push_str(field.c);
-        out.push_str("; ");
-    }
-    out.push_str("} ");
-    out.push_str(layout.c_name);
-    out.push(';');
-    out
-}
-
-/// Every builtin layout's C typedef, one per line, in `LAYOUTS` order.
-fn c_layout_typedefs() -> String {
-    LAYOUTS.iter().map(|layout| c_typedef(layout) + "\n").collect()
-}
 
 /// The IR struct type of every builtin layout, keyed by `Layout::name`, with its
 /// body set. The names are the C typedef names, so a pointer to one crosses into
@@ -15583,7 +15457,7 @@ fn c_layout_typedefs() -> String {
 fn builtin_struct_types<'a>(ctx: &'a Context) -> HashMap<String, Type<'a>> {
     let mut out = HashMap::new();
     for layout in LAYOUTS {
-        let ty = ctx.struct_type(layout.c_name);
+        let ty = ctx.struct_type(layout.ir_name);
         let fields: Vec<Type<'a>> = layout
             .fields
             .iter()
@@ -15598,186 +15472,10 @@ fn builtin_struct_types<'a>(ctx: &'a Context) -> HashMap<String, Type<'a>> {
     out
 }
 
-/// The C translation unit carrying the compiler-supplied `extern fun` bodies
-/// this program reaches and the capability check's own C half (MK7 S3,
-/// plan §3.2 and §5), or `None` when it needs neither.
-///
-/// The bodies stay C. They are the one place an unportable primitive (`malloc`,
-/// `clock_gettime`, a raw `read` on a descriptor) is allowed to live, and their
-/// text is what the C backend compiles into each generated program. Every byte
-/// of that text here comes from the same emitters the C backend uses:
-/// the removed C backend's `write_extern` writes the signature and the body, and
-/// `runtime_prototypes` declares the Kelp half of the runtime
-/// (`std/rt`) that one body calls. A second copy of either would be the drift
-/// this slice has to avoid.
-///
-/// # Why this object is generated per program, not compiled once
-///
-/// MK7 §3.2 compiles the *runtime* once, in `build.rs`, because a fixed object
-/// serves every program. The extern bodies cannot be served that way, for two
-/// reasons that are properties of the bodies themselves:
-///
-/// * a body may name a symbol that only exists when its own module is loaded.
-///   `std.path.normalize_raw` calls `kelp_std__rt__path_normalize`, a Kelp
-///   function the resolver injects only for a program that imports `std/path`.
-///   A single object linked into every binary would carry that undefined
-///   reference into programs that never mention `path.normalize`, and the link
-///   would fail for all of them. Nothing in the object could be dropped by the
-///   linker either: the object is not an archive and its sections are not
-///   garbage-collected by default.
-/// * a body may name a monomorphized type. `process.spawn_raw` takes a
-///   `List<String>`, so the C signature `write_extern` writes for it names
-///   `kelp_List__String`, a typedef that exists only for the program that uses
-///   it.
-///
-/// Emitting exactly `program.functions`' extern set, which is the set the C
-/// backend emits, keeps the object's undefined references to exactly the symbols
-/// the program has. That is the property a link needs, and it is the reason this
-/// is not a build-time object like `kelp_rt.o`.
-///
-/// # The capability glue
-///
-/// `runtime/cap_glue.c` is the same text the C backend splices into a generated
-/// program that contains a gated call: the deny path, the buffered plumbing and
-/// the allowlist loops. It is emitted here, in the same object, for the same
-/// reason the extern bodies are: its checks call the Kelp matcher (`std/rt`),
-/// which exists only for a program that holds a grant, and it is C text that
-/// must not be re-derived (MK7 §3.2). The one difference is linkage: in the C
-/// backend the call sites are in the same translation unit and the glue is
-/// `static`, while here the callers are IR, so `#define static` around the
-/// include is what gives the check functions the external linkage the IR
-/// declares them with (`declare_cap_fns`).
-///
-/// The allowlist arrays are emitted here too, as C data, with the C backend's
-/// own escaper (the removed C backend's `c_string_literal`). They are not `static`: the IR
-/// names them by symbol (`cap_array_symbol`), and a static array would have no
-/// symbol to name.
-fn program_c_source(program: &Program) -> Option<String> {
-    let externs: Vec<&Function> = program.functions.iter().filter(|f| f.extern_).collect();
-    // `program.gated` is non-empty exactly when the program contains a gated
-    // call site, which is the condition the C backend emits the glue under.
-    let cap_glue = !program.gated.is_empty();
-    if externs.is_empty() && !cap_glue {
-        return None;
-    }
-    let mut out = String::new();
-    out.push_str(
-        "/* Generated by the llvm backend: the compiler-supplied `extern fun`\n   \
-         bodies this program reaches (MK7 S3, the record in plan/done.md).\n   \
-         The bodies are C text in `kelpc/src/externs.rs`; the signatures come\n   \
-         from the removed C backend's `write_extern`, so this file is the C backend's\n   \
-         copy of the same functions. */\n",
-    );
-    out.push_str(crate::cdecl::C_HEADERS);
-    out.push_str(&crate::cdecl::extern_header_includes(&program.extern_headers));
-    if crate::cdecl::uses_tls(program) {
-        out.push_str(crate::cdecl::OPENSSL_HEADERS);
-    }
-
-    // The builtin layouts, field for field the structs `runtime/kelp_rt.c`
-    // defines (MK7 §3.3). Only the types an extern signature names are
-    // repeated, and `layout_tests::the_extern_prelude_matches_the_c_runtime`
-    // pins them against that file.
-    out.push_str(
-        "/* The builtin heap layouts of `runtime/kelp_rt.c`: the extern bodies\n   \
-         read and return these by value, so their field order and widths have to\n   \
-         be the runtime's own (MK7 3.3). */\n",
-    );
-    out.push_str(&c_layout_typedefs());
-
-    // A body whose signature names a Kelp type needs that type to exist in this
-    // file: the monomorphized containers and arrays it already repeated
-    // (`process.spawn_raw`'s `List<String>`), and now the `datac`s and `enum`s
-    // too (BUG-kQ7Rv: an `extern fun` naming `atomic.Ordering` had no typedef
-    // here, so `cc` refused the `struct_std__atomic__Ordering` the signature
-    // spelled). The C backend's own emitters write all of it, so the same body
-    // sees one layout here and in a generated program. The set is collected
-    // from the signatures rather than from the whole program: a type the externs
-    // never name is not this file's business.
-    let mut signature_tys: Vec<Ty> = Vec::new();
-    for f in &externs {
-        signature_tys.push(f.ret.clone());
-        for (_, ty) in &f.params {
-            signature_tys.push(ty.clone());
-        }
-    }
-    crate::cdecl::write_referenced_type_layouts(
-        &mut out,
-        &program.structs,
-        &program.enums,
-        &signature_tys,
-    );
-
-    // The runtime helpers and globals the bodies call and read, declared and
-    // never defined here: the definitions are in the object `build.rs` compiles
-    // from `runtime/kelp_rt.c`, whose `#define static` is what gives them the
-    // external linkage these declarations name. `cc` is invoked with
-    // `-Werror=implicit-function-declaration`, so a body that reached a helper
-    // missing from this list would fail the build rather than call it through an
-    // invented signature.
-    out.push_str(
-        "\n/* The runtime's own functions and process globals, defined in the\n   \
-         object `build.rs` compiles from `runtime/kelp_rt.c`. */\n",
-    );
-    for decl in PROTOTYPES {
-        out.push_str(decl);
-        out.push('\n');
-    }
-
-    // The Kelp half of the runtime (`std/rt`), declared with the C backend's
-    // own prototype writer. Only `path.normalize` calls into it today, and the
-    // resolver injects the module exactly when a program can reach that call, so
-    // the reference always has a definition. The list is the whole module rather
-    // than the one function: it is one emitter, and an unused declaration costs
-    // nothing.
-    let prototypes = crate::cdecl::runtime_prototypes(program);
-    if !prototypes.is_empty() {
-        out.push('\n');
-        out.push_str(&prototypes);
-    }
-
-    // The native-callback glue (gap 4) for the user externs' `move
-    // closure(...)` parameters: the same thunk and destructor text the C
-    // backend emits, compiled into this same object. Emitted before the
-    // bodies because `write_user_extern` names both.
-    let callback_sigs = crate::cdecl::callback_signatures(program);
-    if !callback_sigs.is_empty() {
-        out.push_str("\n/* native-callback glue (gap 4) */\n");
-        for sig in &callback_sigs {
-            crate::cdecl::write_callback_glue(&mut out, sig);
-        }
-    }
-
-    for f in &externs {
-        out.push('\n');
-        crate::cdecl::write_extern(&mut out, f, &program.extern_ffi_symbols, true);
-    }
-
-    if cap_glue {
-        // Each module's granted patterns, as constant data, exactly as
-        // the removed C backend's `generate` writes them. An empty pattern list is `{
-        // NULL }` rather than omitted: a module can hold a domain with no
-        // patterns, and a call that names a resource still has to have an array
-        // to deny against.
-        out.push_str("\n/* capability allowlists, compiled in per module */\n");
-        for g in &program.caps {
-            out.push_str(&format!(
-                "const char* {}[] = {{ {}NULL }};\n",
-                cap_array_symbol(&g.module, &g.domain),
-                g.patterns
-                    .iter()
-                    .map(|p| format!("{}, ", crate::cdecl::c_string_literal(p)))
-                    .collect::<String>()
-            ));
-        }
-    }
-    Some(out)
-}
-
 /// Whether a `tir` type is lowered to an LLVM aggregate rather than a scalar or
 /// a pointer. Only an aggregate can be too large to cross a C boundary by value,
 /// which is the one thing the verifier cannot see (BUG-vN4tR).
-fn is_aggregate_ty(ty: &Ty) -> bool {
+pub(crate) fn is_aggregate_ty(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Bytes
@@ -15844,7 +15542,7 @@ fn c_int_extension(llvm_ty: Type<'_>) -> Option<IntExtension> {
 /// and parameter list the declaration was made from, and no call-site
 /// attribute: LLVM's call lowering reads a direct callee's parameter
 /// attributes, so the declaration is what an argument is extended to.
-fn extend_narrow_c_abi(func: LlvmFunction<'_>, ret: Type<'_>, params: &[Type<'_>]) {
+pub(crate) fn extend_narrow_c_abi(func: LlvmFunction<'_>, ret: Type<'_>, params: &[Type<'_>]) {
     if let Some(ext) = c_int_extension(ret) {
         func.add_return_extension(ext);
     }
@@ -16144,7 +15842,7 @@ fn ty_contains_atomic(ty: &Ty, structs: &[StructDef]) -> bool {
     }
 }
 
-fn llvm_type<'a>(
+pub(crate) fn llvm_type<'a>(
     ctx: &'a Context,
     structs: &HashMap<String, Type<'a>>,
     containers: &HashMap<Ty, Type<'a>>,
@@ -16528,7 +16226,7 @@ fn read_only_expr(e: &Expr) -> bool {
 /// runtime requires it, everything else gets the `kelp_` prefix and the same
 /// sanitizing mangler, so the name is a valid symbol and cannot collide with a
 /// libc one.
-fn symbol_name(name: &str) -> String {
+pub(crate) fn symbol_name(name: &str) -> String {
     if name == "main" {
         "main".to_string()
     } else {
@@ -16689,300 +16387,8 @@ fn no_value(what: &str) -> String {
 
 #[cfg(test)]
 mod layout_tests {
-    use super::{builtin_struct_types, c_typedef, program_c_source, FieldKind, LAYOUTS, PROTOTYPES};
-    use crate::lexer::Span;
     use crate::llvm_ffi::{Context, Module};
-    use crate::tir::{Block, Function, Program};
     use crate::types::Ty;
-
-    /// The Rust runtime's sources, read at compile time: the prelude test
-    /// checks what it declares against what `kelp-rt` exports.
-    fn runtime_rust_source() -> String {
-        [
-            include_str!("../../kelp-rt/src/abi.rs"),
-            include_str!("../../kelp-rt/src/alloc.rs"),
-            include_str!("../../kelp-rt/src/cap.rs"),
-            include_str!("../../kelp-rt/src/cleanup.rs"),
-            include_str!("../../kelp-rt/src/env.rs"),
-            include_str!("../../kelp-rt/src/io.rs"),
-            include_str!("../../kelp-rt/src/map.rs"),
-            include_str!("../../kelp-rt/src/net.rs"),
-            include_str!("../../kelp-rt/src/panic.rs"),
-            include_str!("../../kelp-rt/src/proc.rs"),
-            include_str!("../../kelp-rt/src/text.rs"),
-            include_str!("../../kelp-rt/src/thread.rs"),
-        ]
-        .concat()
-    }
-
-    /// The extern prelude repeats the builtin struct layouts and declares every
-    /// runtime helper the bodies call (MK7 §3.3). The C compiler checks a
-    /// prototype's arity, not its agreement with a definition in another
-    /// translation unit, so the agreement is pinned here by reading both texts:
-    /// each repeated typedef is the same field-for-field shape, and each declared
-    /// helper and process global is one `runtime/kelp_rt.c` actually defines.
-    #[test]
-    fn the_extern_prelude_matches_the_c_runtime() {
-        let program = Program {
-            structs: Vec::new(),
-            enums: Vec::new(),
-            pds: Vec::new(),
-            extern_ffi_symbols: std::collections::HashMap::new(),
-            extern_headers: Vec::new(),
-            const_data: Vec::new(),
-            statics: Vec::new(),
-            dyn_vtables: Vec::new(),
-            dyn_traits: Vec::new(),
-            functions: vec![Function {
-                name: "std.mem.alloc_raw".to_string(),
-                params: vec![("n".to_string(), Ty::Usize)],
-                ret: Ty::Bytes,
-                body: Block {
-                    stmts: Vec::new(),
-                    tail: None,
-                },
-                // A span of zero: this declaration is synthesized for the
-                // test, and the DWARF skeleton is built from a real one.
-                span: Span::new(0, 0),
-                module: "std/mem".to_string(),
-                extern_: true,
-                env: None,
-                naked: false,
-                section: None,
-                align: None,
-            }],
-            caps: Vec::new(),
-            gated: Default::default(),
-            declared_keys: Default::default(),
-            drop_types: Default::default(),
-        };
-        let source = program_c_source(&program).expect("one extern fun is one body");
-
-        // The layout text: the prelude's typedefs come from `LAYOUTS`; the
-        // Rust runtime's `#[repr(C)]` structs are checked against the same
-        // table by `kelp-rt`'s own layout tests.
-        let rust_runtime = runtime_rust_source();
-        for layout in LAYOUTS {
-            let want = c_typedef(layout);
-            assert!(
-                source.contains(&want),
-                "the extern prelude does not declare '{want}':\n{source}"
-            );
-            assert!(
-                rust_runtime.contains(&format!("pub struct {}", layout.name.trim_start_matches("kelp_"))),
-                "'kelp-rt' does not define the struct '{}'",
-                layout.name
-            );
-        }
-
-        // Every declared helper and global comes from `PROTOTYPES`: each one is
-        // written verbatim, and each helper is one the Rust runtime exports.
-        for decl in PROTOTYPES {
-            assert!(
-                source.contains(decl),
-                "the extern prelude does not declare '{decl}':\n{source}"
-            );
-            if decl.contains('(') {
-                let name = c_decl_name(decl);
-                assert!(
-                    rust_runtime.contains(&format!("fn {name}(")),
-                    "'kelp-rt' does not export '{name}'"
-                );
-            }
-        }
-        // The process globals: exported statics the prelude declares.
-        for want in ["static mut kelp_argc:", "static mut kelp_argv:"] {
-            assert!(
-                rust_runtime.contains(want),
-                "'kelp-rt' does not export '{want}'"
-            );
-        }
-        // The loopback accessors that replaced the thread-local variable.
-        for want in [
-            "fn kelp_listen_loopback_set(",
-            "fn kelp_listen_loopback_take(",
-        ] {
-            assert!(
-                rust_runtime.contains(want),
-                "'kelp-rt' does not export '{want}'"
-            );
-        }
-    }
-
-    /// The name a C declaration in `PROTOTYPES` declares: the identifier before
-    /// the parameter list, or before the semicolon for a global.
-    fn c_decl_name(decl: &str) -> &str {
-        let head = decl.split('(').next().expect("a declaration has a head");
-        let head = head.trim_end_matches(';');
-        head.split_whitespace()
-            .last()
-            .expect("a declaration names something")
-            .trim_start_matches('*')
-    }
-
-    /// The IR's builtin heap layouts must match the C structs in
-    /// `runtime/kelp_rt.c` field for field (MK7 §3.3): a pointer, a length and a
-    /// capacity in that order for `Bytes` and `String`, and a pointer and a
-    /// length for `View`. The verifier cannot see the object, so a reordered or
-    /// re-widened field would only be caught when a fixture printed the wrong
-    /// bytes; this pins the agreement where it is made.
-    #[test]
-    fn the_builtin_heap_layouts_match_the_c_runtime() {
-        // The table itself: three layouts, and the field kinds the IR and the C
-        // typedefs are both written from.
-        let names: Vec<(&str, usize)> = LAYOUTS
-            .iter()
-            .map(|layout| (layout.name, layout.fields.len()))
-            .collect();
-        assert_eq!(names, [("Bytes", 3), ("String", 3), ("View", 2)]);
-        let bytes = LAYOUTS[0];
-        assert_eq!(
-            bytes.fields.iter().map(|f| f.kind).collect::<Vec<_>>(),
-            [FieldKind::Ptr, FieldKind::I64, FieldKind::I64]
-        );
-
-        let ctx = Context::new();
-        let module = Module::new(&ctx, "layout");
-        let ptr = ctx.opaque_ptr();
-        let types = builtin_struct_types(&ctx);
-        // A named type is only printed once something references it, so one
-        // declaration each is what puts the bodies into the module text.
-        module.add_function("probe_bytes", ctx.fn_type(types["Bytes"], &[ptr], false));
-        module.add_function("probe_string", ctx.fn_type(types["String"], &[ptr], false));
-        module.add_function("probe_view", ctx.fn_type(types["View"], &[ptr], false));
-        let ir = module.to_ir_string();
-        assert!(
-            ir.contains("%kelp_Bytes = type { ptr, i64, i64 }"),
-            "unexpected Bytes layout:\n{ir}"
-        );
-        assert!(
-            ir.contains("%kelp_String = type { ptr, i64, i64 }"),
-            "unexpected String layout:\n{ir}"
-        );
-        assert!(
-            ir.contains("%kelp_View = type { ptr, i64 }"),
-            "unexpected View layout:\n{ir}"
-        );
-    }
-
-    /// Every `extern fun` the compiler ships, compiled against the prelude the
-    /// LLVM backend emits for it (MK7 S3A).
-    ///
-    /// The corpus cannot reach this: the modules whose bodies are the widest
-    /// (`std/fs`, `std/net`, `std/process`, `std/io`) each carry a `pd`, so the
-    /// backend refuses those programs before it would emit their externs file.
-    /// This test runs the front end only, which `pd` does not disturb, so the
-    /// program is the whole shipped extern surface at once and `cc` is the
-    /// judge: a body that calls a runtime helper the prelude forgot, or one that
-    /// needs a header it does not include, fails here rather than in the slice
-    /// that lowers `pd`.
-    #[test]
-    fn every_shipped_extern_body_compiles_against_the_prelude() {
-        use crate::diag::SourceMap;
-
-        let modules = [
-            "std/mem",
-            "std/str",
-            "std/path",
-            "std/math",
-            "std/fs",
-            "std/time",
-            "std/rand",
-            "std/env",
-            "std/fmt",
-            "std/io",
-            "std/process",
-            "std/net",
-            "std/encoding",
-            "std/list",
-            "std/option",
-            "std/result",
-        ];
-        let mut entry_source = String::new();
-        for id in modules {
-            entry_source.push_str(&format!("impl \"{id}\"\n"));
-        }
-        entry_source.push_str("\nfun main() {\n    print(1)\n}\n");
-
-        let dir = std::env::temp_dir().join(format!(
-            "kelp_extern_prelude_{}_{}",
-            std::process::id(),
-            modules.len()
-        ));
-        std::fs::create_dir_all(&dir).expect("a scratch directory for the entry file");
-        let entry = dir.join("main.kp");
-        std::fs::write(&entry, entry_source).expect("the entry file");
-
-        let mut sources = SourceMap::new();
-        let loaded = crate::resolve::load(&entry, &mut sources, None, None)
-            .expect("an import of every shipped stdlib module resolves");
-        let program = crate::infer::check_program(&loaded.program, &loaded.project)
-            .expect("the shipped stdlib type-checks");
-        let source = program_c_source(&program).expect("the stdlib declares extern funs");
-
-        if let Err(e) = crate::driver::compile_c_object(
-            &source,
-            &dir.join("all.externs.c"),
-            &dir.join("all.externs.o"),
-            crate::opt::OptLevel::DEFAULT,
-            &[],
-            &[],
-        ) {
-            panic!(
-                "a shipped extern body does not compile against the prelude: {}",
-                e.message
-            );
-        }
-    }
-
-    /// The container headers the module builds must match the C typedefs in
-    /// the removed C backend's `write_container_typedef` field for field, because a
-    /// container's own runtime helpers and the `kelp_rt.c` entry points read
-    /// the same fields by the same offsets. The verifier cannot see the object
-    /// and a Kelp-only fixture cannot see a reordered field that both sides of
-    /// an IR-to-IR call agree on, so the agreement is pinned where it is made.
-    ///
-    /// The list is the whole container surface: `List` and `Bytes`/`String`
-    /// share the `{ptr, len, cap}` shape, `Box` is one pointer, the map is the
-    /// dense entries plus the separate index, one entry is `{key, value*, live}`,
-    /// and an array is its inline storage. A change to any of these lines is a
-    /// change to the ABI the C runtime and the monomorphized sets share.
-    #[test]
-    fn the_container_layouts_match_the_c_typedefs() {
-        let ctx = Context::new();
-        let module = Module::new(&ctx, "containers");
-        let ptr = ctx.opaque_ptr();
-        let i64t = ctx.i64();
-        let i8t = ctx.i8();
-        let string = ctx.struct_type("kelp_String");
-        ctx.struct_set_body(string, &[ptr, i64t, i64t]);
-        let list = ctx.struct_type("kelp_List__i32");
-        ctx.struct_set_body(list, &[ptr, i64t, i64t]);
-        let boxed = ctx.struct_type("kelp_Box__i32");
-        ctx.struct_set_body(boxed, &[ptr]);
-        let entry = ctx.struct_type("kelp_Map__String__i32_entry");
-        ctx.struct_set_body(entry, &[string, ptr, i8t]);
-        let map = ctx.struct_type("kelp_Map__String__i32");
-        ctx.struct_set_body(map, &[ptr, i64t, i64t, i64t, ptr, i64t, i64t]);
-        let arr = ctx.struct_type("kelp_Array__u8__4");
-        ctx.struct_set_body(arr, &[ctx.array_type(ctx.i8(), 4)]);
-        // A named type is only printed once something references it.
-        module.add_function("probe_list", ctx.fn_type(list, &[], false));
-        module.add_function("probe_box", ctx.fn_type(boxed, &[], false));
-        module.add_function("probe_map", ctx.fn_type(map, &[], false));
-        module.add_function("probe_entry", ctx.fn_type(entry, &[ptr], false));
-        module.add_function("probe_array", ctx.fn_type(arr, &[], false));
-        let ir = module.to_ir_string();
-        for want in [
-            "%kelp_List__i32 = type { ptr, i64, i64 }",
-            "%kelp_Box__i32 = type { ptr }",
-            "%kelp_Map__String__i32_entry = type { %kelp_String, ptr, i8 }",
-            "%kelp_Map__String__i32 = type { ptr, i64, i64, i64, ptr, i64, i64 }",
-            "%kelp_Array__u8__4 = type { [4 x i8] }",
-        ] {
-            assert!(ir.contains(want), "missing '{want}':\n{ir}");
-        }
-    }
 
     /// The C-boundary rule (BUG-vN4tR, MK7 3.3): an aggregate over two
     /// eightbytes crosses a C boundary only through a pointer. The threshold is
@@ -17099,192 +16505,6 @@ mod layout_tests {
     /// so the signatures here are this test's own and the bodies still compile
     /// beside them unchanged. `cc` is the judge: without the typedefs this text
     /// does not compile.
-    #[test]
-    fn an_extern_signature_that_names_a_kelp_type_gets_its_typedef() {
-        use crate::types::{FieldDef, StructDef, VariantDef};
-
-        let field = |name: &str, ty: Ty| FieldDef {
-            name: name.to_string(),
-            ty,
-            mutable: false,
-        };
-        let order = crate::types::EnumDef {
-            name: "std.atomic.Ordering".to_string(),
-            variants: vec![VariantDef {
-                name: "SeqCst".to_string(),
-                fields: Vec::new(),
-                discriminant: None,
-            }],
-            repr: crate::ast::Repr::C,
-            order: 2,
-        };
-        // A payload-carrying variant whose payload is a `datac` declared
-        // before it, which is the order the merged declaration sequence has to
-        // keep.
-        let shape = crate::types::EnumDef {
-            name: "Shape".to_string(),
-            variants: vec![
-                VariantDef {
-                    name: "Dot".to_string(),
-                    fields: Vec::new(),
-                    discriminant: None,
-                },
-                VariantDef {
-                    name: "Circle".to_string(),
-                    fields: vec![field("center", Ty::Struct("Point".to_string()))],
-                    discriminant: None,
-                },
-            ],
-            repr: crate::ast::Repr::C,
-            order: 3,
-        };
-        let point = StructDef {
-            name: "Point".to_string(),
-            fields: vec![field("x", Ty::I32), field("y", Ty::I32)],
-            repr: crate::ast::Repr::C,
-            order: 0,
-        };
-        // A `datac` field names an earlier `datac` by value and a container by
-        // value, so the container typedef has to come before it.
-        let segment = StructDef {
-            name: "Segment".to_string(),
-            fields: vec![
-                field("head", Ty::Struct("Point".to_string())),
-                field("tags", Ty::List(Box::new(Ty::String))),
-            ],
-            repr: crate::ast::Repr::C,
-            order: 1,
-        };
-
-        let extern_fn = |name: &str, module: &str, params: Vec<(String, Ty)>, ret: Ty| Function {
-            name: name.to_string(),
-            params,
-            ret,
-            body: Block {
-                stmts: Vec::new(),
-                tail: None,
-            },
-            span: Span::new(0, 0),
-            module: module.to_string(),
-            extern_: true,
-            env: None,
-            naked: false,
-            section: None,
-            align: None,
-        };
-        let program = Program {
-            structs: vec![point, segment],
-            enums: vec![order, shape],
-            pds: Vec::new(),
-            extern_ffi_symbols: std::collections::HashMap::new(),
-            extern_headers: Vec::new(),
-            const_data: Vec::new(),
-            statics: Vec::new(),
-            dyn_vtables: Vec::new(),
-            dyn_traits: Vec::new(),
-            functions: vec![
-                // The bug's own shape: an `enum` in the parameter list.
-                extern_fn(
-                    "std.time.now_unix_raw",
-                    "std/time",
-                    vec![(
-                        "order".to_string(),
-                        Ty::Struct("std.atomic.Ordering".to_string()),
-                    )],
-                    Ty::I64,
-                ),
-                // A `datac` by value, a payload-carrying `enum` by value, and
-                // a `datac` behind a borrow.
-                extern_fn(
-                    "std.rand.u64_raw",
-                    "std/rand",
-                    vec![
-                        ("point".to_string(), Ty::Struct("Point".to_string())),
-                        ("shape".to_string(), Ty::Struct("Shape".to_string())),
-                        (
-                            "segment".to_string(),
-                            Ty::Ref {
-                                mutable: false,
-                                inner: Box::new(Ty::Struct("Segment".to_string())),
-                            },
-                        ),
-                    ],
-                    Ty::U64,
-                ),
-            ],
-            caps: Vec::new(),
-            gated: Default::default(),
-            declared_keys: Default::default(),
-            drop_types: Default::default(),
-        };
-        let source = program_c_source(&program).expect("two extern funs are two bodies");
-
-        // Every typedef the declaration's own C text needs, by the name the
-        // bug's message spelled.
-        for want in [
-            "typedef struct tag_std__atomic__Ordering {",
-            "} kelp_v_SeqCst;",
-            "} struct_std__atomic__Ordering;",
-            "typedef struct tag_Shape {",
-            "} kelp_v_Circle;",
-            "struct_Point kelp_center;",
-            "} struct_Shape;",
-            "typedef struct tag_Point {",
-            "int32_t kelp_x;",
-            "} struct_Point;",
-            "typedef struct tag_Segment {",
-            "struct_Point kelp_head;",
-            "kelp_List__String kelp_tags;",
-            "} struct_Segment;",
-            // The container the `datac` field holds by value, emitted with the
-            // C backend's own `write_container_typedef`.
-            "} kelp_List__String;",
-            // The tags, so a container typedef emitted before a `datac` can
-            // hold a pointer to it.
-            "struct tag_Point;",
-            "struct tag_Segment;",
-            "struct tag_Shape;",
-            "struct tag_std__atomic__Ordering;",
-            // The declaration whose type had no name before the fix.
-            "// extern 'std.time.now_unix_raw' is provided by the Rust runtime archive",
-        ] {
-            assert!(
-                source.contains(want),
-                "the extern prelude does not declare '{want}':\n{source}"
-            );
-        }
-        // The declaration order is the topological one: the payload of
-        // `Shape`'s `Circle` is a `Point` held by value, so `Point`'s typedef
-        // has to be complete first.
-        let point_at = source.find("} struct_Point;").expect("the datac typedef");
-        let shape_at = source.find("} struct_Shape;").expect("the enum typedef");
-        assert!(
-            point_at < shape_at,
-            "the `enum` was declared before the `datac` its payload holds:\n{source}"
-        );
-
-        let dir = std::env::temp_dir().join(format!(
-            "kelp_extern_types_{}_{}",
-            std::process::id(),
-            program.structs.len() + program.enums.len()
-        ));
-        std::fs::create_dir_all(&dir).expect("a scratch directory for the prelude");
-        if let Err(e) = crate::driver::compile_c_object(
-            &source,
-            &dir.join("types.externs.c"),
-            &dir.join("types.externs.o"),
-            crate::opt::OptLevel::DEFAULT,
-            &[],
-            &[],
-        ) {
-            panic!(
-                "the extern prelude a signature naming these types needs does not \
-                 compile: {}",
-                e.message
-            );
-        }
-    }
-
     /// The return position of an `extern fun` signature names a Kelp type the
     /// same way a parameter does, and `program_c_source` collects `f.ret`
     /// beside the parameters, so the type's typedef has to come out for a
@@ -17293,89 +16513,6 @@ mod layout_tests {
     /// The body is not built here, which is why this half asserts the emitted
     /// text rather than compiling it: an `extern fun` body is C text written
     /// for its own declaration, and no shipped body returns a `datac`.
-    #[test]
-    fn an_extern_return_that_names_a_kelp_type_gets_its_typedef() {
-        use crate::types::{FieldDef, StructDef, VariantDef};
-
-        // `Shape` is declared before `Point` and `Point` holds it by value, so
-        // the enum's typedef has to come out before the datac's even though the
-        // datac is the type the return position names.
-        let point = StructDef {
-            name: "Point".to_string(),
-            fields: vec![FieldDef {
-                name: "shape".to_string(),
-                ty: Ty::Struct("Shape".to_string()),
-                mutable: false,
-            }],
-            repr: crate::ast::Repr::C,
-            order: 1,
-        };
-        let shape = crate::types::EnumDef {
-            name: "Shape".to_string(),
-            variants: vec![VariantDef {
-                name: "Dot".to_string(),
-                fields: Vec::new(),
-                discriminant: None,
-            }],
-            repr: crate::ast::Repr::C,
-            order: 0,
-        };
-        let program = Program {
-            structs: vec![point],
-            enums: vec![shape],
-            pds: Vec::new(),
-            extern_ffi_symbols: std::collections::HashMap::new(),
-            extern_headers: Vec::new(),
-            const_data: Vec::new(),
-            statics: Vec::new(),
-            dyn_vtables: Vec::new(),
-            dyn_traits: Vec::new(),
-            functions: vec![Function {
-                name: "std.time.now_mono_ns_raw".to_string(),
-                params: Vec::new(),
-                ret: Ty::Struct("Point".to_string()),
-                body: Block {
-                    stmts: Vec::new(),
-                    tail: None,
-                },
-                span: Span::new(0, 0),
-                module: "std/time".to_string(),
-                extern_: true,
-                env: None,
-                naked: false,
-                section: None,
-                align: None,
-            }],
-            caps: Vec::new(),
-            gated: Default::default(),
-            declared_keys: Default::default(),
-            drop_types: Default::default(),
-        };
-        let source = program_c_source(&program).expect("one extern fun is one body");
-
-        for want in [
-            // The type the return position spells.
-            "} struct_Point;",
-            // Reached only through that type's field, so the walk into a
-            // `datac`'s fields is what puts it there.
-            "} struct_Shape;",
-            // The ported extern: its signature is the runtime archive's, so the
-            // prelude names it in a comment rather than declaring a body.
-            "// extern 'std.time.now_mono_ns_raw' is provided by the Rust runtime archive",
-        ] {
-            assert!(
-                source.contains(want),
-                "the extern prelude does not declare '{want}':\n{source}"
-            );
-        }
-        let shape_at = source.find("} struct_Shape;").expect("the enum typedef");
-        let point_at = source.find("} struct_Point;").expect("the datac typedef");
-        assert!(
-            shape_at < point_at,
-            "the `enum` a `datac` field names by value was not declared before it:\n{source}"
-        );
-    }
-
     /// Kernel stage 10: the `_start` stub is chosen by the manifest's triple,
     /// and a triple with no stub is refused by name rather than emitted as
     /// another architecture's entry point.

@@ -473,99 +473,6 @@ impl Ty {
         })
     }
 
-    pub fn c_type(&self) -> String {
-        match self {
-            Ty::I32 => "int32_t".to_string(),
-            Ty::I64 => "int64_t".to_string(),
-            Ty::U32 => "uint32_t".to_string(),
-            Ty::U64 => "uint64_t".to_string(),
-            Ty::F32 => "float".to_string(),
-            Ty::F64 => "double".to_string(),
-            Ty::Bool => "bool".to_string(),
-            // A `char` is a Unicode scalar value, not a C byte: one code
-            // point, which is what makes `'中'` representable. `%c` in
-            // `print` still prints its low byte, which is the ASCII case it
-            // is there for.
-            Ty::Char => "uint32_t".to_string(),
-            Ty::Unit => "void".to_string(),
-            Ty::Str => "const char*".to_string(),
-            Ty::U8 => "uint8_t".to_string(),
-            Ty::U16 => "uint16_t".to_string(),
-            Ty::Usize => "size_t".to_string(),
-            Ty::Isize => "ptrdiff_t".to_string(),
-            Ty::Bytes => "kelp_Bytes".to_string(),
-            Ty::String => "kelp_String".to_string(),
-            Ty::View => "kelp_View".to_string(),
-            Ty::List(elem) => list_c_type(elem),
-            Ty::Box(elem) => box_c_type(elem),
-            Ty::Map(key, value) => map_c_type(key, value),
-            Ty::Array(elem, len) => array_c_type(elem, *len),
-            // A const argument never reaches code generation: it appears only
-            // in an instantiation's argument list and in a template's
-            // bindings, both gone by the time a C type is needed.
-            Ty::ConstInt { .. } => {
-                unreachable!("a const argument has no C type; it is substituted before codegen")
-            }
-            Ty::Atomic(elem) => atomic_c_type(elem),
-            Ty::Thread(_) => thread_c_type(),
-            Ty::Mutex(_) => mutex_c_type(),
-            Ty::RwLock(_) => rwlock_c_type(),
-            Ty::Condvar => condvar_c_type(),
-            Ty::Handle(name) => handle_c_type(name),
-            // A pointer is the C pointer to whatever type it addresses. An
-            // array's generated struct name and a datac's `struct_` name are
-            // both ordinary C types, so the element spells itself.
-            Ty::Ptr(elem) => format!("{}*", elem.c_type()),
-            // A `&str` is the same C value as the `str` it points at (both
-            // `const char*`): a reference to an already-borrowed view is not
-            // a pointer to a pointer. The borrow lives in the type system
-            // and the borrow checker, not in the representation.
-            Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => "const char*".to_string(),
-            // A function *type* is a pointer type, and a pointer type cannot
-            // be printed as `ret (*)(params)` and then followed by a name
-            // (`c_decl` is what puts a declarator together). Inside another
-            // declarator this spelling is the correct C fragment, which is
-            // all a return position needs.
-            Ty::Fn { params, ret } => {
-                format!("{} (*)({})", ret.c_type(), fn_params_c(params))
-            }
-            // A closure is an ordinary C struct (a fat pointer), so it is
-            // named by its typedef and never needs the declarator trick
-            // above - including in a return position, which is why a
-            // function may return a closure but not a bare function value. A
-            // scoped function value has the same fat-pointer shape, so it is
-            // spelled by the same typedef.
-            Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => {
-                closure_c_type(params, ret)
-            }
-            Ty::Struct(name) => format!("struct_{}", c_ident(name)),
-            // A borrowed trait object is the fat pair: the erased data pointer
-            // and a pointer to the trait's vtable, one C struct per trait (the
-            // shared and exclusive spellings are the same C value; the borrow
-            // checker is what distinguishes them).
-            // An owned trait object is the same fat pair the borrowed one is:
-            // the C struct is `{ void* data; const VTable* vtable; }` either
-            // way, and the borrow checker, not the C type, is what tells the
-            // owning value from the borrowed one.
-            Ty::Dyn { trait_name, .. } | Ty::BoxDyn { trait_name } => dyn_c_type(trait_name),
-            Ty::Ref { mutable, inner } => {
-                if *mutable {
-                    format!("{}*", inner.c_type())
-                } else if matches!(**inner, Ty::Mutex(_) | Ty::RwLock(_) | Ty::Condvar) {
-                    // A `Mutex<T>`/`RwLock<T>`/`Condvar` is itself one pointer,
-                    // so a shared borrow of one is a pointer to a pointer and
-                    // the `const` the shared spelling normally adds would make
-                    // `&m` and the parameter's `&Mutex<T>` two incompatible C
-                    // types. The borrow checker, not the C qualifier, is what
-                    // stops a write through a `&Mutex<T>`.
-                    format!("{}*", inner.c_type())
-                } else {
-                    format!("const {}*", inner.c_type())
-                }
-            }
-        }
-    }
-
     pub fn display(&self) -> String {
         match self {
             Ty::I32 => "i32".to_string(),
@@ -645,42 +552,6 @@ impl Ty {
         }
     }
 
-    /// The C declaration of a variable called `name` with this type: the C
-    /// type followed by the name, except for a function value, where the name
-    /// goes *inside* the pointer declarator (`int32_t (*kelp_f)(int32_t)`).
-    /// Every declaration site - a parameter, a `val`/`var`, a `datac` field,
-    /// an enum payload, a passdown - goes through this rather than pairing
-    /// `c_type()` with a name by hand, because a function type is the one type
-    /// where that pairing does not produce valid C.
-    pub fn c_decl(&self, name: &str) -> String {
-        match self {
-            Ty::Fn { params, ret } => {
-                format!("{} (*{name})({})", ret.c_type(), fn_params_c(params))
-            }
-            other => format!("{} {name}", other.c_type()),
-        }
-    }
-}
-
-/// `ret (*)(params)`'s parameter half: `void` for none, the C parameter types
-/// otherwise. Shared with `c_decl`, since a declarator and a bare function
-/// pointer type differ only in where the name goes, and with the removed C backend,
-/// which writes the same list for a function that returns a function value. A
-/// `unit` parameter is not written, for the same reason a `unit` parameter of
-/// a `fun` declaration is not (the removed C backend's `write_params`): no value crosses
-/// for it, so a pointer to such a function takes exactly the parameters the
-/// callee's own definition takes.
-pub(crate) fn fn_params_c(params: &[Ty]) -> String {
-    if params.iter().all(|p| *p == Ty::Unit) {
-        "void".to_string()
-    } else {
-        params
-            .iter()
-            .filter(|p| **p != Ty::Unit)
-            .map(|p| p.c_type())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
 }
 
 /// `T, U` for a diagnostic or a written type.
@@ -1044,14 +915,6 @@ pub const ORD_TRAIT: &str = "std.ops.Ord";
 /// to appear in `"${x}"` and as the argument of `print`/`print!`.
 pub const DISPLAY_TRAIT: &str = "std.fmt.Display";
 
-/// The emitted symbol of a type's declared destructor, the same spelling on
-/// both backends (the removed C backend's `write_signature` and
-/// `codegen_llvm.rs::symbol_name` both mangle the `Type#name` key the same
-/// way). The generated `kelp_drop_<T>` calls this at the top of its body.
-pub fn user_drop_fn_name(type_name: &str) -> String {
-    format!("kelp_{}", c_ident(&drop_method_key(type_name)))
-}
-
 /// Whether `ty` is a user type that declares its own destructor (kernel stage
 /// 9, MK9-S6-M1). A partial move of a field or payload of such a type is
 /// refused by `borrowck.rs`: the move zeroes the slot it came from and the
@@ -1373,44 +1236,6 @@ pub fn atomic_c_type(elem: &Ty) -> String {
     format!("kelp_Atomic__{}", ty_mangle(elem))
 }
 
-/// The generated C type for `Thread<T>` (MK9-S3-M1 stage C1): the handle is one
-/// pointer to the worker record `thread.spawn` allocates, so the C type is
-/// uniform over the element type exactly as `str` is uniform over what it
-/// points at. The element type stays in the Kelp type, which is what decides
-/// the result slot's size and the `Result<T, ThreadErr>` a join builds, so it
-/// is deliberately not part of this name.
-pub fn thread_c_type() -> String {
-    "kelp_Thread*".to_string()
-}
-
-/// The C type for `Mutex<T>` (B-5, `std/sync`): one pointer to the runtime's
-/// `kelp_Mutex` record, uniform over the element type for the same reason
-/// `Thread<T>` is. The element type stays in the Kelp type, where it decides
-/// what the generated `new` copies in and what `into_inner` hands back; the
-/// record's own layout, including the `T` slot, is `kelp_rt.c`'s.
-pub fn mutex_c_type() -> String {
-    "kelp_Mutex*".to_string()
-}
-
-/// The C type for `RwLock<T>`: one pointer to the runtime's `kelp_RwLock`
-/// record, uniform over the element type for the same reason `Mutex<T>` is.
-pub fn rwlock_c_type() -> String {
-    "kelp_RwLock*".to_string()
-}
-
-/// The C type for `Condvar`: one pointer to the runtime's `kelp_Condvar`
-/// record, which wraps one `pthread_cond_t`.
-pub fn condvar_c_type() -> String {
-    "kelp_Condvar*".to_string()
-}
-
-/// The generated C typedef for one opaque handle. The typedef is what gives
-/// `void*` a name, so two handles are two distinct C types a reader can trace
-/// back to their declarations.
-pub fn handle_c_type(name: &str) -> String {
-    format!("kelp_Handle__{}", c_ident(name))
-}
-
 /// The synthetic callee keys `infer.rs` lowers the two handle operations to.
 /// A call's callee is a string that codegen matches, and these two never come
 /// from a declaration, so they use a spelling no Kelp identifier can have.
@@ -1699,34 +1524,6 @@ pub fn array_len_of(ty: &Ty) -> Option<u64> {
         Ty::Array(_, len) => Some(*len),
         Ty::Ref { inner, .. } => array_len_of(inner),
         _ => None,
-    }
-}
-
-/// The C spelling of an element type *inside a container's own typedef*.
-/// A container is emitted before the `datac`s (its buffer is a pointer), so
-/// a `datac` element is named by its forward-declared struct tag rather than
-/// by its typedef name; every other element is named as usual.
-///
-/// A borrow of a `datac` has to name the tag too, and for the same reason: a
-/// closure typedef is emitted before the `datac`s as well (a `datac` field may
-/// hold a closure, so the closure type has to exist first), and a callback
-/// parameter of a module's own type - `closure(&Item)` - is exactly a `datac`
-/// behind a pointer. Falling back to `c_type()` there spelled it
-/// `const struct_Item*`, a typedef name that is not declared until after the
-/// closure typedef that uses it (BUG-2). `&str` keeps its own spelling, since
-/// `c_type()` already collapses it to `const char*`.
-pub fn container_elem_c_type(elem: &Ty) -> String {
-    match elem {
-        Ty::Struct(name) => format!("struct tag_{}", c_ident(name)),
-        Ty::Ref { mutable, inner } if !matches!(**inner, Ty::Str) => {
-            let pointee = container_elem_c_type(inner);
-            if *mutable || matches!(**inner, Ty::Mutex(_) | Ty::RwLock(_) | Ty::Condvar) {
-                format!("{pointee}*")
-            } else {
-                format!("const {pointee}*")
-            }
-        }
-        other => other.c_type(),
     }
 }
 
@@ -2190,21 +1987,6 @@ impl EnumDef {
                 _ => (4, true),
             },
             _ => (4, true),
-        }
-    }
-
-    /// The C spelling of the tag's storage type, which is what the generated
-    /// `typedef` declares it as.
-    pub fn tag_c_type(&self) -> &'static str {
-        match self.tag_storage() {
-            (1, false) => "uint8_t",
-            (2, false) => "uint16_t",
-            (4, false) => "uint32_t",
-            (8, false) => "uint64_t",
-            (1, true) => "int8_t",
-            (2, true) => "int16_t",
-            (8, true) => "int64_t",
-            _ => "int32_t",
         }
     }
 

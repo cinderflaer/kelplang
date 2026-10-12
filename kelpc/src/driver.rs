@@ -54,68 +54,6 @@ pub struct CompileError {
     pub message: String,
 }
 
-/// Compiles one generated C translation unit into an object. The LLVM backend
-/// needs it for the `extern fun` bodies, which stay C (MK7 §3.2) but whose object
-/// is emitted per program: see `codegen_llvm::externs_c_source` for why a fixed
-/// object cannot carry them.
-///
-/// The flags are `-O<n> -fwrapv`, so a body that does arithmetic at the edge of a
-/// signed range wraps the way the rest of the program does.
-/// `-Werror=implicit-function-declaration` is the one extra: the bodies call the
-/// runtime helpers through prototypes written out beside them, and C99 makes an
-/// undeclared call a warning, so a helper whose prototype went missing would be
-/// called through an invented `int` signature instead of failing the build.
-pub fn compile_c_object(
-    c_source: &str,
-    c_path: &Path,
-    obj_path: &Path,
-    opt: OptLevel,
-    include_dirs: &[String],
-    pkg_config_flags: &[String],
-) -> Result<(), CompileError> {
-    std::fs::write(c_path, c_source).map_err(|e| CompileError {
-        message: format!("could not write generated C to '{}': {e}", c_path.display()),
-    })?;
-    // `cc` stays here on purpose: this is a C compile, not a link. `ld.lld` only
-    // links, and the `extern fun` bodies are C source that needs a C compiler.
-    let mut command = Command::new("cc");
-    command
-        .arg("-c")
-        .arg(opt.cc_flag())
-        .arg("-fwrapv")
-        // The same reason the runtime object's own build passes it: an `extern
-        // fun` body may reach the thread runtime's helpers (MK9-S3-M1 stage C1).
-        .arg("-pthread")
-        .arg("-Werror=implicit-function-declaration");
-    for flag in dir_flags(include_dirs, &[]) {
-        command.arg(flag);
-    }
-    // The LLVM backend compiles the generated C for a program's `extern fun`
-    // bodies here, so a package's `-I` has to reach this invocation as well
-    // (MK9-S1-M1).
-    for flag in pkg_config_flags {
-        command.arg(flag);
-    }
-    let output = command
-        .arg("-o")
-        .arg(obj_path)
-        .arg(c_path)
-        .guarded_output()
-        .map_err(|e| CompileError {
-            message: format!("could not invoke 'cc': {e}"),
-        })?;
-    if !output.status.success() {
-        return Err(CompileError {
-            message: format!(
-                "cc failed to build '{}':\n{}",
-                c_path.display(),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        });
-    }
-    Ok(())
-}
-
 /// Links the object `codegen_llvm` wrote into the final binary: the LLVM
 /// backend's *finishing* step. The C linker is kept (MK7 §1.3), so
 /// `glibc_lib_dir()` and the `crt1.o` lookup stay unchanged. The runtime object
@@ -124,15 +62,14 @@ pub fn compile_c_object(
 /// IR, which wraps by definition. `-lm` is for `std/math`'s externs and is free
 /// whether or not they are used.
 ///
-/// `externs_object` is the object [`compile_c_object`] built from the program's
-/// `extern fun` bodies, or `None` when the program reaches none of them. It is
-/// an ordinary object on the link line, after the IR object and before `-lm`, so
-/// a body that calls a runtime helper resolves against the runtime object above
-/// it and one that calls `sqrt` resolves against the library below.
+/// `externs_object` is the object `extern_object::lower_externs_object` wrote for
+/// the program's `extern fun` trampolines and callback glue, or `None` when the
+/// program has none. It is an ordinary object on the link line, after the IR
+/// object and before `-lm`, so a trampoline that calls a native symbol resolves
+/// against the library below it.
 ///
 /// `opt` is the selected level's `-O` flag on the link line. At link time it is
-/// inert without LTO, but it is the same vocabulary the per-program object's `cc` call takes
-/// (MK7 S6).
+/// inert without LTO (MK7 S6).
 pub fn link_llvm_object(
     object_path: &Path,
     externs_object: Option<&Path>,

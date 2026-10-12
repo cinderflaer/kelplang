@@ -52,14 +52,6 @@ pub struct Program {
     /// C text. Empty for a program that declares no user FFI, which behaves
     /// exactly as before this feature existed.
     pub extern_ffi_symbols: std::collections::HashMap<String, String>,
-    /// The C headers the project's `[extern.*] header` keys name,
-    /// deduplicated and sorted. the removed C backend emitted one `#include <header>`
-    /// line per entry after the fixed preamble, and `codegen_llvm.rs` writes
-    /// the same lines into the separately-compiled extern object, so a native
-    /// symbol the runtime does not already declare has a prototype. Empty
-    /// when no section names a header, which leaves the generated C text
-    /// byte-for-byte what it was before the key existed.
-    pub extern_headers: Vec<String>,
     /// The top-level integer-array `const`s that carry a `section("...")`
     /// clause (kernel stage 4), sorted by name so both backends emit them in
     /// one order. Each is emitted as read-only data in its section so a linker

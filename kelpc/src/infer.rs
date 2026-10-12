@@ -9925,7 +9925,6 @@ fn check_program_pass(
         declared_keys: (*declared_keys).clone(),
         drop_types: (*declared_drops).clone(),
         extern_ffi_symbols,
-        extern_headers: project.extern_headers(),
         const_data,
         statics: static_decls,
         dyn_vtables,
