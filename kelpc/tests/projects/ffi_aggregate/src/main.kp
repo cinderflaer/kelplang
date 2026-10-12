@@ -1,0 +1,25 @@
+// By-value aggregates across an extern boundary, each result printed. The
+// values are the ones the Rust witness computes (kelpc/tests/extern_aggregate.rs).
+impl "agg" caps(process = ["/**"])
+
+fun main() {
+    val p = agg.agg_pair_bump(agg.Pair(a = 3, b = 2.5))
+    print(p.a)
+    print(p.b)
+
+    val m = agg.agg_mixed_bump(agg.Mixed(x = 1.5, y = 2.25, n = 7))
+    print(m.x)
+    print(m.y)
+    print(m.n)
+
+    val w = agg.agg_wide_bump(agg.Wide(a = 1, b = 2, c = 3))
+    print(w.a)
+    print(w.b)
+    print(w.c)
+    print(agg.agg_wide_total(agg.Wide(a = 10, b = 20, c = 30)))
+
+    print(agg.agg_bytes_len(Bytes.from_str("hello")))
+    val made = agg.agg_bytes_make(5)
+    print(made.len())
+    print(agg.agg_string_len(String.from_str("abcdefg")))
+}

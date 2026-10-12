@@ -1,0 +1,21 @@
+// The user module whose externs take and return aggregates by value. Each
+// extern binds the native symbol of the same name in coral.toml.
+
+// Two eightbytes, one INTEGER and one SSE: returned in rax and xmm0.
+pub datac Pair(val a: i64, val b: f64)
+
+// Two eightbytes, the first holding two floats (one SSE eightbyte) and the
+// second an INTEGER.
+pub datac Mixed(val x: f32, val y: f32, val n: i64)
+
+// Three words: 24 bytes, MEMORY class, passed on the stack and returned
+// through the hidden pointer.
+pub datac Wide(val a: i64, val b: i64, val c: i64)
+
+pub extern fun agg_pair_bump(p: move Pair).return: Pair
+pub extern fun agg_mixed_bump(m: move Mixed).return: Mixed
+pub extern fun agg_wide_bump(w: move Wide).return: Wide
+pub extern fun agg_wide_total(w: move Wide).return: i64
+pub extern fun agg_bytes_len(b: move Bytes).return: usize
+pub extern fun agg_bytes_make(n: usize).return: Bytes
+pub extern fun agg_string_len(s: move String).return: usize

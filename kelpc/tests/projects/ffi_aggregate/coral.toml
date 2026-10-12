@@ -1,0 +1,20 @@
+name = "ffiaggregate"
+
+# A user extern taking or returning an aggregate by value (System V x86_64):
+# a 16-byte datac in registers by class, a 24-byte datac, Bytes and String in
+# memory. The native symbols are Rust `extern "C"` functions the test links
+# from a static library it writes into `native/` (kelpc/tests/extern_aggregate.rs).
+# No C source is compiled.
+[extern."agg"]
+domain = "process"
+library = "kelpaggwit"
+library_dirs = ["native"]
+symbols = [
+    "agg_pair_bump",
+    "agg_mixed_bump",
+    "agg_wide_bump",
+    "agg_wide_total",
+    "agg_bytes_len",
+    "agg_bytes_make",
+    "agg_string_len",
+]
