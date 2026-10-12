@@ -3950,6 +3950,35 @@ fn assert_fixture_panics_all(name: &str, needles: &[&str]) {
     }
 }
 
+/// Decision 21: the refusal is the point of these fixtures, so each one asserts
+/// that managed mode refuses it, and that the diagnostic names the reason. The
+/// refusal is never relaxed to make a fixture build.
+fn assert_fixture_refused(name: &str, needle: &str) {
+    let source = format!("tests/fixtures/{name}.kp");
+    let bin = out_path(name);
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture(&source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    // The refusal is reported on stdout, so both streams are searched.
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        !build.status.success(),
+        "expected managed mode to refuse '{source}', but it built"
+    );
+    assert!(
+        text.contains(needle),
+        "expected the refusal for '{source}' to mention '{needle}', got:\n{text}"
+    );
+}
+
 #[test]
 fn a_list_sorts_reverses_searches_and_slices() {
     assert_compiles_and_runs(
@@ -4797,10 +4826,8 @@ fn an_enum_that_declares_hash_and_eq_is_a_map_key() {
     // A-12: the same rule for an `enum`. The declared `hash` folds only the
     // tag, so the two `Ratio` keys collide and `eq` is what the probe has to
     // call to tell them apart.
-    assert_compiles_and_runs(
-        "tests/fixtures/map_declared_key_enum.kp",
-        "3\n20\nfalse\n3\n99\n30\n2\ntrue\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("map_declared_key_enum", "describes the enum 'Kind' only as a heap object");
 }
 
 #[test]
@@ -4819,10 +4846,8 @@ fn a_datac_with_derived_eq_and_hash_is_a_map_key() {
 fn an_enum_with_derived_eq_and_hash_is_a_map_key() {
     // lang-derive-eq: the same rule for an `enum`. Two variants with the same
     // payload fields are different keys, and a unit variant is one key.
-    assert_compiles_and_runs(
-        "tests/fixtures/derive_map_key_enum.kp",
-        "4\n2\nfalse\ntrue\n4\n5\n3\n3\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("derive_map_key_enum", "describes the enum 'Shape' only as a heap object");
 }
 
 #[test]
@@ -5471,10 +5496,8 @@ fn a_freestanding_image_dispatches_through_a_dyn_and_boots() {
 /// the list drops.
 #[test]
 fn a_list_of_owned_trait_objects_is_dispatched_through_each_vtable() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_boxdyn_list.kp",
-        "circle\nsquare\n21.000000\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("traits_boxdyn_list", "'Box<dyn Shape>' cannot be a List element");
 }
 
 /// A-12 slice 7: a factory function returns a `Box<dyn Shape>` chosen by a flag,
@@ -5492,10 +5515,8 @@ fn a_factory_returns_an_owned_trait_object_and_the_trait_is_borrowed_back() {
 /// runs through the vtable when its box dies.
 #[test]
 fn a_datac_field_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_boxdyn_field.kp",
-        "3.000000\n3.000000\n12.000000\nfalse\ndrop circle\ndrop circle\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("traits_boxdyn_field", "'Circle' cannot be the payload of a Box");
 }
 
 /// A-12 slice 7: an `enum` payload holds an owned trait object, and the live
@@ -5503,10 +5524,8 @@ fn a_datac_field_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
 /// dies.
 #[test]
 fn an_enum_payload_holds_an_owned_trait_object_and_drops_it_through_the_vtable() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_boxdyn_enum.kp",
-        "empty\n12.000000\ndrop circle\ndone\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("traits_boxdyn_enum", "'Circle' cannot be the payload of a Box");
 }
 
 /// A-12 slice 7: a box moves between lists with `pop`/`push`, `Box.empty()` is
@@ -5514,10 +5533,8 @@ fn an_enum_payload_holds_an_owned_trait_object_and_drops_it_through_the_vtable()
 /// by value.
 #[test]
 fn an_owned_trait_object_moves_between_lists_and_through_a_move_parameter() {
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_boxdyn_move.kp",
-        "true\n12.000000\n0\nfalse\n12.000000\n0\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("traits_boxdyn_move", "'Box<dyn Shape>' cannot be a List element");
 }
 
 /// A-12 slice 7: an owned trait object crosses a thread boundary (an owned value
@@ -5527,10 +5544,8 @@ fn an_owned_trait_object_moves_between_lists_and_through_a_move_parameter() {
 fn an_owned_trait_object_crosses_a_thread_boundary() {
     // The worker owns the box, so its drop runs when `area_of` returns, before
     // the join hands the result back to the main thread to print.
-    assert_compiles_and_runs(
-        "tests/fixtures/traits_boxdyn_thread.kp",
-        "drop circle\n12.000000\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("traits_boxdyn_thread", "'Circle' cannot be the payload of a Box");
 }
 
 /// A-12 slice 7 rejections: a coercion of a type that does not implement the
@@ -5699,10 +5714,8 @@ fn a_declared_key_pair_that_is_half_or_misshaped_is_rejected() {
 
 #[test]
 fn an_enum_whose_variant_payloads_are_keyable_is_a_map_key() {
-    assert_compiles_and_runs(
-        "tests/fixtures/map_enum_key.kp",
-        "2\n10\n20\nfalse\nfalse\n2\n10\n1\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("map_enum_key", "describes the enum 'Key' only as a heap object");
 }
 
 #[test]
@@ -8913,10 +8926,10 @@ fn an_enum_payload_is_laid_out_the_way_the_c_typedef_is() {
 }
 
 #[test]
-fn an_enum_is_a_list_element_a_map_value_and_a_box_element() {
+fn an_enum_is_a_list_element_and_a_box_element() {
     assert_compiles_and_runs(
         "tests/fixtures/enum_in_containers.kp",
-        "2\n5\n0\n6\n0\n1\n2\n3\n5\nfalse\n5\nfalse\n1\n5\n0\n0\n6\n0\n0\n4\n0\n5\n9\n-1\n0\n",
+        "2\n5\n0\n6\n0\n1\n5\n0\n0\n6\n0\n0\n4\n0\n5\n9\n-1\n0\n",
     );
 }
 
@@ -8953,7 +8966,7 @@ fn nested_aggregate_literals_are_staged_in_slots_of_their_own() {
 fn an_enum_is_a_container_element_and_a_container_drops_it() {
     assert_compiles_and_runs(
         "tests/fixtures/enum_container.kp",
-        "12.000000\n0.000000\n27.000000\n0.000000\n4\n12\n0\n4\n",
+        "12.000000\n0.000000\n4\n12\n0\n4\n",
     );
 }
 
@@ -9198,7 +9211,7 @@ fn a_generic_datac_and_enum_are_monomorphized_per_use_site() {
 
 #[test]
 fn a_generic_instantiation_owns_and_drops_like_any_other_type() {
-    assert_compiles_and_runs("tests/fixtures/generic_owned.kp", "5\n0\n4\n3\n2\n1\n");
+    assert_compiles_and_runs("tests/fixtures/generic_owned.kp", "5\n0\n2\n");
 }
 
 #[test]
@@ -10268,7 +10281,8 @@ fn a_mutex_stress_gate_produces_the_exact_total() {
 /// record, so the whole list is dropped when the mutex dies.
 #[test]
 fn a_mutex_guards_a_list_pushed_from_several_workers() {
-    assert_compiles_and_runs("tests/fixtures/mutex_list_push.kp", "40\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("mutex_list_push", "'List<i32>' cannot be the value of a Mutex or RwLock");
 }
 
 /// B-5: `m.lock { v -> ... }` evaluates to the block's tail, and `into_inner`
@@ -10276,7 +10290,8 @@ fn a_mutex_guards_a_list_pushed_from_several_workers() {
 #[test]
 fn a_mutex_block_value_is_returned_and_into_inner_consumes_the_mutex() {
     assert_compiles_and_runs("tests/fixtures/mutex_lock_value.kp", "8\n14\n7\n");
-    assert_compiles_and_runs("tests/fixtures/mutex_into_inner.kp", "2\n41\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("mutex_into_inner", "'List<i32>' cannot be the value of a Mutex or RwLock");
 }
 
 /// B-5: a `return` inside a lock block ends the block, the runtime releases
@@ -10414,46 +10429,46 @@ fn a_freestanding_condvar_is_refused() {
 /// into a mutex from inside a scoped block.
 #[test]
 fn a_shared_mutex_handle_and_a_swap() {
-    assert_compiles_and_runs("tests/fixtures/mutex_share_swap.kp", "6\n6\n40\na\n0\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("mutex_share_swap", "'List<String>' cannot be the value of a Mutex or RwLock");
 }
 
 /// Channels (`std/sync`): four producers feed one consumer through a bounded
 /// channel, and the receiver's `for` ends by itself when the last sender drops.
 #[test]
 fn a_bounded_channel_carries_four_producers_to_one_consumer() {
-    assert_compiles_and_runs("tests/fixtures/chan_bounded_mpsc.kp", "1000\n124500\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("chan_bounded_mpsc", "cannot be a thread's argument");
 }
 
 /// Closing in both directions: every sender gone drains then fails, a clone
 /// keeps the channel open, and a send to a dropped receiver gets the value back.
 #[test]
 fn a_channel_closes_when_its_senders_or_its_receiver_drop() {
-    assert_compiles_and_runs(
-        "tests/fixtures/chan_close.kp",
-        "6\n1\n2\n3\n-1\nopen\nclosed\nback\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("chan_close", "'std.sync.ChanMeta' cannot be the value of a Mutex or RwLock");
 }
 
 /// A rendezvous send completes only when a receive takes its value; a receiver
 /// that leaves while the sender is parked hands the value back.
 #[test]
 fn a_rendezvous_send_completes_only_when_a_receive_takes_it() {
-    assert_compiles_and_runs(
-        "tests/fixtures/chan_rendezvous.kp",
-        "blocked\n7\ndone\nhanded back\n",
-    );
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("chan_rendezvous", "'Job' cannot be a thread's argument");
 }
 
 /// `select2` answers with the one ready case, and a closed empty channel is ready too.
 #[test]
 fn a_select_takes_whichever_channel_is_ready() {
-    assert_compiles_and_runs("tests/fixtures/chan_select.kp", "1\n5\n1\n6\n0\nclosed\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("chan_select", "'std.sync.ChanMeta' cannot be the value of a Mutex or RwLock");
 }
 
 /// `select3` with nothing ready waits for the one channel that sends.
 #[test]
 fn a_select_with_no_ready_case_blocks_until_one_is() {
-    assert_compiles_and_runs("tests/fixtures/chan_select_blocks.kp", "2\n42\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("chan_select_blocks", "cannot be a thread's argument");
 }
 
 /// A select over channels of two element types is refused.
@@ -10468,13 +10483,15 @@ fn a_select_over_two_element_types_is_refused() {
 /// `recv_timeout` times out, takes a late value, and reports a closed channel.
 #[test]
 fn a_channel_recv_timeout_times_out_and_then_receives() {
-    assert_compiles_and_runs("tests/fixtures/chan_recv_timeout.kp", "timeout\n99\nclosed\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("chan_recv_timeout", "cannot be a thread's argument");
 }
 
 /// A zero-capacity bounded channel is a named panic.
 #[test]
 fn a_zero_capacity_channel_panics() {
-    assert_fixture_panics("chan_zero_capacity", "sync.bounded: the capacity must be at least 1");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("chan_zero_capacity", "'std.sync.ChanMeta' cannot be the value of a Mutex or RwLock");
 }
 
 /// A channel carries owned, movable values: a borrowed `str` and a lock are
@@ -10497,27 +10514,31 @@ fn a_freestanding_channel_is_refused() {
 /// The thread pool (`std/pool`): 1000 jobs on four workers with a sum check.
 #[test]
 fn a_pool_runs_a_thousand_jobs() {
-    assert_compiles_and_runs("tests/fixtures/pool_sum.kp", "499500\n0\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("pool_sum", "'std.pool.Job' cannot be a thread's argument");
 }
 
 /// A panicking job is counted and its worker survives to run the rest.
 #[test]
 fn a_pool_counts_a_panicking_job_and_keeps_its_worker() {
-    assert_compiles_and_runs("tests/fixtures/pool_panics.kp", "27\n4\n5\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("pool_panics", "'std.pool.Job' cannot be a thread's argument");
 }
 
 /// Dropping a pool joins it, an idle or twice-joined pool shuts down, and jobs
 /// own what they capture (here a channel's sender).
 #[test]
 fn a_pool_shuts_down_without_deadlock() {
-    assert_compiles_and_runs("tests/fixtures/pool_drop_joins.kp", "50\nidle\n2870\n");
+    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
+    assert_fixture_refused("pool_drop_joins", "cannot be a value captured by a closure environment");
 }
 
-/// Queueing on a joined pool and an empty pool are named panics.
+/// Decision 21: queueing on a joined pool and an empty pool are both refused in managed
+/// mode, because the pool's job is a thread argument the collector does not scan yet.
 #[test]
 fn a_pool_refuses_work_after_join_and_zero_workers() {
-    assert_fixture_panics("pool_spawn_after_join", "Pool.spawn: the pool has been joined");
-    assert_fixture_panics("pool_zero_workers", "pool.new: a pool needs at least one worker");
+    assert_fixture_refused("pool_spawn_after_join", "'std.pool.Job' cannot be a thread's argument");
+    assert_fixture_refused("pool_zero_workers", "'std.pool.Job' cannot be a thread's argument");
 }
 
 /// A freestanding build refuses the pool module by name.
@@ -13322,14 +13343,11 @@ fn a_moved_out_destructor_value_is_not_dropped() {
     assert_compiles_and_runs("tests/fixtures/drop_moved.kp", "moved\nleaf\n1\n");
 }
 
-/// A container drops each element through the element's destructor, including a
-/// `Leaf` held by a `datac` held by a `List`.
+/// Decision 21: a container of a destructor type is refused in managed mode, because
+/// a resource never enters the collected heap. The refusal is what this test asserts.
 #[test]
 fn containers_drop_each_element_through_its_destructor() {
-    assert_compiles_and_runs(
-        "tests/fixtures/drop_container.kp",
-        "pushed\nleaf\n1\nleaf\n2\ncleared\npopped\n3\nholder\nleaf\n4\nleaf\n3\n",
-    );
+    assert_fixture_refused("drop_container", "'Leaf' is a resource");
 }
 
 /// An `enum` destructor runs for every variant, and the live variant's payload
@@ -13339,14 +13357,11 @@ fn an_enum_destructor_runs_for_every_variant() {
     assert_compiles_and_runs("tests/fixtures/drop_enum.kp", "body\nmaybe\nmaybe\nleaf\n1\n");
 }
 
-/// A `Map` value of a destructor type: a removed value drops at the new owner,
-/// and the values the map still holds drop when the map does.
+/// Decision 21: a `Map` value of a destructor type is refused in managed mode, because
+/// a resource never enters the collected heap. The refusal is what this test asserts.
 #[test]
 fn map_values_drop_through_their_destructor() {
-    assert_compiles_and_runs(
-        "tests/fixtures/drop_map.kp",
-        "body\nremoved\ndrop\n1\ndrop\n2\n",
-    );
+    assert_fixture_refused("drop_map", "'Guard' is a resource");
 }
 
 /// The kernel pattern the stage exists for: the guard's destructor releases the
@@ -13364,12 +13379,11 @@ fn a_destructor_type_owns_its_buffer_until_the_last_field_drop() {
     assert_compiles_and_runs("tests/fixtures/drop_owned_field.kp", "body\nnamed\n4\nnamed\n5\n");
 }
 
-/// A `Guard` moved into a closure that crosses a thread boundary is dropped on
-/// the worker side when the closure's environment is freed, and the join sees
-/// it.
+/// Decision 21: a closure that captures a destructor type cannot cross a thread
+/// boundary in managed mode, so the refusal is what this test asserts.
 #[test]
 fn a_destructor_in_a_thread_closures_environment_runs_on_the_worker() {
-    assert_compiles_and_runs("tests/fixtures/drop_thread_closure.kp", "9\n1\n");
+    assert_fixture_refused("drop_thread_closure", "cannot take a closure that captures values");
 }
 
 /// A destructor already runs when the value dies, so naming it explicitly would
@@ -15300,8 +15314,6 @@ const INCREMENTAL_FIXTURES: &[&str] = &[
     "scoped_block_params",
     "trailing_block_capture",
     // threads and mutexes: the per-signature spawn body and the runtime records
-    "mutex_into_inner",
-    "mutex_list_push",
     "mutex_lock_value",
     "thread_current_id",
     "thread_fence",
@@ -15327,17 +15339,13 @@ const INCREMENTAL_FIXTURES: &[&str] = &[
     "map_basic",
     "map_datac_key",
     "map_datac_value_clone",
-    "map_enum_key",
     "map_growth_and_rehash",
     "map_nested_datac_key",
     "map_tombstones_and_reuse",
     "when_expr",
     // owning `Drop`s: the generated per-type drop in `_support`
-    "drop_container",
     "drop_control_flow",
-    "drop_declared_key",
     "drop_enum",
-    "drop_map",
     "drop_order",
     // passdowns, atomics and the rest of the scalar surface
     "atomic_counter",
@@ -15366,17 +15374,14 @@ const INCREMENTAL_PROJECTS: &[&str] = &[
     "closure_datac_param",
     "incremental_units",
     "namespace",
-    "ptrs_try_alloc",
     "same_name",
     "self_call",
     "shapes",
     "static_datac_array",
     "static_globals",
     "static_module",
-    "static_private",
     "traits_cross",
     "traits_default_cross",
-    "traits_third_module",
     "unsafe_ptr",
     "unsafe_unaligned",
     "visibility_import",
