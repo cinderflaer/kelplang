@@ -13,7 +13,6 @@ use crate::net::kelp_rt_connect;
 use crate::panic::{kelp_panic, kelp_panic_at, kelp_panic_errno, kelp_panic_gai};
 use crate::text::kelp_String__from_str;
 
-use super::set_reason;
 
 unsafe extern "C" {
     fn inet_ntop(af: c_int, src: *const c_void, dst: *mut c_char, size: libc::socklen_t) -> *const c_char;
@@ -65,7 +64,9 @@ pub unsafe extern "C" fn kelp_std__net__connect_try_raw(host: *const c_char, por
                     libc::strerror(last),
                 );
             }
-            set_reason(reason, text.as_ptr());
+            // Not freed first, as main's C connect and accept bodies never did: the
+            // reason a caller passes in is not always a buffer this module owns.
+            *reason = kelp_String__from_str(text.as_ptr());
         }
         fd
     }
@@ -170,7 +171,9 @@ pub unsafe extern "C" fn kelp_std__net__accept_try_raw(fd: c_int, reason: *mut K
                     libc::strerror(e),
                 );
             }
-            set_reason(reason, text.as_ptr());
+            // Not freed first, as main's C connect and accept bodies never did: the
+            // reason a caller passes in is not always a buffer this module owns.
+            *reason = kelp_String__from_str(text.as_ptr());
         }
         c
     }
