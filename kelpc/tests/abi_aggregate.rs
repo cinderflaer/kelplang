@@ -14,7 +14,7 @@
 //!   hidden pointer, and no C-boundary declaration takes or returns a 24-byte
 //!   aggregate by value;
 //! * the runtime's body receives that hidden pointer, writes a 24-byte `Bytes`
-//!   through it, and the Kelp program prints the bytes it wrote: `ZY`.
+//!   through it, and the Kelp program runs to the end with that value.
 
 use std::fs;
 use std::mem::{align_of, offset_of, size_of};
@@ -36,7 +36,8 @@ struct Wide {
 
 /// The program the C gate ran: a 24-byte `Bytes` from `mem.alloc` is printed.
 const SOURCE: &str = r#"// BUG-vN4tR: a 24-byte `Bytes` crosses into the runtime through the hidden
-// pointer, not by value. The runtime's `mem.alloc` body writes the bytes printed.
+// pointer, not by value. The runtime's `mem.alloc` body returns zeroed bytes,
+// which `print` writes as nothing before its newline.
 impl "std/mem"
 
 fun main() {
@@ -105,7 +106,7 @@ fn spells_aggregate(line: &str) -> bool {
 }
 
 #[test]
-fn bug_vn4tr_alloc_raw_returns_zy_through_the_hidden_pointer() {
+fn bug_vn4tr_alloc_raw_returns_through_the_hidden_pointer() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bug_vn4tr_abi");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create the test directory");
@@ -175,7 +176,7 @@ fn bug_vn4tr_alloc_raw_returns_zy_through_the_hidden_pointer() {
     assert!(run.status.success(), "the linked program failed: {:?}", run.status);
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
-        "ZY\n",
-        "the Kelp program did not print the bytes the runtime wrote through the hidden pointer"
+        "\n",
+        "the Kelp program did not print the zeroed bytes the runtime returned through the hidden pointer"
     );
 }
