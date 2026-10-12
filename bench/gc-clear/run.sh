@@ -12,13 +12,14 @@
 #   M9: 256 attached threads, one object each, then unrooted 4 KiB garbage until
 #       the automatic trigger clears. Median of unused tail plus overshoot against
 #       8 MiB, and the first clearing leaves no block but the trigger's own.
-# Every run is under ulimit -v 2 GiB (section 17.5). MALLOC_ARENA_MAX=2 stops glibc
+# Every run is under ulimit -v 2.5 GiB (DECISIONS item 25). MALLOC_ARENA_MAX=2 stops glibc
 # from reserving one arena per thread, which would fill that limit at 256 threads.
+# Each M4 run also reports its VmPeak (kB), sampled from /proc while the process runs.
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 GC="$ROOT/kelpc/gc"
 RUNS=${RUNS:-5}
-LIMIT_KB=2097152
+LIMIT_KB=2621440
 export MALLOC_ARENA_MAX=2
 unset KELP_GC_VERIFY KELP_GC_STRESS KELP_GC_STATS
 
@@ -35,10 +36,24 @@ echo "host=$(hostname) cpus=$(nproc) load=$(cut -d' ' -f1-3 /proc/loadavg) bin=$
 
 RAW=$(mktemp)
 # One measurement test in its own process. $1 is the test name, the rest are env assignments.
+# The subshell execs env, which execs the test binary, so $! is the test's pid and
+# its VmPeak can be sampled until it exits. The output ends with VmPeak_kb=N.
 run_one() {
     t=$1
     shift
-    ( ulimit -v $LIMIT_KB; ulimit -t 600; env "$@" timeout 600 "$BIN" --exact "tests::bench_clear::$t" --ignored --nocapture --test-threads=1 2>&1 )
+    ofile=$(mktemp)
+    ( ulimit -v $LIMIT_KB; ulimit -t 600; exec env "$@" "$BIN" --exact "tests::bench_clear::$t" --ignored --nocapture --test-threads=1 ) >"$ofile" 2>&1 &
+    pid=$!
+    vm=0
+    while kill -0 "$pid" 2>/dev/null; do
+        v=$(awk '/^VmPeak:/ {print $2}' "/proc/$pid/status" 2>/dev/null)
+        [ -n "$v" ] && vm=$v
+        sleep 0.2
+    done
+    wait "$pid"
+    cat "$ofile"
+    rm -f "$ofile"
+    echo "VmPeak_kb=$vm"
 }
 
 i=1
@@ -47,6 +62,7 @@ while [ "$i" -le "$RUNS" ]; do
         out=$(run_one m4_clearing_cost_child KELP_GC_M4_MIB=$mib)
         echo "$out" | grep -q 'test result: ok' || { echo "M4 run $i heap_max=$mib FAILED"; echo "$out" | tail -30; }
         echo "$out" | grep -o 'M4 heap_max_mib=.*' >>"$RAW"
+        echo "M4 vmpeak heap_max_mib=$mib run=$i $(echo "$out" | grep -o 'VmPeak_kb=[0-9]*')" >>"$RAW"
     done
     out=$(run_one m9_refill_tail_and_overshoot_256_threads)
     echo "$out" | grep -q 'test result: ok' || { echo "M9 run $i FAILED"; echo "$out" | tail -30; }

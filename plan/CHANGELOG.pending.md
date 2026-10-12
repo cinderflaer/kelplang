@@ -91,6 +91,10 @@ empty on release.
 - The `std/fs` tests write their scratch files under a directory unique to each test in each run, and remove it afterwards, so two kelpc suites running at once no longer delete each other's files.
 - The memory gate's `fs_*` fixtures write their scratch files under a directory unique to each run, not the shared `/tmp`, and remove it afterwards.
 - The golden sweep's `fixture_fs_*` targets write their scratch files under a directory unique to each run, and their output is mapped back to the frozen `/tmp` text before the comparison.
+- The roadmap no longer carries a release schedule, and ISSUES no longer has release slots (landed on main, c87fb51).
+- The roadmap says channels and Mutex ship now, and the download row says when it was true (landed on main, be51d2e).
+- The KelpScript proposal moves to `plan/kelpscript.md` (on branch kelpscript-plan, not merged).
+- The collector's clearing bench (`bench/gc-clear/run.sh`) runs under a 2.5 GiB address-space limit (DECISIONS item 25) and prints each M4 run's VmPeak.
 - The dev shell (`shell.nix`) adds `gdb`, so the debug-info test (`llvm_debug_info`) can resolve its fault backtrace.
 - A hosted program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
 - A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
