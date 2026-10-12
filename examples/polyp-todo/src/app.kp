@@ -205,7 +205,10 @@ pub fun update(state: mut Model, msg: Msg) {
 
 // One scheduled input, as data: the delay the GTK backend arms a timeout with, and the event the
 // headless backend hands the loop. Both backends then run the same sequence.
-pub datac Step(val delay_ms: u32, val event: core.Event)
+// The event sits in a `Box`: a managed datac cannot hold an enum inline.
+pub datac Step(val delay_ms: u32, val event: Box<core.Event>)
+
+fun step(delay_ms: u32, event: move core.Event).return: Step = Step(delay_ms = delay_ms, event = Box.of(event))
 
 // The sequence the smoke runs drive themselves with: focus the entry, type three titles through
 // the entry's own `changed` signal, add each one, tick the second row's checkbox, move the third
@@ -214,17 +217,17 @@ pub datac Step(val delay_ms: u32, val event: core.Event)
 // (checkbox, move, remove), so the first row is 2/3/4, the second 5/6/7 and the third 8/9/10.
 pub fun script().return: List<Step> {
     var steps: List<Step> = List.empty()
-    steps.push(Step(delay_ms = 100, event = core.Event.Focus(index = 0)))
-    steps.push(Step(delay_ms = 150, event = core.Event.Edit(index = 0, text = String.from_str("alpha"))))
-    steps.push(Step(delay_ms = 200, event = core.Event.Post(id = 1)))
-    steps.push(Step(delay_ms = 250, event = core.Event.Edit(index = 0, text = String.from_str("beta"))))
-    steps.push(Step(delay_ms = 300, event = core.Event.Post(id = 1)))
-    steps.push(Step(delay_ms = 350, event = core.Event.Edit(index = 0, text = String.from_str("gamma"))))
-    steps.push(Step(delay_ms = 400, event = core.Event.Post(id = 1)))
-    steps.push(Step(delay_ms = 450, event = core.Event.Post(id = 5)))
-    steps.push(Step(delay_ms = 500, event = core.Event.Post(id = 9)))
-    steps.push(Step(delay_ms = 550, event = core.Event.Post(id = 10)))
-    steps.push(Step(delay_ms = 650, event = core.Event.Quit))
+    steps.push(step(delay_ms = 100, event = core.Event.Focus(index = 0)))
+    steps.push(step(delay_ms = 150, event = core.Event.Edit(index = 0, text = String.from_str("alpha"))))
+    steps.push(step(delay_ms = 200, event = core.Event.Post(id = 1)))
+    steps.push(step(delay_ms = 250, event = core.Event.Edit(index = 0, text = String.from_str("beta"))))
+    steps.push(step(delay_ms = 300, event = core.Event.Post(id = 1)))
+    steps.push(step(delay_ms = 350, event = core.Event.Edit(index = 0, text = String.from_str("gamma"))))
+    steps.push(step(delay_ms = 400, event = core.Event.Post(id = 1)))
+    steps.push(step(delay_ms = 450, event = core.Event.Post(id = 5)))
+    steps.push(step(delay_ms = 500, event = core.Event.Post(id = 9)))
+    steps.push(step(delay_ms = 550, event = core.Event.Post(id = 10)))
+    steps.push(step(delay_ms = 650, event = core.Event.Quit))
     return steps
 }
 
@@ -234,7 +237,7 @@ pub fun events().return: List<core.Event> {
     var steps = script()
     var i: usize = 0
     while i < steps.len() {
-        out.push(core.clone_event(steps.get(i).event))
+        out.push(core.clone_event(steps.get(i).event.get()))
         i += 1
     }
     return out

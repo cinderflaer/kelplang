@@ -25,6 +25,7 @@ use core::ptr::{null, null_mut};
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::abi::{Bytes, String as KString};
+use crate::alloc::kelp_bytes_alloc_raw;
 use crate::panic::kelp_panic;
 use crate::text::kelp_String__from_str;
 
@@ -164,6 +165,10 @@ ossl! {
     fn SSL_get_error(ssl: *const SSL, ret: c_int) -> c_int;
     fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
     fn SSL_pending(ssl: *const SSL) -> c_int;
+    fn SSL_get_fd(ssl: *const SSL) -> c_int;
+    fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
+    fn SSL_write(ssl: *mut SSL, buf: *const c_void, num: c_int) -> c_int;
+    fn SSL_shutdown(ssl: *mut SSL) -> c_int;
     fn SSL_get0_alpn_selected(ssl: *const SSL, data: *mut *const u8, len: *mut c_uint);
     fn SSL_get1_peer_certificate(ssl: *const SSL) -> *mut X509;
     fn SSL_select_next_proto(
@@ -241,7 +246,7 @@ unsafe fn release_kelp_buf(data: *mut u8) {
 
 /// Replaces `*reason` with a fresh Kelp string holding `text`, releasing the old
 /// buffer first, as every failing body does.
-unsafe fn set_reason(reason: *mut KString, text: *const c_char) {
+pub(crate) unsafe fn set_reason(reason: *mut KString, text: *const c_char) {
     unsafe {
         release_kelp_buf((*reason).data);
         *reason = kelp_String__from_str(text);
@@ -1102,6 +1107,238 @@ pub unsafe extern "C" fn kelp_std__tls__peer_subject_raw(handle: *mut c_void, ou
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_std__tls__pending_raw(handle: *mut c_void) -> usize {
     unsafe { SSL_pending(handle as *const SSL) as usize }
+}
+
+/// `std/tls` `set_timeout_raw`: the receive and send timeouts of the socket under `handle`.
+///
+/// # Safety
+/// `handle` must be a live `SSL*` from the handshake or accept bodies.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_std__tls__set_timeout_raw(handle: *mut c_void, ms: u64) {
+    unsafe {
+        let fd = SSL_get_fd(handle as *const SSL);
+        if fd < 0 {
+            kelp_panic(c"tls.set_timeout: the TLS handle has no socket".as_ptr());
+        }
+        let tv = libc::timeval {
+            tv_sec: (ms / 1000) as libc::time_t,
+            tv_usec: ((ms % 1000) * 1000) as libc::suseconds_t,
+        };
+        let len = size_of::<libc::timeval>() as libc::socklen_t;
+        let p = &tv as *const libc::timeval as *const c_void;
+        if libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO, p, len) != 0 {
+            crate::panic::kelp_panic_errno(c"tls.set_timeout: cannot set the receive timeout".as_ptr());
+        }
+        if libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_SNDTIMEO, p, len) != 0 {
+            crate::panic::kelp_panic_errno(c"tls.set_timeout: cannot set the send timeout".as_ptr());
+        }
+    }
+}
+
+/// `std/tls` `write_try_raw`: one `SSL_write`, retried while OpenSSL asks for it.
+///
+/// # Safety
+/// `handle` is a live `SSL*`; `data`, `err_code` and `reason` are valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_std__tls__write_try_raw(
+    handle: *mut c_void,
+    data: *const Bytes,
+    err_code: *mut i32,
+    reason: *mut KString,
+) -> usize {
+    unsafe {
+        if (*data).len == 0 {
+            *err_code = 0;
+            return 0;
+        }
+        let ssl = handle as *mut SSL;
+        let buf = (*data).data as *const c_void;
+        let len = (*data).len as c_int;
+        loop {
+            let n = no_sigpipe(|| SSL_write(ssl, buf, len));
+            if n > 0 {
+                *err_code = 0;
+                return n as usize;
+            }
+            let err = SSL_get_error(ssl, n);
+            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                && errno() != libc::EAGAIN
+                && errno() != libc::EWOULDBLOCK
+            {
+                continue;
+            }
+            let mut text = [0 as c_char; 256];
+            *err_code = classify_error(ssl, err, text.as_mut_ptr(), text.len());
+            set_reason(reason, text.as_ptr());
+            return 0;
+        }
+    }
+}
+
+/// `std/tls` `write_all_try_raw`: writes all of `data`, or stops at the first failure
+/// and returns how much went out.
+///
+/// # Safety
+/// As [`kelp_std__tls__write_try_raw`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_std__tls__write_all_try_raw(
+    handle: *mut c_void,
+    data: *const Bytes,
+    err_code: *mut i32,
+    reason: *mut KString,
+) -> usize {
+    unsafe {
+        if (*data).len == 0 {
+            *err_code = 0;
+            return 0;
+        }
+        let ssl = handle as *mut SSL;
+        let base = (*data).data;
+        let total = (*data).len;
+        let mut off = 0usize;
+        while off < total {
+            let at = base.add(off) as *const c_void;
+            let left = (total - off) as c_int;
+            let n = no_sigpipe(|| SSL_write(ssl, at, left));
+            if n <= 0 {
+                let err = SSL_get_error(ssl, n);
+                if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                    && errno() != libc::EAGAIN
+                    && errno() != libc::EWOULDBLOCK
+                {
+                    continue;
+                }
+                let mut text = [0 as c_char; 256];
+                *err_code = classify_error(ssl, err, text.as_mut_ptr(), text.len());
+                set_reason(reason, text.as_ptr());
+                return off;
+            }
+            off += n as usize;
+        }
+        *err_code = 0;
+        off
+    }
+}
+
+/// `std/tls` `read_try_raw`: up to `max` bytes. A clean close_notify is the empty
+/// `Bytes` with no error; a stream that ends without one is an error value.
+///
+/// # Safety
+/// As [`kelp_std__tls__write_try_raw`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_std__tls__read_try_raw(
+    handle: *mut c_void,
+    max: usize,
+    err_code: *mut i32,
+    reason: *mut KString,
+) -> Bytes {
+    unsafe {
+        if max == 0 {
+            *err_code = 0;
+            return kelp_bytes_alloc_raw(0);
+        }
+        let ssl = handle as *mut SSL;
+        let mut b = kelp_bytes_alloc_raw(max);
+        loop {
+            let dst = b.data as *mut c_void;
+            let n = no_sigpipe(|| SSL_read(ssl, dst, max as c_int));
+            if n > 0 {
+                b.len = n as usize;
+                *b.data.add(b.len) = 0;
+                *err_code = 0;
+                return b;
+            }
+            let err = SSL_get_error(ssl, n);
+            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                && errno() != libc::EAGAIN
+                && errno() != libc::EWOULDBLOCK
+            {
+                continue;
+            }
+            if err == SSL_ERROR_ZERO_RETURN {
+                b.len = 0;
+                *b.data = 0;
+                *err_code = 0;
+                return b;
+            }
+            let mut text = [0 as c_char; 256];
+            let code = classify_error(ssl, err, text.as_mut_ptr(), text.len());
+            // The buffer came from `kelp_bytes_alloc_raw`, so it is released the
+            // same way: freed hosted, left to the collector when managed.
+            release_kelp_buf(b.data);
+            *err_code = code;
+            set_reason(reason, text.as_ptr());
+            return kelp_bytes_alloc_raw(0);
+        }
+    }
+}
+
+/// `std/tls` `read_into_try_raw`: reads into `buf` from `at` on, up to its length.
+///
+/// # Safety
+/// As [`kelp_std__tls__write_try_raw`]; `buf` is a valid `Bytes`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_std__tls__read_into_try_raw(
+    handle: *mut c_void,
+    buf: *mut Bytes,
+    at: usize,
+    err_code: *mut i32,
+    reason: *mut KString,
+) -> usize {
+    unsafe {
+        let room = if at < (*buf).len { (*buf).len - at } else { 0 };
+        if room == 0 {
+            *err_code = 0;
+            return 0;
+        }
+        let ssl = handle as *mut SSL;
+        let base = (*buf).data;
+        loop {
+            let dst = base.add(at) as *mut c_void;
+            let n = no_sigpipe(|| SSL_read(ssl, dst, room as c_int));
+            if n > 0 {
+                *base.add(at + n as usize) = 0;
+                *err_code = 0;
+                return n as usize;
+            }
+            let err = SSL_get_error(ssl, n);
+            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                && errno() != libc::EAGAIN
+                && errno() != libc::EWOULDBLOCK
+            {
+                continue;
+            }
+            if err == SSL_ERROR_ZERO_RETURN {
+                *err_code = 0;
+                return 0;
+            }
+            let mut text = [0 as c_char; 256];
+            *err_code = classify_error(ssl, err, text.as_mut_ptr(), text.len());
+            set_reason(reason, text.as_ptr());
+            return 0;
+        }
+    }
+}
+
+/// `std/tls` `shutdown_try_raw`: one `SSL_shutdown`, then the handle is always freed.
+/// A return of 0 (close_notify sent, peer's not yet seen) is not a failure.
+///
+/// # Safety
+/// `handle` is a live `SSL*`, which this call consumes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_std__tls__shutdown_try_raw(handle: *mut c_void, err_code: *mut i32, reason: *mut KString) {
+    unsafe {
+        let ssl = handle as *mut SSL;
+        let rc = no_sigpipe(|| SSL_shutdown(ssl));
+        *err_code = 0;
+        if rc < 0 {
+            let err = SSL_get_error(ssl, rc);
+            let mut text = [0 as c_char; 256];
+            *err_code = classify_error(ssl, err, text.as_mut_ptr(), text.len());
+            set_reason(reason, text.as_ptr());
+        }
+        SSL_free(ssl);
+    }
 }
 
 /// The server's IPv4 listener for `host:port`. The cap check ran before this

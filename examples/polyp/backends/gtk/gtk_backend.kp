@@ -41,7 +41,7 @@ pub datac Mount(
     var inner: gtk.Widget,
     var handler: u64,
     var slot: i32,
-    var key: core.Key,
+    var key: Box<core.Key>,
     var kids: List<Mount>,
     var classes: List<String>,
 )
@@ -201,7 +201,7 @@ fun key_of_path(path: &core.Path).return: core.Key {
     }
     return when path.segs.get(path.segs.len() - 1) {
         Index(_) -> core.Key.None
-        Keyed(_, key) -> core.clone_key(key)
+        Keyed(_, key) -> core.clone_key(key.get())
     }
 }
 
@@ -216,7 +216,7 @@ fun box_of(rec: &Mount).return: gtk.BoxWidget {
 fun kid_index(kids: &List<Mount>, seg: &core.Seg).return: i32 {
     var i: usize = 0
     while i < kids.len() {
-        if core.child_at(seg, kids.get(i).key, i) {
+        if core.child_at(seg, kids.get(i).key.get(), i) {
             return i.to_i32()
         }
         i += 1
@@ -374,7 +374,7 @@ fun make_widget(be: mut GtkBackend, kind: i32, props: &core.Props).return: Mount
         inner = inner,
         handler = handler,
         slot = slot,
-        key = core.Key.None,
+        key = Box.of(core.Key.None),
         kids = List.empty(),
         classes = copy_strings(props.classes),
     )
@@ -515,7 +515,7 @@ fun find_path(kids: &List<Mount>, base: &core.Path, id: i32).return: option.Opti
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
-        val here = core.with_seg(base, core.seg_for(n.key, i.to_i32()))
+        val here = core.with_seg(base, core.seg_for(n.key.get(), i.to_i32()))
         if n.slot == id {
             return option.Option.Some(value = here)
         }
@@ -550,7 +550,7 @@ impl core.Backend for GtkBackend {
 
     fun mut Self.make(path: &core.Path, at: i32, kind: i32, props: &core.Props) {
         var rec = make_widget(self, kind, props)
-        rec.key = key_of_path(path)
+        rec.key.set(key_of_path(path))
         if path.segs.len() == 0 {
             gtk.gtk_window_set_child(win, rec.widget)
             root.clear()

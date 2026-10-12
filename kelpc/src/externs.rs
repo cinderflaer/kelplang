@@ -615,21 +615,6 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/net",
-        "send_all_try_raw",
-        "    size_t off = 0;\n    while (off < kelp_data->len) {\n        ssize_t n = send(kelp_fd, kelp_data->data + off, kelp_data->len - off, MSG_NOSIGNAL);\n        if (n < 0) {\n            if (errno == EINTR) {\n                continue;\n            }\n            char text[256];\n            snprintf(text, sizeof text, \"net.send: send failed (the peer may have closed)\\n  errno %d: %s\", errno, strerror(errno));\n            free(kelp_reason->data);\n            *kelp_reason = kelp_String__from_str(text);\n            return -1;\n        }\n        off += (size_t)n;\n    }\n    return 0;\n",
-    ),
-    (
-        "std/net",
-        "recv_try_raw",
-        "    if (kelp_max == 0) {\n        return kelp_bytes_alloc_raw(0);\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max);\n    ssize_t n;\n    do {\n        n = recv(kelp_fd, b.data, kelp_max, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.recv: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.recv: receive failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        b.len = 0;\n        b.data[0] = 0;\n        return b;\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
-    ),
-    (
-        "std/net",
-        "recv_into_try_raw",
-        "    size_t room = kelp_at < kelp_buf->len ? kelp_buf->len - kelp_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    ssize_t n;\n    do {\n        n = recv(kelp_fd, kelp_buf->data + kelp_at, room, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.recv_into: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.recv_into: receive failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return 0;\n    }\n    kelp_buf->data[kelp_at + (size_t)n] = 0;\n    return (size_t)n;\n",
-    ),
-    (
-        "std/net",
         "set_timeout_raw",
         "    struct timeval tv;\n    tv.tv_sec = (time_t)(kelp_ms / 1000);\n    tv.tv_usec = (suseconds_t)((kelp_ms % 1000) * 1000);\n    if (setsockopt(kelp_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"net.set_timeout: cannot set the receive timeout\");\n    }\n    if (setsockopt(kelp_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"net.set_timeout: cannot set the send timeout\");\n    }\n",
     ),
@@ -648,53 +633,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "resolve_raw",
         "    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    struct addrinfo* list = NULL;\n    int rc = getaddrinfo(kelp_host, NULL, &hints, &list);\n    if (rc != 0) {\n        kelp_panic_gai(\"net.resolve: cannot resolve host\", rc);\n    }\n    /* One address per line, in the order `getaddrinfo` reported them, with\n       duplicates dropped - an address literal resolves to itself, so this\n       is also the honest way to see what `connect` would try first. */\n    char out[4096];\n    size_t at = 0;\n    out[0] = 0;\n    char seen[16][INET6_ADDRSTRLEN];\n    size_t seen_n = 0;\n    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {\n        void* src = NULL;\n        if (a->ai_family == AF_INET) {\n            src = &((struct sockaddr_in*)a->ai_addr)->sin_addr;\n        } else if (a->ai_family == AF_INET6) {\n            src = &((struct sockaddr_in6*)a->ai_addr)->sin6_addr;\n        } else {\n            continue;\n        }\n        char host[INET6_ADDRSTRLEN];\n        if (inet_ntop(a->ai_family, src, host, sizeof host) == NULL) {\n            continue;\n        }\n        bool dup = false;\n        for (size_t i = 0; i < seen_n; i++) {\n            if (strcmp(seen[i], host) == 0) {\n                dup = true;\n                break;\n            }\n        }\n        if (dup) {\n            continue;\n        }\n        if (seen_n < 16) {\n            snprintf(seen[seen_n], sizeof seen[seen_n], \"%s\", host);\n            seen_n++;\n        }\n        size_t hl = strlen(host);\n        if (at + hl + 1 >= sizeof out) {\n            break;\n        }\n        if (at > 0) {\n            out[at++] = '\\n';\n        }\n        memcpy(out + at, host, hl);\n        at += hl;\n        out[at] = 0;\n    }\n    freeaddrinfo(list);\n    return kelp_String__from_str(out);\n",
     ),
-    // ---- std/tls (MK5-S4b-M1, open item 37) --------------------------------
-    //
-    // The only OpenSSL-touching code in the compiler. `std/tls` never dials a
-    // socket itself (see the module's header comment for why: a capability
-    // grant is resolved one hop from the importing program's `impl` line, and
-    // a `net.connect` written here would be checked against this module's own
-    // (always-empty) grant instead). Every body below operates on an `fd`
-    // the caller already connected, or on the `SSL*` `handshake_try_raw`
-    // handed back, carried as the opaque `TlsHandle` (a `void*` behind its own
-    // typedef), exactly as a socket crosses as a plain `fd: i32`.
-    //
-    // The fallible half of each call writes 0 through `kelp_err_code` on
-    // success and one of `std/tls`'s `ERR_*` constants on failure, with a
-    // sentence in `kelp_reason`. `kelp_tls_classify_verify` and
-    // `kelp_tls_classify_error` (the two `static inline` helpers in
-    // `cdecl::C_HEADERS`) own the translation from OpenSSL's error state,
-    // so every body classifies the same way.
-    (
-        "std/tls",
-        "set_timeout_raw",
-        "    SSL* ssl = (SSL*)kelp_handle;\n    int fd = SSL_get_fd(ssl);\n    if (fd < 0) {\n        kelp_panic(\"tls.set_timeout: the TLS handle has no socket\");\n    }\n    /* A `ms` of 0 is the socket's own \"wait forever\", which the zero\n       `timeval` below is too, so neither value needs a special case. */\n    struct timeval tv;\n    tv.tv_sec = (time_t)(kelp_ms / 1000);\n    tv.tv_usec = (suseconds_t)((kelp_ms % 1000) * 1000);\n    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"tls.set_timeout: cannot set the receive timeout\");\n    }\n    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"tls.set_timeout: cannot set the send timeout\");\n    }\n",
-    ),
-    (
-        "std/tls",
-        "write_try_raw",
-        "    if (kelp_data->len == 0) {\n        *kelp_err_code = 0;\n        return 0;\n    }\n    SSL* ssl = (SSL*)kelp_handle;\n    for (;;) {\n        int n = KELP_NO_SIGPIPE(SSL_write(ssl, kelp_data->data, (int)kelp_data->len));\n        if (n > 0) {\n            *kelp_err_code = 0;\n            return (size_t)n;\n        }\n        int err = SSL_get_error(ssl, n);\n        if ((err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)\n                && errno != EAGAIN && errno != EWOULDBLOCK) {\n            continue;\n        }\n        char text[256];\n        int code = kelp_tls_classify_error(ssl, err, text, sizeof text);\n        *kelp_err_code = code;\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return 0;\n    }\n",
-    ),
-    (
-        "std/tls",
-        "write_all_try_raw",
-        "    if (kelp_data->len == 0) {\n        *kelp_err_code = 0;\n        return 0;\n    }\n    SSL* ssl = (SSL*)kelp_handle;\n    size_t off = 0;\n    while (off < kelp_data->len) {\n        int n = KELP_NO_SIGPIPE(SSL_write(ssl, kelp_data->data + off, (int)(kelp_data->len - off)));\n        if (n <= 0) {\n            int err = SSL_get_error(ssl, n);\n            if ((err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)\n                    && errno != EAGAIN && errno != EWOULDBLOCK) {\n                continue;\n            }\n            char text[256];\n            int code = kelp_tls_classify_error(ssl, err, text, sizeof text);\n            *kelp_err_code = code;\n            free(kelp_reason->data);\n            *kelp_reason = kelp_String__from_str(text);\n            return off;\n        }\n        off += (size_t)n;\n    }\n    *kelp_err_code = 0;\n    return off;\n",
-    ),
-    (
-        "std/tls",
-        "read_try_raw",
-        "    /* A `max` of 0 needs no `SSL_read`, whose own return of 0 is what a\n       clean close also reports. */\n    if (kelp_max == 0) {\n        *kelp_err_code = 0;\n        return kelp_bytes_alloc_raw(0);\n    }\n    SSL* ssl = (SSL*)kelp_handle;\n    kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max);\n    for (;;) {\n        int n = KELP_NO_SIGPIPE(SSL_read(ssl, b.data, (int)kelp_max));\n        if (n > 0) {\n            b.len = (size_t)n;\n            b.data[b.len] = 0;\n            *kelp_err_code = 0;\n            return b;\n        }\n        int err = SSL_get_error(ssl, n);\n        if ((err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)\n                && errno != EAGAIN && errno != EWOULDBLOCK) {\n            continue;\n        }\n        /* A close_notify is the clean end of stream, so it is the empty\n           `Bytes` the panicking form always reported. Anything else that ends\n           the stream without one is a truncation, and a value here. */\n        if (err == SSL_ERROR_ZERO_RETURN) {\n            b.len = 0;\n            b.data[0] = 0;\n            *kelp_err_code = 0;\n            return b;\n        }\n        char text[256];\n        int code = kelp_tls_classify_error(ssl, err, text, sizeof text);\n        free(b.data);\n        *kelp_err_code = code;\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return kelp_bytes_alloc_raw(0);\n    }\n",
-    ),
-    (
-        "std/tls",
-        "read_into_try_raw",
-        "    size_t room = kelp_at < kelp_buf->len ? kelp_buf->len - kelp_at : 0;\n    if (room == 0) {\n        *kelp_err_code = 0;\n        return 0;\n    }\n    SSL* ssl = (SSL*)kelp_handle;\n    for (;;) {\n        int n = KELP_NO_SIGPIPE(SSL_read(ssl, kelp_buf->data + kelp_at, (int)room));\n        if (n > 0) {\n            kelp_buf->data[kelp_at + (size_t)n] = 0;\n            *kelp_err_code = 0;\n            return (size_t)n;\n        }\n        int err = SSL_get_error(ssl, n);\n        if ((err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)\n                && errno != EAGAIN && errno != EWOULDBLOCK) {\n            continue;\n        }\n        if (err == SSL_ERROR_ZERO_RETURN) {\n            *kelp_err_code = 0;\n            return 0;\n        }\n        char text[256];\n        int code = kelp_tls_classify_error(ssl, err, text, sizeof text);\n        *kelp_err_code = code;\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return 0;\n    }\n",
-    ),
-    (
-        "std/tls",
-        "shutdown_try_raw",
-        "    /* One `SSL_shutdown` (a return of 0 means `close_notify` went out but\n       the peer's set has not arrived yet, which is not a failure), then the\n       handle is always freed: the caller has no second chance to end the\n       session and the socket close follows either way. */\n    SSL* ssl = (SSL*)kelp_handle;\n    int rc = KELP_NO_SIGPIPE(SSL_shutdown(ssl));\n    *kelp_err_code = 0;\n    if (rc < 0) {\n        int err = SSL_get_error(ssl, rc);\n        char text[256];\n        int code = kelp_tls_classify_error(ssl, err, text, sizeof text);\n        *kelp_err_code = code;\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    SSL_free(ssl);\n",
-    ),
+    // std/tls bodies are Rust exports in kelp-rt/src/tls.rs (see RUST_PORTED).
 ];
 
 /// The externs whose body is the Rust runtime's export of the same name
@@ -711,6 +650,15 @@ static RUST_PORTED: &[(&str, &str)] = &[
     ("std/tls", "alpn_raw"),
     ("std/tls", "peer_subject_raw"),
     ("std/tls", "pending_raw"),
+    ("std/tls", "set_timeout_raw"),
+    ("std/tls", "write_try_raw"),
+    ("std/tls", "write_all_try_raw"),
+    ("std/tls", "read_try_raw"),
+    ("std/tls", "read_into_try_raw"),
+    ("std/tls", "shutdown_try_raw"),
+    ("std/net", "send_all_try_raw"),
+    ("std/net", "recv_try_raw"),
+    ("std/net", "recv_into_try_raw"),
 ];
 
 /// The name `module` writes in its own `extern fun` declarations for

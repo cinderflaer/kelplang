@@ -117,8 +117,8 @@ pub enum Node<M> {
     Text(val text: String, val size: i32, val bold: bool)
     Spacer(val height: i32)
     Entry(val text: String, val on_change: fun (String).return: M)
-    Button(val label: String, val on_click: M)
-    Checkbox(val label: String, val checked: bool, val on_toggle: M)
+    Button(val label: String, val on_click: Box<M>)
+    Checkbox(val label: String, val checked: bool, val on_toggle: Box<M>)
     Progress(val permille: i32)
     Separator
     Scrolled(val children: List<Child<M>>, val spacing: i32)
@@ -146,8 +146,8 @@ fun run_build<M>(deps: &Deps, build: fun (&Deps).return: List<Child<M>>).return:
     if items.len() != 1 {
         panic("polyp: a memo view function must return exactly one node")
     }
-    val child = items.remove(0)
-    return child.node
+    var child = items.remove(0)
+    return unbox(child.node)
 }
 
 // What a memo view function returns: the nodes the block pushes (exactly one is required), so
@@ -213,7 +213,14 @@ fun Deps.eq(other: &Deps).return: bool {
 // One child of a container: its key, its node, and the options that apply to its widget. A key
 // must be unique among the children of one container; a duplicate panics when the container is
 // reconciled.
-pub datac Child<M>(val key: Key, val node: Node<M>, val opts: Opts)
+pub datac Child<M>(val key: Box<Key>, val node: Box<Node<M>>, val opts: Opts)
+
+// Moves a value out of a `Box`. A managed datac or enum payload holds a Key, a Node or a message
+// only through a Box, because the collector describes an enum only as a heap object.
+pub fun unbox<T>(b: move Box<T>).return: T {
+    var c = b
+    return c.take()
+}
 
 // The builder a block writes children into. A trailing block is passed to `column`/`row` as a
 // `scoped fun(mut Children<M>)`, so the block mutates this value through the exclusive borrow a
@@ -326,11 +333,11 @@ fun duplicate_message(k: &Key).return: String = when k {
 fun check_duplicate_keys<M>(children: &List<Child<M>>) {
     var i: usize = 0
     while i < children.len() {
-        if !key_is_none(children.get(i).key) {
+        if !key_is_none(children.get(i).key.get()) {
             var j: usize = i + 1
             while j < children.len() {
-                if key_eq(children.get(i).key, children.get(j).key) {
-                    panic(duplicate_message(children.get(i).key))
+                if key_eq(children.get(i).key.get(), children.get(j).key.get()) {
+                    panic(duplicate_message(children.get(i).key.get()))
                 }
                 j += 1
             }
@@ -366,14 +373,14 @@ fun mut Children<M>.push_node(node: move Node<M>) {
     pending_key.set(Key.None)
     val o = pending_opts.take()
     pending_opts.set(default_opts())
-    items.push(Child(key = k, node = node, opts = o))
+    items.push(Child(key = Box.of(k), node = Box.of(node), opts = o))
 }
 
 fun mut Children<M>.push_keyed(key: move Key, node: move Node<M>) {
     pending_key.set(Key.None)
     val o = pending_opts.take()
     pending_opts.set(default_opts())
-    items.push(Child(key = key, node = node, opts = o))
+    items.push(Child(key = Box.of(key), node = Box.of(node), opts = o))
 }
 
 fun mut Children<M>.text(t: str) {
@@ -389,7 +396,7 @@ fun mut Children<M>.spacer(height: i32) {
 }
 
 fun mut Children<M>.button(label: str, on_click: move M) {
-    self.push_node(Node.Button(label = String.from_str(label), on_click = on_click))
+    self.push_node(Node.Button(label = String.from_str(label), on_click = Box.of(on_click)))
 }
 
 // `on_change` is a plain `fun` value, not a closure capturing state: the loop calls it with the
@@ -399,7 +406,7 @@ fun mut Children<M>.entry(value: str, on_change: fun (String).return: M) {
 }
 
 fun mut Children<M>.checkbox(label: str, checked: bool, on_toggle: move M) {
-    self.push_node(Node.Checkbox(label = String.from_str(label), checked = checked, on_toggle = on_toggle))
+    self.push_node(Node.Checkbox(label = String.from_str(label), checked = checked, on_toggle = Box.of(on_toggle)))
 }
 
 // The fraction is an integer permille (`0..=1000`), not an `f64`: a f64 comparison on a
@@ -584,7 +591,7 @@ fun plain_children<M>(nodes: move List<Node<M>>).return: List<Child<M>> {
     var out: List<Child<M>> = List.empty()
     var rest = nodes
     while !rest.is_empty() {
-        out.push(Child(key = Key.None, node = rest.remove(0), opts = default_opts()))
+        out.push(Child(key = Box.of(Key.None), node = Box.of(rest.remove(0)), opts = default_opts()))
     }
     return out
 }
@@ -595,7 +602,7 @@ pub fun memo<M>(deps: move Deps, build: fun (&Deps).return: List<Child<M>>).retu
 pub fun plain_column<M>(children: move List<Node<M>>).return: Node<M> = Node.Column(children = plain_children(children), spacing = 6)
 pub fun plain_row<M>(children: move List<Node<M>>).return: Node<M> = Node.Row(children = plain_children(children), spacing = 6)
 pub fun text<M>(text: move String).return: Node<M> = Node.Text(text = text, size = 0, bold = false)
-pub fun button<M>(label: move String, on_click: move M).return: Node<M> = Node.Button(label = label, on_click = on_click)
+pub fun button<M>(label: move String, on_click: move M).return: Node<M> = Node.Button(label = label, on_click = Box.of(on_click))
 
 // A node's address in the tree. The root is the empty path; a segment names a child by its key
 // when it has one (`Keyed`) and by its position otherwise (`Index`). Identity is the key for a
@@ -603,7 +610,7 @@ pub fun button<M>(label: move String, on_click: move M).return: Node<M> = Node.B
 // an unkeyed one keeps the index positional matching gave it.
 pub enum Seg {
     Index(val i: i32)
-    Keyed(val i: i32, val key: Key)
+    Keyed(val i: i32, val key: Box<Key>)
 }
 
 pub datac Path(val segs: List<Seg>)
@@ -736,13 +743,13 @@ pub fun copy_path(p: &Path).return: Path {
 
 pub fun clone_seg(s: &Seg).return: Seg = when s {
     Index(i) -> Seg.Index(i = i)
-    Keyed(i, key) -> Seg.Keyed(i = i, key = clone_key(key))
+    Keyed(i, key) -> Seg.Keyed(i = i, key = Box.of(clone_key(key.get())))
 }
 
 pub fun seg_for(key: &Key, i: i32).return: Seg = if key_is_none(key) {
     Seg.Index(i = i)
 } else {
-    Seg.Keyed(i = i, key = clone_key(key))
+    Seg.Keyed(i = i, key = Box.of(clone_key(key)))
 }
 
 pub fun seg_index(s: &Seg).return: i32 = when s {
@@ -843,7 +850,7 @@ fun apply_opts(p: mut Props, o: &Opts) {
 }
 
 pub fun child_props<M>(c: &Child<M>).return: Props {
-    var p = props_of(c.node)
+    var p = props_of(c.node.get())
     apply_opts(p, &c.opts)
     return p
 }
@@ -927,7 +934,7 @@ fun node_props_eq<M>(a: &Node<M>, b: &Node<M>).return: bool = when a {
 fun find_key<M>(old: &List<Child<M>>, used: &List<bool>, key: &Key).return: i32 {
     var j: usize = 0
     while j < old.len() {
-        if !used.get(j) && key_eq(old.get(j).key, key) {
+        if !used.get(j) && key_eq(old.get(j).key.get(), key) {
             return j.to_i32()
         }
         j += 1
@@ -979,7 +986,7 @@ pub fun diff_memo_into<M>(old: &Node<M>, new: &Node<M>, out: mut List<Patch>, st
 //
 // Counters: `hits`, `misses` and `view_calls` (one per call of a memoised view function made to
 // build the screen; `take_message` rebuilds the subtree it needs on a click, which is not counted).
-pub datac MemoEntry<M>(var ident: Path, var deps: Deps, var body: Node<M>)
+pub datac MemoEntry<M>(var ident: Path, var deps: Deps, var body: Box<Node<M>>)
 
 pub datac MemoStore<M>(var entries: List<MemoEntry<M>>, var hits: i32, var misses: i32, var view_calls: i32, var hint: i32)
 
@@ -1007,7 +1014,7 @@ fun seg_ident_eq(a: &Seg, b: &Seg).return: bool = when a {
         else -> false
     }
     Keyed(_, ka) -> when b {
-        Keyed(_, kb) -> key_eq(ka, kb)
+        Keyed(_, kb) -> key_eq(ka.get(), kb.get())
         else -> false
     }
 }
@@ -1063,7 +1070,7 @@ fun memo_build<M>(path: &Path, deps: &Deps, build: fun (&Deps).return: List<Chil
     val bp = with_seg(path, Seg.Index(i = 0))
     out.push(Patch.Create(path = copy_path(bp), kind = kind_of_node(&body), props = props_of(&body)))
     create_subtree(bp, &body, out, store)
-    store.entries.push(MemoEntry(ident = copy_path(path), deps = copy_deps(deps), body = body))
+    store.entries.push(MemoEntry(ident = copy_path(path), deps = copy_deps(deps), body = Box.of(body)))
 }
 
 // A matched pair of memo nodes: hit, or miss and diff the subtree against the stored one.
@@ -1089,8 +1096,8 @@ fun memo_match<M>(path: &Path, deps: &Deps, build: fun (&Deps).return: List<Chil
     val body = run_build(deps, build)
     val bp = with_seg(path, Seg.Index(i = 0))
     var e = store.entries.remove(at.to_usize())
-    diff_node(bp, &e.body, &body, out, store)
-    e.body = body
+    diff_node(bp, e.body.get(), &body, out, store)
+    e.body.set(body)
     e.deps = copy_deps(deps)
     var back = at.to_usize()
     if back > store.entries.len() {
@@ -1142,23 +1149,23 @@ fun diff_node<M>(path: &Path, old: &Node<M>, new: &Node<M>, out: mut List<Patch>
 
 // A matched child: its own property update, then its subtree.
 fun diff_matched<M>(path: &Path, old: &Child<M>, new: &Child<M>, out: mut List<Patch>, store: mut MemoStore<M>) {
-    if !node_props_eq(old.node, new.node) || !opts_eq(old.opts, new.opts) {
+    if !node_props_eq(old.node.get(), new.node.get()) || !opts_eq(old.opts, new.opts) {
         out.push(Patch.Update(path = copy_path(path), props = child_props(new)))
     }
-    when old.node {
-        Column(oc, _) -> when new.node {
+    when old.node.get() {
+        Column(oc, _) -> when new.node.get() {
             Column(nc, _) -> diff_children(path, oc, nc, out, store)
             else -> {}
         }
-        Row(oc, _) -> when new.node {
+        Row(oc, _) -> when new.node.get() {
             Row(nc, _) -> diff_children(path, oc, nc, out, store)
             else -> {}
         }
-        Scrolled(oc, _) -> when new.node {
+        Scrolled(oc, _) -> when new.node.get() {
             Scrolled(nc, _) -> diff_children(path, oc, nc, out, store)
             else -> {}
         }
-        Memo(_, _) -> when new.node {
+        Memo(_, _) -> when new.node.get() {
             Memo(nd, nb) -> memo_match(path, nd, nb, out, store)
             else -> {}
         }
@@ -1181,24 +1188,24 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
     var i: usize = 0
     while i < new.len() {
         var m: i32 = -1
-        if !key_is_none(new.get(i).key) {
+        if !key_is_none(new.get(i).key.get()) {
             // The common case first: the key is where it was, so no scan is needed (keys are
             // unique within a container, so this finds the same child `find_key` would).
-            if i < old.len() && !used.get(i) && key_eq(old.get(i).key, new.get(i).key) {
+            if i < old.len() && !used.get(i) && key_eq(old.get(i).key.get(), new.get(i).key.get()) {
                 m = i.to_i32()
             } else {
-                m = find_key(old, used, new.get(i).key)
+                m = find_key(old, used, new.get(i).key.get())
             }
             // A memo and a plain node under one key are different widgets: no match.
-            if m >= 0 && is_memo(old.get(m.to_usize()).node) != is_memo(new.get(i).node) {
+            if m >= 0 && is_memo(old.get(m.to_usize()).node.get()) != is_memo(new.get(i).node.get()) {
                 m = -1
             }
-        } else if i < old.len() && !used.get(i) && key_is_none(old.get(i).key) && kind_of_node(new.get(i).node) == kind_of_node(old.get(i).node) {
+        } else if i < old.len() && !used.get(i) && key_is_none(old.get(i).key.get()) && kind_of_node(new.get(i).node.get()) == kind_of_node(old.get(i).node.get()) {
             m = i.to_i32()
         }
         if m >= 0 {
             used.set(m.to_usize(), true)
-        } else if !key_is_none(new.get(i).key) {
+        } else if !key_is_none(new.get(i).key.get()) {
             unmatched_key = true
         }
         matches.push(m)
@@ -1217,7 +1224,7 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
     while i2 < new.len() {
         val m = matches.get(i2)
         if m >= 0 {
-            val p = with_seg(parent, seg_for(new.get(i2).key, i2.to_i32()))
+            val p = with_seg(parent, seg_for(new.get(i2).key.get(), i2.to_i32()))
             diff_matched(p, old.get(m.to_usize()), new.get(i2), out, store)
         }
         i2 += 1
@@ -1227,7 +1234,7 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
     var j: i32 = old.len().to_i32() - 1
     while j >= 0 {
         if !used.get(j.to_usize()) {
-            val gone = with_seg(parent, seg_for(old.get(j.to_usize()).key, j))
+            val gone = with_seg(parent, seg_for(old.get(j.to_usize()).key.get(), j))
             if !store.entries.is_empty() {
                 store.drop_under(gone)
             }
@@ -1240,9 +1247,9 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
     var k: usize = 0
     while k < new.len() {
         if matches.get(k) < 0 {
-            val p = with_seg(parent, seg_for(new.get(k).key, k.to_i32()))
-            out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(new.get(k).node), props = child_props(new.get(k))))
-            create_subtree(p, new.get(k).node, out, store)
+            val p = with_seg(parent, seg_for(new.get(k).key.get(), k.to_i32()))
+            out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(new.get(k).node.get()), props = child_props(new.get(k))))
+            create_subtree(p, new.get(k).node.get(), out, store)
         }
         k += 1
     }
@@ -1267,7 +1274,7 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
         while t < new.len() {
             val mm = matches.get(t)
             if mm >= 0 && mm != t.to_i32() {
-                out.push(Patch.Move(path = with_seg(parent, seg_for(new.get(t).key, t.to_i32())), to_index = t.to_i32()))
+                out.push(Patch.Move(path = with_seg(parent, seg_for(new.get(t).key.get(), t.to_i32())), to_index = t.to_i32()))
             }
             t += 1
         }
@@ -1289,9 +1296,9 @@ fun create_children<M>(parent: &Path, children: &List<Child<M>>, out: mut List<P
     check_duplicate_keys(children)
     var i: usize = 0
     while i < children.len() {
-        val p = with_seg(parent, seg_for(children.get(i).key, i.to_i32()))
-        out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(children.get(i).node), props = child_props(children.get(i))))
-        create_subtree(p, children.get(i).node, out, store)
+        val p = with_seg(parent, seg_for(children.get(i).key.get(), i.to_i32()))
+        out.push(Patch.Create(path = copy_path(p), kind = kind_of_node(children.get(i).node.get()), props = child_props(children.get(i))))
+        create_subtree(p, children.get(i).node.get(), out, store)
         i += 1
     }
 }
@@ -1351,8 +1358,8 @@ pub fun take_message<B: Backend, M>(root: move Node<M>, path: &Path, backend: &B
 fun take_at<B: Backend, M>(node: move Node<M>, path: &Path, depth: usize, backend: &B, id: i32).return: option.Option<M> {
     if depth >= path.segs.len() {
         return when node {
-            Button(_, msg) -> option.Option.Some(value = msg)
-            Checkbox(_, _, msg) -> option.Option.Some(value = msg)
+            Button(_, msg) -> option.Option.Some(value = unbox(msg))
+            Checkbox(_, _, msg) -> option.Option.Some(value = unbox(msg))
             Entry(_, ctor) -> option.Option.Some(value = ctor(backend.entry_text(id)))
             else -> option.Option.None
         }
@@ -1388,8 +1395,8 @@ fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth:
     var i: usize = 0
     while !rest.is_empty() {
         val c = rest.remove(0)
-        if child_at(want, c.key, i) {
-            return take_at(c.node, path, depth + 1, backend, id)
+        if child_at(want, c.key.get(), i) {
+            return take_at(unbox(c.node), path, depth + 1, backend, id)
         }
         i += 1
     }
@@ -1398,7 +1405,7 @@ fun take_child<B: Backend, M>(children: move List<Child<M>>, path: &Path, depth:
 
 pub fun child_at(seg: &Seg, key: &Key, index: usize).return: bool = when seg {
     Index(i) -> key_is_none(key) && index.to_i32() == i
-    Keyed(_, k) -> key_eq(k, key)
+    Keyed(_, k) -> key_eq(k.get(), key)
 }
 
 fun seq().return: atomic.Ordering = atomic.Ordering.SeqCst
@@ -1537,17 +1544,17 @@ fun frame_drain<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut
 // The clock is the platform's, in microseconds, delivered as `Tick` events (`soft/event.kp`); a
 // platform that never delivers one has a clock stuck at 0 and no timer ever fires.
 pub enum Sub<M> {
-    Every(val ms: i32, val msg: M)
-    After(val ms: i32, val msg: M)
+    Every(val ms: i32, val msg: Box<M>)
+    After(val ms: i32, val msg: Box<M>)
 }
 
 // A repeating timer: `msg` is delivered when the period has elapsed, at most once per turn of the
 // loop, and a turn that finds the timer several periods late fires it once and skips the missed
 // periods (the next firing is the first period boundary after now).
-pub fun every<M>(ms: i32, msg: move M).return: Sub<M> = Sub.Every(ms = ms, msg = msg)
+pub fun every<M>(ms: i32, msg: move M).return: Sub<M> = Sub.Every(ms = ms, msg = Box.of(msg))
 
 // A one-shot timer: `msg` is delivered once, `ms` milliseconds after the timer first appears.
-pub fun after<M>(ms: i32, msg: move M).return: Sub<M> = Sub.After(ms = ms, msg = msg)
+pub fun after<M>(ms: i32, msg: move M).return: Sub<M> = Sub.After(ms = ms, msg = Box.of(msg))
 
 pub datac TimerSlot(var kind: i32, var ms: i32, var due_us: u64, var done: bool)
 
@@ -1622,12 +1629,12 @@ pub fun collect_due<M>(timers: mut Timers, subs: move List<Sub<M>>, now: u64).re
         when s {
             Every(ms, msg) -> {
                 if timers.step(i, SUB_EVERY, ms, now) {
-                    out.push(msg)
+                    out.push(unbox(msg))
                 }
             }
             After(ms, msg) -> {
                 if timers.step(i, SUB_AFTER, ms, now) {
-                    out.push(msg)
+                    out.push(unbox(msg))
                 }
             }
         }

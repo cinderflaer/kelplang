@@ -16,7 +16,9 @@ impl "std/option"
 
 const MAX_PRESENTED: usize = 32
 
-pub datac Timed(val at: u64, val ev: event.Event)
+// The event sits in a `Box`: a managed datac cannot hold an enum inline, and a Box payload is
+// the form the collector describes.
+pub datac Timed(val at: u64, val ev: Box<event.Event>)
 
 pub datac HeadlessPlatform(
     var f: fb.Fb,
@@ -70,12 +72,12 @@ pub fun new(width: i32, height: i32).return: HeadlessPlatform {
 
 // Queue an event at the current clock, which is what a test that wants "this frame" writes.
 fun mut HeadlessPlatform.push(ev: move event.Event) {
-    script.push(Timed(at = time_ms, ev = ev))
+    script.push(Timed(at = time_ms, ev = Box.of(ev)))
 }
 
 // Queue an event for a later clock, for a test that advances time.
 fun mut HeadlessPlatform.push_at(at: u64, ev: move event.Event) {
-    script.push(Timed(at = at, ev = ev))
+    script.push(Timed(at = at, ev = Box.of(ev)))
 }
 
 fun mut HeadlessPlatform.advance(ms: u64) {
@@ -172,7 +174,7 @@ impl platform.Platform for HeadlessPlatform {
             return option.Option.None
         }
         cursor += 1
-        return option.Option.Some(value = event.clone(t.ev))
+        return option.Option.Some(value = event.clone(t.ev.get()))
     }
 
     fun Self.framebuffer().return: fb.Fb {

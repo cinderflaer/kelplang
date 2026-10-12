@@ -86,7 +86,7 @@ pub fun drive<P: platform.Platform>(
     var steps = app.script()
     var i: usize = 0
     while i < steps.len() {
-        backend.schedule(core.clone_event(steps.get(i).event))
+        backend.schedule(core.clone_event(steps.get(i).event.get()))
         i += 1
     }
 

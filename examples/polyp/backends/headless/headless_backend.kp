@@ -20,7 +20,7 @@ pub datac HNode(
     var kind: i32,
     var slot: i32,
     var props: core.Props,
-    var key: core.Key,
+    var key: Box<core.Key>,
     var kids: List<HNode>,
 )
 
@@ -83,7 +83,7 @@ fun key_of_path(path: &core.Path).return: core.Key {
     }
     return when path.segs.get(path.segs.len() - 1) {
         Index(_) -> core.Key.None
-        Keyed(_, key) -> core.clone_key(key)
+        Keyed(_, key) -> core.clone_key(key.get())
     }
 }
 
@@ -91,7 +91,7 @@ fun key_of_path(path: &core.Path).return: core.Key {
 fun kid_index(kids: &List<HNode>, seg: &core.Seg).return: i32 {
     var i: usize = 0
     while i < kids.len() {
-        if core.child_at(seg, kids.get(i).key, i) {
+        if core.child_at(seg, kids.get(i).key.get(), i) {
             return i.to_i32()
         }
         i += 1
@@ -227,7 +227,7 @@ fun find_path(kids: &List<HNode>, base: &core.Path, id: i32).return: option.Opti
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
-        val here = core.with_seg(base, core.seg_for(n.key, i.to_i32()))
+        val here = core.with_seg(base, core.seg_for(n.key.get(), i.to_i32()))
         if n.slot == id {
             return option.Option.Some(value = here)
         }
@@ -333,7 +333,7 @@ fun render(kids: &List<HNode>, level: i32, out: mut List<String>) {
         val n = kids.get(i)
         var line = indent(level)
         line = append(line, kind_name(n.kind))
-        when n.key {
+        when n.key.get() {
             Str(s) -> {
                 line = append(line, " #")
                 line = append(line, s.as_str())
@@ -399,7 +399,7 @@ impl core.Backend for Headless {
         if kind == core.KIND_ENTRY {
             entry_builds += 1
         }
-        val node = HNode(kind = kind, slot = slot, props = copy_props(props), key = key_of_path(path), kids = List.empty())
+        val node = HNode(kind = kind, slot = slot, props = copy_props(props), key = Box.of(key_of_path(path)), kids = List.empty())
         if path.segs.len() == 0 {
             root.clear()
             root.push(node)

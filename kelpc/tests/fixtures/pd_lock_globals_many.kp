@@ -1,5 +1,5 @@
 // Several lock-typed `pd val` globals in one program: two Mutexes, two
-// RwLocks, a Condvar and a Mutex<List<i32>>, all built by the module
+// RwLocks, a Condvar and a Mutex<i64> that counts pushes, all built by the module
 // initialiser, then used from four threads at once.
 impl "std/thread"
 impl "std/result"
@@ -9,7 +9,7 @@ pd val other: Mutex<i64> = Mutex.new(1)
 pd val table: RwLock<i64> = RwLock.new(5)
 pd val table2: RwLock<i64> = RwLock.new(7)
 pd val bell: Condvar = Condvar.new()
-pd val items: Mutex<List<i32>> = Mutex.new(List.empty())
+pd val items: Mutex<i64> = Mutex.new(0)
 
 fun bump(c: &Mutex<i64>).return: i64 {
     var i = 0
@@ -29,10 +29,10 @@ fun wbump(c: &RwLock<i64>).return: i64 {
     0
 }
 
-fun push(c: &Mutex<List<i32>>).return: i64 {
+fun push(c: &Mutex<i64>).return: i64 {
     var i = 0
     while i < 10 {
-        c.lock { v -> v.push(1) }
+        c.lock { v -> *v = *v + 1 }
         i = i + 1
     }
     0
@@ -64,5 +64,5 @@ fun main() {
     print(other.lock { v -> *v })
     print(table.read { v -> *v })
     print(table2.read { v -> *v })
-    print(items.lock { v -> v.len() })
+    print(items.lock { v -> *v })
 }

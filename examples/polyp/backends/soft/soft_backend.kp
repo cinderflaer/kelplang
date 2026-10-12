@@ -251,7 +251,7 @@ pub datac SNode(
     var slot: i32,
     var uid: i32,
     var props: core.Props,
-    var key: core.Key,
+    var key: Box<core.Key>,
     var kids: List<SNode>,
     var rect: fb.Rect,
     var measured_w: i32,
@@ -459,14 +459,14 @@ fun key_of_path(path: &core.Path).return: core.Key {
     }
     return when path.segs.get(path.segs.len() - 1) {
         Index(_) -> core.Key.None
-        Keyed(_, key) -> core.clone_key(key)
+        Keyed(_, key) -> core.clone_key(key.get())
     }
 }
 
 fun kid_index(kids: &List<SNode>, seg: &core.Seg).return: i32 {
     var i: usize = 0
     while i < kids.len() {
-        if core.child_at(seg, kids.get(i).key, i) {
+        if core.child_at(seg, kids.get(i).key.get(), i) {
             return i.to_i32()
         }
         i += 1
@@ -623,7 +623,7 @@ fun find_path(kids: &List<SNode>, base: &core.Path, id: i32).return: option.Opti
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
-        val here = core.with_seg(base, core.seg_for(n.key, i.to_i32()))
+        val here = core.with_seg(base, core.seg_for(n.key.get(), i.to_i32()))
         if n.slot == id {
             return option.Option.Some(value = here)
         }
@@ -2580,7 +2580,7 @@ impl core.Backend for SoftBackend {
             slot = slot,
             uid = uid_now,
             props = copy_props(props),
-            key = key_of_path(path),
+            key = Box.of(key_of_path(path)),
             kids = List.empty(),
             rect = fb.empty_rect(),
             measured_w = 0,

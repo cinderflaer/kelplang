@@ -31,7 +31,7 @@ fun arm_smoke() {
     var i: usize = 0
     while i < steps.len() {
         val step = steps.get(i)
-        polyp.schedule(delay_ms = step.delay_ms, event = core.clone_event(step.event))
+        polyp.schedule(delay_ms = step.delay_ms, event = core.clone_event(step.event.get()))
         i += 1
     }
 }
