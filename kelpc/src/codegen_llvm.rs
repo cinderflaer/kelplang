@@ -3526,7 +3526,7 @@ impl<'a> Gen<'a> {
             let llvm_ty = ctx.struct_type(&struct_tag(&e.name));
             self.structs.insert(e.name.clone(), llvm_ty);
             let union_ty = ctx.struct_type(&enum_union_name(&e.name));
-            // A managed build's enum tag is always an i32 (`kelp_gc.h`: the
+            // A managed build's enum tag is always an i32 (the collector's
             // descriptor reads a u32 at tag_off), whatever `repr` names.
             let (tag_bytes, tag_signed) = if self.managed { (4, true) } else { e.tag_storage() };
             let tag_ty = enum_tag_llvm_type(ctx, tag_bytes);

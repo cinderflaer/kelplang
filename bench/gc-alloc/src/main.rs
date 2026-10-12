@@ -1,5 +1,5 @@
 //! Allocation micro benchmark for the managed collector's C ABI
-//! (kelpc/gc/include/kelp_gc.h). Single thread, world always running.
+//! (the `kelp_gc_*` exports in kelpc/gc/src/lib.rs). Single thread, world always running.
 //!
 //! Each case allocates `N` objects that are all garbage except the last one,
 //! so the heap cycles and the sweep path is exercised. Prints allocations per

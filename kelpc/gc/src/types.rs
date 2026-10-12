@@ -1,5 +1,5 @@
-//! Descriptor and header layouts. These must match `include/kelp_gc.h`
-//! field for field; `kelpc/tests/gc` checks the offsets.
+//! Descriptor and header layouts. The C side reads these fields at these
+//! offsets; `kelpc/tests/gc` checks the offsets.
 
 use core::ffi::c_void;
 

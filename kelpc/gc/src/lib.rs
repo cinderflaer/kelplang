@@ -2,7 +2,7 @@
 //!
 //! Non-moving mark-region (Immix-style) tracing collector with a precise heap
 //! and conservatively scanned thread stacks. See `kelpscript-gc-paper.md`
-//! sections 3 and 4. The C ABI is `include/kelp_gc.h`.
+//! sections 3 and 4. The C ABI is the `kelp_gc_*` exports below.
 #![cfg_attr(not(test), no_std)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
@@ -216,7 +216,7 @@ unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *m
     }
 }
 
-// ---- Exported C ABI. See include/kelp_gc.h. ----
+// ---- Exported C ABI. The layouts are in types.rs. ----
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_gc_init(heap_min: usize, heap_max: usize) {

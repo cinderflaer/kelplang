@@ -167,7 +167,7 @@ pub unsafe fn buf_free(p: *mut u8) {
 
 /// The type descriptor of a byte buffer: a noscan array of `u8`, with the
 /// reserved id the program's own table never hands out (`kelp_rt.c`
-/// `KELP_RT_BYTES_TYPE_ID`). Mirrors `kelp_gc_type` in `kelpc/gc/include`.
+/// `KELP_RT_BYTES_TYPE_ID`). Mirrors the `KelpGcType` layout in `kelpc/gc/src/types.rs`.
 #[cfg(feature = "managed")]
 #[repr(C)]
 struct GcType {

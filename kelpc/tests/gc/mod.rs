@@ -28,10 +28,10 @@ use crate::{
     kelp_gc_unregister_root_region,
 };
 
-// ---- Layout (the header contract with WP3). ----
+// ---- Layout (the ABI contract with WP3). ----
 
 #[test]
-fn c_layout_matches_header() {
+fn c_layout_matches_the_abi() {
     assert_eq!(offset_of!(KelpGcType, id), 0);
     assert_eq!(offset_of!(KelpGcType, size), 4);
     assert_eq!(offset_of!(KelpGcType, align), 8);
@@ -48,16 +48,14 @@ fn c_layout_matches_header() {
     assert_eq!(size_of::<KelpGcVariant>(), 16);
 }
 
-/// The Rust constants must equal the macros the header publishes, so the C
-/// side (WP3 and the runtime) sees the same limits.
+/// The limits the C side reads, pinned as literals. A change
+/// to any of these is a change to the managed ABI and must be made here on purpose.
 #[test]
-fn header_constants_match_the_rust_side() {
-    let h = include_str!("../../gc/include/kelp_gc.h");
-    let has = |line: &str| h.lines().any(|l| l.trim() == line);
-    assert!(has(&format!("#define KELP_GC_TYPE_ID_MAX {}u", TYPE_ID_MAX)), "TYPE_ID_MAX");
-    assert!(has(&format!("#define KELP_GC_TYPE_ID_V1_LIMIT {}u", TYPE_TABLE_IDS)), "TYPE_TABLE_IDS");
-    assert!(has(&format!("#define KELP_GC_ENUM_TAG_BYTES {}u", KELP_GC_ENUM_TAG_BYTES)), "enum tag width");
-    assert!(has(&format!("#define KELP_GC_LARGE_MIN {}u", LARGE_MIN)), "LARGE_MIN");
+fn abi_limits_are_pinned() {
+    assert_eq!(TYPE_ID_MAX, 16_777_215, "type ids are 24 bits");
+    assert_eq!(TYPE_TABLE_IDS, 1_048_576, "the v1 type table limit");
+    assert_eq!(KELP_GC_ENUM_TAG_BYTES, 4, "enum tag width");
+    assert_eq!(LARGE_MIN, 8192, "the large-object threshold");
 }
 
 // ---- Shared descriptors. ----
