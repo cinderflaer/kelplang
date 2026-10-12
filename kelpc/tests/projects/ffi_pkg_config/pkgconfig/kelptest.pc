@@ -1,6 +1,0 @@
-prefix=${pcfiledir}/..
-Name: kelptest
-Description: Kelp pkg-config fixture
-Version: 1.0.0
-Cflags: -I${prefix}/include
-Libs:

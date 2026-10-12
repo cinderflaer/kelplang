@@ -1,4 +1,0 @@
-// Step 0 (D53): the `move closure(i32)` parameter expands to the native
-// (func, user_data, destroy_notify) triple. The closure is valid only for the
-// duration of this call.
-pub extern fun kelp_call_twice(f: move closure(i32), x: i32).return: i32

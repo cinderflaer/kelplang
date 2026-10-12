@@ -2390,18 +2390,15 @@ fn offset_of_a_field_the_datac_does_not_have_is_rejected() {
     );
 }
 
-/// The same stage, end to end against a real C compiler: a packed datac is
-/// handed to a project-local C helper through a user `extern fun`, and the C
-/// helper's `sizeof`/`_Alignof`/`offsetof` are printed beside Kelp's own
-/// `size_of`/`align_of`/`offset_of`. The last line is the helper reading three
-/// fields at C's own offsets, so a backend whose struct body is not byte for
-/// byte the C layout prints a different number.
+/// The same stage, checked in Kelp alone: a packed datac has the size, alignment and field offsets of
+/// the packed C struct it mirrors (1 + 4 + 2 bytes, no padding). The C helper that used to print the
+/// second column is gone, so the expected values are the literals.
 #[test]
-fn a_packed_datac_crosses_to_a_c_helper_and_the_two_layouts_agree() {
+fn a_packed_datac_has_the_packed_layout() {
     assert_project_runs(
         "ffi_layout",
         &project("ffi_layout"),
-        "7\n7\n1\n1\n1\n1\n5\n5\n24037596794668035\n",
+        "7\n1\n1\n5\n",
     );
 }
 
@@ -2550,32 +2547,6 @@ fn a_manifest_ffi_header_key_includes_the_native_symbols_header() {
 }
 
 #[test]
-fn a_manifest_ffi_include_dir_reaches_the_compiled_c() {
-    assert_project_runs("ffi_include_dir", &project("ffi_include_dir"), "42\n");
-}
-
-#[test]
-fn a_manifest_ffi_pkg_config_supplies_the_compile_flags() {
-    let target = project("ffi_pkg_config");
-    let bin = out_path("ffi_pkg_config");
-    let build = kelpc()
-        .env("PKG_CONFIG_PATH", target.join("pkgconfig"))
-        .arg("build")
-        .arg(&target)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'ffi_pkg_config' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let run = Command::new(&bin).output().expect("failed to run compiled binary");
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
-}
-
-#[test]
 fn an_unknown_ffi_pkg_config_package_fails_the_build() {
     let target = project("ffi_unknown_pkg_config");
     let bin = out_path("ffi_unknown_pkg_config");
@@ -2696,39 +2667,6 @@ fn printing_an_ffi_opaque_handle_is_rejected() {
     );
 }
 
-/// Gap 4: a user `extern fun`'s `move closure(...)` parameter expands into the
-/// native `(func, user_data, destroy_notify)` triple. The LLVM backend builds the expansion, and the shape it refuses by name is covered by the test below. The helper calls the callback twice and then its `destroy`
-/// notify, so the printed order proves the thunk reordered the arguments, and
-/// the destroy notify runs exactly once.
-#[test]
-fn an_ffi_callback_closure_crosses_to_native_code() {
-    let target = project("ffi_callback");
-    let bin = out_path("ffi_callback");
-    let build = Command::new(kelpc_bin())
-        .arg("build")
-        .arg(&target)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected 'ffi_callback' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let run = Command::new(&bin).output().expect("failed to run compiled binary");
-    assert!(
-        run.status.success(),
-        "expected the 'ffi_callback' binary to exit successfully, got:\n{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "2\n3\n2\n4\n2\n8\n9\n2\n",
-        "unexpected stdout for 'ffi_callback'"
-    );
-}
-
 #[test]
 fn an_ffi_callback_closure_parameter_that_moves_is_rejected() {
     assert_project_rejected(
@@ -2745,23 +2683,6 @@ fn an_ffi_extern_fun_with_two_callback_closures_is_rejected() {
         &project("ffi_callback_two"),
         "at most one 'move closure(...)' parameter",
     );
-}
-
-/// Gap 7: a user `extern fun` whose last parameter is `...` accepts any number
-/// of extra arguments after the fixed ones. Each distinct list of extra types
-/// gets one generated fixed-arity C wrapper, the call goes through it, and the
-/// C compiler applies the default argument promotions, so neither backend ever
-/// emits a variadic call itself. The fixture calls with 0, 1 and 3 extra `i32`s
-/// and once through a second helper that reads a promoted `f32` as a `double`
-/// and a `str` as a `const char*`.
-#[test]
-fn an_ffi_variadic_extern_accepts_extra_arguments() {
-    assert_project_runs("ffi_variadic", &project("ffi_variadic"), "0\n7\n6\n11\n");
-}
-
-#[test]
-fn an_ffi_extern_accepts_function_pointers() {
-    assert_project_runs("ffi_fn_pointer", &project("ffi_fn_pointer"), "41\n42\n");
 }
 
 #[test]

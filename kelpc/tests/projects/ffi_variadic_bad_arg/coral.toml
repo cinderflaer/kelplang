@@ -4,5 +4,3 @@ name = "ffivariadicbadarg"
 domain = "env"
 library = "c"
 symbols = ["kelp_va_sum"]
-header = "kelp_va_helper.h"
-include_dirs = ["include"]

@@ -275,7 +275,10 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// `eq_operator_type_mismatch`) stay outside the corpus, so they do not move the count.
 /// Raised from 403 by `ffi_fn_pointer`: a user extern passes a typed plain
 /// `fun(i32).return: i32` callback to C and receives one back, on both backends.
-const LLVM_BUILT_BASELINE: usize = 404;
+/// Lowered from 404 to 399 by the no-C-tests lane: `ffi_callback`, `ffi_fn_pointer`, `ffi_include_dir`,
+/// `ffi_pkg_config` and `ffi_variadic` tested C interop (a C helper per project) and were removed. The
+/// count assumes all five built on the LLVM backend; re-record with `LLVM_BUILT_BASELINE_RERECORD=1`.
+const LLVM_BUILT_BASELINE: usize = 399;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

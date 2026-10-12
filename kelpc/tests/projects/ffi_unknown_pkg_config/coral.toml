@@ -7,5 +7,4 @@ name = "ffiunknownpkgconfig"
 domain = "env"
 library = "c"
 symbols = ["kelp_pkg_triple"]
-header = "kelp_pkg_helper.h"
 pkg_config = "kelp-nonexistent-pkg-9zz"

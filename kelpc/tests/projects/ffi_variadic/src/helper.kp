@@ -1,7 +1,0 @@
-// Gap 7: the "..." marker is the last parameter of a user "extern fun". A call
-// may pass any number of extra arguments after the fixed ones, each of a
-// scalar, "bool", "str" or opaque-handle type; the compiler generates one
-// fixed-arity C wrapper per distinct list of extra types and the call goes
-// through it, so neither backend emits a variadic call itself.
-pub extern fun kelp_va_sum(count: i32, ...).return: i32
-pub extern fun kelp_va_mix(count: i32, ...).return: i32

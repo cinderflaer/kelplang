@@ -1,21 +1,11 @@
-// Kernel stage 2 (MK9-S1-M2): the packed datac is built in Kelp, its address
-// is handed to the C helper, and the helper's answers are printed beside
-// Kelp's own `size_of`/`align_of`/`offset_of`. The C column is the real C
-// compiler's layout, so the fixture fails if either backend disagrees with it.
-impl "helper" caps(env = ["*"])
+// Kernel stage 2 (MK9-S1-M2): the packed datac's size, alignment and field
+// offsets. A packed struct of a u8, a u32 and a u16 is 7 bytes, aligned to 1,
+// with `length` at byte 1 and `flags` at byte 5.
+impl "helper"
 
 fun main() {
-    val p = helper.Packed(kind = 3, length = 0x11223344, flags = 0x5566)
-
-    print(helper.kelp_layout_size())
     print(size_of<helper.Packed>())
-    print(helper.kelp_layout_align())
     print(align_of<helper.Packed>())
-    print(helper.kelp_layout_offset_length())
     print(offset_of<helper.Packed>("length"))
-    print(helper.kelp_layout_offset_flags())
     print(offset_of<helper.Packed>("flags"))
-
-    val raw: Ptr<helper.Packed> = Ptr.from_ref(&p)
-    print(helper.kelp_layout_read(raw))
 }

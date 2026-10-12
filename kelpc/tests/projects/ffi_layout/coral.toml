@@ -1,14 +1,1 @@
 name = "ffilayout"
-
-# Kernel stage 2 (MK9-S1-M2, roadmap B-2): a `repr(packed)` datac is handed to
-# a C helper through a user `extern fun`, so the two sides' layouts are checked
-# against a real C compiler rather than against each other. The helper is a
-# project-local `static inline` taking the address as `const void*`, so no
-# Kelp-mangled type name has to appear in the header; `include_dirs` is what
-# lets the generated C find it.
-[extern."helper"]
-domain = "env"
-library = "c"
-symbols = ["kelp_layout_size", "kelp_layout_align", "kelp_layout_offset_length", "kelp_layout_offset_flags", "kelp_layout_read"]
-header = "kelp_layout_helper.h"
-include_dirs = ["include"]

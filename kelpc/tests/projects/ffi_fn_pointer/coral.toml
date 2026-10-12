@@ -1,8 +1,0 @@
-name = "ffifnpointer"
-
-[extern."helper"]
-domain = "env"
-library = "c"
-symbols = ["kelp_apply", "kelp_callback"]
-header = "kelp_fn_helper.h"
-include_dirs = ["include"]

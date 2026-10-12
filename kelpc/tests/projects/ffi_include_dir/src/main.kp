@@ -1,9 +1,0 @@
-// MK9-S1-M1 (roadmap B-1): main delegates the "env" domain coral.toml
-// assigned "helper" to it, then calls the FFI-bound `kelp_test_double(21)`
-// through it. `include_dirs = ["include"]` in the manifest is what makes the
-// generated C find `kelp_test_helper.h` and compile.
-impl "helper" caps(env = ["*"])
-
-fun main() {
-    print(helper.kelp_test_double(21))
-}

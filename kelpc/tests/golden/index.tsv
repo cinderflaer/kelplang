@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1098 ran=557 c_refused=508 excluded=33
+# counts candidates=1093 ran=553 c_refused=507 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -971,11 +971,9 @@ project_ffi_bad_header	c-refused		error: coral.toml value for '[extern."ctype"] 
 project_ffi_bad_header_dotdot	c-refused		error: coral.toml value for '[extern."ctype"] header' must not contain '"', '<', '>', a newline or '..'	
 project_ffi_bad_rename	c-refused		error: coral.toml C symbol for '[extern."sys"] symbols' must be a C identifier, found 'get-pid'	
 project_ffi_bad_symbol	c-refused		error: extern function 'getpid' is not in this module's coral.toml '[extern."sys"]' symbol allowlist — add it there before declaring 'extern fun getpid'	
-project_ffi_callback	ran	exit 0		582da6d349f0777516b1be0d2ba4540c2d17b4da1be8d43ff5f59cccabe68654
 project_ffi_callback_move_param	c-refused		error: the callback closure type 'closure(move i32)' takes 'move i32' by ownership or an exclusive borrow, but a native callback thunk forwards every argument by value	
 project_ffi_callback_two	c-refused		error: 'helper.kelp_call_twice' takes 2 callback closures, but a user 'extern fun' can expand at most one 'move closure(...)' parameter in this pass	
 project_ffi_denied	c-refused		error: 'sys.getpid' needs the 'process' capability, which module 'util' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(process = ["<pattern>"])`)	
-project_ffi_fn_pointer	ran	exit 0		c6b52aaa4985699ddb9dd49186e1666c887c85cabf0818d3d664334e1a823b3c
 project_ffi_getpid	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
 project_ffi_handle	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
 project_ffi_handle_bad_downcast	c-refused		error: function 'mem.down' declared to return 'mem.Buffer' but body evaluates to 'mem.Block'	
@@ -985,15 +983,12 @@ project_ffi_handle_null_outside	c-refused		error: 'mem.Buffer.null()' is only le
 project_ffi_handle_print	c-refused		error: cannot pass a value of type 'mem.Buffer' to 'print'	
 project_ffi_handle_upcast	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
 project_ffi_header	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
-project_ffi_include_dir	ran	exit 0		084c799cd551dd1d8d5c5f9a5d593b2e931f5e36122ee5c793c1d08a19839cc0
-project_ffi_layout	ran	exit 0		ca5c8203801a11983dc011e1a140f91687940a3620c3b7b9e5664a857475949b
-project_ffi_pkg_config	c-refused		error: pkg-config failed for kelptest:	
+project_ffi_layout	ran	exit 0		42928724a5d531cb88c0d0826637fb42f8f03088b69ec2ade54cd0c65b434a35
 project_ffi_rename	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
 project_ffi_ui_denied	c-refused		error: 'display.getpid' needs the 'ui' capability, which module 'util' was not granted; the module that imports this one must delegate it (`impl "<this module>" caps(ui = ["<pattern>"])`)	
 project_ffi_ui_domain	ran	exit 0		a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74
 project_ffi_ui_pattern	c-refused		error: patterns are not enforceable in the 'ui' domain yet	
 project_ffi_unknown_pkg_config	c-refused		error: pkg-config failed for kelp-nonexistent-pkg-9zz:	
-project_ffi_variadic	ran	exit 0		c892f5094c0d91f67a058c3abe6b30469091f792e0df6f3e22ebb19483e5fbaa
 project_ffi_variadic_bad_arg	c-refused		error: extra argument 1 of 'helper.kelp_va_sum' has type 'String', which a variadic 'extern fun' cannot pass	
 project_freestanding_alloc	c-refused		error: '/home/juniper/Projects/kelp-work/wt-stage2-freeze/kelpc/tests/projects/freestanding_alloc' sets '[target] mode = "freestanding"', which only the llvm backend can build	
 project_freestanding_alloc_bad_sig	c-refused		error: the allocator function 'alloc' named by coral.toml's '[target]' has the wrong signature	
