@@ -10337,8 +10337,7 @@ fn a_mutex_stress_gate_produces_the_exact_total() {
 /// record, so the whole list is dropped when the mutex dies.
 #[test]
 fn a_mutex_guards_a_list_pushed_from_several_workers() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("mutex_list_push", "'List<i32>' cannot be the value of a Mutex or RwLock");
+    assert_compiles_and_runs("tests/fixtures/mutex_list_push.kp", "40\n");
 }
 
 /// B-5: `m.lock { v -> ... }` evaluates to the block's tail, and `into_inner`
@@ -10346,8 +10345,7 @@ fn a_mutex_guards_a_list_pushed_from_several_workers() {
 #[test]
 fn a_mutex_block_value_is_returned_and_into_inner_consumes_the_mutex() {
     assert_compiles_and_runs("tests/fixtures/mutex_lock_value.kp", "8\n14\n7\n");
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("mutex_into_inner", "'List<i32>' cannot be the value of a Mutex or RwLock");
+    assert_compiles_and_runs("tests/fixtures/mutex_into_inner.kp", "2\n41\n");
 }
 
 /// B-5: a `return` inside a lock block ends the block, the runtime releases
@@ -10485,8 +10483,7 @@ fn a_freestanding_condvar_is_refused() {
 /// into a mutex from inside a scoped block.
 #[test]
 fn a_shared_mutex_handle_and_a_swap() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("mutex_share_swap", "'List<String>' cannot be the value of a Mutex or RwLock");
+    assert_compiles_and_runs("tests/fixtures/mutex_share_swap.kp", "6\n6\n40\na\n0\n");
 }
 
 /// Channels (`std/sync`): four producers feed one consumer through a bounded
@@ -10501,8 +10498,10 @@ fn a_bounded_channel_carries_four_producers_to_one_consumer() {
 /// keeps the channel open, and a send to a dropped receiver gets the value back.
 #[test]
 fn a_channel_closes_when_its_senders_or_its_receiver_drop() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_close", "'List<i64>' cannot be the value of a Mutex or RwLock");
+    assert_compiles_and_runs(
+        "tests/fixtures/chan_close.kp",
+        "6\n1\n2\n3\n-1\nopen\nclosed\nback\n",
+    );
 }
 
 /// A rendezvous send completes only when a receive takes its value; a receiver
@@ -10516,8 +10515,7 @@ fn a_rendezvous_send_completes_only_when_a_receive_takes_it() {
 /// `select2` answers with the one ready case, and a closed empty channel is ready too.
 #[test]
 fn a_select_takes_whichever_channel_is_ready() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_select", "'List<i64>' cannot be the value of a Mutex or RwLock");
+    assert_compiles_and_runs("tests/fixtures/chan_select.kp", "1\n5\n1\n6\n0\nclosed\n");
 }
 
 /// `select3` with nothing ready waits for the one channel that sends.
@@ -10546,8 +10544,7 @@ fn a_channel_recv_timeout_times_out_and_then_receives() {
 /// A zero-capacity bounded channel is a named panic.
 #[test]
 fn a_zero_capacity_channel_panics() {
-    // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_zero_capacity", "'List<i64>' cannot be the value of a Mutex or RwLock");
+    assert_fixture_panics("chan_zero_capacity", "sync.bounded: the capacity must be at least 1");
 }
 
 /// A channel carries owned, movable values: a borrowed `str` and a lock are
@@ -10571,14 +10568,14 @@ fn a_freestanding_channel_is_refused() {
 #[test]
 fn a_pool_runs_a_thousand_jobs() {
     // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("pool_sum", "'std.pool.Job' cannot be a thread's argument");
+    assert_fixture_refused("pool_sum", "'std.pool.PoolShared' cannot be a thread's argument");
 }
 
 /// A panicking job is counted and its worker survives to run the rest.
 #[test]
 fn a_pool_counts_a_panicking_job_and_keeps_its_worker() {
     // Decision 21: managed mode refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("pool_panics", "'std.pool.Job' cannot be a thread's argument");
+    assert_fixture_refused("pool_panics", "'std.pool.PoolShared' cannot be a thread's argument");
 }
 
 /// Dropping a pool joins it, an idle or twice-joined pool shuts down, and jobs
@@ -10593,8 +10590,8 @@ fn a_pool_shuts_down_without_deadlock() {
 /// mode, because the pool's job is a thread argument the collector does not scan yet.
 #[test]
 fn a_pool_refuses_work_after_join_and_zero_workers() {
-    assert_fixture_refused("pool_spawn_after_join", "'std.pool.Job' cannot be a thread's argument");
-    assert_fixture_refused("pool_zero_workers", "'std.pool.Job' cannot be a thread's argument");
+    assert_fixture_refused("pool_spawn_after_join", "'std.pool.PoolShared' cannot be a thread's argument");
+    assert_fixture_refused("pool_zero_workers", "'std.pool.PoolShared' cannot be a thread's argument");
 }
 
 /// A freestanding build refuses the pool module by name.
@@ -13439,7 +13436,7 @@ fn a_destructor_type_owns_its_buffer_until_the_last_field_drop() {
 /// boundary in managed mode, so the refusal is what this test asserts.
 #[test]
 fn a_destructor_in_a_thread_closures_environment_runs_on_the_worker() {
-    assert_fixture_refused("drop_thread_closure", "cannot take a closure that captures values");
+    assert_fixture_refused("drop_thread_closure", "'Guard' cannot be a value captured by a closure environment in managed mode");
 }
 
 /// A destructor already runs when the value dies, so naming it explicitly would

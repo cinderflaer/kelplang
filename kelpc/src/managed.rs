@@ -638,6 +638,39 @@ mod tests {
         assert!(err.message.contains("a hosted build"), "{}", err.message);
     }
 
+    /// The sizes the root test needs: scalars and the container headers.
+    struct RootLayout;
+
+    impl crate::gc_descr::GcLayout for RootLayout {
+        fn struct_fields(&self, name: &str) -> Result<Vec<Ty>, String> {
+            Err(format!("no fields for {name} in this test"))
+        }
+        fn enum_variants(&self, _name: &str) -> Option<Vec<Vec<Ty>>> {
+            None
+        }
+        fn size_align(&self, ty: &Ty) -> Result<(u64, u64), String> {
+            Ok(match ty {
+                Ty::I32 => (4, 4),
+                Ty::I64 => (8, 8),
+                Ty::String | Ty::Bytes | Ty::List(_) => (24, 8),
+                other => return Err(format!("no layout for {other:?}")),
+            })
+        }
+    }
+
+    #[test]
+    fn a_value_holding_collected_memory_is_rooted_by_its_thread_or_lock_record() {
+        use crate::gc_descr::record_needs_root;
+        let layout = RootLayout;
+        // A scalar holds no collected memory, so its record registers no root.
+        assert!(!record_needs_root(&layout, &Ty::I64).unwrap());
+        // A handle owns no collected slot of its own; its record roots its own value.
+        assert!(!record_needs_root(&layout, &Ty::Thread(Box::new(Ty::I32))).unwrap());
+        // A String or a List is collected memory, so the record that holds it registers a root.
+        assert!(record_needs_root(&layout, &Ty::String).unwrap());
+        assert!(record_needs_root(&layout, &list(Ty::I32)).unwrap());
+    }
+
     #[test]
     fn an_undecided_type_is_refused_not_admitted() {
         let err = check_heap_slot(

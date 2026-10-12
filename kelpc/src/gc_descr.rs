@@ -162,6 +162,10 @@ pub fn pointer_offsets(
         Ty::Closure { .. } => out.push(base + CLOSURE_ENV_OFFSET),
         // A borrow owns nothing: the owner is walked where it is declared.
         Ty::Ref { .. } => {}
+        // An atomic cell holds one scalar by value (`atomic_alias_elem`: bool and
+        // the integer widths), so its walk is its element's walk, which holds no
+        // pointer slot. Decision 41: an `AtomicBool` in a GC object is a scalar.
+        Ty::Atomic(elem) => pointer_offsets(layout, elem, base, out)?,
         Ty::Struct(name) => {
             if layout.enum_variants(name).is_some() {
                 return Err(format!(
