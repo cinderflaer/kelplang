@@ -100,6 +100,93 @@ fun run_diff_tests() {
     show("kind", empty_column(), empty_row())
 }
 
+// Keyed rows named by a string each, the first `n` of the five given. The invariant below builds
+// its trees from these, so each step is a list of keys in the order the tree holds them.
+fun keys(a: str, b: str, c: str, d: str, e: str, n: i32).return: List<String> {
+    var out: List<String> = List.empty()
+    if n >= 1 {
+        out.push(String.from_str(a))
+    }
+    if n >= 2 {
+        out.push(String.from_str(b))
+    }
+    if n >= 3 {
+        out.push(String.from_str(c))
+    }
+    if n >= 4 {
+        out.push(String.from_str(d))
+    }
+    if n >= 5 {
+        out.push(String.from_str(e))
+    }
+    return out
+}
+
+fun keyed_rows(names: &List<String>).return: core.Node<i32> = core.column { k ->
+    var i: usize = 0
+    while i < names.len() {
+        val name = names.get(i)
+        k.keyed(name.as_str()) { r -> r.text(name.as_str()) }
+        i += 1
+    }
+}
+
+// The headless tree after the patches of one step must be the tree a fresh backend builds from the
+// new view alone. A mismatch stops the program: the invariant is the point of the check.
+fun check_same(be: &headless_backend.Headless, tree: &core.Node<i32>, label: str) {
+    var fresh = headless_backend.new(script = List.empty())
+    val all = core.create_all(tree)
+    core.apply_patches(backend = fresh, patches = &all)
+    val got = headless_backend.dump(be)
+    val want = headless_backend.dump(&fresh)
+    if !str.eq(got.as_str(), want.as_str()) {
+        print(got.as_str())
+        print(want.as_str())
+        panic("polyp invariant: the patched tree disagrees with the view")
+    }
+    print("invariant")
+    print(label)
+    print("ok")
+}
+
+// One step of a run: the view changes from `old_names` to `new_names`, the patches are applied to
+// the backend, and the tree after them must be the tree the new view builds.
+fun step(be: mut headless_backend.Headless, old_names: &List<String>, new_names: &List<String>, label: str) {
+    val old_tree = keyed_rows(old_names)
+    val new_tree = keyed_rows(new_names)
+    val patches = core.diff(&old_tree, &new_tree)
+    core.apply_patches(backend = be, patches = &patches)
+    check_same(be, &new_tree, label)
+}
+
+// Each run starts from the first list (built by the first patches of a fresh tree) and then takes
+// the steps in turn, so a step's patches act on the tree the step before left.
+fun run_invariants() {
+    // A single swap, a rotation, and the reversal the old pass got wrong (old [a,b,c,d] to new
+    // [c,b,d,a] ended [c,d,b,a]).
+    val s0 = keys("a", "b", "c", "d", "e", 4)
+    val s1 = keys("c", "b", "d", "a", "e", 4)
+    val s2 = keys("d", "c", "b", "a", "e", 4)
+    val s3 = keys("b", "d", "a", "c", "e", 4)
+    // Inserts and removes in the middle of a reorder, then a shrink and a regrow.
+    val s4 = keys("e", "c", "x", "b", "d", 5)
+    val s5 = keys("x", "d", "a", "e", "e", 2)
+    val s6 = keys("a", "b", "c", "d", "e", 5)
+
+    val start = keyed_rows(&s0)
+    var be = headless_backend.new(script = List.empty())
+    val first = core.create_all(&start)
+    core.apply_patches(backend = be, patches = &first)
+    check_same(&be, &start, "start")
+
+    step(be, &s0, &s1, "c-b-d-a")
+    step(be, &s1, &s2, "d-c-b-a")
+    step(be, &s2, &s3, "b-d-a-c")
+    step(be, &s3, &s4, "insert-and-move")
+    step(be, &s4, &s5, "shrink-to-two")
+    step(be, &s5, &s6, "grow-back")
+}
+
 // The duplicate-key case, run only when POLYP_TEST=dupkey, because a `panic` ends the process.
 fun run_duplicate_key() {
     val a: core.Node<i32> = core.column { k ->
@@ -143,6 +230,7 @@ fun which() {
         return
     }
     run_diff_tests()
+    run_invariants()
     run_headless_todo()
 }
 

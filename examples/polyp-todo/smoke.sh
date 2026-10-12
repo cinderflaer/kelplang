@@ -122,8 +122,18 @@ run() {
     "$KELPC" build examples/polyp-todo -o "$bin"
     # stdout only: GTK's own complaints (the EGL/DRI3 warning Xvfb always
     # produces) go to stderr and are not the program's answer.
-    local out
-    out=$(xvfb-run -a env GSK_RENDERER=cairo GDK_BACKEND=x11 POLYP_SMOKE=1 timeout 60 "$bin")
+    # GTK reports a widget it was handed wrongly as a CRITICAL on stderr and carries on, so the run
+    # is not clean unless stderr has none. Stderr is kept in a file for that test.
+    local out err
+    err=$(mktemp)
+    out=$(xvfb-run -a env GSK_RENDERER=cairo GDK_BACKEND=x11 POLYP_SMOKE=1 timeout 60 "$bin" 2>"$err")
+    if grep -q CRITICAL "$err"; then
+        grep CRITICAL "$err" | sed "s/^/smoke[$label] stderr: /" >&2
+        rm -f "$err"
+        echo "smoke[$label]: GTK reported a CRITICAL" >&2
+        exit 1
+    fi
+    rm -f "$err"
     check "$label" "$out"
     echo "smoke: $label ok"
     printf '%s\n' "$out" | sed 's/^/    /'

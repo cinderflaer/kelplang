@@ -382,6 +382,12 @@ fun make_widget(be: mut GtkBackend, kind: i32, props: &core.Props, rec: mut Moun
 // A matched widget, told the new properties in place. `kind` is known to agree, so only the
 // properties that can change are written.
 fun apply_props_to(rec: mut Mount, w: gtk.Widget, props: &core.Props, focus: gtk.Widget) {
+    // Every write below goes to `w`, and so does the signal block and unblock: a null widget here
+    // means the mount and GTK disagree, which is a bug, so it stops the program rather than writing
+    // into nothing (GTK would only print a critical and carry on).
+    if gtk.is_null_widget(w) {
+        panic("polyp gtk: a patch found no widget for a mounted node")
+    }
     if rec.kind == core.KIND_COLUMN {
         gtk.gtk_box_set_spacing(gtk.as_box(w), props.spacing)
     } else if rec.kind == core.KIND_ROW {
@@ -423,6 +429,9 @@ fun apply_props_to(rec: mut Mount, w: gtk.Widget, props: &core.Props, focus: gtk
 // sits in, and `depth` is how far into `path` that list sits.
 fun insert_into(kids: mut List<Mount>, path: &core.Path, depth: usize, at: i32, node: move Mount, node_w: gtk.Widget, box: gtk.Widget) {
     if depth + 1 == path.segs.len() {
+        if gtk.is_null_widget(box) {
+            panic("polyp gtk: an insert found no container for a new child")
+        }
         var i = at
         if i < 0 {
             i = 0
@@ -434,7 +443,11 @@ fun insert_into(kids: mut List<Mount>, path: &core.Path, depth: usize, at: i32, 
         kids.insert(i.to_usize(), node)
         return
     }
-    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    val found = kid_index(kids, path.segs.get(depth))
+    if found < 0 {
+        panic("polyp gtk: an insert named a child the mount does not have")
+    }
+    val idx = found.to_usize()
     var child = kids.remove(idx)
     val child_w = gtk.nth_child(box, idx)
     val inner_box = box_of(child_w, child)
@@ -443,7 +456,11 @@ fun insert_into(kids: mut List<Mount>, path: &core.Path, depth: usize, at: i32, 
 }
 
 fun patch_into(kids: mut List<Mount>, path: &core.Path, depth: usize, props: &core.Props, focus: gtk.Widget, box: gtk.Widget, n: mut i32) {
-    val idx = kid_index(kids, path.segs.get(depth)).to_usize()
+    val found = kid_index(kids, path.segs.get(depth))
+    if found < 0 {
+        panic("polyp gtk: a patch named a child the mount does not have")
+    }
+    val idx = found.to_usize()
     var child = kids.remove(idx)
     val child_w = gtk.nth_child(box, idx)
     if depth + 1 == path.segs.len() {
@@ -464,11 +481,14 @@ datac Gone(var count: i32)
 fun drop_into(kids: mut List<Mount>, path: &core.Path, depth: usize, box: gtk.Widget, gone: mut Gone) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 {
-        return
+        panic("polyp gtk: a remove named a child the mount does not have")
     }
     var child = kids.remove(idx.to_usize())
     val child_w = gtk.nth_child(box, idx.to_usize())
     if depth + 1 == path.segs.len() {
+        if gtk.is_null_widget(child_w) || gtk.is_null_widget(box) {
+            panic("polyp gtk: a remove found no widget for a mounted node")
+        }
         gone.count += count_nodes(child)
         gtk.gtk_box_remove(gtk.as_box(box), child_w)
         return
@@ -481,11 +501,14 @@ fun drop_into(kids: mut List<Mount>, path: &core.Path, depth: usize, box: gtk.Wi
 fun move_into(kids: mut List<Mount>, path: &core.Path, depth: usize, to_index: i32, box: gtk.Widget) {
     val idx = kid_index(kids, path.segs.get(depth))
     if idx < 0 {
-        return
+        panic("polyp gtk: a move named a child the mount does not have")
     }
     var child = kids.remove(idx.to_usize())
     val child_w = gtk.nth_child(box, idx.to_usize())
     if depth + 1 == path.segs.len() {
+        if gtk.is_null_widget(child_w) || gtk.is_null_widget(box) {
+            panic("polyp gtk: a move found no widget for a mounted node")
+        }
         var at = to_index
         if at < 0 {
             at = 0
@@ -644,6 +667,8 @@ impl core.Backend for GtkBackend {
                 i += 1
             }
             root.clear()
+            gtk.gtk_window_set_child(win, gtk.null_widget())
+            focus_before = gtk.gtk_window_get_focus(win)
             return
         }
         var gone = Gone(count = 0)
@@ -652,6 +677,9 @@ impl core.Backend for GtkBackend {
         drop_into(top.kids, path, 0, top_box, gone)
         root.insert(0, top)
         removed += gone.count
+        // A removed widget may have been the focus: the focus read at the start of the patch list
+        // can now be a widget GTK has destroyed, so it is read again for the patches that follow.
+        focus_before = gtk.gtk_window_get_focus(win)
     }
 
     fun mut Self.place_widget(path: &core.Path, to_index: i32) {

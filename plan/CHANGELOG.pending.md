@@ -96,6 +96,8 @@ empty on release.
 - A `Mutex` or `RwLock` holding a `datac` of scalars is accepted in managed mode: the classifier reads the fields of each struct, so `std.sync.ChanMeta` no longer counts as collected memory. A `Mutex` of a `List`, or a struct with a `List` field, is still refused.
 - The golden corpus index has a row for every fixture again: the 20 fixtures added after the C oracle was removed are decided by the llvm backend (`kelpc/tests/golden/regen_llvm.py`), and the hosted IR golden follows the pooled Box lowering on main. Internal test data only.
 
+- The Polyp GTK backend reads a scrolled area's content box through the viewport GTK puts around it, so the todo example no longer prints GTK CRITICAL warnings; a keyed reorder emits the moves that reach the new order (old [a,b,c,d] to new [c,b,d,a] used to end [c,d,b,a]); a mount that disagrees with the view stops the program instead of writing into nothing; and `examples/polyp-todo/smoke.sh` fails on any CRITICAL line.
+
 ## limits
 
 - Managed lowering is WIP: its first commit (7b24451) was not compiled or verified; later commits add tests and the enum and safepoint lowering (on branch round-gc, not merged).

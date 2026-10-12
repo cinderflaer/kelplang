@@ -16839,9 +16839,11 @@ fn http_server_low_level_api_and_accessors_work_in_one_process() {
 ///
 /// `examples/polyp-core-test` has no `[extern.*]` section at all, so this runs in the plain
 /// development shell with no X server and no GTK, on the backend under test. The first half is the
-/// diff: identical trees produce nothing, a text change one Update, a keyed reorder two Moves and
+/// diff: identical trees produce nothing, a text change one Update, a keyed swap one Move and
 /// no Create or Remove, an insert two Creates (the keyed row and its Text child), a remove one
 /// patch for the whole subtree, a kind change a replace, and a duplicate key a panic naming it.
+/// After the diff, the headless tree after each step of a keyed reorder, insert and remove must
+/// match a fresh build of the new view (the invariant the GTK backend's mount has to keep too).
 ///
 /// The second half runs the todo example's own program (`examples/polyp-todo/src/app.kp`, linked in
 /// as `deps/todo`) on the headless backend with the same scripted input `examples/polyp-todo/smoke.sh`
@@ -16877,7 +16879,7 @@ fn polyp_core_diffs_and_runs_the_todo_program_with_no_display() {
     );
 }
 
-const EXPECTED: &str = "identical\n0\n0\n0\n0\ntext\n0\n1\n0\n0\nreorder\n0\n0\n0\n2\ninsert\n2\n0\n0\n0\nremove\n0\n0\n1\n0\nkind\n1\n0\n1\n0\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n-- tree --\ncolumn\n  row\n    entry id=0 \"gamma\"\n    button id=1 \"add\"\n  separator\n  scrolled\n    row #1\n      checkbox id=2 unchecked\n      text \"alpha\"\n      button id=3 \"^\"\n      button id=4 \"x\"\n    row #2\n      checkbox id=5 checked\n      text \"beta\"\n      button id=6 \"^\"\n      button id=7 \"x\"\n  progress 0.500\n\n";
+const EXPECTED: &str = "identical\n0\n0\n0\n0\ntext\n0\n1\n0\n0\nreorder\n0\n0\n0\n1\ninsert\n2\n0\n0\n0\nremove\n0\n0\n1\n0\nkind\n1\n0\n1\n0\ninvariant\nstart\nok\ninvariant\nc-b-d-a\nok\ninvariant\nd-c-b-a\nok\ninvariant\nb-d-a-c\nok\ninvariant\ninsert-and-move\nok\ninvariant\nshrink-to-two\nok\ninvariant\ngrow-back\nok\n-- todo --\n2\nalpha\nfalse\nbeta\ntrue\n7\n12\n17\n22\n22\n22\n22\n10\n5\n17\ntrue\ntrue\n1\ngamma\n\nend\n-- tree --\ncolumn\n  row\n    entry id=0 \"gamma\"\n    button id=1 \"add\"\n  separator\n  scrolled\n    row #1\n      checkbox id=2 unchecked\n      text \"alpha\"\n      button id=3 \"^\"\n      button id=4 \"x\"\n    row #2\n      checkbox id=5 checked\n      text \"beta\"\n      button id=6 \"^\"\n      button id=7 \"x\"\n  progress 0.500\n\n";
 
 /// `[build] emit = "html"` (Polyp HTML emit): the app's first view is written as
 /// `index.html` in the directory the binary went to. The fixture is a Polyp app with

@@ -1254,8 +1254,8 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
         k += 1
     }
 
-    // Moves, in new order, and only when the matched sequence is not increasing: a monotonic match
-    // already keeps its relative order, so nothing has to be reordered.
+    // Moves, only when the matched sequence is not increasing: a monotonic match already keeps its
+    // relative order, so nothing has to be reordered.
     var monotonic = true
     var last: i32 = -1
     var q: usize = 0
@@ -1270,14 +1270,59 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
         q += 1
     }
     if !monotonic {
-        var t: usize = 0
-        while t < new.len() {
-            val mm = matches.get(t)
-            if mm >= 0 && mm != t.to_i32() {
-                out.push(Patch.Move(path = with_seg(parent, seg_for(new.get(t).key.get(), t.to_i32())), to_index = t.to_i32()))
-            }
-            t += 1
+        diff_moves(parent, new, matches, old.len(), used, out)
+    }
+}
+
+// The moves that put the children in the new order. The backend applies the patches in order, so
+// the pass keeps the order the backend will hold: the matched old children in old order, each
+// labelled with its new index, with each created child inserted at its new index (a create lands
+// where its path says). Then for each target `t` in turn, if the child at `t` is not `new[t]`, that
+// child moves to `t`. Positions before `t` are final by then, so each move is one step, whatever
+// the old order was.
+fun diff_moves<M>(parent: &Path, new: &List<Child<M>>, matches: &List<i32>, old_len: usize, used: &List<bool>, out: mut List<Patch>) {
+    var old_to_new: List<i32> = List.empty()
+    var u: usize = 0
+    while u < old_len {
+        old_to_new.push(-1)
+        u += 1
+    }
+    var i: usize = 0
+    while i < new.len() {
+        val m = matches.get(i)
+        if m >= 0 {
+            old_to_new.set(m.to_usize(), i.to_i32())
         }
+        i += 1
+    }
+    var order: List<i32> = List.empty()
+    var o: usize = 0
+    while o < old_len {
+        if used.get(o) {
+            order.push(old_to_new.get(o))
+        }
+        o += 1
+    }
+    var k: usize = 0
+    while k < new.len() {
+        if matches.get(k) < 0 {
+            order.insert(k, k.to_i32())
+        }
+        k += 1
+    }
+    var t: usize = 0
+    while t < new.len() {
+        if order.get(t) != t.to_i32() {
+            var p: usize = t + 1
+            while order.get(p) != t.to_i32() {
+                p += 1
+            }
+            val mover = with_seg(parent, seg_for(new.get(t).key.get(), p.to_i32()))
+            out.push(Patch.Move(path = mover, to_index = t.to_i32()))
+            val lab = order.remove(p)
+            order.insert(t, lab)
+        }
+        t += 1
     }
 }
 
