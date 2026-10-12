@@ -1658,13 +1658,15 @@ fn fs_has_fallible_read_and_open() {
     // syscall failed. `try_open`'s mode is not a path argument: the `"r"`
     // below would be denied by the capability check if it were.
     for stale in [
-        "/tmp/kelp_fs_try_read.txt",
-        "/tmp/kelp_fs_try_read.bin",
+        reroute_tmp("/tmp/kelp_fs_try_read.txt"),
+        reroute_tmp("/tmp/kelp_fs_try_read.bin"),
     ] {
         let _ = std::fs::remove_file(stale);
     }
-    assert_compiles_and_runs(
-        "tests/fixtures/fs_fallible.kp",
+    let target = rerouted_copy(&fixture("tests/fixtures/fs_fallible.kp"), "fs_fallible_src");
+    assert_project_runs(
+        "fs_fallible",
+        &target,
         "hello\n\n2\nNo such file or directory\nhello\n\n0\nfs.try_read_text: input is not valid utf-8\ntrue\n22\n2\n",
     );
 }
@@ -1673,9 +1675,11 @@ fn fs_has_fallible_read_and_open() {
 fn fs_mutators_have_fallible_twins() {
     // MISSING-k7Rwq: `None` is success, a failure is an `io.IoErr`, and the run
     // goes on after each one (ENOENT 2, EEXIST 17, ENOTDIR 20).
-    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_try_mut");
-    assert_compiles_and_runs(
-        "tests/fixtures/fs_try_mutators.kp",
+    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_try_mut"));
+    let target = rerouted_copy(&fixture("tests/fixtures/fs_try_mutators.kp"), "fs_try_mutators_src");
+    assert_project_runs(
+        "fs_try_mutators",
+        &target,
         "mkdir_all\n0\nwrite_text\n0\nappend\n0\nwrite\n0\nrename\n0\nsymlink\n0\nremove\n0\nwrite_text_missing_dir\n2\nwrite_missing_dir\n2\nappend_missing_dir\n2\nremove_missing\n2\nrename_missing\n2\nsymlink_exists\n17\nmkdir_all_under_file\n20\n3\n2\nremove_all\n0\nfalse\nremove_all_missing\n2\ndone\n",
     );
 }
@@ -1970,6 +1974,32 @@ fn scratch_root() -> &'static Path {
     ROOT.get_or_init(|| {
         std::env::temp_dir().join(format!("kelpc_test_scratch_{}", std::process::id()))
     })
+}
+
+/// The `std/fs` fixtures name their scratch paths as literal `/tmp/kelp_fs_*`
+/// text. Two suites running at once share the host's `/tmp`, so one suite's
+/// run could delete or read another's files, and the `fs_breadth` and
+/// `fs_set_mode` tests failed that way. `reroute_tmp` moves those paths under
+/// `scratch_root()`, which is unique to
+/// this process. Each fixture keeps its `/tmp` text on disk, so it still runs
+/// as written (the ignored golden sweep builds it that way).
+fn reroute_tmp(text: &str) -> String {
+    text.replace("/tmp/kelp_fs_", &format!("{}/kelp_fs_", scratch_root().display()))
+}
+
+/// Writes a copy of `src` (a fixture file, or a project's `main.kp`) into a
+/// fresh directory named `dir_name` under `out_path`, with its scratch paths
+/// rerouted by `reroute_tmp`, and returns the copy to build. The scratch root
+/// is created first, so the program can write under it.
+fn rerouted_copy(src: &Path, dir_name: &str) -> PathBuf {
+    std::fs::create_dir_all(scratch_root()).expect("could not create the scratch root");
+    let dir = out_path(dir_name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("could not create the rerouted fixture directory");
+    let text = std::fs::read_to_string(src).expect("could not read fixture source");
+    let target = dir.join(src.file_name().expect("a fixture source has a file name"));
+    std::fs::write(&target, reroute_tmp(&text)).expect("could not write the rerouted fixture");
+    target
 }
 
 /// A scratch directory the capability fixtures point at. Their patterns are
@@ -5894,11 +5924,12 @@ fn fs_breadth_creates_walks_stats_copies_opens_and_removes_under_one_grant() {
     // string is not a path), `touch`, `walk`, `temp_path`, `remove_all`, all
     // behind the one `fs` grant, all in a scratch directory the program
     // creates and removes itself.
-    assert_project_runs(
-        "caps_fs_breadth",
-        &project("caps_fs_breadth").join("main.kp"),
+    let target = rerouted_copy(&project("caps_fs_breadth").join("main.kp"), "caps_fs_breadth_src");
+    let expected = reroute_tmp(
         "2\nline one\nline two\n18\ntrue\nfalse\ntrue\nfalse\ntop\ntrue\n7\n/tmp/kelp_fs_breadth_test/a/b/c/note.txt\ntrue\ntrue\nfalse\n",
     );
+    assert_project_runs("caps_fs_breadth", &target, &expected);
+    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_breadth_test"));
 }
 
 #[test]
@@ -5950,14 +5981,16 @@ fn a_symlink_is_seen_reported_and_left_alone_by_the_walk() {
     // the link back to the root terminates the walk), and `remove_all` unlinks
     // a link instead of walking into it (BUG-a9Km4: the target's own file
     // survives).
-    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_symlink_kind");
-    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_symlink_kind_target");
-    assert_compiles_and_runs(
-        "tests/fixtures/fs_symlink_kind.kp",
-        "true\ntrue\ntrue\nfalse\n/tmp/kelp_fs_symlink_kind/note.txt\ntrue\nfalse\n8\nfalse\ntrue\nfalse\n",
+    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_symlink_kind"));
+    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_symlink_kind_target"));
+    let target = rerouted_copy(&fixture("tests/fixtures/fs_symlink_kind.kp"), "fs_symlink_kind_src");
+    assert_project_runs(
+        "fs_symlink_kind",
+        &target,
+        &reroute_tmp("true\ntrue\ntrue\nfalse\n/tmp/kelp_fs_symlink_kind/note.txt\ntrue\nfalse\n8\nfalse\ntrue\nfalse\n"),
     );
-    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_symlink_kind");
-    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_symlink_kind_target");
+    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_symlink_kind"));
+    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_symlink_kind_target"));
 }
 
 // ---------------------------------------------------------------------------
@@ -5974,19 +6007,23 @@ fn the_fs_path_family_reads_writes_and_walks() {
     // `write`, `read`, `symlink`, `read_link`, `list` and `remove`. The listing
     // is sorted by `alphasort`, and the link is reported without being
     // descended into.
-    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_path_family");
-    assert_compiles_and_runs(
-        "tests/fixtures/fs_path_family.kp",
-        "false\ntrue\nfalse\n6\nhello\n\ntrue\nxyz\ntrue\ntrue\nfalse\n/tmp/kelp_fs_path_family/a.txt\nfalse\na.txt\nlink\nsub\nfalse\n",
+    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_path_family"));
+    let target = rerouted_copy(&fixture("tests/fixtures/fs_path_family.kp"), "fs_path_family_src");
+    assert_project_runs(
+        "fs_path_family",
+        &target,
+        &reroute_tmp("false\ntrue\nfalse\n6\nhello\n\ntrue\nxyz\ntrue\ntrue\nfalse\n/tmp/kelp_fs_path_family/a.txt\nfalse\na.txt\nlink\nsub\nfalse\n"),
     );
-    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_path_family");
+    let _ = std::fs::remove_dir_all(reroute_tmp("/tmp/kelp_fs_path_family"));
 }
 
 #[test]
 fn fs_set_mode_changes_the_bits_metadata_reports() {
     // 420 is octal 644 and 493 is octal 755.
-    let _ = std::fs::remove_file("/tmp/kelp_fs_set_mode.txt");
-    assert_compiles_and_runs("tests/fixtures/fs_set_mode.kp", "420\n493\n");
+    let _ = std::fs::remove_file(reroute_tmp("/tmp/kelp_fs_set_mode.txt"));
+    let target = rerouted_copy(&fixture("tests/fixtures/fs_set_mode.kp"), "fs_set_mode_src");
+    assert_project_runs("fs_set_mode", &target, "420\n493\n");
+    let _ = std::fs::remove_file(reroute_tmp("/tmp/kelp_fs_set_mode.txt"));
 }
 
 // ---------------------------------------------------------------------------
