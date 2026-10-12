@@ -1,11 +1,11 @@
-//! The BUG-vN4tR gate, with a Rust witness in place of the C object.
+//! The BUG-vN4tR gate, linked against the runtime archive.
 //!
 //! This replaces `kelpc/tests/run-llvm-abi.sh`, which compiled
 //! `kelpc/runtime/abi_aggregate.c` with `cc` and linked it into a Kelp program.
-//! Here the body of `mem.alloc`'s extern (`kelp_std__mem__alloc_raw`) is Rust,
-//! compiled to an object by `rustc` and linked in place of the compiler's
-//! generated extern object. The link step still goes through `cc` as the linker
-//! driver, the way `kelpc` links every program. No C source is compiled.
+//! The body of `mem.alloc`'s extern (`kelp_std__mem__alloc_raw`) is now the
+//! runtime's own export, so the Kelp program links against `kelp-rt` directly.
+//! The link step goes through `cc` as the linker driver, the way `kelpc` links
+//! every program. No C source is compiled.
 //!
 //! What it proves:
 //! * the 24-byte `Bytes` shape has the size, alignment and field offsets of a
@@ -13,15 +13,8 @@
 //! * the LLVM backend declares `mem.alloc`'s extern with the 24-byte return as a
 //!   hidden pointer, and no C-boundary declaration takes or returns a 24-byte
 //!   aggregate by value;
-//! * a body compiled by `rustc` receives that hidden pointer, writes a 24-byte
-//!   `Bytes` through it, and the Kelp program prints the bytes it wrote: `ZY`.
-//!
-//! What it does not prove:
-//! * the C compiler's SysV lowering (clang's `byval` for an argument and `sret`
-//!   for a return) is no longer exercised, and the by-value versus pointer
-//!   disagreement the C gate measured is not reproduced;
-//! * rustc's own by-value lowering is not exercised either, only its acceptance of
-//!   the hidden-pointer return the Kelp backend declares.
+//! * the runtime's body receives that hidden pointer, writes a 24-byte `Bytes`
+//!   through it, and the Kelp program prints the bytes it wrote: `ZY`.
 
 use std::fs;
 use std::mem::{align_of, offset_of, size_of};
@@ -43,48 +36,12 @@ struct Wide {
 
 /// The program the C gate ran: a 24-byte `Bytes` from `mem.alloc` is printed.
 const SOURCE: &str = r#"// BUG-vN4tR: a 24-byte `Bytes` crosses into the runtime through the hidden
-// pointer, not by value. The Rust witness in `kelpc/tests/abi_aggregate.rs`
-// defines `mem.alloc`'s extern body, so the text printed is the text it wrote.
+// pointer, not by value. The runtime's `mem.alloc` body writes the bytes printed.
 impl "std/mem"
 
 fun main() {
     val b = mem.alloc(3)
     print(b)
-}
-"#;
-
-/// The body of `mem.alloc`'s extern, in the ABI the backend declares for it
-/// (`declare void @kelp_std__mem__alloc_raw(ptr, i64)`). It writes `ZY`, a NUL
-/// and the length and capacity, through the hidden pointer. It defines no panic
-/// handler: the runtime archive already has one, and the body cannot panic.
-const WITNESS: &str = r#"#![no_std]
-#[repr(C)]
-pub struct Bytes {
-    data: *mut u8,
-    len: usize,
-    cap: usize,
-}
-
-unsafe extern "C" {
-    fn malloc(n: usize) -> *mut u8;
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelp_std__mem__alloc_raw(out: *mut Bytes, n: usize) {
-    unsafe {
-        let p = malloc(n + 1);
-        let mut i = 0;
-        if i < n {
-            *p.add(i) = b'Z';
-            i += 1;
-        }
-        if i < n {
-            *p.add(i) = b'Y';
-            i += 1;
-        }
-        *p.add(i) = 0;
-        *out = Bytes { data: p, len: i, cap: n };
-    }
 }
 "#;
 
@@ -151,25 +108,12 @@ fn spells_aggregate(line: &str) -> bool {
 fn bug_vn4tr_alloc_raw_returns_zy_through_the_hidden_pointer() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bug_vn4tr_abi");
     let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("create the witness directory");
+    fs::create_dir_all(&dir).expect("create the test directory");
 
-    // The Kelp program, the Rust body and the runtime archive.
+    // The Kelp program and the runtime archive. `mem.alloc`'s body is the
+    // runtime's own export now, so the program links against it directly.
     let source = dir.join("abi_aggregate.kp");
     fs::write(&source, SOURCE).expect("write the Kelp program");
-    let witness_src = dir.join("witness.rs");
-    fs::write(&witness_src, WITNESS).expect("write the witness body");
-    let witness_obj = dir.join("witness.o");
-    let rustc = Command::new("rustc")
-        .args(["--edition", "2024", "--crate-type", "lib", "--emit", "obj", "-C", "panic=abort", "-O", "-o"])
-        .arg(&witness_obj)
-        .arg(&witness_src)
-        .output()
-        .expect("failed to spawn rustc");
-    assert!(
-        rustc.status.success(),
-        "the Rust witness body did not compile:\n{}",
-        String::from_utf8_lossy(&rustc.stderr)
-    );
 
     // The LLVM backend writes `<out>.ll` and `<out>.o`, and its extern body into
     // `<out>.externs.o`, which is left out of the link below.
@@ -208,15 +152,14 @@ fn bug_vn4tr_alloc_raw_returns_zy_through_the_hidden_pointer() {
         "the IR names a 24-byte aggregate in a C-boundary declaration: {by_value:?}"
     );
 
-    // Link the same Kelp object against the Rust body in place of the generated
-    // extern object. `cc` is the linker driver here, not a compiler of C source.
+    // Link the Kelp object against the runtime archive. `cc` is the linker
+    // driver here, not a compiler of C source.
     let runtime = runtime_archive();
-    let linked = dir.join("abi_prog_witness");
+    let linked = dir.join("abi_prog_linked");
     let link = Command::new("cc")
         .arg("-o")
         .arg(&linked)
         .arg(prog.with_extension("o"))
-        .arg(&witness_obj)
         .arg(&runtime)
         .arg(env!("KELPC_GC_ARCHIVE"))
         .args(["-lm", "-lpthread", "-ldl"])
@@ -224,7 +167,7 @@ fn bug_vn4tr_alloc_raw_returns_zy_through_the_hidden_pointer() {
         .expect("failed to spawn the linker");
     assert!(
         link.status.success(),
-        "linking the Kelp object against the Rust witness failed:\n{}",
+        "linking the Kelp object against the runtime archive failed:\n{}",
         String::from_utf8_lossy(&link.stderr)
     );
 
@@ -233,6 +176,6 @@ fn bug_vn4tr_alloc_raw_returns_zy_through_the_hidden_pointer() {
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
         "ZY\n",
-        "the Kelp program did not print the bytes the Rust body wrote through the hidden pointer"
+        "the Kelp program did not print the bytes the runtime wrote through the hidden pointer"
     );
 }

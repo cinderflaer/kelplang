@@ -17246,7 +17246,7 @@ mod layout_tests {
             "struct tag_Shape;",
             "struct tag_std__atomic__Ordering;",
             // The declaration whose type had no name before the fix.
-            "int64_t kelp_std__time__now_unix_raw(struct_std__atomic__Ordering kelp_order) {",
+            "// extern 'std.time.now_unix_raw' is provided by the Rust runtime archive",
         ] {
             assert!(
                 source.contains(want),
@@ -17359,8 +17359,9 @@ mod layout_tests {
             // Reached only through that type's field, so the walk into a
             // `datac`'s fields is what puts it there.
             "} struct_Shape;",
-            // The declaration that had no type to name before the fix.
-            "struct_Point kelp_std__time__now_mono_ns_raw(void) {",
+            // The ported extern: its signature is the runtime archive's, so the
+            // prelude names it in a comment rather than declaring a body.
+            "// extern 'std.time.now_mono_ns_raw' is provided by the Rust runtime archive",
         ] {
             assert!(
                 source.contains(want),
