@@ -175,6 +175,74 @@ fn scratch_bin(backend: &str, tag: &str) -> PathBuf {
     dir.join(tag)
 }
 
+/// The per-process directory the `fixture_fs_*` targets write their scratch
+/// files in. It is keyed on the process id, so two runs at once never share it.
+fn fs_run_dir() -> PathBuf {
+    let mut dir = PathBuf::from(
+        std::env::var("CARGO_TARGET_TMPDIR")
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string()),
+    );
+    dir.push("golden_corpus");
+    dir.push(format!("fs_run_{}", std::process::id()));
+    dir
+}
+
+/// Where the `fixture_fs_*` targets write: the `files` folder of `fs_run_dir()`.
+fn fs_files_dir() -> PathBuf {
+    fs_run_dir().join("files")
+}
+
+/// Removes `fs_run_dir()` when the sweep ends, whether it passes or panics.
+struct FsRunDir;
+
+impl Drop for FsRunDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(fs_run_dir());
+    }
+}
+
+/// The source to build for an `fixture_fs_*` target. Its scratch paths are
+/// literal `/tmp/kelp_fs_*` text, so the copy is rewritten to point under
+/// `fs_files_dir()`. The golden keeps the `/tmp` text; `unmap_fs_paths` maps the
+/// output back before the comparison.
+fn fs_source(source: &Path) -> PathBuf {
+    let run = fs_run_dir();
+    let src_dir = run.join("src");
+    std::fs::create_dir_all(&src_dir)
+        .unwrap_or_else(|e| panic!("could not create '{}': {e}", src_dir.display()));
+    let files = fs_files_dir();
+    std::fs::create_dir_all(&files)
+        .unwrap_or_else(|e| panic!("could not create '{}': {e}", files.display()));
+    let text = std::fs::read_to_string(source)
+        .unwrap_or_else(|e| panic!("could not read '{}': {e}", source.display()));
+    let rerouted = text.replace("/tmp/kelp_fs_", &format!("{}/kelp_fs_", files.display()));
+    let target = src_dir.join(source.file_name().expect("a corpus source has a file name"));
+    std::fs::write(&target, rerouted)
+        .unwrap_or_else(|e| panic!("could not write '{}': {e}", target.display()));
+    target
+}
+
+/// Maps each `fs_files_dir()/kelp_fs_` in a run's stdout back to the `/tmp`
+/// text the frozen golden holds. Bytes that are not part of a match are copied
+/// as they are, so non-UTF-8 output still compares exactly.
+fn unmap_fs_paths(stdout: &[u8]) -> Vec<u8> {
+    let from = format!("{}/kelp_fs_", fs_files_dir().display());
+    let from = from.as_bytes();
+    let to = b"/tmp/kelp_fs_";
+    let mut out = Vec::with_capacity(stdout.len());
+    let mut i = 0;
+    while i < stdout.len() {
+        if stdout[i..].starts_with(from) {
+            out.extend_from_slice(to);
+            i += from.len();
+        } else {
+            out.push(stdout[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Builds one target with the default backend (LLVM). The retired variables
 /// are stripped, so an inherited value cannot change the answer.
 fn build(source: &Path, bin: &Path) -> std::process::Output {
@@ -531,6 +599,7 @@ fn llvm_matches_every_golden() {
     let corpus: BTreeMap<String, PathBuf> =
         targets().into_iter().map(|t| (t.tag, t.source)).collect();
 
+    let _fs_run = FsRunDir;
     let mut checked = 0usize;
     let mut failures: Vec<String> = Vec::new();
 
@@ -539,8 +608,10 @@ fn llvm_matches_every_golden() {
             .get(&row.tag)
             .unwrap_or_else(|| panic!("no corpus source for '{}'", row.tag));
         let bin = scratch_bin("llvm", &row.tag);
+        let is_fs = row.tag.starts_with("fixture_fs_");
+        let built_from = if is_fs { fs_source(source) } else { source.clone() };
 
-        let built = build(source, &bin);
+        let built = build(&built_from, &bin);
         if !built.status.success() {
             failures.push(format!(
                 "'{}': the llvm backend did not build it ({}):\n{}",
@@ -552,7 +623,10 @@ fn llvm_matches_every_golden() {
         }
         checked += 1;
 
-        let observed = run(&bin);
+        let mut observed = run(&bin);
+        if is_fs {
+            observed.stdout = unmap_fs_paths(&observed.stdout);
+        }
         let frozen = std::fs::read(golden_file(&row.tag))
             .unwrap_or_else(|e| panic!("golden for '{}' is missing ({e})", row.tag));
 
