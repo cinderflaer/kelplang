@@ -95,6 +95,7 @@ empty on release.
 - The roadmap says channels and Mutex ship now, and the download row says when it was true (landed on main, be51d2e).
 - The KelpScript proposal moves to `plan/kelpscript.md` (on branch kelpscript-plan, not merged).
 - The collector's clearing bench (`bench/gc-clear/run.sh`) runs under a 2.5 GiB address-space limit (DECISIONS item 25) and prints each M4 run's VmPeak.
+- The collector's M7 measurement (`m7_scan_roots_hw_1_and_hw_1024`, ignored) now checks the root scan at high-water index 1 against index 1024 with one live root (DECISIONS item 32, design section 20.7 row (b)), gate 2.0.
 - The dev shell (`shell.nix`) adds `gdb`, so the debug-info test (`llvm_debug_info`) can resolve its fault backtrace.
 - A hosted program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
 - A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
