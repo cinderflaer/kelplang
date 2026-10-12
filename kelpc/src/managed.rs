@@ -75,7 +75,6 @@ pub const STDLIB_RESOURCE_STRUCTS: &[&str] = &[
     "std.http.Cursor",
     "std.http.Server",
     "std.http.ServerConn",
-    "std.http.Worker",
     "std.http.Pool",
     "std.irq.Line",
     "std.frame.Frame",

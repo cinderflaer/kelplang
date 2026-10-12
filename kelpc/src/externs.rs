@@ -556,7 +556,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/net",
         "connect_try_raw",
-        "    int gai = 0;\n    int last = 0;\n    int fd = kelp_rt_connect(kelp_host, (unsigned)kelp_port, &gai, &last);\n    if (fd < 0) {\n        char text[512];\n        if (gai != 0) {\n            snprintf(text, sizeof text, \"net.connect: cannot resolve host\\n  getaddrinfo: %s\", gai_strerror(gai));\n        } else {\n            snprintf(text, sizeof text, \"net.connect: connection failed\\n  errno %d: %s\", last, strerror(last));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    return fd;\n",
+        "    int gai = 0;\n    int last = 0;\n    int fd = kelp_rt_connect(kelp_host, (unsigned)kelp_port, &gai, &last);\n    if (fd < 0) {\n        char text[512];\n        if (gai != 0) {\n            snprintf(text, sizeof text, \"net.connect: cannot resolve host\\n  getaddrinfo: %s\", gai_strerror(gai));\n        } else {\n            snprintf(text, sizeof text, \"net.connect: connection failed\\n  errno %d: %s\", last, strerror(last));\n        }\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    return fd;\n",
     ),
     (
         "std/net",
@@ -571,7 +571,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/net",
         "accept_try_raw",
-        "    int c;\n    do {\n        c = accept(kelp_fd, NULL, NULL);\n    } while (c < 0 && errno == EINTR);\n    if (c < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.accept: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.accept: accept failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    return c;\n",
+        "    int c;\n    do {\n        c = accept(kelp_fd, NULL, NULL);\n    } while (c < 0 && errno == EINTR);\n    if (c < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.accept: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.accept: accept failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    return c;\n",
     ),
     (
         "std/net",

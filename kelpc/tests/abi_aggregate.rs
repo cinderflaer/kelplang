@@ -121,7 +121,7 @@ fn runtime_archive() -> PathBuf {
         .unwrap_or_else(|e| panic!("cannot read '{}': {e}", build.display()))
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("kelpc-"))
-        .map(|e| e.path().join("out").join("libkelp_rt.a"))
+        .map(|e| e.path().join("out").join("kelp_rt_managed.o"))
         .filter_map(|p| {
             let modified = fs::metadata(&p).ok()?.modified().ok()?;
             Some((modified, p))
@@ -130,7 +130,7 @@ fn runtime_archive() -> PathBuf {
     found.sort();
     found
         .pop()
-        .expect("no libkelp_rt.a under the build directory: build kelpc first")
+        .expect("no kelp_rt_managed.o under the build directory: build kelpc first")
         .1
 }
 
@@ -218,7 +218,8 @@ fn bug_vn4tr_alloc_raw_returns_zy_through_the_hidden_pointer() {
         .arg(prog.with_extension("o"))
         .arg(&witness_obj)
         .arg(&runtime)
-        .args(["-lm", "-lpthread"])
+        .arg(env!("KELPC_GC_ARCHIVE"))
+        .args(["-lm", "-lpthread", "-ldl"])
         .output()
         .expect("failed to spawn the linker");
     assert!(
