@@ -1,5 +1,5 @@
 // M6: the builtin owned heap byte buffer. Construct, measure, index, mutate,
-// copy, and print — each of those is a compiler-provided builtin whose body
+// copy, and print, each of those is a compiler-provided builtin whose body
 // lives in the generated C runtime.
 fun main() {
     var b = Bytes.from_str("hello")

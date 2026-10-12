@@ -1,5 +1,5 @@
 // `List.remove` panics on an index that is not in the list, and the check is
-// `i >= len` — so index 0 is out of bounds exactly when the list is empty,
+// `i >= len`, so index 0 is out of bounds exactly when the list is empty,
 // which is the case this fixture walks up to. `list_pop_empty.kp` pins the
 // sibling message `List.pop` gives the same situation; `remove` has its own.
 fun main() {

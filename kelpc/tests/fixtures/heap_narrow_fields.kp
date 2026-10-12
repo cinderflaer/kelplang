@@ -2,8 +2,8 @@
 // slice, fixed after): a one-eightbyte aggregate field read out of a base
 // that is a heap block *sized to the value*. `field_read`'s aggregate arm
 // loaded a whole `QWORD` whatever the field's own width was, which a padded
-// stack slot absorbs but a `Box.of(Outer(...))` block — `sizeof(Outer)`
-// bytes, no padding — does not: the read crossed the allocation, which is a
+// stack slot absorbs but a `Box.of(Outer(...))` block, `sizeof(Outer)`
+// bytes, no padding, does not: the read crossed the allocation, which is a
 // valgrind finding even though both backends printed the same number.
 //
 // Each size 1, 2, 3, 4, 5 and 7 gets an inner `datac` of exactly that width

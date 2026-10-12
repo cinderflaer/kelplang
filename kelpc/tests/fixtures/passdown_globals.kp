@@ -3,7 +3,7 @@
 //
 // A `pd` initializer can read an earlier `pd` (`doubled`), and a function that
 // names no passdown at all still has to hand one to a callee that reads it
-// (`bump` — it has no hidden parameter of its own, so what it passes is the
+// (`bump`, it has no hidden parameter of its own, so what it passes is the
 // generated global's own address, while `add` receives a hidden parameter and
 // writes through it).
 pd val base = 10

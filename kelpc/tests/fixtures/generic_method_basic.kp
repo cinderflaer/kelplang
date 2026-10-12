@@ -9,7 +9,7 @@ fun Pair<A, B>.second_of().return: B = second
 fun Pair<A, B>.with_second(v: B).return: Pair<A, B> = Pair(first = first, second = v)
 fun mut Pair<A, B>.replace_second(v: B) { second = v }
 
-// Only ever instantiated for `String` — a body is checked per instantiation,
+// Only ever instantiated for `String`, a body is checked per instantiation,
 // so a body that makes sense for one element type is fine as long as that is
 // the one it is used at.
 fun Pair<A, B>.first_len().return: usize = first.len()

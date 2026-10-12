@@ -1,4 +1,4 @@
-// A-8: `View` — a length-carrying borrowed text view.
+// A-8: `View`, a length-carrying borrowed text view.
 //
 // `str` is a bare `const char*`: no length, so every scan re-derives one with
 // `str.len` (a `strlen`), and every slice has to allocate. A `View` carries
@@ -13,7 +13,7 @@
 impl "std/str"
 
 // A `View` parameter is an elision root, so a function may return a view of
-// one — the same rule `&str` returns already follow.
+// one, the same rule `&str` returns already follow.
 fun head(text: View, n: usize).return: View = text.slice(0, n)
 
 fun tail(text: View).return: View = text.slice(1, text.len())
@@ -39,7 +39,7 @@ fun main() {
     print(v.get(0) == 't')
     print(v.get(4) == 'q')
 
-    // A slice is a view of the same text — no `String` is made.
+    // A slice is a view of the same text, no `String` is made.
     print(v.slice(4, 9))
     print(v.slice(0, 3))
     print(v.slice(1, v.len()))
@@ -61,7 +61,7 @@ fun main() {
     print(empty.eq("".view()))
 
     // A `View` becomes a `String` where one is expected, through the
-    // length-aware copy — not `String.from_str`, which is `strlen` and would
+    // length-aware copy, not `String.from_str`, which is `strlen` and would
     // copy past the end of a slice.
     val owned: String = v.slice(4, 9)
     print(owned.as_str())

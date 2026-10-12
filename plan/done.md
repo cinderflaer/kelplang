@@ -4,7 +4,7 @@ The record of what actually happened, milestone by milestone. It overrides any p
 
 Entries are append-only history, so an older entry can describe a state a later one changed; each such entry names the one that superseded it.
 
-Milestone identifiers follow the MK/S/M scheme in `roadmap.md`; the mapping from the older `M0`–`M9`/`C1`/`S1`–`S8`/`T1` identifiers is in that file's "Milestone naming" section.
+Milestone identifiers follow the MK/S/M scheme in `roadmap.md`; the mapping from the older `M0`,`M9`/`C1`/`S1`,`S8`/`T1` identifiers is in that file's "Milestone naming" section.
 
 ## Milestone record
 
@@ -160,7 +160,7 @@ Three things that were stdlib prerequisites, shipped together because `str`, `pa
 - `const` shares its module's top-level namespace with `datac`s, `pd`s and functions, so a clash is reported at the declaration. Canonical order became `impl`, `const`/`pd`, `datac`/`fun`.
 
 **Argument-type overloading, stdlib-only**
-- An overloadable name (`abs`, `min`, `max`, `clamp`) declared in a compiler-shipped module gets a *parameter-typed* signature key (`std.math.abs@f64`), so several declarations coexist; a call site probes its first argument's type and picks the single matching overload, with "no overload of '<name>' takes '<type>' — it is declared for …" otherwise.
+- An overloadable name (`abs`, `min`, `max`, `clamp`) declared in a compiler-shipped module gets a *parameter-typed* signature key (`std.math.abs@f64`), so several declarations coexist; a call site probes its first argument's type and picks the single matching overload, with "no overload of '<name>' takes '<type>', it is declared for …" otherwise.
 - The mechanism is gated on `is_std_module`, which is what stdlib decision 4 asked for: user code cannot declare overloads, and cannot tell that the compiler has the machinery.
 - The consequence to remember: `scan_all` (passdown wiring) and the body checker need the *same* key the call sites will use, so `check_program` now computes a `decl_keys` vector once and threads it, instead of every pass re-deriving `sig_key`.
 
@@ -257,7 +257,7 @@ The plan called this "user-definable owned types, i.e. `Box<T>`-style owners bey
 
 ### MK5-S1-M1 a growable buffer, and failing deliberately (DONE)
 
-The first slice of the stdlib program: the piece everything else in MK5-S1–MK5-S5 was blocked on. Done as a part because the compiler change (a `cap` field and its invariants) is independently testable from the `.kp` surface built on top of it, the same reasoning that split MK3-S1-M1/MK3-S1-M2 and MK3-S2-M1.
+The first slice of the stdlib program: the piece everything else in MK5-S1-MK5-S5 was blocked on. Done as a part because the compiler change (a `cap` field and its invariants) is independently testable from the `.kp` surface built on top of it, the same reasoning that split MK3-S1-M1/MK3-S1-M2 and MK3-S2-M1.
 
 - **One growth routine, two buffers.** `kelp_Bytes`/`kelp_String` gained a `cap` field (usable bytes at `data`, *excluding* the NUL terminator slot, so the allocation is always `cap + 1`). `kelp_buf_reserve(data, len, &cap, extra)` doubles from `cap` (or jumps to 8) until it fits, `realloc`s, and re-terminates at `data[len]` the single invariant that keeps `String.as_str()` handing out a valid `str` after any number of appends. Every constructor sets `cap`: `empty` 0, `from_str`/`clone`/`from_bytes`/`into_bytes` the buffer's real size, `kelp_bytes_alloc_raw` `n`. The extern bodies that build the structs field-by-field needed no edit: `fs.read_raw`, `fs.list_raw` and `path.normalize_raw` all go through `kelp_bytes_alloc_raw`; `list_raw` trims `len` below the capacity it allocated, which is exactly what `cap >= len` allows.
 - **New builtins** (`infer.rs` table + runtime bodies): `Bytes#push`, `Bytes#append`, `Bytes#reserve`, `Bytes#clear`; `String#push`, `String#push_str`, `String#reserve`, `String#clear`, and the associated `String.with_capacity(n)`. All growth methods take `&mut self`, which is the entire safety argument for `realloc` moving the buffer: a live `str` view of the receiver is a shared borrow, so the borrow checker refuses the growth (`grow_while_borrowed`) and refuses it through a `val` binding (`push_to_val_string`).
@@ -294,7 +294,7 @@ The last piece: `List#sort`, `reverse`, `contains`, `slice`, `insert`, `remove`,
 - **Three of the six are conditional on the element type**, and the condition lives in `types.rs` (`list_sortable_elem` / `list_comparable_elem` / `list_clonable_elem`) so `infer::list_sig` and `codegen_c::write_list_s1` can never disagree: `sort`/`contains` need an order or an equality (scalars, `bool`, `String`, `Bytes`), and `slice` needs a copy (a scalar, or `String`/`Bytes` via `clone`). A `datac` element falls through to a diagnostic that says which capability is missing and why "a 'datac' element has no order, so it cannot be sorted" rather than a signature codegen would fail to emit.
 - **The comparator is length-aware for `String`/`Bytes`**, not `strcmp`: an embedded NUL would truncate a `String` comparison, and the same helper is what `contains` uses (length, then `memcmp`). `bool` sorts `false` before `true`; an owned element's shifts are moves, so reordering a `List<String>` neither copies a buffer nor frees one twice ASAN proves that on a three-word sort with an insert and a remove.
 - **`contains` borrows an owned needle** (a `Copy` element is taken by value), because taking a `String` by value would move it into a membership test.
-- **`index_of` was deliberately not shipped.** The sketch listed it with a `-1` sentinel, which is exactly the sentinel convention the plan rejected in stdlib decision 2; open item 42 recommended `contains` now and `index_of` once `Option` exists — which is what happened: MK5-S6-M1 added it returning `Option<usize>` rather than a sentinel.
+- **`index_of` was deliberately not shipped.** The sketch listed it with a `-1` sentinel, which is exactly the sentinel convention the plan rejected in stdlib decision 2; open item 42 recommended `contains` now and `index_of` once `Option` exists, which is what happened: MK5-S6-M1 added it returning `Option<usize>` rather than a sentinel.
 
 **Fixtures**: `stdlib_sort` (numbers, `bool`, an empty list, and a slice mutated to prove it is a copy), `list_slice_insert` (a `List<String>` sorted, searched, sliced, inserted into and removed from in the ASAN pass, because every shift is a move), rejected `list_unsortable_element`, and `list_slice_bounds` panicking with "List.slice: range out of bounds".
 
@@ -536,7 +536,7 @@ fun net.resolve(host: &str).return: List<String>         // dotted-quad / v6 str
 - **Order is keep-alive → framing → pool.** Pooling before keep-alive is a no-op: the client shipped in MK5-S4's first sketch sent `Connection: close` and closed after one request, so there was nothing to keep. Keep-alive is mostly "stop asking the server to close, frame the body, honor the server's own `Connection: close`, retry a stale socket once".
 - **The pool ceiling is configuration, not an API argument**: `coral.toml`'s `http_pool = <n>` (default 4; `0` disables pooling). This is the first *numeric* manifest value, and MK5-S4's only compiler-side change.
 - **The pool is lazy.** Connections open on first checkout and stay open. "A number of connections always open" is read as *never closed on release*, not *pre-warmed at startup* an eager pool makes startup **worse** by N handshakes, which is the opposite of what a pool is for. `mut Pool.warm()` exists for a caller that knows when the next request is coming.
-- **Pooling buys steady-state latency, not startup.** One handshake and one slow-start ramp per `(host, port)` instead of per request: ~0.05–0.2 ms on loopback (invisible), but 100 requests to a 50 ms-RTT host save ~5 s of pure connection setup. TLS (MK5-S4b-M1) is what makes the pool genuinely valuable, and it is that much more expensive per connection.
+- **Pooling buys steady-state latency, not startup.** One handshake and one slow-start ramp per `(host, port)` instead of per request: ~0.05-0.2 ms on loopback (invisible), but 100 requests to a 50 ms-RTT host save ~5 s of pure connection setup. TLS (MK5-S4b-M1) is what makes the pool genuinely valuable, and it is that much more expensive per connection.
 - **No concurrency in MK5-S4.** Threads come first (MK6-S1-M1), then multithreaded downloading (MK6-S2-M1). Poll multiplexing is recorded as the MK5-S4c fallback that needs no language work at all if MK6-S1-M1 slips.
 - **Chunked encoding is no longer deferred.** With keep-alive, a chunked body is the one kind you cannot frame any other way, and the read-to-EOF fallback would block until the peer closed. So the chunked decoder ships *in* MK5-S4 instead of panicking a reversal of the plan's earlier "deferred, and an explicit panic", for a reason that only appeared once keep-alive was decided.
 
@@ -663,7 +663,7 @@ Six `Map` fixtures (scalar and owned values, a `datac` value plus a `datac` fiel
 
 ### MK5-S6-M1 cheap half the error-`datac` convention, and `errno` in a panic (DONE)
 
-MK5-S6-M1 is the `Option`/`Result` decision point. **It stayed open when this landed, and the entry further down ("MK5-S6-M1 `Option`/`Result`, `if let`, `?`, and the stdlib migration") is what closed it** — tagged unions, a way to take a value out without leaking, and generics for the payload are three language features, not stdlib work. What shipped here is the half the milestone itself named as cheap, and the reason to do it first is that it made the migration mechanical.
+MK5-S6-M1 is the `Option`/`Result` decision point. **It stayed open when this landed, and the entry further down ("MK5-S6-M1 `Option`/`Result`, `if let`, `?`, and the stdlib migration") is what closed it**, tagged unions, a way to take a value out without leaking, and generics for the payload are three language features, not stdlib work. What shipped here is the half the milestone itself named as cheap, and the reason to do it first is that it made the migration mechanical.
 
 - **The error-`datac` convention is documented, and the audit changed no code.** `architecture.md`'s naming rules now state it: `ok: bool` first; the success payload named for its type (`value` for a number, `text` for a `String`, `bytes` for a `Bytes`, `at` for an index or offset); a `message: String` when the failure is textual. Every error `datac` the stdlib already ships conforms, so each one becomes a `Result` carrying the same field names inside `Ok`/`Err`, with the old name kept as a wrapper. The set is small and closed: `Line(ok, text)`, `Match(ok, at)`, `ParseInt/ParseUint/ParseFloat(ok, value)`.
 - **A failed syscall now names its cause.** `codegen_c`'s runtime gained three printers: `kelp_panic_at(msg, code)`, `kelp_panic_errno(msg)` (which is `kelp_panic_at(msg, errno)`), and `kelp_panic_gai(msg, rc)`. Each prints the unchanged `panic: <msg>` line and then a detail line `errno N: <strerror(N)>`, or `getaddrinfo: <gai_strerror(rc)>`. The prefix line is byte-identical to before, which is what keeps every existing golden assertion (all of them `needle` assertions on the message) passing untouched; the detail is additive.
@@ -675,50 +675,50 @@ MK5-S6-M1 is the `Option`/`Result` decision point. **It stayed open when this la
 
 ### MK8-S1-M1 part 1 `enum` tagged unions and pattern `when` (DONE)
 
-Part 1 of MK8-S1-M1, which the roadmap had parked as backlog item A-1 (now `roadmap.md`'s A-1): the language work `Option`/`Result` was blocked on. The decision came first, because `syntax.md` is the authority on syntax and had none: **`enum` with payload-carrying variants**, chosen over a `sum` keyword and over teaching `datac` a second layout. Three questions were settled together, and each answer removed work. The two `when` forms never collide, because the boolean form has **no scrutinee** (`when { cond -> value }`) while the pattern form has one (`when s { Variant(bind) -> value }`) — so no lookahead, no new keyword, and the boolean form keeps its parser desugar. A payload **binds as a copy when it is `Copy` and as a shared borrow otherwise**, so a pattern never partially moves the scrutinee, which v1 has no machinery for. And an enum is a `Ty::Struct` at the type level, so nominality, `Copy`-ness, drop and the borrow checker needed no new type dimension — only a declaration table, a pattern checker and a C layout.
+Part 1 of MK8-S1-M1, which the roadmap had parked as backlog item A-1 (now `roadmap.md`'s A-1): the language work `Option`/`Result` was blocked on. The decision came first, because `syntax.md` is the authority on syntax and had none: **`enum` with payload-carrying variants**, chosen over a `sum` keyword and over teaching `datac` a second layout. Three questions were settled together, and each answer removed work. The two `when` forms never collide, because the boolean form has **no scrutinee** (`when { cond -> value }`) while the pattern form has one (`when s { Variant(bind) -> value }`), so no lookahead, no new keyword, and the boolean form keeps its parser desugar. A payload **binds as a copy when it is `Copy` and as a shared borrow otherwise**, so a pattern never partially moves the scrutinee, which v1 has no machinery for. And an enum is a `Ty::Struct` at the type level, so nominality, `Copy`-ness, drop and the borrow checker needed no new type dimension, only a declaration table, a pattern checker and a C layout.
 
 - **One merged declaration order (the structural piece).** A `datac` field and an `enum` payload may each name a type declared *before* them by value, so the two declaration lists had to become one sequence: the parser numbers every `datac` and `enum` with a shared counter, `resolve.rs` renumbers them into module-load then local order, `types::owned_types` walks that order for one-pass drop analysis, and codegen emits typedefs in it. `types::owned_structs` became `owned_types(structs, enums)`; `Ty::Struct`'s tag/typedef/drop-function naming needed no change, which is the payoff of the shared representation.
-- **Layout.** `typedef struct tag_Shape { int32_t kelp_tag; union { struct { double kelp_r; } kelp_v_Circle; ... } kelp_v; } struct_Shape;` — the tag is the variant index, each payload lives in a struct of its own inside the union, and a payload-less variant still gets a member with one `char` field (an empty struct and an empty union are both invalid C, and `enum Flag { On Off }` would produce both). Construction is a C compound literal — `(struct_Shape){ .kelp_tag = 0, .kelp_v = { .kelp_v_Circle = { .kelp_r = 2 } } }` — and a payload-less variant needs no initializer beyond the tag, since C zero-initializes what the designators do not mention.
+- **Layout.** `typedef struct tag_Shape { int32_t kelp_tag; union { struct { double kelp_r; } kelp_v_Circle; ... } kelp_v; } struct_Shape;`, the tag is the variant index, each payload lives in a struct of its own inside the union, and a payload-less variant still gets a member with one `char` field (an empty struct and an empty union are both invalid C, and `enum Flag { On Off }` would produce both). Construction is a C compound literal, `(struct_Shape){ .kelp_tag = 0, .kelp_v = { .kelp_v_Circle = { .kelp_r = 2 } } }`, and a payload-less variant needs no initializer beyond the tag, since C zero-initializes what the designators do not mention.
 - **Drop is a tag switch.** `write_enum` emits a drop function that switches on the tag and drops only the live variant's owned payloads; a variant with none contributes no case. `owned_types` marks an enum as needing drop if *any* variant does, because the switch is the only thing that knows which one is live. Pinned by ASAN: `enum_owned` (an owned `String` payload, a payload inside a `datac` field), `enum_recursive` (a `Box` chain), `enum_container` (an enum carrying a `String` inside a `List`, plus a `remove`).
-- **Pattern matching lowers in `infer.rs`, not in codegen.** `check_when` checks the scrutinee, resolves each arm's variant, checks arity, checks each payload binding, then folds the arms into a chain of TIR `if`s whose condition is a new `EnumTag` node (`<base>.kelp_tag == i`) and whose arm body is preceded by `let`s built from a new `EnumField` node (`<base>.kelp_v.kelp_v_Circle.kelp_r`) — a *place*, which is what makes the owned-payload borrow work through `borrowck`'s existing rules with no new case in the drop plan. **The last arm becomes the base `else` and gets no tag test of its own**: after every other test has failed only its variant can be live, and (unlike a chain that can fall off the end) the `if`-as-a-value lowering then assigns its temporary on both paths.
+- **Pattern matching lowers in `infer.rs`, not in codegen.** `check_when` checks the scrutinee, resolves each arm's variant, checks arity, checks each payload binding, then folds the arms into a chain of TIR `if`s whose condition is a new `EnumTag` node (`<base>.kelp_tag == i`) and whose arm body is preceded by `let`s built from a new `EnumField` node (`<base>.kelp_v.kelp_v_Circle.kelp_r`), a *place*, which is what makes the owned-payload borrow work through `borrowck`'s existing rules with no new case in the drop plan. **The last arm becomes the base `else` and gets no tag test of its own**: after every other test has failed only its variant can be live, and (unlike a chain that can fall off the end) the `if`-as-a-value lowering then assigns its temporary on both paths.
 - **Exhaustiveness, and what is refused.** Every variant must have an arm or an `else` must be present, and the message names the missing variants. Also refused with a real message, each a fixture: an unknown variant (the message lists the variants), a variant matched twice, a binding count that does not match the payload, an `else` arm that is not last, a scrutinee that is a temporary (a payload borrow has to outlive the arm, so bind the value to a `val` first), a scrutinee that is a `datac`, `Shape(...)` (an enum is constructed by naming a variant), `Shape.Circle` without a call (the message shows the call to write), `.field` on an enum value, a method on an enum, an `enum` and a `datac` sharing a name, an enum payload naming the enum by value, and an arm whose body type differs from the others.
-- **`when` as a call argument (a lexer interaction the change flushed out).** Inside `(` `)` the lexer emits no newline tokens at all, so an arm there had no possible separator and *any* `when` used as a call argument failed to parse — pre-existing, and invisible until the pattern form made `when` an ordinary expression worth passing. The arm separator is now optional: an arm is `head -> value` and `->` appears nowhere else in the language, so the next head is unambiguous either way. `when_in_args` pins it.
-- **`Map.empty()` generated a call to a function that did not exist (a second pre-existing bug).** `infer.rs` accepted both `Map.new()` and `Map.empty()`, but only `Map.empty()`'s key was distinct and codegen only ever emitted `__new` — so `Map.empty()` compiled to `kelp_Map__X__empty()` and `cc` rejected it. Nothing had asked for it until a `Map<Shape>` did. Both spellings now lower to one key.
+- **`when` as a call argument (a lexer interaction the change flushed out).** Inside `(` `)` the lexer emits no newline tokens at all, so an arm there had no possible separator and *any* `when` used as a call argument failed to parse, pre-existing, and invisible until the pattern form made `when` an ordinary expression worth passing. The arm separator is now optional: an arm is `head -> value` and `->` appears nowhere else in the language, so the next head is unambiguous either way. `when_in_args` pins it.
+- **`Map.empty()` generated a call to a function that did not exist (a second pre-existing bug).** `infer.rs` accepted both `Map.new()` and `Map.empty()`, but only `Map.empty()`'s key was distinct and codegen only ever emitted `__new`, so `Map.empty()` compiled to `kelp_Map__X__empty()` and `cc` rejected it. Nothing had asked for it until a `Map<Shape>` did. Both spellings now lower to one key.
 
 **Tests**: three accepted enum fixtures (`enum_basic`, `enum_owned`, `enum_recursive`), two more covering containers and `when`-as-an-argument (`enum_container`, `when_in_args`), and thirteen rejections driven from one list. The allocating ones are in the AddressSanitizer pass, so "only the live variant's payload is freed" is a test result rather than a claim. Two parser unit tests pin the declaration form, the shared `datac`/`enum` declaration counter, the pattern `when` AST, and `else` parsing as a catch-all. The suite is **67 unit tests and 167 end-to-end tests**, all green.
 
-*What this milestone deliberately did not do*: no generics (so no `Option<T>` — that is A-2, MK8-S1-M1's next part), no nested or literal patterns, no guards, no `where`-style binding, and no methods on an enum. Each is a separate decision, and none is needed by the code that exists.
+*What this milestone deliberately did not do*: no generics (so no `Option<T>`, that is A-2, MK8-S1-M1's next part), no nested or literal patterns, no guards, no `where`-style binding, and no methods on an enum. Each is a separate decision, and none is needed by the code that exists.
 
 ### MK8-S1-M1 part 2 user-declarable generic *types* (DONE)
 
-Part 2 of MK8-S1-M1, backlog item A-2, and the first half of it: `datac` and `enum` declarations may now carry type parameters, and every use site monomorphizes into a concrete type. This is the piece that makes `datac Pair<A, B>` and `enum Option<T>` expressible, which is what MK5-S6-M1's `Option`/`Result` decision was waiting for. What did **not** land here, and is the rest of A-2, is generic *functions* (`fun f<T>`): the syntax was refused with a message that said so, and the type-argument inference machinery it needed was already here. **The entry below is where they, generic methods, explicit type arguments and the generic `Map` key landed** — this entry describes the state at its own commit.
+Part 2 of MK8-S1-M1, backlog item A-2, and the first half of it: `datac` and `enum` declarations may now carry type parameters, and every use site monomorphizes into a concrete type. This is the piece that makes `datac Pair<A, B>` and `enum Option<T>` expressible, which is what MK5-S6-M1's `Option`/`Result` decision was waiting for. What did **not** land here, and is the rest of A-2, is generic *functions* (`fun f<T>`): the syntax was refused with a message that said so, and the type-argument inference machinery it needed was already here. **The entry below is where they, generic methods, explicit type arguments and the generic `Map` key landed**, this entry describes the state at its own commit.
 
-- **The syntax decision came first, because `syntax.md` is the authority.** The spelling is the one `List<T>` already used, extended to declarations: `datac Pair<A, B>(...)`, `enum Option<T> { ... }`, and `Pair<i32, String>` / `Option<i32>` at a use site. `syntax.md` gained §9.3 (and the `datac`/`enum` grammar lines it had been missing since A-1); its "no generics" bullets in §7.2 and §17 now say what is actually true — generic *types* exist, generic *functions*, receiver methods on a generic type, and explicit type arguments at a construction do not.
-- **A declaration is a template, not a type.** `GenericTemplate` keeps the fields *as written* (`ast::FieldDecl`), because a type parameter has no type until an instantiation binds one; the field types are resolved for the first time inside `TypeScope::instantiate`, with a `params` map that is checked before every other name, so `datac Pair<A, B>`'s `A` is the argument and never a type that happens to share the name. `Ty::Param` does not exist — the parameter dimension never reaches the type representation, which is why `needs_drop`, `c_ident`, `Ty::is_copy` and the borrow checker needed no new case at all.
+- **The syntax decision came first, because `syntax.md` is the authority.** The spelling is the one `List<T>` already used, extended to declarations: `datac Pair<A, B>(...)`, `enum Option<T> { ... }`, and `Pair<i32, String>` / `Option<i32>` at a use site. `syntax.md` gained §9.3 (and the `datac`/`enum` grammar lines it had been missing since A-1); its "no generics" bullets in §7.2 and §17 now say what is actually true, generic *types* exist, generic *functions*, receiver methods on a generic type, and explicit type arguments at a construction do not.
+- **A declaration is a template, not a type.** `GenericTemplate` keeps the fields *as written* (`ast::FieldDecl`), because a type parameter has no type until an instantiation binds one; the field types are resolved for the first time inside `TypeScope::instantiate`, with a `params` map that is checked before every other name, so `datac Pair<A, B>`'s `A` is the argument and never a type that happens to share the name. `Ty::Param` does not exist, the parameter dimension never reaches the type representation, which is why `needs_drop`, `c_ident`, `Ty::is_copy` and the borrow checker needed no new case at all.
 - **An instantiation is an ordinary named declaration.** `Pair<i32, String>` is a `Ty::Struct` key like any other, and `types::c_ident` learned three more manglings (`<` → `__l__`, `>` → `__g__`, space dropped) so it becomes a valid C identifier. Everything downstream therefore works unchanged: field access, `needs_drop`/`owned_types`, the generated drop, `List`/`Box`/`Map` elements, `when` patterns, and the C typedef writer. `Pair<i32, String>` and `Pair<String, i32>` are different C structs with different functions, which is the whole point.
 - **The instance tables are shared and filled on demand.** `TypeEnv` holds the templates and an `Rc<RefCell<InstanceState>>`, because every function's `Ctx` is a clone (with its own copy of `structs`/`enums`) yet an instantiation discovered in one body has to be visible to every other and to the final `tir::Program`. `Ctx::struct_def`/`enum_def`/`is_enum` are the three lookups that consult both tables; the raw `ctx.structs`/`ctx.enums` reads were all replaced. An instantiation is marked in-progress *before* its fields are resolved and stored only after, so `datac Node<T>(val next: Box<Node<T>>)` terminates on the key instead of recursing forever, while a field of the same type *by value* is still caught as an infinite size.
-- **Reading the fields of a template cannot report its own span.** A field is written in the template's file, but the error is found while checking some other module's function, and the caller attributes the error to *its* own module — so `instantiate` re-points the span at the use site and prefixes the message with the instance (`in 'Holder<str>': field 'x' is a borrowed type`). Without that, the diagnostic would print a location in the wrong file.
-- **Type arguments are inferred, and the expected type is consulted first.** `Pair(first = 1, second = "x")` binds `A` and `B` from the arguments' types; `Option.Some(value = 7)` binds `T`; and `val x: Option<i32> = Option.None` — the payload-less case, where the expression itself determines nothing — binds `T` from the expected type. Order matters: the expected type is applied *before* the arguments are probed, which is what makes `xs.push(Option.Some(value = 7))` infer `Option<i64>` from the list's element type rather than defaulting the literal to `i32`. Each argument is also probed against a *field hint* resolved from the bindings so far, which is what lets `Node(value = 1, next = Box.empty())` know the box holds a `Node<i32>`.
+- **Reading the fields of a template cannot report its own span.** A field is written in the template's file, but the error is found while checking some other module's function, and the caller attributes the error to *its* own module, so `instantiate` re-points the span at the use site and prefixes the message with the instance (`in 'Holder<str>': field 'x' is a borrowed type`). Without that, the diagnostic would print a location in the wrong file.
+- **Type arguments are inferred, and the expected type is consulted first.** `Pair(first = 1, second = "x")` binds `A` and `B` from the arguments' types; `Option.Some(value = 7)` binds `T`; and `val x: Option<i32> = Option.None`, the payload-less case, where the expression itself determines nothing, binds `T` from the expected type. Order matters: the expected type is applied *before* the arguments are probed, which is what makes `xs.push(Option.Some(value = 7))` infer `Option<i64>` from the list's element type rather than defaulting the literal to `i32`. Each argument is also probed against a *field hint* resolved from the bindings so far, which is what lets `Node(value = 1, next = Box.empty())` know the box holds a `Node<i32>`.
 - **One topological order for the C typedefs (the structural piece).** A hand-written type may contain an instantiation by value (`datac Holder(val o: Option<i32>)`), and an instantiation may contain another, so the two declaration sets are merged and given a DFS post-order over by-value `Ty::Struct` dependencies (`order_declarations`); dependencies through a container are ignored, because a container holds a pointer and is emitted before every declaration with a forward-declared struct tag. Ties break on the incoming declaration order, so the emitted C stays deterministic. `types::owned_types` and `codegen_c`'s typedef loop both just walk the resulting order.
 - **One real compiler bug the change produced and then fixed**: the first cut of the receiver guard called `qualify` unconditionally, which turned an already-canonical receiver (`std.io.File`, rewritten by `resolve.rs`) into `unknown module alias 'std'` and broke every multi-file project test. The guard now tries both spellings and leaves a name that resolves through neither to the ordinary path.
 
-**Tests**: three accepted fixtures — `generic_type_basic` (a datac and an enum, inference from arguments and from the expected type, a nested instantiation, and the same template at two element types), `generic_owned` (an owned payload, an instantiation held by value inside a hand-written `datac`, and instances as `List` elements and `Map` values), and `generic_recursive` (`Node<i64>` and `Node<String>` from one recursive declaration, plus a recursive generic enum through two boxes) — and ten rejections driven from one list: a generic type without arguments, an arity mismatch, an un-inferable parameter, a receiver method on a generic type, `fun f<T>`, a parameter shadowing a builtin, a duplicate parameter, a generic/non-generic name clash, a parameter bound to a borrowed type, and a self-reference by value. The two allocating fixtures are in the AddressSanitizer pass. The suite is **69 unit tests and 171 end-to-end tests**, all green.
+**Tests**: three accepted fixtures, `generic_type_basic` (a datac and an enum, inference from arguments and from the expected type, a nested instantiation, and the same template at two element types), `generic_owned` (an owned payload, an instantiation held by value inside a hand-written `datac`, and instances as `List` elements and `Map` values), and `generic_recursive` (`Node<i64>` and `Node<String>` from one recursive declaration, plus a recursive generic enum through two boxes), and ten rejections driven from one list: a generic type without arguments, an arity mismatch, an un-inferable parameter, a receiver method on a generic type, `fun f<T>`, a parameter shadowing a builtin, a duplicate parameter, a generic/non-generic name clash, a parameter bound to a borrowed type, and a self-reference by value. The two allocating fixtures are in the AddressSanitizer pass. The suite is **69 unit tests and 171 end-to-end tests**, all green.
 
-*What part 2 deliberately did not do*: generic **functions** (the parser refuses the syntax with a message naming what is missing), receiver methods on a generic type (`fun Pair.first()` — the receiver has no way to say which instantiation it belongs to), explicit type arguments at a construction site (`Pair<i32, String>(...)`, which would need an ambiguity-free expression spelling; inference covers the cases that exist), and type-argument inference through a nested generic constructor (`Box.of(Tree.Leaf)` with nothing to pin `T` — annotate the binding). Each is part of the remaining A-2 work, and none is needed by `Option<T>`/`Result<T, E>` as declarations.
+*What part 2 deliberately did not do*: generic **functions** (the parser refuses the syntax with a message naming what is missing), receiver methods on a generic type (`fun Pair.first()`, the receiver has no way to say which instantiation it belongs to), explicit type arguments at a construction site (`Pair<i32, String>(...)`, which would need an ambiguity-free expression spelling; inference covers the cases that exist), and type-argument inference through a nested generic constructor (`Box.of(Tree.Leaf)` with nothing to pin `T`, annotate the binding). Each is part of the remaining A-2 work, and none is needed by `Option<T>`/`Result<T, E>` as declarations.
 
 ### MK8-S1-M1 part 2 (continued) generic functions, generic methods, explicit type arguments, and generic `Map` keys (DONE)
 
 The rest of A-2, in three commits after the type declarations (above). With these, MK8-S1-M1 part 2 is closed and open item 34 is resolved: `datac Pair<A, B>`, `enum Option<T>`, `fun first<T>(xs: &List<T>).return: T`, `fun Pair<A, B>.first().return: A`, `Pair<i32, String>(first = 1, second = ...)` and `Map<i32, String>` all work.
 
 - **A generic function is a template, and a call site instantiates it.**
-  `FuncTemplate` keeps the declaration's parameters, return type and body as written, because a type parameter has no type until an instantiation binds one — the same reason a generic *type* is a template. The type arguments come from the argument types and from the expected type, inferred by the same `bind_type_params` the type side uses, which grew two cases to make that useful: it looks through a borrow on either side (`fun is_some<T>(o: &Option<T>)` called with an `Option<i32>`), and it pairs a written `Pair<T, T>` against an instantiated `Pair<i32, i32>` by reading the instance table's origin. A parameter neither determines is an error that names it, with the fix.
+  `FuncTemplate` keeps the declaration's parameters, return type and body as written, because a type parameter has no type until an instantiation binds one, the same reason a generic *type* is a template. The type arguments come from the argument types and from the expected type, inferred by the same `bind_type_params` the type side uses, which grew two cases to make that useful: it looks through a borrow on either side (`fun is_some<T>(o: &Option<T>)` called with an `Option<i32>`), and it pairs a written `Pair<T, T>` against an instantiated `Pair<i32, i32>` by reading the instance table's origin. A parameter neither determines is an error that names it, with the fix.
 - **The worklist, and why the signature is registered before the body is queued.** An instantiated signature goes into a shared `FunctionState` *before* its body is checked, so a recursive call inside that body resolves to the same instance instead of instantiating again; `check_program` then drains a queue of pending bodies, and checking one can queue another. A generic function that is never called is never checked, which is what makes a body that only makes sense for one instantiation fine as long as that is the one it is used at (`fun Pair<A, B>.first_len().return: usize = first.len()`, called only on `Pair<String, _>`). `main` may not take type parameters, a generic and a non-generic function may not share a name, and a parameter must not shadow a builtin type; each is a fixture.
 - **Passdown wiring is the template's.** The passdown scan runs over declarations, and which passdowns a body names does not depend on its type arguments, so `wired` stays keyed by the declaration and a call to an instance looks the template up through the instance's origin. A generic function that prints a passdown is in the suite.
-- **A method on a generic type takes the type's parameters.** The receiver writes them (`fun Pair<A, B>.first_of()`), must write exactly the type's own and in order, and a rename or reorder is refused with the spelling to write — the body names them, so anything else would make `T` mean something the declaration does not say. The type arguments are the receiver's *instantiation*, so there is nothing to infer: the call resolves the type template through the instance's origin and instantiates `Pair#first_of` for the receiver's arguments. The instance's key (`Pair<i32, String>#first_of`) is what the call names — the first cut destructured `instantiate_function` down to its signature only and let the call name `Pair<i32, String>#first_of` from `format!("{owner}#{method}")` instead, which `cc` caught as a call to an undeclared function. `receiver_field_ty` now reads through `struct_def`, so the implicit-`self.field` fallback (`fun Pair<A, B>.first_of().return: A = first`) sees an instantiation. An `enum` template declares no methods, generic or not (A-1's rule), and that is refused at the declaration instead of at the call; a concrete `enum` declares its own, called on a value of the enum type rather than on a variant-construction path.
-- **Explicit type arguments, and the one ambiguous spelling.** `Name<...>(` in an expression is recognized only when the `<` is written *against* the name and the `(` *against* the `>`, because `a < b > (c)` is a valid comparison chain and the two must not collide. The parser attempts the form speculatively and restores its token position when either half is not adjacent, so a comparison can never be misread as a call; the deliberate consequence is that `a<b>(c)` without spaces *is* read as an instantiation and then fails on `b` not being a type, which syntax.md states as a rule rather than hiding. An explicit instantiation bypasses inference entirely (arity checked, then the parameters bound from the written arguments) and is refused with a real message on a non-generic type, a non-generic function, or a method, whose parameters come from its receiver. A payload-less variant cannot take one — there is no call to attach it to — so `Option.None`'s parameter comes from the expected type.
+- **A method on a generic type takes the type's parameters.** The receiver writes them (`fun Pair<A, B>.first_of()`), must write exactly the type's own and in order, and a rename or reorder is refused with the spelling to write, the body names them, so anything else would make `T` mean something the declaration does not say. The type arguments are the receiver's *instantiation*, so there is nothing to infer: the call resolves the type template through the instance's origin and instantiates `Pair#first_of` for the receiver's arguments. The instance's key (`Pair<i32, String>#first_of`) is what the call names, the first cut destructured `instantiate_function` down to its signature only and let the call name `Pair<i32, String>#first_of` from `format!("{owner}#{method}")` instead, which `cc` caught as a call to an undeclared function. `receiver_field_ty` now reads through `struct_def`, so the implicit-`self.field` fallback (`fun Pair<A, B>.first_of().return: A = first`) sees an instantiation. An `enum` template declares no methods, generic or not (A-1's rule), and that is refused at the declaration instead of at the call; a concrete `enum` declares its own, called on a value of the enum type rather than on a variant-construction path.
+- **Explicit type arguments, and the one ambiguous spelling.** `Name<...>(` in an expression is recognized only when the `<` is written *against* the name and the `(` *against* the `>`, because `a < b > (c)` is a valid comparison chain and the two must not collide. The parser attempts the form speculatively and restores its token position when either half is not adjacent, so a comparison can never be misread as a call; the deliberate consequence is that `a<b>(c)` without spaces *is* read as an instantiation and then fails on `b` not being a type, which syntax.md states as a rule rather than hiding. An explicit instantiation bypasses inference entirely (arity checked, then the parameters bound from the written arguments) and is refused with a real message on a non-generic type, a non-generic function, or a method, whose parameters come from its receiver. A payload-less variant cannot take one, there is no call to attach it to, so `Option.None`'s parameter comes from the expected type.
 - **Nested-constructor inference (pinned, not implicit).** `Tree.Branch(label = 9, left = Box.of(Tree.Leaf), right = ...)` binds `T` from the first field and then hands `Box<Tree<i32>>` down as the expected type for the next one, so no annotation is needed anywhere in the tree. It already worked once the bindings accumulated left to right and the field hint was resolved from them; the fixture is what makes it a result rather than a coincidence.
-- **`Map<K, V>` — the last piece of "a `Map` with a real key type".** `Ty::Map` gained a key, `Map<V>` stayed valid as the shorthand for `Map<String, V>` (so all 147 pre-existing uses, the stdlib's included, are unchanged and mean exactly what they did), and the key set is closed to `String`, the integers and `bool` because the two operations a map needs — a hash and an equality — are *generated by the compiler* from the key type: FNV-1a over the key's bytes plus a length-aware `memcmp` for `String`, `kelp_map_mix` over the widened value plus `==` for a scalar. A float is refused (`nan != nan` would make an inserted key unfindable) and a `datac`, container or borrow is refused (v1 has no equality for them); a key of the user's own type would need a trait (A-12) or a comparator function (A-4), and that is the honest limit of what generics alone could reach here. `keys()` returns `List<K>` rather than `List<String>`, the map's generated name carries both type arguments, and the entry's key sits inline as the key type itself. The codegen rewrite is one function: `write_map` builds two closures (hash and equality) from the key, and every other line of the map's function set is key-agnostic.
-- **One latent generator bug the map flushed out, and no others.** `hash_arg` and `hash_stored` are not the same expression — a `str` view's length comes from `strlen`, a stored `kelp_String`'s from its own `len`, and the equality/drop helpers take the stored key as an *lvalue* rather than a pointer (a scalar key compared or dropped by address is a different expression, and `cc` refuses it as a pointer/integer comparison and a always-true conversion). Both were mine, both were one line, and the second was only reachable through the scalar path.
+- **`Map<K, V>`, the last piece of "a `Map` with a real key type".** `Ty::Map` gained a key, `Map<V>` stayed valid as the shorthand for `Map<String, V>` (so all 147 pre-existing uses, the stdlib's included, are unchanged and mean exactly what they did), and the key set is closed to `String`, the integers and `bool` because the two operations a map needs, a hash and an equality, are *generated by the compiler* from the key type: FNV-1a over the key's bytes plus a length-aware `memcmp` for `String`, `kelp_map_mix` over the widened value plus `==` for a scalar. A float is refused (`nan != nan` would make an inserted key unfindable) and a `datac`, container or borrow is refused (v1 has no equality for them); a key of the user's own type would need a trait (A-12) or a comparator function (A-4), and that is the honest limit of what generics alone could reach here. `keys()` returns `List<K>` rather than `List<String>`, the map's generated name carries both type arguments, and the entry's key sits inline as the key type itself. The codegen rewrite is one function: `write_map` builds two closures (hash and equality) from the key, and every other line of the map's function set is key-agnostic.
+- **One latent generator bug the map flushed out, and no others.** `hash_arg` and `hash_stored` are not the same expression, a `str` view's length comes from `strlen`, a stored `kelp_String`'s from its own `len`, and the equality/drop helpers take the stored key as an *lvalue* rather than a pointer (a scalar key compared or dropped by address is a different expression, and `cc` refuses it as a pointer/integer comparison and a always-true conversion). Both were mine, both were one line, and the second was only reachable through the scalar path.
 
 **Tests**: the type-declaration half shipped with 3 accepted fixtures and 10 rejections; this half adds 7 more accepted fixtures (`generic_function_basic`, `generic_function_owned`, `generic_method_basic`, `generic_explicit_args`, `generic_nested_inference`, `map_key_types`, plus the earlier ones now covered), 12 more rejections, two parser unit tests (the declaration form and the adjacency rule), and the allocating fixtures in the AddressSanitizer pass. The suite is **71 unit tests and 181 end-to-end tests**, all green.
 
@@ -726,53 +726,53 @@ The rest of A-2, in three commits after the type declarations (above). With thes
 
 The milestone the whole MK5 program was pointed at, and the last of the three language features A-3 named (`A-1`'s tagged unions, `A-2`'s generics, and now the propagation surface). Four commits, each one a phase: `if let`, `?`, the two stdlib modules, then the migration off the error-`datac` convention. The language half and the stdlib half were chosen together, because the migration is what proves the surface is usable.
 
-- **`if let` is a parser desugar, and that is the whole of it.** `if let Circle(r) = shape { ... } else { ... }` becomes `{ val #iflet0 = shape  when #iflet0 { Circle(r) -> { ... } else -> { ... } } }` — the pattern form of `when` (A-1) with one arm and an `else`, so infer, borrowck and codegen needed no new case. Binding the scrutinee to a local first is what makes a **temporary** legal here; a bare `when` needs a place, because an owned payload binds as a borrow of it. `let` is read as the pattern form only directly after `if`, so nothing is reserved and the only cost is that a binding *named* `let` cannot be an `if` condition without parentheses.
-- **`?` is defined on a *shape*, never on a name.** The operand must be an enum held by value with exactly two variants named `Ok`/`Err` (the failure carries a payload) or `Some`/`None` (it does not) — so `std/result`'s `Result`, `std/option`'s `Option` and a program's own declaration all work identically, and the compiler knows neither module exists. The enclosing function must return the same shape, and for `Ok`/`Err` the same failure payload type: v1 has no error conversion, so `Result<i64, String>` cannot leave a function returning `Result<i64, IoErr>`. `tir::ExprKind::Try` carries both enum instantiations and both variant indices; codegen emits a statement expression that evaluates the operand once, rebuilds the failure on the failure tag, and is otherwise the success payload. The temporary is deliberately never dropped — exactly one variant's payload moves out on either path, so dropping the rest would free what moved — and `borrowck` treats `Try` as a whole-value read, which moves a named operand and still refuses an owned *field* as a partial move. An early return drops the frame's locals (that was already true), so `a?` mid-function leaks nothing, and the ASAN pass proves it over owned payloads.
-- **`std/option` and `std/result` are Kelp, and thin on purpose.** The enums are the point; the helpers are `is_some`/`is_none`/`unwrap_or`/`unwrap`/`expect` and `is_ok`/`is_err`/`unwrap`/`unwrap_err`/`unwrap_or`/`expect`/`expect_err`. What is missing is documented in the modules: `map`/`and_then` need function values (A-4), and anything that hands a payload out by value needs a move-taking parameter or a clone, so those helpers are offered for a `Copy` payload and are a compile error at any other instantiation — the rule `List.get` already follows.
-- **Two language gaps the modules forced, both fixed rather than worked around.** First, *divergence*: a function body whose tail is `panic(...)` now satisfies any declared return type, which is the only way a "this cannot happen" accessor is expressible at all; `infer.rs` accepts that tail, `codegen_c.rs` writes it as a statement rather than `return kelp_panic(...)`, and the panic printers are `_Noreturn` so no missing-return warning is left. It is deliberately narrow — a `panic` cannot be an `if`/`when` arm — and it is the whole divergence rule. Second, *name resolution*: a bare name inside a module is that module's own item, but the call-resolution order tried the unqualified key first, so a bare call inside `std/str` could resolve to a same-named function of the entry module (`index_of(s, needle)` there picked up a test fixture's `index_of(&List<String>, &str)`). `check_call`, `resolve_overload` and `func_template_named` all try the calling module's own spelling first now, which is what the strict module-qualified namespace always said. Type-argument inference needed the matching fix: a written type resolves against the module the *declaration* was written in, so `r: &Result<T, E>` inside `std/result.kp` is `std.result.Result<T, E>` no matter who calls it.
-- **The migration, and the one rule it needed.** `Line(ok, text)` became `Option<String>` (end of file is not a reason), `Match(ok, at)` became `Option<usize>` (same), and `ParseInt`/`ParseUint`/`ParseFloat(ok, value)` became `Result<T, ParseErr>` with `enum ParseErr { Empty Invalid }` — a real reason, two variants wide, with `Invalid` covering everything the C conversion refuses including an out-of-range value, because the primitives report one bit. That is the rule the two modules state applied for real: **a failure with no reason is an `Option`, one with a reason is a `Result`**. No old names survive as wrappers: a wrapper would keep the old call shape compiling and hide the point of the milestone, and the repo has no external callers to protect. Call sites became `if let`/`?`: `str.contains` is one line, `std/http`'s five `index_of` sites are `option.expect(o = ..., message = ...)`, and the four HTTP test projects' `server_port` is `result.expect(...)`. The one deliberate non-migration is `http.content_length_of`'s `-1` for an absent header — absence is not a parse failure and the value is a count whose every non-negative value is meaningful.
+- **`if let` is a parser desugar, and that is the whole of it.** `if let Circle(r) = shape { ... } else { ... }` becomes `{ val #iflet0 = shape  when #iflet0 { Circle(r) -> { ... } else -> { ... } } }`, the pattern form of `when` (A-1) with one arm and an `else`, so infer, borrowck and codegen needed no new case. Binding the scrutinee to a local first is what makes a **temporary** legal here; a bare `when` needs a place, because an owned payload binds as a borrow of it. `let` is read as the pattern form only directly after `if`, so nothing is reserved and the only cost is that a binding *named* `let` cannot be an `if` condition without parentheses.
+- **`?` is defined on a *shape*, never on a name.** The operand must be an enum held by value with exactly two variants named `Ok`/`Err` (the failure carries a payload) or `Some`/`None` (it does not), so `std/result`'s `Result`, `std/option`'s `Option` and a program's own declaration all work identically, and the compiler knows neither module exists. The enclosing function must return the same shape, and for `Ok`/`Err` the same failure payload type: v1 has no error conversion, so `Result<i64, String>` cannot leave a function returning `Result<i64, IoErr>`. `tir::ExprKind::Try` carries both enum instantiations and both variant indices; codegen emits a statement expression that evaluates the operand once, rebuilds the failure on the failure tag, and is otherwise the success payload. The temporary is deliberately never dropped, exactly one variant's payload moves out on either path, so dropping the rest would free what moved, and `borrowck` treats `Try` as a whole-value read, which moves a named operand and still refuses an owned *field* as a partial move. An early return drops the frame's locals (that was already true), so `a?` mid-function leaks nothing, and the ASAN pass proves it over owned payloads.
+- **`std/option` and `std/result` are Kelp, and thin on purpose.** The enums are the point; the helpers are `is_some`/`is_none`/`unwrap_or`/`unwrap`/`expect` and `is_ok`/`is_err`/`unwrap`/`unwrap_err`/`unwrap_or`/`expect`/`expect_err`. What is missing is documented in the modules: `map`/`and_then` need function values (A-4), and anything that hands a payload out by value needs a move-taking parameter or a clone, so those helpers are offered for a `Copy` payload and are a compile error at any other instantiation, the rule `List.get` already follows.
+- **Two language gaps the modules forced, both fixed rather than worked around.** First, *divergence*: a function body whose tail is `panic(...)` now satisfies any declared return type, which is the only way a "this cannot happen" accessor is expressible at all; `infer.rs` accepts that tail, `codegen_c.rs` writes it as a statement rather than `return kelp_panic(...)`, and the panic printers are `_Noreturn` so no missing-return warning is left. It is deliberately narrow, a `panic` cannot be an `if`/`when` arm, and it is the whole divergence rule. Second, *name resolution*: a bare name inside a module is that module's own item, but the call-resolution order tried the unqualified key first, so a bare call inside `std/str` could resolve to a same-named function of the entry module (`index_of(s, needle)` there picked up a test fixture's `index_of(&List<String>, &str)`). `check_call`, `resolve_overload` and `func_template_named` all try the calling module's own spelling first now, which is what the strict module-qualified namespace always said. Type-argument inference needed the matching fix: a written type resolves against the module the *declaration* was written in, so `r: &Result<T, E>` inside `std/result.kp` is `std.result.Result<T, E>` no matter who calls it.
+- **The migration, and the one rule it needed.** `Line(ok, text)` became `Option<String>` (end of file is not a reason), `Match(ok, at)` became `Option<usize>` (same), and `ParseInt`/`ParseUint`/`ParseFloat(ok, value)` became `Result<T, ParseErr>` with `enum ParseErr { Empty Invalid }`, a real reason, two variants wide, with `Invalid` covering everything the C conversion refuses including an out-of-range value, because the primitives report one bit. That is the rule the two modules state applied for real: **a failure with no reason is an `Option`, one with a reason is a `Result`**. No old names survive as wrappers: a wrapper would keep the old call shape compiling and hide the point of the milestone, and the repo has no external callers to protect. Call sites became `if let`/`?`: `str.contains` is one line, `std/http`'s five `index_of` sites are `option.expect(o = ..., message = ...)`, and the four HTTP test projects' `server_port` is `result.expect(...)`. The one deliberate non-migration is `http.content_length_of`'s `-1` for an absent header, absence is not a parse failure and the value is a count whose every non-negative value is meaningful.
 
 **Tests**: `if_let_basic` (place and temporary scrutinees, `_`, `else`, `else if let` chains, the no-`else` `Unit` form, an owned payload), `try_operator` (Result and Option, chained across two frames, an owned payload through both, `?` mid-expression), `stdlib_option_result` (both modules, `?` through two frames, `if let` over both, and the same-name-in-two-modules regression), `panic_tail`, and the migrated `stdlib_parse`/`stdlib_build`/`string_views`/`io_stdio` fixtures; 8 rejections across the three features; two parser unit tests (the `if let` desugar and the `?` adjacency rule). The allocating ones are in the AddressSanitizer pass. The suite is **72 unit tests and 187 end-to-end tests**, all green.
 
-*What is left of A-3*: `?`'s restriction to an identical failure type is the honest edge of a language with no traits — an error conversion (`From`-shaped, or `?` lifting into a `Box<dyn Error>`) is A-12's work, and so is `map`/`and_then`. Neither is needed by any code that exists.
+*What is left of A-3*: `?`'s restriction to an identical failure type is the honest edge of a language with no traits, an error conversion (`From`-shaped, or `?` lifting into a `Box<dyn Error>`) is A-12's work, and so is `map`/`and_then`. Neither is needed by any code that exists.
 
-### MK8-S1-M2 phase A `move T` — a parameter that takes ownership (DONE)
+### MK8-S1-M2 phase A `move T`, a parameter that takes ownership (DONE)
 
-A-4's first phase, and the half of open item 1 that threads, `Option.map` and `?`'s error-conversion rule were all waiting on. The milestone is numbered now (it had no identity before — the roadmap recorded that numbering it was the first task), and the rest of A-4 is phases B-E: function references, anonymous `fun` literals, captures, and the stdlib combinators.
+A-4's first phase, and the half of open item 1 that threads, `Option.map` and `?`'s error-conversion rule were all waiting on. The milestone is numbered now (it had no identity before, the roadmap recorded that numbering it was the first task), and the rest of A-4 is phases B-E: function references, anonymous `fun` literals, captures, and the stdlib combinators.
 
-- **The type-level difference is the whole implementation.** `move T` resolves to the bare `T` rather than a `Ty::Ref`, which is exactly the by-value shape a `Copy` type already had. That makes a moved argument an ordinary whole-value read at the call site, so `check_call_arg` needed no new arm, `borrowck`'s existing rule for a bare `Ident` argument marks the caller's binding moved, and the drop plan already frees an owned parameter at the end of its frame. Codegen needed **no change at all**: the C parameter is `kelp_String` instead of `const kelp_String*`, so the callee already receives the value and frees it. What did change is `implicit_borrow_wrap` being skipped, and the comment in `borrowck.rs` that said a parameter is never owned — the plan had left that hook in place since MK1, which is why the callee's side was free.
+- **The type-level difference is the whole implementation.** `move T` resolves to the bare `T` rather than a `Ty::Ref`, which is exactly the by-value shape a `Copy` type already had. That makes a moved argument an ordinary whole-value read at the call site, so `check_call_arg` needed no new arm, `borrowck`'s existing rule for a bare `Ident` argument marks the caller's binding moved, and the drop plan already frees an owned parameter at the end of its frame. Codegen needed **no change at all**: the C parameter is `kelp_String` instead of `const kelp_String*`, so the callee already receives the value and frees it. What did change is `implicit_borrow_wrap` being skipped, and the comment in `borrowck.rs` that said a parameter is never owned, the plan had left that hook in place since MK1, which is why the callee's side was free.
 - **The precedent was already in the builtins.** `String.into_bytes` and `String.from_bytes` take their argument by value today and always did; a user declaration simply had no spelling for it. That is also why the one new *call-site* diagnostic is worded for both: an argument that is a borrow handed to a moved parameter now says so, rather than reporting `'&String'` against `'String'` and letting the reader infer that an `&` was missing.
-- **Three spellings refused, each because the form means nothing.** `move str` and `move &T` — a borrow has no owner to transfer; `mut T` + `move T` on one parameter — one says "I write through your value", the other "I own it"; and `move` on a receiver — a method that consumed its receiver would destroy the caller's value at a call that reads like one (`c.total()`). The receiver case is a parser error, the other two are type errors.
+- **Three spellings refused, each because the form means nothing.** `move str` and `move &T`, a borrow has no owner to transfer; `mut T` + `move T` on one parameter, one says "I write through your value", the other "I own it"; and `move` on a receiver, a method that consumed its receiver would destroy the caller's value at a call that reads like one (`c.total()`). The receiver case is a parser error, the other two are type errors.
 - **A moved argument can be a temporary.** `consume(String.from_str("x"))` has no binding to move out of, so nothing hoists and drops it: the value goes straight into the call and the callee frees it. It is the same shape `val q = p` already had, one expression wider.
-- **What a moved parameter cannot do yet, and it is the next phase's problem.** No partial moves, so an owned *field* of a moved `datac` still cannot be read out by value (`fun unwrap(b: move Bag).return: String = b.name` is refused), and `when` still binds an owned payload as a shared borrow. Both need the same piece — moving one field out of a value the frame owns — which is what `Option.map` written in Kelp requires and what phase E adds.
+- **What a moved parameter cannot do yet, and it is the next phase's problem.** No partial moves, so an owned *field* of a moved `datac` still cannot be read out by value (`fun unwrap(b: move Bag).return: String = b.name` is refused), and `when` still binds an owned payload as a shared borrow. Both need the same piece, moving one field out of a value the frame owns, which is what `Option.map` written in Kelp requires and what phase E adds.
 
-**Tests**: `move_param` and `move_param_return`, both in the AddressSanitizer pass — the first covers a temporary, a chained move, a move handed back out, and a moved `datac` and `List`; the second covers the three drop points (the tail, an early `return`, and a `return` from inside a loop), so a missed drop is a leak and a second drop is a double free. Four rejection tests that check the message (use after move, a moved parameter inside a loop, moving out of a borrow, `mut`+`move`, `move str`, `move &String`, a `move` receiver), and two parser unit tests. `syntax.md` gained the qualifier in §7.1, the rule and examples in §10.1, `move` in the §2.3 keyword list, four §18 error rows, and the grammar line. The suite is **74 unit tests and 192 end-to-end tests**, all green.
+**Tests**: `move_param` and `move_param_return`, both in the AddressSanitizer pass, the first covers a temporary, a chained move, a move handed back out, and a moved `datac` and `List`; the second covers the three drop points (the tail, an early `return`, and a `return` from inside a loop), so a missed drop is a leak and a second drop is a double free. Four rejection tests that check the message (use after move, a moved parameter inside a loop, moving out of a borrow, `mut`+`move`, `move str`, `move &String`, a `move` receiver), and two parser unit tests. `syntax.md` gained the qualifier in §7.1, the rule and examples in §10.1, `move` in the §2.3 keyword list, four §18 error rows, and the grammar line. The suite is **74 unit tests and 192 end-to-end tests**, all green.
 
 ### MK8-S1-M2 phases B-D function values, `fun` literals, and the stdlib callbacks (DONE)
 
 A-4's middle, and the part that makes the first phase useful. Phase A gave a parameter a way to take ownership; these three give a *function* a way to be passed. Shipped in three commits: function values, `fun` literals, then the stdlib callbacks that prove both.
 
-- **A function value is a plain C function pointer, and that is the design.** A bare name of a declared `fun` is a value of type `fun(T).return: U`; it is `Copy`, owns nothing, needs no drop, and can live wherever a `Copy` value can — a `val`/`var`, a `datac`/`enum` field, a passdown, a parameter, a return type, and a type argument. The alternative (a fat pointer with an environment) is what closures need, and doing it first would have made every one of those placements carry ownership rules for nothing, since a declared function has no environment to capture.
-- **The written function type follows the declaration's parameter rule**, which is what makes the two the *same type* when they spell the same thing: `fun(String)` is a borrow, `fun(mut Counter)` an exclusive borrow, `fun(move String)` ownership. So `apply(double, 5)` needs no conversion and no new argument rule: the parameter types are the parameter types. Two placements are refused because C has no declarator for them (a function type *returning* a function type, and a borrow of one) and one because a container's generated C type names its element as a name prefix (`List<fun(...)>` — the honest answer, which the message gives, is a one-field `datac`).
-- **`Ty::c_decl(name)` is the one new idea in codegen.** A function pointer's *name* goes inside the declarator, so every declaration site — a `datac` field, an enum payload, a parameter, a local, a hoisted temporary, a passdown — now asks the type to declare the name rather than pairing `c_type()` with one by hand. That is why `int32_t (*kelp_f)(int32_t)` and `int32_t (*kelp_pick(bool))(int32_t)` come out right, the second being the one signature whose parameter list lands *inside* the returned pointer's.
-- **A call through a value is `tir::ExprKind::IndirectCall`**, whose callee is an expression rather than a resolved key — so a `datac` field holding a function value is callable with method syntax (`cfg.on_event(x)`) and only codegen has to parenthesize. A local wins over a declaration of the same name for the indirect case and loses to it for a named call, which is the order that cannot change the meaning of existing code; a passdown holding one is callable too, since its storage is a global or a hidden parameter that is already in scope.
+- **A function value is a plain C function pointer, and that is the design.** A bare name of a declared `fun` is a value of type `fun(T).return: U`; it is `Copy`, owns nothing, needs no drop, and can live wherever a `Copy` value can, a `val`/`var`, a `datac`/`enum` field, a passdown, a parameter, a return type, and a type argument. The alternative (a fat pointer with an environment) is what closures need, and doing it first would have made every one of those placements carry ownership rules for nothing, since a declared function has no environment to capture.
+- **The written function type follows the declaration's parameter rule**, which is what makes the two the *same type* when they spell the same thing: `fun(String)` is a borrow, `fun(mut Counter)` an exclusive borrow, `fun(move String)` ownership. So `apply(double, 5)` needs no conversion and no new argument rule: the parameter types are the parameter types. Two placements are refused because C has no declarator for them (a function type *returning* a function type, and a borrow of one) and one because a container's generated C type names its element as a name prefix (`List<fun(...)>`, the honest answer, which the message gives, is a one-field `datac`).
+- **`Ty::c_decl(name)` is the one new idea in codegen.** A function pointer's *name* goes inside the declarator, so every declaration site, a `datac` field, an enum payload, a parameter, a local, a hoisted temporary, a passdown, now asks the type to declare the name rather than pairing `c_type()` with one by hand. That is why `int32_t (*kelp_f)(int32_t)` and `int32_t (*kelp_pick(bool))(int32_t)` come out right, the second being the one signature whose parameter list lands *inside* the returned pointer's.
+- **A call through a value is `tir::ExprKind::IndirectCall`**, whose callee is an expression rather than a resolved key, so a `datac` field holding a function value is callable with method syntax (`cfg.on_event(x)`) and only codegen has to parenthesize. A local wins over a declaration of the same name for the indirect case and loses to it for a named call, which is the order that cannot change the meaning of existing code; a passdown holding one is callable too, since its storage is a global or a hidden parameter that is already in scope.
 - **Four names that *are* functions are refused as values rather than reported as undefined**: a generic function (no single concrete signature), a function that reads a passdown (its C signature has a hidden argument), `main`, and an overloaded stdlib name (`math.abs` is three functions). Each message names which and the way round it. This is the same reasoning the plan used for `?`: the *shape* is the contract, and a diagnostic that lies about what exists is worse than a limitation.
-- **A `fun` literal is one synthesized top-level function**, so its body is checked exactly as a declaration's is — the same parameter list with the same qualifiers, the same `.return: T`, the same tail check, and the same `?` propagation against its own return type. `infer.rs` resolves its signature where it was written (an enclosing generic instance's type parameters are in scope), binds its parameters, checks the body in a `Ctx` clone with empty scopes, and pushes the result into a shared table that `check_program` appends to the program's functions. Its key starts with `#`, which no `.kp` identifier can contain, so it cannot collide with anything, and a literal inside a literal just takes the next one.
-- **What a literal cannot see is the point of this phase's order.** It is a function value, not a closure: a name from the enclosing frame is a diagnostic that says it is a capture and names the two ways round it (pass it as a parameter, or as a `move` parameter to hand over ownership). The same boundary produces the other two refusals — a passdown is a hidden argument of the function that names it, so a function pointer has no room for it, and a borrow return has no parameter list for the elision rule to read. A receiver's fields are refused by the same rule and read the same way.
+- **A `fun` literal is one synthesized top-level function**, so its body is checked exactly as a declaration's is, the same parameter list with the same qualifiers, the same `.return: T`, the same tail check, and the same `?` propagation against its own return type. `infer.rs` resolves its signature where it was written (an enclosing generic instance's type parameters are in scope), binds its parameters, checks the body in a `Ctx` clone with empty scopes, and pushes the result into a shared table that `check_program` appends to the program's functions. Its key starts with `#`, which no `.kp` identifier can contain, so it cannot collide with anything, and a literal inside a literal just takes the next one.
+- **What a literal cannot see is the point of this phase's order.** It is a function value, not a closure: a name from the enclosing frame is a diagnostic that says it is a capture and names the two ways round it (pass it as a parameter, or as a `move` parameter to hand over ownership). The same boundary produces the other two refusals, a passdown is a hidden argument of the function that names it, so a function pointer has no room for it, and a borrow return has no parameter list for the elision rule to read. A receiver's fields are refused by the same rule and read the same way.
 - **The callbacks borrow the payload, which is why they exist at every instantiation.** `option.map(o, f)` is `f: fun(&T).return: U`: a `when` arm binds a `Copy` payload by copy (auto-borrowed at the call, since a named local is a place) and an owned one as a shared borrow, so the same helper works for `Option<i32>` and `Option<String>` and hands ownership on to nobody. `std/list` is the same idea over a list, and is a **new module** because a callback's result type cannot be known when the list's per-element-type C functions are generated: `list.map(xs, f)` is the free-function shape `str.*`/`math.*` already have.
-- **The `Copy`-only helpers, and the diagnostic they needed.** Only the arm that has to *rebuild* the variant it was handed needs a copy: `or_else` (rebuilds `Some`), `result.map` (rebuilds `Err`), `map_err` (rebuilds `Ok`), `list.filter` (reads an accepted element out). That is not a missing function but a missing *rule* — reading an owned payload out of an owned enum is a partial move, which is A-11 — and the failure surfaces *inside* the module, with a span in a file the caller never opened. `infer.rs` now appends one note when the module is a shipped std module: the instantiation asked for is one the helper does not offer, and the module's header says which. Three rejections in the suite check that the note names the right module.
-- **One inference gap the callbacks forced, in A-2's binder.** `bind_type_params` paired a written type against an argument for `List`/`Box`/`Map` and user instantiations, and had no case for a function type, so `U` in `map<T, U>(o: &Option<T>, f: fun(&T).return: U)` could not be inferred from the callback — the error was "cannot infer type parameter 'U'". It pairs function types now (parameters in order, then the return), before the early return that treats a bare parameter name.
+- **The `Copy`-only helpers, and the diagnostic they needed.** Only the arm that has to *rebuild* the variant it was handed needs a copy: `or_else` (rebuilds `Some`), `result.map` (rebuilds `Err`), `map_err` (rebuilds `Ok`), `list.filter` (reads an accepted element out). That is not a missing function but a missing *rule*, reading an owned payload out of an owned enum is a partial move, which is A-11, and the failure surfaces *inside* the module, with a span in a file the caller never opened. `infer.rs` now appends one note when the module is a shipped std module: the instantiation asked for is one the helper does not offer, and the module's header says which. Three rejections in the suite check that the note names the right module.
+- **One inference gap the callbacks forced, in A-2's binder.** `bind_type_params` paired a written type against an argument for `List`/`Box`/`Map` and user instantiations, and had no case for a function type, so `U` in `map<T, U>(o: &Option<T>, f: fun(&T).return: U)` could not be inferred from the callback, the error was "cannot infer type parameter 'U'". It pairs function types now (parameters in order, then the return), before the early return that treats a bare parameter name.
 
-**Tests**: `fn_value`, `fn_literal`, `stdlib_combinators`, `stdlib_list_callbacks` — all four in the AddressSanitizer pass, since each hands an owned buffer to a function value that frees it. 14 rejections for phase B (a generic function, a passdown reader, `main`, an overloaded stdlib name, named arguments and arity in an indirect call, `mut`/`&` on a function type, a container element, a nested function-type return, `print`, a wrong-shaped callback, a borrow where `move` is required), 6 for phase C (a capture, a passdown, a borrow return in a literal and in a function type, a bad tail, a bodyless literal), and 3 for phase D (the `Copy`-only helpers). Plus two parser unit tests. The suite is **77 unit tests and 203 end-to-end tests**, all green.
+**Tests**: `fn_value`, `fn_literal`, `stdlib_combinators`, `stdlib_list_callbacks`, all four in the AddressSanitizer pass, since each hands an owned buffer to a function value that frees it. 14 rejections for phase B (a generic function, a passdown reader, `main`, an overloaded stdlib name, named arguments and arity in an indirect call, `mut`/`&` on a function type, a container element, a nested function-type return, `print`, a wrong-shaped callback, a borrow where `move` is required), 6 for phase C (a capture, a passdown, a borrow return in a literal and in a function type, a bad tail, a bodyless literal), and 3 for phase D (the `Copy`-only helpers). Plus two parser unit tests. The suite is **77 unit tests and 203 end-to-end tests**, all green.
 
-*What is left of A-4*: **captures** — a function value carries no environment, so a closure is a representation decision (a data pointer, and a rule for what a capture owns), not more plumbing. Two smaller pieces follow from *other* items rather than from closures: a `sort_by`-shaped comparator over an owned element type, and the helpers that hand an owned payload out by value, both of which need A-11's partial moves. MK5-S7-M1's two prerequisites for threads — function values and a move-taking parameter — are both met, so MK6-S1-M1's language surface is no longer its blocker.
+*What is left of A-4*: **captures**, a function value carries no environment, so a closure is a representation decision (a data pointer, and a rule for what a capture owns), not more plumbing. Two smaller pieces follow from *other* items rather than from closures: a `sort_by`-shaped comparator over an owned element type, and the helpers that hand an owned payload out by value, both of which need A-11's partial moves. MK5-S7-M1's two prerequisites for threads, function values and a move-taking parameter, are both met, so MK6-S1-M1's language surface is no longer its blocker.
 
 ### MK8-S1-M2 phase E captures, and the closure type (DONE)
 
 A-4's last language piece, and the representation decision the earlier phases
 left open. A `fun` literal that names a binding from the enclosing scope now
-captures it: the literal becomes a **closure** — a function value plus the heap
-environment those captures were moved into — typed `closure(T).return: U`, the
+captures it: the literal becomes a **closure**, a function value plus the heap
+environment those captures were moved into, typed `closure(T).return: U`, the
 function type one keyword apart, and called identically. A literal that
 captures *nothing* is still a plain `fun` value, `Copy` and environment-free,
 so every placement phases B and C established keeps its exact meaning.
@@ -785,7 +785,7 @@ so every placement phases B and C established keeps its exact meaning.
   system is what lets two closures of the same signature share a C type
   (`kelp_Closure__<sig>`, emitted like a container, before every `datac`).
   `env` is type-erased for the same reason, and `drop` is what makes erasure
-  sound — the value cannot know its own layout, so it carries the destructor
+  sound, the value cannot know its own layout, so it carries the destructor
   beside the pointer. This is the design the A-4 record named and the one the
   docs now describe; the alternative considered and rejected was a fat pointer
   *without* the destructor, which cannot free an environment the value no
@@ -801,7 +801,7 @@ so every placement phases B and C established keeps its exact meaning.
   v1 has no lifetime syntax to say otherwise.
 - **Inside the body a capture is a place.** `tir::ExprKind::Capture { index }`
   is a read of one environment field, so an owned capture can be used in place
-  — a method called on it, a field read, passed to a parameter — while reading
+, a method called on it, a field read, passed to a parameter, while reading
   it out whole is the partial move `borrowck` already refuses for an owned
   `datac` field and an owned enum payload. `is_tir_place` counts a capture too,
   which is what makes `prefix.as_str()` inside a literal borrow the
@@ -812,9 +812,9 @@ so every placement phases B and C established keeps its exact meaning.
   points (block end, early `return`, once per loop iteration), where a missed
   drop is a leak and a second one a double free.
 - **One widening connects the two types, and it lives in `check_expr`.** A
-  plain function value used where a closure is expected — `val f:
+  plain function value used where a closure is expected, `val f:
   closure(i32).return: i32 = double`, `Holder(cb = fun(x: i32).return: i32 = x)`,
-  `Box.of(...)` — is wrapped in a one-field environment holding the pointer,
+  `Box.of(...)`, is wrapped in a one-field environment holding the pointer,
   with a thunk generated per signature calling through it. Putting it in
   `check_expr` is what makes one implementation cover every site that knows the
   expected type, and there is deliberately no conversion the other way: a
@@ -829,13 +829,13 @@ so every placement phases B and C established keeps its exact meaning.
   optional-callback shape, and a `datac`/`enum` field holds one.
 - **A nested literal copies a `Copy` capture out of the enclosing
   environment**, and the enclosing literal captures a name it only needs on its
-  inner literal's behalf — so a literal two frames down reaches a binding of
+  inner literal's behalf, so a literal two frames down reaches a binding of
   the function above it, which is what makes `fun` inside `fun` behave like the
   lexical nesting it looks like. An owned capture cannot be moved out of an
   environment: the same partial move, one level up.
 - **A closure the frame holds is callable from inside another literal.** The
   call's callee path consults captures now, and `borrowck` reads an indirect
-  callee as a *place* rather than a whole value — which was a real bug the
+  callee as a *place* rather than a whole value, which was a real bug the
   first cut had: calling a closure marked the binding that held it moved, so
   the closure was never dropped and the call after it was a use of a moved
   value.
@@ -845,10 +845,10 @@ so every placement phases B and C established keeps its exact meaning.
 read through a borrow, a capturing literal passed to a borrowed and to a `move`
 closure parameter, a closure returned out of its frame, one in a `datac` field,
 one in a `Box`, and an inner literal calling a closure the frame holds), and
-`closure_move` (the three drop points). Six rejections that check the message —
+`closure_move` (the three drop points). Six rejections that check the message,
 a captured borrow, a receiver's field, an owned capture moved out of a nested
 environment, an owned capture read by value, `&closure(...)`, and
-`List<closure(...)>` — plus a closure where a plain function value is expected,
+`List<closure(...)>`, plus a closure where a plain function value is expected,
 a signature mismatch through the widening, use after capture, and use after a
 `move` parameter. Two parser unit tests for the closure type. `syntax.md` §2.3
 (the keyword), §3 (the type table and the placement rules), §7.2, §7.4
@@ -862,20 +862,20 @@ The phase that makes the two before it useful to code that already exists: the
 shipped callbacks take closures now, so `list.map(xs, fun(x: &i32).return: i32 = x *
 factor)` is what it reads as.
 
-- **The three modules' callback parameters are `closure(...)`** — `std/list`'s
+- **The three modules' callback parameters are `closure(...)`**, `std/list`'s
   six, `std/option`'s four, `std/result`'s five. The bodies are unchanged: a
   closure parameter borrows the closure, so `f(x)` inside each helper is the
   same call, and the payload is still read through a borrow, which is what
   keeps the helpers working at every instantiation.
 - **A named function still costs nothing.** The widening now distinguishes what
-  it is wrapping. A value that *names* a function — a declared `fun`, or a
-  literal that captured nothing, both of which are `ExprKind::FnRef` — gets a
+  it is wrapping. A value that *names* a function, a declared `fun`, or a
+  literal that captured nothing, both of which are `ExprKind::FnRef`, gets a
   generated **shim**: the same signature with the ignored hidden parameter, so
   `env` is `NULL`, `drop` is `NULL` and the conversion allocates nothing. Only
   a function value whose identity is known at the call (`val g = pick(true)`,
   then `list.map(xs, g)`) needs the one-field environment and the thunk.
   Without the split, retyping the callbacks would have put a `malloc` in front
-  of every `list.map(xs, inc)` — which is the reason the split came with this
+  of every `list.map(xs, inc)`, which is the reason the split came with this
   phase rather than an earlier one.
 - **A latent parser bug this flushed out, which had to be fixed first.** The
   lexer suppressed newline tokens at any `paren_depth > 0`, and a `{` does not
@@ -883,17 +883,17 @@ factor)` is what it reads as.
   written as a call argument at all: the literal's inner newlines were swallowed
   by the enclosing call's parens and the parse failed with `unexpected token
   Newline`. Phase C only ever wrote one-statement block bodies in argument
-  position, which is why nothing caught it — and the first multi-statement one
+  position, which is why nothing caught it, and the first multi-statement one
   was exactly the shape this phase wants (`list.each(xs, fun(x: &i32) { ... })`).
   The lexer now tracks the paren depth in force at each unclosed `{`: a block
   whose braces were opened inside parens tokenizes newlines again, while a
   function body's own braces are at depth 0, so a wrapped argument list inside
   one still ignores them. The first cut of the fix (a plain brace counter) broke
-  three fixtures whose argument lists wrap — a trailing-comma argument list
-  inside a function body became newline-sensitive again — which is what the
+  three fixtures whose argument lists wrap, a trailing-comma argument list
+  inside a function body became newline-sensitive again, which is what the
   depth comparison is for.
 
-**Tests**: `stdlib_closure_callbacks` — a capturing callback through
+**Tests**: `stdlib_closure_callbacks`, a capturing callback through
 `map`/`any`/`each` (one of them capturing an owned `String`, so the
 environment's drop is what frees it), a declared function and a non-capturing
 literal (the shim path), a function value known only at the call (the
@@ -910,10 +910,10 @@ rather than on closures: a `sort_by`-shaped comparator over an *owned* element
 type, and the helpers that hand an owned payload out by value (`option.unwrap`
 on an `Option<String>`, `result.map` over a `Result<T, MyErr>`, `list.filter`
 over a `List<String>`). Both are recorded under A-11 and in each module's
-header. MK5-S7-M1's two prerequisites for threads — function values and a
-move-taking parameter — have been met since phase A, and open item 60's (a) and
+header. MK5-S7-M1's two prerequisites for threads, function values and a
+move-taking parameter, have been met since phase A, and open item 60's (a) and
 (b) are now the closure half of that story as well: a thread entry point may be
-a closure, and (c)–(e) (the panic policy, the per-thread frame story, and
+a closure, and (c)-(e) (the panic policy, the per-thread frame story, and
 atomics plus a `Send`-shaped rule) are what MK6-S1-M1 still needs.
 
 ---
@@ -922,9 +922,9 @@ atomics plus a `Send`-shaped rule) are what MK6-S1-M1 still needs.
 
 ### MK5-S2-M2 `spawn_in`/`run_in`, the fallible `try_run`, and `fs.symlink` (DONE)
 
-The three stdlib-sized gaps `roadmap.md` recorded under "What the port hit" —
+The three stdlib-sized gaps `roadmap.md` recorded under "What the port hit",
 found by writing the parts of Coral that shell out, and each one extern plus one
-wrapper by the plan's own estimate — plus the two things implementing them
+wrapper by the plan's own estimate, plus the two things implementing them
 turned out to need. The process half is MK5-S2-M2 (the `io` + `process` stage);
 the filesystem half continues MK5-S5's breadth.
 
@@ -943,19 +943,19 @@ the filesystem half continues MK5-S5's breadth.
   the design question was whether to keep that or check the link alone. Both
   ends is the choice, and it is the one that keeps an `fs` grant **closed under
   link creation**: a module can only create a link whose target it could also
-  name. Checking the link alone would still be sound — every later access
-  resolves the link first and is denied if it escapes — but it would let a tree
+  name. Checking the link alone would still be sound, every later access
+  resolves the link first and is denied if it escapes, but it would let a tree
   inside the grant contain a link out of it, which is the case `fs.remove_all`
   refuses to walk, and its doc comment now says so, because `fs.symlink` is the
   first thing in the language that can create that state. One consequence worth
   knowing: the target must be **absolute**, since the check normalizes every
   path it matches and only an absolute path normalizes at all. A dangling
   target is fine; a relative one is a denial. There is deliberately no
-  `read_link` — nothing has needed to resolve a link back to its target text.
+  `read_link`, nothing has needed to resolve a link back to its target text.
 - **A fallible run, with the failures a pre-check can see.**
   `try_run`/`try_run_in` return `Result<RunResult, ProcErr>`, where `ProcErr` is
   `NotFound` (nothing at that path), `NotExecutable` (something is there that
-  `exec` would refuse — a directory, a non-executable file, a dangling link) or
+  `exec` would refuse, a directory, a non-executable file, a dangling link) or
   `DirNotFound`. All three are decided **before** the fork by `stat`/`access`,
   which is what keeps them honest: none can be confused with a child that ran
   and exited with a matching code, and an `Err` always means the child never
@@ -968,7 +968,7 @@ the filesystem half continues MK5-S5's breadth.
   included. That variant is unreachable without a compiler change, and the
   reason is structural rather than an oversight: the capability check is
   compiled in per *calling* module and emitted at the call site, where it
-  panics — so a program outside the grant, and a relative one (which normalizes
+  panics, so a program outside the grant, and a relative one (which normalizes
   to nothing), is refused before any Kelp function runs. Returning it as a value
   needs a non-panicking check mode in codegen, with the verdict reaching the
   callee as a value while the guard still refuses to *call* on deny (a flag the
@@ -982,7 +982,7 @@ the filesystem half continues MK5-S5's breadth.
   `spawn`/`run` and the *directory* for `spawn_in`/`run_in`/`try_run_in`.
   Checking argument 0 there would have matched a working directory against a
   program allowlist and denied every call whose directory is outside the
-  granted programs, so the table is now keyed on the call — the shape
+  granted programs, so the table is now keyed on the call, the shape
   `fs.open`'s mode argument and `net`'s resources already needed.
   `process_in`'s `dir_outside_grant` is the regression pin: it runs `/bin/sh`
   with `/tmp` as the working directory, which no pattern in that project grants.
@@ -992,12 +992,12 @@ the filesystem half continues MK5-S5's breadth.
   module and `std/process` cannot hold `fs`. The three are called **directly**
   from the fallible pre-checks rather than through Kelp wrappers, which matters:
   a wrapper in a gated module is itself gated, so calling one would re-check the
-  *path* against `std/process`'s patterns — harmless for the program, since it
+  *path* against `std/process`'s patterns, harmless for the program, since it
   is the same path that just passed, but wrong for the working directory.
 
 **Tests**: three projects. `caps_link` (`fs.symlink` inside a grant, read
-through the link, then the target removed so the link dangles — which is the
-proof it is a link and not a copy — then the dangling link removed through
+through the link, then the target removed so the link dangles, which is the
+proof it is a link and not a copy, then the dangling link removed through
 `fs.remove`, with `fs.list` proving the directory is empty afterwards);
 `caps_link_denied` (the target outside the grant, denied before `symlink(2)`
 runs, with the denial naming the *target* rather than the link); and
@@ -1010,7 +1010,7 @@ grant is not a grant question. The suite is **78 unit tests and 211 end-to-end
 tests**, all green.
 
 *What this does not close*: open item 67's "what a Coral port hits" is now empty
-of stdlib gaps — the language half was already shipped — but the port still
+of stdlib gaps, the language half was already shipped, but the port still
 needs the compiler's CLI contract that open item 72 names, and `fs.read_link`
 stays absent until something has to resolve a link back.
 
@@ -1052,8 +1052,8 @@ resolved.
 - **The iterable is borrowed when it is a place, and owned when it is not.**
   This is the one decision the desugar had to make, and the reason is that a
   parameter is a borrow: binding the iterable by value (`val #for0 = xs`) would
-  move out of that borrow, so `for x in xs` inside a function — the common case,
-  and the shape every iteration fixture wants — would fail to compile. A place
+  move out of that borrow, so `for x in xs` inside a function, the common case,
+  and the shape every iteration fixture wants, would fail to compile. A place
   (`Ident`, `FieldAccess`, `Deref`) is therefore used as written; anything else
   (a call, a literal, a `when`) is bound to `val #for0`, so it is evaluated
   **once** and freed with the block, which is what makes `for x in make()`
@@ -1067,7 +1067,7 @@ resolved.
   increment, and `BODY`'s tail expression stays the tail of a block.
 - **`for` walks a `List` and nothing else, and says so generically.** The
   desugar asks for `.len()`, so `for x in 5` is refused with the ordinary
-  method diagnostic — `type 'i32' has no method 'len'` — with the span on the
+  method diagnostic, `type 'i32' has no method 'len'`, with the span on the
   *iterable* (`5`), not on the `for`. That is honest rather than tailored, and
   `for_not_a_list.kp` pins the wording so a future message change is
   deliberate.
@@ -1098,8 +1098,8 @@ the `Copy`-only stdlib helpers wait on; the language's unstarted work is MK6-S1
 ### MK8-S2-M1 the five gaps a real program hit: `to_f64`, char literals, bitwise operators, `str` -> `String`, `View` (DONE)
 
 A concrete program found these, not a roadmap. `jsonlibary` is a JSON reader
-and writer written in Kelp as a *test of the language* — written by someone
-with no access to `kelpc`'s source, against `syntax.md` alone — and reading it
+and writer written in Kelp as a *test of the language*, written by someone
+with no access to `kelpc`'s source, against `syntax.md` alone, and reading it
 back gave five gaps that were not ergonomics-in-the-abstract but workarounds
 paid at every use site. It is also the milestone that showed what
 documentation is for: a language whose reference is a list of features and not
@@ -1109,7 +1109,7 @@ a map. §22 of `syntax.md` is the answer to that.
 **1. `to_f64`/`to_f32`, and the absurdity of the workaround.** Operands must
 match exactly, so an `i64` and an `f64` never meet by themselves and `n * 1.0`
 is a type error. Before this the only widening the language had was to format
-the integer and parse it back — `str.parse_f64(fmt.int(n).as_str())`, which
+the integer and parse it back, `str.parse_f64(fmt.int(n).as_str())`, which
 allocates a `String` to add zero to a number. `to_f64` is the exact cast;
 `to_f32` rounds and is the one conversion allowed to lose value unchecked,
 because C defines it for every input. `integer_conversion` became
@@ -1121,23 +1121,23 @@ it loses the fraction and there is no `Option` for it to report the loss with.
 them.** `char` was a type with no values, so every byte-level algorithm was
 written in decimal: `if c == 34`, `out.push(32)`, `hex_digit` returning
 `n + 48`/`n + 87`. A literal now holds one Unicode scalar value and **takes the
-integer type its context asks for**, exactly as a numeric literal does — that
-single rule is what makes `c == '"'` work when `c` is a `u8` — and is `char`
+integer type its context asks for**, exactly as a numeric literal does, that
+single rule is what makes `c == '"'` work when `c` is a `u8`, and is `char`
 when nothing constrains it. A code point that does not fit the requested type
 is refused rather than truncated, and a `char` meeting an integer explains
 itself rather than reporting a bare mismatch. `char` is a code point rather
 than a C byte, so its C type is `uint32_t` and `'\u{4e2d}'` fits. Escapes:
 `\n \t \r \0 \' \" \\` and `\u{...}`.
 
-**3. The bit surface.** The language had no bitwise operators at all — the
-plan's own note was that `str.char_at` decoded UTF-8 by subtraction — and the
+**3. The bit surface.** The language had no bitwise operators at all, the
+plan's own note was that `str.char_at` decoded UTF-8 by subtraction, and the
 JSON reader's encoder wrote `192 + cp / 64` for `0xC0 | (cp >> 6)`. `&` `|` `^`
 are infix, `~` is prefix, and `<<`/`>>` are two *adjacent* `<`/`>`
 characters: the lexer deliberately does not fold them, so `List<List<i32>>`
 still closes a nested type-argument list. `&` is bitwise-and in infix position
 and the borrow prefix in prefix position, told apart by position exactly as C++
 reads it. Precedence is C's except that the bitwise operators bind *tighter*
-than the comparisons — Rust's reading, and the one deliberate divergence,
+than the comparisons, Rust's reading, and the one deliberate divergence,
 because C's makes `flags & MASK == 0` mean `flags & (MASK == 0)`. `bool` is not
 a bitwise domain: `a & b` on two booleans reads as a non-short-circuiting
 `and` when `&&` is right there.
@@ -1146,7 +1146,7 @@ a bitwise domain: `a & b` on two booleans reads as a non-short-circuiting
 `String.from_str("...")` appeared about twenty times in the JSON library, once
 per parser error message and once per accessor arm. The conversion is applied
 at the end of `check_expr`, so every site that already knows an expected type
-gets it — a call argument, a `let` with a written type, an assignment, a
+gets it, a call argument, a `let` with a written type, an assignment, a
 `return`, a `datac` field, a `List<String>` element, a `Map` key or value, an
 `if` branch, a `when` arm, a block tail. Doing it in the wrapper rather than at
 each site is the whole design: the behaviour is the same either way and this
@@ -1157,20 +1157,20 @@ borrow with a lifetime, not a copy.
 
 **5. `View`, the only one that needed a new type.** `str` is a bare
 `const char*`: no length, so every scan re-derives one with a `strlen`, every
-slice allocates, and a `datac` cannot hold one at all — which is why the JSON
+slice allocates, and a `datac` cannot hold one at all, which is why the JSON
 reader copied its whole input before parsing. A `View` carries the length with
 the pointer.
 
 **Soundness was the design, and it cost the one thing the recommendation had
-promised.** The obvious shape — a `View` field in the parser's own `datac`, so
-the parser keeps its input — is not expressible soundly without lifetime
+promised.** The obvious shape, a `View` field in the parser's own `datac`, so
+the parser keeps its input, is not expressible soundly without lifetime
 syntax (A-11): v1 has no way to tie a field to the text it borrows, so
 `fun bad().return: Parser { val s = String.from_str("x") return Parser(text = s.view()) }`
 would compile and hand back a dangling pointer. The operator chose the sound
 version, which means `View` follows `str`'s rules exactly rather than getting
 an exception: **not** a `datac` field, **not** an enum payload, **not** a
 `List`/`Box` element, **not** a `Map` key, and **no implicit conversion to
-`str`** — a slice has no NUL after it, so `strlen`/`strcmp`/`%s` on one would
+`str`**, a slice has no NUL after it, so `strlen`/`strcmp`/`%s` on one would
 read past the slice and report a different string than the program holds.
 `print` emits `%.*s` from the pair, `v.eq` compares the bytes and the lengths,
 and `v.to_string()` is the one safe way to make owned text of a slice.
@@ -1188,9 +1188,9 @@ works because a `View` parameter is a reference parameter. Four rejection
 fixtures pin those four rules.
 
 **A fifth of this milestone is a defect the type found in the compiler.** The
-"a borrowed type cannot be stored" check existed at **four** sites — the
+"a borrowed type cannot be stored" check existed at **four** sites, the
 struct-table pass and the generic instantiation path, each for `datac` fields
-and for `enum` payloads — and `View` was missed at two of them on the first
+and for `enum` payloads, and `View` was missed at two of them on the first
 attempt, so `datac P(val text: View)` compiled until a probe caught it. All
 four now call `types::is_borrowed_field_ty`, which is also what `is_ref_param`
 is, so a sixth borrowed type cannot be half-added.
@@ -1201,7 +1201,7 @@ rows), §5 (precedence with the deliberate divergence spelled out, plus new
 §5.0 numeric conversion and §5.1 the implicit conversion), §11.4 (the
 conversion surface, and the stale claim that `parse_i64` returns a `datac`), a
 new §11.5 for `View`, §16.1, §17 and the §18 error table, and §20's grammar.
-Then §22: **"Writing a program: the rules that explain most errors"** — the
+Then §22: **"Writing a program: the rules that explain most errors"**, the
 eight rules that explain most diagnostics (every owned parameter is a borrow;
 a `mut` scalar is dereferenced with `*`; no partial moves; no `break`; the
 `List.get` borrow; no implicit numeric conversion; `char` is not an integer;
@@ -1220,7 +1220,7 @@ end-to-end tests**, all green.
 
 *What is next from here*: MK8-S2's remainder is A-6 (`Set`, non-`String` map
 keys), A-7 (arenas, shared immutable data), A-10 (loosened element rules),
-A-11 (checker expressiveness — now the blocker for a `View` field as well as
+A-11 (checker expressiveness, now the blocker for a `View` field as well as
 for the `Copy`-only stdlib helpers), A-12 (traits) and A-13 (privacy). The
 part of A-8/A-9 that shipped is recorded against them in `roadmap.md`'s open
 items 21, 22, 29, 30, 44 and 53.
@@ -1230,14 +1230,14 @@ items 21, 22, 29, 30, 44 and 53.
 The same JSON library, now written against `syntax.md` *after* MK8-S2-M1, was
 compiled again and the defects it hit were minimised by the author into three
 codegen bugs and one doc inconsistency. Two of the three were memory-visible
-rather than cosmetic — a leak on every propagated failure, and a build failure
-in `cc` — which is what made them worth a pass of their own rather than a
+rather than cosmetic, a leak on every propagated failure, and a build failure
+in `cc`, which is what made them worth a pass of their own rather than a
 workaround note. All three are fixed, the fourth turned out to be a
 mis-attribution, and DOC-1 is a `syntax.md` fix.
 
 **1. `?`'s early return skipped the drops of the frame it sat in.** `?`
 desugars to a `return` of the failure value, and `codegen_c.rs` renders that
-return *inside a C statement-expression* — so the only drop lookup on the path
+return *inside a C statement-expression*, so the only drop lookup on the path
 was the one keyed to a `Stmt::Return`, and there was no such node. Every owned
 local live in the frame leaked on every failure, which for a recursive-descent
 parser means every rejected document: `jsonlibary`'s `parse_array`/
@@ -1248,8 +1248,8 @@ they recurse, and 20 000 rejected 8 000-element arrays leaked about 9 GB.
 
 The fix is a third drop point in the same side table as the other two:
 `DropPlan::at_try`, keyed by the `?` expression's span. `borrowck.rs` records
-the frame's live owned locals *after* the operand is checked — so a local the
-operand moved (`val r = f()?`) is not freed twice — and `codegen_c.rs` emits
+the frame's live owned locals *after* the operand is checked, so a local the
+operand moved (`val r = f()?`) is not freed twice, and `codegen_c.rs` emits
 those drops inside the failure arm, after the payload is moved into the
 return value and before the `return`, which is the order `Stmt::Return` uses.
 Measured, not argued: the report's shape (a 64 KiB local, 40 000 iterations,
@@ -1260,8 +1260,8 @@ Measured, not argued: the report's shape (a 64 KiB local, 40 000 iterations,
 reading it.** The generated hidden parameter and the generated global share one
 name (`kelp_pd__failures`), so a bare identifier in a body means whichever is
 in scope. Inside a function that received the parameter, passing it on is the
-pointer itself; inside one that received nothing — `main`, or any function that
-only *calls* a passdown reader — the identifier named the global, whose type is
+pointer itself; inside one that received nothing, `main`, or any function that
+only *calls* a passdown reader, the identifier named the global, whose type is
 the passdown's *value*, so the call passed an `i32` where the signature wanted
 `int32_t*` and `cc` refused the file. The call-site logic asked
 `pd_global_borrow`, which is true only for `main` and a `pd` initializer, and
@@ -1274,7 +1274,7 @@ cases are genuinely different and the old flag conflated them with a third.
 *The report recorded this as fixed on `main`; it is not.* The repro fails
 identically at `d5be7f5`, at `cacd434` and on `v0.1.4`, and `hidden_args` has
 carried `pd_global_borrow` unchanged since MK2-S2-M2. The fixture below is the
-shape from the report plus the two callers it does not cover — a chain
+shape from the report plus the two callers it does not cover, a chain
 (`deep -> relay -> bump`) and a function that both reads the passdown itself
 *and* forwards it, where taking the parameter's address would be a pointer to
 a pointer.
@@ -1285,11 +1285,11 @@ fractional part of an integral value, so `100000000000000000000.0` emitted
 `100000000000000000000` and `-0.0` emitted `-0`. The first makes `cc` reject
 the file ("integer literal is too large to be represented in any integer
 type"); the second changes the value, because C reads `-0` as the integer
-zero — losing the sign, and evaluating an expression whose operands are both
+zero, losing the sign, and evaluating an expression whose operands are both
 rewritten that way in integer arithmetic (`0.0 * -1.0` became `0 * (-1)` and
 produced `0` instead of `-0.0`). `Debug` is the shortest form that *keeps the
 type*: it always emits a `.` or an exponent. `c_float_literal` uses it, and
-adds the two cases no literal can spell — an overflowing literal parses to
+adds the two cases no literal can spell, an overflowing literal parses to
 infinity at lex time and a folded `0.0 / 0.0` is a NaN, so those emit
 `INFINITY`/`(-INFINITY)`/`NAN` from `<math.h>` instead of `Display`'s
 non-lexing `inf`/`NaN`. `pretty.rs` had the same `Display` bug and gets the
@@ -1299,8 +1299,8 @@ case is documented as having no Kelp spelling rather than being papered over).
 **DOC-1. `syntax.md` §22.4's UTF-8 snippet used hex literals §2.4 forbids.**
 §2.4 is the lexical authority ("Integer literals are decimal digits only: no
 suffix, no hex") and the lexer agrees with it, so the worked example was the
-thing that was wrong. It is now written in decimal — `(224 | (cp >> 12))` and
-so on, with the hex spellings named in the sentence — which is what
+thing that was wrong. It is now written in decimal, `(224 | (cp >> 12))` and
+so on, with the hex spellings named in the sentence, which is what
 `jsonlibary` had already done by hand. A hex literal remains open work in
 `roadmap.md` A-9's "still open" list, which is the right place for it: the
 snippet was wrong, not the lexer.
@@ -1319,20 +1319,20 @@ chain, and a function that reads and forwards. The suite is **88 unit tests and
 ## The fourth pass of a real program: a JSON library and a query tool over it (DONE)
 
 A second, independent program (a JSON reader/writer plus a small query tool built on it) hit four more
-defects, probed rather than guessed at the way the third pass was. One was a real, confirmed language bug —
-6.1's own worked example did not compile — and two were not bugs at all: a documented one-directional
+defects, probed rather than guessed at the way the third pass was. One was a real, confirmed language bug,
+6.1's own worked example did not compile, and two were not bugs at all: a documented one-directional
 implicit conversion, read as bidirectional, and a sound refusal with no lifetime mechanism to relax it. Both
 of the latter got a better diagnostic instead of a behavior change, which is the honest fix when the reported
 behavior is already correct. The fourth (a closure parameter typed as a borrow of a module type breaking
-codegen) is real and stays open — it is a codegen gap in the closure-and-borrow intersection, not a small
+codegen) is real and stays open, it is a codegen gap in the closure-and-borrow intersection, not a small
 fix, and the report's own workaround (dropping the closure-based traversal API for named accessor functions)
 is recorded so the gap does not have to be rediscovered.
 
 **1. `else if let` on the same scrutinee re-moved it.** `if let PAT1 = x { .. } else if let PAT2 = x { .. }`
 desugars each `if let` independently (`parse_if_let`), and every version of that desugar bound the scrutinee
 to a fresh owning temporary unconditionally: `{ val #iflet0 = x  when #iflet0 { PAT1 -> .. else -> {
-val #iflet1 = x  when #iflet1 { PAT2 -> .. } } } }`. `x`'s type is a `datac`/`enum` — never `Copy`, regardless
-of what its payload holds, since `Ty::is_copy` excludes every `Ty::Struct(_)` outright — so the first `val
+val #iflet1 = x  when #iflet1 { PAT2 -> .. } } } }`. `x`'s type is a `datac`/`enum` - never `Copy`, regardless
+of what its payload holds, since `Ty::is_copy` excludes every `Ty::Struct(_)` outright, so the first `val
 #iflet0 = x` reads as a move, and the second link's own re-evaluation of the same source expression `x` then
 reads an already-moved place. 6.1 documents the chain as legal and its own worked example (`Rect`/`Circle`
 over one `shape`) is exactly this shape; it did not compile before this fix, on `main` or on any released
@@ -1340,12 +1340,12 @@ build. The existing `if_let_basic.kp` fixture never caught it because every chai
 fresh temporary literal, never the same place read twice.
 
 The fix is narrower than "stop moving the scrutinee": binding it to a temporary at all is only there because
-`when`'s pattern form needs a *place* (6.1's own note — "a bare `when` needs a place, since a payload borrow
+`when`'s pattern form needs a *place* (6.1's own note, "a bare `when` needs a place, since a payload borrow
 has to outlive the arm"), and a scrutinee that is *already* a place needs no temporary, exactly the way a
 bare `when x { .. }` needs none. `parse_if_let` now checks that first: a place scrutinee (`Ident`,
 `.field`, `*expr`) is handed to the synthesized `when` directly, with no `val #iflet_i = ..` at all, so
 reading it again in a chained `else if let` is exactly as legal as `when`'s own multi-arm form reading its
-one scrutinee once and testing it repeatedly — because matching a place was never a move of the whole value
+one scrutinee once and testing it repeatedly, because matching a place was never a move of the whole value
 to begin with (`check_when`'s binding logic only ever copies or borrows the matched *field*). A scrutinee
 that is not already a place (a call's result, a literal) still gets the temporary, since there is nothing
 else for `when` to borrow through. `ast::is_place` is the shared definition parser.rs and infer.rs both use
@@ -1353,33 +1353,33 @@ now (it used to be a private `infer.rs` copy under the name `is_ast_place`, kept
 call site stayed unchanged), so "what counts as a place" cannot drift between the two.
 
 **2 (not a bug). An owned `String` does not implicitly become a `str` argument.** The report read this as an
-inconsistency — `print(a_string)` accepts one, `str.concat(a_string, "!")` does not — but 5.1 only promises
+inconsistency, `print(a_string)` accepts one, `str.concat(a_string, "!")` does not, but 5.1 only promises
 the conversion in the other direction (`str`/`View` to an owned `String`); `print` accepting a `String`
 directly is a `print`-specific rule (it also accepts `Bytes`/`View` and every scalar), not the general
 argument-matching path every other call goes through. The confusion is real even though the behavior is
 correct, so the mismatch now names which direction is implicit and what to write instead: `argument 'a' has
-type 'String', expected 'str' — there is no implicit conversion this direction (5.1 only goes the other way,
+type 'String', expected 'str', there is no implicit conversion this direction (5.1 only goes the other way,
 'str'/'View' to an owned 'String'); call \`.as_str()\` to borrow it`.
 
 **3 (not a bug). `.as_str()` on a temporary stays refused.** `fmt.int(n).as_str()` is refused because the
 call returns a borrow of its own `self` argument and `self` here is a temporary with nowhere to outlive the
-call to — v1 has no lifetime syntax to say the borrow only needs to survive the rest of the enclosing
+call to, v1 has no lifetime syntax to say the borrow only needs to survive the rest of the enclosing
 statement, so relaxing this is real engineering (borrowck would have to reason about how long the returned
 borrow is actually used, and codegen's temporary-hoisting would have to agree), not a diagnostic fix. Given
-the choice the report itself offered — relax the rule, or name the workaround — this took the safe one: the
+the choice the report itself offered, relax the rule, or name the workaround, this took the safe one: the
 message now says to bind the value to a local first, rather than only naming the parameter that cannot be a
 temporary.
 
 **4 (fixed by the `fpl` pass below). A closure parameter typed as a borrow of a module type breaks codegen.** `closure(&Json).return: bool`
 mangles into a symbol codegen cannot forward-declare through (`kelp_Closure__refjson.Json__bool`, a name
-containing a module-qualified dot codegen did not expect a monomorphized closure name to carry) — a real gap
+containing a module-qualified dot codegen did not expect a monomorphized closure name to carry), a real gap
 in how closure monomorphization and cross-module borrow types combine, not something the diagnostic-hint
-treatment above fits. The report's own workaround — the whole closure-based traversal API
+treatment above fits. The report's own workaround, the whole closure-based traversal API
 (`each_value`/`each_field`/`map_array`/`filter_array`/`count_where`/`index_where`) rewritten as named
-accessor functions (`count_nodes`/`depth_of`/`count_of_kind`/`collect_strings`/`filter_array_by_kind`) — is
+accessor functions (`count_nodes`/`depth_of`/`count_of_kind`/`collect_strings`/`filter_array_by_kind`), is
 recorded here so a future pass at this gap starts from a known-working call shape instead of guessing at one.
 
-**Tests**: `if_let_chain_same_scrutinee.kp` pins fix 1 — 6.1's own example verbatim, a third link with a
+**Tests**: `if_let_chain_same_scrutinee.kp` pins fix 1, 6.1's own example verbatim, a third link with a
 non-`Copy` payload so the fix is not only correct for scalars, and reading the scrutinee again after the
 chain ends to prove it is still owned by the caller. It is in the AddressSanitizer list (the non-`Copy`
 payload is a `String`). The suite is **88 unit tests and 242 end-to-end tests**, all green.
@@ -1392,33 +1392,33 @@ in the compiler, none of them a language question; the same session added `/* ..
 syntax the documents kept wanting (they were written with a `//` on every line of a multi-line note).
 
 **1. A drop was emitted into the wrong block when two blocks shared one span.** `borrowck::DropPlan` keyed
-every drop point by *source span* — which was the right idea (the two passes walk the tree independently and
+every drop point by *source span*, which was the right idea (the two passes walk the tree independently and
 must not have to stay in lockstep on positions) and the wrong key. Parse-time desugaring deliberately gives
 several distinct blocks one span: `if let` synthesizes a `when` whose `else` block is an empty block carrying
 the `then` block's span, and `for` builds an element block inside a `while` body, both carrying the loop
 body's span. So an owned local declared in an `if let` arm had its end-of-scope drop looked up by the *else*
-branch, where the name is not declared at all — `cc` rejected the file — and one declared in a `for` body was
+branch, where the name is not declared at all, `cc` rejected the file, and one declared in a `for` body was
 dropped there and again at the loop's exit. The naming error was the symptom; the placement was the bug, and
 with a name declared in the enclosing scope the same lookup would have been a use-before-init and a double
 free rather than a build failure.
 
 The fix is the key, not the placement logic: `DropPlan` now keys a block's drops by the block's *identity*
-(its address — both passes walk the same `tir::Program`, and nothing moves or copies the tree between them),
+(its address, both passes walk the same `tir::Program`, and nothing moves or copies the tree between them),
 and `tir::Block` no longer carries a span at all, so nothing can key on one again. Keying on identity also
 keeps the property the span key was chosen for: a `while` body is still checked twice (M3's double-move
 trick) and emitted once, because the second check writes the same key. `codegen_c.rs` and `codegen_asm.rs`
 both pass the block itself where they used to pass its span.
 
 **2. A closure parameter that borrows a module-declared type named the type before it existed.** A closure
-typedef is emitted before every `datac` — a `datac` field may hold a closure, so the closure type has to exist
-first — and it spelled a `datac` parameter with `container_elem_c_type`, which named the forward-declared
+typedef is emitted before every `datac`, a `datac` field may hold a closure, so the closure type has to exist
+first, and it spelled a `datac` parameter with `container_elem_c_type`, which named the forward-declared
 struct tag. That function did not look through a borrow, so `closure(&Item)` came out as
 `const struct_Item*`, `Item`'s *typedef* name, which is not declared until after the typedef that uses it.
 It now walks through a borrow, and the coercion environment beside it inherits the fix.
 
 The same report's own repro found the other half, one mangling later: inside a non-entry module the parameter
 type is module-qualified, and `closure_mangle` builds the C name from `ty_mangle`, whose borrow arm spelled
-`&items.Item` as `refitems.Item` — a dot in a C identifier, so the generated closure type was
+`&items.Item` as `refitems.Item`, a dot in a C identifier, so the generated closure type was
 `kelp_Closure__refitems.Item__unit` and every use of it failed to parse. The fallback now goes through
 `c_ident`, the one mangling every other generated symbol uses, which is what turns the fourth pass's open item
 4 (above) into a fixed one: its own repro, `closure(&json.Json).return: bool` in a module named `json`, now builds
@@ -1428,7 +1428,7 @@ reached by different files: `closure_datac_borrow_param.kp` (one file) and the p
 
 **3. The generated C warned on every fresh build.** Both kinds came from `codegen_c.rs`, and both were
 cheap once named: a condition that already renders as one parenthesized group (every binary expression, and
-`when`'s tag test) was wrapped a second time by `if (…)`, which clang flags as an extraneous parenthesis —
+`when`'s tag test) was wrapped a second time by `if (…)`, which clang flags as an extraneous parenthesis,
 on the most common conditions in the language; and the conversion bound check compared an `int32_t` against
 `u32`'s ceiling, a comparison clang reports as always false. Conditions are now parenthesized exactly once,
 and a bound the source's own range cannot reach is dropped rather than emitted as a tautology (`i32.to_u32`
@@ -1438,7 +1438,7 @@ emitted about 47 warnings emits none.
 **`/* ... */`, and it nests.** The documents needed a note that spans lines, and the authority said there
 were no block comments, so this is a language change: `syntax.md` §2.1 defines them, the lexer consumes them
 as trivia (both forms through one entry point, so `keep_comments`-mode trivia retention and the formatter's
-byte-for-byte copy of a comment's own text — newlines and inner indentation included — work for a block
+byte-for-byte copy of a comment's own text, newlines and inner indentation included, work for a block
 comment unchanged; `fmt.rs`'s `comments-verbatim-bytes` rule gained `block_comment` as a second pin and a
 `/* … */` in its statement, and the header bullet it is read back from). Nesting, not C's first-`*/`-wins:
 commenting out a region that already contains a block comment is the case that decides it, and the cost is
@@ -1463,7 +1463,7 @@ detail in the MK7 record below.
 *token-level* formatter: `lexer.rs` gained an additive trivia mode (`TokenKind::Comment`, a `keep_comments`
 flag, `tokenize_with_trivia`) so comments exist as tokens at all, and the formatter copies each token's own
 source slice and rewrites only the whitespace between tokens. That is why comments, literal spelling and
-template text survive by construction rather than by re-encoding — an AST round-trip cannot hold a comment,
+template text survive by construction rather than by re-encoding, an AST round-trip cannot hold a comment,
 and `StringLit`/`CharLit`/`FloatLit` store decoded values. `kelpc fmt FILE` writes to stdout, `-w` rewrites in
 place, `--check` exits nonzero for CI. Two properties are structural rather than claimed: a space is
 suppressed between two tokens only when the concatenation provably re-lexes to those same tokens (without
@@ -1478,13 +1478,13 @@ statement wrong in the same way as the pair that pins it survives, and a raw-str
 reason is covered by no check.
 
 **The 2024 edition.** `gen` is a reserved keyword there, and the C code generator's own local was called that
-in 22 places, so it is now `g` — the name `codegen_asm.rs` already used. Nothing else bit, and that was
+in 22 places, so it is now `g`, the name `codegen_asm.rs` already used. Nothing else bit, and that was
 measured rather than assumed: no dependencies, no `unsafe`, no `no_mangle`/`export_name`/`link_section`, no
 `static mut`, no `extern "C"`, and 272 `if let`/`while let` sites compile unchanged, which the scope-narrowing
 change to that position would have broken as a borrow error. The workspace resolver moves to 3 to match. The
 check that matters is that generated C did not move: the `asm` backend's differential result is unchanged.
 
-**The `Map` slice** is MK7 section 5's item 4 and the last container. Headline: the ABI needed nothing —
+**The `Map` slice** is MK7 section 5's item 4 and the last container. Headline: the ABI needed nothing,
 `$Map` is a 56-byte `MEMORY`-class aggregate like `Bytes`, so the fifth heap type slotted into the aggregate
 work unchanged, and the one thing that finally depended on a type parameter is an *entry*'s own offsets,
 because the key is stored inline at `align_up(size_of(K), 8)`. Fixture-level coverage is 97 built of 145 with
@@ -1503,15 +1503,15 @@ places and was false: `wiki/docs/meta/known-issues.md` said a module-scope
 carried it as a warning (the "`pd var` foot-gun"), and `testkit`'s source and
 docs justified their explicit `mut Report` with it. On 0.1.4 a chain
 (`main -> relay -> bump`) prints what it should, on both backends: what those
-notes were describing was the argument-forwarding codegen bug fixed earlier —
+notes were describing was the argument-forwarding codegen bug fixed earlier,
 a caller holding no hidden parameter passed the global by value, so the call
 failed to compile rather than reading a stale value. Docs that say a feature is
 broken are as expensive as a broken feature, and these outlived the bug.
 
 What was left was real, though, and it is what roadmap item 17 named: every
 reference to a `pd var` was an exclusive borrow, so a function that *took* the
-passdown as an argument and *read* it — `fun show(s: &String) { print(s.as_str());
-print(cfg.as_str()) }` called as `show(cfg)` — was refused with "cannot borrow
+passdown as an argument and *read* it, `fun show(s: &String) { print(s.as_str());
+print(cfg.as_str()) }` called as `show(cfg)`, was refused with "cannot borrow
 passdown 'cfg' as exclusive: already borrowed as shared". Only a writer needs an
 exclusive borrow, and only a caller of a writer needs to hold one.
 
@@ -1520,8 +1520,8 @@ of a passdown's hidden parameter is now decided by what the function does with
 it, over the call graph induced by the `wired` scan: a *probe* pass runs with
 every passdown shared, `check_target_writable` records a use that needs an
 exclusive borrow instead of refusing it, and every resolved call site records an
-edge. `close_pd_modes` walks the edges to a fixpoint — a caller of a writer is a
-writer — and `check_program_pass` runs again with the result. The probe is a
+edge. `close_pd_modes` walks the edges to a fixpoint, a caller of a writer is a
+writer, and `check_program_pass` runs again with the result. The probe is a
 real body check whose `tir` is thrown away, which is the point: the answer comes
 from the checker, so generic instances, overloads, `mut` receivers and implicit
 borrowing are all handled by the code that already handles them, with no second
@@ -1532,9 +1532,9 @@ nothing to compute (measured on an `std/io` + `std/http` program: 0.32s before,
 `std/io` writes its `stdin_reader`).
 
 **Two details the closure has to get right.** The edge is followed even when the
-callee never names the passdown — a function that only *forwards* takes the
+callee never names the passdown, a function that only *forwards* takes the
 global's own address itself, so a caller holding a shared borrow across that
-call would be holding one across a write — and a promotion for a passdown a
+call would be holding one across a write, and a promotion for a passdown a
 function never references is inert, which is what keeps a read-only reference
 shared and is why the fix helps at all. `main` and a `pd` initializer are filed
 under their own keys, so a `main` that only reads a `pd var` takes a shared
@@ -1550,10 +1550,10 @@ keeps its own message, and reading a `Copy` passdown by value twice is still
 fine. What changed is only what a *read* costs.
 
 **Tests**: `pd_var_read_only_shared.kp` (an owned `String` passdown taken as an
-argument by a function that also reads it — the shape that was refused),
+argument by a function that also reads it, the shape that was refused),
 `pd_var_read_only_datac.kp` (the same through a `datac`'s field),
 `pd_write_reaches_callers.kp` (`caller` reads the passdown and calls `relay`,
-which forwards to the writer — the transitive edge, and the case where the edge
+which forwards to the writer, the transitive edge, and the case where the edge
 is a function that takes no hidden parameter at all), and
 `pd_var_mut_argument.kp` (the trigger a callee's own references cannot show: the
 passdown is handed to a `mut` parameter, so the caller writes it while the callee
@@ -1569,7 +1569,7 @@ module scope, not borrows), `wiki/libraries/testkit.md`,
 `fpl/docs/testkit.md`; `plan/syntax.md` §14.2 states the rule the compiler now
 implements; `plan/roadmap.md` item 17 is closed; and the asm coverage ratchet
 gained `pd_write_reaches_callers` and `pd_var_mut_argument` (152 fixtures built
-by the C backend, 100 by the asm backend, 52 refused) — the direction the ratchet
+by the C backend, 100 by the asm backend, 52 refused), the direction the ratchet
 tolerates, with the two new refusals recorded rather than hidden.
 
 **Suite at this record** (before the passdown-drop slice below, which adds one
@@ -1584,20 +1584,20 @@ MK7 §5's eleventh item, and the last thing the asm backend's passdown row was c
 (`String`, `List<i32>`), not for the passdown machinery: an owned passdown has no scope to die at, so the
 C backend frees it from an `atexit` handler, and this backend had no handler. The own backend's whole point
 is that a construct it cannot lower is refused by name rather than silently miscompiled, which is why those
-three were refusals instead of leaks — and why closing the row meant building the handler rather than
+three were refusals instead of leaks, and why closing the row meant building the handler rather than
 deleting the check.
 
 **The handler.** `generate` resolves a *drop site* for every passdown whose type owns memory, in a pass that
 still runs before the routine set is snapshotted: `drop_site_for` is what registers the `Bytes`/`String`/
 `datac`/`Box`/`List`/`Map` routines the drop body calls, and for the two fixed routines it only *names* the
-site, so they are registered there too. The body is `kelp_drop_pds` — one `lea`/`call` per owning passdown, in
+site, so they are registered there too. The body is `kelp_drop_pds`, one `lea`/`call` per owning passdown, in
 declaration order, under the same symbol and the same order the C backend's `kelp_init_pds` generates, so a
 differential test and a stack trace name the same thing. `main` registers it with `atexit` immediately after
 the passdown initializers, which is where the C backend registers its handler, so a `return` from `main`,
 `std/process.exit` and `kelp_panic`'s own `exit(1)` all free the passdowns. The one thing that is glibc's
 rather than ours: `atexit` lives in `libc_nonshared.a` and calls `__cxa_atexit(fn, NULL, __dso_handle)`, and
 `__dso_handle` is normally defined by `crtbegin.o`, which this backend's `ld` line deliberately does not carry
-(crt1/crti/crtn and `-lc` only). The generated object defines it itself — hidden, zero — which is what
+(crt1/crti/crtn and `-lc` only). The generated object defines it itself, hidden, zero, which is what
 `crtbegin.o` would have supplied, and `exit` runs every registered handler regardless of the value.
 
 **What the store found, which is the part worth keeping.** An owned `pd var` is *writable*, not just
@@ -1605,24 +1605,24 @@ initializable, and writing an aggregate through a borrow (`*p = v` where the val
 was a refusal on this backend. It is now a staged copy through the pointer, as an aggregate local assignment
 already was. Doing that exposed a **silent miscompile** in the register allocator, not a refusal:
 `LiveAnalysis`'s `Assign` arm touched an `Ident` target and the base of a `FieldAccess` target, and for a
-`Deref` target it only ticked a position — so the operand of the `*`, which *is* the borrow being written
+`Deref` target it only ticked a position, so the operand of the `*`, which *is* the borrow being written
 through, was never recorded as used. Its live range was therefore its declaration and nothing else, and the
 allocator was free to hand that register to another local: in `pd_var_datac_reassign.kp` it went to `a` or
 `b`, so `pair = Pair(a = ..., b = ...)` wrote through the wrong pointer and the asm binary printed `1,2` where
 the C binary printed `3,6`. The fix is one arm of a `match`; the evidence is an A/B build (revert the arm and
 `3,6` becomes `1,2` again), because a miscompile that prints a plausible number is not something a refusal log
-or a differential sweep can catch on its own — nothing else in the suite wrote an aggregate through a borrow,
+or a differential sweep can catch on its own, nothing else in the suite wrote an aggregate through a borrow,
 which is exactly why the fixture exists.
 
 **Tests**: `pd_var_datac_reassign.kp` (a `pd var` two-word `datac`, written from a function that also takes
-ordinary parameters — the shape that put the write in the wrong storage), plus the three fixtures this slice
+ordinary parameters, the shape that put the write in the wrong storage), plus the three fixtures this slice
 built (`pd_owned`, `list_field`, `pd_argument_forwarding`) and the two the borrow-mode slice built, all
 compared byte-for-byte against the C backend. The ratchet gained five entries,
 `pd_var_datac_reassign` among them.
 
 **Measured**: the asm suite goes 195 → **200 of 273**; the fixture baseline is **106 built of 153 with 47
 refused**; the memory gate (`cargo test --test memory_gate -- --ignored`) runs `valgrind --leak-check=full`
-over 259 binaries — 153 C and 106 asm — with **zero findings** and zero lost bytes, which is the check that
+over 259 binaries, 153 C and 106 asm, with **zero findings** and zero lost bytes, which is the check that
 says the new `atexit` handler frees the passdown rather than merely not crashing. Suite at this record: 112
 unit, 273 end-to-end, 57 formatter, 2 capability-matcher, 1 path-normalizer, 1 memory gate, plus the three
 `--ignored` backend_coverage tests.

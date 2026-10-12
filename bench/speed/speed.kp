@@ -44,7 +44,7 @@ fun float_sum(iters: i64, above: mut i64).return: f64 {
         acc = acc + v
         if v > FLOAT_THRESHOLD {
             // A `mut T` parameter is a borrow, so reading and writing the
-            // pointee takes an explicit `*` — the same rule Rust has.
+            // pointee takes an explicit `*`, the same rule Rust has.
             *above = *above + 1
         }
         i = i + 1

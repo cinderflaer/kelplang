@@ -5,8 +5,8 @@
 // compares pointers), and the module had no ordering function at all, so the
 // catalogue grew its own: `fpl/json` carries a private `str_less` with the rule
 // written in its doc comment, used by `write_sorted` to order object keys. A
-// consumer that wanted to order text had nowhere to turn — a library cannot
-// import a sibling library — so every project with a sorted list of words wrote
+// consumer that wanted to order text had nowhere to turn, a library cannot
+// import a sibling library, so every project with a sorted list of words wrote
 // the byte loop a third time.
 //
 // `is_digit` is the same story with five copies: a private one in `fpl/json`, a
@@ -16,8 +16,8 @@
 // The fixture exercises both the way a caller uses them rather than only as
 // predicates: a hand-written number parser that has to stop at the first
 // non-digit, and an insertion sort over three words. It also pins the two rules
-// the doc comments commit to — first differing byte decides, and a prefix is less
-// than the text that extends it — because those are the answers a caller's sort
+// the doc comments commit to, first differing byte decides, and a prefix is less
+// than the text that extends it, because those are the answers a caller's sort
 // depends on and the ones a "friendlier" codepoint comparison would change.
 impl "std/str"
 

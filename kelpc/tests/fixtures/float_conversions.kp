@@ -3,7 +3,7 @@
 // `to_f64` the only widening was to format the integer and parse it back.
 // `to_f64` is exact for every `i64`; `to_f32` rounds to the nearest `f32`,
 // which is the one conversion in the language allowed to lose value without
-// a check — C defines it for every input.
+// a check, C defines it for every input.
 fun main() {
     // 2^24 + 1 is the first integer an `f32` cannot hold, so the two
     // conversions visibly differ on it.

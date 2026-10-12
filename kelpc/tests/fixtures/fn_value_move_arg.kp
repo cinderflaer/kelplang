@@ -1,4 +1,4 @@
-// A-4: `fun(move String)` takes ownership, so a borrow cannot satisfy it —
+// A-4: `fun(move String)` takes ownership, so a borrow cannot satisfy it,
 // the same rule a declared `move` parameter follows.
 fun consume(s: move String).return: usize = s.len()
 

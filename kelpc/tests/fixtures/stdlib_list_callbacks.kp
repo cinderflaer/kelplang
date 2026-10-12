@@ -1,4 +1,4 @@
-// A-4 phase D: `std/list` — the callback-shaped operations on `List<T>`.
+// A-4 phase D: `std/list`, the callback-shaped operations on `List<T>`.
 //
 // The element-wise API is builtin (a list is monomorphized, so its methods are
 // generated C per element type); what needs a function value cannot be

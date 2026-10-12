@@ -1,5 +1,5 @@
 // MK7 §5's second heap slice, `View` end to end. `kelp_View` is
-// `{const char* ptr; size_t len}` — two eightbytes — so it is the first heap
+// `{const char* ptr; size_t len}`, two eightbytes, so it is the first heap
 // type that travels in a register pair (`rdi`/`rsi` in, `rax`/`rdx` out)
 // rather than through the hidden pointer. This fixture pins that ABI: a
 // `View` parameter, a `View` return, a `View` printed by pointer *and length*
@@ -33,7 +33,7 @@ fun main() {
     print(v.is_empty())
     print(v.get(4) == 'q')
 
-    // A slice is a view of the same text — no `String` is made.
+    // A slice is a view of the same text, no `String` is made.
     print(v.slice(4, 9))
     print(v.slice(0, 3))
     print(v.slice(1, v.len()))

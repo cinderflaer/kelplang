@@ -1,5 +1,5 @@
 // Collections: a `List<T>` as an owned `datac` field and as an owned
-// passdown. Both are drop points the milestone has to get right — the field
+// passdown. Both are drop points the milestone has to get right, the field
 // through the struct's generated drop function, the passdown through the
 // `atexit` handler (M6.2).
 pd val primes = List.of(2)

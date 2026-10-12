@@ -1,4 +1,4 @@
-/* std/ops — the operator traits (language-completeness 5, `plan/traits.md` 13).
+/* std/ops, the operator traits (language-completeness 5, `plan/traits.md` 13).
 
    Declaring one of these for a `datac`/`enum` gives the type the operator, and
    the front end lowers the operator into the trait method before borrow

@@ -2,19 +2,19 @@ impl "std/io"
 impl "std/result"
 impl "std/str"
 
-// std/process — running other programs (S2). Gated on the `process`
+// std/process, running other programs (S2). Gated on the `process`
 // capability.
 //
 // The grant names the *program*: `spawn`/`run` take the executable as a
 // separate first argument, never as `argv[0]`, because that is what makes the
-// capability check meaningful — one absolute path matched against the
+// capability check meaningful, one absolute path matched against the
 // module's allowlist before the fork happens. The arguments are not checked
 // and are not part of the grant: `process = ["/bin/sh"]` lets a module run
 // `/bin/sh`, and what it then asks it to do is the module's business (which
 // is why a shell is a broad grant to hand out).
 //
 // The check refuses anything that is not absolute, since it normalizes before
-// it matches — so `execvp`'s `PATH` search is unreachable through this API and
+// it matches, so `execvp`'s `PATH` search is unreachable through this API and
 // a bare program name is a *denial*, not a lookup. A caller that found a tool
 // on `PATH` has to pass the absolute path it resolved; that is what makes the
 // check a statement about one file.
@@ -22,7 +22,7 @@ impl "std/str"
 // The check resolves symlinks before matching, like `fs` and unlike `net`:
 // on a NixOS machine `/bin/sh` is a link into `/nix/store`, so the grant has
 // to name the *resolved* path (`/nix/store/**`), not the name the caller
-// wrote. That is the same rule `fs` follows, and for the same reason — a link
+// wrote. That is the same rule `fs` follows, and for the same reason, a link
 // is not a name the author chose.
 //
 // The primitives C supplies are fork/exec, pipe, waitpid, kill, `chdir` in the
@@ -43,7 +43,7 @@ extern fun is_dir_raw(path: &str).return: bool
 
 // A running (or finished) child. Its three streams are ordinary `File`s, so
 // `std/io` is the whole API for talking to it: write to `stdin`, read from
-// `stdout`, poll either. Nothing closes them on drop — a `Child` that goes
+// `stdout`, poll either. Nothing closes them on drop, a `Child` that goes
 // out of scope leaks three descriptors and, if it was never waited for, one
 // zombie.
 //
@@ -69,7 +69,7 @@ datac Child(
 // unbounded output should use `spawn` and read incrementally.
 datac RunResult(val code: i32, val signal: i32, val out: Bytes, val err: Bytes)
 
-// Why a fallible start refused to run a program (MK5-S2-M2) — the same conditions
+// Why a fallible start refused to run a program (MK5-S2-M2), the same conditions
 // the panicking forms report, as values a caller can branch on.
 //
 // Each one is decided *before* the fork by a `stat`/`access` pre-check, which
@@ -81,7 +81,7 @@ datac RunResult(val code: i32, val signal: i32, val out: Bytes, val err: Bytes)
 // That refusal is the compiler's, it happens at the *call site* before any of
 // this runs, and it panics: the check is compiled in per calling module and
 // has no value-returning form. It is also the one failure that is a manifest
-// error rather than a runtime condition — the grant named the wrong program —
+// error rather than a runtime condition, the grant named the wrong program,
 // which is why the panicking shape is the honest one for it. Making it a value
 // needs a non-panicking check mode in codegen (recorded in the Backlog part of `plan/roadmap.md`,
 // "What the port hit").
@@ -114,7 +114,7 @@ fun arg_count().return: usize = arg_count_raw()
 // `dir` keeps the parent's working directory, and that is what `spawn` passes.
 //
 // `chdir` runs in the *child*, between `fork` and `exec`, so the parent's own
-// directory is unchanged and no grant pattern's meaning moves — which is what
+// directory is unchanged and no grant pattern's meaning moves, which is what
 // makes a per-call directory expressible at all, given that v1 still has no
 // process-wide `chdir`. `dir` is not a resource and is not checked against the
 // grant: a child's working directory changes the meaning of its own relative
@@ -127,7 +127,7 @@ fun arg_count().return: usize = arg_count_raw()
 // anything that is not absolute, so the `PATH` search never runs: the caller
 // passes the absolute path it resolved itself.
 //
-// A failed `exec` is not a panic here — the child reports it on its own stderr
+// A failed `exec` is not a panic here, the child reports it on its own stderr
 // and exits 127, which is what `run` returns as the code.
 //
 // Panics: if `program` is not absolute, is outside the granted capability, or
@@ -165,7 +165,7 @@ fun spawn(program: &str, args: List<String>).return: Child = spawn_in("", progra
 //
 // Panics: as `spawn_in`. Two failures are *not* panics: a missing binary,
 // whose child `execvp` fails and exits 127, and a `dir` the child cannot enter,
-// which exits 126 — both are returned as the code, with the reason on `err`.
+// which exits 126, both are returned as the code, with the reason on `err`.
 //
 // `try_run_in` is the same call with `NotFound`, `NotExecutable` and
 // `DirNotFound` as values instead.
@@ -178,7 +178,7 @@ fun run_in(dir: &str, program: &str, args: List<String>).return: RunResult {
     var err_open = true
     // Poll both pipes in turn: a 50 ms slice on each means neither can fill
     // and block the child while the other is being drained, and the loop ends
-    // as soon as both report end of file. The timeout only paces the wait —
+    // as soon as both report end of file. The timeout only paces the wait,
     // a long-lived child is still waited for indefinitely.
     while out_open || err_open {
         if out_open {
@@ -233,7 +233,7 @@ fun run_inherit(program: &str, args: List<String>).return: RunResult = run_inher
 // Whether `program` is a regular file that could be executed: it exists, it is
 // not a directory or a dangling link, and it carries an execute bit for this
 // process. This is the pre-check `try_run` makes, and it is not the capability
-// check — that one is the compiler's, at the call site.
+// check, that one is the compiler's, at the call site.
 //
 // Because it takes a path, naming a program here is checked against the grant
 // like every other resource argument.
@@ -280,7 +280,7 @@ fun mut Child.wait().return: i32 {
 }
 
 // Whether the child still runs. This is a non-blocking `waitpid`, so it also
-// *observes* an exit — after it returns false, `wait` returns the recorded
+// *observes* an exit, after it returns false, `wait` returns the recorded
 // code without blocking.
 //
 // Panics: if `waitpid` fails.
@@ -309,7 +309,7 @@ fun Child.kill(signal: i32) {
 }
 
 // Ends this process with `code`, immediately and without unwinding. Nothing
-// is flushed or freed — `exit(3)` from the C runtime, not a panic. This is a
+// is flushed or freed, `exit(3)` from the C runtime, not a panic. This is a
 // process's authority over itself, so it needs no capability.
 fun exit(code: i32) {
     exit_raw(code)

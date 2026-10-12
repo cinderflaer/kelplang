@@ -6,7 +6,7 @@
 // and `INTEGER` otherwise, and the two register files are numbered
 // independently. So `Vec2`/`TwoF` travel in `xmm` registers, `Mix` splits into
 // `rdi` + `xmm0`, `Mix2` into `xmm0` + `rdi`, and a three-`f64` `Big` is over
-// sixteen bytes and therefore `MEMORY` — it goes in the outgoing argument area
+// sixteen bytes and therefore `MEMORY`, it goes in the outgoing argument area
 // and comes back through the hidden pointer, exactly as its all-integer
 // counterpart already did.
 //

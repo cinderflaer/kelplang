@@ -1,4 +1,4 @@
-// S4: a redirect to a host the grant does not cover is denied — which is the
+// S4: a redirect to a host the grant does not cover is denied, which is the
 // capability model working, not a limitation.
 //
 // The grant names `127.0.0.1`, the first request names `127.0.0.1`, and the
@@ -6,7 +6,7 @@
 // follow-up request therefore names a host the code never wrote, so it re-runs
 // the connect path and `localhost` fails the compiled-in allowlist. The check
 // matches the host *as written*, so the address being the same machine is
-// irrelevant — which is exactly why `caps_net_denied` exists too.
+// irrelevant, which is exactly why `caps_net_denied` exists too.
 impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/process"
 impl "std/str"

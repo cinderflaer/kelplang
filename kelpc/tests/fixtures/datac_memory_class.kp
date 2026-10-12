@@ -1,5 +1,5 @@
 // MK7 §5 item 4, third slice: a `datac` whose C layout is over sixteen bytes
-// — SysV `MEMORY` class. Returned through the hidden-pointer convention; not
+//, SysV `MEMORY` class. Returned through the hidden-pointer convention; not
 // supported as a by-value parameter or argument this slice, so `sum_quad`
 // takes its `Quad` by reference (the already-working `datac` case), not by
 // value.

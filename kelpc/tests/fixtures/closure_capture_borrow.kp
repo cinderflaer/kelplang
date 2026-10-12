@@ -1,6 +1,6 @@
 // A-4 phase E: a borrow cannot be captured. The environment is an owned value
 // that outlives the frame the borrow points into, and there is no lifetime
-// syntax to say otherwise — so the fix is to capture an owned value, or to
+// syntax to say otherwise, so the fix is to capture an owned value, or to
 // pass the borrow as a parameter of the literal.
 impl "std/str"
 

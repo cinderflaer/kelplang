@@ -1,4 +1,4 @@
-// S1: growing an owned `Bytes` in place — `push`, `append` (a borrowed
+// S1: growing an owned `Bytes` in place, `push`, `append` (a borrowed
 // view of another buffer), `reserve`, `clear`. The same growth path and the
 // same NUL-termination invariant as `String`.
 fun main() {

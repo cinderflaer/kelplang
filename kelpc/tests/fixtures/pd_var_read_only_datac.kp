@@ -1,6 +1,6 @@
 // The same rule for a `datac` passdown: `describe` borrows the caller's
 // argument and reads the passdown itself, and the two borrows are both shared
-// because no function writes `cfg` — including `retries`, read through the
+// because no function writes `cfg`, including `retries`, read through the
 // hidden parameter rather than through the argument.
 pd var cfg = Config(name = String.from_str(s = "api"), retries = 3)
 

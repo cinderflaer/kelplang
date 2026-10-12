@@ -1,5 +1,5 @@
 // MK7 §5 item 4, the float-in-aggregate slice: writing a float field, which is
-// the `xmm` counterpart of an integer field's store — through a `mut` method's
+// the `xmm` counterpart of an integer field's store, through a `mut` method's
 // receiver and through a plain `c.r = v` alike, on a `datac` whose other field
 // is an integer so the value is the mixed `INTEGER`/`SSE` class.
 //

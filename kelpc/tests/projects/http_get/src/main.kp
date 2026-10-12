@@ -1,7 +1,7 @@
 // S4: the HTTP client over a pooled connection. The harness is the server (a
 // client blocks inside `send` until the response arrives, so one process cannot
 // be both ends), and it asserts that *one* connection carried all five
-// requests — which is what makes the reuse claim a test result rather than a
+// requests, which is what makes the reuse claim a test result rather than a
 // timing inference.
 //
 // The grant names the host as the URL spells it, because that is the string the

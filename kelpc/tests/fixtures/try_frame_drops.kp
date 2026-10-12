@@ -1,5 +1,5 @@
 // `?`'s early return is a `return`, so it has to free everything the frame
-// still owns on its failure arm — `syntax.md` §10.3's "on every exit path
+// still owns on its failure arm, `syntax.md` §10.3's "on every exit path
 // including `return`" applies to the desugared one too. `try_drops_frame.kp`
 // pins this shape, but its last function wraps the same code in a `fun`
 // literal, and the asm backend refuses a function value by name, so that
@@ -27,7 +27,7 @@ fun fail(n: i64).return: Res = Res.Err(why = n)
 
 fun some_or(n: i64).return: Opt = if n < 0 { Opt.None } else { Opt.Some(value = n) }
 
-// One owned local, live at two `?` sites — one per branch of an `if`.
+// One owned local, live at two `?` sites, one per branch of an `if`.
 fun one(good: bool).return: Res {
     var scratch = String.from_str(s = "scratch")
     scratch.push_str(s = "!")

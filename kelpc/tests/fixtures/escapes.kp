@@ -1,7 +1,7 @@
 impl "std/str"
 
 // The escape set, pinned: `\n`, `\t`, `\r`, `\"` and `\\`. `\r` is the one S4
-// found broken — it decoded to the letter `r`, because the lexer passed an
+// found broken, it decoded to the letter `r`, because the lexer passed an
 // unknown escape through as the character itself. A protocol whose line ending
 // is CRLF cannot be written without it.
 //

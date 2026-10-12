@@ -37,14 +37,14 @@ The two desugars, as `infer.rs` writes them (spans are the `for` line's, so a
 diagnostic points at the loop):
 
 ```kelp
-// List<T> / [T; N] — unchanged except that the increment precedes the body
+// List<T> / [T; N], unchanged except that the increment precedes the body
 { var #forN_i: usize = 0
   while #forN_i < <seq>.len() {
       { val x = <seq>.get(#forN_i)
         #forN_i = #forN_i + 1
         <body> } } }
 
-// Iterator — a place is borrowed exclusively, a temporary is owned
+// Iterator, a place is borrowed exclusively, a temporary is owned
 { val #forN = &mut <place>       // or: var #forN = <temporary>
   while true {
       when #forN.next() {

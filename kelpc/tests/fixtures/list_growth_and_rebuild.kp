@@ -1,6 +1,6 @@
 // The buffer's growth policy, which nothing else pins: `List.reserve` starts
 // at four elements and doubles, so 300 pushes have been `realloc`'d six times
-// and every element has moved — and a list cleared and refilled reuses the
+// and every element has moved, and a list cleared and refilled reuses the
 // buffer it already has rather than allocating a second one. The second half
 // grows a `List<String>` the same way, where each move carries a pointer the
 // list still owns afterwards, then drains it one element at a time: a byte

@@ -1,6 +1,6 @@
 // MISSING-p5Xtr: `Response.retry_after()` and `Response.rate_limit()`. A
 // `429` naming a delay and a spent bucket, then a plain `200` that names
-// none of these headers — the second request is the "absent, not a panic"
+// none of these headers, the second request is the "absent, not a panic"
 // half of the fixture.
 //
 // The grant names the host as the URL spells it (S3's rule): `127.0.0.1`

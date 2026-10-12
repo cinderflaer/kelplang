@@ -3,7 +3,7 @@ impl "std/mem"
 impl "std/str"
 
 // This module holds `net` because `main.kp` delegated it. The grant names one
-// host and any port — the vocabulary that could not be written at all before
+// host and any port, the vocabulary that could not be written at all before
 // S3, because the compiler counted `net` as a path domain and rejected
 // anything that was not an absolute path. This file *is* the regression test
 // for that: before the fix, the `impl` line in `main.kp` was a compile error.

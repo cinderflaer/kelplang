@@ -1,22 +1,22 @@
 // MK7 §5's enum slice: the regression test for the register allocator's
 // liveness pass, on the four node kinds this slice adds. `LiveAnalysis` has now
 // twice handed two genuinely-live locals the *same* physical register because a
-// node kind it did not walk made one of them look dead on declaration — a
+// node kind it did not walk made one of them look dead on declaration, a
 // `StructLit` first, then `FieldAccess`/`Ref`/`Deref`. The failure mode is a
 // wrong number, not a refusal, and it only appears when two locals are live
 // *around* the node in question, so every function below keeps two scalars
 // alive across the node kind it is named for and adds them back afterwards.
 //
-//   * `literal`  — `EnumLit`: the payload reads `a`.
-//   * `tagged`   — `EnumTag` and `EnumField`: the scrutinee's tag is tested
+//   * `literal`, `EnumLit`: the payload reads `a`.
+//   * `tagged` , `EnumTag` and `EnumField`: the scrutinee's tag is tested
 //                  while `a` and `b` are both live, and the payload's value is
 //                  read out of the union.
-//   * `propagated` — `Try`: the `?` sits inside a binary operator, so `a` and
+//   * `propagated`, `Try`: the `?` sits inside a binary operator, so `a` and
 //                  `b` are live across the early return's own branch.
-//   * `if_let`   — MK5-S6-M1's `if let`, which desugars to a `when` inside an
+//   * `if_let` , MK5-S6-M1's `if let`, which desugars to a `when` inside an
 //                  `if`: the condition is evaluated with `a` and `b` live and
 //                  the binding is read inside the arm.
-//   * `held`     — an enum-typed *local* live across a call: `hold` is built
+//   * `held`   , an enum-typed *local* live across a call: `hold` is built
 //                  before `tagged` is called and read after it returns, so an
 //                  enum local the call's own walk left out of the liveness
 //                  pass would be handed to the next scalar.

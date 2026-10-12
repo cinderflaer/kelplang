@@ -1,5 +1,5 @@
 // A function that hands back a borrow, for every kind of pointee the assembly
-// backend can address — a `datac`, an owned heap type, and an owned buffer.
+// backend can address, a `datac`, an owned heap type, and an owned buffer.
 //
 // `str`/`&str` was the only borrow shape a return type could have under
 // `--backend=asm`: its return-class classification had a case for a pointer in

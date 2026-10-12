@@ -26,7 +26,7 @@ extern fun byte_at_raw(s: &str, i: usize).return: u8
 extern fun slice_from_raw(s: &str, from: usize).return: &str
 extern fun byte_ptr_raw(s: &str).return: Ptr<u8>
 
-/// Byte length, not character count — see `char_count`, which counts
+/// Byte length, not character count, see `char_count`, which counts
 /// continuation bytes as parts of the same character.
 fun len(s: &str).return: usize = byte_len_raw(s)
 
@@ -44,7 +44,7 @@ fun ptr(s: &str).return: Ptr<u8> = byte_ptr_raw(s)
 /// Whether `s` has no bytes.
 fun is_empty(s: &str).return: bool = len(s) == 0
 
-/// The tail of `s` starting at byte `from` — a view, not a copy, which is
+/// The tail of `s` starting at byte `from`, a view, not a copy, which is
 /// what `&str` return elision makes possible: the result borrows `s`.
 /// Panics: if `from` is past the end.
 fun substring(s: &str, from: usize).return: &str = slice_from_raw(s, from)
@@ -136,7 +136,7 @@ fun contains(s: &str, needle: &str).return: bool {
 }
 
 /// Text equality, which `==` deliberately does not provide for `str` (it
-/// would compare addresses — see `infer.rs::comparable`).
+/// would compare addresses, see `infer.rs::comparable`).
 fun eq(a: &str, b: &str).return: bool = a.view().eq(b.view())
 
 /// Byte-wise ordering, the `<` that `str` deliberately does not have: `eq` above
@@ -198,7 +198,7 @@ fun trim_start(s: &str).return: &str {
 }
 
 /// Trailing whitespace is *truncation*, which a `&str` (a NUL-terminated C
-/// string) cannot represent — there is nowhere to put the terminator. So the
+/// string) cannot represent, there is nowhere to put the terminator. So the
 /// end-trimming functions return an owned `String` and allocate, while the
 /// start-trimming ones stay views. This is the one place M6.3 diverges from
 /// the plan's `str` sketch.
@@ -490,7 +490,7 @@ fun repeat(s: &str, n: usize).return: String {
 
 /// Copies bytes [from, to) of `s` into a fresh owned `String`. A range that
 /// is neither a prefix nor a suffix cannot be a view (a `&str` is a
-/// NUL-terminated C string), so it is copied — the same reason `prefix`
+/// NUL-terminated C string), so it is copied, the same reason `prefix`
 /// allocates.
 fun copy_range(s: &str, from: usize, to: usize).return: String {
     val sv = s.view()
@@ -628,7 +628,7 @@ fun from_u64(n: u64).return: String {
 
 /// Decimal text for a signed value. The digits are taken in `i64`, with each
 /// remainder made positive before it is narrowed, so `i64`'s minimum needs no
-/// special case — converting it to `u64` first would panic (it is negative),
+/// special case, converting it to `u64` first would panic (it is negative),
 /// and negating it in `i64` would overflow. Like `from_u64` it collects the
 /// digits in a stack array (at most 19 for an `i64`), so the result is the
 /// only allocation.
@@ -776,7 +776,7 @@ fun byte_index(s: &str, i: usize).return: usize {
     return n
 }
 
-/// The codepoint starting at byte `at`, decoded with arithmetic only — v1 has
+/// The codepoint starting at byte `at`, decoded with arithmetic only, v1 has
 /// no bitwise operators, so the UTF-8 lead-byte masks are subtractions.
 /// A truncated sequence returns 0, the same value past-the-end returns.
 fun decode_at(s: &str, at: usize).return: u32 {

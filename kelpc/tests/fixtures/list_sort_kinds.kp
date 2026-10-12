@@ -1,8 +1,8 @@
 // S1's element-level methods across the element kinds this backend can hold in
-// a list. Each kind reaches a *different* comparison — a signed integer, an
+// a list. Each kind reaches a *different* comparison, a signed integer, an
 // unsigned one (200 in a `u8` sorts above 3 only if the compare is unsigned),
 // and an owned buffer compared length-aware (a prefix must not pass, and an
-// embedded NUL must not stop the compare) — and a slice of a `Copy` element is
+// embedded NUL must not stop the compare), and a slice of a `Copy` element is
 // a plain copy where a slice of an owned one clones, so this fixture pins both
 // slice paths too. `stdlib_sort` and `list_slice_insert` cover `i32`, `bool`
 // and `String`; this one is the kinds neither of them reaches.

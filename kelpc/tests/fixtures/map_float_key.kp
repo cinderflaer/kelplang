@@ -1,4 +1,4 @@
-// A-2: a float cannot be a map key — `nan != nan` would make a key that was
+// A-2: a float cannot be a map key, `nan != nan` would make a key that was
 // inserted unfindable.
 fun main() {
     var m: Map<f64, i32> = Map.new()

@@ -1,7 +1,7 @@
 impl "std/net"
 
 // A peer that never writes. `set_timeout` turns the blocking `recv` into a
-// bounded wait, so this panics with "timed out" instead of hanging forever —
+// bounded wait, so this panics with "timed out" instead of hanging forever,
 // the difference between a broken peer and an unkillable program. Both ends
 // are in this process, so nothing external is involved.
 fun main() {

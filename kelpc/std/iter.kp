@@ -1,4 +1,4 @@
-/* std/iter — the iterator protocol and the iterators that ship with it
+/* std/iter, the iterator protocol and the iterators that ship with it
    (`plan/iterators.md`).
 
    `for x in <expr>` over a `List<T>` or `[T; N]` is still the index walk

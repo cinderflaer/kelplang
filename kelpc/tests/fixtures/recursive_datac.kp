@@ -1,6 +1,6 @@
 // M8: self-recursion through a `List` as well as through a `Box`. A list's
 // buffer holds its elements through a pointer, so `datac Tree(val kids:
-// List<Tree>)` has a finite size too — and two datacs may point at each
+// List<Tree>)` has a finite size too, and two datacs may point at each
 // other as long as every step is indirect.
 datac Tree(val value: i32, val kids: List<Tree>)
 

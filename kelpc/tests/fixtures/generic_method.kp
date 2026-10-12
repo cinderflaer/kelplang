@@ -1,4 +1,4 @@
-// A-2: a receiver method on a generic type is not implemented yet — the
+// A-2: a receiver method on a generic type is not implemented yet, the
 // receiver would have to say which instantiation it belongs to.
 datac Pair<A, B>(val first: A, val second: B)
 

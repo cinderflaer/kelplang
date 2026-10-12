@@ -1,6 +1,6 @@
 // A library's own type in a callback signature: the generated closure type is
 // named after the parameter type, which for a module-qualified `&Item` is the
-// case that used to mangle into `refitems.Item` — not a C identifier.
+// case that used to mangle into `refitems.Item`, not a C identifier.
 pub datac Item(val n: i64)
 
 pub fun each(items: &List<Item>, f: closure(&Item)) {

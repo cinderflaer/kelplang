@@ -2,7 +2,7 @@
 // `String.empty()` does: pointing at a NUL byte, never at NULL.
 //
 // It did not. The capacity reserve has nothing to do when the requested
-// capacity is zero, so `data` stayed NULL while `len` and `cap` were 0 — and
+// capacity is zero, so `data` stayed NULL while `len` and `cap` were 0, and
 // every path that treats a `String` as a C string then handed NULL to
 // `strlen`/`%s`/`as_str`. Nothing in the corpus called it with zero, so the
 // hole survived until the heap-runtime spec listed it as an uncertainty; this

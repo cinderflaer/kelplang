@@ -1,4 +1,4 @@
-// M6.3: `std/math` — constants, argument-type overloading, and the C
+// M6.3: `std/math`, constants, argument-type overloading, and the C
 // library's transcendentals behind one extern each.
 impl "std/math"
 

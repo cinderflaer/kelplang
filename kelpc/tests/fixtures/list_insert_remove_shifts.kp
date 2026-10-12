@@ -2,7 +2,7 @@
 // elements: `insert` opens a hole by moving everything above it up, `remove`
 // closes one by moving the tail down and handing the element back. Both are
 // element-struct moves, so a shift that copies the wrong number of bytes
-// leaks a buffer or double-frees one — this fixture is for the
+// leaks a buffer or double-frees one, this fixture is for the
 // AddressSanitizer pass. `list_slice_insert.kp` reaches these two only
 // alongside `sort`/`contains`/`slice`, so nothing pinned them on their own,
 // and every index here is exercised against a three-element tail rather than

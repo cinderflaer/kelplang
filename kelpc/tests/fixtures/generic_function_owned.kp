@@ -1,6 +1,6 @@
 // A-2: a generic function whose type parameter is an owned type. A parameter
 // of a non-`Copy` type is a borrow (v1 has no move-taking parameters), so the
-// function reads through it — the same rule a non-generic function obeys.
+// function reads through it, the same rule a non-generic function obeys.
 enum Option<T> {
     Some(val value: T)
     None

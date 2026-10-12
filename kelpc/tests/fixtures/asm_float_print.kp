@@ -1,5 +1,5 @@
-// MK7 §5 item 8: printing the values this backend used to refuse — a `str`, an
-// `f32`/`f64` — and the register discipline each one needs.
+// MK7 §5 item 8: printing the values this backend used to refuse, a `str`, an
+// `f32`/`f64`, and the register discipline each one needs.
 //
 // SysV numbers the vector and integer argument registers independently, so a
 // float argument goes in `xmm` while the integers around it keep `rsi`, `rdx`
@@ -39,7 +39,7 @@ fun main() {
     print(top.to_f64())
     print(below.to_f64())
 
-    // A `str` through a parameter, printed and interpolated — the value is a
+    // A `str` through a parameter, printed and interpolated, the value is a
     // pointer either way, and the template path must not try to put it in a
     // float register.
     print(word())

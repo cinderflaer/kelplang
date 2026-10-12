@@ -1,7 +1,7 @@
 // S4: redirects, and the pooled one-liner.
 //
 // A relative `Location` keeps the same host, so the redirect is followed on the
-// *pooled* connection — one connection carries both hops. The POST at the end
+// *pooled* connection, one connection carries both hops. The POST at the end
 // goes through `http.post_text`, which uses `Client.send` and therefore a fresh
 // connection: the harness sees exactly two connections and asserts both.
 impl "std/http" caps(net = ["127.0.0.1:*"])

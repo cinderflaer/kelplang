@@ -34,7 +34,7 @@ fun main() {
     // A field of a temporary passed by borrow as a whole value: the ordinary
     // borrowed-temporary path, which must keep freeing exactly once.
     print(area(mkName()))
-    // A field of a *named* local, which is a place and is not a temporary —
+    // A field of a *named* local, which is a place and is not a temporary,
     // the borrow stages nothing and nothing may be freed here.
     val n = Named(r = 3, name = String.from_str("bound"))
     print(n.r)

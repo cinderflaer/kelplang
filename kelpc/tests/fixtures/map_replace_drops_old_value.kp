@@ -1,6 +1,6 @@
 // Inserting a key the map already holds replaces the value in place: the old
 // value is dropped and the new one takes its slot. For a `String` value that
-// drop is the whole point, and it is a check no stdout comparison can make —
+// drop is the whole point, and it is a check no stdout comparison can make,
 // the value printed after a replace is the new one whether or not the old
 // buffer was ever freed. The check is valgrind (`kelpc/tests/memory_gate.rs`
 // sweeps every fixture): a replacement that leaked the old value is a leak,

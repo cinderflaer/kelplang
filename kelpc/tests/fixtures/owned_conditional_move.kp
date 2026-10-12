@@ -6,7 +6,7 @@
 // The assignment after the join is the second half of the same rule: the old
 // value is freed there, which is correct on both paths for the same reason.
 // Before the fix in `borrowck.rs` the move marked the binding moved on *either*
-// path and the free disappeared — `memory_gate.rs`'s `std_str_order` finding,
+// path and the free disappeared, `memory_gate.rs`'s `std_str_order` finding,
 // 10 bytes in 2 blocks.
 fun take(s: String) {
     print(s)

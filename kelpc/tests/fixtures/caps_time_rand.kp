@@ -1,6 +1,6 @@
 // M7: `time` and `rand` are capabilities too (WASI's clocks and random), and
 // main holds every domain implicitly. Neither has a named resource, so there
-// is nothing to match — the gate alone is the whole check.
+// is nothing to match, the gate alone is the whole check.
 impl "std/time"
 impl "std/rand"
 

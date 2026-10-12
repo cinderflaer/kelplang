@@ -1,5 +1,5 @@
 // Roadmap item 17: handing the passdown to a `mut` parameter is a write as far
-// as the borrow is concerned, so `step` holds `st` exclusively — and `relay`,
+// as the borrow is concerned, so `step` holds `st` exclusively, and `relay`,
 // which holds the passdown itself and calls `step`, is upgraded with it. This
 // is the trigger the closure cannot see from a callee's own references: `add`
 // names no passdown at all.

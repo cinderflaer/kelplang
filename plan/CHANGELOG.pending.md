@@ -105,6 +105,7 @@ empty on release.
 - Finished wiki lane branches deleted on the remote and locally; origin keeps only main and unreleased.
 - Wiki: new section "Working without the garbage collector" (`memory.md` and `memory/`, on kelp-wiki branch `wiki-manual-memory`, not merged); its managed comparison is a placeholder until the managed build is measured.
 - Wiki reorganised for finding pages: examples named by what they do, changelog pages under `changelog/`, a sidebar order file, and old paths kept as redirect stubs.
+- Docs: the wiki no longer says a feature works "on both backends" (the C backend is gone, LLVM is the only one), and no em or en dashes remain in the repo text; the comments, docs and test fixtures were reworded with commas, colons and plain hyphens, with no change to behaviour.
 
 ## Plans not in the repo
 

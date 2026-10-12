@@ -1,5 +1,5 @@
 // A-4 phase D: `option.map`/`and_then`/`or_else`/`each` and
-// `result.map`/`map_err`/`and_then`/`or_else`/`each` — the helpers
+// `result.map`/`map_err`/`and_then`/`or_else`/`each`, the helpers
 // MK5-S6-M1 recorded as waiting on function values.
 //
 // Every callback takes a *borrow* of the payload (`fun(&T).return: U`), which is

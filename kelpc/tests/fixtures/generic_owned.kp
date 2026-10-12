@@ -1,6 +1,6 @@
 // A-2: a generic type whose instantiation owns heap memory. Dropping the
-// value frees only what is live — the payload's buffer, the list's elements,
-// the map's values — through the same `needs_drop` machinery a non-generic
+// value frees only what is live, the payload's buffer, the list's elements,
+// the map's values, through the same `needs_drop` machinery a non-generic
 // `datac` uses, because an instantiation *is* an ordinary declaration with a
 // name like `Option<String>`.
 enum Option<T> {

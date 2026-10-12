@@ -1,7 +1,7 @@
 impl "std/result"
 impl "std/str"
 
-/* dns_parse — the message-parsing half of the stub resolver (MK7 §7 item 6,
+/* dns_parse, the message-parsing half of the stub resolver (MK7 §7 item 6,
    §8), written in Kelp.
 
    This is *not* a std module: it is not shipped, and the resolver does not

@@ -1,6 +1,6 @@
 // MK9-S1-M1 (roadmap B-1): a user module's own "extern fun", bound to a
 // native symbol through this project's coral.toml '[extern."sys"]'
-// section instead of a compiler-supplied body from `externs.rs` — the door
+// section instead of a compiler-supplied body from `externs.rs`, the door
 // B-1's design pass opened for anything that is not a stdlib module. The
 // bare name here ("getpid") is also the native symbol the removed C backend called:
 // MK9-S1-M1 keeps user FFI to that 1:1 mapping.

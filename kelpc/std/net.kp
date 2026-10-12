@@ -3,11 +3,11 @@ impl "std/io"
 impl "std/str"
 impl "std/result"
 
-/* std/net — sockets (S3). Gated on the `net` capability.
+/* std/net, sockets (S3). Gated on the `net` capability.
 
    The grant names a *host*, unlike `fs`/`process`, which name paths: the
    vocabulary is `host`, `host:port`, `*.host`, `*:port`, and `*`, matched as
-   a name. That distinction is the whole of open item 32 — `net` used to be
+   a name. That distinction is the whole of open item 32, `net` used to be
    classified as a path domain, which rejected `api.example.com:443` at the
    `impl` line and, had it been accepted, would have denied every host through
    a path normalizer.
@@ -15,7 +15,7 @@ impl "std/result"
    The rule that matters: **the check matches the host as the code wrote it**.
    `getaddrinfo` runs inside the call, *after* the check, so a grant for
    `example.com` does not cover `net.connect("93.184.216.34", 80)`. That is the
-   same rule `fs` follows for the opposite reason — `fs` resolves symlinks
+   same rule `fs` follows for the opposite reason, `fs` resolves symlinks
    before matching because a link is not a name the author chose, while a host
    string is exactly the name the author chose.
 
@@ -57,7 +57,7 @@ extern fun resolve_raw(host: &str).return: String
 datac Socket(val fd: i32)
 
 /// A bound, listening socket. Distinct from `Socket` so that `accept` cannot be
-/// handed a connected one by mistake — there is no `Copy` in v1 to blur the two,
+/// handed a connected one by mistake, there is no `Copy` in v1 to blur the two,
 /// only the type name, which is exactly what a type name is for.
 datac Listener(val fd: i32)
 
@@ -145,13 +145,13 @@ fun try_recv_into(s: Socket, buf: mut Bytes, at: usize).return: result.Result<us
 
 /// Binds `port` on every interface and listens, leaving the backlog to the
 /// kernel. Port 0 asks the kernel for a free port, which `Listener.port` then
-/// reports — the loopback test's way of needing no fixed port.
+/// reports, the loopback test's way of needing no fixed port.
 ///
 /// The check for this call matches the *port* only: a listener binds the
 /// machine, not a named host, so the port is the resource a `net` grant governs
 /// for listening, and a pattern with no port (`api.example.com`) constrains
 /// none. That is deliberately different from `connect`, which matches the host
-/// as written — a listener has no host to name, and v1 has no
+/// as written, a listener has no host to name, and v1 has no
 /// `net.listen(host, port)`.
 ///
 /// Panics: if the port is outside the granted capability, or the bind fails
@@ -202,7 +202,7 @@ fun close(s: Socket) {
 }
 
 /// The listener's own close. A listener holds a descriptor like anything else
-/// and nothing closes on drop, so it needs the matching close — the sketch in
+/// and nothing closes on drop, so it needs the matching close, the sketch in
 /// `plan.md` had only `net.close(s: Socket)`, and separate types with separate
 /// closes is what keeps `accept` from being handed a connected socket.
 ///
@@ -234,7 +234,7 @@ fun try_shutdown_write(s: Socket).return: bool = shutdown_write_try_raw(s.fd)
 fun send(s: Socket, data: Bytes).return: usize = send_raw(s.fd, data)
 
 /// The whole buffer, looping over short writes in the same primitive that
-/// `io.File.write` uses — a pipe or socket may take fewer bytes than it was
+/// `io.File.write` uses, a pipe or socket may take fewer bytes than it was
 /// offered, so one `send` is not a write.
 ///
 /// Panics: as `send`.
@@ -259,7 +259,7 @@ fun recv(s: Socket, max: usize).return: Bytes = recv_raw(s.fd, max)
 
 /// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 when
 /// the peer has closed). The buffer is written in place and its length is not
-/// changed, so this is the form for a message of a known size — the
+/// changed, so this is the form for a message of a known size, the
 /// `Content-Length` case the HTTP client needs.
 ///
 /// Panics: if the receive fails.
@@ -313,7 +313,7 @@ fun Listener.port().return: u16 = local_port_raw(fd)
 fun Socket.peer_addr().return: String = peer_addr_raw(fd)
 
 /// The addresses `host` resolves to, as strings (`getaddrinfo`, formatted with
-/// `inet_ntop`) — not a `getaddrinfo` blob, and deduplicated. An address
+/// `inet_ntop`), not a `getaddrinfo` blob, and deduplicated. An address
 /// literal resolves to itself, which makes this the honest way to see what
 /// `connect` would try.
 ///

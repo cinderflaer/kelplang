@@ -1,7 +1,7 @@
 // A `std/...` module the compiler does not ship is reported as "not
 // implemented yet" (naming what is shipped) rather than as a missing file, so
 // the reservation stays visible. `std/zzz_unshipped` is a placeholder name
-// this fixture alone reserves — never a real module — so this test does not
+// this fixture alone reserves, never a real module, so this test does not
 // need updating every time a real one ships, the way it did when `std/tls`
 // (this fixture's previous example) shipped in MK5-S4b-M1.
 impl "std/zzz_unshipped"

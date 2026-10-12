@@ -3,7 +3,7 @@
 // for a value wider than one eightbyte that is a staged copy plus a
 // `memcpy` rather than a register move. Two things this pins that nothing else
 // did. The operand of the write's `*` is a *use* of the passdown's hidden
-// parameter — the asm backend's live-range analysis used to miss it, which gave
+// parameter, the asm backend's live-range analysis used to miss it, which gave
 // the parameter a one-instruction live range and let the allocator hand its
 // register to `a` or `b`, so the write landed in the wrong storage instead of
 // being refused. And an aggregate store through a borrow was a refusal on that

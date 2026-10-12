@@ -1,7 +1,7 @@
 // M8: a `Box<T>` that owns an element which itself owns memory. The box is
 // the slot's single owner: `set` on a full box frees the value the slot held,
 // `take` moves the value back out and leaves the box empty, and `get` only
-// borrows — so every buffer below is freed exactly once, which is what the
+// borrows, so every buffer below is freed exactly once, which is what the
 // AddressSanitizer pass checks.
 //
 // `box_basic` pins the scalar and `box_recursive` the chain. This fixture

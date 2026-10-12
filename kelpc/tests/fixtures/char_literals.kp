@@ -1,6 +1,6 @@
 // Character literals (open item 53). Before this, `char` was a type with no
-// values and every byte-level algorithm was written in decimal codes —
-// `if c == 34`, `out.push(32)`, `return n + 48` — so a reader had to decode
+// values and every byte-level algorithm was written in decimal codes,
+// `if c == 34`, `out.push(32)`, `return n + 48`, so a reader had to decode
 // the ASCII table in their head.
 //
 // A character literal holds one Unicode scalar value and takes the integer
@@ -9,7 +9,7 @@
 impl "std/str"
 
 fun main() {
-    // In a `u8` position — the byte-level case.
+    // In a `u8` position, the byte-level case.
     val quote: u8 = '"'
     print(quote)
     val zero: u8 = '0'
@@ -43,7 +43,7 @@ fun main() {
     print(cjk == 'A')
 
     // A `u8` byte read out of a string compares against a character literal
-    // directly — no cast, no decimal code.
+    // directly, no cast, no decimal code.
     val s = "hi"
     print(str.byte(s, 0) == 'h')
     print(str.byte(s, 1) == 'i')

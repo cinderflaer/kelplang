@@ -1,5 +1,5 @@
 // A-2: an explicit instantiation, written `Name<...>` immediately before the
-// call. It is needed only where inference has nothing to go on — the argument
+// call. It is needed only where inference has nothing to go on, the argument
 // types and the expected type cover the rest.
 datac Pair<A, B>(val first: A, val second: B)
 

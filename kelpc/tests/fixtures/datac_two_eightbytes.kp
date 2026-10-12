@@ -1,4 +1,4 @@
-// MK7 §5 item 4, third slice: a `datac` whose C layout is 9-16 bytes — two
+// MK7 §5 item 4, third slice: a `datac` whose C layout is 9-16 bytes, two
 // `INTEGER` eightbytes, passed/returned in a register pair rather than the
 // first two slices' single opaque eightbyte.
 datac Pair3(var a: i64, var b: i64)

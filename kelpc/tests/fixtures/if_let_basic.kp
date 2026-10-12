@@ -1,6 +1,6 @@
 // MK5-S6-M1: `if let` branches on one variant and binds its payload. It is the
 // pattern form of `when` with a single arm and an `else`, over a scrutinee
-// bound to a local first — which is what makes a temporary legal here.
+// bound to a local first, which is what makes a temporary legal here.
 enum Shape {
     Circle(val r: f64)
     Rect(val w: f64, val h: f64)
@@ -36,7 +36,7 @@ fun main() {
     print(width(t = Token.Word(text = String.from_str(s = "four"))))
     print(width(t = Token.Blank))
 
-    // A temporary scrutinee — the shape the pattern form of `when` alone
+    // A temporary scrutinee, the shape the pattern form of `when` alone
     // cannot take.
     if let Circle(r) = Shape.Circle(r = 3.0) {
         print(r)

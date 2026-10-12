@@ -3,7 +3,7 @@
 //
 // `%*doubled*%` prints 44, not 84: substitution is pure text, so
 // `%*answer*% * 2` becomes `40 + 2 * 2`. That is the tradeoff the plan
-// states explicitly (no hygiene, no parameters) — write the parens into the
+// states explicitly (no hygiene, no parameters), write the parens into the
 // alias text if you want the other grouping.
 alias %*answer*% = 40 + 2
 alias %*doubled*% = %*answer*% * 2

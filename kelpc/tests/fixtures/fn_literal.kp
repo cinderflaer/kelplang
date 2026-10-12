@@ -1,8 +1,8 @@
-// A-4 phase C: anonymous `fun` literals — `fun(x: i32).return: i32 = x * 2` written
+// A-4 phase C: anonymous `fun` literals, `fun(x: i32).return: i32 = x * 2` written
 // where an expression is expected. Each literal is one synthesized top-level
 // function, so its body is checked like any other function's: it can use `?`
 // against its own declared return type, and it owns (and drops) its `move`
-// parameters. What it cannot do is see the enclosing scope — a name from one
+// parameters. What it cannot do is see the enclosing scope, a name from one
 // frame up is a *capture*, and captures are the next phase, not this one.
 //
 // This fixture is in the AddressSanitizer list: the `move` literal frees the

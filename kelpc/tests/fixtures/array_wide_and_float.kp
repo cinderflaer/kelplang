@@ -3,14 +3,14 @@
 // registers.
 //
 // A `[f64; 2]` is two `SSE` eightbytes, so `pairs` takes it in `xmm0`/`xmm1` and
-// hands its `f64` back in `xmm0` — which is the one element kind a classifier
+// hands its `f64` back in `xmm0`, which is the one element kind a classifier
 // has to answer `SSE` for by name, since a scalar float is not an integer
 // eightbyte.
 //
 // A `[u8; 300]` is over sixteen bytes, so it is `MEMORY` class: passed in the
 // caller's outgoing argument area and returned through the hidden pointer, in
 // both directions. `[[i32; 5]; 2]` is the same shape one level in, because a
-// twenty-byte *element* is itself `MEMORY` class — its `get` goes through the
+// twenty-byte *element* is itself `MEMORY` class, its `get` goes through the
 // hidden pointer too.
 const WIDE: usize = 300
 

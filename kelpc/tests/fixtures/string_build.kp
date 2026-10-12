@@ -1,6 +1,6 @@
 // S1: growing an owned `String` in place. `push`/`push_str` append,
 // `reserve` grows without writing, `clear` keeps the buffer, and every path
-// re-terminates it — which is what keeps `as_str` a valid view after growth.
+// re-terminates it, which is what keeps `as_str` a valid view after growth.
 //
 // `push` takes a `u8` rather than the sketch's `char`: v1 has no char
 // literal and no function that returns a `char`, so `u8` is the only byte

@@ -1,5 +1,5 @@
 // M6: ownership through branches. `b` is reassigned on one path only, and the
-// other path declares its own owned local — both have to be freed exactly
+// other path declares its own owned local, both have to be freed exactly
 // once, on the right path.
 fun choose(flag: bool).return: Bytes {
     var b = Bytes.from_str("first")

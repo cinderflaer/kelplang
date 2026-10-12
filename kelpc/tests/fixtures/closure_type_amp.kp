@@ -1,4 +1,4 @@
-// A-4 phase E: a closure is an owned value, so `&closure(...)` is not a type —
+// A-4 phase E: a closure is an owned value, so `&closure(...)` is not a type,
 // a parameter of the closure type already borrows it, and `move closure(...)`
 // takes it.
 fun main() {

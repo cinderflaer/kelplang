@@ -5,8 +5,8 @@
 // `remove` that moves the value out, a `keys()` and a `values()` that clone
 // into `List`s, and a `clear()` that drops every live value and keeps the
 // buffers. `map_owned` reaches the same methods over a two-entry map; this
-// one runs three entries through them, so the states between the calls — a
-// value borrowed, then cloned, then moved out, then dropped — are all
+// one runs three entries through them, so the states between the calls, a
+// value borrowed, then cloned, then moved out, then dropped, are all
 // observable and all valgrind-checked.
 impl "std/str"
 

@@ -1,5 +1,5 @@
 // MK7 §5's print slice: a `%.*s` interpolation takes **two** variadic
-// arguments — the `int` length and the `char*` data — so the register
+// arguments, the `int` length and the `char*` data, so the register
 // numbering has to count arguments per piece rather than one per value. A
 // buffer piece followed by anything is what makes that observable: every later
 // interpolation is numbered behind both of its arguments, and getting that

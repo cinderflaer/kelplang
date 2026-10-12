@@ -1,4 +1,4 @@
-// MISSING-FZqe6: `std/encoding` — the alphabet-and-codec module. Every decoder
+// MISSING-FZqe6: `std/encoding`, the alphabet-and-codec module. Every decoder
 // is exercised once with a good input and once with a bad one, and both
 // directions of each codec are checked against a literal.
 //

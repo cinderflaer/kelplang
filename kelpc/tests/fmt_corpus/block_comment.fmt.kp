@@ -1,5 +1,5 @@
-// pins comments-verbatim-bytes: a `/* ... */` comment is copied byte-for-byte — its own
-// newlines and inner indentation included — and only the whitespace between
+// pins comments-verbatim-bytes: a `/* ... */` comment is copied byte-for-byte, its own
+// newlines and inner indentation included, and only the whitespace between
 // tokens around it is rewritten.
 /* a block comment at the
    top of the file */

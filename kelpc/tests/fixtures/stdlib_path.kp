@@ -1,4 +1,4 @@
-// M6.2: `std/path` — built on `std/str` and `std/mem`, both of which it
+// M6.2: `std/path`, built on `std/str` and `std/mem`, both of which it
 // imports; every `/` it inserts or drops is decided in Kelp.
 impl "std/path"
 

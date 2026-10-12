@@ -4,8 +4,8 @@
 // same syntax as any other call.
 //
 // The parameter types of the written type are the parameter types of the
-// declaration — `fun(String)` is a borrow, `fun(mut Counter)` an exclusive
-// borrow, `fun(move String)` ownership — which is what makes `double` fit
+// declaration, `fun(String)` is a borrow, `fun(mut Counter)` an exclusive
+// borrow, `fun(move String)` ownership, which is what makes `double` fit
 // `fun(i32).return: i32` with no conversion anywhere. This fixture is in the
 // AddressSanitizer list: the `move` case below hands a buffer to a callee that
 // frees it, and the passdown case reads a global.
@@ -38,7 +38,7 @@ datac Handlers(val on_i32: fun(i32).return: i32)
 fun call_through(h: Handlers, x: i32).return: i32 = h.on_i32(x)
 
 // A moved parameter's type is the bare type, so a function value for it says
-// `move` — the same word the declaration says.
+// `move`, the same word the declaration says.
 fun consume(s: move String).return: usize = s.len()
 
 datac Counter(var n: i32)
@@ -89,7 +89,7 @@ fun main() {
     print(cur(10))
 
     // A module's item named as a value, with its qualified spelling. (An
-    // overloaded one is not a value — see `fn_value`'s rejections.)
+    // overloaded one is not a value, see `fn_value`'s rejections.)
     val m = math.sqrt
     print(m(16.0))
 }

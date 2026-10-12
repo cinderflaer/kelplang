@@ -2,7 +2,7 @@
 // program and the scratch directory the pre-checks probe: a path has to be
 // inside the grant even to be *asked about*, because the check runs at the
 // call site before any of this. The working directory is deliberately not a
-// resource — `runner.dir_outside_grant` passes `/tmp`, which no process
+// resource, `runner.dir_outside_grant` passes `/tmp`, which no process
 // pattern admits, and still runs.
 impl "runner" caps(process = ["/bin/**", "/nix/store/**", "__KELP_SCRATCH__/kelp_caps_process_in/**"])
 

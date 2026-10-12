@@ -4,10 +4,10 @@
 //! only a real invocation can settle is the command's contract, which is where
 //! `lint` differs from every other `kelpc` command:
 //!
-//!   1. **a warning is not a failure** — findings go to stderr and the exit
+//!   1. **a warning is not a failure**, findings go to stderr and the exit
 //!      stays zero, so a script tells "clean" from "has findings" by the output
 //!      and "could not check" by the exit code;
-//!   2. **the file is never written** — lint has no `-w` and no `--check`,
+//!   2. **the file is never written**, lint has no `-w` and no `--check`,
 //!      because there is no state to fix and nothing to rewrite;
 //!   3. **only a read failure or a lex failure is an error**, reported with the
 //!      same shape `kelpc build` uses for the same file;

@@ -1,5 +1,5 @@
-// M6.2 / MK7 §5: a `datac` that owns three heap fields at once — a `String`, a
-// `Bytes`, and a nested `datac` (`Label`) that itself owns a `String` — plus an
+// M6.2 / MK7 §5: a `datac` that owns three heap fields at once, a `String`, a
+// `Bytes`, and a nested `datac` (`Label`) that itself owns a `String`, plus an
 // `i32` scalar that is deliberately *not* last, so a heap field follows a
 // non-heap one. Dropping `Row` has to recurse through `Label` into its
 // `String`, and each buffer must be freed exactly once whether the value is
@@ -7,7 +7,7 @@
 //
 // A `View` is exercised here as a local borrow, never as a field: a `datac`
 // holds owned data only in v1, and `is_borrowed_field_ty` (kelpc/src/types.rs)
-// refuses a `View`/`&str`/`Ref` field outright — `view_field.kp` and
+// refuses a `View`/`&str`/`Ref` field outright, `view_field.kp` and
 // `a_view_cannot_be_stored_in_a_datac` pin that rejection. So the `View` below
 // is `moved.name.view()`, printed and then dropped without being freed because
 // it owns nothing.

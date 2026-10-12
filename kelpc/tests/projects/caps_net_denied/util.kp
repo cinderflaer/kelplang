@@ -4,7 +4,7 @@ impl "std/net"
 // which is the same machine but not the same name: the denial happens before
 // any resolution, so the port need not be listening for this to be denied.
 //
-// `net.close` is never reached — the panic is at the `connect` call site.
+// `net.close` is never reached, the panic is at the `connect` call site.
 pub fun connect_by_another_name().return: i64 {
     val s = net.connect("localhost", 1)
     net.close(s)

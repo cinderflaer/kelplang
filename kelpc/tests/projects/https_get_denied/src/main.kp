@@ -1,5 +1,5 @@
 // MK5-S4b-M1 (open item 37): `https` is still network access under the
-// existing `net` capability, not a separate one to grant — so a program that
+// existing `net` capability, not a separate one to grant, so a program that
 // asks for a host:port its grant does not name is denied for `https` exactly
 // the way it already is for `http` (see `caps_net_denied`, `http_redirect_denied`).
 //

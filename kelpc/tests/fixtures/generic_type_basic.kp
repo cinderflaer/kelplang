@@ -23,7 +23,7 @@ fun main() {
     val n = Pair(first = 1, second = 2)
     print(add_pair(p = n))
 
-    // Inferred from the arguments, with a different second type — a separate
+    // Inferred from the arguments, with a different second type, a separate
     // instantiation of the same template.
     val p = Pair(first = 3, second = String.from_str(s = "three"))
     print(p.first)
@@ -42,7 +42,7 @@ fun main() {
     print(unwrap_or(o = some, fallback = 0))
     print(unwrap_or(o = none, fallback = 0))
 
-    // `option_payloadless` is a `Pair<i32, i32>` too — the same instance the
+    // `option_payloadless` is a `Pair<i32, i32>` too, the same instance the
     // first construction produced.
     val again = Pair(first = 9, second = 10)
     print(add_pair(p = again))

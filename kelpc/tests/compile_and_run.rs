@@ -92,7 +92,7 @@ fn assert_rejected(source: &str) {
 }
 
 /// Asserts that `kelpc build` rejects `source`, and that the diagnostic
-/// mentions `needle` — so a fixture cannot pass for the wrong reason.
+/// mentions `needle`, so a fixture cannot pass for the wrong reason.
 fn assert_rejected_with(source: &str, needle: &str) {
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
     let bin = out_path(&name);
@@ -413,7 +413,7 @@ fn run_fixture_with_stdin(tag: &str, name: &str, stdin: &str, expected: &str) {
     );
 }
 
-/// As `assert_project_runs`, with arguments appended to `argv` — which is what
+/// As `assert_project_runs`, with arguments appended to `argv`, which is what
 /// `process.args()` reads back.
 fn assert_project_runs_with_args(name: &str, target: &Path, args: &[&str], expected: &str) {
     let bin = out_path(name);
@@ -946,7 +946,7 @@ fn a_passdown_is_forwarded_through_a_caller_that_does_not_name_it() {
     // The call site's hidden argument is a borrow of the storage in scope:
     // the caller's own hidden parameter when it has one (so the forwarded
     // value stays a pointer, not a pointer to a pointer), the global's
-    // address when it does not — `main`, or a function that only calls a
+    // address when it does not, `main`, or a function that only calls a
     // function reading the passdown.
     assert_compiles_and_runs(
         "tests/fixtures/pd_argument_forwarding.kp",
@@ -983,7 +983,7 @@ fn a_pd_var_no_function_writes_is_a_shared_borrow() {
 fn a_pd_var_write_reaches_the_callers_that_hold_it() {
     // The upgrade follows the call graph, and the edge is followed even when
     // the callee does not name the passdown (a pure forwarder takes the
-    // global's address itself) — a shared borrow held across that write is
+    // global's address itself), a shared borrow held across that write is
     // the hazard the mode exists to prevent.
     assert_compiles_and_runs(
         "tests/fixtures/pd_write_reaches_callers.kp",
@@ -1011,8 +1011,8 @@ fn a_pd_var_of_a_two_word_datac_is_writable_through_its_borrow() {
 
 #[test]
 fn a_scalar_local_can_be_borrowed_and_written_through_the_pointer() {
-    // MK7 §5: the caller's half of a `mut` out-parameter — `&mut x` on a scalar
-    // local — plus `*p` and `*p = v` through the pointer it produces, a pointer
+    // MK7 §5: the caller's half of a `mut` out-parameter, `&mut x` on a scalar
+    // local, plus `*p` and `*p = v` through the pointer it produces, a pointer
     // binding held across a call, and two live locals around the store (the
     // live-range probe: a missed touch hands the pointer's register to `keep`
     // and the store writes through it).
@@ -1280,7 +1280,7 @@ fn a_move_one_path_takes_is_freed_on_the_path_that_did_not() {
     // out of an owned local that only one path through a branch takes used to
     // mark the binding moved for *both* paths, so the branch that kept the
     // value leaked it. The fixture also covers the assignment after the join,
-    // which frees the old value — the path that moved it cleared the slot, so
+    // which frees the old value, the path that moved it cleared the slot, so
     // that free finds nothing there.
     assert_compiles_and_runs(
         "tests/fixtures/owned_conditional_move.kp",
@@ -1293,7 +1293,7 @@ fn an_owned_local_bound_in_a_loop_body_is_dropped_on_both_paths() {
     // The defect's own minimal repro (MK7 §5): the owned local is bound inside
     // the loop body, moved on one path through it and abandoned on the other,
     // so the body's end-of-block drop has to run on the path that left the value
-    // behind — and the two `while`-pass plan write must not lose it.
+    // behind, and the two `while`-pass plan write must not lose it.
     assert_compiles_and_runs("tests/fixtures/owned_move_in_loop.kp", "hi\n");
 }
 
@@ -1302,7 +1302,7 @@ fn an_assignment_through_a_dereferenced_borrow_frees_the_old_value() {
     // roadmap open item 15, case 2: `*p = value` (and `p.field = value`
     // through a borrowed base) used to leak the value it overwrote, because
     // `DropPlan::at_assign` only ever recorded a plain binding, and neither
-    // target has one — there is no declaration to key a `DropTarget` to,
+    // target has one, there is no declaration to key a `DropTarget` to,
     // only a place. Both backends now free the old value at the target's own
     // address instead of resolving a binding.
     assert_compiles_and_runs("tests/fixtures/assign_through_deref.kp", "second\nbeta\n");
@@ -1364,7 +1364,7 @@ fn printing_a_temporary_owned_buffer_works() {
 #[test]
 fn a_buffer_in_a_print_template_takes_two_argument_slots() {
     // A `%.*s` interpolation is two variadic arguments (length, then pointer),
-    // so the register numbering counts arguments per piece — every piece after
+    // so the register numbering counts arguments per piece, every piece after
     // a buffer one sits behind both of its arguments, and the three buffer
     // shapes (an owned temporary, a borrow of a name, a `View`) each supply
     // them from somewhere different. `heap_temporary_print` above is the
@@ -1389,7 +1389,7 @@ fn a_buffer_in_a_print_template_takes_two_argument_slots() {
 #[test]
 fn string_constructs_measures_and_round_trips_through_bytes() {
     // `len` is bytes (h + é(2) + l + l + o = 6) and `char_count` is
-    // characters (5) — the distinction the two functions exist to make.
+    // characters (5), the distinction the two functions exist to make.
     assert_compiles_and_runs(
         "tests/fixtures/string_basic.kp",
         "6\n5\nfalse\nhéllo\nhéllo\n6\nhéllo\ntrue\n0\n",
@@ -1421,7 +1421,7 @@ fn bytes_grow_by_push_and_append() {
 #[test]
 fn growing_a_string_needs_an_exclusive_borrow_and_a_var_binding() {
     // `realloc` can move the buffer a live `str` view points into, and a
-    // `val` binding is not writable — both are compile errors, which is what
+    // `val` binding is not writable, both are compile errors, which is what
     // makes growth sound here without a lifetime syntax.
     assert_rejected("tests/fixtures/grow_while_borrowed.kp");
     assert_rejected("tests/fixtures/push_to_val_string.kp");
@@ -1753,7 +1753,7 @@ fn an_owned_passdown_no_expression_reads_is_still_dropped() {
 
 #[test]
 fn a_compiler_shipped_stdlib_module_can_be_imported() {
-    // `impl "std/mem"` — the module's Kelp body calls a compiler-supplied
+    // `impl "std/mem"`, the module's Kelp body calls a compiler-supplied
     // `extern` for the allocation itself.
     assert_compiles_and_runs("tests/fixtures/stdlib_mem.kp", "3\nhi\n0\n");
 }
@@ -1861,7 +1861,7 @@ fn regex_is_match_panics_on_a_bad_pattern() {
 }
 
 // A body that ends in `while true { ... }` never falls through, so a function
-// returning an owned type needs no fallthrough `ret` — which it could not build
+// returning an owned type needs no fallthrough `ret`, which it could not build
 // one for anyway, a `String` having no zero value. Both backends agree here now;
 // before, the LLVM one refused the shape as a compiler defect.
 #[test]
@@ -1896,7 +1896,7 @@ fn the_tz_module_reads_the_system_zoneinfo_database() {
 }
 
 /// Whether the host carries every zone `stdlib_tz_zones.kp` reads, in `$TZDIR`
-/// or in `/usr/share/zoneinfo` — the same probe the fixture makes, so the two
+/// or in `/usr/share/zoneinfo`, the same probe the fixture makes, so the two
 /// agree about whether the database is there.
 fn zoneinfo_has_the_test_zones() -> bool {
     let tzdir = std::env::var("TZDIR").unwrap_or_default();
@@ -2029,7 +2029,7 @@ fn copy_substituted(src: &Path, dst: &Path, root: &str) {
 }
 
 /// Builds a caps project, runs it, and asserts the run fails with `needle` on
-/// stderr — the runtime-denial path, which only a *granted* module can reach.
+/// stderr, the runtime-denial path, which only a *granted* module can reach.
 fn assert_project_denied_at_runtime(name: &str, target: &Path, needle: &str) {
     let bin = out_path(name);
     let build = kelpc()
@@ -2089,7 +2089,7 @@ fn a_module_cannot_delegate_more_than_it_holds() {
 // ---------------------------------------------------------------------------
 // C-2 (roadmap open item 18): coral.toml's [caps] section restricts the
 // entry module's own capability set, which the entry module could not
-// restrict any other way — an ordinary `caps(...)` clause on one of its own
+// restrict any other way, an ordinary `caps(...)` clause on one of its own
 // `impl` lines grants the *imported* module, never main itself. A project
 // with no [caps] section keeps the old default (main holds everything, every
 // project above this point in the file has none), so these three are the
@@ -2099,7 +2099,7 @@ fn a_module_cannot_delegate_more_than_it_holds() {
 #[test]
 fn the_entry_modules_own_caps_section_can_leave_a_domain_ungranted() {
     // This project's coral.toml [caps] grants only 'env', so main's direct
-    // reference to 'fs' resolves against nothing — a resolution error at the
+    // reference to 'fs' resolves against nothing, a resolution error at the
     // same place and with the same wording an imported module's ungranted
     // reference gets. Nothing in this fixture touches disk (the build never
     // gets past resolution), so it needs no scratch directory at all.
@@ -2126,7 +2126,7 @@ fn a_caps_restricted_entry_module_is_denied_outside_its_own_pattern_at_runtime()
     // 'fs' is held (resolution passes), but only for a scratch directory this
     // project's main.kp never names (it reads '/tmp', not the granted
     // directory), so the denial is the runtime pattern check, not the
-    // resolution gate above — and it names 'main', the way
+    // resolution gate above, and it names 'main', the way
     // a_path_outside_the_grant_is_denied_at_runtime names 'util' for a
     // delegated module. No scratch directory needs to exist on disk for that
     // same reason (a_path_outside_the_grant_is_denied_at_runtime creates none
@@ -3032,7 +3032,7 @@ fn a_granted_module_creates_a_symlink_inside_its_grant() {
 #[test]
 fn a_symlink_whose_target_is_outside_the_grant_cannot_be_created() {
     // The link's own path is inside the grant; the target is not, and the
-    // denial names the *target* — the check runs in argument order, and it is
+    // denial names the *target*, the check runs in argument order, and it is
     // what keeps a grant closed under link creation.
     let dir = caps_scratch("link_denied");
     assert_project_denied_at_runtime(
@@ -3046,7 +3046,7 @@ fn a_symlink_whose_target_is_outside_the_grant_cannot_be_created() {
 #[test]
 fn a_granted_env_reads_sets_and_unsets_only_the_granted_names() {
     // MK5-S5: the bodies are real now. `HOME` is read through the grant, and
-    // `KELP_ENV_PROBE` is set, read back, unset and confirmed gone — all inside
+    // `KELP_ENV_PROBE` is set, read back, unset and confirmed gone, all inside
     // the child process, so the harness's environment is untouched.
     assert_project_runs(
         "caps_env",
@@ -3203,12 +3203,12 @@ fn a_str_becomes_a_string_where_one_is_expected() {
 /// `str.less` is the ordering `str` never had, and `str.is_digit` is the digit
 /// predicate that four libraries in the catalogue wrote by hand.
 ///
-/// `str` refuses `==`, `<` and the rest (they would compare pointers — see
+/// `str` refuses `==`, `<` and the rest (they would compare pointers, see
 /// `str_comparison.kp` next door), and `std/str` offered no comparison instead, so
 /// `fpl/json` carries a private `str_less` for its key sorting and `fpl/json`,
 /// `fpl/decimal`, `fpl/encoding` and `fpl/httpx` each have their own digit test.
-/// This fixture is the two functions used the way a caller uses them — a number
-/// parser that stops at the first non-digit, and an insertion sort — plus the two
+/// This fixture is the two functions used the way a caller uses them, a number
+/// parser that stops at the first non-digit, and an insertion sort, plus the two
 /// rules their doc comments commit to, because a codepoint comparison instead of a
 /// byte comparison would pass a predicate test and silently change a sort.
 #[test]
@@ -3913,7 +3913,7 @@ fn a_field_of_an_owned_temporary_is_dropped_per_read() {
 // ---------------------------------------------------------------------------
 
 /// Builds a fixture, runs it, and asserts the run fails with `needle` on
-/// stderr — the runtime-panic path (`List.pop` on an empty list).
+/// stderr, the runtime-panic path (`List.pop` on an empty list).
 fn assert_fixture_panics(name: &str, needle: &str) {
     assert_fixture_panics_all(name, &[needle]);
 }
@@ -4053,7 +4053,7 @@ fn a_list_grows_indexes_and_shrinks() {
 #[test]
 fn a_for_loop_walks_a_list_without_an_index() {
     // A-5: the parser desugars `for x in xs { }` to an index and a `while`, so
-    // this pins the desugaring where a caller can see it — the element binding
+    // this pins the desugaring where a caller can see it, the element binding
     // (value for `Copy`, shared borrow for owned), a call iterable evaluated
     // once, the same once for a *field* of a call, nesting, and a list a
     // function only borrows.
@@ -4211,7 +4211,7 @@ fn the_iterator_helpers_count_sum_and_collect() {
 #[test]
 fn a_place_iterator_is_borrowed_by_its_loop() {
     // The loop holds `&mut f`, so naming `f` in the body is the ordinary
-    // "already borrowed" error — the iterator mutability the design promises.
+    // "already borrowed" error, the iterator mutability the design promises.
     assert_rejected_with(
         "tests/fixtures/for_iter_borrowed.kp",
         "already borrowed",
@@ -4272,7 +4272,7 @@ fn a_float_list_copies_and_compares_at_its_own_width() {
 
 #[test]
 fn a_list_copies_elements_at_their_own_width() {
-    // A one-byte `bool`, an eight-byte `i64` and a twelve-byte `Trio` — the
+    // A one-byte `bool`, an eight-byte `i64` and a twelve-byte `Trio`, the
     // last is not a power of two, so copying it is two instructions rather
     // than one, and every element this corpus had before was four or
     // thirty-two bytes wide.
@@ -4303,8 +4303,8 @@ fn a_narrow_aggregate_field_is_read_at_its_own_width() {
 fn a_list_returns_a_narrow_element_at_its_own_width() {
     // The same defect in the second place a heap element's own address reaches
     // a one-eightbyte load: `List#pop`/`List#remove` hand the element address
-    // to `emit_elem_return`, whose `One` arm loaded eight bytes — and whose
-    // `Two` arm loaded a full second eightbyte — out of a buffer sized to the
+    // to `emit_elem_return`, whose `One` arm loaded eight bytes, and whose
+    // `Two` arm loaded a full second eightbyte, out of a buffer sized to the
     // element. The four pushes fill the initial capacity so both pops come off
     // the buffer's end, where the crossing load is a heap overread.
     assert_compiles_and_runs(
@@ -5878,7 +5878,7 @@ fn fs_list_returns_a_granted_directories_entries() {
 #[test]
 fn fs_breadth_creates_walks_stats_copies_opens_and_removes_under_one_grant() {
     // MK5-S5: `mkdir_all`, `read_lines`, `metadata`, `copy`, `open` (its mode
-    // string is not a path), `touch`, `walk`, `temp_path`, `remove_all` — all
+    // string is not a path), `touch`, `walk`, `temp_path`, `remove_all`, all
     // behind the one `fs` grant, all in a scratch directory the program
     // creates and removes itself.
     assert_project_runs(
@@ -6138,7 +6138,7 @@ fn a_child_gets_a_working_directory_and_a_fallible_run_reports_why() {
 }
 
 // ---------------------------------------------------------------------------
-// S3: `net` — the capability vocabulary (`host`, `host:port`, `*.host`,
+// S3: `net`, the capability vocabulary (`host`, `host:port`, `*.host`,
 // `*:port`, `*`), sockets, and the one-process loopback test.
 //
 // Every `net` test is one process, loopback only, and never a fixed port: the
@@ -6158,7 +6158,7 @@ fn the_entry_module_holds_net_as_the_whole_resource_wildcard() {
 #[test]
 fn a_granted_module_speaks_the_net_vocabulary_and_round_trips_bytes() {
     // The grant is `peer`'s, not `main`'s, and it is written in the vocabulary
-    // open item 32 was about: `127.0.0.1:*` — a host and a wildcard port. The
+    // open item 32 was about: `127.0.0.1:*`, a host and a wildcard port. The
     // program binds port 0, learns the port, connects, accepts, and exchanges
     // bytes in both directions, printing `send`'s byte count, `recv_into`'s,
     // both payloads, and whether the peer address is the requested loopback.
@@ -6171,7 +6171,7 @@ fn a_granted_module_speaks_the_net_vocabulary_and_round_trips_bytes() {
 
 #[test]
 fn the_net_check_matches_the_host_as_written() {
-    // `util` holds `127.0.0.1:*` and connects to `localhost` — the same
+    // `util` holds `127.0.0.1:*` and connects to `localhost`, the same
     // machine under another name. The check runs before `getaddrinfo`, so this
     // is denied, and the denial prints the string the code wrote. The granted
     // pattern (not the host as written) is what the assertion reads, per the
@@ -6187,7 +6187,7 @@ fn the_net_check_matches_the_host_as_written() {
 fn a_socket_reports_readiness_without_blocking() {
     // `poll` on a connected socket: false on a bounded wait with nothing sent,
     // true once the peer writes, and true again at end of file after
-    // `shutdown_write` — the three answers a single-threaded event loop needs.
+    // `shutdown_write`, the three answers a single-threaded event loop needs.
     assert_compiles_and_runs("tests/fixtures/net_poll.kp", "false\ntrue\ntrue\nnow\ntrue\ntrue\n");
 }
 
@@ -6290,7 +6290,7 @@ fn a_reconnect_loop_survives_three_refused_dials_and_gives_up() {
 
 // ---------------------------------------------------------------------------
 // S4: `std/http`. The client blocks inside `send` until the response arrives,
-// so — unlike S3's `net` fixtures, which could be both ends in one process —
+// so, unlike S3's `net` fixtures, which could be both ends in one process,
 // an HTTP test needs a real server in another process (or, here, in another
 // thread of the harness).
 //
@@ -6472,7 +6472,7 @@ fn serve(
 // canned-connections shape as `CannedServer` above, except every accepted
 // `TcpStream` goes through an `SslAcceptor`'s handshake first, using a
 // throwaway self-signed certificate generated once per server (the `openssl`
-// crate, not a CLI subprocess — see `Cargo.toml`'s `[dev-dependencies]`
+// crate, not a CLI subprocess, see `Cargo.toml`'s `[dev-dependencies]`
 // comment). The compiled `.kp` binary under test is started with
 // `SSL_CERT_FILE` pointing at that certificate's own PEM file, which is what
 // lets `std/tls`'s unconditional `SSL_CTX_set_default_verify_paths()`
@@ -6815,7 +6815,7 @@ fn assert_project_served_tls(
 
 /// As `assert_project_served_denied`, for the TLS server: the capability
 /// check runs before any connection, TLS or otherwise, so this needs no
-/// `SSL_CERT_FILE` — the denial happens before a handshake could use it.
+/// `SSL_CERT_FILE`, the denial happens before a handshake could use it.
 fn assert_project_served_tls_denied(
     name: &str,
     target: &Path,
@@ -7894,7 +7894,7 @@ fn a_relative_redirect_is_followed_on_the_pooled_connection() {
 fn rate_limit_headers_parse_and_absence_reads_as_none() {
     // MISSING-p5Xtr: a `429` naming `Retry-After` and the five
     // `X-RateLimit-*` bucket headers, then a plain `200` naming none of
-    // them — the second response is the "absent, not a panic" half, and it
+    // them, the second response is the "absent, not a panic" half, and it
     // also exercises `remaining = 0` on the first response reading as
     // `Some(0)` rather than being confused with "absent". Neither response
     // asks to close, so both ride the one connection `BODY_200_HELLO`'s
@@ -7926,7 +7926,7 @@ fn the_pool_ceiling_comes_from_the_manifest() {
 fn a_redirect_to_a_host_the_grant_does_not_name_is_denied() {
     // The grant names `127.0.0.1`; the redirect names `localhost`. The check
     // matches the host as written, so the denial happens even though both names
-    // are the same machine — and it happens before any connection to port 80.
+    // are the same machine, and it happens before any connection to port 80.
     assert_project_served_denied(
         "http_redirect_denied",
         &project("http_redirect_denied"),
@@ -8058,7 +8058,7 @@ fn https_to_a_host_the_grant_does_not_name_is_denied() {
     // Same shape as `a_redirect_to_a_host_the_grant_does_not_name_is_denied`,
     // but for `https` directly: the grant names `127.0.0.1:80`\
     // (the `http` default port), the URL asks for `127.0.0.1:<TLS port>`, and
-    // the capability check denies it before a socket is ever opened — so the
+    // the capability check denies it before a socket is ever opened, so the
     // server here accepts nothing, and `SSL_CERT_FILE` is never consulted.
     assert_project_served_tls_denied(
         "https_get_denied",
@@ -8747,7 +8747,7 @@ fn the_download_example_writes_exactly_what_it_received() {
     // `examples/download.kp` is a program, not a snippet: it is compiled and run
     // against a canned server, and the file it writes is compared byte for
     // byte. The body deliberately holds a NUL and invalid utf-8, which is the
-    // case a `String` could not carry — `fs.write` takes `Bytes` for exactly
+    // case a `String` could not carry, `fs.write` takes `Bytes` for exactly
     // this, and a download that went through text would corrupt it.
     let body: Vec<u8> = b"line\r\nnul:\0 hi:\xff\xfe".to_vec();
     let mut response = format!(
@@ -8873,7 +8873,7 @@ fn the_download_pool_example_uses_one_kept_alive_connection_per_worker() {
 }
 
 // ---------------------------------------------------------------------------
-// A-1: `enum` — tagged unions, variant construction, and pattern `when`.
+// A-1: `enum`, tagged unions, variant construction, and pattern `when`.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -8925,7 +8925,7 @@ fn the_enum_node_kinds_keep_two_live_locals_in_different_registers() {
     // The register allocator's liveness pass has twice handed two live locals
     // the same register because a node kind it never walked made one of them
     // look dead on declaration. This fixture keeps two scalars alive across
-    // each of this slice's four node kinds — and, added with the slice's own
+    // each of this slice's four node kinds, and, added with the slice's own
     // defect fix, across `if let` and across a call with an enum-typed local
     // live on the far side, the two shapes the slice's report claimed were
     // probed when the fixture held neither. A repeat of the mistake is a wrong
@@ -8960,7 +8960,7 @@ fn an_enum_is_a_container_element_and_a_container_drops_it() {
 #[test]
 fn when_arms_do_not_need_a_newline_inside_parentheses() {
     // A `when` is an expression, and inside `(` `)` the lexer emits no
-    // newline tokens at all — so an arm separator cannot be required there.
+    // newline tokens at all, so an arm separator cannot be required there.
     assert_compiles_and_runs("tests/fixtures/when_in_args.kp", "1\n2\n2\n");
 }
 
@@ -9026,7 +9026,7 @@ fn enum_misuse_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// MK5-S6-M1: `if let` — a pattern condition, desugared to a single-arm `when`.
+// MK5-S6-M1: `if let`, a pattern condition, desugared to a single-arm `when`.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -9102,7 +9102,7 @@ fn an_else_if_let_behind_a_plain_if_compiles() {
 }
 
 // ---------------------------------------------------------------------------
-// MK5-S6-M1: `?` — propagate the failure of an `Ok`/`Err` or `Some`/`None` enum.
+// MK5-S6-M1: `?`, propagate the failure of an `Ok`/`Err` or `Some`/`None` enum.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -9123,7 +9123,7 @@ fn option_and_result_ship_as_stdlib_modules() {
 
 #[test]
 fn a_panicking_tail_satisfies_any_return_type() {
-    // The body diverges, so no `return` is needed after the `panic` — and the
+    // The body diverges, so no `return` is needed after the `panic`, and the
     // panic still fires when that path is taken.
     assert_fixture_panics("panic_tail", "always_fails: non-positive");
 }
@@ -9145,7 +9145,7 @@ fn try_frees_the_frame_it_returns_from() {
 fn a_propagated_failure_frees_the_frame_it_leaves() {
     // `?`'s early return is a `return`, so the frame's owned locals die on it
     // too. `try_drops_frame.kp` pins the same shape, but its last function
-    // wraps it in a `fun` literal, which this backend refuses by name — so this
+    // wraps it in a `fun` literal, which this backend refuses by name, so this
     // fixture is the same mechanism without the closure. The printed values pin
     // the success arm; the valgrind sweep is what proves the failure arm frees,
     // because a leak prints nothing.
@@ -9161,7 +9161,7 @@ fn a_one_eightbyte_try_payload_builds_without_a_destination() {
     // is what a `let` of a one-eightbyte `datac` uses) refused *every*
     // aggregate payload for want of a destination, and said "over eight bytes"
     // about a three-byte `datac`. `Result<D3, u8>` is eight bytes in total, so
-    // its success payload fits `rax` and the program must build — while a
+    // its success payload fits `rax` and the program must build, while a
     // genuinely wider payload keeps the refusal.
     assert_compiles_and_runs("tests/fixtures/try_narrow_payload.kp", "6\n9\n");
 }
@@ -9184,7 +9184,7 @@ fn try_misuse_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// A-2: user-declarable generic types — `datac`/`enum` templates, monomorphized
+// A-2: user-declarable generic types, `datac`/`enum` templates, monomorphized
 // at each use site, with the type arguments inferred from the construction.
 // ---------------------------------------------------------------------------
 
@@ -9301,7 +9301,7 @@ fn generic_type_misuse_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// A-4 phase A: `move T` — a parameter that takes ownership of its argument.
+// A-4 phase A: `move T`, a parameter that takes ownership of its argument.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -9395,7 +9395,7 @@ fn move_parameter_misuse_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// A-4 phase B: function values — a declared `fun` as a value of type
+// A-4 phase B: function values, a declared `fun` as a value of type
 // `fun(T).return: U`, called through a local, a field, a passdown or a parameter.
 // ---------------------------------------------------------------------------
 
@@ -9411,7 +9411,7 @@ fn a_function_name_is_a_value_and_a_value_is_callable() {
 #[test]
 fn a_function_value_with_the_wrong_shape_is_rejected() {
     // The parameter types are part of the function type, so a callback of the
-    // wrong shape is an ordinary argument-type mismatch — and a `fun(move
+    // wrong shape is an ordinary argument-type mismatch, and a `fun(move
     // String)` callback cannot be handed a borrow.
     assert_rejected_with(
         "tests/fixtures/fn_value_mismatch.kp",
@@ -9483,7 +9483,7 @@ fn indirect_call_misuse_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// A-4 phase C: anonymous `fun` literals — one synthesized function each,
+// A-4 phase C: anonymous `fun` literals, one synthesized function each,
 // checked in a scope of their own.
 // ---------------------------------------------------------------------------
 
@@ -9577,7 +9577,7 @@ fn fun_literal_misuse_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// A-4 phase D: the stdlib callbacks — what function values and a move-taking
+// A-4 phase D: the stdlib callbacks, what function values and a move-taking
 // parameter were for.
 // ---------------------------------------------------------------------------
 
@@ -9613,7 +9613,7 @@ fn a_combinator_needing_a_copy_payload_says_so() {
 }
 
 // ---------------------------------------------------------------------------
-// A-4 phase E: captures — a `fun` literal that names a binding from the
+// A-4 phase E: captures, a `fun` literal that names a binding from the
 // enclosing scope becomes a closure (`closure(T).return: U`), which owns the heap
 // environment its captures were moved into.
 // ---------------------------------------------------------------------------
@@ -9649,7 +9649,7 @@ fn a_library_may_take_a_closure_over_its_own_type() {
     // The other half of BUG-2, and the shape that motivated it: inside a
     // non-entry module the parameter type is module-qualified (`&items.Item`),
     // so the generated closure type is named after it. That name used to come
-    // out of the mangling as `refitems.Item` — a dot in a C identifier — and
+    // out of the mangling as `refitems.Item`, a dot in a C identifier, and
     // every generated use of the closure type failed to compile. Needs a
     // project because the module prefix is what makes the name qualified.
     assert_project_runs(
@@ -9662,7 +9662,7 @@ fn a_library_may_take_a_closure_over_its_own_type() {
 #[test]
 fn a_closure_is_dropped_where_its_binding_dies() {
     // Also in the AddressSanitizer list: a missed drop is a leak and a second
-    // one a double free. Covers the three drop points — the end of a block, an
+    // one a double free. Covers the three drop points, the end of a block, an
     // early `return`, and once per loop iteration.
     assert_compiles_and_runs(
         "tests/fixtures/closure_move.kp",
@@ -9781,7 +9781,7 @@ fn the_cli_reports_its_version() {
 #[test]
 fn an_unknown_command_prints_the_usage_and_fails() {
     // Including `kelpc` with no arguments at all, which is the case a new user
-    // hits first — and the usage line has to name every command that exists.
+    // hits first, and the usage line has to name every command that exists.
     for args in [vec![], vec!["bogus"], vec!["build"]] {
         let out = kelpc()
             .args(&args)
@@ -9851,7 +9851,7 @@ fn the_default_backend_is_llvm() {
 /// `<stem>` **relative to the working directory**, so a build run from a
 /// checkout put the binary in the checkout's root. Ten of them were committed
 /// across six commits before anyone noticed, and the generated C beside each
-/// one was invisible because `*.c` is ignored — which is exactly the shape a
+/// one was invisible because `*.c` is ignored, which is exactly the shape a
 /// test has to pin, because the output is only wrong somewhere no one looks.
 ///
 /// Both halves matter: the artifact has to be *in* `build/`, and the working

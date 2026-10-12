@@ -1,8 +1,8 @@
 // The float half of a scalar borrow: `*p` and `*p = v` for an `f64` pointee,
 // through a `mut f64` parameter and through an explicit `&mut` binding.
 //
-// The pointer is one integer register either way — only the load and the store
-// change register file, `movsd` against the integer `mov` — which is why a
+// The pointer is one integer register either way, only the load and the store
+// change register file, `movsd` against the integer `mov`, which is why a
 // `mut f64` parameter needed `int_regs_for`/`value_kind` to accept a reference
 // to a float, and `ExprKind::Deref`/`Assign` to know the float mnemonics. A
 // wrong register file here prints a plausible wrong number rather than failing

@@ -1,4 +1,4 @@
-// M6.2: `std/str` — an Kelp-body stdlib module whose only non-Kelp operations are
+// M6.2: `std/str`, an Kelp-body stdlib module whose only non-Kelp operations are
 // the two compiler-supplied byte accesses (`str.len`, `str.byte`).
 impl "std/str"
 

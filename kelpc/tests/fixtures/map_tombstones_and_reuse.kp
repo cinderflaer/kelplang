@@ -11,7 +11,7 @@
 // capacity, so they share one chain. `k0` is inserted, then `k8` beside it;
 // removing `k0` tombstones the chain's head, and `k8` must stay findable
 // through it. `k13` is then inserted into that tombstone, and reinserting
-// `k0` must land a fresh entry rather than resurrect the dead one — the
+// `k0` must land a fresh entry rather than resurrect the dead one, the
 // failure here is a wrong number or a missing key, not a crash.
 fun main() {
     var m: Map<i64> = Map.new()

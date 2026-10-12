@@ -10,7 +10,7 @@
 // the index to just under the next threshold; the six removes that follow
 // leave tombstones, and the twenty-fourth insert fires the rebuild again with
 // those tombstones present, so the rebuild has to skip them. `keys()` must
-// still be insertion order — the removed keys gone, the late key last — and
+// still be insertion order, the removed keys gone, the late key last, and
 // `len()` must agree.
 fun main() {
     var m: Map<i32, i32> = Map.new()

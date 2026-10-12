@@ -1,4 +1,4 @@
-// download_pool.kp — fetch a list of paths from one host concurrently, with
+// download_pool.kp, fetch a list of paths from one host concurrently, with
 // one keep-alive connection pool per worker thread (MK6-S2-M1: the payoff of
 // row 4 on the critical path, once threads existed to spend).
 //
@@ -17,14 +17,14 @@
 //
 // Each worker owns one `http.Pool` for the run's one host, never shared with
 // another thread (a `Pool`'s `var idle` field is exactly the kind of shared
-// mutable state `thread.spawn` refuses to send — MK9 section 5 rule 3 — so
+// mutable state `thread.spawn` refuses to send, MK9 section 5 rule 3, so
 // the only way to give a worker one is to let it build its own), so the four
 // in-flight workers keep at most four sockets open between them and every
 // path a worker downloads after its first reuses its own connection.
 //
 // The capability is `net = ["*"]` because the host is a command-line
 // argument, decided at run time, and a compile-time pattern cannot spell a
-// value that is not known yet — the same tradeoff `examples/download.kp`'s
+// value that is not known yet, the same tradeoff `examples/download.kp`'s
 // header discusses for its own fixed pattern. Narrow this to the host you
 // actually run against if you adapt the program.
 impl "std/thread"
@@ -51,7 +51,7 @@ fun build_url(host: &str, port: u16, path: &str).return: String {
 }
 
 // One worker's whole run: its own pool, one request per path in its own
-// share, sequentially — the pool's keep-alive is what makes a sequential loop
+// share, sequentially, the pool's keep-alive is what makes a sequential loop
 // here as cheap as it is, since only the first request per worker pays for a
 // handshake.
 fun fetch_all(job: move Job).return: Outcome {

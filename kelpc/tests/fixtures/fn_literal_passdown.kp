@@ -1,5 +1,5 @@
 // A-4: a passdown is a hidden argument of the function that names it, so a
-// literal cannot read one — its generated C function has no such parameter.
+// literal cannot read one, its generated C function has no such parameter.
 pd val base = 3
 
 fun main() {

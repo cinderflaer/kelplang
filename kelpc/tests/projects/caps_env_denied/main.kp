@@ -1,5 +1,5 @@
 // The grant names PATH only, so asking about HOME is denied before the body
-// runs — the name itself is the governed resource.
+// runs, the name itself is the governed resource.
 impl "util" caps(env = ["PATH"])
 
 fun main() {

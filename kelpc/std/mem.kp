@@ -1,4 +1,4 @@
-/* std/mem — allocation primitives (M6.2).
+/* std/mem, allocation primitives (M6.2).
 
    The only thing here that Kelp cannot express is the allocation itself, so that
    is the one `extern`: `alloc_raw`'s body is supplied by the compiler and

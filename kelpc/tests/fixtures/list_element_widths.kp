@@ -1,6 +1,6 @@
 // The element's own size decides the copy width inside the buffer, and the
 // three widths here are the ones no fixture reaches: a `bool` is one byte, an
-// `i64` is eight, and `Trio` is twelve — not a power of two, so a copy of it
+// `i64` is eight, and `Trio` is twelve, not a power of two, so a copy of it
 // is two instructions rather than one (8 bytes then 4). `list_basic.kp` is
 // four-byte `i32` elements throughout and `list_datac_element.kp` is
 // thirty-two-byte ones, so every element this corpus had was one of those two

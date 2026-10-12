@@ -2,7 +2,7 @@
 // slot of its own, so two of them in one expression cannot share an address.
 //
 // Before this slice a temporary was built into one reusable staging slot
-// (`Frame::agg_slot`), which `struct_lit` also loads its own value out of — so
+// (`Frame::agg_slot`), which `struct_lit` also loads its own value out of, so
 // a borrow of a temporary was refused rather than handed a pointer that the
 // next `datac` literal in the same call would overwrite. The cases below are
 // exactly the ones a shared slot would break: two temporaries as two arguments

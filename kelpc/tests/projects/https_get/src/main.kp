@@ -1,7 +1,7 @@
 // MK5-S4b-M1 (open item 37): the same `https://` URL that used to panic in
 // `parse_url` ("'https' is not supported yet") now runs the TLS handshake
 // (via `std/tls`) and reads a real response. One request on a fresh
-// connection through `http.get`, which is `Client.send`'s one-liner — the
+// connection through `http.get`, which is `Client.send`'s one-liner, the
 // pooled path (`http.pool`, `Pool.checkout`'s `use_tls`) already has its own
 // coverage in `http_get`, for plain `http`.
 //

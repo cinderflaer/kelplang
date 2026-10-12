@@ -1,8 +1,8 @@
-/* std/rt — the compiler's own runtime, written in Kelp (MK7 §8).
+/* std/rt, the compiler's own runtime, written in Kelp (MK7 §8).
 
    This module is not part of the stdlib's public surface. It is the *runtime*
    that generated code calls into, and it is here so that a piece of the runtime
-   exists once, in Kelp, for every backend — instead of as C text emitted into
+   exists once, in Kelp, for every backend, instead of as C text emitted into
    every program, which is what MK7 §7 is retiring.
 
    The first piece to move is the capability matcher, which §8 puts first in the
@@ -125,7 +125,7 @@ fun dir_wildcard_at(s: View, i: usize).return: bool {
 }
 
 // Whether `pat` admits `text` in the `net` vocabulary: `*` is one label wide, so
-// it stops at `.` and `:`, and there is no `**` — there is nothing for it to
+// it stops at `.` and `:`, and there is no `**`, there is nothing for it to
 // mean that `*` does not already say.
 fun host_glob(pat: &str, text: &str).return: bool {
     return host_glob_at(pat, 0, text, 0, str.len(text))
@@ -137,7 +137,7 @@ fun host_glob(pat: &str, text: &str).return: bool {
 // between `host_glob` and `host_part` + `host_glob`: the C code *copies* the
 // host out of `host:port` so that a NUL terminator can stand where the `:`
 // was, and this version matches only as far as `tend` instead. Nothing is
-// copied, and the verdicts are the same — which is what the corpus checks, the
+// copied, and the verdicts are the same, which is what the corpus checks, the
 // `host:port` cases included.
 fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usize).return: bool {
     val pv = pat.view()
@@ -174,7 +174,7 @@ fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usiz
 }
 
 // Whether `pat` admits the resource `hostport`. The match is on the string the
-// code wrote — no DNS before matching, which is the rule that keeps a grant for
+// code wrote, no DNS before matching, which is the rule that keeps a grant for
 // `example.com` from covering `93.184.216.34` (`fs` resolves symlinks first for
 // the opposite reason: a link is not a name the author chose). A pattern with no
 // port admits any port.
@@ -192,8 +192,8 @@ fun host_match(pat: &str, hostport: &str).return: bool {
     return host_glob_at(pat, 0, hostport, 0, host_end(hostport))
 }
 
-// The index just past the host part of `hostport` — where its *last* `:`
-// is — cut the way `kelp_host_part`'s `char host[PATH_MAX]` cuts it. `PATH_MAX`
+// The index just past the host part of `hostport`, where its *last* `:`
+// is, cut the way `kelp_host_part`'s `char host[PATH_MAX]` cuts it. `PATH_MAX`
 // is 4096 on Linux, and the C version keeps the first `cap - 1` bytes of what it
 // copied.
 fun host_end(hostport: &str).return: usize {
@@ -215,7 +215,7 @@ fun host_end(hostport: &str).return: usize {
     return end
 }
 
-// Whether `pat` names a port at all — the C version's `strrchr(pat, ':') !=
+// Whether `pat` names a port at all, the C version's `strrchr(pat, ':') !=
 // NULL`, which asks only whether a colon exists, not where.
 fun has_colon(pat: &str).return: bool {
     val pv = pat.view()
@@ -235,7 +235,7 @@ fun has_colon(pat: &str).return: bool {
 // `s` normalized into `out`: `//` collapses, `.` is dropped, and `..` pops a
 // segment. Returns false when `s` is not absolute or escapes its own root
 // through `..`, which is what makes this the *one* normalization the language
-// uses — `path.normalize` panics on it and the capability check denies, but the
+// uses, `path.normalize` panics on it and the capability check denies, but the
 // decision itself is made here, once.
 //
 // **The buffer is the caller's and this allocates nothing.** `out` is a view of
@@ -243,7 +243,7 @@ fun has_colon(pat: &str).return: bool {
 // NUL slot `Bytes` keeps, which is exactly the spare byte the C version's
 // `char buf[cap]` rule needed. The C reference `path_normalize_ref.c` is the
 // same algorithm with a `char*` and a `size_t cap`, and
-// `kelpc/tests/path_normalize.rs` compares the two — including the bytes each
+// `kelpc/tests/path_normalize.rs` compares the two, including the bytes each
 // one leaves in the buffer when it fails, which is why the rule has to match
 // and not merely the verdict.
 //

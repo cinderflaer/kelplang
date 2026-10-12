@@ -1,6 +1,6 @@
 // A-4 phase E: captures. A `fun` literal that names a binding from the
-// enclosing scope becomes a *closure* — a function value plus the heap
-// environment those captures were moved into — and its type is written
+// enclosing scope becomes a *closure*, a function value plus the heap
+// environment those captures were moved into, and its type is written
 // `closure(T).return: U`, the function type one keyword apart.
 //
 // A `Copy` capture is copied into the environment (the binding stays usable);
@@ -39,7 +39,7 @@ fun main() {
     val shout = fun(s: str).return: usize = str.len(s) + suffix.len()
     print(shout("hi"))
 
-    // A capturing literal passed straight to a closure parameter — borrowed
+    // A capturing literal passed straight to a closure parameter, borrowed
     // by the parameter, and moved by a `move` parameter.
     print(apply(fun(x: i32).return: i32 = x * k, 3))
     print(own(fun(x: i32).return: i32 = x - k, 4))
@@ -49,7 +49,7 @@ fun main() {
     val f = make(String.from_str("abcd"))
     print(f(10))
 
-    // A closure in a `datac` field, and one in a `Box` — the optional-callback
+    // A closure in a `datac` field, and one in a `Box`, the optional-callback
     // shape, since `List<closure(...)>` is refused (a list's elements are
     // inline).
     val h = Holder(cb = fun(x: i32).return: i32 = x + k)

@@ -1330,7 +1330,7 @@ Each of these is a fixture that is refused; the text is the compiler's, verbatim
 - **`?` inside `next` must keep the `Option` shape.** (`matrix_from_try_in_next.kp`)
 
   ```
-  error: '?' here propagates a carrying failure, but the enclosing function returns 'std.option.Option<i32>' — the two have to be the same shape; match the value instead (`when r { Ok(v) -> ..., Err(e) -> return <your failure> }`), or make the function return the same kind of enum
+  error: '?' here propagates a carrying failure, but the enclosing function returns 'std.option.Option<i32>', the two have to be the same shape; match the value instead (`when r { Ok(v) -> ..., Err(e) -> return <your failure> }`), or make the function return the same kind of enum
   ```
 
 - **A block inside a block cannot hold the outer block's exclusive capture.** (`excl_refused_nested.kp`)
@@ -1360,7 +1360,7 @@ Each of these is a fixture that is refused; the text is the compiler's, verbatim
 - **`?` with no `From` impl.** (`from_no_impl.kp`)
 
   ```
-  error: '?' cannot convert a failure: 'std.result.Result<i32, IoErr>' carries 'IoErr' and the enclosing function returns 'std.result.Result<i32, AppErr>', whose failure carries 'AppErr' — write 'impl From<IoErr> for AppErr { fun from(value: IoErr).return: AppErr { ... } }' so the operator has a conversion to call
+  error: '?' cannot convert a failure: 'std.result.Result<i32, IoErr>' carries 'IoErr' and the enclosing function returns 'std.result.Result<i32, AppErr>', whose failure carries 'AppErr', write 'impl From<IoErr> for AppErr { fun from(value: IoErr).return: AppErr { ... } }' so the operator has a conversion to call
   ```
 
 - **An operator with no trait impl.** (`ops_arith_no_add.kp`)

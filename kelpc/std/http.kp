@@ -9,7 +9,7 @@ impl "std/result"
 impl "std/encoding"
 impl "std/thread"
 
-/* std/http — an HTTP/1.1 client (S4). Ungated itself, and it *holds* `net`:
+/* std/http, an HTTP/1.1 client (S4). Ungated itself, and it *holds* `net`:
    the grant that governs its connections is the one its importer wrote
    (`impl "std/http" caps(net = ["api.example.com:443"])`), and the
    runtime check that follows uses those patterns, not any of its own. Because
@@ -23,7 +23,7 @@ impl "std/thread"
       send `Connection: close`; a connection goes back into the pool when the
       body was completely framed and the server did not ask to close.
     * **Framing, all of it.** `Content-Length`, `Transfer-Encoding: chunked`, a
-      bodyless response, and the read-to-end-of-file fallback — the only case
+      bodyless response, and the read-to-end-of-file fallback, the only case
       that costs a connection.
     * **The pool.** `http_pool` in `coral.toml` is how many kept-alive connections
       per `host:port` a program keeps (default 4; `0` disables pooling). The
@@ -38,14 +38,14 @@ impl "std/thread"
 
    **`https` (MK5-S4b-M1, open item 37)**: on the system OpenSSL, via
    `std/tls`. Every place that used to hold a `net.Socket` now holds a `Conn`
-   (below) instead, which is a plain socket or a TLS session over one — the
+   (below) instead, which is a plain socket or a TLS session over one, the
    dial, the pool, the redirect follower and the framing reader do not care
    which, because `conn_send_all`/`conn_recv`/`conn_recv_into`/`conn_close`
    dispatch on it once. This module still does the dialing and the closing
    (`net.connect`, `net.close`): `std/tls`'s own header comment explains why
    it cannot do either itself, and why a program's existing
    `impl "std/http" caps(net = [...])` line, unchanged, is what covers an
-   `https://` URL too — `https` is network access under the same grant, not
+   `https://` URL too, `https` is network access under the same grant, not
    a second capability to ask for.
 
    **The server (st2)** is at the end of this file: `listen`/`serve`, `Limits`,
@@ -87,8 +87,8 @@ datac Header(val name: String, val value: String)
 datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val reusable: bool)
 
 /// The `X-RateLimit-*` bucket headers, bundled (MISSING-p5Xtr). Discord is the
-/// worked example the issue names, and its five headers — `Limit`,
-/// `Remaining`, `Reset`, `Reset-After`, `Bucket` — are also what GitHub and
+/// worked example the issue names, and its five headers, `Limit`,
+/// `Remaining`, `Reset`, `Reset-After`, `Bucket`, are also what GitHub and
 /// Twitch send under the same names, so those are the names this module uses
 /// rather than inventing its own vocabulary. `Global` and `Scope`, which
 /// Discord sends only on some `429`s and nowhere else, are left out: this is a
@@ -97,7 +97,7 @@ datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val 
 /// Every field is an `Option` because no server is required to send all five
 /// (`Limit`/`Remaining` are the two nearly everyone sends; a per-route
 /// `Bucket` hash is closer to Discord's own scheme), and a response that sends
-/// none of them is not a parse failure — `Response.rate_limit()` on a plain
+/// none of them is not a parse failure, `Response.rate_limit()` on a plain
 /// `200` returns a `RateLimit` of five `None`s.
 ///
 /// `reset` and `reset_after` are `f64`, not `u64`: Discord's own docs give
@@ -168,7 +168,7 @@ fun exchange_failed<T>(text: &str).return: result.Result<T, HttpErr> {
 }
 
 /// A set of kept-alive connections to one `host:port`, keyed on the host **as
-/// written** — never on a resolved address, because the capability check
+/// written**, never on a resolved address, because the capability check
 /// matches the string the author wrote (S3's rule), and two spellings of one
 /// address can fall under different grants.
 ///
@@ -204,7 +204,7 @@ datac Pool(
 /// connection was already open. Nothing here is owned, and `release` takes the
 /// lease by value, so the value is gone afterwards: releasing twice, or using a
 /// lease after release, does not compile. That check is the reason to have the
-/// pool in Kelp rather than in C — it is the borrow checker's, and it is free.
+/// pool in Kelp rather than in C, it is the borrow checker's, and it is free.
 datac Lease(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, val reused: bool)
 
 /// One open connection, plain or TLS. `tls_handle` is the OpenSSL `SSL*` from
@@ -315,7 +315,7 @@ fun conn_close(c: Conn) {
     net.close(net.Socket(fd = c.fd))
 }
 
-/// Dials `host:port` and, for `https`, performs the TLS handshake — the one
+/// Dials `host:port` and, for `https`, performs the TLS handshake, the one
 /// place a connection is actually made, called from a fresh exchange and from
 /// a pool's checkout alike.
 ///
@@ -363,8 +363,8 @@ fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool).re
 
 /// The read cursor for one response: bytes already received, and how far into
 /// them we are. It refills from the connection when it runs dry. It holds the
-/// connection's plain scalar fields rather than a `Conn` itself — the same
-/// reason `net.Socket` used to be unpacked to `fd: i32` here — because no
+/// connection's plain scalar fields rather than a `Conn` itself, the same
+/// reason `net.Socket` used to be unpacked to `fd: i32` here, because no
 /// `datac` is `Copy`, and a parameter is always a borrow: `Cursor(conn = c,
 /// ...)` would need to move `c`'s referent out of that borrow to store it,
 /// which does not compile. `fd` is `i32` and `tls_handle` is a handle the type
@@ -380,7 +380,7 @@ fun Cursor.conn().return: Conn = Conn(fd = fd, tls_handle = tls_handle)
 // ----- URLs -----
 
 /// The default port for a scheme this module knows: 80 for `http`, 443 for
-/// `https`. Panics: never — `parse_url` has already rejected anything else by
+/// `https`. Panics: never, `parse_url` has already rejected anything else by
 /// the time this is called.
 fun default_port_for(scheme: &str).return: u16 {
     if str.eq(scheme, "https") {
@@ -389,7 +389,7 @@ fun default_port_for(scheme: &str).return: u16 {
     return DEFAULT_PORT
 }
 
-/// Whether `u` is an `https` URL — the one place that question is asked as a
+/// Whether `u` is an `https` URL, the one place that question is asked as a
 /// named call instead of a `str.eq` scattered at each site that needs it.
 fun url_is_https(u: Url).return: bool = str.eq(u.scheme.as_str(), "https")
 
@@ -397,7 +397,7 @@ fun url_is_https(u: Url).return: bool = str.eq(u.scheme.as_str(), "https")
 /// scheme, no host, or the scheme is anything else.
 ///
 /// The port is split at the *first* `:`, so an IPv6 literal is not expressible
-/// here either — the same rule `net`'s capability patterns follow, for the same
+/// here either, the same rule `net`'s capability patterns follow, for the same
 /// reason: a host that contains the port separator would be ambiguous.
 fun parse_url(s: &str).return: Url {
     val sep = option.expect(
@@ -412,7 +412,7 @@ fun parse_url(s: &str).return: Url {
     return split_authority(rest, scheme.as_str())
 }
 
-/// Splits `host[:port][/path]` — the part after `://`. The path is everything
+/// Splits `host[:port][/path]`, the part after `://`. The path is everything
 /// from the first `/`, so a query string without a path (`host?a=b`) parses as
 /// part of the authority and fails there rather than silently losing the query.
 fun split_authority(rest: &str, scheme: &str).return: Url {
@@ -506,7 +506,7 @@ fun Response.has_header(name: &str).return: bool {
     return false
 }
 
-/// The first matching header's value, or an empty `String` when absent — v1
+/// The first matching header's value, or an empty `String` when absent, v1
 /// has no `Option`, so absence is the empty string and `has_header` is the
 /// honest test.
 ///
@@ -538,7 +538,7 @@ fun Response.is_ok().return: bool = status >= 200 && status < 300
 /// response is borrowed here, and a field of a borrow cannot be moved out.
 fun Response.text().return: String = String.from_bytes(body.clone())
 
-/// The `Retry-After` header, in seconds — `None` when it is absent, or when it
+/// The `Retry-After` header, in seconds, `None` when it is absent, or when it
 /// names an HTTP-date instead of a delay (MISSING-p5Xtr). The date form
 /// (`Retry-After: Fri, 31 Dec 1999 23:59:59 GMT`) needs a calendar parser this
 /// module does not have: `std/time` (M7) is the gated clock namespace, and
@@ -561,7 +561,7 @@ fun Response.retry_after().return: option.Option<u64> {
 
 /// The `X-RateLimit-*` bucket headers, bundled: a caller reading one after a
 /// `429` (or checking ahead of one) wants what all five have to say in one
-/// read, not five separate scans of `headers` — see `RateLimit`'s own comment
+/// read, not five separate scans of `headers`, see `RateLimit`'s own comment
 /// for why these are the five and why each is an `Option`.
 fun Response.rate_limit().return: RateLimit = RateLimit(
     limit = header_u64(headers, "x-ratelimit-limit"),
@@ -643,7 +643,7 @@ fun mut Cursor.ensure() {
 
 /// One line, up to and including the `LF`; the `LF` is consumed and a `CR` is
 /// dropped. Dropping every `CR` rather than only a trailing one is safe here
-/// because neither a chunk size nor a header value may contain one — and it
+/// because neither a chunk size nor a header value may contain one, and it
 /// avoids a `String` truncation that does not exist yet.
 fun mut Cursor.try_read_line().return: result.Result<String, HttpErr> {
     var out = String.empty()
@@ -871,11 +871,11 @@ fun mut Cursor.read_chunked().return: Bytes {
 
 /// The offset just past the blank line that ends the header block, or 0 when it
 /// has not arrived yet. 0 is a usable sentinel because a header block can never
-/// end at offset 0 — the terminator alone is four bytes.
+/// end at offset 0, the terminator alone is four bytes.
 ///
 /// This scans **bytes**, and that is not an optimization. `Bytes.as_str()`
 /// validates utf-8, and the buffer holds whatever arrived alongside the
-/// headers — so the first response with a binary body would panic right here,
+/// headers, so the first response with a binary body would panic right here,
 /// before the headers had even been located. Every synthetic test had an
 /// all-ASCII body, which is why it took `examples/download.kp` (a 200 KB image)
 /// to find this.
@@ -1004,7 +1004,7 @@ fun header_u64(hs: List<Header>, name: &str).return: option.Option<u64> {
     }
 }
 
-/// As `header_u64`, but `f64` — for `X-RateLimit-Reset` and
+/// As `header_u64`, but `f64`, for `X-RateLimit-Reset` and
 /// `X-RateLimit-Reset-After`, which carry fractional seconds on the API this
 /// module was designed against.
 fun header_f64(hs: List<Header>, name: &str).return: option.Option<f64> {
@@ -1019,7 +1019,7 @@ fun header_f64(hs: List<Header>, name: &str).return: option.Option<f64> {
     }
 }
 
-/// A header's value as an owned `String`, or `None` for an absent header —
+/// A header's value as an owned `String`, or `None` for an absent header,
 /// unlike `Response.header`, which answers "" either way, this is for a caller
 /// that needs to tell "absent" apart from "present and empty" (used for
 /// `X-RateLimit-Bucket`, an opaque string with no numeric fallback).
@@ -1031,7 +1031,7 @@ fun header_opt(hs: List<Header>, name: &str).return: option.Option<String> {
     return option.Option.Some(value = text)
 }
 
-/// `-1` for absent, which is not a legal `Content-Length` — an absent header is
+/// `-1` for absent, which is not a legal `Content-Length`, an absent header is
 /// not a parse failure, and the value is a count whose every non-negative value
 /// is meaningful, so there is nothing for an `Option` to add here. A header that
 /// is present and not a number is an `Exchange` failure.
@@ -1175,7 +1175,7 @@ fun is_redirect(status: i32).return: bool {
 /// redirect to another name is a *different* connection needing its own
 /// grant. Inheriting `base.scheme` (not always `http`) is what keeps a
 /// relative redirect on an `https` connection from silently downgrading to
-/// plain `http` — an *absolute* `Location`, returned unchanged just above,
+/// plain `http`, an *absolute* `Location`, returned unchanged just above,
 /// is the only way a redirect actually crosses schemes.
 fun absolute_url(base: Url, loc: &str).return: String {
     if str.starts_with(loc, "http://") || str.starts_with(loc, "https://") {
@@ -1198,7 +1198,7 @@ fun absolute_url(base: Url, loc: &str).return: String {
 }
 
 /// Whether to follow this response, and where to. Panics: if the redirect chain
-/// is longer than the client allows — a loop is a malformed server, and v1 has
+/// is longer than the client allows, a loop is a malformed server, and v1 has
 /// no `Result` to report it with.
 /// Where a redirect chain goes next, or an empty string for "do not follow".
 ///
@@ -1316,8 +1316,8 @@ fun send_fresh_try(
 }
 
 /// A single exchange on a connection the caller already holds: parse the URL,
-/// send, read. This is the concurrency-ready primitive — no pool and no client
-/// are named while it runs — and `Client.send`/`Pool.send` are the redirect
+/// send, read. This is the concurrency-ready primitive, no pool and no client
+/// are named while it runs, and `Client.send`/`Pool.send` are the redirect
 /// loops built on top of it.
 ///
 /// Panics: as `one_exchange`, plus a malformed URL.
@@ -1373,8 +1373,8 @@ fun Lease.conn().return: Conn = Conn(fd = fd, tls_handle = tls_handle)
 /// Opens up to `size` connections now, so the first request does not pay for
 /// them. Optional by design: eager connecting is what makes a pool hurt startup,
 /// so it is a call a program makes rather than the default. `use_tls` has to be
-/// given here because a `Pool` is not itself keyed on a scheme — only on
-/// `host:port` — so warming has no request to read it from the way `checkout`
+/// given here because a `Pool` is not itself keyed on a scheme, only on
+/// `host:port`, so warming has no request to read it from the way `checkout`
 /// does; the caller says how it means to use the pool.
 ///
 /// The pool's fields are copied into locals first and the idle count is read
@@ -1401,8 +1401,8 @@ fun mut Pool.warm(use_tls: bool) {
 }
 
 /// Hands out a connection: an idle one if there is one, a fresh one if there is
-/// not. The pool never refuses — the ceiling governs how many connections are
-/// *kept*, not how many may be in flight — so a caller holding two leases simply
+/// not. The pool never refuses, the ceiling governs how many connections are
+/// *kept*, not how many may be in flight, so a caller holding two leases simply
 /// gets two connections, and only one of them is kept on release. An idle
 /// connection is reused only when its scheme is the one asked for: a kept
 /// connection of the other scheme (one `host:port` answering both `http` and
@@ -1441,8 +1441,8 @@ fun mut Pool.try_checkout(use_tls: bool).return: result.Result<Lease, HttpErr> {
 }
 
 /// Gives a connection back. `release` consumes the lease, so this cannot happen
-/// twice. A connection that is not reusable — an unframed body, or a server that
-/// said `Connection: close` — is closed instead of kept, and so is one beyond
+/// twice. A connection that is not reusable, an unframed body, or a server that
+/// said `Connection: close`, is closed instead of kept, and so is one beyond
 /// the ceiling: the pool keeps at most `size`.
 ///
 /// Panics: if closing a connection fails.
@@ -1719,7 +1719,7 @@ fun get_tls(url: &str, opts: &tls.TlsClientOptions).return: Response {
 
 /// A `GET` on a fresh connection, no pool. Pooling is opt-in through an
 /// explicit `Pool` because a process-wide default pool would be shared mutable
-/// state, and threads (T1) would then need a lock around every request — see
+/// state, and threads (T1) would then need a lock around every request, see
 /// the plan's open item 61.
 ///
 /// Panics: if the connection fails, the capability denies the host, or the

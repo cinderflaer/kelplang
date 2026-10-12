@@ -1,7 +1,7 @@
 // MK7 §5: the *owned*-field half of `heap_field_of_temporary.kp`, and the
 // shape the previous slice recorded rather than fixed. `mkName()` returns a
 // `datac` that owns two `String`s, and every read below borrows one field of
-// the temporary — so the whole temporary owns memory that nothing else can
+// the temporary, so the whole temporary owns memory that nothing else can
 // free, and freeing only the field that was read would leak the other one.
 // The fix stages the temporary itself and drops *it*, which is why a
 // two-owned-field `datac` is the interesting case and not a one-field one.
@@ -62,7 +62,7 @@ fun main() {
     // A condition that reads through an owned temporary: dropped on every
     // pass of the loop, not once after it. The bound comes first and the
     // temporary second, and `&&` short-circuits, so the loop terminates after
-    // three passes and the temporary is still evaluated — and dropped — on
+    // three passes and the temporary is still evaluated, and dropped, on
     // every one of them. (`n` is printed, so `n` is the fixture's own control:
     // this fixture was committed with the temporary as its *only* condition
     // and no test over it, so the loop never terminated and nothing noticed.)

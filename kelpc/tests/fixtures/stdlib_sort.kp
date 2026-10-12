@@ -1,4 +1,4 @@
-// S1: the `List` ordering surface — `sort`, `reverse`, `contains`, `slice`.
+// S1: the `List` ordering surface, `sort`, `reverse`, `contains`, `slice`.
 // Numbers and `bool` sort by value; the whole set is only defined for an
 // element type that has an order (see `list_unsortable_element`).
 fun main() {

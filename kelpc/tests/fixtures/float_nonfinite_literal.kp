@@ -4,7 +4,7 @@
 // a NaN. Emitting `Display`'s `inf`/`NaN` put an identifier in the generated C,
 // which does not compile.
 //
-// 400 nines is well past `f64::MAX`, so the literal is infinity — it stands in
+// 400 nines is well past `f64::MAX`, so the literal is infinity, it stands in
 // for the shape, not for a number anyone would write.
 const HUGE: f64 = 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999.0
 const NOT_A_NUMBER: f64 = 0.0 / 0.0
@@ -13,7 +13,7 @@ fun main() {
     if HUGE > 1.0 {
         print("infinite")
     }
-    // A NaN is not equal to itself — the one test that can tell the folded
+    // A NaN is not equal to itself, the one test that can tell the folded
     // value reached C as a NaN rather than as anything numeric.
     if NOT_A_NUMBER != NOT_A_NUMBER {
         print("nan")

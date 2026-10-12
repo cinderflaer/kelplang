@@ -1,6 +1,6 @@
 // MK7 §5 item 4, the float-in-aggregate slice: a value over sixteen bytes is
 // `MEMORY` class whatever its fields, so a `{f64, String}` travels in the
-// caller's outgoing argument area and back through the hidden return pointer —
+// caller's outgoing argument area and back through the hidden return pointer,
 // the same two conventions the fourth slice built for all-integer `MEMORY`
 // shapes, now with an `SSE`-classified field inside.
 //

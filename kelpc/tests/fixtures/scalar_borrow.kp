@@ -2,7 +2,7 @@
 // it produces. Three things this pins that nothing did before.
 //
 // A `mut i64` parameter is a plain pointer in this convention, so the caller's
-// half of `add(x, 3)` is `&mut x` — the address of `x`'s own frame slot, taken
+// half of `add(x, 3)` is `&mut x`, the address of `x`'s own frame slot, taken
 // with a `lea` and with nothing copied. `infer.rs` inserts exactly that borrow
 // for any scalar local handed to a `mut` parameter, which is the shape the
 // `str` parsers' `out = v` has, and the reason they could not be lowered until

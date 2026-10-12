@@ -1,5 +1,5 @@
 // MK7 §5's enum slice: an `enum` is an ordinary aggregate, so it has to work
-// as a container element and as a container *value* — not only as a local. The
+// as a container element and as a container *value*, not only as a local. The
 // three shapes below are the ones whose code paths differ: a `List` element is
 // addressed by `elem_size` and marshalled by `elem_class`; a `Map` value is one
 // indirection further, behind a `malloc` whose size comes from the same
@@ -8,7 +8,7 @@
 //
 // The payload owns a `String`, so every one of these paths also has to run the
 // per-`enum` drop that switches on the runtime tag and frees only the live
-// variant's payload — the half of the slice a scalar-only enum would never
+// variant's payload, the half of the slice a scalar-only enum would never
 // reach. `tests/memory_gate.rs` is what proves the frees happen; this fixture
 // pins the values.
 //

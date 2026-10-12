@@ -9,17 +9,17 @@
 //!
 //! So this file asserts, over the whole repository's Kelp source:
 //!
-//!   1. **round trip / idempotence** — `kelpc fmt --check` on a formatted file
+//!   1. **round trip / idempotence**, `kelpc fmt --check` on a formatted file
 //!      exits zero, which is `F(F(x)) == F(x)`;
-//!   2. **token fidelity** — the lexer's sequence of `(kind, source slice)`
+//!   2. **token fidelity**, the lexer's sequence of `(kind, source slice)`
 //!      pairs is identical before and after formatting (blank-line runs are
 //!      the one thing allowed to differ, so `Newline` is dropped). Comparing
 //!      the *slice* and not only the kind is what proves identifiers, literals
 //!      and operators are byte-equal rather than merely well-typed;
-//!   3. **comment survival** — the comments, in order, verbatim;
-//!   4. **still lexes, and a refusal is honest** — `F(x)` lexes; a file the
+//!   3. **comment survival**, the comments, in order, verbatim;
+//!   4. **still lexes, and a refusal is honest**, `F(x)` lexes; a file the
 //!      formatter declines is reported and left byte-for-byte unchanged. The
-//!      names `kelpc/src/fmt.rs` enumerates, one `- **`name`** — …` bullet each
+//!      names `kelpc/src/fmt.rs` enumerates, one `- **`name`** - …` bullet each
 //!      under its *Reasons a file is refused* heading, are read back out of that
 //!      header by `enumerated_refusal_names`, and
 //!      `the_file_header_names_every_refusal_reason_the_formatter_enumerates`
@@ -37,7 +37,7 @@
 //!      are an unreadable or non-UTF-8 file, a source that does not lex, a
 //!      preprocessed source that does not parse, and a `%*name*%` reference that
 //!      neither the file's own declarations nor the project's alias table can
-//!      supply — declined with the alias named rather than formatted with a
+//!      supply, declined with the alias named rather than formatted with a
 //!      placeholder for it.
 //!
 //!      `lone-carriage-return` is the one *input shape* in which `fmt` declines
@@ -56,12 +56,12 @@
 //!      `--check` verdict on a file that differs from its formatted form (it
 //!      exits nonzero and writes nothing), and
 //!      `token-fidelity-internal-error` can only fire on an emitter bug;
-//!   5. **semantic equivalence** — a formatted copy of a runnable example
+//!   5. **semantic equivalence**, a formatted copy of a runnable example
 //!      prints the same bytes (an `#[ignore]`d test, because it builds and runs
 //!      a native binary).
 //!
 //! The symlink and failed-write tests (defects 3 and 4) are asserted the same
-//! way — as outcomes, not as reference output: `-w` through a link leaves the
+//! way, as outcomes, not as reference output: `-w` through a link leaves the
 //! link a link and rewrites the file it names; a link that names nothing, or a
 //! directory, is refused in every mode; a directory walk never follows a link;
 //! and a write that fails after its temporary file exists leaves no temporary
@@ -72,7 +72,7 @@
 //! do.
 //!
 //! Two more outcomes are asserted the same way. A path that is not a regular
-//! file — a FIFO, a socket, a device — is refused before anything reads it, so
+//! file, a FIFO, a socket, a device, is refused before anything reads it, so
 //! a FIFO with no writer cannot block the run and the node is never replaced by
 //! a regular file (defect 12). And `-w` lands the rewrite as a *new inode*, so a
 //! hard link to the formatted file keeps the old bytes: that is the documented
@@ -94,7 +94,7 @@
 //!
 //! **Read-only contract.** `kelpc/tests/fixtures/**` and `plan/…` are owned by
 //! another workflow; `kelpc/std/**` is the test contract. This file reads them
-//! and copies each into the test's own temporary directory before formatting —
+//! and copies each into the test's own temporary directory before formatting,
 //! the copy carries the tree the file lives in (`mirrored`), because a lone
 //! copy of `src/main.kp` is a file whose `util.kp` is missing and whose alias
 //! table therefore really is incomplete. It never writes to any existing `.kp`
@@ -104,8 +104,8 @@
 //! `kelpc/src/lexer.rs`) because `kelpc` has no library target: the token
 //! sequence and the comments are not observable through the command line, and
 //! the properties above are about them. `tokenize_with_trivia` is the
-//! trivia-preserving entry point the formatter itself lexes with — it returns a
-//! `TokenKind::Comment` per `//` comment — while `tokenize` drops comments,
+//! trivia-preserving entry point the formatter itself lexes with, it returns a
+//! `TokenKind::Comment` per `//` comment, while `tokenize` drops comments,
 //! which is the sequence `significant_tokens` compares.
 
 use std::collections::HashMap;
@@ -274,8 +274,8 @@ fn first_sequence_difference<T: PartialEq + std::fmt::Debug>(a: &[T], b: &[T]) -
 }
 
 /// The adversarial adjacency probes. Each one places two tokens next to each
-/// other that the lexer would fold into one *longer* token — or, for `/ /`,
-/// into a comment — if the formatter ever ran them together. `&` before `&`
+/// other that the lexer would fold into one *longer* token, or, for `/ /`,
+/// into a comment, if the formatter ever ran them together. `&` before `&`
 /// is the reported case; the rest are the same mechanism. Each is embedded in
 /// a function body so the only thing under test is the spacing between the two
 /// tokens.
@@ -327,7 +327,7 @@ fn report(failures: &[String], what: &str) -> String {
 
 /// The refusal names `kelpc/src/fmt.rs` enumerates, read back out of that
 /// file's own bullet list: the module header section "Reasons a file is refused",
-/// one `- **`name`** — …` bullet per reason. Reading the list out of the source
+/// one `- **`name`** - …` bullet per reason. Reading the list out of the source
 /// is what lets this file's header be checked against the data instead of
 /// against a second copy of it.
 fn enumerated_refusal_names() -> Vec<String> {
@@ -363,8 +363,8 @@ fn enumerated_refusal_names() -> Vec<String> {
 /// The header of this file names each refusal bullet `kelpc/src/fmt.rs` lists.
 /// What this proves is that the names agree, not that any condition is worded
 /// correctly (see the module header). The header used to call an
-/// unresolvable alias one of the shapes a *valid* Kelp program is declined in —
-/// it is not valid Kelp, and `kelpc build` rejects it — while a later paragraph
+/// unresolvable alias one of the shapes a *valid* Kelp program is declined in,
+/// it is not valid Kelp, and `kelpc build` rejects it, while a later paragraph
 /// in the same header already said the carriage-return shape was the only one.
 #[test]
 fn the_file_header_names_every_refusal_reason_the_formatter_enumerates() {
@@ -475,7 +475,7 @@ fn every_corpus_pair_formats_to_its_expected_output() {
 /// sequence and comment sequence (trailing whitespace included) are the same
 /// before and after, the expected file ends with exactly one newline, and it
 /// holds no tab, no CR, and no trailing whitespace outside a comment. This test
-/// needs no `kelpc fmt` — it fails only if a hand-written expected file pins
+/// needs no `kelpc fmt`, it fails only if a hand-written expected file pins
 /// something that is not a legal formatter output at all, which is what keeps
 /// the corpus honest while the formatter is still being written.
 #[test]
@@ -613,7 +613,7 @@ fn collect_kp(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// The repository's Kelp source, read-only: the standard library, the examples,
 /// and the fixtures and projects the other workflows own. This file never
-/// writes to any of them — each file is copied into the test's scratch
+/// writes to any of them, each file is copied into the test's scratch
 /// directory before it is formatted.
 fn repository_corpus() -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -627,7 +627,7 @@ fn repository_corpus() -> Vec<PathBuf> {
 /// The tree a corpus file has to be copied *with* to stay the same program to
 /// the resolver: the nearest directory above it that holds a `coral.toml` (the
 /// project root, whose `src/` the `impl` paths are relative to), or the file's
-/// own directory when there is no manifest — which is what `kelpc build` treats
+/// own directory when there is no manifest, which is what `kelpc build` treats
 /// a manifest-less file as.
 fn context_root(file: &Path) -> PathBuf {
     let dir = file
@@ -646,8 +646,8 @@ fn context_root(file: &Path) -> PathBuf {
 
 /// The mirrored trees *one test* formats in.
 ///
-/// Each test owns its own mirror — the tests run in parallel, so a shared one
-/// would let one test's fresh copy delete another's files mid-run — and within a
+/// Each test owns its own mirror, the tests run in parallel, so a shared one
+/// would let one test's fresh copy delete another's files mid-run, and within a
 /// test each tree is copied once and then reused, because formatting every file
 /// of a project only needs one copy of it.
 struct Trees {
@@ -669,7 +669,7 @@ impl Trees {
     /// A lone copy is not the same input: `kelpc fmt` asks the compiler's
     /// resolver for the project's alias table when the file's own declarations
     /// cannot resolve a `%*name*%`, and a copy with no `util.kp` beside it is a
-    /// file whose alias table really is incomplete — fmt refuses it, and that
+    /// file whose alias table really is incomplete, fmt refuses it, and that
     /// refusal says nothing about formatting. Copying the tree gives the copy
     /// the module graph the original has, so the assertions below stay
     /// statements about formatting.
@@ -687,7 +687,7 @@ impl Trees {
 }
 
 /// Copies one tree into the scratch directory and returns its new root. Symbolic
-/// links are not copied — the corpus has none — because `kelpc fmt -w` does not
+/// links are not copied, the corpus has none, because `kelpc fmt -w` does not
 /// follow them either.
 fn mirror_tree(tag: &str, root: &Path) -> PathBuf {
     let dest = scratch(&format!("tree/{tag}/{}", scratch_name(root)));
@@ -716,8 +716,8 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Files that are valid Kelp by construction, so the formatter must accept
 /// them: the standard library, the example programs, and the project fixtures.
-/// `tests/fixtures/` holds deliberately invalid programs too — the compiler's
-/// negative tests — which a syntax gate is right to refuse, so that directory
+/// `tests/fixtures/` holds deliberately invalid programs too, the compiler's
+/// negative tests, which a syntax gate is right to refuse, so that directory
 /// is not in this set.
 fn must_format(path: &Path) -> bool {
     let rel = brief(path);
@@ -753,7 +753,7 @@ fn formatting_is_idempotent_token_faithful_and_comment_preserving() {
 
         // The formatter may decline a file. It must say why and must not have
         // touched the file. A refusal is right for a program that is not valid
-        // Kelp — a syntax error is reported, not silently reformatted — but a
+        // Kelp, a syntax error is reported, not silently reformatted, but a
         // valid program must format, so `must_format` is asserted separately.
         let out = fmt_write(&work);
         if !out.status.success() {
@@ -817,7 +817,7 @@ fn formatting_is_idempotent_token_faithful_and_comment_preserving() {
         let check = fmt_check(&work);
         if !check.status.success() {
             failures.push(format!(
-                "{}: kelpc fmt --check on the formatted copy exited {:?} — formatting is not idempotent",
+                "{}: kelpc fmt --check on the formatted copy exited {:?}, formatting is not idempotent",
                 brief(file),
                 check.status.code()
             ));
@@ -912,7 +912,7 @@ fn operator_adjacencies_are_never_silently_relexed() {
 /// every readable Kelp source in the repository plus every adjacency probe,
 /// the significant token sequence (`kind` and exact source slice) of `kelpc
 /// fmt`'s output equals the input's. This is precisely the property the
-/// original defect-1 output violated — `& &` came back as `&&` — and the
+/// original defect-1 output violated, `& &` came back as `&&`, and the
 /// formatter now refuses rather than emit a mismatch, so this test fails loudly
 /// if that guard is ever removed.
 #[test]
@@ -1100,7 +1100,7 @@ fn a_lex_error_is_reported_and_nothing_is_written() {
     );
 }
 
-/// A file with a syntax error — it lexes, but the parser cannot read it — is
+/// A file with a syntax error, it lexes, but the parser cannot read it, is
 /// reported and left alone too. This pins the formatter's syntax gate: a file
 /// the compiler cannot parse is not silently reformatted. The gate parses a
 /// *preprocessed* copy of the file (see the `fmt` module), which is what makes
@@ -1163,7 +1163,7 @@ fn fmt_write_paths(paths: &[&Path]) -> Output {
 
 /// Every entry of a directory, sorted: `name`, or `name -> target` for a
 /// symbolic link. "Nothing else is in this directory" is the assertion the
-/// temporary-file tests have to make, and this is how they state it — a
+/// temporary-file tests have to make, and this is how they state it, a
 /// leftover temporary is exactly a name that is not supposed to be here.
 fn entries(dir: &Path) -> Vec<String> {
     let mut out: Vec<String> = fs::read_dir(dir)
@@ -1417,7 +1417,7 @@ fn writing_through_a_symlink_keeps_the_link_and_formats_its_target() {
 
 /// A dangling link names nothing, so there is no file to format: it is refused
 /// in every mode, nothing is written, and the link is left alone. Refusing is
-/// the point — replacing it with a copy of itself would be the one thing a
+/// the point, replacing it with a copy of itself would be the one thing a
 /// formatter must never do to a link.
 #[test]
 fn a_dangling_symlink_is_refused_and_nothing_is_written() {
@@ -1477,8 +1477,8 @@ fn a_symlink_to_a_directory_is_refused_and_nothing_is_written() {
 }
 
 /// Directory recursion never follows a symbolic link. A link may name a file
-/// outside the tree the user named, or a directory that holds this one —
-/// `ln -s .. up` here points at the walk's own parent — so following one could
+/// outside the tree the user named, or a directory that holds this one,
+/// `ln -s .. up` here points at the walk's own parent, so following one could
 /// format a file twice under two names, rewrite a file outside the tree, or
 /// recurse without end. Each skipped link is reported, the run still succeeds
 /// for the files that are really there, and nothing inside a link is touched.
@@ -1755,7 +1755,7 @@ fn a_non_regular_file_is_refused_before_it_is_read() {
 /// to a secondary group the caller belongs to, and the new inode must not be in
 /// it). The owner cannot be varied without privilege, so "the owner does not
 /// follow" rests on reading `write_atomic`, and so do ACLs and extended
-/// attributes — `set_permissions` with mode bits has nowhere to put either, and
+/// attributes, `set_permissions` with mode bits has nowhere to put either, and
 /// nothing here measures them. Preserving the inode would mean writing in place,
 /// which is the half-written file the design exists to avoid. This test pins the
 /// outcome so it cannot change silently.
@@ -1875,7 +1875,7 @@ fn between(text: &str, begin: &str, end: &str) -> Vec<String> {
 }
 
 /// Introduces a script and answers whether its condition was reached, with the
-/// run's stdout and stderr — the scripts print their observations on stdout and
+/// run's stdout and stderr, the scripts print their observations on stdout and
 /// the formatter's diagnostic goes to stderr.
 fn harness_ready(what: &str, out: &Output) -> Option<(String, String)> {
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -1894,7 +1894,7 @@ fn harness_ready(what: &str, out: &Output) -> Option<(String, String)> {
 /// writer used to leave the temporary in the source directory, where nothing
 /// owns it and `git status` reports it. The filesystem here is a 4 KiB tmpfs
 /// that is already full, so creating the temporary succeeds (an empty file
-/// needs no page) and writing it does not — the exact shape of the defect. It
+/// needs no page) and writing it does not, the exact shape of the defect. It
 /// is forced inside a user and mount namespace, because mounting a filesystem
 /// is the only way an unprivileged test can own one.
 #[test]
@@ -2041,7 +2041,7 @@ cat "$d/x.kp"
 
 /// Two `fmt -w` runs against one path must not write the same temporary. With
 /// one fixed name they would write the *same* file, and either run could rename
-/// the other's half-written bytes into place — or fail on a path that had
+/// the other's half-written bytes into place, or fail on a path that had
 /// already been renamed away. The temporary's name carries the process id, so
 /// the runs write two files; the file must end up as one run's whole output,
 /// with no temporary left over. The source is large so the two writes really do
@@ -2120,7 +2120,7 @@ fn build_verdict(entry: &Path, out: &Path) -> (Option<i32>, String) {
 /// substitute a placeholder identifier for the reference and format the file
 /// `kelpc build` rejects: the gate checked the layout around the reference and
 /// never the reference itself. The alias table fmt can see is a file's own
-/// declarations, so an undefined name is knowable — and must be reported, not
+/// declarations, so an undefined name is knowable, and must be reported, not
 /// papered over.
 #[test]
 fn an_undefined_alias_is_refused_with_the_compilers_own_diagnostic() {
@@ -2153,7 +2153,7 @@ fn an_undefined_alias_is_refused_with_the_compilers_own_diagnostic() {
 
 /// An alias another module declares, whose expansion is not valid syntax. One
 /// file cannot see `util.kp`, so `fmt` asks the resolver for the project's alias
-/// table — the one `kelpc build` expands with — and the project is refused with
+/// table, the one `kelpc build` expands with, and the project is refused with
 /// the resolver's own diagnostic. Without that, the file formatted cleanly and
 /// then failed to build.
 #[test]
@@ -2213,7 +2213,7 @@ fn an_alias_from_another_module_that_expands_to_bad_syntax_is_refused() {
 
 /// A file whose lines end with a lone carriage return is refused, not joined
 /// onto one line. The lexer reads `\r` as blank trivia rather than as a line
-/// terminator, so such a file is not multi-line to it at all — that is a lexer
+/// terminator, so such a file is not multi-line to it at all, that is a lexer
 /// limit, and the formatter's answer to it is a diagnostic rather than a
 /// rewrite. A CRLF file is ordinary input, and the corpus pins what it becomes.
 #[test]
@@ -2258,7 +2258,7 @@ fn a_file_with_lone_carriage_returns_is_refused_and_unchanged() {
 /// The rule used to fire on a `\r` anywhere in the bytes and told the reader
 /// the file "would be formatted as a single line", which was false twice over
 /// for this input: the `\r` is a byte of a string token, and the file is
-/// genuinely multi-line. `kelpc build` accepts the file, so `fmt` must too — and
+/// genuinely multi-line. `kelpc build` accepts the file, so `fmt` must too, and
 /// with this shape fixed, a lone carriage return *used as a line terminator* is
 /// the only shape left in which `fmt` declines a program `kelpc build` accepts.
 #[test]
@@ -2329,8 +2329,8 @@ fn build(source: &Path, binary: &Path) -> Output {
 }
 
 /// The repository's buildable programs: the entry file of every project fixture
-/// and every example. The fixtures include deliberate errors — of the front end
-/// and of the type checker — so a candidate that does not build is skipped; what
+/// and every example. The fixtures include deliberate errors, of the front end
+/// and of the type checker, so a candidate that does not build is skipped; what
 /// this test is about is the ones that do.
 fn buildable_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -2358,7 +2358,7 @@ fn buildable_candidates() -> Vec<PathBuf> {
 /// status. This test is about the formatter, not the backend.
 ///
 /// The formatted copy is written into a mirror of the tree the original lives in
-/// and built from there, so a project's imports still resolve — the same reason
+/// and built from there, so a project's imports still resolve, the same reason
 /// the corpus tests above format a mirrored copy. `examples/download.kp` needs a
 /// live HTTP server; it builds, and running both copies fails the same way,
 /// which this comparison accepts.
@@ -2407,7 +2407,7 @@ fn formatting_preserves_a_programs_output() {
             || original_run.status.code() != formatted_run.status.code()
         {
             failures.push(format!(
-                "{}: original and formatted disagree — exit {:?} vs {:?}, stdout {:?} vs {:?}",
+                "{}: original and formatted disagree, exit {:?} vs {:?}, stdout {:?} vs {:?}",
                 brief(&source),
                 original_run.status.code(),
                 formatted_run.status.code(),

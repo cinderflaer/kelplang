@@ -15,7 +15,7 @@ fun main() {
     print(counts.len())
 
     // `keys()` returns the key type the map was declared with, in insertion
-    // order — not a `List<String>` borrowed from the key representation.
+    // order, not a `List<String>` borrowed from the key representation.
     var ks: List<i32> = counts.keys()
     print(ks.len())
     print(ks.get(i = 0))

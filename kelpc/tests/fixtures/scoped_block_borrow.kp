@@ -1,7 +1,7 @@
 // A scoped block captures the enclosing frame's *borrowed* parameter: `s` is a
 // `&State` here (a plain `State` parameter is an implicit shared borrow), and
-// the block reads through it. An ordinary closure cannot do this — its
-// environment outlives the frame — which is the limit `plan/scoped-blocks.md`
+// the block reads through it. An ordinary closure cannot do this, its
+// environment outlives the frame, which is the limit `plan/scoped-blocks.md`
 // lifts for the stack-environment case.
 datac State(val title: String, val a: i32)
 

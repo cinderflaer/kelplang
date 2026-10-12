@@ -1,10 +1,10 @@
 // `?`'s early return is a `return`, so it has to free everything the frame
-// still owns on its failure arm — `syntax.md` §10.3's "on every exit path
+// still owns on its failure arm, `syntax.md` §10.3's "on every exit path
 // including `return`" applies to the desugared one too. This fixture is the
 // shape a recursive-descent parser hits everywhere: a frame that owns a
 // partially built value and recurses with `?`. Before the fix every failure
 // leaked the whole frame, and `heap_fixtures_are_double_free_and_leak_clean`
-// in the end-to-end suite (AddressSanitizer) is what pins it — a leak prints
+// in the end-to-end suite (AddressSanitizer) is what pins it, a leak prints
 // nothing, so only the sanitizer can see it.
 enum Res<T, E> {
     Ok(val value: T)
@@ -31,7 +31,7 @@ fun some_word(n: i64).return: Opt<String> {
     return Opt.Some(value = String.from_str(s = "word"))
 }
 
-// One owned local live at two `?` sites, one per branch of an `if` — so both
+// One owned local live at two `?` sites, one per branch of an `if`, so both
 // the success and the failure path are exercised with the same frame.
 fun one(good: bool).return: Res<i64, String> {
     var scratch = String.from_str(s = "scratch")

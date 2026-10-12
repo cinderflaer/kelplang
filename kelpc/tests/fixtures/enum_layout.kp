@@ -1,14 +1,14 @@
 // MK7 §5's enum slice: the layout the asm backend builds for a tagged union has
 // to be the one the removed C backend's `write_enum`'s emitted `typedef` gets from clang,
-// and the two numbers it can get wrong are both silent — a wrong payload offset
+// and the two numbers it can get wrong are both silent, a wrong payload offset
 // reads the wrong bytes, and a union sized to the wrong variant changes the
 // enum's own size, which changes its SysV class. Neither crashes.
 //
 // So this fixture pins the three class decisions at once, each with a payload
 // that only reads back correctly at its real offset:
 //
-//   * `Narrow` is the case where the union's alignment is *one* — every payload
-//     is `u8` — so the tag's four bytes are followed by the payload at offset
+//   * `Narrow` is the case where the union's alignment is *one*, every payload
+//     is `u8`, so the tag's four bytes are followed by the payload at offset
 //     4, not 8, and the whole enum is 8 bytes (`AggClass::One`). The "obvious"
 //     wrong answer, a union at offset 8, makes it 16 bytes instead, which is a
 //     different ABI class as well as a different field address.
@@ -62,7 +62,7 @@ fun wide(w: move Wide).return: i64 = when w {
 }
 
 // A returned enum, at each class, and the same value read back through a
-// borrow — the two directions an enum crosses a function boundary in.
+// borrow, the two directions an enum crosses a function boundary in.
 fun make_narrow(n: i64).return: Narrow = if n > 1 {
     Narrow.Three(a = 1, b = 2, c = 3)
 } else if n > 0 {
@@ -89,7 +89,7 @@ fun peek(w: &Wide).return: i64 = when w {
     Blank -> -3
 }
 
-// An enum by value inside a `datac` — a nested aggregate, placed by the same
+// An enum by value inside a `datac`, a nested aggregate, placed by the same
 // sequential rule a `String` field is, whatever class it has.
 datac Holder(val name: i64, val small: Narrow, val mid: Eight, val big: Wide)
 

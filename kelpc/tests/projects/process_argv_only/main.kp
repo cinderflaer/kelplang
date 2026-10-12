@@ -1,5 +1,5 @@
 // An *empty* grant: `runner` may name `std/process`, so `process.args` and
-// `process.exit` resolve, but its allowlist holds no program at all — so it
+// `process.exit` resolve, but its allowlist holds no program at all, so it
 // cannot run anything. That separation is the point: reading your own argv is
 // your own invocation, not authority over the machine, while the patterns are
 // what turn the grant into the authority to execute.

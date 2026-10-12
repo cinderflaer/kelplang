@@ -112,7 +112,7 @@ bench-shaped half of MK13-S5-M1 are still open. Coral today is
 `[dependencies]` with `sync`, `docs`, `fmt`/`lint` and `test`, and the
 one-version toolchain store.
 
-### MISSING-Mta7v kelp: user-declarable `extern fun` — syntax, linkage, variadics, function pointers
+### MISSING-Mta7v kelp: user-declarable `extern fun`, syntax, linkage, variadics, function pointers
 
 repo: kelp | found: 2026-09-20 | effort: L
 

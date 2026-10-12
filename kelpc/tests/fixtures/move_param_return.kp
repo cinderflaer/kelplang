@@ -1,5 +1,5 @@
 // A-4: a moved parameter is an owned local, so the frame's drops have to cover
-// it on every path out — the tail, an early `return`, and a `return` inside a
+// it on every path out, the tail, an early `return`, and a `return` inside a
 // loop. Each of the three functions below hands the value in and leaves it
 // behind; this fixture is in the AddressSanitizer list, so a missed drop is a
 // leak and a double drop is a double free.

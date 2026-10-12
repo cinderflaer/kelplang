@@ -11,7 +11,7 @@ enum J {
 
 // 1. **A view derived through a pattern binding keeps its provenance.** `s` is
 //    a shared borrow of `v`'s payload, so returning a view of it returns a
-//    view of `v` — the same thing `v.x.as_str()` (already accepted) returns.
+//    view of `v`, the same thing `v.x.as_str()` (already accepted) returns.
 fun as_str(v: &J).return: &str {
     if let S(s) = v {
         return s.as_str()
@@ -23,8 +23,8 @@ fun as_str(v: &J).return: &str {
 }
 
 // 3. **`str` and `&str` agree**, and join to the borrow. They are one type at
-//    every use site (`str.eq`, `print`, a `str` parameter) — `is_str_like` says
-//    so — and arm unification was the one place comparing them by identity.
+//    every use site (`str.eq`, `print`, a `str` parameter), `is_str_like` says
+//    so, and arm unification was the one place comparing them by identity.
 //    A total version of the same accessor, so the arms below can be exercised
 //    on either variant without panicking.
 fun text_or(v: &J).return: &str {
@@ -51,7 +51,7 @@ fun either(v: &J, c: bool).return: &str {
 //    What is *not* expressible, and why: when a whole `when` is the returned
 //    value, the arms are checked (and their scopes pop) before the merged root
 //    is computed, so a payload binding is gone by then. Return from inside the
-//    arm instead — the form `as_str` above uses, and the form every accessor
+//    arm instead, the form `as_str` above uses, and the form every accessor
 //    over an owned payload wants.
 
 // 4. **A borrow taken inside an initializer ends with the statement.** The
@@ -75,7 +75,7 @@ datac P(val text: String, val n: usize)
 fun P.tag().return: usize = n
 
 // 5. **A `Copy` value is never moved**, so reading one while a borrow of it is
-//    live is allowed — and, before this, `self` (a `&mut P` inside a `mut`
+//    live is allowed, and, before this, `self` (a `&mut P` inside a `mut`
 //    method: a pointer, and Copy) was reported as "cannot move 'self' while it
 //    is borrowed" for a read that moves nothing.
 fun P.check().return: bool {

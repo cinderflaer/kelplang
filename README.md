@@ -4,7 +4,7 @@ Kelp is a statically typed, compiled systems language whose headline feature is
 **capability-based security**. A module declares what it may touch, and that
 authority is part of the source and checked at every call site that uses it. A
 program cannot read a file, open a socket, spawn a process or read the clock
-unless the module making the call was granted that resource — so "what can this
+unless the module making the call was granted that resource, so "what can this
 code do?" is answered by the first few lines of the file rather than by auditing
 it.
 
@@ -69,9 +69,9 @@ impl "std/fs"
 ```
 
 Those two lines are `examples/download.kp`'s entire network and filesystem
-authority. A grant names the resource **as the program spells it** — `net`
+authority. A grant names the resource **as the program spells it**, `net`
 matches the host string rather than a resolved address, and `fs` matches a
-normalized, symlink-resolved path — so there is no second place where authority
+normalized, symlink-resolved path, so there is no second place where authority
 can be acquired.
 
 ## What the language has
@@ -101,8 +101,8 @@ cargo build --release -p kelpc
 With no `-o`, the binary and the backend's intermediate land in `build/` beside
 the working directory: the `llvm` backend leaves `<stem>.ll` and `<stem>.o`. A
 directory with a
-[`coral.toml`](https://homelabone.xenoo.dev/gittea/Juniper/coral) in it — `name`,
-`version`, `entry` — builds the same way: `kelpc build myproject`.
+[`coral.toml`](https://homelabone.xenoo.dev/gittea/Juniper/coral) in it, `name`,
+`version`, `entry`, builds the same way: `kelpc build myproject`.
 
 `kelpc` builds every program with one backend, **`llvm`**: it lowers the typed IR
 to LLVM IR, runs LLVM's own pass pipeline over the module, emits an object and
@@ -152,8 +152,8 @@ before it.
 `kelpc fmt` formats `.kp` source to the style rules in `plan/syntax.md` §19:
 `kelpc fmt FILE` writes to stdout, `-w` rewrites in place, and `--check` exits
 nonzero when a file is not already formatted, which is what a CI job wants. It is
-idempotent, token-faithful and comment-preserving — a formatted file lexes to the
-same tokens and keeps every comment verbatim — and it refuses rather than guesses:
+idempotent, token-faithful and comment-preserving, a formatted file lexes to the
+same tokens and keeps every comment verbatim, and it refuses rather than guesses:
 a syntax error, a file whose aliases cannot be resolved, a non-regular file, or a
 lone carriage return used as a line terminator is reported with nothing written. A
 symlink named on the command line is written *through*, and one found inside a
@@ -210,8 +210,8 @@ the compiler; these two are the tooling around it.
 
 | repository | what it is |
 | --- | --- |
-| **[Coral](https://homelabone.xenoo.dev/gittea/Juniper/coral)** | the build tool and package manager (`plan/roadmap.md` open item 72). `kelpc` stays the compiler; Coral owns the project — the `coral.toml` manifest, tasks, build cache and dependencies — and calls `kelpc` as a subprocess, never the reverse. |
-| **[Lighthouse](https://homelabone.xenoo.dev/gittea/Juniper/lighthouse)** | IDE support: Kelp's LSP/editor tooling — completion, hover, go-to-definition, signature help, symbols, references, rename, folding, inlay hints, auto-import and quick fixes, plus diagnostics from `kelpc` itself. |
+| **[Coral](https://homelabone.xenoo.dev/gittea/Juniper/coral)** | the build tool and package manager (`plan/roadmap.md` open item 72). `kelpc` stays the compiler; Coral owns the project, the `coral.toml` manifest, tasks, build cache and dependencies, and calls `kelpc` as a subprocess, never the reverse. |
+| **[Lighthouse](https://homelabone.xenoo.dev/gittea/Juniper/lighthouse)** | IDE support: Kelp's LSP/editor tooling, completion, hover, go-to-definition, signature help, symbols, references, rename, folding, inlay hints, auto-import and quick fixes, plus diagnostics from `kelpc` itself. |
 
 ## Documentation
 

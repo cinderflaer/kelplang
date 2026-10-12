@@ -26,8 +26,8 @@
 //!   finding is in this tree's history: `process_spawn.kp` ends with a run of
 //!   a program that does not exist, and the child reached `execvp`, failed,
 //!   and `_exit(127)`ed with the `char*[]` it had built for `execvp` still
-//!   allocated. AddressSanitizer could not see it — `_exit` bypasses
-//!   LeakSanitizer — and this gate did; it is fixed in `dbaabc2`.
+//!   allocated. AddressSanitizer could not see it, `_exit` bypasses
+//!   LeakSanitizer, and this gate did; it is fixed in `dbaabc2`.
 //!
 //! **Ground rule 1.5**: nothing may make the
 //! default `cargo test` slower or needier. A sweep builds ~130 fixtures and
@@ -168,7 +168,7 @@ fn error_count(line: &str) -> Option<u64> {
 
 /// One `LEAK SUMMARY` field, e.g. `   definitely lost: 0 bytes in 0 blocks`.
 fn leak_counts(line: &str) -> Option<(u8, u64)> {
-    /// `definite`, `indirect`, `possible`, `still_reachable` — the order
+    /// `definite`, `indirect`, `possible`, `still_reachable`, the order
     /// `Leaks::accumulate` reads them in.
     const KINDS: [(u8, &str); 4] = [
         (0, "definitely lost:"),
@@ -188,7 +188,7 @@ fn leak_counts(line: &str) -> Option<(u8, u64)> {
 /// lines.
 struct Process {
     pid: u32,
-    /// The process valgrind was launched on — the artifact under test — as
+    /// The process valgrind was launched on, the artifact under test, as
     /// opposed to a child it forked.
     launched: bool,
     lines: Vec<String>,
@@ -450,7 +450,7 @@ fn backend_summary(label: &str, checks: &[Check], skipped: &str) -> String {
     format!(
         "  {label}: {} binaries checked{skipped}, {findings} finding(s); \
          leak bytes: definitely {}, indirectly {}, possibly {} \
-         (still reachable {} — glibc's own, not an error)",
+         (still reachable {}, glibc's own, not an error)",
         checks.len(),
         leaks.definite,
         leaks.indirect,
@@ -498,7 +498,7 @@ fn print_summary(sweep: &Sweep, version: &str) {
         .count();
     println!(
         "  program exits: {non_zero} of {runs} runs exited non-zero, and {panics} of those wrote \
-         `panic: …` to their own stderr — the program's output, never parsed as a finding",
+         `panic: …` to their own stderr, the program's output, never parsed as a finding",
     );
     println!(
         "  wall clock: {:.1}s for {runs} valgrind runs over {} fixtures",
@@ -519,7 +519,7 @@ fn print_summary(sweep: &Sweep, version: &str) {
 fn no_fixture_leaks_or_touches_freed_memory_under_valgrind() {
     let Some(version) = valgrind_version() else {
         println!(
-            "memory gate: valgrind is not on PATH, so the sweep is skipped — install valgrind to \
+            "memory gate: valgrind is not on PATH, so the sweep is skipped, install valgrind to \
              check the binaries' drops for leaks, double frees and invalid accesses"
         );
         return;

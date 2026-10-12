@@ -1,5 +1,5 @@
 // A-5: `for` walks a `List` and nothing else. The desugar asks for `.len()` on
-// the iterable, so a non-list is refused with the ordinary method diagnostic —
+// the iterable, so a non-list is refused with the ordinary method diagnostic,
 // and the span is the iterable itself, because every synthesized call is
 // spelled with a node from the source.
 fun main() {

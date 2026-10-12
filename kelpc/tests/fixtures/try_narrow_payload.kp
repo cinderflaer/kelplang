@@ -2,7 +2,7 @@
 // after): `?`'s success payload at the `One` class. A `?` evaluated where
 // only one eightbyte can be held (`expr`, which is what a `let` of a
 // one-eightbyte `datac` uses) had no destination, and `payload_out` refused
-// *every* aggregate payload for want of one — with a message that said "over
+// *every* aggregate payload for want of one, with a message that said "over
 // eight bytes" about a three-byte `datac`. The class is the question, not the
 // kind: `Result<D3, u8>` is eight bytes in total, `AggClass::One`, and its
 // success payload fits `rax`, so it must build.

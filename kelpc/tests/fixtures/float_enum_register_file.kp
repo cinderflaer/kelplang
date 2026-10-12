@@ -1,6 +1,6 @@
 // MK7 §5 item 4, the float-in-aggregate slice: an `enum`'s payload eightbytes
-// are classified *through the union*, so a variant with no payload — or one
-// with a non-float field — in the same eightbyte merges it back to `INTEGER`.
+// are classified *through the union*, so a variant with no payload, or one
+// with a non-float field, in the same eightbyte merges it back to `INTEGER`.
 //
 // The two enums below are both sixteen bytes and differ only in the register
 // file their payload eightbyte lands in. `Pure { D(f64) }` has a four-byte tag

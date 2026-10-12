@@ -1,6 +1,6 @@
 // A-2: inference through a nested generic constructor. `label = 9` binds the
 // `enum`'s parameter first, and the `Box<Tree<T>>` fields then hand it down to
-// `Box.of(Tree.Leaf)` — no annotation anywhere.
+// `Box.of(Tree.Leaf)`, no annotation anywhere.
 enum Tree<T> {
     Leaf
     Branch(val label: T, val left: Box<Tree<T>>, val right: Box<Tree<T>>)

@@ -16,9 +16,9 @@ The shipped half is the protocol itself, and every fixture and test named in
 
 ## What is missing, and exactly why
 
-The generic adapters the task asks for — `take`, `skip`, `enumerate`, `zip`,
+The generic adapters the task asks for, `take`, `skip`, `enumerate`, `zip`,
 `chain`, and the association `List.into_iter()` that `enumerate` is tested
-over — are **not** delivered. They are blocked on one language feature:
+over, are **not** delivered. They are blocked on one language feature:
 
 **Generic trait impls.** Each adapter is a generic `datac` implementing
 `Iterator`:

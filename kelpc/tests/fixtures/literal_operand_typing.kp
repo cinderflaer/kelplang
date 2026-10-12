@@ -1,6 +1,6 @@
 // A numeric or character literal has no width of its own: it takes the type
 // its context requires, and a binary operator's sibling operand *is* that
-// context — on either side.
+// context, on either side.
 //
 // This was found by a real program. `192 + cp / 64` (a UTF-8 encoder) was
 // written against Rust's inference, where the literal is `u32` from the

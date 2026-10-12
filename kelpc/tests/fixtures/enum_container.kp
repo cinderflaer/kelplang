@@ -1,5 +1,5 @@
 // A-1: an enum is a type like any other, so it can be a `List` element and a
-// `Map` value — and the containers' generated code drops it through the same
+// `Map` value, and the containers' generated code drops it through the same
 // `needs_drop` machinery a `datac` uses.
 enum Shape {
     Circle(val r: f64)

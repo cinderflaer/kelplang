@@ -1,5 +1,5 @@
 // MK5-S6-M1: a function body whose tail is a `panic` diverges, so it satisfies
-// the declared return type — which is what makes an accessor like
+// the declared return type, which is what makes an accessor like
 // `std/option`'s `unwrap` expressible.
 fun always_fails(n: i64).return: i64 {
     if n > 0 {

@@ -1,6 +1,6 @@
 // `str` -> `String`, implicitly (open item 21). A string literal is a `str`
 // (a borrowed view) and an owned field or element is a `String`, so before
-// this every one of those sites had to spell `String.from_str(...)` — about
+// this every one of those sites had to spell `String.from_str(...)`, about
 // twenty times in the JSON library this came from, once per parser error
 // message and once per `kind()` arm.
 //

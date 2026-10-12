@@ -1,5 +1,5 @@
 // A-5: the `for` loop. It is a parser desugar to an index and a `while`, so
-// what this fixture pins is the desugaring's observable behaviour — the element
+// what this fixture pins is the desugaring's observable behaviour, the element
 // binding, a non-place iterable evaluated exactly once, nesting (each loop's
 // synthesized names are fresh), and iteration over a list the function only
 // borrows.
@@ -64,7 +64,7 @@ fun main() {
     print(bag_calls)
 
     // An owned element binds as a shared borrow, exactly as `List.get` gives
-    // it — hence the `.as_str()` (the open-item-21 wart, unchanged here).
+    // it, hence the `.as_str()` (the open-item-21 wart, unchanged here).
     val names = str.split("a,b,c", ",")
     for name in names {
         print(name.as_str())

@@ -1,5 +1,5 @@
 // A-4 phase E: the stdlib callbacks take *closures*, so a callback can carry a
-// binding from the frame that passes it — which is what a closure is for. The
+// binding from the frame that passes it, which is what a closure is for. The
 // five callback helpers in `std/option`, `std/result` and `std/list` are
 // declared with `closure(...)` parameters, and a plain function value is
 // widened into one: a declared `fun` or a non-capturing literal needs a
@@ -36,7 +36,7 @@ fun main() {
     print(scaled.get(2))
 
     // A capturing predicate, a capturing action, and one that captures an
-    // *owned* value — the environment owns it and frees it with the closure.
+    // *owned* value, the environment owns it and frees it with the closure.
     val limit = 1
     print(list.any(xs, fun(x: &i32).return: bool = x > limit))
     val tag = String.from_str("v")
@@ -46,7 +46,7 @@ fun main() {
     })
     print("")
 
-    // A declared function and a non-capturing literal are widened too — the
+    // A declared function and a non-capturing literal are widened too, the
     // named one through a generated shim, so this allocates nothing.
     print(list.map(xs, inc).get(0))
     print(list.all(xs, fun(x: &i32).return: bool = x > 0))

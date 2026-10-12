@@ -1,8 +1,8 @@
 // The paths that *replace* an owned element rather than move one in or out:
 // `List.of` with an owned element is the one-element constructor, and `set`
 // frees the element it overwrites before it stores the new owner. Nothing
-// else pins `set` on an element that owns memory — `list_owned.kp` sets only
-// a two-`i32` `Pair`, whose drop is empty — so a `set` that stored the new
+// else pins `set` on an element that owns memory, `list_owned.kp` sets only
+// a two-`i32` `Pair`, whose drop is empty, so a `set` that stored the new
 // `String` without dropping the old buffer leaks, and one that dropped the
 // new one double-frees. The empty `String` at the end is the other end of the
 // same path: a one-NUL buffer replacing a longer one.

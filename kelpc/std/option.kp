@@ -1,5 +1,5 @@
 //! `Option<T>`: a value that may be absent, with its helpers.
-/* std/option — `Option<T>`, and the helpers the language can express (MK5-S6-M1).
+/* std/option, `Option<T>`, and the helpers the language can express (MK5-S6-M1).
 
    The enum is the point. `Some`/`None` is one of the two shapes the `?`
    operator understands (`syntax.md` §5) and the shape `if let` branches on, so
@@ -72,7 +72,7 @@ fun unwrap<T>(o: move Option<T>).return: T {
     panic("Option.unwrap: value is None")
 }
 
-/// The payload, or a panic carrying `message` — the form the stdlib uses, where
+/// The payload, or a panic carrying `message`, the form the stdlib uses, where
 /// the message names the operation that failed rather than the accessor. The
 /// option is taken with `move`, for the same reason `unwrap_or`'s is.
 fun expect<T>(o: move Option<T>, message: &str).return: T {
@@ -106,7 +106,7 @@ fun or_else<T>(o: &Option<T>, f: closure().return: Option<T>).return: Option<T> 
     None -> f()
 }
 
-/// Run `f` over the payload, if there is one, and discard the result — the
+/// Run `f` over the payload, if there is one, and discard the result, the
 /// `Unit` case of `map`, written as its own call so a side effect reads like
 /// one. Works for any `T`.
 fun each<T>(o: &Option<T>, f: closure(&T)) {

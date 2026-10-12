@@ -1,6 +1,6 @@
 // `%` at every integer width (MK7 §5). A division's remainder lands in the
-// *high* half of the dividend — `ah` for a byte, `dx` for a word, `edx` for a
-// dword — and the asm backend moved it into a sixty-four-bit destination,
+// *high* half of the dividend, `ah` for a byte, `dx` for a word, `edx` for a
+// dword, and the asm backend moved it into a sixty-four-bit destination,
 // which the assembler rejects outright. No asm-buildable fixture had ever
 // divided a narrow value, so the gap survived until the heap slice's own probe
 // found it: a loud `as` failure rather than a silent wrong number, but a
@@ -11,7 +11,7 @@
 // assemble. The negatives pin the rule that a remainder follows its *dividend*
 // rather than its divisor, which is the part of `%` a sign-extension bug gets
 // wrong rather than losing entirely. (There is no signed 8- or 16-bit integer
-// type in v1 — only `u8` and `u16` are that narrow — so the two narrow widths
+// type in v1, only `u8` and `u16` are that narrow, so the two narrow widths
 // are exercised unsigned, which is also the only way they can be reached.)
 //
 // The wide cases use named locals rather than inline literals: at the time this

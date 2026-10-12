@@ -1,6 +1,6 @@
 // A call site has to hand a callee a *borrow* of the passdown's storage: the
-// hidden parameter the caller itself received, or — when it received none,
-// because it only *calls* a function that reads the passdown — the address of
+// hidden parameter the caller itself received, or, when it received none,
+// because it only *calls* a function that reads the passdown, the address of
 // the generated global. Emitting the bare identifier named the global by value
 // in that second case, so the call passed an `i32` where the callee's
 // signature wanted an `int32_t*` and `cc` refused the file. Every kind of
@@ -31,7 +31,7 @@ fun show_banner() {
     print(banner.as_str())
 }
 
-// Reads `failures` itself, so it receives the hidden parameter — and forwards
+// Reads `failures` itself, so it receives the hidden parameter, and forwards
 // it, which is the parameter itself and not its address.
 fun forwarding(ok: bool) {
     if ok {

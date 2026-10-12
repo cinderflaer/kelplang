@@ -4,8 +4,8 @@
 //
 // `Box.of`, `Box#set`, `Box#take`, `List#push` and `Map#insert` are routines
 // this backend writes by hand, and the caller is generated. If the two ends
-// disagree about an `SSE` element — the caller in `xmm0` and the routine in
-// `rdi`, say — the value that comes back is wrong, and every assertion here
+// disagree about an `SSE` element, the caller in `xmm0` and the routine in
+// `rdi`, say, the value that comes back is wrong, and every assertion here
 // compares it against the C backend's own output. `datac V2` is a single
 // `f64`, so it is `One(SSE)`: the shape that used to be refused because
 // `elem_size` had no answer for a float `datac` at all.

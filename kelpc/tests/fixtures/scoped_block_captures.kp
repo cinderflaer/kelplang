@@ -1,7 +1,7 @@
 // Every kind of capture a scoped block allows: an owned non-`Copy` local by
 // shared borrow, a `Copy` local by copy, and a borrowed parameter by copy of
 // the pointer. The borrows end with the call, so the locals stay usable after
-// it — which is the whole difference from an ordinary closure.
+// it, which is the whole difference from an ordinary closure.
 datac State(val a: i32)
 datac Counter(var n: i32)
 

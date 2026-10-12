@@ -1,4 +1,4 @@
-// S1: building text in ordinary Kelp — concatenation is a function (open item
+// S1: building text in ordinary Kelp, concatenation is a function (open item
 // 40), replacement is a loop over `starts_with_at`, and number formatting is
 // a digit loop over the growable buffer. Only the float format is C.
 impl "std/str"

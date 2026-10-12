@@ -1,4 +1,4 @@
-// M6.4: the cost of making a `pd var` writable — a reference to it is an
+// M6.4: the cost of making a `pd var` writable, a reference to it is an
 // *exclusive* borrow, so one call cannot take it both exclusively and
 // shared, exactly like `f(&mut c, &c)`.
 //

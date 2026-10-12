@@ -1,5 +1,5 @@
 // A-4 phase E: an owned capture is read out of the environment through a
-// borrow — that is what a capture is for. Reading it out as a whole value
+// borrow, that is what a capture is for. Reading it out as a whole value
 // would give two owners of one buffer, which a partial move does not cover:
 // the environment is not a local this frame owns.
 fun main() {

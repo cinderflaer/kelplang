@@ -1,5 +1,5 @@
 // A-2: a generic type that refers to itself. The parameter is what makes the
-// recursion useful — `Node<i32>` is a list of integers, and the same
+// recursion useful, `Node<i32>` is a list of integers, and the same
 // declaration instantiates again for any other element type. The `Box` is
 // what gives it a finite size, and the drop walks it the same way the
 // non-generic `Box` chain does.

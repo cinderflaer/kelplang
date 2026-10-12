@@ -1,4 +1,4 @@
-// `util`'s `fs` capability is whatever its importer granted — it is received,
+// `util`'s `fs` capability is whatever its importer granted, it is received,
 // never self-declared. The path below is inside the grant, so the
 // compiler-inserted check passes.
 impl "std/fs"

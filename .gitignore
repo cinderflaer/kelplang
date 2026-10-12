@@ -12,13 +12,13 @@
 # destination (MK7 §8). It holds the C the compiler still emits as its runtime,
 # now kept as reviewed files instead of Rust string literals, because the
 # runtime track is replacing each piece with Kelp and the differential test for
-# a replacement has to compile the C it is comparing against — which needs a
+# a replacement has to compile the C it is comparing against, which needs a
 # file with a path, not a `const` inside the compiler binary.
 !kelpc/runtime/
 !kelpc/runtime/*.c
 
 # Stray `kelpc build` output. With no `-o`, the driver writes the binary *and*
-# the emitted C into `build/` (as of `fc7a2bf`), which this file ignores — but
+# the emitted C into `build/` (as of `fc7a2bf`), which this file ignores, but
 # before that it wrote them into the working directory itself, and the `.c` half
 # was hidden by the `*.c` rule above while the binary half, having no extension,
 # was matched by nothing. Ten of them were committed across six commits (0.1.2

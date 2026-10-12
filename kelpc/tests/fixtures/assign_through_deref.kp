@@ -1,7 +1,7 @@
 // roadmap open item 15, case 2: an assignment through a dereferenced borrow
 // (`*p = value`) used to leak the value it overwrote, because the drop plan
 // only recorded a drop for a plain binding (`DropPlan::at_assign`), and a
-// `Deref` assignment target is not one — there is no declaration to key a
+// `Deref` assignment target is not one, there is no declaration to key a
 // `DropTarget` to, only a place. Fixed by giving `at_assign` a second shape,
 // keyed by nothing (`binding: None`), that both backends resolve by
 // recomputing the target's own place expression instead of looking up a

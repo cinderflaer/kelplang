@@ -1,4 +1,4 @@
-// M6.4: reading a Copy `pd var` twice in one call is fine — that is a read
+// M6.4: reading a Copy `pd var` twice in one call is fine, that is a read
 // of the global, not a borrow of it (see pd_var_double_borrow.kp for the case
 // that is refused).
 pd var counter = 1

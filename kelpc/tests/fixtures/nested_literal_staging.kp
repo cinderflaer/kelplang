@@ -1,8 +1,8 @@
 // A pre-existing staging bug this slice's own fixtures reached, not one they
 // introduce: the asm backend used to build every aggregate value that was
 // *staged* for a call argument or for a `Two`-class `return` in one shared
-// frame slot (`Frame::agg_slot`). That reasoning — "one slot, because no two
-// uses overlap in time" — is false for nesting: a field initializer is itself
+// frame slot (`Frame::agg_slot`). That reasoning, "one slot, because no two
+// uses overlap in time", is false for nesting: a field initializer is itself
 // an expression, and if it stages a second aggregate value, the inner one
 // overwrites what the outer one had already written while the outer one is
 // still being built.
@@ -10,14 +10,14 @@
 // `Node` is 16 bytes, so it is a `Two`-class value and every one of these
 // literals is staged. Three shapes are pinned here:
 //
-//   * `chain`/`four` — a `Two`-class argument whose own field initializer is
+//   * `chain`/`four`, a `Two`-class argument whose own field initializer is
 //     another `Two`-class argument (`Box.of(Node(...))` inside `Node(...)`).
 //     Before the fix the middle node read the innermost node's `value`:
 //     `chain` totalled 7 instead of 6, and `four()` returned 10 instead of 9.
-//   * `mixed` — a `One`-class literal (`Pair`) evaluated as a call argument
+//   * `mixed`, a `One`-class literal (`Pair`) evaluated as a call argument
 //     *inside* the field initializer of the staged outer value, which clobbers
 //     the same shared slot from the other direction.
-//   * `five` — both at once, in a `Two`-class return value's own staging.
+//   * `five`, both at once, in a `Two`-class return value's own staging.
 //
 // Nothing about this is enum-specific; the fixture lives beside the enum slice
 // because `generic_recursive`, newly reachable once an `enum` no longer refused

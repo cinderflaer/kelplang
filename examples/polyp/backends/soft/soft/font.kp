@@ -13,7 +13,7 @@
 // Extended-A letters Polish/Czech/Slovak/Hungarian/Turkish/Baltic/Romanian text use (not the
 // letters whose ascender leaves no room for a mark: ď ť ľ ĺ ĥ and friends), Greek capitals and
 // lowercase (no tonos forms), the Cyrillic capitals and lowercase of the Russian alphabet with Ё/ё,
-// the euro sign, the punctuation – — ‘ ’ ‚ “ ” „ † ‡ • …, the arrows ← ↑ → ↓ ↔ ↕, box drawing
+// the euro sign, the punctuation (en dash, em dash, ‘ ’ ‚ “ ” „ † ‡ • …), the arrows ← ↑ → ↓ ↔ ↕, box drawing
 // ─ │ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ ═ ║ (5 columns wide with the 6th column blank, so a horizontal line is
 // dashed) and the shapes ■ □ ▲ ▼ ○ ●. Every other code point, including every 3- and 4-byte scalar
 // outside those blocks, is the replacement box (`has_glyph` says which). The tables for everything

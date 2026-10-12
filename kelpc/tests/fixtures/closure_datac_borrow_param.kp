@@ -1,8 +1,8 @@
 // BUG-2: a closure whose parameter is a borrow of a module-declared `datac`.
 // A closure typedef is emitted before the `datac`s (a `datac` field may hold a
 // closure, so the closure type has to exist first) and so is the coercion
-// environment beside it. Both named the parameter `const struct_Item*` — the
-// `datac`'s typedef name, which is not declared until after them — instead of
+// environment beside it. Both named the parameter `const struct_Item*`, the
+// `datac`'s typedef name, which is not declared until after them, instead of
 // the forward-declared `struct tag_Item` a borrow has to be spelled with
 // there, so `cc` rejected the program outright.
 datac Item(val n: i64)

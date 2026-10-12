@@ -1,19 +1,19 @@
 // roadmap open item 15, case 3: assigning an owned *field* of a local this
 // frame directly owns (`h.name = s`) used to leak the field's old buffer, for
-// the same reason `assign_through_deref.kp`'s `*p = value` did — the drop
+// the same reason `assign_through_deref.kp`'s `*p = value` did, the drop
 // plan's `at_assign` only recorded a plain binding, and a `FieldAccess`
 // target names a place, not a binding.
 //
 // Three shapes, each on a local `var` this frame owns directly (a partial
 // move of a field, which two of these lean on, is only legal off a local the
-// frame owns, never through a borrow — and a parameter binding is always
+// frame owns, never through a borrow, and a parameter binding is always
 // immutable in v1, so these are locals rather than `move`/`mut` parameters):
 // - `plain_reassign`: the ordinary case, a live field overwritten by an
 //   unrelated value.
-// - `self_assign_field`: `h.name = h.name` — the value expression reads the
+// - `self_assign_field`: `h.name = h.name`, the value expression reads the
 //   very same field by whole value, which is a partial move (A-11) that
 //   *unconditionally* zeroes the field's slot as part of that read (unlike a
-//   whole-binding move, a field move is never merely "maybe" — see
+//   whole-binding move, a field move is never merely "maybe", see
 //   `borrowck.rs`'s `field_move_sites`/`at_clear`). So the slot this
 //   assignment's own drop reaches is already zero by the time it runs, and
 //   freeing zero has to be the safe no-op the rest of the drop plan already

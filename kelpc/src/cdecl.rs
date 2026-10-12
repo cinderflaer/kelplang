@@ -223,7 +223,7 @@ impl Decl<'_> {
 }
 
 /// Emits an `extern` declaration's body: either the compiler-supplied C text
-/// from `externs.rs` (a stdlib module), or — MK9-S1-M1, roadmap B-1 — a
+/// from `externs.rs` (a stdlib module), or, MK9-S1-M1, roadmap B-1, a
 /// direct-call trampoline to the native symbol a *user* module's own
 /// `coral.toml` `[extern."<module id>"]` section allowlisted, when
 /// `extern_ffi_symbols` (`infer.rs::check_program_pass`) names one for this
@@ -277,7 +277,7 @@ pub(crate) fn write_extern(
 /// itself (gap 4): it expands in place into the `(func, user_data,
 /// destroy_notify)` triple the native side expects, which the body below
 /// spells and `write_callback_glue` defines. There is nothing else to
-/// write — the "compiler-supplied body" that `write_extern`'s
+/// write, the "compiler-supplied body" that `write_extern`'s
 /// stdlib branch looks up in `externs.rs` exists to hand-write a primitive
 /// `.kp` cannot express at all (a raw syscall, a `malloc`); a user FFI
 /// binding has no such primitive to hand-write, since the whole point is
@@ -450,7 +450,7 @@ pub(crate) fn write_field_eq(out: &mut String, ty: &Ty, a: &str, b: &str) {
 
 /// (M6.2). Emitted in declaration order, and a `datac` may only name earlier
 /// `datac`s, so a struct's drop function is always defined before the struct
-/// that calls it — no forward declarations needed.
+/// that calls it, no forward declarations needed.
 pub(crate) fn write_struct(
     out: &mut String,
     s: &StructDef,
@@ -611,7 +611,7 @@ pub(crate) fn variant_member(name: &str) -> String {
 
 /// One `enum`'s C typedef and drop function (A-1). A tagged union: the tag is
 /// the variant's index, and each variant keeps its payload in a struct of its
-/// own inside a union — so exactly one payload is live, which is the whole
+/// own inside a union, so exactly one payload is live, which is the whole
 /// difference from a `datac`.
 ///
 /// A variant with no payload still gets a member with one `char` field: an
@@ -689,7 +689,7 @@ pub(crate) fn write_enum(
             }
             out.push_str("        break;\n    }\n");
         }
-        // No `default:` arm on purpose — `switch` on an unknown tag is a
+        // No `default:` arm on purpose, `switch` on an unknown tag is a
         // compiler-visible hole, and every tag this program can produce is
         // one of the cases above.
         out.push_str("    }\n}\n");
@@ -872,13 +872,13 @@ pub(crate) fn write_container_typedef(out: &mut String, ty: &Ty) {
 /// One closure instantiation's C typedef (A-4 phase E): the fat pointer a
 /// capturing `fun` literal becomes. Three members, and each earns its place:
 ///
-/// * `fn` — the generated function, whose first parameter is the environment.
+/// * `fn`, the generated function, whose first parameter is the environment.
 ///   Making it typed (rather than `void*`) is why the closure is
 ///   monomorphized per signature, exactly like a container.
-/// * `env` — the environment itself, type-erased: the layout belongs to the
+/// * `env`, the environment itself, type-erased: the layout belongs to the
 ///   one literal that made it, and casting it back inside the generated
 ///   function is what keeps that layout out of the type system.
-/// * `drop` — how to free the environment. The value cannot know its own
+/// * `drop`, how to free the environment. The value cannot know its own
 ///   layout, so it carries the destructor beside the pointer; without that a
 ///   closure could not drop what it captured.
 ///
@@ -1420,7 +1420,7 @@ pub(crate) fn write_signature(out: &mut String, f: &Function) {
     // cannot write as `ret name(params)`: the returned pointer's own
     // parameter list has to be attached to the name, before this function's.
     // One level is what a function type is allowed to be here (a function
-    // type may not return a function type — `infer.rs` refuses that), so one
+    // type may not return a function type, `infer.rs` refuses that), so one
     // level is what this handles. A literal that captured something has a
     // hidden environment parameter (A-4 phase E), which goes first in either
     // spelling.
@@ -1446,7 +1446,7 @@ pub(crate) fn write_signature(out: &mut String, f: &Function) {
     out.push(')');
 }
 
-/// The parenthesized parameter list of a function's own signature — `void`
+/// The parenthesized parameter list of a function's own signature, `void`
 /// when it takes none, which is what a C definition requires. A literal that
 /// captured something receives its environment first, as a `void*` the body
 /// casts back to the literal's own environment struct: the environment's
@@ -1478,7 +1478,7 @@ pub(crate) fn write_params(out: &mut String, params: &[(String, Ty)], env: bool)
     }
 }
 
-/// A function type's own parameter list, as C — the same text a declarator
+/// A function type's own parameter list, as C, the same text a declarator
 /// needs after the name, so `types.rs` and this emitter agree on one spelling:
 /// `types::fn_params_c` is that spelling, and a `unit` parameter is left out of
 /// it.
@@ -1547,7 +1547,7 @@ pub(crate) fn c_string_literal(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             // CR was missing, and a raw carriage return inside a C string
-            // literal is not a string at all — it breaks the generated line.
+            // literal is not a string at all, it breaks the generated line.
             // Nothing could reach this until the lexer learned `\r` (S4), so a
             // protocol that ends its lines with CRLF is what found it.
             '\r' => out.push_str("\\r"),

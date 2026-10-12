@@ -1,5 +1,5 @@
 //! `Result<T, E>`: the outcome of a fallible step, with its helpers.
-/* std/result — `Result<T, E>`, and the helpers the language can express
+/* std/result, `Result<T, E>`, and the helpers the language can express
    (MK5-S6-M1).
 
    `Ok`/`Err` is the other shape `?` understands (`syntax.md` §5), and the one

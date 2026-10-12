@@ -6,7 +6,7 @@
 // `& | ^` are infix, `~` is prefix, and `<<`/`>>` are written as two
 // adjacent `<`/`>` characters (the lexer does not fold them, so
 // `List<List<i32>>` still closes). Precedence is C's except that the bitwise
-// operators bind *tighter* than the comparisons — Rust's reading, kept
+// operators bind *tighter* than the comparisons, Rust's reading, kept
 // because C's makes `flags & MASK == 0` mean `flags & (MASK == 0)`:
 // `|| < && < == < < < | < ^ < & < << < + < *`.
 fun main() {
@@ -23,7 +23,7 @@ fun main() {
     print(1 << 2 + 3)
 
     // `&` binds tighter than `==`, which is what stops `flags & MASK == 0`
-    // from meaning `flags & (MASK == 0)` — the C bug this precedence exists
+    // from meaning `flags & (MASK == 0)`, the C bug this precedence exists
     // to prevent.
     val flags: u8 = 6
     val mask: u8 = 2

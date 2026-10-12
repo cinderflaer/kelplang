@@ -15,7 +15,7 @@ pub fun build() {
     print(fs.is_file(link.as_str()))
     print(fs.read_text(link.as_str()))
 
-    // Removing the target leaves the link dangling, and `exists` follows it —
+    // Removing the target leaves the link dangling, and `exists` follows it,
     // which is the proof that this is a link and not a copy.
     fs.remove(target.as_str())
     print(fs.exists(link.as_str()))

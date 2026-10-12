@@ -1,6 +1,6 @@
 impl "std/str"
 
-/* std/fmt — turning values into text (S1). Ungated: this is arithmetic and
+/* std/fmt, turning values into text (S1). Ungated: this is arithmetic and
    byte shuffling, and it cannot reach the outside world.
 
    Everything here is a thin Kelp wrapper over `std/str`, except the two places

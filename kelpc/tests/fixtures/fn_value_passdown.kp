@@ -1,5 +1,5 @@
 // A-4: a function that reads a passdown receives it as a hidden argument, so
-// its C signature is not a plain function pointer's — refused, not silently
+// its C signature is not a plain function pointer's, refused, not silently
 // mistyped.
 pd val greeting = "hi"
 

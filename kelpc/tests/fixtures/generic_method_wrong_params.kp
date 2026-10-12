@@ -1,4 +1,4 @@
-// A-2: the receiver must write the type's own parameters, in order — the body
+// A-2: the receiver must write the type's own parameters, in order, the body
 // names them, so a rename or a reorder would not mean what it says.
 datac Pair<A, B>(val first: A, val second: B)
 

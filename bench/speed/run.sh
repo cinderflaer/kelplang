@@ -3,7 +3,7 @@
 # Python.
 #
 # Every language runs the *same* algorithm with the *same* op counts, so the
-# checksums have to agree — that is what makes the timings comparable. Each
+# checksums have to agree, that is what makes the timings comparable. Each
 # program times its own workloads; this harness compiles them, runs each
 # program three times, keeps the fastest measurement per workload, checks that
 # every language produced the same checksums, and prints ns/op.

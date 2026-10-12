@@ -1,5 +1,5 @@
 // MK7 §5 item 4, fourth slice: a `datac` whose C layout is over sixteen bytes
-// — SysV `MEMORY` class — passed and received *by value*.
+//, SysV `MEMORY` class, passed and received *by value*.
 //
 // The third slice returned one of these through the hidden-pointer convention
 // and deliberately refused it as a parameter or argument, because a by-value
@@ -30,7 +30,7 @@ fun six(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, v: move Quad).return: i6
 fun grow(v: move Quad, by: i64).return: Quad = Quad(a = v.a + by, b = v.b + by, c = v.c + by)
 
 // A moved parameter is an ordinary owned local, so it can be copied into a
-// mutable one — which is only a copy if the parameter really is the value
+// mutable one, which is only a copy if the parameter really is the value
 // rather than a pointer to the caller's copy.
 fun bump(v: move Quad).return: i64 {
     var w = v
@@ -39,7 +39,7 @@ fun bump(v: move Quad).return: i64 {
 }
 
 // A nine-to-sixteen-byte `datac` is two `INTEGER` eightbytes in a register pair,
-// not a `MEMORY`-class one — so a call can put one in two integer registers
+// not a `MEMORY`-class one, so a call can put one in two integer registers
 // while a `Quad` goes on the stack. The two mechanisms share a call and nothing
 // else.
 datac Pair3(var a: i64, var b: i64)

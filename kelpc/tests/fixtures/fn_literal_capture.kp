@@ -1,4 +1,4 @@
-// A-4 phase E: the smallest capture there is — a literal that names one
+// A-4 phase E: the smallest capture there is, a literal that names one
 // enclosing binding, which makes it a closure, and the binding is `Copy`, so it
 // is copied into the environment and stays usable afterwards.
 fun main() {

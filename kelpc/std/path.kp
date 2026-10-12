@@ -7,7 +7,7 @@ fun is_absolute(s: &str).return: bool = str.len(s) > 0 && str.byte(s, 0) == 47
 
 // Purely lexical normalization: `//` collapses, `.` is dropped, `..` pops a
 // segment. It is *the same C function* the capability checker uses (M7),
-// which is the plan's requirement — the security-relevant normalization must
+// which is the plan's requirement, the security-relevant normalization must
 // exist once, not twice.
 // Panics: if the path is not absolute, or escapes its own root via `..`.
 extern fun normalize_raw(s: &str).return: String
@@ -31,7 +31,7 @@ fun absolute(base: &str, p: &str).return: String {
 
 // The byte index just past the last `/`, or 0 when the path has none. A
 // path with no separator has no directory part at all, so `file_name`
-// reports the whole string — which is what every other path library does.
+// reports the whole string, which is what every other path library does.
 fun last_sep(s: &str).return: usize {
     val sv = s.view()
     val n = sv.len()
@@ -115,7 +115,7 @@ fun split(s: &str).return: List<String> {
 }
 
 // Every part joined with `/`, left to right, so a later absolute part
-// replaces everything before it — `join`'s rule, applied repeatedly.
+// replaces everything before it, `join`'s rule, applied repeatedly.
 fun join_all(parts: List<String>).return: String {
     var out = String.empty()
     var first = true

@@ -1,6 +1,6 @@
 // A-4 phase E, the memory half: a closure owns the environment its captures
 // were moved into, so the environment is freed exactly where the binding that
-// holds the closure dies — at the end of its block, on an early `return`, and
+// holds the closure dies, at the end of its block, on an early `return`, and
 // once per loop iteration.
 //
 // In the AddressSanitizer list: a missed drop is a leak here, and a second one
@@ -29,7 +29,7 @@ fun main() {
     print(early(false))
 
     // One environment per iteration, each freed at the end of the iteration's
-    // block — the loop body is checked twice and emitted once, so this is also
+    // block, the loop body is checked twice and emitted once, so this is also
     // what proves the two walks agree about the environment.
     var i = 0
     while i < 3 {
