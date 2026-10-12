@@ -37,7 +37,7 @@ fn m4_clearing_cost_child() {
         return;
     };
     unsafe {
-        kelp_gc_init(0, mib << 20);
+        kelp_gc_init(0, mib << 20, 0, 0, 20);
         kelp_gc_thread_attach();
         let live = kelp_gc_alloc_array(&M4_BYTES, 1 << 20) as usize;
         *M4_LIVE.0.get() = live;
@@ -70,7 +70,7 @@ fn m4_clearing_cost_child() {
 fn m9_refill_tail_and_overshoot_256_threads() {
     const WORKERS: usize = 255;
     unsafe {
-        kelp_gc_init(0, 0);
+        kelp_gc_init(0, 0, 0, 0, 20);
         kelp_gc_thread_attach();
         let objects = Arc::new(Mutex::new(Vec::<usize>::new()));
         let ready = Arc::new(Barrier::new(WORKERS + 1));

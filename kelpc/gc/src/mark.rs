@@ -196,7 +196,12 @@ pub unsafe fn collect_locked() {
     s.sweep_ns_total += t2 - t1;
     s.epoch ^= 1;
     s.cycles += 1;
-    s.trigger = core::cmp::max(s.heap_min, s.live);
+    s.live_prev = s.live_last;
+    s.live_last = s.live;
+    s.trigger = core::cmp::min(
+        crate::trigger::next_trigger(s.heap_min, s.live_prev, s.live_last, s.headroom_pct),
+        s.region_bytes,
+    );
     s.bytes_since = 0;
     s.alloc_block = 0;
     s.alloc_line = 0;

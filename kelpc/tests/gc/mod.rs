@@ -182,7 +182,7 @@ fn serial() -> MutexGuard<'static, ()> {
 /// test lock. The stress setting comes from the environment, so the whole
 /// suite can run under KELP_GC_STRESS; the verifier is always on.
 unsafe fn reset() {
-    kelp_gc_init(0, 0);
+    kelp_gc_init(0, 0, 0, 0, 20);
     let s = st();
     core::ptr::write_bytes(s.blocks as *mut u8, 0, s.nblocks * size_of::<BlockMeta>());
     core::ptr::write_bytes(s.types as *mut u8, 0, TYPE_TABLE_IDS * 8);
@@ -251,22 +251,22 @@ fn child_entry() {
     unsafe {
         match mode.as_str() {
             "cap" => {
-                kelp_gc_init(0, 0);
+                kelp_gc_init(0, 0, 0, 0, 20);
                 kelp_gc_thread_attach();
                 fill_until_full();
             }
             "hook" => {
-                kelp_gc_init(0, 8 << 20);
+                kelp_gc_init(0, 8 << 20, 0, 0, 20);
                 kelp_gc_set_panic_hook(Some(hook_exit_3));
                 kelp_gc_thread_attach();
                 fill_until_full();
             }
             "unattached" => {
-                kelp_gc_init(0, 0);
+                kelp_gc_init(0, 0, 0, 0, 20);
                 black_box(kelp_gc_alloc(&NODE));
             }
             "type_over_limit" => {
-                kelp_gc_init(0, 0);
+                kelp_gc_init(0, 0, 0, 0, 20);
                 kelp_gc_thread_attach();
                 black_box(kelp_gc_alloc(&OVER_ID));
             }
@@ -275,17 +275,44 @@ fn child_entry() {
             "root_full" => child_root_full(),
             "dup_id" => child_dup_id(),
             "array_too_large" => {
-                kelp_gc_init(0, 0);
+                kelp_gc_init(0, 0, 0, 0, 20);
                 kelp_gc_thread_attach();
                 black_box(kelp_gc_alloc_array(&NODE, u32::MAX as usize + 1));
             }
             "noscan_with_pointers" => tidepool_step1_fixb::child_noscan_with_pointers(),
             "array_overflows" => tidepool_step1_fixb::child_array_overflows(),
             "foreign_thread" => tidepool_step1_fixb::child_foreign_thread(),
+            "first_clear" => child_first_clear(),
             "panic_location" => crate::sys::report_and_abort("heap.rs", 42),
             other => panic!("unknown child mode {other}"),
         }
     }
+}
+
+/// Tidepool step 2, T40e: the first clearing happens at the trigger the
+/// manifest sets. The start guesses are 1 and 2 MiB at headroom 20, so the
+/// first trigger is 1.8 MiB (not heap_min's 8 MiB). The clearing must come at
+/// the allocation where `bytes_since` first reaches the trigger, so the bytes
+/// before the previous allocation are below it and the bytes before this one
+/// are at or above it. Exit 0 when that holds, 5 when it does not.
+unsafe fn child_first_clear() {
+    const TRIGGER: usize = 1_887_436;
+    kelp_gc_init(0, 0, 1 << 20, 2 << 20, 20);
+    kelp_gc_thread_attach();
+    let mut prev = 0usize;
+    for _ in 0..10_000_000u32 {
+        let before = crate::state::st().bytes_since;
+        let cycles = crate::state::st().cycles;
+        black_box(kelp_gc_alloc(&NODE));
+        if crate::state::st().cycles > cycles {
+            if before >= TRIGGER && prev < TRIGGER {
+                std::process::exit(0);
+            }
+            std::process::exit(5);
+        }
+        prev = before;
+    }
+    std::process::exit(6);
 }
 
 /// Keep every node live until the heap cap is reached.
@@ -309,7 +336,7 @@ static CHILD_READY: AtomicBool = AtomicBool::new(false);
 /// A worker attaches and spins without polling. The collector must give up
 /// after the timeout and name the thread.
 unsafe fn child_stop_timeout() {
-    kelp_gc_init(0, 0);
+    kelp_gc_init(0, 0, 0, 0, 20);
     kelp_gc_thread_attach();
     std::thread::spawn(|| unsafe {
         kelp_gc_thread_attach();
@@ -326,7 +353,7 @@ unsafe fn child_stop_timeout() {
 
 /// A survivor whose mark bit is set after its cycle must fail the verifier.
 unsafe fn child_verify_mark() {
-    kelp_gc_init(0, 0);
+    kelp_gc_init(0, 0, 0, 0, 20);
     kelp_gc_thread_attach();
     root(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
     let p = kelp_gc_alloc(&LINK) as usize;
@@ -1092,7 +1119,7 @@ unsafe fn churn_run(threads: usize, per: usize) -> (f64, usize, usize) {
 fn measure_heap_lock_contention_four_threads() {
     let _g = serial();
     unsafe {
-        kelp_gc_init(0, 0);
+        kelp_gc_init(0, 0, 0, 0, 20);
         let (t1, a1, c1) = churn_run(1, 1_000_000);
         let (t4, a4, c4) = churn_run(4, 1_000_000);
         let rate1 = a1 as f64 / t1 / 1e6;
@@ -1451,7 +1478,7 @@ unsafe extern "C" {
 const RLIMIT_AS: i32 = 9;
 
 unsafe fn child_root_full() {
-    kelp_gc_init(0, 0);
+    kelp_gc_init(0, 0, 0, 0, 20);
     kelp_gc_thread_attach();
     // The first registration maps the first table (ROOT_CHUNK slots); the table
     // then cannot grow, because the limit leaves less room than its next size.
@@ -1491,7 +1518,7 @@ fn t52_two_descriptors_for_one_id_are_fatal() {
 }
 
 unsafe fn child_dup_id() {
-    kelp_gc_init(0, 0);
+    kelp_gc_init(0, 0, 0, 0, 20);
     kelp_gc_thread_attach();
     // NODE is registered by the first two allocations, so the duplicate meets
     // the registered (fast) path as well as the first registration.
@@ -1691,4 +1718,13 @@ mod trigger_t40 {
         // A = 1 MiB, B = 2 MiB: heap_min is the floor, 8 MiB.
         assert_eq!(next_trigger(8 * MIB, MIB, 2 * MIB, 20), 8 * MIB);
     }
+}
+
+/// Tidepool step 2, T40e: the runtime's first clearing is at the manifest trigger
+/// (see `child_first_clear`). Runs in a child, because the collector starts once
+/// per process.
+#[test]
+fn t40e_first_clearing_happens_at_the_manifest_trigger() {
+    let (code, err) = run_child("first_clear", &[]);
+    assert_eq!(code, Some(0), "first clearing was not at the trigger: exit {code:?}\n{err}");
 }

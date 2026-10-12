@@ -605,7 +605,7 @@ fn build(
     let managed = if hosted {
         match driver::managed_archive() {
             Ok(gc_archive) => Some(codegen_llvm::Managed {
-                heap_max_mib: loaded.project.target().heap_max_mib(),
+                heap: codegen_llvm::HeapLimits::from_target(loaded.project.target()),
                 gc_archive,
             }),
             Err(e) => {

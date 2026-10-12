@@ -445,7 +445,7 @@ pub fn compile(
         freestanding,
         None,
         None,
-        managed.map(|m| m.heap_max_mib << 20),
+        managed.map(|m| m.heap),
         timings,
     )?;
 
@@ -500,11 +500,35 @@ pub fn compile(
     linked.map_err(|e| e.message)
 }
 
-/// A managed build's settings (WP2): the heap cap in MiB that `kelp_gc_init`
-/// receives as its maximum, and the collector archive the link takes.
+/// The heap settings `kelp_gc_init` receives: the cap, the two start guesses
+/// of the first clearing and the headroom percent. Bytes, except the percent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeapLimits {
+    pub max: u64,
+    pub start_low: u64,
+    pub start_high: u64,
+    pub headroom_pct: u64,
+}
+
+impl HeapLimits {
+    /// The limits a target asks for: `[target] heap_max` and the `[tidepool]`
+    /// section, with the defaults where the manifest names none.
+    pub fn from_target(target: &crate::resolve::TargetDecl) -> Self {
+        let tidepool = target.tidepool();
+        HeapLimits {
+            max: target.heap_max_mib() << 20,
+            start_low: tidepool.start_low_mib_or_default() << 20,
+            start_high: tidepool.start_high_mib_or_default() << 20,
+            headroom_pct: tidepool.headroom_pct_or_default(),
+        }
+    }
+}
+
+/// A managed build's settings (WP2): the heap limits `kelp_gc_init` receives,
+/// and the collector archive the link takes.
 #[derive(Debug, Clone)]
 pub struct Managed {
-    pub heap_max_mib: u64,
+    pub heap: HeapLimits,
     pub gc_archive: PathBuf,
 }
 
@@ -518,7 +542,7 @@ pub fn compile_ir(
     program: &Program,
     drops: &DropPlan,
     sources: &SourceMap,
-    managed: Option<u64>,
+    managed: Option<HeapLimits>,
     ir_path: &Path,
     object_path: &Path,
 ) -> Result<String, String> {
@@ -615,7 +639,7 @@ fn lower_to_object(
     freestanding: Option<&Freestanding>,
     unit: Option<Unit>,
     cache: Option<&Cache>,
-    managed: Option<u64>,
+    managed: Option<HeapLimits>,
     timings: &mut Timings,
 ) -> Result<Option<String>, String> {
     let started = Instant::now();
@@ -2111,9 +2135,9 @@ struct Gen<'a> {
     /// Whether this is a managed build (WP3): heap objects are GC allocations,
     /// frees are dropped, and a drop runs only where a resource needs one.
     managed: bool,
-    /// The managed heap's cap in bytes, from the manifest's `heap_max`. `kelp_gc_init`
-    /// receives it as its maximum. `None` in every other build.
-    managed_heap_max: Option<u64>,
+    /// The managed heap's limits, from the manifest's `heap_max` and `[tidepool]`.
+    /// `kelp_gc_init` receives them. `None` in every other build.
+    managed_heap: Option<HeapLimits>,
     /// The managed build's LLVM descriptors and collector entry points
     /// (`gc_descr`), declared once per module. `None` in every other build.
     gc: Option<crate::gc_descr::GcTypes<'a>>,
@@ -2171,7 +2195,7 @@ impl<'a> Gen<'a> {
         optimized: bool,
         freestanding: Option<Freestanding>,
         unit: Option<Unit>,
-        managed: Option<u64>,
+        managed: Option<HeapLimits>,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
         // The one libc symbol this slice reaches: `printf`, for `print` and
@@ -2262,7 +2286,7 @@ impl<'a> Gen<'a> {
             freestanding,
             unit,
             managed: managed.is_some(),
-            managed_heap_max: managed,
+            managed_heap: managed,
             gc: managed.map(|_| crate::gc_descr::GcTypes::declare(ctx, module)),
             resources: if managed.is_some() { crate::gc_descr::resource_types(program) } else { HashSet::new() },
         })
@@ -4149,11 +4173,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if self.fn_name == "main" {
             // Managed: the collector starts first (paper 3.4), with the minimum
             // heap and the manifest's `heap_max` as the maximum.
-            if let (Some(gc), Some(cap)) = (&self.g.gc, self.g.managed_heap_max) {
+            if let (Some(gc), Some(limits)) = (&self.g.gc, self.g.managed_heap) {
                 let (init, ity) = gc.init;
                 let min = self.g.ctx.const_int(self.g.ctx.i64(), crate::gc_descr::DEFAULT_HEAP_MIN, false);
-                let max = self.g.ctx.const_int(self.g.ctx.i64(), cap, false);
-                self.g.builder.build_call(init, ity, &[min, max], "");
+                let max = self.g.ctx.const_int(self.g.ctx.i64(), limits.max, false);
+                let low = self.g.ctx.const_int(self.g.ctx.i64(), limits.start_low, false);
+                let high = self.g.ctx.const_int(self.g.ctx.i64(), limits.start_high, false);
+                let headroom = self.g.ctx.const_int(self.g.ctx.i64(), limits.headroom_pct, false);
+                self.g.builder.build_call(init, ity, &[min, max, low, high, headroom], "");
                 let (attach, aty) = gc.thread_attach;
                 self.g.builder.build_call(attach, aty, &[], "");
             }

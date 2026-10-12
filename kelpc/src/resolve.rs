@@ -295,6 +295,9 @@ pub struct TargetDecl {
     /// `heap_max = N` (managed mode): the collected heap's cap in MiB. `None`
     /// when the section names none; `heap_max_mib` then gives the default.
     heap_max: Option<u64>,
+    /// The manifest's `[tidepool]` section, copied in at the end of
+    /// `parse_manifest` (Tidepool step 2). The defaults apply when it is empty.
+    tidepool: TidepoolDecl,
 }
 
 impl TargetDecl {
@@ -312,6 +315,7 @@ impl TargetDecl {
             realloc: None,
             cpus: 1,
             heap_max: None,
+            tidepool: TidepoolDecl::default(),
         }
     }
 
@@ -381,6 +385,11 @@ impl TargetDecl {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn heap_max_mib(&self) -> u64 {
         self.heap_max.unwrap_or(crate::managed::DEFAULT_HEAP_MAX_MIB)
+    }
+
+    /// The manifest's `[tidepool]` section (Tidepool step 2).
+    pub fn tidepool(&self) -> &TidepoolDecl {
+        &self.tidepool
     }
 }
 
@@ -2283,13 +2292,15 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
             ));
         }
     }
+    // The runtime reads the section through the target, next to heap_max.
+    manifest.target.tidepool = std::mem::take(&mut manifest.tidepool);
     Ok(manifest)
 }
 
 /// `[tidepool]` (Tidepool step 2, design section 14.2 and 14.4): the first
 /// clearing's two start guesses and the headroom percent. Each is a bare
 /// whole number of MiB (or percent). `None` takes the default.
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub struct TidepoolDecl {
     /// `headroom_pct`, from 0 to 1000.
     pub headroom_pct: Option<u64>,
@@ -2297,6 +2308,23 @@ pub struct TidepoolDecl {
     pub start_low_mib: Option<u64>,
     /// `start_high_mib`, at least 1 and no more than `heap_max`.
     pub start_high_mib: Option<u64>,
+}
+
+impl TidepoolDecl {
+    /// `start_low_mib`, or the default when the section names none.
+    pub fn start_low_mib_or_default(&self) -> u64 {
+        self.start_low_mib.unwrap_or(crate::managed::DEFAULT_START_LOW_MIB)
+    }
+
+    /// `start_high_mib`, or the default when the section names none.
+    pub fn start_high_mib_or_default(&self) -> u64 {
+        self.start_high_mib.unwrap_or(crate::managed::DEFAULT_START_HIGH_MIB)
+    }
+
+    /// `headroom_pct`, or the default when the section names none.
+    pub fn headroom_pct_or_default(&self) -> u64 {
+        self.headroom_pct.unwrap_or(crate::managed::DEFAULT_HEADROOM_PCT)
+    }
 }
 
 /// Parse one `key = <whole number>` line of `[tidepool]`. Every key takes a

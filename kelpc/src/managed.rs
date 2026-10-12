@@ -23,6 +23,12 @@ use crate::types::Ty;
 /// program cannot take the host's memory from the Minecraft server.
 pub const DEFAULT_HEAP_MAX_MIB: u64 = 256;
 
+/// The first clearing's start guesses and the headroom percent, when the
+/// manifest's `[tidepool]` section names none (design section 5, D2).
+pub const DEFAULT_START_LOW_MIB: u64 = 1;
+pub const DEFAULT_START_HIGH_MIB: u64 = 4;
+pub const DEFAULT_HEADROOM_PCT: u64 = 20;
+
 /// The values `[target] heap_max` accepts, in MiB. The top bound stops a typo
 /// from asking the kernel for a heap no 7.6 GB host can give.
 pub const HEAP_MAX_MIB_RANGE: std::ops::RangeInclusive<u64> = 1..=65_536;

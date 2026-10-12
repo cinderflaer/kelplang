@@ -61,7 +61,7 @@ pub extern "C" fn rust_eh_personality(
 mod tests;
 
 /// Map the heap region and metadata. Called once, under INIT == 1.
-unsafe fn do_init(heap_min: usize, heap_max: usize) {
+unsafe fn do_init(heap_min: usize, heap_max: usize, start_low: usize, start_high: usize, headroom_pct: usize) {
     let s = st();
     let max = if heap_max == 0 { DEFAULT_HEAP_MAX } else { heap_max };
     let nblocks = core::cmp::max(4, max.div_ceil(BLOCK));
@@ -84,7 +84,12 @@ unsafe fn do_init(heap_min: usize, heap_max: usize) {
     s.mark_cap = mark_cap;
     s.heap_max = region_bytes;
     s.heap_min = if heap_min == 0 { DEFAULT_HEAP_MIN } else { heap_min };
-    s.trigger = s.heap_min;
+    s.headroom_pct = headroom_pct;
+    let low = if start_low == 0 { DEFAULT_START_LOW } else { start_low };
+    let high = if start_high == 0 { DEFAULT_START_HIGH } else { start_high };
+    // The first clearing is the start guesses' midpoint plus headroom (design
+    // section 4). A trigger above the shared-pool space would never be reached.
+    s.trigger = core::cmp::min(trigger::first_trigger(s.heap_min, low, high, headroom_pct), region_bytes);
     s.pool_hw = 0;
     s.unused_tail = 0;
     s.epoch = 0;
@@ -183,11 +188,11 @@ unsafe fn map(bytes: usize) -> usize {
     p
 }
 
-unsafe fn init_once(heap_min: usize, heap_max: usize) {
+unsafe fn init_once(heap_min: usize, heap_max: usize, start_low: usize, start_high: usize, headroom_pct: usize) {
     use core::sync::atomic::Ordering::Relaxed;
     match INIT.compare_exchange(0, 1, Acquire, Relaxed) {
         Ok(_) => {
-            do_init(heap_min, heap_max);
+            do_init(heap_min, heap_max, start_low, start_high, headroom_pct);
             INIT.store(2, Release);
         }
         Err(1) => {
@@ -202,7 +207,7 @@ unsafe fn init_once(heap_min: usize, heap_max: usize) {
 #[inline]
 unsafe fn ensure_init() {
     if INIT.load(Acquire) != 2 {
-        init_once(0, 0);
+        init_once(0, 0, 0, 0, DEFAULT_HEADROOM_PCT);
     }
 }
 
@@ -324,9 +329,21 @@ unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *m
 
 // ---- Exported C ABI. The layouts are in types.rs. ----
 
+/// Phase 1 API. heap_max of 0 selects the default 256 MiB; heap_min of 0
+/// selects 8 MiB (the collection trigger floor). start_low and start_high are
+/// the first clearing's two guesses in bytes (0 selects 1 MiB and 4 MiB), and
+/// headroom_pct is the percent added to the measured live size (manifest
+/// [tidepool]). The first trigger is the midpoint of the guesses plus headroom.
+/// Call before any allocation. A later call is ignored.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelp_gc_init(heap_min: usize, heap_max: usize) {
-    init_once(heap_min, heap_max);
+pub unsafe extern "C" fn kelp_gc_init(
+    heap_min: usize,
+    heap_max: usize,
+    start_low: usize,
+    start_high: usize,
+    headroom_pct: usize,
+) {
+    init_once(heap_min, heap_max, start_low, start_high, headroom_pct);
 }
 
 #[unsafe(no_mangle)]

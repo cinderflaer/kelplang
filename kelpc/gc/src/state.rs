@@ -20,6 +20,11 @@ pub const MAX_THREADS: usize = 256;
 pub const ROOT_CHUNK: usize = 1024;
 pub const DEFAULT_HEAP_MAX: usize = 256 << 20;
 pub const DEFAULT_HEAP_MIN: usize = 8 << 20;
+/// The first clearing's two start guesses and the headroom percent, when the
+/// manifest names none (`[tidepool]`, design section 4 and D2).
+pub const DEFAULT_START_LOW: usize = 1 << 20;
+pub const DEFAULT_START_HIGH: usize = 4 << 20;
+pub const DEFAULT_HEADROOM_PCT: usize = 20;
 /// Default time a mutator may take to reach a safepoint before the collector
 /// gives up and names it.
 pub const DEFAULT_STOP_TIMEOUT_MS: usize = 10_000;
@@ -57,6 +62,11 @@ pub struct State {
     pub epoch: usize,       // 0 or 1; a header is live when its mark bit equals this
     pub bytes_since: usize, // bytes allocated since the last cycle
     pub trigger: usize,
+    /// The two latest measured live sizes, `live_prev` the older one.
+    pub live_prev: usize,
+    pub live_last: usize,
+    /// `headroom_pct` from `[tidepool]`: the percent added to the live size.
+    pub headroom_pct: usize,
     pub live: usize,        // bytes marked in the current cycle
     pub used_blocks: usize,
     /// First pool block index never handed out (high-water index). Blocks at or
