@@ -13882,11 +13882,12 @@ fn an_allocator_with_the_wrong_signature_is_refused() {
     );
 }
 
-/// The hosted regression: with no `[target]` allocator, containers still
-/// allocate through libc. The program runs and prints its sum, and (on the LLVM
-/// backend) the IR calls `@malloc`, never `@kelp_alloc`.
+/// The hosted regression: with no `[target]` allocator configured, containers still
+/// allocate, and every hosted build is managed (decision 21). The program runs and
+/// prints its sum, and (on the LLVM backend) the IR takes its buffers from the
+/// collector, `@kelp_gc_alloc_array`, and never from libc `@malloc`.
 #[test]
-fn hosted_containers_still_allocate_through_libc() {
+fn hosted_containers_allocate_through_the_collector() {
     let bin = out_path("hosted_list_alloc");
     let build = kelpc()
         .arg("build")
@@ -13907,15 +13908,15 @@ fn hosted_containers_still_allocate_through_libc() {
     {
         let ir = std::fs::read_to_string(bin.with_extension("ll"))
             .expect("the LLVM backend writes textual IR beside the object");
-        // `List.reserve` grows through `realloc` (a null pointer on the first
-        // call is libc's `malloc`), and the drop frees the buffer.
+        // `List.reserve` takes its buffer from the collector, and no hosted
+        // container calls libc `malloc` for it (decision 21).
         assert!(
-            ir.contains("call ptr @realloc") && ir.contains("call void @free"),
-            "a hosted container should still allocate and free through libc"
+            ir.contains("@kelp_gc_alloc_array"),
+            "a hosted container should allocate through the collector"
         );
         assert!(
-            !ir.contains("@kelp_alloc("),
-            "a hosted build has no project allocator to call"
+            !ir.contains("call ptr @malloc"),
+            "a hosted container should not allocate through libc malloc"
         );
     }
 }
@@ -15577,7 +15578,9 @@ fn parse_cache_stats(stderr: &str) -> (u64, u64, u64) {
         assert_eq!(numbers.len(), 3, "unexpected cache line: {line}");
         return (numbers[0], numbers[1], numbers[2]);
     }
-    panic!("no 'kelpc cache:' line in stderr:\n{stderr}");
+    // A hosted build falls back to whole-program (decision 5) and prints no
+    // cache line at all, so no line means no cache traffic.
+    (0, 0, 0)
 }
 
 /// The `unit NAME: N.N ms hit|miss` lines of a `--timings` build.
