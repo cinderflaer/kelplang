@@ -104,10 +104,53 @@ fn fixture_names() -> Vec<String> {
     names
 }
 
+/// The directory this process's `fs_*` fixture copies and their scratch files
+/// live in. It sits under `scratch_dir()` and is keyed on the process id, so two
+/// runs at once never share it.
+fn fs_run_dir() -> PathBuf {
+    scratch_dir().join(format!("fs_run_{}", std::process::id()))
+}
+
+/// Removes `fs_run_dir()` when the sweep ends, whether it passes or panics.
+struct FsRunDir;
+
+impl Drop for FsRunDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(fs_run_dir());
+    }
+}
+
+/// The source to build for `name`. The `fs_*` fixtures name their scratch paths
+/// as literal `/tmp/kelp_fs_*` text, so their copy is rewritten to point under
+/// `fs_run_dir()`. Every other fixture is built as written.
+fn fixture_source(name: &str) -> PathBuf {
+    let source = fixture_dir().join(format!("{name}.kp"));
+    if !name.starts_with("fs_") {
+        return source;
+    }
+    let scratch = fs_run_dir();
+    let src_dir = scratch.join("src");
+    let files = scratch.join("files");
+    std::fs::create_dir_all(&src_dir)
+        .unwrap_or_else(|e| panic!("failed to create '{}': {e}", src_dir.display()));
+    std::fs::create_dir_all(&files)
+        .unwrap_or_else(|e| panic!("failed to create '{}': {e}", files.display()));
+    let text = std::fs::read_to_string(&source)
+        .unwrap_or_else(|e| panic!("failed to read '{}': {e}", source.display()));
+    let rerouted = text.replace(
+        "/tmp/kelp_fs_",
+        &format!("{}/kelp_fs_", files.display()),
+    );
+    let target = src_dir.join(format!("{name}.kp"));
+    std::fs::write(&target, rerouted)
+        .unwrap_or_else(|e| panic!("failed to write '{}': {e}", target.display()));
+    target
+}
+
 /// Builds one fixture with the default backend (LLVM). The retired variables
 /// are stripped, so an inherited value cannot turn a build into its refusal.
 fn build(name: &str, bin: &Path) -> bool {
-    let source = fixture_dir().join(format!("{name}.kp"));
+    let source = fixture_source(name);
     let mut cmd = Command::new(kelpc_bin());
     cmd.arg("build");
     cmd.env_remove("KELPC_BACKEND");
@@ -935,6 +978,7 @@ fn the_llvm_passdown_and_capability_binaries_are_valgrind_clean() {
     let dir = scratch_dir();
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("failed to create '{}': {e}", dir.display()));
+    let _fs_run = FsRunDir;
 
     let mut checked = Vec::new();
     let mut rejected = Vec::new();
