@@ -18438,7 +18438,18 @@ fn tidepool_key_one_letter_off_is_refused_by_name() {
     assert_project_rejected(
         "tidepoolkeytypo",
         &project("tidepoolkeytypo"),
-        "unknown key 'headrom_pct' in coral.toml's [tidepool] section; its keys are 'headroom_pct', 'start_low_mib' and 'start_high_mib'",
+        "unknown key 'headrom_pct' in coral.toml's [tidepool] section; its keys are 'headroom_pct', 'start_low_mib', 'start_high_mib' and 'trigger_rule'",
+    );
+}
+
+// Tidepool trigger rule: a name no rule has is refused by name, with the names
+// it may take (design section 4, Challenge 2).
+#[test]
+fn tidepool_trigger_rule_unknown_name_is_refused_by_name() {
+    assert_project_rejected(
+        "tidepoolrulename",
+        &project("tidepoolrulename"),
+        "coral.toml's [tidepool] key 'trigger_rule' names no rule 'mean'; its rules are 'two-size', 'last-size' and 'gogc-style'",
     );
 }
 

@@ -61,7 +61,14 @@ pub extern "C" fn rust_eh_personality(
 mod tests;
 
 /// Map the heap region and metadata. Called once, under INIT == 1.
-unsafe fn do_init(heap_min: usize, heap_max: usize, start_low: usize, start_high: usize, headroom_pct: usize) {
+unsafe fn do_init(
+    heap_min: usize,
+    heap_max: usize,
+    start_low: usize,
+    start_high: usize,
+    headroom_pct: usize,
+    trigger_rule: usize,
+) {
     let s = st();
     let max = if heap_max == 0 { DEFAULT_HEAP_MAX } else { heap_max };
     let nblocks = core::cmp::max(4, max.div_ceil(BLOCK));
@@ -85,6 +92,13 @@ unsafe fn do_init(heap_min: usize, heap_max: usize, start_low: usize, start_high
     s.heap_max = region_bytes;
     s.heap_min = if heap_min == 0 { DEFAULT_HEAP_MIN } else { heap_min };
     s.headroom_pct = headroom_pct;
+    s.trigger_rule = match trigger::Rule::from_code(trigger_rule) {
+        Some(rule) => rule.code(),
+        None => {
+            Msg::new().s(b"gc: unknown trigger rule, using two-size").emit_line();
+            trigger::Rule::TwoSize.code()
+        }
+    };
     let low = if start_low == 0 { DEFAULT_START_LOW } else { start_low };
     let high = if start_high == 0 { DEFAULT_START_HIGH } else { start_high };
     // The first clearing is the start guesses' midpoint plus headroom (design
@@ -188,11 +202,18 @@ unsafe fn map(bytes: usize) -> usize {
     p
 }
 
-unsafe fn init_once(heap_min: usize, heap_max: usize, start_low: usize, start_high: usize, headroom_pct: usize) {
+unsafe fn init_once(
+    heap_min: usize,
+    heap_max: usize,
+    start_low: usize,
+    start_high: usize,
+    headroom_pct: usize,
+    trigger_rule: usize,
+) {
     use core::sync::atomic::Ordering::Relaxed;
     match INIT.compare_exchange(0, 1, Acquire, Relaxed) {
         Ok(_) => {
-            do_init(heap_min, heap_max, start_low, start_high, headroom_pct);
+            do_init(heap_min, heap_max, start_low, start_high, headroom_pct, trigger_rule);
             INIT.store(2, Release);
         }
         Err(1) => {
@@ -207,7 +228,7 @@ unsafe fn init_once(heap_min: usize, heap_max: usize, start_low: usize, start_hi
 #[inline]
 unsafe fn ensure_init() {
     if INIT.load(Acquire) != 2 {
-        init_once(0, 0, 0, 0, DEFAULT_HEADROOM_PCT);
+        init_once(0, 0, 0, 0, DEFAULT_HEADROOM_PCT, trigger::Rule::TwoSize.code());
     }
 }
 
@@ -342,8 +363,9 @@ pub unsafe extern "C" fn kelp_gc_init(
     start_low: usize,
     start_high: usize,
     headroom_pct: usize,
+    trigger_rule: usize,
 ) {
-    init_once(heap_min, heap_max, start_low, start_high, headroom_pct);
+    init_once(heap_min, heap_max, start_low, start_high, headroom_pct, trigger_rule);
 }
 
 #[unsafe(no_mangle)]

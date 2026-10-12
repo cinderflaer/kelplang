@@ -178,6 +178,7 @@ pub unsafe fn scan_range_conservative(lo: usize, hi: usize) {
 pub unsafe fn collect_locked() {
     let s = st();
     s.live = 0;
+    s.root_bytes = 0;
     s.mark_len = 0;
     for b in 0..s.pool_hw {
         (*blk(b)).lines = [0; LINES];
@@ -198,8 +199,9 @@ pub unsafe fn collect_locked() {
     s.cycles += 1;
     s.live_prev = s.live_last;
     s.live_last = s.live;
+    let rule = crate::trigger::Rule::from_code(s.trigger_rule).unwrap_or(crate::trigger::Rule::TwoSize);
     s.trigger = core::cmp::min(
-        crate::trigger::next_trigger(s.heap_min, s.live_prev, s.live_last, s.headroom_pct),
+        crate::trigger::next_trigger(rule, s.heap_min, s.live_prev, s.live_last, s.root_bytes, s.headroom_pct),
         s.region_bytes,
     );
     s.bytes_since = 0;

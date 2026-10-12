@@ -385,6 +385,7 @@ pub unsafe fn scan_roots() {
         if !(*t).used || !st().scan_stacks {
             continue;
         }
+        st().root_bytes += (*t).hi.saturating_sub((*t).sp);
         mark::scan_range_conservative((*t).sp, (*t).hi);
         for r in (*t).regs {
             mark::mark_word(r);
@@ -403,6 +404,7 @@ pub unsafe fn scan_roots() {
             let r = rec(i);
             if (*r).used {
                 let d = (*r).layout as *const KelpGcType;
+                st().root_bytes += (*d).size as usize;
                 mark::scan_root_value((*r).base, d);
             }
         }

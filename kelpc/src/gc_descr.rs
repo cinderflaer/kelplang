@@ -296,7 +296,7 @@ pub struct GcTypes<'a> {
     /// `void* kelp_gc_alloc(const kelp_gc_type* t)`.
     pub alloc: (LlvmFunction<'a>, FnType<'a>),
     /// `void kelp_gc_init(size_t heap_min, size_t heap_max, size_t start_low,
-    /// size_t start_high, size_t headroom_pct)`, called once from
+    /// size_t start_high, size_t headroom_pct, size_t trigger_rule)`, called once from
     /// `main` before anything else (paper 3.4).
     pub init: (LlvmFunction<'a>, FnType<'a>),
     /// `void* kelp_gc_alloc_array(const kelp_gc_type* elem, size_t count)`: a
@@ -332,7 +332,7 @@ impl<'a> GcTypes<'a> {
         let alloc = (module.add_function(GC_ALLOC, alloc_ty), alloc_ty);
         let array_ty = ctx.fn_type(ptr, &[ptr, ctx.i64()], false);
         let alloc_array = (module.add_function(GC_ALLOC_ARRAY, array_ty), array_ty);
-        let init_ty = ctx.fn_type(ctx.void(), &[ctx.i64(), ctx.i64(), ctx.i64(), ctx.i64(), ctx.i64()], false);
+        let init_ty = ctx.fn_type(ctx.void(), &[ctx.i64(), ctx.i64(), ctx.i64(), ctx.i64(), ctx.i64(), ctx.i64()], false);
         let init = (module.add_function(GC_INIT, init_ty), init_ty);
         let poll_ty = ctx.fn_type(ctx.void(), &[], false);
         let safepoint = (module.add_function(GC_SAFEPOINT, poll_ty), poll_ty);
@@ -554,7 +554,10 @@ mod tests {
             .target()
             .has_shared_pool()
             .then(|| codegen_llvm::HeapLimits::from_target(loaded.project.target()));
-        let out = std::env::temp_dir().join(format!("kelpc-gc-project-{}", std::process::id()));
+        // One directory per project: the tests run in parallel threads of one
+        // process, so a shared name would let one test read another's IR.
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let out = std::env::temp_dir().join(format!("kelpc-gc-project-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
         codegen_llvm::compile_ir(
             &typed,
@@ -715,7 +718,7 @@ mod tests {
     fn managed_project_initialises_the_collector_to_its_heap_max() {
         let ir = lower_project(&project("heap_max_64")).expect("managed lowering of heap_max_64");
         assert!(
-            ir.contains("call void @kelp_gc_init(i64 8388608, i64 67108864, i64 1048576, i64 4194304, i64 20)"),
+            ir.contains("call void @kelp_gc_init(i64 8388608, i64 67108864, i64 1048576, i64 4194304, i64 20, i64 0)"),
             "{ir}"
         );
         assert!(!ir.contains("i64 268435456,"), "the default cap must not be emitted: {ir}");
@@ -727,7 +730,18 @@ mod tests {
     fn tidepool_section_reaches_the_collector_init() {
         let ir = lower_project(&project("tidepool_start")).expect("managed lowering of tidepool_start");
         assert!(
-            ir.contains("call void @kelp_gc_init(i64 8388608, i64 67108864, i64 2097152, i64 8388608, i64 50)"),
+            ir.contains("call void @kelp_gc_init(i64 8388608, i64 67108864, i64 2097152, i64 8388608, i64 50, i64 0)"),
+            "{ir}"
+        );
+    }
+
+    /// `trigger_rule = "last-size"` reaches `kelp_gc_init` as its code, 1. The
+    /// default (no key) is 0, as the tests above show.
+    #[test]
+    fn tidepool_trigger_rule_reaches_the_collector_init() {
+        let ir = lower_project(&project("tidepool_rule")).expect("managed lowering of tidepool_rule");
+        assert!(
+            ir.contains("call void @kelp_gc_init(i64 8388608, i64 67108864, i64 1048576, i64 4194304, i64 50, i64 1)"),
             "{ir}"
         );
     }

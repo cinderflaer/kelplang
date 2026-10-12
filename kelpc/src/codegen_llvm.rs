@@ -501,13 +501,15 @@ pub fn compile(
 }
 
 /// The heap settings `kelp_gc_init` receives: the cap, the two start guesses
-/// of the first clearing and the headroom percent. Bytes, except the percent.
+/// of the first clearing, the headroom percent and the trigger rule's code.
+/// Bytes, except the percent and the code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeapLimits {
     pub max: u64,
     pub start_low: u64,
     pub start_high: u64,
     pub headroom_pct: u64,
+    pub trigger_rule: u64,
 }
 
 impl HeapLimits {
@@ -520,6 +522,7 @@ impl HeapLimits {
             start_low: tidepool.start_low_mib_or_default() << 20,
             start_high: tidepool.start_high_mib_or_default() << 20,
             headroom_pct: tidepool.headroom_pct_or_default(),
+            trigger_rule: tidepool.trigger_rule_or_default().code(),
         }
     }
 }
@@ -4180,7 +4183,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let low = self.g.ctx.const_int(self.g.ctx.i64(), limits.start_low, false);
                 let high = self.g.ctx.const_int(self.g.ctx.i64(), limits.start_high, false);
                 let headroom = self.g.ctx.const_int(self.g.ctx.i64(), limits.headroom_pct, false);
-                self.g.builder.build_call(init, ity, &[min, max, low, high, headroom], "");
+                let rule = self.g.ctx.const_int(self.g.ctx.i64(), limits.trigger_rule, false);
+                self.g.builder.build_call(init, ity, &[min, max, low, high, headroom, rule], "");
                 let (attach, aty) = gc.thread_attach;
                 self.g.builder.build_call(attach, aty, &[], "");
             }

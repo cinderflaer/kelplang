@@ -2297,6 +2297,44 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
     Ok(manifest)
 }
 
+/// `trigger_rule` in `[tidepool]` (design section 4, Challenge 2): the live
+/// size that sets each later trigger. Its ABI code is what `kelp_gc_init`
+/// receives, and the codes match `kelp_gc::trigger::Rule`.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerRule {
+    /// The larger of the last two measured live sizes (the default, D4).
+    #[default]
+    TwoSize,
+    /// The last measured live size alone.
+    LastSize,
+    /// The last measured live size plus the stack and global bytes scanned with it.
+    GogcStyle,
+}
+
+impl TriggerRule {
+    /// The names a manifest may give, in the order the error message lists them.
+    pub const NAMES: [&'static str; 3] = ["two-size", "last-size", "gogc-style"];
+
+    /// The rule a manifest name selects, or `None` for any other name.
+    pub fn from_name(name: &str) -> Option<TriggerRule> {
+        match name {
+            "two-size" => Some(TriggerRule::TwoSize),
+            "last-size" => Some(TriggerRule::LastSize),
+            "gogc-style" => Some(TriggerRule::GogcStyle),
+            _ => None,
+        }
+    }
+
+    /// The ABI code `kelp_gc_init` receives for this rule.
+    pub fn code(self) -> u64 {
+        match self {
+            TriggerRule::TwoSize => 0,
+            TriggerRule::LastSize => 1,
+            TriggerRule::GogcStyle => 2,
+        }
+    }
+}
+
 /// `[tidepool]` (Tidepool step 2, design section 14.2 and 14.4): the first
 /// clearing's two start guesses and the headroom percent. Each is a bare
 /// whole number of MiB (or percent). `None` takes the default.
@@ -2308,6 +2346,8 @@ pub struct TidepoolDecl {
     pub start_low_mib: Option<u64>,
     /// `start_high_mib`, at least 1 and no more than `heap_max`.
     pub start_high_mib: Option<u64>,
+    /// `trigger_rule`, a double-quoted name. `None` takes the two-size default.
+    pub trigger_rule: Option<TriggerRule>,
 }
 
 impl TidepoolDecl {
@@ -2325,6 +2365,46 @@ impl TidepoolDecl {
     pub fn headroom_pct_or_default(&self) -> u64 {
         self.headroom_pct.unwrap_or(crate::managed::DEFAULT_HEADROOM_PCT)
     }
+
+    /// `trigger_rule`, or the two-size default when the section names none.
+    pub fn trigger_rule_or_default(&self) -> TriggerRule {
+        self.trigger_rule.unwrap_or_default()
+    }
+}
+
+/// Parse `trigger_rule = "<name>"` in `[tidepool]`. The value is a
+/// double-quoted name, one of `TriggerRule::NAMES`; any other name is refused
+/// by name, with the names it may take.
+fn parse_trigger_rule_line(manifest: &mut Manifest, value: &str, at: Span) -> Result<(), Diagnostic> {
+    let key = "trigger_rule";
+    if manifest.tidepool.trigger_rule.is_some() {
+        return Err(Diagnostic::new(
+            format!("'{key}' appears more than once in {MANIFEST_NAME}'s [tidepool] section"),
+            at,
+            "",
+        ));
+    }
+    let Some(name) = value.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+        return Err(Diagnostic::new(
+            format!("{MANIFEST_NAME}'s [tidepool] key '{key}' must be a double-quoted rule name, found '{value}'"),
+            at,
+            "",
+        ));
+    };
+    let Some(rule) = TriggerRule::from_name(name) else {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME}'s [tidepool] key '{key}' names no rule '{name}'; its rules are '{}', '{}' and '{}'",
+                TriggerRule::NAMES[0],
+                TriggerRule::NAMES[1],
+                TriggerRule::NAMES[2]
+            ),
+            at,
+            "",
+        ));
+    };
+    manifest.tidepool.trigger_rule = Some(rule);
+    Ok(())
 }
 
 /// Parse one `key = <whole number>` line of `[tidepool]`. Every key takes a
@@ -2347,6 +2427,9 @@ fn parse_tidepool_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<
             "",
         ));
     }
+    if key == "trigger_rule" {
+        return parse_trigger_rule_line(manifest, value, at);
+    }
     let (slot, min, max) = match key {
         "headroom_pct" => (&mut manifest.tidepool.headroom_pct, 0u64, 1000u64),
         "start_low_mib" => (&mut manifest.tidepool.start_low_mib, 1, u64::MAX),
@@ -2354,7 +2437,7 @@ fn parse_tidepool_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<
         other => {
             return Err(Diagnostic::new(
                 format!(
-                    "unknown key '{other}' in {MANIFEST_NAME}'s [tidepool] section; its keys are 'headroom_pct', 'start_low_mib' and 'start_high_mib'"
+                    "unknown key '{other}' in {MANIFEST_NAME}'s [tidepool] section; its keys are 'headroom_pct', 'start_low_mib', 'start_high_mib' and 'trigger_rule'"
                 ),
                 at,
                 "",

@@ -1,0 +1,11 @@
+name = "tidepoolrule"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[target]
+mode = "managed"
+heap_max = 64
+
+[tidepool]
+headroom_pct = 50
+trigger_rule = "last-size"

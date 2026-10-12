@@ -43,7 +43,7 @@ fn collections() -> u64 {
 
 /// T51: a descriptor that is noscan and has a pointer slot must be refused.
 pub(super) unsafe fn child_noscan_with_pointers() {
-    kelp_gc_init(0, 0, 0, 0, 20);
+    kelp_gc_init(0, 0, 0, 0, 20, 0);
     kelp_gc_thread_attach();
     black_box(kelp_gc_alloc(&NOSCAN_PTR));
 }
@@ -65,7 +65,7 @@ static WIDE: KelpGcType = KelpGcType {
 /// the product overflows usize. A u32 count and a u32 size cannot overflow
 /// 64 bits, so the count must be a u64.
 pub(super) unsafe fn child_array_overflows() {
-    kelp_gc_init(0, 0, 0, 0, 20);
+    kelp_gc_init(0, 0, 0, 0, 20, 0);
     kelp_gc_thread_attach();
     black_box(kelp_gc_alloc_array(&WIDE, 1usize << 63));
 }
@@ -76,7 +76,7 @@ unsafe extern "C" fn foreign_alloc() -> *mut u8 {
 
 /// T70: a C-ABI callback that allocates, called on a thread Kelp did not start.
 pub(super) unsafe fn child_foreign_thread() {
-    kelp_gc_init(0, 0, 0, 0, 20);
+    kelp_gc_init(0, 0, 0, 0, 20, 0);
     kelp_gc_thread_attach();
     let f: unsafe extern "C" fn() -> *mut u8 = foreign_alloc;
     let addr = std::thread::spawn(move || unsafe { f() as usize })

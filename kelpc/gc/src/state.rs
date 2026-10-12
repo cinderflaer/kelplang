@@ -67,6 +67,11 @@ pub struct State {
     pub live_last: usize,
     /// `headroom_pct` from `[tidepool]`: the percent added to the live size.
     pub headroom_pct: usize,
+    /// The trigger rule from `[tidepool]`, as its ABI code (trigger::Rule).
+    pub trigger_rule: usize,
+    /// Stack and global bytes the current cycle scanned as roots. The
+    /// GOGC-style rule adds them to the live size.
+    pub root_bytes: usize,
     pub live: usize,        // bytes marked in the current cycle
     pub used_blocks: usize,
     /// First pool block index never handed out (high-water index). Blocks at or

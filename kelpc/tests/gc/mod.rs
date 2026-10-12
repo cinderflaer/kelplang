@@ -182,7 +182,7 @@ fn serial() -> MutexGuard<'static, ()> {
 /// test lock. The stress setting comes from the environment, so the whole
 /// suite can run under KELP_GC_STRESS; the verifier is always on.
 unsafe fn reset() {
-    kelp_gc_init(0, 0, 0, 0, 20);
+    kelp_gc_init(0, 0, 0, 0, 20, 0);
     let s = st();
     core::ptr::write_bytes(s.blocks as *mut u8, 0, s.nblocks * size_of::<BlockMeta>());
     core::ptr::write_bytes(s.types as *mut u8, 0, TYPE_TABLE_IDS * 8);
@@ -251,22 +251,22 @@ fn child_entry() {
     unsafe {
         match mode.as_str() {
             "cap" => {
-                kelp_gc_init(0, 0, 0, 0, 20);
+                kelp_gc_init(0, 0, 0, 0, 20, 0);
                 kelp_gc_thread_attach();
                 fill_until_full();
             }
             "hook" => {
-                kelp_gc_init(0, 8 << 20, 0, 0, 20);
+                kelp_gc_init(0, 8 << 20, 0, 0, 20, 0);
                 kelp_gc_set_panic_hook(Some(hook_exit_3));
                 kelp_gc_thread_attach();
                 fill_until_full();
             }
             "unattached" => {
-                kelp_gc_init(0, 0, 0, 0, 20);
+                kelp_gc_init(0, 0, 0, 0, 20, 0);
                 black_box(kelp_gc_alloc(&NODE));
             }
             "type_over_limit" => {
-                kelp_gc_init(0, 0, 0, 0, 20);
+                kelp_gc_init(0, 0, 0, 0, 20, 0);
                 kelp_gc_thread_attach();
                 black_box(kelp_gc_alloc(&OVER_ID));
             }
@@ -275,7 +275,7 @@ fn child_entry() {
             "root_full" => child_root_full(),
             "dup_id" => child_dup_id(),
             "array_too_large" => {
-                kelp_gc_init(0, 0, 0, 0, 20);
+                kelp_gc_init(0, 0, 0, 0, 20, 0);
                 kelp_gc_thread_attach();
                 black_box(kelp_gc_alloc_array(&NODE, u32::MAX as usize + 1));
             }
@@ -297,7 +297,7 @@ fn child_entry() {
 /// are at or above it. Exit 0 when that holds, 5 when it does not.
 unsafe fn child_first_clear() {
     const TRIGGER: usize = 1_887_436;
-    kelp_gc_init(0, 0, 1 << 20, 2 << 20, 20);
+    kelp_gc_init(0, 0, 1 << 20, 2 << 20, 20, 0);
     kelp_gc_thread_attach();
     let mut prev = 0usize;
     for _ in 0..10_000_000u32 {
@@ -336,7 +336,7 @@ static CHILD_READY: AtomicBool = AtomicBool::new(false);
 /// A worker attaches and spins without polling. The collector must give up
 /// after the timeout and name the thread.
 unsafe fn child_stop_timeout() {
-    kelp_gc_init(0, 0, 0, 0, 20);
+    kelp_gc_init(0, 0, 0, 0, 20, 0);
     kelp_gc_thread_attach();
     std::thread::spawn(|| unsafe {
         kelp_gc_thread_attach();
@@ -353,7 +353,7 @@ unsafe fn child_stop_timeout() {
 
 /// A survivor whose mark bit is set after its cycle must fail the verifier.
 unsafe fn child_verify_mark() {
-    kelp_gc_init(0, 0, 0, 0, 20);
+    kelp_gc_init(0, 0, 0, 0, 20, 0);
     kelp_gc_thread_attach();
     root(ROOT_SLOT.0.get() as *mut u8, &ROOT_PTR);
     let p = kelp_gc_alloc(&LINK) as usize;
@@ -1119,7 +1119,7 @@ unsafe fn churn_run(threads: usize, per: usize) -> (f64, usize, usize) {
 fn measure_heap_lock_contention_four_threads() {
     let _g = serial();
     unsafe {
-        kelp_gc_init(0, 0, 0, 0, 20);
+        kelp_gc_init(0, 0, 0, 0, 20, 0);
         let (t1, a1, c1) = churn_run(1, 1_000_000);
         let (t4, a4, c4) = churn_run(4, 1_000_000);
         let rate1 = a1 as f64 / t1 / 1e6;
@@ -1478,7 +1478,7 @@ unsafe extern "C" {
 const RLIMIT_AS: i32 = 9;
 
 unsafe fn child_root_full() {
-    kelp_gc_init(0, 0, 0, 0, 20);
+    kelp_gc_init(0, 0, 0, 0, 20, 0);
     kelp_gc_thread_attach();
     // The first registration maps the first table (ROOT_CHUNK slots); the table
     // then cannot grow, because the limit leaves less room than its next size.
@@ -1518,7 +1518,7 @@ fn t52_two_descriptors_for_one_id_are_fatal() {
 }
 
 unsafe fn child_dup_id() {
-    kelp_gc_init(0, 0, 0, 0, 20);
+    kelp_gc_init(0, 0, 0, 0, 20, 0);
     kelp_gc_thread_attach();
     // NODE is registered by the first two allocations, so the duplicate meets
     // the registered (fast) path as well as the first registration.
@@ -1677,7 +1677,7 @@ mod bench_clear;
 //
 //   pub fn first_trigger(heap_min: usize, start_low: usize, start_high: usize, headroom_pct: usize) -> usize
 //       // midpoint(start_low, start_high) * (100 + headroom_pct) / 100; heap_min is not used
-//   pub fn next_trigger(heap_min: usize, live_earlier: usize, live_latest: usize, headroom_pct: usize) -> usize
+//   pub fn next_trigger(rule: Rule, heap_min: usize, live_earlier: usize, live_latest: usize, extra: usize, headroom_pct: usize) -> usize
 //       // max(heap_min, max(live_earlier, live_latest) * (100 + headroom_pct) / 100)
 //
 // Integer division rounds down. The spec gives 1.8 MiB for case (c), which is
@@ -1688,7 +1688,7 @@ mod bench_clear;
 // RED (job 59c3aa60): the four T40 tests below do not compile (E0432, unresolved import
 // `crate::trigger`), so the kelp_gc test target fails to build.
 mod trigger_t40 {
-    use crate::trigger::{first_trigger, next_trigger};
+    use crate::trigger::{first_trigger, next_trigger, Rule};
 
     const MIB: usize = 1 << 20;
 
@@ -1712,11 +1712,11 @@ mod trigger_t40 {
     #[test]
     fn t40d_next_trigger_uses_the_larger_of_the_two_latest_live_sizes() {
         // A (earlier) = 10 MiB, B (latest) = 20 MiB: max(8, 20 * 1.2) = 24 MiB.
-        assert_eq!(next_trigger(8 * MIB, 10 * MIB, 20 * MIB, 20), 24 * MIB);
+        assert_eq!(next_trigger(Rule::TwoSize, 8 * MIB, 10 * MIB, 20 * MIB, 0, 20), 24 * MIB);
         // A = 30 MiB, B = 20 MiB: max(8, 30 * 1.2) = 36 MiB.
-        assert_eq!(next_trigger(8 * MIB, 30 * MIB, 20 * MIB, 20), 36 * MIB);
+        assert_eq!(next_trigger(Rule::TwoSize, 8 * MIB, 30 * MIB, 20 * MIB, 0, 20), 36 * MIB);
         // A = 1 MiB, B = 2 MiB: heap_min is the floor, 8 MiB.
-        assert_eq!(next_trigger(8 * MIB, MIB, 2 * MIB, 20), 8 * MIB);
+        assert_eq!(next_trigger(Rule::TwoSize, 8 * MIB, MIB, 2 * MIB, 0, 20), 8 * MIB);
     }
 }
 
