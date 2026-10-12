@@ -2,5 +2,3 @@ name = "t20_spawn_env_and_arg_rooted"
 version = "0.1.0"
 entry = "src/main.kp"
 
-[target]
-mode = "managed"

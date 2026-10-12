@@ -2,5 +2,3 @@ name = "t21_spawn_result_rooted_until_join"
 version = "0.1.0"
 entry = "src/main.kp"
 
-[target]
-mode = "managed"
