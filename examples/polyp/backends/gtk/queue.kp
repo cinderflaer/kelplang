@@ -1,24 +1,148 @@
-// The message queue, bound. `polyp_queue.h` holds the whole thing: three rings
-// of ints (plus the edit ring's text) and static inline functions, compiled
-// into whichever translation unit includes the header, so `library` has
-// nothing to link and names libc only because a section must name something.
+// The message queue. A GTK callback cannot hold the loop's state, so it posts a
+// small integer here and the loop, which owns the state, turns the integer back
+// into a message. Both ends run on the thread that owns the GTK main context
+// (`g_signal_connect` invokes the handler from `g_main_context_iteration`, which
+// the loop calls), so there is no locking, and the counters below are the whole
+// of the state.
 //
-// `polyp_poll` answers -1 when the queue is empty, which is why its Kelp return
-// type is `i32` rather than the `usize` an index would be.
-pub extern fun polyp_post(id: i32)
+// The rings are fixed size on purpose: they bound what a burst of clicks can
+// buffer, and the head/count pair tells the full and empty cases apart without a
+// third sentinel. A post into a full ring is dropped, never overwriting a pending
+// one.
+//
+// The state is `static mut`, so the consumer lists this module under
+// `[unsafe] modules` in its coral.toml. Every access is inside an `unsafe` block.
+impl "std/str"
 
-pub extern fun polyp_poll().return: i32
+const CAPACITY: usize = 64
+const EDIT_CAPACITY: usize = 8
+const EDIT_TEXT_MAX: usize = 256
+const FOCUS_CAPACITY: usize = 8
 
-// The edit channel: a program with no user asks the loop to set an entry's
-// text, which fires the entry's real `changed` signal. `polyp_poll_edit`
-// answers the entry's position in the current tree, or -1 when none is
-// pending, and `polyp_poll_edit_text` is the text of the edit just polled.
-pub extern fun polyp_post_edit(index: i32, text: str)
-pub extern fun polyp_poll_edit().return: i32
-pub extern fun polyp_poll_edit_text().return: str
+static mut IDS: [i32; 64] = [0; 64]
+static mut HEAD: usize = 0
+static mut COUNT: usize = 0
 
-// The focus channel: the same idea for `gtk_widget_grab_focus`, so a smoke run
-// can put the focus somewhere and then watch a patch keep it there. It answers
-// the entry's position in the current tree, or -1 when none is pending.
-pub extern fun polyp_post_focus(index: i32)
-pub extern fun polyp_poll_focus().return: i32
+// The edit channel: a program with no user asks the loop to set an entry's text,
+// which fires the entry's real `changed` signal. The text is copied in, for the
+// same reason as the ids: the loop owns the widgets, the scheduler does not.
+static mut EDIT_TEXT: [u8; 2048] = [0; 2048]
+static mut EDIT_LEN: [usize; 8] = [0; 8]
+static mut EDIT_ENTRY: [i32; 8] = [0; 8]
+static mut EDIT_HEAD: usize = 0
+static mut EDIT_COUNT: usize = 0
+static mut EDIT_LAST: usize = 0
+static mut EDIT_LAST_OK: bool = false
+
+// The focus channel: a program with no user asks the loop to grab the focus for
+// an entry, so a smoke run can prove a patch keeps it.
+static mut FOCUS_INDEX: [i32; 8] = [0; 8]
+static mut FOCUS_HEAD: usize = 0
+static mut FOCUS_COUNT: usize = 0
+
+pub fun polyp_post(id: i32) {
+    unsafe {
+        if COUNT < CAPACITY {
+            IDS.set(i = (HEAD + COUNT) % CAPACITY, v = id)
+            COUNT = COUNT + 1
+        }
+    }
+}
+
+// The oldest id, or -1 when the queue is empty. -1 is the empty marker rather
+// than one of the loop's own ids, so `Polyp.QUIT_ID` is -2: button ids are tree
+// positions and are never negative.
+pub fun polyp_poll().return: i32 {
+    var out: i32 = -1
+    unsafe {
+        if COUNT > 0 {
+            out = IDS.get(i = HEAD)
+            HEAD = (HEAD + 1) % CAPACITY
+            COUNT = COUNT - 1
+        }
+    }
+    return out
+}
+
+// Copies `text` into the edit ring. The copy stops at 255 bytes, and backs off
+// to the start of a character when the cut would split one, so the text the
+// loop reads back is always valid UTF-8.
+pub fun polyp_post_edit(index: i32, text: str) {
+    unsafe {
+        if EDIT_COUNT < EDIT_CAPACITY {
+            val slot: usize = (EDIT_HEAD + EDIT_COUNT) % EDIT_CAPACITY
+            val total: usize = str.len(text)
+            var n: usize = total
+            if n > EDIT_TEXT_MAX - 1 {
+                n = EDIT_TEXT_MAX - 1
+                while n > 0 && str.byte(text, n) >= 128 && str.byte(text, n) < 192 {
+                    n = n - 1
+                }
+            }
+            var i: usize = 0
+            while i < n {
+                EDIT_TEXT.set(i = slot * EDIT_TEXT_MAX + i, v = str.byte(text, i))
+                i = i + 1
+            }
+            EDIT_LEN.set(i = slot, v = n)
+            EDIT_ENTRY.set(i = slot, v = index)
+            EDIT_COUNT = EDIT_COUNT + 1
+        }
+    }
+}
+
+// The entry index of the oldest pending edit, or -1 when none is pending. The
+// text of the edit just polled is read with `polyp_poll_edit_text`.
+pub fun polyp_poll_edit().return: i32 {
+    var out: i32 = -1
+    unsafe {
+        if EDIT_COUNT == 0 {
+            EDIT_LAST_OK = false
+        } else {
+            EDIT_LAST = EDIT_HEAD
+            EDIT_LAST_OK = true
+            out = EDIT_ENTRY.get(i = EDIT_LAST)
+            EDIT_HEAD = (EDIT_HEAD + 1) % EDIT_CAPACITY
+            EDIT_COUNT = EDIT_COUNT - 1
+        }
+    }
+    return out
+}
+
+// The text of the edit just polled, as a copy: the ring slot is reused by the
+// next post, so the loop gets its own `String`. Empty when no edit was polled.
+pub fun polyp_poll_edit_text().return: String {
+    var bytes: Bytes = Bytes.empty()
+    unsafe {
+        if EDIT_LAST_OK {
+            var i: usize = 0
+            while i < EDIT_LEN.get(i = EDIT_LAST) {
+                bytes.push(EDIT_TEXT.get(i = EDIT_LAST * EDIT_TEXT_MAX + i))
+                i = i + 1
+            }
+        }
+    }
+    return String.from_str(bytes.as_str())
+}
+
+pub fun polyp_post_focus(index: i32) {
+    unsafe {
+        if FOCUS_COUNT < FOCUS_CAPACITY {
+            FOCUS_INDEX.set(i = (FOCUS_HEAD + FOCUS_COUNT) % FOCUS_CAPACITY, v = index)
+            FOCUS_COUNT = FOCUS_COUNT + 1
+        }
+    }
+}
+
+// The entry index of the oldest pending focus request, or -1 when none is.
+pub fun polyp_poll_focus().return: i32 {
+    var out: i32 = -1
+    unsafe {
+        if FOCUS_COUNT > 0 {
+            out = FOCUS_INDEX.get(i = FOCUS_HEAD)
+            FOCUS_HEAD = (FOCUS_HEAD + 1) % FOCUS_CAPACITY
+            FOCUS_COUNT = FOCUS_COUNT - 1
+        }
+    }
+    return out
+}

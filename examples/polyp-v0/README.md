@@ -67,8 +67,8 @@ a taste in UI frameworks:
 - So a callback cannot hold the state. Polyp does not pretend otherwise: **no
   callback captures the state at all.**
 - Instead, a button's handler is a closure whose entire environment is one small
-  integer. It posts that integer to a fixed-size C queue
-  (`include/polyp_queue.h`), and the loop, which *does* own the state, reads the
+  integer. It posts that integer to a fixed-size queue
+  (`queue.kp`), and the loop, which *does* own the state, reads the
   integer, finds the `Msg` stored at that position in the tree it built, calls
   `update`, re-runs `view` and rebuilds the widgets.
 
@@ -164,20 +164,18 @@ packaging limitation, not a design choice:
    header = "gtk/gtk.h"
    pkg_config = "gtk4"
    symbols = ["gtk_init", "gtk_window_new", "gtk_window_set_title", "gtk_window_set_default_size", "gtk_window_set_child", "gtk_window_present", "gtk_box_new", "gtk_box_append", "gtk_label_new", "gtk_button_new_with_label", "g_object_unref", "g_main_context_iteration", "g_timeout_add_full", "connect=g_signal_connect_data", "connect_ret=g_signal_connect_data"]
-
-   [extern."deps/polyp/queue"]
-   domain = "ui"
-   library = "c"
-   header = "polyp_queue.h"
-   include_dirs = ["src/deps/polyp/include"]
-   symbols = ["polyp_post", "polyp_poll"]
    ```
 
-   `header` is one key per section, which is why the queue is its own module:
-   `polyp_queue.h` is a header of the library and `gtk/gtk.h` is GTK's, and a
-   section names one.
+   The queue is plain Kelp (`queue.kp`), so it has no section. Its ring is
+   `static mut`, which the consumer grants in a `[unsafe]` section naming the
+   queue module:
 
-3. **Grant the domain.** Every GTK and queue call is in the `ui` domain
+   ```toml
+   [unsafe]
+   modules = ["deps/polyp/queue"]
+   ```
+
+3. **Grant the domain.** Every GTK call is in the `ui` domain
    (`plan/ffi-display-domain.md`; the only accepted grant is the wildcard), so
    the consumer's import of the library delegates it:
 

@@ -16,9 +16,7 @@ header = "gtk/gtk.h"
 pkg_config = "gtk4"
 symbols = ["gtk_init", "gtk_window_new", "gtk_window_set_title", "gtk_window_set_default_size", "gtk_window_set_child", "gtk_window_present", "gtk_box_new", "gtk_box_append", "gtk_label_new", "gtk_button_new_with_label", "g_object_unref", "g_main_context_iteration", "g_timeout_add_full", "connect=g_signal_connect_data", "connect_ret=g_signal_connect_data"]
 
-[extern."deps/polyp/queue"]
-domain = "ui"
-library = "c"
-header = "polyp_queue.h"
-include_dirs = ["src/deps/polyp/include"]
-symbols = ["polyp_post", "polyp_poll"]
+# The queue is pure Kelp now (no C header). Its ring is `static mut`, so the
+# queue module is the one module that takes the `unsafe` grant.
+[unsafe]
+modules = ["deps/polyp/queue"]

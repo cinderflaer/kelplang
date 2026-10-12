@@ -619,7 +619,7 @@ impl core.Backend for GtkBackend {
     fun mut Self.poll().return: core.Event {
         val edit = queue.polyp_poll_edit()
         if edit >= 0 {
-            return core.Event.Edit(index = edit, text = String.from_str(queue.polyp_poll_edit_text()))
+            return core.Event.Edit(index = edit, text = queue.polyp_poll_edit_text())
         }
         val focus = queue.polyp_poll_focus()
         if focus >= 0 {
