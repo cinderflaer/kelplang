@@ -1,17 +1,17 @@
-# speed — working speed of the same four workloads, in four languages
+# speed: working speed of the same four workloads, in three languages
 
     ./run.sh          # compiles, runs three trials of each, prints the table
 
 ## Method
 
 Four CPU-bound workloads, the **same algorithm and the same op counts** in
-Rust, Kelp, C++ and Python. Every program times its own workloads with a
+Rust, Kelp and Python. Every program times its own workloads with a
 monotonic clock and prints one line per workload:
 
     RESULT <workload> <ops> <work_ns> <checksum>
 
 The harness compiles each program, runs it three times, keeps the *fastest*
-measurement per workload, verifies that all four languages produced the same
+measurement per workload, verifies that all three languages produced the same
 checksum for each workload, and reports ns/op. Equal checksums are what make
 the timings comparable: they prove the four programs did the same work.
 
@@ -26,20 +26,17 @@ the timings comparable: they prove the four programs did the same work.
 
 ## Caveats worth knowing
 
-- **Kelp compiles to C** and shells out to `cc -O2`, so Kelp and C++ share a
-  backend and a single C++ file's `-O2` flags. Kelp being level with C++ is the
-  expected result, not a surprise. Kelp's own front end adds nothing (no bounds
-  checks, no hidden allocation, no slow ABI) on these workloads: what the numbers
-  can show is that.
-- **Rust is built with `rustc -O`** (no cargo, no LTO), C++ with
-  `clang++ -O2`, Kelp with `kelpc build` (its whole pipeline plus the `cc` call).
+- **Kelp runs on the LLVM backend** (`kelpc build -O2`), and the table's
+  `vs Rust` column is each language's ns/op divided by Rust's.
+- **Rust is built with `rustc -O`** (no cargo, no LTO), Kelp with `kelpc build`
+  (its whole pipeline plus the link).
   Python has no compile step: it parses and compiles at import, which is why
   its compile column says n/a and its startup column is ~13 ms.
 - **`collatz` is measured per start value**, not per inner step, so its
   "80 ns/op" is ~100 steps' worth of work. The ns/op column is only
   comparable *within* a row.
 - Checksums are integers on purpose. The float workload's `VALUE` is printed
-  too and agrees across all four to six decimals, which is a stronger check
+  too and agrees across all three to six decimals, which is a stronger check
   than the integer count, but the harness asserts on the integers because FP
   summation order and FMA contraction can differ in the last bits.
 - The compiled languages' measurements are ~0.1–0.4 s per workload; the

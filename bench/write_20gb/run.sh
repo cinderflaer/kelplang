@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Compiles and runs four 20 GiB writers (Rust, Kelp, C++, Python) and reports
+# Compiles and runs three 20 GiB writers (Rust, Kelp, Python) and reports
 # compile time, wall clock, and the phases each program timed for itself.
 #
 # Each program writes a fresh file, syncs it to storage, verifies the size and
-# deletes it, so peak disk usage is one 20 GiB file, not four.
+# deletes it, so peak disk usage is one 20 GiB file, not three.
 #
 # Usage: ./run.sh [target-dir]      (default /mnt/bigdrive)
 set -u
@@ -27,12 +27,10 @@ KELPC="$DIR/../../target/release/kelpc"
 printf '%-7s %12s %12s %12s %12s %12s %14s %10s\n' \
     lang compile_s wall_s work_s flush_s delete_s startup_s MiB/s | tee "$RESULTS"
 
-for lang in rust kelp cpp py; do
+for lang in rust kelp py; do
     case "$lang" in
         rust) src="$DIR/write20gb.rs";  out="$BUILD/write20gb_rust";  path="$TARGET_DIR/kelp_bench_write20gb_rust.bin"
               compile_cmd="rustc -O -o $out $src"; run_cmd="$out $path" ;;
-        cpp)  src="$DIR/write20gb.cpp"; out="$BUILD/write20gb_cpp";   path="$TARGET_DIR/kelp_bench_write20gb_cpp.bin"
-              compile_cmd="clang++ -O2 -o $out $src"; run_cmd="$out $path" ;;
         kelp) src="$DIR/write20gb.kp";   out="$BUILD/write20gb_kelp";     path="$TARGET_DIR/kelp_bench_write20gb_kelp.bin"
               compile_cmd="$KELPC build $src -o $out"; run_cmd="$out" ;;
         py)   src="$DIR/write20gb.py";  out="";                       path="$TARGET_DIR/kelp_bench_write20gb_py.bin"

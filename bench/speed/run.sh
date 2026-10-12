@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Compares the working speed of the same three CPU-bound workloads in Rust, Kelp,
-# C++ and Python.
+# Compares the working speed of the same CPU-bound workloads in Rust, Kelp and
+# Python.
 #
 # Every language runs the *same* algorithm with the *same* op counts, so the
 # checksums have to agree — that is what makes the timings comparable. Each
@@ -46,7 +46,6 @@ compile_one() {
 
 : > "$BUILD/compile.tsv"
 compile_one rust "rustc -O -o $BUILD/speed_rust $DIR/speed.rs" || exit 1
-compile_one cpp  "clang++ -O2 -o $BUILD/speed_cpp $DIR/speed.cpp" || exit 1
 compile_one kelp    "$KELPC build $DIR/speed.kp -o $BUILD/speed_kelp" || exit 1
 compile_one py   "" || exit 1
 
@@ -54,10 +53,9 @@ compile_one py   "" || exit 1
 { s=$(now); python3 -c pass; e=$(now); printf "baseline: python3 -c pass (interpreter startup only) %.1f ms\n\n" "$(( (e - s) / 1000 ))e-3"; } | tee -a "$REPORT"
 
 for trial in $(seq 1 "$TRIALS"); do
-    for lang in rust cpp kelp py; do
+    for lang in rust kelp py; do
         case "$lang" in
             rust) exe="$BUILD/speed_rust" ;;
-            cpp)  exe="$BUILD/speed_cpp" ;;
             kelp) exe="$BUILD/speed_kelp" ;;
             py)   exe="python3 $DIR/speed.py" ;;
         esac
@@ -87,22 +85,22 @@ awk '
     if (!(($2) in wlorder)) { wlorder[$2] = ++nwl; wlnames[nwl] = $2 }
 }
 END {
-    printf "%-9s %14s %14s %12s %10s %10s\n", "workload", "language", "ops", "ns/op", "Mops/s", "vs C++"
+    printf "%-9s %14s %14s %12s %10s %10s\n", "workload", "language", "ops", "ns/op", "Mops/s", "vs Rust"
     printf "%s\n", "------------------------------------------------------------------------------"
     for (w = 1; w <= nwl; w++) {
         wl = wlnames[w]
-        cpp_nsop = 0
-        split("rust kelp cpp py", order, " ")
-        for (i = 1; i <= 4; i++) {
+        base_nsop = 0
+        split("rust kelp py", order, " ")
+        for (i = 1; i <= 3; i++) {
             k = order[i] " " wl
-            if (k in best) { cpp_nsop = best["cpp " wl] / ops["cpp " wl]; break }
+            if (k in best) { base_nsop = best[k] / ops[k]; break }
         }
-        for (i = 1; i <= 4; i++) {
+        for (i = 1; i <= 3; i++) {
             lang = order[i]
             k = lang " " wl
             if (!(k in best)) { continue }
             nsop = best[k] / ops[k]
-            ratio = (cpp_nsop > 0) ? nsop / cpp_nsop : 0
+            ratio = (base_nsop > 0) ? nsop / base_nsop : 0
             printf "%-9s %14s %14d %12.3f %10.1f %9.1fx%s\n", wl, lang, ops[k], nsop,
                    1000.0 / nsop, ratio, (k in mismatch) ? "  CHECKSUM MISMATCH" : ""
         }
@@ -111,8 +109,8 @@ END {
     for (w = 1; w <= nwl; w++) {
         wl = wlnames[w]
         printf "checksum %-8s ", wl
-        split("rust kelp cpp py", order, " ")
-        for (i = 1; i <= 4; i++) {
+        split("rust kelp py", order, " ")
+        for (i = 1; i <= 3; i++) {
             k = order[i] " " wl
             printf "%s=%s ", order[i], (k in cks) ? cks[k] : "?"
         }
@@ -123,7 +121,7 @@ END {
 
 echo >> "$REPORT"
 echo "compile (s) / wall per trial (s) / startup = wall - work (ms):" >> "$REPORT"
-for lang in rust x cpp py; do
+for lang in rust x py; do
     cns=$(awk -v l="$lang" '$1 == l { print $2 }' "$BUILD/compile.tsv")
     # Startup is measured per trial (wall minus that trial's three workload
     # times, so the two are never from different runs) and the smallest is
