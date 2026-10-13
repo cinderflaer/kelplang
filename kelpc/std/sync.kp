@@ -139,20 +139,65 @@ enum RecvTimeout {
 
 /// Everything the two ends agree on, guarded by one mutex. `count` mirrors the
 /// queue's length, so the waits never need to look inside the generic queue.
-datac ChanMeta(var count: usize, var senders: i64, var rx_alive: bool, val cap: usize, val bounded: bool, val handoff: bool, var pushed: usize, var taken: usize)
+datac ChanMeta(
+    /// The values in the queue, kept beside it so the waits need not look inside the generic queue.
+    var count: usize,
+    /// The live sender handles. The channel closes when this reaches zero.
+    var senders: i64,
+    /// False once the receiver is gone.
+    var rx_alive: bool,
+    /// The most values the queue holds. Only meaningful when `bounded`.
+    val cap: usize,
+    /// Whether `send` waits while the queue is full.
+    val bounded: bool,
+    /// Whether each `send` also waits until its value is taken (the rendezvous form).
+    val handoff: bool,
+    /// How many values have been queued. Gives each send its ticket.
+    var pushed: usize,
+    /// How many values have been taken off the queue.
+    var taken: usize
+)
 
 /// What a sender owns besides the queue, and the destructor that closes the
 /// channel when the last one goes.
-datac SendEnd(val live: bool, val meta: Mutex<ChanMeta>, val ne: Condvar, val nf: Condvar)
+datac SendEnd(
+    /// False for the zeroed value a partial move leaves behind. Such a value closes nothing.
+    val live: bool,
+    /// The state both ends share.
+    val meta: Mutex<ChanMeta>,
+    /// Wakes receivers waiting for a value.
+    val ne: Condvar,
+    /// Wakes senders waiting for room or for a take.
+    val nf: Condvar
+)
 
 /// The receiving half's shared state; it closes the channel when dropped.
-datac RecvEnd(val live: bool, val meta: Mutex<ChanMeta>, val ne: Condvar, val nf: Condvar)
+datac RecvEnd(
+    /// False for the zeroed value a partial move leaves behind. Such a value closes nothing.
+    val live: bool,
+    /// The state both ends share.
+    val meta: Mutex<ChanMeta>,
+    /// Wakes receivers waiting for a value.
+    val ne: Condvar,
+    /// Wakes senders waiting for room or for a take.
+    val nf: Condvar
+)
 
 /// The sending half of a channel.
-datac Sender<T>(val q: Mutex<List<T>>, val end: SendEnd)
+datac Sender<T>(
+    /// The queue of values in flight.
+    val q: Mutex<List<T>>,
+    /// The sender's share of the channel state. Its destructor counts this sender out.
+    val end: SendEnd
+)
 
 /// The receiving half of a channel.
-datac Receiver<T>(val q: Mutex<List<T>>, val end: RecvEnd)
+datac Receiver<T>(
+    /// The queue of values in flight.
+    val q: Mutex<List<T>>,
+    /// The receiver's share of the channel state. Its destructor closes the receiving side.
+    val end: RecvEnd
+)
 
 /// Counts this sender out and wakes a waiting receiver.
 fun mut SendEnd.drop() {
@@ -181,9 +226,17 @@ fun mut RecvEnd.drop() {
 /// or the case at `index` is a channel that is closed and empty.
 enum Pick<T> {
     /// The case at `index` received a value.
-    Got(val index: usize, val value: T)
+    Got(
+        /// The position of the case that was ready, 0-based.
+        val index: usize,
+        /// The value it received.
+        val value: T
+    )
     /// The case at `index` is closed: every sender is gone and the queue is empty.
-    Closed(val index: usize)
+    Closed(
+        /// The position of the closed case, 0-based.
+        val index: usize
+    )
 }
 
 /// Builds a channel holding at most `cap` values (`bounded`), or none of a limit
