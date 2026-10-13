@@ -58,6 +58,7 @@ empty on release.
 - The collector's root table
 - The collector clears
 - A hosted program's collector starts with 10 percent headroom. Its first collection starts at the midpoint of the start guesses (1 and 4 MiB) plus the headroom, not at 8 MiB, and later collections follow the two latest live sizes (the default `two-size` trigger) plus the headroom. A program with a small live set collects more often than before. `[tidepool]` in `coral.toml` changes the guesses, the headroom and the trigger rule.
+- The language reference says `kelpc` emits LLVM IR, not C, and no longer says the binary is written next to a `.c` file.
 
 - A misspelled or misplaced Tidepool section is refused by name: `[target.tidepool]`, `[[tidepool]]`, `[tidpool]` and `[tidepool.x]` each stop the build, and a `[tidepool]` key in a freestanding build is refused, where before the section was skipped without a word. An out-of-range `headroom_pct` (above 1000), a duplicate key and a `start_high_mib` above `heap_max` are refused by name.
 

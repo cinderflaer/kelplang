@@ -1,6 +1,6 @@
 # The Kelp language
 
-Kelp is a small compiled language. `kelpc` lexes and parses a Kelp source tree, checks types and ownership, emits C, and calls `ld.lld` to link a native binary (since 2026-10-10; before that it called `cc`). Programs link nothing beyond libc, have no garbage collector, and reach the outside world only through capabilities a module declares.
+Kelp is a small compiled language. `kelpc` lexes and parses a Kelp source tree, checks types and ownership, emits LLVM IR, and calls `ld.lld` to link a native binary (since 2026-10-10; before that it called `cc`). Programs link nothing beyond libc, have no garbage collector, and reach the outside world only through capabilities a module declares.
 
 This file is the language reference. It is written to be read start to finish by someone who wants to write a program, so it starts with the toolchain and ends with a complete example. Where another plan file disagrees with this one about syntax or style, this file is correct.
 
@@ -70,7 +70,7 @@ A loose `.kp` file that is not inside a project still compiles, and is then its 
 kelpc build src/main.kp -o myproject/main    # from the project root: same module graph
 ```
 
-With no `-o`, the binary is written into the **current working directory**, named after the last path segment you passed: `kelpc build myproject/` writes `./myproject` and `kelpc build src/main.kp` writes `./main`, wherever you are standing. The emitted C lands beside it as `<name>.c`. Pass `-o` when that is not where you want the output, the fixtures and `bench/` always do.
+With no `-o`, the binary is written into the **current working directory**, named after the last path segment you passed: `kelpc build myproject/` writes `./myproject` and `kelpc build src/main.kp` writes `./main`, wherever you are standing. Pass `-o` when that is not where you want the output, the fixtures and `bench/` always do.
 
 What a project buys you, concretely:
 
