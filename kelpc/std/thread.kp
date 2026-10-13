@@ -82,11 +82,14 @@
    observe: `__atomic_thread_fence(__ATOMIC_SEQ_CST)` on the C side and
    `fence seq_cst` on the LLVM side. */
 
-// Why a joined worker ended without a value, and where: the message carries the
-// panic text, which already names the `.kp` line, so the joiner can report where
-// the worker died (MK9 section 2). One owned `String` field, so the reason is
-// built by the worker's panic and read by whoever joins it.
-datac ThreadErr(val message: String)
+/// Why a joined worker ended without a value, and where: the message carries the
+/// panic text, which already names the `.kp` line, so the joiner can report where
+/// the worker died (MK9 section 2). One owned `String` field, so the reason is
+/// built by the worker's panic and read by whoever joins it.
+datac ThreadErr(
+    /// The panic text the worker died with, which names the `.kp` line it panicked on.
+    val message: String
+)
 
 /* MK9-S3-M1 stage C2: `thread.sleep_ms` and `thread.current_id`, the two
    pieces MK6-S2-M1's worker pool needs and `spawn`/`join` alone do not give
@@ -108,14 +111,15 @@ datac ThreadErr(val message: String)
 extern fun sleep_ms_raw(ms: u64)
 extern fun current_id_raw().return: u64
 
+/// Blocks the calling thread for `ms` milliseconds. It takes no capability.
 fun sleep_ms(ms: u64) {
     sleep_ms_raw(ms)
 }
 
-// A stable, cheap id for the calling thread: the main thread and every
-// worker `thread.spawn` starts each get one, and a thread's id never changes
-// across its lifetime. It identifies "which thread is this", not "which Nth
-// worker did I spawn" a detached, unjoined handle's worker still has an id,
-// and nothing in v1 hands out sequential pool slots. Backed by `pthread_self`,
-// which is one instruction and needs no syscall.
+/// A stable, cheap id for the calling thread: the main thread and every
+/// worker `thread.spawn` starts each get one, and a thread's id never changes
+/// across its lifetime. It identifies "which thread is this", not "which Nth
+/// worker did I spawn" a detached, unjoined handle's worker still has an id,
+/// and nothing in v1 hands out sequential pool slots. Backed by `pthread_self`,
+/// which is one instruction and needs no syscall.
 fun current_id().return: u64 = current_id_raw()
