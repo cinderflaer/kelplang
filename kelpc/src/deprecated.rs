@@ -35,6 +35,10 @@
 //! fixtures that were deliberately left on it), delete the entry here, and let
 //! `kelpc/tests/outdated.rs` and the shipped-source test below say what is left.
 
+// The register is empty, so no pass raises a finding yet. The read path stays
+// here for the next entry, and this keeps it from warning until then.
+#![cfg_attr(not(test), allow(dead_code))]
+
 use crate::diag::Diagnostic;
 use crate::lexer::Span;
 
