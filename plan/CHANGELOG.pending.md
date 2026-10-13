@@ -31,10 +31,10 @@ empty on release.
 ## changed
 
 - `=>` is accepted as the same arrow as `->` in `when` arms and in a trailing block's parameter header (`{ x => ... }`). Both spellings are one token, so no existing program changes; the arrow's error messages now name both.
-- The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named. Every hosted build links the tracing collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (files, sockets, processes, threads, locks, channel ends, pools) still drop at scope end. Delete the mode line; every hosted file may use `block` regions beside ordinary code, and `heap_max` is read in every hosted build.
+- The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named. Every hosted build links the tracing collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (files, sockets, processes, threads, locks, channel ends, pools) still drop at scope end. Delete the mode line; `heap_max` is read in every hosted build.
 - `kelpc` builds the collector archive itself from `kelpc/gc`, so a hosted build needs no `KELP_GC_LIB`. The variable, when set, names a different archive to link.
 - A resource (file, socket, process, channel end, pool, TLS stream or capability receipt) cannot go in a `Box`, `List`, `Map`, array or closure environment, or be a thread's argument: the checker refuses it by name in every hosted build.
-- A hosted build accepts channels that close when their senders or receiver drop, `select` over channels where one is ready, a `Mutex` shared through one handle, a `Mutex` block value that is returned or consumed by `into_inner`, and a `Mutex` guarding a `List` pushed from several workers. A zero-capacity channel still panics (`sync.bounded: the capacity must be at least 1`).
+- A hosted build accepts channels that close when their senders or receiver drop, `select` over channels where one is ready, a `Mutex` shared through one handle, a `Mutex` block value that is returned or consumed by `into_inner`, and a `Mutex` guarding a `List` pushed from several workers. `sync.bounded(0)` still panics (`sync.bounded: the capacity must be at least 1`); `sync.rendezvous()` is the zero-capacity channel and does not panic.
 - A hosted project whose `coral.toml` sets `[build] incremental = true` is built whole-program with a warning that names the reason (the collector's descriptor ids are per unit). The `--incremental` flag is still refused for a hosted build.
 - A `String` argument is accepted where a `str` parameter is expected: it is borrowed for the call exactly as `.as_str()` would borrow it (11.2). A generic function or trait method's `str` parameter still needs `.as_str()`, and the compiler says so by name.
 - The borrow checker refuses passing one `mut` parameter twice to one call, and reading a struct whole after one of its nested owned fields moved out.
@@ -95,4 +95,5 @@ empty on release.
 ## limits
 
 - A hosted build refuses an enum stored inside a `datac`: the collector does not describe that layout yet, so such a program is a compile error.
+- A `Map` whose value is an enum passes the checker but fails in a hosted build's codegen (`gc_descr.rs`), so such a program is a compile error.
 - A-11 (full borrow checking) is not finished.
