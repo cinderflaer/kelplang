@@ -1069,22 +1069,22 @@ mod tests {
     /// callee and the byte where the site starts. T103 checks the denominator
     /// against this list, so it cannot change between runs.
     const BASELINE: [(&str, &str, &str, usize); 16] = [
-        ("suite/binary-trees/binary-trees.kp", "make", "Box#of", 675),
-        ("suite/binary-trees/binary-trees.kp", "make", "Box#of", 704),
-        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 510),
-        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 549),
-        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 589),
-        ("suite/hashmap/hashmap.kp", "main", "Map#new", 650),
-        ("suite/json-tokenizer/json-tokenizer.kp", "main", "String#empty", 1220),
-        ("suite/matmul/matmul.kp", "main", "List#empty", 566),
-        ("suite/matmul/matmul.kp", "main", "List#empty", 602),
-        ("suite/matmul/matmul.kp", "main", "List#empty", 638),
-        ("suite/sort/sort.kp", "main", "List#empty", 2108),
-        ("suite/sort-builtin/sort-builtin.kp", "main", "List#empty", 603),
-        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1341),
-        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1377),
-        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1415),
-        ("suite/strings/strings.kp", "main", "String#empty", 549),
+        ("suite/binary-trees/binary-trees.kp", "make", "Box#of", 665),
+        ("suite/binary-trees/binary-trees.kp", "make", "Box#of", 694),
+        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 505),
+        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 544),
+        ("suite/fannkuch-redux/fannkuch-redux.kp", "main", "List#empty", 584),
+        ("suite/hashmap/hashmap.kp", "main", "Map#new", 645),
+        ("suite/json-tokenizer/json-tokenizer.kp", "main", "String#empty", 1200),
+        ("suite/matmul/matmul.kp", "main", "List#empty", 561),
+        ("suite/matmul/matmul.kp", "main", "List#empty", 597),
+        ("suite/matmul/matmul.kp", "main", "List#empty", 633),
+        ("suite/sort/sort.kp", "main", "List#empty", 2103),
+        ("suite/sort-builtin/sort-builtin.kp", "main", "List#empty", 598),
+        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1331),
+        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1367),
+        ("suite/spectral-norm/spectral-norm.kp", "main", "List#empty", 1405),
+        ("suite/strings/strings.kp", "main", "String#empty", 544),
     ];
 
     /// T103: the gate counts the same 16 sites, each container site records its
