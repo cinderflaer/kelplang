@@ -91,9 +91,10 @@ empty on release.
 - A `Mutex` or `RwLock` may hold a `List`, `String`, `Box`, `Map`, `Bytes` or a struct with a `List` field in a hosted build; the collector keeps the value alive while the lock holds it.
 - The Polyp GTK backend reads a scrolled area's content box through the viewport GTK puts around it, so the todo example no longer prints GTK CRITICAL warnings; a keyed reorder emits the moves that reach the new order (old [a,b,c,d] to new [c,b,d,a] used to end [c,d,b,a]); a mount that disagrees with the view stops the program instead of writing into nothing; and `examples/polyp-todo/smoke.sh` fails on any CRITICAL line.
 - A hosted TLS server no longer crashes when a request string is released.
+- A `Map` whose value is an enum is refused when the checker reads the `Map` type, not later in codegen, and the refusal names the type and the `List` to use instead.
 
 ## limits
 
 - A hosted build refuses an enum stored inside a `datac`: the collector does not describe that layout yet, so such a program is a compile error.
-- A `Map` whose value is an enum passes the checker but fails in a hosted build's codegen (`gc_descr.rs`), so such a program is a compile error.
+- A `Map` whose value is an enum is refused by the checker at the `Map` type, with a sentence that names the type and says to keep the values in a `List`; the hosted build's codegen does not describe an enum inside a map's entry yet, and a `datac` holding the enum is refused the same way.
 - A-11 (full borrow checking) is not finished.
