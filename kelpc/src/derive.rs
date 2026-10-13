@@ -176,6 +176,7 @@ fn method_source(scope: &Scope, req: &DeriveRequest, target: &Target) -> Result<
     let check = |ty: &TypeExpr, field: &str, span: Span, method: &str| -> Result<Kind, ParseError> {
         if mentions(ty, params) {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "derive({method}) on generic '{name}' cannot check field '{field}' of type '{}': it mentions a type parameter, and derive cannot tell what that is compared or hashed as. Fix: declare 'fun {name}.{method}' by hand",
                     type_text(ty)
@@ -184,7 +185,7 @@ fn method_source(scope: &Scope, req: &DeriveRequest, target: &Target) -> Result<
             });
         }
         if let Some(msg) = refusal(scope, name, field, ty, method) {
-            return Err(ParseError { message: msg, span });
+            return Err(ParseError { message: msg, span, help: None });
         }
         Ok(classify(ty))
     };
@@ -306,6 +307,7 @@ pub fn expand(
             });
             if let Some(f) = existing {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "derive({n}) on '{t}' would declare 'fun {t}.{n}' a second time, and the hand-written 'fun {t}.{n}' already declares it. Fix: remove derive({n}), or remove the hand-written 'fun {t}.{n}'",
                         t = req.type_name
@@ -327,6 +329,7 @@ pub fn expand(
         };
         if const_params > 0 {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "derive is not supported on '{}': it has const parameters, and a derived method would need them written out",
                     req.type_name
@@ -339,6 +342,7 @@ pub fn expand(
         // the span of its derive clause, so a diagnostic about generated code
         // points at the line the programmer wrote.
         let internal = |message: String| ParseError {
+            help: None,
             message: format!("internal error in derive: {message}"),
             span: req.span,
         };

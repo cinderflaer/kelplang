@@ -32,6 +32,10 @@ pub struct Diagnostic {
     pub module: String,
     /// Extra locations, rendered after the primary one.
     pub notes: Vec<DiagnosticNote>,
+    /// One imperative sentence that says the next step, printed as a
+    /// `  help: ` line after the primary location. `None` for a finding that
+    /// has no next step to name; the JSON form then has no `help` key.
+    pub help: Option<String>,
 }
 
 /// What kind of finding a diagnostic is. The prose printer's three labels
@@ -75,7 +79,14 @@ impl Diagnostic {
             span,
             module: module.into(),
             notes: Vec::new(),
+            help: None,
         }
+    }
+
+    /// Attaches the next step a reader can take, as a `help:` line.
+    pub fn with_help(mut self, text: impl Into<String>) -> Self {
+        self.help = Some(text.into());
+        self
     }
 
     /// Attaches a secondary location in its own module/file.
@@ -181,6 +192,10 @@ impl SourceMap {
 
     fn render_labeled(&self, d: &Diagnostic, label: &str) -> String {
         let mut out = self.render_at(&d.message, d.span, &d.module, label);
+        if let Some(help) = &d.help {
+            out.push_str("\n  help: ");
+            out.push_str(help);
+        }
         for note in &d.notes {
             out.push('\n');
             out.push_str(&self.render_at(&note.message, note.span, &note.module, "  note: "));
@@ -225,6 +240,9 @@ impl SourceMap {
             json_string(&d.module),
         );
         out.push_str(&self.json_location(d.span, &d.module));
+        if let Some(help) = &d.help {
+            out.push_str(&format!(",\"help\":{}", json_string(help)));
+        }
         out.push_str(",\"notes\":[");
         for (i, note) in d.notes.iter().enumerate() {
             if i > 0 {
@@ -316,6 +334,30 @@ fn line_col(src: &str, offset: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_help_line_follows_the_location_and_precedes_the_notes() {
+        let mut sources = SourceMap::new();
+        sources.insert("m", Path::new("m.kp"), "val x = 1\nprint(y)\n".to_string());
+        let d = Diagnostic::new("undefined variable 'y'".to_string(), Span::new(16, 17), "m")
+            .with_note("elsewhere".to_string(), Span::new(4, 5), "m")
+            .with_help("declare it first.");
+        let text = sources.render_labeled(&d, "error: ");
+        assert_eq!(
+            text,
+            "error: undefined variable 'y'\n  --> m.kp:2:7\n  help: declare it first.\n  note: elsewhere\n  --> m.kp:1:5"
+        );
+        let json = sources.render_json(Severity::Error, &d);
+        assert!(json.contains(",\"help\":\"declare it first.\",\"notes\":["), "{json}");
+    }
+
+    #[test]
+    fn json_has_no_help_key_when_a_finding_has_no_help() {
+        let sources = SourceMap::new();
+        let d = Diagnostic::new("bad".to_string(), Span::new(0, 1), "m");
+        let json = sources.render_json(Severity::Error, &d);
+        assert!(!json.contains("help"), "{json}");
+    }
 
     #[test]
     fn the_outdated_kind_is_labelled_and_spelled_the_same_way() {

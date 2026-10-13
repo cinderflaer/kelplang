@@ -61,6 +61,7 @@ empty on release.
 
 ## compiler
 
+- A compiler error prints a `  help:` line under its location for the common mistakes: an undefined variable, an undefined local, an assignment to a `val`, a return type mismatch, a missing `main`, a use of a moved value, a second statement on one line, a module that cannot be found and a call to an undefined function. The message on the first line is unchanged, and `check --json` gives the same text in a `help` key that is there only when a finding has one.
 - The link step uses `ld.lld`, not `cc`: a build with no `cc` can link, and `KELPC_LLD` selects the `ld.lld` binary (otherwise the first one on PATH).
 - A TLS program finds OpenSSL's `libssl.so` and `libcrypto.so` through `pkg-config openssl` (then the build-time record, then the system directories), so a Nix build links without a hand-set library path.
 - The C runtime is removed: `kelp-rt/`, a Rust `no_std` crate built by `kelpc/build.rs`, is linked into every LLVM-built program. Its symbol names, signatures and struct layouts are unchanged, so a program that calls a runtime helper links as before.

@@ -1686,6 +1686,7 @@ impl Loader<'_> {
                                 at,
                                 from,
                             )
+                            .with_help("create the file at that path, under src/, or correct the import path.")
                         })?,
                     }
                 } else {
@@ -1695,6 +1696,7 @@ impl Loader<'_> {
                             at,
                             from,
                         )
+                        .with_help("create the file at that path, under src/, or correct the import path.")
                     })?
                 };
                 (path, text)
@@ -1751,7 +1753,11 @@ impl Loader<'_> {
         let expanded = self.aliases.expand_file(&tokens, id)?;
         let mut program = Parser::new(expanded)
             .parse_program()
-            .map_err(|e| Diagnostic::new(e.message, e.span, id))?;
+            .map_err(|e| {
+                let mut diag = Diagnostic::new(e.message, e.span, id);
+                diag.help = e.help;
+                diag
+            })?;
         for span in &program.outdated_returns {
             // Still accepted, no longer wanted: `.return:` says what the
             // marker means (`deprecated.rs`).

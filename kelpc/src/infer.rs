@@ -12,6 +12,8 @@ use crate::types::{EnumDef, FieldDef, FnSig, StructDef, Ty};
 pub struct TypeError {
     pub message: String,
     pub span: Span,
+    /// The next step a reader can take, carried onto the `Diagnostic`.
+    pub help: Option<String>,
 }
 
 type Result<T> = std::result::Result<T, TypeError>;
@@ -20,7 +22,9 @@ impl TypeError {
     /// A `Span` only means something inside the file it came from, so every
     /// error leaving this pass is tagged with the module that produced it.
     fn in_module(self, module: &str) -> Diagnostic {
-        Diagnostic::new(self.message, self.span, module)
+        let mut diag = Diagnostic::new(self.message, self.span, module);
+        diag.help = self.help;
+        diag
     }
 
     /// The same error re-pointed at another span, for the sites that only
@@ -493,6 +497,7 @@ fn bind_const_args(
         let Some(arg) = args.get(idx) else { continue };
         let Ty::ConstInt { value, ty: arg_ty } = arg else {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "const parameter '{name}' expects a constant expression of type '{}', but a type was written: write a literal or a 'const' ('Buf<16>', 'Buf<SIZE>'), not a type name",
                     declared.display()
@@ -507,6 +512,7 @@ fn bind_const_args(
         let wants_char = matches!(declared, Ty::Char);
         if wants_char && !arg_is_char {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "const parameter '{name}' is a 'char', so its argument has to be a character literal or a 'char' const ('Tag<'x'>'), not a number"
                 ),
@@ -515,6 +521,7 @@ fn bind_const_args(
         }
         if !wants_char && arg_is_char {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "const parameter '{name}' is a '{}', so its argument has to be an integer or 'bool' value, and a character is not one",
                     declared.display()
@@ -525,6 +532,7 @@ fn bind_const_args(
         if matches!(declared, Ty::Bool) {
             if value != 0 && value != 1 {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "const parameter '{name}' is a 'bool', so its argument has to be 'true' or 'false'"
                     ),
@@ -534,6 +542,7 @@ fn bind_const_args(
         } else if wants_char {
             if u32::try_from(value).ok().and_then(char::from_u32).is_none() {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "const parameter '{name}' is a 'char', and U+{value:04X} is not a Unicode scalar value"
                     ),
@@ -554,6 +563,7 @@ fn bind_const_args(
         }
         if let Some(Ty::ConstInt { .. }) = args.get(idx) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "type parameter '{name}' expects a type, but a constant expression was written: a 'const' parameter is declared 'const {name}: usize' where the value belongs"
                 ),
@@ -1100,6 +1110,7 @@ impl Ctx {
             return Ok(());
         }
         Err(TypeError {
+            help: None,
             message: format!(
                 "'{what}' is only legal in a module with a coral.toml '[extern.\"<module id>\"]' section, because only there can a native handle exist"
             ),
@@ -1233,6 +1244,7 @@ impl Ctx {
             return Ok(());
         }
         Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' needs the '{}' capability, which module '{}' was not granted; the module that imports this one must delegate it (`impl \"<this module>\" caps({} = [\"<pattern>\"])`)",
                 display_callee(key),
@@ -1529,6 +1541,7 @@ impl TypeScope<'_> {
             if let Some(ip) = self.in_progress {
                 if resolved == Ty::Struct(ip.to_string()) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{ip}' cannot hold itself by value - that type has no finite size; put it behind indirection ('val next: Box<{ip}>', or a 'List<{ip}>' for many)"
                         ),
@@ -1559,6 +1572,7 @@ impl TypeScope<'_> {
         // type belongs.
         if ty.const_expr.is_some() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is a constant expression, not a type: a constant argument is only legal where the declaration's parameter is 'const' ('datac Buf<const N: usize> ...'), and a type belongs here",
                     ty.display()
@@ -1571,6 +1585,7 @@ impl TypeScope<'_> {
         // not cover (a `let`, a field, a return).
         if let Some(trait_name) = &ty.impl_trait {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'impl {trait_name}' is only legal as a whole parameter type of a declared function: write 'fun f(x: impl {trait_name})', and name a type parameter where a stored, returned or container type belongs"
                 ),
@@ -1584,6 +1599,7 @@ impl TypeScope<'_> {
         // value, which is exactly what the modifier forbids.
         if ty.scoped {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'scoped {}' is only legal on a top-level parameter of a declaration, not here: a scoped function value may only live for the call it was written in, so it cannot be stored, returned or nested in another type",
                     ty.display()
@@ -1603,6 +1619,7 @@ impl TypeScope<'_> {
             // everywhere else (A-12 slice 7).
             if !ty.amp {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'dyn {written}' is not a type on its own: an owned trait object is written 'Box<dyn {written}>', and a borrowed one '&dyn {written}'"
                     ),
@@ -1612,6 +1629,7 @@ impl TypeScope<'_> {
             let qualified = self.qualify(written, ty.span)?;
             if !self.env.traits.contains_key(&qualified) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'&dyn {written}' names no declared trait: declare 'trait {written} {{ ... }}' first (or import the module that does)"
                     ),
@@ -1648,6 +1666,7 @@ impl TypeScope<'_> {
             for (i, e) in elems.iter().enumerate() {
                 if e.amp {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'&{}' cannot be element {} of a tuple: an element is stored by value, so a borrow of one has nowhere to put its lifetime; use the owned type",
                             e.display(),
@@ -1659,6 +1678,7 @@ impl TypeScope<'_> {
                 let elem = self.resolve(e, indirect)?;
                 if crate::types::is_borrowed_field_ty(&elem) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "element {} of the tuple is a borrowed type ('{}'): a tuple holds owned data only in v1, exactly as a datac field does, so a '&str', 'View' or reference element is not expressible; an owned 'String' is the way to keep text in one",
                             i + 1,
@@ -1669,6 +1689,7 @@ impl TypeScope<'_> {
                 }
                 if elem == Ty::Unit {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "element {} of the tuple is 'unit': 'unit' is the absent value and cannot be stored, exactly as a datac field cannot be",
                             i + 1
@@ -1692,6 +1713,7 @@ impl TypeScope<'_> {
             let elem = self.resolve_element(elem)?;
             if !crate::types::is_array_element(&elem) {
                 return Err(TypeError {
+                    help: None,
                     message: array_element_error(&elem),
                     span: ty.span,
                 });
@@ -1719,6 +1741,7 @@ impl TypeScope<'_> {
                 return Ok(bound.clone());
             }
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}::{}' is not a known associated type: bind '{}' with a trait that carries 'type {}' ('trait ... {{ type {} }}'), so the projection names the type an impl supplies",
                     ty.name, item, ty.name, item, item
@@ -1733,6 +1756,7 @@ impl TypeScope<'_> {
             if let Some(bound) = self.params.get(&ty.name) {
                 if let Ty::ConstInt { .. } = bound {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{}' is a const parameter, not a type: use it as a value ('i < {}'), as an array length ('[i32; {}]') or in a repeat expression ('[0; {}]'), and write a type parameter where a type belongs",
                             ty.name, ty.name, ty.name, ty.name
@@ -1760,6 +1784,7 @@ impl TypeScope<'_> {
             let written = arg.dyn_trait.as_ref().expect("matched above");
             if arg.amp {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'Box<&dyn {written}>' is not an owned trait object: a box holds its value, so write 'Box<dyn {written}>' for an owned one or '&dyn {written}' for a borrowed one"
                     ),
@@ -1769,6 +1794,7 @@ impl TypeScope<'_> {
             let qualified = self.qualify(written, arg.span)?;
             if !self.env.traits.contains_key(&qualified) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'Box<dyn {written}>' names no declared trait: declare 'trait {written} {{ ... }}' first (or import the module that does)"
                     ),
@@ -1810,6 +1836,7 @@ impl TypeScope<'_> {
                         let key = self.resolve_element(&ty.args[0])?;
                         if !crate::types::is_map_key_with(&key, &self.keyable_set()) {
                             return Err(TypeError {
+                                help: None,
                                 message: map_key_error(&key),
                                 span: ty.args[0].span,
                             });
@@ -1819,6 +1846,7 @@ impl TypeScope<'_> {
                     }
                     n => {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "'Map' takes 1 or 2 type arguments ('Map<V>' or 'Map<K, V>'), found {n}"
                             ),
@@ -1829,6 +1857,7 @@ impl TypeScope<'_> {
             } else {
                 if ty.args.len() != 1 {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{}' takes exactly 1 type argument, found {}",
                             ty.name,
@@ -1859,6 +1888,7 @@ impl TypeScope<'_> {
             };
             if !ok {
                 return Err(TypeError {
+                    help: None,
                     message: error,
                     span: value_span,
                 });
@@ -1906,6 +1936,7 @@ impl TypeScope<'_> {
                 )?;
                 if ty.args.len() != tmpl.params.len() {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{}' takes {} type argument(s), found {}",
                             tmpl.name,
@@ -1927,6 +1958,7 @@ impl TypeScope<'_> {
                 return self.instantiate(&qualified, &args, ty.span);
             }
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>', 'Thread<T>', 'Mutex<T>', 'RwLock<T>' and 'Ptr<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
                     ty.name,
@@ -1991,6 +2023,7 @@ impl TypeScope<'_> {
             // A generic type written without its arguments. The generic half
             // of the name is enough to say what is missing.
             Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is a generic type - it needs {} type argument(s): '{}<{}>'",
                     tmpl.name,
@@ -2013,6 +2046,7 @@ impl TypeScope<'_> {
                 Ok(Ty::Struct(qualified))
             } else {
                 Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{}' is declared after this type - a type may only name types declared before it by value; behind a 'Box' or 'List' it may name any type, including itself",
                         ty.name
@@ -2022,6 +2056,7 @@ impl TypeScope<'_> {
             }
         } else {
             Err(TypeError {
+                help: None,
                 message: match qualified_hint(
                     &ty.name,
                     self.structs.keys(),
@@ -2044,6 +2079,7 @@ impl TypeScope<'_> {
     fn resolve_element(&self, ty: &ast::TypeExpr) -> Result<Ty> {
         if ty.amp {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'&{}' cannot be a container element: an element has to outlive the container that holds it, and v1 has no lifetime syntax to say so; use the owned type",
                     ty.display()
@@ -2062,6 +2098,7 @@ impl TypeScope<'_> {
             if let Some(Ty::ConstInt { value, ty }) = self.params.get(name) {
                 if matches!(**ty, Ty::Char) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{name}' is a 'char' const parameter, and an array length has to be an integer"
                         ),
@@ -2070,6 +2107,7 @@ impl TypeScope<'_> {
                 }
                 if *value < 1 {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "an array length has to be at least 1, and '{name}' is {value}: v1 has no zero-length form ('[T; 0]' would be a C array with no elements, which is not standard C)"
                         ),
@@ -2084,6 +2122,7 @@ impl TypeScope<'_> {
         // refuse it by name rather than folding it.
         if let Some(name) = const_param_in(expr, self.params) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{name}' is a const parameter, and arithmetic on one in a type ('[T; {name} + 1]') is not in this slice: write the length the instantiation binds ('[T; {name}]'), or compute it from a 'const' ('const M: usize = ...')"
                 ),
@@ -2092,6 +2131,7 @@ impl TypeScope<'_> {
         }
         let (Some(consts), Some(const_fns)) = (self.consts, self.const_fns) else {
             return Err(TypeError {
+                help: None,
                 message: "an array length has to be a compile-time constant, and this position has no constants in reach".to_string(),
                 span: expr.span(),
             });
@@ -2112,6 +2152,7 @@ impl TypeScope<'_> {
             None => {
                 if ty.const_expr.is_some() {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "a type argument expected a type, but '{}' is a constant expression: declare the parameter 'const' ('datac Buf<const N: usize>') where a value belongs",
                             ty.display()
@@ -2129,6 +2170,7 @@ impl TypeScope<'_> {
                     .or_else(|| named_const_expr(ty));
                 let Some(expr) = expr else {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "a 'const' parameter expects a constant expression of type '{}', but the type '{}' was written: write a literal or a 'const' ('Buf<16>', 'Buf<SIZE>')",
                             declared.display(),
@@ -2156,6 +2198,7 @@ impl TypeScope<'_> {
                 let value = *value;
                 if matches!(**source, Ty::Char) != matches!(declared, Ty::Char) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "const parameter '{name}' is a '{}' and cannot be passed where a '{}' is expected",
                             source.display(),
@@ -2175,6 +2218,7 @@ impl TypeScope<'_> {
         }
         let (Some(consts), Some(const_fns)) = (self.consts, self.const_fns) else {
             return Err(TypeError {
+                help: None,
                 message: "a const argument has to be a compile-time constant, and this position has no constants in reach".to_string(),
                 span: expr.span(),
             });
@@ -2189,6 +2233,7 @@ impl TypeScope<'_> {
             (ConstValue::Bool(b), t) if !matches!(t, Ty::Char) => i128::from(b),
             _ => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "a const parameter of type '{}' takes {}, and this expression is not one",
                         declared.display(),
@@ -2216,6 +2261,7 @@ impl TypeScope<'_> {
     fn fold_const_arg_any(&self, expr: &ast::Expr) -> Result<Ty> {
         let (Some(consts), Some(const_fns)) = (self.consts, self.const_fns) else {
             return Err(TypeError {
+                help: None,
                 message: "a const argument has to be a compile-time constant, and this position has no constants in reach".to_string(),
                 span: expr.span(),
             });
@@ -2230,6 +2276,7 @@ impl TypeScope<'_> {
             ConstValue::Char(c) => (i128::from(c), Ty::Char),
             _ => {
                 return Err(TypeError {
+                    help: None,
                     message: "a const argument has to be an integer, boolean or character value".to_string(),
                     span: expr.span(),
                 })
@@ -2250,6 +2297,7 @@ impl TypeScope<'_> {
             Some((alias, item)) => match self.aliases.get(alias) {
                 Some(prefix) => Ok(format!("{prefix}{item}")),
                 None => Err(TypeError {
+                    help: None,
                     message: format!(
                         "unknown module alias '{alias}' in type '{name}' - was it imported?"
                     ),
@@ -2308,6 +2356,7 @@ impl TypeScope<'_> {
         let built = scope.build_instance(&tmpl, &key);
         self.env.instances.borrow_mut().in_progress.remove(&key);
         let inst = built.map_err(|e| TypeError {
+            help: None,
             // A template's fields live in the template's own file, so an
             // error found while resolving them cannot keep its own span: the
             // caller attributes the error to *its* module, which is where
@@ -2343,6 +2392,7 @@ impl TypeScope<'_> {
                 for f in fields {
                     if out.iter().any(|fd| fd.name == f.name) {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "field '{}' is defined more than once in datac '{}'",
                                 f.name, tmpl.name
@@ -2353,6 +2403,7 @@ impl TypeScope<'_> {
                     let ty = self.resolve(&f.ty, false)?;
                     if crate::types::is_borrowed_field_ty(&ty) {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "field '{}' is a borrowed type ('{}') - a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible - an owned 'String' is the way to keep text in one",
                                 f.name,
@@ -2381,6 +2432,7 @@ impl TypeScope<'_> {
                 for v in variants {
                     if out.iter().any(|vd| vd.name == v.name) {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "variant '{}' is defined more than once in enum '{}'",
                                 v.name, tmpl.name
@@ -2392,6 +2444,7 @@ impl TypeScope<'_> {
                     for f in &v.fields {
                         if fields.iter().any(|fd| fd.name == f.name) {
                             return Err(TypeError {
+                                help: None,
                                 message: format!(
                                     "payload field '{}' is defined more than once in variant '{}'",
                                     f.name, v.name
@@ -2402,6 +2455,7 @@ impl TypeScope<'_> {
                         let ty = self.resolve(&f.ty, false)?;
                         if crate::types::is_borrowed_field_ty(&ty) {
                             return Err(TypeError {
+                                help: None,
                                 message: format!(
                                     "payload field '{}' is a borrowed type ('{}') - an enum holds owned data only in v1, so a '&str', 'View' or reference payload is not expressible - an owned 'String' is the way to keep text in one",
                                     f.name,
@@ -2471,6 +2525,7 @@ impl TypeScope<'_> {
             // need a pointer to a function pointer that nothing can usefully
             // write through.
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'mut' cannot be written on the function type '{}' - a function value is Copy (it is a plain function pointer), so there is nothing to write through; write the type without 'mut'",
                     ty.display()
@@ -2491,6 +2546,7 @@ impl TypeScope<'_> {
     fn resolve_scoped_param(&self, ty: &ast::TypeExpr, mode: ast::ParamMode) -> Result<Ty> {
         if mode.moves() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'move' cannot be written on '{}' - a scoped function value is a fat pointer with a stack environment, so there is nothing to own; write it without 'move'",
                     ty.display()
@@ -2500,6 +2556,7 @@ impl TypeScope<'_> {
         }
         if mode.mutable() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'mut' cannot be written on '{}' - a scoped function value is Copy and has nothing to write through; write it without 'mut'",
                     ty.display()
@@ -2509,6 +2566,7 @@ impl TypeScope<'_> {
         }
         if ty.amp {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'&' cannot be written on '{}' - a scoped function value is already a fat pointer passed by value; write it without '&'",
                     ty.display()
@@ -2521,6 +2579,7 @@ impl TypeScope<'_> {
         for p in params {
             if p.ty.scoped {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'scoped' cannot be nested inside another function type ('{}'): a value of such a type could be stored, which a scoped function value may not be",
                         p.ty.display()
@@ -2558,6 +2617,7 @@ impl TypeScope<'_> {
                 ty.display()
             };
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'move' cannot be written on '{written}' - a 'str' is already a borrowed view, '&T' is already a copy of a borrow, and a function value is already Copy, so there is nothing to take ownership of; write the owned type instead ('move String')"
                 ),
@@ -2582,6 +2642,7 @@ impl TypeScope<'_> {
     fn resolve_fn_type(&self, ty: &ast::TypeExpr, params: &[ast::FnTypeParam]) -> Result<Ty> {
         if ty.amp {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'&' cannot be written on the function type '{}' - a function value is Copy (it is a plain function pointer), so a borrowed one would be a pointer to a pointer; write the type without '&'",
                     ty.display()
@@ -2596,6 +2657,7 @@ impl TypeScope<'_> {
             // as the function type, which is the one thing it forbids.
             if p.ty.scoped {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'scoped {}' cannot be a parameter of a function type - a function type is a value that can be stored and passed on, and a scoped function value may only live for one call; write it as a top-level parameter of a declaration instead",
                         p.ty.display()
@@ -2608,6 +2670,7 @@ impl TypeScope<'_> {
         if let Some(r) = &ty.fn_ret {
             if r.amp {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "a function type cannot return a borrow ('&{}') - the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a function *type* is called through a pointer where there is none; return an owned value instead",
                         r.display()
@@ -2619,6 +2682,7 @@ impl TypeScope<'_> {
         let ret = match &ty.fn_ret {
             Some(r) if r.is_fn() => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "a function type cannot return another function type ('{}') - C cannot write that declarator, and nothing needs it; return a 'datac' holding the function value instead",
                         ty.display()
@@ -2635,6 +2699,7 @@ impl TypeScope<'_> {
     fn resolve_closure_type(&self, ty: &ast::TypeExpr, params: &[ast::FnTypeParam]) -> Result<Ty> {
         if ty.amp {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'&' cannot be written on the closure type '{}' - a closure is an owned value, and a parameter of that type already borrows it; write the type without '&', or 'move {}' to take ownership",
                     ty.display(),
@@ -2647,6 +2712,7 @@ impl TypeScope<'_> {
         for p in params {
             if p.ty.scoped {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'scoped {}' cannot be a parameter of a closure type - a closure type is a value that can be stored and passed on, and a scoped function value may only live for one call; write it as a top-level parameter of a declaration instead",
                         p.ty.display()
@@ -2659,6 +2725,7 @@ impl TypeScope<'_> {
         if let Some(r) = &ty.fn_ret {
             if r.amp {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "a closure type cannot return a borrow ('&{}') - the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a closure is called through a value; return an owned value instead",
                         r.display()
@@ -2670,6 +2737,7 @@ impl TypeScope<'_> {
         let ret = match &ty.fn_ret {
             Some(r) if r.is_fn() || r.is_closure() => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "a closure type cannot return a function type ('{}') - C cannot write that declarator, and a closure's result is a value rather than a call target; return a 'datac' holding the function value instead",
                         ty.display()
@@ -2700,6 +2768,7 @@ impl TypeScope<'_> {
                 .unwrap_or(false)
         {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is a generic type - the receiver has to name its type parameters, and they have to be the type's own, in order ('fun {}<{}>.method(...)')",
                     r.type_name,
@@ -2727,6 +2796,7 @@ impl TypeScope<'_> {
         // lifetime syntax, exactly as for a `Ty::Ref` return.
         if ty.dyn_trait.is_some() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' cannot be a return type: a borrowed trait object points at a value the caller owns, and a return would have to name how long that borrow lives; take it as a parameter, or return an owned value",
                     ty.display()
@@ -3278,6 +3348,7 @@ fn check_dyn_object_safety(
     if let Some(info) = traits.get(name) {
         if !info.type_params.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is not allowed: the trait takes type parameters ('{}'), and a trait object has no vtable slot for one; use a bounded type parameter ('<T: {}<...>>') instead",
                     spelling,
@@ -3293,6 +3364,7 @@ fn check_dyn_object_safety(
     // to name. Refused by name here, where the `dyn` type is written.
     if let Some(item) = first_assoc_type(traits, name) {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' is not allowed: the trait declares the associated type '{}', and a trait object does not know which type an implementor binds; use a bounded type parameter ('<T: {}>') instead",
                 spelling, item, name
@@ -3308,6 +3380,7 @@ fn check_dyn_object_safety(
         // to stand for, so it has no vtable slot.
         if m.receiver.is_none() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is not allowed: method '{}' has no receiver ('Self'), so there is no value for the vtable to dispatch on; call it on a concrete type instead",
                     spelling, m.name
@@ -3318,6 +3391,7 @@ fn check_dyn_object_safety(
         if let Some(ret) = &m.return_type {
             if type_mentions_self(ret) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{}' is not allowed: method '{}' returns 'Self', and a trait object does not know the concrete type it would build",
                         spelling, m.name
@@ -3329,6 +3403,7 @@ fn check_dyn_object_safety(
         for p in &m.params {
             if type_mentions_self(&p.ty) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{}' is not allowed: method '{}' takes a 'Self' parameter, which a trait object cannot pass (the vtable erases the concrete type); make the parameter a borrow of a concrete type, or use a generic function instead",
                         spelling, m.name
@@ -3339,6 +3414,7 @@ fn check_dyn_object_safety(
         }
         if !seen.insert(m.name.as_str()) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is not allowed: two methods are named '{}', and a vtable holds one slot per name",
                     spelling, m.name
@@ -4165,12 +4241,14 @@ fn function_value_at(
     if let Some(sig) = ctx.sig_of(key) {
         if key == "main" {
             return Err(TypeError {
+                help: None,
                 message: "cannot reference 'main': it is the program entry point".to_string(),
                 span,
             });
         }
         if ctx.wired_for(key).is_some_and(|w| !w.is_empty()) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{written}' reads a passdown, so it cannot be a function value - a passdown is passed to the callee as a hidden argument, and a function value is a plain C function pointer; call it directly instead"
                 ),
@@ -4193,6 +4271,7 @@ fn function_value_at(
         // ungranted name.
         if let Some(domain) = ctx.gated.get(key) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{written}' is a gated function ('{domain}' capability), so it cannot be a function value: a call through the pointer is not a call site, and the '{domain}' check on its resource argument cannot be emitted there; call it directly instead"
                 ),
@@ -4203,6 +4282,7 @@ fn function_value_at(
     }
     if ctx.fns.templates.contains_key(key) {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{written}' is a generic function - a function value needs one concrete signature, so wrap the call in a small non-generic function and pass that"
             ),
@@ -4283,6 +4363,7 @@ fn indirect_callee(
         };
         if !ctx.pd_initialized(&pd.hidden) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "passdown '{}' is read before it is initialized - a 'pd' initializer can only use passdowns declared before it",
                     pd.qualified
@@ -4333,6 +4414,7 @@ fn check_indirect_call_expr(
     };
     if args.len() != params.len() {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "a call through {what} takes {} argument(s), found {}",
                 params.len(),
@@ -4344,6 +4426,7 @@ fn check_indirect_call_expr(
     for a in args {
         if a.name.is_some() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "a call through {what} cannot use named arguments - a function type has no parameter names, so every argument is positional"
                 ),
@@ -4485,6 +4568,7 @@ fn exported(key: &str, env: &TypeEnv) -> bool {
 /// item exists, and its own module is the reason it is out of reach.
 fn private_item_error(alias: &str, item: &str, span: Span) -> TypeError {
     TypeError {
+        help: None,
         message: format!(
             "'{alias}.{item}' is private: '{item}' is declared in module '{alias}' without 'pub', so only that module can name it; add 'pub' to its declaration to export it"
         ),
@@ -4852,6 +4936,7 @@ impl<'a> SignatureScope<'a> {
             let bare = ty.name.rsplit('.').next().unwrap_or(&ty.name);
             let owner = self.type_module(&ty.name);
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is exported but its signature names '{key}', which module '{owner}' does not export: add 'pub' to '{bare}', or make '{}' private",
                     self.item, self.fix
@@ -5863,6 +5948,7 @@ fn atomic_sig(key: &str, elem: &Ty, ctx: &Ctx, span: Span) -> Result<Option<FnSi
             );
             if !ctx.env.generics.contains_key(&result_key) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'Atomic.compare_exchange' hands back 'Result<T, T>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
                         result_key,
@@ -5916,6 +6002,7 @@ fn require_ptr_unsafe(key: &str, span: Span, ctx: &Ctx) -> Result<()> {
     }
     let name = key.strip_prefix("Ptr#").unwrap_or(key);
     Err(TypeError {
+        help: None,
         message: format!(
             "'Ptr.{name}' is an unsafe operation: it can only be used inside 'unsafe {{ ... }}' or in a function declared 'unsafe fun'"
         ),
@@ -5933,6 +6020,7 @@ fn require_static_unsafe(s: &StaticInfo, span: Span, ctx: &Ctx) -> Result<()> {
         return Ok(());
     }
     Err(TypeError {
+        help: None,
         message: format!(
             "'static mut {}' is an unsafe operation: reading, writing or taking its address can only be done inside 'unsafe {{ ... }}' or in a function declared 'unsafe fun'",
             s.name
@@ -5979,6 +6067,7 @@ fn check_ptr_associated(
     if method == "from_fn" {
         if !type_args.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: "'Ptr.from_fn' takes no type argument: its result is always 'Ptr<u8>'"
                     .to_string(),
                 span,
@@ -5986,6 +6075,7 @@ fn check_ptr_associated(
         }
         let [arg] = args else {
             return Err(TypeError {
+                help: None,
                 message: format!("'Ptr.from_fn' takes exactly 1 argument, found {}", args.len()),
                 span,
             });
@@ -5995,18 +6085,21 @@ fn check_ptr_associated(
             Ty::Fn { .. } => {}
             Ty::Closure { .. } => {
                 return Err(TypeError {
+                    help: None,
                     message: "'Ptr.from_fn' takes a function, but this is a closure: its body captured something, so it carries an environment the code address alone cannot describe; pass a declared 'fun' or a 'fun' literal that captures nothing".to_string(),
                     span,
                 })
             }
             Ty::ScopedFn { .. } => {
                 return Err(TypeError {
+                    help: None,
                     message: "'Ptr.from_fn' takes a function, but this is a scoped function value: it is a code pointer paired with a stack environment that lives only for the call it was written in, so it has no standalone code address".to_string(),
                     span,
                 })
             }
             other => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'Ptr.from_fn' takes a function value, found '{}': name a declared 'fun' or write a 'fun(...)' literal that captures nothing",
                         other.display()
@@ -6030,6 +6123,7 @@ fn check_ptr_associated(
         1 => Some(explicit[0].clone()),
         n => {
             return Err(TypeError {
+                help: None,
                 message: format!("'Ptr' takes exactly 1 type argument, found {n}"),
                 span,
             })
@@ -6037,6 +6131,7 @@ fn check_ptr_associated(
     };
     let Some(elem) = elem else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "cannot tell which type 'Ptr.{method}' points at: write it in the call ('Ptr.{method}<i32>(...)' where the operation takes a type argument) or on the binding ('val p: Ptr<i32> = Ptr.null()')"
             ),
@@ -6045,6 +6140,7 @@ fn check_ptr_associated(
     };
     if !crate::types::is_ptr_element(&elem) {
         return Err(TypeError {
+            help: None,
             message: crate::types::ptr_element_error(&elem),
             span,
         });
@@ -6075,6 +6171,7 @@ fn check_ptr_associated(
         "try_alloc" => ("Ptr#try_alloc".to_string(), vec![p("count", Ty::Usize)], ptr),
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'Ptr.{other}' is not a pointer operation: a pointer is made with 'Ptr.null()', 'Ptr.from_addr(a)', 'Ptr.from_ref(&x)', 'Ptr.from_mut(x)', 'Ptr.alloc<i32>(count)' or 'Ptr.try_alloc<i32>(count)', and read through the value it is bound to"
                 ),
@@ -6113,6 +6210,7 @@ fn check_ptr_method(
             1 => Some(explicit[0].clone()),
             n => {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'Ptr.cast' takes exactly 1 type argument, found {n}"),
                     span,
                 })
@@ -6121,6 +6219,7 @@ fn check_ptr_method(
     } else {
         if !explicit.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'Ptr.{method}' does not take type arguments - a method's type parameters come from its receiver"
                 ),
@@ -6132,6 +6231,7 @@ fn check_ptr_method(
     if let Some(target) = &cast_to {
         if !crate::types::is_ptr_element(target) {
             return Err(TypeError {
+                help: None,
                 message: crate::types::ptr_element_error(target),
                 span,
             });
@@ -6140,6 +6240,7 @@ fn check_ptr_method(
     let key = format!("Ptr#{method}");
     let Some(sig) = ptr_sig(&key, &elem, cast_to.as_ref(), span)? else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'Ptr.{method}' is not a pointer operation: a pointer has addr, is_null, offset, byte_offset, cast<U>, read, write, read_volatile, write_volatile, read_unaligned, write_unaligned and free"
             ),
@@ -6190,6 +6291,7 @@ fn ptr_sig(key: &str, elem: &Ty, cast_to: Option<&Ty>, span: Span) -> Result<Opt
             if !elem.is_copy() {
                 let op = key.strip_prefix("Ptr#").unwrap_or(key);
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'Ptr<{}>.{op}' would read a '{}' out of raw memory, and '{}' is not 'Copy': a second owner of the same value would be made, so the memory could be freed twice. Read a 'Copy' element (a scalar, a handle, a pointer) instead",
                         elem.display(),
@@ -6655,7 +6757,7 @@ fn check_int_literal(value: i128, ty: &Ty, defaulted: bool, span: Span) -> Resul
             ty.display()
         )
     };
-    Err(TypeError { message, span })
+    Err(TypeError { message, span, help: None })
 }
 
 /// A code point as a diagnostic can show it: the character itself when it is
@@ -7437,6 +7539,7 @@ impl<'a> ConstEvaluator<'a> {
         self.steps.set(self.steps.get() + 1);
         if self.steps.get() > CONST_EVAL_STEPS {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "this constant expression did not finish within {CONST_EVAL_STEPS} steps: a 'const' is folded while the compiler runs, so a 'fun' it calls has to terminate on the values it is given"
                 ),
@@ -7459,6 +7562,7 @@ impl<'a> ConstEvaluator<'a> {
         let mut scope = ConstScope::new(prefix.to_string(), aliases.clone());
         let (value, found) = self.eval(expr, Some(declared), &mut scope)?;
         literal_for(&value, declared).map_err(|_| TypeError {
+            help: None,
             message: format!(
                 "const '{name}' is declared as '{}' but its initializer is a '{}'",
                 declared.display(),
@@ -7482,12 +7586,14 @@ impl<'a> ConstEvaluator<'a> {
         match value {
             ConstValue::Int(n) if n > 0 => Ok(n as u64),
             ConstValue::Int(n) => Err(TypeError {
+                help: None,
                 message: format!(
                     "an array length has to be at least 1, and this one is {n}: v1 has no zero-length form ('[T; 0]' would be a C array with no elements, which is not standard C)"
                 ),
                 span: expr.span(),
             }),
             _ => Err(TypeError {
+                help: None,
                 message: format!(
                     "an array length has to be an integer constant, and this one is a '{}' value",
                     ty.display()
@@ -7526,6 +7632,7 @@ impl<'a> ConstEvaluator<'a> {
                 Some(t) if t.is_integer() => {
                     if !char_fits(*v, t) {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "the character '{}' (U+{:04X}) does not fit in '{}'",
                                 printable_codepoint(*v),
@@ -7543,6 +7650,7 @@ impl<'a> ConstEvaluator<'a> {
                 if let Some(t) = expected {
                     if !matches!(t, Ty::U8) {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "a byte literal is a 'u8', not a '{}': write it as a character literal when it should take this type",
                                 t.display()
@@ -7569,6 +7677,7 @@ impl<'a> ConstEvaluator<'a> {
                 }
                 if self.const_fns.fns.contains_key(&key) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{name}' is a function, not a value: call it, and a constant expression can call it too when its body is one a constant can evaluate"
                         ),
@@ -7576,6 +7685,7 @@ impl<'a> ConstEvaluator<'a> {
                     });
                 }
                 Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{name}' is not a constant here: a compile-time expression (an array length, or a 'const' initializer) can only use literals, 'const's declared before it, and the locals of the 'fun' it is evaluating; a 'val' from the enclosing function is not one"
                     ),
@@ -7589,6 +7699,7 @@ impl<'a> ConstEvaluator<'a> {
                 };
                 let Some(prefix) = scope.aliases.get(alias).cloned() else {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{alias}' is not a module alias, so '{alias}.{field}' is a field of a value; a constant expression has no values to read fields from"
                         ),
@@ -7602,6 +7713,7 @@ impl<'a> ConstEvaluator<'a> {
                 match self.consts.get(&key).and_then(|c| value_of(&c.value)) {
                     Some(c) => Ok(c),
                     None => Err(TypeError {
+                        help: None,
                         message: format!(
                             "module '{alias}' has no constant '{field}' declared before this one"
                         ),
@@ -7642,6 +7754,7 @@ impl<'a> ConstEvaluator<'a> {
                 }
                 let ConstValue::Bool(take) = value else {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "the condition of an 'if' has to be a 'bool', and this one is a '{}'",
                             ty.display()
@@ -7688,6 +7801,7 @@ impl<'a> ConstEvaluator<'a> {
                 if let Some((_, ty)) = scope.get(name) {
                     if v.1 != *ty {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "cannot assign a '{}' to '{name}', which is a '{}'",
                                 v.1.display(),
@@ -7703,10 +7817,12 @@ impl<'a> ConstEvaluator<'a> {
                         Ok((ConstValue::Unit, Ty::Unit))
                     }
                     Some(_) => Err(TypeError {
+                        help: Some(format!("write var {name} = ... instead if the value has to change.")),
                         message: format!("cannot assign to '{name}': it was declared with 'val'"),
                         span: *nspan,
                     }),
                     None => Err(TypeError {
+                        help: Some("declare it with val or var before the assignment.".to_string()),
                         message: format!("undefined local '{name}'"),
                         span: *nspan,
                     }),
@@ -7784,6 +7900,7 @@ impl<'a> ConstEvaluator<'a> {
                 };
                 if hinted.as_ref().is_some_and(|h| h.len() != elems.len()) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "a tuple of {} element(s) is expected here, and this one has {}",
                             hinted.as_ref().map_or(0, |h| h.len()),
@@ -7831,6 +7948,7 @@ impl<'a> ConstEvaluator<'a> {
         self.tick(span)?;
         if type_args.len() != 1 {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{callee}' takes exactly one type argument, written '{callee}<T>()'"
                 ),
@@ -7843,6 +7961,7 @@ impl<'a> ConstEvaluator<'a> {
         let field = if callee == "offset_of" {
             if args.len() != 1 {
                 return Err(TypeError {
+                    help: None,
                     message: "'offset_of' takes exactly one field name, written 'offset_of<T>(\"field\")'"
                         .to_string(),
                     span,
@@ -7852,6 +7971,7 @@ impl<'a> ConstEvaluator<'a> {
                 ast::Expr::StringLit(field, _) if args[0].name.is_none() => Some(field.clone()),
                 _ => {
                     return Err(TypeError {
+                        help: None,
                         message: "'offset_of' takes the field name as a string literal, written 'offset_of<T>(\"field\")'"
                             .to_string(),
                         span,
@@ -7861,6 +7981,7 @@ impl<'a> ConstEvaluator<'a> {
         } else {
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'{callee}' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -7882,6 +8003,7 @@ impl<'a> ConstEvaluator<'a> {
     /// and says what a constant expression is allowed to do.
     fn unsupported(&self, span: Span, what: &str) -> TypeError {
         TypeError {
+            help: None,
             message: format!(
                 "a 'const' initializer cannot use {what}: what it can evaluate is literals, other 'const's, the arithmetic, comparison and bitwise operators, 'if', and a call to a plain 'fun' whose own body stays inside that"
             ),
@@ -7898,6 +8020,7 @@ impl<'a> ConstEvaluator<'a> {
     ) -> Result<ConstResult> {
         use ConstValue::*;
         let kind_mismatch = || TypeError {
+            help: None,
             message: format!(
                 "operator does not apply to '{}'",
                 ty.display()
@@ -7949,6 +8072,7 @@ impl<'a> ConstEvaluator<'a> {
         let (rv, rt) = r;
         if lt != rt {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "a constant expression cannot mix '{}' and '{}': every operator requires matching operands, exactly as it does at runtime",
                     lt.display(),
@@ -7958,6 +8082,7 @@ impl<'a> ConstEvaluator<'a> {
             });
         }
         let no = |what: &str, ty: &Ty| TypeError {
+            help: None,
             message: format!(
                 "a 'const' expression cannot use {what} on '{}' values",
                 ty.display()
@@ -7965,6 +8090,7 @@ impl<'a> ConstEvaluator<'a> {
             span,
         };
         let zero = || TypeError {
+            help: None,
             message: "division by zero in a constant expression".to_string(),
             span,
         };
@@ -7997,6 +8123,7 @@ impl<'a> ConstEvaluator<'a> {
                     // which is what the generated code does.
                     Shl | Shr if b < 0 || b >= bits as i128 => {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "a shift by {b} is not defined for a '{}', whose width is {bits} bits",
                                 lt.display()
@@ -8041,6 +8168,7 @@ impl<'a> ConstEvaluator<'a> {
             },
             _ => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "a constant expression cannot compare or combine '{}' values",
                         lt.display()
@@ -8064,12 +8192,14 @@ impl<'a> ConstEvaluator<'a> {
     ) -> Result<ConstResult> {
         let Some(target) = Ty::from_name(to) else {
             return Err(TypeError {
+                help: None,
                 message: format!("'{}' is not a type to convert to", to),
                 span,
             });
         };
         let (ConstValue::Int(n), true) = (value, from.is_integer()) else {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "only an integer conversion is available in a constant expression, and this one reads a '{}'",
                     from.display()
@@ -8085,6 +8215,7 @@ impl<'a> ConstEvaluator<'a> {
         }
         if !target.is_integer() {
             return Err(TypeError {
+                help: None,
                 message: format!("'{call}' is not a conversion a constant expression can perform"),
                 span,
             });
@@ -8095,6 +8226,7 @@ impl<'a> ConstEvaluator<'a> {
         let fits = *n >= lo && *n <= hi as i128;
         if !fits {
             return Err(TypeError {
+                help: None,
                 message: format!("{call}: value out of range"),
                 span,
             });
@@ -8114,6 +8246,7 @@ impl<'a> ConstEvaluator<'a> {
     ) -> Result<ConstResult> {
         let Some(f) = self.const_fns.fns.get(key) else {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{display}' cannot be called in a constant expression: only a plain 'fun' whose own body a constant can evaluate is in reach, and this is not one (a builtin, an 'extern', a method and a generic function are all out of reach)"
                 ),
@@ -8122,6 +8255,7 @@ impl<'a> ConstEvaluator<'a> {
         };
         if self.depth.get() >= CONST_EVAL_DEPTH {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "evaluating '{display}' recursed more than {CONST_EVAL_DEPTH} calls deep: a constant expression has to terminate on the values it is given"
                 ),
@@ -8141,6 +8275,7 @@ impl<'a> ConstEvaluator<'a> {
                     Some(i) => i,
                     None => {
                         return Err(TypeError {
+                            help: None,
                             message: format!("'{display}' has no parameter named '{name}'"),
                             span: arg.value.span(),
                         })
@@ -8154,6 +8289,7 @@ impl<'a> ConstEvaluator<'a> {
             };
             if index >= f.params.len() {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{display}' takes {} argument(s), and this call has more",
                         f.params.len()
@@ -8163,6 +8299,7 @@ impl<'a> ConstEvaluator<'a> {
             }
             if slots[index].is_some() {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "parameter '{}' of '{display}' is given twice",
                         f.params[index].0
@@ -8193,6 +8330,7 @@ impl<'a> ConstEvaluator<'a> {
                         .map_err(|e| e.at(span))?;
                     if v.1 != declared {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "parameter '{}' of '{display}' is a '{}', and this argument is a '{}'",
                                 f.params[i].0,
@@ -8212,6 +8350,7 @@ impl<'a> ConstEvaluator<'a> {
                 }
                 None => {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{display}' is missing its argument for parameter '{}'",
                             f.params[i].0
@@ -8232,6 +8371,7 @@ impl<'a> ConstEvaluator<'a> {
             (Some(v), Some(t)) => {
                 if v.1 != t {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{display}' declares '{}' but this call produced a '{}'",
                             t.display(),
@@ -8243,11 +8383,13 @@ impl<'a> ConstEvaluator<'a> {
                 Ok(v)
             }
             (Some(_), None) => Err(TypeError {
+                help: None,
                 message: format!("'{display}' returns a value but declares no return type"),
                 span,
             }),
             (None, None) => Ok((ConstValue::Unit, Ty::Unit)),
             (None, Some(t)) => Err(TypeError {
+                help: None,
                 message: format!(
                     "'{display}' has to produce a '{}' value, and it fell off its end",
                     t.display()
@@ -8291,6 +8433,7 @@ impl<'a> ConstEvaluator<'a> {
                     if let Some(t) = &declared {
                         if &value.1 != t {
                             return Err(TypeError {
+                                help: None,
                                 message: format!(
                                     "'{name}' is declared as '{}', and its initializer is a '{}'",
                                     t.display(),
@@ -8321,6 +8464,7 @@ impl<'a> ConstEvaluator<'a> {
                         ConstValue::Bool(false) => break,
                         _ => {
                             return Err(TypeError {
+                                help: None,
                                 message: format!(
                                     "the condition of a 'while' has to be a 'bool', and this one is a '{}'",
                                     ty.display()
@@ -8365,6 +8509,7 @@ impl<'a> ConstEvaluator<'a> {
                 // initializer never contains one.
                 ast::Stmt::Defer { span, .. } | ast::Stmt::Errdefer { span, .. } => {
                     return Err(TypeError {
+                        help: None,
                         message: "internal error: a 'defer' reached the constant folder; it should have been lowered before checking".to_string(),
                         span: *span,
                     })
@@ -9570,17 +9715,18 @@ fn check_program_pass(
         "main"
     };
     if !sigs.contains_key(entry_key) {
-        return Err(Diagnostic::new(
-            if entry_key == "main" {
-                "no 'main' function found".to_string()
-            } else {
-                format!(
-                    "no entry function '{entry_key}' found: coral.toml's '[target] entry' names a `fun` with no parameters and no return in the entry module"
-                )
-            },
-            Span::new(0, 0),
-            project.entry.clone(),
-        ));
+        let message = if entry_key == "main" {
+            "no 'main' function found".to_string()
+        } else {
+            format!(
+                "no entry function '{entry_key}' found: coral.toml's '[target] entry' names a `fun` with no parameters and no return in the entry module"
+            )
+        };
+        let mut diag = Diagnostic::new(message, Span::new(0, 0), project.entry.clone());
+        if entry_key == "main" {
+            diag = diag.with_help("add fun main() to the entry file. It takes no arguments and returns nothing.");
+        }
+        return Err(diag);
     }
 
     let mut checked_pds = Vec::new();
@@ -10693,6 +10839,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
         tir::ExprKind::StaticRef(name) => match ctx.statics.get(name) {
             Some(s) if s.mutable => Ok(()),
             Some(s) => Err(TypeError {
+                help: None,
                 message: format!(
                     "cannot assign to 'static {}': it is not declared 'static mut'",
                     s.name
@@ -10704,6 +10851,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
         tir::ExprKind::Ident(name) => {
             let Some(info) = ctx.lookup(name) else {
                 return Err(TypeError {
+                    help: None,
                     message: format!("cannot assign to '{name}'"),
                     span: target.span,
                 });
@@ -10723,6 +10871,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
                         Ok(())
                     } else {
                         Err(TypeError {
+                            help: None,
                             message: format!("cannot write to '{name}': it is a shared borrow, not 'mut'"),
                             span: target.span,
                         })
@@ -10733,6 +10882,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
                         Ok(())
                     } else {
                         Err(TypeError {
+                            help: None,
                             message: format!("cannot assign to '{name}': not declared 'var'"),
                             span: target.span,
                         })
@@ -10756,6 +10906,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
                     if let Some(pd) = ctx.pds.values().find(|p| p.hidden == name).cloned() {
                         if !pd.mutable {
                             return Err(TypeError {
+                                help: None,
                                 message: format!(
                                     "cannot assign to passdown '{}': it is declared 'pd val' (only a 'pd var' can be assigned inside a function)",
                                     pd.qualified
@@ -10767,6 +10918,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
                             return Ok(());
                         }
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "cannot write to passdown '{}' through a shared borrow",
                                 pd.qualified
@@ -10776,6 +10928,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
                     }
                 }
                 Err(TypeError {
+                    help: None,
                     message: "cannot write through a shared borrow".to_string(),
                     span: target.span,
                 })
@@ -10805,11 +10958,12 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
                     } else {
                         format!("cannot write to captured '{name}': it is not declared 'var' in the enclosing function; declare it 'var' so a scoped block can write it")
                     };
-                    Err(TypeError { message, span: target.span })
+                    Err(TypeError { message, span: target.span, help: None })
                 }
                 _ => {
                     note_excl_need(target, ctx);
                     Err(TypeError {
+                        help: None,
                     message: if ctx.borrowed_captures && ctx.outer_mut.contains(&name) {
                         format!("cannot write to captured '{name}': it is copied in by value here")
                     } else if ctx.borrowed_captures {
@@ -10825,6 +10979,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
         // A function name, a literal or a call result is not somewhere a value
         // can be stored (`f -= 1`, `1 = x`).
         _ => Err(TypeError {
+            help: None,
             message: "cannot assign to this expression: it is not a variable, a field or an element".to_string(),
             span: target.span,
         }),
@@ -10901,6 +11056,7 @@ fn check_extern_callback_params(f: &ast::FunctionDecl, sig: &FnSig) -> Result<()
                     for (wp, resolved) in written_params.iter().zip(params.iter()) {
                         if wp.mode != ast::ParamMode::Borrow {
                             return Err(TypeError {
+                                help: None,
                                 message: format!(
                                     "the callback closure type '{written}' takes '{}' by ownership or an exclusive borrow, but a native callback thunk forwards every argument by value: write the closure parameter as a scalar, 'bool', 'str', an opaque handle or 'unit'",
                                     wp.display()
@@ -10910,6 +11066,7 @@ fn check_extern_callback_params(f: &ast::FunctionDecl, sig: &FnSig) -> Result<()
                         }
                         if !is_callback_abi_ty(resolved) {
                             return Err(TypeError {
+                                help: None,
                                 message: format!(
                                     "the callback closure type '{written}' passes '{}' by value, which a native callback thunk cannot forward: write the closure parameter as a scalar, 'bool', 'str', an opaque handle or 'unit'",
                                     wp.ty.display()
@@ -10921,6 +11078,7 @@ fn check_extern_callback_params(f: &ast::FunctionDecl, sig: &FnSig) -> Result<()
                 }
                 if !is_callback_abi_ty(ret) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "the callback closure type '{written}' returns '{}', which a native callback thunk cannot forward: a callback closure must return a scalar, 'bool', 'str', an opaque handle or 'unit'",
                             ret.display()
@@ -10931,6 +11089,7 @@ fn check_extern_callback_params(f: &ast::FunctionDecl, sig: &FnSig) -> Result<()
             }
             Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "the parameter '{}' of an 'extern fun' is a closure handed to native code, which must own it: write the type 'move {}' so the destroy notify has an environment to free",
                         p.name,
@@ -10944,6 +11103,7 @@ fn check_extern_callback_params(f: &ast::FunctionDecl, sig: &FnSig) -> Result<()
     }
     if callbacks > 1 {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' takes {callbacks} callback closures, but a user 'extern fun' can expand at most one 'move closure(...)' parameter in this pass",
                 f.name
@@ -10992,6 +11152,7 @@ fn check_function(
     if f.variadic {
         if !f.extern_ {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' writes '...', which is only legal on a user 'extern fun': a plain function has no native call to pass the extra arguments to",
                     display_name(f)
@@ -11001,6 +11162,7 @@ fn check_function(
         }
         if project.extern_ffi_of(&f.module).is_none() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' writes '...', but only a user 'extern fun' - one whose module has a coral.toml '[extern.\"{}\"]' section - may be variadic",
                     display_name(f),
@@ -11011,6 +11173,7 @@ fn check_function(
         }
         if !decl_type_params(f).is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is variadic and generic: a variadic user 'extern fun' cannot have type parameters",
                     display_name(f)
@@ -11026,24 +11189,28 @@ fn check_function(
     if f.naked {
         if f.extern_ {
             return Err(TypeError {
+                help: None,
                 message: "a 'naked fun' cannot be 'extern': it has a body of its own".to_string(),
                 span: f.span,
             });
         }
         if f.receiver.is_some() {
             return Err(TypeError {
+                help: None,
                 message: "a 'naked fun' cannot be a receiver method: it has no compiler-emitted prologue, so there is nothing that could pass the receiver".to_string(),
                 span: f.span,
             });
         }
         if f.name == "main" {
             return Err(TypeError {
+                help: None,
                 message: "a 'naked fun' cannot be 'main': the compiler emits the hosted entry point's own C signature for it".to_string(),
                 span: f.span,
             });
         }
         if !f.params.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: "a 'naked fun' takes no parameters: the asm reads the incoming registers itself, and the compiler binds nothing".to_string(),
                 span: f.span,
             });
@@ -11061,6 +11228,7 @@ fn check_function(
         };
         if !single_asm {
             return Err(TypeError {
+                help: None,
                 message: "a 'naked fun' body must be exactly one 'asm(...)' statement: nothing else can be emitted around it".to_string(),
                 span: f.span,
             });
@@ -11204,6 +11372,7 @@ fn check_function(
                     }
                     Some(_) => {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "extern function '{bare}' is not in this module's coral.toml '[extern.\"{}\"]' symbol allowlist - add it there before declaring 'extern fun {bare}'",
                                 f.module
@@ -11213,6 +11382,7 @@ fn check_function(
                     }
                     None => {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "extern function '{bare}' has no compiler-supplied body - only compiler-shipped stdlib modules may declare 'extern fun', unless this module has its own coral.toml '[extern.\"{}\"]' section naming '{bare}' in its 'symbols' allowlist", f.module
                             ),
@@ -11232,6 +11402,7 @@ fn check_function(
         // signature had been registered as a declaration.
         ast::FunctionBody::Signature => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' is a trait method signature and has no body: write the body in the 'impl' block",
                     display_name(f)
@@ -11263,6 +11434,7 @@ fn check_function(
         && !str_view_compatible(&body.ty(), &sig.ret)
     {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "function '{}' declared to return '{}' but body evaluates to '{}'",
                 display_name(f),
@@ -11329,6 +11501,7 @@ fn refuse_dropped_must_use(checked: &tir::Expr, ctx: &Ctx, span: Span) -> Result
         let plain = callee.split('<').next().unwrap_or(callee);
         if ctx.must_use_fns.contains(plain) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "the result of '{}' must be used: it reports a failure or hands a value back. Branch on it, or write 'val _r = ...' to discard it on purpose",
                     display_callee(plain)
@@ -11478,7 +11651,7 @@ fn open_container_declaration_error(ty: &Ty, binding: &OpenBinding) -> TypeError
         (None, Ty::List(_)) => "cannot tell what 'List.empty()' holds, write the element type on the binding ('var xs: List<String> = List.empty()') or start from 'List.of(x)'".to_string(),
         (None, _) => "cannot tell what 'Box.empty()' holds, write the element type on the binding ('var b: Box<String> = Box.empty()') or start from 'Box.of(x)'".to_string(),
     };
-    TypeError { message, span: binding.span }
+    TypeError { message, span: binding.span, help: None }
 }
 
 fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
@@ -11504,6 +11677,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 let final_ty = expected.unwrap_or_else(|| value.ty.clone());
                 if final_ty != value.ty {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "cannot assign value of type '{}' to '{name}' declared as '{}'",
                             value.ty.display(),
@@ -11534,6 +11708,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             let final_ty = expected.unwrap_or_else(|| init.ty.clone());
             if final_ty != init.ty {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "cannot assign value of type '{}' to '{name}' declared as '{}'",
                         init.ty.display(),
@@ -11568,6 +11743,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             // positions are then read out of that value one at a time.
             let value_ty = value.ty.clone();
             let elements = tuple_elems_of(&value_ty, ctx).ok_or_else(|| TypeError {
+                help: None,
                 message: format!(
                     "a destructuring binding takes one tuple value apart, and this initializer is a '{}': 'val (lo, hi) = ...' needs a tuple here ('(i32, i32)'), and a single value is bound with an ordinary 'val name = ...'",
                     value_ty.display()
@@ -11576,6 +11752,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             })?;
             if elements.len() != pattern_arity(pattern) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "this pattern has {} position(s), and the tuple it destructures ('{}') has {}",
                         pattern_arity(pattern),
@@ -11605,6 +11782,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             let cond = check_expr(cond, ctx, Some(&Ty::Bool))?;
             if cond.ty != Ty::Bool {
                 return Err(TypeError {
+                    help: None,
                     message: format!("while condition must be 'bool', found '{}'", cond.ty.display()),
                     span: *span,
                 });
@@ -11660,6 +11838,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             }
             if !implements_iterator(ctx, &iter_ty) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'for' walks a 'List<T>' or a type that implements 'Iterator', and '{}' is neither: implement 'std.iter.Iterator' for it ('type Item' and 'fun mut Self.next().return: option.Option<Self::Item>'), or walk a 'List' by index",
                         iter_ty.display()
@@ -11679,6 +11858,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                     "continue"
                 };
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{what}' is a loop control statement, and no loop encloses it: write it inside a 'while' or a 'for'"
                     ),
@@ -11708,6 +11888,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                     String::new()
                 };
                 return Err(TypeError {
+                    help: Some(format!("return a value of type '{}', or change the return type to '{}'.", ret_ty.display(), actual.display())),
                     message: format!(
                         "return type mismatch: expected '{}', found '{}'{note}",
                         ret_ty.display(),
@@ -11729,6 +11910,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             // temporary, so this would leak. Reject it instead.
             if !checked.ty.is_copy() {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "this expression produces an owned '{}' value that is never used - bind it to a 'val' or 'var', print it, or pass it to something that takes it by value",
                         checked.ty.display()
@@ -11741,6 +11923,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
         // `defer` is lowered away by `defer.rs` before this pass runs, so one
         // reaching the checker is a compiler bug rather than a program error.
         ast::Stmt::Defer { span, .. } | ast::Stmt::Errdefer { span, .. } => Err(TypeError {
+            help: None,
             message: "internal error: a 'defer' statement reached the type checker; it should have been lowered before checking"
                 .to_string(),
             span: *span,
@@ -11831,7 +12014,7 @@ fn desugar_map_for(
     span: Span,
     iter_ty: &Ty,
 ) -> Result<ast::Stmt> {
-    let refuse = |message: String| Err(TypeError { message, span });
+    let refuse = |message: String| Err(TypeError { message, span, help: None });
     if !binding.starts_with("#forpat") {
         return refuse(format!(
             "'for' over a '{}' binds the key and the value together: write 'for (key, value) in map'",
@@ -12155,6 +12338,7 @@ fn lower_pattern(
 ) -> Result<()> {
     let ast::BindingPattern::Tuple(positions) = pattern else {
         return Err(TypeError {
+            help: None,
             message: "a destructuring pattern is a parenthesized list of two or more positions ('val (lo, hi) = ...')".to_string(),
             span,
         });
@@ -12187,6 +12371,7 @@ fn lower_pattern(
             }
             ast::BindingPattern::Tuple(_) => {
                 let nested = tuple_elems_of(&elements[i], ctx).ok_or_else(|| TypeError {
+                    help: None,
                     message: format!(
                         "position {} of the pattern is itself a pattern, and element {} of the tuple it destructures ('{}') is not a tuple; bind that element to one name instead",
                         i + 1,
@@ -12354,6 +12539,7 @@ fn check_fn_literal_pass(
             Some((want_params, want_ret)) => {
                 if want_params.len() != params_ast.len() {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "this block declares {} parameter(s), but the parameter it is passed to expects a function of {}",
                             params_ast.len(),
@@ -12377,6 +12563,7 @@ fn check_fn_literal_pass(
             None => {
                 if !params_ast.is_empty() {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "this block declares parameter(s) ({}), but there is no function type at this position to take their types from - a block header is typed by the closure point it is passed to; write the parameter types on a 'fun(...)' literal instead",
                             params_ast
@@ -12405,6 +12592,7 @@ fn check_fn_literal_pass(
                 // place to be written here.
                 if rt.amp {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "a 'fun' literal cannot return a borrow ('&{}') - an indirect call has no parameter an elided lifetime could bind to; return an owned value instead",
                             rt.display()
@@ -12510,6 +12698,7 @@ fn check_fn_literal_pass(
         && !str_view_compatible(&checked.ty(), &ret)
     {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "this 'fun' literal is declared to return '{}' but its body evaluates to '{}'",
                 ret.display(),
@@ -12532,6 +12721,7 @@ fn check_fn_literal_pass(
         // not hold one (`kelp wiki page language/functions.md` part 2).
         if !scoped && matches!(ty, Ty::ScopedFn { .. }) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "a closure cannot capture the scoped function value '{name}': a scoped value may only live for the call it was written in, and a closure's environment can outlive that call; pass it on to another 'scoped fun(...)' parameter instead"
                 ),
@@ -12543,6 +12733,7 @@ fn check_fn_literal_pass(
         // (`kelp wiki page language/functions.md`).
         if scoped && matches!(ty, Ty::Ref { mutable: true, .. }) && crate::types::is_borrowed_field_ty(&ret) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "this block writes through '{name}' (an exclusive capture) and returns a borrow ('{}'): the borrow would outlive the call that holds '{name}' exclusively; return an owned value (a copy or a 'String.from_str(...)') instead",
                     ret.display()
@@ -12557,6 +12748,7 @@ fn check_fn_literal_pass(
         // carries is already live in the enclosing frame.
         if crate::types::is_borrowed_field_ty(&ty) && !scoped {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "a 'fun' literal cannot capture '{name}': it is a borrow ('{}'), and the environment it would be stored in outlives the frame the borrow points into - capture an owned value, or pass it as a parameter of the literal",
                     ty.display()
@@ -12610,6 +12802,7 @@ fn check_fn_literal_pass(
             // `Copy` capture can be nested this way.
             if !ty.is_copy() {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "cannot capture '{name}' into this literal: it belongs to the enclosing closure's environment, which is not a local this frame owns, so there is no owned place to move it out of; capture an owned value from the frame that owns it, or copy a `Copy` one"
                     ),
@@ -12877,6 +13070,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             let exact = if ty == Ty::F32 { 1u64 << 24 } else { 1u64 << 53 };
             if *v > exact {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "the literal {v} is not exactly representable as '{}': write it as a float ({v}.0) to accept the rounding, or use a smaller number",
                         ty.display()
@@ -12913,6 +13107,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 Some(t) if t.is_integer() => {
                     if !char_fits(*v, t) {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "the character '{}' (U+{:04X}) does not fit in '{}'",
                                 printable_codepoint(*v),
@@ -12952,6 +13147,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if let Some(t) = expected {
                 if !matches!(t, Ty::U8) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "a byte literal is a 'u8', not a '{}': write it as a character literal when it should take this type",
                             t.display()
@@ -13038,6 +13234,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // way round it.
             if ctx.in_fn_literal && ctx.pds.contains_key(name) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "a 'fun' literal cannot read passdown '{name}' - a passdown is passed to the function that names it as a hidden argument, and a function value is a plain pointer to code; pass the value as a parameter instead"
                     ),
@@ -13050,6 +13247,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if let Some(pd) = ctx.pds.get(name).cloned() {
                 if !ctx.pd_initialized(&pd.hidden) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "passdown '{}' is read before it is initialized - a 'pd' initializer can only use passdowns declared before it",
                             pd.qualified
@@ -13062,6 +13260,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 // borrow, and a passdown has to hold a value.
                 if ctx.init_state.is_some() && !pd.value_ty.is_copy() {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "passdown '{}' cannot be read in another passdown's initializer: its value is not Copy",
                             pd.qualified
@@ -13150,6 +13349,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 if let Some(owner) = &ctx.outer_receiver {
                     if ctx.field_of(owner, name).is_some() {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "a 'fun' literal cannot capture '{name}': it is a field of '{owner}', and the receiver is a borrow, so its field is not this frame's to move out; bind a `Copy` field to a local first (`val {name}0 = {name}`) and capture that, or take the whole receiver as a 'move' parameter"
                             ),
@@ -13159,6 +13359,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 }
             }
             Err(TypeError {
+                help: (ctx.foreign_pds.get(name).is_none() && ctx.init_state.is_none()).then(|| "declare it with val or var before this line, or check the spelling.".to_string()),
                 message: match ctx.foreign_pds.get(name) {
                     Some(module) => format!(
                         "'{name}' is a passdown of module '{module}' - a passdown is only visible inside the module that declares it"
@@ -13221,6 +13422,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                             return Ok(lower_operator_call(&owner, "neg", &[&sub_t], *span, ctx)?);
                         }
                         return Err(TypeError {
+                            help: None,
                             message: format!("cannot negate a value of type '{}'", sub_t.ty.display()),
                             span: *span,
                         });
@@ -13229,6 +13431,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 UnOp::Not => {
                     if sub_t.ty != Ty::Bool {
                         return Err(TypeError {
+                            help: None,
                             message: format!("cannot apply '!' to a value of type '{}'", sub_t.ty.display()),
                             span: *span,
                         });
@@ -13237,6 +13440,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 UnOp::BitNot => {
                     if !sub_t.ty.is_integer() {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "cannot apply '~' to a value of type '{}' - '~' complements the bits of an integer",
                                 sub_t.ty.display()
@@ -13335,6 +13539,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         }
                         if ctx.sigs.keys().any(|k| k.split('@').next() == Some(&qualified)) {
                             return Err(TypeError {
+                                help: None,
                                 message: format!(
                                     "'{name}.{field}' is an overloaded stdlib function - its parameter types are part of the name, so it is not a value; write a non-generic wrapper function and pass that"
                                 ),
@@ -13343,6 +13548,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         }
                     }
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{name}' is a module, not a value - call its items as '{name}.{field}(...)'"
                         ),
@@ -13374,6 +13580,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         .map(|v| format!("'{}'", v.name))
                         .collect();
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{field}' is not a variant of enum '{ename}' - the variants are {}",
                             names.join(", ")
@@ -13385,6 +13592,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     let fields: Vec<String> =
                         vdef.fields.iter().map(|f| f.name.clone()).collect();
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "variant '{}.{}' carries payload ({}) - construct it as '{}.{}({})'",
                             ename,
@@ -13410,6 +13618,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             let base_t = check_expr(base, ctx, None)?;
             let Some(sname) = struct_name_of(&base_t.ty).map(|s| s.to_string()) else {
                 return Err(TypeError {
+                    help: None,
                     message: format!("cannot access field '{field}' on non-struct type '{}'", base_t.ty.display()),
                     span: *span,
                 });
@@ -13418,6 +13627,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // pattern, and its tag through `when` (A-1).
             if ctx.is_enum(&sname) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "enum '{sname}' has no field '{field}' - match it with 'when {sname} {{ ... }}' to read a payload"
                     ),
@@ -13426,6 +13636,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             }
             let sdef = ctx.struct_def(&sname).expect("struct types are only produced for known structs");
             let field_ty = sdef.field(field).map(|f| f.ty.clone()).ok_or_else(|| TypeError {
+                help: None,
                 message: format!("datac '{sname}' has no field '{field}'"),
                 span: *span,
             })?;
@@ -13493,6 +13704,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // pointee's (`syntax.md` 10.2).
             if !is_durable_place(&sub_t) {
                 return Err(TypeError {
+                    help: None,
                     message: "cannot borrow a temporary value".to_string(),
                     span: *span,
                 });
@@ -13507,6 +13719,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     _ => "this borrow".to_string(),
                 };
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "this is a borrow of a borrow: {written} borrows a value that is already a borrow, and Kelp has no '&&T'; pass the borrow itself"
                     ),
@@ -13527,6 +13740,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             let sub_t = check_expr(sub, ctx, None)?;
             let Ty::Ref { inner, .. } = &sub_t.ty else {
                 return Err(TypeError {
+                    help: None,
                     message: format!("cannot dereference a value of type '{}'", sub_t.ty.display()),
                     span: *span,
                 });
@@ -13543,6 +13757,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // `print`/`print!` (that path is handled in `check_call`).
             let _ = (parts, span);
             Err(TypeError {
+                help: None,
                 message: "a string template can only be printed: pass it to 'print(...)' or 'print!(...)'; a template is not a value, so build the text with 'str.concat', 'fmt.*' or a 'String'".to_string(),
                 span: *span,
             })
@@ -13617,6 +13832,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             }
             if !type_args.is_empty() && !ptr_receiver(receiver, ctx) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{method}' does not take type arguments - a method's type parameters come from its receiver"
                     ),
@@ -13640,6 +13856,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 Some(Ty::Array(elem, len)) => {
                     if *len as usize != elems.len() {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "an array of {len} element(s) is expected here, and this literal has {}",
                                 elems.len()
@@ -13663,6 +13880,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     None => elem_ty = Some(v.ty.clone()),
                     Some(t) if *t != v.ty => {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "the elements of an array have different types: element {i} is a '{}', and the first element is a '{}'",
                                 v.ty.display(),
@@ -13679,6 +13897,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             note_heap_use(&ctx.env, managed::HeapSlot::ArrayElement, &elem_ty, *span);
             if !crate::types::is_array_element(&elem_ty) {
                 return Err(TypeError {
+                    help: None,
                     message: array_element_error(&elem_ty),
                     span: *span,
                 });
@@ -13704,6 +13923,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if let Some(expected_elems) = &hinted {
                 if expected_elems.len() != elems.len() {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "a tuple of {} element(s) is expected here, and this one has {}",
                             expected_elems.len(),
@@ -13720,6 +13940,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 let v = check_expr(e, ctx, hint)?;
                 if crate::types::is_borrowed_field_ty(&v.ty) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "element {} of the tuple is a borrowed type ('{}'): a tuple holds owned data only in v1, exactly as a datac field does, so a '&str', 'View' or reference element is not expressible; an owned 'String' is the way to keep text in one",
                             i + 1,
@@ -13730,6 +13951,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 }
                 if v.ty == Ty::Unit {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "element {} of the tuple produces no value ('unit'): 'unit' is the absent value and cannot be stored, exactly as a datac field cannot be",
                             i + 1
@@ -13765,6 +13987,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 Some(Ty::Array(elem, expected_len)) => {
                     if *expected_len != n {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "an array of {expected_len} element(s) is expected here, and this repeat produces {n}"
                             ),
@@ -13785,6 +14008,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // declared set and its positions are walked instead.
             if elem_owns_memory(ctx, &elem_ty) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "the repeat form '[x; N]' needs an element that owns nothing, and '{}' owns memory. Copying it into {n} slots would make {n} owners of the same buffer; write the elements out ('[a, b, c]') instead",
                         elem_ty.display()
@@ -13795,6 +14019,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             note_heap_use(&ctx.env, managed::HeapSlot::ArrayElement, &elem_ty, *span);
             if !crate::types::is_array_element(&elem_ty) {
                 return Err(TypeError {
+                    help: None,
                     message: array_element_error(&elem_ty),
                     span: *span,
                 });
@@ -13931,6 +14156,7 @@ fn generic_template_name(name: &str, ctx: &Ctx) -> Option<String> {
 fn arg_slots(what: &str, names: &[String], args: &[ast::CallArg], span: Span) -> Result<Vec<usize>> {
     if args.len() != names.len() {
         return Err(TypeError {
+            help: None,
             message: format!("{what} expects {} argument(s), found {}", names.len(), args.len()),
             span,
         });
@@ -13940,6 +14166,7 @@ fn arg_slots(what: &str, names: &[String], args: &[ast::CallArg], span: Span) ->
         if let Some(n) = &a.name {
             if named.insert(n.as_str(), i).is_some() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("argument '{n}' specified more than once"),
                     span,
                 });
@@ -13955,6 +14182,7 @@ fn arg_slots(what: &str, names: &[String], args: &[ast::CallArg], span: Span) ->
                 .next()
                 .map(|(i, _)| i)
                 .ok_or_else(|| TypeError {
+                    help: None,
                     message: format!("{what} is missing argument '{name}'"),
                     span,
                 })?,
@@ -13963,6 +14191,7 @@ fn arg_slots(what: &str, names: &[String], args: &[ast::CallArg], span: Span) ->
     }
     if let Some((&leftover, _)) = named.iter().next() {
         return Err(TypeError {
+            help: None,
             message: format!("{what} has no parameter named '{leftover}'"),
             span,
         });
@@ -14009,6 +14238,7 @@ fn resolve_explicit_args(type_args: &[ast::TypeExpr], ctx: &Ctx) -> Result<Vec<T
 fn check_arity(name: &str, params: &[String], explicit: &[Ty], span: Span) -> Result<Vec<Ty>> {
     if explicit.len() != params.len() {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{name}' takes {} type argument(s), found {}",
                 params.len(),
@@ -14190,6 +14420,7 @@ fn finish_type_args(
             Some(t) => args.push(t.clone()),
             None => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "cannot infer type parameter '{p}' of '{name}' here - annotate the binding (e.g. 'val x: {name}<{}> = ...') or pass an argument that determines it",
                         params.join(", ")
@@ -14259,6 +14490,7 @@ fn check_generic_datac_construction(
             GenericKind::Record(_) => unreachable!(),
         };
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' is an enum - construct one of its variants: {}",
                 tmpl.name,
@@ -14328,6 +14560,7 @@ fn check_generic_enum_construction(
     let tmpl = ctx.env.generics[tmpl_name].clone();
     let GenericKind::Sum(variants) = &tmpl.kind else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' is a generic datac - construct it as '{}(...)'",
                 tmpl.name, tmpl.name
@@ -14338,6 +14571,7 @@ fn check_generic_enum_construction(
     let Some(vdef) = variants.iter().find(|v| v.name == variant) else {
         let names: Vec<String> = variants.iter().map(|v| format!("'{}'", v.name)).collect();
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}.{}' is not a variant - the variants of '{}' are {}",
                 tmpl.name,
@@ -14412,6 +14646,7 @@ fn check_generic_bare_variant(
     let tmpl = ctx.env.generics[tmpl_name].clone();
     let GenericKind::Sum(variants) = &tmpl.kind else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' is a generic datac - read its fields with '.' after constructing it",
                 tmpl.name
@@ -14422,6 +14657,7 @@ fn check_generic_bare_variant(
     let Some(vdef) = variants.iter().find(|v| v.name == variant) else {
         let names: Vec<String> = variants.iter().map(|v| format!("'{}'", v.name)).collect();
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}.{}' is not a variant - the variants of '{}' are {}",
                 tmpl.name,
@@ -14435,6 +14671,7 @@ fn check_generic_bare_variant(
     if !vdef.fields.is_empty() {
         let fields: Vec<String> = vdef.fields.iter().map(|f| f.name.clone()).collect();
         return Err(TypeError {
+            help: None,
             message: format!(
                 "variant '{}.{}' carries payload ({}) - construct it as '{}.{}({})'",
                 tmpl.name,
@@ -14520,6 +14757,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
         Ty::Struct(name) => name.clone(),
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value, not '{}' - match it with 'when' or 'if let' instead",
                     other.display()
@@ -14530,6 +14768,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     };
     let Some(edef) = ctx.enum_def(&source) else {
         return Err(TypeError {
+            help: None,
             message: format!("'?' needs an enum, but '{}' is a datac", inner.ty.display()),
             span,
         });
@@ -14537,6 +14776,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     let Some(shape) = try_shape(&edef) else {
         let names: Vec<String> = edef.variants.iter().map(|v| format!("'{}'", v.name)).collect();
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'?' needs an enum with an 'Ok' and an 'Err' variant (or a 'Some' and a 'None'), but '{}' has {}",
                 inner.ty.display(),
@@ -14551,6 +14791,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
         Ty::Struct(name) if ctx.enum_def(name).is_some() => name.clone(),
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' - it returns '{}'",
                     other.display()
@@ -14565,6 +14806,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     let Some(rshape) = try_shape(&rdef) else {
         let names: Vec<String> = rdef.variants.iter().map(|v| format!("'{}'", v.name)).collect();
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' - it returns '{}', with {}",
                 ret.display(),
@@ -14575,6 +14817,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     };
     if shape.err_has_payload != rshape.err_has_payload {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'?' here propagates {} failure, but the enclosing function returns '{}' - the two have to be the same shape; match the value instead (`when r {{ Ok(v) -> ..., Err(e) -> return <your failure> }}`), or make the function return the same kind of enum",
                 if shape.err_has_payload { "a carrying" } else { "a payload-less" },
@@ -14596,6 +14839,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
                 Some(key) => convert = Some(key),
                 None => {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'?' cannot convert a failure: '{}' carries '{}' and the enclosing function returns '{}', whose failure carries '{}' - write 'impl From<{}> for {} {{ fun from(value: {}).return: {} {{ ... }} }}' so the operator has a conversion to call",
                             inner.ty.display(),
@@ -14717,6 +14961,7 @@ fn check_enum_construction(
             .map(|v| format!("'{}'", v.name))
             .collect();
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{ename}.{variant}' is not a variant - the variants of '{ename}' are {}",
                 names.join(", ")
@@ -14791,6 +15036,7 @@ fn check_let_else_form(scrut: &tir::Expr, arms: &[ast::WhenArm]) -> Result<()> {
     if let Some(ast::WhenArm { body: ast::Expr::Block(block), span, pattern: None }) = arms.get(1) {
         if !ast_block_leaves(block) {
             return Err(TypeError {
+                help: None,
                 message: "let-else: the else block falls through. Its last statement must leave the enclosing code (return, break, continue, or panic(...)), because the code after the let runs only when the pattern matched".to_string(),
                 span: *span,
             });
@@ -14802,6 +15048,7 @@ fn check_let_else_form(scrut: &tir::Expr, arms: &[ast::WhenArm]) -> Result<()> {
             None => String::new(),
         };
         return Err(TypeError {
+            help: None,
             message: format!(
                 "let-else: the pattern '{pattern}' must match the expression's type, and '{}' is not an enum, so no variant can match it. Fix: give the expression the enum type the pattern names",
                 scrut.ty.display()
@@ -14826,6 +15073,7 @@ fn check_when(
     }
     let Some(ename) = struct_name_of(&scrut.ty).map(|s| s.to_string()) else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'when' with a scrutinee matches an 'enum', but '{}' is not one - for a chain of conditions write 'when {{ cond -> value }}' with no scrutinee",
                 scrut.ty.display()
@@ -14835,6 +15083,7 @@ fn check_when(
     };
     let Some(edef) = ctx.enum_def(&ename) else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'when' with a scrutinee matches an 'enum', but '{ename}' is a datac - read its fields with '.' instead"
             ),
@@ -14859,6 +15108,7 @@ fn check_when(
     for (ai, arm) in arms.iter().enumerate() {
         if else_seen {
             return Err(TypeError {
+                help: None,
                 message: "an 'else' arm must be the last arm of a 'when'".to_string(),
                 span: arm.span,
             });
@@ -14877,6 +15127,7 @@ fn check_when(
                         .collect();
                     if let_else {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "let-else: the pattern '{}' must match the expression's type, and '{ename}' has no such variant (the variants are {}). Fix: name a variant of the expression's enum, or change the expression to the enum the pattern names",
                                 p.variant,
@@ -14886,6 +15137,7 @@ fn check_when(
                         });
                     }
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{}' is not a variant of enum '{ename}' - the variants are {}",
                             p.variant,
@@ -14896,6 +15148,7 @@ fn check_when(
                 };
                 if covered[vidx].is_some() {
                     return Err(TypeError {
+                        help: None,
                         message: format!("variant '{}' is matched more than once", p.variant),
                         span: p.span,
                     });
@@ -14904,6 +15157,7 @@ fn check_when(
                     let fields: Vec<String> =
                         vdef.fields.iter().map(|f| f.name.clone()).collect();
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "pattern '{}({})' has {} binding(s) but variant '{}' carries {} payload field(s) ({})",
                             p.variant,
@@ -14983,6 +15237,7 @@ fn check_when(
                 Some(joined) => arm_ty = Some(joined),
                 None => {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'when' arms have different types: '{}' and '{}'",
                             t.display(),
@@ -15013,6 +15268,7 @@ fn check_when(
             .collect();
         if !missing.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "this 'when' is not exhaustive: {} of enum '{ename}' has no arm - add an arm, or an 'else' arm",
                     missing.join(" and ")
@@ -15151,6 +15407,7 @@ fn check_written_place(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
         let fdef = sdef.field(field).expect("field already resolved by check_expr");
         if !fdef.mutable {
             return Err(TypeError {
+                help: None,
                 message: format!("cannot write to '{field}': declared 'val'"),
                 span: target.span,
             });
@@ -15175,6 +15432,7 @@ fn check_asm(
 ) -> Result<tir::Expr> {
     if ctx.unsafe_depth == 0 {
         return Err(TypeError {
+            help: None,
             message: "'asm' is an unsafe operation: it can only be used inside 'unsafe { ... }' or in a function declared 'unsafe fun'".to_string(),
             span,
         });
@@ -15197,6 +15455,7 @@ fn check_asm(
                 Some(e) => {
                     if !is_ast_place(e) {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "a '{}' operand must be a place: the asm writes it back, so an arbitrary expression has nowhere to be written",
                                 asm_kind_word(op.kind)
@@ -15212,6 +15471,7 @@ fn check_asm(
                 None => {
                     if value_out.is_some() {
                         return Err(TypeError {
+                            help: None,
                             message: "an 'asm' expression has at most one anonymous output: name the others with a place ('out(\"r\") x')".to_string(),
                             span: op.span,
                         });
@@ -15238,6 +15498,7 @@ fn check_asm(
     for n in asm_placeholders(template) {
         if n >= operands.len() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "the asm template refers to operand {{{n}}}, but the asm has {} operand{}",
                     operands.len(),
@@ -15301,6 +15562,7 @@ fn require_asm_operand_ty(ty: &Ty, span: Span) -> Result<()> {
         Ok(())
     } else {
         Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' cannot be an asm operand: an operand is one machine value (an integer, 'bool', 'char', 'f32'/'f64', a 'Ptr' or an 'extern type' handle)",
                 ty.display()
@@ -15313,6 +15575,7 @@ fn require_asm_operand_ty(ty: &Ty, span: Span) -> Result<()> {
 fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     if !is_ast_place(target) {
         return Err(TypeError {
+            help: None,
             message: "invalid assignment target".to_string(),
             span,
         });
@@ -15324,6 +15587,7 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
     let value_t = check_expr(value, ctx, Some(&target_t.ty))?;
     if value_t.ty != target_t.ty {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "cannot assign value of type '{}' to target of type '{}'",
                 value_t.ty.display(),
@@ -15493,6 +15757,7 @@ fn lower_equality(
                 // has no such sight of the declaration and is a known gap).
                 if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'",
                             display_callee(&key)
@@ -15537,6 +15802,7 @@ fn lower_equality(
     if let (Some(a), Some(b)) = (equality_owner(&l.ty), equality_owner(&r.ty)) {
         if a == b && implements_trait(&ctx.env, crate::types::ORD_TRAIT, a) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "cannot compare '{}' values with '{}': '==' and '!=' come from a declared 'eq' method, and 'Ord' does not supply one; write 'fun {}.eq(other: &{}).return: bool'",
                     a,
@@ -15625,6 +15891,7 @@ fn lower_operator_call(
 ) -> Result<tir::Expr> {
     let key = crate::types::key_pair_method_key(owner, method);
     let sig = ctx.sig_of(&key).ok_or_else(|| TypeError {
+        help: None,
         message: format!(
             "'{owner}' implements the operator trait, but its '{method}' method is missing"
         ),
@@ -15632,6 +15899,7 @@ fn lower_operator_call(
     })?;
     if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'",
                 display_callee(&key)
@@ -15861,6 +16129,7 @@ fn check_binary(
                     return Ok(expr);
                 }
                 return Err(TypeError {
+                    help: None,
                     message: arithmetic_error(op, &l, &r),
                     span,
                 });
@@ -15888,6 +16157,7 @@ fn check_binary(
             let (l, r) = check_binary_operands(lhs, rhs, ctx, int_expected)?;
             if !l.ty.is_integer() || l.ty != r.ty {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "operator requires matching integer operands, found '{}' and '{}'",
                         l.ty.display(),
@@ -15903,6 +16173,7 @@ fn check_binary(
                 if let (tir::ExprKind::IntLit(v), Some(bits)) = (&r.kind, int_bits(&l.ty)) {
                     if *v < 0 || *v >= bits as i128 {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "a shift by {v} is not defined for a '{}', whose width is {bits} bits: the amount has to be in 0..{bits} (use wrapping_shl/wrapping_shr to mask it)",
                                 l.ty.display()
@@ -15951,6 +16222,7 @@ fn check_binary(
             }
             if l.ty != r.ty && !handle_pair {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "cannot compare '{}' with '{}'",
                         l.ty.display(),
@@ -15969,6 +16241,7 @@ fn check_binary(
                     && matches!(op, BinOp::Eq | BinOp::NotEq));
             if !comparable {
                 return Err(TypeError {
+                    help: None,
                     message: comparison_error(&l.ty, op),
                     span,
                 });
@@ -15988,6 +16261,7 @@ fn check_binary(
             let r = check_expr(rhs, ctx, Some(&Ty::Bool))?;
             if l.ty != Ty::Bool || r.ty != Ty::Bool {
                 return Err(TypeError {
+                    help: None,
                     message: "logical operators require bool operands".to_string(),
                     span,
                 });
@@ -16037,6 +16311,7 @@ fn match_args_split<'a>(
     let site = ctx.str_arg_site.take();
     if args.len() != params.len() && !(variadic && args.len() > params.len()) {
         return Err(TypeError {
+            help: None,
             message: format!("{what} expects {} argument(s), found {}", params.len(), args.len()),
             span,
         });
@@ -16047,6 +16322,7 @@ fn match_args_split<'a>(
         if let Some(n) = &a.name {
             if named.insert(n.as_str(), a).is_some() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("argument '{n}' specified more than once"),
                     span,
                 });
@@ -16060,6 +16336,7 @@ fn match_args_split<'a>(
         let arg = match named.remove(pname.as_str()) {
             Some(a) => a,
             None => positional.next().ok_or_else(|| TypeError {
+                help: None,
                 message: format!("{what} is missing argument '{pname}'"),
                 span,
             })?,
@@ -16071,6 +16348,7 @@ fn match_args_split<'a>(
 
     if let Some((&leftover, _)) = named.iter().next() {
         return Err(TypeError {
+            help: None,
             message: format!("{what} has no parameter named '{leftover}'"),
             span,
         });
@@ -16125,6 +16403,7 @@ fn require_place_for_borrowed_arg(
     // borrow is taken in, which is the whole question here.
     if !is_durable_place(inner) {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "this call returns a borrow of its parameter '{}', so that argument has to be a variable or a field - a temporary would be freed before the borrow could be used; bind it to a local first (`val tmp = <the expression>`) and pass `tmp` instead",
                 params[idx].0
@@ -16186,6 +16465,7 @@ fn check_call_arg_in(
         let checked = check_expr(arg_expr, ctx, None)?;
         if !matches!(checked.ty, Ty::ScopedFn { .. }) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "argument {pname} has type '{}', expected '{}': a scoped parameter accepts only a function literal or a trailing block written at this call site, never a stored value",
                     checked.ty.display(),
@@ -16196,6 +16476,7 @@ fn check_call_arg_in(
         }
         if checked.ty != *pty {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "argument {pname} has type '{}', expected '{}'",
                     checked.ty.display(),
@@ -16218,6 +16499,7 @@ fn check_call_arg_in(
                 }
                 Some(StrArgSite::Refused(callee)) => {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "argument {pname} has type 'String', expected 'str': {callee} takes no implicit borrow of a 'String' for a 'str' parameter; write `.as_str()` on the argument"
                         ),
@@ -16241,6 +16523,7 @@ fn check_call_arg_in(
         // (A-4).
         if matches!(checked.ty, Ty::Ref { .. }) && !pty.is_copy() {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "argument {pname} has type '{}', but this call moves its argument in, and a borrow cannot be moved out of - pass an owned value (a 'Box' holding one moves it out with 'take()'){}",
                     checked.ty.display(),
@@ -16251,9 +16534,10 @@ fn check_call_arg_in(
         }
         if checked.ty != *pty {
             if let Some(why) = closure_kind_mismatch(pty, &checked.ty) {
-                return Err(TypeError { message: why, span: arg_expr.span() });
+                return Err(TypeError { message: why, span: arg_expr.span(), help: None });
             }
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "argument {pname} has type '{}', expected '{}'{}{}",
                     checked.ty.display(),
@@ -16282,6 +16566,7 @@ fn check_call_arg_in(
             if *mutable {
                 if !is_durable_place(&checked) {
                     return Err(TypeError {
+                        help: None,
                         message: format!("argument {pname} must be a variable or field, not a temporary value"),
                         span: arg_expr.span(),
                     });
@@ -16299,6 +16584,7 @@ fn check_call_arg_in(
             if *mutable && !a_mut {
                 note_excl_need(&checked, ctx);
                 return Err(TypeError {
+                    help: None,
                     message: format!("argument {pname} requires an exclusive borrow, found a shared one"),
                     span: arg_expr.span(),
                 });
@@ -16306,6 +16592,7 @@ fn check_call_arg_in(
             Ok(checked)
         }
         other => Err(TypeError {
+            help: None,
             message: closure_kind_mismatch(pty, other).unwrap_or_else(|| {
                 format!(
                     "argument {pname} has type '{}', expected '{}'{}{}",
@@ -16407,6 +16694,7 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
     if let Ty::Dyn { mutable: src_mut, trait_name: src_trait } = &value.ty {
         if src_trait != trait_name {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "expected '{}', found '{}': a trait object does not convert to another trait's ('{}' to '{}'); take a bound on a type parameter, or coerce from the concrete value",
                     want.display(),
@@ -16419,6 +16707,7 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
         }
         if *want_mut && !*src_mut {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "expected '{}', found '{}': a shared borrow cannot become an exclusive trait object",
                     want.display(),
@@ -16433,6 +16722,7 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
     }
     let Ty::Ref { mutable: src_mut, inner } = &value.ty else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "expected '{}', found '{}': a trait object is built from a borrow, so write '&value' (or '&mut value' for '{want}')",
                 want.display(),
@@ -16444,6 +16734,7 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
     };
     if *want_mut && !*src_mut {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "expected '{}', found '{}': a shared borrow cannot become an exclusive trait object",
                 want.display(),
@@ -16461,6 +16752,7 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
         if let tir::ExprKind::Ref { expr: place, .. } = &value.kind {
             if !is_durable_place(place) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "expected '{}', found '{}': an exclusive borrow needs a variable or field to write through, not a temporary value",
                         want.display(),
@@ -16474,6 +16766,7 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
     }
     let Some(type_name) = dyn_target_name(inner) else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "expected '{}', found '{}': '{}' cannot be the value behind a trait object",
                 want.display(),
@@ -16493,6 +16786,7 @@ fn coerce_to_dyn(want: Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<ti
             return Err(blanket_dyn_refusal(&want, &value.ty, &inner, trait_name, span));
         }
         return Err(TypeError {
+            help: None,
             message: format!(
                 "expected '{}', found '{}': '{}' does not implement '{}', so write 'impl {} for {}' first",
                 want.display(),
@@ -16542,6 +16836,7 @@ fn coerce_box_to_dyn(
     // there is no upcast in this slice, exactly as for a `&dyn`.
     if let Ty::BoxDyn { trait_name: src_trait } = &value.ty {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "expected '{}', found '{}': an owned trait object does not convert to another trait's ('{}' to '{}'); take a bound on a type parameter, or coerce from the concrete value",
                 want.display(),
@@ -16554,6 +16849,7 @@ fn coerce_box_to_dyn(
     }
     let Ty::Box(inner) = &value.ty else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "expected '{}', found '{}': an owned trait object is built from a box of a value that implements the trait ('Box.of(v)'), and this is not a box",
                 want.display(),
@@ -16564,6 +16860,7 @@ fn coerce_box_to_dyn(
     };
     let Some(type_name) = dyn_target_name(inner) else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "expected '{}', found '{}': '{}' cannot be the value behind an owned trait object",
                 want.display(),
@@ -16583,6 +16880,7 @@ fn coerce_box_to_dyn(
             return Err(blanket_dyn_refusal(&want, &value.ty, &inner, trait_name, span));
         }
         return Err(TypeError {
+            help: None,
             message: format!(
                 "expected '{}', found '{}': '{}' does not implement '{}', so write 'impl {} for {}' first",
                 want.display(),
@@ -16688,6 +16986,7 @@ fn check_thread_spawn(
         Ty::Fn { params, ret } | Ty::Closure { params, ret } => (params.clone(), (**ret).clone()),
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'thread.spawn' takes a function or closure value as its entry point, found '{}': a declared 'fun', a 'fun' literal and a capturing closure all work, because a function value is widened where a closure is expected",
                     other.display()
@@ -16700,6 +16999,7 @@ fn check_thread_spawn(
     // moved in as that parameter (MK9 section 5 rule 1).
     if params.len() != 1 {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'thread.spawn''s entry point has to take exactly one parameter, the value moved into the worker, and this one takes {}",
                 params.len()
@@ -16726,6 +17026,7 @@ fn check_thread_spawn(
     note_heap_use(&ctx.env, managed::HeapSlot::ThreadResult, &ret, span);
     if value.ty != moved {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'thread.spawn''s argument has type '{}', and its entry point takes '{}' by move: the worker's parameter is the value moved in, so the two have to be the same type",
                 value.ty.display(),
@@ -16767,6 +17068,7 @@ fn check_thread_join(
         Ty::Thread(elem) => (**elem).clone(),
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'thread.join' takes a 'Thread<T>' handle, found '{}': a handle comes from 'thread.spawn', which is the only call that makes one",
                     other.display()
@@ -16785,6 +17087,7 @@ fn check_thread_join(
     );
     if !ctx.env.generics.contains_key(&result_key) {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'thread.join' hands back 'Result<T, ThreadErr>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
                 result_key,
@@ -16819,6 +17122,7 @@ fn check_thread_arg(expr: &ast::Expr, value: &tir::Expr, ctx: &Ctx) -> Result<()
         // that no other path reaches the value, and the worker outlives the
         // frame the borrow was made in, so the promise cannot hold.
         Ty::Ref { mutable: true, inner } => Err(TypeError {
+            help: None,
             message: format!(
                 "'thread.spawn' cannot send '&mut {}': an exclusive borrow promises that no other path reaches the value, and the worker outlives the frame that made the borrow, so the promise cannot cross the thread boundary; move an owned value in, or share a '&Atomic<T>'",
                 inner.display()
@@ -16831,6 +17135,7 @@ fn check_thread_arg(expr: &ast::Expr, value: &tir::Expr, ctx: &Ctx) -> Result<()
         Ty::Ref { mutable: false, inner } => {
             if !borrows_a_pd(expr, ctx) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'thread.spawn' cannot send '{}': a shared borrow may cross to a worker only when the place it borrows has process lifetime, which in v1 means a 'pd' global, and this one borrows a frame local that ends before the worker does; share a 'pd' value instead, or move an owned value in",
                         value.ty.display()
@@ -16840,6 +17145,7 @@ fn check_thread_arg(expr: &ast::Expr, value: &tir::Expr, ctx: &Ctx) -> Result<()
             }
             if has_reachable_mut_path(inner, ctx) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'thread.spawn' cannot share '{}' across a thread boundary: the borrow reaches a 'var' field, so two threads could write it through the same shared borrow. A shared borrow may cross only when its pointee has no reachable '&mut' path, which an 'Atomic<T>' has by construction",
                         inner.display()
@@ -16855,6 +17161,7 @@ fn check_thread_arg(expr: &ast::Expr, value: &tir::Expr, ctx: &Ctx) -> Result<()
         // arm: it owns its value and falls through to rule 4 like any other
         // owned value (A-12 slice 7).
         Ty::Dyn { trait_name, .. } => Err(TypeError {
+            help: None,
             message: format!(
                 "'thread.spawn' cannot send '&dyn {trait_name}': a borrowed trait object points at a value the frame owns, and the worker outlives that frame; move an owned 'Box<dyn {trait_name}>' in instead, or share a 'pd' value"
             ),
@@ -16864,6 +17171,7 @@ fn check_thread_arg(expr: &ast::Expr, value: &tir::Expr, ctx: &Ctx) -> Result<()
         // no place of their own, so there is nothing with process lifetime for
         // them to borrow.
         Ty::Str | Ty::View => Err(TypeError {
+            help: None,
             message: format!(
                 "'thread.spawn' cannot send a '{}': it is a borrowed view of text somebody else owns, and the worker outlives the frame that owns the text; pass an owned 'String' or 'Bytes' instead, or share a 'pd' value",
                 value.ty.display()
@@ -16985,6 +17293,7 @@ fn check_layout_query(
 ) -> Result<tir::Expr> {
     if explicit.len() != 1 {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{callee}' takes exactly one type argument, written '{callee}<T>()'"
             ),
@@ -16994,6 +17303,7 @@ fn check_layout_query(
     let field = if callee == "offset_of" {
         if args.len() != 1 {
             return Err(TypeError {
+                help: None,
                 message: "'offset_of' takes exactly one field name, written 'offset_of<T>(\"field\")'"
                     .to_string(),
                 span,
@@ -17003,6 +17313,7 @@ fn check_layout_query(
             ast::Expr::StringLit(field, _) if args[0].name.is_none() => Some(field.as_str()),
             _ => {
                 return Err(TypeError {
+                    help: None,
                     message: "'offset_of' takes the field name as a string literal, written 'offset_of<T>(\"field\")'"
                         .to_string(),
                     span,
@@ -17012,6 +17323,7 @@ fn check_layout_query(
     } else {
         if !args.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!("'{callee}' takes no arguments, found {}", args.len()),
                 span,
             });
@@ -17064,6 +17376,7 @@ fn layout_query_value(
     );
     if !allowed {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{callee}' cannot be asked about '{}': the queried type is a scalar, an 'extern type' handle, a 'Ptr<U>', a 'datac' or an 'enum'"
                 , t.display()
@@ -17074,6 +17387,7 @@ fn layout_query_value(
     match callee {
         "size_of" | "align_of" => {
             let l = crate::types::type_layout(t, structs, enums).ok_or_else(|| TypeError {
+                help: None,
                 message: format!("'{}' has no layout this compiler can compute", t.display()),
                 span,
             })?;
@@ -17082,18 +17396,21 @@ fn layout_query_value(
         "offset_of" => {
             let Ty::Struct(name) = t else {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'offset_of' needs a 'datac': '{}' is not one", t.display()),
                     span,
                 });
             };
             let Some(field) = field else {
                 return Err(TypeError {
+                    help: None,
                     message: "'offset_of' takes the field name as a string literal, written 'offset_of<T>(\"field\")'"
                         .to_string(),
                     span,
                 });
             };
             crate::types::field_offset(name, field, structs, enums).ok_or_else(|| TypeError {
+                help: None,
                 message: format!("'{}' has no field '{field}'", t.display()),
                 span,
             })
@@ -17205,6 +17522,7 @@ fn check_call(
     if matches!(callee, "cpu_index" | "cpu_count") && !callee.contains('.') {
         if !ctx.freestanding {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{callee}' is only available in a freestanding build: it reads the CPU index register the kernel sets at boot"
                 ),
@@ -17213,12 +17531,14 @@ fn check_call(
         }
         if !explicit.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!("'{callee}' takes no type arguments"),
                 span,
             });
         }
         if !args.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!("'{callee}' takes no arguments, found {}", args.len()),
                 span,
             });
@@ -17242,6 +17562,7 @@ fn check_call(
         // is no way to hand it the passdowns it may reference, and its own
         // `argv` is reached through `process.args()` instead.
         return Err(TypeError {
+            help: None,
             message: "cannot call 'main': it is the program entry point".to_string(),
             span,
         });
@@ -17249,12 +17570,14 @@ fn check_call(
     if PRINTABLE_BUILTINS.contains(&callee) {
         if args.len() != 1 {
             return Err(TypeError {
+                help: None,
                 message: format!("'{callee}' takes exactly 1 argument, found {}", args.len()),
                 span,
             });
         }
         if args[0].name.is_some() {
             return Err(TypeError {
+                help: None,
                 message: format!("'{callee}' does not take named arguments"),
                 span,
             });
@@ -17270,6 +17593,7 @@ fn check_call(
         // format: name it rather than fall through to the generic refusal.
         if let Ty::Handle(name) = &arg.ty {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "cannot pass a value of type '{name}' to '{callee}': an 'extern type' is an opaque native handle with no printable value"
                 ),
@@ -17295,6 +17619,7 @@ fn check_call(
                 });
             }
             return Err(TypeError {
+                help: None,
                 message: print_error(callee, &arg.ty),
                 span,
             });
@@ -17319,12 +17644,14 @@ fn check_call(
     if callee == "panic" {
         if args.len() != 1 {
             return Err(TypeError {
+                help: None,
                 message: format!("'panic' takes exactly 1 argument, found {}", args.len()),
                 span,
             });
         }
         if args[0].name.is_some() {
             return Err(TypeError {
+                help: None,
                 message: "'panic' does not take named arguments".to_string(),
                 span,
             });
@@ -17333,6 +17660,7 @@ fn check_call(
         let arg = borrow_for_print(arg, callee, ctx)?;
         if !is_panic_message(&arg.ty) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "cannot pass a value of type '{}' to 'panic': a panic message is a 'str' or an owned 'String'",
                     arg.ty.display()
@@ -17364,6 +17692,7 @@ fn check_call(
         && func_template_named(ctx, callee, &ctx.qualify_own(callee)).is_none()
     {
         return Err(TypeError {
+            help: None,
             message: format!("'{callee}' does not take type arguments"),
             span,
         });
@@ -17385,6 +17714,7 @@ fn check_call(
             .map(|v| format!("'{ename}.{}'", v.name))
             .collect();
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{ename}' is an enum - construct one of its variants: {}",
                 variants.join(", ")
@@ -17404,6 +17734,7 @@ fn check_call(
             let ctx_is_shipped = is_shipped_module(&ctx.module);
             if !inside && !ctx_is_shipped && !domains.iter().any(|d| ctx.caps.contains_key(*d)) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{}' wraps an operating-system descriptor, so building one from a number needs the '{}' capability, which module '{}' was not granted{}; a module that holds no grant can only use the handles it is given",
                         display_callee(&sdef.name),
@@ -17503,6 +17834,7 @@ fn check_call(
                     }
                     None => {
                         return Err(TypeError {
+                            help: Some(format!("declare fun {callee} before this call, or import the module that declares it.")),
                             message: match qualified_hint(
                                 callee,
                                 ctx.structs
@@ -17529,6 +17861,7 @@ fn check_call(
     // the function so the reader knows which call in the statement it was.
     if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'",
                 display_callee(&key)
@@ -17575,6 +17908,7 @@ fn check_call(
             let extra = check_expr(&a.value, ctx, None)?;
             if !crate::types::is_variadic_abi_ty(&extra.ty) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "extra argument {} of '{}' has type '{}', which a variadic 'extern fun' cannot pass: use an integer, 'bool', 'f32', 'f64', 'str' or an opaque handle",
                         i + 1,
@@ -17626,14 +17960,14 @@ fn aggregate_borrowed_fields(
             continue;
         }
         let Some(source) = aggregate_borrow_source(value) else {
-            return Err(TypeError { message: format!("field '{}' stores a borrowed '{}', so construct it from a string literal or from an earlier String/Bytes field in this datac", field.name, field.ty.display()), span });
+            return Err(TypeError { message: format!("field '{}' stores a borrowed '{}', so construct it from a string literal or from an earlier String/Bytes field in this datac", field.name, field.ty.display()), span, help: None });
         };
         let owns_source = fields[..i].iter().zip(&values[..i]).any(|(owner, value)| {
             matches!(owner.ty, Ty::String | Ty::Bytes)
                 && matches!(&value.kind, tir::ExprKind::Ident(name) if name == source)
         });
         if !owns_source {
-            return Err(TypeError { message: format!("field '{}' borrows '{source}', but that value is not moved into an earlier String/Bytes field of this datac", field.name), span });
+            return Err(TypeError { message: format!("field '{}' borrows '{source}', but that value is not moved into an earlier String/Bytes field of this datac", field.name), span, help: None });
         }
         out.push(field.name.clone());
     }
@@ -17675,6 +18009,7 @@ fn check_claim_argument(
         if let Some(v) = value {
             if v % crate::stdlib::FRAME_SIZE != 0 {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'frame.claim' would take the address 0x{v:X}, which is not {}-aligned: a frame is a {}-byte-aligned physical address",
                         crate::stdlib::FRAME_SIZE, crate::stdlib::FRAME_SIZE
@@ -17691,6 +18026,7 @@ fn check_claim_argument(
     let what = if domain == "frames" { "address" } else { "line" };
     let Some(value) = value else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{name}' takes a {what} the compiler cannot fold, and module '{}' holds only the granted {what}(s) {}; a computed {what} needs the whole-resource grant `caps({domain} = [\"*\"])`",
                 ctx.module,
@@ -17704,6 +18040,7 @@ fn check_claim_argument(
     }
     if domain == "frames" {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'frame.claim' would take the address 0x{value:X}, which no 'frames' grant of module '{}' covers (granted: {})",
                 ctx.module,
@@ -17713,6 +18050,7 @@ fn check_claim_argument(
         });
     }
     Err(TypeError {
+        help: None,
         message: format!(
             "'irq.claim' would take the line {value}, which no 'irq' grant of module '{}' covers (granted: {})",
             ctx.module,
@@ -18212,6 +18550,7 @@ fn check_trait_bounds(
                 Some(key) => key,
                 None => {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{}' bounds '{}' of '{}', but its first segment is not a module the declaration imports",
                             b.name,
@@ -18224,6 +18563,7 @@ fn check_trait_bounds(
             };
             let Some(info) = ctx.env.traits.get(&key) else {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{}' is not a trait, so it cannot bound '{}' of '{}': a bound names a declared trait ('trait {} {{ ... }}')",
                         b.name,
@@ -18256,6 +18596,7 @@ fn check_trait_bounds(
                     && !a.name.is_empty();
                 if !simple {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{}' bounds '{}' of '{}' with the argument '{}', which is not a named type or a builtin: a container, tuple, array, borrow, function type or projection as a bound argument is not in this slice",
                             b.display(),
@@ -18279,6 +18620,7 @@ fn check_trait_bounds(
                 };
                 let Some(resolved) = resolved else {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "'{}' bounds '{}' of '{}' with the argument '{}', which names no type",
                             b.display(),
@@ -18293,6 +18635,7 @@ fn check_trait_bounds(
             }
             if arg_names.len() != info.type_params.len() {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{}' bounds '{}' of '{}', and trait '{}' takes {} type argument(s), found {}",
                         b.display(),
@@ -18310,6 +18653,7 @@ fn check_trait_bounds(
                 for (written, pkey) in pbounds {
                     if !implements_trait(&ctx.env, pkey, aname) {
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "the call to '{}' instantiates '{}', and '{}' does not satisfy the bound '{written}' on its parameter '{}': write 'impl {written} for {aname} {{ ... }}'",
                                 display_callee(&tmpl.key),
@@ -18334,6 +18678,7 @@ fn check_trait_bounds(
                 // arguments; name which, rather than suggesting a concrete impl.
                 if let Some(why) = generic_impl_shortfall(&ctx.env, &instance, arg) {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "the call to '{}' needs '{}' to implement the trait '{}': {why}",
                             display_callee(&tmpl.key),
@@ -18344,6 +18689,7 @@ fn check_trait_bounds(
                     });
                 }
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "the call to '{}' needs '{}' to implement the trait '{}', and it does not: write 'impl {} for {} {{ ... }}' in the trait's module or in the type's",
                         display_callee(&tmpl.key),
@@ -18414,6 +18760,7 @@ fn check_bound_equalities(
             .is_some_and(|info| info.assoc_types.iter().any(|a| a.name == *assoc));
         if !declared {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{}' declares no associated type '{assoc}', so the equality constraint '{assoc} = {}' on '{param}' of '{callee}' names nothing",
                     b.name,
@@ -18424,6 +18771,7 @@ fn check_bound_equalities(
         }
         let Some(got) = assoc_type_of(&ctx.env, arg, assoc) else {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "the call to '{callee}' instantiates '{param}: {}' with '{}', which binds no '{assoc}', so the equality constraint '{assoc} = {}' cannot hold",
                     b.display(),
@@ -18435,6 +18783,7 @@ fn check_bound_equalities(
         };
         if !eq_rhs_matches(rhs, &tmpl.params, type_args, &tmpl.prefix, &tmpl.aliases, &got) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "the call to '{callee}' instantiates '{param}: {}' with '{}', whose '{assoc}' is '{}', not '{}': the equality constraint '{assoc} = {}' fails",
                     b.display(),
@@ -18491,6 +18840,7 @@ fn check_projection_bound(
     };
     if !pb.bound.args.is_empty() {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'where {written}: {}' bounds a projection with trait arguments, which is not in this slice",
                 pb.bound.display()
@@ -18500,6 +18850,7 @@ fn check_projection_bound(
     }
     let Some(key) = qualify_written_name(&pb.bound.name, &tmpl.prefix, &tmpl.aliases) else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' bounds '{written}' of '{callee}', but its first segment is not a module the declaration imports",
                 pb.bound.name
@@ -18509,6 +18860,7 @@ fn check_projection_bound(
     };
     if !ctx.env.traits.contains_key(&key) {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' is not a trait, so it cannot bound '{written}' of '{callee}': a bound names a declared trait ('trait {} {{ ... }}')",
                 pb.bound.name, pb.bound.name
@@ -18519,6 +18871,7 @@ fn check_projection_bound(
     match projection_check(&ctx.env, arg, &pb.assoc, &key) {
         ProjectionCheck::Holds => Ok(()),
         ProjectionCheck::NoItem => Err(TypeError {
+            help: None,
             message: format!(
                 "the call to '{callee}' bounds '{written}' with '{}', but '{}' binds no associated type '{}': a projection bound needs a type that binds it, such as an iterator",
                 pb.bound.display(),
@@ -18528,6 +18881,7 @@ fn check_projection_bound(
             span,
         }),
         ProjectionCheck::Unmet(item) => Err(TypeError {
+            help: None,
             message: format!(
                 "the call to '{callee}' needs '{written}', which is '{}' for '{}', to implement the trait '{}', and it does not: write 'impl {} for {} {{ ... }}' in the trait's module or in the type's",
                 item.display(),
@@ -18552,6 +18906,7 @@ fn blanket_dyn_refusal(
     span: Span,
 ) -> TypeError {
     TypeError {
+        help: None,
         message: format!(
             "expected '{}', found '{}': '{}' implements '{}' through a blanket impl, and a blanket impl has no 'dyn' form yet (MISSING-Ve8Nc step 4 does not include it): call the method through a generic function ('fun f<T: {}>(x: &T)') instead",
             want.display(),
@@ -18595,6 +18950,7 @@ fn blanket_method_template(ctx: &Ctx, ty: &Ty, method: &str, span: Span) -> Opti
         let b = candidates[0];
         let bound = b.bounds.first().map(|k| k.as_str()).unwrap_or(b.trait_name.as_str());
         return Some(Err(TypeError {
+            help: None,
             message: format!(
                 "the method '{method}' comes from a blanket impl of '{}', whose bound on the receiver ('{bound}') cannot be checked on '{}': a reference or a function type has no impl table to check a bound against, so call the method on the value it names",
                 b.trait_name,
@@ -18615,6 +18971,7 @@ fn blanket_method_template(ctx: &Ctx, ty: &Ty, method: &str, span: Span) -> Opti
         let b = candidates[0];
         let bound = b.bounds.first().map(|k| k.as_str()).unwrap_or(b.trait_name.as_str());
         return Some(Err(TypeError {
+            help: None,
             message: format!(
                 "the method '{method}' comes from a blanket impl of '{}', whose bound '{bound}' on the receiver cannot be checked on '{}': a builtin container's impl table has no entry per element type, so the bound on its element is not visible to the check",
                 b.trait_name,
@@ -18627,6 +18984,7 @@ fn blanket_method_template(ctx: &Ctx, ty: &Ty, method: &str, span: Span) -> Opti
         [] => None,
         [one] => Some(Ok(format!("{}#{method}", crate::types::blanket_receiver_name(&one.trait_key)))),
         [a, b, ..] => Some(Err(TypeError {
+            help: None,
             message: format!(
                 "'{}.{method}()' is ambiguous: the blanket impls of '{}' and '{}' both provide '{method}' for it, and a method is not chosen between traits by name",
                 name, a.trait_name, b.trait_name
@@ -18758,6 +19116,7 @@ fn instantiate_function(
         if tmpl.declared.is_empty() {
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("{what} expects 0 argument(s), found {}", args.len()),
                     span,
                 });
@@ -18839,6 +19198,7 @@ fn instantiate_function(
     }
     for p in &tmpl.declared {
         let ty = scope.resolve_param(p).map_err(|e| TypeError {
+            help: None,
             message: format!("in '{key}': {}", e.message),
             span,
         })?;
@@ -18846,6 +19206,7 @@ fn instantiate_function(
     }
     let ret = match &tmpl.ret {
         Some(t) => scope.resolve_return(t).map_err(|e| TypeError {
+            help: None,
             message: format!("in '{key}': {}", e.message),
             span,
         })?,
@@ -18855,6 +19216,7 @@ fn instantiate_function(
     let mut st = ctx.fns.instances.borrow_mut();
     if st.sigs.len() >= MAX_FUNCTION_INSTANTIATIONS {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "generic instantiation did not terminate - more than {MAX_FUNCTION_INSTANTIATIONS} function instances were created; a generic function that calls itself with a different type argument grows without bound"
             ),
@@ -18905,6 +19267,7 @@ fn resolve_overload(
     hits.dedup();
     match hits.len() {
         0 => Err(TypeError {
+            help: None,
             message: format!(
                 "no overload of '{}' takes '{}'{}",
                 display_callee(callee),
@@ -18923,6 +19286,7 @@ fn resolve_overload(
             Ok(Some((key, sig)))
         }
         _ => Err(TypeError {
+            help: None,
             message: format!(
                 "call to '{}' is ambiguous for argument type '{}'",
                 display_callee(callee),
@@ -18970,6 +19334,7 @@ fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
     for pd in pds {
         if !ctx.pd_initialized(&pd.hidden) {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "'{callee}' reads passdown '{}', which is not initialized yet here - a 'pd' initializer can only call functions whose passdowns are already set up",
                     pd.qualified
@@ -19019,6 +19384,7 @@ fn check_template(
                 let value = borrow_for_print(value, "a string template", ctx)?;
                 if let Ty::Handle(name) = &value.ty {
                     return Err(TypeError {
+                        help: None,
                         message: format!(
                             "cannot interpolate a value of type '{name}' into a string template: an 'extern type' is an opaque native handle with no printable value"
                         ),
@@ -19037,6 +19403,7 @@ fn check_template(
                         continue;
                     }
                     return Err(TypeError {
+                        help: None,
                         message: match &value.ty {
                             Ty::Struct(_) => format!(
                                 "cannot interpolate a value of type '{}' into a string template: it does not implement 'Display' (write 'impl fmt.Display for {} {{ fun Self.to_text().return: String }}', importing 'std/fmt')",
@@ -19113,6 +19480,7 @@ fn open_container_from_call(
             note_heap_use(&ctx.env, managed::HeapSlot::ListElement, &value.ty, arg.value.span());
             if !crate::types::is_list_element(&value.ty) {
                 return Err(TypeError {
+                    help: None,
                     message: list_element_error(&value.ty),
                     span: arg.value.span(),
                 });
@@ -19132,6 +19500,7 @@ fn open_container_from_call(
             note_heap_use(&ctx.env, managed::HeapSlot::BoxPayload, &value.ty, arg.value.span());
             if !crate::types::is_box_element(&value.ty) {
                 return Err(TypeError {
+                    help: None,
                     message: box_element_error(&value.ty),
                     span: arg.value.span(),
                 });
@@ -19153,6 +19522,7 @@ fn open_container_from_call(
             note_heap_use(&ctx.env, managed::HeapSlot::MapValue, &value.ty, value_arg.value.span());
             if !crate::types::is_map_element(&value.ty) {
                 return Err(TypeError {
+                    help: None,
                     message: map_element_error(&value.ty),
                     span: value_arg.value.span(),
                 });
@@ -19168,6 +19538,7 @@ fn open_container_from_call(
                 key.ty.clone()
             } else {
                 return Err(TypeError {
+                    help: None,
                     message: map_key_error(&key.ty),
                     span: key_arg.value.span(),
                 });
@@ -19197,6 +19568,7 @@ fn open_container_use_error(ty: &Ty, receiver: &ast::Expr, span: Span) -> TypeEr
         _ => format!("this container (the one bound as '{binding}')"),
     };
     TypeError {
+        help: None,
         message: format!(
             "the element type of {named} is still open: nothing said what '{constructor}' holds, and '{decider}' is what decides it. Write it on the binding instead ('{example}')"
         ),
@@ -19238,6 +19610,7 @@ fn check_method_call_enum_guard(
     if let ast::Expr::FieldAccess { base, .. } = receiver {
         if enum_path(base, ctx).is_some() {
             return Err(TypeError {
+                help: None,
                 message: "an 'enum' method is called on a value, not on a variant path; bind the variant first, as in: val e = E.A  then  e.tag()".to_string(),
                 span,
             });
@@ -19263,6 +19636,7 @@ fn check_handle_associated(
             ctx.require_extern_section(&format!("{handle}.null()"), span)?;
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'{handle}.null()' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -19280,6 +19654,7 @@ fn check_handle_associated(
             ctx.require_extern_section(&format!("{handle}.cast(w)"), span)?;
             if args.len() != 1 {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{handle}.cast(w)' takes exactly 1 argument, found {}",
                         args.len()
@@ -19289,6 +19664,7 @@ fn check_handle_associated(
             }
             if args[0].name.is_some() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'{handle}.cast' does not take named arguments"),
                     span,
                 });
@@ -19296,6 +19672,7 @@ fn check_handle_associated(
             let value = check_expr(&args[0].value, ctx, None)?;
             let Ty::Handle(from) = &value.ty else {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{handle}.cast(w)' requires 'w' to be a handle, found '{}'",
                         value.ty.display()
@@ -19305,6 +19682,7 @@ fn check_handle_associated(
             };
             if !handle_is_same_or_ancestor(&ctx.env.handle_parents, from, handle) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{handle}.cast(w)' requires 'w' to be '{handle}' or an ancestor of it, found '{from}'; a child converts up to its parent implicitly, and 'cast' never checks at run time"
                     ),
@@ -19317,6 +19695,7 @@ fn check_handle_associated(
             })
         }
         other => Err(TypeError {
+            help: None,
             message: format!(
                 "'{handle}.{other}' is not a handle operation: write '{handle}.null()' for the null handle, or call 'is_null()' on a value ('w.is_null()')"
             ),
@@ -19374,6 +19753,7 @@ fn check_trait_static_call(
     }
     let Some(exp) = expected else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{trait_key}.{method}' is a static method, so the implementing type has to be known here: annotate the binding with its type, or call it on the type itself ('<Type>.{method}(...)'), which names it outright"
             ),
@@ -19385,6 +19765,7 @@ fn check_trait_static_call(
         .or_else(|| builtin_type_name(exp).map(|s| s.to_string()))
     else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{trait_key}.{method}' needs a concrete implementing type, and the expected type '{}' is not one: call it on the type itself ('<Type>.{method}(...)'), which names it outright",
                 exp.display()
@@ -19470,6 +19851,7 @@ fn check_static_method_call(
     candidates.retain(|(_, s)| s.params.len() == args.len());
     if candidates.is_empty() {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{owner}.{method}' is a static method, and no overload takes {} argument(s)",
                 args.len()
@@ -19500,6 +19882,7 @@ fn check_static_method_call(
             1 => hits.remove(0),
             0 => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "no static method '{owner}.{method}' matches the argument type(s) {}",
                         arg_tys
@@ -19513,6 +19896,7 @@ fn check_static_method_call(
             }
             _ => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "call to static method '{owner}.{method}' is ambiguous: several trait impls match these argument types"
                     ),
@@ -19674,6 +20058,7 @@ fn check_method_call(
             ctx.require_extern_section(&format!("{handle}.is_null()"), span)?;
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'is_null' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -19688,6 +20073,7 @@ fn check_method_call(
             });
         }
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{handle}' is an opaque native handle with no readable contents: 'is_null()' is its only method"
             ),
@@ -19706,6 +20092,7 @@ fn check_method_call(
         .or_else(|| builtin_type_name(&probe.ty).map(|s| s.to_string()));
     let Some(owner) = owner else {
         return Err(TypeError {
+            help: None,
             message: format!("cannot call method '{method}' on non-struct type '{}'", probe.ty.display()),
             span,
         });
@@ -19717,6 +20104,7 @@ fn check_method_call(
         && ctx.sig_of(&crate::types::drop_method_key(&owner)).is_some()
     {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{owner}.drop' cannot be called: an explicit destructor call is an error, because the value's own drop already runs when its owner dies"
             ),
@@ -20002,6 +20390,7 @@ fn check_method_call(
                 (None, _) => format!("datac '{owner}' has no method '{method}'"),
                         };
                         return Err(TypeError {
+                            help: None,
                             message: format!(
                                 "{base}{}",
                                 shadowed_module_alias_note(receiver, method, ctx)
@@ -20025,6 +20414,7 @@ fn check_method_call(
     // an `unsafe` context, exactly as a free one is.
     if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{owner}.{method}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'"
             ),
@@ -20075,6 +20465,7 @@ fn check_dyn_method_call(
     let decl = decl.clone();
     if receiver_mut && !mutable {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{trait_name}.{method}' takes an exclusive receiver, and a shared '&dyn {trait_name}' cannot call it; make the receiver '&mut dyn {trait_name}'"
             ),
@@ -20115,6 +20506,7 @@ fn check_box_dyn_method_call(
     if method == "is_empty" {
         if !args.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!("'is_empty' takes no arguments, found {}", args.len()),
                 span,
             });
@@ -20130,6 +20522,7 @@ fn check_box_dyn_method_call(
     if method == "get" {
         if !args.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!("'get' takes no arguments, found {}", args.len()),
                 span,
             });
@@ -20151,6 +20544,7 @@ fn check_box_dyn_method_call(
     // so both are refused by name with the spelling that works instead.
     if method == "take" || method == "set" {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'Box<dyn {trait_name}>.{method}' is not allowed: the concrete type behind an owned trait object is erased, so no sized value can be moved in or out; borrow the trait with 'get()' and call its methods, or keep the boxed type concrete"
             ),
@@ -20165,6 +20559,7 @@ fn check_box_dyn_method_call(
             Some(true) => {}
             Some(false) => {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{trait_name}.{method}' takes an exclusive receiver, and a shared '&Box<dyn {trait_name}>' cannot call it; take the box by 'mut' or make the binding writable"
                     ),
@@ -20190,6 +20585,7 @@ fn dyn_method_slot<'a>(
     let Some((slot, decl)) = flat.iter().enumerate().find(|(_, m)| m.name == method) else {
         let names: Vec<&str> = flat.iter().map(|m| m.name.as_str()).collect();
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'dyn {trait_name}' has no method '{method}'; its methods are {}",
                 names.join(", ")
@@ -20295,6 +20691,7 @@ fn lower_try_to(src: &Ty, dst: &Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> 
     );
     if !ctx.env.generics.contains_key(&option_key) {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}.try_to_{}' hands back 'Option<{}>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
                 src.display(),
@@ -20315,6 +20712,7 @@ fn lower_try_to(src: &Ty, dst: &Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> 
     // same rule `?` uses (see `try_shape`).
     let Some(shape) = try_shape(&edef).filter(|s| !s.err_has_payload) else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' declares '{option_key}', and it is not the two-variant 'Some'/'None' shape this conversion hands back",
                 crate::stdlib::OPTION_MODULE
@@ -20448,6 +20846,7 @@ fn lower_enum_to_int(
         .expect("the receiver was checked against a declared enum");
     if !edef.is_field_less() {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "enum '{ename}' has a variant with a payload, so it has no declared integer value: 'to_int' is on a field-less enum"
             ),
@@ -20541,6 +20940,7 @@ fn lower_enum_from_int(
         .expect("enum_path only returns known enums");
     if !edef.is_field_less() {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "enum '{ename}' has a variant with a payload, so it has no declared integer value: 'from_int' is on a field-less enum"
             ),
@@ -20561,6 +20961,7 @@ fn lower_enum_from_int(
     );
     if !ctx.env.generics.contains_key(&option_key) {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{ename}.from_int' hands back 'Option<{ename}>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
                 option_key,
@@ -20577,6 +20978,7 @@ fn lower_enum_from_int(
     let odef = ctx.enum_def(&opt_name).expect("just instantiated");
     let Some(shape) = try_shape(&odef).filter(|s| !s.err_has_payload) else {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{}' declares '{option_key}', and it is not the two-variant 'Some'/'None' shape this conversion hands back",
                 crate::stdlib::OPTION_MODULE
@@ -20680,6 +21082,7 @@ fn check_container_associated(
         if let Some(want @ Ty::BoxDyn { .. }) = expected {
             if method != "empty" {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'Box.{method}' is not an operation of an owned trait object: '{}' is made from 'Box.of(v)' where 'v' implements the trait (or 'Box.empty()'), and used through its methods",
                         want.display()
@@ -20689,6 +21092,7 @@ fn check_container_associated(
             }
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'Box.empty' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -20748,6 +21152,7 @@ fn check_container_associated(
         "new" if container == "Map" => {
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'Map.new' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -20761,6 +21166,7 @@ fn check_container_associated(
                     });
                 }
                 return Err(TypeError {
+                    help: None,
                     message: "cannot tell what 'Map.new()' holds, write the type on the binding ('var m: Map<String, i32> = Map.new()'); there is no 'Map.of(x)' since a map starts empty".to_string(),
                     span,
                 });
@@ -20779,6 +21185,7 @@ fn check_container_associated(
         "with_capacity" if container == "Map" || container == "List" => {
             if args.len() != 1 {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{container}.with_capacity' takes exactly 1 argument (the {}), found {}",
                         if container == "Map" { "entry count" } else { "element count" },
@@ -20790,6 +21197,7 @@ fn check_container_associated(
             let cap = check_expr(&args[0].value, ctx, Some(&Ty::Usize))?;
             if !matches!(cap.ty, Ty::Usize | Ty::I64) {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'{container}.with_capacity' needs a 'usize' or 'i64' count, found '{}'",
                         cap.ty.display()
@@ -20806,6 +21214,7 @@ fn check_container_associated(
                     });
                 }
                 return Err(TypeError {
+                    help: None,
                     message: match container {
                         "Map" => "cannot tell what 'Map.with_capacity(n)' holds, write the type on the binding ('var m: Map<String, i32> = Map.with_capacity(n)')".to_string(),
                         _ => "cannot tell what 'List.with_capacity(n)' holds, write the element type on the binding ('var xs: List<i32> = List.with_capacity(n)')".to_string(),
@@ -20822,6 +21231,7 @@ fn check_container_associated(
         "empty" => {
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'{container}.empty' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -20835,6 +21245,7 @@ fn check_container_associated(
                     });
                 }
                 return Err(TypeError {
+                    help: None,
                     message: match container {
                         "Map" => "cannot tell what 'Map.empty()' holds, write the type on the binding ('var m: Map<String, i32> = Map.empty()')".to_string(),
                         _ => format!(
@@ -20851,12 +21262,14 @@ fn check_container_associated(
             })
         }
         "of" if container == "Map" => Err(TypeError {
+            help: None,
             message: "'Map.of' does not exist - a map starts empty; write 'Map.new()' with the value type on the binding, then 'insert(k, v)'".to_string(),
             span,
         }),
         "of" => {
             if args.len() != 1 {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'{container}.of' takes exactly 1 argument, found {}", args.len()),
                     span,
                 });
@@ -20877,6 +21290,7 @@ fn check_container_associated(
             };
             if !allowed {
                 return Err(TypeError {
+                    help: None,
                     message: if container == "List" {
                         list_element_error(&value.ty)
                     } else if container == "Map" {
@@ -20895,6 +21309,7 @@ fn check_container_associated(
             })
         }
         other => Err(TypeError {
+            help: None,
             message: format!(
                 "'{container}.{other}' is not a {container} operation - {}",
                 if container == "List" {
@@ -20929,6 +21344,7 @@ fn check_atomic_associated(
 ) -> Result<tir::Expr> {
     if method != "new" {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{name}.{method}' is not an 'Atomic' operation: an atomic is made with 'Atomic.new(x)' (or 'AtomicI64.new(0)' for a named instantiation) and read through the value it is bound to ('c.load(order = ...)', 'c.store(value = x, order = ...)')"
             ),
@@ -20937,6 +21353,7 @@ fn check_atomic_associated(
     }
     if args.len() != 1 {
         return Err(TypeError {
+            help: None,
             message: format!("'Atomic.new' takes exactly 1 argument, found {}", args.len()),
             span,
         });
@@ -20949,6 +21366,7 @@ fn check_atomic_associated(
         Some(elem) => {
             if value.ty != elem {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'Atomic<{}>.new' needs a '{}' value, found '{}'",
                         elem.display(),
@@ -20966,6 +21384,7 @@ fn check_atomic_associated(
     };
     if !crate::types::is_atomic_element(&elem) {
         return Err(TypeError {
+            help: None,
             message: atomic_element_error(&elem),
             span: args[0].value.span(),
         });
@@ -20991,6 +21410,7 @@ fn check_mutex_associated(
 ) -> Result<tir::Expr> {
     if method != "new" {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{name}.{method}' is not a 'Mutex' operation: a mutex is made with 'Mutex.new(value)' and reached through the value it is bound to ('m.lock {{ v -> ... }}', 'm.into_inner()')"
             ),
@@ -20999,6 +21419,7 @@ fn check_mutex_associated(
     }
     if args.len() != 1 {
         return Err(TypeError {
+            help: None,
             message: format!("'Mutex.new' takes exactly 1 argument, found {}", args.len()),
             span,
         });
@@ -21007,6 +21428,7 @@ fn check_mutex_associated(
     let value = check_expr(&args[0].value, ctx, written.as_ref())?;
     if value.ty == Ty::Unit {
         return Err(TypeError {
+            help: None,
             message: "'Mutex.new' needs a value to guard, found 'unit'".to_string(),
             span: args[0].value.span(),
         });
@@ -21015,6 +21437,7 @@ fn check_mutex_associated(
         Some(elem) => {
             if value.ty != elem {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'Mutex<{}>.new' needs a '{}' value, found '{}'",
                         elem.display(),
@@ -21030,6 +21453,7 @@ fn check_mutex_associated(
     };
     if !crate::types::is_mutex_element(&elem) {
         return Err(TypeError {
+            help: None,
             message: mutex_element_error(&elem),
             span: args[0].value.span(),
         });
@@ -21073,6 +21497,7 @@ fn check_mutex_method(
         "share" => {
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'Mutex.share' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -21100,6 +21525,7 @@ fn check_mutex_method(
         "swap" => {
             if args.len() != 1 {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'Mutex.swap' takes exactly 1 argument, found {}", args.len()),
                     span,
                 });
@@ -21123,6 +21549,7 @@ fn check_mutex_method(
         "into_inner" => {
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'Mutex.into_inner' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -21140,6 +21567,7 @@ fn check_mutex_method(
             })
         }
         other => Err(TypeError {
+            help: None,
             message: format!(
                 "'Mutex.{other}' is not a mutex operation: write 'm.lock {{ v -> ... }}' to reach the value while the lock is held, 'm.share()' for another handle to the same mutex, 'm.swap(value)' to exchange the guarded value, or 'm.into_inner()' to consume the mutex and take the value out"
             ),
@@ -21192,6 +21620,7 @@ fn check_mutex_lock(
         Ty::Fn { params, ret } => coerce_fn_to_scoped(Ty::ScopedFn { params, ret }, checked),
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "the block 'Mutex.lock' takes has type '{}', expected a scoped function taking 'mut {}'",
                     other.display(),
@@ -21226,6 +21655,7 @@ fn option_ty(ctx: &Ctx, elem: Ty, span: Span) -> Result<Ty> {
     );
     if !ctx.env.generics.contains_key(&option_key) {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "this call hands back 'Option<T>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
                 option_key,
@@ -21251,6 +21681,7 @@ fn check_rwlock_associated(
 ) -> Result<tir::Expr> {
     if method != "new" {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{name}.{method}' is not an 'RwLock' operation: an rwlock is made with 'RwLock.new(value)' and reached through the value it is bound to ('rw.read {{ v -> ... }}', 'rw.write {{ v -> ... }}', 'rw.into_inner()')"
             ),
@@ -21259,6 +21690,7 @@ fn check_rwlock_associated(
     }
     if args.len() != 1 {
         return Err(TypeError {
+            help: None,
             message: format!("'RwLock.new' takes exactly 1 argument, found {}", args.len()),
             span,
         });
@@ -21267,6 +21699,7 @@ fn check_rwlock_associated(
     let value = check_expr(&args[0].value, ctx, written.as_ref())?;
     if value.ty == Ty::Unit {
         return Err(TypeError {
+            help: None,
             message: "'RwLock.new' needs a value to guard, found 'unit'".to_string(),
             span: args[0].value.span(),
         });
@@ -21275,6 +21708,7 @@ fn check_rwlock_associated(
         Some(elem) => {
             if value.ty != elem {
                 return Err(TypeError {
+                    help: None,
                     message: format!(
                         "'RwLock<{}>.new' needs a '{}' value, found '{}'",
                         elem.display(),
@@ -21290,6 +21724,7 @@ fn check_rwlock_associated(
     };
     if !crate::types::is_rwlock_element(&elem) {
         return Err(TypeError {
+            help: None,
             message: rwlock_element_error(&elem),
             span: args[0].value.span(),
         });
@@ -21326,6 +21761,7 @@ fn check_rwlock_method(
         "into_inner" => {
             if !args.is_empty() {
                 return Err(TypeError {
+                    help: None,
                     message: format!("'RwLock.into_inner' takes no arguments, found {}", args.len()),
                     span,
                 });
@@ -21341,6 +21777,7 @@ fn check_rwlock_method(
             })
         }
         other => Err(TypeError {
+            help: None,
             message: format!(
                 "'RwLock.{other}' is not an rwlock operation: write 'rw.read {{ v -> ... }}' or 'rw.write {{ v -> ... }}' to reach the value with the lock held, 'rw.try_read'/'.try_write' for the non-blocking form, or 'rw.into_inner()' to consume it"
             ),
@@ -21398,6 +21835,7 @@ fn check_rwlock_block(
         Ty::Fn { params, ret } => coerce_fn_to_scoped(Ty::ScopedFn { params, ret }, checked),
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "the block 'RwLock.{name}' takes has type '{}', expected a scoped function taking '{} {}'",
                     other.display(),
@@ -21436,6 +21874,7 @@ fn check_condvar_associated(
 ) -> Result<tir::Expr> {
     if method != "new" {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{name}.{method}' is not a 'Condvar' operation: a condition variable is made with 'Condvar.new()' and reached through the value it is bound to ('cv.notify_one()')"
             ),
@@ -21444,6 +21883,7 @@ fn check_condvar_associated(
     }
     if !args.is_empty() {
         return Err(TypeError {
+            help: None,
             message: format!("'Condvar.new' takes no arguments, found {}", args.len()),
             span,
         });
@@ -21470,6 +21910,7 @@ fn check_condvar_method(
     if method == "share" {
         if !args.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!("'Condvar.share' takes no arguments, found {}", args.len()),
                 span,
             });
@@ -21483,6 +21924,7 @@ fn check_condvar_method(
     }
     if method != "notify_one" && method != "notify_all" {
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'Condvar.{method}' is not a condition variable operation: write 'cv.notify_one()' or 'cv.notify_all()' to wake a waiter; a wait is 'm.wait_while(cv, pred) {{ v -> ... }}' on the mutex that guards the state"
             ),
@@ -21491,6 +21933,7 @@ fn check_condvar_method(
     }
     if !args.is_empty() {
         return Err(TypeError {
+            help: None,
             message: format!("'Condvar.{method}' takes no arguments, found {}", args.len()),
             span,
         });
@@ -21564,6 +22007,7 @@ fn check_mutex_wait(
         }
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "the predicate 'Mutex.{method}' takes has type '{}', expected 'fun({}).return: bool'",
                     other.display(),
@@ -21592,6 +22036,7 @@ fn check_mutex_wait(
         Ty::Fn { params, ret } => coerce_fn_to_scoped(Ty::ScopedFn { params, ret }, checked),
         other => {
             return Err(TypeError {
+                help: None,
                 message: format!(
                     "the block 'Mutex.{method}' takes has type '{}', expected a scoped function taking 'mut {}'",
                     other.display(),
@@ -21690,6 +22135,7 @@ fn check_module_item(
     if crate::stdlib::is_sealed_type(&qualified) {
         let module = crate::stdlib::sealed_type_module(&qualified).unwrap_or("its own module");
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{alias}.{item}' is a capability value: its constructor is private to module '{module}', so another module cannot build one; take the value from a `claim` call instead"
             ),
@@ -21710,6 +22156,7 @@ fn check_module_item(
     if let Some(c) = ctx.consts.get(&qualified).cloned() {
         if !args.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!("'{alias}.{item}' is a constant, not a function"),
                 span,
             });
@@ -21723,6 +22170,7 @@ fn check_module_item(
     if let Some(s) = ctx.statics.get(&qualified).cloned() {
         if !args.is_empty() {
             return Err(TypeError {
+                help: None,
                 message: format!("'{alias}.{item}' is a static object, not a function"),
                 span,
             });
@@ -21744,6 +22192,7 @@ fn check_module_item(
     {
         let type_name = key.trim_end_matches(&method_suffix).trim_end_matches(prefix);
         return Err(TypeError {
+            help: None,
             message: format!(
                 "'{item}' is a method on '{type_name}', not a free function - call it on a value ('value.{item}(...)')"
             ),
@@ -21766,6 +22215,7 @@ fn check_module_item(
         return check_call(&qualified, type_args, args, span, ctx, expected);
     }
     Err(TypeError {
+        help: None,
         message: format!("module '{alias}' has no item '{item}'"),
         span,
     })
@@ -21782,6 +22232,7 @@ fn check_if(
     let cond = check_expr(cond, ctx, Some(&Ty::Bool))?;
     if cond.ty != Ty::Bool {
         return Err(TypeError {
+            help: None,
             message: format!("if condition must be 'bool', found '{}'", cond.ty.display()),
             span,
         });
@@ -21809,6 +22260,7 @@ fn check_if(
 
     let ty = match &else_t {
         Some(e) => join_value_type(&then_t.ty(), &e.ty()).ok_or_else(|| TypeError {
+            help: None,
             message: format!(
                 "if/else branches have different types: '{}' and '{}'",
                 then_t.ty().display(),
@@ -21819,6 +22271,7 @@ fn check_if(
         None => {
             if then_t.ty() != Ty::Unit {
                 return Err(TypeError {
+                    help: None,
                     message: "if without an else branch must evaluate to 'unit'".to_string(),
                     span,
                 });

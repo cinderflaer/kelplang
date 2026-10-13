@@ -57,6 +57,8 @@ const NO_LITERAL_FALLBACK: &str = "a position matched by literals needs an arm t
 pub struct ParseError {
     pub message: String,
     pub span: Span,
+    /// The next step a reader can take, carried onto the `Diagnostic`.
+    pub help: Option<String>,
 }
 
 type PResult<T> = Result<T, ParseError>;
@@ -78,6 +80,7 @@ struct TypeParamParsed {
 /// names the spelling that does mean what the writer wanted.
 fn mixing_wildcard_error(span: Span) -> ParseError {
     ParseError {
+        help: None,
         message: "`caps(*)` already means every domain, so nothing can stand beside the `*`: \
                   write `caps(*)` alone, or name the domains it needs \
                   (`caps(net = [\"host:port\"])`, `caps(fs = [\"/a/**\"], env = [\"HOME\"])`)"
@@ -149,12 +152,14 @@ fn desugar_impl_trait_params(
         if let Some(trait_name) = p.ty.impl_trait.clone() {
             if is_signature {
                 return Err(ParseError {
+                    help: None,
                     message: "a trait method cannot write 'impl Trait': its signature names 'Self' and the trait's own types, and a method takes no type parameters of its own".to_string(),
                     span,
                 });
             }
             if is_method {
                 return Err(ParseError {
+                    help: None,
                     message: "'impl Trait' cannot be written on a method's parameter: a method's type parameters come from its receiver, so declare the parameter on a free function, or name the receiver type's own parameter".to_string(),
                     span: p.ty.span,
                 });
@@ -169,6 +174,7 @@ fn desugar_impl_trait_params(
             p.ty = replacement;
         } else if let Some(span) = impl_trait_anywhere(&p.ty) {
             return Err(ParseError {
+                help: None,
                 message: "'impl Trait' is only legal as a whole parameter type: write it bare ('x: impl Trait') or behind a borrow ('x: &impl Trait'), not nested inside another type".to_string(),
                 span,
             });
@@ -200,6 +206,7 @@ impl Parser {
     fn chain_limit(&self, links: usize) -> PResult<()> {
         if links > MAX_NESTING * 4 {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "this chain of operators or accesses is longer than {} links; split it into smaller pieces",
                     MAX_NESTING * 4
@@ -215,6 +222,7 @@ impl Parser {
     fn nest(&mut self) -> PResult<()> {
         if self.depth >= MAX_NESTING {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "this nests more than {MAX_NESTING} levels deep (expressions, blocks, types and patterns inside one another); split it into smaller pieces"
                 ),
@@ -342,6 +350,7 @@ impl Parser {
             Ok(self.advance())
         } else {
             Err(ParseError {
+                help: None,
                 message: format!("expected {what}, found {:?}", self.peek_kind()),
                 span: self.peek().span,
             })
@@ -356,6 +365,7 @@ impl Parser {
                 Ok((name, span))
             }
             other => Err(ParseError {
+                help: None,
                 message: format!("expected identifier, found {other:?}"),
                 span: self.peek().span,
             }),
@@ -404,6 +414,7 @@ impl Parser {
             if let Some(req) = self.parse_derive_clause()? {
                 if let Some(earlier) = &pending_derive {
                     return Err(ParseError {
+                        help: None,
                         message: "a 'derive(...)' line applies to the 'datac' or 'enum' right under it, and this one follows another with nothing between".to_string(),
                         span: earlier.span,
                     });
@@ -430,6 +441,7 @@ impl Parser {
                 (before_pub, None) => before_pub,
                 (Some(_), Some(_)) => {
                     return Err(ParseError {
+                        help: None,
                         message: "a 'repr(...)' clause is written once, before or after 'pub', not both".to_string(),
                         span: self.peek().span,
                     })
@@ -441,6 +453,7 @@ impl Parser {
                 (before_pub, None) => before_pub,
                 (Some(_), Some(_)) => {
                     return Err(ParseError {
+                        help: None,
                         message: "a 'section(...)' clause is written once, before or after 'pub', not both".to_string(),
                         span: self.peek().span,
                     })
@@ -451,6 +464,7 @@ impl Parser {
                 (before_pub, None) => before_pub,
                 (Some(_), Some(_)) => {
                     return Err(ParseError {
+                        help: None,
                         message: "an 'align(N)' clause is written once, before or after 'pub', not both".to_string(),
                         span: self.peek().span,
                     })
@@ -463,6 +477,7 @@ impl Parser {
             let percpu = self.check_percpu_marker();
             if !percpu && matches!(self.peek_kind(), TokenKind::Ident(n) if n == "percpu") {
                 return Err(ParseError {
+                    help: None,
                     message: "'percpu' applies to a 'static', written 'percpu static mut NAME: T = INIT'"
                         .to_string(),
                     span: self.peek().span,
@@ -470,6 +485,7 @@ impl Parser {
             }
             if repr.is_some() && !self.check(&TokenKind::Datac) && !self.check(&TokenKind::Enum) {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "'repr(...)' applies to a 'datac' or an 'enum', found {:?}",
                         self.peek_kind()
@@ -480,6 +496,7 @@ impl Parser {
             if let Some(req) = &pending_derive {
                 if !self.check(&TokenKind::Datac) && !self.check(&TokenKind::Enum) {
                     return Err(ParseError {
+                        help: None,
                         message: "'derive(...)' applies to the 'datac' or 'enum' on the line under it".to_string(),
                         span: req.span,
                     });
@@ -487,6 +504,7 @@ impl Parser {
             }
             if section.is_some() && !self.check(&TokenKind::Const) && !self.check(&TokenKind::Static) && !self.at_function_decl() {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "'section(\"...\")' applies to a top-level 'const', 'static' or 'fun', found {:?}",
                         self.peek_kind()
@@ -496,6 +514,7 @@ impl Parser {
             }
             if align.is_some() && !self.at_function_decl() {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "'align(N)' applies to a top-level 'fun', found {:?}",
                         self.peek_kind()
@@ -515,6 +534,7 @@ impl Parser {
             } else if self.check(&TokenKind::Impl) {
                 if !consts.is_empty() || !statics.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
+                        help: None,
                         message: "'impl' lines must come first (canonical order: impl, const/pd, datac/enum/trait/fun)".to_string(),
                         span: self.peek().span,
                     });
@@ -523,6 +543,7 @@ impl Parser {
             } else if self.check(&TokenKind::Const) {
                 if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
+                        help: None,
                         message: "'const' lines must come before any 'pd', 'datac', 'enum', 'trait' or 'fun' (canonical order: impl, const/pd, datac/enum/trait/fun)".to_string(),
                         span: self.peek().span,
                     });
@@ -531,6 +552,7 @@ impl Parser {
             } else if self.check(&TokenKind::Static) {
                 if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
+                        help: None,
                         message: "'static' lines must come before any 'pd', 'datac', 'enum', 'trait' or 'fun' (canonical order: impl, const/static/pd, datac/enum/trait/fun)".to_string(),
                         span: self.peek().span,
                     });
@@ -539,6 +561,7 @@ impl Parser {
             } else if self.check(&TokenKind::Pd) {
                 if !datacs.is_empty() || !enums.is_empty() || !traits.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
+                        help: None,
                         message: "'pd' lines must come before any 'datac', 'enum', 'trait' or 'fun' (canonical order: impl, const/pd, datac/enum/trait/fun)".to_string(),
                         span: self.peek().span,
                     });
@@ -579,6 +602,7 @@ impl Parser {
                 if let Some(r) = &f.receiver {
                     if r.type_name == "Self" {
                         return Err(ParseError {
+                            help: None,
                             message: "'Self' can only be written inside a 'trait' or an 'impl': it names the implementing type, so a method of a named type writes that type ('fun Circle.area()')".to_string(),
                             span: r.span,
                         });
@@ -590,6 +614,7 @@ impl Parser {
         }
         if let Some(req) = pending_derive {
             return Err(ParseError {
+                help: None,
                 message: "'derive(...)' is written on a line of its own above a 'datac' or 'enum', and nothing follows it".to_string(),
                 span: req.span,
             });
@@ -621,6 +646,7 @@ impl Parser {
         let (marker, mspan) = self.expect_ident()?;
         if marker != "R" {
             return Err(ParseError {
+                help: None,
                 message: format!("expected 'return' after '.', found '{marker}'"),
                 span: mspan,
             });
@@ -726,10 +752,12 @@ impl Parser {
                 Ok(())
             }
             TokenKind::Pd => Err(ParseError {
+                help: None,
                 message: "a 'pd' cannot be 'pub': a passdown is module-scoped by design, so another module cannot reach it; a 'fun' that reads it can be exported instead".to_string(),
                 span: pub_span.to(self.peek().span),
             }),
             _ => Err(ParseError {
+                help: None,
                 message: format!(
                     "'pub' applies to a top-level 'fun', 'extern fun', 'extern type', 'datac', 'enum', 'const' or 'static', found {:?}",
                     self.peek_kind()
@@ -840,6 +868,7 @@ impl Parser {
             }
             other => {
                 return Err(ParseError {
+                    help: None,
                     message: format!("expected a quoted module path after 'impl', found {other:?}"),
                     span: self.peek().span,
                 })
@@ -851,6 +880,7 @@ impl Parser {
         // to the generic "expected an item" error further up.
         if self.check(&TokenKind::As) {
             return Err(ParseError {
+                help: None,
                 message: "`impl \"...\" as name` is gone: reach the module by its own name \
                           (`std/path` is `path`, `shapes/circle` is `circle`, and a dependency's \
                           entry module `deps/argparse/lib` is `argparse`)"
@@ -867,6 +897,7 @@ impl Parser {
         // grants this clause still accepts.
         if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "with") {
             return Err(ParseError {
+                help: None,
                 message: "`impl \"...\" with caps(...)` is gone: drop the `with`, so the grant is \
                           `impl \"std/fs\" caps(fs = [\"/var/log/**\"])`, and the patterns, the \
                           domains and the no-escalation rule are exactly the same"
@@ -914,6 +945,7 @@ impl Parser {
                         }
                         other => {
                             return Err(ParseError {
+                                help: None,
                                 message: format!(
                                     "expected a quoted path or host pattern, found {other:?}"
                                 ),
@@ -960,6 +992,7 @@ impl Parser {
         let (name, name_span) = self.expect_ident()?;
         if name == "Drop" {
             return Err(ParseError {
+                help: None,
                 message: "the trait 'Drop' is built in: a type's destructor is written 'fun mut T.drop()', not through a trait"
                     .to_string(),
                 span: name_span,
@@ -967,6 +1000,7 @@ impl Parser {
         }
         if name == "Self" {
             return Err(ParseError {
+                help: None,
                 message: "'Self' is the implementing type inside a 'trait' or an 'impl', so it cannot be a trait's own name"
                     .to_string(),
                 span: name_span,
@@ -974,6 +1008,7 @@ impl Parser {
         }
         if crate::types::Ty::from_name(&name).is_some() {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "'{name}' is a builtin type, so it cannot be a trait's name"
                 ),
@@ -983,6 +1018,7 @@ impl Parser {
         let name_params = self.parse_type_params()?;
         if let Some(p) = name_params.iter().find(|p| p.const_ty.is_some()) {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "a trait cannot take a const parameter ('const {}'): a const parameter is a value on a type or a function (A-20), and a trait is implemented for a type",
                     p.name
@@ -1018,6 +1054,7 @@ impl Parser {
                 let (name, name_span) = self.expect_ident()?;
                 if self.check(&TokenKind::Lt) {
                     return Err(ParseError {
+                        help: None,
                         message: "a generic associated type is not in this slice: 'type Item' declares a plain type, so parameters wait for a later slice".to_string(),
                         span: self.peek().span,
                     });
@@ -1030,12 +1067,14 @@ impl Parser {
                 };
                 if self.check(&TokenKind::Eq) {
                     return Err(ParseError {
+                        help: None,
                         message: "a default associated type is not in this slice: write 'type Item' in the trait and bind it in every 'impl' ('type Item = i32'), because a default type would let an impl inherit a type it never names".to_string(),
                         span: self.peek().span,
                     });
                 }
                 if assoc_types.iter().any(|a| a.name == name) {
                     return Err(ParseError {
+                        help: None,
                         message: format!("trait declares 'type {name}' more than once"),
                         span: name_span,
                     });
@@ -1061,6 +1100,7 @@ impl Parser {
                     ),
                 };
                 return Err(ParseError {
+                    help: None,
                     message: what,
                     span: self.peek().span,
                 });
@@ -1093,6 +1133,7 @@ impl Parser {
         let impl_params = self.parse_type_params()?;
         if let Some(p) = impl_params.iter().find(|p| p.const_ty.is_some()) {
             return Err(ParseError {
+                help: None,
                 message: format!("an impl cannot take the const parameter '{}' yet: only type parameters", p.name),
                 span: p.span,
             });
@@ -1107,6 +1148,7 @@ impl Parser {
         };
         if trait_name == "Drop" || trait_name.ends_with(".Drop") {
             return Err(ParseError {
+                help: None,
                 message: "the trait 'Drop' is built in, so it cannot be implemented: a type's destructor is written 'fun mut T.drop()' inside its own module"
                     .to_string(),
                 span: trait_span,
@@ -1116,6 +1158,7 @@ impl Parser {
         let (type_name, type_span) = self.parse_dotted_name()?;
         if type_name == "Self" || type_name.ends_with(".Self") {
             return Err(ParseError {
+                help: None,
                 message: "the 'for' type names the implementing type, not 'Self': 'Self' is what the methods of this block call it"
                     .to_string(),
                 span: type_span,
@@ -1128,18 +1171,21 @@ impl Parser {
         if blanket {
             if self.check(&TokenKind::Lt) {
                 return Err(ParseError {
+                    help: None,
                     message: format!("a blanket impl names its parameter as the type it implements for: 'impl<{type_name}: Bound> Trait for {type_name}', with no '<...>' after '{type_name}'"),
                     span: type_span,
                 });
             }
             if impl_params.len() != 1 {
                 return Err(ParseError {
+                    help: None,
                     message: format!("a blanket impl has exactly one type parameter, the type it implements for: 'impl<{type_name}: Bound> Trait for {type_name}'"),
                     span: type_span,
                 });
             }
             if !trait_args.is_empty() {
                 return Err(ParseError {
+                    help: None,
                     message: format!("a blanket impl of a trait with type arguments is not supported yet: 'impl<{type_name}: Bound> Trait<...> for {type_name}' has no argument to bind the instance by, so write the trait without its arguments"),
                     span: type_span,
                 });
@@ -1156,12 +1202,14 @@ impl Parser {
                 });
             if impl_params.is_empty() || !same {
                 return Err(ParseError {
+                    help: None,
                     message: "an impl for a generic type writes the type's parameters, in order, as its own: 'impl<T: Bound> Trait for Type<T>'; an impl for one instantiation ('Type<i32>') is not supported - implement the trait for a non-generic wrapper, or give the type an inherent method".to_string(),
                     span: args_span,
                 });
             }
         } else if !impl_params.is_empty() {
             return Err(ParseError {
+                help: None,
                 message: "'impl<...>' needs the generic type it is for: 'impl<T: Bound> Trait for Type<T>', or a blanket impl 'impl<T: Bound> Trait for T' with the parameter as the type".to_string(),
                 span: type_span,
             });
@@ -1187,6 +1235,7 @@ impl Parser {
                 let (name, name_span) = self.expect_ident()?;
                 if self.check(&TokenKind::Colon) {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "a bound on 'type {name}' is written in the trait's declaration, not in the impl: write 'type {name}: Named' in the 'trait' body, and bind it here with 'type {name} = <concrete type>'"
                         ),
@@ -1195,6 +1244,7 @@ impl Parser {
                 }
                 if !self.check(&TokenKind::Eq) {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "'type {name}' needs the type the impl binds: write 'type {name} = <concrete type>'"
                         ),
@@ -1206,6 +1256,7 @@ impl Parser {
                 let end = ty.span;
                 if assoc_types.iter().any(|a| a.name == name) {
                     return Err(ParseError {
+                        help: None,
                         message: format!("'type {name}' is bound more than once in this impl"),
                         span: name_span,
                     });
@@ -1220,6 +1271,7 @@ impl Parser {
             }
             if !self.check(&TokenKind::Fun) {
                 return Err(ParseError {
+                    help: None,
                     message: "an 'impl' block declares methods ('fun Self.name(...)') and associated types ('type Name = Type'): move anything else to the top level"
                         .to_string(),
                     span: self.peek().span,
@@ -1229,6 +1281,7 @@ impl Parser {
             match &f.receiver {
                 Some(r) if r.type_name == "Self" && !r.type_args.is_empty() => {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "an 'impl' method cannot take type parameters: the block already names the type it implements for, so write 'fun Self.{}(...)'",
                             f.name
@@ -1247,6 +1300,7 @@ impl Parser {
                 }
                 Some(r) => {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "an 'impl' method's receiver is written 'Self', not '{}': 'Self' stands for the type the block implements for ('fun Self.{}(...)')",
                             r.type_name, f.name
@@ -1256,6 +1310,7 @@ impl Parser {
                 }
                 None if blanket => {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "a blanket impl has no static member yet: '{}' has no receiver to take the type from, so write it as a method ('fun Self.{}(...)')",
                             f.name, f.name
@@ -1334,6 +1389,7 @@ impl Parser {
             let (name, span) = self.expect_ident()?;
             if name != "eq" && name != "hash" {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "'derive' can derive 'eq' and 'hash', not '{name}': a 'datac' or 'enum' gets '==' and a 'Map' key from those two methods"
                     ),
@@ -1348,6 +1404,7 @@ impl Parser {
         let end = self.expect(TokenKind::RParen, "')' after the derive names")?.span;
         if names.is_empty() {
             return Err(ParseError {
+                help: None,
                 message: "'derive()' names nothing: write 'derive(eq, hash)', or one of the two".to_string(),
                 span: start,
             });
@@ -1384,6 +1441,7 @@ impl Parser {
                     }
                     other => {
                         return Err(ParseError {
+                            help: None,
                             message: format!(
                                 "expected an integer literal alignment in 'repr(align(N))', found {other:?}"
                             ),
@@ -1394,6 +1452,7 @@ impl Parser {
                 self.expect(TokenKind::RParen, "')' after 'repr(align(N)'")?;
                 if !n.is_power_of_two() {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "'repr(align({n}))' needs a power of two: 1, 2, 4, 8, 16, ... are the alignments a type can have"
                         ),
@@ -1406,6 +1465,7 @@ impl Parser {
                 // refusal here rather than a nonsense type later.
                 if n > 1 << 28 {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "'repr(align({n}))' is too large: the largest alignment is 268435456"
                         ),
@@ -1423,6 +1483,7 @@ impl Parser {
                 );
                 if !is_int {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "unknown 'repr({other})': the clause is 'c', 'packed', 'align(N)' or an integer type ('u8', 'i8', 'u16', 'i16', 'u32', 'i32', 'u64', 'i64')"
                         ),
@@ -1456,6 +1517,7 @@ impl Parser {
             }
             other => {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "expected a quoted section name in 'section(\"...\")', found {other:?}"
                     ),
@@ -1466,6 +1528,7 @@ impl Parser {
         self.expect(TokenKind::RParen, "')' to close 'section(...)'")?;
         if name.is_empty() {
             return Err(ParseError {
+                help: None,
                 message: "'section(\"\")' needs a section name, for example 'section(\".text.boot\")'"
                     .to_string(),
                 span: name_span,
@@ -1520,6 +1583,7 @@ impl Parser {
             }
             other => {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "expected an integer literal alignment in 'align(N)', found {other:?}"
                     ),
@@ -1530,6 +1594,7 @@ impl Parser {
         self.expect(TokenKind::RParen, "')' to close 'align(...)'")?;
         if !n.is_power_of_two() || n > 4096 {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "'align({n})' needs a power of two up to 4096: 1, 2, 4, 8, ... 4096 are the alignments a function can have"
                 ),
@@ -1597,6 +1662,7 @@ impl Parser {
         let open = self.advance().span;
         if self.check(&TokenKind::Gt) {
             return Err(ParseError {
+                help: None,
                 message: "a type parameter list needs at least one parameter ('<T>')".to_string(),
                 span: open.to(self.peek().span),
             });
@@ -1611,6 +1677,7 @@ impl Parser {
                 let (param, pspan) = self.expect_ident()?;
                 if params.iter().any(|p| p.name == param) {
                     return Err(ParseError {
+                        help: None,
                         message: format!("parameter '{param}' is declared more than once"),
                         span: pspan,
                     });
@@ -1619,6 +1686,7 @@ impl Parser {
                 let (ty, _) = self.expect_ident()?;
                 if self.check(&TokenKind::Lt) || self.check(&TokenKind::Colon) {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "a const parameter's type is one of 'usize', 'u8'..'u64', 'i32', 'i64', 'bool' or 'char', so '{ty}' cannot take arguments or bounds"
                         ),
@@ -1635,6 +1703,7 @@ impl Parser {
                 let (param, pspan) = self.expect_ident()?;
                 if params.iter().any(|p| p.name == param) {
                     return Err(ParseError {
+                        help: None,
                         message: format!("type parameter '{param}' is declared more than once"),
                         span: pspan,
                     });
@@ -1690,6 +1759,7 @@ impl Parser {
             // (`plan/generic-trait-impls.md` 6): refused by name where it starts.
             if self.check(&TokenKind::Bang) {
                 return Err(ParseError {
+                    help: None,
                     message: "a negative bound ('!Name') is excluded from generic trait impls (plan/generic-trait-impls.md section 6): a bound says a type implements a trait, and no bound says that it does not".to_string(),
                     span: self.peek().span,
                 });
@@ -1710,6 +1780,7 @@ impl Parser {
                         let (item, item_span) = self.expect_ident()?;
                         if let Some(site) = site {
                             return Err(ParseError {
+                                help: None,
                                 message: format!(
                                     "an equality constraint ('{name}<{item} = ...>') is not in this slice on {site}: an equality constraint is written on a function's or an impl's type parameter ('fun f<I: {name}<{item} = i64>>')"
                                 ),
@@ -1768,6 +1839,7 @@ impl Parser {
             let (pname, pspan) = self.expect_ident()?;
             let Some(at) = params.iter().position(|p| *p == pname) else {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "'where {pname}: ...' names no type parameter of this {owner}: a 'where' clause bounds a parameter written in the '<...>' list, so declare '{pname}' there first"
                     ),
@@ -1809,6 +1881,7 @@ impl Parser {
     ) -> PResult<(Vec<String>, Vec<ConstParamDecl>)> {
         if let Some(p) = params.iter().find(|p| !p.bounds.is_empty()) {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "a bound cannot be written on a type declaration's parameter '{}': a bound is written where the parameter is used ('fun f<T: Name>'), so a type declaration lists its parameters alone",
                     p.name
@@ -1927,6 +2000,7 @@ impl Parser {
                     }
                     other => {
                         return Err(ParseError {
+                            help: None,
                             message: format!(
                                 "expected an integer literal discriminant after '=', found {other:?}"
                             ),
@@ -1946,6 +2020,7 @@ impl Parser {
             if !self.check(&TokenKind::RBrace) {
                 if !self.check(&TokenKind::Newline) {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "expected a newline or '}}' after an enum variant, found {:?}",
                             self.peek_kind()
@@ -1959,6 +2034,7 @@ impl Parser {
         let end = self.expect(TokenKind::RBrace, "'}'")?.span;
         if variants.is_empty() {
             return Err(ParseError {
+                help: None,
                 message: "an 'enum' needs at least one variant".to_string(),
                 span: start.to(end),
             });
@@ -2009,6 +2085,7 @@ impl Parser {
         // refused with the parameter form named instead (A-4).
         if self.check(&TokenKind::Move) {
             return Err(ParseError {
+                help: None,
                 message: "'move' cannot be written on a receiver - a method always borrows its receiver; a move-taking parameter is written 'name: move T'".to_string(),
                 span: self.peek().span,
             });
@@ -2034,6 +2111,7 @@ impl Parser {
             let own_params = self.parse_type_params()?;
             if let Some(p) = own_params.iter().find(|p| p.const_ty.is_some()) {
                 return Err(ParseError {
+                    help: None,
                     message: format!("a method cannot take the const parameter '{}' of its own yet: only type parameters", p.name),
                     span: method_span,
                 });
@@ -2043,6 +2121,7 @@ impl Parser {
             // by whoever declares the generic type.
             if let Some(p) = name_params.iter().find(|p| !p.bounds.is_empty()) {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "a bound cannot be written on a receiver's type parameter '{}': those parameters come from the receiver's type, so bind them there, or write the bound on a function's own parameter list ('fun f<T: Name>')",
                         p.name
@@ -2077,6 +2156,7 @@ impl Parser {
         } else {
             if receiver_mutable {
                 return Err(ParseError {
+                    help: None,
                     message: "'mut' before a function name is only valid on a receiver ('fun mut Type.method(...)')".to_string(),
                     span: first_span,
                 });
@@ -2103,6 +2183,7 @@ impl Parser {
         if signature {
             if extern_ {
                 return Err(ParseError {
+                    help: None,
                     message: "a trait method cannot be 'extern': a trait declares the method an impl or the default body provides".to_string(),
                     span: start,
                 });
@@ -2111,6 +2192,7 @@ impl Parser {
                 Some(r) if r.type_name == "Self" => {
                     if !type_params.is_empty() {
                         return Err(ParseError {
+                            help: None,
                             message: "a trait method cannot take type parameters: the signature names 'Self' and the trait's own types".to_string(),
                             span: first_span,
                         });
@@ -2118,6 +2200,7 @@ impl Parser {
                 }
                 Some(r) => {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "a trait method's receiver is written 'Self', not '{}': 'Self' stands for the implementing type ('fun Self.{name}(...)')",
                             r.type_name
@@ -2132,6 +2215,7 @@ impl Parser {
                 None => {
                     if !type_params.is_empty() {
                         return Err(ParseError {
+                            help: None,
                             message: "a trait method cannot take type parameters: the signature names 'Self', the trait's own types and no others"
                                 .to_string(),
                             span: first_span,
@@ -2146,6 +2230,7 @@ impl Parser {
         // `pub` is what exports the method with it (A-13).
         if is_pub && receiver.is_some() {
             return Err(ParseError {
+                help: None,
                 message: "'pub' cannot be written on a method: a method's reachability follows its declaring type, so mark the type 'pub' instead".to_string(),
                 span: start,
             });
@@ -2168,6 +2253,7 @@ impl Parser {
 
         if extern_ && receiver.is_some() {
             return Err(ParseError {
+                help: None,
                 message: "'extern' cannot be used on a receiver method - declare it as a free function"
                     .to_string(),
                 span: start,
@@ -2175,6 +2261,7 @@ impl Parser {
         }
         if extern_ && section.is_some() {
             return Err(ParseError {
+                help: None,
                 message: "'section(\"...\")' cannot be written on an 'extern fun': the declaration has no code of its own to place"
                     .to_string(),
                 span: start,
@@ -2182,6 +2269,7 @@ impl Parser {
         }
         if extern_ && align.is_some() {
             return Err(ParseError {
+                help: None,
                 message: "'align(N)' cannot be written on an 'extern fun': the declaration has no code of its own to align"
                     .to_string(),
                 span: start,
@@ -2195,6 +2283,7 @@ impl Parser {
             let ty = self.parse_type()?;
             if let Some(span) = impl_trait_anywhere(&ty) {
                 return Err(ParseError {
+                    help: None,
                     message: "'impl Trait' is not allowed in return position: write a named type parameter and bound it ('fun f<T: Trait>(...).return: T') when the caller needs a concrete type, or return the owning value ('Box<dyn Trait>')".to_string(),
                     span,
                 });
@@ -2216,6 +2305,7 @@ impl Parser {
                 let eq_span = self.advance().span;
                 if return_type.is_none() {
                     return Err(ParseError {
+                        help: None,
                         message: "expression-bodied function requires a '.return: T' return type"
                             .to_string(),
                         span: eq_span,
@@ -2233,6 +2323,7 @@ impl Parser {
             // it.
             if self.check(&TokenKind::Eq) || self.check(&TokenKind::LBrace) {
                 return Err(ParseError {
+                    help: None,
                     message: "an 'extern fun' declaration has no body - the compiler supplies it"
                         .to_string(),
                     span: self.peek().span,
@@ -2243,6 +2334,7 @@ impl Parser {
             let eq_span = self.advance().span;
             if return_type.is_none() {
                 return Err(ParseError {
+                    help: None,
                     message: "expression-bodied function requires a '.return: T' return type"
                         .to_string(),
                     span: eq_span,
@@ -2253,6 +2345,7 @@ impl Parser {
             FunctionBody::Block(self.parse_block()?)
         } else {
             return Err(ParseError {
+                help: None,
                 message: format!("expected '=' or '{{', found {:?}", self.peek_kind()),
                 span: self.peek().span,
             });
@@ -2330,6 +2423,7 @@ impl Parser {
             // `A` and `B` as supertraits.
             if self.check(&TokenKind::Plus) {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "`dyn` names one trait: write `dyn {name}`, and make a trait that combines them (`trait Both: A + B {{ ... }}`) when both sets of methods are wanted"
                     ),
@@ -2408,6 +2502,7 @@ impl Parser {
             }
             if amp_mut {
                 return Err(ParseError {
+                    help: None,
                     message: "'&mut' is only written before 'dyn' in a type: a parameter writes 'mut T' for an exclusive borrow".to_string(),
                     span: self.peek().span,
                 });
@@ -2424,6 +2519,7 @@ impl Parser {
             let (trait_name, tspan) = self.parse_dotted_name()?;
             if self.check(&TokenKind::Lt) {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "'impl {trait_name}' cannot take the trait's own arguments here: write a named type parameter bounded by the trait ('fun f<T: {trait_name}<Arg>>(x: T)')"
                     ),
@@ -2494,6 +2590,7 @@ impl Parser {
             if self.check(&TokenKind::RParen) {
                 let close = self.advance().span;
                 return Err(ParseError {
+                    help: None,
                     message: "'()' is not a type: a tuple has two or more element types ('(i32, i32)'), and the absent value's type is 'unit'"
                         .to_string(),
                     span: amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close)),
@@ -2576,6 +2673,7 @@ impl Parser {
             span = span.to(ispan);
             if self.check(&TokenKind::Lt) {
                 return Err(ParseError {
+                    help: None,
                     message: "a generic associated type is not in this slice: 'type Item' declares a type, not a parameterized one, so write the type the impl binds without an argument list"
                         .to_string(),
                     span: self.peek().span,
@@ -2645,6 +2743,7 @@ impl Parser {
                 self.advance();
                 if !self.check(&TokenKind::RParen) {
                     return Err(ParseError {
+                        help: None,
                         message: "'...' must be the last parameter of an 'extern fun': nothing may follow it".to_string(),
                         span: self.peek().span,
                     });
@@ -2692,6 +2791,7 @@ impl Parser {
         let (params, variadic) = self.parse_params()?;
         if variadic {
             return Err(ParseError {
+                help: None,
                 message: "a 'fun' literal cannot be variadic: '...' is only legal on a user 'extern fun'"
                     .to_string(),
                 span: start,
@@ -2716,6 +2816,7 @@ impl Parser {
             (FunctionBody::Block(b), end)
         } else {
             return Err(ParseError {
+                help: None,
                 message: "a 'fun' literal needs a body: '= expr' or '{ ... }'".to_string(),
                 span: self.peek().span,
             });
@@ -2746,6 +2847,7 @@ impl Parser {
         };
         if self.check(&TokenKind::Mut) || self.check(&TokenKind::Move) {
             return Err(ParseError {
+                help: None,
                 message: "'mut' and 'move' cannot be combined on one parameter - 'mut T' is an exclusive borrow, 'move T' takes ownership".to_string(),
                 span: self.peek().span,
             });
@@ -2967,6 +3069,7 @@ impl Parser {
                 if !self.check(&TokenKind::RBrace) {
                     if !self.check(&TokenKind::Newline) {
                         return Err(ParseError {
+                            help: Some("Kelp has no ';' between statements. Put the next statement on its own line.".to_string()),
                             message: format!(
                                 "expected a newline or '}}' after a statement, found {:?}",
                                 self.peek_kind()
@@ -3005,6 +3108,7 @@ impl Parser {
             if !self.check(&TokenKind::RBrace) {
                 if !self.check(&TokenKind::Newline) {
                     return Err(ParseError {
+                        help: Some("Kelp has no ';' between statements. Put the next statement on its own line.".to_string()),
                         message: format!(
                             "expected a newline or '}}' after a statement, found {:?}",
                             self.peek_kind()
@@ -3037,6 +3141,7 @@ impl Parser {
                     || matches!(self.peek_kind(), TokenKind::Ident(n) if n == "loop");
                 if !loop_ahead {
                     return Err(ParseError {
+                        help: None,
                         message: format!("the label '{label} has to be followed by a 'while', 'for' or 'loop'"),
                         span: self.peek().span,
                     });
@@ -3079,6 +3184,7 @@ impl Parser {
             // so the message names the forms it can lead (A-13) rather than
             // reading the keyword as a start-of-expression.
             TokenKind::Pub => Err(ParseError {
+                help: None,
                 message: "'pub' applies to a top-level 'fun', 'extern fun', 'datac', 'enum', 'const' or 'static', and only at the top level of a file".to_string(),
                 span: self.peek().span,
             }),
@@ -3105,6 +3211,7 @@ impl Parser {
             let pattern = self.parse_binding_pattern()?;
             if self.check(&TokenKind::Colon) {
                 return Err(ParseError {
+                    help: None,
                     message: "a destructuring binding takes no written type: every position's type comes from the initializer, in order; bind the whole value first ('val p = ...') and write the type there"
                         .to_string(),
                     span: self.peek().span,
@@ -3178,6 +3285,7 @@ impl Parser {
             .span;
         if positions.len() < 2 {
             return Err(ParseError {
+                help: None,
                 message: "a destructuring pattern needs two or more positions ('val (lo, hi) = ...'); a single name is an ordinary 'val', and '_' ignores a position rather than binding one"
                     .to_string(),
                 span: open.to(close),
@@ -3305,6 +3413,7 @@ impl Parser {
         });
         if valued == 0 {
             return Err(ParseError {
+                help: None,
                 message: "a 'loop' used as a value needs a 'break value' to produce one".to_string(),
                 span,
             });
@@ -3340,6 +3449,7 @@ impl Parser {
     fn parse_labelled_exit(&mut self, is_break: bool, label: &str, span: Span, value: Option<Expr>) -> PResult<Stmt> {
         let Some(target) = self.loop_stack.iter().rposition(|l| l.label.as_deref() == Some(label)) else {
             return Err(ParseError {
+                help: None,
                 message: format!("no enclosing loop is labelled '{label}; a label is written before a loop ('{label}: for ...') and does not cross a function or a block passed to a call"),
                 span,
             });
@@ -3407,10 +3517,12 @@ impl Parser {
                 }))
             }
             (None, Some(_)) => Err(ParseError {
+                help: None,
                 message: "only a 'loop' used as a value can 'break' with one: write 'val x = loop { ... break value ... }'".to_string(),
                 span,
             }),
             (Some(_), None) if is_break => Err(ParseError {
+                help: None,
                 message: "this 'loop' produces a value, so every 'break' out of it carries one: 'break value'".to_string(),
                 span,
             }),
@@ -3493,6 +3605,7 @@ impl Parser {
         let (word, word_span) = self.expect_ident()?;
         if word != "in" {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "expected 'in' between the 'for' binding and what it iterates, found '{word}'"
                 ),
@@ -3922,6 +4035,7 @@ impl Parser {
             }
             other => {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "expected a quoted instruction template in 'asm(\"...\", ...)', found {other:?}"
                     ),
@@ -3943,6 +4057,7 @@ impl Parser {
                 }
                 other => {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "expected an asm operand ('in', 'out', 'inout', 'clobber') or an option word ('volatile', 'nomem', 'nostack'), found {other:?}"
                         ),
@@ -3964,6 +4079,7 @@ impl Parser {
                     let (name, _) = self.asm_constraint("clobber")?;
                     if name.is_empty() {
                         return Err(ParseError {
+                            help: None,
                             message: "'clobber(\"\")' needs a register name, for example 'clobber(\"memory\")' or 'clobber(\"rax\")'"
                                 .to_string(),
                             span: word_span,
@@ -3986,6 +4102,7 @@ impl Parser {
                     };
                     if operand.is_none() && kind != AsmOperandKind::Out {
                         return Err(ParseError {
+                            help: None,
                             message: format!(
                                 "'{}' needs a place: only 'out' may write an anonymous output ('out(\"...\") _')",
                                 word
@@ -4006,6 +4123,7 @@ impl Parser {
                 }
                 other => {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "unknown asm operand kind '{other}': expected 'in', 'out', 'inout' or 'clobber'"
                         ),
@@ -4039,6 +4157,7 @@ impl Parser {
             }
             other => {
                 return Err(ParseError {
+                    help: None,
                     message: format!(
                         "expected a quoted constraint in '{kind}(\"...\")', found {other:?}"
                     ),
@@ -4048,6 +4167,7 @@ impl Parser {
         };
         if name.is_empty() {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "'{kind}(\"\")' needs a constraint name, for example 'in(\"r\")' or 'out(\"rax\")'"
                 ),
@@ -4059,6 +4179,7 @@ impl Parser {
             .any(|c| c.is_whitespace() || matches!(c, '{' | '}' | '~' | ',' | '$'))
         {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "'{name}' is not a constraint name: a constraint is a register class or register name, with no spaces, '{{', '}}', '~', ',' or '$'"
                 ),
@@ -4200,6 +4321,7 @@ impl Parser {
             TokenKind::If => self.parse_if(),
             TokenKind::When => self.parse_when(),
             other => Err(ParseError {
+                help: None,
                 message: format!("unexpected token {other:?}"),
                 span: tok.span,
             }),
@@ -4218,6 +4340,7 @@ impl Parser {
         self.expect(TokenKind::LBracket, "'['")?;
         if self.check(&TokenKind::RBracket) {
             return Err(ParseError {
+                help: None,
                 message: "an array literal needs at least one element ('[a, b, c]') or a repeat ('[x; N]')"
                     .to_string(),
                 span: start.to(self.peek().span),
@@ -4279,6 +4402,7 @@ impl Parser {
                 }
                 other => {
                     return Err(ParseError {
+                        help: None,
                         message: format!(
                             "malformed string template: expected literal text or '${{expr}}', found {other:?}"
                         ),
@@ -4393,6 +4517,7 @@ impl Parser {
         let start = self.advance().span; // `let`
         if self.check(&TokenKind::LParen) {
             return Err(ParseError {
+                help: None,
                 message: "let-else: a tuple pattern always matches, so the else block could never run. Fix: write 'val (a, b) = ...' with no else, or match an enum variant such as 'Some(x)' here".to_string(),
                 span: self.peek().span,
             });
@@ -4400,6 +4525,7 @@ impl Parser {
         let (name, nspan) = self.expect_ident()?;
         if !self.check(&TokenKind::LParen) && self.check(&TokenKind::Eq) {
             return Err(ParseError {
+                help: None,
                 message: format!(
                     "let-else: '{name}' is a plain name, which always matches, so the else block could never run. Fix: write 'val {name} = ...' with no else, or match an enum variant such as 'Some({name})' here"
                 ),
@@ -4411,6 +4537,7 @@ impl Parser {
         let init = self.parse_head_expr()?;
         if !self.check(&TokenKind::Else) {
             return Err(ParseError {
+                help: None,
                 message: "let-else: a 'let' with a pattern needs an 'else' block that leaves the enclosing code. Fix: add 'else { return ... }' (or break, continue, panic), or use 'if let' when the no-match case needs no exit".to_string(),
                 span: self.peek().span,
             });
@@ -4576,6 +4703,7 @@ impl Parser {
 
         if arms.is_empty() {
             return Err(ParseError {
+                help: None,
                 message: "'when' needs at least one arm".to_string(),
                 span,
             });
@@ -4681,6 +4809,7 @@ impl Parser {
         let end = self.expect(TokenKind::RBrace, "'}'")?.span;
         if arms.is_empty() {
             return Err(ParseError {
+                help: None,
                 message: "'when' needs at least one arm".to_string(),
                 span: start.to(end),
             });
@@ -4713,6 +4842,7 @@ impl Parser {
             } else {
                 if !self.check(&TokenKind::LParen) {
                     return Err(ParseError {
+                        help: None,
                         message: "every arm of a 'when' over a tuple is a tuple pattern '(a, b)' or 'else'".to_string(),
                         span: head,
                     });
@@ -4729,6 +4859,7 @@ impl Parser {
                 self.expect(TokenKind::RParen, "')' to close the tuple pattern")?;
                 if pats.len() < 2 {
                     return Err(ParseError {
+                        help: None,
                         message: "a tuple pattern needs two or more positions".to_string(),
                         span: head,
                     });
@@ -4737,6 +4868,7 @@ impl Parser {
                     None => width = Some(pats.len()),
                     Some(w) if w != pats.len() => {
                         return Err(ParseError {
+                            help: None,
                             message: format!("this tuple pattern has {} positions and the first arm has {w}", pats.len()),
                             span: head,
                         })
@@ -4755,6 +4887,7 @@ impl Parser {
         let span = start.to(end);
         let Some(width) = width else {
             return Err(ParseError {
+                help: None,
                 message: "a 'when' over a tuple needs at least one tuple pattern arm".to_string(),
                 span,
             });
@@ -4828,6 +4961,7 @@ impl Parser {
             let close = self.expect(TokenKind::RParen, "')' to close the tuple pattern")?.span;
             if elems.len() < 2 {
                 return Err(ParseError {
+                    help: None,
                     message: "a tuple pattern needs two or more positions".to_string(),
                     span: open.to(close),
                 });
@@ -4942,6 +5076,7 @@ impl Parser {
                     None => variants.push((name.clone(), binds.len(), *span)),
                     Some((_, arity, _)) if *arity != binds.len() => {
                         return Err(ParseError {
+                            help: None,
                             message: format!("'{name}' is bound with {} name(s) here and {arity} in an earlier arm", binds.len()),
                             span: *span,
                         })
@@ -4973,12 +5108,14 @@ impl Parser {
                     }
                     TuplePat::Lit { expr, .. } => {
                         return Err(ParseError {
+                            help: None,
                             message: "a position cannot be matched by a variant in one arm and a literal in another".to_string(),
                             span: expr.span(),
                         })
                     }
                     TuplePat::Tuple(_, tspan) => {
                         return Err(ParseError {
+                            help: None,
                             message: "a position cannot be matched by a variant in one arm and a tuple in another".to_string(),
                             span: *tspan,
                         })
@@ -5057,6 +5194,7 @@ impl Parser {
                 TuplePat::Tuple(elems, tspan) => {
                     if elems.len() != width {
                         return Err(ParseError {
+                            help: None,
                             message: format!("this nested tuple pattern has {} positions and an earlier arm's has {width}", elems.len()),
                             span: *tspan,
                         });
@@ -5071,12 +5209,14 @@ impl Parser {
                 }
                 TuplePat::Variant { span: vspan, .. } => {
                     return Err(ParseError {
+                        help: None,
                         message: "a position that is a tuple in one arm cannot be a variant in another".to_string(),
                         span: *vspan,
                     })
                 }
                 TuplePat::Lit { expr, .. } => {
                     return Err(ParseError {
+                        help: None,
                         message: "a position that is a tuple in one arm cannot be a literal in another".to_string(),
                         span: expr.span(),
                     })
@@ -5104,12 +5244,14 @@ impl Parser {
                 TuplePat::Any(_) => {}
                 TuplePat::Variant { span: vspan, .. } => {
                     return Err(ParseError {
+                        help: None,
                         message: "a position cannot be matched by a literal in one arm and a variant in another".to_string(),
                         span: *vspan,
                     })
                 }
                 TuplePat::Tuple(_, tspan) => {
                     return Err(ParseError {
+                        help: None,
                         message: "a position cannot be matched by a literal in one arm and a tuple in another".to_string(),
                         span: *tspan,
                     })
@@ -5139,6 +5281,7 @@ impl Parser {
         let fallback = any_rows(self, &rows, None);
         if fallback.is_empty() {
             return Err(ParseError {
+                help: None,
                 message: format!("{NO_LITERAL_FALLBACK}: add an arm with a name or '_' in that position, or 'else'"),
                 span: rows[0].span,
             });

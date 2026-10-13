@@ -393,6 +393,8 @@ impl DropPlan {
 pub struct BorrowError {
     pub message: String,
     pub span: Span,
+    /// The next step a reader can take, carried onto the `Diagnostic`.
+    pub help: Option<String>,
 }
 
 type Result<T> = std::result::Result<T, BorrowError>;
@@ -963,6 +965,7 @@ impl Ctx {
             }
         };
         Some(BorrowError {
+            help: None,
             message: format!("cannot use {} as a whole value: {what}", display_root(name)),
             span,
         })
@@ -985,6 +988,7 @@ impl Ctx {
         self.check_iterated_mutation(expr)?;
         if self.moved_at_or_below(name, &proj) {
             return Err(BorrowError {
+                help: Some(format!("pass &{} to keep the value here, or do not use it after the move.", field_display(name, &proj))),
                 message: format!("use of moved value '{}'", field_display(name, &proj)),
                 span: expr.span,
             });
@@ -1013,6 +1017,7 @@ impl Ctx {
         };
         if self.moved_at_or_below(name, &proj) {
             return Err(BorrowError {
+                help: Some(format!("pass &{name}.{field} to keep the value here, or do not use it after the move.")),
                 message: format!("use of moved value '{name}.{field}'"),
                 span,
             });
@@ -1032,6 +1037,7 @@ impl Ctx {
         let proj = if path.len() == 1 { Projection::Field(path.remove(0)) } else { Projection::NestedField(path) };
         if self.moved_at_or_above(name, &proj) {
             return Err(BorrowError {
+                help: Some(format!("pass &{} to keep the value here, or do not use it after the move.", field_display(name, &proj))),
                 message: format!("use of moved value '{}'", field_display(name, &proj)),
                 span,
             });
@@ -1131,6 +1137,7 @@ impl Ctx {
         }
         if v.moved_at.is_some() {
             return Err(BorrowError {
+                help: Some(format!("pass &{name} to keep the value here, or do not use it after the move.")),
                 message: format!("use of moved value {}", display_root(name)),
                 span,
             });
@@ -1138,6 +1145,7 @@ impl Ctx {
         let reserved = !v.reserved.is_empty();
         if self.pin_of(name) != BorrowKind::None || reserved {
             return Err(BorrowError {
+                help: None,
                 message: format!("cannot move {} while it is borrowed", display_root(name)),
                 span,
             });
@@ -1179,6 +1187,7 @@ impl Ctx {
         };
         if v.moved_at.is_some() {
             return Err(BorrowError {
+                help: Some(format!("pass &{name} to keep the value here, or do not use it after the move.")),
                 message: format!("use of moved value {}", display_root(name)),
                 span,
             });
@@ -1196,6 +1205,7 @@ impl Ctx {
             || self.lookup(name).map(|v| !v.reserved.is_empty()).unwrap_or(false)
         {
             return Err(BorrowError {
+                help: None,
                 message: format!("cannot assign to {} while it is borrowed", display_root(name)),
                 span,
             });
@@ -1218,6 +1228,7 @@ impl Ctx {
         let moved = self.lookup(var_of(root)).map(|v| v.moved_at.is_some()).unwrap_or(false);
         if moved {
             return Err(BorrowError {
+                help: None,
                 message: format!("cannot borrow {}: value was moved", display_root(root)),
                 span,
             });
@@ -1231,6 +1242,7 @@ impl Ctx {
         if reserved {
             if mutable {
                 return Err(BorrowError {
+                    help: None,
                     message: format!(
                         "cannot borrow {} as exclusive: already borrowed exclusively",
                         display_root(root)
@@ -1248,6 +1260,7 @@ impl Ctx {
         let new = match (&around, mutable) {
             (BorrowKind::Exclusive, _) => {
                 return Err(BorrowError {
+                    help: None,
                     message: format!(
                         "cannot borrow {}: already borrowed exclusively",
                         display_root(root)
@@ -1257,6 +1270,7 @@ impl Ctx {
             }
             (BorrowKind::Shared(_), true) => {
                 return Err(BorrowError {
+                    help: None,
                     message: format!(
                         "cannot borrow {} as exclusive: already borrowed as shared",
                         display_root(root)
@@ -1292,12 +1306,14 @@ impl Ctx {
         }
         if self.lookup(var_of(root)).map(|v| v.moved_at.is_some()).unwrap_or(false) {
             return Err(BorrowError {
+                help: None,
                 message: format!("cannot borrow {}: value was moved", display_root(root)),
                 span,
             });
         }
         if self.is_reserved(root) {
             return Err(BorrowError {
+                help: None,
                 message: format!("cannot borrow {}: already borrowed exclusively", display_root(root)),
                 span,
             });
@@ -1305,12 +1321,14 @@ impl Ctx {
         match self.pin_of(root) {
             BorrowKind::Exclusive => {
                 return Err(BorrowError {
+                    help: None,
                     message: format!("cannot borrow {}: already borrowed exclusively", display_root(root)),
                     span,
                 });
             }
             BorrowKind::Shared(_) => {
                 return Err(BorrowError {
+                    help: None,
                     message: format!(
                         "cannot borrow {} as exclusive: already borrowed as shared",
                         display_root(root)
@@ -1339,6 +1357,7 @@ impl Ctx {
             return Ok(());
         };
         Err(BorrowError {
+            help: None,
             message: format!("cannot mutate '{path}' while iterating over it"),
             span: it.span,
         })
@@ -1356,6 +1375,7 @@ impl Ctx {
         }
         if self.pin_of(root) != BorrowKind::None {
             return Err(BorrowError {
+                help: None,
                 message: format!(
                     "cannot borrow {} as exclusive: already borrowed as shared",
                     display_root(root)
@@ -1543,6 +1563,7 @@ impl Ctx {
         // The binding itself, not its roots: `&cur` would pin `cur`.
         if self.pin_of(name) != BorrowKind::None {
             return Err(BorrowError {
+                help: None,
                 message: format!("cannot assign to {} while it is borrowed", display_root(name)),
                 span,
             });
@@ -1713,6 +1734,7 @@ impl Ctx {
         match self.ret_borrow_param.clone() {
             Some(param) if owners.len() == 1 && owners[0] == param => Ok(()),
             Some(param) => Err(BorrowError {
+                help: None,
                 message: format!(
                     "cannot return a borrow of '{}': '{}' borrows from its first reference parameter '{param}', so the returned value must be derived from '{param}'",
                     owners[0],
@@ -1728,6 +1750,7 @@ impl Ctx {
     /// the elided parameter: named after the parameter when there is one.
     fn unrooted_return_error(&self, span: Span) -> BorrowError {
         BorrowError {
+            help: None,
             message: match &self.ret_borrow_param {
                 Some(param) => format!(
                     "cannot return this value as '{}': it is not derived from a reference parameter (an elided return lifetime is '{param}', or a 'str' literal)",
@@ -2160,7 +2183,9 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
         .collect();
     for f in &program.functions {
         let function = check_function(f, &owned, &program.drop_types, &fn_borrow_root, &fn_mut_params, &capture_footprints, &globals, &enums).map_err(|e| {
-            Diagnostic::new(e.message, e.span, f.module.clone())
+            let mut diag = Diagnostic::new(e.message, e.span, f.module.clone());
+            diag.help = e.help;
+            diag
         })?;
         plan.functions.insert(f.name.clone(), function);
     }
@@ -2817,7 +2842,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                                 index + 1
                             ),
                         };
-                        return Err(BorrowError { message, span: expr.span });
+                        return Err(BorrowError { message, span: expr.span, help: None });
                     }
                     let message = match base.ty {
                         Ty::Ref { .. } => format!(
@@ -2828,7 +2853,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                             "cannot read the owned field '{field}' by value: the base is not a local this frame owns, so a partial move cannot take the field out; use it through a borrow (pass it to a parameter, call a method on it) or hold it in a 'Box' and 'take()' it"
                         ),
                     };
-                    return Err(BorrowError { message, span: expr.span });
+                    return Err(BorrowError { message, span: expr.span, help: None });
                 };
                 path.push(field.clone());
                 let proj = if path.len() == 1 {
@@ -2848,6 +2873,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                         ),
                     };
                     return Err(BorrowError {
+                        help: None,
                         message: format!(
                             "cannot move {what} out of '{base_name}' by value: it is a type with a destructor, and a partial move zeroes the slot it came from, so the base's own drop would run that destructor a second time; take the whole value by moving it, or use it through a borrow"
                         ),
@@ -2909,6 +2935,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         tir::ExprKind::Capture { .. } => {
             if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
                 return Err(BorrowError {
+                    help: None,
                     message: "cannot read a captured value out of the closure's environment by value: the environment is not a local this frame owns, so the read would give two owners of the same buffer; use it through a borrow (read a field of it, call a method on it, pass it to a parameter), or capture a `Copy` value instead".to_string(),
                     span: expr.span,
                 });
@@ -3046,10 +3073,11 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                             "cannot read the owned payload '{name}' by value: the base is not a local this frame owns, so a partial move cannot take the payload out; match the enum where it is, which borrows the payload"
                         ),
                     };
-                    return Err(BorrowError { message, span: expr.span });
+                    return Err(BorrowError { message, span: expr.span, help: None });
                 };
                 if crate::types::is_drop_type(&expr.ty, &ctx.drop_types) {
                     return Err(BorrowError {
+                        help: None,
                         message: format!(
                             "cannot move the payload '{name}' out of the enum by value: it is a type with a destructor, and a partial move zeroes the slot it came from, so the enum's own drop would run that destructor a second time; match the enum through a borrow, or move the whole value"
                         ),
@@ -3188,6 +3216,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             check_value(sub, ctx)?; // the pointer itself is Copy; reading it never moves anything
             if !is_copy(&expr.ty) {
                 return Err(BorrowError {
+                    help: None,
                     message: "cannot move a value out through a dereferenced borrow".to_string(),
                     span: expr.span,
                 });
@@ -3455,6 +3484,7 @@ fn take_call_arguments(
                     if already_held {
                         if !held_reborrows.insert(root.clone()) {
                             return Err(BorrowError {
+                                help: None,
                                 message: format!(
                                     "cannot borrow {}: already borrowed exclusively",
                                     display_root(&root)
@@ -3506,6 +3536,7 @@ fn take_call_arguments(
                                 });
                             if twice {
                                 return Err(BorrowError {
+                                    help: None,
                                     message: format!(
                                         "cannot borrow {} as exclusive: this call also uses it, and a block that writes through a captured exclusive borrow needs the call's other arguments to leave it alone",
                                         display_root(&root)
@@ -3527,6 +3558,7 @@ fn take_call_arguments(
     for (root, span) in shared_reborrows {
         if exclusive_reborrows.iter().any(|r| roots_overlap(r, &root)) {
             return Err(BorrowError {
+                help: None,
                 message: format!(
                     "cannot borrow {}: already borrowed exclusively",
                     display_root(&root)
