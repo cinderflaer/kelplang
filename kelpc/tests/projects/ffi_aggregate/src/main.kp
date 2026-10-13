@@ -18,6 +18,16 @@ fun main() {
     print(w.c)
     print(agg.agg_wide_total(agg.Wide(a = 10, b = 20, c = 30)))
 
+    val t = agg.agg_trio_scale(agg.Trio(x = 1.5, y = 2.0, z = 3.0))
+    print(t.x)
+    print(t.y)
+    print(t.z)
+
+    val g = agg.agg_tag_next(agg.Tag(kind = 7, flag = true, n = 21))
+    print(g.kind)
+    print(g.flag)
+    print(g.n)
+
     print(agg.agg_bytes_len(Bytes.from_str("hello")))
     val made = agg.agg_bytes_make(5)
     print(made.len())

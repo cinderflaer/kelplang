@@ -17,14 +17,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The native side of the fixture's externs, in the ABI `rustc` gives
-/// `extern "C"`. Every function is a no_std leaf: it allocates only through
-/// `malloc`, which the link already provides.
+/// `extern "C"`. Every function is a no_std leaf that cannot panic, and it
+/// allocates only through `malloc`, which the link already provides. It has no
+/// panic handler of its own, so it links beside the runtime's without a second
+/// `rust_begin_unwind`.
 const WITNESS: &str = r#"#![no_std]
-
-#[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
 
 unsafe extern "C" {
     fn malloc(n: usize) -> *mut u8;
@@ -81,6 +78,32 @@ pub extern "C" fn agg_wide_total(w: Wide) -> i64 {
     w.a + w.b + w.c
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Trio {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Tag {
+    kind: u8,
+    flag: bool,
+    n: u16,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn agg_trio_scale(t: Trio) -> Trio {
+    Trio { x: t.x * 2.0, y: t.y * 2.0, z: t.z * 2.0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn agg_tag_next(t: Tag) -> Tag {
+    Tag { kind: t.kind.wrapping_add(1), flag: !t.flag, n: t.n * 2 }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn agg_bytes_len(b: Bytes) -> usize {
     b.len
@@ -106,9 +129,9 @@ pub extern "C" fn agg_string_len(s: Bytes) -> usize {
 }
 "#;
 
-/// The output the fixture's `main` must print: the witness's arithmetic on the
-/// fixture's inputs, with floats in the `%f` form Kelp prints them in.
-fn expected_output() -> String {
+/// The lines the datac externs print: the witness's arithmetic on the fixture's
+/// inputs, with floats in the `%f` form Kelp prints them in.
+fn datac_output() -> String {
     // agg_pair_bump(Pair { a: 3, b: 2.5 })
     let (pa, pb) = (3i64 + 1, 2.5f64 * 2.0);
     // agg_mixed_bump(Mixed { x: 1.5, y: 2.25, n: 7 })
@@ -117,11 +140,22 @@ fn expected_output() -> String {
     let (wa, wb, wc) = (1i64 + 1, 2i64 + 2, 3i64 + 3);
     // agg_wide_total(Wide { a: 10, b: 20, c: 30 })
     let total = 10i64 + 20 + 30;
+    // agg_trio_scale(Trio { x: 1.5, y: 2.0, z: 3.0 })
+    let (tx, ty, tz) = (1.5f32 * 2.0, 2.0f32 * 2.0, 3.0f32 * 2.0);
+    // agg_tag_next(Tag { kind: 7, flag: true, n: 21 })
+    let (gk, gf, gn) = (7u8.wrapping_add(1), !true, 21u16 * 2);
+    format!(
+        "{pa}\n{pb:.6}\n{mx:.6}\n{my:.6}\n{mn}\n{wa}\n{wb}\n{wc}\n{total}\n\
+         {tx:.6}\n{ty:.6}\n{tz:.6}\n{gk}\n{gf}\n{gn}\n"
+    )
+}
+
+/// The whole fixture's output: the datac lines, then the `Bytes` and `String`
+/// lengths.
+fn expected_output() -> String {
     // agg_bytes_len("hello"), agg_bytes_make(5).len(), agg_string_len("abcdefg")
     let (hello, made, seven) = (5usize, 5usize, 7usize);
-    format!(
-        "{pa}\n{pb:.6}\n{mx:.6}\n{my:.6}\n{mn}\n{wa}\n{wb}\n{wc}\n{total}\n{hello}\n{made}\n{seven}\n"
-    )
+    format!("{}{hello}\n{made}\n{seven}\n", datac_output())
 }
 
 /// Copies the fixture project into `dst`, so the native library can be written
@@ -139,24 +173,26 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
-/// Builds the fixture against the Rust witness and runs it, returning stdout.
-fn build_and_run(name: &str) -> String {
+/// Builds the fixture `fixture` against the Rust witness, with `flags` on the
+/// command line, and runs it, returning stdout.
+fn build_and_run(fixture: &str, name: &str, flags: &[&str]) -> String {
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = fs::remove_dir_all(&root);
-    let project = root.join("ffi_aggregate");
+    let project = root.join(fixture);
     copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/projects/ffi_aggregate"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/projects").join(fixture),
         &project,
     );
 
-    // The witness, as a static library the manifest's `library_dirs` names.
+    // The witness, as an archive the manifest's `library_dirs` names. An rlib is
+    // an ar archive of the object, which the linker reads like a static library.
     let native = project.join("native");
     fs::create_dir_all(&native).expect("create the native directory");
     let witness = root.join("witness.rs");
     fs::write(&witness, WITNESS).expect("write the Rust witness");
     let lib = native.join("libkelpaggwit.a");
     let rustc = Command::new("rustc")
-        .args(["--edition", "2024", "--crate-type", "staticlib", "-C", "panic=abort", "-O", "-o"])
+        .args(["--edition", "2024", "--crate-type", "rlib", "-C", "panic=abort", "-O", "-o"])
         .arg(&lib)
         .arg(&witness)
         .output()
@@ -175,6 +211,7 @@ fn build_and_run(name: &str) -> String {
         .arg(&project)
         .arg("-o")
         .arg(&bin)
+        .args(flags)
         .output()
         .expect("failed to spawn kelpc");
     assert!(
@@ -195,6 +232,15 @@ fn build_and_run(name: &str) -> String {
 
 #[test]
 fn a_user_extern_passes_and_returns_aggregates_by_value() {
-    let stdout = build_and_run("extern_aggregate_values");
+    let stdout = build_and_run("ffi_aggregate", "extern_aggregate_values", &[]);
     assert_eq!(stdout, expected_output());
+}
+
+/// The datac shapes alone, with no `Bytes` or `String`: the program the unit split
+/// is meant for. A hosted build refuses `--incremental` (the shared pool), so
+/// this one is built whole-program.
+#[test]
+fn a_user_extern_datac_shapes_pass_and_return_by_value() {
+    let stdout = build_and_run("ffi_aggregate_datac", "extern_aggregate_datac", &[]);
+    assert_eq!(stdout, datac_output());
 }

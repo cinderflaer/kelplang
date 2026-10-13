@@ -16,10 +16,10 @@
 //! The stdlib's `extern fun` bodies are Rust exports in `kelp-rt`, listed in
 //! `externs::RUST_PORTED`, so this object defines nothing for them.
 //!
-//! A user `extern fun` that takes or returns an aggregate by value is refused.
-//! The System V classification of a struct that crosses into native code was
-//! the C compiler's job in the trampoline this replaces, and it is not lowered
-//! here yet. Scalars, pointers, handles and callbacks cross as before.
+//! A user `extern fun` that takes or returns a `datac`, `Bytes` or `String` by
+//! value is lowered by `extern_agg`, into the program's own module, and is not
+//! written here. Any other aggregate by value is refused. Scalars, pointers,
+//! handles and callbacks cross as before.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -150,10 +150,16 @@ pub(crate) fn lower_externs_object(
     out: &Path,
     hosted: bool,
 ) -> Result<bool, String> {
+    // A user extern that `extern_agg` lowers has its trampoline in the program's own
+    // module, so this object leaves it out.
     let user: Vec<&TirFunction> = program
         .functions
         .iter()
-        .filter(|f| f.extern_ && program.extern_ffi_symbols.contains_key(&f.name))
+        .filter(|f| {
+            f.extern_
+                && program.extern_ffi_symbols.contains_key(&f.name)
+                && !crate::extern_agg::lowered_in_ir(program, f)
+        })
         .collect();
     for f in program.functions.iter().filter(|f| f.extern_) {
         if !program.extern_ffi_symbols.contains_key(&f.name)

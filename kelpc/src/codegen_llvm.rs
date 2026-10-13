@@ -641,6 +641,9 @@ fn lower_to_object(
     lowering.declare()?;
     lowering.emit_const_data()?;
     lowering.declare_statics()?;
+    // The user `extern fun`s that take or return an aggregate by value, lowered
+    // to IR (`extern_agg`): the unit that owns one defines its trampoline.
+    lowering.define_aggregate_externs()?;
     // The small builtin accessors get their bodies here, as IR rather than a
     // declaration into the runtime object, so the module's own `-O2` inlines
     // them at the call site. `emit_container_bodies` below is the same idea for
@@ -2285,6 +2288,20 @@ impl<'a> Gen<'a> {
         self.unit.as_ref().map_or(true, |unit| unit.support)
     }
 
+    /// Defines the trampolines of the lowered user externs this pass owns
+    /// (`extern_agg::define_trampolines`).
+    fn define_aggregate_externs(&self) -> Result<(), String> {
+        crate::extern_agg::define_trampolines(
+            self.ctx,
+            self.module,
+            self.program,
+            &|f| self.defines_function(f),
+            // The codegen's own LLVM types, so a trampoline and the declaration it
+            // defines name the same struct types.
+            &|ty| llvm_type(self.ctx, &self.structs, &self.containers, ty),
+        )
+    }
+
     /// Whether this pass emits the body of the user function `f`: every
     /// function in the whole-program mode, and a module's own functions in the
     /// incremental mode.
@@ -3296,6 +3313,9 @@ impl<'a> Gen<'a> {
             Some(llvm_type(ctx, &self.structs, &self.containers, &f.ret)?)
         };
         let symbol = symbol_name(&f.name);
+        // A user extern that takes or returns an aggregate by value is lowered to
+        // IR by `extern_agg`, which defines its body in the owning unit.
+        let lowered = crate::extern_agg::lowered_in_ir(self.program, f);
         // The bare name inside the module, the last dot-separated component,
         // which is how `externs.rs` keys a body: `(module, bare name)`.
         let bare = f.name.rsplit('.').next().unwrap_or(&f.name);
@@ -3347,6 +3367,12 @@ impl<'a> Gen<'a> {
                 continue;
             }
             if crosses_c_boundary_by_value(pty, llvm_pty, self.layout) {
+                // A lowered extern takes the pointer to the caller's copy, which
+                // its trampoline reads (`extern_agg`).
+                if lowered {
+                    params.push(ctx.opaque_ptr());
+                    continue;
+                }
                 return Err(refuse(
                     &format!("the extern '{}' taking '{}' by value", f.name, pname),
                     "S3",

@@ -44,6 +44,8 @@ empty on release.
 - The Polyp examples use the Polyp v5 impl ids (`deps/polyp/core/core`, `deps/polyp/backends/gtk/polyp/lib`, `deps/polyp/backends/gtk/gtk`, `deps/polyp/backends/gtk/queue`, `deps/polyp/backends/soft/...`). The `polyp` namespace is unchanged. The v0 examples are frozen.
 - The Polyp examples' message queue is Kelp code now, so their `coral.toml` files name no C header.
 
+- A user `extern fun` that takes or returns a `datac`, `Bytes` or `String` by value is lowered to LLVM IR with the System V register or memory classes, not to a C trampoline. A `List`, `Box`, `Map` or array passed or returned by value is still refused by name.
+
 ## compiler
 
 - The link step uses `ld.lld`, not `cc`: a build with no `cc` can link, and `KELPC_LLD` selects the `ld.lld` binary (otherwise the first one on PATH).

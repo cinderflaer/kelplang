@@ -10,6 +10,7 @@ mod defer;
 mod diag;
 mod doc;
 mod driver;
+mod extern_agg;
 mod extern_object;
 mod externs;
 mod fmt;
