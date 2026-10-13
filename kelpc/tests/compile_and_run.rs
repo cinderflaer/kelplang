@@ -5773,6 +5773,18 @@ fn an_enum_whose_variant_payloads_are_keyable_is_a_map_key() {
 }
 
 #[test]
+fn an_enum_map_value_is_refused_by_the_checker_with_a_list_hint() {
+    // A `Map` value that is an `enum` is refused at the `Map` type, before codegen.
+    // The message names the type and says to keep the values in a `List`, which
+    // holds an `enum` as its own element; a `datac` wrapper is refused in codegen too.
+    assert_fixture_refused(
+        "map_enum_value",
+        "'Status' cannot be a 'Map' value: a hosted build cannot describe an 'enum' inside a map's entry yet",
+    );
+    assert_fixture_refused("map_enum_value", "Keep the values in a 'List<Status>' and store each value's index in the map instead");
+}
+
+#[test]
 fn a_map_is_not_copy_so_assigning_one_moves_it() {
     assert_rejected("tests/fixtures/map_move.kp");
 }

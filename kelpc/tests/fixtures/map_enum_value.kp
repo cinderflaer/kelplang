@@ -1,0 +1,16 @@
+// A Map whose value is an `enum`. The checker accepts the value (an enum is a
+// plain `Struct` element), but a hosted build cannot describe the enum in the
+// map's entry record, so the program is refused. The refusal should come from
+// the checker, at the `Map` type, and say what to use instead.
+enum Status {
+    Open
+    Closed(val code: i32)
+}
+
+fun main() {
+    var m: Map<i32, Status> = Map.new()
+    m.insert(key = 1, v = Status.Open)
+    m.insert(key = 2, v = Status.Closed(code = 404))
+    print(m.len())
+    print(m.has(key = 2))
+}

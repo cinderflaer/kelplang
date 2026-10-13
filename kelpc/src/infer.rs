@@ -1378,6 +1378,12 @@ impl Ctx {
         self.enums.contains_key(name) || self.env.instances.borrow().sums.contains_key(name)
     }
 
+    /// Whether `ty` is an `enum`, which an `enum` is a plain `Struct` element of
+    /// (so `is_map_element` takes it), but a `Map` value may not be (`map_enum_value_error`).
+    fn is_enum_ty(&self, ty: &Ty) -> bool {
+        matches!(ty, Ty::Struct(name) if self.is_enum(name))
+    }
+
     /// Every `datac`/`enum` declaration the checker knows, generic instances
     /// included, as `(name, each field's type)` - what the derived
     /// clone/order/key fixpoints (`types::clonable_types`) run over.
@@ -1517,6 +1523,11 @@ struct TypeScope<'a> {
 }
 
 impl TypeScope<'_> {
+    /// Whether `ty` is an `enum` (declared or instantiated), as `Ctx::is_enum_ty` says.
+    fn is_enum_ty(&self, ty: &Ty) -> bool {
+        matches!(ty, Ty::Struct(name) if self.enums.contains_key(name) || self.env.instances.borrow().sums.contains_key(name))
+    }
+
     /// The user types that are `Map` keys, from the declarations this view of
     /// the program can see (A-6, A-12). A `Map` key is resolved before the
     /// whole program is known, so this runs the same fixpoint `Ctx` runs, over
@@ -1872,7 +1883,9 @@ impl TypeScope<'_> {
             let (ok, error) = if ty.name == "List" {
                 (crate::types::is_list_element(&elem), list_element_error(&elem))
             } else if ty.name == "Map" {
-                (crate::types::is_map_element(&elem), map_element_error(&elem))
+                let enum_value = self.is_enum_ty(&elem);
+                let error = if enum_value { map_enum_value_error(&elem) } else { map_element_error(&elem) };
+                (!enum_value && crate::types::is_map_element(&elem), error)
             } else if ty.name == "Atomic" {
                 (crate::types::is_atomic_element(&elem), atomic_element_error(&elem))
             } else if ty.name == "Thread" {
@@ -5555,6 +5568,19 @@ fn list_element_error(ty: &Ty) -> String {
     )
 }
 
+/// Why an `enum` cannot be a `Map` value (the checker refuses it here, so a
+/// hosted build does not reach codegen). The checker takes an `enum` as a plain
+/// element, but the map's entry record is described through its value's layout,
+/// and a hosted build cannot describe an enum there (`gc_descr::pointer_offsets`).
+/// A `datac` that holds the enum is refused the same way, so the sentence points
+/// at a `List`, which holds an enum as its own element.
+fn map_enum_value_error(ty: &Ty) -> String {
+    format!(
+        "'{0}' cannot be a 'Map' value: a hosted build cannot describe an 'enum' inside a map's entry yet, and a 'datac' that holds the enum is refused the same way. Keep the values in a 'List<{0}>' and store each value's index in the map instead",
+        ty.display()
+    )
+}
+
 /// Why a type cannot be a `Map<V>` value, in one place so the `Map<V>` type
 /// position and `Map.new()` share the explanation. The value set is narrower
 /// than the `List` element set: a container is refused here, so a `List` or a
@@ -5577,11 +5603,11 @@ fn map_element_error(ty: &Ty) -> String {
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason}: a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or an 'enum'"
+            "{reason}: a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
         );
     }
     format!(
-        "'{}' cannot be a 'Map' value: the value set is a scalar, 'String', 'Bytes', a 'datac', or an 'enum', which is narrower than a list's (that also takes a 'List' or a 'Box'). A container, an array, a borrow or a view, an atomic, a function value, and 'unit' are refused",
+        "'{}' cannot be a 'Map' value: the value set is a scalar, 'String', 'Bytes', or a 'datac', which is narrower than a list's (that also takes a 'List', a 'Box' or an 'enum'). A container, an array, a borrow or a view, an atomic, a function value, and 'unit' are refused",
         ty.display()
     )
 }
@@ -19520,10 +19546,14 @@ fn open_container_from_call(
             };
             let value = check_deciding_element(&value_arg.value, ctx)?;
             note_heap_use(&ctx.env, managed::HeapSlot::MapValue, &value.ty, value_arg.value.span());
-            if !crate::types::is_map_element(&value.ty) {
+            if !crate::types::is_map_element(&value.ty) || ctx.is_enum_ty(&value.ty) {
                 return Err(TypeError {
                     help: None,
-                    message: map_element_error(&value.ty),
+                    message: if ctx.is_enum_ty(&value.ty) {
+                        map_enum_value_error(&value.ty)
+                    } else {
+                        map_element_error(&value.ty)
+                    },
                     span: value_arg.value.span(),
                 });
             }
@@ -21284,7 +21314,7 @@ fn check_container_associated(
             let allowed = if container == "List" {
                 crate::types::is_list_element(&value.ty)
             } else if container == "Map" {
-                crate::types::is_map_element(&value.ty)
+                crate::types::is_map_element(&value.ty) && !ctx.is_enum_ty(&value.ty)
             } else {
                 crate::types::is_box_element(&value.ty)
             };
@@ -21293,6 +21323,8 @@ fn check_container_associated(
                     help: None,
                     message: if container == "List" {
                         list_element_error(&value.ty)
+                    } else if container == "Map" && ctx.is_enum_ty(&value.ty) {
+                        map_enum_value_error(&value.ty)
                     } else if container == "Map" {
                         map_element_error(&value.ty)
                     } else {
