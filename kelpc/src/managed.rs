@@ -702,4 +702,27 @@ mod tests {
             .expect("state.rs declares DEFAULT_HEADROOM_PCT as a usize literal");
         assert_eq!(value.parse::<u64>().expect("a whole number"), DEFAULT_HEADROOM_PCT);
     }
+
+    /// The collector's heap cap and start guesses are written as `N << 20` (N
+    /// MiB) in `kelpc/gc/src/state.rs`. Each one with a manifest default here
+    /// must agree with it. The collector's minimum heap has no manifest default,
+    /// so nothing holds it to one.
+    #[test]
+    fn the_collector_default_heap_and_start_sizes_are_the_manifest_defaults() {
+        let state = include_str!("../gc/src/state.rs");
+        let mib = |name: &str| -> u64 {
+            let prefix = format!("pub const {name}: usize = ");
+            let value = state
+                .lines()
+                .find_map(|line| line.strip_prefix(prefix.as_str()))
+                .and_then(|rest| rest.strip_suffix(';'))
+                .unwrap_or_else(|| panic!("state.rs declares {name} as a usize"));
+            let (count, shift) = value.split_once(" << ").expect("a count shifted left");
+            assert_eq!(shift.parse::<u32>().expect("a whole number"), 20, "{name} is in MiB");
+            count.parse::<u64>().expect("a whole number")
+        };
+        assert_eq!(mib("DEFAULT_HEAP_MAX"), DEFAULT_HEAP_MAX_MIB);
+        assert_eq!(mib("DEFAULT_START_LOW"), DEFAULT_START_LOW_MIB);
+        assert_eq!(mib("DEFAULT_START_HIGH"), DEFAULT_START_HIGH_MIB);
+    }
 }
