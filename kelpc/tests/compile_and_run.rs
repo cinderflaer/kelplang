@@ -18484,3 +18484,50 @@ fn tidepool_start_low_zero_is_refused() {
         "coral.toml's [tidepool] key 'start_low_mib' must be at least 1, found '0'",
     );
 }
+
+// Tidepool settings (manifest refusals by name, each with a fixture). A
+// section about Tidepool under any other name is refused, not skipped.
+#[test]
+fn tidepool_section_under_target_is_refused_by_name() {
+    assert_project_rejected(
+        "tidepoolsectionname",
+        &project("tidepoolsectionname"),
+        "unknown section '[target.tidepool]' in coral.toml; did you mean '[tidepool]'?",
+    );
+}
+
+#[test]
+fn tidepool_double_bracket_header_is_refused_by_name() {
+    assert_project_rejected(
+        "tidepoolarraytable",
+        &project("tidepoolarraytable"),
+        "unknown section '[[tidepool]]' in coral.toml; did you mean '[tidepool]'?",
+    );
+}
+
+#[test]
+fn tidepool_headroom_pct_above_1000_is_refused_by_name() {
+    assert_project_rejected(
+        "tidepoolheadroomrange",
+        &project("tidepoolheadroomrange"),
+        "coral.toml's [tidepool] key 'headroom_pct' must be from 0 to 1000, found '1001'",
+    );
+}
+
+#[test]
+fn tidepool_start_high_above_heap_max_is_refused_by_name() {
+    assert_project_rejected(
+        "tidepoolstarthighover",
+        &project("tidepoolstarthighover"),
+        "coral.toml's [tidepool] key 'start_high_mib' must not exceed [target] heap_max (8 MiB), found '9'",
+    );
+}
+
+#[test]
+fn tidepool_duplicate_key_is_refused_by_name() {
+    assert_project_rejected(
+        "tidepoolduplicate",
+        &project("tidepoolduplicate"),
+        "'headroom_pct' appears more than once in coral.toml's [tidepool] section",
+    );
+}

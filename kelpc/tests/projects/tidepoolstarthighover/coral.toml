@@ -1,0 +1,9 @@
+name = "tidepoolstarthighover"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[target]
+heap_max = 8
+
+[tidepool]
+start_high_mib = 9

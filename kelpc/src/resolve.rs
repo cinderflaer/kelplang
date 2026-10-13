@@ -2043,12 +2043,21 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                     .extern_modules
                     .insert(module_id.to_string(), ExternModuleDecl::default());
             }
-            // A header that is almost `[tidepool]` (any case, or a `tid`
-            // prefix) or the old name `[gc]` is refused by name. Skipping it
-            // would give every Tidepool setting its default without a word.
-            if name != "tidepool" && (name == "gc" || name.to_ascii_lowercase().starts_with("tid")) {
+            // A header about Tidepool is refused by name: one that contains
+            // `tidepool` in any case (`[target.tidepool]`, `[tidepool.x]`),
+            // one that starts with `tid` (`[tidpool]`), the old name `[gc]`,
+            // and the double-bracket `[[tidepool]]`, which is an array of
+            // tables, not the one table. Skipping any of them would give every
+            // Tidepool setting its default without a word. A `[extern."..."]`
+            // header names a user module, so its id is not checked.
+            let lower = name.to_ascii_lowercase();
+            let about_tidepool = !name.starts_with("extern.")
+                && (name == "gc" || lower.starts_with("tid") || lower.contains("tidepool"));
+            let array_of_tables = line.starts_with("[[");
+            if about_tidepool && (name != "tidepool" || array_of_tables) {
+                let header = if array_of_tables { format!("[[{name}]]") } else { format!("[{name}]") };
                 return Err(Diagnostic::new(
-                    format!("unknown section '[{name}]' in {MANIFEST_NAME}; did you mean '[tidepool]'?"),
+                    format!("unknown section '{header}' in {MANIFEST_NAME}; did you mean '[tidepool]'?"),
                     at,
                     "",
                 ));
@@ -2320,6 +2329,17 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
             ));
         }
     }
+    // A freestanding build has no shared pool, so a key in `[tidepool]` would
+    // do nothing. An empty header is harmless and is still accepted.
+    if manifest.target.is_freestanding() && !manifest.tidepool.is_unset() {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME}'s [tidepool] section is only meaningful with 'mode = \"hosted\"', because a freestanding build has no shared pool"
+            ),
+            at,
+            "",
+        ));
+    }
     // The runtime reads the section through the target, next to heap_max.
     manifest.target.tidepool = std::mem::take(&mut manifest.tidepool);
     Ok(manifest)
@@ -2379,6 +2399,14 @@ pub struct TidepoolDecl {
 }
 
 impl TidepoolDecl {
+    /// Whether the section names no key at all (an empty `[tidepool]`).
+    pub fn is_unset(&self) -> bool {
+        self.headroom_pct.is_none()
+            && self.start_low_mib.is_none()
+            && self.start_high_mib.is_none()
+            && self.trigger_rule.is_none()
+    }
+
     /// `start_low_mib`, or the default when the section names none.
     pub fn start_low_mib_or_default(&self) -> u64 {
         self.start_low_mib.unwrap_or(crate::managed::DEFAULT_START_LOW_MIB)
@@ -4746,5 +4774,118 @@ mod tests {
         let m = manifest("name = \"x\"\n");
         assert!(m.alias.is_empty());
         assert!(m.alias_source.is_none());
+    }
+
+    // Tidepool manifest settings: each accepted value, each refusal by name,
+    // and the section names that are refused rather than skipped.
+
+    #[test]
+    fn tidepool_defaults_apply_when_the_section_is_absent() {
+        let m = manifest("name = \"x\"\n");
+        let t = m.target.tidepool();
+        assert_eq!(t.headroom_pct_or_default(), 10);
+        assert_eq!(t.start_low_mib_or_default(), 1);
+        assert_eq!(t.start_high_mib_or_default(), 4);
+        assert_eq!(t.trigger_rule_or_default(), TriggerRule::TwoSize);
+    }
+
+    #[test]
+    fn tidepool_headroom_pct_accepts_both_ends_of_its_range() {
+        let low = manifest("name = \"x\"\n[tidepool]\nheadroom_pct = 0\n");
+        assert_eq!(low.target.tidepool().headroom_pct_or_default(), 0);
+        let high = manifest("name = \"x\"\n[tidepool]\nheadroom_pct = 1000\n");
+        assert_eq!(high.target.tidepool().headroom_pct_or_default(), 1000);
+    }
+
+    #[test]
+    fn tidepool_headroom_pct_above_1000_is_refused_by_name() {
+        let err = manifest_err("name = \"x\"\n[tidepool]\nheadroom_pct = 1001\n");
+        assert!(err.message.contains("key 'headroom_pct' must be from 0 to 1000, found '1001'"), "{}", err.message);
+    }
+
+    #[test]
+    fn tidepool_trigger_rule_accepts_each_rule_name_with_its_code() {
+        for (name, code) in [("two-size", 0), ("last-size", 1), ("gogc-style", 2)] {
+            let m = manifest(&format!("name = \"x\"\n[tidepool]\ntrigger_rule = \"{name}\"\n"));
+            assert_eq!(m.target.tidepool().trigger_rule_or_default().code(), code, "{name}");
+        }
+    }
+
+    #[test]
+    fn tidepool_start_high_equal_to_heap_max_is_accepted() {
+        let m = manifest("name = \"x\"\n[target]\nheap_max = 64\n[tidepool]\nstart_high_mib = 64\n");
+        assert_eq!(m.target.tidepool().start_high_mib_or_default(), 64);
+    }
+
+    #[test]
+    fn tidepool_start_high_above_heap_max_is_refused_by_name() {
+        let err = manifest_err("name = \"x\"\n[target]\nheap_max = 8\n[tidepool]\nstart_high_mib = 9\n");
+        assert!(
+            err.message.contains("'start_high_mib' must not exceed [target] heap_max (8 MiB), found '9'"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn tidepool_duplicate_key_is_refused_by_name() {
+        let err = manifest_err("name = \"x\"\n[tidepool]\nheadroom_pct = 10\nheadroom_pct = 20\n");
+        assert!(err.message.contains("'headroom_pct' appears more than once"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_empty_tidepool_section_is_accepted_hosted_and_freestanding() {
+        let hosted = manifest("name = \"x\"\n[tidepool]\n");
+        assert!(hosted.target.tidepool().is_unset());
+        let free = manifest(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\ntriple = \"riscv64-unknown-none-elf\"\n\
+             entry = \"kmain\"\nlinker_script = \"k.ld\"\n[tidepool]\n",
+        );
+        assert!(free.target.is_freestanding());
+    }
+
+    #[test]
+    fn a_tidepool_key_is_refused_when_the_target_is_freestanding() {
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\ntriple = \"riscv64-unknown-none-elf\"\n\
+             entry = \"kmain\"\nlinker_script = \"k.ld\"\n[tidepool]\nheadroom_pct = 10\n",
+        );
+        assert!(
+            err.message.contains("only meaningful with 'mode = \"hosted\"', because a freestanding build has no shared pool"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn tidepool_section_names_about_tidepool_are_refused_by_name() {
+        for header in [
+            "[target.tidepool]",
+            "[tidepool.limits]",
+            "[Tidepool]",
+            "[TIDEPOOL]",
+            "[tidpool]",
+            "[tid]",
+            "[gc]",
+            "[[tidepool]]",
+        ] {
+            let text = format!("name = \"x\"\n{header}\nheadroom_pct = 10\n");
+            let err = manifest_err(&text);
+            let name = header.trim_start_matches('[').trim_end_matches(']');
+            let shown = if header.starts_with("[[") { format!("[[{name}]]") } else { format!("[{name}]") };
+            assert!(
+                err.message.contains(&format!("unknown section '{shown}'")),
+                "{header}: {}",
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn other_sections_and_extern_modules_named_tidepool_are_not_refused() {
+        let m = manifest("name = \"x\"\n[tasks]\nworkers = 4\n");
+        assert!(m.target.tidepool().is_unset());
+        let m = manifest("name = \"x\"\n[extern.\"tidepool_helper\"]\ndomain = \"time\"\nlibrary = \"c\"\nsymbols = []\n");
+        assert!(m.extern_modules.contains_key("tidepool_helper"));
     }
 }

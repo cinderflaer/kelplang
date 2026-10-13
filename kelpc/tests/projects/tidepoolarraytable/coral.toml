@@ -1,0 +1,6 @@
+name = "tidepoolarraytable"
+version = "0.1.0"
+entry = "src/main.kp"
+
+[[tidepool]]
+headroom_pct = 10

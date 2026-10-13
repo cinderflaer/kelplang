@@ -59,6 +59,8 @@ empty on release.
 - The collector clears
 - A hosted program's collector starts with 10 percent headroom. Its first collection starts at the midpoint of the start guesses (1 and 4 MiB) plus the headroom, not at 8 MiB, and later collections follow the two latest live sizes (the default `two-size` trigger) plus the headroom. A program with a small live set collects more often than before. `[tidepool]` in `coral.toml` changes the guesses, the headroom and the trigger rule.
 
+- A misspelled or misplaced Tidepool section is refused by name: `[target.tidepool]`, `[[tidepool]]`, `[tidpool]` and `[tidepool.x]` each stop the build, and a `[tidepool]` key in a freestanding build is refused, where before the section was skipped without a word. An out-of-range `headroom_pct` (above 1000), a duplicate key and a `start_high_mib` above `heap_max` are refused by name.
+
 ## compiler
 
 - A compiler error prints a `  help:` line under its location for the common mistakes: an undefined variable, an undefined local, an assignment to a `val`, a return type mismatch, a missing `main`, a use of a moved value, a second statement on one line, a module that cannot be found and a call to an undefined function. The message on the first line is unchanged, and `check --json` gives the same text in a `help` key that is there only when a finding has one.
