@@ -315,7 +315,7 @@ struct TypeEnv {
     /// site and the impl's own signature agree.
     assoc: std::rc::Rc<HashMap<(String, String), HashMap<String, Ty>>>,
     /// Generic types that are iterators by shape: the type template declares
-    /// `fun mut Name<P, ...>.next().return: option.Option<Item>`, where `Item` is
+    /// `fun mut Name<P, ...>.next() => option.Option<Item>`, where `Item` is
     /// a written type over the template's own parameters. Keyed by template
     /// name. `std/iter`'s adapters are such types (`TakeIter<I, T>`), and this is
     /// what lets one satisfy `I: Iterator` and name `I::Item` without a generic
@@ -340,8 +340,8 @@ struct IterNext {
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
-/// parameters (`fun first<T>(xs: List<T>).return: T`) or a receiver method on a
-/// generic type (`fun Pair<A, B>.first().return: A`). Its parameter and return
+/// parameters (`fun first<T>(xs: List<T>) => T`) or a receiver method on a
+/// generic type (`fun Pair<A, B>.first() => A`). Its parameter and return
 /// types are kept as written, because a type parameter has no type until an
 /// instantiation binds it - exactly like `GenericTemplate`.
 #[derive(Clone)]
@@ -416,7 +416,7 @@ struct FuncEnv {
 
 /// How many generic instantiations one program may create before the compiler
 /// gives up. A generic function that calls itself with a different type
-/// argument (`fun g<T>(x: T).return: i32 = g(x = List.of(x))`) grows without bound;
+/// argument (`fun g<T>(x: T) => i32 = g(x = List.of(x))`) grows without bound;
 /// this turns that into a diagnostic instead of a hang.
 const MAX_FUNCTION_INSTANTIATIONS: usize = 2048;
 
@@ -852,7 +852,7 @@ struct Ctx {
     outer_receiver: Option<String>,
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
-    /// an implicit `self.field` (`fun Circle.area().return: f64 = 3.14159 * r *
+    /// an implicit `self.field` (`fun Circle.area() => f64 = 3.14159 * r *
     /// r` - no `self.` qualifier written, per `plan/syntax.md` §5's "no
     /// `self` keyword").
     receiver_struct: Option<String>,
@@ -912,7 +912,7 @@ struct Ctx {
     /// Set only while checking the block argument of `Mutex.lock` (B-5): a
     /// scoped block's return type is the block's own tail type, so
     /// `check_fn_literal` infers it instead of taking it from the expected
-    /// `scoped fun(...).return: R`. Cleared for the body of the literal itself, so
+    /// `scoped fun(...) => R`. Cleared for the body of the literal itself, so
     /// a nested scoped block is typed by its own callee again.
     infer_scoped_ret: bool,
 }
@@ -1732,7 +1732,7 @@ impl TypeScope<'_> {
             note_heap_use(&self.env, managed::HeapSlot::ArrayElement, &elem, ty.span);
             return Ok(Ty::Array(Box::new(elem), len));
         }
-        // A function type (A-4): `fun(i32, String).return: bool`. Checked before
+        // A function type (A-4): `fun(i32, String) => bool`. Checked before
         // every name, because it is the one written type that is not one -
         // and `fun` cannot be a name at all, since it is a keyword. A closure
         // type (A-4 phase E) is the same shape under `closure`.
@@ -2549,7 +2549,7 @@ impl TypeScope<'_> {
         Ok(implicit_borrow_wrap(base, mode.mutable()))
     }
 
-    /// `scoped fun(T).return: U` - the non-escaping callback type
+    /// `scoped fun(T) => U` - the non-escaping callback type
     /// (`kelp wiki page language/functions.md` part 2). The qualifier is only meaningful as
     /// written: `mut` needs something to write through and `move` something
     /// to own, and a scoped value is neither, so both are refused by name
@@ -3508,7 +3508,7 @@ fn render_fn_decl(f: &ast::FunctionDecl) -> String {
     out.push_str(&parts.join(", "));
     out.push(')');
     if let Some(t) = &f.return_type {
-        out.push_str(&format!(".return: {}", t.display()));
+        out.push_str(&format!("=> {}", t.display()));
     }
     out
 }
@@ -3531,7 +3531,7 @@ fn resolve_trait_method_sig(
     let mut params_map: HashMap<String, Ty> = HashMap::new();
     params_map.insert("Self".to_string(), self_ty.clone());
     // A-12 slice 6: the trait's own parameters, bound to the impl's concrete
-    // arguments, so `fun from(value: T).return: Self` resolves for `From<IoErr>` as
+    // arguments, so `fun from(value: T) => Self` resolves for `From<IoErr>` as
     // `fn(IoErr) -> AppErr`.
     for (param, arg) in trait_info.type_params.iter().zip(trait_args.iter()) {
         params_map.insert(param.clone(), arg.clone());
@@ -4161,7 +4161,7 @@ fn check_key_pair_method(
     if f.name == crate::types::KEY_PAIR_HASH_METHOD {
         if !f.params.is_empty() {
             return Err(err(format!(
-                "'{owner}.hash' takes no parameters: a key's hash is computed from the key alone, so write 'fun {owner}.hash().return: u64'"
+                "'{owner}.hash' takes no parameters: a key's hash is computed from the key alone, so write 'fun {owner}.hash() => u64'"
             )));
         }
         if *ret != Ty::U64 {
@@ -4174,7 +4174,7 @@ fn check_key_pair_method(
     }
     if f.params.len() != 1 {
         return Err(err(format!(
-            "'{owner}.eq' takes exactly one parameter, a shared borrow of '{owner}', so write 'fun {owner}.eq(other: &{owner}).return: bool'"
+            "'{owner}.eq' takes exactly one parameter, a shared borrow of '{owner}', so write 'fun {owner}.eq(other: &{owner}) => bool'"
         )));
     }
     let written = &f.params[0];
@@ -4204,7 +4204,7 @@ fn check_key_pair_method(
 
 /// The `Ty::Fn` a declared signature has (A-4): its parameter types, in order,
 /// and its return type. A function *type* spells exactly this, so a written
-/// `fun(String).return: usize` and the signature of `fun f(s: String).return: usize` are
+/// `fun(String) => usize` and the signature of `fun f(s: String) => usize` are
 /// the same type with no conversion anywhere.
 fn fn_value_ty(sig: &FnSig) -> Ty {
     Ty::Fn {
@@ -6467,7 +6467,7 @@ fn map_sig(key: &str, map_key: &Ty, value: &Ty, clonable: bool) -> Option<FnSig>
 /// is the one refusal a caller's next edit can answer.
 fn map_key_error(ty: &Ty) -> String {
     format!(
-        "'{}' cannot be a Map key: the key has to be 'String', an integer, 'bool' or 'char', or a 'datac'/'enum' whose every field is one of those, because the compiler derives the key's hash and its equality from the fields; a 'datac' or 'enum' outside that set becomes a key by declaring 'fun T.hash().return: u64' and 'fun T.eq(other: &T).return: bool'",
+        "'{}' cannot be a Map key: the key has to be 'String', an integer, 'bool' or 'char', or a 'datac'/'enum' whose every field is one of those, because the compiler derives the key's hash and its equality from the fields; a 'datac' or 'enum' outside that set becomes a key by declaring 'fun T.hash() => u64' and 'fun T.eq(other: &T) => bool'",
         ty.display()
     )
 }
@@ -6608,7 +6608,7 @@ fn str_view_compatible(actual: &Ty, declared: &Ty) -> bool {
 /// This is the `panic` ending every payload reader has:
 ///
 /// ```kelp
-/// fun as_str(v: &Json).return: &str {
+/// fun as_str(v: &Json) => &str {
 ///     if let Str(s) = v {
 ///         return s.as_str()
 ///     }
@@ -6636,7 +6636,7 @@ pub fn tail_diverges(expr: &tir::Expr) -> bool {
 /// identity, so ordinary code was refused:
 ///
 /// ```kelp
-/// fun f(v: &J).return: &str = when v {
+/// fun f(v: &J) => &str = when v {
 ///     S(s) -> s.as_str()
 ///     N -> "n"
 /// }
@@ -9517,7 +9517,7 @@ fn check_program_pass(
             let ty = scope.resolve_param(p).map_err(|e| e.in_module(&f.module))?;
             params.push((p.name.clone(), ty));
         }
-        // `.return: T` never goes through `resolve_param_type`, so a function's
+        // `=> T` never goes through `resolve_param_type`, so a function's
         // return type is always a plain owned `Ty` - never `Ty::Ref`. That's
         // what makes the borrow checker's call-scoped release sound: no
         // surface syntax exists yet for a function to hand a borrow back to
@@ -9566,7 +9566,7 @@ fn check_program_pass(
         // A returned borrow has to have something to borrow from, which the
         // borrow checker enforces per return site (M6.3): either the first
         // reference parameter, or a `str` literal (whose storage is static,
-        // which is what `fun classify(n: i32).return: &str = "pos"` needs).
+        // which is what `fun classify(n: i32) => &str = "pos"` needs).
         // `borrowck.rs` cannot be stricter here without knowing the body.
         let key = sig_key_for(f, prefix, &params);
         if sigs.contains_key(&key) {
@@ -9642,7 +9642,7 @@ fn check_program_pass(
         };
         return Err(Diagnostic::new(
             format!(
-                "'{name}' declares '{}' but not '{missing}': a declared `Map` key needs both halves, 'fun {name}.hash().return: u64' and 'fun {name}.eq(other: &{name}).return: bool'",
+                "'{name}' declares '{}' but not '{missing}': a declared `Map` key needs both halves, 'fun {name}.hash() => u64' and 'fun {name}.eq(other: &{name}) => bool'",
                 half.method
             ),
             half.span,
@@ -11445,7 +11445,7 @@ fn check_function(
     // expression is actually present and disagrees with the declared return
     // type.
     // A body whose tail is a `panic` diverges, so it satisfies any declared
-    // return type: `fun unwrap<T>(o: &Option<T>).return: T { ... panic("...") }` is
+    // return type: `fun unwrap<T>(o: &Option<T>) => T { ... panic("...") }` is
     // the "this cannot happen" accessor. Nothing else in the language is
     // divergence-aware - an `if` arm cannot be a `panic` - so this is
     // deliberately the narrow rule the accessors need.
@@ -11866,7 +11866,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 return Err(TypeError {
                     help: None,
                     message: format!(
-                        "'for' walks a 'List<T>' or a type that implements 'Iterator', and '{}' is neither: implement 'std.iter.Iterator' for it ('type Item' and 'fun mut Self.next().return: option.Option<Self::Item>'), or walk a 'List' by index",
+                        "'for' walks a 'List<T>' or a type that implements 'Iterator', and '{}' is neither: implement 'std.iter.Iterator' for it ('type Item' and 'fun mut Self.next() => option.Option<Self::Item>'), or walk a 'List' by index",
                         iter_ty.display()
                     ),
                     span: *span,
@@ -12001,7 +12001,7 @@ fn implements_iterator(ctx: &Ctx, ty: &Ty) -> bool {
     // A generic instantiation cannot take a trait impl (the parser reads the
     // `for` type as a bare name), so a shipped generic `datac` such as the
     // channel's `Receiver<T>` is walkable through a method it declares on its
-    // template: `fun mut Receiver<T>.next().return: option.Option<T>`. The `for`
+    // template: `fun mut Receiver<T>.next() => option.Option<T>`. The `for`
     // desugar is an ordinary `next()` call either way, so a wrong shape is
     // the ordinary type error of that call.
     let Some(name) = name else { return false };
@@ -12444,7 +12444,7 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
     }
 }
 
-/// A `fun` literal (A-4): `fun(x: i32).return: i32 = x * 2`.
+/// A `fun` literal (A-4): `fun(x: i32) => i32 = x * 2`.
 ///
 /// A literal is one synthesized top-level function, so most of the work is
 /// the same work a declaration needs - resolve the signature, bind the
@@ -14314,10 +14314,10 @@ fn bind_type_params(
     };
     // A function type (A-4) pairs a written type against a function value
     // structurally: the parameters in order, then the return. This is what
-    // lets `map<T, U>(o: &Option<T>, f: fun(&T).return: U)` take both `T` and `U`
+    // lets `map<T, U>(o: &Option<T>, f: fun(&T) => U)` take both `T` and `U`
     // from its arguments, and it is the only place a function type is bound.
     // A closure type (A-4 phase E) pairs the same way, which is what lets a
-    // callback written as `f: closure(&T).return: U` infer `U` from a literal.
+    // callback written as `f: closure(&T) => U` infer `U` from a literal.
     if let Some(written_params) = &written.fn_params {
         let implied = match actual {
             Ty::Fn { params, ret }
@@ -14867,7 +14867,7 @@ fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
                     return Err(TypeError {
                         help: None,
                         message: format!(
-                            "'?' cannot convert a failure: '{}' carries '{}' and the enclosing function returns '{}', whose failure carries '{}' - write 'impl From<{}> for {} {{ fun from(value: {}).return: {} {{ ... }} }}' so the operator has a conversion to call",
+                            "'?' cannot convert a failure: '{}' carries '{}' and the enclosing function returns '{}', whose failure carries '{}' - write 'impl From<{}> for {} {{ fun from(value: {}) => {} {{ ... }} }}' so the operator has a conversion to call",
                             inner.ty.display(),
                             from.display(),
                             ret.display(),
@@ -15753,7 +15753,7 @@ fn negate_comparison(op: BinOp, call: tir::Expr, span: Span) -> tir::Expr {
 /// H-5: whether `a == b` / `a != b` is lowered in the front end into a method
 /// call instead of the scalar comparison. Two shapes lower:
 ///
-/// * a `datac`/`enum` `T` that declares `fun T.eq(other: &T).return: bool` (the same
+/// * a `datac`/`enum` `T` that declares `fun T.eq(other: &T) => bool` (the same
 ///   method name A-12 gives a declared `Map` key), lowered to `a.eq(&b)`;
 /// * `View` against `View`, or `View` against a `str`, lowered to the builtin
 ///   `View.eq`.
@@ -15830,7 +15830,7 @@ fn lower_equality(
             return Err(TypeError {
                 help: None,
                 message: format!(
-                    "cannot compare '{}' values with '{}': '==' and '!=' come from a declared 'eq' method, and 'Ord' does not supply one; write 'fun {}.eq(other: &{}).return: bool'",
+                    "cannot compare '{}' values with '{}': '==' and '!=' come from a declared 'eq' method, and 'Ord' does not supply one; write 'fun {}.eq(other: &{}) => bool'",
                     a,
                     bin_op_symbol(op),
                     a,
@@ -16014,7 +16014,7 @@ fn arithmetic_error(op: BinOp, l: &tir::Expr, r: &tir::Expr) -> String {
         if a == b {
             if let Some((_, simple, method)) = arithmetic_operator(op) {
                 return format!(
-                    "cannot use '{}' on '{}': it does not implement '{}' from 'std/ops' (write 'impl {} for {} {{ fun Self.{}(rhs: &Self).return: {} }}', importing 'std/ops')",
+                    "cannot use '{}' on '{}': it does not implement '{}' from 'std/ops' (write 'impl {} for {} {{ fun Self.{}(rhs: &Self) => {} }}', importing 'std/ops')",
                     bin_op_symbol(op),
                     a,
                     simple,
@@ -16045,7 +16045,7 @@ fn arithmetic_error(op: BinOp, l: &tir::Expr, r: &tir::Expr) -> String {
 fn print_error(callee: &str, ty: &Ty) -> String {
     match ty {
         Ty::Struct(_) => format!(
-            "cannot pass a value of type '{}' to '{callee}': it does not implement 'Display' (write 'impl fmt.Display for {} {{ fun Self.to_text().return: String }}', importing 'std/fmt')",
+            "cannot pass a value of type '{}' to '{callee}': it does not implement 'Display' (write 'impl fmt.Display for {} {{ fun Self.to_text() => String }}', importing 'std/fmt')",
             ty.display(),
             ty.display()
         ),
@@ -16937,7 +16937,7 @@ fn coerce_box_to_dyn(
 /// The one sentence that explains why a plain function value and a closure are
 /// different types, when one is passed where the other is expected (A-4 phase
 /// E). The two are the same shape of value and are called identically, so a
-/// bare `expected 'closure(i32).return: i32', found 'fun(i32).return: i32'` would leave
+/// bare `expected 'closure(i32) => i32', found 'fun(i32) => i32'` would leave
 /// the reader to guess which half is missing. The expected side is looked
 /// through a borrow, because a parameter of a closure type is one.
 fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String> {
@@ -16950,7 +16950,7 @@ fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String> {
             "this is a plain function value, not a closure: its body captured nothing, so it carries no environment - a `fun` literal becomes a closure when it names a binding from the enclosing scope, and a declared `fun` is always a plain function value".to_string(),
         ),
         (Ty::Fn { .. }, Ty::Closure { .. }) => Some(
-            "this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for - write the expected type as 'closure(...)' (the same parameter list and '.return:'), or pass a declared function instead".to_string(),
+            "this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for - write the expected type as 'closure(...)' (the same parameter list and '=> '), or pass a declared function instead".to_string(),
         ),
         (Ty::Fn { .. } | Ty::Closure { .. }, Ty::ScopedFn { .. }) => Some(
             "this is a scoped function value: it may only be passed to another 'scoped fun(...)' parameter, because it may not outlive the call it was written in - a plain function or closure parameter could store it or return it".to_string(),
@@ -19432,7 +19432,7 @@ fn check_template(
                         help: None,
                         message: match &value.ty {
                             Ty::Struct(_) => format!(
-                                "cannot interpolate a value of type '{}' into a string template: it does not implement 'Display' (write 'impl fmt.Display for {} {{ fun Self.to_text().return: String }}', importing 'std/fmt')",
+                                "cannot interpolate a value of type '{}' into a string template: it does not implement 'Display' (write 'impl fmt.Display for {} {{ fun Self.to_text() => String }}', importing 'std/fmt')",
                                 value.ty.display(),
                                 value.ty.display()
                             ),
@@ -22018,7 +22018,7 @@ fn check_mutex_wait(
         &args[slots[0]].value,
         ctx,
     )?;
-    // The predicate is a `fun(&T).return: bool` (or a closure of that shape): a
+    // The predicate is a `fun(&T) => bool` (or a closure of that shape): a
     // parameter is already a shared borrow in Kelp, so its resolved type is
     // `T` for a `Copy` element and `&T` for an owned one
     // (`implicit_borrow_wrap`), and the runtime hands the generated body the
@@ -22041,7 +22041,7 @@ fn check_mutex_wait(
             return Err(TypeError {
                 help: None,
                 message: format!(
-                    "the predicate 'Mutex.{method}' takes has type '{}', expected 'fun({}).return: bool'",
+                    "the predicate 'Mutex.{method}' takes has type '{}', expected 'fun({}) => bool'",
                     other.display(),
                     pred_param.display()
                 ),

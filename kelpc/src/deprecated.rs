@@ -55,7 +55,7 @@ pub struct Outdated {
 
 /// Every outdated construct, in the order they were scheduled.
 ///
-/// **Holds `.R:` since 26.10.3, and empties again when it is removed.** Two entries
+/// **Empty since the `.R:` marker was removed with the `=>` return arrow.** Two entries
 /// lived here and both were removed in the cycle that followed `26.09.0`, which
 /// is the deadline each of them carried: `impl "..." as name`, retired once a
 /// module's own name became its namespace (`syntax.md` 13.1), and
@@ -69,14 +69,7 @@ pub struct Outdated {
 /// spelling is read, and remove the spelling on the next development cycle. An
 /// entry survives only while the spelling still compiles, and the removal is the
 /// parser's, not this module's.
-pub const REGISTER: &[Outdated] = &[Outdated {
-    id: RETURN_R,
-    what: "the return marker `.R:`",
-    instead: "write `.return:` (`fun f(a: i32).return: i32`), which means the same thing and reads as what it is",
-}];
-
-/// The id of the `.R:` return marker's entry.
-pub const RETURN_R: &str = "return-r";
+pub const REGISTER: &[Outdated] = &[];
 
 /// The register entry with this id.
 ///

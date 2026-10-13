@@ -29,7 +29,7 @@ pub struct Program {
     /// a runtime allowlist check.
     pub gated: std::collections::HashMap<String, String>,
     /// The user types that declare their own `Map` key pair (A-12): a `datac`
-    /// carrying both `fun T.hash().return: u64` and `fun T.eq(other: &T).return: bool`.
+    /// carrying both `fun T.hash() => u64` and `fun T.eq(other: &T) => bool`.
     /// `infer.rs` is the only place that decides it, so the two backends
     /// cannot disagree about which key spells its own hash: each reads this
     /// set to point the `Map`'s hash and equality at those two methods instead
@@ -480,8 +480,8 @@ pub enum ExprKind {
     /// refuses.
     Capture { index: usize },
     /// A plain function value used where a closure is expected (A-4 phase E):
-    /// the widening that makes `val f: closure(i32).return: i32 = double` and
-    /// `Holder(cb = fun(x: i32).return: i32 = x)` mean what they read as. A `fun`
+    /// the widening that makes `val f: closure(i32) => i32 = double` and
+    /// `Holder(cb = fun(x: i32) => i32 = x)` mean what they read as. A `fun`
     /// value is a bare code pointer with no environment, so the value is
     /// wrapped in a one-field environment holding the pointer, plus a thunk
     /// generated per signature that calls through it. The alternative - a

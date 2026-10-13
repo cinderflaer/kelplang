@@ -327,7 +327,7 @@ const RULES: &[Rule] = &[
     Rule {
         name: "no-space-before-suffix-token",
         statement: "No space goes before `,` `:` `.` `::` `)` `]` or `?`.",
-        pins: &["spacing_dot_return"],
+        pins: &["spacing_return_arrow"],
     },
     Rule {
         name: "brace-spacing",

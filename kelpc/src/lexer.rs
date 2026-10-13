@@ -77,7 +77,7 @@ pub enum TokenKind {
 
     // keywords
     Fun,
-    /// `closure(i32).return: i32` - the type of a `fun` literal that captures
+    /// `closure(i32) => i32` - the type of a `fun` literal that captures
     /// (A-4, phase E): a function *value* that carries an environment, so it
     /// is owned (not Copy) and drops that environment. A keyword rather than
     /// a contextual name, for the reason `fun` is one: the spelling is a type
@@ -142,7 +142,7 @@ pub enum TokenKind {
     /// `static NAME: T = expr` - a top-level global object (kernel stage 7).
     /// Unlike a `const`, one with a stable address.
     Static,
-    /// `extern fun name(...).return: T` - a declaration whose body the compiler
+    /// `extern fun name(...) => T` - a declaration whose body the compiler
     /// supplies (M6.2). Only compiler-shipped stdlib modules may use it: the
     /// whole point is to confine the unportable primitive (a syscall, a
     /// `malloc`) to a body that is not `.kp` source.

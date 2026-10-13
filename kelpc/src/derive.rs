@@ -99,7 +99,7 @@ fn refusal(scope: &Scope, owner: &str, field: &str, ty: &TypeExpr, method: &str)
         Kind::Int | Kind::Bool | Kind::Char | Kind::Text => None,
         Kind::Float if method == "eq" => None,
         Kind::Float => Some(format!(
-            "derive(hash) on '{owner}' cannot hash field '{field}' of type '{text}': a float has no hash, because 'nan != nan' would make an inserted key unfindable. Fix: compare an integer field instead, or declare 'fun {owner}.hash().return: u64' and 'fun {owner}.eq(other: &{owner}).return: bool' by hand"
+            "derive(hash) on '{owner}' cannot hash field '{field}' of type '{text}': a float has no hash, because 'nan != nan' would make an inserted key unfindable. Fix: compare an integer field instead, or declare 'fun {owner}.hash() => u64' and 'fun {owner}.eq(other: &{owner}) => bool' by hand"
         )),
         Kind::User(name) if name.contains('.') => {
             // A qualified name is another module's type; its methods are
@@ -192,7 +192,7 @@ fn method_source(scope: &Scope, req: &DeriveRequest, target: &Target) -> Result<
 
     let mut out = String::new();
     if asks("eq") {
-        out.push_str(&format!("fun {name}{generic}.eq(other: &{name}{generic}).return: bool {{\n"));
+        out.push_str(&format!("fun {name}{generic}.eq(other: &{name}{generic}) => bool {{\n"));
         match (fields, variants) {
             (Some(fields), _) => {
                 for f in fields {
@@ -230,7 +230,7 @@ fn method_source(scope: &Scope, req: &DeriveRequest, target: &Target) -> Result<
     }
 
     if asks("hash") {
-        out.push_str(&format!("fun {name}{generic}.hash().return: u64 {{\nvar h: u64 = 0\n"));
+        out.push_str(&format!("fun {name}{generic}.hash() => u64 {{\nvar h: u64 = 0\n"));
         let mut k = 0usize;
         match (fields, variants) {
             (Some(fields), _) => {

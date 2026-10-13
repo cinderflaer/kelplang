@@ -134,7 +134,7 @@ pub enum Ty {
     Fn { params: Vec<Ty>, ret: Box<Ty> },
     /// A function value that carries an environment (A-4 phase E): what a
     /// `fun` literal whose body names a binding from the enclosing scope
-    /// becomes. Written `closure(T).return: U` - the same shape as a function
+    /// becomes. Written `closure(T) => U` - the same shape as a function
     /// type, under the `closure` keyword, because it is called the same way.
     ///
     /// The representation differs from `Ty::Fn` in exactly the ways that
@@ -152,7 +152,7 @@ pub enum Ty {
     /// something to capture.
     Closure { params: Vec<Ty>, ret: Box<Ty> },
     /// A **scoped** function value (`kelp wiki page language/functions.md`): a parameter
-    /// written `scoped fun(T).return: U`, which accepts only a `fun` literal or a
+    /// written `scoped fun(T) => U`, which accepts only a `fun` literal or a
     /// trailing block written at the call site and may not outlive the call.
     ///
     /// It is closure-shaped at the ABI level (`{ fn, env, drop }`, `fn`
@@ -523,12 +523,12 @@ impl Ty {
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
             Ty::Fn { params, ret } => {
-                // The return is written `.return: T` exactly as a declaration
+                // The return is written `=> T` exactly as a declaration
                 // writes it, and a `Unit` return is left off - so a written
                 // function type and a signature read the same way.
                 let mut s = format!("fun({})", join_types(params));
                 if **ret != Ty::Unit {
-                    s.push_str(&format!(".return: {}", ret.display()));
+                    s.push_str(&format!("=> {}", ret.display()));
                 }
                 s
             }
@@ -538,14 +538,14 @@ impl Ty {
                 // and differ only in what the value owns.
                 let mut s = format!("closure({})", join_types(params));
                 if **ret != Ty::Unit {
-                    s.push_str(&format!(".return: {}", ret.display()));
+                    s.push_str(&format!("=> {}", ret.display()));
                 }
                 s
             }
             Ty::ScopedFn { params, ret } => {
                 let mut s = format!("scoped fun({})", join_types(params));
                 if **ret != Ty::Unit {
-                    s.push_str(&format!(".return: {}", ret.display()));
+                    s.push_str(&format!("=> {}", ret.display()));
                 }
                 s
             }
@@ -560,7 +560,7 @@ fn join_types(types: &[Ty]) -> String {
 }
 
 /// The mangled signature fragment a closure instantiation is named by:
-/// `i32__i32` is `closure(i32).return: i32`. Parameters first, in order, then the
+/// `i32__i32` is `closure(i32) => i32`. Parameters first, in order, then the
 /// return - the same order `ty_mangle`'s function-type arm uses, under a
 /// different prefix.
 pub fn closure_mangle(params: &[Ty], ret: &Ty) -> String {
@@ -846,7 +846,7 @@ pub fn eq_fn_name(ty: &Ty) -> String {
 }
 
 /// The two method names a `datac`/`enum` declares to be its own `Map` key pair
-/// (A-12): `fun T.hash().return: u64` and `fun T.eq(other: &T).return: bool`. The names
+/// (A-12): `fun T.hash() => u64` and `fun T.eq(other: &T) => bool`. The names
 /// belong to the pair rather than to the type, which is why declaring either
 /// one is read as a statement about the type's key.
 pub const KEY_PAIR_HASH_METHOD: &str = "hash";
@@ -1102,7 +1102,7 @@ pub fn is_box_element(ty: &Ty) -> bool {
     match ty {
         // A closure is an ordinary C struct, and it is emitted before every
         // `Box` instantiation that names one (A-4 phase E), so a box is the
-        // one container that can hold a closure - `Box<closure().return: i32>` is
+        // one container that can hold a closure - `Box<closure() => i32>` is
         // how an *optional* callback is written (`Box.empty()`).
         Ty::Bytes
         | Ty::String
@@ -1809,7 +1809,7 @@ pub fn c_ident(name: &str) -> String {
         .replace(',', "_")
         .replace('<', "__l__")
         .replace('>', "__g__")
-        // A function type argument (`Holder<fun(i32).return: i32>`) is the one
+        // A function type argument (`Holder<fun(i32) => i32>`) is the one
         // type whose written form carries parentheses and a colon, and its
         // instantiation key is built from that written form, so the two have
         // to mangle too or the key is not a C identifier.
@@ -2062,7 +2062,7 @@ mod tests {
         assert_eq!(c_ident("len@i32"), "len__ov_i32");
         assert_eq!(c_ident("Pair<i32, String>"), "Pair__l__i32_String__g__");
         assert_eq!(
-            c_ident("Holder<fun(i32).return: i32>"),
+            c_ident("Holder<fun(i32) => i32>"),
             "Holder__l__fun__lp__i32__rp____return__c__i32__g__"
         );
     }

@@ -229,13 +229,13 @@ pub const SYNTHETIC_ITEMS: &[SyntheticItem] = &[
         module: THREAD_MODULE,
         name: "spawn",
         kind: "fun",
-        sig: "fun spawn<t, r>(entry: closure(move t).return: r, arg: move t).return: Thread<r>",
+        sig: "fun spawn<t, r>(entry: closure(move t) => r, arg: move t) => Thread<r>",
     },
     SyntheticItem {
         module: THREAD_MODULE,
         name: "join",
         kind: "fun",
-        sig: "fun join<t>(handle: move Thread<t>).return: Result<t, ThreadErr>",
+        sig: "fun join<t>(handle: move Thread<t>) => Result<t, ThreadErr>",
     },
 ];
 
