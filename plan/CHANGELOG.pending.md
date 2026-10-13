@@ -80,6 +80,8 @@ empty on release.
 - The retired `--backend`, `KELPC_BACKEND` and `KELPC_ORACLE` refusals and the `--sanitize=` refusal no longer name the removed C backend or its date. The README and the code comments that described the removed backend are rewritten to say what the build does now.
 - A function whose body ends in an `if` with no `else` now says to end the block with `return <value>`.
 - `kelpc lint` warns on `== true` and on `.len() == 0`, which read better as the condition alone and `.is_empty()`. The warning does not fail the build.
+- A string literal is accepted where a `String` is expected; the examples write it that way, without `String.from_str`.
+- The missing-doc lint for the standard library (`kelpc lint` on `kelpc/std`) is deferred until the std docs exist; it is not in this release.
 
 ## stdlib
 

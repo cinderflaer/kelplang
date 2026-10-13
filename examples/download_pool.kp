@@ -67,7 +67,7 @@ fun fetch_all(worker: usize).return: Outcome {
         val path = job.paths.get(i)
         val url = build_url(job.host.as_str(), job.port, path.as_str())
         val req = http.Request(
-            method = String.from_str("GET"),
+            method = "GET",
             url = url,
             headers = http.empty_headers(),
             body = Bytes.empty(),

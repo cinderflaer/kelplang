@@ -146,7 +146,7 @@ fun dump_node(n: &Node, depth: i32, out: mut String) {
 //   `role "name" [value="v"] state=[flags] bounds=x,y,w,h actions=[acts] id=N`
 // Tests use it as a golden.
 pub fun dump(tree: &Node).return: String {
-    var out = String.from_str("")
+    var out: String = ""
     dump_node(tree, 0, out)
     return out
 }

@@ -72,7 +72,7 @@ fun arm_smoke() {
     polyp.schedule(delay_ms = 100, event = core.Event.Post(id = 0))
     polyp.schedule(delay_ms = 150, event = core.Event.Post(id = 0))
     polyp.schedule(delay_ms = 200, event = core.Event.Post(id = 1))
-    polyp.schedule(delay_ms = 300, event = core.Event.Edit(index = 0, text = String.from_str("typed")))
+    polyp.schedule(delay_ms = 300, event = core.Event.Edit(index = 0, text = "typed"))
     polyp.schedule(delay_ms = 400, event = core.Event.Quit)
 }
 
@@ -84,7 +84,7 @@ fun main() {
         title = "polyp counter",
         width = 320,
         height = 200,
-        init = Counter(count = 0, draft = String.from_str("")),
+        init = Counter(count = 0, draft = ""),
         view = view,
         update = update,
     )

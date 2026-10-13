@@ -994,7 +994,7 @@ fun scalar_of(cp: i32).return: i32 = if utf8.is_scalar(cp) {
 }
 
 fun insert_char(s: &str, at: usize, cp: i32).return: String {
-    var out = String.from_str("")
+    var out: String = ""
     val n = str.len(s)
     var i: usize = 0
     while i < at && i < n {
@@ -1020,7 +1020,7 @@ fun insert_char(s: &str, at: usize, cp: i32).return: String {
 }
 
 fun remove_range(s: &str, from: usize, to: usize).return: String {
-    var out = String.from_str("")
+    var out: String = ""
     val n = str.len(s)
     var i: usize = 0
     while i < n {
@@ -2342,8 +2342,8 @@ fun exposed(k: i32).return: bool = k != core.KIND_SPACER && k != core.KIND_SEPAR
 fun a11y_build(kids: &List<SNode>, i: usize, in_list: bool, focus: i32).return: a11y.Node {
     val n = kids.get(i)
     val role = a11y_role(n, in_list)
-    var name = String.from_str("")
-    var value = String.from_str("")
+    var name: String = ""
+    var value: String = ""
     var state: i32 = 0
     var actions: i32 = 0
     val enabled = !n.props.disabled
@@ -2418,7 +2418,7 @@ fun a11y_build(kids: &List<SNode>, i: usize, in_list: bool, focus: i32).return: 
 // children.
 fun SoftBackend.a11y_tree().return: a11y.Node {
     if root.is_empty() {
-        return a11y.Node(id = -1, role = a11y.ROLE_REGION, name = String.from_str(""), value = String.from_str(""), state = 0, x = 0, y = 0, w = 0, h = 0, actions = 0, kids = List.empty())
+        return a11y.Node(id = -1, role = a11y.ROLE_REGION, name = "", value = "", state = 0, x = 0, y = 0, w = 0, h = 0, actions = 0, kids = List.empty())
     }
     return a11y_build(root, 0, false, focus_id)
 }
@@ -2495,7 +2495,7 @@ fun SoftBackend.caret_chars_of(id: i32).return: i32 {
     if c < 0 {
         return -1
     }
-    val text = String.from_str("")
+    val text: String = ""
     var t = text
     if !root.is_empty() {
         val _ = find_text(root.get(0).kids, id, t)
@@ -2766,7 +2766,7 @@ impl core.Backend for SoftBackend {
         if !root.is_empty() && root.get(0).slot == id {
             return String.from_str(root.get(0).props.text.as_str())
         }
-        var out: String = String.from_str("")
+        var out: String = ""
         if root.is_empty() {
             return out
         }

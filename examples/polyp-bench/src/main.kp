@@ -35,10 +35,10 @@ fun make_model(n: i32).return: app.Model {
     var items: List<app.Todo> = List.empty()
     var i: i32 = 0
     while i < n {
-        items.push(app.Todo(id = i, title = String.from_str("row"), done = false))
+        items.push(app.Todo(id = i, title = "row", done = false))
         i += 1
     }
-    return app.Model(draft = String.from_str(""), items = items, next_id = n, marks = List.empty())
+    return app.Model(draft = "", items = items, next_id = n, marks = List.empty())
 }
 
 // The tree a tick carries, so a driver reads one value out of `Tick` whatever the variant.

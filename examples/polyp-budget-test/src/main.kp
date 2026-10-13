@@ -71,10 +71,10 @@ fun make_model(n: i32).return: app.Model {
     var items: List<app.Todo> = List.empty()
     var i: i32 = 0
     while i < n {
-        items.push(app.Todo(id = i, title = String.from_str("row"), done = false))
+        items.push(app.Todo(id = i, title = "row", done = false))
         i += 1
     }
-    return app.Model(draft = String.from_str(""), items = items, next_id = n, marks = List.empty())
+    return app.Model(draft = "", items = items, next_id = n, marks = List.empty())
 }
 
 // The sum of a presented rectangle list's areas, the pixels a repaint can actually change.
@@ -349,8 +349,8 @@ fun run_append() {
         items2.push(app.Todo(id = m1.items.get(i).id, title = String.from_str(m1.items.get(i).title.as_str()), done = m1.items.get(i).done))
         i += 1
     }
-    items2.push(app.Todo(id = ROWS, title = String.from_str("last"), done = false))
-    val m2 = app.Model(draft = String.from_str(""), items = items2, next_id = ROWS + 1, marks = List.empty())
+    items2.push(app.Todo(id = ROWS, title = "last", done = false))
+    val m2 = app.Model(draft = "", items = items2, next_id = ROWS + 1, marks = List.empty())
     val t2 = app.view(m2)
     soft_backend.apply_diff(backend = b, old = &t1, new = &t2)
     b.layout()

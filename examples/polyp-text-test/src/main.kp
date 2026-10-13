@@ -25,7 +25,7 @@ fun nop(s: mut St, m: i32) {}
 fun changed(text: String).return: i32 = 0
 
 fun bytes(a: u8, b: u8, c: u8, d: u8, n: i32).return: String {
-    var s = String.from_str("")
+    var s: String = ""
     if n > 0 {
         s.push(a)
     }
@@ -132,11 +132,11 @@ fun run_draw() {
         print("accent missing")
     }
     // A string that ends in the middle of a sequence draws without reading past its end.
-    var tail = String.from_str("ab")
+    var tail: String = "ab"
     tail.push(0xE2)
     tail.push(0x82)
     val t1 = checksum_of_text(p, tail.as_str())
-    var tail2 = String.from_str("ab")
+    var tail2: String = "ab"
     tail2.push(0xF0)
     val t2 = checksum_of_text(p, tail2.as_str())
     if t1 != t2 {
@@ -218,7 +218,7 @@ fun run_edit() {
     tree = key(p, b, tree, st, event.KEY_BACKSPACE)
     report("emptied", b, id)
     // A malformed byte is one unit for the caret and for backspace.
-    var raw = String.from_str("a")
+    var raw: String = "a"
     raw.push(0xFF)
     raw.push(0x62)
     b.set_entry_text(id, raw.as_str())
@@ -229,7 +229,7 @@ fun run_edit() {
     // A caret stranded inside a sequence by a text change snaps back to its start.
     b.set_entry_text(id, "xy")
     tree = key(p, b, tree, st, event.KEY_END)
-    var two = String.from_str("A")
+    var two: String = "A"
     two.push(0xC3)
     two.push(0xA9)
     two.push(0x42)

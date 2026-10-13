@@ -68,7 +68,7 @@ fun Msg.eq(other: &Msg).return: bool = when self {
 }
 
 pub fun initial().return: Model = Model(
-    draft = String.from_str(""),
+    draft = "",
     items = List.empty(),
     next_id = 1,
     marks = List.empty(),
@@ -171,7 +171,7 @@ pub fun update(state: mut Model, msg: Msg) {
                 val id = state.next_id
                 state.next_id = id + 1
                 state.items.push(Todo(id = id, title = draft_now, done = false))
-                state.draft = String.from_str("")
+                state.draft = ""
             }
             mark(state)
         }
@@ -218,11 +218,11 @@ fun step(delay_ms: u32, event: move core.Event).return: Step = Step(delay_ms = d
 pub fun script().return: List<Step> {
     var steps: List<Step> = List.empty()
     steps.push(step(delay_ms = 100, event = core.Event.Focus(index = 0)))
-    steps.push(step(delay_ms = 150, event = core.Event.Edit(index = 0, text = String.from_str("alpha"))))
+    steps.push(step(delay_ms = 150, event = core.Event.Edit(index = 0, text = "alpha")))
     steps.push(step(delay_ms = 200, event = core.Event.Post(id = 1)))
-    steps.push(step(delay_ms = 250, event = core.Event.Edit(index = 0, text = String.from_str("beta"))))
+    steps.push(step(delay_ms = 250, event = core.Event.Edit(index = 0, text = "beta")))
     steps.push(step(delay_ms = 300, event = core.Event.Post(id = 1)))
-    steps.push(step(delay_ms = 350, event = core.Event.Edit(index = 0, text = String.from_str("gamma"))))
+    steps.push(step(delay_ms = 350, event = core.Event.Edit(index = 0, text = "gamma")))
     steps.push(step(delay_ms = 400, event = core.Event.Post(id = 1)))
     steps.push(step(delay_ms = 450, event = core.Event.Post(id = 5)))
     steps.push(step(delay_ms = 500, event = core.Event.Post(id = 9)))

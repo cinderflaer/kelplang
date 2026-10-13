@@ -316,7 +316,7 @@ pub fun clone_key(k: &Key).return: Key = when k {
 }
 
 fun duplicate_message(k: &Key).return: String = when k {
-    None -> String.from_str("polyp: duplicate key among the children of one container")
+    None -> "polyp: duplicate key among the children of one container"
     Str(s) -> {
         val head = str.concat("polyp: duplicate key '", s.as_str())
         str.concat(head.as_str(), "' among the children of one container")
@@ -769,10 +769,10 @@ pub fun with_seg(parent: &Path, s: move Seg).return: Path {
 }
 
 pub fun props_default().return: Props = Props(
-    text = String.from_str(""),
+    text = "",
     size = 0,
     bold = false,
-    label = String.from_str(""),
+    label = "",
     checked = false,
     permille = 0,
     spacing = 0,

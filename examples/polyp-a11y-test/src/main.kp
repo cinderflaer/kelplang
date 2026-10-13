@@ -40,12 +40,12 @@ fun boot(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatf
 // A todo model with two rows, the second done, and "hi" typed in the entry.
 fun sample().return: app.Model {
     var m = app.initial()
-    app.update(m, app.Msg.Changed(text = String.from_str("alpha")))
+    app.update(m, app.Msg.Changed(text = "alpha"))
     app.update(m, app.Msg.Add)
-    app.update(m, app.Msg.Changed(text = String.from_str("beta")))
+    app.update(m, app.Msg.Changed(text = "beta"))
     app.update(m, app.Msg.Add)
     app.update(m, app.Msg.Toggle(id = 2))
-    app.update(m, app.Msg.Changed(text = String.from_str("hi")))
+    app.update(m, app.Msg.Changed(text = "hi"))
     return m
 }
 
@@ -71,7 +71,7 @@ fun press_case(use_tree: bool) {
     var st = app.initial()
     var tree = app.view(st)
     boot(b, p, &tree)
-    b.schedule(core.Event.Edit(index = 0, text = String.from_str("alpha")))
+    b.schedule(core.Event.Edit(index = 0, text = "alpha"))
     tree = step(b, p, tree, st)
     tree = step(b, p, tree, st)
     val before = b.a11y_tree()
