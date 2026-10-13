@@ -1,6 +1,6 @@
 // T95 twin: the List grows inside the body that owns it, and a number is
 // returned. The List is accepted.
-fun sum(n: i32).return: i32 {
+fun sum(n: i32) => i32 {
     var xs: List<i32> = List.empty()
     xs.push(n)
     xs.push(n + 1)

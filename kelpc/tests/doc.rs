@@ -366,7 +366,7 @@ fn json_name_spans_point_at_the_name_in_the_file() {
 
 #[test]
 fn json_from_stdin_documents_the_buffer() {
-    let buffer = "/// Doubles.\npub fun twice(n: i32).return: i32 = n * 2\n";
+    let buffer = "/// Doubles.\npub fun twice(n: i32) => i32 = n * 2\n";
     let r = run_in_json_fixture(&["--text", "src/buffer.kp", "--format", "json"], Some(buffer));
     assert!(r.status.success(), "{}", stderr(&r));
     let text = String::from_utf8(r.stdout).expect("utf-8 output");

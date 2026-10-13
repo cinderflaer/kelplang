@@ -1,3 +1,3 @@
 // Gap 4 rejection: this pass expands at most one callback closure parameter
 // per user `extern fun`.
-pub extern fun kelp_call_twice(f: move closure(i32), g: move closure(i32), x: i32).return: i32
+pub extern fun kelp_call_twice(f: move closure(i32), g: move closure(i32), x: i32) => i32

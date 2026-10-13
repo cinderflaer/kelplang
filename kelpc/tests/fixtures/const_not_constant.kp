@@ -4,7 +4,7 @@
 // compile-time fold has no output to print to.
 const BAD: i32 = shout()
 
-fun shout().return: i32 {
+fun shout() => i32 {
     print("hi")
     1
 }

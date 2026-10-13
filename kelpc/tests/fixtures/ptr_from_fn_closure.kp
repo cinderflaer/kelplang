@@ -3,7 +3,7 @@
 // and the message says why. The compiler must reject this program.
 fun main() {
     val k = 1
-    val add_k = fun(x: i32).return: i32 = x + k
+    val add_k = fun(x: i32) => i32 = x + k
     val p = Ptr.from_fn(add_k)
     print(p.addr())
 }

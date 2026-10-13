@@ -5,7 +5,7 @@ enum Option<T> {
     None
 }
 
-fun peek(o: &Option<i32>).return: Option<i32> {
+fun peek(o: &Option<i32>) => Option<i32> {
     val v = o?
     return Option.Some(value = v)
 }

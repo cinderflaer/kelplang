@@ -17,9 +17,9 @@ datac I2(val a: u8, val b: u8)
 datac A3(val a: u8, val b: u8, val c: u8)
 datac S12(val a: i32, val b: i32, val c: i32)
 
-fun s2(v: &I2).return: i32 = v.a.to_i32() + v.b.to_i32() * 10
-fun s3(v: &A3).return: i32 = v.a.to_i32() + v.b.to_i32() * 10 + v.c.to_i32() * 100
-fun s12(v: &S12).return: i64 = v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000
+fun s2(v: &I2) => i32 = v.a.to_i32() + v.b.to_i32() * 10
+fun s3(v: &A3) => i32 = v.a.to_i32() + v.b.to_i32() * 10 + v.c.to_i32() * 100
+fun s12(v: &S12) => i64 = v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000
 
 fun main() {
     var a: List<A3> = List.empty()

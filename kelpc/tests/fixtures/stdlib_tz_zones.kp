@@ -26,9 +26,9 @@ fun same(st: mut Stats, name: &str, value: String, expect: &str) {
     t(st, name, str.eq(value.as_str(), expect))
 }
 
-fun digits(n: i64).return: String = str.from_i64(n)
+fun digits(n: i64) => String = str.from_i64(n)
 
-fun label(r: &tz.Resolved).return: String {
+fun label(r: &tz.Resolved) => String {
     var out = String.empty()
     if let One(u) = r {
         out.push_str("one ")
@@ -49,7 +49,7 @@ fun label(r: &tz.Resolved).return: String {
 
 // ---- is there a database? ---------------------------------------------------
 
-fun has_zone(dir: String, name: &str).return: bool {
+fun has_zone(dir: String, name: &str) => bool {
     if dir.len() == 0 {
         return false
     }
@@ -58,7 +58,7 @@ fun has_zone(dir: String, name: &str).return: bool {
     return fs.is_file(path.as_str())
 }
 
-fun dir_of(name: &str).return: String {
+fun dir_of(name: &str) => String {
     val tzdir = env.get("TZDIR")
     if has_zone(tzdir, name) {
         return tzdir

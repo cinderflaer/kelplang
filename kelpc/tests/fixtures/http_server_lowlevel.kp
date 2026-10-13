@@ -6,7 +6,7 @@ impl "std/net"
 impl "std/option"
 impl "std/str"
 
-fun show_opt(o: move option.Option<String>).return: String {
+fun show_opt(o: move option.Option<String>) => String {
     return when o {
         Some(s) -> s
         None -> String.from_str("<none>")

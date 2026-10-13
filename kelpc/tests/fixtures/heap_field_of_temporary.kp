@@ -18,13 +18,13 @@
 // still free nothing there.
 datac Named(val r: i64, val name: String)
 
-fun mkName().return: Named = Named(r = 7, name = String.from_str("hi"))
+fun mkName() => Named = Named(r = 7, name = String.from_str("hi"))
 
 fun take(n: i64) {
     print(n)
 }
 
-fun area(n: Named).return: i64 = n.r
+fun area(n: Named) => i64 = n.r
 
 fun main() {
     // A field read of a call temporary, in `print` position.

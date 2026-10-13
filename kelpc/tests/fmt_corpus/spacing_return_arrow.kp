@@ -1,6 +1,6 @@
-// pins no-space-before-suffix-token: no space around '.' or '::', and none in the '.return:' return type.
+// pins no-space-before-suffix-token: no space around '.' or '::', and one space either side of the return arrow.
 datac Circle(val r: f64)
 
-fun Circle.area(). return : f64 = 3.14159 * r * r
+fun Circle.area()   =>   f64 = 3.14159 * r * r
 
-fun first<I>(xs: List<I>). return : I :: Item = xs.get(0)
+fun first<I>(xs: List<I>)  =>  I :: Item = xs.get(0)

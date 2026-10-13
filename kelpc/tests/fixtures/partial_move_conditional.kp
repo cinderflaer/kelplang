@@ -6,7 +6,7 @@
 // buffer exactly once.
 datac Bag(val xs: List<i32>, val name: String)
 
-fun take_it(bag: move Bag, take: bool).return: i32 {
+fun take_it(bag: move Bag, take: bool) => i32 {
     var out = 0
     if take {
         val xs = bag.xs

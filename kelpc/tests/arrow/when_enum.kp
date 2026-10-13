@@ -4,7 +4,7 @@ enum Shape {
     Rect(val w: i32, val h: i32)
 }
 
-fun area(s: &Shape).return: i32 = when s {
+fun area(s: &Shape) => i32 = when s {
     Circle(r) => r * r * 3
     Rect(w, h) => w * h
     else => 0

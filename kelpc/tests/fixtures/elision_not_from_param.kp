@@ -1,6 +1,6 @@
 // M6.3: a returned borrow has to come from the caller's value, a view of a
 // local would dangle the moment this frame returns.
-fun make(a: &str).return: &str {
+fun make(a: &str) => &str {
     val s = String.from_str("temp")
     return s.as_str()
 }

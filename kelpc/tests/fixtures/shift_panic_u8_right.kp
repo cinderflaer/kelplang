@@ -1,5 +1,5 @@
 // `>>` panics the same way, at the narrowest width.
-fun shift(x: u8, n: u8).return: u8 = x >> n
+fun shift(x: u8, n: u8) => u8 = x >> n
 
 fun main() {
     print(shift(200, 7))

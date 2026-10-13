@@ -2,7 +2,7 @@
 // shared-pool memory.
 fun make(n: i32) {
     val b = Box.of(n)
-    val f = fun() .return: i32 = b.get()
+    val f = fun() => i32 = b.get()
     print(f())
 }
 

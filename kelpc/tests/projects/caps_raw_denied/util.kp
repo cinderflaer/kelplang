@@ -3,4 +3,4 @@
 // the grant is enforced against.
 impl "std/fs"
 
-pub fun outside_raw().return: usize = fs.read_raw("/etc/passwd").len()
+pub fun outside_raw() => usize = fs.read_raw("/etc/passwd").len()

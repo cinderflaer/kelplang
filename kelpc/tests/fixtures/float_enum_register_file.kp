@@ -19,17 +19,17 @@ enum Pure {
     D(val r: f64)
 }
 
-fun takeMerge(v: move Merge).return: f64 = when v {
+fun takeMerge(v: move Merge) => f64 = when v {
     C(r) -> r
     Empty -> 0.0
 }
 
-fun takePure(v: move Pure).return: f64 = when v {
+fun takePure(v: move Pure) => f64 = when v {
     D(r) -> r
 }
 
-fun mkMerge().return: Merge = Merge.Empty
-fun mkPure().return: Pure = Pure.D(r = 2.5)
+fun mkMerge() => Merge = Merge.Empty
+fun mkPure() => Pure = Pure.D(r = 2.5)
 
 fun main() {
     print(takeMerge(Merge.C(r = 1.5)))

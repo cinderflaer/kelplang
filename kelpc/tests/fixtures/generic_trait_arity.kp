@@ -7,7 +7,7 @@ enum E {
 }
 
 impl convert.From for E {
-    fun from(value: i32).return: E = E.A(x = value)
+    fun from(value: i32) => E = E.A(x = value)
 }
 
 fun main() { }

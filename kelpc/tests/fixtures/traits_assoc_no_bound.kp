@@ -3,7 +3,7 @@
 
 datac A(val n: i32)
 
-fun pick<I>(x: I).return: I::Item = x.produce()
+fun pick<I>(x: I) => I::Item = x.produce()
 
 fun main() {
     val a = A(n = 1)

@@ -31,18 +31,18 @@ enum ZRes {
     Err(val why: i32)
 }
 
-fun z_add(a: i32, b: i32).return: i32 = ((a | b) % 6)
-fun z_scale(a: f64, b: f64).return: f64 = ((a * 0.0625) * (b * a))
-fun z_mk(n: i32).return: ZPoint = ZPoint(x = n, y = n + 1)
-fun z_psum(p: ZPoint).return: i32 = p.x + p.y
-fun z_vsum(v: ZVec).return: f64 = v.x + v.y
-fun z_msg_int(m: ZMsg).return: i32 = when m {
+fun z_add(a: i32, b: i32) => i32 = ((a | b) % 6)
+fun z_scale(a: f64, b: f64) => f64 = ((a * 0.0625) * (b * a))
+fun z_mk(n: i32) => ZPoint = ZPoint(x = n, y = n + 1)
+fun z_psum(p: ZPoint) => i32 = p.x + p.y
+fun z_vsum(v: ZVec) => f64 = v.x + v.y
+fun z_msg_int(m: ZMsg) => i32 = when m {
     Num(n) -> n
     Text(t) -> t.len().to_i32()
     Nil -> -1
 }
-fun z_double(v: i32).return: i32 = v * 2
-fun z_apply(f: fun(i32).return: i32, v: i32).return: i32 = f(v)
+fun z_double(v: i32) => i32 = v * 2
+fun z_apply(f: fun(i32) => i32, v: i32) => i32 = f(v)
 
 fun main() {
     {
@@ -235,10 +235,10 @@ fun main() {
 
     {
         val s = String.from_str("text")
-        val f = fun() .return: usize = s.len()
+        val f = fun() => usize = s.len()
         print(f())
         val k = 30
-        val g = fun(x: i32).return: i32 = x + k
+        val g = fun(x: i32) => i32 = x + k
         print(g(7))
         val h = z_double
         print(h(7))
@@ -247,7 +247,7 @@ fun main() {
         var i = 0
         while i < 3 {
             val t = String.from_str("x")
-            val c = fun() .return: usize = t.len()
+            val c = fun() => usize = t.len()
             print(c())
             i = i + 1
         }

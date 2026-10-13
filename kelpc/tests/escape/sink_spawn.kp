@@ -1,7 +1,7 @@
 // T15 refusal: the Box is passed to a thread spawn, which crosses to a worker.
 impl "std/thread"
 impl "std/result"
-fun worker(b: move Box<i32>).return: i32 {
+fun worker(b: move Box<i32>) => i32 {
     return b.get()
 }
 

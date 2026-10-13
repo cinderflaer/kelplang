@@ -7,7 +7,7 @@ enum Held {
     Two(val text: String, val n: i32)
 }
 
-fun take(h: move Held).return: String {
+fun take(h: move Held) => String {
     val a = when h {
         Two(text, _) -> text
     }

@@ -3,7 +3,7 @@ impl "std/result"
 
 // Step 1 (T68, section 18.8): 300 short threads, each joined before the next
 // starts, all run to the end. The spawner counts only the threads still open.
-fun double(n: i64).return: i64 = n * 2
+fun double(n: i64) => i64 = n * 2
 
 fun main() {
     var i: i64 = 0

@@ -33,20 +33,20 @@ pub enum Mode {
 /// A trait — with a required item and a type item.
 pub trait Reading {
     /// The current value – as a number.
-    fun Self.reading().return: i32
+    fun Self.reading() => i32
     type Unit
 }
 
 impl Reading for Gauge {
     /// The reading — of this gauge.
-    fun Self.reading().return: i32 = self.value
+    fun Self.reading() => i32 = self.value
 }
 
 /// Builds a gauge — from a value.
-pub fun make(v: i32).return: Gauge = Gauge(value = v, max = 9)
+pub fun make(v: i32) => Gauge = Gauge(value = v, max = 9)
 
 /// A method – on Gauge.
-fun Gauge.doubled().return: i32 = self.value * 2
+fun Gauge.doubled() => i32 = self.value * 2
 
 fun hidden() {
 }

@@ -3,7 +3,7 @@ enum Shape {
     Empty
 }
 
-fun area(s: &Shape).return: f64 = when s {
+fun area(s: &Shape) => f64 = when s {
     Circle(r) -> r
     Square(r) -> r
     Empty -> 0.0

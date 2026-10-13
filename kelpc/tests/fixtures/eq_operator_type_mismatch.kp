@@ -3,7 +3,7 @@
 datac A(val x: i32)
 datac B(val x: i32)
 
-fun A.eq(other: &A).return: bool = self.x == other.x
+fun A.eq(other: &A) => bool = self.x == other.x
 
 fun main() {
     print(A(x = 1) == B(x = 1))

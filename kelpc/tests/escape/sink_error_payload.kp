@@ -1,6 +1,6 @@
 // T15 refusal: the Box is the error payload that `?` propagates.
 impl "std/result"
-fun run(n: i32).return: result.Result<i32, Box<i32>> {
+fun run(n: i32) => result.Result<i32, Box<i32>> {
     val r: result.Result<i32, Box<i32>> = result.Result.Err(error = Box.of(n))
     val v = r?
     return result.Result.Ok(value = v)

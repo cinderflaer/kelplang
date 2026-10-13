@@ -1,6 +1,6 @@
 // A-4: a generic function has no one signature, so it is not a value. The
 // message names the fix.
-fun first<T>(a: T, b: T).return: T = a
+fun first<T>(a: T, b: T) => T = a
 
 fun main() {
     val f = first

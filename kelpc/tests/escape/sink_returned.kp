@@ -1,5 +1,5 @@
 // T15 refusal: the Box is returned from its body.
-fun make(n: i32).return: Box<i32> {
+fun make(n: i32) => Box<i32> {
     return Box.of(n)
 }
 

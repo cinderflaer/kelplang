@@ -10,29 +10,29 @@
 // it were not there at all.
 datac Quad(var a: i64, var b: i64, var c: i64)
 
-fun make(a: i64, b: i64, c: i64).return: Quad = Quad(a = a, b = b, c = c)
+fun make(a: i64, b: i64, c: i64) => Quad = Quad(a = a, b = b, c = c)
 
-fun sum(v: move Quad).return: i64 = v.a + v.b + v.c
+fun sum(v: move Quad) => i64 = v.a + v.b + v.c
 
 // A `MEMORY`-class argument between two register arguments: the register
 // numbering must not shift because of it (`n` in the first register, `m` in the
 // second, the `Quad` on the stack).
-fun between(n: i64, v: move Quad, m: i64).return: i64 = n + v.a + v.b + v.c + m
+fun between(n: i64, v: move Quad, m: i64) => i64 = n + v.a + v.b + v.c + m
 
 // Two of them in one call: each at its own offset, in argument order.
-fun two(first: move Quad, second: move Quad).return: i64 = first.a * 100 + first.b * 10 + first.c + second.a * 100 + second.b * 10 + second.c
+fun two(first: move Quad, second: move Quad) => i64 = first.a * 100 + first.b * 10 + first.c + second.a * 100 + second.b * 10 + second.c
 
 // A `MEMORY`-class argument after all six integer registers are already taken.
-fun six(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, v: move Quad).return: i64 = a + b + c + d + e + f + v.a + v.b + v.c
+fun six(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, v: move Quad) => i64 = a + b + c + d + e + f + v.a + v.b + v.c
 
 // A `MEMORY`-class argument *and* a `MEMORY`-class return: the hidden return
 // pointer takes `rdi`, and the argument still goes on the stack.
-fun grow(v: move Quad, by: i64).return: Quad = Quad(a = v.a + by, b = v.b + by, c = v.c + by)
+fun grow(v: move Quad, by: i64) => Quad = Quad(a = v.a + by, b = v.b + by, c = v.c + by)
 
 // A moved parameter is an ordinary owned local, so it can be copied into a
 // mutable one, which is only a copy if the parameter really is the value
 // rather than a pointer to the caller's copy.
-fun bump(v: move Quad).return: i64 {
+fun bump(v: move Quad) => i64 {
     var w = v
     w.c = w.c + 100
     return w.a + w.b + w.c
@@ -44,12 +44,12 @@ fun bump(v: move Quad).return: i64 {
 // else.
 datac Pair3(var a: i64, var b: i64)
 
-fun pair_and_quad(t: move Pair3, q: move Quad).return: i64 = t.a * 1000 + t.b * 100 + q.a * 10 + q.b
+fun pair_and_quad(t: move Pair3, q: move Quad) => i64 = t.a * 1000 + t.b * 100 + q.a * 10 + q.b
 
 // ...and the same with a float argument, whose register file SysV numbers
 // independently of the integer one (`x` in `xmm0`, `n` in `rdi`, the `Quad` on
 // the stack).
-fun float_and_quad(x: f64, n: i64, q: move Quad).return: i64 = n + q.a + q.b + q.c
+fun float_and_quad(x: f64, n: i64, q: move Quad) => i64 = n + q.a + q.b + q.c
 
 fun main() {
     val q = make(1, 2, 3)

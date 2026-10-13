@@ -12,14 +12,14 @@ enum Token {
     Blank
 }
 
-fun radius(s: &Shape).return: f64 {
+fun radius(s: &Shape) => f64 {
     if let Circle(r) = s {
         return r
     }
     return 0.0
 }
 
-fun width(t: &Token).return: usize {
+fun width(t: &Token) => usize {
     if let Word(text) = t {
         return text.len()
     }

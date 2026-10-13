@@ -2,7 +2,7 @@
 // only declaration is `eq`, exactly as `<` is.
 datac P(val x: i32)
 
-fun P.eq(other: &P).return: bool = self.x == other.x
+fun P.eq(other: &P) => bool = self.x == other.x
 
 fun main() {
     val a = P(x = 1)

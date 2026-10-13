@@ -8,7 +8,7 @@ impl "std/result"
 
 pd val counter: Mutex<i64> = Mutex.new(0)
 
-fun bump(c: &Mutex<i64>).return: i64 {
+fun bump(c: &Mutex<i64>) => i64 {
     var i: i64 = 0
     while i < 1000 {
         c.lock { v ->

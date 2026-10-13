@@ -5,7 +5,7 @@ impl "std/str"
 // that keeps the pipes (S2). The entry module holds every capability, so no
 // delegation is needed here; `process_denied` and `process_run` cover the
 // grant.
-fun sh(script: &str).return: List<String> {
+fun sh(script: &str) => List<String> {
     var args: List<String> = List.empty()
     args.push(String.from_str("-c"))
     args.push(String.from_str(script))

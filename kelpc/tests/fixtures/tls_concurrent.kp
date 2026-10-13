@@ -16,7 +16,7 @@ impl "std/tls"
 // What one worker needs: where to dial and which id it is.
 datac Job(val port: i32, val id: i64)
 
-fun fail(e: move tls.TlsError).return: tls.TlsStream {
+fun fail(e: move tls.TlsError) => tls.TlsStream {
     val text = tls.error_text(e)
     panic(text.as_str())
 }
@@ -26,7 +26,7 @@ fun fail_unit(e: move tls.TlsError) {
     panic(text.as_str())
 }
 
-fun arg_port().return: i32 {
+fun arg_port() => i32 {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(1).as_str()),
@@ -38,12 +38,12 @@ fun arg_port().return: i32 {
 // How many descriptors this process holds right now, read out of the kernel's own
 // listing. The listing call itself opens one directory descriptor and closes it
 // again before returning, so the two counts are taken the same way.
-fun fd_count().return: usize {
+fun fd_count() => usize {
     val listing = fs.list("/proc/self/fd")
     return listing.len()
 }
 
-fun worker(j: move Job).return: i32 {
+fun worker(j: move Job) => i32 {
     val id_text = str.from_i64(j.id)
     var req = String.with_capacity(64)
     req.push_str("GET /")

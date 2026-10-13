@@ -1,9 +1,9 @@
 // A module's own items are reachable *bare* inside that file, even though
 // `resolve.rs` stores them with their module prefix. Both a function call
 // and a `datac` construction exercise that lookup.
-fun doubled(n: i32).return: i32 = n * 2
+fun doubled(n: i32) => i32 = n * 2
 
-pub fun quadrupled(n: i32).return: i32 = doubled(n = doubled(n = n))
+pub fun quadrupled(n: i32) => i32 = doubled(n = doubled(n = n))
 
 // `pub` because the private-in-public rule (A-13) refuses an exported item's
 // signature that names a type this module does not export, and both
@@ -11,6 +11,6 @@ pub fun quadrupled(n: i32).return: i32 = doubled(n = doubled(n = n))
 // the fixture is about, and they are unaffected.
 pub datac Pair(val a: i32, val b: i32)
 
-pub fun pair_sum(p: Pair).return: i32 = p.a + p.b
+pub fun pair_sum(p: Pair) => i32 = p.a + p.b
 
-pub fun make_pair().return: Pair = Pair(a = 1, b = 2)
+pub fun make_pair() => Pair = Pair(a = 1, b = 2)

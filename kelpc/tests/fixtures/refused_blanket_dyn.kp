@@ -1,17 +1,17 @@
 trait Describe {
-    fun Self.describe().return: i32
+    fun Self.describe() => i32
 }
 
 impl Describe for i32 {
-    fun Self.describe().return: i32 = self
+    fun Self.describe() => i32 = self
 }
 
 trait Tagged {
-    fun Self.tag().return: i32
+    fun Self.tag() => i32
 }
 
 impl<T: Describe> Tagged for T {
-    fun Self.tag().return: i32 {
+    fun Self.tag() => i32 {
         return self.describe() * 100
     }
 }

@@ -3,17 +3,17 @@
 // type argument of a `datac`. Two instantiations of one template are two types.
 
 // A plain `fun` whose body reads the character and returns it.
-fun glyph<const C: char>().return: char = C
+fun glyph<const C: char>() => char = C
 
 // A `bool` result from comparing the parameter.
-fun is_slash<const C: char>().return: bool {
+fun is_slash<const C: char>() => bool {
     return C == '/'
 }
 
 // A `datac` with a `char` const parameter, and a method reading it.
 datac Tag<const C: char>(var weight: i32)
 
-fun Tag<const C: char>.mark().return: char {
+fun Tag<const C: char>.mark() => char {
     return C
 }
 

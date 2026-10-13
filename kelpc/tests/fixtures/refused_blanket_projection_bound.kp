@@ -1,14 +1,14 @@
 // A `where` projection bound on a type that binds no such associated type is
 // refused at the call (MISSING-Ve8Nc step 5).
 trait Describe {
-    fun Self.describe().return: i32
+    fun Self.describe() => i32
 }
 
 impl Describe for i32 {
-    fun Self.describe().return: i32 = self
+    fun Self.describe() => i32 = self
 }
 
-fun first<I>(it: I).return: i32 where I::Item: Describe {
+fun first<I>(it: I) => i32 where I::Item: Describe {
     return 1
 }
 

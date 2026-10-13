@@ -9,13 +9,13 @@ fun mut Kids.keyed(f: scoped fun(mut Kids)) { f(self) }
 fun mut Kids.text(t: str) { n += 1 }
 fun mut Kids.progress(p: i32) { progress = p }
 
-fun column(block: scoped fun(mut Kids)).return: Kids {
+fun column(block: scoped fun(mut Kids)) => Kids {
     var k = Kids(n = 0, progress = 0)
     block(k)
     return k
 }
 
-fun view(s: Model).return: Kids {
+fun view(s: Model) => Kids {
     var done = 0
     return column { k ->
         var i: usize = 0

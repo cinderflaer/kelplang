@@ -11,7 +11,7 @@ pub enum Msg {
     Inc
 }
 
-pub fun view(s: Counter).return: core.Node<Msg> {
+pub fun view(s: Counter) => core.Node<Msg> {
     val shown_count = fmt.int(s.count.to_i64())
     val shown = str.concat("the count is ", shown_count.as_str())
     return core.column { k ->

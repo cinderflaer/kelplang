@@ -1,8 +1,8 @@
 // A `where` clause is the other spelling of a bound on a parameter (26.10.3).
 trait Shape {
-    fun Self.area().return: f64
+    fun Self.area() => f64
 }
 
-fun f<T>(x: &T).return: i32 where T: Shape = 0
+fun f<T>(x: &T) => i32 where T: Shape = 0
 
 fun main() { }

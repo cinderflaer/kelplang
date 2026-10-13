@@ -2,7 +2,7 @@
 // leaks `Hidden` through the container exactly as `List<Hidden>` does.
 datac Hidden(val n: i32)
 
-pub fun stash(n: i32).return: Box<Hidden> = Box.of(Hidden(n = n))
+pub fun stash(n: i32) => Box<Hidden> = Box.of(Hidden(n = n))
 
 fun main() {
     print(1)

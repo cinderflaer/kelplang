@@ -4,7 +4,7 @@
 // to say "no TLS". Nothing here runs; the rejection is the point.
 impl "std/tls"
 
-fun forge().return: tls.TlsHandle = 0
+fun forge() => tls.TlsHandle = 0
 
 fun main() {
     print("unreachable")

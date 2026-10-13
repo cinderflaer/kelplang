@@ -4,7 +4,7 @@
 impl "std/ops"
 
 impl ops.Add for i32 {
-    fun Self.add(rhs: &Self).return: i32 = self + rhs
+    fun Self.add(rhs: &Self) => i32 = self + rhs
 }
 
 fun main() {

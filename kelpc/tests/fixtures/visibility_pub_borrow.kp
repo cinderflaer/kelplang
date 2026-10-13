@@ -2,7 +2,7 @@
 // `Hidden` exactly as `Hidden` does.
 datac Hidden(val n: i32)
 
-pub fun peek(h: &Hidden).return: i32 = h.n
+pub fun peek(h: &Hidden) => i32 = h.n
 
 fun main() {
     print(1)

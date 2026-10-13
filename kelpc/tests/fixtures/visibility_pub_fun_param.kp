@@ -3,7 +3,7 @@
 // the signature leaks a type no other module can name.
 datac Hidden(val n: i32)
 
-pub fun describe(h: Hidden).return: i32 = h.n
+pub fun describe(h: Hidden) => i32 = h.n
 
 fun main() {
     print(1)

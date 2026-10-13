@@ -13,7 +13,7 @@ impl "std/process"
 impl "std/str"
 impl "std/result"
 
-fun arg_port(at: usize).return: u16 {
+fun arg_port(at: usize) => u16 {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(at).as_str()),

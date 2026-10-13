@@ -3,7 +3,7 @@
 // return) stays refused (`impl_trait_field_refused.kp`,
 // `impl_trait_return_refused.kp`).
 trait Shape {
-    fun Self.area().return: f64
+    fun Self.area() => f64
 }
 
 fun take(s: impl Shape) { }

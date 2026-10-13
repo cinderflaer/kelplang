@@ -220,7 +220,7 @@ fn a_project_directory_checks_and_names_the_module_that_failed() {
         "name = \"demo\"\nversion = \"0.1.0\"\nentry = \"src/main.kp\"\n",
     );
     write(&dir, "src/main.kp", "impl \"util\"\n\nfun main() {\n    util.area()\n}\n");
-    write(&dir, "src/util.kp", "fun area().return: i32 = \"not a number\"\n");
+    write(&dir, "src/util.kp", "fun area() => i32 = \"not a number\"\n");
 
     let out = check(&dir, &["--json"]);
     assert!(!out.status.success());

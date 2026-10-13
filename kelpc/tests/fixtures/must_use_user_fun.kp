@@ -1,7 +1,7 @@
 // MISSING-Cn2Ym: `must_use` on a user function. A bound result, a branch on it
 // and the `val _r` discard all compile; only the bare statement is refused
 // (see `must_use_user_dropped.kp`).
-must_use fun check(n: i32).return: bool = n > 0
+must_use fun check(n: i32) => bool = n > 0
 
 fun main() {
     val ok = check(1)

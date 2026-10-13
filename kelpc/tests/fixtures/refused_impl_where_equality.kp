@@ -7,7 +7,7 @@ datac Wrap<I>(var inner: I)
 
 impl<I> iter.Iterator for Wrap<I> where I: iter.Iterator<Item = i64> {
     type Item = i64
-    fun mut Self.next().return: option.Option<i64> {
+    fun mut Self.next() => option.Option<i64> {
         return self.inner.next()
     }
 }
@@ -16,7 +16,7 @@ datac Strs(var left: i64)
 
 impl iter.Iterator for Strs {
     type Item = String
-    fun mut Self.next().return: option.Option<String> {
+    fun mut Self.next() => option.Option<String> {
         return option.Option.None
     }
 }

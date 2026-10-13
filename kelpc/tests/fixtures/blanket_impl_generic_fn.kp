@@ -1,30 +1,30 @@
 trait Describe {
-    fun Self.describe().return: i32
+    fun Self.describe() => i32
 }
 
 impl Describe for i32 {
-    fun Self.describe().return: i32 = self
+    fun Self.describe() => i32 = self
 }
 
 datac Pair<A, B>(val a: A, val b: B)
 
 impl<A: Describe, B: Describe> Describe for Pair<A, B> {
-    fun Self.describe().return: i32 {
+    fun Self.describe() => i32 {
         return self.a.describe() * 10 + self.b.describe()
     }
 }
 
 trait Doubled {
-    fun Self.doubled().return: i32
+    fun Self.doubled() => i32
 }
 
 impl<T: Describe> Doubled for T {
-    fun Self.doubled().return: i32 {
+    fun Self.doubled() => i32 {
         return self.describe() * 2
     }
 }
 
-fun twice<T: Doubled>(x: &T).return: i32 {
+fun twice<T: Doubled>(x: &T) => i32 {
     return x.doubled() + x.doubled()
 }
 

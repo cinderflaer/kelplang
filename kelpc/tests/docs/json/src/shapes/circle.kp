@@ -3,7 +3,7 @@
 /// Something with an area.
 pub trait Shape {
     /// The area.
-    fun Self.area().return: f64
+    fun Self.area() => f64
 }
 
 /// A circle.
@@ -13,5 +13,5 @@ pub datac Circle(
 )
 
 impl Shape for Circle {
-    fun Self.area().return: f64 = self.r * self.r
+    fun Self.area() => f64 = self.r * self.r
 }

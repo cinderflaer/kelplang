@@ -16,15 +16,15 @@ enum Opt<T> {
     None
 }
 
-fun ok(n: i64).return: Res<i64, String> {
+fun ok(n: i64) => Res<i64, String> {
     return Res.Ok(value = n)
 }
 
-fun fail(n: i64).return: Res<i64, String> {
+fun fail(n: i64) => Res<i64, String> {
     return Res.Err(error = String.from_str(s = "no"))
 }
 
-fun some_word(n: i64).return: Opt<String> {
+fun some_word(n: i64) => Opt<String> {
     if n < 0 {
         return Opt.None
     }
@@ -33,7 +33,7 @@ fun some_word(n: i64).return: Opt<String> {
 
 // One owned local live at two `?` sites, one per branch of an `if`, so both
 // the success and the failure path are exercised with the same frame.
-fun one(good: bool).return: Res<i64, String> {
+fun one(good: bool) => Res<i64, String> {
     var scratch = String.from_str(s = "scratch")
     scratch.push_str(s = "!")
     val v = if good { ok(n = 1)? } else { fail(n = 1)? }
@@ -42,7 +42,7 @@ fun one(good: bool).return: Res<i64, String> {
 
 // The operand is a named local: its payload is moved onto the return path, so
 // the frame's drop must not free what that payload now owns a second time.
-fun via_local(good: bool).return: Res<i64, String> {
+fun via_local(good: bool) => Res<i64, String> {
     var pad = String.from_str(s = "pad")
     pad.push_str(s = "!")
     val r = if good { ok(n = 2) } else { fail(n = 2) }
@@ -52,7 +52,7 @@ fun via_local(good: bool).return: Res<i64, String> {
 
 // Two live scopes: the `?` sits inside the inner block, and both the inner and
 // the outer local die on its failure arm, innermost first.
-fun nested(good: bool).return: Res<i64, String> {
+fun nested(good: bool) => Res<i64, String> {
     var outer = String.from_str(s = "outer")
     val v = {
         var inner = String.from_str(s = "inner")
@@ -66,7 +66,7 @@ fun nested(good: bool).return: Res<i64, String> {
 
 // `?` on `Option`: the failure carries no payload, but the frame's locals are
 // still the frame's to free.
-fun option_frame(n: i64).return: Opt<String> {
+fun option_frame(n: i64) => Opt<String> {
     var held = String.from_str(s = "held")
     held.push_str(s = "!")
     val w = some_word(n = n)?
@@ -76,7 +76,7 @@ fun option_frame(n: i64).return: Opt<String> {
 // `?` inside a loop body: the body's own local and the function's are both
 // live at the `?`, and the loop-body drop points must not run a second time
 // after the early return leaves the function.
-fun loop_frame(bad_at: i64).return: Res<i64, String> {
+fun loop_frame(bad_at: i64) => Res<i64, String> {
     var i: i64 = 0
     var total = String.from_str(s = "t")
     while i < 3 {
@@ -95,8 +95,8 @@ fun loop_frame(bad_at: i64).return: Res<i64, String> {
 // The same rule inside a `fun` literal's body: the early return leaves *that*
 // generated function, so the drop plan is keyed by the closure's own key and
 // `scratch` is freed on the failure arm.
-fun closure_frame(good: bool).return: Res<i64, String> {
-    val f = fun(flag: bool).return: Res<i64, String> {
+fun closure_frame(good: bool) => Res<i64, String> {
+    val f = fun(flag: bool) => Res<i64, String> {
         var scratch = String.from_str(s = "s")
         scratch.push_str(s = "!")
         val v = if flag { ok(n = 7)? } else { fail(n = 7)? }
@@ -105,7 +105,7 @@ fun closure_frame(good: bool).return: Res<i64, String> {
     return f(good)
 }
 
-fun res_len(r: &Res<i64, String>).return: i32 {
+fun res_len(r: &Res<i64, String>) => i32 {
     if let Ok(v) = r {
         return v.to_i32()
     }
@@ -115,7 +115,7 @@ fun res_len(r: &Res<i64, String>).return: i32 {
     return 0
 }
 
-fun opt_len(o: &Opt<String>).return: i32 {
+fun opt_len(o: &Opt<String>) => i32 {
     if let Some(v) = o {
         return v.len().to_i32()
     }

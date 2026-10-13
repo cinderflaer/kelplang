@@ -8,12 +8,12 @@ enum Kind {
     Nothing
 }
 
-fun Kind.hash().return: u64 = when self {
+fun Kind.hash() => u64 = when self {
     Ratio(r) -> 1
     Nothing -> 0
 }
 
-fun Kind.eq(other: &Kind).return: bool = when self {
+fun Kind.eq(other: &Kind) => bool = when self {
     Ratio(a) -> when other {
         Ratio(b) -> a == b
         Nothing -> false

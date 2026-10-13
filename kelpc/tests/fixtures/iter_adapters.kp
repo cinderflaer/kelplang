@@ -6,8 +6,8 @@ fun main() {
     xs.push(6)
     xs.push(7)
     xs.push(8)
-    var evens = iter.filter(iter.into_iter(xs), fun(x: &i64).return: bool = x % 2 == 0)
-    var doubled = iter.map(evens, fun(x: &i64).return: i64 = x * 10)
+    var evens = iter.filter(iter.into_iter(xs), fun(x: &i64) => bool = x % 2 == 0)
+    var doubled = iter.map(evens, fun(x: &i64) => i64 = x * 10)
     for v in doubled {
         print(v)
     }
@@ -25,5 +25,5 @@ fun main() {
     }
     val words = iter.collect_list(iter.take(iter.skip(iter.range(0, 50), 3), 4))
     print(words.len())
-    print(iter.sum_i64(iter.map(iter.range(1, 4), fun(x: &i64).return: i64 = x * x)))
+    print(iter.sum_i64(iter.map(iter.range(1, 4), fun(x: &i64) => i64 = x * x)))
 }

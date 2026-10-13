@@ -10,7 +10,7 @@ impl "std/result"
 
 pd val counter: AtomicI64 = AtomicI64.new(0)
 
-fun worker(c: &AtomicI64).return: i64 {
+fun worker(c: &AtomicI64) => i64 {
     c.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
     c.load(order = atomic.Ordering.SeqCst)
 }

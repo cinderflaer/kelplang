@@ -10,7 +10,7 @@ datac Plains(var left: i64)
 
 impl iter.Iterator for Plains {
     type Item = Plain
-    fun mut Self.next().return: option.Option<Plain> {
+    fun mut Self.next() => option.Option<Plain> {
         if self.left == 0 {
             return option.Option.None
         }
@@ -19,7 +19,7 @@ impl iter.Iterator for Plains {
     }
 }
 
-fun show_all<I: iter.Iterator>(it: move I).return: i64 where I::Item: fmt.Display {
+fun show_all<I: iter.Iterator>(it: move I) => i64 where I::Item: fmt.Display {
     var n: i64 = 0
     var cursor = it
     for x in cursor {

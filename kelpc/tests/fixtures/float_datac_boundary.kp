@@ -21,20 +21,20 @@ datac FourF(val w: f32, val x: f32, val y: f32, val z: f32)
 datac ThreeF(val x: f32, val y: f32, val z: f32)
 datac F1(val a: f32)
 
-fun sum2(v: move Vec2).return: f64 = v.a
-fun addmix(m: move Mix).return: f64 = m.d + m.i.to_f64()
-fun addmix2(m: move Mix2).return: f64 = m.d + m.i.to_f64()
-fun sumf(t: move TwoF).return: f64 = t.x + t.y
-fun sumbig(b: move Big).return: f64 = b.a + b.b + b.c
-fun sum4(t: move FourF).return: f32 = t.w + t.x + t.y + t.z
-fun sum3(t: move ThreeF).return: f32 = t.x + t.y + t.z
-fun sum1(t: move F1).return: f32 = t.a
+fun sum2(v: move Vec2) => f64 = v.a
+fun addmix(m: move Mix) => f64 = m.d + m.i.to_f64()
+fun addmix2(m: move Mix2) => f64 = m.d + m.i.to_f64()
+fun sumf(t: move TwoF) => f64 = t.x + t.y
+fun sumbig(b: move Big) => f64 = b.a + b.b + b.c
+fun sum4(t: move FourF) => f32 = t.w + t.x + t.y + t.z
+fun sum3(t: move ThreeF) => f32 = t.x + t.y + t.z
+fun sum1(t: move F1) => f32 = t.a
 
-fun mk2().return: Vec2 = Vec2(a = 4.5)
-fun mkf().return: TwoF = TwoF(x = 1.25, y = 2.5)
-fun mkmix().return: Mix = Mix(i = 7, d = 0.5)
-fun mkmix2().return: Mix2 = Mix2(d = 0.5, i = 7)
-fun mkbig().return: Big = Big(a = 1.0, b = 2.0, c = 3.0)
+fun mk2() => Vec2 = Vec2(a = 4.5)
+fun mkf() => TwoF = TwoF(x = 1.25, y = 2.5)
+fun mkmix() => Mix = Mix(i = 7, d = 0.5)
+fun mkmix2() => Mix2 = Mix2(d = 0.5, i = 7)
+fun mkbig() => Big = Big(a = 1.0, b = 2.0, c = 3.0)
 
 fun main() {
     print(sum2(Vec2(a = 3.0)))

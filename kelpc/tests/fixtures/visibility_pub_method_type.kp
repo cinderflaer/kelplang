@@ -5,7 +5,7 @@ datac Hidden(val n: i32)
 
 pub datac Boxed(val n: i32)
 
-fun Boxed.stash(h: Hidden).return: i32 = h.n
+fun Boxed.stash(h: Hidden) => i32 = h.n
 
 fun main() {
     print(1)

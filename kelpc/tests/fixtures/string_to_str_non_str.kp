@@ -1,7 +1,7 @@
 // A `String` passed to a parameter of any type other than `str` keeps the
 // ordinary mismatch error. Only a `str` parameter borrows a `String`.
 impl "std/str"
-fun width(n: i32).return: i32 {
+fun width(n: i32) => i32 {
     return n
 }
 

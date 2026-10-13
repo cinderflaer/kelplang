@@ -2,7 +2,7 @@
 // `where` clause and in the parameter list, types the body's reads of `Item`.
 impl "std/iter"
 
-fun total<I>(it: move I).return: i64 where I: iter.Iterator<Item = i64> {
+fun total<I>(it: move I) => i64 where I: iter.Iterator<Item = i64> {
     var sum: i64 = 0
     var cursor = it
     for x in cursor {
@@ -12,7 +12,7 @@ fun total<I>(it: move I).return: i64 where I: iter.Iterator<Item = i64> {
     return sum
 }
 
-fun first_plus<I: iter.Iterator<Item = i64>>(it: move I, extra: i64).return: i64 {
+fun first_plus<I: iter.Iterator<Item = i64>>(it: move I, extra: i64) => i64 {
     var cursor = it
     var sum: i64 = extra
     for x in cursor {

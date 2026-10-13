@@ -4,7 +4,7 @@ fun main() {
     var xs: List<i32> = List.empty()
     xs.push(1)
     for x in xs {
-        val f = fun().return: usize {
+        val f = fun() => usize {
             return xs.len()
         }
         print(f())

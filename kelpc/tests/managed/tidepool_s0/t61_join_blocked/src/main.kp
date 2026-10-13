@@ -2,7 +2,7 @@ impl "std/thread"
 impl "std/result"
 datac Cell(val n: i64, val next: Box<Cell>)
 
-fun churn(count: i64).return: i64 {
+fun churn(count: i64) => i64 {
     var total: i64 = 0
     var i: i64 = 0
     while i < count {
@@ -15,7 +15,7 @@ fun churn(count: i64).return: i64 {
 
 // Step 0 (T61, section 18.13): main is blocked in join while the worker
 // collects. The join must not hold the collection up until the stop timeout.
-fun worker(n: i64).return: i64 {
+fun worker(n: i64) => i64 {
     return churn(n)
 }
 

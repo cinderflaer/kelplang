@@ -3,13 +3,13 @@
 // a separate long-tail gap), so every check here goes through a `bool`
 // result instead, the arithmetic and comparisons are what this fixture
 // pins, not float formatting.
-fun add(a: f64, b: f64).return: f64 = a + b
+fun add(a: f64, b: f64) => f64 = a + b
 
 // A mixed-class call: SysV numbers the integer and vector argument
 // registers independently, so `b`'s `f64` must land in `xmm0` even though it
 // is the second *argument overall*, and `a`/`c` must still land in `rdi`/
 // `rsi` rather than being pushed out to `rdi`/`rdx` by `b`'s position.
-fun mid(a: i32, b: f64, c: i32).return: i32 = a + c
+fun mid(a: i32, b: f64, c: i32) => i32 = a + c
 
 fun main() {
     val x: f64 = 3.5

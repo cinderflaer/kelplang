@@ -3,14 +3,14 @@
 // trait object is refused by name; the generic function is the workaround.
 trait Source {
     type Item
-    fun mut Self.pull().return: Self::Item
+    fun mut Self.pull() => Self::Item
 }
 
 datac Counter(var n: i32)
 
 impl Source for Counter {
     type Item = i32
-    fun mut Self.pull().return: i32 {
+    fun mut Self.pull() => i32 {
         n += 1
         return n
     }

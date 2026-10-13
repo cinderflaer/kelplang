@@ -3,7 +3,7 @@
 derive(eq, hash)
 datac Point(val x: i32)
 
-fun Point.eq(other: &Point).return: bool = self.x == other.x
+fun Point.eq(other: &Point) => bool = self.x == other.x
 
 fun main() {
     print(Point(x = 1).x)

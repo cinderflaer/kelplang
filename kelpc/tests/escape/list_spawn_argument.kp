@@ -1,7 +1,7 @@
 // T94 refusal: the List is passed to a thread spawn, which crosses to a worker.
 impl "std/thread"
 impl "std/result"
-fun worker(xs: move List<i32>).return: i32 {
+fun worker(xs: move List<i32>) => i32 {
     return xs.get(0)
 }
 

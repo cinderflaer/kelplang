@@ -7,7 +7,7 @@ datac Fib(var a: i64, var b: i64)
 
 impl iter.Iterator for Fib {
     type Item = i64
-    fun mut Self.next().return: option.Option<i64> {
+    fun mut Self.next() => option.Option<i64> {
         val v = self.a
         self.a = self.a + self.b
         return option.Option.Some(value = v)

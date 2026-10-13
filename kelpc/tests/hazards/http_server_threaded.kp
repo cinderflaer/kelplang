@@ -13,7 +13,7 @@ impl "std/str"
 impl "std/thread"
 impl "std/http" caps(net = ["127.0.0.1:*"])
 
-fun arg_u64(i: usize).return: u64 {
+fun arg_u64(i: usize) => u64 {
     val args = process.args()
     return result.expect(
         r = str.parse_u64(args.get(i).as_str()),
@@ -27,12 +27,12 @@ fun say(text: &str) {
     val b = f.write_str("\n")
 }
 
-fun fd_count().return: usize {
+fun fd_count() => usize {
     val listing = fs.list("/proc/self/fd")
     return listing.len()
 }
 
-fun handle(req: &http.ServerRequest).return: http.ServerResponse {
+fun handle(req: &http.ServerRequest) => http.ServerResponse {
     if str.eq(req.path.as_str(), "/id") {
         thread.sleep_ms(200)
         val id = fmt.uint(thread.current_id())

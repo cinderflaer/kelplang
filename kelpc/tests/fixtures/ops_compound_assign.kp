@@ -7,15 +7,15 @@ impl "std/ops"
 datac Vec2(val x: i64, val y: i64)
 
 impl ops.Add for Vec2 {
-    fun Self.add(rhs: &Self).return: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+    fun Self.add(rhs: &Self) => Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
 }
 
 impl ops.Sub for Vec2 {
-    fun Self.sub(rhs: &Self).return: Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
+    fun Self.sub(rhs: &Self) => Vec2 = Vec2(x = x - rhs.x, y = y - rhs.y)
 }
 
 impl ops.Mul for Vec2 {
-    fun Self.mul(rhs: &Self).return: Vec2 = Vec2(x = x * rhs.x, y = y * rhs.y)
+    fun Self.mul(rhs: &Self) => Vec2 = Vec2(x = x * rhs.x, y = y * rhs.y)
 }
 
 datac Holder(var v: Vec2)

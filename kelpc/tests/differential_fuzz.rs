@@ -402,9 +402,9 @@ impl Gen {
         let e = self.i32_expr(&["a", "b"], 2);
         let g = self.f64_expr(&["a", "b"], 2);
         let decls = vec![
-            format!("fun z_add(a: i32, b: i32).return: i32 = {e}"),
-            format!("fun z_scale(a: f64, b: f64).return: f64 = {g}"),
-            "fun z_mk(n: i32).return: ZPoint = ZPoint(x = n, y = n + 1)".to_string(),
+            format!("fun z_add(a: i32, b: i32) => i32 = {e}"),
+            format!("fun z_scale(a: f64, b: f64) => f64 = {g}"),
+            "fun z_mk(n: i32) => ZPoint = ZPoint(x = n, y = n + 1)".to_string(),
         ];
         let lines = vec![
             format!("print(z_add({}, {}))", self.i32_lit(), self.i32_lit()),
@@ -424,8 +424,8 @@ impl Gen {
 
     fn shape_datac(&mut self) -> (Vec<String>, Vec<String>) {
         let decls = vec![
-            "fun z_psum(p: ZPoint).return: i32 = p.x + p.y".to_string(),
-            "fun z_vsum(v: ZVec).return: f64 = v.x + v.y".to_string(),
+            "fun z_psum(p: ZPoint) => i32 = p.x + p.y".to_string(),
+            "fun z_vsum(v: ZVec) => f64 = v.x + v.y".to_string(),
         ];
         let lines = vec![
             format!(
@@ -521,17 +521,17 @@ impl Gen {
     /// operator exists for.
     fn shape_try(&mut self) -> (Vec<String>, Vec<String>) {
         let decls = vec![
-            "fun z_try(n: i32).return: ZRes {".to_string(),
+            "fun z_try(n: i32) => ZRes {".to_string(),
             "    if n > 0 {".to_string(),
             "        return ZRes.Ok(value = n)".to_string(),
             "    }".to_string(),
             "    return ZRes.Err(why = 0)".to_string(),
             "}".to_string(),
-            "fun z_chain(n: i32).return: ZRes {".to_string(),
+            "fun z_chain(n: i32) => ZRes {".to_string(),
             "    val v = z_try(n)?".to_string(),
             "    return ZRes.Ok(value = v + 1)".to_string(),
             "}".to_string(),
-            "fun z_val(r: ZRes).return: i32 = when r {".to_string(),
+            "fun z_val(r: ZRes) => i32 = when r {".to_string(),
             "    Ok(v) -> v".to_string(),
             "    Err(_e) -> -1".to_string(),
             "}".to_string(),
@@ -654,7 +654,7 @@ impl Gen {
     /// element in place.
     fn shape_list_owned(&mut self) -> (Vec<String>, Vec<String>) {
         let decls = vec![
-            "fun z_msg_int(m: ZMsg).return: i32 = when m {".to_string(),
+            "fun z_msg_int(m: ZMsg) => i32 = when m {".to_string(),
             "    Num(n) -> n".to_string(),
             "    Text(t) -> t.len().to_i32()".to_string(),
             "    Nil -> -1".to_string(),
@@ -756,7 +756,7 @@ impl Gen {
     }
 
     fn shape_array(&mut self) -> (Vec<String>, Vec<String>) {
-        let decls = vec!["fun z_pair_sum(p: [f64; 2]).return: f64 = p.get(i = 0) + p.get(i = 1)"
+        let decls = vec!["fun z_pair_sum(p: [f64; 2]) => f64 = p.get(i = 0) + p.get(i = 1)"
             .to_string()];
         let (a1, a2, a3) = (
             self.i32_lit(),
@@ -835,8 +835,8 @@ impl Gen {
     /// of an iteration is exercised.
     fn shape_closure(&mut self) -> (Vec<String>, Vec<String>) {
         let decls = vec![
-            "fun z_double(v: i32).return: i32 = v * 2".to_string(),
-            "fun z_apply(f: fun(i32).return: i32, v: i32).return: i32 = f(v)".to_string(),
+            "fun z_double(v: i32) => i32 = v * 2".to_string(),
+            "fun z_apply(f: fun(i32) => i32, v: i32) => i32 = f(v)".to_string(),
         ];
         let q1 = self.quoted();
         let k = self.i32_lit();
@@ -844,10 +844,10 @@ impl Gen {
         let q2 = self.quoted();
         let lines = vec![
             format!("val s = String.from_str({q1})"),
-            "val f = fun() .return: usize = s.len()".to_string(),
+            "val f = fun() => usize = s.len()".to_string(),
             "print(f())".to_string(),
             format!("val k = {k}"),
-            "val g = fun(x: i32).return: i32 = x + k".to_string(),
+            "val g = fun(x: i32) => i32 = x + k".to_string(),
             format!("print(g({n}))"),
             "val h = z_double".to_string(),
             format!("print(h({n}))"),
@@ -856,7 +856,7 @@ impl Gen {
             "var i = 0".to_string(),
             "while i < 3 {".to_string(),
             format!("    val t = String.from_str({q2})"),
-            "    val c = fun() .return: usize = t.len()".to_string(),
+            "    val c = fun() => usize = t.len()".to_string(),
             "    print(c())".to_string(),
             "    i = i + 1".to_string(),
             "}".to_string(),

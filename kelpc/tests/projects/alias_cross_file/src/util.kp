@@ -3,4 +3,4 @@
 // only way to share a substitution.
 alias %*greeting*% = "hello from an imported alias"
 
-fun double(n: i32).return: i32 = n * 2
+fun double(n: i32) => i32 = n * 2

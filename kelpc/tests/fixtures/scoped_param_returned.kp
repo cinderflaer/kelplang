@@ -1,6 +1,6 @@
 // Returning a scoped parameter: the value would outlive the call it was
 // written in, and its stack environment with it.
-fun run(f: scoped fun(i32)).return: fun(i32) {
+fun run(f: scoped fun(i32)) => fun(i32) {
     return f
 }
 

@@ -8,7 +8,7 @@ enum Tree<T> {
 
 datac Pair<A, B>(val first: A, val second: B)
 
-fun depth(t: &Tree<i32>).return: i32 = when t {
+fun depth(t: &Tree<i32>) => i32 = when t {
     Leaf -> 0
     Branch(_l, left, right) -> 1 + depth(t = left.get())
 }

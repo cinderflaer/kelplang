@@ -8,12 +8,12 @@ impl "std/result"
 
 datac Cell(val n: i64, val next: Box<Cell>)
 
-fun work(k: i64).return: i64 {
+fun work(k: i64) => i64 {
     val c = Cell(n = k, next = Box.of(Cell(n = k + 1, next = Box.empty())))
     panic("worker exploded")
 }
 
-fun churn(n: i64).return: i64 {
+fun churn(n: i64) => i64 {
     var total: i64 = 0
     var i: i64 = 0
     while i < n {

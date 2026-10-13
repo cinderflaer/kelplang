@@ -1,6 +1,6 @@
 // M6.3: while a `&str` view is alive, its owner cannot be moved, the view
 // is exactly as long-lived as the owner's borrow.
-fun view(s: &String).return: &str = s.as_str()
+fun view(s: &String) => &str = s.as_str()
 
 fun main() {
     val s = String.from_str("hi")

@@ -15,7 +15,7 @@ enum Token {
     Blank
 }
 
-fun find(id: i32).return: option.Option<i32> {
+fun find(id: i32) => option.Option<i32> {
     if id > 0 {
         return option.Option.Some(value = id * 10)
     }
@@ -23,19 +23,19 @@ fun find(id: i32).return: option.Option<i32> {
 }
 
 // The else block returns when the lookup misses.
-fun doubled(id: i32).return: i32 {
+fun doubled(id: i32) => i32 {
     let Some(user) = find(id) else { return -1 }
     print(user)
     return user * 2
 }
 
 // The else block is a `return` too, on a borrow of an enum.
-fun radius(s: &Shape).return: f64 {
+fun radius(s: &Shape) => f64 {
     let Circle(r) = s else { return 0.0 }
     return r
 }
 
-fun width(t: Token).return: usize {
+fun width(t: Token) => usize {
     let Word(text) = t else {
         return 0
     }
@@ -43,7 +43,7 @@ fun width(t: Token).return: usize {
 }
 
 // `continue` leaves the loop body, so the else block can end an iteration.
-fun total(ids: [i32; 4]).return: i32 {
+fun total(ids: [i32; 4]) => i32 {
     var sum = 0
     for id in ids {
         let Some(v) = find(id) else {

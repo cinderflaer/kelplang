@@ -8,7 +8,7 @@ impl "std/result"
 
 static COUNTER: AtomicI64 = AtomicI64.new(0)
 
-fun worker(rounds: i64).return: i64 {
+fun worker(rounds: i64) => i64 {
     var i: i64 = 0
     while i < rounds {
         COUNTER.fetch_add(value = 1, order = atomic.Ordering.SeqCst)

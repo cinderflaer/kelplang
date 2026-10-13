@@ -4,9 +4,9 @@
 // are well formed.
 datac WithList(val xs: List<i32>)
 
-fun WithList.hash().return: u64 = self.xs.len().to_u64()
+fun WithList.hash() => u64 = self.xs.len().to_u64()
 
-fun WithList.eq(other: &WithList).return: bool = self.xs.len() == other.xs.len()
+fun WithList.eq(other: &WithList) => bool = self.xs.len() == other.xs.len()
 
 fun main() {
     var m: Map<WithList, i32> = Map.new()

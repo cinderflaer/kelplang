@@ -2,7 +2,7 @@
 // `List<Hidden>` leaks `Hidden` through the element position.
 datac Hidden(val n: i32)
 
-pub fun lookup(xs: List<Hidden>).return: i32 = xs.get(i = 0).n
+pub fun lookup(xs: List<Hidden>) => i32 = xs.get(i = 0).n
 
 fun main() {
     print(1)

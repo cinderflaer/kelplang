@@ -30,7 +30,7 @@ A circle.
 #### `Circle.diameter`
 
 ```kelp
-fun Circle.diameter().return: f64
+fun Circle.diameter() => f64
 ```
 
 The diameter.
@@ -74,7 +74,7 @@ Something with an area.
 
 **Required and provided items**
 
-- `fun Self.area().return: f64`: The area.
+- `fun Self.area() => f64`: The area.
 - `type Item`
 
 ## Functions
@@ -88,7 +88,7 @@ fun hidden()
 ### `load`
 
 ```kelp
-pub fun load(path: &str).return: String
+pub fun load(path: &str) => String
 ```
 
 *requires capability `fs`*
@@ -98,7 +98,7 @@ Reads a file named by `path`.
 ### `make`
 
 ```kelp
-pub unsafe fun make(r: f64).return: Circle
+pub unsafe fun make(r: f64) => Circle
 ```
 
 *unsafe*

@@ -3,9 +3,9 @@
 // transfer and is refused.
 datac Key(val x: i32)
 
-fun Key.hash().return: u64 = self.x.to_u64()
+fun Key.hash() => u64 = self.x.to_u64()
 
-fun Key.eq(other: Key).return: bool = self.x == other.x
+fun Key.eq(other: Key) => bool = self.x == other.x
 
 fun main() {
     var m: Map<Key, i32> = Map.new()

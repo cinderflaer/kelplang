@@ -2,7 +2,7 @@
 // argument list the `String` is moved into `take`, so the borrow would outlive
 // the move. The borrow rules refuse it, as they refuse the explicit `.as_str()`.
 impl "std/str"
-fun take(s: move String).return: i32 {
+fun take(s: move String) => i32 {
     return 1
 }
 

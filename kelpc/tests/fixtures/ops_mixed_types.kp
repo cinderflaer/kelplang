@@ -7,11 +7,11 @@ datac A(val x: i32)
 datac B(val x: i32)
 
 impl ops.Add for A {
-    fun Self.add(rhs: &Self).return: A = A(x = x + rhs.x)
+    fun Self.add(rhs: &Self) => A = A(x = x + rhs.x)
 }
 
 impl ops.Add for B {
-    fun Self.add(rhs: &Self).return: B = B(x = x + rhs.x)
+    fun Self.add(rhs: &Self) => B = B(x = x + rhs.x)
 }
 
 fun main() {

@@ -8,7 +8,7 @@ impl "std/result"
 
 pd val flag: AtomicBool = AtomicBool.new(false)
 
-fun try_set().return: bool {
+fun try_set() => bool {
     val r = flag.compare_exchange(current = false, new = true, order = atomic.Ordering.SeqCst)
     when r {
         Ok(_) -> true

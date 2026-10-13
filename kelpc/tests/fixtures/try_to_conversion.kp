@@ -9,34 +9,34 @@ impl "std/result"
 
 pd var calls_seen = 0
 
-fun noisy(v: i64).return: i64 {
+fun noisy(v: i64) => i64 {
     calls_seen = calls_seen + 1
     return v
 }
 
 // The payload, or `fail` when the conversion refused.
-fun u8_or(o: option.Option<u8>, fail: u8).return: u8 {
+fun u8_or(o: option.Option<u8>, fail: u8) => u8 {
     if let Some(v) = o {
         return v
     }
     return fail
 }
 
-fun u32_or(o: option.Option<u32>, fail: u32).return: u32 {
+fun u32_or(o: option.Option<u32>, fail: u32) => u32 {
     if let Some(v) = o {
         return v
     }
     return fail
 }
 
-fun u64_or(o: option.Option<u64>, fail: u64).return: u64 {
+fun u64_or(o: option.Option<u64>, fail: u64) => u64 {
     if let Some(v) = o {
         return v
     }
     return fail
 }
 
-fun i32_or(o: option.Option<i32>, fail: i32).return: i32 {
+fun i32_or(o: option.Option<i32>, fail: i32) => i32 {
     if let Some(v) = o {
         return v
     }
@@ -45,7 +45,7 @@ fun i32_or(o: option.Option<i32>, fail: i32).return: i32 {
 
 // `?` propagates `None` out of a function that returns `Option`, so the
 // conversion composes with the rest of the error surface.
-fun pick(n: i64).return: option.Option<u8> {
+fun pick(n: i64) => option.Option<u8> {
     val v = n.try_to_u8()?
     return option.Option.Some(value = v)
 }

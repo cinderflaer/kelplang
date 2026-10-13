@@ -1,6 +1,6 @@
 impl "std/option"
 
-fun classify(a: i32, b: i32).return: i32 {
+fun classify(a: i32, b: i32) => i32 {
     return when (a, b) {
         (0, 0) -> 100
         (0, y) -> y
@@ -10,7 +10,7 @@ fun classify(a: i32, b: i32).return: i32 {
     }
 }
 
-fun pick(p: (i32, i32), o: &option.Option<i32>).return: i32 {
+fun pick(p: (i32, i32), o: &option.Option<i32>) => i32 {
     return when (p, o) {
         ((1, k), Some(v)) -> k + v
         ((1, k), None) -> k
@@ -20,7 +20,7 @@ fun pick(p: (i32, i32), o: &option.Option<i32>).return: i32 {
     }
 }
 
-fun letter(c: char, flag: bool).return: i32 {
+fun letter(c: char, flag: bool) => i32 {
     return when (c, flag) {
         ('a', true) -> 1
         ('a', false) -> 2

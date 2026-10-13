@@ -5,7 +5,7 @@
 impl "std/thread"
 impl "std/result"
 
-fun worker(x: move i64).return: i64 {
+fun worker(x: move i64) => i64 {
     thread.sleep_ms(5)
     x + 1
 }

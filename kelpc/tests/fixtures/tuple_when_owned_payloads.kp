@@ -1,6 +1,6 @@
 impl "std/option"
 
-fun pick(a: option.Option<String>, b: option.Option<String>).return: usize {
+fun pick(a: option.Option<String>, b: option.Option<String>) => usize {
     return when (a, b) {
         (Some(x), Some(y)) -> x.len() + y.len()
         (Some(x), None) -> x.len()

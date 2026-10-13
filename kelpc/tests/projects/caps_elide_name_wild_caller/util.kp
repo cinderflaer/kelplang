@@ -1,3 +1,3 @@
 impl "std/env"
 
-pub fun probe().return: bool = env.has("has/nested")
+pub fun probe() => bool = env.has("has/nested")

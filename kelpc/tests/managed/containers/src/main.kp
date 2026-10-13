@@ -18,6 +18,6 @@ fun main() {
     print(held.name.as_str())
 
     val b = Box.of(41)
-    val add = fun(x: i32).return: i32 = x + b.get()
+    val add = fun(x: i32) => i32 = x + b.get()
     print(add(1))
 }

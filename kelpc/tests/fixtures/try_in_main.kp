@@ -5,7 +5,7 @@ enum Result<T, E> {
     Err(val error: E)
 }
 
-fun get().return: Result<i32, i32> = Result.Ok(value = 1)
+fun get() => Result<i32, i32> = Result.Ok(value = 1)
 
 fun main() {
     val v = get()?

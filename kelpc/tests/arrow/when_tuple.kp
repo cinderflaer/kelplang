@@ -1,5 +1,5 @@
 // `=>` is the arrow of a tuple `when`, one arm per row.
-fun classify(a: i32, b: i32).return: i32 {
+fun classify(a: i32, b: i32) => i32 {
     return when (a, b) {
         (0, 0) => 100
         (0, y) => y

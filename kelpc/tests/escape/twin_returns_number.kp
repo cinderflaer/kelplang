@@ -1,7 +1,7 @@
 // T45 twin: a body makes a Box, uses it only inside the body, and returns a
 // number. The Box is a block value that never leaves the body, so the escape
 // test accepts it.
-fun count(n: i32).return: i32 {
+fun count(n: i32) => i32 {
     val b = Box.of(n)
     return b.get() + 1
 }

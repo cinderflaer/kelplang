@@ -1,9 +1,9 @@
 trait Describe {
-    fun Self.describe().return: i32
+    fun Self.describe() => i32
 }
 
 impl<T: Describe> Describe for T {
-    fun Self.describe().return: i32 {
+    fun Self.describe() => i32 {
         return 1
     }
 }

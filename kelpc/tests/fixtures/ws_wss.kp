@@ -9,7 +9,7 @@ impl "std/process"
 impl "std/str"
 impl "std/result"
 
-fun server_port().return: u16 {
+fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(1).as_str()),
@@ -18,7 +18,7 @@ fun server_port().return: u16 {
     return p.to_u16()
 }
 
-fun url_for(port: u16).return: String {
+fun url_for(port: u16) => String {
     val port_text = str.from_u64(port.to_u64())
     val rest = str.concat(port_text.as_str(), "/gateway")
     return str.concat("wss://127.0.0.1:", rest.as_str())

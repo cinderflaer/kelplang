@@ -7,7 +7,7 @@ impl "uart" caps(mmio = ["0x10000000+0x100"])
 
 trait Line {
     fun Self.write()
-    fun Self.count().return: i64
+    fun Self.count() => i64
     fun mut Self.bump()
 }
 
@@ -16,13 +16,13 @@ datac Bye()
 
 impl Line for Hello {
     fun Self.write() { uart.puts("hello from dyn\n") }
-    fun Self.count().return: i64 = 1
+    fun Self.count() => i64 = 1
     fun mut Self.bump() { }
 }
 
 impl Line for Bye {
     fun Self.write() { uart.puts("bye from dyn\n") }
-    fun Self.count().return: i64 = 2
+    fun Self.count() => i64 = 2
     fun mut Self.bump() { }
 }
 

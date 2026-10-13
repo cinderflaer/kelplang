@@ -1,3 +1,3 @@
 pub trait Doubler {
-    fun Self.double().return: i32
+    fun Self.double() => i32
 }

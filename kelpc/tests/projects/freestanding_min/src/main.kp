@@ -16,15 +16,15 @@ section(".rodata.boot") const BOOT_MAGIC: [u8; 4] = [75, 69, 76, 80]
 
 trait Step {
     type Item
-    fun Self.step(v: Self::Item).return: Self::Item
-    fun Self.bump(v: Self::Item).return: Self::Item { return self.step(v) + 1 }
+    fun Self.step(v: Self::Item) => Self::Item
+    fun Self.bump(v: Self::Item) => Self::Item { return self.step(v) + 1 }
 }
 
 datac Thrice(val factor: u64)
 
 impl Step for Thrice {
     type Item = u64
-    fun Self.step(v: u64).return: u64 = v * factor
+    fun Self.step(v: u64) => u64 = v * factor
 }
 
 section(".text.boot") fun kmain() {

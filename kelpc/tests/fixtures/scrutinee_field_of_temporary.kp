@@ -18,7 +18,7 @@ enum Token {
 
 datac Holder(val t: Token, val extra: String)
 
-fun mk().return: Holder {
+fun mk() => Holder {
     return Holder(t = Token.Word(text = String.from_str("four")), extra = String.from_str("xy"))
 }
 

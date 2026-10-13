@@ -2,12 +2,12 @@
 // it and `move (A, B)` takes ownership of the argument at the call site
 // (`plan/syntax.md` 4 and 10.1). Every position of a borrow binds when it is
 // `Copy`; an owned one out of a borrow is refused (`tuple_element_borrow.kp`).
-fun sum(p: (i32, i32)).return: i32 {
+fun sum(p: (i32, i32)) => i32 {
     val (lo, hi) = p
     return lo + hi
 }
 
-fun take(p: move (String, i32)).return: i32 {
+fun take(p: move (String, i32)) => i32 {
     val (text, n) = p
     print(text.as_str())
     return n

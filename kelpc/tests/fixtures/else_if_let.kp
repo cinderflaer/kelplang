@@ -10,7 +10,7 @@ enum Maybe {
     No
 }
 
-fun pick(limit: i64).return: i64 {
+fun pick(limit: i64) => i64 {
     val m = Maybe.Yes(n = 3)
     var best: i64 = 0
     if limit < 0 {
@@ -24,7 +24,7 @@ fun pick(limit: i64).return: i64 {
 // A payload-free variant, the second shape the panic covered, and an `else if
 // let` whose pattern does not match. The chain's tail is then the value of the
 // `if`, with nothing else in it.
-fun label(m: Maybe).return: i64 {
+fun label(m: Maybe) => i64 {
     if false {
         return -1
     } else if let No = m {
@@ -35,7 +35,7 @@ fun label(m: Maybe).return: i64 {
     return -2
 }
 
-fun otherwise(m: Maybe).return: i64 {
+fun otherwise(m: Maybe) => i64 {
     var seen: i64 = 1
     if false {
         seen = 2
@@ -47,7 +47,7 @@ fun otherwise(m: Maybe).return: i64 {
 
 // The same link used as a *value*: the `if` produces an `i64`, so the else-if
 // branch's block has a tail and the join runs over the two branch types.
-fun classify(b: bool, m: Maybe).return: i64 {
+fun classify(b: bool, m: Maybe) => i64 {
     if b {
         1
     } else if let Yes(n) = m {

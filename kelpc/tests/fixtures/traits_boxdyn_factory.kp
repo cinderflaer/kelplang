@@ -3,25 +3,25 @@
 // copying it, and a `&dyn` borrowed back out of the box goes on to a free
 // function.
 trait Shape {
-    fun Self.area().return: f64
-    fun Self.kind().return: str
+    fun Self.area() => f64
+    fun Self.kind() => str
 }
 
 datac Circle(val r: f64)
 impl Shape for Circle {
-    fun Self.area().return: f64 = r * r * 3.0
-    fun Self.kind().return: str = "circle"
+    fun Self.area() => f64 = r * r * 3.0
+    fun Self.kind() => str = "circle"
 }
 
 datac Square(val s: f64)
 impl Shape for Square {
-    fun Self.area().return: f64 = s * s
-    fun Self.kind().return: str = "square"
+    fun Self.area() => f64 = s * s
+    fun Self.kind() => str = "square"
 }
 
-fun describe(s: &dyn Shape).return: str = s.kind()
+fun describe(s: &dyn Shape) => str = s.kind()
 
-fun make(big: bool).return: Box<dyn Shape> {
+fun make(big: bool) => Box<dyn Shape> {
     if big {
         return Box.of(Circle(r = 2.0))
     }

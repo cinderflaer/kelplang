@@ -26,7 +26,7 @@ fun add(p: mut i64, d: i64) {
     *p = *p + d
 }
 
-fun accumulate(p: mut i64, a: i64, b: i64).return: i64 {
+fun accumulate(p: mut i64, a: i64, b: i64) => i64 {
     *p = *p + a
     val keep = a * b
     *p = *p + keep

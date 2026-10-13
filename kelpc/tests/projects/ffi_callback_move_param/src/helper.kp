@@ -1,4 +1,4 @@
 // Gap 4 rejection: a callback closure parameter cannot take ownership itself
 // (or be a `mut` borrow), because the native thunk forwards every argument by
 // value.
-pub extern fun kelp_call_twice(f: move closure(move i32), x: i32).return: i32
+pub extern fun kelp_call_twice(f: move closure(move i32), x: i32) => i32

@@ -4,7 +4,7 @@
 
 trait Src {
     type Out
-    fun Self.produce().return: Self::Out
+    fun Self.produce() => Self::Out
 }
 
 datac A(val n: i32)
@@ -12,15 +12,15 @@ datac B(val n: i64)
 
 impl Src for A {
     type Out = i32
-    fun Self.produce().return: i32 = n * 2
+    fun Self.produce() => i32 = n * 2
 }
 
 impl Src for B {
     type Out = i64
-    fun Self.produce().return: i64 = n * 3
+    fun Self.produce() => i64 = n * 3
 }
 
-fun produce_of<S: Src>(x: &S).return: S::Out = x.produce()
+fun produce_of<S: Src>(x: &S) => S::Out = x.produce()
 
 fun main() {
     val a = A(n = 3)

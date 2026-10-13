@@ -2,8 +2,8 @@
 // parameters. Each occurrence is its own parameter, the bound is checked at the
 // call, and the trait's methods dispatch statically inside the body.
 trait Shape {
-    fun Self.area().return: i32
-    fun Self.name().return: str
+    fun Self.area() => i32
+    fun Self.name() => str
 }
 
 datac Square(val side: i32)
@@ -11,18 +11,18 @@ datac Square(val side: i32)
 datac Rect(val width: i32, val height: i32)
 
 impl Shape for Square {
-    fun Self.area().return: i32 = side * side
-    fun Self.name().return: str = "square"
+    fun Self.area() => i32 = side * side
+    fun Self.name() => str = "square"
 }
 
 impl Shape for Rect {
-    fun Self.area().return: i32 = width * height
-    fun Self.name().return: str = "rect"
+    fun Self.area() => i32 = width * height
+    fun Self.name() => str = "rect"
 }
 
-fun pair_area(a: impl Shape, b: &impl Shape).return: i32 = a.area() + b.area()
+fun pair_area(a: impl Shape, b: &impl Shape) => i32 = a.area() + b.area()
 
-fun describe(s: &impl Shape).return: str = s.name()
+fun describe(s: &impl Shape) => str = s.name()
 
 fun main() {
     print(pair_area(a = Square(side = 3), b = Rect(width = 2, height = 5)))

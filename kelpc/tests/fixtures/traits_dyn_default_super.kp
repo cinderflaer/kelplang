@@ -1,20 +1,20 @@
 // A-12 slice 4: a default method and a supertrait method, both called through a
 // `&dyn` of the subtrait.
 trait Shape {
-    fun Self.area().return: f64
-    fun Self.describe().return: String { return "a shape" }
+    fun Self.area() => f64
+    fun Self.describe() => String { return "a shape" }
 }
 
 trait Named: Shape {
-    fun Self.name().return: str
+    fun Self.name() => str
 }
 
 datac Circle(val r: f64)
 
-impl Shape for Circle { fun Self.area().return: f64 = r * r }
-impl Named for Circle { fun Self.name().return: str = "circle" }
+impl Shape for Circle { fun Self.area() => f64 = r * r }
+impl Named for Circle { fun Self.name() => str = "circle" }
 
-fun through_named(s: &dyn Named).return: f64 {
+fun through_named(s: &dyn Named) => f64 {
     print(s.name())
     print(s.describe())
     return s.area()

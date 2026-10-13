@@ -11,12 +11,12 @@ impl "std/option"
 
 datac Doc(val title: String, val body: String)
 
-fun title_of().return: String {
+fun title_of() => String {
     // A `return` position.
     return "a title"
 }
 
-fun shout(s: String).return: String {
+fun shout(s: String) => String {
     return str.concat(s.as_str(), "!")
 }
 

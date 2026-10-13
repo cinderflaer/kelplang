@@ -8,7 +8,7 @@ enum Shape {
     Empty
 }
 
-fun find(id: i32).return: option.Option<i32> {
+fun find(id: i32) => option.Option<i32> {
     return option.Option.Some(value = id)
 }
 

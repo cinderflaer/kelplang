@@ -8,7 +8,7 @@ impl "std/thread"
 impl "std/result"
 impl "std/str"
 
-fun reader(rounds: move i64).return: i64 {
+fun reader(rounds: move i64) => i64 {
     var seen: i64 = 0
     var i: i64 = 0
     while i < rounds {
@@ -23,7 +23,7 @@ fun reader(rounds: move i64).return: i64 {
     seen
 }
 
-fun writer_a(rounds: move i64).return: i64 {
+fun writer_a(rounds: move i64) => i64 {
     var i: i64 = 0
     while i < rounds {
         env.set("KELP_ENV_CHURN_A", "a")
@@ -33,7 +33,7 @@ fun writer_a(rounds: move i64).return: i64 {
     rounds
 }
 
-fun writer_b(rounds: move i64).return: i64 {
+fun writer_b(rounds: move i64) => i64 {
     var i: i64 = 0
     while i < rounds {
         env.set("KELP_ENV_CHURN_B", "b")

@@ -1,16 +1,16 @@
 // A-12 slice 6: a static method written on the trait's own name, with the
 // implementing type supplied by the expected type.
 trait From<T> {
-    fun from(value: T).return: Self
+    fun from(value: T) => Self
 }
 
 datac AppErr(val code: i32)
 
 impl From<i32> for AppErr {
-    fun from(value: i32).return: AppErr = AppErr(code = value)
+    fun from(value: i32) => AppErr = AppErr(code = value)
 }
 
-fun build(n: i32).return: AppErr {
+fun build(n: i32) => AppErr {
     return From.from(value = n)
 }
 

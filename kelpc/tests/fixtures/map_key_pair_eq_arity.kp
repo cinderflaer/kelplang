@@ -2,9 +2,9 @@
 // or none is not a pair the map can call.
 datac Key(val x: i32)
 
-fun Key.hash().return: u64 = self.x.to_u64()
+fun Key.hash() => u64 = self.x.to_u64()
 
-fun Key.eq(a: &Key, b: &Key).return: bool = a.x == b.x
+fun Key.eq(a: &Key, b: &Key) => bool = a.x == b.x
 
 fun main() {
     var m: Map<Key, i32> = Map.new()

@@ -6,14 +6,14 @@ enum Option<T> {
     None
 }
 
-fun is_some<T>(o: &Option<T>).return: bool = when o {
+fun is_some<T>(o: &Option<T>) => bool = when o {
     Some(_) -> true
     None -> false
 }
 
-fun wrap<T>(x: T).return: Option<T> = Option.Some(value = x)
+fun wrap<T>(x: T) => Option<T> = Option.Some(value = x)
 
-fun describe(o: &Option<String>).return: usize = when o {
+fun describe(o: &Option<String>) => usize = when o {
     Some(v) -> v.len()
     None -> 0
 }

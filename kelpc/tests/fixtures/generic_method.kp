@@ -2,7 +2,7 @@
 // receiver would have to say which instantiation it belongs to.
 datac Pair<A, B>(val first: A, val second: B)
 
-fun Pair.first_of().return: A = first
+fun Pair.first_of() => A = first
 
 fun main() {
     val p = Pair(first = 1, second = 2)

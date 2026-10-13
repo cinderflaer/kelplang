@@ -5,7 +5,7 @@
 impl "std/thread"
 impl "std/result"
 
-fun worker(x: move i64).return: i64 = x + 1
+fun worker(x: move i64) => i64 = x + 1
 
 fun main() {
     val h = thread.spawn(worker, 41)

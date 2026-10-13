@@ -7,14 +7,14 @@ enum Bad {
     Oops
 }
 
-fun step(fail: bool).return: result.Result<i32, Bad> {
+fun step(fail: bool) => result.Result<i32, Bad> {
     if fail {
         return result.Result.Err(error = Bad.Oops)
     }
     return result.Result.Ok(value = 7)
 }
 
-fun run(fail: bool).return: result.Result<i32, Bad> {
+fun run(fail: bool) => result.Result<i32, Bad> {
     errdefer print("cleanup")
     val v = step(fail)?
     return result.Result.Ok(value = v + 1)

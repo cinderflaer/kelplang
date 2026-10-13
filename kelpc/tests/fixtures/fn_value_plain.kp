@@ -5,18 +5,18 @@
 // which is the runtime slice (MK7 S3); this fixture is the closure slice's own
 // copy, so MK7 S2E is gated on shapes no stdlib import hides behind `S3`.
 
-fun double(x: i32).return: i32 = x * 2
+fun double(x: i32) => i32 = x * 2
 
-fun triple(x: i32).return: i32 = x * 3
+fun triple(x: i32) => i32 = x * 3
 
 // A function type as a parameter, and one widened closure parameter by `move`.
-fun apply(f: fun(i32).return: i32, x: i32).return: i32 = f(x)
+fun apply(f: fun(i32) => i32, x: i32) => i32 = f(x)
 
-fun own(f: move closure(i32).return: i32, x: i32).return: i32 = f(x)
+fun own(f: move closure(i32) => i32, x: i32) => i32 = f(x)
 
 // A function type as a return value: which function it is, the caller cannot
 // tell, so calling it is the backend's indirect call.
-fun pick(which: bool).return: fun(i32).return: i32 {
+fun pick(which: bool) => fun(i32) => i32 {
     if which {
         return double
     }
@@ -24,11 +24,11 @@ fun pick(which: bool).return: fun(i32).return: i32 {
 }
 
 // A function value in a `datac` field, and a closure in one.
-datac Handlers(val on_i32: fun(i32).return: i32)
+datac Handlers(val on_i32: fun(i32) => i32)
 
-datac Callback(val cb: closure(i32).return: i32)
+datac Callback(val cb: closure(i32) => i32)
 
-fun call_through(h: Handlers, x: i32).return: i32 = h.on_i32(x)
+fun call_through(h: Handlers, x: i32) => i32 = h.on_i32(x)
 
 fun main() {
     // A local, a parameter and a call through a value.
@@ -46,13 +46,13 @@ fun main() {
     // A `Box` is the one container a closure may be an element of, and the
     // literal here captured `k`, so the box owns an environment.
     val k = 5
-    val boxed: Box<closure(i32).return: i32> = Box.of(fun(x: i32).return: i32 = x * k)
+    val boxed: Box<closure(i32) => i32> = Box.of(fun(x: i32) => i32 = x * k)
     val g = boxed.get()
     print(g(4))
 
     // A capturing literal moved into a `move` parameter, and a closure in a
     // field called through the field's own address.
-    print(own(fun(x: i32).return: i32 = x + k, 1))
-    val h = Callback(cb = fun(x: i32).return: i32 = x - k)
+    print(own(fun(x: i32) => i32 = x + k, 1))
+    val h = Callback(cb = fun(x: i32) => i32 = x - k)
     print(h.cb(12))
 }

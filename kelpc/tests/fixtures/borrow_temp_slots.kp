@@ -20,15 +20,15 @@ datac Trio(val x: Pair, val y: i32)
 // passing the next slice adds.
 datac Quad(val a: i64, val b: i64, val c: i64)
 
-fun sum(p: Pair).return: i32 = p.a + p.b
+fun sum(p: Pair) => i32 = p.a + p.b
 
-fun pair_sum(first: Pair, second: Pair).return: i32 = first.a + first.b + second.a + second.b
+fun pair_sum(first: Pair, second: Pair) => i32 = first.a + first.b + second.a + second.b
 
-fun make(a: i32, b: i32).return: Pair = Pair(a = a, b = b)
+fun make(a: i32, b: i32) => Pair = Pair(a = a, b = b)
 
-fun trio_sum(t: Trio).return: i32 = t.x.a + t.x.b + t.y
+fun trio_sum(t: Trio) => i32 = t.x.a + t.x.b + t.y
 
-fun quad_sum(q: Quad).return: i64 = q.a + q.b + q.c
+fun quad_sum(q: Quad) => i64 = q.a + q.b + q.c
 
 fun main() {
     print(sum(Pair(a = 1, b = 2)))

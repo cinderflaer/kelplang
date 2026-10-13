@@ -1,7 +1,7 @@
-// A-4: a literal's `.return` cannot be a borrow: the elision rule that says which
+// A-4: a literal's `=>` cannot be a borrow: the elision rule that says which
 // argument a borrow comes from has nowhere to be written for a value called
 // through a pointer.
 fun main() {
-    val f = fun(s: &str).return: &str = s
+    val f = fun(s: &str) => &str = s
     print(f("x"))
 }

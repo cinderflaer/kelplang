@@ -30,14 +30,14 @@ fun mut Children<M>.column(block: scoped fun(mut Children<M>)) {
     items.push(Node.Column(children = inner.items))
 }
 
-pub fun column<M>(block: scoped fun(mut Children<M>)).return: Node<M> {
+pub fun column<M>(block: scoped fun(mut Children<M>)) => Node<M> {
     var c = Children<M>(items = List.empty())
     block(c)
     return Node.Column(children = c.items)
 }
 
 // The block reads the borrowed `s` and nests a second scoped block.
-fun view(s: State).return: Node<i32> {
+fun view(s: State) => Node<i32> {
     return column { k ->
         k.text(s.title.as_str())
         k.column { m ->
@@ -47,13 +47,13 @@ fun view(s: State).return: Node<i32> {
     }
 }
 
-fun size<M>(n: Node<M>).return: i32 = when n {
+fun size<M>(n: Node<M>) => i32 = when n {
     Column(children) -> total(children)
     Text(_) -> 1
     Button(_, _) -> 1
 }
 
-fun total<M>(xs: List<Node<M>>).return: i32 {
+fun total<M>(xs: List<Node<M>>) => i32 {
     var sum = 0
     var i: usize = 0
     while i < xs.len() {

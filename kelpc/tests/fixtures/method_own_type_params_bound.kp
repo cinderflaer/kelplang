@@ -1,6 +1,6 @@
-trait Named { fun Self.name().return: i32 }
+trait Named { fun Self.name() => i32 }
 datac Dog(val id: i32)
-impl Named for Dog { fun Self.name().return: i32 = id }
+impl Named for Dog { fun Self.name() => i32 = id }
 datac Bag(var total: i32)
 fun mut Bag.add_named<T: Named>(x: &T) { total += x.name() }
 fun main() {

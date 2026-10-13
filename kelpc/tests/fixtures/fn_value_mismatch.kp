@@ -1,8 +1,8 @@
 // A-4: the parameter types are part of the function type, so a callback of the
 // wrong shape is an ordinary argument-type mismatch.
-fun double(x: i32).return: i32 = x * 2
+fun double(x: i32) => i32 = x * 2
 
-fun apply(f: fun(f64).return: f64, x: f64).return: f64 = f(x)
+fun apply(f: fun(f64) => f64, x: f64) => f64 = f(x)
 
 fun main() {
     print(apply(double, 1.0))

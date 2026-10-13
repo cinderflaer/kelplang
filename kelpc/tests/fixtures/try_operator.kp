@@ -12,7 +12,7 @@ enum Option<T> {
     None
 }
 
-fun half(n: i64).return: Result<i64, String> {
+fun half(n: i64) => Result<i64, String> {
     if n % 2 != 0 {
         return Result.Err(error = String.from_str(s = "odd"))
     }
@@ -20,25 +20,25 @@ fun half(n: i64).return: Result<i64, String> {
 }
 
 // Two frames, both propagating: the failure crosses `quarter` unchanged.
-fun quarter(n: i64).return: Result<i64, String> {
+fun quarter(n: i64) => Result<i64, String> {
     val h = half(n = n)?
     return Result.Ok(value = h / 2)
 }
 
 // `?` on `Option`, and an owned success payload moved through it.
-fun maybe_word(n: i64).return: Option<String> {
+fun maybe_word(n: i64) => Option<String> {
     if n < 0 {
         return Option.None
     }
     return Option.Some(value = String.from_str(s = "word"))
 }
 
-fun loud(n: i64).return: Option<String> {
+fun loud(n: i64) => Option<String> {
     val w = maybe_word(n = n)?
     return Option.Some(value = String.from_str(s = w.as_str()))
 }
 
-fun res_len(r: &Result<i64, String>).return: i32 {
+fun res_len(r: &Result<i64, String>) => i32 {
     if let Ok(v) = r {
         return v.to_i32()
     }
@@ -48,7 +48,7 @@ fun res_len(r: &Result<i64, String>).return: i32 {
     return 0
 }
 
-fun opt_len(o: &Option<String>).return: i32 {
+fun opt_len(o: &Option<String>) => i32 {
     if let Some(v) = o {
         return v.len().to_i32()
     }
@@ -56,7 +56,7 @@ fun opt_len(o: &Option<String>).return: i32 {
 }
 
 // `?` mid-expression: the operand does not have to be a whole statement.
-fun plus_half(n: i64).return: Result<i64, String> {
+fun plus_half(n: i64) => Result<i64, String> {
     return Result.Ok(value = 1 + half(n = n)?)
 }
 

@@ -1,6 +1,6 @@
 // T95 twin: a shared borrow of the List is passed to a call whose result holds
 // no reference, so the borrow reaches nothing. The List is accepted.
-fun first(xs: &List<i32>).return: i32 = xs.get(0)
+fun first(xs: &List<i32>) => i32 = xs.get(0)
 
 fun main() {
     var xs: List<i32> = List.empty()

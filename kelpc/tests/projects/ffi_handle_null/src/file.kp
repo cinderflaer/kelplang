@@ -3,7 +3,7 @@
 // which is legal here because this module has an "[extern.\"file\"]" section.
 pub extern type File
 
-pub extern fun fopen(path: str, mode: str).return: File
+pub extern fun fopen(path: str, mode: str) => File
 
-pub fun missing().return: File = File.null()
-pub fun is_null_file(f: File).return: bool = f.is_null()
+pub fun missing() => File = File.null()
+pub fun is_null_file(f: File) => bool = f.is_null()

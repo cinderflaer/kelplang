@@ -8,7 +8,7 @@
 // pins that the backend gets them right rather than merely plausible: every
 // float below is printed directly, interpolated, or both, and the expected
 // bytes were taken from the C backend's own output.
-fun word().return: str = "kelp"
+fun word() => str = "kelp"
 
 fun main() {
     val half: f64 = 2.5

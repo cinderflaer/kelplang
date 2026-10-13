@@ -16,13 +16,13 @@
 // of a returned `if`, where the merged root is computed from the two arms.
 datac Point(var x: i32, var y: i32)
 
-fun origin(p: &Point).return: &Point = p
+fun origin(p: &Point) => &Point = p
 
-fun pick(p: &Point, c: bool).return: &Point = if c { p } else { p }
+fun pick(p: &Point, c: bool) => &Point = if c { p } else { p }
 
-fun text(s: &String).return: &String = s
+fun text(s: &String) => &String = s
 
-fun buf(b: &Bytes).return: &Bytes = b
+fun buf(b: &Bytes) => &Bytes = b
 
 fun main() {
     val p = Point(x = 3, y = 4)

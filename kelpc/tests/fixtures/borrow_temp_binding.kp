@@ -2,7 +2,7 @@ impl "std/str"
 
 datac Name(val text: String)
 
-fun make().return: Name = Name(text = String.from_str("hello"))
+fun make() => Name = Name(text = String.from_str("hello"))
 
 fun main() {
     val view = make().text.as_str()

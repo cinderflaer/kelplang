@@ -16,7 +16,7 @@ impl "std/process"
 impl "std/str"
 impl "std/result"
 
-fun arg_port(at: usize).return: u16 {
+fun arg_port(at: usize) => u16 {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(at).as_str()),
@@ -25,7 +25,7 @@ fun arg_port(at: usize).return: u16 {
     return p.to_u16()
 }
 
-fun url_for(port: u16, path: &str).return: String {
+fun url_for(port: u16, path: &str) => String {
     val port_text = str.from_u64(port.to_u64())
     val head = str.concat("http://127.0.0.1:", port_text.as_str())
     return str.concat(head.as_str(), path)

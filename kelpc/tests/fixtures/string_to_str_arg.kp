@@ -1,7 +1,7 @@
 // A `String` passed where a `str` parameter is expected is borrowed for the
 // call, exactly as `.as_str()` would borrow it. No conversion call is made.
 impl "std/str"
-fun shout(text: str).return: usize {
+fun shout(text: str) => usize {
     print(text)
     return str.len(text)
 }

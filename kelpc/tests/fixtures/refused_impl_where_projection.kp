@@ -10,7 +10,7 @@ datac Plains(var left: i64)
 
 impl iter.Iterator for Plains {
     type Item = Plain
-    fun mut Self.next().return: option.Option<Plain> {
+    fun mut Self.next() => option.Option<Plain> {
         if self.left == 0 {
             return option.Option.None
         }
@@ -23,7 +23,7 @@ datac Keep<I>(var inner: I)
 
 impl<I: iter.Iterator> iter.Iterator for Keep<I> where I::Item: fmt.Display {
     type Item = I::Item
-    fun mut Self.next().return: option.Option<I::Item> {
+    fun mut Self.next() => option.Option<I::Item> {
         return self.inner.next()
     }
 }

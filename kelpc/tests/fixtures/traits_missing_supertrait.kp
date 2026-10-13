@@ -1,17 +1,17 @@
 // Implementing a subtrait requires implementing each supertrait (A-12 slice 3).
 
 trait Shape {
-    fun Self.area().return: i32
+    fun Self.area() => i32
 }
 
 trait Named: Shape {
-    fun Self.name().return: i32
+    fun Self.name() => i32
 }
 
 datac C(val r: i32)
 
 impl Named for C {
-    fun Self.name().return: i32 = 1
+    fun Self.name() => i32 = 1
 }
 
 fun main() { }

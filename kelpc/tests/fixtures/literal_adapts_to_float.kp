@@ -1,4 +1,4 @@
-fun half(x: f32).return: f32 { return x / 2 }
+fun half(x: f32) => f32 { return x / 2 }
 fun main() {
     val x: f64 = 2.5
     val y = x * 2

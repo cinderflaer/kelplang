@@ -1,1 +1,1 @@
-pub fun shout(text: str).return: String = text
+pub fun shout(text: str) => String = text

@@ -6,7 +6,7 @@ impl "std/ops"
 datac Vec2(val x: i64, val y: i64)
 
 impl ops.Add<Vec2> for Vec2 {
-    fun Self.add(rhs: &Vec2).return: Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
+    fun Self.add(rhs: &Vec2) => Vec2 = Vec2(x = x + rhs.x, y = y + rhs.y)
 }
 
 fun main() {

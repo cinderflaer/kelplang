@@ -31,19 +31,19 @@ enum ZRes {
     Err(val why: i32)
 }
 
-fun z_psum(p: ZPoint).return: i32 = p.x + p.y
-fun z_vsum(v: ZVec).return: f64 = v.x + v.y
-fun z_try(n: i32).return: ZRes {
+fun z_psum(p: ZPoint) => i32 = p.x + p.y
+fun z_vsum(v: ZVec) => f64 = v.x + v.y
+fun z_try(n: i32) => ZRes {
     if n > 0 {
         return ZRes.Ok(value = n)
     }
     return ZRes.Err(why = 0)
 }
-fun z_chain(n: i32).return: ZRes {
+fun z_chain(n: i32) => ZRes {
     val v = z_try(n)?
     return ZRes.Ok(value = v + 1)
 }
-fun z_val(r: ZRes).return: i32 = when r {
+fun z_val(r: ZRes) => i32 = when r {
     Ok(v) -> v
     Err(_e) -> -1
 }

@@ -31,14 +31,14 @@ enum ZRes {
     Err(val why: i32)
 }
 
-fun z_psum(p: ZPoint).return: i32 = p.x + p.y
-fun z_vsum(v: ZVec).return: f64 = v.x + v.y
-fun z_msg_int(m: ZMsg).return: i32 = when m {
+fun z_psum(p: ZPoint) => i32 = p.x + p.y
+fun z_vsum(v: ZVec) => f64 = v.x + v.y
+fun z_msg_int(m: ZMsg) => i32 = when m {
     Num(n) -> n
     Text(t) -> t.len().to_i32()
     Nil -> -1
 }
-fun z_pair_sum(p: [f64; 2]).return: f64 = p.get(i = 0) + p.get(i = 1)
+fun z_pair_sum(p: [f64; 2]) => f64 = p.get(i = 0) + p.get(i = 1)
 
 fun main() {
     {

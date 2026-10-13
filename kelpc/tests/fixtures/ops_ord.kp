@@ -6,7 +6,7 @@ impl "std/ops"
 datac Version(val major: i32, val minor: i32)
 
 impl ops.Ord for Version {
-    fun Self.cmp(other: &Self).return: i32 {
+    fun Self.cmp(other: &Self) => i32 {
         if major < other.major {
             return -1
         }

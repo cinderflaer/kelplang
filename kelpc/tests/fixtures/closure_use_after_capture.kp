@@ -3,7 +3,7 @@
 // follows, and the same message.
 fun main() {
     val text = String.from_str("x")
-    val f = fun() .return: usize = text.len()
+    val f = fun() => usize = text.len()
     print(text.len())
     print(f())
 }

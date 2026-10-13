@@ -22,9 +22,9 @@ enum Token {
     Blank
 }
 
-fun mkName().return: Named = Named(r = String.from_str("aa"), name = String.from_str("bb"))
+fun mkName() => Named = Named(r = String.from_str("aa"), name = String.from_str("bb"))
 
-fun mkBag().return: Bag {
+fun mkBag() => Bag {
     var xs: List<i32> = List.empty()
     xs.push(1)
     xs.push(2)
@@ -34,9 +34,9 @@ fun mkBag().return: Bag {
 // The field of a call's result as a call argument, which is the reported
 // shape verbatim: `can't take the address of an rvalue of type
 // 'kelp_List__i32'`.
-fun count().return: usize = mkBag().items.len()
+fun count() => usize = mkBag().items.len()
 
-fun pass(n: move Named).return: Named = n
+fun pass(n: move Named) => Named = n
 
 fun take(s: String) {
     print(s)

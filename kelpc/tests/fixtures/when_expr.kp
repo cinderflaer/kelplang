@@ -1,4 +1,4 @@
-fun classify(n: i32).return: &str = when {
+fun classify(n: i32) => &str = when {
     n > 0 -> "pos"
     n < 0 -> "neg"
     else -> "zero"

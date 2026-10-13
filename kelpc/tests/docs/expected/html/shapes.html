@@ -29,7 +29,7 @@
 <li><code>var tag: i32</code>: A free tag.</li>
 </ul>
 <h4 id="circlediameter"><code>Circle.diameter</code></h4>
-<pre><code>fun Circle.diameter().return: f64</code></pre>
+<pre><code>fun Circle.diameter() => f64</code></pre>
 <p>The diameter.</p>
 <p><strong>Trait impls</strong></p>
 <ul>
@@ -49,16 +49,16 @@
 <p>Something with an area.</p>
 <p><strong>Required and provided items</strong></p>
 <ul>
-<li><code>fun Self.area().return: f64</code>: The area.</li>
+<li><code>fun Self.area() => f64</code>: The area.</li>
 <li><code>type Item</code></li>
 </ul>
 <h2>Functions</h2>
 <h3 id="load"><code>load</code></h3>
-<pre><code>pub fun load(path: &amp;str).return: String</code></pre>
+<pre><code>pub fun load(path: &amp;str) => String</code></pre>
 <p class="badges">requires capability <code>fs</code></p>
 <p>Reads a file named by <code>path</code>.</p>
 <h3 id="make"><code>make</code></h3>
-<pre><code>pub unsafe fun make(r: f64).return: Circle</code></pre>
+<pre><code>pub unsafe fun make(r: f64) => Circle</code></pre>
 <p class="badges">unsafe</p>
 <p>Makes a circle from a radius.</p>
 <h2>Constants</h2>

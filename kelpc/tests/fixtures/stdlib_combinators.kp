@@ -2,7 +2,7 @@
 // `result.map`/`map_err`/`and_then`/`or_else`/`each`, the helpers
 // MK5-S6-M1 recorded as waiting on function values.
 //
-// Every callback takes a *borrow* of the payload (`fun(&T).return: U`), which is
+// Every callback takes a *borrow* of the payload (`fun(&T) => U`), which is
 // what makes `map` work at any instantiation, owned payload included, and what
 // keeps the callback from taking ownership. What a helper *cannot* do is hand
 // the variant it was given back out through a borrow: `result.map` and
@@ -16,14 +16,14 @@ impl "std/option"
 impl "std/result"
 impl "std/str"
 
-fun half(n: i32).return: option.Option<i32> {
+fun half(n: i32) => option.Option<i32> {
     if n % 2 == 0 {
         return option.Option.Some(value = n / 2)
     }
     return option.Option.None
 }
 
-fun parse_positive(n: i32).return: result.Result<i32, i32> {
+fun parse_positive(n: i32) => result.Result<i32, i32> {
     if n > 0 {
         return result.Result.Ok(value = n)
     }
@@ -35,10 +35,10 @@ fun main() {
     // result is a fresh owned value. Reading it back out goes through
     // `option.expect`, which takes the option with `move` (A-11).
     val text = option.Option.Some(value = String.from_str("hello"))
-    val len = option.map(o = text, f = fun(s: &String).return: usize = s.len())
+    val len = option.map(o = text, f = fun(s: &String) => usize = s.len())
     print(option.expect(o = len, message = "none"))
 
-    val shout = option.map(o = text, f = fun(s: &String).return: String = str.to_upper(s.as_str()))
+    val shout = option.map(o = text, f = fun(s: &String) => String = str.to_upper(s.as_str()))
     if let Some(s) = shout {
         print(s)
     }
@@ -51,7 +51,7 @@ fun main() {
     val empty: option.Option<i32> = option.Option.None
     val seven = option.or_else(
         o = empty,
-        f = fun().return: option.Option<i32> = option.Option.Some(value = 7)
+        f = fun() => option.Option<i32> = option.Option.Some(value = 7)
     )
     // `each` is the `Unit` case of `map`.
     option.each(o = seven, f = fun(v: &i32) { print(v) })
@@ -65,9 +65,9 @@ fun main() {
     // rebuild may be owned; the call hands over a fresh result. `and_then` and
     // `or_else` below keep the borrow receiver, so their rebuilt side is
     // `Copy`.
-    val ok = result.map(r = parse_positive(21), f = fun(n: &i32).return: i32 = n * 2)
+    val ok = result.map(r = parse_positive(21), f = fun(n: &i32) => i32 = n * 2)
     print(result.expect(r = ok, message = "err"))
-    val failed = result.map_err(r = parse_positive(-5), f = fun(e: &i32).return: i32 = e + 100)
+    val failed = result.map_err(r = parse_positive(-5), f = fun(e: &i32) => i32 = e + 100)
     print(result.expect_err(r = failed, message = "ok"))
 
     // `and_then` chains, `or_else` recovers, `each` observes.
@@ -75,7 +75,7 @@ fun main() {
     print(result.expect(r = chained, message = "err"))
     val recovered = result.or_else(
         r = parse_positive(-1),
-        f = fun(e: &i32).return: result.Result<i32, i32> = result.Result.Ok(value = e + 10)
+        f = fun(e: &i32) => result.Result<i32, i32> = result.Result.Ok(value = e + 10)
     )
     print(result.expect(r = recovered, message = "err"))
     result.each(r = chained, f = fun(n: &i32) { print(n) })

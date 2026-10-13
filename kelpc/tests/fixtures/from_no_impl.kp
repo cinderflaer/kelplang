@@ -10,11 +10,11 @@ enum AppErr {
     Io(val code: i32)
 }
 
-fun failing().return: result.Result<i32, IoErr> {
+fun failing() => result.Result<i32, IoErr> {
     return result.Result.Err(error = IoErr.Bad(code = 1))
 }
 
-fun outer().return: result.Result<i32, AppErr> {
+fun outer() => result.Result<i32, AppErr> {
     val v = failing()?
     return result.Result.Ok(value = v)
 }

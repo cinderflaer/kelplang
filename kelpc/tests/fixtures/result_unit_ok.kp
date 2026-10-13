@@ -4,7 +4,7 @@
 // just its tag, and the arm matches like any other `Ok`.
 impl "std/result"
 
-fun check_positive(x: i32).return: result.Result<unit, String> {
+fun check_positive(x: i32) => result.Result<unit, String> {
     if x > 0 {
         return result.Result.Ok(value = ())
     }
@@ -19,7 +19,7 @@ fun run_check(x: i32) {
     }
 }
 
-fun explicit_success().return: result.Result<unit, String> {
+fun explicit_success() => result.Result<unit, String> {
     val done: result.Result<unit, String> = result.Result.Ok(value = ())
     return done
 }

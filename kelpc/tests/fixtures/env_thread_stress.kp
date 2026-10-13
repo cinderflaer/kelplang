@@ -12,7 +12,7 @@ impl "std/thread"
 impl "std/result"
 impl "std/str"
 
-fun worker_a(x: move i64).return: bool {
+fun worker_a(x: move i64) => bool {
     val before = !env.has("KELP_ENV_THREAD_A")
     env.set("KELP_ENV_THREAD_A", "value-a")
     val v = env.get("KELP_ENV_THREAD_A")
@@ -22,7 +22,7 @@ fun worker_a(x: move i64).return: bool {
     before && mid && after
 }
 
-fun worker_b(x: move i64).return: bool {
+fun worker_b(x: move i64) => bool {
     val before = !env.has("KELP_ENV_THREAD_B")
     env.set("KELP_ENV_THREAD_B", "value-b")
     val v = env.get("KELP_ENV_THREAD_B")
@@ -32,7 +32,7 @@ fun worker_b(x: move i64).return: bool {
     before && mid && after
 }
 
-fun worker_c(x: move i64).return: bool {
+fun worker_c(x: move i64) => bool {
     val before = !env.has("KELP_ENV_THREAD_C")
     env.set("KELP_ENV_THREAD_C", "value-c")
     val v = env.get("KELP_ENV_THREAD_C")

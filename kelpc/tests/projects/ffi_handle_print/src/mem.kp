@@ -1,5 +1,5 @@
 // Gap 1: the handle itself is legal here; "print" of one is not, because an
 // opaque value has nothing to format.
 pub extern type Buffer
-pub extern fun malloc(size: usize).return: Buffer
+pub extern fun malloc(size: usize) => Buffer
 pub extern fun free(buf: Buffer)

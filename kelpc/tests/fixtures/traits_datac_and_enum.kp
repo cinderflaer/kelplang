@@ -3,10 +3,10 @@
 // static: every call below is the concrete type's own method.
 
 trait Shape {
-    fun Self.area().return: f64
-    fun Self.name().return: str
-    fun Self.rank().return: i32
-    fun Self.same_as(other: &Self).return: bool
+    fun Self.area() => f64
+    fun Self.name() => str
+    fun Self.rank() => i32
+    fun Self.same_as(other: &Self) => bool
 }
 
 trait Grow {
@@ -16,10 +16,10 @@ trait Grow {
 datac Circle(var r: f64)
 
 impl Shape for Circle {
-    fun Self.area().return: f64 = r * r * 3.0
-    fun Self.name().return: str = "circle"
-    fun Self.rank().return: i32 = 1
-    fun Self.same_as(other: &Self).return: bool = r == other.r
+    fun Self.area() => f64 = r * r * 3.0
+    fun Self.name() => str = "circle"
+    fun Self.rank() => i32 = 1
+    fun Self.same_as(other: &Self) => bool = r == other.r
 }
 
 impl Grow for Circle {
@@ -32,22 +32,22 @@ enum Figure {
 }
 
 impl Shape for Figure {
-    fun Self.area().return: f64 = when self {
+    fun Self.area() => f64 = when self {
         Square(s) -> s * s
         Dot -> 0.0
     }
-    fun Self.name().return: str = "figure"
-    fun Self.rank().return: i32 = 2
-    fun Self.same_as(other: &Self).return: bool = false
+    fun Self.name() => str = "figure"
+    fun Self.rank() => i32 = 2
+    fun Self.same_as(other: &Self) => bool = false
 }
 
-fun area_of<T: Shape>(s: &T).return: f64 = s.area()
+fun area_of<T: Shape>(s: &T) => f64 = s.area()
 
 // `T: Shape` reaching another bounded generic with the same bound is fine: the
 // bound the outer call was checked against is the one the inner call needs.
-fun area_twice<T: Shape>(s: &T).return: f64 = area_of(s) + area_of(s)
+fun area_twice<T: Shape>(s: &T) => f64 = area_of(s) + area_of(s)
 
-fun grow_and_measure<T: Shape + Grow>(s: mut T).return: f64 {
+fun grow_and_measure<T: Shape + Grow>(s: mut T) => f64 {
     s.grow(by = 1.0)
     return s.area()
 }

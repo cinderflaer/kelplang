@@ -1,5 +1,5 @@
 // A-2: a function's type parameter must not name a builtin type.
-fun convert<i64>(x: i64).return: i64 = x
+fun convert<i64>(x: i64) => i64 = x
 
 fun main() {
     print(convert(x = 1))

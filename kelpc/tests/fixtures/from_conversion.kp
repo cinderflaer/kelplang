@@ -15,7 +15,7 @@ enum AppErr {
 }
 
 impl convert.From<IoErr> for AppErr {
-    fun from(value: IoErr).return: AppErr {
+    fun from(value: IoErr) => AppErr {
         return when value {
             Bad(code) -> AppErr.Io(code = code, note = "io")
         }
@@ -23,7 +23,7 @@ impl convert.From<IoErr> for AppErr {
 }
 
 impl convert.From<ParseErr> for AppErr {
-    fun from(value: ParseErr).return: AppErr {
+    fun from(value: ParseErr) => AppErr {
         return when value {
             Letter(ch) -> AppErr.Parse(note = "parse")
         }
@@ -31,32 +31,32 @@ impl convert.From<ParseErr> for AppErr {
 }
 
 impl convert.From<i32> for AppErr {
-    fun from(value: i32).return: AppErr = AppErr.Io(code = value, note = "int")
+    fun from(value: i32) => AppErr = AppErr.Io(code = value, note = "int")
 }
 
 impl convert.Into<i32> for AppErr {
-    fun Self.into().return: i32 = 42
+    fun Self.into() => i32 = 42
 }
 
-fun io_fail().return: result.Result<i32, IoErr> {
+fun io_fail() => result.Result<i32, IoErr> {
     return result.Result.Err(error = IoErr.Bad(code = 7))
 }
 
-fun parse_fail().return: result.Result<i32, ParseErr> {
+fun parse_fail() => result.Result<i32, ParseErr> {
     return result.Result.Err(error = ParseErr.Letter(ch = 'x'))
 }
 
-fun lift_io().return: result.Result<i32, AppErr> {
+fun lift_io() => result.Result<i32, AppErr> {
     val v = io_fail()?
     return result.Result.Ok(value = v)
 }
 
-fun lift_parse().return: result.Result<i32, AppErr> {
+fun lift_parse() => result.Result<i32, AppErr> {
     val v = parse_fail()?
     return result.Result.Ok(value = v)
 }
 
-fun make<X: convert.From<i32>>(v: i32).return: X {
+fun make<X: convert.From<i32>>(v: i32) => X {
     return X.from(value = v)
 }
 

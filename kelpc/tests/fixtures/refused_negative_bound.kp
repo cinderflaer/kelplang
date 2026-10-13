@@ -2,7 +2,7 @@
 // (plan/generic-trait-impls.md section 6) and is refused by name.
 impl "std/fmt"
 
-fun show<T: !fmt.Display>(x: &T).return: i64 = 0
+fun show<T: !fmt.Display>(x: &T) => i64 = 0
 
 fun main() {
     print(show(1))

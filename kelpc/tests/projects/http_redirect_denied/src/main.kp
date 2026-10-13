@@ -12,12 +12,12 @@ impl "std/process"
 impl "std/str"
 impl "std/result"
 
-fun hdrs().return: List<http.Header> {
+fun hdrs() => List<http.Header> {
     var l: List<http.Header> = List.empty()
     return l
 }
 
-fun server_port().return: u16 {
+fun server_port() => u16 {
     val args = process.args()
     val p = result.expect(
         r = str.parse_u64(args.get(1).as_str()),
@@ -26,7 +26,7 @@ fun server_port().return: u16 {
     return p.to_u16()
 }
 
-fun url_for(path: &str).return: String {
+fun url_for(path: &str) => String {
     val port_text = str.from_u64(server_port().to_u64())
     var out = String.with_capacity(64)
     out.push_str("http://127.0.0.1:")
@@ -37,7 +37,7 @@ fun url_for(path: &str).return: String {
 
 // The URL is built into a local first: `as_str()` needs a place, and a call
 // result is not one (the same rule that makes `x.fmt().as_str()` an error).
-fun req_for(path: &str).return: http.Request {
+fun req_for(path: &str) => http.Request {
     val url = url_for(path)
     return http.Request(
         method = String.from_str("GET"),

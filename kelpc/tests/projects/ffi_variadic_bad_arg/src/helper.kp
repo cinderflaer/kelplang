@@ -2,4 +2,4 @@
 // native "va_arg" can read back (an integer, "bool", "f32"/"f64", "str" or an
 // opaque handle). An owned "String" is not one, so the call below is a compile
 // error naming the argument.
-pub extern fun kelp_va_sum(count: i32, ...).return: i32
+pub extern fun kelp_va_sum(count: i32, ...) => i32

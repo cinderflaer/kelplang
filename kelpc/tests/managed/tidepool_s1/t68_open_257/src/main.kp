@@ -6,7 +6,7 @@ impl "std/thread"
 // ends with the spawner's message.
 datac Cell(val n: i64, val next: Box<Cell>)
 
-fun churn(count: i64).return: i64 {
+fun churn(count: i64) => i64 {
     var total: i64 = 0
     var i: i64 = 0
     while i < count {
@@ -17,7 +17,7 @@ fun churn(count: i64).return: i64 {
     return total
 }
 
-fun busy(n: i64).return: i64 = churn(200000000)
+fun busy(n: i64) => i64 = churn(200000000)
 
 fun main() {
     var i: i64 = 0

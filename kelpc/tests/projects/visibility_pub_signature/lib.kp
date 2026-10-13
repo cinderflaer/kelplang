@@ -6,12 +6,12 @@ pub datac Point(val x: i32, val y: i32)
 // that is the parameter is never a violation (A-2).
 pub datac Pair<A, B>(val a: A, val b: B)
 
-pub fun origin().return: Point = Point(x = 0, y = 0)
+pub fun origin() => Point = Point(x = 0, y = 0)
 
 // Private, and it names a private type: nothing outside this module can
 // reach either one, so the rule binds neither.
 datac Secret(val n: i32)
 
-fun hidden_value(n: i32).return: Secret = Secret(n = n)
+fun hidden_value(n: i32) => Secret = Secret(n = n)
 
-pub fun reveal(n: i32).return: i32 = hidden_value(n = n).n
+pub fun reveal(n: i32) => i32 = hidden_value(n = n).n

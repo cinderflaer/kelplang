@@ -1,5 +1,5 @@
 // T94 refusal: the List is returned from its body.
-fun make().return: List<i32> {
+fun make() => List<i32> {
     var xs: List<i32> = List.empty()
     xs.push(1)
     return xs

@@ -7,7 +7,7 @@ impl "std/str"
 
 datac Stats(var run: i32, var bad: i32)
 
-fun err_of(pat: &str).return: String {
+fun err_of(pat: &str) => String {
     val r = regex.compile(pat)
     var out = String.empty()
     if let Err(e) = r {

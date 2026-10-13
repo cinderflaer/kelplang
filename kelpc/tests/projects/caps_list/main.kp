@@ -5,7 +5,7 @@
 impl "std/str"
 impl "std/fs" caps(fs = ["__KELP_SCRATCH__/kelp_caps_list_test/**"])
 
-fun path_of(dir: &str, name: &str).return: String {
+fun path_of(dir: &str, name: &str) => String {
     var parts: List<String> = List.empty()
     parts.push(String.from_str(dir))
     parts.push(String.from_str("/"))

@@ -5,11 +5,11 @@
 // value.
 datac Quad(var a: i64, var b: i64, var c: i64)
 
-fun make_quad(a: i64, b: i64, c: i64).return: Quad {
+fun make_quad(a: i64, b: i64, c: i64) => Quad {
     return Quad(a = a, b = b, c = c)
 }
 
-fun sum_quad(q: Quad).return: i64 {
+fun sum_quad(q: Quad) => i64 {
     return q.a + q.b + q.c
 }
 

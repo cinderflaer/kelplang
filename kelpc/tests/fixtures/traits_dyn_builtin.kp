@@ -1,14 +1,14 @@
 // A-12 slice 4: a trait implemented for a `Copy` builtin is reached through
 // `&dyn`, so the thunk reads the scalar out of the erased pointer.
 trait Doubler {
-    fun Self.double().return: i32
+    fun Self.double() => i32
 }
 
 impl Doubler for i32 {
-    fun Self.double().return: i32 = self * 2
+    fun Self.double() => i32 = self * 2
 }
 
-fun twice(d: &dyn Doubler).return: i32 = d.double() + d.double()
+fun twice(d: &dyn Doubler) => i32 = d.double() + d.double()
 
 fun main() {
     val n: i32 = 21

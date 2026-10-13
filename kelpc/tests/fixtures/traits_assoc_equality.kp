@@ -3,19 +3,19 @@
 
 trait Src {
     type Out
-    fun Self.produce().return: Self::Out
+    fun Self.produce() => Self::Out
 }
 
 datac Feed(val n: i32)
 
 impl Src for Feed {
     type Out = i32
-    fun Self.produce().return: Self::Out {
+    fun Self.produce() => Self::Out {
         return self.n
     }
 }
 
-fun pick<I: Src<Missing = i32>>(x: I).return: i32 = 0
+fun pick<I: Src<Missing = i32>>(x: I) => i32 = 0
 
 fun main() {
     print(pick(Feed(n = 1)))

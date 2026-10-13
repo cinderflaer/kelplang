@@ -9,7 +9,7 @@ enum Option<T> {
     None
 }
 
-fun text_len(o: &Option<String>).return: usize = when o {
+fun text_len(o: &Option<String>) => usize = when o {
     Some(v) -> v.len()
     None -> 0
 }

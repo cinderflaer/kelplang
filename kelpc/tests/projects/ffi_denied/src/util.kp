@@ -4,4 +4,4 @@
 // domain is gated exactly the same way.
 impl "sys"
 
-pub fun read_pid().return: i32 = sys.getpid()
+pub fun read_pid() => i32 = sys.getpid()

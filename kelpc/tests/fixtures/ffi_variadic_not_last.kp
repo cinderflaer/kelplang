@@ -3,4 +3,4 @@
 // signature that silently ignores what comes after. It lives here, in the
 // directory of programs that are deliberately not valid Kelp, so the formatter
 // is right to refuse it.
-pub extern fun kelp_va_sum(count: i32, ..., extra: i32).return: i32
+pub extern fun kelp_va_sum(count: i32, ..., extra: i32) => i32

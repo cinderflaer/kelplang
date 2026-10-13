@@ -1,6 +1,6 @@
 datac Circle(var r: f64)
 
-fun Circle.area().return: f64 = 3.14159 * r * r
+fun Circle.area() => f64 = 3.14159 * r * r
 
 fun mut Circle.grow(by: f64) {
     r += by

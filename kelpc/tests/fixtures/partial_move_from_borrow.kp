@@ -3,7 +3,7 @@
 // shape `take(b: &Bag)` has, and the refusal names the borrow.
 datac Bag(val xs: List<i32>)
 
-fun take(b: &Bag).return: List<i32> = b.xs
+fun take(b: &Bag) => List<i32> = b.xs
 
 fun main() {
     val bag = Bag(xs = List.of(1))

@@ -2,12 +2,12 @@
 // the trait, the associated type and the concrete type.
 
 trait Named {
-    fun Self.name().return: str
+    fun Self.name() => str
 }
 
 trait Repo {
     type Entry: Named
-    fun Self.entry().return: Self::Entry
+    fun Self.entry() => Self::Entry
 }
 
 datac Item(val n: i32)
@@ -15,7 +15,7 @@ datac Store(val v: i32)
 
 impl Repo for Store {
     type Entry = Item
-    fun Self.entry().return: Item = Item(n = v)
+    fun Self.entry() => Item = Item(n = v)
 }
 
 fun main() { }

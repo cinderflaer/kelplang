@@ -8,7 +8,7 @@ datac Wrap<I>(var inner: I)
 
 impl<I> iter.Iterator for Wrap<I> where I: iter.Iterator<Item = i64> {
     type Item = i64
-    fun mut Self.next().return: option.Option<i64> {
+    fun mut Self.next() => option.Option<i64> {
         return self.inner.next()
     }
 }
@@ -16,7 +16,7 @@ impl<I> iter.Iterator for Wrap<I> where I: iter.Iterator<Item = i64> {
 datac Tag(val id: i64)
 
 impl fmt.Display for Tag {
-    fun Self.to_text().return: String {
+    fun Self.to_text() => String {
         var out = String.empty()
         val s = fmt.int(id)
         out.push_str("#")
@@ -29,7 +29,7 @@ datac Tags(var left: i64)
 
 impl iter.Iterator for Tags {
     type Item = Tag
-    fun mut Self.next().return: option.Option<Tag> {
+    fun mut Self.next() => option.Option<Tag> {
         if self.left == 0 {
             return option.Option.None
         }
@@ -42,7 +42,7 @@ datac Keep<I>(var inner: I)
 
 impl<I: iter.Iterator> iter.Iterator for Keep<I> where I::Item: fmt.Display {
     type Item = I::Item
-    fun mut Self.next().return: option.Option<I::Item> {
+    fun mut Self.next() => option.Option<I::Item> {
         return self.inner.next()
     }
 }

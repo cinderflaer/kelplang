@@ -1,5 +1,5 @@
 // A-4: a literal always has a body, there is no `extern` spelling for one.
 fun main() {
-    val f = fun(x: i32).return: i32
+    val f = fun(x: i32) => i32
     print(f(1))
 }

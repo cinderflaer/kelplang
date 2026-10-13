@@ -6,9 +6,9 @@ enum Shape {
     Dot
 }
 
-fun pair().return: (i32, i32) { return (1, 2) }
+fun pair() => (i32, i32) { return (1, 2) }
 
-fun describe(a: Shape, b: option.Option<i32>).return: i32 {
+fun describe(a: Shape, b: option.Option<i32>) => i32 {
     return when (a, b) {
         (Circle(r), Some(n)) -> r + n
         (Circle(r), None) -> r

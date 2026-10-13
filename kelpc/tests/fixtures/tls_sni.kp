@@ -9,7 +9,7 @@ impl "std/result"
 impl "std/str"
 impl "std/tls"
 
-fun err_name(e: move tls.TlsError).return: String = when e {
+fun err_name(e: move tls.TlsError) => String = when e {
     Untrusted -> String.from_str("untrusted")
     Expired -> String.from_str("expired")
     HostMismatch -> String.from_str("host_mismatch")
@@ -20,7 +20,7 @@ fun err_name(e: move tls.TlsError).return: String = when e {
     Io(reason) -> str.concat("io ", reason.as_str())
 }
 
-fun fail(e: move tls.TlsError).return: tls.TlsStream {
+fun fail(e: move tls.TlsError) => tls.TlsStream {
     val text = err_name(e)
     panic(text.as_str())
 }

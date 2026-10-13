@@ -5,7 +5,7 @@
 // the ordinary case.
 datac Pair(val a: i32, val b: i32)
 
-fun sum(p: Pair).return: i32 = p.a + p.b
+fun sum(p: Pair) => i32 = p.a + p.b
 
 fun main() {
     print(sum(Pair(a = 1, b = 2)))

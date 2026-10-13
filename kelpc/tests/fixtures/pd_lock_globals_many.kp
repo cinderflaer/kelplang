@@ -11,7 +11,7 @@ pd val table2: RwLock<i64> = RwLock.new(7)
 pd val bell: Condvar = Condvar.new()
 pd val items: Mutex<i64> = Mutex.new(0)
 
-fun bump(c: &Mutex<i64>).return: i64 {
+fun bump(c: &Mutex<i64>) => i64 {
     var i = 0
     while i < 10 {
         c.lock { v -> *v = *v + 1 }
@@ -20,7 +20,7 @@ fun bump(c: &Mutex<i64>).return: i64 {
     0
 }
 
-fun wbump(c: &RwLock<i64>).return: i64 {
+fun wbump(c: &RwLock<i64>) => i64 {
     var i = 0
     while i < 10 {
         c.write { v -> *v = *v + 1 }
@@ -29,7 +29,7 @@ fun wbump(c: &RwLock<i64>).return: i64 {
     0
 }
 
-fun push(c: &Mutex<i64>).return: i64 {
+fun push(c: &Mutex<i64>) => i64 {
     var i = 0
     while i < 10 {
         c.lock { v -> *v = *v + 1 }

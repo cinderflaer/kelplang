@@ -18,12 +18,12 @@ pub datac Trio(val x: f32, val y: f32, val z: f32)
 // A u8, a bool and a u16: 4 bytes, one INTEGER eightbyte with narrow fields.
 pub datac Tag(val kind: u8, val flag: bool, val n: u16)
 
-pub extern fun agg_pair_bump(p: move Pair).return: Pair
-pub extern fun agg_mixed_bump(m: move Mixed).return: Mixed
-pub extern fun agg_wide_bump(w: move Wide).return: Wide
-pub extern fun agg_wide_total(w: move Wide).return: i64
-pub extern fun agg_trio_scale(t: move Trio).return: Trio
-pub extern fun agg_tag_next(t: move Tag).return: Tag
-pub extern fun agg_bytes_len(b: move Bytes).return: usize
-pub extern fun agg_bytes_make(n: usize).return: Bytes
-pub extern fun agg_string_len(s: move String).return: usize
+pub extern fun agg_pair_bump(p: move Pair) => Pair
+pub extern fun agg_mixed_bump(m: move Mixed) => Mixed
+pub extern fun agg_wide_bump(w: move Wide) => Wide
+pub extern fun agg_wide_total(w: move Wide) => i64
+pub extern fun agg_trio_scale(t: move Trio) => Trio
+pub extern fun agg_tag_next(t: move Tag) => Tag
+pub extern fun agg_bytes_len(b: move Bytes) => usize
+pub extern fun agg_bytes_make(n: usize) => Bytes
+pub extern fun agg_string_len(s: move String) => usize

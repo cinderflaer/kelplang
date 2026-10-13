@@ -9,7 +9,7 @@ impl "std/arena"
 
 static mut ARENA: [u8; 4096] = [0; 4096]
 
-fun flag(value: bool).return: usize {
+fun flag(value: bool) => usize {
     if value {
         return 1
     }

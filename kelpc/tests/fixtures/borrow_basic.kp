@@ -4,7 +4,7 @@ fun bump(c: mut Counter) {
     c.count += 1
 }
 
-fun total(c: Counter).return: i32 = c.id + c.count
+fun total(c: Counter) => i32 = c.id + c.count
 
 fun main() {
     var c = Counter(id = 1, count = 0)

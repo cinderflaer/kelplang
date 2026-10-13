@@ -5,7 +5,7 @@ enum Shape {
     Empty
 }
 
-fun get().return: Shape = Shape.Empty
+fun get() => Shape = Shape.Empty
 
 fun main() {
     val s = get()?

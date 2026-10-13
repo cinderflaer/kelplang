@@ -2,7 +2,7 @@
 // exactly as in a `datac` field (`plan/syntax.md` 3).
 fun side_effect() {}
 
-fun broken().return: (i32, unit) = (1, side_effect())
+fun broken() => (i32, unit) = (1, side_effect())
 
 fun main() {
     print(1)

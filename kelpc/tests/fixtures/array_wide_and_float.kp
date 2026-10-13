@@ -14,29 +14,29 @@
 // hidden pointer too.
 const WIDE: usize = 300
 
-fun pairs(xs: [f64; 2]).return: f64 = xs.get(i = 0) + xs.get(i = 1)
+fun pairs(xs: [f64; 2]) => f64 = xs.get(i = 0) + xs.get(i = 1)
 
-fun scaled(xs: [f64; 2], k: f64).return: [f64; 2] {
+fun scaled(xs: [f64; 2], k: f64) => [f64; 2] {
     var out: [f64; 2] = [0.0; 2]
     out.set(i = 0, v = xs.get(i = 0) * k)
     out.set(i = 1, v = xs.get(i = 1) * k)
     return out
 }
 
-fun last(ws: [u8; WIDE]).return: u8 = ws.get(i = WIDE - 1)
+fun last(ws: [u8; WIDE]) => u8 = ws.get(i = WIDE - 1)
 
-fun filled(v: u8).return: [u8; WIDE] {
+fun filled(v: u8) => [u8; WIDE] {
     var ws: [u8; WIDE] = [v; WIDE]
     ws.set(i = 0, v = 1)
     return ws
 }
 
-fun inner(xs: [[i32; 5]; 2]).return: i32 = xs.get(i = 1).get(i = 4)
+fun inner(xs: [[i32; 5]; 2]) => i32 = xs.get(i = 1).get(i = 4)
 
 // An owned-element array does not have to be a place: a literal handed to a
 // borrow parameter is staged and then freed after the call, which is the one
 // drop site an array temporary reaches.
-fun first_len(names: [String; 2]).return: usize = names.get(i = 0).len()
+fun first_len(names: [String; 2]) => usize = names.get(i = 0).len()
 
 fun main() {
     val p: [f64; 2] = [1.5, 2.25]

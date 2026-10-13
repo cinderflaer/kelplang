@@ -5,8 +5,8 @@ fun main() {
     names.push(String.from_str(s = "ann"))
     names.push(String.from_str(s = "bo"))
     names.push(String.from_str(s = "cyrus"))
-    var long = iter.filter(iter.into_iter(names), fun(s: &String).return: bool = s.len() > 2)
-    var lens = iter.map(long, fun(s: &String).return: usize = s.len())
+    var long = iter.filter(iter.into_iter(names), fun(s: &String) => bool = s.len() > 2)
+    var lens = iter.map(long, fun(s: &String) => usize = s.len())
     for n in lens {
         print(n)
     }

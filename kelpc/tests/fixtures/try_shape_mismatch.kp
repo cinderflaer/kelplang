@@ -10,9 +10,9 @@ enum Option<T> {
     None
 }
 
-fun a().return: Result<i32, i32> = Result.Ok(value = 1)
+fun a() => Result<i32, i32> = Result.Ok(value = 1)
 
-fun b().return: Option<i32> {
+fun b() => Option<i32> {
     val v = a()?
     return Option.Some(value = v)
 }

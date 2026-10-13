@@ -6,7 +6,7 @@ pd val gate: Mutex<Gate> = Mutex.new(Gate(value = 0))
 datac Gate(var value: i64)
 
 
-fun grab(g: &Mutex<Gate>).return: i64 {
+fun grab(g: &Mutex<Gate>) => i64 {
     return g.lock { v -> v.value + 5 }
 }
 

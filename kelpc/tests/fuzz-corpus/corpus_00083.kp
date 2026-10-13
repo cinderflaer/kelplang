@@ -31,7 +31,7 @@ enum ZRes {
     Err(val why: i32)
 }
 
-fun z_msg_int(m: ZMsg).return: i32 = when m {
+fun z_msg_int(m: ZMsg) => i32 = when m {
     Num(n) -> n
     Text(t) -> t.len().to_i32()
     Nil -> -1

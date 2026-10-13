@@ -19,12 +19,12 @@ fun give_up(tx: move sync.Sender<i64>) {
 fun hang_up(rx: move sync.Receiver<String>) {
 }
 
-fun show(o: move option.Option<i64>).return: i64 = when o {
+fun show(o: move option.Option<i64>) => i64 = when o {
     Some(v) -> v
     None -> -1
 }
 
-fun state(rx: &sync.Receiver<i64>).return: str {
+fun state(rx: &sync.Receiver<i64>) => str {
     return when rx.recv_timeout(0) {
         Ok(_) -> "value"
         Err(e) -> when e {

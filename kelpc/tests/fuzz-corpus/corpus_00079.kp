@@ -31,14 +31,14 @@ enum ZRes {
     Err(val why: i32)
 }
 
-fun z_add(a: i32, b: i32).return: i32 = ((34 % 7) + ((-11) << 3))
-fun z_scale(a: f64, b: f64).return: f64 = (0.5 + (1.5 - 10.0))
-fun z_mk(n: i32).return: ZPoint = ZPoint(x = n, y = n + 1)
-fun z_psum(p: ZPoint).return: i32 = p.x + p.y
-fun z_vsum(v: ZVec).return: f64 = v.x + v.y
-fun z_pair_sum(p: [f64; 2]).return: f64 = p.get(i = 0) + p.get(i = 1)
-fun z_double(v: i32).return: i32 = v * 2
-fun z_apply(f: fun(i32).return: i32, v: i32).return: i32 = f(v)
+fun z_add(a: i32, b: i32) => i32 = ((34 % 7) + ((-11) << 3))
+fun z_scale(a: f64, b: f64) => f64 = (0.5 + (1.5 - 10.0))
+fun z_mk(n: i32) => ZPoint = ZPoint(x = n, y = n + 1)
+fun z_psum(p: ZPoint) => i32 = p.x + p.y
+fun z_vsum(v: ZVec) => f64 = v.x + v.y
+fun z_pair_sum(p: [f64; 2]) => f64 = p.get(i = 0) + p.get(i = 1)
+fun z_double(v: i32) => i32 = v * 2
+fun z_apply(f: fun(i32) => i32, v: i32) => i32 = f(v)
 
 fun main() {
     {
@@ -234,10 +234,10 @@ fun main() {
 
     {
         val s = String.from_str("data")
-        val f = fun() .return: usize = s.len()
+        val f = fun() => usize = s.len()
         print(f())
         val k = (-23)
-        val g = fun(x: i32).return: i32 = x + k
+        val g = fun(x: i32) => i32 = x + k
         print(g((-11)))
         val h = z_double
         print(h((-11)))
@@ -246,7 +246,7 @@ fun main() {
         var i = 0
         while i < 3 {
             val t = String.from_str("data")
-            val c = fun() .return: usize = t.len()
+            val c = fun() => usize = t.len()
             print(c())
             i = i + 1
         }

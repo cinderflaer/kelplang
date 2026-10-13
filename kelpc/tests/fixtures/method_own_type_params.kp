@@ -1,25 +1,25 @@
 datac Box2(val v: i32)
 
-fun Box2.map<U>(f: fun(i32).return: U).return: U {
+fun Box2.map<U>(f: fun(i32) => U) => U {
     return f(v)
 }
 
 datac Pair<A, B>(val a: A, val b: B)
 
-fun Pair<A, B>.map_first<C>(f: fun(A).return: C).return: Pair<C, B> {
+fun Pair<A, B>.map_first<C>(f: fun(A) => C) => Pair<C, B> {
     return Pair(a = f(a), b = b)
 }
 
-fun Pair<A, B>.swap_with<C>(c: C).return: Pair<B, C> {
+fun Pair<A, B>.swap_with<C>(c: C) => Pair<B, C> {
     return Pair(a = b, b = c)
 }
 
 fun main() {
     val b = Box2(v = 2)
-    print(b.map(fun(x: i32).return: i32 = x + 1))
-    print(b.map(fun(x: i32).return: bool = x > 1))
+    print(b.map(fun(x: i32) => i32 = x + 1))
+    print(b.map(fun(x: i32) => bool = x > 1))
     val p = Pair(a = 1, b = 2)
-    val q = p.map_first(fun(x: i32).return: bool = x == 1)
+    val q = p.map_first(fun(x: i32) => bool = x == 1)
     print(q.a)
     print(q.b)
     val r = q.swap_with(7)

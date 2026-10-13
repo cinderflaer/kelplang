@@ -1,4 +1,4 @@
 //! Argument parsing.
 
 /// Parses `args`.
-pub fun parse(args: &str).return: i32 = 0
+pub fun parse(args: &str) => i32 = 0

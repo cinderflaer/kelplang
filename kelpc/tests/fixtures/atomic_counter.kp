@@ -16,7 +16,7 @@ impl "std/result"
 pd val counter: AtomicI64 = AtomicI64.new(0)
 
 // The oracle: a plain integer incremented the same number of times.
-fun plain_total(n: i64).return: i64 {
+fun plain_total(n: i64) => i64 {
     var total: i64 = 0
     var i: i64 = 0
     while i < n {

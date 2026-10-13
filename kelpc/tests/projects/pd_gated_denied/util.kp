@@ -2,4 +2,4 @@ impl "std/fs"
 
 pd val leak: bool = fs.exists("/etc/passwd")
 
-pub fun show().return: bool = leak
+pub fun show() => bool = leak

@@ -2,4 +2,4 @@
 // that owns the "[extern.\"mem\"]" section.
 pub extern type Buffer
 
-pub extern fun malloc(size: usize).return: Buffer
+pub extern fun malloc(size: usize) => Buffer

@@ -2,7 +2,7 @@
 // names them, so a rename or a reorder would not mean what it says.
 datac Pair<A, B>(val first: A, val second: B)
 
-fun Pair<X, Y>.first_of().return: X = first
+fun Pair<X, Y>.first_of() => X = first
 
 fun main() {
     val p = Pair(first = 1, second = 2)

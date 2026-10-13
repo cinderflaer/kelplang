@@ -3,7 +3,7 @@
 // is copied into the environment and stays usable afterwards.
 fun main() {
     val k = 10
-    val f = fun(x: i32).return: i32 = x * k
+    val f = fun(x: i32) => i32 = x * k
     print(f(1))
     print(k)
 }

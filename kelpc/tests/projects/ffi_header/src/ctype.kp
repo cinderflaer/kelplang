@@ -1,4 +1,4 @@
 // MK9-S1-M1 (roadmap B-1): a user module's own "extern fun", bound to a
 // native symbol through this project's coral.toml '[extern."ctype"]'
 // section. "toupper" is the native symbol, which the section's library provides.
-pub extern fun toupper(c: i32).return: i32
+pub extern fun toupper(c: i32) => i32

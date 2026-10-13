@@ -1,6 +1,6 @@
 pd var log = 0
 
-fun step(n: i32).return: i32 {
+fun step(n: i32) => i32 {
     log = log * 10 + n
     n
 }

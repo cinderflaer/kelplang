@@ -2,4 +2,4 @@
 // coral.toml's `[extern."display"]` section. The `header` key makes the real
 // prototype visible to the generated C, so the trampoline calls `getpid` with
 // the type `unistd.h` gives it.
-pub extern fun getpid().return: i32
+pub extern fun getpid() => i32

@@ -9,7 +9,7 @@ impl "std/str"
 impl "std/option"
 impl "std/result"
 
-fun half(n: i64).return: result.Result<i64, String> {
+fun half(n: i64) => result.Result<i64, String> {
     if n % 2 != 0 {
         return result.Result.Err(error = String.from_str(s = "odd"))
     }
@@ -17,12 +17,12 @@ fun half(n: i64).return: result.Result<i64, String> {
 }
 
 // `?` propagates the `String` failure unchanged out of a second frame.
-fun quarter(n: i64).return: result.Result<i64, String> {
+fun quarter(n: i64) => result.Result<i64, String> {
     val h = half(n = n)?
     return result.Result.Ok(value = h / 2)
 }
 
-fun find(xs: &List<String>, needle: &str).return: option.Option<i64> {
+fun find(xs: &List<String>, needle: &str) => option.Option<i64> {
     var i: usize = 0
     while i < xs.len() {
         if str.eq(xs.get(i = i).as_str(), needle) {
@@ -34,7 +34,7 @@ fun find(xs: &List<String>, needle: &str).return: option.Option<i64> {
 }
 
 // `?` on an `Option` out of the enclosing `Option`.
-fun index_of(xs: &List<String>, needle: &str).return: option.Option<String> {
+fun index_of(xs: &List<String>, needle: &str) => option.Option<String> {
     val at = find(xs = xs, needle = needle)?
     return option.Option.Some(value = String.from_str(s = "found"))
 }

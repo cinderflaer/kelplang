@@ -1,7 +1,7 @@
 // MISSING-Nf3Rb: a long all-constant array literal bound to a local is a private
 // global plus a copy; a literal with a non-constant element, a literal passed on
 // without a binding, and a copy that is then mutated all behave as before.
-fun total(xs: [i32; 300]).return: i64 {
+fun total(xs: [i32; 300]) => i64 {
     var s: i64 = 0
     var i: usize = 0
     while i < 300 {

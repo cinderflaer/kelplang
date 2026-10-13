@@ -5,7 +5,7 @@ impl "std/str"
 impl "std/result"
 
 // The reason, as a number, so the fixture can print it.
-fun why(s: &str).return: i32 {
+fun why(s: &str) => i32 {
     val r = str.parse_i64(s)
     if let Err(e) = r {
         if let Empty = e {

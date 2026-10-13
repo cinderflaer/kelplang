@@ -7,7 +7,7 @@ impl "std/option"
 datac Tag(val id: i64)
 
 impl fmt.Display for Tag {
-    fun Self.to_text().return: String {
+    fun Self.to_text() => String {
         var out = String.empty()
         val s = fmt.int(id)
         out.push_str("#")
@@ -20,7 +20,7 @@ datac Tags(var left: i64)
 
 impl iter.Iterator for Tags {
     type Item = Tag
-    fun mut Self.next().return: option.Option<Tag> {
+    fun mut Self.next() => option.Option<Tag> {
         if self.left == 0 {
             return option.Option.None
         }
@@ -29,7 +29,7 @@ impl iter.Iterator for Tags {
     }
 }
 
-fun show_all<I: iter.Iterator>(it: move I).return: i64 where I::Item: fmt.Display {
+fun show_all<I: iter.Iterator>(it: move I) => i64 where I::Item: fmt.Display {
     var n: i64 = 0
     var cursor = it
     for x in cursor {

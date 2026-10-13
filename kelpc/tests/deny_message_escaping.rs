@@ -35,7 +35,7 @@ fn scratch(shape: &str) -> PathBuf {
 const UNIT: &str = "\
 impl \"std/fs\"
 
-pub fun probe().return: String = fs.read_text(\"/etc/hostname\")
+pub fun probe() => String = fs.read_text(\"/etc/hostname\")
 ";
 
 // The grant is a prefix nothing under `/etc` can match, so the denial is

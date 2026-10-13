@@ -3,6 +3,6 @@
 // shape that works.
 fun main() {
     val k = 1
-    val xs: List<closure().return: i32> = List.of(fun() .return: i32 = k)
+    val xs: List<closure() => i32> = List.of(fun() => i32 = k)
     print(xs.len())
 }

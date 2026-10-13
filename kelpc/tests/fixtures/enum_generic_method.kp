@@ -2,13 +2,13 @@ enum Opt<T> {
     Has(val v: T)
     No
 }
-fun Opt<T>.is_has().return: bool {
+fun Opt<T>.is_has() => bool {
     return when self {
         Has(_) -> true
         No -> false
     }
 }
-fun Opt<T>.map<U>(f: fun(T).return: U).return: Opt<U> {
+fun Opt<T>.map<U>(f: fun(T) => U) => Opt<U> {
     return when self {
         Has(x) -> Opt.Has(v = f(x))
         No -> Opt.No
@@ -17,6 +17,6 @@ fun Opt<T>.map<U>(f: fun(T).return: U).return: Opt<U> {
 fun main() {
     val o: Opt<i32> = Opt.Has(v = 4)
     print(o.is_has())
-    val p = o.map(fun(x: i32).return: i64 = x.to_i64() * 10)
+    val p = o.map(fun(x: i32) => i64 = x.to_i64() * 10)
     print(when p { Has(v) -> v  No -> 0 })
 }

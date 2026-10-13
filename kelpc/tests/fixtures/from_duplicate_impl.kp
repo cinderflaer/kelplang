@@ -9,11 +9,11 @@ enum E {
 datac T(val y: i32)
 
 impl convert.From<E> for T {
-    fun from(value: E).return: T = T(y = 1)
+    fun from(value: E) => T = T(y = 1)
 }
 
 impl convert.From<E> for T {
-    fun from(value: E).return: T = T(y = 2)
+    fun from(value: E) => T = T(y = 2)
 }
 
 fun main() { }

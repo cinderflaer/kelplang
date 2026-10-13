@@ -24,22 +24,22 @@ enum Wrap {
     Nothing
 }
 
-fun tell(m: &Maybe<String>).return: usize = when m {
+fun tell(m: &Maybe<String>) => usize = when m {
     Yes(v) -> v.len()
     No -> 0
 }
 
-fun unwrap_or(m: &Maybe<i64>, fallback: i64).return: i64 = when m {
+fun unwrap_or(m: &Maybe<i64>, fallback: i64) => i64 = when m {
     Yes(v) -> v
     No -> fallback
 }
 
-fun wrapped_len(w: &Wrap).return: usize = when w {
+fun wrapped_len(w: &Wrap) => usize = when w {
     Held(m) -> tell(m = m)
     Nothing -> 0
 }
 
-fun make(n: i64).return: Maybe<String> = if n > 0 {
+fun make(n: i64) => Maybe<String> = if n > 0 {
     Maybe.Yes(value = String.from_str(s = "held"))
 } else {
     Maybe.No

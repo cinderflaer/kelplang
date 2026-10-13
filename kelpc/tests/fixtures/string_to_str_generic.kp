@@ -1,7 +1,7 @@
 // A `String` passed to a `str` parameter of a generic function is refused by
 // name: an implicit borrow is made only for a plain function or method.
 impl "std/str"
-fun label<T>(v: T, text: str).return: i32 {
+fun label<T>(v: T, text: str) => i32 {
     print(text)
     return 0
 }

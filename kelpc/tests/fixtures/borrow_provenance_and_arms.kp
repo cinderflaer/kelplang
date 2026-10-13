@@ -12,7 +12,7 @@ enum J {
 // 1. **A view derived through a pattern binding keeps its provenance.** `s` is
 //    a shared borrow of `v`'s payload, so returning a view of it returns a
 //    view of `v`, the same thing `v.x.as_str()` (already accepted) returns.
-fun as_str(v: &J).return: &str {
+fun as_str(v: &J) => &str {
     if let S(s) = v {
         return s.as_str()
     }
@@ -27,14 +27,14 @@ fun as_str(v: &J).return: &str {
 //    so, and arm unification was the one place comparing them by identity.
 //    A total version of the same accessor, so the arms below can be exercised
 //    on either variant without panicking.
-fun text_or(v: &J).return: &str {
+fun text_or(v: &J) => &str {
     if let S(s) = v {
         return s.as_str()
     }
     return "none"
 }
 
-fun joined(v: &J, c: bool).return: bool {
+fun joined(v: &J, c: bool) => bool {
     // A borrowed arm and a literal arm in one `if`, which used to be
     // "'if/else branches have different types: '&str' and 'str'".
     val w = if c { text_or(v) } else { "n" }
@@ -44,7 +44,7 @@ fun joined(v: &J, c: bool).return: bool {
 //    The same join at a *return*, where the merged root also has to be one
 //    owner: `as_str(v)` borrows `v`, and `"d"` is static, so the value has a
 //    single owner and that owner is `v`.
-fun either(v: &J, c: bool).return: &str {
+fun either(v: &J, c: bool) => &str {
     return if c { text_or(v) } else { "d" }
 }
 
@@ -59,7 +59,7 @@ fun either(v: &J, c: bool).return: &str {
 //    survives (`Result<i64, _>` owns its data), so `cand` can still be moved
 //    a few lines later. Before this the borrow was held to the end of the
 //    block and `return cand` was refused.
-fun round_trip(n: i64).return: String {
+fun round_trip(n: i64) => String {
     val cand = fmt.int(n)
     val back = str.parse_i64(cand.as_str())
     if let Ok(v) = back {
@@ -72,13 +72,13 @@ fun round_trip(n: i64).return: String {
 
 datac P(val text: String, val n: usize)
 
-fun P.tag().return: usize = n
+fun P.tag() => usize = n
 
 // 5. **A `Copy` value is never moved**, so reading one while a borrow of it is
 //    live is allowed, and, before this, `self` (a `&mut P` inside a `mut`
 //    method: a pointer, and Copy) was reported as "cannot move 'self' while it
 //    is borrowed" for a read that moves nothing.
-fun P.check().return: bool {
+fun P.check() => bool {
     val t = text.as_str()
     return str.eq(t, "x") && self.tag() > 0
 }

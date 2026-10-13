@@ -1,6 +1,6 @@
 // MISSING-Ey4Mt: a const parameter's type is an integer, `bool` or `char`.
 // Any other type is refused by name.
-fun label<const S: String>().return: i32 = 0
+fun label<const S: String>() => i32 = 0
 
 fun main() {
     print(label<"x">())

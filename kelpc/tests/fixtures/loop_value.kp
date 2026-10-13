@@ -1,4 +1,4 @@
-fun find_first_big(xs: List<i32>).return: i32 {
+fun find_first_big(xs: List<i32>) => i32 {
     var i: usize = 0
     return loop {
         if i >= xs.len() {

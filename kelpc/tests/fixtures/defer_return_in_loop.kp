@@ -1,7 +1,7 @@
 // A `return` nested in an `if` inside a `while` leaves the loop body and the
 // function body, so the loop body's defer runs and then the function's, both
 // before the return.
-fun f(n: i32).return: i32 {
+fun f(n: i32) => i32 {
     defer print("f-out")
     var i = 0
     while i < n {

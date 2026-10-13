@@ -3,20 +3,20 @@
 // trait.
 
 trait Shape {
-    fun Self.area().return: i32
-    fun Self.describe().return: i32 { return 7 }
-    fun Self.summary().return: i32 { return self.area() + self.describe() }
+    fun Self.area() => i32
+    fun Self.describe() => i32 { return 7 }
+    fun Self.summary() => i32 { return self.area() + self.describe() }
 }
 
 trait Tagged {
-    fun Self.tag().return: i32 { return 5 }
+    fun Self.tag() => i32 { return 5 }
 }
 
 datac Circle(val r: i32)
 
 impl Shape for Circle {
-    fun Self.area().return: i32 = r * r
-    fun Self.describe().return: i32 = 9
+    fun Self.area() => i32 = r * r
+    fun Self.describe() => i32 = 9
 }
 
 // `Tagged` declares only a default, so an empty block implements it.

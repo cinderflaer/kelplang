@@ -11,6 +11,6 @@ pub datac Pair<T>(val a: T, val b: T)
 
 // A bare name is the declaring module's own: `bumped` reaches `add` with no
 // qualifier and no `pub` (A-13).
-pub fun bumped(n: i32).return: i32 = add(n = n, by = 1)
+pub fun bumped(n: i32) => i32 = add(n = n, by = 1)
 
-fun add(n: i32, by: i32).return: i32 = n + by
+fun add(n: i32, by: i32) => i32 = n + by

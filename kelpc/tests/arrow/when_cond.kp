@@ -1,5 +1,5 @@
 // `=>` is the arrow of a `when` with no scrutinee, the same token as `->`.
-fun sign(n: i32).return: &str = when {
+fun sign(n: i32) => &str = when {
     n > 0 => "pos"
     n < 0 => "neg"
     else => "zero"

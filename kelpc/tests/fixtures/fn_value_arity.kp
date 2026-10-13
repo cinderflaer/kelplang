@@ -1,5 +1,5 @@
 // A-4: an indirect call is counted against the callee's own parameter list.
-fun double(x: i32).return: i32 = x * 2
+fun double(x: i32) => i32 = x * 2
 
 fun main() {
     val f = double

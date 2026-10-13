@@ -2,7 +2,7 @@
 // because the code after the let would run with the pattern unmatched.
 impl "std/option"
 
-fun find(id: i32).return: option.Option<i32> {
+fun find(id: i32) => option.Option<i32> {
     if id > 0 {
         return option.Option.Some(value = id * 10)
     }

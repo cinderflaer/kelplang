@@ -8,7 +8,7 @@ pd var tally = Tally(n = 0)
 
 datac Tally(var n: i32)
 
-fun combine(a: mut Tally, b: Tally).return: i32 = a.n + b.n
+fun combine(a: mut Tally, b: Tally) => i32 = a.n + b.n
 
 fun main() {
     print(combine(tally, tally))

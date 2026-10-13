@@ -1,6 +1,6 @@
 // M6: returning an owned value moves it out of the frame, so the callee must
 // not free it and the caller must.
-fun make(text: &str).return: Bytes {
+fun make(text: &str) => Bytes {
     val b = Bytes.from_str(text)
     return b
 }

@@ -8,7 +8,7 @@ impl "std/str"
 
 datac Cell(val n: i64, val next: Box<Cell>)
 
-fun churn(n: i64).return: i64 {
+fun churn(n: i64) => i64 {
     var total: i64 = 0
     var i: i64 = 0
     while i < n {
@@ -19,7 +19,7 @@ fun churn(n: i64).return: i64 {
     total
 }
 
-fun worker(n: i64).return: i64 {
+fun worker(n: i64) => i64 {
     churn(n)
 }
 

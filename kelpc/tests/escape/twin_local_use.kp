@@ -1,5 +1,5 @@
 // T45 twin: a block value used only inside its own body, as a borrow.
-fun twice(n: i32).return: i32 {
+fun twice(n: i32) => i32 {
     val b = Box.of(n)
     val c = b.get()
     return c + c

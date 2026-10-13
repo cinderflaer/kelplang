@@ -3,17 +3,17 @@
 // the box is still live is refused, exactly as `c.scale(...)` is refused while
 // `&c` is live.
 trait Shape {
-    fun Self.area().return: f64
+    fun Self.area() => f64
     fun mut Self.scale(f: f64)
 }
 
 datac Circle(var r: f64)
 impl Shape for Circle {
-    fun Self.area().return: f64 = r * r * 3.0
+    fun Self.area() => f64 = r * r * 3.0
     fun mut Self.scale(f: f64) { r = r * f }
 }
 
-fun make().return: Box<dyn Shape> = Box.of(Circle(r = 1.0))
+fun make() => Box<dyn Shape> = Box.of(Circle(r = 1.0))
 
 fun main() {
     var b = make()

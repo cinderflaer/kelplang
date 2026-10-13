@@ -1,6 +1,6 @@
 datac Node(val left: Box<Node>, val right: Box<Node>)
 
-fun check(n: Node).return: i64 {
+fun check(n: Node) => i64 {
     return 1
 }
 

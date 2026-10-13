@@ -9477,7 +9477,7 @@ fn move_parameter_misuse_is_rejected() {
 
 // ---------------------------------------------------------------------------
 // A-4 phase B: function values, a declared `fun` as a value of type
-// `fun(T).return: U`, called through a local, a field, a passdown or a parameter.
+// `fun(T) => U`, called through a local, a field, a passdown or a parameter.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -9496,7 +9496,7 @@ fn a_function_value_with_the_wrong_shape_is_rejected() {
     // String)` callback cannot be handed a borrow.
     assert_rejected_with(
         "tests/fixtures/fn_value_mismatch.kp",
-        "expected 'fun(f64).return: f64'",
+        "expected 'fun(f64) => f64'",
     );
     assert_rejected_with(
         "tests/fixtures/fn_value_move_arg.kp",
@@ -9545,7 +9545,7 @@ fn function_type_misuse_is_rejected() {
     );
     assert_rejected_with(
         "tests/fixtures/fn_value_print.kp",
-        "cannot pass a value of type 'fun(i32).return: i32' to 'print'",
+        "cannot pass a value of type 'fun(i32) => i32' to 'print'",
     );
 }
 
@@ -9573,7 +9573,7 @@ fn a_fun_literal_is_a_function_value() {
     // Also in the AddressSanitizer list: the `move` literal frees what it is
     // handed. Covers a literal passed directly, a block body, a nested
     // literal, a literal in a `datac` field, a literal returned from a
-    // function, and `?` propagating against the literal's own `.return`.
+    // function, and `?` propagating against the literal's own return type.
     assert_compiles_and_runs(
         "tests/fixtures/fn_literal.kp",
         "42\n6\n7\n4\n31\n9\n12\ntrue\n4\n",
@@ -9633,7 +9633,7 @@ fn an_indirect_call_numbers_the_environment_after_a_mem_class_return_pointer() {
 #[test]
 fn fun_literal_misuse_is_rejected() {
     // A passdown is a hidden argument a function value cannot carry, a borrow
-    // return has no elision root, the tail is checked against `.return` like any
+    // return has no elision root, the tail is checked against the return type like any
     // function's, and a body is required.
     assert_rejected_with(
         "tests/fixtures/fn_literal_passdown.kp",
@@ -9695,7 +9695,7 @@ fn a_combinator_needing_a_copy_payload_says_so() {
 
 // ---------------------------------------------------------------------------
 // A-4 phase E: captures, a `fun` literal that names a binding from the
-// enclosing scope becomes a closure (`closure(T).return: U`), which owns the heap
+// enclosing scope becomes a closure (`closure(T) => U`), which owns the heap
 // environment its captures were moved into.
 // ---------------------------------------------------------------------------
 
@@ -9808,7 +9808,7 @@ fn the_closure_type_and_its_limits_are_checked() {
     );
     assert_rejected_with(
         "tests/fixtures/closure_signature_mismatch.kp",
-        "declared as 'closure(i32).return: i32'",
+        "declared as 'closure(i32) => i32'",
     );
     assert_rejected_with(
         "tests/fixtures/closure_where_fn_expected.kp",
@@ -15685,12 +15685,12 @@ fn cache_project(tag: &str) -> PathBuf {
     .expect("write main");
     std::fs::write(
         dir.join("src/alpha.kp"),
-        "impl \"beta\"\n\npub fun greet().return: str = beta.message()\n",
+        "impl \"beta\"\n\npub fun greet() => str = beta.message()\n",
     )
     .expect("write alpha");
     std::fs::write(
         dir.join("src/beta.kp"),
-        "pub fun message().return: str = \"hello\"\n",
+        "pub fun message() => str = \"hello\"\n",
     )
     .expect("write beta");
     dir
@@ -15700,7 +15700,7 @@ fn cache_project(tag: &str) -> PathBuf {
 fn set_beta_message(dir: &Path, body: &str) {
     std::fs::write(
         dir.join("src/beta.kp"),
-        format!("pub fun message().return: str = {body}\n"),
+        format!("pub fun message() => str = {body}\n"),
     )
     .expect("rewrite beta");
 }
@@ -15912,11 +15912,11 @@ fun main() {
         dir.join("src/alpha.kp"),
         "impl \"beta\"
 
-pub fun greet().return: i64 = beta.value()
+pub fun greet() => i64 = beta.value()
 ",
     )
     .unwrap();
-    std::fs::write(dir.join("src/beta.kp"), "pub fun value().return: i64 = 41
+    std::fs::write(dir.join("src/beta.kp"), "pub fun value() => i64 = 41
 ").unwrap();
     let cache = out_path("cache_signature_cache");
     let _ = std::fs::remove_dir_all(&cache);
@@ -15927,11 +15927,11 @@ pub fun greet().return: i64 = beta.value()
         dir.join("src/alpha.kp"),
         "impl \"beta\"
 
-pub fun greet().return: i64 = beta.value(0)
+pub fun greet() => i64 = beta.value(0)
 ",
     )
     .unwrap();
-    std::fs::write(dir.join("src/beta.kp"), "pub fun value(x: i64).return: i64 = x + 41
+    std::fs::write(dir.join("src/beta.kp"), "pub fun value(x: i64) => i64 = x + 41
 ").unwrap();
     let second_bin = out_path("cache_signature_2");
     let second = cache_build(&dir, &second_bin, &cache, &[], &[]);

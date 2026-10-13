@@ -11,7 +11,7 @@ impl "std/result"
 
 // The decoded bytes as text, or a marker when the decode was refused. The
 // payload is a borrow (`Result`'s header), so the copy is explicit.
-fun decoded(r: result.Result<Bytes, encoding.DecodeErr>).return: String {
+fun decoded(r: result.Result<Bytes, encoding.DecodeErr>) => String {
     if let Ok(b) = r {
         return String.from_bytes(b.clone())
     }
@@ -19,7 +19,7 @@ fun decoded(r: result.Result<Bytes, encoding.DecodeErr>).return: String {
 }
 
 // The decoded text, or the same marker.
-fun decoded_text(r: result.Result<String, encoding.DecodeErr>).return: String {
+fun decoded_text(r: result.Result<String, encoding.DecodeErr>) => String {
     if let Ok(s) = r {
         return s.clone()
     }

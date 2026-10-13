@@ -5,12 +5,12 @@ impl "std/ops"
 
 datac Version(val major: i32, val minor: i32)
 
-fun Version.hash().return: u64 = self.major.to_u64() * 31 + self.minor.to_u64()
+fun Version.hash() => u64 = self.major.to_u64() * 31 + self.minor.to_u64()
 
-fun Version.eq(other: &Version).return: bool = self.major == other.major && self.minor == other.minor
+fun Version.eq(other: &Version) => bool = self.major == other.major && self.minor == other.minor
 
 impl ops.Ord for Version {
-    fun Self.cmp(other: &Self).return: i32 {
+    fun Self.cmp(other: &Self) => i32 {
         if major != other.major {
             if major < other.major {
                 return -1

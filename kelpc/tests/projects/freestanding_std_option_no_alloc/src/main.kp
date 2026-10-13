@@ -2,7 +2,7 @@ impl "std/option"
 
 section(".text.boot") fun kmain() {
     val o: option.Option<i32> = option.Option.Some(value = 1)
-    val m = option.map(o = &o, f = fun(v: &i32).return: i32 = v + 1)
+    val m = option.map(o = &o, f = fun(v: &i32) => i32 = v + 1)
     if option.is_none(o = &m) { }
     while true { }
 }

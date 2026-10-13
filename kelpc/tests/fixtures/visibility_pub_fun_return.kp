@@ -2,7 +2,7 @@
 // signature, and `Secret` is private to this module.
 datac Secret(val n: i32)
 
-pub fun make(n: i32).return: Secret = Secret(n = n)
+pub fun make(n: i32) => Secret = Secret(n = n)
 
 fun main() {
     print(1)

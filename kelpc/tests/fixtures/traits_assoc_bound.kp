@@ -2,28 +2,28 @@
 // the impl, and generic code reaches the bound's method through `R::Entry`.
 
 trait Named {
-    fun Self.name().return: str
+    fun Self.name() => str
 }
 
 trait Repo {
     type Entry: Named
-    fun Self.entry().return: Self::Entry
+    fun Self.entry() => Self::Entry
 }
 
 datac Item(val n: i32)
 
 impl Named for Item {
-    fun Self.name().return: str = "item"
+    fun Self.name() => str = "item"
 }
 
 datac Store(val v: i32)
 
 impl Repo for Store {
     type Entry = Item
-    fun Self.entry().return: Item = Item(n = v)
+    fun Self.entry() => Item = Item(n = v)
 }
 
-fun describe<R: Repo>(r: &R).return: str {
+fun describe<R: Repo>(r: &R) => str {
     val e = r.entry()
     return e.name()
 }

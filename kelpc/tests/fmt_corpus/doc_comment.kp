@@ -1,6 +1,6 @@
 // pins comments-verbatim-bytes: a doc comment is not rewritten into a line comment.
 /// Doubles a number.
-fun twice(n: i32).return: i32 = n * 2
+fun twice(n: i32) => i32 = n * 2
 
 /// Prints the result.
 fun main() {

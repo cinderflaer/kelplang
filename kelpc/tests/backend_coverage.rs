@@ -172,7 +172,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// so neither moves this count.
 ///
 /// Raised from 244 by MK8-S2 item A-12 slice 1: a `datac` or `enum` that
-/// declares both `fun T.hash().return: u64` and `fun T.eq(other: &T).return: bool` is a
+/// declares both `fun T.hash() => u64` and `fun T.eq(other: &T) => bool` is a
 /// `Map` key whatever its fields are, so `map_declared_key` (a `f64` field,
 /// which the derived key set refuses, beside an owned `String`) and
 /// `map_declared_key_enum` (an `enum` with a `f64` payload and a declared pair
@@ -274,7 +274,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// (`eq_operator_no_eq`, `eq_operator_order`, `eq_operator_bad_signature`,
 /// `eq_operator_type_mismatch`) stay outside the corpus, so they do not move the count.
 /// Raised from 403 by `ffi_fn_pointer`: a user extern passes a typed plain
-/// `fun(i32).return: i32` callback to C and receives one back, on both backends.
+/// `fun(i32) => i32` callback to C and receives one back, on both backends.
 /// Lowered from 404 to 399 by the no-C-tests lane: `ffi_callback`, `ffi_fn_pointer`, `ffi_include_dir`,
 /// `ffi_pkg_config` and `ffi_variadic` tested C interop (a C helper per project) and were removed. The
 /// count assumes all five built on the LLVM backend; re-record with `LLVM_BUILT_BASELINE_RERECORD=1`.

@@ -11,7 +11,7 @@ pub enum AppErr {
 }
 
 impl convert.From<IoErr> for AppErr {
-    fun from(value: IoErr).return: AppErr {
+    fun from(value: IoErr) => AppErr {
         return when value {
             Bad(code) -> AppErr.Io(code = code, note = "cross")
         }

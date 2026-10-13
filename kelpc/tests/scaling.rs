@@ -107,7 +107,7 @@ fn a_long_chain_of_std_method_calls_is_linear() {
 #[test]
 fn a_long_chain_of_user_method_calls_is_linear() {
     let src = format!(
-        "datac P(var v: i32)\nfun P.me().return: P = P(v = self.v)\nfun main() {{\n    val p = P(v = 1)\n    val q = p{}\n    print(q.v)\n}}\n",
+        "datac P(var v: i32)\nfun P.me() => P = P(v = self.v)\nfun main() {{\n    val p = P(v = 1)\n    val q = p{}\n    print(q.v)\n}}\n",
         rep(".me()", 790)
     );
     run_shape("user_chain", &src, "1");
@@ -118,7 +118,7 @@ fn a_chain_mixing_receivers_and_arguments_is_linear() {
     // The receiver of every link is itself a call with an argument, so each
     // link both infers a receiver and matches an argument against it.
     let src = format!(
-        "datac P(var v: i32)\nfun P.add(k: i32).return: P = P(v = self.v + k)\nfun main() {{\n    val p = P(v = 0)\n    val q = p{}\n    print(q.v)\n}}\n",
+        "datac P(var v: i32)\nfun P.add(k: i32) => P = P(v = self.v + k)\nfun main() {{\n    val p = P(v = 0)\n    val q = p{}\n    print(q.v)\n}}\n",
         rep(".add(1)", 400)
     );
     run_shape("arg_chain", &src, "400");
@@ -127,7 +127,7 @@ fn a_chain_mixing_receivers_and_arguments_is_linear() {
 #[test]
 fn deeply_nested_calls_are_linear() {
     let src = format!(
-        "fun f(x: i32).return: i32 = x\nfun main() {{\n    val x = {}1{}\n    print(x)\n}}\n",
+        "fun f(x: i32) => i32 = x\nfun main() {{\n    val x = {}1{}\n    print(x)\n}}\n",
         rep("f(", 90),
         rep(")", 90)
     );
@@ -137,7 +137,7 @@ fn deeply_nested_calls_are_linear() {
 #[test]
 fn deeply_nested_generic_calls_are_linear() {
     let src = format!(
-        "fun id<T>(x: T).return: T = x\nfun main() {{\n    val x = {}1{}\n    print(x)\n}}\n",
+        "fun id<T>(x: T) => T = x\nfun main() {{\n    val x = {}1{}\n    print(x)\n}}\n",
         rep("id(", 90),
         rep(")", 90)
     );
@@ -182,11 +182,11 @@ fn nested_function_literals_are_linear() {
             out.push_str(&format!("{ind}return x{i} + k\n"));
             return;
         }
-        out.push_str(&format!("{ind}val g{i} = fun(x{}: i32).return: i32 {{\n", i + 1));
+        out.push_str(&format!("{ind}val g{i} = fun(x{}: i32) => i32 {{\n", i + 1));
         level(i + 1, n, out);
         out.push_str(&format!("{ind}}}\n{ind}return g{i}(x{i})\n"));
     }
-    let mut src = String::from("fun main() {\n    val k = 1\n    val f = fun(x0: i32).return: i32 {\n");
+    let mut src = String::from("fun main() {\n    val k = 1\n    val f = fun(x0: i32) => i32 {\n");
     level(0, 50, &mut src);
     src.push_str("    }\n    print(f(1))\n}\n");
     run_shape("nested_closures", &src, "2");
@@ -194,9 +194,9 @@ fn nested_function_literals_are_linear() {
 
 #[test]
 fn a_long_sequence_of_closures_is_linear() {
-    let mut src = String::from("fun main() {\n    val k = 1\n    val f0 = fun(x: i32).return: i32 = x + k\n");
+    let mut src = String::from("fun main() {\n    val k = 1\n    val f0 = fun(x: i32) => i32 = x + k\n");
     for i in 1..=150 {
-        src.push_str(&format!("    val f{i} = fun(x: i32).return: i32 = f{}(x) + 1\n", i - 1));
+        src.push_str(&format!("    val f{i} = fun(x: i32) => i32 = f{}(x) + 1\n", i - 1));
     }
     src.push_str("    print(f150(0))\n}\n");
     run_shape("closure_sequence", &src, "151");

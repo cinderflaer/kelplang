@@ -26,7 +26,7 @@ fun show(r: Row) {
     print(r.inner.text)
 }
 
-fun tag_of(r: Row).return: i32 = r.tag
+fun tag_of(r: Row) => i32 = r.tag
 
 fun main() {
     // Block scope: every owned field of `row` drops at the closing brace.

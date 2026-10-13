@@ -1,5 +1,5 @@
 // A-2: no argument and no expected type determines `T` here.
-fun empty_of<T>().return: List<T> = List.empty()
+fun empty_of<T>() => List<T> = List.empty()
 
 fun main() {
     val xs = empty_of()

@@ -41,21 +41,21 @@ enum Wide {
 
 // One class: the enum *is* one eightbyte, so it rides `rax` exactly like a
 // `u64` would.
-fun narrow(a: move Narrow).return: i64 = when a {
+fun narrow(a: move Narrow) => i64 = when a {
     One(x) -> x.to_i64()
     Three(x, y, z) -> (x.to_i64() * 1) + (y.to_i64() * 2) + (z.to_i64() * 4)
     Blank -> -1
 }
 
 // Two class: `rax:rdx`.
-fun eight(e: move Eight).return: i64 = when e {
+fun eight(e: move Eight) => i64 = when e {
     Value(n) -> n
     Empty -> 0 - 2
 }
 
 // MEMORY class: the callee's result is written through a hidden pointer, and
 // the argument arrives in the caller's outgoing argument area.
-fun wide(w: move Wide).return: i64 = when w {
+fun wide(w: move Wide) => i64 = when w {
     Text(f, s, t) -> f + (s * 2) + (t * 3)
     Point(p) -> p.id.to_i64() + p.score
     Blank -> -3
@@ -63,7 +63,7 @@ fun wide(w: move Wide).return: i64 = when w {
 
 // A returned enum, at each class, and the same value read back through a
 // borrow, the two directions an enum crosses a function boundary in.
-fun make_narrow(n: i64).return: Narrow = if n > 1 {
+fun make_narrow(n: i64) => Narrow = if n > 1 {
     Narrow.Three(a = 1, b = 2, c = 3)
 } else if n > 0 {
     Narrow.One(a = n.to_u8())
@@ -71,19 +71,19 @@ fun make_narrow(n: i64).return: Narrow = if n > 1 {
     Narrow.Blank
 }
 
-fun make_eight(n: i64).return: Eight = if n > 0 {
+fun make_eight(n: i64) => Eight = if n > 0 {
     Eight.Value(n = n * 10)
 } else {
     Eight.Empty
 }
 
-fun make_wide(n: i64).return: Wide = if n > 0 {
+fun make_wide(n: i64) => Wide = if n > 0 {
     Wide.Point(p = Entry(id = n.to_i32(), score = n * 100))
 } else {
     Wide.Text(first = n, second = n * 2, third = n * 3)
 }
 
-fun peek(w: &Wide).return: i64 = when w {
+fun peek(w: &Wide) => i64 = when w {
     Text(f, s, t) -> f + (s * 2) + (t * 3)
     Point(p) -> p.id.to_i64() + p.score
     Blank -> -3
@@ -93,7 +93,7 @@ fun peek(w: &Wide).return: i64 = when w {
 // sequential rule a `String` field is, whatever class it has.
 datac Holder(val name: i64, val small: Narrow, val mid: Eight, val big: Wide)
 
-fun holder_total(h: &Holder).return: i64 = h.name + narrow(a = h.small) + wide(w = h.big)
+fun holder_total(h: &Holder) => i64 = h.name + narrow(a = h.small) + wide(w = h.big)
 
 fun main() {
     // One class, constructed and passed.

@@ -1,6 +1,6 @@
 datac Point(val x: i32, val y: i32)
 
-fun f(p: &Point).return: i32 = when p {
+fun f(p: &Point) => i32 = when p {
     else -> 0
 }
 

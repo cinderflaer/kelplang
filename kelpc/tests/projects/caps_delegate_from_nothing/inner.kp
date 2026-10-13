@@ -1,3 +1,3 @@
 impl "std/fs"
 
-fun check().return: bool = fs.exists("/var/lib/kelp/caps_eligible")
+fun check() => bool = fs.exists("/var/lib/kelp/caps_eligible")

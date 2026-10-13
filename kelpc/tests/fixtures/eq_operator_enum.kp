@@ -5,7 +5,7 @@ enum K {
     B
 }
 
-fun K.eq(other: &K).return: bool = when self {
+fun K.eq(other: &K) => bool = when self {
     A(a) -> when other {
         A(b) -> a == b
         B -> false

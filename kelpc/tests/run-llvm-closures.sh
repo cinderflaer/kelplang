@@ -29,7 +29,7 @@
 #     closure as a `Box` element, a `move` parameter and a field of its own.
 #   * `a_fun_literal_is_a_function_value` (`fn_literal.kp`) is a literal with no
 #     capture, so its value is a `FnRef`: a bare code pointer, called indirectly,
-#     with a `?` inside its body against its own `.return`.
+#     with a `?` inside its body against its own return type.
 #   * `a_fun_literal_captures_rather_than_failing` (`fn_literal_capture.kp`) is
 #     the smallest closure: one `Copy` capture means a heap environment, a
 #     `Capture` read in the generated body and a drop that frees it.

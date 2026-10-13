@@ -9,7 +9,7 @@ pd var bag_calls = 0
 
 datac Bag(val items: List<i32>)
 
-fun make_bag().return: Bag {
+fun make_bag() => Bag {
     bag_calls += 1
     var out: List<i32> = List.empty()
     out.push(4)
@@ -17,7 +17,7 @@ fun make_bag().return: Bag {
     return Bag(items = out)
 }
 
-fun make().return: List<i32> {
+fun make() => List<i32> {
     var out: List<i32> = List.empty()
     out.push(7)
     out.push(8)
@@ -25,7 +25,7 @@ fun make().return: List<i32> {
     return out
 }
 
-fun sum_all(xs: List<i32>).return: i32 {
+fun sum_all(xs: List<i32>) => i32 {
     // A parameter is a borrow, so the loop must not move the list out of it.
     var total: i32 = 0
     for x in xs {

@@ -8,14 +8,14 @@ enum Bad {
     Oops
 }
 
-fun open(n: i32).return: result.Result<i32, Bad> {
+fun open(n: i32) => result.Result<i32, Bad> {
     if n > 0 {
         return result.Result.Ok(value = n)
     }
     return result.Result.Err(error = Bad.Oops)
 }
 
-fun pair(second: i32).return: result.Result<i32, Bad> {
+fun pair(second: i32) => result.Result<i32, Bad> {
     val first = open(1)?
     errdefer print(first)
     val other = open(second)?

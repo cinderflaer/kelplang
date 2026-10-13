@@ -37,24 +37,24 @@ pub enum Kind {
 /// Something with an area.
 pub trait Shape {
     /// The area.
-    fun Self.area().return: f64
+    fun Self.area() => f64
     type Item
 }
 
 impl Shape for Circle {
-    fun Self.area().return: f64 = self.r * self.r
+    fun Self.area() => f64 = self.r * self.r
 }
 
 /// Reads a file named by `path`.
-pub fun load(path: &str).return: String {
+pub fun load(path: &str) => String {
     return fs.read_text(path)
 }
 
 /// Makes a circle from a radius.
-pub unsafe fun make(r: f64).return: Circle = Circle(r = r, tag = 0)
+pub unsafe fun make(r: f64) => Circle = Circle(r = r, tag = 0)
 
 /// The diameter.
-fun Circle.diameter().return: f64 = self.r * 2.0
+fun Circle.diameter() => f64 = self.r * 2.0
 
 fun hidden() {
 }

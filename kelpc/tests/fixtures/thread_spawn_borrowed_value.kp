@@ -8,7 +8,7 @@ impl "std/str"
 
 datac Payload(val text: View)
 
-fun worker(p: move Payload).return: usize = p.text.len()
+fun worker(p: move Payload) => usize = p.text.len()
 
 fun main() {
     val h = thread.spawn(worker, Payload(text = "x".view()))

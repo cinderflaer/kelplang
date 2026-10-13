@@ -7,7 +7,7 @@ impl "std/option"
 
 // Returns a value derived from the owned argument, so the argument itself is
 // still owned at the `return` and has to be freed there.
-fun taken(s: move String, take: bool).return: option.Option<usize> {
+fun taken(s: move String, take: bool) => option.Option<usize> {
     if !take {
         return option.Option.None
     }
@@ -15,7 +15,7 @@ fun taken(s: move String, take: bool).return: option.Option<usize> {
 }
 
 // A `return` from inside a loop is the same drop point.
-fun length_if_any(s: move String, n: i32).return: usize {
+fun length_if_any(s: move String, n: i32) => usize {
     var i = 0
     while i < n {
         return s.len()
@@ -24,7 +24,7 @@ fun length_if_any(s: move String, n: i32).return: usize {
 }
 
 // Falling off the end of the body is the third drop point.
-fun measure(s: move String).return: usize {
+fun measure(s: move String) => usize {
     val n = s.len()
     if n > 3 {
         print("long")

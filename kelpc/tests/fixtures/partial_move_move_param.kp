@@ -5,9 +5,9 @@
 // buffer fails AddressSanitizer and valgrind.
 datac Bag(val name: String, val xs: List<i32>)
 
-fun take_name(b: move Bag).return: String = b.name
+fun take_name(b: move Bag) => String = b.name
 
-fun take_count(b: move Bag).return: usize {
+fun take_count(b: move Bag) => usize {
     val xs = b.xs
     return xs.len()
 }

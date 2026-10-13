@@ -14,7 +14,7 @@ pd val counter: AtomicI64 = AtomicI64.new(0)
 // One thousand increments, then a value for the joiner: `T` is the worker's
 // return type, so a worker that returns nothing would make the join's
 // `Result<unit, ThreadErr>` carry no payload at all.
-fun bump(c: &AtomicI64).return: i64 {
+fun bump(c: &AtomicI64) => i64 {
     var i: i64 = 0
     while i < 1000 {
         c.fetch_add(value = 1, order = atomic.Ordering.SeqCst)

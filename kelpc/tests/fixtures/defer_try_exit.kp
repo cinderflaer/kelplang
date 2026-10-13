@@ -3,9 +3,9 @@
 // has no exit for it. The refusal names the operator.
 impl "std/option"
 
-fun g().return: option.Option<i32> = option.Option.None
+fun g() => option.Option<i32> = option.Option.None
 
-fun f().return: i32 {
+fun f() => i32 {
     defer print("out")
     val x = option.unwrap(o = g())?
     return x

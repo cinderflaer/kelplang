@@ -12,7 +12,7 @@ static mut USED: usize = 0
 
 trait Line {
     fun Self.write()
-    fun Self.count().return: i64
+    fun Self.count() => i64
 }
 
 datac Hello()
@@ -28,12 +28,12 @@ fun mut Bye.drop() {
 
 impl Line for Hello {
     fun Self.write() { uart.puts("hello from boxdyn\n") }
-    fun Self.count().return: i64 = 1
+    fun Self.count() => i64 = 1
 }
 
 impl Line for Bye {
     fun Self.write() { uart.puts("bye from boxdyn\n") }
-    fun Self.count().return: i64 = 2
+    fun Self.count() => i64 = 2
 }
 
 fun announce(l: &dyn Line) {
@@ -42,11 +42,11 @@ fun announce(l: &dyn Line) {
     uart.putc(b'\n')
 }
 
-fun align_up(value: usize, align: usize).return: usize {
+fun align_up(value: usize, align: usize) => usize {
     return ((value + align - 1) / align) * align
 }
 
-fun alloc(size: usize, align: usize).return: Ptr<u8> {
+fun alloc(size: usize, align: usize) => Ptr<u8> {
     val out: Ptr<u8> = unsafe {
         val start: usize = align_up(USED, align)
         if start + size > 4096 {
@@ -69,7 +69,7 @@ fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
     }
 }
 
-fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).return: Ptr<u8> {
+fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
     val fresh: Ptr<u8> = alloc(new, align)
     if fresh.is_null() {
         return Ptr.null()

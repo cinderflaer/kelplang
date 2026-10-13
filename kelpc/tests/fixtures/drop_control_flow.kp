@@ -8,7 +8,7 @@ fun mut Leaf.drop() {
     print(self.tag)
 }
 
-fun early(x: bool).return: i32 {
+fun early(x: bool) => i32 {
     val a = Leaf(tag = 1)
     if x {
         return 9

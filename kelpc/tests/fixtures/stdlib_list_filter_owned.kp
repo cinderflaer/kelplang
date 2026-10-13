@@ -7,6 +7,6 @@ impl "std/list"
 fun main() {
     var names: List<String> = List.empty()
     names.push(String.from_str("ab"))
-    val short = list.filter(xs = names, f = fun(s: &String).return: bool = s.len() < 3)
+    val short = list.filter(xs = names, f = fun(s: &String) => bool = s.len() < 3)
     print(short.len())
 }

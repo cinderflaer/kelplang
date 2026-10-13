@@ -6,11 +6,11 @@ impl "std/str"
 static mut ARENA: [u8; 65536] = [0; 65536]
 static mut USED: usize = 0
 
-fun align_up(value: usize, align: usize).return: usize {
+fun align_up(value: usize, align: usize) => usize {
     return ((value + align - 1) / align) * align
 }
 
-fun alloc(size: usize, align: usize).return: Ptr<u8> {
+fun alloc(size: usize, align: usize) => Ptr<u8> {
     val out: Ptr<u8> = unsafe {
         val start: usize = align_up(USED, align)
         if start + size > 65536 {
@@ -32,7 +32,7 @@ fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
     }
 }
 
-fun is_one(v: &i32).return: bool {
+fun is_one(v: &i32) => bool {
     return v == 1
 }
 
@@ -44,8 +44,8 @@ section(".text.boot") fun kmain() {
     // captures a local owns a heap environment; both are the allocator's.
     val any = list.any(xs = &xs, f = is_one)
     var factor: i32 = 3
-    val doubled = list.map(xs = &xs, f = fun(x: &i32).return: i32 = x * factor)
-    val filtered = list.filter(xs = &xs, f = fun(x: &i32).return: bool = x > 0)
+    val doubled = list.map(xs = &xs, f = fun(x: &i32) => i32 = x * factor)
+    val filtered = list.filter(xs = &xs, f = fun(x: &i32) => bool = x > 0)
 
     val text = str.from_u64(n = 42)
     val joined = str.concat(a = text.as_str(), b = "!")
@@ -53,9 +53,9 @@ section(".text.boot") fun kmain() {
     s.push_str("?")
 
     val o: option.Option<i32> = option.Option.Some(value = 1)
-    val mapped = option.map(o = &o, f = fun(v: &i32).return: i32 = v + 1)
+    val mapped = option.map(o = &o, f = fun(v: &i32) => i32 = v + 1)
     val r: result.Result<i32, i32> = result.Result.Ok(value = 1)
-    val lifted = result.map(r = r, f = fun(v: &i32).return: i32 = v + 1)
+    val lifted = result.map(r = r, f = fun(v: &i32) => i32 = v + 1)
 
     var n: usize = doubled.len() + filtered.len() + s.len()
     if any && option.is_some(o = &mapped) && result.is_ok(r = &lifted) {

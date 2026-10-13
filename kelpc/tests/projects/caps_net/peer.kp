@@ -19,7 +19,7 @@ fun push_num(out: mut String, n: u64) {
     out.push_str(text.as_str())
 }
 
-pub fun report().return: String {
+pub fun report() => String {
     val listener = net.listen(0)
     val port = listener.port()
     val client = net.connect("127.0.0.1", port)

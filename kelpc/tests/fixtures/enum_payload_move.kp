@@ -3,7 +3,7 @@ enum Token {
     Blank
 }
 
-fun take(t: &Token).return: String = when t {
+fun take(t: &Token) => String = when t {
     Word(text) -> text
     Blank -> String.from_str(s = "")
 }

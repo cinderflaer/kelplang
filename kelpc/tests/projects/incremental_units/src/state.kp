@@ -4,4 +4,4 @@ pub static LIMIT: i64 = 3
 
 pub datac Boxed(val value: i64)
 
-pub fun double(x: i64).return: i64 = x * 2
+pub fun double(x: i64) => i64 = x * 2

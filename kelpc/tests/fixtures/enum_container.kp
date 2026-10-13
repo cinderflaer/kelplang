@@ -7,7 +7,7 @@ enum Shape {
     Empty
 }
 
-fun area(s: &Shape).return: f64 = when s {
+fun area(s: &Shape) => f64 = when s {
     Circle(r) -> 3.0 * r * r
     Empty -> 0.0
 }
@@ -21,7 +21,7 @@ enum Token {
     Blank
 }
 
-fun label(t: &Token).return: usize = when t {
+fun label(t: &Token) => usize = when t {
     Word(text) -> text.len()
     Digits(n) -> n.to_usize()
     Blank -> 0

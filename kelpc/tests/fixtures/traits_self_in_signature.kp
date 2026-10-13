@@ -3,18 +3,18 @@
 // generic function over `T` all resolve to the concrete type per instantiation
 // (A-12 slice 2).
 trait Copyable {
-    fun Self.duplicate().return: Self
-    fun Self.add(other: &Self).return: Self
+    fun Self.duplicate() => Self
+    fun Self.add(other: &Self) => Self
 }
 
 datac Point(val x: i32, val y: i32)
 
 impl Copyable for Point {
-    fun Self.duplicate().return: Self = Point(x = x, y = y)
-    fun Self.add(other: &Self).return: Self = Point(x = x + other.x, y = y + other.y)
+    fun Self.duplicate() => Self = Point(x = x, y = y)
+    fun Self.add(other: &Self) => Self = Point(x = x + other.x, y = y + other.y)
 }
 
-fun duplicated<T: Copyable>(x: &T).return: T = x.duplicate()
+fun duplicated<T: Copyable>(x: &T) => T = x.duplicate()
 
 fun main() {
     val p = Point(x = 1, y = 2)

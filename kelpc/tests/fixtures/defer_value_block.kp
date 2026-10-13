@@ -1,7 +1,7 @@
 // A block that is used as a value keeps its value while its deferred actions
 // run: the block's tail is preserved through the cleanup, and a function whose
 // body is a block expression is the same case.
-fun f().return: i32 = {
+fun f() => i32 = {
     defer print("f-out")
     5
 }

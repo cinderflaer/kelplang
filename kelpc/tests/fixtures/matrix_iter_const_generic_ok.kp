@@ -10,7 +10,7 @@ datac Cursor(var at: usize, val len: usize)
 
 impl iter.Iterator for Cursor {
     type Item = usize
-    fun mut Self.next().return: option.Option<usize> {
+    fun mut Self.next() => option.Option<usize> {
         if at >= len {
             return option.Option.None
         }
@@ -20,9 +20,9 @@ impl iter.Iterator for Cursor {
     }
 }
 
-fun Ring<const N: usize>.cursor().return: Cursor = Cursor(at = 0, len = N)
+fun Ring<const N: usize>.cursor() => Cursor = Cursor(at = 0, len = N)
 
-fun total<const N: usize>(r: &Ring<N>).return: i32 {
+fun total<const N: usize>(r: &Ring<N>) => i32 {
     var sum: i32 = 0
     for i in r.cursor() {
         sum += r.data.get(i = i)

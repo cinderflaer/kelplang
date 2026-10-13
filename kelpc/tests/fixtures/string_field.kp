@@ -3,7 +3,7 @@
 // `Holder` dies, and never when it is moved.
 datac Holder(val name: String, val n: i32)
 
-fun make(label: &str).return: Holder = Holder(name = String.from_str(label), n = 7)
+fun make(label: &str) => Holder = Holder(name = String.from_str(label), n = 7)
 
 fun show(h: Holder) {
     print(h.name)
