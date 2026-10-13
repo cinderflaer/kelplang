@@ -88,6 +88,7 @@ empty on release.
 
 - `str.split` checks the first byte of the separator before comparing the whole separator, so splitting a long string does less work per position.
 - The `net`, `thread`, `tlsfile`, `trace` and `frame` modules now have doc comments on their public items, so `kelpc doc --std --check` reports nothing for them.
+- The `ops`, `sync` and `process` modules now have doc comments on their public items, so `kelpc doc --std --check` reports nothing for them.
 
 ## fixes
 
