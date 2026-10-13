@@ -1,0 +1,12 @@
+// `=>` is the arrow of a `when` with no scrutinee, the same token as `->`.
+fun sign(n: i32).return: &str = when {
+    n > 0 => "pos"
+    n < 0 => "neg"
+    else => "zero"
+}
+
+fun main() {
+    print(sign(5))
+    print(sign(-5))
+    print(sign(0))
+}

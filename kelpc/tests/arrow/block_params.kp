@@ -1,0 +1,33 @@
+// `=>` ends the parameter header of a trailing block, one and two parameters.
+fun each(xs: List<i32>, f: scoped fun(i32)) {
+    var i: usize = 0
+    while i < xs.len() {
+        f(xs.get(i))
+        i += 1
+    }
+}
+
+fun sum(xs: List<i32>, f: scoped fun(i32).return: i32).return: i32 {
+    var total = 0
+    var i: usize = 0
+    while i < xs.len() {
+        total += f(xs.get(i))
+        i += 1
+    }
+    return total
+}
+
+fun pairs(a: i32, f: scoped fun(i32, i32)) {
+    f(a, a + 1)
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(4)
+    xs.push(5)
+    xs.push(6)
+
+    each(xs) { n => print(n) }
+    print(sum(xs) { n => n * 10 })
+    pairs(3) { x, y => print(x * 10 + y) }
+}

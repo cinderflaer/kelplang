@@ -28,6 +28,7 @@ empty on release.
 
 ## Changed
 
+- `=>` is accepted as the same arrow as `->` in `when` arms and in a trailing block's parameter header (`{ x => ... }`). Both spellings are one token, so no existing program changes; the arrow's error messages now name both.
 - The `plan/` folder is being cleaned up: the finished feature records and the milestone history now live in the kelp wiki, and the source comments and the README point there. This is documentation only; no compiler or runtime code changed.
 - The open issues list moves from `plan/ISSUES.md` to the kelp wiki page `meta/open-issues`, and the source comments that named the file point there. This is documentation only.
 - The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named. Every hosted build links the tracing collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (files, sockets, processes, threads, locks, channel ends, pools) still drop at scope end. Delete the mode line; every hosted file may use `block` regions beside ordinary code, and `heap_max` is read in every hosted build.

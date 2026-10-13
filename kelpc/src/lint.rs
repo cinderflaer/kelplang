@@ -411,7 +411,7 @@ fn ident_at(tokens: &[Token], i: usize) -> Option<(String, Span)> {
 ///   `fun(mut Counter)`. A function *type*'s `.return: i64` cannot be mistaken for
 ///   one, because its `R` follows a `.`.
 /// - a pattern binding is an identifier in a variant's payload list: the list
-///   after the variant name of an `if let`, or the list an arm head's `->`
+///   after the variant name of an `if let`, or the list an arm head's arrow
 ///   closes. Nothing else puts identifiers in those two places.
 ///
 /// Nothing else in the language puts an identifier in any of those positions.
@@ -533,9 +533,9 @@ fn fun_name(tokens: &[Token], fun: usize) -> Option<(String, Span)> {
 ///
 /// Two shapes are a pattern: `if let Variant(a, b) = e`, where the identifier
 /// before the variant is the contextual `let`, and `when e { Variant(a, b) ->
-/// .. }`, where the `->` of the arm head follows the list. `->` appears
-/// nowhere else in the language, and `let` directly before a variant name is
-/// the `if let` grammar, so neither test can be met by a call.
+/// .. }`, where the `->` (or `=>`) of the arm head follows the list. The
+/// arrow appears nowhere else in the language, and `let` directly before a
+/// variant name is the `if let` grammar, so neither test can be met by a call.
 fn pattern_binds(tokens: &[Token], open: usize) -> Vec<(String, Span)> {
     let Some(close) = matching_paren(tokens, open) else {
         return Vec::new();

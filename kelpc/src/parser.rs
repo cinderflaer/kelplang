@@ -243,8 +243,8 @@ impl Parser {
     /// only; their types come from the expected function type of the parameter
     /// the block is passed to (`kelp wiki page language/functions.md` part 1), so the literal
     /// is marked `infer_params`. The header is read only when the first tokens
-    /// are identifiers, comma separated, followed by `->`, which appears
-    /// nowhere else at the start of a block.
+    /// are identifiers, comma separated, followed by `->` or `=>` (one token),
+    /// which appears nowhere else at the start of a block.
     fn parse_trailing_block(&mut self, args: &mut Vec<CallArg>, end: &mut Span) -> PResult<()> {
         if self.no_trailing_block || !self.check(&TokenKind::LBrace) {
             return Ok(());
@@ -265,7 +265,7 @@ impl Parser {
                 }
                 break;
             }
-            self.expect(TokenKind::Arrow, "'->' after the block's parameters")?;
+            self.expect(TokenKind::Arrow, "'->' or '=>' after the block's parameters")?;
         }
         let outer = std::mem::take(&mut self.loop_stack);
         let block = self.parse_block_body(start);
@@ -288,7 +288,7 @@ impl Parser {
 
     /// Whether the `{` the parser has already consumed opens a block whose
     /// first tokens are a parameter header: one or more identifiers, comma
-    /// separated, then `->`. A lookahead only - nothing is consumed.
+    /// separated, then `->` or `=>`. A lookahead only - nothing is consumed.
     fn block_header_starts_params(&self) -> bool {
         let mut i = self.pos;
         if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Ident(_))) {
@@ -4557,7 +4557,7 @@ impl Parser {
             } else {
                 Some(self.parse_expr()?)
             };
-            self.expect(TokenKind::Arrow, "'->'")?;
+            self.expect(TokenKind::Arrow, "'->' or '=>'")?;
             let body = self.parse_expr()?;
             arms.push((cond, body));
 
@@ -4565,7 +4565,8 @@ impl Parser {
             // `(` `)` the lexer does not emit newline tokens at all (see
             // `Lexer::paren_depth`), and a `when` is allowed to be a call
             // argument. An arm head is unambiguous either way - every arm is
-            // `head -> value`, and `->` appears nowhere else in the language.
+            // `head -> value` (or `head => value`), and the arrow appears
+            // nowhere else in the language.
             if !self.check(&TokenKind::RBrace) {
                 self.skip_newlines();
             }
@@ -4654,7 +4655,7 @@ impl Parser {
                     span: vspan,
                 })
             };
-            self.expect(TokenKind::Arrow, "'->'")?;
+            self.expect(TokenKind::Arrow, "'->' or '=>'")?;
             let body = self.parse_expr()?;
             let arm_span = pattern
                 .as_ref()
@@ -4671,7 +4672,8 @@ impl Parser {
             // `(` `)` the lexer does not emit newline tokens at all (see
             // `Lexer::paren_depth`), and a `when` is allowed to be a call
             // argument. An arm head is unambiguous either way - every arm is
-            // `head -> value`, and `->` appears nowhere else in the language.
+            // `head -> value` (or `head => value`), and the arrow appears
+            // nowhere else in the language.
             if !self.check(&TokenKind::RBrace) {
                 self.skip_newlines();
             }
@@ -4742,7 +4744,7 @@ impl Parser {
                     Some(_) => {}
                 }
             }
-            self.expect(TokenKind::Arrow, "'->'")?;
+            self.expect(TokenKind::Arrow, "'->' or '=>'")?;
             let body = self.parse_expr()?;
             rows.push(TupleRow { pats, binds: Vec::new(), body, span: head });
             if !self.check(&TokenKind::RBrace) {

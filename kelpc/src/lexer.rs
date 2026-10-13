@@ -177,7 +177,7 @@ pub enum TokenKind {
     /// parameter (gap 7). Nothing follows it, and it is not a value: it only
     /// ever appears in a declaration's parameter list.
     DotDotDot,
-    Arrow, // -> (reserved for `when` arms)
+    Arrow, // -> or => (`when` arms, block parameters)
     Newline,
 
     // operators
@@ -656,6 +656,9 @@ impl<'a> Lexer<'a> {
                     if self.peek() == Some(b'=') {
                         self.advance();
                         TokenKind::EqEq
+                    } else if self.peek() == Some(b'>') {
+                        self.advance();
+                        TokenKind::Arrow
                     } else {
                         TokenKind::Eq
                     }
@@ -1487,6 +1490,26 @@ mod tests {
                 TokenKind::Ident("Shape".to_string()),
                 TokenKind::Plus,
                 TokenKind::Ident("Other".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn fat_arrow_is_the_arrow_token_and_leaves_the_others_alone() {
+        assert_eq!(
+            kinds("=> -> = == >= <= ==> >= ="),
+            vec![
+                TokenKind::Arrow,
+                TokenKind::Arrow,
+                TokenKind::Eq,
+                TokenKind::EqEq,
+                TokenKind::GtEq,
+                TokenKind::LtEq,
+                TokenKind::EqEq,
+                TokenKind::Gt,
+                TokenKind::GtEq,
+                TokenKind::Eq,
                 TokenKind::Eof,
             ]
         );

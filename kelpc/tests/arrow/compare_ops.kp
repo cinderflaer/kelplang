@@ -1,0 +1,12 @@
+// `>=` and `==` still lex as comparisons next to the `=>` arrow.
+fun main() {
+    val a = 3
+    val b = 3
+    if a >= b { print("ge") }
+    if a==b { print("eq") }
+    if a <= b { print("le") }
+    if a != 4 { print("ne") }
+    var c = 1
+    c += 1
+    if c > 1 { print("gt") }
+}

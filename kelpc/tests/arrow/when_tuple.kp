@@ -1,0 +1,16 @@
+// `=>` is the arrow of a tuple `when`, one arm per row.
+fun classify(a: i32, b: i32).return: i32 {
+    return when (a, b) {
+        (0, 0) => 100
+        (0, y) => y
+        (x, 0) => x * 10
+        (x, y) => x + y
+    }
+}
+
+fun main() {
+    print(classify(0, 0))
+    print(classify(0, 7))
+    print(classify(4, 0))
+    print(classify(2, 3))
+}

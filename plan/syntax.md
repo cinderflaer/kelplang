@@ -275,7 +275,7 @@ print(math.pow(base = 2.0,
                exp = 8.0))
 ```
 
-Inside `(` `)` newlines are insignificant, which is what lets a field list or an argument list wrap. Two statements on one line with no separator is an error. Since 26.10.3 a line that **ends** in a binary or assignment operator (`+ - * / && || = == != <= >=` and the compound assignments), in `,`, in `.` or in a `when` arrow `->` continues onto the next line; `<`, `>`, `%`, `&` and `|` do not (they also close and open type arguments or end a pattern), and a line that *starts* with an operator is a new statement.
+Inside `(` `)` newlines are insignificant, which is what lets a field list or an argument list wrap. Two statements on one line with no separator is an error. Since 26.10.3 a line that **ends** in a binary or assignment operator (`+ - * / && || = == != <= >=` and the compound assignments), in `,`, in `.` or in a `when` arrow (`->` or `=>`, one token) continues onto the next line; `<`, `>`, `%`, `&` and `|` do not (they also close and open type arguments or end a pattern), and a line that *starts* with an operator is a new statement.
 
 ### 2.3 Identifiers and keywords
 
@@ -343,7 +343,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 &  &mut  *             reference, exclusive reference, dereference
 ?                      propagate a failure (5.2)
 .  ,  :  (  )  {  }    member access, separators
-->                     `when` arms only
+-> or =>               `when` arms and trailing block headers (one token, two spellings)
 '                      character literal (2.4)
 ```
 
@@ -830,7 +830,7 @@ fun classify(n: i32).return: &str = when {
 }
 ```
 
-Each arm is `condition -> value` and `->` appears nowhere else in the language. Arms are evaluated in order, `else` is required when a value is produced, and there is no exhaustiveness analysis beyond that. `when` desugars to nested `if`/`else if`/`else`.
+Each arm is `condition -> value` (or `condition => value`, the same arrow) and the arrow appears nowhere else in the language. Arms are evaluated in order, `else` is required when a value is produced, and there is no exhaustiveness analysis beyond that. `when` desugars to nested `if`/`else if`/`else`.
 
 With a scrutinee, `when` becomes pattern matching over an `enum`, and `->` is the same arrow:
 
@@ -3289,7 +3289,7 @@ primary      := int | float | string | char | template | "true" | "false"
               | "if" expr block chain
               | "if" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr
                 block chain
-              | "when" "{" ( expr "->" expr )* "else" "->" expr "}"
+              | "when" "{" ( expr ( "->" | "=>" ) expr )* "else" ( "->" | "=>" ) expr "}"
 char         := "'" ( <any Unicode scalar value except ' and newline>
                     | "\\n" | "\\t" | "\\r" | "\\0" | "\\'" | "\\"" | "\\\\"
                     | "\\u{" hexdigit+ "}" ) "'"
