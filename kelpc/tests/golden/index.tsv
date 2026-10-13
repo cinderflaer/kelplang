@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1105 ran=552 c_refused=520 excluded=33
+# counts candidates=1106 ran=552 c_refused=521 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -483,6 +483,7 @@ fixture_map_datac_value_clone	ran	exit 0		2edba8a3b2a3d92c8a9a87a5e8deb1c0bcd900
 fixture_map_declared_key	ran	exit 0		40a07eb20126c4f44ebe9cdf787176b82c630a5dd547aa7c6080abc5fabcd3cd
 fixture_map_declared_key_enum	ran	exit 0		deef798b1b0d290bd82f6eecc0a7397ae4d75ae2891172f81fd90fb82e6db9ac
 fixture_map_enum_key	ran	exit 0		c54133814c8f8cc073bc18853ba1ff6ddc728da83dc70362228f297e27fae66a
+fixture_map_enum_value	c-refused		error: 'Status' cannot be a 'Map' value	
 fixture_map_float_key	c-refused		error: 'f64' cannot be a Map key	
 fixture_map_growth_and_rehash	ran	exit 0		4e3a7ffcc3f1ce9826064dcdcadaf0b11ac7576276635f975300e8c3b4106f1f
 fixture_map_key_pair_eq_arity	c-refused		error: 'Key.eq' takes exactly one parameter, a shared borrow of 'Key', so write 'fun Key.eq(other	
