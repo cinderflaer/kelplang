@@ -13787,14 +13787,12 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             })
         }
         ast::Expr::Template { parts, span } => {
-            // Only reachable when a template is *not* the argument of
-            // `print`/`print!` (that path is handled in `check_call`).
-            let _ = (parts, span);
-            Err(TypeError {
-                help: None,
-                message: "a string template can only be printed: pass it to 'print(...)' or 'print!(...)'; a template is not a value, so build the text with 'str.concat', 'fmt.*' or a 'String'".to_string(),
-                span: *span,
-            })
+            // Outside `print`/`print!` (that path is handled in `check_call`)
+            // a template is a `String` value: the text is formatted once into
+            // an owned buffer, so `val part = "${out}.part"` binds a String.
+            let mut value = check_template(parts, false, *span, ctx)?;
+            value.ty = Ty::String;
+            Ok(value)
         }
         ast::Expr::MethodCall {
             receiver,
@@ -19396,7 +19394,8 @@ fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
 /// Checks a string template's interpolated pieces and lowers it to one
 /// `tir::ExprKind::Template`. Interpolated values must be printable under
 /// exactly the rule `print` already applies (numeric, `bool`, `char`,
-/// `str`) - a template is a formatted print, not a string builder.
+/// `str`). Printed, the template writes its text; outside `print` the caller
+/// sets the type to `String` and the text is built into an owned buffer.
 fn check_template(
     parts: &[ast::TemplatePart],
     newline: bool,

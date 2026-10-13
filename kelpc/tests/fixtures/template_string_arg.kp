@@ -1,0 +1,10 @@
+// A template passed where a String parameter is expected.
+fun show(text: String) {
+    print("[${text}]")
+}
+
+fun main() {
+    val n = 3
+    show("count=${n}")
+    show("${n} items")
+}

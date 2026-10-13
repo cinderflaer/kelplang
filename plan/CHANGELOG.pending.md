@@ -16,6 +16,7 @@ empty on release.
 
 ## added
 
+- A string template outside `print` is a `String` value: `val part = "${out}.part"` binds it, and a `String` parameter takes it. A template in `print` or `print!` prints as before.
 - `kelpc caps <project>` prints each module's capabilities and the caps each dependency reaches, sorted for CI diffs. A `[dependencies]` entry whose modules reach a domain its `coral.toml` list does not name is refused at build time.
 - `[target] heap_max = N` sets a hosted program's heap cap in MiB (1 to 65536, default 256). A program that needs more stops with `out of memory`. A freestanding build refuses the key.
 - `KELP_GC_STATS=1` prints one counter line to stderr at exit and before a fatal exit: collections, pause totals and maxima, live roots and charged bytes.

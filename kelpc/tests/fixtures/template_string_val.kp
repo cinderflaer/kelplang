@@ -1,0 +1,10 @@
+// A template bound to a val is a String: the text is built once, then printed.
+fun main() {
+    val out = "report"
+    val part = "${out}.part"
+    print(part)
+    val a: i32 = 7
+    val label: String = "n=${a}"
+    print(label)
+    print("${label} done")
+}

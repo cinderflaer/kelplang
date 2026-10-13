@@ -1,0 +1,10 @@
+// A template in print or print! still prints directly, as before.
+fun main() {
+    val n = 42
+    val word = "world"
+    print("hello ${word}, n=${n}")
+    print!("no newline ${n}")
+    print("!")
+    print("${n}% done")
+    print("100% sure")
+}

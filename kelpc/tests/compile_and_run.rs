@@ -1122,12 +1122,20 @@ fn templates_print_literals_and_values() {
 }
 
 #[test]
-fn a_template_outside_print_is_rejected() {
-    // The message may not claim a missing owned `String`: `String` shipped in
-    // MK5-S1, and `syntax.md` 2.5 names the ways to build one.
-    assert_rejected_with(
-        "tests/fixtures/template_not_printed.kp",
-        "a template is not a value",
+fn a_template_outside_print_is_a_string_value() {
+    // A template outside `print` is a String value: the bound text prints as written.
+    assert_compiles_and_runs("tests/fixtures/template_not_printed.kp", "hi x\n");
+}
+
+#[test]
+fn a_template_string_binds_and_passes_as_a_string() {
+    assert_compiles_and_runs(
+        "tests/fixtures/template_string_val.kp",
+        "report.part\nn=7\nn=7 done\n",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/template_string_arg.kp",
+        "[count=3]\n[3 items]\n",
     );
 }
 

@@ -4864,6 +4864,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 Ok(Some(self.g.builder.build_load(lty, ptr, "deref")))
             }
             ExprKind::Template { newline, pieces } => {
+                if e.ty == Ty::String {
+                    return Ok(Some(self.emit_string_template(pieces)?));
+                }
                 self.emit_template(*newline, pieces)?;
                 Ok(None)
             }
@@ -8707,6 +8710,81 @@ impl<'g, 'a> FnGen<'g, 'a> {
         newline: bool,
         pieces: &[TemplatePiece],
     ) -> Result<(), String> {
+        let (fmt, args, holds) = self.template_format(newline, pieces)?;
+        let fmt_ptr = self.string_global(&fmt)?;
+        let mut all = Vec::with_capacity(args.len() + 1);
+        all.push(fmt_ptr);
+        all.extend(args);
+        self.g
+            .builder
+            .build_call(self.g.printf_fn, self.g.printf_ty, &all, "");
+        for (slot, ty) in holds {
+            self.g.call_drop(slot, &ty)?;
+        }
+        Ok(())
+    }
+
+    /// A template as a `String` value: `snprintf` twice, once to measure the
+    /// text and once into a buffer of that size owned by a new `String`. The
+    /// format and its arguments are the ones `print` would use, so the text is
+    /// the printed text without the newline. Owned interpolated temporaries are
+    /// freed after the second call, as the `printf` form frees them.
+    fn emit_string_template(&mut self, pieces: &[TemplatePiece]) -> Result<Value<'a>, String> {
+        let (fmt, args, holds) = self.template_format(false, pieces)?;
+        let fmt_ptr = self.string_global(&fmt)?;
+        let ptr = self.g.ctx.opaque_ptr();
+        let i64t = self.g.ctx.i64();
+        // Declared here, on first use, so a module without a String template
+        // keeps the IR it had before: `snprintf` is variadic, as `printf` is.
+        let snprintf_ty = self.g.ctx.fn_type(self.g.ctx.i32(), &[ptr, i64t], true);
+        let snprintf = match self.g.module.get_function("snprintf") {
+            Some(f) => f,
+            None => self.g.module.add_function("snprintf", snprintf_ty),
+        };
+        let null = self.g.ctx.const_null(ptr);
+        let zero = self.g.ctx.const_int(i64t, 0, false);
+        let one = self.g.ctx.const_int(i64t, 1, false);
+
+        let mut measure = vec![null, zero, fmt_ptr];
+        measure.extend(args.iter().copied());
+        let n32 = self
+            .g
+            .builder
+            .build_call(snprintf, snprintf_ty, &measure, "n");
+        let n = self
+            .g
+            .builder
+            .build_int_cast(true, true, n32, i64t, "n64");
+        let cap = self
+            .g
+            .builder
+            .build_int_binop(IntBinOp::Add, n, one, "cap");
+
+        let lty = self.lty(&Ty::String)?;
+        let slot = self.temp_alloca(lty, "tmpl.str");
+        self.g.sret_call("kelp_String__with_capacity", slot, &[cap])?;
+        let (data, _) = self.buffer_pair(slot, lty);
+
+        let mut fill = vec![data, cap, fmt_ptr];
+        fill.extend(args);
+        self.g
+            .builder
+            .build_call(snprintf, snprintf_ty, &fill, "");
+        let len_ptr = self.g.builder.build_struct_gep(lty, slot, 1, "tmpl.len");
+        self.g.builder.build_store(n, len_ptr);
+        for (held, ty) in holds {
+            self.g.call_drop(held, &ty)?;
+        }
+        Ok(self.g.builder.build_load(lty, slot, "tmpl"))
+    }
+
+    /// The printf format of a template and its promoted arguments, with the
+    /// owned temporaries each interpolated value holds. Literal `%` is doubled.
+    fn template_format(
+        &mut self,
+        newline: bool,
+        pieces: &[TemplatePiece],
+    ) -> Result<(String, Vec<Value<'a>>, Vec<(Value<'a>, Ty)>), String> {
         let mut fmt = String::new();
         let mut args: Vec<Value<'a>> = Vec::new();
         let mut holds: Vec<(Value<'a>, Ty)> = Vec::new();
@@ -8732,17 +8810,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if newline {
             fmt.push('\n');
         }
-        let fmt_ptr = self.string_global(&fmt)?;
-        let mut all = Vec::with_capacity(args.len() + 1);
-        all.push(fmt_ptr);
-        all.extend(args);
-        self.g
-            .builder
-            .build_call(self.g.printf_fn, self.g.printf_ty, &all, "");
-        for (slot, ty) in holds {
-            self.g.call_drop(slot, &ty)?;
-        }
-        Ok(())
+        Ok((fmt, args, holds))
     }
 
     /// The `data` pointer of a value `panic` reads as text: a `str`/`&str` is
