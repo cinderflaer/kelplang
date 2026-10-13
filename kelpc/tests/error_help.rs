@@ -125,7 +125,7 @@ fn a_return_type_mismatch_gets_a_help_line() {
     let file = write(
         &dir,
         "main.kp",
-        "fun f().return: i32 {\n    return true\n}\n\nfun main() {\n    print(f())\n}\n",
+        "fun f() => i32 {\n    return true\n}\n\nfun main() {\n    print(f())\n}\n",
     );
     assert_site(
         &check(&file, &[]),
