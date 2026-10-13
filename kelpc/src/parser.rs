@@ -639,7 +639,6 @@ impl Parser {
             return Ok(());
         }
         let (marker, mspan) = self.expect_ident()?;
-        help: None,
         Err(ParseError {
             help: None,
             message: format!(
