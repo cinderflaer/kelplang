@@ -12,33 +12,49 @@
    There are deliberately **no blanket impls**, exactly as `std/convert` has
    none, and no operator is derived: a type that wants one writes the impl. */
 
+/// The `+` operator: `a + b` calls `a.add(&b)`.
 pub trait Add {
+    /// Returns `self + rhs`. Both operands are borrowed, not moved.
     fun Self.add(rhs: &Self) => Self
 }
 
+/// The `-` operator: `a - b` calls `a.sub(&b)`.
 pub trait Sub {
+    /// Returns `self - rhs`. Both operands are borrowed, not moved.
     fun Self.sub(rhs: &Self) => Self
 }
 
+/// The `*` operator: `a * b` calls `a.mul(&b)`.
 pub trait Mul {
+    /// Returns `self * rhs`. Both operands are borrowed, not moved.
     fun Self.mul(rhs: &Self) => Self
 }
 
+/// The `/` operator: `a / b` calls `a.div(&b)`.
 pub trait Div {
+    /// Returns `self / rhs`. Both operands are borrowed, not moved.
     fun Self.div(rhs: &Self) => Self
 }
 
+/// The `%` operator: `a % b` calls `a.rem(&b)`.
 pub trait Rem {
+    /// Returns `self % rhs`. Both operands are borrowed, not moved.
     fun Self.rem(rhs: &Self) => Self
 }
 
+/// The unary `-` operator: `-a` calls `a.neg()`.
 pub trait Neg {
+    /// Returns the negation of `self`.
     fun Self.neg() => Self
 }
 
 // The order trait: `cmp` returns the sign of the order (negative, zero,
 // positive), like `memcmp`. It supplies `<`, `<=`, `>` and `>=` and not
 // equality: `==`/`!=` come from a declared `eq` (`plan/syntax.md` 5).
+/// The ordering operators `<`, `<=`, `>` and `>=`: `a < b` is `a.cmp(&b) < 0`.
+/// It does not supply `==` or `!=`, which come from a declared `eq`.
 pub trait Ord {
+    /// Compares `self` with `other`: negative when `self` sorts first, zero when
+    /// they are equal, positive when `self` sorts after `other`.
     fun Self.cmp(other: &Self) => i32
 }
