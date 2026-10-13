@@ -2,7 +2,7 @@
 //
 // An `emit = "html"` build imports this module, not `backends/gtk/polyp/lib.kp`, because the HTML
 // output needs no window and no display binding. The GTK backend holds its widgets in containers,
-// which managed mode refuses for a resource, so a build that never opens a window should not pull
+// which a hosted build refuses for a resource, so a build that never opens a window should not pull
 // it in. `emit_html` has the same signature as the one in the GTK facade.
 impl "deps/polyp/core/core"
 impl "deps/polyp/backends/headless/headless_backend"

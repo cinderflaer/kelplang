@@ -5,7 +5,7 @@
 // so the loop above it has no idea a display is involved at all. `gtk.kp` is the binding and
 // `queue.kp` the message ring the signal handlers post into.
 //
-// A widget handle is never stored. Managed mode refuses a resource value inside a `List`, so the
+// A widget handle is never stored. A hosted build refuses a resource value inside a `List`, so the
 // tree keeps only scalars: a node's kind, handler, interactive id, key, classes and children. A
 // node's widget is found by the scalar that names it, its index among its parent's children, which
 // GTK keeps in the order the tree was built in. Every handle is a local, read from the live tree

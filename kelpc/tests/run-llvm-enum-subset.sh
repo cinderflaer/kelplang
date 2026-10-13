@@ -20,7 +20,7 @@
 #
 # The fixtures that make this slice worth its own gate:
 #
-#   * `an_enum_payload_is_laid_out_the_way_the_c_typedef_is` (`enum_layout.kp`)
+#   * `an_enum_payload_is_laid_out_the_way_the_layout_rule_says` (`enum_layout.kp`)
 #     pins the payload offset and the union size at the three SysV classes an
 #     enum lands in (one eightbyte, two, and MEMORY), each passed and returned
 #     by value. The section after the list asserts the same three layouts in the
@@ -97,7 +97,7 @@ drops_follow_control_flow
 panic_reports_its_message_and_assert_reports_failure
 an_enum_matches_on_its_live_variant
 an_owned_payload_binds_as_a_borrow
-an_enum_payload_is_laid_out_the_way_the_c_typedef_is
+an_enum_payload_is_laid_out_the_way_the_layout_rule_says
 the_enum_node_kinds_keep_two_live_locals_in_different_registers
 an_enum_payload_eightbyte_is_classified_through_the_union
 when_desugars_to_if_else_chain

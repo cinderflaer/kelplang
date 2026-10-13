@@ -2,10 +2,10 @@
 //! `(name, prototype)` pairs. The LLVM backend's prelude is spelled from that table, so a row
 //! whose name is not a real export would be a prelude that does not link.
 //!
-//! The first probe is written in Rust, not C: it declares every name as an `extern "C"` symbol,
+//! The first probe is written in Rust: it declares every name as an `extern "C"` symbol,
 //! takes its address (so each one must be defined in the archive), and links the object against
-//! `libkelp_rt.a` with `cc` as the linker driver. The C spelling of each prototype is no longer
-//! compiled by a C compiler; the table is checked for consistency by the second test instead.
+//! `libkelp_rt.a` with `ld.lld`, using the same argv `kelpc` links a program with. The table is
+//! checked for consistency by the second test as well.
 //!
 //! The probe needs the archive that `build.rs` writes to `OUT_DIR`. It is ignored until it is
 //! run with `cargo test --test runtime_prototypes -- --ignored`.
@@ -13,6 +13,13 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+
+#[allow(dead_code)]
+#[path = "../src/guard.rs"]
+mod guard;
+#[allow(dead_code)]
+#[path = "../src/sysroot.rs"]
+mod sysroot;
 
 use kelp_rt::abi::PROTOTYPES;
 
@@ -65,14 +72,27 @@ fn every_prototype_name_is_defined_in_the_archive() {
         String::from_utf8_lossy(&compile.stderr)
     );
 
-    let link = Command::new("cc")
-        .arg("-o")
-        .arg(&exe)
-        .arg(&obj)
-        .arg(archive())
-        .args(["-pthread", "-lm"])
+    let sys = sysroot::discover_here().expect("could not find the link inputs");
+    let runtime = archive();
+    let objects = [obj.clone()];
+    let argv = sysroot::hosted_link_argv(
+        &sys,
+        &sysroot::HostedLink {
+            out: &exe,
+            objects: &objects,
+            runtime_obj: &runtime,
+            externs_obj: None,
+            gc_archive: None,
+            library_dirs: &[],
+            pkg_config_flags: &[],
+            tls: false,
+            link_libs: &[],
+        },
+    );
+    let link = Command::new(&sys.ld_lld)
+        .args(&argv)
         .output()
-        .expect("failed to spawn the linker");
+        .expect("failed to spawn ld.lld");
     assert!(
         link.status.success(),
         "the PROTOTYPES names are not all defined in {}:\n{}",

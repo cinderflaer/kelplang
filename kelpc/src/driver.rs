@@ -20,8 +20,7 @@ static RUNTIME_OBJECT_MANAGED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// write the same path.
 static RUNTIME_TMP: AtomicU64 = AtomicU64::new(0);
 
-/// A sanitizer named by `[build] sanitize`. The C backend that built sanitized
-/// programs was removed on 2026-10-10, and the LLVM backend links no sanitizer
+/// A sanitizer named by `[build] sanitize`. The LLVM backend links no sanitizer
 /// passes, so the manifest key is refused at build time. The type stays so the
 /// manifest still parses and the refusal can name the kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,17 +298,6 @@ pub fn link_freestanding_object(
     Ok(())
 }
 
-/// The `-I<dir>` and `-L<dir>` flags for a project's `[extern.*]` include and
-/// library directories, in that order. Pure, so the flag shape is tested
-/// without invoking `cc`.
-pub fn dir_flags(include_dirs: &[String], library_dirs: &[String]) -> Vec<String> {
-    include_dirs
-        .iter()
-        .map(|dir| format!("-I{dir}"))
-        .chain(library_dirs.iter().map(|dir| format!("-L{dir}")))
-        .collect()
-}
-
 /// The argument list for one `pkg-config` invocation over `packages`: the
 /// `--cflags --libs` request first, then the packages themselves, sorted and
 /// deduplicated so the same set of manifests always runs the same command.
@@ -362,20 +350,6 @@ pub fn pkg_config_flags(packages: &[String]) -> Result<Vec<String>, CompileError
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dir_flags_name_includes_then_libraries() {
-        let flags = dir_flags(
-            &["/a".to_string(), "/b".to_string()],
-            &["/c".to_string()],
-        );
-        assert_eq!(flags, ["-I/a", "-I/b", "-L/c"]);
-    }
-
-    #[test]
-    fn no_dirs_yield_no_flags() {
-        assert!(dir_flags(&[], &[]).is_empty());
-    }
 
     #[test]
     fn pkg_config_args_request_flags_then_sorted_packages() {

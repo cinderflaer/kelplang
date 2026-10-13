@@ -32,7 +32,7 @@ kelpc version                                     # the compiler's version
 
 The version `kelpc version` prints is the crate's `[package] version`, read at compile time, so it always names the release the binary was built from.
 
-The compiler needs `ld.lld` on `PATH` (or `KELPC_LLD` set to its path) to link a binary, as of 2026-10-10. The `extern fun` bodies are C, so a program that has one also needs a C compiler (`cc`, or `clang` through `CC`).
+The compiler needs `ld.lld` on `PATH` (or `KELPC_LLD` set to its path) to link a binary, as of 2026-10-10. An `extern fun` body is linked in as an object file or comes from the runtime, so a program that has one needs no C compiler.
 
 ### 1.2 Hello world
 

@@ -2,7 +2,7 @@
 // value frees only what is live, the payload's buffer and the list's elements,
 // through the same `needs_drop` machinery a non-generic `datac` uses, because an
 // instantiation *is* an ordinary declaration with a name like `Option<String>`.
-// An enum held in a `datac` or as a `Map` value is refused in managed mode for
+// An enum held in a `datac` or as a `Map` value is refused in a hosted build for
 // now, so those two shapes are not in this fixture.
 enum Option<T> {
     Some(val value: T)

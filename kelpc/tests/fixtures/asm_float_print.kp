@@ -4,8 +4,8 @@
 // SysV numbers the vector and integer argument registers independently, so a
 // float argument goes in `xmm` while the integers around it keep `rsi`, `rdx`
 // and so on; `al` has to say how many vector registers a variadic call used.
-// The C backend gets all of that from the C compiler, and this fixture is what
-// pins that this backend gets it right rather than merely plausible: every
+// The float printing rules are the backend's own, and this fixture is what
+// pins that the backend gets them right rather than merely plausible: every
 // float below is printed directly, interpolated, or both, and the expected
 // bytes were taken from the C backend's own output.
 fun word().return: str = "kelp"

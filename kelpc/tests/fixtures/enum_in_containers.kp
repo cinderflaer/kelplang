@@ -3,7 +3,7 @@
 // ones whose code paths differ: a `List` element is addressed by `elem_size`
 // and marshalled by `elem_class`, and a `Box` element is an allocation of that
 // size with the `Box`'s own drop calling the enum's generated one. A `Map` value
-// of an enum is refused in managed mode for now, so it is not in this fixture.
+// of an enum is refused in a hosted build for now, so it is not in this fixture.
 //
 // The payload owns a `String`, so every one of these paths also has to run the
 // per-`enum` drop that switches on the runtime tag and frees only the live

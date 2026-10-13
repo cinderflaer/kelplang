@@ -1,5 +1,5 @@
 // MK9-S3-M1 stage C1: the accepted `thread.spawn` shape with a `fun` literal as
-// the entry point. A closure that captures values is refused in managed mode (its
+// the entry point. A closure that captures values is refused in a hosted build (its
 // environment would sit in the collected heap, which the collector does not scan
 // for a thread), so the literal takes its constant in its body and the argument
 // crosses the thread boundary.

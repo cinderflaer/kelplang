@@ -5,7 +5,7 @@
 // argument that determines `M`, so the hint has to come from `view`'s return
 // type, and then the block's `k` is the `mut Children<i32>` the scoped
 // parameter declares. This is the shape Polyp's builder syntax uses. The message
-// type is a number: an enum held in a `datac` is refused in managed mode for now.
+// type is a number: an enum held in a `datac` is refused in a hosted build for now.
 datac State(val title: String, val n: i32)
 
 pub enum Node<M> {

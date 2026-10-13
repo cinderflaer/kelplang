@@ -1,9 +1,8 @@
 //! The backend selectors that no longer exist.
 //!
 //! `kelpc` has one code generator, the LLVM backend, and it builds every
-//! program. The C backend was removed on 2026-10-10 (stage 2, step A), and with
-//! it the `--backend` flag, the `KELPC_BACKEND` variable and the `KELPC_ORACLE`
-//! switch that reached the C backend from the project's own suite.
+//! program. The `--backend` flag, the `KELPC_BACKEND` variable and the
+//! `KELPC_ORACLE` switch went with the other code generators.
 //!
 //! A retired spelling is refused by name rather than ignored. A shell that still
 //! exports one of the variables would otherwise believe its builds used a
@@ -13,12 +12,12 @@
 /// The flag that used to choose a backend.
 pub const FLAG_RETIRED: &str =
     "--backend is gone: kelpc builds every program with the llvm backend, which is the only \
-     backend since the C backend was removed on 2026-10-10";
+     backend";
 
 /// The environment variable that used to choose a backend.
 pub const BACKEND_ENV: &str = "KELPC_BACKEND";
 
-/// The project's oracle switch, which reached the C backend. Retired with it.
+/// The project's oracle switch, which selected a second code generator. Retired with it.
 pub const ORACLE_ENV: &str = "KELPC_ORACLE";
 
 /// Refuses either retired variable, whatever its value. Presence is what counts:
@@ -28,13 +27,13 @@ pub fn check_retired_env(backend_set: bool, oracle_set: bool) -> Result<(), Stri
     if backend_set {
         return Err(format!(
             "{BACKEND_ENV} is gone: kelpc builds every program with the llvm backend, which is \
-             the only backend since the C backend was removed on 2026-10-10"
+             the only backend"
         ));
     }
     if oracle_set {
         return Err(format!(
-            "{ORACLE_ENV} is gone: the C backend it selected was removed on 2026-10-10, and \
-             kelpc builds every program with the llvm backend"
+            "{ORACLE_ENV} is gone: kelpc builds every program with the llvm backend, which is \
+             the only backend"
         ));
     }
     Ok(())

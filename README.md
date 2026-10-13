@@ -18,7 +18,7 @@ undefined-behaviour escape hatch.
 `kelpc` is the compiler: a Rust program that takes `.kp` sources through lexing,
 preprocessing, parsing, type checking, move/borrow checking and code generation.
 The standard library ships inside that binary as Kelp sources, so the text
-functions in `std/str` are reviewable Kelp rather than a C blob.
+functions in `std/str` are reviewable Kelp rather than opaque native code.
 
 ## A program
 
@@ -108,16 +108,14 @@ directory with a
 to LLVM IR, runs LLVM's own pass pipeline over the module, emits an object and
 links it with `ld.lld`. There is no backend to choose.
 
-The C backend was removed on 2026-10-10. It was the project's differential
-oracle until then, and its answers for the corpus are kept as the golden set in
-`kelpc/tests/golden/`. Sanitizers (`--sanitize=`, `[build] sanitize`) went with
-it, so a build that asks for one is refused.
+Sanitizers (`--sanitize=`, `[build] sanitize`) are not available: the LLVM
+backend links no sanitizer passes, so a build that asks for one is refused.
 
 `build` and `run` take an optimization level: `-O0`, `-O1`, `-O2`, `-O3` or `-Os`,
 with `-O2` the default. One level is one level for the whole build: it selects the
-LLVM pass pipeline and the target machine's codegen level, and it is the `-O` flag
-the per-program C object and the final link are given. `-Oz` is refused because it
-is a clang-only spelling and the linking `cc` may be gcc; `-Os` is the size level.
+LLVM pass pipeline and the target machine's codegen level, and the final link with
+`ld.lld` takes no separate level. `-Oz` is refused because it is a clang-only
+spelling; `-Os` is the size level.
 `-O0` runs no module pipeline and is the cheap dev build.
 
 The hand-written `asm` backend was removed on 2026-09-21, and the LLVM backend's plan of record is
@@ -165,7 +163,7 @@ directory is not followed.
 | --- | --- |
 | `kelpc/src/` | the compiler: `lexer`, `preprocess`, `parser`, `infer` (types, generics, capabilities), `borrowck` (moves, drops), `codegen_llvm`, `driver` |
 | `kelpc/std/` | the standard library, written in Kelp and embedded into the compiler |
-| `kelpc/runtime/` | the reviewed C that is still C: the capability glue the LLVM backend emits (`cap_glue.c`), and the C matcher/normalizer the §8 differential tests compare the Kelp versions against |
+| `kelpc/runtime/` | the Kelp sources of the stub resolver's message parser (`dns_parse.kp`) and configuration reader (`resolver_conf.kp`) |
 | `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and the corpus goldens |
 | `examples/` | `hello.kp`, `fib.kp`, `download.kp` |
 | `bench/speed/` | four workloads written in four languages, with checksums |
@@ -200,7 +198,6 @@ exist and are `#[ignore]`d so the default run stays fast:
 
 ```sh
 cargo test --test memory_gate    -- --ignored                 # valgrind over the built binaries
-cargo test --test cap_matcher    -- --ignored                 # the capability matcher against its C reference
 ```
 
 `bench/speed/run.sh` times the four workloads and checks their checksums.

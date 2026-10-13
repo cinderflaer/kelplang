@@ -1,9 +1,8 @@
-//! The LLVM backend: lower `tir` to LLVM IR. It is the only backend. The C backend
-//! that was its differential oracle was removed on 2026-10-10.
+//! The LLVM backend: lower `tir` to LLVM IR. It is the only code generator.
 //!
 //! MK7 §3.1 names this module as the whole of the new work: the front half of the
 //! compiler is unchanged and already backend-complete, so the lowering walks the
-//! same typed IR the C backend walks and emits a different target. This is the
+//! same typed IR the earlier emitter walks and emits a different target. This is the
 //! **S1** slice (MK7 §5): the scalar subset, `llvm` selectable, with byte-identical
 //! stdout on the fixtures that use only it.
 //!
@@ -22,7 +21,7 @@
 //!
 //! A `datac` whose fields are all scalars or earlier all-scalar `datac`s lowers
 //! to an LLVM identified struct with the same field order and natural alignment
-//! the C backend's typedef has (MK7 §3.1). Covered:
+//! the earlier emitter's typedef has (MK7 §3.1). Covered:
 //!
 //! - the struct type itself, as an identified (named) struct type, body set once
 //!   per declaration in program order
@@ -48,7 +47,7 @@
 //! - the builtin `Bytes`/`String`/`View` methods, and `print`/templates reading
 //!   a buffer or a view as `%.*s` from its own length and pointer
 //! - an owned `datac` field, the generated per-`datac` drop, and the
-//!   `borrowck::DropPlan` emitted at the same points the removed C backend emitted it:
+//!   `borrowck::DropPlan` emitted at the same points the earlier emitter emitted it:
 //!   end of block, before a `return`, and before an assignment overwrites an
 //!   owned binding. A move clears its source slot, so the drop a binding still
 //!   owes on a path that did not move it frees nothing
@@ -63,7 +62,7 @@
 //!
 //! # What S2C adds (MK7 S2, the tagged-union slice)
 //!
-//! An `enum` lowers to the `{ tag, union }` shape the removed C backend's `write_enum`
+//! An `enum` lowers to the `{ tag, union }` shape the enum emitter
 //! emits today (MK7 §3.1), with the same tag width and the same payload
 //! offsets:
 //!
@@ -92,17 +91,17 @@
 //! the tag read.
 //!
 //! Exhaustiveness is the frontend's job (`check_when` refuses a non-exhaustive
-//! match), so no runtime check is emitted here, exactly as the C backend emits
+//! match), so no runtime check is emitted here, exactly as the earlier emitter emits
 //! no `default:` arm.
 //!
 //! # What S2D adds (MK7 S2, the container slice)
 //!
 //! `List<T>`, `Map<K, V>`, `Box<T>` and `[T; N]`. MK7 §3.2 names the one
 //! exception to "the runtime stays C": the monomorphized container code, which
-//! the removed C backend generates per element or value type and which therefore cannot
+//! the earlier emitter generates per element or value type and which therefore cannot
 //! live in a fixed C file. So it is generated into the module, as IR, one
 //! function set per instantiation, with the same function names, the same bodies
-//! and the same panics the C backend writes:
+//! and the same panics the earlier emitter writes:
 //!
 //! - `List<T>` is `{ data, len, cap }`; `reserve` doubles through `realloc`, and
 //!   `get`/`set` run the same bounds check (`List.get: index out of bounds`). The
@@ -122,7 +121,7 @@
 //!   initializers.
 //!
 //! A container header is an aggregate over 16 bytes, so it never crosses to the
-//! C runtime by value: every helper the module declares takes a pointer
+//! runtime by value: every helper the module declares takes a pointer
 //! (BUG-vN4tR, MK7 §3.3), and `the_container_layouts_match_the_c_typedefs` pins
 //! the field-for-field agreement with `write_container_typedef`.
 //!
@@ -149,7 +148,7 @@
 //!   and `syntax.md` 10.2's borrowed return are the same one-pointer transport
 //! - the panic tail (BUG-b2Ldp): a body whose tail is a `panic` diverges, so it
 //!   is emitted as a statement that ends the block with `unreachable` rather
-//!   than asked for a value it does not have. the removed C backend's `write_function_body`
+//!   than asked for a value it does not have. the function body emitter
 //!   draws the same line, and without it the backend reported its own
 //!   "internal error" for `move_param_return` and `panic_tail`.
 //!
@@ -159,7 +158,7 @@
 //!
 //! # What S2E adds (MK7 S2, the closure slice)
 //!
-//! Function values and closures, mirrored from the removed C backend: a declared `fun`
+//! Function values and closures, mirrored from the earlier emitter: a declared `fun`
 //! named as a value, a `fun` literal (with and without captures), a call through
 //! a value, and a closure or a function value as a local, a parameter, a return
 //! value, a `datac` field and a `Box` element.
@@ -167,7 +166,7 @@
 //! - a `Ty::Fn` is a bare `ptr`: the address of the declared function, which is
 //!   what `FnRef` yields (`LLVM` already treats a function as a pointer value).
 //!   It is `Copy`, owns nothing and has no drop.
-//! - a `Ty::Closure` is the C backend's fat pointer, one identified struct per
+//! - a `Ty::Closure` is the earlier emitter's fat pointer, one identified struct per
 //!   **signature** (`{ ptr fn, ptr env, ptr drop }`), exactly the three members
 //!   `write_closure_typedef` declares. `fn` takes the environment as its hidden
 //!   first parameter, so the call site is `fn(env, args...)`; the members are
@@ -180,12 +179,12 @@
 //!   each capture in field order and builds the fat pointer (MK7 §3.3: the
 //!   environment is heap, so its pointer is spelled out).
 //! - the widening of a plain function value where a closure is expected keeps
-//!   the C backend's two shapes: a *known* function (`FnRef`) gets a generated
+//!   the earlier emitter's two shapes: a *known* function (`FnRef`) gets a generated
 //!   shim with a `null` environment and allocates nothing, while a value whose
 //!   identity only the call knows gets a one-field heap environment and a
 //!   thunk that loads the code pointer back out of it.
 //! - the per-signature closure drop is the one function in a closure's set, as
-//!   it is in the C backend: `if (env != null) { drop(env); env = null; }`.
+//!   it is in the earlier emitter: `if (env != null) { drop(env); env = null; }`.
 //!
 //! Where an aggregate crosses to C the pointer stays spelled out (BUG-vN4tR),
 //! but a closure never crosses: its environment is Kelp-only and its drop is
@@ -202,13 +201,13 @@
 //! around.
 //!
 //! - every `extern fun` the program carries is **declared** with the exact
-//!   signature its C body has, not the written one: an owned parameter is a
+//!   signature its body has, not the written one: an owned parameter is a
 //!   borrow (so it is a pointer), and a `Bytes`/`String` return is 24 bytes, so
 //!   it comes back through the hidden first argument clang compiles the body's
 //!   `return` into (`declare_extern`, BUG-vN4tR).
 //! - a call to one is lowered as a call through the same table the runtime
 //!   helpers use: the declaration and the call are the same IR shape whether the
-//!   callee's text is in `kelp_rt.c` or in the program's own object.
+//!   callee's text is in the runtime crate or in the program's own object.
 //! - a user `extern fun` has no body in the program: its trampoline is written
 //!   per program as LLVM IR in `<out>.externs.o` (`extern_object.rs`), together
 //!   with the callback glue of its `move closure(...)` parameters and the
@@ -230,7 +229,7 @@
 //!   A function that received no hidden parameter names the global directly,
 //!   which is what `main` and another `pd`'s initializer are.
 //! - a gated call site is guarded by the same runtime allowlist check the C
-//!   backend emits. `cap_plan` mirrors `the removed C backend's `Gen`::cap_plan` site for
+//!   backend emits. `cap_plan` mirrors the capability plan site for
 //!   site: the same domain, the same resource arguments, the same pattern
 //!   count, the same `.kp` call site. Every checked argument is evaluated
 //!   **once** into a value the check and the call share (BUG-Kf7Rn), and the
@@ -242,7 +241,7 @@
 //!   (`std/rt`) and are lowered like any other code.
 //!
 //! The whole fixture corpus now lowers: the `llvm` backend is the only backend,
-//! and it builds every one of the 223 corpus targets the C backend built before
+//! and it builds every one of the 223 corpus targets the earlier emitter built before
 //! its removal, with an empty refusal ranking (MK7 §4.1). The differential
 //! fuzzer (`kelpc/tests/differential_fuzz.rs`, MK7 S5) covers the surface the
 //! curated corpus does not, and found the two shapes the sweep's fixtures were
@@ -260,13 +259,13 @@
 //! own statement of them:
 //!
 //! - A narrow `IntLit` (an `i128` in `tir`) is cut to the *expression's* type
-//!   before the operation, exactly as the removed C backend casts its literal text, so a
+//!   before the operation, exactly as the earlier emitter casts its literal text, so a
 //!   `u64`-wide literal in an `i32` context is truncated first.
 //! - Signedness comes from `Ty`: `sdiv`/`udiv`, `srem`/`urem`, `ashr`/`lshr`,
 //!   `icmp slt` vs `ult`. `Shr` on a signed type is arithmetic.
 //! - No `nsw`/`nuw` on an arithmetic instruction, no `inbounds` on a
 //!   data-dependent GEP, and no fast-math flag is ever emitted. The plain forms
-//!   wrap by definition, which is what the C backend's `-fwrapv` promised; the C
+//!   wrap by definition, which is what the earlier emitter's `-fwrapv` promised; the C
 //!   frontend flag has no counterpart here because there is nothing to turn off.
 //!   The one `inbounds`/`nuw` in the IR is the struct-field GEP, where the index
 //!   is a compile-time constant inside an object of that exact type, so the
@@ -275,9 +274,9 @@
 //!   constant folding in the frontend, and this backend mirrors that: a `sdiv` by
 //!   zero is UB in LLVM exactly as it is in C.
 //! - `print` and templates call libc `printf`, with the same format string and the
-//!   same C ABI widths the removed C backend's `printf_piece_with` uses. A vararg narrower
+//!   same C ABI widths the printf piece rule uses. A vararg narrower
 //!   than `int` is promoted here, because LLVM, unlike C, does not promote it.
-//! - The numeric conversions mirror the removed C backend's `numeric_conversion`: a widening
+//! - The numeric conversions mirror the numeric conversion rule: a widening
 //!   is a plain cast, a narrowing that can lose a value is a range check that
 //!   panics with the call's own `.kp` spelling.
 //!
@@ -286,8 +285,8 @@
 //! DWARF, so that a fault in an `llvm`-built binary names a `.kp` file and line.
 //! MK7 §4.4 states this as an exit criterion rather than a nice-to-have: a crash
 //! report that points into generated IR instead of a Kelp source line is the
-//! difference between actionable and not, and the C backend buys the same
-//! resolution with one `#line` per statement (the removed C backend's `write_line_marker`).
+//! difference between actionable and not, and the earlier emitter buys the same
+//! resolution with one `#line` per statement (the line-marker emitter).
 //!
 //! - one compile unit for the module, named in `llvm.dbg.cu` and marked by the
 //!   `Debug Info Version` module flag: the two halves are what make the object
@@ -298,7 +297,7 @@
 //!   `Function::span`, which S4 added for exactly this)
 //! - one `DILocation` per statement and per block tail, given to LLVM's builder
 //!   so every instruction the statement emits carries it. The spans are the four
-//!   the removed C backend's `write_stmt` writes its `#line` from, and the line and column
+//!   the statement emitter writes its `#line` from, and the line and column
 //!   are read through the accessor both backends share
 //!   (`diag::SourceMap::path_line_col`), so the two cannot name different lines
 //!   for one statement
@@ -670,7 +669,7 @@ fn lower_to_object(
     }
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
-    // the removed C backend wrote each typedef and its drop routine in. The container
+    // the earlier emitter wrote each typedef and its drop routine in. The container
     // function sets come next, because a container's own drop calls the
     // element's (MK7 §3.2: one monomorphized set per instantiation, generated
     // into the module). In the incremental mode only the `_support` unit gets
@@ -682,10 +681,10 @@ fn lower_to_object(
         lowering.emit_container_bodies()?;
         // The S2E machinery (per-signature closure drops, the widening's thunk
         // and destructor, the shims) comes before the function bodies, the same
-        // order the C backend writes them in.
+        // order the earlier emitter writes them in.
         lowering.emit_closure_bodies()?;
         // The `&dyn` thunks (A-12 slice 4), after every function they call is
-        // declared and defined, the same order the C backend writes them in.
+        // declared and defined, the same order the earlier emitter writes them in.
         lowering.emit_dyn_bodies()?;
         // The `pd` globals' two generated functions (MK7 §5), whose bodies call
         // the drops and container sets above.
@@ -1285,7 +1284,7 @@ fn plan_units(program: &Program) -> Vec<Unit> {
             unit.exported.insert(key.clone());
         }
     }
-    // `main` is called by the C runtime's startup, not by a unit, so nothing in
+    // `main` is called by the process startup code, not by a unit, so nothing in
     // the program references it and the reference scan above cannot see it.
     if let Some(main) = program.functions.iter().find(|f| f.name == "main") {
         if let Some(unit) = units.iter_mut().find(|u| u.name == main.module) {
@@ -1778,7 +1777,7 @@ struct RtFn<'a> {
 }
 
 /// One gated call site's check plan, the mirror of what
-/// `the removed C backend's `Gen`::cap_plan` returns: the domain to match against, how many
+/// the capability plan returns: the domain to match against, how many
 /// patterns the calling module holds for it, the call site as written, and
 /// which arguments are resource names.
 struct CapPlan {
@@ -1787,11 +1786,9 @@ struct CapPlan {
     /// The calling module's whole compiled-in pattern list for `domain`, text
     /// and all, not just its count: `emit_cap_checks` inspects it to decide
     /// whether a `CapCheck::Name` here is one of the two fast-path shapes
-    /// `cap_glue.c`'s own `kelp_cap_check_name` already fast-paths (the lone
+    /// the runtime capability glue's own `kelp_cap_check_name` already fast-paths (the lone
     /// `*`, or a literal with no `*`), which can be hand-built as inline IR
-    /// instead of a call into that separately-compiled object. the removed C backend
-    /// needs no equivalent field: the C backend gets this optimization for
-    /// free from `cc`'s own inlining of the spliced text.
+    /// instead of a call into that separately-compiled object.
     patterns: Vec<String>,
     at: String,
     checks: Vec<crate::stdlib::CapCheck>,
@@ -1805,7 +1802,7 @@ struct CapPlan {
 /// `*` is not the lone wildcard (a real glob, still matched through
 /// `kelp_std__rt__glob_match` exactly as before).
 enum NameFastPath<'p> {
-    /// The pattern list is exactly `["*"]`. `cap_glue.c`'s own fast path reads
+    /// The pattern list is exactly `["*"]`. the runtime capability glue's own fast path reads
     /// this as "the name has no `/`", so the inline IR is the same scan.
     Wildcard,
     /// The pattern list is exactly one pattern with no `*` byte anywhere: the
@@ -1814,7 +1811,7 @@ enum NameFastPath<'p> {
 }
 
 /// Whether `patterns` (a calling module's whole compiled-in allowlist for one
-/// domain) is one of the two shapes `cap_glue.c`'s `kelp_cap_check_name`
+/// domain) is one of the two shapes the runtime capability glue's `kelp_cap_check_name`
 /// already fast-paths, so `emit_cap_checks` can hand-build the check as
 /// inline IR instead of emitting a call into that separately-compiled object.
 fn name_fast_path(patterns: &[String]) -> Option<NameFastPath<'_>> {
@@ -1832,7 +1829,7 @@ fn name_fast_path(patterns: &[String]) -> Option<NameFastPath<'_>> {
 }
 
 /// One `enum`'s LLVM layout, mirroring the `{ tag, union }` typedef
-/// the removed C backend's `write_enum` emits (MK7 §3.1).
+/// the enum emitter emits (MK7 §3.1).
 #[derive(Clone)]
 struct EnumInfo<'a> {
     /// The outer struct: field 0 is the tag, field 1 the union.
@@ -1843,7 +1840,7 @@ struct EnumInfo<'a> {
     /// typedef declares.
     tag_ty: Type<'a>,
     /// Whether that tag type is signed, so the hash's widening extension
-    /// matches the C backend's `(uint64_t)` cast of a signed or unsigned tag.
+    /// matches the earlier emitter's `(uint64_t)` cast of a signed or unsigned tag.
     tag_signed: bool,
     /// The union type. It is a struct anchored on the widest payload's own
     /// alignment type, sized to the widest payload; the anchor field is what
@@ -1867,7 +1864,7 @@ impl<'a> EnumVariant<'a> {
     /// The payload struct's field index for declared field `field`: the count
     /// of `unit`-typed fields declared before it, subtracted out, because a
     /// `unit` field gets no struct member (`MISSING-r7Wqb`). LLVM addresses a
-    /// struct positionally, unlike the C backend's by-name
+    /// struct positionally, unlike the earlier emitter's by-name
     /// `.kelp_v.<variant>.<field>`, so a declared index and a payload-struct
     /// index only coincide when nothing before `field` was filtered out.
     /// `field` itself must not be `unit`: reading one is answered by
@@ -1892,7 +1889,7 @@ const DATAC_ALIGN_FIELD: &str = "#align";
 
 /// Module-level state: the context, the module, the builder, and the runtime
 /// symbols every function shares. Per-function state lives in [`FnGen`].
-/// The Box pool's geometry, mirrored from `kelp_rt.c` (`KELP_BOX_POOL_MAX` and
+/// The Box pool's geometry, mirrored from the runtime crate (`KELP_BOX_POOL_MAX` and
 /// `KELP_BOX_POOL_CLASSES`): blocks of up to 64 bytes at an alignment of 16 or
 /// less are pooled in 16-byte size classes, and every other block is malloc.
 const BOX_POOL_CLASSES: u64 = 4;
@@ -1946,19 +1943,19 @@ struct Gen<'a> {
     /// resolves its field to the struct index a `getelementptr` needs without
     /// re-walking `program.structs`.
     field_index: HashMap<String, Vec<String>>,
-    /// The `DropPlan`, keyed by the same node identity the removed C backend reads, so
+    /// The `DropPlan`, keyed by the same node identity the earlier emitter reads, so
     /// the two backends free the same set of owned locals at the same points
     /// (MK7 §3.4).
     drops: &'a DropPlan,
     /// The runtime helpers this slice reaches, keyed by their mangled symbol,
-    /// plus every `extern fun` the program carries (S3). `kelp_rt.c` defines the
+    /// plus every `extern fun` the program carries (S3). the runtime crate defines the
     /// helpers (compiled into the object `build.rs` leaves in `OUT_DIR`) and the
     /// program's own object defines the extern bodies (`externs.rs`), and in both
-    /// cases the module only *declares* the function: the C backend emits the
+    /// cases the module only *declares* the function: the earlier emitter emits the
     /// same text into one translation unit.
     runtime: HashMap<String, RtFn<'a>>,
     /// The generated per-`datac` drop functions (`kelp_drop_<name>`), the mirror
-    /// of the ones the removed C backend emitted beside each typedef.
+    /// of the ones the earlier emitter emitted beside each typedef.
     drop_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
     /// The `datac`/`enum` names that own memory, so `types::needs_drop` can
     /// answer for a type without re-walking the declarations.
@@ -2016,7 +2013,7 @@ struct Gen<'a> {
     eq_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
     /// The libc primitives the container function sets call: the standard
     /// headers' allocation, copy and scan functions, declared and never
-    /// re-implemented, exactly as the C backend reaches them.
+    /// re-implemented, exactly as the earlier emitter reaches them.
     libc: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
     /// The project's own allocator, when a freestanding manifest configures one
     /// (kernel stage 7). `None` means libc or, in a freestanding build, no
@@ -2028,27 +2025,27 @@ struct Gen<'a> {
     /// bodies still need a byte copy and a zero fill.
     mem: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
     /// Every container instantiation the program mentions, so the module emits
-    /// exactly the sets it uses (mirrors the removed C backend's `Instantiations`).
+    /// exactly the sets it uses (mirrors the instantiation table).
     instantiations: Instantiations,
     /// The user types whose value can be deep-copied, the same fixpoint
-    /// the removed C backend computes for `List.clone`/`List.slice`.
+    /// the earlier emitter computes for `List.clone`/`List.slice`.
     clonable: HashSet<String>,
     /// The user types whose value has a derived order, for `List.sort`.
     sortable: HashSet<String>,
     /// The user types whose value is a key, for `Map<K, V>` with a user key
-    /// (A-6): the same fixpoint the removed C backend computes for `kelp_hash_<T>`
+    /// (A-6): the same fixpoint the earlier emitter computes for `kelp_hash_<T>`
     /// and `kelp_eq_<T>`.
     keyable: HashSet<String>,
     /// One module-scope global per `pd` (MK7 §3.1 and §5), keyed by the
     /// internal `pd#<name>` identifier `tir` names it with, plus that
-    /// passdown's own type. The C backend's `static <type> <name>;` is the
+    /// passdown's own type. The earlier emitter's `static <type> <name>;` is the
     /// same storage: a `pd` initializer fills it once and a function with no
     /// hidden parameter of its own (`main`) reads it directly.
     pd_globals: HashMap<String, (Value<'a>, Ty)>,
     /// The generated `kelp_init_pds` and `kelp_drop_pds`, present only for a
     /// program that declares a passdown. The init function is what `main`
     /// calls first; the drop function is what `atexit` registers, the only
-    /// drop point an owned passdown has (the removed C backend's `write_pd_globals`).
+    /// drop point an owned passdown has (the passdown globals emitter).
     init_pds_fn: Option<LlvmFunction<'a>>,
     drop_pds_fn: Option<LlvmFunction<'a>>,
     /// One module-scope global per `static` (kernel stage 7), keyed by the
@@ -2058,15 +2055,15 @@ struct Gen<'a> {
     /// init hook; a `StaticRef` loads from it, stores through it and takes its
     /// address.
     static_globals: HashMap<String, StaticGlobal<'a>>,
-    /// The runtime's two saved `argv` globals (`runtime/kelp_rt.c`), which
+    /// The runtime's two saved `argv` globals (the runtime crate), which
     /// `main` writes and `process.args()` reads. They are `extern` here: the
-    /// runtime object defines them, exactly as it does for the C backend's
+    /// runtime object defines them, exactly as it does for the earlier emitter's
     /// generated `main`.
     argc_global: Value<'a>,
     argv_global: Value<'a>,
     /// The source map, which `cap_plan` reads for the `.kp` call site a
-    /// capability denial names. The C backend reads the same map for the same
-    /// text (the removed C backend's `cap_plan`), so the two cannot name different
+    /// capability denial names. The earlier emitter reads the same map for the same
+    /// text (the capability plan), so the two cannot name different
     /// places.
     sources: &'a SourceMap,
     /// The compiled-in allowlist array of each `(module, domain)` grant, keyed
@@ -2074,7 +2071,7 @@ struct Gen<'a> {
     /// (`program_c_source`); this is the symbol a check passes as `patterns`.
     cap_arrays: HashMap<(String, String), Value<'a>>,
     /// The capability check's C entry points (`kelp_cap_check_path` and
-    /// friends), declared with the signature `runtime/cap_glue.c` defines.
+    /// friends), declared with the signature `the runtime capability glue` defines.
     cap_fns: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
     /// The DWARF debug-information builder (MK7 S4 §4.4): the one place a
     /// `.kp` file and line become metadata. It owns the compile unit, the
@@ -2123,9 +2120,9 @@ struct Gen<'a> {
 }
 
 /// Every container instantiation a program mentions, the mirror of
-/// the removed C backend's `Instantiations` (MK7 S2D). Kept separate from the `datac` table
+/// the instantiation table (MK7 S2D). Kept separate from the `datac` table
 /// because a container is lowered as a *function set*, one per element or value
-/// type, exactly as the C backend writes one C function set per instantiation.
+/// type, exactly as the earlier emitter writes one C function set per instantiation.
 #[derive(Default, Clone)]
 struct Instantiations {
     lists: HashSet<Ty>,
@@ -2133,7 +2130,7 @@ struct Instantiations {
     maps: HashSet<(Ty, Ty)>,
     arrays: HashSet<Ty>,
     /// Closure signatures (S2E). A closure's type is `{ fn, env, drop }`,
-    /// monomorphized per signature exactly as the C backend monomorphizes its
+    /// monomorphized per signature exactly as the earlier emitter monomorphizes its
     /// typedef, so one exists per signature the program mentions.
     closures: HashSet<Ty>,
     /// Closure signatures a plain function value is widened into somewhere, so
@@ -2330,7 +2327,7 @@ impl<'a> Gen<'a> {
         let program = self.program;
         // The container types first, so a `datac` or `enum` field that *is* one
         // resolves its own named struct rather than a refused type. A container
-        // typedef is emitted before every `datac` in the C backend for the same
+        // typedef is emitted before every `datac` in the earlier emitter for the same
         // reason (a container holds its contents through a pointer).
         self.declare_container_types()?;
         // The aggregate types next, so a field this slice cannot lay out is
@@ -2338,7 +2335,7 @@ impl<'a> Gen<'a> {
         // declaration.
         self.declare_aggregates()?;
         // A map entry that holds a `datac` by value, as a key or a value, is
-        // only settable once the `datac` types exist. The C backend splits the
+        // only settable once the `datac` types exist. The earlier emitter splits the
         // same typedef for the same reason.
         self.set_late_map_entry_bodies()?;
         // The environment struct of each capturing literal (S2E), after every
@@ -2353,7 +2350,7 @@ impl<'a> Gen<'a> {
         self.declare_pd_globals()?;
         // Each `(module, domain)` grant's compiled-in allowlist array: the data
         // is C in the per-program object (`program_c_source`, the same text and
-        // the same escaping the C backend writes), and this is the symbol a
+        // the same escaping the earlier emitter writes), and this is the symbol a
         // check passes to `kelp_cap_check_*` as `patterns`.
         for grant in &program.caps {
             let symbol = cap_array_symbol(&grant.module, &grant.domain);
@@ -2364,7 +2361,7 @@ impl<'a> Gen<'a> {
         // `program.caps` holds each module's granted patterns, which is data, not
         // a construct. The allowlist arrays are declared above and the check
         // itself is emitted at each gated call site (`cap_plan`,
-        // `emit_cap_checks`), exactly where the C backend emits it.
+        // `emit_cap_checks`), exactly where the earlier emitter emits it.
 
         self.declare_drop_fns();
         // The derived deep-copy and order, then the container function sets: a
@@ -2385,7 +2382,7 @@ impl<'a> Gen<'a> {
         let ctx = self.ctx;
 
         for f in &program.functions {
-            // An `extern fun` has no `.kp` body: its C text is supplied by the
+            // An `extern fun` has no `.kp` body: its body is supplied by the
             // compiler (`externs.rs`), so the function is *declared* here with
             // the body's own C signature and a call lowers as a call to it
             // (MK7 S3). The body then reaches the link through the object
@@ -2395,7 +2392,7 @@ impl<'a> Gen<'a> {
                 continue;
             }
             let (params, ret) = if f.name == "main" {
-                // The C backend's `main` is `int main(int, char**)`; this
+                // The earlier emitter's `main` is `int main(int, char**)`; this
                 // mirrors the type the C standard cares about and returns 0.
                 // The two parameters are not Kelp parameters: `main` saves
                 // them into the runtime's `kelp_argc`/`kelp_argv`, which is
@@ -2792,7 +2789,7 @@ impl<'a> Gen<'a> {
 
     /// The `@llvm.used` global that keeps every static in the object even when
     /// LLVM can constant-fold every read of it (an immutable table, a
-    /// `static mut` nothing writes). The C backend's `__attribute__((used))` is
+    /// `static mut` nothing writes). The earlier emitter's `__attribute__((used))` is
     /// the same fact, and a freestanding image's section placement has to match
     /// on both.
     fn emit_llvm_used(&mut self) {
@@ -2889,7 +2886,7 @@ impl<'a> Gen<'a> {
     /// Nothing here is a source *location* yet. The locations are given to the
     /// builder as each statement is emitted (`FnGen::locate`), which is what
     /// puts the statement, not only the function, in the line table: the same
-    /// resolution one `#line` per statement bought the removed C backend
+    /// resolution one `#line` per statement bought the earlier emitter
     /// (its `write_line_marker`).
     ///
     /// The line and column come from the same `Span`s the statements carry,
@@ -2952,7 +2949,7 @@ impl<'a> Gen<'a> {
         self.module.set_debug_info_version();
 
         for f in &unit_functions {
-            // An `extern fun` has no body in this module: its C text is
+            // An `extern fun` has no body in this module: its body is
             // compiled into the program's own object (S3A), so there is no
             // instruction here to locate.
             if f.extern_ {
@@ -3025,7 +3022,7 @@ impl<'a> Gen<'a> {
     /// `scope`, so every instruction emitted until the next call to this
     /// carries it (MK7 S4, §4.4).
     ///
-    /// The LLVM half of the removed C backend's `write_line_marker`: `codegen_llvm.rs`
+    /// The LLVM half of the line-marker emitter: `codegen_llvm.rs`
     /// calls it from the same places, with the same spans, so the two backends
     /// put a statement at the same source line.
     ///
@@ -3051,7 +3048,7 @@ impl<'a> Gen<'a> {
     }
 
     /// Declare one module-scope global per `pd`, plus the two generated
-    /// functions the removed C backend's `write_pd_globals` emits beside them (MK7 §3.1,
+    /// functions the passdown globals emitter emits beside them (MK7 §3.1,
     /// §5).
     ///
     /// Each global has internal linkage and a zero initializer, which is C's
@@ -3100,7 +3097,7 @@ impl<'a> Gen<'a> {
         self.init_pds_fn = Some(self.module.add_function("kelp_init_pds", void_fn));
         // An owned passdown has no scope to die at, so its drop point is process
         // exit. A program whose passdowns all own nothing gets no handler at
-        // all, exactly as the C backend emits none.
+        // all, exactly as the earlier emitter emits none.
         if owned.iter().any(|owns| *owns) {
             self.drop_pds_fn = Some(self.module.add_function("kelp_drop_pds", void_fn));
         }
@@ -3116,7 +3113,7 @@ impl<'a> Gen<'a> {
     /// The order is what makes a chained initializer (`pd val doubled =
     /// base * 2`) read the value an earlier one wrote. An initializer that
     /// diverges (`panic`) ends the init function, so the remaining passdowns
-    /// are never assigned, which is the same fate the C backend's sequential
+    /// are never assigned, which is the same fate the earlier emitter's sequential
     /// statements have.
     fn emit_pd_globals(&self) -> Result<(), String> {
         let Some(init_fn) = self.init_pds_fn else {
@@ -3181,7 +3178,7 @@ impl<'a> Gen<'a> {
     }
 
     /// The gated-call plan for one call site, or `None` when the call is not a
-    /// checked one. The mirror of `the removed C backend's `Gen`::cap_plan`, field for
+    /// checked one. The mirror of the capability plan, field for
     /// field on purpose: which calls are checked, against which domain, with
     /// which arguments and which pattern count, is the security-relevant
     /// decision, and two backends answering it differently would be a hole in
@@ -3191,7 +3188,7 @@ impl<'a> Gen<'a> {
     /// name, so a call that reaches codegen is one the calling module may make.
     /// What the check adds is the *pattern* test at the call site, and a call
     /// that names no resource (`time.now_unix`, `rand.below`, `process.exit`)
-    /// needs none, exactly as it gets none from the C backend.
+    /// needs none, exactly as it gets none from the earlier emitter.
     ///
     /// A gated stdlib module calling its own item is a checked call site only
     /// when something handed that module patterns for its own domain (an
@@ -3219,7 +3216,7 @@ impl<'a> Gen<'a> {
         // (`read`, not `fs.read`), the qualified key being what `gated` holds.
         let bare = callee.rsplit('.').next().unwrap_or(callee);
         let mut checks = crate::stdlib::checked_args(domain, bare, &arg_is_str);
-        // Mirror of `the removed C backend's `Gen`::cap_plan`'s elision, field for field:
+        // Mirror of the capability plan's elision, field for field:
         // a path domain's whole-resource pattern (`/**`) matches any string
         // unconditionally in `glob_match` (`std/rt.kp`, the `**` branch's
         // `if rest == plen { return true }` fast path), so when the calling
@@ -3234,7 +3231,7 @@ impl<'a> Gen<'a> {
         {
             checks.retain(|c| !matches!(c, crate::stdlib::CapCheck::Path(_)));
         }
-        // Mirror of the name-domain elision in `the removed C backend's `Gen`::cap_plan`,
+        // Mirror of the name-domain elision in the capability plan,
         // field for field: a domain-declaring module's own forwarding call (the
         // thin wrapper over its `extern fun`) needs no `CapCheck::Name` when its
         // own list for the domain is exactly the whole-resource `*`, because an
@@ -3285,7 +3282,7 @@ impl<'a> Gen<'a> {
     /// * every parameter is a pointer or a scalar. `infer.rs`'s
     ///   `implicit_borrow_wrap` turns a parameter that owns memory into a borrow,
     ///   and the runtime's own text uses `kelp_data->len` accordingly, so no
-    ///   aggregate crosses *into* the C body by value. The guard below stays so
+    ///   aggregate crosses *into* the body by value. The guard below stays so
     ///   that a future extern whose parameter is a bare aggregate fails by name
     ///   rather than crossing wrongly.
     /// * the only aggregate returns in the whole extern table are `Bytes` and
@@ -3303,13 +3300,12 @@ impl<'a> Gen<'a> {
         // which is how `externs.rs` keys a body: `(module, bare name)`.
         let bare = f.name.rsplit('.').next().unwrap_or(&f.name);
         // `std/math`'s square root is LLVM's own `llvm.sqrt.f64` rather than the
-        // C body `externs.rs` carries: the body is a `call` at every use, and a
+        // body `externs.rs` carries: the body is a `call` at every use, and a
         // call in the loop is what keeps the SLP vectorizer from packing the
         // arithmetic around it (its remark is `call instruction cannot be
-        // vectorized`). The intrinsic is the same `sqrtsd` the C body's `sqrt`
-        // compiles to; only the errno the C call would set is lost, and Kelp has
-        // no errno. The C backend keeps the body, so the two backends still
-        // differ only in how they say the same operation.
+        // vectorized`). The intrinsic is the same `sqrtsd` the body's `sqrt`
+        // compiles to; only the errno a C call would set is lost, and Kelp has
+        // no errno.
         if f.module == "std/math" && bare == "sqrt_raw" {
             let Some(ret) = ret_llvm else {
                 return Err(no_value("the return type of 'sqrt_raw'"));
@@ -3373,7 +3369,7 @@ impl<'a> Gen<'a> {
         extend_narrow_c_abi(func, ret, &params);
         // The declarations live in the same table as the runtime helpers, and a
         // call reaches either through the same lookup (`emit_call`): a body and
-        // a `kelp_rt.c` helper differ in where their text is compiled, not in how
+        // a runtime helper differ in where their text is compiled, not in how
         // the IR calls them.
         self.runtime.insert(
             symbol,
@@ -3501,7 +3497,7 @@ impl<'a> Gen<'a> {
         decls.sort_by_key(|(order, _)| *order);
         // An array field is held *by value*, so its body has to be set before the
         // `datac` or payload that names it. `emit_array_body` recurses into the
-        // arrays nested inside it, innermost first, exactly as the removed C backend
+        // arrays nested inside it, innermost first, exactly as the earlier emitter
         // emits them just before the declaration that needs them.
         let mut emitted_arrays: HashSet<Ty> = HashSet::new();
         for (_, decl) in decls {
@@ -3623,7 +3619,7 @@ impl<'a> Gen<'a> {
     }
 
     /// Declare one drop function per `datac` or `enum` that owns memory
-    /// (`types::needs_drop`), the mirror of the routine the removed C backend wrote
+    /// (`types::needs_drop`), the mirror of the routine the earlier emitter wrote
     /// beside each typedef. The plan's targets call them by name.
     fn declare_drop_fns(&mut self) {
         let owned = owned_types(&self.program.structs, &self.program.enums, &self.program.drop_types);
@@ -3700,7 +3696,7 @@ impl<'a> Gen<'a> {
     }
 
     /// One `enum`'s drop: `switch (tag) { case v: <drop v's owned payload>
-    /// ... }`, which is the C backend's version of the same function and the
+    /// ... }`, which is the earlier emitter's version of the same function and the
     /// only place a tagged union frees anything.
     ///
     /// Only a variant with at least one owned payload field gets a case, exactly
@@ -3772,7 +3768,7 @@ impl<'a> Gen<'a> {
     /// Call one type's declared destructor (`fun mut T.drop()`) at the top of
     /// its generated drop (kernel stage 9, MK9-S6-M1). `declare_functions` has
     /// already declared the body as an ordinary method, so the LLVM function is
-    /// in `funcs` under the same `Type#name` key the C backend mangles.
+    /// in `funcs` under the same `Type#name` key the earlier emitter mangles.
     fn call_user_drop(&self, ptr: Value<'a>, name: &str) -> Result<(), String> {
         let key = crate::types::drop_method_key(name);
         let info = self
@@ -3785,7 +3781,7 @@ impl<'a> Gen<'a> {
 
     /// Free the value at `ptr`: the runtime's builtin free, or the generated
     /// per-`datac` drop. A type that owns nothing has no call, which is the same
-    /// silence the removed C backend keeps for a dropless field.
+    /// silence the earlier emitter keeps for a dropless field.
     fn call_drop(&self, ptr: Value<'a>, ty: &Ty) -> Result<(), String> {
         // A managed build calls no drop for memory alone: the collector reclaims
         // it, so the drop of a memory-only value is no call at all.
@@ -3832,7 +3828,7 @@ impl<'a> Gen<'a> {
             // A `Thread<T>` handle owns the worker record, and its drop is the
             // runtime's: detach the worker and free nothing (MK9-S3-M1 stage
             // C1). It takes the address of the slot holding the handle, exactly
-            // as the removed C backend's `drop_call` passes `&h`.
+            // as the drop call rule passes `&h`.
             Ty::Thread(_) => {
                 let symbol = drop_fn_name(ty);
                 let rt = self
@@ -4008,7 +4004,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// passdown's own global.
     ///
     /// `fn_name` is empty and the module is the declaring one, exactly as
-    /// the removed C backend's `write_pd_globals` builds its `Gen`: the drop plan has no
+    /// the passdown globals emitter builds its `Gen`: the drop plan has no
     /// entry keyed to a `pd` (`borrowck.rs` keys by function, and an initializer
     /// is not one), and a gated call inside the initializer is checked against
     /// the module that declared it, which is the only carrier of that module.
@@ -4049,7 +4045,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// Aim the builder at the `.kp` line `span` names, so every instruction
     /// emitted until the next call to this carries it (MK7 S4, §4.4).
     ///
-    /// This is the LLVM half of the removed C backend's `write_line_marker`, called from
+    /// This is the LLVM half of the line-marker emitter, called from
     /// the same places with the same span, so the two backends put a statement
     /// at the same source line. A span the source map cannot resolve, or a
     /// function with no subprogram, clears the location instead: an instruction
@@ -4118,7 +4114,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // `main` runs the passdown initializers before its first statement,
-        // exactly where the removed C backend's `write_function` inserts
+        // exactly where the function emitter inserts
         // `kelp_init_pds();`, and saves its own `argc`/`argv` into the
         // runtime's globals, where `process.args()` reads them. `main`
         // receives no hidden parameter, so it reads the generated globals
@@ -4208,7 +4204,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// Emit a block's statements and then its tail: as a `return` when the tail
     /// belongs to a value-returning function, discarded otherwise, followed by
-    /// the block's end-of-scope drops (the C backend draws both lines in
+    /// the block's end-of-scope drops (the earlier emitter draws both lines in
     /// `write_function_body`).
     fn emit_block_body(&mut self, block: &Block) -> Result<(), String> {
         for stmt in &block.stmts {
@@ -4223,11 +4219,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let drops = self.drops_at_block_end(block);
         if let Some(tail) = &block.tail {
             // The tail is an expression in statement position here, and the C
-            // backend marks it as one (the removed C backend's `write_block_body`).
+            // backend marks it as one (the block body emitter).
             self.locate(tail.span);
             // A body whose tail is a `panic` diverges: `infer.rs` accepts it
             // against any declared return type, so it is a statement rather
-            // than a returned value (the removed C backend's `write_function_body`
+            // than a returned value (the function body emitter
             // draws the same line). The call ends the block itself, so no
             // `ret` and no drop follows it.
             if is_diverging_tail(tail) {
@@ -4307,7 +4303,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // One location per statement, from the span the statement itself
         // carries: a `Let` is the initializer's span (its first token *is* the
         // `val`), a `Return` carries its own, a `While` its condition's. The
-        // same four spans the removed C backend's `write_stmt` wrote its `#line` from.
+        // same four spans the statement emitter wrote its `#line` from.
         match stmt {
             Stmt::Let { init, .. } => self.locate(init.span),
             Stmt::Return { span, .. } => self.locate(*span),
@@ -4535,7 +4531,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// Evaluate `e`, store it in a temporary, then run `drops`. A returned or
     /// block-tailed value may read through a local being freed, so it has to be
-    /// read first (the removed C backend's `write_temp_then_drops`). An expression that
+    /// read first (the temporary-then-drops rule). An expression that
     /// diverged leaves nothing to store and no drop to run.
     fn value_of_then_drops(
         &mut self,
@@ -4639,7 +4635,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::Call { callee, args } => self.emit_call(callee, args, &e.ty, e.span),
             // A variadic user `extern fun` call (gap 7): the call goes to the
             // generated fixed-arity wrapper, whose declaration and per-program
-            // C body are the same text the C backend compiles, while the
+            // body is the same text this module compiles, while the
             // capability check reads the extern's own key.
             ExprKind::VariadicCall {
                 callee,
@@ -4727,7 +4723,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // A borrow (`infer.rs::check_call_arg` synthesizes one for a
             // parameter whose type resolves to a shared or exclusive borrow,
             // and `&x`/`&mut x` write one directly). `&str` is the pointer
-            // itself, as the C backend writes it, because there is no second
+            // itself, as the earlier emitter writes it, because there is no second
             // indirection; every other pointee is the address of the place it
             // borrows, which is the one indirection `getelementptr` needs and
             // the pointer the runtime's `const kelp_Bytes*` parameters take.
@@ -4745,7 +4741,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::Deref { expr: sub } => {
                 // `*p` on a `&str` is the view itself: a `str` is already the
                 // pointer, so there is no second indirection to load
-                // (the removed C backend's `expr_value` returns `expr_value(sub)` for the
+                // (the expression value rule returns `expr_value(sub)` for the
                 // same node). This is the shape a `pd` of type `str` reads
                 // through, and a `&str` parameter read too.
                 if e.ty == Ty::Str {
@@ -4933,7 +4929,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // read out of that copy, the temporary is dropped, and the value is
         // handed on, so the temporary and every buffer its other fields own die
         // at the end of the expression that read through it. This is
-        // the removed C backend's `staged_field_value`, and it is the reason a two-owned-
+        // the staged field value rule, and it is the reason a two-owned-
         // field `datac` is the interesting case: the drop is at the temporary,
         // not at the field.
         //
@@ -5176,7 +5172,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// A call through a function value (S2E): a plain function pointer is the
     /// callee, and a closure is the fat pointer, so the call names its code
     /// pointer and passes the environment as the hidden first argument
-    /// (`(c.fn)(c.env, ...)`, the shape the removed C backend wrote).
+    /// (`(c.fn)(c.env, ...)`, the shape the earlier emitter wrote).
     fn emit_indirect_call(
         &mut self,
         callee: &Expr,
@@ -5184,9 +5180,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         ret: &Ty,
     ) -> Result<Option<Value<'a>>, String> {
         // A closure value or a borrow of one: the code pointer and the
-        // environment come out of the same fat pointer the C backend projects.
+        // environment come out of the same fat pointer the earlier emitter projects.
         if let Some(sig) = closure_callee_sig(&callee.ty) {
-            // The callee is read before the arguments, as the C backend binds
+            // The callee is read before the arguments, as the earlier emitter binds
             // it to a temporary in front of the call, so a field or a
             // dereference is evaluated once.
             let (code, env) = self.closure_code_and_env(callee)?;
@@ -5509,7 +5505,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// tag, and on the failure path rebuild the failure in the enclosing
     /// function's return type, free the frame, and return.
     ///
-    /// This is the C backend's statement expression, as control flow: the two
+    /// This is the earlier emitter's statement expression, as control flow: the two
     /// arms are two blocks and the operator's value is the success payload read
     /// out of the temporary. The temporary is deliberately never dropped: exactly
     /// one variant's payload is moved out of it on either path, and dropping what
@@ -5723,7 +5719,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// place, or the pointer a `datac` or heap borrow names.
     ///
     /// An rvalue base (`mk().field`, a literal's field) has no address, so it is
-    /// stored into a temporary slot first, exactly as the removed C backend hoists one.
+    /// stored into a temporary slot first, exactly as the earlier emitter hoists one.
     /// The temporary is handed back to the caller, which is what frees it: this
     /// slice's `datac`s can own, so a staged temporary's drop is the caller's
     /// business, not silently dropped here.
@@ -5833,7 +5829,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// One call argument. An explicit borrow of an owned *temporary* is staged
     /// into a slot of its own and handed back in `held` for the caller to free
-    /// after the call, which is what the removed C backend's `stage_argument` does; every
+    /// after the call, which is what the argument staging rule does; every
     /// other argument is its own value.
     fn arg_value(
         &mut self,
@@ -5853,7 +5849,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// temporary is copied into a slot of its own, the field's address is taken
     /// inside that copy, and the slot is handed back in `held` for the caller to
     /// free after its operation (the call or the `printf`). This is
-    /// the removed C backend's `stage_argument`'s borrow arm and
+    /// the argument staging rule's borrow arm and
     /// `stage_borrowed_field`, which stage the *whole* temporary and not the
     /// field, so a `datac` that owns two buffers frees both.
     ///
@@ -5905,7 +5901,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The address of the field chain `e` read out of `root`, the staged
-    /// temporary its base is rooted at (the C backend's `chain_off`).
+    /// temporary its base is rooted at (the earlier emitter's `chain_off`).
     fn chain_addr(&mut self, root: Value<'a>, e: &Expr) -> Result<Value<'a>, String> {
         match &e.kind {
             ExprKind::FieldAccess { base, field } => {
@@ -5960,7 +5956,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let lty = self.lty(ty)?;
         // Cut the `i128` literal to the expression's own type. `LLVMConstInt`
         // takes the low 64 bits and truncates to the type's width, which is the
-        // same narrowing the removed C backend spells as a C cast; the sign flag is
+        // same narrowing the earlier emitter spells as a C cast; the sign flag is
         // irrelevant for a value already in two's complement.
         Ok(self.g.ctx.const_int(lty, value as u64, false))
     }
@@ -5985,7 +5981,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// Load a binding. A load at a move site also clears the source slot: the
     /// value is copied out and the binding is zeroed, so a drop the binding
     /// still owes on a path that did not move it frees nothing rather than a
-    /// second copy (MK7 §3.4; the removed C backend wrote `({0})` for the same
+    /// second copy (MK7 §3.4; the earlier emitter wrote `({0})` for the same
     /// reason). A binding moved on every path gets no `at_move` entry, so this
     /// leaves its slot alone and nothing drops it.
     fn load_ident(&mut self, e: &Expr, name: &str) -> Result<Value<'a>, String> {
@@ -6618,7 +6614,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// resource, the module's compiled-in pattern array and its count, the
     /// calling module and the `.kp` call site.
     ///
-    /// This is the removed C backend's `cap_checked_call`'s statement expression without
+    /// This is the capability-checked call's statement expression without
     /// the statement: the same symbols, the same argument order, and the same
     /// strings, because the deny path's text is pinned by the tests and the two
     /// backends must produce it byte for byte.
@@ -6653,7 +6649,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // The two fast paths: hand-built IR in this same module, so
             // LLVM's own optimizer can see through and inline them, instead
             // of the call every other check kind still emits below into
-            // `cap_glue.c`'s separately-compiled object (see the module doc
+            // the runtime capability glue's separately-compiled object (see the module doc
             // comment above `cap_plan` for why that call is otherwise opaque
             // to it). `deny_args` is exactly the argument list
             // `kelp_cap_check_name`'s own loop would have handed
@@ -6699,7 +6695,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// `CapCheck::Name`'s lone-`*` fast path (see `NameFastPath::Wildcard`):
     /// scan `name` for a `/` byte, byte by byte, exactly the way
-    /// `cap_glue.c`'s own fast path and `std/rt.kp`'s `glob_match` both do.
+    /// the runtime capability glue's own fast path and `std/rt.kp`'s `glob_match` both do.
     /// Finding a `/` before the NUL terminator denies, calling
     /// `kelp_cap_deny` with `deny_args` unchanged (the same six arguments the
     /// runtime match loop's own denial would have used); reaching the
@@ -6905,7 +6901,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
             // The fallible twin (kernel stage 13): the allocator's own null is
             // the result rather than a panic. The byte count is checked for
-            // wrap first, on the same rule the removed C backend's `ptr_call` writes as
+            // wrap first, on the same rule the earlier emitter's `ptr_call` writes as
             // C, so a huge count never reaches the allocator as a small block;
             // both outcomes land in one slot so the expression has one value
             // and the allocator is only called on the non-wrapping path.
@@ -7040,7 +7036,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// Emit one `llvm.bswap.iN` intrinsic call on `v`. The intrinsic is what
-    /// the C backend's `__builtin_bswap*` lowers to, so both backends run the
+    /// the earlier emitter's `__builtin_bswap*` lowers to, so both backends run the
     /// same machine instruction.
     fn bswap(&mut self, v: Value<'a>, bits: u32) -> Result<Value<'a>, String> {
         let ty = match bits {
@@ -7090,7 +7086,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// A byte-order read or write on a `Bytes` (kernel stage 3, MK9-S8).
     ///
     /// The bounds check is the same wrapped-add test
-    /// the removed C backend's `bytes_endian_call` writes, and the access is an `align 1`
+    /// the earlier emitter's `bytes_endian_call` writes, and the access is an `align 1`
     /// load or store, so the offset needs no alignment. A field whose order is
     /// not the target's swaps on the way in or out; one whose order already
     /// matches is a plain load or store.
@@ -7287,7 +7283,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// worker with the generated body for this signature. The handle's element
     /// is the entry's *return* type, which is the value the worker hands its
     /// joiner, so `sizeof` that type is the result slot. The C twin is
-    /// the removed C backend's `thread_spawn_value`, runtime call for runtime call.
+    /// the earlier emitter's `thread_spawn_value`, runtime call for runtime call.
     fn emit_thread_spawn(&mut self, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
         let Ty::Thread(elem) = ret else {
             unreachable!("thread.spawn hands back a Thread<T> handle")
@@ -7299,7 +7295,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let Ty::Closure { params, .. } = &entry.ty else {
             unreachable!("thread.spawn's entry is a closure by the checker's coercion")
         };
-        // The entry first, as the C backend binds it to a temporary in front of
+        // The entry first, as the earlier emitter binds it to a temporary in front of
         // the call, so a field or a dereference is evaluated once.
         let closure = self.value_of(entry)?;
         let code = self.g.builder.build_extract_value(closure, 0, "fn");
@@ -7385,7 +7381,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// A `Mutex<T>` operation (B-5, `std/sync`): `new` builds the runtime record,
     /// `lock` runs the generated block body while the lock is held, and
     /// `into_inner` moves the value out and frees the record. The C twin is
-    /// the removed C backend's `mutex_call`, runtime call for runtime call.
+    /// the earlier emitter's `mutex_call`, runtime call for runtime call.
     fn emit_mutex_call(&mut self, op: &str, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
         let ptr = self.g.pty();
         match op {
@@ -7541,7 +7537,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// `RwLock<T>` operations (`std/sync`). The C twin is
-    /// the removed C backend's `rwlock_call`, runtime call for runtime call.
+    /// the earlier emitter's `rwlock_call`, runtime call for runtime call.
     fn emit_rwlock_call(
         &mut self,
         op: &str,
@@ -7641,7 +7637,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// `Condvar` operations (`std/sync`): the constructor and the two
     /// notifies, one runtime call each. The C twin is
-    /// the removed C backend's `condvar_call`.
+    /// the earlier emitter's `condvar_call`.
     fn emit_condvar_call(
         &mut self,
         op: &str,
@@ -7679,7 +7675,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// `Mutex#wait_while` / `wait_while_timeout` (`std/sync`). The C twin is
-    /// the removed C backend's `mutex_wait_value`: the runtime calls the predicate body
+    /// the earlier emitter's `mutex_wait_value`: the runtime calls the predicate body
     /// while the lock is held, releases it around each sleep, then calls the
     /// block body; the timed form returns `Option`.
     fn emit_mutex_wait(
@@ -7774,7 +7770,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// build `Result<T, ThreadErr>` from the result slot or the message the
     /// worker panicked with. The result slot is read only on the success path,
     /// because a worker that panicked never wrote it; the handle is freed once
-    /// the value is out of it. The C twin is the removed C backend's `thread_join_value`.
+    /// the value is out of it. The C twin is the earlier emitter's `thread_join_value`.
     fn emit_thread_join(&mut self, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
         let handle_arg = args
             .first()
@@ -7983,7 +7979,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 "is_null",
             )));
         }
-        // A gated call site the C backend would guard with a runtime allowlist
+        // A gated call site the earlier emitter would guard with a runtime allowlist
         // check is checked here the same way: `cap_plan` decides the domain,
         // the arguments matched and the pattern count, and every resource
         // argument is evaluated once into a value the check and the call share
@@ -7991,7 +7987,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let plan = self.g.cap_plan(&self.module, callee, args, span);
         let prepared = self.prepare_checked_args(args, plan.as_ref())?;
 
-        // `print`/`print!` reach libc `printf`, as the C backend does.
+        // `print`/`print!` reach libc `printf`, as the earlier emitter does.
         if callee == "print" || callee == "print!" {
             let arg = args
                 .first()
@@ -8015,7 +8011,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // `assert` reaches the runtime's `kelp_assert(bool)`, which panics with
-        // the same "assertion failed" text the C backend gets.
+        // the same "assertion failed" text the earlier emitter gets.
         if callee == "assert" {
             let arg = args
                 .first()
@@ -8031,7 +8027,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // `n.to_u8()` and friends: the key is `"<src>#to_<dst>"`, the same shape
-        // the removed C backend's `call_value` matches.
+        // the earlier emitter's `call_value` matches.
         if let Some((src, dst)) = callee.split_once("#to_") {
             if let (Some(from), Some(to)) = (Ty::from_name(src), Ty::from_name(dst)) {
                 if from.is_integer() && (to.is_integer() || to.is_float()) {
@@ -8055,7 +8051,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // Byte-order conversion (kernel stage 3, MK9-S8): `x.swap_bytes()`,
         // `x.to_be()`, `x.to_le()` and the static `u32.from_be(x)`/
         // `u32.from_le(x)`. One `llvm.bswap.*` intrinsic, or nothing when the
-        // direction is the target's own, exactly as the removed C backend's `endian_call`
+        // direction is the target's own, exactly as the earlier emitter's `endian_call`
         // emits one `__builtin_bswap*` or the identity.
         if let Some((src, op)) = callee.split_once('#') {
             if let Some(ty) = Ty::from_name(src) {
@@ -8082,14 +8078,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // A `Ptr<T>` operation (MK9-S2 stage 1): one instruction, or one libc
-        // allocation, per operation. the removed C backend's `ptr_call` writes the same
+        // allocation, per operation. the earlier emitter's `ptr_call` writes the same
         // operations as C.
         if let Some(op) = callee.strip_prefix("Ptr#") {
             return self.emit_ptr_call(op, args, ret);
         }
 
         // `thread.fence` (MK9-S3-M1 stage A2): one `fence seq_cst` instruction,
-        // the same shape the atomic operations above take. the removed C backend
+        // the same shape the atomic operations above take. the earlier emitter
         // spells the same operation as its one-line C builtin at the call site,
         // and this side emits the LLVM instruction, because a fence is a
         // memory-model operation each backend states in its own terms. The
@@ -8103,7 +8099,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
         // `thread.spawn` / `thread.join` (MK9-S3-M1 stage C1): the runtime owns
         // the thread and the panic policy, and each call site is the handle
-        // build or the result build around it. the removed C backend's `call_value`
+        // build or the result build around it. the earlier emitter's `call_value`
         // dispatches the same two keys to the same shape in C.
         if callee == crate::stdlib::SPAWN_FN {
             return self.emit_thread_spawn(args, ret);
@@ -8113,7 +8109,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // A `Mutex<T>` operation (B-5, `std/sync`): three runtime calls, the
-        // same three the removed C backend's `mutex_call` writes in C.
+        // same three the earlier emitter's `mutex_call` writes in C.
         if let Some(op) = callee.strip_prefix("Mutex#") {
             if op == "wait_while" || op == "wait_while_timeout" {
                 return self.emit_mutex_wait(op, args, ret);
@@ -8162,7 +8158,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             let name = if yields_value { "call" } else { "" };
             let v = self.g.builder.build_call(info.func, info.ty, &values, name);
             // An owned temporary staged for the argument is freed *after* the
-            // call, as the removed C backend's `hoisted_call` frees it.
+            // call, as the earlier emitter's `hoisted_call` frees it.
             for (slot, ty) in held {
                 self.g.call_drop(slot, &ty)?;
             }
@@ -8174,7 +8170,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
         // A builtin method on `Bytes`/`String`/`View`: reached by declaration
         // and never re-implemented here, with the machine-level signature
-        // `kelp_rt.c` is compiled with. A helper that returns a struct through
+        // the runtime crate is compiled with. A helper that returns a struct through
         // the hidden pointer takes the destination as its explicit first
         // argument, which is the same call clang would emit.
         if let Some(rt) = self.g.runtime.get(&symbol_name(callee)).copied() {
@@ -8201,7 +8197,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         // A builtin container method: the monomorphized function this slice
-        // generated into the module, named exactly as the C backend names it.
+        // generated into the module, named exactly as the earlier emitter names it.
         if let Some(symbol) = container_symbol(callee, args, ret) {
             let Some((func, fty)) = self.g.container_fns.get(&symbol).copied() else {
                 return Err(refuse(&format!("the call to '{callee}'"), "S2D"));
@@ -8278,7 +8274,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The runtime-table call itself: one extern body compiled into the
-    /// per-program C object, or one `kelp_rt.c` helper. Shared by a plain
+    /// per-program object, or one runtime helper. Shared by a plain
     /// extern call and a variadic wrapper call, so the two cannot disagree
     /// about how a 24-byte return or a checked argument crosses.
     fn call_runtime_entry(
@@ -8544,7 +8540,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The `print` path for one value: `printf` with the specifier and promotion
-    /// the removed C backend's `printf_piece_with` uses, so stdout is byte-identical. An
+    /// the printf piece rule uses, so stdout is byte-identical. An
     /// owned temporary is freed right after the `printf`, exactly where the C
     /// backend frees it.
     fn emit_template_print(&mut self, newline: bool, arg: &Expr) -> Result<(), String> {
@@ -8568,8 +8564,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// A template: one `printf` whose format string is the literal chunks (with
-    /// `%` doubled) plus each interpolated value's specifier. The C backend
-    /// builds the same format string in the removed C backend's `Template` arm; an
+    /// `%` doubled) plus each interpolated value's specifier. The earlier emitter
+    /// builds the same format string in the earlier emitter's `Template` arm; an
     /// interpolated owned temporary is freed after the `printf`, as `print`'s is.
     fn emit_template(
         &mut self,
@@ -8614,9 +8610,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(())
     }
 
-    /// The `data` pointer of a value `panic` reads as C text: a `str`/`&str` is
+    /// The `data` pointer of a value `panic` reads as text: a `str`/`&str` is
     /// already the pointer, an owned `String` (or a borrow of one) contributes
-    /// the first field of its buffer. This is the IR twin of the C backend's
+    /// the first field of its buffer. This is the IR twin of the earlier emitter's
     /// `panic` argument staging, minus the rows it does not reach.
     fn heap_data_ptr(&mut self, arg: &Expr) -> Result<Value<'a>, String> {
         match &arg.ty {
@@ -8634,7 +8630,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 // A borrow of a field of an owned temporary (`panic(mk().msg)`)
                 // stages the temporary the way every other borrow argument
                 // does. Nothing is freed afterwards: a panic does not return, so
-                // the drop would be unreachable (the removed C backend leaves it out for
+                // the drop would be unreachable (the earlier emitter leaves it out for
                 // the same reason).
                 let ptr = self.borrow_place(arg, &mut Vec::new())?;
                 let lty = self.lty(inner)?;
@@ -8701,7 +8697,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The format specifier and the already-promoted variadic arguments for one
-    /// value, mirroring the removed C backend's `printf_piece_with` exactly. A heap buffer
+    /// value, mirroring the printf piece rule exactly. A heap buffer
     /// or a view contributes `%.*s` with an `int` length and a pointer, so the
     /// specifier comes back with two arguments; the third slot carries a
     /// temporary the caller frees after the `printf`.
@@ -8780,7 +8776,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The terminator for a function that reached the end of its body without a
-    /// `return`: `main` returns 0 (mirroring the C backend's rewrite of a bare
+    /// `return`: `main` returns 0 (mirroring the earlier emitter's rewrite of a bare
     /// `return;` in `main`), a unit function returns nothing, and a value-returning
     /// function (which `infer.rs` does not let fall through) returns zero.
     fn emit_fallthrough_return(&mut self) -> Result<(), String> {
@@ -8803,10 +8799,10 @@ impl<'g, 'a> FnGen<'g, 'a> {
 // The containers (MK7 S2D): `List<T>`, `Map<K, V>`, `Box<T>` and `[T; N]`.
 //
 // MK7 §3.2 names the exception this section exists for: the fixed runtime stays
-// C, but the monomorphized container code cannot, because the removed C backend
+// C, but the monomorphized container code cannot, because the earlier emitter
 // generates one function set per element or value type. So this backend
 // generates the same sets into the module, one per instantiation, with the same
-// function names and the same bodies the C backend writes. A container's header
+// function names and the same bodies the earlier emitter writes. A container's header
 // is a named struct whose field order and widths match the C typedefs field for
 // field, but it never crosses to C by value: the runtime helpers it calls take
 // a pointer (MK7 §3.3 and BUG-vN4tR).
@@ -8824,7 +8820,7 @@ fn is_x86_triple(triple: &str) -> bool {
 }
 
 /// The `(name, each field's type)` pairs of every declaration, for the derived
-/// clone/order fixpoints. The mirror of the removed C backend's `type_decls`.
+/// clone/order fixpoints. The mirror of the earlier emitter's `type_decls`.
 fn type_decls(
     structs: &[crate::types::StructDef],
     enums: &[crate::types::EnumDef],
@@ -8850,7 +8846,7 @@ fn type_decls(
 }
 
 /// Every container instantiation a program mentions, the mirror of
-/// the removed C backend's `collect_containers`. Over-collecting is harmless (an unused set
+/// the earlier emitter's `collect_containers`. Over-collecting is harmless (an unused set
 /// is unused code), under-collecting is not, so every expression's own type and
 /// every declaration's fields are noted, and a `Map` also notes the `List<K>`
 /// and `List<V>` its `keys`/`values` return.
@@ -9112,11 +9108,11 @@ fn collect_instantiations(program: &Program) -> Instantiations {
 }
 
 /// Declare the libc primitives the container function sets reach, exactly as
-/// the C backend reaches them through the standard headers. The signatures are
+/// the earlier emitter reaches them through the standard headers. The signatures are
 /// the ones `<stdlib.h>`/`<string.h>` declare, on the ABI this machine uses:
 /// `size_t` is `i64` and `int` is `i32`.
 /// The argument indices one capability check reads, in the order the check
-/// reads them. the removed C backend's `checked_arg_flags` enumerates the same set; this
+/// reads them. the earlier emitter's `checked_arg_flags` enumerates the same set; this
 /// one keeps the order, which is what the two-argument `HostPort` check needs.
 fn cap_check_indices(check: &crate::stdlib::CapCheck) -> Vec<usize> {
     use crate::stdlib::CapCheck;
@@ -9127,7 +9123,7 @@ fn cap_check_indices(check: &crate::stdlib::CapCheck) -> Vec<usize> {
 }
 
 /// The symbol of the compiled-in allowlist array for one `(module, domain)`
-/// grant, spelled exactly as `the removed C backend's `CapTable`::symbol` spells it: the
+/// grant, spelled exactly as `the earlier emitter's `CapTable`::symbol` spells it: the
 /// array is C data in the per-program object, and the IR declaration here has to
 /// name the same symbol the object defines.
 pub(crate) fn cap_array_symbol(module: &str, domain: &str) -> String {
@@ -9139,7 +9135,7 @@ pub(crate) fn cap_array_symbol(module: &str, domain: &str) -> String {
 }
 
 /// Declare the capability check's C entry points, with the signatures
-/// `runtime/cap_glue.c` defines.
+/// `the runtime capability glue` defines.
 ///
 /// The resource is a `const char*` for every check but the two that name a
 /// port, where it is the `uint16_t` the grant is matched on. `count` is a
@@ -9193,7 +9189,7 @@ fn declare_libc<'a>(
     decl("malloc", ptr, &[i64t]);
     decl("realloc", ptr, &[ptr, i64t]);
     decl("free", void, &[ptr]);
-    // The Box small-block free lists (speed-alloc, kelp_rt.c): the runtime
+    // The Box small-block free lists (speed-alloc, the runtime crate): the runtime
     // object defines them, so they are declared with the libc surface.
     decl("kelp_box_pool", ptr, &[]);
     decl("kelp_box_alloc", ptr, &[i64t, i64t]);
@@ -9203,7 +9199,7 @@ fn declare_libc<'a>(
     decl("memset", ptr, &[ptr, i32t, i64t]);
     decl("strlen", i64t, &[ptr]);
     // The one registration an owned `pd` has: its drop point is process exit
-    // (the removed C backend's `write_pd_globals`), so the generated `kelp_init_pds`
+    // (the passdown globals emitter), so the generated `kelp_init_pds`
     // hands `kelp_drop_pds` to `atexit`. Declared unconditionally like every
     // other libc symbol here; an unused declaration costs nothing.
     decl("atexit", i32t, &[ptr]);
@@ -9381,7 +9377,7 @@ impl<'a> Gen<'a> {
 
     /// Emit `kelp_panic(msg)` and terminate the block, for the bounds checks
     /// and the empty-container panics whose text must be byte-identical to the
-    /// C backend's.
+    /// text of the runtime's own panics.
     /// Point `alloc_fns` at this project's own allocator (kernel stage 7,
     /// MK9-S5-M1): the manifest's `[target] alloc`/`dealloc`/`realloc` names,
     /// resolved to the LLVM functions `declare_functions` already declared for
@@ -9473,7 +9469,7 @@ impl<'a> Gen<'a> {
     }
 
     /// `if (i >= len) panic(msg);`, the bounds check every indexed builtin
-    /// accessor opens with. The text is the C body's own, so the message a
+    /// accessor opens with. The text is the runtime's own, so the message a
     /// program prints is the same one the runtime object would have printed.
     fn emit_bounds_check(
         &self,
@@ -9584,7 +9580,7 @@ impl<'a> Gen<'a> {
 
         // The closure signature types first (S2E): a container element may be
         // one (`Box<closure(...)>`), a parameter certainly may, and a later
-        // closure signature may name an earlier one. The C backend emits these
+        // closure signature may name an earlier one. The earlier emitter emits these
         // before every container and `datac` for the same reason.
         let mut closures: Vec<Ty> = inst.closures.iter().cloned().collect();
         closures.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
@@ -10101,8 +10097,8 @@ impl<'a> Gen<'a> {
 
 // ===========================================================================
 // The closures (MK7 S2E): function values and the fat pointer a capturing
-// `fun` literal becomes. The C backend's shape is mirrored member for member
-// (see the removed C backend's `write_closure_typedef` and its neighbours): the value is
+// `fun` literal becomes. The earlier emitter's shape is mirrored member for member
+// (see the earlier emitter's `write_closure_typedef` and its neighbours): the value is
 // `{ fn, env, drop }`, the code pointer takes the environment first, the
 // environment and the widening's one-field wrapper are heap, and the only
 // function in a signature's own set is the drop. Per-instantiation code is
@@ -10214,7 +10210,7 @@ impl<'a> Gen<'a> {
     /// Declare the S2E machinery: the per-signature drop, one environment
     /// destructor per capturing literal, the widening thunk and its
     /// environment's destructor, and the shim a known function value is widened
-    /// through. One name each, the same names the C backend gives them, so the
+    /// through. One name each, the same names the earlier emitter gives them, so the
     /// IR reads like the generated C beside it.
     fn declare_closure_fns(&mut self) -> Result<(), String> {
         let inst = self.instantiations.clone();
@@ -10321,7 +10317,7 @@ impl<'a> Gen<'a> {
             }
             // The drop entry's thunk (A-12 slice 7): the concrete type's own
             // drop glue, emitted by `emit_dyn_bodies`. Its body is the twin of
-            // the C backend's `write_dyn_drop_thunk`.
+            // the earlier emitter's `write_dyn_drop_thunk`.
             let drop_symbol =
                 crate::types::dyn_drop_thunk_symbol(&vtable.trait_name, &vtable.type_name);
             let drop_ty = self.ctx.fn_type(self.ctx.void(), &[ptr], false);
@@ -10450,7 +10446,7 @@ impl<'a> Gen<'a> {
     /// One spawn signature's worker body (MK9-S3-M1 stage C1): load the moved
     /// argument out of its slot, call the closure's code pointer with its
     /// environment, and store the result where the handle expects it. The shape
-    /// is the C backend's `write_thread_body`, pointer for pointer, because the
+    /// is the earlier emitter's `write_thread_body`, pointer for pointer, because the
     /// runtime's trampoline is the one caller of either.
     fn emit_thread_body(&self, sig: &Ty) -> Result<(), String> {
         let Ty::Closure { params, ret } = sig else {
@@ -10800,7 +10796,7 @@ fn closure_mangle_of(ty: &Ty) -> String {
 }
 
 /// The generated names of the widening's two halves and of the shim, mirroring
-/// the removed C backend's `coerce_thunk_name`/`coerce_drop_name`/`coerce_shim_name`.
+/// the earlier emitter's `coerce_thunk_name`/`coerce_drop_name`/`coerce_shim_name`.
 fn coerce_thunk_symbol(ty: &Ty) -> String {
     format!("kelp_coerce__{}", closure_mangle_of(ty))
 }
@@ -10814,7 +10810,7 @@ fn shim_symbol(key: &str, ty: &Ty) -> String {
 }
 
 /// The symbol of one spawn signature's worker body (MK9-S3-M1 stage C1), the
-/// same name the removed C backend's `thread_body_name` gives the C body: the runtime's
+/// same name `thread_body_name` gives the body: the runtime's
 /// trampoline is the one caller of either.
 fn thread_body_symbol(sig: &Ty) -> String {
     format!("kelp_thread_body__{}", closure_mangle_of(sig))
@@ -10842,7 +10838,7 @@ fn closure_is_unit(sig: &Ty) -> bool {
 }
 
 /// How deeply containers nest, used to emit a container after the containers it
-/// contains. The mirror of the removed C backend's `container_depth`.
+/// contains. The mirror of the earlier emitter's `container_depth`.
 fn container_depth(ty: &Ty) -> usize {
     match ty {
         Ty::List(elem) | Ty::Box(elem) => 1 + container_depth(elem),
@@ -10937,7 +10933,7 @@ impl<'a> Gen<'a> {
 
     /// Deep-copy one element value (a `String`/`Bytes` clone, a `datac`'s
     /// generated clone, or a plain copy) into caller storage that owns nothing
-    /// yet. The mirror of the removed C backend's `write_field_clone` for a container slot.
+    /// yet. The mirror of the earlier emitter's `write_field_clone` for a container slot.
     fn clone_into(&self, src: Value<'a>, dst: Value<'a>, elem: &Ty) -> Result<(), String> {
         match elem {
             Ty::String => self.sret_call("kelp_String__clone", dst, &[src]),
@@ -11096,7 +11092,7 @@ impl<'a> Gen<'a> {
             out.push(spec(&format!("{base}__sort"), void, &[ptr]));
         }
         // `contains` is gated on equality, which is a wider set than order in
-        // the C backend only for a `datac` element: `list_comparable_elem` is
+        // the earlier emitter only for a `datac` element: `list_comparable_elem` is
         // the same set as `list_sortable_elem`, so a `datac` element gets
         // `sort` but never `contains`.
         if comparable {
@@ -11198,8 +11194,8 @@ impl<'a> Gen<'a> {
             let func = self.module.add_function(&s.symbol, ty);
             // C's `static`: the body is emitted into this module just below,
             // and an external symbol is one LLVM will not inline into its
-            // callers, which is why the C backend's copy of these bodies runs
-            // 1.15x faster than this backend's. No runtime C body names a
+            // callers, which is why the earlier emitter's copy of these bodies runs
+            // 1.15x faster than this backend's. No runtime body names a
             // container symbol, so nothing outside the module calls one. In
             // the incremental mode the `_support` unit defines them and every
             // other unit calls them, so they stay external there (roadmap
@@ -11265,16 +11261,16 @@ const L_CAP: u32 = 2;
 /// 243ms, 32 at 238ms, with diminishing returns above that (a further push to
 /// 64 was only 227ms) - 32 stays inside the well-tested range while clearing
 /// the 250ms target with headroom, rather than chasing the last few
-/// milliseconds outside it. Shared with the C backend's
+/// milliseconds outside it. Shared with the earlier emitter's
 /// `KELP_SORT_INSERTION_CUTOFF`.
 const KELP_SORT_INSERTION_CUTOFF: u64 = 32;
 
-/// `List#sort`'s partition, branchless block size: mirrors the C backend's
+/// `List#sort`'s partition, branchless block size: mirrors the earlier emitter's
 /// `KELP_SORT_BLOCK` exactly, same value and same reasoning (pdqsort's own
 /// published block size, not something benchmarked here). See that constant's
 /// doc comment for the full explanation of the technique; this backend hand-
-/// builds the identical algorithm as LLVM IR instead of emitting C text for
-/// it, so both backends must keep agreeing on the value, checked by the
+/// builds the identical algorithm as LLVM IR instead of emitting source text for
+/// it, so the two copies must keep agreeing on the value, checked by the
 /// differential test suite.
 const KELP_SORT_BLOCK: u64 = 64;
 
@@ -11594,9 +11590,8 @@ impl<'a> Gen<'a> {
     /// as inline IR rather than a call into `kelp_rt.o`: that object is a
     /// separate compilation unit from the code generated here, so LLVM's
     /// optimizer can never see into `kelp_map_mix`'s body and inline it, no
-    /// matter how small it is. `cc` already inlines the same three
-    /// instructions by splicing `kelp_rt.c`'s text
-    /// into the same file, so this reaches parity by building the same
+    /// matter how small it is. The optimizer already inlines the same three
+    /// instructions when they sit in the same file, so this reaches parity by building the same
     /// instructions here instead. Matches the C reference operation for
     /// operation, including the unsigned (logical) right shift both times,
     /// since `x` is `uint64_t` there.
@@ -11620,7 +11615,7 @@ impl<'a> Gen<'a> {
     /// `kelp_map_hash`'s FNV-1a loop over `data[0..len]`, hand-built as
     /// inline IR in `cur_fn` for the same reason `emit_map_mix` is: a call
     /// into `kelp_rt.o` is opaque to LLVM's optimizer, a splice into the
-    /// same file (what the runtime's C text gets from `cc`) is not. Built in
+    /// same file (what the runtime's own copy gets) is not. Built in
     /// this file's usual byte-scanning-loop shape (an `alloca`-based index,
     /// `loop_header`, `gep`/`ld` per byte, `build_cond_br`), the same shape
     /// the capability name fast paths and `rehash`'s own walk above use.
@@ -11683,7 +11678,7 @@ impl<'a> Gen<'a> {
 
     /// One field's own hash before it is folded in: a `String` field's byte
     /// hash, a scalar's mix, and a nested keyable `datac`/`enum`'s own hash.
-    /// The mirror of the removed C backend's `write_field_hash`. `cur_fn` is the
+    /// The mirror of the earlier emitter's `write_field_hash`. `cur_fn` is the
     /// enclosing hash function being built, threaded through only for the
     /// `String` case's `emit_map_hash` loop, which needs a function to
     /// append its blocks to.
@@ -11719,7 +11714,7 @@ impl<'a> Gen<'a> {
     /// One field's equality in a derived key equality. A `String` field reuses
     /// the runtime's stored-key comparison, so the byte-length-aware rule is
     /// the one the `String` key path already uses. The mirror of
-    /// the removed C backend's `write_field_eq`.
+    /// the earlier emitter's `write_field_eq`.
     fn emit_field_eq(
         &self,
         ty: &Ty,
@@ -11818,7 +11813,7 @@ impl<'a> Gen<'a> {
         );
         let h_slot = self.builder.build_alloca(self.ctx.i64(), "h");
         // The tag folds first, so two variants never share a hash of the same
-        // payload shape; the C backend writes the same fold from its tag. The
+        // payload shape; the earlier emitter writes the same fold from its tag. The
         // widening extension follows the tag's signedness, which is what the
         // C `(uint64_t)` cast of a signed or unsigned tag does.
         let wide = self
@@ -11884,7 +11879,7 @@ impl<'a> Gen<'a> {
             self.fld(info.llvm_ty, b, ENUM_TAG_FIELD, "tag"),
             "tb",
         );
-        // A different tag is unequal at once, the same rule the C backend's
+        // A different tag is unequal at once, the same rule the earlier emitter's
         // `a->kelp_tag != b->kelp_tag` writes.
         let same_tag = self.builder.build_icmp(IntCmp::Eq, ta, tb, "sametag");
         let cont0 = func.append_block("eq.variants");
@@ -11925,7 +11920,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// One `List<T>` function set, the mirror of the removed C backend's `write_list` and
+    /// One `List<T>` function set, the mirror of the earlier emitter's `write_list` and
     /// `write_list_s1`. The list is `{ data, len, cap }`, the element's size and
     /// drop decide the bodies, and every bounds check panics with the C
     /// backend's own text.
@@ -12583,7 +12578,7 @@ impl<'a> Gen<'a> {
             // everything in `[lo, j]` compares <= everything in
             // `[j + 1, hi]`. This hand-builds pdqsort/BlockQuicksort's
             // branchless partition as LLVM IR, not a plain Hoare scan (see
-            // the C backend's `{base}__partition`, and `KELP_SORT_BLOCK`'s
+            // the earlier emitter's `{base}__partition`, and `KELP_SORT_BLOCK`'s
             // doc comment above, for the full explanation of the technique
             // and why it helps on random data): while at least two full
             // blocks remain between the cursors `l` and `rr`, each round
@@ -13120,7 +13115,7 @@ impl<'a> Gen<'a> {
     /// backend's translation unit. The runtime object still defines every one of
     /// them for the callers that stay out of line, and an internal definition is
     /// no link-time name, so the two never meet. The bodies, their bounds checks
-    /// and their panic strings are `runtime/kelp_rt.c`'s, so nothing observable
+    /// and their panic strings are the runtime crate's, so nothing observable
     /// moves.
     ///
     /// Only fixed-layout accessors and the one-byte append are here: an owned
@@ -13302,14 +13297,14 @@ impl<'a> Gen<'a> {
     /// Emit the libc-free `str` surface a freestanding build needs: the five
     /// `std/str` operations the allowed set admits, and the `View` accessors
     /// their Kelp bodies reach. The hosted definitions are `strlen`/`memcmp`
-    /// in `runtime/kelp_rt.c` and the `externs.rs` C text, neither of which is
+    /// in the runtime crate and the `externs.rs` bodies, neither of which is
     /// linked into a bare-metal image, so each one is emitted here as a byte
     /// loop and given internal linkage, exactly as `emit_runtime_bodies`
     /// does for the hosted accessors.
     ///
     /// `str.byte_at_raw`'s bounds check is the one new panic site: it calls the
     /// compiler's panic entry (`self.panic_fn`) with the same
-    /// `"str.byte: index out of bounds"` text the C body passes, so the message
+    /// `"str.byte: index out of bounds"` text the runtime body passes, so the message
     /// a kernel prints for an over-long index is the one the hosted build
     /// prints. The line is the current statement's, since the accessor body is
     /// shared by every call site.
@@ -14137,7 +14132,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// One `Box<T>` function set, the mirror of the removed C backend's `write_box`. The box
+    /// One `Box<T>` function set, the mirror of the earlier emitter's `write_box`. The box
     /// holds one pointer or `NULL`; `take` moves the value out, which is what
     /// makes a recursive `datac` expressible without `Option`.
     fn emit_box_bodies(&self, elem: &Ty) -> Result<(), String> {
@@ -14286,7 +14281,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// One `[T; N]` function set, the mirror of the removed C backend's `write_array`. The
+    /// One `[T; N]` function set, the mirror of the earlier emitter's `write_array`. The
     /// array is `{ T v[N] }` held inline, so nothing here allocates; `len()` is
     /// the type's own constant and `get`/`set` are the same bounds check
     /// `List` uses.
@@ -14675,7 +14670,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// One `Map<K, V>` function set, the mirror of the removed C backend's `write_map`.
+    /// One `Map<K, V>` function set, the mirror of the earlier emitter's `write_map`.
     /// Entries sit in insertion order in a dense array and a separate
     /// open-addressed index of `entry index + 1` in a `u32` (`0` empty,
     /// `UINT32_MAX` tombstone) does the lookup.
@@ -14997,7 +14992,7 @@ impl<'a> Gen<'a> {
                 }
                 // The caller moved the fallback in and this path does not
                 // hand it back, so the fallback is dropped here like the
-                // C backend's `map__get_or` drops it.
+                // the way `map__get_or` drops it.
                 Ty::Struct(_) if value_drops => self.call_drop(fb_slot, value)?,
                 _ => {}
             }
@@ -15415,7 +15410,7 @@ pub struct Layout {
     pub fields: &'static [Field],
 }
 
-/// The builtin heap layouts, field for field the structs `runtime/kelp_rt.c`
+/// The builtin heap layouts, field for field the structs the runtime crate
 /// defines (MK7 3.3): a pointer, a length and a capacity for `Bytes` and
 /// `String`, and a pointer and a length for `View`.
 pub const LAYOUTS: &[Layout] = &[
@@ -15532,9 +15527,9 @@ fn c_int_extension(llvm_ty: Type<'_>) -> Option<IntExtension> {
 ///
 /// Every declaration site that spells a prototype of a body compiled as C asks
 /// this one function, so the three cannot drift: `declare_extern` for a
-/// program's own `extern fun` bodies, `declare_runtime` for the `kelp_rt.c`
+/// program's own `extern fun` bodies, `declare_runtime` for the runtime crate
 /// helpers and `declare_cap_fns` for the capability checks of
-/// `runtime/cap_glue.c`. One call per declaration, with the same LLVM return
+/// `the runtime capability glue`. One call per declaration, with the same LLVM return
 /// and parameter list the declaration was made from, and no call-site
 /// attribute: LLVM's call lowering reads a direct callee's parameter
 /// attributes, so the declaration is what an argument is extended to.
@@ -15553,10 +15548,10 @@ pub(crate) fn extend_narrow_c_abi(func: LlvmFunction<'_>, ret: Type<'_>, params:
 }
 
 /// Declare every runtime helper this slice calls, with the signature
-/// `kelp_rt.c` defines and the ABI shape it is compiled under (MK7 §3.3). The
+/// the runtime crate defines and the ABI shape it is compiled under (MK7 §3.3). The
 /// object `build.rs` produces is compiled from that same text, so a signature
 /// that drifts is caught by neither the verifier (which knows nothing of the
-/// object) nor `cc` at build time: it is caught only when a fixture runs. The
+/// object) nor the linker at build time: it is caught only when a fixture runs. The
 /// list is therefore exactly the surface the S2B fixtures reach: `int` arguments
 /// are `i32`, `size_t` and `uint64_t` are `i64`, `uint8_t` is `i8`, `bool` is
 /// `i1`; a `View` (two eightbytes) travels by value in registers both ways;
@@ -15620,9 +15615,9 @@ fn declare_runtime<'a>(
     decl(&mut out, "kelp_assert", void, &[i1], false, false);
     // The thread runtime (MK9-S3-M1 stage C1). The handle is one opaque pointer,
     // and every accessor takes it and hands back one of the slots, so the
-    // record's layout stays `kelp_rt.c`'s business. `kelp_thread_start` takes
+    // record's layout stays the runtime crate's business. `kelp_thread_start` takes
     // the per-signature body's address as an ordinary pointer, the same shape
-    // the C backend calls it with.
+    // the earlier emitter calls it with.
     decl(&mut out, "kelp_thread_new", ptr, &[i64, i64], true, false);
     decl(
         &mut out,
@@ -15873,7 +15868,7 @@ pub(crate) fn llvm_type<'a>(
         // record (`std/sync`), so the element type never reaches the IR.
         Ty::RwLock(_) | Ty::Condvar => ctx.opaque_ptr(),
         // An opaque handle (gap 1) is a plain pointer, so the two backends
-        // agree without a layout table: the C backend's `void*` typedef and
+        // agree without a layout table: the earlier emitter's `void*` typedef and
         // this `ptr` are the same value at the ABI.
         Ty::Handle(_) => ctx.opaque_ptr(),
         // A raw pointer (MK9-S2 stage 1) is the same plain `ptr`: LLVM 21's
@@ -15881,7 +15876,7 @@ pub(crate) fn llvm_type<'a>(
         // information only the Kelp type keeps (it decides the load/store and
         // the GEP width, which the call sites name themselves).
         Ty::Ptr(_) => ctx.opaque_ptr(),
-        // The builtin heap types, in the same field order `runtime/kelp_rt.c`
+        // The builtin heap types, in the same field order the runtime crate
         // defines them (MK7 §3.3). `View` is the borrowed pair.
         Ty::Bytes => *structs
             .get("Bytes")
@@ -15990,7 +15985,7 @@ fn is_str_ref(ty: &Ty) -> bool {
 
 /// Whether a block's tail diverges instead of producing a value. `panic` is the
 /// one expression the frontend puts there (`infer.rs` accepts it against any
-/// declared return type), and the C backend special-cases the same call in
+/// declared return type), and the earlier emitter special-cases the same call in
 /// `write_function_body`; without this a value-returning function whose tail is
 /// a `panic` asks the unit-typed call for a value and reports an internal error.
 fn is_diverging_tail(tail: &Expr) -> bool {
@@ -15998,7 +15993,7 @@ fn is_diverging_tail(tail: &Expr) -> bool {
 }
 
 /// Whether an expression has stable storage, mirroring the subset of
-/// the removed C backend's `is_place` this slice lowers.
+/// the earlier emitter's `is_place` this slice lowers.
 /// The largest bound a `while` condition may state literally and still have
 /// its loop fully unrolled by LLVM (`llvm_ffi::Context::mark_loop_unroll_full`).
 ///
@@ -16041,10 +16036,10 @@ fn is_place_expr(e: &Expr) -> bool {
 }
 
 /// The rvalue a field chain hangs off, when the chain's own address is not
-/// storage already: the C backend's `temporary_root`, minus the rows this slice
+/// storage already: the earlier emitter's `temporary_root`, minus the rows this slice
 /// does not lower. `None` for a place, `Some(root)` for a chain rooted at an
 /// rvalue. An `enum` payload field is part of a chain exactly as a `datac` field
-/// is (the removed C backend walks the two the same way).
+/// is (the earlier emitter walks the two the same way).
 fn temporary_root(expr: &Expr) -> Option<&Expr> {
     let mut cur = expr;
     loop {
@@ -16082,7 +16077,7 @@ fn round_up(size: u64, align: u32) -> u64 {
 }
 
 /// The mangled symbol of the monomorphized function a builtin container method
-/// resolves to, mirroring the removed C backend's `call_value`'s name construction: the
+/// resolves to, mirroring the earlier emitter's `call_value`'s name construction: the
 /// element type comes from the receiver argument (or, for the associated
 /// `List.of(v)`/`Box.of(v)`, from `v` itself, and for `empty`/`Map.new()` from
 /// the call's own result type). `get` has two spellings, by value for a `Copy`
@@ -16217,7 +16212,7 @@ fn read_only_expr(e: &Expr) -> bool {
     }
 }
 
-/// A symbol name for a LLVM function, mirroring the removed C backend's `c_name` without
+/// A symbol name for a LLVM function, mirroring the earlier emitter's `c_name` without
 /// reaching into that (private) helper: `main` keeps its name because the C
 /// runtime requires it, everything else gets the `kelp_` prefix and the same
 /// sanitizing mangler, so the name is a valid symbol and cannot collide with a
@@ -16253,7 +16248,7 @@ fn int_width(ty: &Ty) -> Option<u32> {
 /// The width in bits of an integer the byte-order conversions cover, or `None`
 /// when `ty` has no such conversion (`bool`, `char`, `u8`, a pointer).
 /// `usize`/`isize` are the target's pointer-width integers, which `llvm_type`
-/// maps to `i64`, so their swap is 64 bits wide; the C backend reads the same
+/// maps to `i64`, so their swap is 64 bits wide; the earlier emitter reads the same
 /// width from `sizeof` in `KELP_SWAP_SIZE`.
 fn endian_bits(ty: &Ty) -> Option<u32> {
     Some(match ty {
@@ -16487,28 +16482,6 @@ mod layout_tests {
         assert!(!ir.contains("ptr zeroext"), "a pointer took zeroext:\n{ir}");
     }
 
-    /// An `extern fun` body is C text compiled in its own file against the
-    /// prelude `program_c_source` emits (MK7 §3.2), so a signature that names a
-    /// Kelp `enum` or `datac` needs that type's typedef in the prelude: `cc`
-    /// refuses the declaration's own type otherwise (BUG-kQ7Rv, whose message
-    /// named `struct_std__atomic__Ordering`).
-    ///
-    /// The types are the one the bug was found with (`std.atomic.Ordering`)
-    /// plus the shapes that make the emission order matter: a `datac` in a
-    /// parameter, a payload-carrying `enum` whose payload is that `datac`, and
-    /// a `datac` that holds both an earlier `datac` and a container. The bodies
-    /// are shipped ones (`externs.rs`) whose statements never read a parameter,
-    /// so the signatures here are this test's own and the bodies still compile
-    /// beside them unchanged. `cc` is the judge: without the typedefs this text
-    /// does not compile.
-    /// The return position of an `extern fun` signature names a Kelp type the
-    /// same way a parameter does, and `program_c_source` collects `f.ret`
-    /// beside the parameters, so the type's typedef has to come out for a
-    /// return that no parameter names (BUG-kQ7Rv covered the parameter half).
-    ///
-    /// The body is not built here, which is why this half asserts the emitted
-    /// text rather than compiling it: an `extern fun` body is C text written
-    /// for its own declaration, and no shipped body returns a `datac`.
     /// Kernel stage 10: the `_start` stub is chosen by the manifest's triple,
     /// and a triple with no stub is refused by name rather than emitted as
     /// another architecture's entry point.

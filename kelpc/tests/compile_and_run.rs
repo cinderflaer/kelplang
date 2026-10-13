@@ -2596,7 +2596,7 @@ fn an_extern_fun_outside_its_manifest_symbol_allowlist_is_rejected() {
 }
 
 #[test]
-fn a_manifest_ffi_header_key_includes_the_native_symbols_header() {
+fn a_manifest_without_a_header_key_builds_the_ffi_project() {
     assert_project_runs("ffi_header", &project("ffi_header"), "true\n");
 }
 
@@ -8967,7 +8967,7 @@ fn a_recursive_enum_nests_through_a_box() {
 }
 
 #[test]
-fn an_enum_payload_is_laid_out_the_way_the_c_typedef_is() {
+fn an_enum_payload_is_laid_out_the_way_the_layout_rule_says() {
     // The three SysV classes a tagged union lands in, each with a payload that
     // only reads back correctly at the offset clang gives it: `Narrow`'s union
     // is at offset 4 because every payload is a `u8` (so the whole enum is 8
@@ -9979,9 +9979,9 @@ fn a_build_with_no_output_path_lands_in_build() {
 /// retired spellings are reported with. An exact comparison, not a search: a
 /// message that drifted into "unknown flag" while a test only looked for the
 /// word "backend" would keep passing while telling the caller the wrong thing.
-const FLAG_GONE: &str = "--backend is gone: kelpc builds every program with the llvm backend, which is the only backend since the C backend was removed on 2026-10-10";
-const ENV_GONE: &str = "KELPC_BACKEND is gone: kelpc builds every program with the llvm backend, which is the only backend since the C backend was removed on 2026-10-10";
-const ORACLE_GONE: &str = "KELPC_ORACLE is gone: the C backend it selected was removed on 2026-10-10, and kelpc builds every program with the llvm backend";
+const FLAG_GONE: &str = "--backend is gone: kelpc builds every program with the llvm backend, which is the only backend";
+const ENV_GONE: &str = "KELPC_BACKEND is gone: kelpc builds every program with the llvm backend, which is the only backend";
+const ORACLE_GONE: &str = "KELPC_ORACLE is gone: kelpc builds every program with the llvm backend, which is the only backend";
 
 /// A caller who still passes `--backend=c` is asking for a choice that no longer
 /// exists. The refusal names the change and says which backend the build gets,
@@ -10029,7 +10029,7 @@ fn the_backend_environment_variable_is_gone() {
     }
 }
 
-/// `KELPC_ORACLE` selected the C backend, which was removed on 2026-10-10. A set
+/// `KELPC_ORACLE` selected a second code generator, which is gone. A set
 /// variable is refused by name whatever it holds, because a suite run or a
 /// script that still exports it would otherwise believe it measured another
 /// backend.
@@ -18186,7 +18186,7 @@ fn eval_order_template_interpolations_run_left_to_right() {
 }
 
 #[test]
-fn ordered_binary_conditions_are_c_expressions() {
+fn ordered_binary_conditions_run_left_to_right() {
     // An effectful binary operation evaluates its left operand first. In a condition that has to hold whatever the operand's shape.
     assert_compiles_and_runs("tests/fixtures/eval_order_condition.kp", "12\n1234\n");
 }

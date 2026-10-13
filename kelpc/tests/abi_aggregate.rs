@@ -1,11 +1,8 @@
 //! The BUG-vN4tR gate, linked against the runtime archive.
 //!
-//! This replaces `kelpc/tests/run-llvm-abi.sh`, which compiled
-//! `kelpc/runtime/abi_aggregate.c` with `cc` and linked it into a Kelp program.
-//! The body of `mem.alloc`'s extern (`kelp_std__mem__alloc_raw`) is now the
+//! The body of `mem.alloc`'s extern (`kelp_std__mem__alloc_raw`) is the
 //! runtime's own export, so the Kelp program links against `kelp-rt` directly.
-//! The link step goes through `cc` as the linker driver, the way `kelpc` links
-//! every program. No C source is compiled.
+//! The link step runs `ld.lld` with the argv `kelpc` links every program with.
 //!
 //! What it proves:
 //! * the 24-byte `Bytes` shape has the size, alignment and field offsets of a
@@ -23,6 +20,13 @@ use std::process::Command;
 use std::time::SystemTime;
 
 use kelp_rt::abi::Bytes;
+
+#[allow(dead_code)]
+#[path = "../src/guard.rs"]
+mod guard;
+#[allow(dead_code)]
+#[path = "../src/sysroot.rs"]
+mod sysroot;
 
 /// The 24-byte aggregate in Rust's `#[repr(C)]` layout, the shape the C object
 /// used (`kelp_abi_wide`).
@@ -153,19 +157,31 @@ fn bug_vn4tr_alloc_raw_returns_through_the_hidden_pointer() {
         "the IR names a 24-byte aggregate in a C-boundary declaration: {by_value:?}"
     );
 
-    // Link the Kelp object against the runtime archive. `cc` is the linker
-    // driver here, not a compiler of C source.
+    // Link the Kelp object against the runtime archive with `ld.lld`, the same
+    // argv `kelpc` links a hosted program with.
     let runtime = runtime_archive();
     let linked = dir.join("abi_prog_linked");
-    let link = Command::new("cc")
-        .arg("-o")
-        .arg(&linked)
-        .arg(prog.with_extension("o"))
-        .arg(&runtime)
-        .arg(env!("KELPC_GC_ARCHIVE"))
-        .args(["-lm", "-lpthread", "-ldl"])
+    let sys = sysroot::discover_here().expect("could not find the link inputs");
+    let objects = [prog.with_extension("o")];
+    let mut argv = sysroot::hosted_link_argv(
+        &sys,
+        &sysroot::HostedLink {
+            out: &linked,
+            objects: &objects,
+            runtime_obj: &runtime,
+            externs_obj: None,
+            gc_archive: Some(Path::new(env!("KELPC_GC_ARCHIVE"))),
+            library_dirs: &[],
+            pkg_config_flags: &[],
+            tls: false,
+            link_libs: &[],
+        },
+    );
+    argv.push("-ldl".into());
+    let link = Command::new(&sys.ld_lld)
+        .args(&argv)
         .output()
-        .expect("failed to spawn the linker");
+        .expect("failed to spawn ld.lld");
     assert!(
         link.status.success(),
         "linking the Kelp object against the runtime archive failed:\n{}",

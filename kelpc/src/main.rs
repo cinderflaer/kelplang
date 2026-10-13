@@ -123,9 +123,8 @@ fn usage() {
          LLVM context. KELPC_JOBS names the worker count (a positive integer;\n\
          the default is 2, not the CPU count); more workers than units spawns\n\
          one per unit.\n\n\
-         --sanitize=... is refused. The sanitizers were built by the C backend,\n\
-         which was removed on 2026-10-10, and the LLVM backend links no\n\
-         sanitizer passes (plan/sanitizers.md).\n\n\
+         --sanitize=... is refused: the LLVM backend links no sanitizer\n\
+         passes (plan/sanitizers.md).\n\n\
          --timings prints per-phase wall times (parse, resolve, infer,\n\
          borrowck, codegen, unit compile, link) and, for an --incremental\n\
          build, one line per unit with hit or miss, to stderr.\n\n\
@@ -564,13 +563,13 @@ fn build(
     *freestanding_out = loaded.project.target().is_freestanding();
     *emit_out = loaded.project.emit();
 
-    // The sanitizers were built by the C backend, which was removed on
-    // 2026-10-10. The manifest key still parses, so a project that names one
-    // gets the refusal here rather than a silent build without it. The
+    // The LLVM backend links no sanitizer passes. The manifest key still
+    // parses, so a project that names one gets the refusal here rather than a
+    // silent build without it. The
     // `--sanitize=` flag is refused where it is read.
     if let Some(kind) = loaded.project.sanitize() {
         eprintln!(
-            "error: '{}' sets '[build] sanitize = \"{}\"', and sanitizers are not available: the C backend that built them was removed on 2026-10-10, and the LLVM backend links no sanitizer passes",
+            "error: '{}' sets '[build] sanitize = \"{}\"', and sanitizers are not available: the LLVM backend links no sanitizer passes",
             path,
             kind.name()
         );
@@ -1796,10 +1795,9 @@ fn real_main() -> ExitCode {
             print_timings = true;
             i += 1;
         } else if arg == "--sanitize" || arg.starts_with("--sanitize=") {
-            // Refused by name: the sanitizers were built by the C backend, which
-            // was removed on 2026-10-10, and the LLVM backend links no passes.
+            // Refused by name: the LLVM backend links no sanitizer passes.
             eprintln!(
-                "error: sanitizers are not available: the C backend that built them was removed on 2026-10-10, and the LLVM backend links no sanitizer passes"
+                "error: sanitizers are not available: the LLVM backend links no sanitizer passes"
             );
             return ExitCode::FAILURE;
         } else if arg == "--incremental" {
