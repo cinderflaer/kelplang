@@ -2829,11 +2829,11 @@ fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
          a different path than the check admitted"
     );
     assert_eq!(run.status.code(), Some(1), "the control must be denied");
-    // `util.kp:23:36` is `fs.read_text("/etc/passwd")` in the control, as the
+    // `util.kp:23:31` is `fs.read_text("/etc/passwd")` in the control, as the
     // compiler was invoked with the file. (`pub` on the control's own line is
     // what moved the column from 27; A-13.)
     let expected = format!(
-        "{}:23:36: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+        "{}:23:31: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
          granted:\n    {}/kelp_caps_double_eval/**\n",
         caps_project("caps_double_eval").join("util.kp").display(),
         scratch_root().display()
@@ -2956,7 +2956,7 @@ fn a_primitive_checks_its_resource_argument_once() {
     );
     assert_eq!(run.status.code(), Some(1), "the control must be denied");
     let expected = format!(
-        "{}:20:35: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+        "{}:20:30: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
          granted:\n    {}/kelp_caps_raw_double_eval/**\n",
         caps_project("caps_raw_double_eval").join("util.kp").display(),
         scratch_root().display()
