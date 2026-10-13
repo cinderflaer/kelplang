@@ -543,10 +543,27 @@ fn pattern_binds(tokens: &[Token], open: usize) -> Vec<(String, Span)> {
     let is_if_let = open >= 2
         && matches!(tokens[open - 1].kind, TokenKind::Ident(_))
         && matches!(&tokens[open - 2].kind, TokenKind::Ident(word) if word == "let");
-    let is_arm_head = matches!(
-        tokens.get(close + 1).map(|t| &t.kind),
-        Some(TokenKind::Arrow)
-    );
+    // A parameter list followed by `=>` is a return type, not a when arm, when
+    // the list belongs to a `fun` header or a `fun`/`closure` type.
+    let is_fun_header = {
+        let mut i = open;
+        let mut found = false;
+        while i > 0 {
+            i -= 1;
+            match tokens[i].kind {
+                TokenKind::Ident(_) | TokenKind::Dot | TokenKind::Mut => continue,
+                TokenKind::Fun | TokenKind::Closure => found = true,
+                _ => {}
+            }
+            break;
+        }
+        found
+    };
+    let is_arm_head = !is_fun_header
+        && matches!(
+            tokens.get(close + 1).map(|t| &t.kind),
+            Some(TokenKind::Arrow)
+        );
     if !is_if_let && !is_arm_head {
         return Vec::new();
     }
