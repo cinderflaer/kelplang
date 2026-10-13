@@ -18,9 +18,6 @@ empty on release.
 
 - `kelpc caps <project>` prints each module's capabilities and the caps each dependency reaches, sorted for CI diffs. A `[dependencies]` entry whose modules reach a domain its `coral.toml` list does not name is refused at build time.
 - `[target] heap_max = N` sets a hosted program's heap cap in MiB (1 to 65536, default 256). A program that needs more stops with `out of memory`. A freestanding build refuses the key.
-- Managed mode: `[target] mode = "managed"` builds a program whose heap is collected by a GC instead of freed by hand. It needs the LLVM backend, refuses `--incremental`, and reads the collector archive from `KELP_GC_LIB`. `[target] heap_max` sets the heap cap in MiB (1 to 65536, default 256). A resource value (a file, socket or capability) in a heap slot is refused by name (on branch round-gc, not merged).
-- `[target] mode = "managed"` builds a program whose heap is collected by a tracing garbage collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (threads, mutexes, rwlocks, condvars) still drop at scope end, and the checker refuses one in the heap by name. Not yet: an enum held by value inside a `datac` is refused at build time, and incremental (per-unit) builds are refused.
-- `[target] heap_max = N` sets a managed program's heap cap in MiB (1 to 65536, default 256). A program that needs more fails with "out of shared-pool memory", which gives the cap, the live figure and the charged figure.
 - `KELP_GC_STATS=1` prints one counter line to stderr at exit and before a fatal exit: collections, pause totals and maxima, live roots and charged bytes.
 - `[build] emit = "html"` writes a Polyp view as a static HTML file. `[build] emit_entry` names the program that builds it. A Polyp HTML build needs no env grant.
 - `let Some(user) = find(id) else { return Err("missing") }` (let-else) binds an enum variant's payload for the rest of the block when it matches. The else block must end in return, break, continue or panic.
@@ -49,17 +46,11 @@ empty on release.
 - The Polyp examples' message queue is Kelp code now, so their `coral.toml` files name no C header.
 
 - A user `extern fun` that takes or returns a `datac`, `Bytes` or `String` by value is lowered to LLVM IR with the System V register or memory classes, not to a C trampoline. A `List`, `Box`, `Map` or array passed or returned by value is still refused by name.
-- `Box<T>` blocks of up to 64 bytes are recycled through per-thread free lists instead of malloc and free (binary-trees runs about 1.9x faster). Programs with their own allocator are unchanged.
 - The `Box` free lists read their per-thread state with the initial-exec TLS model, so each allocation skips a `__tls_get_addr` call.
 - A pooled `Box` allocation or release is inline in the generated code: a call into the runtime only when a size class is empty or a thread is new.
-- The `[target]` error for a missing `mode` now also names `managed`, and `heap_max` is refused unless `mode = "managed"` (on branch round-gc, not merged).
-- A managed build refuses `thread.spawn` of a closure that captures values, including one bound to a name first. A thread's argument or result, and a `Mutex` or `RwLock` value, that holds a `Box`, `String`, `List`, `Map` or `Bytes` is refused by name, because the collector does not scan those records yet.
-- When a thread cannot start, `thread.spawn` panics with the `pthread_create` return code (`errno N: ...`) and frees what it built, where it used to leak it.
 - Managed GC collection (`kelpc/gc`, 128 MiB heap cap, 42 cycles): binary-trees total stop-the-world time 217 ms to 131 ms (-39%); a 1.5 M-node live set 880 ms to 633 ms (-28%), longest pause 42 ms to 30 ms. Wall time 11-12% lower on both (medians of 5 runs, same job).
 
-- The `header` and `include_dirs` keys of `[extern."<module id>"]` are refused by name, since no C is compiled and they did nothing (`library_dirs` is unchanged). The refusals that said "in managed mode" now say "in a hosted build", and `build/install.sh` checks for `ld.lld` instead of `cc`.
 - A managed build accepts `thread.spawn` of a closure that captures values, and a thread's argument or result, and a `Mutex` or `RwLock` value, that holds a `Box`, `String`, `List`, `Map` or `Bytes`. The collector keeps those values alive while the thread or lock holds them.
-- When a thread cannot start, `thread.spawn` panics with the `pthread_create` return code (`errno N: ...`) and frees what it built, where it used to leak it.
 - A managed build refuses the 257th thread that is still open in the spawner ("256 threads are already running; join or drop a thread before spawning another"), where it used to fail inside the new thread.
 - A shared-pool array above 4294967295 elements is named in its own message, and so is a count times size that overflows.
 - A `KELP_GC_` variable whose value is not a whole number prints one notice and is ignored. `KELP_GC_STOP_TIMEOUT_MS=0` is refused the same way.

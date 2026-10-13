@@ -13436,7 +13436,7 @@ fn a_destructor_type_owns_its_buffer_until_the_last_field_drop() {
 /// boundary in managed mode, so the refusal is what this test asserts.
 #[test]
 fn a_destructor_in_a_thread_closures_environment_runs_on_the_worker() {
-    assert_fixture_refused("drop_thread_closure", "'Guard' cannot be a value captured by a closure environment in managed mode");
+    assert_fixture_refused("drop_thread_closure", "'Guard' cannot be a value captured by a closure environment in a hosted build");
 }
 
 /// A destructor already runs when the value dies, so naming it explicitly would
