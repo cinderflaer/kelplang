@@ -17102,9 +17102,15 @@ fn polyp_soft_raster_matches_its_references_and_golden_checksums() {
 /// timeout, and returns its output. Every compiled program this file runs on behalf of the
 /// raster tests goes through here.
 fn run_bounded(bin: &Path, envs: &[(&str, &str)]) -> std::process::Output {
+    run_bounded_for(bin, envs, 10)
+}
+
+/// `run_bounded` with a wall-clock and CPU-time limit of `secs` seconds instead of 10.
+/// Used only where a correct run can take longer than 10 s on a loaded host.
+fn run_bounded_for(bin: &Path, envs: &[(&str, &str)], secs: u32) -> std::process::Output {
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
-        .arg("( ulimit -v 1048576; ulimit -t 10; timeout 10 \"$1\" )")
+        .arg(format!("( ulimit -v 1048576; ulimit -t {secs}; timeout {secs} \"$1\" )"))
         .arg("sh")
         .arg(bin);
     for (k, v) in envs {
@@ -17834,6 +17840,11 @@ fn polyp_bench_prints_a_bounded_table() {
 /// a project in `examples/` that prints a deterministic transcript; the file under
 /// `tests/polyp_v4/` is the pinned copy, so a changed number is a visible diff.
 fn polyp_v4_transcript(project: &str, tag: &str, envs: &[(&str, &str)]) -> String {
+    polyp_v4_transcript_for(project, tag, envs, 10)
+}
+
+/// `polyp_v4_transcript` with a `secs`-second limit on the run instead of 10.
+fn polyp_v4_transcript_for(project: &str, tag: &str, envs: &[(&str, &str)], secs: u32) -> String {
     let bin = out_path(tag);
     let build = kelpc()
         .arg("build")
@@ -17847,7 +17858,7 @@ fn polyp_v4_transcript(project: &str, tag: &str, envs: &[(&str, &str)]) -> Strin
         "expected {project} to compile, but it failed:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let run = run_bounded(&bin, envs);
+    let run = run_bounded_for(&bin, envs, secs);
     assert!(
         run.status.success(),
         "expected {project} to exit successfully, got:\n{}\n{}",
@@ -17915,7 +17926,9 @@ fn polyp_v4_memo_skips_unchanged_subtrees_and_never_changes_a_pixel() {
 /// (columns 7 to 9) are the host's; `POLYP_BENCH_QUICK` shortens each run to 3 frames.
 #[test]
 fn polyp_v4_memo_bench_counts_view_calls_and_hits() {
-    let got = polyp_v4_transcript("polyp-memo-bench", "polyp_memo_bench", &[("POLYP_BENCH_QUICK", "1")]);
+    // The bench runs five timed passes per variant, so it can exceed the 10 s limit on a loaded host.
+    // The counts and pixels do not depend on timing, so only the limit changes here.
+    let got = polyp_v4_transcript_for("polyp-memo-bench", "polyp_memo_bench", &[("POLYP_BENCH_QUICK", "1")], 60);
     let lines: Vec<&str> = got.lines().collect();
     // Four runs, nine lines each: label, rows, frames, view calls, hits, pixels, median, view, diff.
     assert_eq!(lines.len(), 36, "the memo benchmark's shape changed:\n{got}");
