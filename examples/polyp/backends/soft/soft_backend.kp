@@ -73,7 +73,7 @@ pub datac Theme(
     var text_scale: i32,
 )
 
-pub fun default_theme().return: Theme = Theme(
+pub fun default_theme() => Theme = Theme(
     bg = 0xFF1E1E24,
     panel = 0xFF2A2A33,
     panel_alt = 0xFF34343F,
@@ -110,7 +110,7 @@ pub datac Style(
     var has_pad: bool,
 )
 
-fun style_none().return: Style = Style(
+fun style_none() => Style = Style(
     bg = 0,
     fg = 0,
     border = 0,
@@ -150,7 +150,7 @@ fun mut Style.merge(o: &Style) {
 // stage asked for, spelled as comparisons because Kelp has no `static String`. A program adds a
 // class by adding a branch here. The three shipped names are the ones `examples/polyp-todo` uses;
 // `todo-done` is the muted colour its GTK stylesheet gives a completed row.
-fun class_style(name: &str).return: Style {
+fun class_style(name: &str) => Style {
     var s = style_none()
     if str.eq(name, "todo-app") {
         s.has_pad = true
@@ -169,7 +169,7 @@ fun class_style(name: &str).return: Style {
 
 // The base style of one kind, before classes. Containers set nothing, so their children inherit
 // whatever foreground an ancestor set.
-fun base_style(n: &SNode, th: &Theme).return: Style {
+fun base_style(n: &SNode, th: &Theme) => Style {
     var s = style_none()
     val k = n.kind
     if k == core.KIND_BUTTON {
@@ -218,7 +218,7 @@ fun base_style(n: &SNode, th: &Theme).return: Style {
     return s
 }
 
-fun style_for(n: &SNode, inherited_fg: u32, th: &Theme).return: Style {
+fun style_for(n: &SNode, inherited_fg: u32, th: &Theme) => Style {
     var s = base_style(n, th)
     var i: usize = 0
     while i < n.props.classes.len() {
@@ -239,7 +239,7 @@ fun style_for(n: &SNode, inherited_fg: u32, th: &Theme).return: Style {
 // `running`, which is what lets `wants_frames` go false.
 pub datac Chan(var has: bool, var t0: u64, var shown: i32, var running: bool)
 
-fun chan_none().return: Chan = Chan(has = false, t0 = 0, shown = 0, running = false)
+fun chan_none() => Chan = Chan(has = false, t0 = 0, shown = 0, running = false)
 
 // One retained widget. `slot` is the interactive id the core knows (-1 when the widget cannot
 // post); `uid` is a grow-only number for diagnostics and tests. `rect` is the last arranged
@@ -329,7 +329,7 @@ pub datac SoftBackend(
     var anim_active: bool,
 )
 
-pub fun new().return: SoftBackend = SoftBackend(
+pub fun new() => SoftBackend = SoftBackend(
     root = List.empty(),
     theme = default_theme(),
     damage = damage.new(),
@@ -412,17 +412,17 @@ pub fun apply_diff_memo<M>(backend: mut SoftBackend, old: &core.Node<M>, new: &c
 // Small copy helpers. `fb.Rect` is a `datac` and therefore not `Copy`, so every second value is
 // built explicitly; a field read through a borrow is read one scalar at a time.
 
-fun rect4(x: i32, y: i32, w: i32, h: i32).return: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+fun rect4(x: i32, y: i32, w: i32, h: i32) => fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
 
-fun rect_of(n: &SNode).return: fb.Rect = fb.Rect(x = n.rect.x, y = n.rect.y, w = n.rect.w, h = n.rect.h)
+fun rect_of(n: &SNode) => fb.Rect = fb.Rect(x = n.rect.x, y = n.rect.y, w = n.rect.w, h = n.rect.h)
 
-fun margin_of(p: &core.Props).return: i32 = if p.margin < 0 {
+fun margin_of(p: &core.Props) => i32 = if p.margin < 0 {
     0
 } else {
     p.margin
 }
 
-fun copy_props(p: &core.Props).return: core.Props {
+fun copy_props(p: &core.Props) => core.Props {
     var out = core.props_default()
     out.text = String.from_str(p.text.as_str())
     out.size = p.size
@@ -451,9 +451,9 @@ fun copy_props(p: &core.Props).return: core.Props {
     return out
 }
 
-fun empty_path().return: core.Path = core.Path(segs = List.empty())
+fun empty_path() => core.Path = core.Path(segs = List.empty())
 
-fun key_of_path(path: &core.Path).return: core.Key {
+fun key_of_path(path: &core.Path) => core.Key {
     if path.segs.len() == 0 {
         return core.Key.None
     }
@@ -463,7 +463,7 @@ fun key_of_path(path: &core.Path).return: core.Key {
     }
 }
 
-fun kid_index(kids: &List<SNode>, seg: &core.Seg).return: i32 {
+fun kid_index(kids: &List<SNode>, seg: &core.Seg) => i32 {
     var i: usize = 0
     while i < kids.len() {
         if core.child_at(seg, kids.get(i).key.get(), i) {
@@ -474,7 +474,7 @@ fun kid_index(kids: &List<SNode>, seg: &core.Seg).return: i32 {
     return -1
 }
 
-fun contains_slot(node: &SNode, slot: i32).return: bool {
+fun contains_slot(node: &SNode, slot: i32) => bool {
     if slot >= 0 && node.slot == slot {
         return true
     }
@@ -488,7 +488,7 @@ fun contains_slot(node: &SNode, slot: i32).return: bool {
     return false
 }
 
-fun count_nodes(node: &SNode).return: i32 {
+fun count_nodes(node: &SNode) => i32 {
     var n: i32 = 1
     var i: usize = 0
     while i < node.kids.len() {
@@ -500,7 +500,7 @@ fun count_nodes(node: &SNode).return: i32 {
 
 // Find a node's rectangle by slot, or empty when there is none. Slots are unique, so the first
 // match is the node.
-fun find_rect_in(kids: &List<SNode>, id: i32).return: fb.Rect {
+fun find_rect_in(kids: &List<SNode>, id: i32) => fb.Rect {
     if id < 0 {
         return fb.empty_rect()
     }
@@ -520,7 +520,7 @@ fun find_rect_in(kids: &List<SNode>, id: i32).return: fb.Rect {
 }
 
 // Whether the widget with interactive id `id` is disabled.
-fun slot_disabled(kids: &List<SNode>, id: i32).return: bool {
+fun slot_disabled(kids: &List<SNode>, id: i32) => bool {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -535,7 +535,7 @@ fun slot_disabled(kids: &List<SNode>, id: i32).return: bool {
     return false
 }
 
-fun find_caret_in(kids: &List<SNode>, id: i32).return: i32 {
+fun find_caret_in(kids: &List<SNode>, id: i32) => i32 {
     if id < 0 {
         return -1
     }
@@ -554,7 +554,7 @@ fun find_caret_in(kids: &List<SNode>, id: i32).return: i32 {
     return -1
 }
 
-fun kind_of_in(kids: &List<SNode>, id: i32).return: i32 {
+fun kind_of_in(kids: &List<SNode>, id: i32) => i32 {
     if id < 0 {
         return -1
     }
@@ -602,7 +602,7 @@ fun collect_entries(kids: &List<SNode>, out: mut List<i32>) {
 // rather than an `Option<String>`: a keyable `Option<String>` makes the compiler emit a derived
 // equality that compares the string through `kelp_map_key_eq`, a hosted runtime symbol a bare-metal
 // image has no body for (`plan/polyp-v3.md`, stage 4).
-fun find_text(kids: &List<SNode>, id: i32, out: mut String).return: bool {
+fun find_text(kids: &List<SNode>, id: i32, out: mut String) => bool {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -619,7 +619,7 @@ fun find_text(kids: &List<SNode>, id: i32, out: mut String).return: bool {
     return false
 }
 
-fun find_path(kids: &List<SNode>, base: &core.Path, id: i32).return: option.Option<core.Path> {
+fun find_path(kids: &List<SNode>, base: &core.Path, id: i32) => option.Option<core.Path> {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -685,7 +685,7 @@ fun insert_into(kids: mut List<SNode>, path: &core.Path, depth: usize, at: i32, 
 }
 
 // A fresh node has no animation yet: start whatever its properties carry, at `clock`.
-fun sync_new_node(n: mut SNode, clock: u64).return: bool {
+fun sync_new_node(n: mut SNode, clock: u64) => bool {
     val none = anim.none()
     val a_main = anim.copy(&n.props.anim_main)
     val a_op = anim.copy(&n.props.anim_opacity)
@@ -698,7 +698,7 @@ fun sync_new_node(n: mut SNode, clock: u64).return: bool {
     return any_chan_running(n)
 }
 
-fun same_classes(a: &List<String>, b: &List<String>).return: bool {
+fun same_classes(a: &List<String>, b: &List<String>) => bool {
     if a.len() != b.len() {
         return false
     }
@@ -733,29 +733,29 @@ fun sync_chan(ch: mut Chan, old: &anim.Anim, new: &anim.Anim, clock: u64) {
     }
 }
 
-fun any_chan_running(n: &SNode).return: bool = n.ch_main.running || n.ch_op.running || n.ch_ox.running || n.ch_oy.running
+fun any_chan_running(n: &SNode) => bool = n.ch_main.running || n.ch_op.running || n.ch_ox.running || n.ch_oy.running
 
 // The values a widget is painted with: the channel's animated value while it carries an animation
 // (running or finished), the plain property otherwise.
-fun eff_main(n: &SNode, plain: i32).return: i32 = if n.ch_main.has {
+fun eff_main(n: &SNode, plain: i32) => i32 = if n.ch_main.has {
     n.ch_main.shown
 } else {
     plain
 }
 
-fun eff_opacity(n: &SNode).return: i32 = if n.ch_op.has {
+fun eff_opacity(n: &SNode) => i32 = if n.ch_op.has {
     n.ch_op.shown
 } else {
     n.props.opacity
 }
 
-fun eff_ox(n: &SNode).return: i32 = if n.ch_ox.has {
+fun eff_ox(n: &SNode) => i32 = if n.ch_ox.has {
     n.ch_ox.shown
 } else {
     n.props.offset_x
 }
 
-fun eff_oy(n: &SNode).return: i32 = if n.ch_oy.has {
+fun eff_oy(n: &SNode) => i32 = if n.ch_oy.has {
     n.ch_oy.shown
 } else {
     n.props.offset_y
@@ -763,13 +763,13 @@ fun eff_oy(n: &SNode).return: i32 = if n.ch_oy.has {
 
 // A widget's layout rectangle moved by its own paint offset (its ancestors' offsets are added by
 // the callers that walk down from them).
-fun eff_rect(n: &SNode, dx: i32, dy: i32).return: fb.Rect = rect4(n.rect.x + dx + eff_ox(n), n.rect.y + dy + eff_oy(n), n.rect.w, n.rect.h)
+fun eff_rect(n: &SNode, dx: i32, dy: i32) => fb.Rect = rect4(n.rect.x + dx + eff_ox(n), n.rect.y + dy + eff_oy(n), n.rect.w, n.rect.h)
 
 // Patch one retained node's properties in place. The strings are cleared and refilled rather than
 // replaced with fresh `copy_props` values, so a steady-state text or checkbox update reuses the
 // node's own buffers and the backend allocates nothing (stage 5). A focused entry keeps its text:
 // the display owns it while the user types, and the patch must not write back over it.
-fun set_props_on(n: mut SNode, props: &core.Props, focus: i32, clock: u64).return: bool {
+fun set_props_on(n: mut SNode, props: &core.Props, focus: i32, clock: u64) => bool {
     // The animation channels first, while the node still holds the animations it had: a channel
     // whose `Anim` is unchanged keeps running from where it is, a changed one restarts at `clock`.
     val old_main = anim.copy(&n.props.anim_main)
@@ -942,7 +942,7 @@ fun set_hover_in(kids: mut List<SNode>, id: i32, v: bool, d: mut damage.Damage) 
 // and backspace and delete remove, one whole code point (a malformed run counts as one), and it is
 // drawn `count_before` cells from the left (Polyp v4 stage 2).
 
-fun utf8_len(cp: i32).return: i32 {
+fun utf8_len(cp: i32) => i32 {
     if cp < 0x80 {
         return 1
     }
@@ -955,7 +955,7 @@ fun utf8_len(cp: i32).return: i32 {
     return 4
 }
 
-fun utf8_byte(cp: i32, i: i32).return: u8 {
+fun utf8_byte(cp: i32, i: i32) => u8 {
     val c: u32 = cp.to_u32()
     if cp < 0x80 {
         return c.to_u8()
@@ -987,13 +987,13 @@ fun utf8_byte(cp: i32, i: i32).return: u8 {
     return (0x80 | (c & 0x3F)).to_u8()
 }
 
-fun scalar_of(cp: i32).return: i32 = if utf8.is_scalar(cp) {
+fun scalar_of(cp: i32) => i32 = if utf8.is_scalar(cp) {
     cp
 } else {
     utf8.REPLACEMENT
 }
 
-fun insert_char(s: &str, at: usize, cp: i32).return: String {
+fun insert_char(s: &str, at: usize, cp: i32) => String {
     var out = String.from_str("")
     val n = str.len(s)
     var i: usize = 0
@@ -1019,7 +1019,7 @@ fun insert_char(s: &str, at: usize, cp: i32).return: String {
     return out
 }
 
-fun remove_range(s: &str, from: usize, to: usize).return: String {
+fun remove_range(s: &str, from: usize, to: usize) => String {
     var out = String.from_str("")
     val n = str.len(s)
     var i: usize = 0
@@ -1034,7 +1034,7 @@ fun remove_range(s: &str, from: usize, to: usize).return: String {
 
 // Edit one entry. Returns whether the text changed (so the caller posts the entry's id); a caret
 // move changes pixels but not the text.
-fun edit_entry_in(kids: mut List<SNode>, id: i32, op: i32, cp: i32, d: mut damage.Damage).return: bool {
+fun edit_entry_in(kids: mut List<SNode>, id: i32, op: i32, cp: i32, d: mut damage.Damage) => bool {
     if id < 0 {
         return false
     }
@@ -1231,7 +1231,7 @@ fun mut SNode.compute_measure(th: &Theme) {
     }
 }
 
-fun subtree_dirty(n: &SNode).return: bool {
+fun subtree_dirty(n: &SNode) => bool {
     if n.dirty {
         return true
     }
@@ -1245,7 +1245,7 @@ fun subtree_dirty(n: &SNode).return: bool {
     return false
 }
 
-fun mut SNode.remeasure(c: mut LayoutCount, th: &Theme).return: bool {
+fun mut SNode.remeasure(c: mut LayoutCount, th: &Theme) => bool {
     var child_changed = false
     var i: usize = 0
     while i < kids.len() {
@@ -1415,7 +1415,7 @@ fun mut SNode.arrange_scrolled(th: &Theme, d: mut damage.Damage, c: mut LayoutCo
 // Painting. Every rectangle in the damage list is painted once, clipped to itself, by walking the
 // tree and drawing only nodes that intersect the clip. An unchanged frame never reaches here.
 
-fun text_scale_of(n: &SNode, th: &Theme).return: i32 {
+fun text_scale_of(n: &SNode, th: &Theme) => i32 {
     val sc = n.props.size
     if sc >= 1 && sc <= font.MAX_SCALE {
         return sc
@@ -1433,7 +1433,7 @@ fun mut Px.add(n: usize) {
 // `0` is the background. It is the whole of the opacity model: a widget's own colours are blended
 // with the background, not with whatever is painted under it, which is exact for the usual case of
 // a widget on the plain background and an honest approximation elsewhere (`kelp wiki page libraries/polyp.md`).
-fun fade(c: u32, op: i32, bg: u32).return: u32 {
+fun fade(c: u32, op: i32, bg: u32) => u32 {
     if op >= 1000 {
         return c
     }
@@ -1449,7 +1449,7 @@ fun fade(c: u32, op: i32, bg: u32).return: u32 {
     return 0xFF000000 | (r << 16) | (g << 8) | b
 }
 
-fun k_is_filled(k: i32).return: bool = k == core.KIND_BUTTON || k == core.KIND_ENTRY
+fun k_is_filled(k: i32) => bool = k == core.KIND_BUTTON || k == core.KIND_ENTRY
 
 fun paint_nodes(kids: &List<SNode>, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u32, dx: i32, dy: i32, op: i32, px: mut Px) {
     var i: usize = 0
@@ -1584,7 +1584,7 @@ fun paint_one(n: &SNode, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u3
 // Hit testing. The innermost interactive widget under a point wins; a `Scrolled` clips its
 // children, and a later sibling is on top of an earlier one.
 
-fun inner_rect(r: fb.Rect, pad: i32, sbw: i32).return: fb.Rect {
+fun inner_rect(r: fb.Rect, pad: i32, sbw: i32) => fb.Rect {
     var w = r.w - 2 * pad - sbw
     if w < 0 {
         w = 0
@@ -1596,7 +1596,7 @@ fun inner_rect(r: fb.Rect, pad: i32, sbw: i32).return: fb.Rect {
     return rect4(r.x + pad, r.y + pad, w, h)
 }
 
-fun hit_one(n: &SNode, clip: fb.Rect, x: i32, y: i32, th: &Theme).return: i32 {
+fun hit_one(n: &SNode, clip: fb.Rect, x: i32, y: i32, th: &Theme) => i32 {
     if !fb.contains_point(clip, x, y) {
         return -1
     }
@@ -1621,7 +1621,7 @@ fun hit_one(n: &SNode, clip: fb.Rect, x: i32, y: i32, th: &Theme).return: i32 {
     return -1
 }
 
-fun hit_nodes(kids: &List<SNode>, clip: fb.Rect, x: i32, y: i32, th: &Theme).return: i32 {
+fun hit_nodes(kids: &List<SNode>, clip: fb.Rect, x: i32, y: i32, th: &Theme) => i32 {
     var i: usize = kids.len()
     while i > 0 {
         i -= 1
@@ -1654,7 +1654,7 @@ fun mut SoftBackend.resize(w: i32, h: i32) {
     }
 }
 
-fun SoftBackend.hit(x: i32, y: i32).return: i32 {
+fun SoftBackend.hit(x: i32, y: i32) => i32 {
     if root.is_empty() {
         return -1
     }
@@ -1679,7 +1679,7 @@ fun mut SoftBackend.post_id(id: i32) {
 }
 
 // The innermost `Scrolled` under a point, whose offset the wheel moves.
-fun scroll_in(kids: mut List<SNode>, clip: fb.Rect, x: i32, y: i32, dy: i32, pad: i32, sbw: i32, d: mut damage.Damage).return: bool {
+fun scroll_in(kids: mut List<SNode>, clip: fb.Rect, x: i32, y: i32, dy: i32, pad: i32, sbw: i32, d: mut damage.Damage) => bool {
     if !fb.contains_point(clip, x, y) {
         return false
     }
@@ -1838,7 +1838,7 @@ fun mut SoftBackend.handle(ev: event.Event) {
 // The wheel scrolls the `Scrolled` under the last pointer position, which is where a mouse wheel
 // event lands; a platform that reports the position with the wheel should send a `PointerMove`
 // first, and the backend keeps the last one it saw.
-fun mut SoftBackend.edit(op: i32, cp: i32, d: mut damage.Damage).return: bool {
+fun mut SoftBackend.edit(op: i32, cp: i32, d: mut damage.Damage) => bool {
     if focus_id < 0 {
         return false
     }
@@ -1893,7 +1893,7 @@ fun mut SoftBackend.handle_key(code: i32, mods: i32, d: mut damage.Damage) {
 
 datac AnimFlags(var any: bool, var relayout: bool)
 
-fun any_running(n: &SNode).return: bool {
+fun any_running(n: &SNode) => bool {
     if any_chan_running(n) {
         return true
     }
@@ -1908,7 +1908,7 @@ fun any_running(n: &SNode).return: bool {
 }
 
 // Move one channel to its value at `clock`; true when the shown value changed.
-fun step_chan(ch: mut Chan, spec: &anim.Anim, clock: u64).return: bool {
+fun step_chan(ch: mut Chan, spec: &anim.Anim, clock: u64) => bool {
     if !ch.running {
         return false
     }
@@ -1999,11 +1999,11 @@ fun mut SoftBackend.advance_anims() {
 // else { sleep until the next event or timer }` draws nothing and burns nothing while the UI is at
 // rest; a finished animation stops asking at the end of the frame that finished it. Timers are not
 // in this answer, they wake the loop at `core.next_wake_us` instead.
-fun SoftBackend.wants_frames().return: bool = anim_active || dirty || self.damage.count() > 0 || !input.is_empty() || !pending.is_empty() || cursor < script.len().to_i32()
+fun SoftBackend.wants_frames() => bool = anim_active || dirty || self.damage.count() > 0 || !input.is_empty() || !pending.is_empty() || cursor < script.len().to_i32()
 
 // The permille the index-th `Progress` widget (tree order) is showing right now, animation included,
 // or -1 when the tree has fewer. For a test: a progress bar has no interactive id to ask by.
-fun SoftBackend.shown_progress(index: i32).return: i32 {
+fun SoftBackend.shown_progress(index: i32) => i32 {
     if root.is_empty() {
         return -1
     }
@@ -2011,7 +2011,7 @@ fun SoftBackend.shown_progress(index: i32).return: i32 {
     return progress_in(root, index, seen)
 }
 
-fun progress_in(kids: &List<SNode>, index: i32, seen: mut i32).return: i32 {
+fun progress_in(kids: &List<SNode>, index: i32, seen: mut i32) => i32 {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -2031,7 +2031,7 @@ fun progress_in(kids: &List<SNode>, index: i32, seen: mut i32).return: i32 {
 }
 
 // The clock the backend last heard, in microseconds.
-fun SoftBackend.clock().return: u64 = clock_us
+fun SoftBackend.clock() => u64 = clock_us
 
 // ---------------------------------------------------------------------------------------------
 // The frame an OS calls. Poll every pending input event, run one loop turn, lay out again and
@@ -2052,9 +2052,9 @@ pub fun frame<P: platform.Platform, S, M>(
     platform: mut P,
     tree: move core.Node<M>,
     state: mut S,
-    view: fun (S).return: core.Node<M>,
+    view: fun (S) => core.Node<M>,
     update: fun (mut S, M),
-).return: core.Tick<M> {
+) => core.Tick<M> {
     return when frame_budgeted(backend = backend, platform = platform, tree = tree, state = state, view = view, update = update, budget_us = 0) {
         Done(tick) -> tick
         Deferred(tick) -> tick
@@ -2066,10 +2066,10 @@ pub fun frame_budgeted<P: platform.Platform, S, M>(
     platform: mut P,
     tree: move core.Node<M>,
     state: mut S,
-    view: fun (S).return: core.Node<M>,
+    view: fun (S) => core.Node<M>,
     update: fun (mut S, M),
     budget_us: u64,
-).return: Frame<M> {
+) => Frame<M> {
     val start = platform.now_us()
     val f = frame_begin(backend, platform)
     var scratch = backend.patch_buf.take()
@@ -2087,11 +2087,11 @@ pub fun frame_timed<P: platform.Platform, S, M>(
     platform: mut P,
     tree: move core.Node<M>,
     state: mut S,
-    view: fun (S).return: core.Node<M>,
+    view: fun (S) => core.Node<M>,
     update: fun (mut S, M),
-    subs: fun (S).return: List<core.Sub<M>>,
+    subs: fun (S) => List<core.Sub<M>>,
     timers: mut core.Timers,
-).return: core.Tick<M> {
+) => core.Tick<M> {
     val start = platform.now_us()
     val f = frame_begin(backend, platform)
     var scratch = backend.patch_buf.take()
@@ -2113,12 +2113,12 @@ pub fun frame_memo<P: platform.Platform, S, M>(
     platform: mut P,
     tree: move core.Node<M>,
     state: mut S,
-    view: fun (S).return: core.Node<M>,
+    view: fun (S) => core.Node<M>,
     update: fun (mut S, M),
-    subs: fun (S).return: List<core.Sub<M>>,
+    subs: fun (S) => List<core.Sub<M>>,
     timers: mut core.Timers,
     store: mut core.MemoStore<M>,
-).return: core.Tick<M> {
+) => core.Tick<M> {
     val start = platform.now_us()
     val f = frame_begin(backend, platform)
     var scratch = backend.patch_buf.take()
@@ -2132,7 +2132,7 @@ pub fun frame_memo<P: platform.Platform, S, M>(
 
 // The start of every frame: zero the counters, size the backend to the surface, lay out, and
 // hand every pending platform event to the backend.
-fun frame_begin<P: platform.Platform>(backend: mut SoftBackend, platform: mut P).return: fb.Fb {
+fun frame_begin<P: platform.Platform>(backend: mut SoftBackend, platform: mut P) => fb.Fb {
     backend.begin_frame()
     val f = platform.framebuffer()
     backend.resize(f.width, f.height)
@@ -2158,7 +2158,7 @@ fun frame_end<P: platform.Platform, M>(
     tick: move core.Tick<M>,
     start: u64,
     budget_us: u64,
-).return: Frame<M> {
+) => Frame<M> {
     // Zero is "no deadline", which is what `frame` passes so every existing caller keeps its
     // exact behaviour.
     val unlimited = budget_us == 0
@@ -2207,7 +2207,7 @@ fun mut SoftBackend.layout() {
 // Paint one damage rectangle and return the pixels written. The clip is the rectangle intersected
 // with the surface, so a rectangle that is partly off-screen still writes only what is visible and
 // the count is the pixels actually touched.
-fun mut SoftBackend.paint_rect(f: fb.Fb, r: fb.Rect).return: i64 {
+fun mut SoftBackend.paint_rect(f: fb.Fb, r: fb.Rect) => i64 {
     if r.is_empty() {
         return 0
     }
@@ -2221,7 +2221,7 @@ fun mut SoftBackend.paint_rect(f: fb.Fb, r: fb.Rect).return: i64 {
     return px.n
 }
 
-fun mut SoftBackend.paint(f: fb.Fb).return: damage.Damage {
+fun mut SoftBackend.paint(f: fb.Fb) => damage.Damage {
     var out = damage.new()
     var px: i64 = 0
     var i: usize = 0
@@ -2254,7 +2254,7 @@ fun mut SoftBackend.consume_damage(n: usize) {
 // Paint as much of the damage as the deadline allows, checking the platform's clock after each
 // rectangle (a check before the first would defer a frame that has painted nothing). Each rectangle
 // is painted whole; whatever is left stays in `self.damage` for the next frame.
-fun paint_until<P: platform.Platform>(backend: mut SoftBackend, f: fb.Fb, platform: mut P, deadline: u64, unlimited: bool).return: damage.Damage {
+fun paint_until<P: platform.Platform>(backend: mut SoftBackend, f: fb.Fb, platform: mut P, deadline: u64, unlimited: bool) => damage.Damage {
     var out = damage.new()
     var px: i64 = 0
     var stop = false
@@ -2276,7 +2276,7 @@ fun paint_until<P: platform.Platform>(backend: mut SoftBackend, f: fb.Fb, platfo
     return out
 }
 
-fun SoftBackend.rect_of_slot(id: i32).return: option.Option<fb.Rect> {
+fun SoftBackend.rect_of_slot(id: i32) => option.Option<fb.Rect> {
     if root.is_empty() {
         return option.Option.None
     }
@@ -2290,7 +2290,7 @@ fun SoftBackend.rect_of_slot(id: i32).return: option.Option<fb.Rect> {
     return option.Option.Some(value = r)
 }
 
-fun SoftBackend.interactive_ids().return: List<i32> {
+fun SoftBackend.interactive_ids() => List<i32> {
     var out: List<i32> = List.empty()
     if !root.is_empty() {
         collect_interactive(root.get(0).kids, out)
@@ -2298,7 +2298,7 @@ fun SoftBackend.interactive_ids().return: List<i32> {
     return out
 }
 
-fun SoftBackend.caret_of(id: i32).return: i32 {
+fun SoftBackend.caret_of(id: i32) => i32 {
     if root.is_empty() {
         return -1
     }
@@ -2311,7 +2311,7 @@ fun SoftBackend.caret_of(id: i32).return: i32 {
 // ---------------------------------------------------------------------------------------------
 // The accessibility tree (Polyp v4 stage 3). Built only when asked, from the retained widgets.
 
-fun a11y_role(n: &SNode, in_list: bool).return: i32 {
+fun a11y_role(n: &SNode, in_list: bool) => i32 {
     val k = n.kind
     if k == core.KIND_BUTTON {
         return a11y.ROLE_BUTTON
@@ -2337,9 +2337,9 @@ fun a11y_role(n: &SNode, in_list: bool).return: i32 {
     return a11y.ROLE_REGION
 }
 
-fun exposed(k: i32).return: bool = k != core.KIND_SPACER && k != core.KIND_SEPARATOR
+fun exposed(k: i32) => bool = k != core.KIND_SPACER && k != core.KIND_SEPARATOR
 
-fun a11y_build(kids: &List<SNode>, i: usize, in_list: bool, focus: i32).return: a11y.Node {
+fun a11y_build(kids: &List<SNode>, i: usize, in_list: bool, focus: i32) => a11y.Node {
     val n = kids.get(i)
     val role = a11y_role(n, in_list)
     var name = String.from_str("")
@@ -2416,7 +2416,7 @@ fun a11y_build(kids: &List<SNode>, i: usize, in_list: bool, focus: i32).return: 
 
 // A fresh accessibility tree of the whole UI, rooted at the top widget. Empty UI: a region with no
 // children.
-fun SoftBackend.a11y_tree().return: a11y.Node {
+fun SoftBackend.a11y_tree() => a11y.Node {
     if root.is_empty() {
         return a11y.Node(id = -1, role = a11y.ROLE_REGION, name = String.from_str(""), value = String.from_str(""), state = 0, x = 0, y = 0, w = 0, h = 0, actions = 0, kids = List.empty())
     }
@@ -2441,7 +2441,7 @@ fun find_uid(kids: &List<SNode>, uid: i32, out: mut UidInfo) {
     }
 }
 
-fun mut SoftBackend.uid_info(uid: i32).return: UidInfo {
+fun mut SoftBackend.uid_info(uid: i32) => UidInfo {
     var info = UidInfo(found = false, slot = -1, kind = -1, disabled = false)
     find_uid(root, uid, info)
     return info
@@ -2451,7 +2451,7 @@ fun mut SoftBackend.uid_info(uid: i32).return: UidInfo {
 // click on it would (it focuses the widget and posts its message; it does not move the hover
 // state), `ACT_FOCUS` focuses an interactive widget. True when the action was performed; a node that
 // does not exist, does not accept the action or is disabled answers false and changes nothing.
-fun mut SoftBackend.a11y_act(node_id: i32, action: i32).return: bool {
+fun mut SoftBackend.a11y_act(node_id: i32, action: i32) => bool {
     val info = self.uid_info(node_id)
     if !info.found || info.disabled || info.slot < 0 {
         return false
@@ -2477,7 +2477,7 @@ fun mut SoftBackend.a11y_act(node_id: i32, action: i32).return: bool {
 
 // `ACT_SET_VALUE` on an entry: replace its text, as `set_entry_text` does (the entry's change
 // message is posted). False for any other node or a disabled entry.
-fun mut SoftBackend.a11y_set_value(node_id: i32, text: &str).return: bool {
+fun mut SoftBackend.a11y_set_value(node_id: i32, text: &str) => bool {
     val info = self.uid_info(node_id)
     if !info.found || info.disabled || info.slot < 0 || info.kind != core.KIND_ENTRY {
         return false
@@ -2487,10 +2487,10 @@ fun mut SoftBackend.a11y_set_value(node_id: i32, text: &str).return: bool {
 }
 
 // The interactive id of the focused widget, or -1.
-fun SoftBackend.focus_slot().return: i32 = focus_id
+fun SoftBackend.focus_slot() => i32 = focus_id
 
 // The caret as a count of code points from the start, which is how far right it is drawn.
-fun SoftBackend.caret_chars_of(id: i32).return: i32 {
+fun SoftBackend.caret_chars_of(id: i32) => i32 {
     val c = self.caret_of(id)
     if c < 0 {
         return -1
@@ -2512,38 +2512,38 @@ fun mut SoftBackend.reset_counts() {
     self.begin_frame()
 }
 
-fun SoftBackend.measure_count().return: i32 = measures
+fun SoftBackend.measure_count() => i32 = measures
 
-fun SoftBackend.arrange_count().return: i32 = arranges
+fun SoftBackend.arrange_count() => i32 = arranges
 
 // The number of allocation sites the backend executed during the last frame, and a lower bound on
 // the bytes they built. A steady-state patch, hover, focus, caret or wheel frame reads 0.
-fun SoftBackend.frame_alloc_count().return: i32 = frame_allocs
+fun SoftBackend.frame_alloc_count() => i32 = frame_allocs
 
-fun SoftBackend.frame_alloc_bytes().return: i64 = frame_bytes
+fun SoftBackend.frame_alloc_bytes() => i64 = frame_bytes
 
 // The largest patch list `apply_diff` has produced, the documented capacity its reusable buffer
 // reaches. The loop's `frame_step_into` shares that same `Box`-held buffer (section 5's
 // caller-provided patch buffer), but it is core code and does not update this counter; a driver
 // that only calls `frame` still reuses the buffer, it just does not read a high-water from here.
-fun SoftBackend.arena_high_water().return: i32 = arena_high
+fun SoftBackend.arena_high_water() => i32 = arena_high
 
 // Pixels the last paint wrote, from the primitives' own return values, and the running total.
-fun SoftBackend.pixels_written().return: i64 = pixels_last
+fun SoftBackend.pixels_written() => i64 = pixels_last
 
-fun SoftBackend.pixels_written_total().return: i64 = pixels_total
+fun SoftBackend.pixels_written_total() => i64 = pixels_total
 
 // The number of rectangles the last `paint` returned, which is what `present` was handed. A frame
 // driver reports it per step, and an idle frame reads 0 because `paint` returned nothing.
-fun SoftBackend.last_painted().return: i32 = painted
+fun SoftBackend.last_painted() => i32 = painted
 
 fun mut SoftBackend.note_painted(n: usize) {
     painted = n.to_i32()
 }
 
-fun SoftBackend.damage_count().return: usize = self.damage.count()
+fun SoftBackend.damage_count() => usize = self.damage.count()
 
-fun SoftBackend.damage_rect(i: usize).return: fb.Rect = self.damage.at(i)
+fun SoftBackend.damage_rect(i: usize) => fb.Rect = self.damage.at(i)
 
 fun mut SoftBackend.clear_damage() {
     self.damage.clear()
@@ -2708,14 +2708,14 @@ impl core.Backend for SoftBackend {
         }
     }
 
-    fun mut Self.poll().return: core.Event {
+    fun mut Self.poll() => core.Event {
         if !pending.is_empty() {
             return pending.remove(0)
         }
         return core.Event.Idle
     }
 
-    fun Self.path_of(id: i32).return: option.Option<core.Path> {
+    fun Self.path_of(id: i32) => option.Option<core.Path> {
         if root.is_empty() {
             return option.Option.None
         }
@@ -2726,7 +2726,7 @@ impl core.Backend for SoftBackend {
         return find_path(root.get(0).kids, base, id)
     }
 
-    fun Self.focus().return: option.Option<i32> {
+    fun Self.focus() => option.Option<i32> {
         if focus_id < 0 {
             return option.Option.None
         }
@@ -2762,7 +2762,7 @@ impl core.Backend for SoftBackend {
         pending.push(core.Event.Post(id = id))
     }
 
-    fun Self.entry_text(id: i32).return: String {
+    fun Self.entry_text(id: i32) => String {
         if !root.is_empty() && root.get(0).slot == id {
             return String.from_str(root.get(0).props.text.as_str())
         }
@@ -2774,13 +2774,13 @@ impl core.Backend for SoftBackend {
         return out
     }
 
-    fun Self.entry_ids().return: List<i32> {
+    fun Self.entry_ids() => List<i32> {
         var out: List<i32> = List.empty()
         collect_entries(root, out)
         return out
     }
 
-    fun Self.entries_built().return: i32 = entry_builds
+    fun Self.entries_built() => i32 = entry_builds
 
-    fun Self.stats().return: core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed, memo_hits = 0, memo_misses = 0, view_calls = 0)
+    fun Self.stats() => core.Stats = core.Stats(created = created, updated = updated, removed = removed, live = created - removed, memo_hits = 0, memo_misses = 0, view_calls = 0)
 }

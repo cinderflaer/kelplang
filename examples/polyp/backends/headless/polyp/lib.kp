@@ -10,7 +10,7 @@ impl "deps/polyp/backends/headless/headless_backend"
 // The first view as one HTML document on stdout. There is no window and no loop. An app's
 // `[build] emit_entry` program calls this from its `main` in place of `run`; kelpc runs that
 // program once and writes the output as index.html (`[build] emit = "html"`).
-pub fun emit_html<S, M>(init: move S, view: fun (S).return: core.Node<M>) {
+pub fun emit_html<S, M>(init: move S, view: fun (S) => core.Node<M>) {
     val tree = view(init)
     var backend = headless_backend.new(List.empty())
     val first = core.create_all(&tree)

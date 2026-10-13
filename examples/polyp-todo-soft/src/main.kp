@@ -22,7 +22,7 @@ impl "std/str"
 // The stage's golden checksums are taken at three window sizes, so a test can run the same binary
 // instead of building it three times. Unset means 400x300, `big` is 800x600, and `kernel` is the
 // 320x200 the bare-metal framebuffer projects use.
-fun width().return: i32 {
+fun width() => i32 {
     val v = env.get("POLYP_SOFT_SIZE")
     if str.eq(v.as_str(), "big") {
         return 800
@@ -33,7 +33,7 @@ fun width().return: i32 {
     return 400
 }
 
-fun height().return: i32 {
+fun height() => i32 {
     val v = env.get("POLYP_SOFT_SIZE")
     if str.eq(v.as_str(), "big") {
         return 600

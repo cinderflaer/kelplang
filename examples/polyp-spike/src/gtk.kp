@@ -23,29 +23,29 @@ pub extern type Argv
 // `GMainContext*`, whose null value is the default context.
 pub extern type MainContext
 
-pub extern fun gtk_application_new(application_id: str, flags: i32).return: Application
-pub extern fun gtk_application_window_new(app: Application).return: Window
+pub extern fun gtk_application_new(application_id: str, flags: i32) => Application
+pub extern fun gtk_application_window_new(app: Application) => Window
 pub extern fun gtk_window_set_title(win: Window, title: str)
 pub extern fun gtk_window_present(win: Window)
-pub extern fun gtk_button_new_with_label(label: str).return: Widget
+pub extern fun gtk_button_new_with_label(label: str) => Widget
 pub extern fun gtk_window_set_child(win: Window, child: Widget)
 
 // `g_object_unref` takes a `gpointer`, so the one binding takes the base
 // `Object` and every widget and application converts up to it.
 pub extern fun g_object_unref(obj: Object)
 
-pub extern fun g_application_run(app: Application, argc: i32, argv: Argv).return: i32
+pub extern fun g_application_run(app: Application, argc: i32, argv: Argv) => i32
 
 // `g_main_context_iteration(context, may_block)`: a null `GMainContext*` means
 // the default context, and `null_main_context` is how the module spells that
 // null handle (a handle operation is legal only here, where the
 // `[extern."gtk"]` section is).
-pub extern fun g_main_context_iteration(context: MainContext, may_block: i32).return: i32
-pub fun null_main_context().return: MainContext = MainContext.null()
+pub extern fun g_main_context_iteration(context: MainContext, may_block: i32) => i32
+pub fun null_main_context() => MainContext = MainContext.null()
 
 // `g_application_run` wants a real `char**`. `g_strsplit` is the GLib call that
 // hands one back, NULL-terminated, from a string the program already has.
-pub extern fun g_strsplit(s: str, delim: str, max: i32).return: Argv
+pub extern fun g_strsplit(s: str, delim: str, max: i32) => Argv
 pub extern fun g_strfreev(v: Argv)
 
 // `g_signal_connect_data(instance, signal, c_handler, data, destroy, flags)`. The
@@ -53,4 +53,4 @@ pub extern fun g_strfreev(v: Argv)
 // GLib's own order, so the Kelp signature is the C one with the three callback
 // arguments collapsed into one. The generated call is cast to the expansion's
 // types, so `GCallback` and `GClosureNotify` need no cast written here.
-pub extern fun connect(instance: Widget, signal: str, handler: move closure(Widget), flags: i32).return: u64
+pub extern fun connect(instance: Widget, signal: str, handler: move closure(Widget), flags: i32) => u64

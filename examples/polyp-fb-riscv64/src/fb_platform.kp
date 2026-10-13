@@ -46,7 +46,7 @@ pub datac FbPlatform(
     var tick_due: bool,
 )
 
-pub fun new().return: FbPlatform {
+pub fun new() => FbPlatform {
     val base: Ptr<[u32; FB_PIXELS]> = unsafe { Ptr.from_mut(FRAME) }
     val pixels: Ptr<u32> = base.cast<u32>()
     return FbPlatform(
@@ -71,7 +71,7 @@ fun mut FbPlatform.push_at(at: u64, ev: move event.Event) {
     script_len += 1
 }
 
-fun FbPlatform.frame_count().return: i32 = frames
+fun FbPlatform.frame_count() => i32 = frames
 
 // Take the clock over from the per-present auto advance: from now on it moves only through
 // `advance_ms`, which is the clock a Polyp v4 scenario scripts.
@@ -89,17 +89,17 @@ fun mut FbPlatform.advance_ms(ms: u64) {
 // Where the surface is, for the ramfb registration: the display device needs the physical address
 // and the stride, in pixels, of the memory it scans out. The cast is a separate binding because a
 // method with type arguments cannot be written on a call expression (`plan/user-ffi-gap-analysis.md`).
-pub fun framebuffer_addr().return: usize {
+pub fun framebuffer_addr() => usize {
     val base: Ptr<[u32; FB_PIXELS]> = unsafe { Ptr.from_mut(FRAME) }
     val bytes: Ptr<u8> = base.cast<u8>()
     return bytes.addr()
 }
 
-pub fun framebuffer_stride().return: i32 = FB_W
+pub fun framebuffer_stride() => i32 = FB_W
 
-fun FbPlatform.presented_count().return: i32 = presented
+fun FbPlatform.presented_count() => i32 = presented
 
-fun FbPlatform.clock().return: u64 = time_ms
+fun FbPlatform.clock() => u64 = time_ms
 
 impl platform.Platform for FbPlatform {
     fun mut Self.present(fb: fb.Fb, dirty: &damage.Damage) {
@@ -114,13 +114,13 @@ impl platform.Platform for FbPlatform {
         }
     }
 
-    fun Self.now_ms().return: u64 = time_ms
+    fun Self.now_ms() => u64 = time_ms
 
     // No timer device and no requirement for a deadline here: the millisecond clock is the whole of
     // it, and this stage's deadline is a hosted feature (`plan/polyp-v3.md`, stage 5).
-    fun mut Self.now_us().return: u64 = time_ms * 1000
+    fun mut Self.now_us() => u64 = time_ms * 1000
 
-    fun mut Self.poll_event().return: option.Option<event.Event> {
+    fun mut Self.poll_event() => option.Option<event.Event> {
         if tick_due {
             tick_due = false
             return option.Option.Some(value = event.Event.Tick(now_us = time_ms * 1000))
@@ -136,5 +136,5 @@ impl platform.Platform for FbPlatform {
         return option.Option.Some(value = event.clone(t.ev))
     }
 
-    fun Self.framebuffer().return: fb.Fb = fb.new(pixels = f.pixels, width = f.width, height = f.height, stride_px = f.stride_px)
+    fun Self.framebuffer() => fb.Fb = fb.new(pixels = f.pixels, width = f.width, height = f.height, stride_px = f.stride_px)
 }

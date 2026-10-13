@@ -5,7 +5,7 @@ impl "std/process"
 impl "std/str"
 impl "std/result"
 
-fun size_arg(default: i64).return: i64 {
+fun size_arg(default: i64) => i64 {
     if process.arg_count() < 2 {
         return default
     }
@@ -17,7 +17,7 @@ fun size_arg(default: i64).return: i64 {
     }
 }
 
-fun round(n: i64, salt: i64).return: u64 {
+fun round(n: i64, salt: i64) => u64 {
     var s = String.empty()
     var i: i64 = 0
     while i < n {

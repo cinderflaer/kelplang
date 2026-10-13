@@ -28,7 +28,7 @@ enum Msg {
     Remove(val id: i32)
 }
 
-fun find(m: &Model, id: i32).return: i32 {
+fun find(m: &Model, id: i32) => i32 {
     var i: usize = 0
     while i < m.items.len() {
         if m.items.get(i).id == id {
@@ -61,7 +61,7 @@ fun update(m: mut Model, msg: Msg) {
     }
 }
 
-fun make(n: i32).return: Model {
+fun make(n: i32) => Model {
     var items: List<Item> = List.empty()
     var i: i32 = 0
     while i < n {
@@ -81,14 +81,14 @@ fun fill_row(r: mut core.Children<Msg>, id: i32, done: bool, title: &str) {
     r.button("x", Msg.Remove(id = id))
 }
 
-fun row_view(d: &core.Deps).return: List<core.Child<Msg>> {
+fun row_view(d: &core.Deps) => List<core.Child<Msg>> {
     val id = d.ints.get(0).to_i32()
     val done = d.ints.get(1) != 0
     val title = String.from_str(d.strs.get(0).as_str())
     return core.single { k -> k.row { r -> fill_row(r, id, done, title.as_str()) } }
 }
 
-fun row_deps(it: &Item).return: core.Deps {
+fun row_deps(it: &Item) => core.Deps {
     var d = core.deps()
     d.push_int(it.id.to_i64())
     d.push_bool(it.done)
@@ -96,7 +96,7 @@ fun row_deps(it: &Item).return: core.Deps {
     return d
 }
 
-fun view_memo(m: Model).return: core.Node<Msg> {
+fun view_memo(m: Model) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(4)
         k.expand()
@@ -112,7 +112,7 @@ fun view_memo(m: Model).return: core.Node<Msg> {
     }
 }
 
-fun view_plain(m: Model).return: core.Node<Msg> {
+fun view_plain(m: Model) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(4)
         k.expand()
@@ -129,13 +129,13 @@ fun view_plain(m: Model).return: core.Node<Msg> {
     }
 }
 
-fun no_subs(m: Model).return: List<core.Sub<Msg>> {
+fun no_subs(m: Model) => List<core.Sub<Msg>> {
     var out: List<core.Sub<Msg>> = List.empty()
     return out
 }
 
 
-fun frames().return: i32 {
+fun frames() => i32 {
     val v = env.get("POLYP_BENCH_QUICK")
     if !str.is_empty(v.as_str()) {
         return 3

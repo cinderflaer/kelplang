@@ -24,7 +24,7 @@ enum Msg {
     Reset
 }
 
-fun view(state: Counter).return: polyp.Node<Msg> {
+fun view(state: Counter) => polyp.Node<Msg> {
     var kids: List<polyp.Node<Msg>> = List.empty()
     kids.push(polyp.text("a counter"))
     kids.push(polyp.button("+1", Msg.Inc))
@@ -99,13 +99,13 @@ pub enum Node<M> {
     Button(val label: String, val on_click: M)
 }
 
-pub fun column<M>(children: move List<Node<M>>).return: Node<M>
-pub fun row<M>(children: move List<Node<M>>).return: Node<M>
-pub fun text<M>(text: move String).return: Node<M>
-pub fun button<M>(label: move String, on_click: move M).return: Node<M>
+pub fun column<M>(children: move List<Node<M>>) => Node<M>
+pub fun row<M>(children: move List<Node<M>>) => Node<M>
+pub fun text<M>(text: move String) => Node<M>
+pub fun button<M>(label: move String, on_click: move M) => Node<M>
 
 pub fun run<S, M>(title: str, width: i32, height: i32, init: move S,
-                  view: fun(S).return: Node<M>, update: fun(mut S, M)).return: S
+                  view: fun(S) => Node<M>, update: fun(mut S, M)) => S
 
 pub const QUIT_ID: i32
 pub fun schedule_post(delay_ms: u32, id: i32)
@@ -118,7 +118,7 @@ pub fun schedule_quit(delay_ms: u32)
   caller reads what the run left behind).
 - `fun(S)` in `view`'s type is the "view borrows the state" shape: a parameter of
   an owned type is a shared borrow (`plan/syntax.md` 7.1), so an application
-  writes `fun view(state: Counter).return: Node<Msg>` with no `&` anywhere. `update`
+  writes `fun view(state: Counter) => Node<Msg>` with no `&` anywhere. `update`
   is written `fun update(state: mut Counter, msg: Msg)` and matches
   `fun(mut S, M)`.
 - Ids are handed out in tree order: the `i`-th `Button` in a depth-first walk is

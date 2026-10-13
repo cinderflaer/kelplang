@@ -109,9 +109,9 @@ enum Msg {
 }
 
 // A plain `fun` value, not a closure: the entry hands it the new text.
-fun changed(text: String).return: Msg = Msg.Changed(text = String.from_str(text.as_str()))
+fun changed(text: String) => Msg = Msg.Changed(text = String.from_str(text.as_str()))
 
-fun view(s: Counter).return: core.Node<Msg> {
+fun view(s: Counter) => core.Node<Msg> {
     return polyp.column { k ->
         k.text_styled("a counter", 0, true)
         val shown = fmt.int(s.count.to_i64())
@@ -207,7 +207,7 @@ turns the `Msg` into a change.
 
 ```kelp
 k.button("+1", Msg.Inc)
-k.entry(s.draft.as_str(), changed)   // changed: fun(String).return: Msg
+k.entry(s.draft.as_str(), changed)   // changed: fun(String) => Msg
 ```
 
 For an entry, `value` seeds the text on first build. A later patch rewrites
@@ -239,7 +239,7 @@ Dependencies are plain values, pushed in order.
 var d = core.deps()
 d.push_int(item.id)
 d.push_bool(item.done)
-k.memo("row", d, build_row)          // build_row: fun(&Deps).return: List<Child<Msg>>
+k.memo("row", d, build_row)          // build_row: fun(&Deps) => List<Child<Msg>>
 ```
 
 The memo-aware entry points (`frame_memo` in the soft backend,
@@ -252,7 +252,7 @@ The application lists the timers it wants for each state. The loop calls
 `subscriptions(state)` after every turn.
 
 ```kelp
-fun subscriptions(s: Counter).return: List<core.Sub<Msg>> {
+fun subscriptions(s: Counter) => List<core.Sub<Msg>> {
     var out: List<core.Sub<Msg>> = List.empty()
     out.push(core.every(1000, Msg.Tick))     // every 1000 ms
     out.push(core.after(250, Msg.Flash))     // once, 250 ms after it first appears

@@ -4,7 +4,7 @@
 //
 //   State, any type it likes
 //   Msg  , an `enum`, its own
-//   view , `fun(State).return: Node<Msg>`, a pure function of the state
+//   view , `fun(State) => Node<Msg>`, a pure function of the state
 //   update, `fun(mut State, Msg)`, where the app writes one exhaustive `when`
 //
 // Why the Elm shape and not callbacks that capture the state: a Kelp closure
@@ -54,15 +54,15 @@ pub enum Node<M> {
 // Constructors, so app code reads `polyp.column(kids)` rather than naming the
 // enum. Each takes `M` only from the expected type, which is the tree it is
 // being pushed into.
-pub fun column<M>(children: move List<Node<M>>).return: Node<M> = Node.Column(children = children)
-pub fun row<M>(children: move List<Node<M>>).return: Node<M> = Node.Row(children = children)
-pub fun text<M>(text: move String).return: Node<M> = Node.Text(text = text)
-pub fun button<M>(label: move String, on_click: move M).return: Node<M> = Node.Button(label = label, on_click = on_click)
+pub fun column<M>(children: move List<Node<M>>) => Node<M> = Node.Column(children = children)
+pub fun row<M>(children: move List<Node<M>>) => Node<M> = Node.Row(children = children)
+pub fun text<M>(text: move String) => Node<M> = Node.Text(text = text)
+pub fun button<M>(label: move String, on_click: move M) => Node<M> = Node.Button(label = label, on_click = on_click)
 
 // The click handler a button gets: a closure whose whole environment is the
 // integer id, moved to the native side by `gtk.connect`. The native side runs
 // it on the loop's own thread, so `polyp_post` is an ordinary store.
-fun click_handler(id: i32).return: closure(gtk.Widget) {
+fun click_handler(id: i32) => closure(gtk.Widget) {
     return fun (w: gtk.Widget) {
         queue.polyp_post(id)
     }
@@ -70,15 +70,15 @@ fun click_handler(id: i32).return: closure(gtk.Widget) {
 
 // The handler a `g_timeout_add_full` source gets. It posts once and returns
 // `G_SOURCE_REMOVE`, so the source is destroyed after it fires.
-fun timeout_handler(id: i32).return: closure().return: i32 {
-    return fun ().return: i32 {
+fun timeout_handler(id: i32) => closure() => i32 {
+    return fun () => i32 {
         queue.polyp_post(id)
         return 0
     }
 }
 
-fun close_handler().return: closure(gtk.Window).return: i32 {
-    return fun (w: gtk.Window).return: i32 {
+fun close_handler() => closure(gtk.Window) => i32 {
+    return fun (w: gtk.Window) => i32 {
         queue.polyp_post(QUIT_ID)
         // TRUE: the default handler would destroy the window, and the loop
         // still owns the unref it does on the way out.
@@ -99,7 +99,7 @@ pub fun schedule_quit(delay_ms: u32) {
 
 // One button: the message is pushed at the id the counter is about to hand out,
 // so `msgs[i]` is the `Msg` of the `i`-th button in the tree, in tree order.
-fun button_widget<M>(label: String, msg: move M, msgs: mut List<M>, next: mut i32).return: gtk.Widget {
+fun button_widget<M>(label: String, msg: move M, msgs: mut List<M>, next: mut i32) => gtk.Widget {
     val id = *next
     * next = *next + 1
     msgs.push(msg)
@@ -112,14 +112,14 @@ fun button_widget<M>(label: String, msg: move M, msgs: mut List<M>, next: mut i3
 // scrutinee binds its payloads by value, so the `Msg` in a `Button` is moved
 // into `msgs` and the `String` in a `Text` into the label. The tree is moved
 // into the widgets and dropped; nothing keeps it.
-fun build<M>(node: move Node<M>, msgs: mut List<M>, next: mut i32).return: gtk.Widget = when node {
+fun build<M>(node: move Node<M>, msgs: mut List<M>, next: mut i32) => gtk.Widget = when node {
     Column(children) -> box_widget(children, VERTICAL, msgs, next)
     Row(children) -> box_widget(children, HORIZONTAL, msgs, next)
     Text(text) -> gtk.gtk_label_new(text.as_str())
     Button(label, on_click) -> button_widget(label, on_click, msgs, next)
 }
 
-fun box_widget<M>(children: move List<Node<M>>, orientation: i32, msgs: mut List<M>, next: mut i32).return: gtk.Widget {
+fun box_widget<M>(children: move List<Node<M>>, orientation: i32, msgs: mut List<M>, next: mut i32) => gtk.Widget {
     // A `move` parameter is an owned `val`, so the walk needs a `var` binding
     // of its own: `remove` takes an exclusive borrow.
     var rest = children
@@ -132,7 +132,7 @@ fun box_widget<M>(children: move List<Node<M>>, orientation: i32, msgs: mut List
 
 // One state, one tree, one child of the window. Replacing the whole child is
 // the v0 strategy: GTK drops the widget that was there and shows the new one.
-fun render<S, M>(win: gtk.Window, state: S, msgs: mut List<M>, next: mut i32, view: fun (S).return: Node<M>) {
+fun render<S, M>(win: gtk.Window, state: S, msgs: mut List<M>, next: mut i32, view: fun (S) => Node<M>) {
     msgs.clear()
     * next = 0
     val node = view(state)
@@ -144,9 +144,9 @@ fun render<S, M>(win: gtk.Window, state: S, msgs: mut List<M>, next: mut i32, vi
 //
 // `view` is `fun(S)`: a parameter of an owned type is a shared borrow
 // (plan/syntax.md 7.1), so that is the "view borrows the state" shape without a
-// written `&`. The app writes `fun view(state: Counter).return: Node<Msg>` and it
+// written `&`. The app writes `fun view(state: Counter) => Node<Msg>` and it
 // matches.
-pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (S).return: Node<M>, update: fun (mut S, M)).return: S {
+pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (S) => Node<M>, update: fun (mut S, M)) => S {
     gtk.gtk_init()
     val win = gtk.gtk_window_new()
     gtk.gtk_window_set_title(win, title)

@@ -29,9 +29,9 @@ const BIG_H: i32 = 768
 const ROWS: i32 = 200
 const RUNS: i32 = 5
 
-fun rect4(x: i32, y: i32, w: i32, h: i32).return: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+fun rect4(x: i32, y: i32, w: i32, h: i32) => fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
 
-fun make_model(n: i32).return: app.Model {
+fun make_model(n: i32) => app.Model {
     var items: List<app.Todo> = List.empty()
     var i: i32 = 0
     while i < n {
@@ -42,7 +42,7 @@ fun make_model(n: i32).return: app.Model {
 }
 
 // The tree a tick carries, so a driver reads one value out of `Tick` whatever the variant.
-fun tick_tree<M>(t: move core.Tick<M>).return: core.Node<M> = when t {
+fun tick_tree<M>(t: move core.Tick<M>) => core.Node<M> = when t {
     Idle(tree) -> tree
     Changed(tree) -> tree
     Quit(tree) -> tree
@@ -71,7 +71,7 @@ fun report(name: str, frames: i32, pixels: i64, rects: i32, allocs: i32, samples
     print(a.get((RUNS - 1).to_usize()))
 }
 
-fun scenario_name(id: i32).return: str {
+fun scenario_name(id: i32) => str {
     if id == 0 {
         return "scroll-200"
     }
@@ -90,14 +90,14 @@ fun scenario_name(id: i32).return: str {
 // The count the test suite uses: `POLYP_BENCH_QUICK` shortens every scenario to a single frame so
 // the whole run fits in the bounded runner. The doc's table is a full
 // run with the variable unset.
-fun quick().return: bool {
+fun quick() => bool {
     val v = env.get("POLYP_BENCH_QUICK")
     return !str.is_empty(v.as_str())
 }
 
 // Frames per run for each scenario: the count the name claims, and a round number for the two that
 // have none. `type-100` is 100 characters and `toggle-50` toggles 50 checkboxes.
-fun scenario_frames(id: i32).return: i32 {
+fun scenario_frames(id: i32) => i32 {
     if quick() {
         return 1
     }

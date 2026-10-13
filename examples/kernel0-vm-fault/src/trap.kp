@@ -22,7 +22,7 @@ pub fun arm(phase: usize) {
     }
 }
 
-fun current_phase().return: usize {
+fun current_phase() => usize {
     unsafe { PHASE }
 }
 
@@ -60,7 +60,7 @@ pub fun install() {
 
 // The body the naked handler calls: read the three CSRs the fault left, print
 // them, and answer with the resume increment.
-pub fun report().return: usize {
+pub fun report() => usize {
     val cause: usize = unsafe { asm("csrr {0}, scause", out("r") _) }
     val tval: usize = unsafe { asm("csrr {0}, stval", out("r") _) }
     val pc: usize = unsafe { asm("csrr {0}, sepc", out("r") _) }

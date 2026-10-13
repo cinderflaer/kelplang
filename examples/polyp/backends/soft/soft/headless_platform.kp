@@ -38,7 +38,7 @@ pub datac HeadlessPlatform(
     var last_checksum: u64,
 )
 
-pub fun new(width: i32, height: i32).return: HeadlessPlatform {
+pub fun new(width: i32, height: i32) => HeadlessPlatform {
     var w = width
     if w < 1 {
         w = 1
@@ -102,20 +102,20 @@ fun mut HeadlessPlatform.set_clock_step_us(us: u64) {
 }
 
 // The frame the last present showed, and the rectangles it was handed.
-fun HeadlessPlatform.checksum().return: u64 = fb.checksum(f)
+fun HeadlessPlatform.checksum() => u64 = fb.checksum(f)
 
-fun HeadlessPlatform.frame_count().return: i32 = frames
+fun HeadlessPlatform.frame_count() => i32 = frames
 
-fun HeadlessPlatform.presented_count().return: usize = presented_len
+fun HeadlessPlatform.presented_count() => usize = presented_len
 
-fun HeadlessPlatform.presented_at(i: usize).return: fb.Rect {
+fun HeadlessPlatform.presented_at(i: usize) => fb.Rect {
     val r = presented.get(i = i)
     return fb.Rect(x = r.x, y = r.y, w = r.w, h = r.h)
 }
 
-fun HeadlessPlatform.width().return: i32 = f.width
+fun HeadlessPlatform.width() => i32 = f.width
 
-fun HeadlessPlatform.height().return: i32 = f.height
+fun HeadlessPlatform.height() => i32 = f.height
 
 // Fill the whole surface, for a test that wants a known background.
 fun mut HeadlessPlatform.clear(color: u32) {
@@ -131,14 +131,14 @@ fun mut HeadlessPlatform.clear(color: u32) {
 }
 
 // A one-pixel probe for a damage test: the colour at a point, or 0 outside the surface.
-fun HeadlessPlatform.pixel(x: i32, y: i32).return: u32 {
+fun HeadlessPlatform.pixel(x: i32, y: i32) => u32 {
     if x < 0 || y < 0 || x >= f.width || y >= f.height {
         return 0
     }
     return unsafe { f.get(x, y) }
 }
 
-fun checksum_of(f: fb.Fb).return: u64 = fb.checksum(f)
+fun checksum_of(f: fb.Fb) => u64 = fb.checksum(f)
 
 impl platform.Platform for HeadlessPlatform {
     fun mut Self.present(fb: fb.Fb, dirty: &damage.Damage) {
@@ -152,14 +152,14 @@ impl platform.Platform for HeadlessPlatform {
         last_checksum = checksum_of(fb)
     }
 
-    fun Self.now_ms().return: u64 = time_ms
+    fun Self.now_ms() => u64 = time_ms
 
-    fun mut Self.now_us().return: u64 {
+    fun mut Self.now_us() => u64 {
         time_us += clock_step_us
         return time_us
     }
 
-    fun mut Self.poll_event().return: option.Option<event.Event> {
+    fun mut Self.poll_event() => option.Option<event.Event> {
         // The clock moved: the backend hears it first, so the frame's input is handled at the new
         // time (a widget an input creates starts its animation then).
         if tick_due {
@@ -177,7 +177,7 @@ impl platform.Platform for HeadlessPlatform {
         return option.Option.Some(value = event.clone(t.ev.get()))
     }
 
-    fun Self.framebuffer().return: fb.Fb {
+    fun Self.framebuffer() => fb.Fb {
         return fb.new(pixels = pixels, width = f.width, height = f.height, stride_px = f.stride_px)
     }
 }

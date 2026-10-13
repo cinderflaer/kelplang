@@ -34,19 +34,19 @@ pub const MAX_DAMAGE: usize = 16
 
 pub datac Damage(var rects: [fb.Rect; MAX_DAMAGE], var len: usize)
 
-pub fun new().return: Damage = Damage(rects = [fb.Rect(x = 0, y = 0, w = 0, h = 0); MAX_DAMAGE], len = 0)
+pub fun new() => Damage = Damage(rects = [fb.Rect(x = 0, y = 0, w = 0, h = 0); MAX_DAMAGE], len = 0)
 
-fun Damage.count().return: usize = len
+fun Damage.count() => usize = len
 
 // A copy, so a caller cannot hold a borrow of the list across a later `add`.
-fun Damage.at(i: usize).return: fb.Rect = rects.get(i = i).dup()
+fun Damage.at(i: usize) => fb.Rect = rects.get(i = i).dup()
 
 fun mut Damage.clear() {
     len = 0
 }
 
 // The one rectangle covering every entry, empty when the list is.
-fun Damage.bounds().return: fb.Rect {
+fun Damage.bounds() => fb.Rect {
     val n: usize = len
     if n == 0 {
         return fb.empty_rect()
@@ -89,7 +89,7 @@ fun mut Damage.add(rect: fb.Rect) {
 }
 
 // Replace the first entry that touches `r` with the union, if any does.
-fun mut Damage.merge_into_touching(r: fb.Rect).return: bool {
+fun mut Damage.merge_into_touching(r: fb.Rect) => bool {
     val n: usize = len
     var i: usize = 0
     while i < n {

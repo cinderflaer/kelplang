@@ -52,7 +52,7 @@ pub fun polyp_post(id: i32) {
 // The oldest id, or -1 when the queue is empty. -1 is the empty marker rather
 // than one of the loop's own ids, so `Polyp.QUIT_ID` is -2: button ids are tree
 // positions and are never negative.
-pub fun polyp_poll().return: i32 {
+pub fun polyp_poll() => i32 {
     var out: i32 = -1
     unsafe {
         if COUNT > 0 {
@@ -93,7 +93,7 @@ pub fun polyp_post_edit(index: i32, text: str) {
 
 // The entry index of the oldest pending edit, or -1 when none is pending. The
 // text of the edit just polled is read with `polyp_poll_edit_text`.
-pub fun polyp_poll_edit().return: i32 {
+pub fun polyp_poll_edit() => i32 {
     var out: i32 = -1
     unsafe {
         if EDIT_COUNT == 0 {
@@ -111,7 +111,7 @@ pub fun polyp_poll_edit().return: i32 {
 
 // The text of the edit just polled, as a copy: the ring slot is reused by the
 // next post, so the loop gets its own `String`. Empty when no edit was polled.
-pub fun polyp_poll_edit_text().return: String {
+pub fun polyp_poll_edit_text() => String {
     var bytes: Bytes = Bytes.empty()
     unsafe {
         if EDIT_LAST_OK {
@@ -135,7 +135,7 @@ pub fun polyp_post_focus(index: i32) {
 }
 
 // The entry index of the oldest pending focus request, or -1 when none is.
-pub fun polyp_poll_focus().return: i32 {
+pub fun polyp_poll_focus() => i32 {
     var out: i32 = -1
     unsafe {
         if FOCUS_COUNT > 0 {

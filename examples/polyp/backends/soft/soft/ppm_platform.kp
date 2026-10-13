@@ -17,16 +17,16 @@ impl "std/str"
 
 pub datac PpmPlatform(var inner: headless_platform.HeadlessPlatform, var dir: String, var n: i32)
 
-pub fun new(width: i32, height: i32).return: PpmPlatform = PpmPlatform(
+pub fun new(width: i32, height: i32) => PpmPlatform = PpmPlatform(
     inner = headless_platform.new(width = width, height = height),
     dir = env.get("POLYP_DUMP_DIR"),
     n = 0,
 )
 
 // The frame index the next dump will use, so a test can tell "dumping" from "not".
-fun PpmPlatform.dumps().return: bool = !dir.is_empty()
+fun PpmPlatform.dumps() => bool = !dir.is_empty()
 
-fun PpmPlatform.dump_dir().return: String = String.from_str(dir.as_str())
+fun PpmPlatform.dump_dir() => String = String.from_str(dir.as_str())
 
 fun mut PpmPlatform.push(ev: move event.Event) {
     inner.push(ev)
@@ -40,13 +40,13 @@ fun mut PpmPlatform.advance_us(us: u64) {
     inner.advance_us(us)
 }
 
-fun PpmPlatform.checksum().return: u64 = inner.checksum()
+fun PpmPlatform.checksum() => u64 = inner.checksum()
 
-fun PpmPlatform.frame_count().return: i32 = inner.frame_count()
+fun PpmPlatform.frame_count() => i32 = inner.frame_count()
 
-fun PpmPlatform.presented_count().return: usize = inner.presented_count()
+fun PpmPlatform.presented_count() => usize = inner.presented_count()
 
-fun PpmPlatform.pixel(x: i32, y: i32).return: u32 = inner.pixel(x, y)
+fun PpmPlatform.pixel(x: i32, y: i32) => u32 = inner.pixel(x, y)
 
 fun mut PpmPlatform.dump(f: fb.Fb) {
     if !dir.is_empty() {
@@ -65,11 +65,11 @@ impl platform.Platform for PpmPlatform {
         inner.present(fb, dirty)
     }
 
-    fun Self.now_ms().return: u64 = inner.now_ms()
+    fun Self.now_ms() => u64 = inner.now_ms()
 
-    fun mut Self.now_us().return: u64 = inner.now_us()
+    fun mut Self.now_us() => u64 = inner.now_us()
 
-    fun mut Self.poll_event().return: option.Option<event.Event> = inner.poll_event()
+    fun mut Self.poll_event() => option.Option<event.Event> = inner.poll_event()
 
-    fun Self.framebuffer().return: fb.Fb = inner.framebuffer()
+    fun Self.framebuffer() => fb.Fb = inner.framebuffer()
 }

@@ -16,20 +16,20 @@ pub const VERTICAL: i32 = gtk_backend.VERTICAL
 
 // Block-taking constructors, so app code reads
 // `polyp.column { k -> k.text(s.title) k.button("+1", Msg.Inc) }`.
-pub fun column<M>(block: scoped fun(mut core.Children<M>)).return: core.Node<M> = core.column(block)
+pub fun column<M>(block: scoped fun(mut core.Children<M>)) => core.Node<M> = core.column(block)
 
-pub fun row<M>(block: scoped fun(mut core.Children<M>)).return: core.Node<M> = core.row(block)
+pub fun row<M>(block: scoped fun(mut core.Children<M>)) => core.Node<M> = core.row(block)
 
 // The plain constructors, the two spellings v1 had. `polyp.Node<M>` is `core.Node<M>` now, so an
 // application imports `deps/polyp/core/core` for the type it writes in a `view` signature.
-pub fun plain_column<M>(children: move List<core.Node<M>>).return: core.Node<M> = core.plain_column(children)
-pub fun plain_row<M>(children: move List<core.Node<M>>).return: core.Node<M> = core.plain_row(children)
-pub fun text<M>(text: move String).return: core.Node<M> = core.text(text)
-pub fun button<M>(label: move String, on_click: move M).return: core.Node<M> = core.button(label, on_click)
+pub fun plain_column<M>(children: move List<core.Node<M>>) => core.Node<M> = core.plain_column(children)
+pub fun plain_row<M>(children: move List<core.Node<M>>) => core.Node<M> = core.plain_row(children)
+pub fun text<M>(text: move String) => core.Node<M> = core.text(text)
+pub fun button<M>(label: move String, on_click: move M) => core.Node<M> = core.button(label, on_click)
 
 // The loop, on the GTK backend. `init` is moved in and the final state is returned, so a caller can
 // read what the run left behind without a second sharing mechanism.
-pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (S).return: core.Node<M>, update: fun (mut S, M)).return: S {
+pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (S) => core.Node<M>, update: fun (mut S, M)) => S {
     var backend = gtk_backend.open(title = title, width = width, height = height)
     val final = core.run(backend = backend, init = init, view = view, update = update)
     diag.capture(backend)
@@ -40,7 +40,7 @@ pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (
 // The first view as one HTML document on stdout, built on the headless backend. There is no window
 // and no loop. An app's `[build] emit_entry` program calls this from its `main` in place of `run`;
 // kelpc runs that program once and writes the output as index.html (`[build] emit = "html"`).
-pub fun emit_html<S, M>(init: move S, view: fun (S).return: core.Node<M>) {
+pub fun emit_html<S, M>(init: move S, view: fun (S) => core.Node<M>) {
     val tree = view(init)
     var backend = headless_backend.new(List.empty())
     val first = core.create_all(&tree)
@@ -78,18 +78,18 @@ pub fun schedule_focus_entry(delay_ms: u32, index: i32) {
 
 // The counters the smoke runs read: how many widgets were ever built, how many matched widgets were
 // patched in place, how many were destroyed, and how many are alive now.
-pub fun stats().return: core.Stats = core.stats()
+pub fun stats() => core.Stats = core.stats()
 
 // Whether every patch kept the focus widget it found.
-pub fun focus_survived().return: bool = core.focus_survived()
+pub fun focus_survived() => bool = core.focus_survived()
 
 // Whether a patch ever found a focus widget, so a run can tell "the focus stayed" from "there was
 // no focus to keep".
-pub fun focus_present().return: bool = core.focus_present()
+pub fun focus_present() => bool = core.focus_present()
 
 // How many `Entry` widgets this process has built.
-pub fun entries_built().return: i32 = core.entries_built()
+pub fun entries_built() => i32 = core.entries_built()
 
 // The live text of the index-th entry of the tree the run finished with, or "" when there was no
 // such entry.
-pub fun entry_text(index: i32).return: String = diag.entry_text(index)
+pub fun entry_text(index: i32) => String = diag.entry_text(index)

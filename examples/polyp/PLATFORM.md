@@ -192,7 +192,7 @@ rectangles it was handed, `now_ms` returns the platform's own clock or a fake on
 is the whole of it.
 3. **`[target] alloc` and `dealloc`.** The retained tree, the scenario's patches and every
 `String` the view builds allocate through these, so a freestanding image needs a pair of
-functions with the fixed signatures (`fun alloc(size: usize, align: usize).return: Ptr<u8>`, `fun
+functions with the fixed signatures (`fun alloc(size: usize, align: usize) => Ptr<u8>`, `fun
 dealloc(p: Ptr<u8>, size: usize, align: usize)`). `main.kp`'s bump arena over a second
 `static mut [u8; N]` is the smallest one that works; a project that wants a real allocator
 implements a better bump or a free list against the same two names.

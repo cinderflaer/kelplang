@@ -47,19 +47,19 @@ fun update(s: mut St, m: Msg) {
     }
 }
 
-fun no_subs(s: St).return: List<core.Sub<Msg>> {
+fun no_subs(s: St) => List<core.Sub<Msg>> {
     var out: List<core.Sub<Msg>> = List.empty()
     return out
 }
 
-fun beat_subs(s: St).return: List<core.Sub<Msg>> {
+fun beat_subs(s: St) => List<core.Sub<Msg>> {
     var out: List<core.Sub<Msg>> = List.empty()
     out.push(core.every(100, Msg.Beat))
     return out
 }
 
 // One shot while `armed`: the sub list changes shape when `Done` clears the flag.
-fun after_subs(s: St).return: List<core.Sub<Msg>> {
+fun after_subs(s: St) => List<core.Sub<Msg>> {
     var out: List<core.Sub<Msg>> = List.empty()
     if s.armed {
         out.push(core.after(300, Msg.Done))
@@ -67,13 +67,13 @@ fun after_subs(s: St).return: List<core.Sub<Msg>> {
     return out
 }
 
-fun tree_of<M>(t: move core.Tick<M>).return: core.Node<M> = when t {
+fun tree_of<M>(t: move core.Tick<M>) => core.Node<M> = when t {
     Idle(x) -> x
     Changed(x) -> x
     Quit(x) -> x
 }
 
-fun rect4(x: i32, y: i32, w: i32, h: i32).return: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+fun rect4(x: i32, y: i32, w: i32, h: i32) => fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
 
 // First frame: apply the whole tree, lay it out and paint it.
 fun boot<M>(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: &core.Node<M>) {
@@ -131,7 +131,7 @@ fun run_easing() {
     print(anim.value_at(&instant, 0))
 }
 
-fun progress_view(s: St).return: core.Node<Msg> {
+fun progress_view(s: St) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -176,7 +176,7 @@ fun run_progress() {
     say_bool("rest_wants", b.wants_frames())
 }
 
-fun restart_view(s: St).return: core.Node<Msg> {
+fun restart_view(s: St) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -236,7 +236,7 @@ fun run_restart() {
     say_bool("wants", b.wants_frames())
 }
 
-fun spacer_view(s: St).return: core.Node<Msg> {
+fun spacer_view(s: St) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -270,7 +270,7 @@ fun run_spacer() {
     }
 }
 
-fun opacity_view(s: St).return: core.Node<Msg> {
+fun opacity_view(s: St) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -307,7 +307,7 @@ fun run_opacity() {
     say_bool("wants", b.wants_frames())
 }
 
-fun offset_view(s: St).return: core.Node<Msg> {
+fun offset_view(s: St) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -338,17 +338,17 @@ fun drive_timed<S>(
     p: mut headless_platform.HeadlessPlatform,
     tree: move core.Node<Msg>,
     state: mut S,
-    view: fun (S).return: core.Node<Msg>,
+    view: fun (S) => core.Node<Msg>,
     upd: fun (mut S, Msg),
-    subs: fun (S).return: List<core.Sub<Msg>>,
+    subs: fun (S) => List<core.Sub<Msg>>,
     timers: mut core.Timers,
     ms: u64,
-).return: core.Node<Msg> {
+) => core.Node<Msg> {
     p.advance(ms)
     return tree_of(soft_backend.frame_timed(backend = b, platform = p, tree = tree, state = state, view = view, update = upd, subs = subs, timers = timers))
 }
 
-fun beat_view(s: St).return: core.Node<Msg> {
+fun beat_view(s: St) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -388,7 +388,7 @@ fun run_every() {
     say("stopped_beats", st.beats.to_i64())
 }
 
-fun after_view(s: St).return: core.Node<Msg> {
+fun after_view(s: St) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)

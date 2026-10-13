@@ -46,7 +46,7 @@ pub datac Node(
     var kids: List<Node>,
 )
 
-pub fun role_name(role: i32).return: str {
+pub fun role_name(role: i32) => str {
     if role == ROLE_BUTTON {
         return "button"
     }
@@ -72,7 +72,7 @@ pub fun role_name(role: i32).return: str {
 }
 
 // Whether the role carries a value the dump prints.
-fun has_value(role: i32).return: bool = role == ROLE_ENTRY || role == ROLE_CHECKBOX || role == ROLE_PROGRESS
+fun has_value(role: i32) => bool = role == ROLE_ENTRY || role == ROLE_CHECKBOX || role == ROLE_PROGRESS
 
 fun push_int(out: mut String, n: i32) {
     val t = str.from_i64(n.to_i64())
@@ -145,7 +145,7 @@ fun dump_node(n: &Node, depth: i32, out: mut String) {
 // A stable, indented text form of a tree, one node per line, two spaces per level:
 //   `role "name" [value="v"] state=[flags] bounds=x,y,w,h actions=[acts] id=N`
 // Tests use it as a golden.
-pub fun dump(tree: &Node).return: String {
+pub fun dump(tree: &Node) => String {
     var out = String.from_str("")
     dump_node(tree, 0, out)
     return out
@@ -153,7 +153,7 @@ pub fun dump(tree: &Node).return: String {
 
 // Find a node by id in a built tree; `None`-like as -1 in `id` of the result is not needed, so the
 // caller gets a bool and reads through `find_into`.
-pub fun count(tree: &Node).return: i32 {
+pub fun count(tree: &Node) => i32 {
     var c: i32 = 1
     var i: usize = 0
     while i < tree.kids.len() {
@@ -164,7 +164,7 @@ pub fun count(tree: &Node).return: i32 {
 }
 
 // The id of the first node (depth first) with this role and name, or -1.
-pub fun find_id(tree: &Node, role: i32, name: &str).return: i32 {
+pub fun find_id(tree: &Node, role: i32, name: &str) => i32 {
     if tree.role == role && str.eq(tree.name.as_str(), name) {
         return tree.id
     }

@@ -90,19 +90,19 @@ pub fun set_root(root: usize) {
     }
 }
 
-fun current_root().return: usize {
+fun current_root() => usize {
     unsafe { CURRENT_ROOT }
 }
 
 // This hart's trap stack top, from the linker script the way `vm` reads the
 // frame region: a symbol the language cannot name outside an asm template.
-pub fun trap_stack_top().return: usize = unsafe {
+pub fun trap_stack_top() => usize = unsafe {
     asm("la {0}, __trap_stack_top", out("r") _)
 }
 
 // The slot block is addressed backwards from the trap stack top, because that
 // is the only address the entry has before it has built a frame.
-fun slot(back: usize).return: Ptr<u64> {
+fun slot(back: usize) => Ptr<u64> {
     val top: usize = trap_stack_top()
     Ptr.from_addr(top - back)
 }
@@ -110,11 +110,11 @@ fun slot(back: usize).return: Ptr<u64> {
 // One 64-bit word of the frame, at a byte offset the asm and this module agree
 // on. Everything in the frame is a machine word, so an aligned volatile load is
 // the whole access.
-fun word(addr: usize).return: Ptr<u64> {
+fun word(addr: usize) => Ptr<u64> {
     Ptr.from_addr(addr)
 }
 
-fun frame_get(frame: Ptr<TrapFrame>, offset: usize).return: u64 {
+fun frame_get(frame: Ptr<TrapFrame>, offset: usize) => u64 {
     unsafe {
         word(frame.addr() + offset).read_volatile()
     }
@@ -129,7 +129,7 @@ fun frame_set(frame: Ptr<TrapFrame>, offset: usize, value: u64) {
 // What the boot prints `user: frame ok` for: the four offsets the naked entry
 // hardcodes, the size the push reserves, the slot block's size, and the two
 // registers the dispatcher reads and writes.
-pub fun frame_layout_ok().return: bool {
+pub fun frame_layout_ok() => bool {
     if size_of<TrapFrame>() != FRAME_BYTES {
         return false
     }
@@ -172,7 +172,7 @@ pub fun install() {
 // The body the naked entry calls with the frame in `a0`. Nonzero means resume
 // the program; zero means the kernel leaves and the entry jumps to the resume
 // slots instead of `sret`ing.
-fun trap_dispatch(frame: Ptr<TrapFrame>).return: isize {
+fun trap_dispatch(frame: Ptr<TrapFrame>) => isize {
     val cause: usize = unsafe { asm("csrr {0}, scause", out("r") _) }
     if cause == SCAUSE_ECALL_U {
         val num: usize = frame_get(frame, OFF_A7).to_usize()

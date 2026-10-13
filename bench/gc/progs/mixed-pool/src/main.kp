@@ -10,21 +10,21 @@ pd val total: AtomicI64 = AtomicI64.new(0)
 
 datac Node(val left: Box<Node>, val right: Box<Node>)
 
-fun make(d: i32).return: Node {
+fun make(d: i32) => Node {
     if d == 0 {
         return Node(left = Box.empty(), right = Box.empty())
     }
     return Node(left = Box.of(make(d - 1)), right = Box.of(make(d - 1)))
 }
 
-fun check(n: &Node).return: i64 {
+fun check(n: &Node) => i64 {
     if n.left.is_empty() {
         return 1
     }
     return 1 + check(n.left.get()) + check(n.right.get())
 }
 
-fun job(k: i64).return: i64 {
+fun job(k: i64) => i64 {
     val t = make(12 + (k % 3).to_i32())
     var s = String.empty()
     var i: i64 = 0

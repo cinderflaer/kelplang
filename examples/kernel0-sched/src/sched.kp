@@ -64,19 +64,19 @@ pub datac Task(
 // The task table's first byte. Every frame and stack is reached from here with
 // `byte_offset`, so no module turns a computed address into a pointer and the
 // `mmio` grant stays the two device windows it is.
-fun table().return: Ptr<u8> {
+fun table() => Ptr<u8> {
     val raw: Ptr<[Task; NTASKS]> = unsafe { Ptr.from_mut(TASKS) }
     val bytes: Ptr<u8> = raw.cast<u8>()
     return bytes
 }
 
-fun field_ptr(i: usize, offset: usize).return: Ptr<u64> {
+fun field_ptr(i: usize, offset: usize) => Ptr<u64> {
     val bytes: Ptr<u8> = table().byte_offset((i * size_of<Task>() + offset).to_isize())
     val word: Ptr<u64> = bytes.cast<u64>()
     return word
 }
 
-fun frame_of(i: usize).return: Ptr<trap.TrapFrame> {
+fun frame_of(i: usize) => Ptr<trap.TrapFrame> {
     val bytes: Ptr<u8> = table().byte_offset((i * size_of<Task>() + offset_of<Task>("frame")).to_isize())
     val f: Ptr<trap.TrapFrame> = bytes.cast<trap.TrapFrame>()
     return f
@@ -84,13 +84,13 @@ fun frame_of(i: usize).return: Ptr<trap.TrapFrame> {
 
 // The top of a task's stack, rounded down to the 16-byte alignment the ABI
 // wants: the table's own base is only 8-aligned.
-fun stack_top(i: usize).return: usize {
+fun stack_top(i: usize) => usize {
     val base: Ptr<u8> = table()
     val end: usize = base.addr() + i * size_of<Task>() + offset_of<Task>("stack") + STACK_BYTES
     return end & (~15)
 }
 
-fun task_state(i: usize).return: usize {
+fun task_state(i: usize) => usize {
     unsafe {
         field_ptr(i, offset_of<Task>("state")).read_volatile().to_usize()
     }
@@ -102,7 +102,7 @@ fun set_task_state(i: usize, state: usize) {
     }
 }
 
-fun boot_frame().return: Ptr<trap.TrapFrame> {
+fun boot_frame() => Ptr<trap.TrapFrame> {
     val raw: Ptr<[u64; 34]> = unsafe { Ptr.from_mut(BOOT) }
     val f: Ptr<trap.TrapFrame> = raw.cast<trap.TrapFrame>()
     return f
@@ -142,7 +142,7 @@ fun init_task(i: usize) {
 // The next READY task, or the only READY one when the others are not (none are
 // in this kernel: a task never exits, so the walk is a plain rotation and the
 // state field is what a blocking or finished task would use).
-fun pick().return: Ptr<trap.TrapFrame> {
+fun pick() => Ptr<trap.TrapFrame> {
     val last: usize = unsafe { CURRENT }
     var next: usize = (last + 1) % NTASKS
     var scanned: usize = 0
@@ -163,7 +163,7 @@ fun pick().return: Ptr<trap.TrapFrame> {
 // The body the naked trap entry calls with the frame in `a0`. It reads `mcause`
 // itself, arms the next timer tick, advances a yielded task's `mepc` past the
 // `ecall`, and answers the frame to resume.
-pub fun schedule(frame: Ptr<trap.TrapFrame>).return: Ptr<trap.TrapFrame> {
+pub fun schedule(frame: Ptr<trap.TrapFrame>) => Ptr<trap.TrapFrame> {
     val cause: usize = unsafe { asm("csrr {0}, mcause", out("r") _) }
     if cause == trap.CAUSE_TIMER {
         timer.arm(timer.now() + timer.TICK)
@@ -209,7 +209,7 @@ fun fault(cause: usize) {
 
 // What the boot checks against the frame layout, so that a `datac` that grows
 // cannot move the fields the asm hardcodes.
-pub fun layout_ok().return: bool {
+pub fun layout_ok() => bool {
     if trap.layout_ok() == false {
         return false
     }

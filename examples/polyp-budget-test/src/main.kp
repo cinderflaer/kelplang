@@ -35,10 +35,10 @@ datac St(var n: i32)
 
 fun nop(s: mut St, m: i32) {}
 
-fun rect4(x: i32, y: i32, w: i32, h: i32).return: fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
+fun rect4(x: i32, y: i32, w: i32, h: i32) => fb.Rect = fb.Rect(x = x, y = y, w = w, h = h)
 
 // Two texts whose rectangles are their own measured size: "aaaa" is 4 bytes * 6 = 24 px wide.
-fun two_texts(a: str, c: str).return: core.Node<i32> {
+fun two_texts(a: str, c: str) => core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -49,7 +49,7 @@ fun two_texts(a: str, c: str).return: core.Node<i32> {
 }
 
 // Five separate texts, so a frame has five non-touching damage rectangles to defer between.
-fun five_texts(a: str, b: str, c: str, d: str, e: str).return: core.Node<i32> {
+fun five_texts(a: str, b: str, c: str, d: str, e: str) => core.Node<i32> {
     return core.column { k ->
         k.spacing(10)
         k.align(core.Align.Start)
@@ -65,9 +65,9 @@ fun five_texts(a: str, b: str, c: str, d: str, e: str).return: core.Node<i32> {
     }
 }
 
-fun two_view(s: St).return: core.Node<i32> = two_texts("aaaa", "zzzz")
+fun two_view(s: St) => core.Node<i32> = two_texts("aaaa", "zzzz")
 
-fun make_model(n: i32).return: app.Model {
+fun make_model(n: i32) => app.Model {
     var items: List<app.Todo> = List.empty()
     var i: i32 = 0
     while i < n {
@@ -78,7 +78,7 @@ fun make_model(n: i32).return: app.Model {
 }
 
 // The sum of a presented rectangle list's areas, the pixels a repaint can actually change.
-fun presented_area(d: &damage.Damage).return: i64 {
+fun presented_area(d: &damage.Damage) => i64 {
     var a: i64 = 0
     var i: usize = 0
     while i < d.count() {
@@ -88,7 +88,7 @@ fun presented_area(d: &damage.Damage).return: i64 {
     return a
 }
 
-fun smallest_y(b: &soft_backend.SoftBackend).return: i32 {
+fun smallest_y(b: &soft_backend.SoftBackend) => i32 {
     if b.damage_count() == 0 {
         return -1
     }
@@ -287,9 +287,9 @@ fun run_type() {
     }
 }
 
-fun entry_changed(text: String).return: i32 = 0
+fun entry_changed(text: String) => i32 = 0
 
-fun one_entry_view(s: St).return: core.Node<i32> {
+fun one_entry_view(s: St) => core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -440,7 +440,7 @@ fun run_deadline() {
     print(b.damage_count())
 }
 
-fun checkbox_node(checked: bool).return: core.Node<i32> {
+fun checkbox_node(checked: bool) => core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -448,7 +448,7 @@ fun checkbox_node(checked: bool).return: core.Node<i32> {
     }
 }
 
-fun progress_node(permille: i32).return: core.Node<i32> {
+fun progress_node(permille: i32) => core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -456,7 +456,7 @@ fun progress_node(permille: i32).return: core.Node<i32> {
     }
 }
 
-fun scroll_view(s: St).return: core.Node<i32> {
+fun scroll_view(s: St) => core.Node<i32> {
     return core.column { k ->
         k.spacing(0)
         k.expand()

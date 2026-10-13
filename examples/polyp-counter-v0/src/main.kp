@@ -19,7 +19,7 @@ enum Msg {
 
 // The buttons are visited in this order, so their ids are 0 (Inc), 1 (Dec) and
 // 2 (Reset). The smoke run below leans on that.
-fun view(state: Counter).return: polyp.Node<Msg> {
+fun view(state: Counter) => polyp.Node<Msg> {
     var kids: List<polyp.Node<Msg>> = List.empty()
     val shown = fmt.int(state.count.to_i64())
     kids.push(polyp.text(str.concat("count: ", shown.as_str())))
@@ -43,7 +43,7 @@ fun update(state: mut Counter, msg: Msg) {
     }
 }
 
-fun smoke_enabled().return: bool {
+fun smoke_enabled() => bool {
     val value = env.get("POLYP_SMOKE")
     return str.eq(value.as_str(), "1")
 }

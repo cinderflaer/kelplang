@@ -70,7 +70,7 @@ pub fun mask_timer() {
     port.outb(PIC1_DATA, ALL_MASKED)
 }
 
-pub fun ticks().return: usize {
+pub fun ticks() => usize {
     TICKS.load(order = atomic.Ordering.SeqCst)
 }
 

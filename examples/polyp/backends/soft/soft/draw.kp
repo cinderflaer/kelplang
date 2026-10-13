@@ -31,7 +31,7 @@ pub const MAX_CLIP: usize = 8
 // only has a borrow of a stack never has to check for one.
 pub datac ClipStack(var rects: [fb.Rect; 8], var depth: usize)
 
-pub fun clip(rect: fb.Rect).return: ClipStack {
+pub fun clip(rect: fb.Rect) => ClipStack {
     var s = ClipStack(rects = [fb.Rect(x = 0, y = 0, w = 0, h = 0); 8], depth = 1)
     s.rects.set(i = 0, v = rect.dup())
     return s
@@ -54,21 +54,21 @@ fun mut ClipStack.pop() {
     depth -= 1
 }
 
-fun ClipStack.top().return: fb.Rect {
+fun ClipStack.top() => fb.Rect {
     if depth == 0 {
         return fb.empty_rect()
     }
     return rects.get(i = depth - 1).dup()
 }
 
-fun ClipStack.depth().return: usize = depth
+fun ClipStack.depth() => usize = depth
 
 // What every primitive actually clips to.
-fun effective(f: fb.Fb, c: &ClipStack).return: fb.Rect = fb.intersect(c.top(), f.bounds())
+fun effective(f: fb.Fb, c: &ClipStack) => fb.Rect = fb.intersect(c.top(), f.bounds())
 
 // One already-clipped horizontal span. Not `pub`: it trusts its bounds, so only the functions
 // in this module may call it.
-fun put_span(f: fb.Fb, x0: i32, x1: i32, y: i32, color: u32).return: usize {
+fun put_span(f: fb.Fb, x0: i32, x1: i32, y: i32, color: u32) => usize {
     var count: usize = 0
     var i: i32 = x0
     while i < x1 {
@@ -81,7 +81,7 @@ fun put_span(f: fb.Fb, x0: i32, x1: i32, y: i32, color: u32).return: usize {
 
 // One row of `[a, b)` clipped to `cl` vertically and horizontally. `a`/`b`/`py` are widened so a
 // rectangle that starts near `i32::MAX` cannot wrap before the clip is applied.
-fun paint_row(f: fb.Fb, cl: fb.Rect, py: i64, a: i64, b: i64, color: u32).return: usize {
+fun paint_row(f: fb.Fb, cl: fb.Rect, py: i64, a: i64, b: i64, color: u32) => usize {
     if py < cl.y.to_i64() || py >= cl.bottom() {
         return 0
     }
@@ -99,7 +99,7 @@ fun paint_row(f: fb.Fb, cl: fb.Rect, py: i64, a: i64, b: i64, color: u32).return
     return put_span(f, lo.to_i32(), hi.to_i32(), py.to_i32(), color)
 }
 
-pub fun fill_rect(f: fb.Fb, c: &ClipStack, x: i32, y: i32, w: i32, h: i32, color: u32).return: usize {
+pub fun fill_rect(f: fb.Fb, c: &ClipStack, x: i32, y: i32, w: i32, h: i32, color: u32) => usize {
     val r: fb.Rect = fb.intersect(effective(f, c), fb.Rect(x = x, y = y, w = w, h = h))
     if r.is_empty() {
         return 0
@@ -113,11 +113,11 @@ pub fun fill_rect(f: fb.Fb, c: &ClipStack, x: i32, y: i32, w: i32, h: i32, color
     return count
 }
 
-pub fun hline(f: fb.Fb, c: &ClipStack, x: i32, y: i32, len: i32, color: u32).return: usize {
+pub fun hline(f: fb.Fb, c: &ClipStack, x: i32, y: i32, len: i32, color: u32) => usize {
     return fill_rect(f, c, x, y, len, 1, color)
 }
 
-pub fun vline(f: fb.Fb, c: &ClipStack, x: i32, y: i32, len: i32, color: u32).return: usize {
+pub fun vline(f: fb.Fb, c: &ClipStack, x: i32, y: i32, len: i32, color: u32) => usize {
     return fill_rect(f, c, x, y, 1, len, color)
 }
 
@@ -133,7 +133,7 @@ pub fun stroke_rect(
     h: i32,
     thickness: i32,
     color: u32,
-).return: usize {
+) => usize {
     if w <= 0 || h <= 0 || thickness <= 0 {
         return 0
     }
@@ -172,7 +172,7 @@ pub fun stroke_rect(
 // computation that agrees pixel for pixel, and the recurrence's half-step tie is not one
 // closed-form predicate. The answer is the number of columns at each side of the row that fall
 // outside the corner.
-fun corner_inset(row: i32, r: i32, h: i32).return: i32 {
+fun corner_inset(row: i32, r: i32, h: i32) => i32 {
     if r <= 0 {
         return 0
     }
@@ -208,7 +208,7 @@ fun corner_inset(row: i32, r: i32, h: i32).return: i32 {
 
 // The radius a shape of `w` by `h` is allowed to use: never negative and never past half the
 // shorter side, so the two corners of a row cannot cross.
-fun clamp_radius(radius: i32, w: i32, h: i32).return: i32 {
+fun clamp_radius(radius: i32, w: i32, h: i32) => i32 {
     var r: i32 = radius
     if r < 0 {
         r = 0
@@ -233,7 +233,7 @@ pub fun fill_round_rect(
     h: i32,
     radius: i32,
     color: u32,
-).return: usize {
+) => usize {
     if w <= 0 || h <= 0 {
         return 0
     }
@@ -266,7 +266,7 @@ pub fun stroke_round_rect(
     radius: i32,
     thickness: i32,
     color: u32,
-).return: usize {
+) => usize {
     if w <= 0 || h <= 0 || thickness <= 0 {
         return 0
     }
@@ -311,7 +311,7 @@ pub fun stroke_round_rect(
 }
 
 // Source-over, channel by channel, with `src`'s alpha. The exact form is in the module header.
-pub fun blend_over(dst: u32, src: u32).return: u32 {
+pub fun blend_over(dst: u32, src: u32) => u32 {
     val a: u64 = ((src >> 24) & 0xFF).to_u64()
     var out: u32 = channel((src >> 24) & 0xFF, (dst >> 24) & 0xFF, a) << 24
     out = out | (channel((src >> 16) & 0xFF, (dst >> 16) & 0xFF, a) << 16)
@@ -320,14 +320,14 @@ pub fun blend_over(dst: u32, src: u32).return: u32 {
     return out
 }
 
-fun channel(s: u32, d: u32, a: u64).return: u32 {
+fun channel(s: u32, d: u32, a: u64) => u32 {
     val sv: u64 = s.to_u64()
     val dv: u64 = d.to_u64()
     val v: u64 = (sv * a + dv * (255 - a) + 127) / 255
     return v.to_u32()
 }
 
-pub fun blend_pixel(f: fb.Fb, c: &ClipStack, x: i32, y: i32, color: u32).return: usize {
+pub fun blend_pixel(f: fb.Fb, c: &ClipStack, x: i32, y: i32, color: u32) => usize {
     if !fb.contains_point(effective(f, c), x, y) {
         return 0
     }
@@ -348,7 +348,7 @@ pub fun blit_mask8(
     h: i32,
     mask: Ptr<u8>,
     color: u32,
-).return: usize {
+) => usize {
     if w <= 0 || h <= 0 {
         return 0
     }
@@ -392,7 +392,7 @@ pub fun line(
     x1: i32,
     y1: i32,
     color: u32,
-).return: usize {
+) => usize {
     val cl: fb.Rect = effective(f, c)
     if cl.is_empty() {
         return 0

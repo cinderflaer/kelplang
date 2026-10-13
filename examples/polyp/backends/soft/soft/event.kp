@@ -49,7 +49,7 @@ pub enum Event {
 }
 
 // A copy, for a caller that holds a list of events and hands one out by value.
-pub fun clone(e: &Event).return: Event = when e {
+pub fun clone(e: &Event) => Event = when e {
     PointerMove(x, y) -> Event.PointerMove(x = x, y = y)
     PointerDown(x, y, button) -> Event.PointerDown(x = x, y = y, button = button)
     PointerUp(x, y, button) -> Event.PointerUp(x = x, y = y, button = button)

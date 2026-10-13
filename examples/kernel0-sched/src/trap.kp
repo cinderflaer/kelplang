@@ -80,7 +80,7 @@ pub repr(c) datac TrapFrame(
 // One machine word of the frame at a byte offset, through the raw pointer the
 // scheduler was handed. Everything in the frame is a word, so an aligned
 // volatile load or store is the whole access.
-pub fun get(frame: Ptr<TrapFrame>, offset: usize).return: u64 {
+pub fun get(frame: Ptr<TrapFrame>, offset: usize) => u64 {
     unsafe {
         frame.cast<u8>().byte_offset(offset.to_isize()).cast<u64>().read_volatile()
     }
@@ -104,7 +104,7 @@ pub fun install() {
 // What the boot checks before anything relies on the asm: the offsets the
 // template hardcodes, the size the register file has, and where the dispatch
 // word starts. A `datac` that grows would move every number after it.
-pub fun layout_ok().return: bool {
+pub fun layout_ok() => bool {
     if size_of<TrapFrame>() != FRAME_BYTES {
         return false
     }

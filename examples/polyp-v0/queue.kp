@@ -28,7 +28,7 @@ pub fun polyp_post(id: i32) {
 // The oldest id, or -1 when the queue is empty. -1 is the empty marker rather
 // than one of the loop's own ids, so `Polyp.QUIT_ID` is -2: button ids are tree
 // positions and are never negative.
-pub fun polyp_poll().return: i32 {
+pub fun polyp_poll() => i32 {
     var out: i32 = -1
     unsafe {
         if COUNT > 0 {

@@ -67,7 +67,7 @@ const ROW_BIT: [u8; 8] = [1, 2, 4, 8, 16, 32, 64, 128]
 
 // The glyph index of a byte, or -1 when it has none (the ASCII table only; `glyph_column_cp` is the
 // general lookup).
-pub fun glyph_index(b: u8).return: i32 {
+pub fun glyph_index(b: u8) => i32 {
     if b < 32 || b > 126 {
         return -1
     }
@@ -75,11 +75,11 @@ pub fun glyph_index(b: u8).return: i32 {
 }
 
 // Column `ci` of the glyph for the byte `b`, with the replacement box for anything outside ASCII.
-pub fun glyph_column(b: u8, ci: i32).return: u8 = glyph_column_cp(b.to_i32(), ci)
+pub fun glyph_column(b: u8, ci: i32) => u8 = glyph_column_cp(b.to_i32(), ci)
 
 // Column `ci` of the glyph for code point `cp`: the ASCII table, then the generated blocks, and the
 // replacement box for every code point with no drawing. The low bit is the top row.
-pub fun glyph_column_cp(cp: i32, ci: i32).return: u8 {
+pub fun glyph_column_cp(cp: i32, ci: i32) => u8 {
     if cp >= 32 && cp <= 126 {
         return FONT.get(i = ((cp - 32) * 5 + ci).to_usize())
     }
@@ -114,7 +114,7 @@ pub fun glyph_column_cp(cp: i32, ci: i32).return: u8 {
 }
 
 // Whether `cp` has a real drawing (anything else is drawn as the replacement box).
-pub fun has_glyph(cp: i32).return: bool {
+pub fun has_glyph(cp: i32) => bool {
     var same = true
     var ci: i32 = 0
     while ci < GLYPH_W {
@@ -136,7 +136,7 @@ fun draw_glyph(
     cp: i32,
     scale: i32,
     color: u32,
-).return: usize {
+) => usize {
     val gw: i32 = GLYPH_W * scale
     var mask: [u8; 560] = [0; 560]
     var ci: i32 = 0
@@ -168,13 +168,13 @@ fun draw_glyph(
 
 // The width of one line, saturating rather than wrapping: code points * 6 * scale in `i64`, then
 // narrowed with `fb.clamp_i32`. A code point is one cell wide, a malformed run is one cell.
-pub fun text_width(s: &str, scale: i32).return: i32 {
+pub fun text_width(s: &str, scale: i32) => i32 {
     val n: i64 = utf8.count(s).to_i64()
     val w: i64 = n * (ADVANCE * scale).to_i64()
     return fb.clamp_i32(w)
 }
 
-pub fun text_height(scale: i32).return: i32 = GLYPH_H * scale
+pub fun text_height(scale: i32) => i32 = GLYPH_H * scale
 
 // Draw a line left to right at `(x, y)`, one pen step of `6 * scale` per UTF-8 unit. The scale is a
 // contract: outside 1..=4 the call panics instead of reading a mask the glyph builder did not
@@ -188,7 +188,7 @@ pub fun draw_text(
     s: &str,
     scale: i32,
     color: u32,
-).return: usize {
+) => usize {
     if scale < 1 || scale > MAX_SCALE {
         panic("text scale must be in 1..=4")
     }

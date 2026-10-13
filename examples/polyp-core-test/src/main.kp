@@ -17,7 +17,7 @@ impl "std/str"
 
 datac Counts(var create: i32, var update: i32, var remove: i32, var moved: i32)
 
-fun count(patches: &List<core.Patch>).return: Counts {
+fun count(patches: &List<core.Patch>) => Counts {
     var c = Counts(create = 0, update = 0, remove = 0, moved = 0)
     var i: usize = 0
     while i < patches.len() {
@@ -50,37 +50,37 @@ fun show(label: str, old: core.Node<i32>, new: core.Node<i32>) {
     print(c.moved)
 }
 
-fun rows_reversed().return: core.Node<i32> = core.column { k ->
+fun rows_reversed() => core.Node<i32> = core.column { k ->
     k.keyed("b") { r -> r.text("two") }
     k.keyed("a") { r -> r.text("one") }
 }
 
-fun rows().return: core.Node<i32> = core.column { k ->
+fun rows() => core.Node<i32> = core.column { k ->
     k.keyed("a") { r -> r.text("one") }
     k.keyed("b") { r -> r.text("two") }
 }
 
-fun rows_with_new().return: core.Node<i32> = core.column { k ->
+fun rows_with_new() => core.Node<i32> = core.column { k ->
     k.keyed("a") { r -> r.text("one") }
     k.keyed("x") { r -> r.text("inserted") }
     k.keyed("b") { r -> r.text("two") }
 }
 
-fun rows_one().return: core.Node<i32> = core.column { k ->
+fun rows_one() => core.Node<i32> = core.column { k ->
     k.keyed("a") { r -> r.text("one") }
 }
 
-fun one_text(t: str).return: core.Node<i32> {
+fun one_text(t: str) => core.Node<i32> {
     val n: core.Node<i32> = core.text(String.from_str(t))
     return n
 }
 
-fun empty_column().return: core.Node<i32> {
+fun empty_column() => core.Node<i32> {
     val out: core.Node<i32> = core.plain_column(List.empty())
     return out
 }
 
-fun empty_row().return: core.Node<i32> {
+fun empty_row() => core.Node<i32> {
     val out: core.Node<i32> = core.plain_row(List.empty())
     return out
 }
@@ -102,7 +102,7 @@ fun run_diff_tests() {
 
 // Keyed rows named by a string each, the first `n` of the five given. The invariant below builds
 // its trees from these, so each step is a list of keys in the order the tree holds them.
-fun keys(a: str, b: str, c: str, d: str, e: str, n: i32).return: List<String> {
+fun keys(a: str, b: str, c: str, d: str, e: str, n: i32) => List<String> {
     var out: List<String> = List.empty()
     if n >= 1 {
         out.push(String.from_str(a))
@@ -122,7 +122,7 @@ fun keys(a: str, b: str, c: str, d: str, e: str, n: i32).return: List<String> {
     return out
 }
 
-fun keyed_rows(names: &List<String>).return: core.Node<i32> = core.column { k ->
+fun keyed_rows(names: &List<String>) => core.Node<i32> = core.column { k ->
     var i: usize = 0
     while i < names.len() {
         val name = names.get(i)

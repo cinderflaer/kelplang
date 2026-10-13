@@ -26,7 +26,7 @@ pub enum Msg {
     Toggle(val id: i32)
 }
 
-pub fun initial().return: Model {
+pub fun initial() => Model {
     var rows: List<Row> = List.empty()
     rows.push(Row(id = 1, label = String.from_str("alpha"), done = false))
     rows.push(Row(id = 2, label = String.from_str("βήτα"), done = false))
@@ -35,7 +35,7 @@ pub fun initial().return: Model {
 }
 
 // A row's memo view: it sees only its deps (id, done, label), which is what makes skipping it sound.
-fun row_view(d: &core.Deps).return: List<core.Child<Msg>> {
+fun row_view(d: &core.Deps) => List<core.Child<Msg>> {
     val id = d.ints.get(0).to_i32()
     val done = d.ints.get(1) != 0
     val label = String.from_str(d.strs.get(0).as_str())
@@ -48,7 +48,7 @@ fun row_view(d: &core.Deps).return: List<core.Child<Msg>> {
     }
 }
 
-fun row_deps(r: &Row).return: core.Deps {
+fun row_deps(r: &Row) => core.Deps {
     var d = core.deps()
     d.push_int(r.id.to_i64())
     d.push_bool(r.done)
@@ -58,7 +58,7 @@ fun row_deps(r: &Row).return: core.Deps {
 
 // The view. The progress bar carries its animation only once `Start` was pressed, so the first thing
 // the backend sees of it is the moment the model changed. `toast` is a line that appears for 300 ms.
-pub fun view(m: Model).return: core.Node<Msg> {
+pub fun view(m: Model) => core.Node<Msg> {
     return core.column { k ->
         k.spacing(6)
         k.margin(8)
@@ -122,7 +122,7 @@ pub fun update(m: mut Model, msg: Msg) {
 
 // `subscriptions(state)`: the beat runs for as long as the program does; the toast's timeout exists
 // only while the toast is up, so it stops itself when `HideToast` clears the flag.
-pub fun subscriptions(m: Model).return: List<core.Sub<Msg>> {
+pub fun subscriptions(m: Model) => List<core.Sub<Msg>> {
     var out: List<core.Sub<Msg>> = List.empty()
     out.push(core.every(100, Msg.Beat))
     if m.toast {
@@ -136,7 +136,7 @@ pub fun subscriptions(m: Model).return: List<core.Sub<Msg>> {
 // are 2, 3 and 4.
 pub datac Step(val ms: u64, val post: i32)
 
-pub fun script().return: List<Step> {
+pub fun script() => List<Step> {
     var s: List<Step> = List.empty()
     s.push(Step(ms = 0, post = -1))
     s.push(Step(ms = 40, post = 0))

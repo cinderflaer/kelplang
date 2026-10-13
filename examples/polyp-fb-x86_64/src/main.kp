@@ -26,14 +26,14 @@ static mut USED: usize = 0
 
 // `align` is always a power of two (every type's alignment the compiler asks for is), so the
 // round-up is a divide and multiply rather than a bit mask: v1 has no bitwise operators.
-fun align_up(value: usize, align: usize).return: usize {
+fun align_up(value: usize, align: usize) => usize {
     return ((value + align - 1) / align) * align
 }
 
 // The project's allocator: a block of `ARENA`, aligned for the caller, or the null pointer when the
 // arena is full. `check_alloc` in the compiler turns that null into `kp_panic("out of memory")`, so
 // a failed allocation never dereferences null.
-fun alloc(size: usize, align: usize).return: Ptr<u8> {
+fun alloc(size: usize, align: usize) => Ptr<u8> {
     val out: Ptr<u8> = unsafe {
         val start: usize = align_up(USED, align)
         if start + size > ARENA_BYTES {

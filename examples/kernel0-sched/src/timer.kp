@@ -17,7 +17,7 @@ const MTIME: usize = 0x0200BFF8
 pub const TICK: u64 = 10000
 
 // The free-running counter the compare register is measured against.
-pub fun now().return: u64 {
+pub fun now() => u64 {
     unsafe {
         val p: Ptr<u64> = Ptr.from_addr(MTIME)
         p.read_volatile()

@@ -5,7 +5,7 @@ impl "std/str"
 impl "std/result"
 impl "std/mem"
 
-fun size_arg(default: i64).return: i64 {
+fun size_arg(default: i64) => i64 {
     if process.arg_count() < 2 {
         return default
     }

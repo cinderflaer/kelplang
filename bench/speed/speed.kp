@@ -12,7 +12,7 @@ const FLOAT_STEP: f64 = 0.00000001
 const FLOAT_THRESHOLD: f64 = 0.75
 
 // Branchy integer work: ~100 dependent steps per start value.
-fun collatz_total(n_end: i64).return: i64 {
+fun collatz_total(n_end: i64) => i64 {
     var total: i64 = 0
     var n: i64 = 1
     while n <= n_end {
@@ -34,7 +34,7 @@ fun collatz_total(n_end: i64).return: i64 {
 
 // Floating point: one division and one add per step. Returns the sum; the
 // caller counts the values above the threshold, which is what consumes them.
-fun float_sum(iters: i64, above: mut i64).return: f64 {
+fun float_sum(iters: i64, above: mut i64) => f64 {
     var x: f64 = 0.0
     var acc: f64 = 0.0
     var i: i64 = 0
@@ -53,9 +53,9 @@ fun float_sum(iters: i64, above: mut i64).return: f64 {
 }
 
 // Call-heavy integer work: one small function call per iteration.
-fun mix(a: i64, b: i64).return: i64 = (a * 31 + b % 97) % 1000003
+fun mix(a: i64, b: i64) => i64 = (a * 31 + b % 97) % 1000003
 
-fun call_chain(iters: i64).return: i64 {
+fun call_chain(iters: i64) => i64 {
     var a: i64 = 12345
     var i: i64 = 0
     while i < iters {
@@ -69,7 +69,7 @@ fun call_chain(iters: i64).return: i64 {
 // observable through a borrow. Without that side effect LLVM turns the
 // recursion into a loop, which would make this a repetition of `mix` instead
 // of a call-cost measurement. `calls` is also the operation count.
-fun fib(n: i64, calls: mut i64).return: i64 {
+fun fib(n: i64, calls: mut i64) => i64 {
     *calls = *calls + 1
     if n < 2 {
         return n

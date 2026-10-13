@@ -16,13 +16,13 @@ impl "deps/polyp/backends/soft/soft_backend"
 impl "deps/todo/app"
 impl "std/str"
 
-fun tree_of(t: move core.Tick<app.Msg>).return: core.Node<app.Msg> = when t {
+fun tree_of(t: move core.Tick<app.Msg>) => core.Node<app.Msg> = when t {
     Idle(x) -> x
     Changed(x) -> x
     Quit(x) -> x
 }
 
-fun step(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: move core.Node<app.Msg>, st: mut app.Model).return: core.Node<app.Msg> {
+fun step(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatform, tree: move core.Node<app.Msg>, st: mut app.Model) => core.Node<app.Msg> {
     return tree_of(soft_backend.frame(backend = b, platform = p, tree = tree, state = st, view = app.view, update = app.update))
 }
 
@@ -38,7 +38,7 @@ fun boot(b: mut soft_backend.SoftBackend, p: mut headless_platform.HeadlessPlatf
 }
 
 // A todo model with two rows, the second done, and "hi" typed in the entry.
-fun sample().return: app.Model {
+fun sample() => app.Model {
     var m = app.initial()
     app.update(m, app.Msg.Changed(text = String.from_str("alpha")))
     app.update(m, app.Msg.Add)
@@ -172,9 +172,9 @@ enum Dm {
 
 datac Ds(var goes: i32, var typed: i32)
 
-fun dis_changed(text: String).return: Dm = Dm.Typed
+fun dis_changed(text: String) => Dm = Dm.Typed
 
-fun dis_view(s: Ds).return: core.Node<Dm> {
+fun dis_view(s: Ds) => core.Node<Dm> {
     return core.column { k ->
         k.spacing(0)
         k.align(core.Align.Start)
@@ -201,7 +201,7 @@ fun dis_update(s: mut Ds, m: Dm) {
     }
 }
 
-fun dis_tree_of(t: move core.Tick<Dm>).return: core.Node<Dm> = when t {
+fun dis_tree_of(t: move core.Tick<Dm>) => core.Node<Dm> = when t {
     Idle(x) -> x
     Changed(x) -> x
     Quit(x) -> x

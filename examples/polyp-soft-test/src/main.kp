@@ -39,15 +39,15 @@ fun mut Tally.bad() {
     fails += 1
 }
 
-fun rng(seed: u64).return: Rng = Rng(s = seed)
+fun rng(seed: u64) => Rng = Rng(s = seed)
 
-fun mut Rng.next().return: u32 {
+fun mut Rng.next() => u32 {
     s = s * 6364136223846793005 + 1442695040888963407
     return ((s >> 33) & 0x7FFFFFFF).to_u32()
 }
 
 // `[lo, hi)`; `hi <= lo` answers `lo`, so a caller cannot ask for an empty range.
-fun mut Rng.range(lo: i32, hi: i32).return: i32 {
+fun mut Rng.range(lo: i32, hi: i32) => i32 {
     val span: i32 = hi - lo
     if span <= 0 {
         return lo
@@ -55,11 +55,11 @@ fun mut Rng.range(lo: i32, hi: i32).return: i32 {
     return lo + (self.next() % span.to_u32()).to_i32()
 }
 
-fun img_new().return: Img = Img(p = [0; AREA])
+fun img_new() => Img = Img(p = [0; AREA])
 
-fun grid_new().return: Grid = Grid(b = [0; AREA])
+fun grid_new() => Grid = Grid(b = [0; AREA])
 
-fun idx(x: i32, y: i32).return: usize = (y * CW.to_i32() + x).to_usize()
+fun idx(x: i32, y: i32) => usize = (y * CW.to_i32() + x).to_usize()
 
 fun fill_bg(img: mut Img, color: u32) {
     var i: usize = 0
@@ -81,7 +81,7 @@ fun random_bg(a: mut Img, b: mut Img, rng: mut Rng) {
     }
 }
 
-fun same(a: &Img, b: &Img).return: bool {
+fun same(a: &Img, b: &Img) => bool {
     var i: usize = 0
     while i < AREA {
         if a.p.get(i = i) != b.p.get(i = i) {
@@ -94,7 +94,7 @@ fun same(a: &Img, b: &Img).return: bool {
 
 // ---- independent geometry -------------------------------------------------
 
-fun ref_isec(a: fb.Rect, b: fb.Rect).return: fb.Rect {
+fun ref_isec(a: fb.Rect, b: fb.Rect) => fb.Rect {
     if a.is_empty() || b.is_empty() {
         return fb.empty_rect()
     }
@@ -120,11 +120,11 @@ fun ref_isec(a: fb.Rect, b: fb.Rect).return: fb.Rect {
     return fb.Rect(x = x0.to_i32(), y = y0.to_i32(), w = (x1 - x0).to_i32(), h = (y1 - y0).to_i32())
 }
 
-fun ref_clip(cl: fb.Rect, x: i32, y: i32, w: i32, h: i32).return: fb.Rect = ref_isec(cl, fb.Rect(x = x, y = y, w = w, h = h))
+fun ref_clip(cl: fb.Rect, x: i32, y: i32, w: i32, h: i32) => fb.Rect = ref_isec(cl, fb.Rect(x = x, y = y, w = w, h = h))
 
-fun in_canvas().return: fb.Rect = fb.Rect(x = 0, y = 0, w = CW.to_i32(), h = CH.to_i32())
+fun in_canvas() => fb.Rect = fb.Rect(x = 0, y = 0, w = CW.to_i32(), h = CH.to_i32())
 
-fun effective(cl: fb.Rect).return: fb.Rect = ref_isec(cl, in_canvas())
+fun effective(cl: fb.Rect) => fb.Rect = ref_isec(cl, in_canvas())
 
 fun ref_fill(
     img: mut Img,
@@ -134,7 +134,7 @@ fun ref_fill(
     w: i32,
     h: i32,
     color: u32,
-).return: usize {
+) => usize {
     val r: fb.Rect = ref_clip(cl, x, y, w, h)
     if r.is_empty() {
         return 0
@@ -153,7 +153,7 @@ fun ref_fill(
     return count
 }
 
-fun ref_clamp_radius(radius: i32, w: i32, h: i32).return: i32 {
+fun ref_clamp_radius(radius: i32, w: i32, h: i32) => i32 {
     var r: i32 = radius
     if r < 0 {
         r = 0
@@ -170,7 +170,7 @@ fun ref_clamp_radius(radius: i32, w: i32, h: i32).return: i32 {
 }
 
 // The exact integer predicate, written per pixel and with no span arithmetic.
-fun in_round(i: i32, j: i32, w: i32, h: i32, r: i32).return: bool {
+fun in_round(i: i32, j: i32, w: i32, h: i32, r: i32) => bool {
     if i < 0 || j < 0 || i >= w || j >= h {
         return false
     }
@@ -199,7 +199,7 @@ fun ref_round(
     h: i32,
     radius: i32,
     color: u32,
-).return: usize {
+) => usize {
     if w <= 0 || h <= 0 {
         return 0
     }
@@ -230,7 +230,7 @@ fun ref_stroke_round(
     radius: i32,
     thickness: i32,
     color: u32,
-).return: usize {
+) => usize {
     if w <= 0 || h <= 0 || thickness <= 0 {
         return 0
     }
@@ -263,7 +263,7 @@ fun ref_stroke_round(
     return count
 }
 
-fun ref_blend(dst: u32, src: u32).return: u32 {
+fun ref_blend(dst: u32, src: u32) => u32 {
     val a: u64 = ((src >> 24) & 0xFF).to_u64()
     var out: u32 = 0
     var shift: u32 = 24
@@ -281,7 +281,7 @@ fun ref_blend(dst: u32, src: u32).return: u32 {
     return out
 }
 
-fun ref_blend_pixel(img: mut Img, cl: fb.Rect, x: i32, y: i32, color: u32).return: usize {
+fun ref_blend_pixel(img: mut Img, cl: fb.Rect, x: i32, y: i32, color: u32) => usize {
     if !fb.contains_point(cl, x, y) {
         return 0
     }
@@ -299,7 +299,7 @@ fun ref_blit(
     h: i32,
     mask: [u8; AREA],
     color: u32,
-).return: usize {
+) => usize {
     if w <= 0 || h <= 0 {
         return 0
     }
@@ -334,7 +334,7 @@ fun ref_line(
     x1: i32,
     y1: i32,
     color: u32,
-).return: usize {
+) => usize {
     var dx: i64 = x1.to_i64() - x0.to_i64()
     var sx: i32 = 1
     if dx < 0 {
@@ -391,7 +391,7 @@ fun ref_text(
     s: &str,
     scale: i32,
     color: u32,
-).return: usize {
+) => usize {
     val n: usize = str.len(s)
     var pen: i32 = x
     var count: usize = 0
@@ -431,7 +431,7 @@ fun ref_text(
 
 // ---- the seeded checks ----------------------------------------------------
 
-fun random_clip(rng: mut Rng).return: fb.Rect {
+fun random_clip(rng: mut Rng) => fb.Rect {
     val x: i32 = rng.range(-6, CW.to_i32() + 6)
     val y: i32 = rng.range(-6, CH.to_i32() + 6)
     val w: i32 = rng.range(-2, CW.to_i32() + 8)
@@ -439,7 +439,7 @@ fun random_clip(rng: mut Rng).return: fb.Rect {
     return ref_isec(fb.Rect(x = x, y = y, w = w, h = h), in_canvas())
 }
 
-fun random_stack(rng: mut Rng).return: (draw.ClipStack, fb.Rect) {
+fun random_stack(rng: mut Rng) => (draw.ClipStack, fb.Rect) {
     var eff: fb.Rect = random_clip(rng)
     var s: draw.ClipStack = draw.clip(eff)
     val extra: i32 = rng.range(0, 3)
@@ -458,9 +458,9 @@ fun random_stack(rng: mut Rng).return: (draw.ClipStack, fb.Rect) {
     return (s, eff)
 }
 
-fun random_color(rng: mut Rng).return: u32 = rng.next() | 0xFF000000
+fun random_color(rng: mut Rng) => u32 = rng.next() | 0xFF000000
 
-fun target(img: &Img).return: fb.Fb {
+fun target(img: &Img) => fb.Fb {
     val base: Ptr<[u32; AREA]> = Ptr.from_ref(img.p)
     return fb.new(
         pixels = base.cast<u32>(),
@@ -529,7 +529,7 @@ fun ref_stroke_rect(
     h: i32,
     thickness: i32,
     color: u32,
-).return: usize {
+) => usize {
     if w <= 0 || h <= 0 || thickness <= 0 {
         return 0
     }
@@ -612,7 +612,7 @@ fun check_stroke_round(t: mut Tally, rng: mut Rng, iters: i32) {
 
 // Non-empty pixels outside the shape's bounding rectangle, for the "never writes outside its
 // bounding rect" property. `x`/`y`/`w`/`h` may be off-canvas or negative.
-fun outside_of(img: &Img, x: i32, y: i32, w: i32, h: i32).return: i32 {
+fun outside_of(img: &Img, x: i32, y: i32, w: i32, h: i32) => i32 {
     var bad: i32 = 0
     var j: i32 = 0
     while j < CH.to_i32() {
@@ -763,7 +763,7 @@ fun check_clipstack(t: mut Tally, rng: mut Rng, iters: i32) {
 }
 
 // The list never exceeds 16 entries, and every pixel that was ever added is covered by it.
-fun check_damage(rng: mut Rng, adds: i32).return: (i32, i32, i32) {
+fun check_damage(rng: mut Rng, adds: i32) => (i32, i32, i32) {
     var d: damage.Damage = damage.new()
     var grid: [u8; AREA] = [0; AREA]
     var max_len: i32 = 0
@@ -825,7 +825,7 @@ fun check_damage(rng: mut Rng, adds: i32).return: (i32, i32, i32) {
 // A deterministic full-list case: 16 isolated blocks fill the list, then a 17th that touches
 // none of them forces the least-waste merge instead of an append, so the count stays 16 and the
 // union still covers everything added.
-fun check_damage_cap().return: (i32, bool) {
+fun check_damage_cap() => (i32, bool) {
     var d: damage.Damage = damage.new()
     var grid = grid_new()
     var n: i32 = 0
@@ -970,7 +970,7 @@ fun check_edges(t: mut Tally) {
     }
 }
 
-fun scene_shapes().return: u64 {
+fun scene_shapes() => u64 {
     var buf = img_new()
     fill_bg(buf, 0xFF101018)
     val f: fb.Fb = target(buf)
@@ -985,7 +985,7 @@ fun scene_shapes().return: u64 {
     return fb.checksum(f)
 }
 
-fun scene_text().return: u64 {
+fun scene_text() => u64 {
     var buf = img_new()
     fill_bg(buf, 0xFF202028)
     val f: fb.Fb = target(buf)
@@ -996,7 +996,7 @@ fun scene_text().return: u64 {
     return fb.checksum(f)
 }
 
-fun scene_blend().return: u64 {
+fun scene_blend() => u64 {
     var buf = img_new()
     fill_bg(buf, 0xFF000000)
     val f: fb.Fb = target(buf)
@@ -1173,7 +1173,7 @@ fun run_dump() {
     print("dumped")
 }
 
-fun mode().return: i32 {
+fun mode() => i32 {
     val m = env.get("POLYP_SOFT_TEST")
     if str.eq(m.as_str(), "scale") {
         return 1

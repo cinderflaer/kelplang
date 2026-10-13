@@ -9,7 +9,7 @@
 // driver has, because a driver that talks to one device should not have to
 // import another's register window.
 
-pub fun inb(port: u16).return: u8 {
+pub fun inb(port: u16) => u8 {
     val v: u8 = unsafe {
         asm(
             "mov dx, {1}\nin al, dx\nmov {0}, al",

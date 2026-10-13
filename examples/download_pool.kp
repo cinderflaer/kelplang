@@ -41,7 +41,7 @@ const WORKER_COUNT: usize = 4
 datac Job(val host: String, val port: u16, val paths: List<String>)
 datac Outcome(val ok: usize, val failed: usize, val bytes: u64)
 
-fun build_url(host: &str, port: u16, path: &str).return: String {
+fun build_url(host: &str, port: u16, path: &str) => String {
     var url = String.empty()
     url.push_str("http://")
     url.push_str(host)
@@ -56,7 +56,7 @@ fun build_url(host: &str, port: u16, path: &str).return: String {
 // share, sequentially, the pool's keep-alive is what makes a sequential loop
 // here as cheap as it is, since only the first request per worker pays for a
 // handshake.
-fun fetch_all(worker: usize).return: Outcome {
+fun fetch_all(worker: usize) => Outcome {
     val job = job_for(worker)
     var pool = http.pool(job.host.as_str(), job.port)
     var ok: usize = 0
@@ -85,7 +85,7 @@ fun fetch_all(worker: usize).return: Outcome {
 }
 
 // The job of one worker, read from the command line: the host, the port and that worker's share.
-fun job_for(worker: usize).return: Job {
+fun job_for(worker: usize) => Job {
     val args = process.args()
     var paths: List<String> = List.empty()
     var i: usize = 3
@@ -103,7 +103,7 @@ fun job_for(worker: usize).return: Job {
 // Every `worker`th path, starting at `worker`: a round-robin split decided
 // entirely from the index, so it costs no coordination between the workers
 // that will each get one slice.
-fun slice_for(paths: &List<String>, worker: usize).return: List<String> {
+fun slice_for(paths: &List<String>, worker: usize) => List<String> {
     var out: List<String> = List.empty()
     var i: usize = worker
     while i < paths.len() {
