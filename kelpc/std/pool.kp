@@ -46,7 +46,12 @@ fun PoolShared.dup() => PoolShared {
     return PoolShared(meta = self.meta.share(), jobs = self.jobs.share(), work = self.work.share(), done = self.done.share())
 }
 
-datac Pool(val shared: PoolShared)
+/// A thread pool. Build one with `new`, queue work with `spawn`, and wait for it
+/// with `join`. Dropping the pool joins it.
+datac Pool(
+    /// The state shared with the pool's workers.
+    val shared: PoolShared
+)
 
 fun run_job(job: move Job) {
     val f = job.run
@@ -92,6 +97,9 @@ fun pool_worker(sh: move PoolShared) {
     sh.done.notify_all()
 }
 
+/// Starts a pool of `workers` threads. The workers run until `join`.
+///
+/// Panics: if `workers` is less than 1.
 // Start a pool of `workers` threads (at least one).
 fun new(workers: i32) => Pool {
     if workers < 1 {
@@ -108,7 +116,9 @@ fun new(workers: i32) => Pool {
     return Pool(shared = shared)
 }
 
-// Queue `job`. It runs on some worker in FIFO order.
+/// Queues `job`. It runs on some worker, in FIFO order.
+///
+/// Panics: if the pool has been joined.
 fun Pool.spawn(job: move closure()) {
     val staged: Mutex<List<Job>> = Mutex.new(List.of(Job(run = job)))
     val open = self.shared.meta.lock { s ->
@@ -129,19 +139,21 @@ fun Pool.spawn(job: move closure()) {
     self.shared.work.notify_one()
 }
 
-// Stop taking work, run everything still queued, and wait for every worker to
-// exit. Safe to call twice; `Drop` calls it.
+/// Stops taking work, runs everything still queued, and waits for every worker to
+/// exit. Safe to call twice; `Drop` calls it.
 fun Pool.join() {
     self.shared.meta.lock { s -> s.stop = true }
     self.shared.work.notify_all()
     self.shared.meta.wait_while(&self.shared.done, fun(s: &PoolMeta) => bool = s.alive > 0) { s -> 0 }
 }
 
+/// How many jobs have panicked so far. A panicking job does not stop its worker.
 // How many jobs have panicked so far.
 fun Pool.panicked() => i32 {
     return self.shared.meta.lock { s -> s.panicked }
 }
 
+/// Joins the pool, so dropping it runs every queued job first.
 fun mut Pool.drop() {
     self.join()
 }
