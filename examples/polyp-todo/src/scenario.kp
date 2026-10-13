@@ -22,7 +22,7 @@ const DIGITS: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 10
 // A `u64` as `0x` plus sixteen lowercase hex digits, fixed width so every step line is the same
 // shape and a human can line them up.
 fun hex64(value: u64) => String {
-    var out: String = String.from_str("0x")
+    var out: String = "0x"
     var i: i32 = 15
     while i >= 0 {
         val nibble = ((value >> (i * 4).to_u64()) & 15).to_usize()

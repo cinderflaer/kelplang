@@ -1297,13 +1297,23 @@ mod tests {
         ]
     }
 
+    /// Collects `.kp` files under `dir`. Symbolic links are skipped, because
+    /// every link in the corpus points at a real file or directory that the
+    /// walk reaches on its own, and following a link can loop (a `deps/v4`
+    /// link back into its own package never terminates).
     fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
         for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
             let path = entry.path();
-            if path.is_dir() {
+            if file_type.is_dir() {
                 collect(&path, out);
             } else if path.extension().and_then(|s| s.to_str()) == Some("kp") {
                 out.push(path);

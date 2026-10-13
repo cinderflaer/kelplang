@@ -83,7 +83,7 @@ section(".text.boot") fun kmain() {
     // text comes from the display itself, because this project does not carry `diag` (its snapshot
     // is a `pd`, which a freestanding build refuses).
     core.publish(backend)
-    var entry: String = String.from_str("")
+    var entry: String = ""
     val ids = backend.entry_ids()
     if ids.len() > 0 {
         entry = backend.entry_text(ids.get(0))

@@ -229,7 +229,7 @@ fun run_rows() {
     same("first_pixels", m, p)
     reset(m)
     // One row's title changes.
-    val t = String.from_str("renamed")
+    val t: String = "renamed"
     st.items.set(7, Item(id = 7, title = t, done = false))
     val t2 = view_memo(st)
     val p2 = view_plain(st)
@@ -258,8 +258,8 @@ fun run_deps() {
     first_plain(p, &p1)
     reset(m)
     // done flips on two rows: exactly those two are rebuilt.
-    st.items.set(3, Item(id = 3, title = String.from_str("row 3"), done = true))
-    st.items.set(11, Item(id = 11, title = String.from_str("row 11"), done = true))
+    st.items.set(3, Item(id = 3, title = "row 3", done = true))
+    st.items.set(11, Item(id = 11, title = "row 11", done = true))
     var t2 = view_memo(st)
     var p2 = view_plain(st)
     next_memo(m, &t1, &t2)
@@ -268,7 +268,7 @@ fun run_deps() {
     same("two_flips_pixels", m, p)
     reset(m)
     // The same row set back to its old value is a change again (deps differ from the last frame's).
-    st.items.set(3, Item(id = 3, title = String.from_str("row 3"), done = false))
+    st.items.set(3, Item(id = 3, title = "row 3", done = false))
     val t3 = view_memo(st)
     val p3 = view_plain(st)
     next_memo(m, &t2, &t3)
@@ -407,7 +407,7 @@ fun run_nested() {
     same("first_pixels", m, p)
     reset(m)
     // done flips: the outer memo of that row misses, its inner (same title) hits.
-    st.items.set(2, Item(id = 2, title = String.from_str("row 2"), done = true))
+    st.items.set(2, Item(id = 2, title = "row 2", done = true))
     val t2 = view_nested(st)
     val p2 = view_nested_plain(st)
     next_memo(m, &t1, &t2)
@@ -416,7 +416,7 @@ fun run_nested() {
     same("flip_pixels", m, p)
     reset(m)
     // The title changes: both levels miss.
-    st.items.set(2, Item(id = 2, title = String.from_str("two"), done = true))
+    st.items.set(2, Item(id = 2, title = "two", done = true))
     val t3 = view_nested(st)
     val p3 = view_nested_plain(st)
     next_memo(m, &t2, &t3)
@@ -478,7 +478,7 @@ fun run_nostore() {
     first_plain(m, &t1)
     first_plain(p, &p1)
     same("first_pixels", m, p)
-    st.items.set(9, Item(id = 9, title = String.from_str("changed"), done = true))
+    st.items.set(9, Item(id = 9, title = "changed", done = true))
     val t2 = view_memo(st)
     val p2 = view_plain(st)
     next_plain(m, &t1, &t2)

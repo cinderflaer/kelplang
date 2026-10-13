@@ -318,7 +318,7 @@ fun kind_name(kind: i32) => str {
 fun append(s: &String, t: str) => String = str.concat(s.as_str(), t)
 
 fun indent(level: i32) => String {
-    var out = String.from_str("")
+    var out: String = ""
     var i: i32 = 0
     while i < level {
         out = append(out, "  ")
@@ -375,7 +375,7 @@ fun render(kids: &List<HNode>, level: i32, out: mut List<String>) {
 pub fun dump(be: &Headless) => String {
     var lines: List<String> = List.empty()
     render(be.root, 0, lines)
-    var out = String.from_str("")
+    var out: String = ""
     var i: usize = 0
     while i < lines.len() {
         out = append(out, lines.get(i).as_str())
@@ -520,11 +520,11 @@ impl core.Backend for Headless {
             return String.from_str(root.get(0).props.text.as_str())
         }
         if root.len() == 0 {
-            return String.from_str("")
+            return ""
         }
         return when find_text(root.get(0).kids, id) {
             Some(t) -> t
-            None -> String.from_str("")
+            None -> ""
         }
     }
 
@@ -553,7 +553,7 @@ fun html_escape(s: &str) => String {
 }
 
 fun html_element(tag: str, attrs: str, body: &str) => String {
-    var out = String.from_str("<")
+    var out: String = "<"
     out = append(out, tag)
     out = append(out, attrs)
     out = append(out, ">")
@@ -565,7 +565,7 @@ fun html_element(tag: str, attrs: str, body: &str) => String {
 }
 
 fun html_of(n: &HNode) => String {
-    var body = String.from_str("")
+    var body: String = ""
     var i: usize = 0
     while i < n.kids.len() {
         val child = html_of(n.kids.get(i))
@@ -611,14 +611,14 @@ fun html_of(n: &HNode) => String {
 
 // The first frame as a complete HTML document. The style is inline so the file is self-contained.
 pub fun html(be: &Headless) => String {
-    var body = String.from_str("")
+    var body: String = ""
     var i: usize = 0
     while i < be.root.len() {
         val top = html_of(be.root.get(i))
         body = append(body, top.as_str())
         i += 1
     }
-    var doc = String.from_str("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+    var doc: String = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
     doc = append(doc, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Polyp</title>\n")
     doc = append(doc, "<style>\nbody { margin: 16px; font-family: sans-serif; }\n")
     doc = append(doc, ".polyp-column { display: flex; flex-direction: column; align-items: flex-start; }\n")

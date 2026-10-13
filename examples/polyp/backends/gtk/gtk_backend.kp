@@ -757,7 +757,7 @@ impl core.Backend for GtkBackend {
     fun Self.entry_text(id: i32) => String {
         val w = widget_of(self, id)
         if gtk.is_null_widget(w) {
-            return String.from_str("")
+            return ""
         }
         return String.from_str(gtk.gtk_editable_get_text(w))
     }

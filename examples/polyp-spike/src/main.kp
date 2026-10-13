@@ -17,7 +17,7 @@ fun main() {
     // An owned capture, so the closure really carries an environment: the
     // native side owns it from the call below until GTK runs the destroy
     // notify, which is the closure's drop.
-    val tag = String.from_str("polyp-spike: button clicked")
+    val tag: String = "polyp-spike: button clicked"
     val on_click = fun (b: gtk.Widget) {
         print(str.len(tag.as_str()))
     }

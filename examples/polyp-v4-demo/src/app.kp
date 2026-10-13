@@ -28,9 +28,9 @@ pub enum Msg {
 
 pub fun initial() => Model {
     var rows: List<Row> = List.empty()
-    rows.push(Row(id = 1, label = String.from_str("alpha"), done = false))
-    rows.push(Row(id = 2, label = String.from_str("βήτα"), done = false))
-    rows.push(Row(id = 3, label = String.from_str("Привет €"), done = false))
+    rows.push(Row(id = 1, label = "alpha", done = false))
+    rows.push(Row(id = 2, label = "βήτα", done = false))
+    rows.push(Row(id = 3, label = "Привет €", done = false))
     return Model(ticks = 0, started = false, toast = false, clicks = 0, rows = rows)
 }
 

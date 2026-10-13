@@ -17,7 +17,7 @@ impl "std/str"
 const DIGITS: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102]
 
 fun hex64(value: u64) => String {
-    var out: String = String.from_str("0x")
+    var out: String = "0x"
     var i: i32 = 15
     while i >= 0 {
         val nibble = ((value >> (i * 4).to_u64()) & 15).to_usize()
@@ -42,7 +42,7 @@ pub fun step_line(step: i32, t_ms: u64, checksum: u64, dirty: i32, wants: bool, 
     if wants {
         w = "1"
     }
-    var line = String.from_str("step ")
+    var line: String = "step "
     line.push_str(a.as_str())
     line.push_str(" t ")
     line.push_str(b.as_str())
@@ -114,13 +114,13 @@ fun emit_a11y(backend: mut soft_backend.SoftBackend, emit: fun (str)) {
     emit("-- a11y --")
     val tree = backend.a11y_tree()
     val text = a11y.dump(&tree)
-    var line = String.from_str("")
+    var line: String = ""
     var i: usize = 0
     while i < text.len() {
         val b = str.byte(text.as_str(), i)
         if b == 10 {
             emit(line.as_str())
-            line = String.from_str("")
+            line = ""
         } else {
             line.push(b)
         }

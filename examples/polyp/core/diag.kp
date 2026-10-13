@@ -27,7 +27,7 @@ pub fun capture<B: core.Backend>(backend: &B) {
 // such entry. A diagnostic: it reads what the display showed, not the model.
 pub fun entry_text(index: i32) => String {
     if index < 0 || index.to_usize() >= entry_texts.len() {
-        return String.from_str("")
+        return ""
     }
     val text = entry_texts.get(index.to_usize())
     return String.from_str(text.as_str())

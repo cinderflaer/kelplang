@@ -30,7 +30,7 @@ empty on release.
 
 ## changed
 
-- The return type is written `=>`: `fun f(a: i32) => i32`. The retired `.return:` marker still compiles and means the same, and `->` is an alias of `=>`. The `.R:` marker is removed, so `.R:` is now a parse error that names `=>`. Every example, the standard library, the runtime sources, the wiki and the messages the compiler prints now write `=>`.
+- The return type is written `=>`: `fun f(a: i32) => i32`. The retired `=> ` marker still compiles and means the same, and `->` is an alias of `=>`. The `=> ` marker is removed, so `=> ` is now a parse error that names `=>`. Every example, the standard library, the runtime sources, the wiki and the messages the compiler prints now write `=>`.
 - `=>` is accepted as the same arrow as `->` in `when` arms and in a trailing block's parameter header (`{ x => ... }`). Both spellings are one token, so no existing program changes; the arrow's error messages now name both.
 - The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named. Every hosted build links the tracing collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (files, sockets, processes, threads, locks, channel ends, pools) still drop at scope end. Delete the mode line; `heap_max` is read in every hosted build.
 - `kelpc` builds the collector archive itself from `kelpc/gc`, so a hosted build needs no `KELP_GC_LIB`. The variable, when set, names a different archive to link.
@@ -59,6 +59,7 @@ empty on release.
 - The collector's root table
 - The collector clears
 - A hosted program's collector starts with 10 percent headroom. Its first collection starts at the midpoint of the start guesses (1 and 4 MiB) plus the headroom, not at 8 MiB, and later collections follow the two latest live sizes (the default `two-size` trigger) plus the headroom. A program with a small live set collects more often than before. `[tidepool]` in `coral.toml` changes the guesses, the headroom and the trigger rule.
+- The language reference says `kelpc` emits LLVM IR, not C, and no longer says the binary is written next to a `.c` file.
 
 - A misspelled or misplaced Tidepool section is refused by name: `[target.tidepool]`, `[[tidepool]]`, `[tidpool]` and `[tidepool.x]` each stop the build, and a `[tidepool]` key in a freestanding build is refused, where before the section was skipped without a word. An out-of-range `headroom_pct` (above 1000), a duplicate key and a `start_high_mib` above `heap_max` are refused by name.
 
@@ -78,6 +79,10 @@ empty on release.
 - `--sanitize=` and `[build] sanitize` are refused: the sanitizers were built by the C backend, so no build can be sanitized now.
 - The TLS and network externs (the `std/tls` handshake, server context, accept and ALPN calls, and `std/net` listen) no longer need a C compiler: they are part of the Rust runtime.
 - The retired `--backend`, `KELPC_BACKEND` and `KELPC_ORACLE` refusals and the `--sanitize=` refusal no longer name the removed C backend or its date. The README and the code comments that described the removed backend are rewritten to say what the build does now.
+- A function whose body ends in an `if` with no `else` now says to end the block with `return <value>`.
+- `kelpc lint` warns on `== true` and on `.len() == 0`, which read better as the condition alone and `.is_empty()`. The warning does not fail the build.
+- A string literal is accepted where a `String` is expected; the examples write it that way, without `String.from_str`.
+- The missing-doc lint for the standard library (`kelpc lint` on `kelpc/std`) is deferred until the std docs exist; it is not in this release.
 
 ## stdlib
 
@@ -95,6 +100,7 @@ empty on release.
 - The Polyp GTK backend reads a scrolled area's content box through the viewport GTK puts around it, so the todo example no longer prints GTK CRITICAL warnings; a keyed reorder emits the moves that reach the new order (old [a,b,c,d] to new [c,b,d,a] used to end [c,d,b,a]); a mount that disagrees with the view stops the program instead of writing into nothing; and `examples/polyp-todo/smoke.sh` fails on any CRITICAL line.
 - A hosted TLS server no longer crashes when a request string is released.
 - A `Map` whose value is an enum is refused when the checker reads the `Map` type, not later in codegen, and the refusal names the type and the `List` to use instead.
+- The `kelpc fmt` corpus test skips symbolic links when it walks the examples, so the `deps/v4` link that leads back into its own package no longer loops until the kernel's symlink limit panics the test.
 
 ## limits
 
