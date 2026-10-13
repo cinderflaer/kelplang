@@ -86,6 +86,7 @@ fn every_prototype_name_is_defined_in_the_archive() {
             library_dirs: &[],
             pkg_config_flags: &[],
             tls: false,
+            strip: false,
             link_libs: &[],
         },
     );

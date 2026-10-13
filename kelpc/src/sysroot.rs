@@ -259,6 +259,9 @@ pub struct HostedLink<'a> {
     pub pkg_config_flags: &'a [String],
     pub tls: bool,
     pub link_libs: &'a [String],
+    /// Strip the output's symbol table and debug sections (`ld.lld -s`), for
+    /// `[build] obfuscate = "names"`. `false` leaves the link line as it was.
+    pub strip: bool,
 }
 
 /// The argv for `ld.lld` (the program name is not included). Mirrors the gcc
@@ -277,6 +280,9 @@ pub fn hosted_link_argv(sys: &Sysroot, link: &HostedLink) -> Vec<OsString> {
     push(&mut a, "-m");
     push(&mut a, "elf_x86_64");
     push(&mut a, "-pie");
+    if link.strip {
+        push(&mut a, "-s");
+    }
     push(&mut a, "--eh-frame-hdr");
     push(&mut a, "--dynamic-linker");
     a.push(sys.ld_linux.as_os_str().to_owned());
@@ -574,6 +580,38 @@ mod tests {
     }
 
     #[test]
+    fn sysroot_hosted_argv_strips_only_when_asked() {
+        let sys = sample_sysroot(false);
+        let objects = vec![PathBuf::from("/tmp/u0.o")];
+        let libs: Vec<String> = vec![];
+        let dirs: Vec<String> = vec![];
+        let pkg: Vec<String> = vec![];
+        let argv_for = |strip: bool| {
+            let link = HostedLink {
+                out: Path::new("/tmp/hello"),
+                objects: &objects,
+                runtime_obj: Path::new("/tmp/rt.o"),
+                externs_obj: None,
+                gc_archive: None,
+                library_dirs: &dirs,
+                pkg_config_flags: &pkg,
+                tls: false,
+                strip,
+                link_libs: &libs,
+            };
+            strings(&hosted_link_argv(&sys, &link))
+        };
+        let plain = argv_for(false);
+        let stripped = argv_for(true);
+        assert!(!plain.iter().any(|a| a == "-s"), "{plain:?}");
+        assert!(stripped.iter().any(|a| a == "-s"), "{stripped:?}");
+        // The stripped link is the plain one with exactly one extra flag.
+        let mut without: Vec<String> = stripped.clone();
+        without.retain(|a| a != "-s");
+        assert_eq!(without, plain);
+    }
+
+    #[test]
     fn sysroot_hosted_argv_has_the_pie_crt_order_and_no_optimisation_flag() {
         let sys = sample_sysroot(false);
         let objects = vec![PathBuf::from("/tmp/u0.o")];
@@ -589,6 +627,7 @@ mod tests {
             library_dirs: &dirs,
             pkg_config_flags: &pkg,
             tls: false,
+            strip: false,
             link_libs: &libs,
         };
         let argv = strings(&hosted_link_argv(&sys, &link));
@@ -625,6 +664,7 @@ mod tests {
             library_dirs: &dirs,
             pkg_config_flags: &pkg,
             tls: true,
+            strip: false,
             link_libs: &libs,
         };
         let argv = strings(&hosted_link_argv(&sys, &link));
@@ -661,6 +701,7 @@ mod tests {
             library_dirs: &dirs,
             pkg_config_flags: &pkg,
             tls: false,
+            strip: false,
             link_libs: &libs,
         };
         let argv = strings(&hosted_link_argv(&sys, &link));
@@ -697,6 +738,7 @@ mod tests {
             library_dirs: &dirs,
             pkg_config_flags: &pkg,
             tls: false,
+            strip: false,
             link_libs: &libs,
         };
         let argv = strings(&hosted_link_argv(&sys, &link));

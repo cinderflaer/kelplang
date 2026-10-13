@@ -3333,6 +3333,7 @@ mod tests {
             &[],
             &[],
             false,
+            false,
         )
         .unwrap_or_else(|e| {
             panic!("ld.lld failed linking '{}': {}", object.display(), e.message)

@@ -174,6 +174,7 @@ fn bug_vn4tr_alloc_raw_returns_through_the_hidden_pointer() {
             library_dirs: &[],
             pkg_config_flags: &[],
             tls: false,
+            strip: false,
             link_libs: &[],
         },
     );

@@ -681,6 +681,7 @@ mod tests {
             None,
             Some(&managed),
             false,
+            false,
             &mut crate::timings::Timings::new(),
         )
         .expect("managed build");

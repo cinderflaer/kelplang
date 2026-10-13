@@ -78,6 +78,7 @@ pub fn link_llvm_object(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     tls: bool,
+    strip: bool,
 ) -> Result<(), CompileError> {
     link_llvm_objects(
         std::slice::from_ref(&object_path.to_path_buf()),
@@ -88,6 +89,7 @@ pub fn link_llvm_object(
         library_dirs,
         pkg_config_flags,
         tls,
+        strip,
     )
 }
 
@@ -110,6 +112,7 @@ pub fn link_managed_object(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     tls: bool,
+    strip: bool,
 ) -> Result<(), CompileError> {
     let mut libs = link_libs.to_vec();
     libs.push("dl".to_string());
@@ -123,6 +126,7 @@ pub fn link_managed_object(
         library_dirs,
         pkg_config_flags,
         tls,
+        strip,
     )
 }
 
@@ -168,6 +172,7 @@ pub fn link_llvm_objects(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     tls: bool,
+    strip: bool,
 ) -> Result<(), CompileError> {
     link_llvm_objects_with_archive(
         objects,
@@ -179,6 +184,7 @@ pub fn link_llvm_objects(
         library_dirs,
         pkg_config_flags,
         tls,
+        strip,
     )
 }
 
@@ -194,6 +200,7 @@ fn link_llvm_objects_with_archive(
     library_dirs: &[String],
     pkg_config_flags: &[String],
     tls: bool,
+    strip: bool,
 ) -> Result<(), CompileError> {
     // Found before anything is written, so a missing `ld.lld` leaves no temp file.
     let sys = crate::sysroot::discover_here().map_err(|message| CompileError { message })?;
@@ -228,6 +235,7 @@ fn link_llvm_objects_with_archive(
             library_dirs,
             pkg_config_flags,
             tls,
+            strip,
             link_libs,
         },
     );

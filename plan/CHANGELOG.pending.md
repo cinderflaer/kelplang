@@ -26,6 +26,7 @@ empty on release.
 - `kelpc doc --format json` writes the documentation as JSON: declarations, spans, imports, trait impls and builtin members.
 - `kelpc stdlib --json --dir <dir>` writes the shipped std sources to `<dir>` and prints the module list with a SHA-256 per file as JSON.
 - `[tidepool]` in `coral.toml` sets the hosted collector's first-clearing guesses (`start_low_mib`, `start_high_mib`), the headroom percent (`headroom_pct`) and the trigger rule (`trigger_rule = "two-size"`, `"last-size"` or `"gogc-style"`, default `"two-size"`). A project that sets `[tidepool]` needs the release that reads it, which the release notes name as the minimum.
+- `[build] obfuscate = "names"` ("off" by default) keeps a hosted build's IR and objects in a temporary directory and links the binary with `ld.lld -s`, which drops its symbol table and debug sections. Names mode is not security: a backtrace shows no function names and the binary has no line information. A freestanding project that sets it is refused by name.
 
 ## changed
 

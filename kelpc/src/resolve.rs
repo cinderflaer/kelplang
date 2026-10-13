@@ -142,6 +142,17 @@ pub struct Project {
     /// `coral.toml`'s `[build] emit = "binary"|"html"`: what `kelpc build`
     /// leaves behind. `Binary` is the default.
     emit: Emit,
+    /// `coral.toml`'s `[build] obfuscate = "off"|"names"` (obfuscation step 1).
+    obfuscate: Obfuscate,
+}
+
+/// What `[build] obfuscate` asks for. `Names` keeps the intermediate IR and
+/// objects out of the output directory and strips the binary's symbol and
+/// debug sections at link time. It is not security.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Obfuscate {
+    Off,
+    Names,
 }
 
 /// What `kelpc build` writes for a project (`[build] emit`). `Html` builds the
@@ -163,6 +174,11 @@ impl Project {
     /// The manifest's `[build] emit`, `Binary` when it names none.
     pub fn emit(&self) -> Emit {
         self.emit
+    }
+
+    /// The manifest's `[build] obfuscate`, `Off` when it names none.
+    pub fn obfuscate(&self) -> Obfuscate {
+        self.obfuscate
     }
 
     /// The native library and symbol allowlist a `[extern."<module id>"]`
@@ -568,6 +584,7 @@ pub fn load(
         manifest_incremental,
         manifest_sanitize,
         manifest_emit,
+        manifest_obfuscate,
         manifest_alias,
         manifest_alias_source,
         manifest_dependencies,
@@ -628,6 +645,7 @@ pub fn load(
                 manifest.incremental,
                 manifest.sanitize,
                 manifest.emit,
+                manifest.obfuscate,
                 manifest.alias,
                 manifest.alias_source,
                 manifest.dependencies,
@@ -664,6 +682,7 @@ pub fn load(
                         manifest.incremental,
                         manifest.sanitize,
                         manifest.emit,
+                        manifest.obfuscate,
                         manifest.alias,
                         manifest.alias_source,
                         manifest.dependencies,
@@ -688,6 +707,7 @@ pub fn load(
                         false,
                         None,
                         Emit::Binary,
+                        Obfuscate::Off,
                         Vec::new(),
                         None,
                         Vec::new(),
@@ -1325,6 +1345,7 @@ pub fn load(
         incremental: manifest_incremental,
         sanitize: manifest_sanitize,
         emit: manifest_emit,
+        obfuscate: manifest_obfuscate,
         dependencies: manifest_dependencies,
         grants: loader
             .grants
@@ -1959,6 +1980,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         incremental: false,
         sanitize: None,
         emit: Emit::Binary,
+        obfuscate: Obfuscate::Off,
         emit_entry: None,
         alias: Vec::new(),
         alias_source: None,
@@ -2546,6 +2568,8 @@ struct Manifest {
     sanitize: Option<crate::driver::Sanitizer>,
     /// `[build] emit = "binary"|"html"`.
     emit: Emit,
+    /// `[build] obfuscate = "off"|"names"`, `Off` when absent.
+    obfuscate: Obfuscate,
     /// `[build] emit_entry = "<file under src/>"`: the entry compiled when `emit`
     /// is `Html`. Required for `Html`, ignored for `Binary`.
     emit_entry: Option<String>,
@@ -2809,7 +2833,7 @@ fn parse_unsafe_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
 fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
     let Some((key, value)) = line.split_once('=') else {
         return Err(Diagnostic::new(
-            format!("expected 'incremental = true|false', 'sanitize = \"address\"' or 'emit = \"binary\"|\"html\"' in {MANIFEST_NAME}'s [build] section, found '{line}'"),
+            format!("expected 'incremental = true|false', 'sanitize = \"address\"', 'emit = \"binary\"|\"html\"' or 'obfuscate = \"off\"|\"names\"' in {MANIFEST_NAME}'s [build] section, found '{line}'"),
             at,
             "",
         ));
@@ -2870,10 +2894,31 @@ fn parse_build_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(),
         })?);
         return Ok(());
     }
+    if key.trim() == "obfuscate" {
+        let value = value.trim();
+        let name = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .unwrap_or("");
+        manifest.obfuscate = match name {
+            "off" => Obfuscate::Off,
+            "names" => Obfuscate::Names,
+            _ => {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[build] obfuscate' must be \"off\" or \"names\" (double-quoted), found '{value}'"
+                    ),
+                    at,
+                    "",
+                ))
+            }
+        };
+        return Ok(());
+    }
     if key.trim() != "incremental" {
         return Err(Diagnostic::new(
             format!(
-                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: its keys are 'incremental', 'sanitize', 'emit' and 'emit_entry'",
+                "unknown key '{}' in {MANIFEST_NAME}'s [build] section: its keys are 'incremental', 'sanitize', 'emit', 'emit_entry' and 'obfuscate'",
                 key.trim()
             ),
             at,
@@ -4323,6 +4368,28 @@ mod tests {
     }
 
     #[test]
+    fn the_build_section_names_an_obfuscation_mode() {
+        use super::Obfuscate;
+        assert_eq!(manifest("name = \"x\"\n").obfuscate, Obfuscate::Off);
+        assert_eq!(
+            manifest("name = \"x\"\n[build]\nobfuscate = \"names\"\n").obfuscate,
+            Obfuscate::Names
+        );
+        assert_eq!(
+            manifest("name = \"x\"\n[build]\nobfuscate = \"off\"\n").obfuscate,
+            Obfuscate::Off
+        );
+        let err = manifest_err("name = \"x\"\n[build]\nobfuscate = \"strip\"\n");
+        assert!(
+            err.message.contains("must be \"off\" or \"names\""),
+            "{}",
+            err.message
+        );
+        let err = manifest_err("name = \"x\"\n[build]\nobfuscate = names\n");
+        assert!(err.message.contains("must be \"off\" or \"names\""), "{}", err.message);
+    }
+
+    #[test]
     fn the_build_section_names_a_sanitizer() {
         use crate::driver::Sanitizer;
         assert_eq!(manifest("name = \"x\"\n").sanitize, None);
@@ -4344,7 +4411,7 @@ mod tests {
         );
         let err = manifest_err("name = \"x\"\n[build]\nunits = true\n");
         assert!(
-            err.message.contains("its keys are 'incremental', 'sanitize', 'emit' and 'emit_entry'"),
+            err.message.contains("its keys are 'incremental', 'sanitize', 'emit', 'emit_entry' and 'obfuscate'"),
             "{}",
             err.message
         );

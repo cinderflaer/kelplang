@@ -578,6 +578,17 @@ fn build(
         return false;
     }
 
+    // Obfuscation step 1 (`[build] obfuscate = "names"`) is hosted only: a
+    // freestanding image has its own linker script and entry stub, so it is
+    // refused by name until that is designed.
+    if loaded.project.obfuscate() == resolve::Obfuscate::Names && loaded.project.target().is_freestanding() {
+        eprintln!(
+            "error: '{}' sets '[build] obfuscate = \"names\"', which is not available for a freestanding project yet: its image has its own linker script and entry stub",
+            path
+        );
+        return false;
+    }
+
     // Roadmap A-14 slice 1: the backend's per-unit split. `--incremental` and
     // the manifest's `[build] incremental = true` both turn it on. A freestanding project is refused by name for now: its image
     // is one ELF with one entry stub and one panic state, which is a slice of
@@ -677,6 +688,7 @@ fn build(
         freestanding.as_ref(),
         managed.as_ref(),
         incremental,
+        loaded.project.obfuscate() == resolve::Obfuscate::Names,
         &mut timing,
     ) {
         eprintln!("error: {message}");

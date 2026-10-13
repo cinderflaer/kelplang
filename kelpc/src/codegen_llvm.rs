@@ -380,6 +380,7 @@ pub fn compile(
     freestanding: Option<&Freestanding>,
     managed: Option<&Managed>,
     incremental: bool,
+    obfuscate_names: bool,
     timings: &mut Timings,
 ) -> Result<(), String> {
     if managed.is_some() && incremental {
@@ -417,6 +418,7 @@ pub fn compile(
             link_libs,
             library_dirs,
             pkg_config_flags,
+            obfuscate_names,
             timings,
         );
     }
@@ -428,8 +430,10 @@ pub fn compile(
     };
     let layout = machine.data_layout();
 
-    let ir_path = out_path.with_extension("ll");
-    let object_path = out_path.with_extension("o");
+    let scratch = Scratch::for_names(obfuscate_names)?;
+    let base = scratch.base(out_path);
+    let ir_path = base.with_extension("ll");
+    let object_path = base.with_extension("o");
     lower_to_object(
         program,
         drops,
@@ -468,7 +472,7 @@ pub fn compile(
         return linked.map_err(|e| e.message);
     }
 
-    let externs_path = out_path.with_extension("externs.o");
+    let externs_path = base.with_extension("externs.o");
     let program_object = crate::extern_object::lower_externs_object(program, &machine, &externs_path, true)?
         .then_some(externs_path);
 
@@ -484,6 +488,7 @@ pub fn compile(
             library_dirs,
             pkg_config_flags,
             crate::extern_object::uses_tls(program),
+            obfuscate_names,
         ),
         None => crate::driver::link_llvm_object(
             &object_path,
@@ -494,6 +499,7 @@ pub fn compile(
             library_dirs,
             pkg_config_flags,
             crate::extern_object::uses_tls(program),
+            obfuscate_names,
         ),
     };
     timings.link += link_start.elapsed();
@@ -971,6 +977,51 @@ mod jobs_tests {
 /// unchanged unit is a hit and its pass pipeline and codegen are skipped. A
 /// link failure is not retried silently: the hit entries are deleted so the
 /// next build recompiles them, and the error names the units that were reused.
+/// The directory a names-mode build keeps its IR, objects and linker inputs
+/// in. It lives under the temp directory and is removed when this value is
+/// dropped, so nothing beside the binary is left behind on success or failure.
+/// Outside names mode it is absent and the artifacts go beside the binary as
+/// they always have.
+struct Scratch {
+    dir: Option<PathBuf>,
+}
+
+static SCRATCH_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+impl Scratch {
+    fn for_names(names: bool) -> Result<Scratch, String> {
+        if !names {
+            return Ok(Scratch { dir: None });
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "kelp_obf_{}_{}",
+            std::process::id(),
+            SCRATCH_COUNT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            format!("could not create the scratch directory '{}': {e}", dir.display())
+        })?;
+        Ok(Scratch { dir: Some(dir) })
+    }
+
+    /// The path the artifacts are named from: the output's file name inside the
+    /// scratch directory, or the output path itself outside names mode.
+    fn base(&self, out_path: &Path) -> PathBuf {
+        match &self.dir {
+            Some(dir) => dir.join(out_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("kelp"))),
+            None => out_path.to_path_buf(),
+        }
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
 fn compile_units(
     program: &Program,
     drops: &DropPlan,
@@ -981,10 +1032,13 @@ fn compile_units(
     link_libs: &[String],
     library_dirs: &[String],
     pkg_config_flags: &[String],
+    obfuscate_names: bool,
     timings: &mut Timings,
 ) -> Result<(), String> {
     let cache = Cache::for_build(out_path);
-    let unit_dir = out_path.with_extension("units");
+    let scratch = Scratch::for_names(obfuscate_names)?;
+    let base = scratch.base(out_path);
+    let unit_dir = base.with_extension("units");
     std::fs::create_dir_all(&unit_dir).map_err(|e| {
         format!(
             "could not create the unit directory '{}': {e}",
@@ -1162,7 +1216,7 @@ fn compile_units(
     // The incremental build has no machine of its own outside its workers, so
     // the externs object is written with one made here, for the same target.
     let machine = TargetMachine::for_host_at(opt.codegen_level())?;
-    let externs_path = out_path.with_extension("externs.o");
+    let externs_path = base.with_extension("externs.o");
     let program_object = crate::extern_object::lower_externs_object(program, &machine, &externs_path, true)?
         .then_some(externs_path);
 
@@ -1176,6 +1230,7 @@ fn compile_units(
         library_dirs,
         pkg_config_flags,
         crate::extern_object::uses_tls(program),
+        obfuscate_names,
     );
     timings.link += link_start.elapsed();
     // A unit object that came from the cache and does not link is corrupt in a
