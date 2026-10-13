@@ -246,3 +246,17 @@ fn the_r_return_marker_is_gone_and_says_what_to_write() {
     assert!(text.contains("found 'R'"), "{text}");
     assert!(text.contains("'=> T'"), "{text}");
 }
+
+#[test]
+fn the_return_dot_marker_is_refused_and_says_what_to_write() {
+    // `.return:` is retired: it is a parse error that names the `=>` spelling.
+    let dir = scratch("return_dot");
+    let source = write(&dir, "main.kp", "fun old(x: i32).return: i32 = x\n\nfun main() {\n    print(old(1))\n}\n");
+    let out = dir.join("prog");
+
+    let refused = build(&source, &out, false);
+    assert!(!refused.status.success());
+    let text = stderr(&refused);
+    assert!(text.contains("'.return:' is no longer accepted"), "{text}");
+    assert!(text.contains("'=>'"), "{text}");
+}

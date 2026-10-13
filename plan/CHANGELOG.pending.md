@@ -62,6 +62,7 @@ empty on release.
 - The language reference says `kelpc` emits LLVM IR, not C, and no longer says the binary is written next to a `.c` file.
 
 - A misspelled or misplaced Tidepool section is refused by name: `[target.tidepool]`, `[[tidepool]]`, `[tidpool]` and `[tidepool.x]` each stop the build, and a `[tidepool]` key in a freestanding build is refused, where before the section was skipped without a word. An out-of-range `headroom_pct` (above 1000), a duplicate key and a `start_high_mib` above `heap_max` are refused by name.
+- `.return:` is refused by name: the parser says to write the return type with `=>`, as in `fun f(a: i32) => i32`. The migration to `=>` is complete, so no shipped module, example or fixture uses the old spelling.
 
 ## compiler
 

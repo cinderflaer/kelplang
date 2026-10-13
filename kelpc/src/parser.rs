@@ -631,12 +631,17 @@ impl Parser {
         })
     }
 
-    /// The `return` of the retired `=>: T` after a parameter list. The
-    /// return type is written `=> T` now (`parse_return_type`).
+    /// The `return` after `.`, which is the retired `.return:` spelling. It is
+    /// refused by name: the return type is written `=> T` after the parameters
+    /// (`parse_return_type`).
     fn expect_return_marker(&mut self) -> PResult<()> {
         if self.check(&TokenKind::Return) {
-            self.advance();
-            return Ok(());
+            let span = self.peek().span;
+            return Err(ParseError {
+                help: None,
+                message: "'.return:' is no longer accepted: write the return type after the parameter list with '=>', as in 'fun f(a: i32) => i32'.".to_string(),
+                span,
+            });
         }
         let (marker, mspan) = self.expect_ident()?;
         Err(ParseError {
@@ -5730,18 +5735,31 @@ mod tests {
     }
 
     #[test]
-    fn the_return_type_takes_the_arrow_the_alias_and_the_retired_marker() {
-        // `=>` is the spelling, `->` is an alias of it, and `.return:` still
-        // parses until it is refused by name. A `fun` literal and a function
-        // type take the same three forms.
-        for src in ["fun f(a: i32) => i32 = a\n", "fun f(a: i32) -> i32 = a\n", "fun f(a: i32).return: i32 = a\n"] {
+    fn the_return_type_takes_the_arrow_and_its_alias() {
+        // `=>` is the spelling and `->` is an alias of it. A `fun` literal and a
+        // function type take the same two forms.
+        for src in ["fun f(a: i32) => i32 = a\n", "fun f(a: i32) -> i32 = a\n"] {
             let p = parse(src);
             let ret = p.functions[0].return_type.as_ref().expect("a return type");
             assert_eq!(ret.name, "i32", "{src}");
         }
         parse("fun main() {\n    val f = fun(x: i32) => i32 = x\n    val g = fun(x: i32) -> i32 = x\n}\n");
         parse("fun g(f: fun(i32) => i32, h: fun(i32) -> i32) {}\n");
-        parse("fun g(f: fun(i32).return: i32) {}\n");
+    }
+
+    #[test]
+    fn the_retired_return_marker_is_refused_by_name() {
+        // `.return:` is refused at the `return` token, in declarations, fun
+        // literals and function types alike, and the message names `=>`.
+        for src in [
+            "fun f(a: i32).return: i32 = a\n",
+            "fun main() {\n    val f = fun(x: i32).return: i32 = x\n}\n",
+            "fun g(f: fun(i32).return: i32) {}\n",
+        ] {
+            let err = parse_err(src);
+            assert!(err.message.contains("'.return:' is no longer accepted"), "{src}: {}", err.message);
+            assert!(err.message.contains("'=>'"), "{src}: {}", err.message);
+        }
     }
 
     #[test]
