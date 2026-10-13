@@ -10,7 +10,7 @@
 //! reason: `lint` lexes a file and reads nothing else, so a file that does not
 //! parse, or that names an alias only its project can resolve, is still linted.
 //!
-//! There are three rules:
+//! There are four rules:
 //!
 //! - the **comment run** (roadmap item G-5): two or more consecutive `//`
 //!   lines with no blank line between them.
@@ -19,6 +19,8 @@
 //! - the **naming case** (roadmap item 23, `syntax.md` 19): the project's case,
 //!   `camelCase` (the default) or `snake_case`, read from `coral.toml`'s
 //!   `naming_case`.
+//! - the **redundant comparison** (`== true`, and `.len() == 0` where
+//!   `.is_empty()` says it): a warning, never a failure.
 //!
 //! ## The comment run
 //!
@@ -158,6 +160,7 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
         })
         .collect();
     all.extend(else_if_links_in(&tokens));
+    all.extend(redundant_comparisons_in(&tokens));
     all.extend(crate::doc::orphan_findings(src, &tokens));
     if let Some(naming) = naming {
         all.extend(naming_findings_in(&tokens, naming));
@@ -177,6 +180,40 @@ fn else_if_links_in(tokens: &[Token]) -> Vec<Finding> {
             out.push(Finding {
                 span: pair[0].span,
                 message: "'else if' compiles, but 'elif' is the preferred spelling".to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// The comparisons a plain condition or `.is_empty()` says better. Warnings
+/// only: the comparison compiles and means the same thing.
+fn redundant_comparisons_in(tokens: &[Token]) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (i, token) in tokens.iter().enumerate() {
+        if !matches!(token.kind, TokenKind::EqEq) {
+            continue;
+        }
+        // `done == true` is `done`.
+        if matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::True)) {
+            out.push(Finding {
+                span: token.span,
+                message: "'== true' is redundant: write the condition alone".to_string(),
+            });
+            continue;
+        }
+        // `xs.len() == 0` is `xs.is_empty()`. Before the operator come the
+        // receiver, `.`, `len`, `(` and `)`, so the span starts at the receiver.
+        if i >= 5
+            && matches!(tokens[i - 4].kind, TokenKind::Dot)
+            && matches!(&tokens[i - 3].kind, TokenKind::Ident(name) if name == "len")
+            && matches!(tokens[i - 2].kind, TokenKind::LParen)
+            && matches!(tokens[i - 1].kind, TokenKind::RParen)
+            && matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::IntLit(0)))
+        {
+            out.push(Finding {
+                span: Span::new(tokens[i - 5].span.start, tokens[i + 1].span.end),
+                message: "'.len() == 0' reads better as '.is_empty()'".to_string(),
             });
         }
     }
@@ -838,6 +875,42 @@ mod tests {
     #[test]
     fn the_two_spellings_are_not_confused_inside_a_string() {
         let src = "fun f() {\n    print(\"if a { } else if b { }\")\n}\n";
+        assert!(findings(src, None).expect("lexes").is_empty());
+    }
+
+    #[test]
+    fn a_comparison_with_true_is_reported_at_the_operator() {
+        let src = "fun f(done: bool) {\n    if done == true { }\n}\n";
+        let found = findings(src, None).expect("lexes");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].span.start, at(src, "== true"));
+        assert_eq!(
+            found[0].message,
+            "'== true' is redundant: write the condition alone"
+        );
+    }
+
+    #[test]
+    fn a_length_compared_with_zero_is_reported_at_the_receiver() {
+        let src = "fun f(xs: List<i32>) {\n    if xs.len() == 0 { }\n}\n";
+        let found = findings(src, None).expect("lexes");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].span.start, at(src, "xs.len()"));
+        assert_eq!(
+            found[0].message,
+            "'.len() == 0' reads better as '.is_empty()'"
+        );
+    }
+
+    #[test]
+    fn the_other_comparisons_are_not_reported() {
+        let src = "fun f(xs: List<i32>, n: i32, done: bool) {\n    if xs.len() > 0 && n == 0 && done == false { }\n}\n";
+        assert!(findings(src, None).expect("lexes").is_empty());
+    }
+
+    #[test]
+    fn a_comparison_inside_a_string_is_not_reported() {
+        let src = "fun f() {\n    val s = \"x == true and xs.len() == 0\"\n}\n";
         assert!(findings(src, None).expect("lexes").is_empty());
     }
 
