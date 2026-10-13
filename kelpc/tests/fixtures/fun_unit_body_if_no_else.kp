@@ -1,0 +1,12 @@
+// A named function whose body ends in an `if` with no `else` evaluates to
+// unit, so the tail disagrees with the declared return type. The message says
+// to end the block with a value instead.
+fun f(a: i32).return: i32 {
+    if a > 0 {
+        return 1
+    }
+}
+
+fun main() {
+    print(f(1))
+}

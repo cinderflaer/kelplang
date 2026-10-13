@@ -11459,13 +11459,21 @@ fn check_function(
         && !f.naked
         && !str_view_compatible(&body.ty(), &sig.ret)
     {
+        // A unit body that ends in an `if` with no `else` is the usual cause,
+        // so the message says what to write instead.
+        let hint = if body.ty() == Ty::Unit {
+            "; end the block with 'return <value>', since an 'if' with no 'else' gives no value"
+        } else {
+            ""
+        };
         return Err(TypeError {
             help: None,
             message: format!(
-                "function '{}' declared to return '{}' but body evaluates to '{}'",
+                "function '{}' declared to return '{}' but body evaluates to '{}'{}",
                 display_name(f),
                 sig.ret.display(),
-                body.ty().display()
+                body.ty().display(),
+                hint
             ),
             span: f.span,
         });

@@ -9631,6 +9631,14 @@ fn an_indirect_call_numbers_the_environment_after_a_mem_class_return_pointer() {
 }
 
 #[test]
+fn a_named_function_ending_in_an_if_without_else_says_what_to_write() {
+    assert_rejected_with(
+        "tests/fixtures/fun_unit_body_if_no_else.kp",
+        "end the block with 'return <value>'",
+    );
+}
+
+#[test]
 fn fun_literal_misuse_is_rejected() {
     // A passdown is a hidden argument a function value cannot carry, a borrow
     // return has no elision root, the tail is checked against `.return` like any
