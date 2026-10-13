@@ -25,6 +25,7 @@ empty on release.
 - `derive(eq, hash)` on a `datac` or `enum` writes its `eq` and `hash` methods field by field, so it is a `Map` key with no hand-written pair, and a field that has no `eq` or `hash` is refused by name (12.2).
 - `kelpc doc --format json` writes the documentation as JSON: declarations, spans, imports, trait impls and builtin members.
 - `kelpc stdlib --json --dir <dir>` writes the shipped std sources to `<dir>` and prints the module list with a SHA-256 per file as JSON.
+- `[tidepool]` in `coral.toml` sets the hosted collector's first-clearing guesses (`start_low_mib`, `start_high_mib`), the headroom percent (`headroom_pct`) and the trigger rule (`trigger_rule = "two-size"`, `"last-size"` or `"gogc-style"`, default `"two-size"`). A project that sets `[tidepool]` needs the release that reads it, which the release notes name as the minimum.
 
 ## Changed
 
@@ -60,6 +61,7 @@ empty on release.
 - The managed collector's root table keeps a used-slot bitmap, so a collection visits only the live roots, not every slot up to the high-water index (a table with many cleared slots no longer slows each collection).
 - The managed collector clears and sweeps only the blocks up to the pool's high-water mark, not every block in the region, so a collection on a lightly used heap no longer walks the unused tail.
 - The step 1 runtime changes (spawn, `Mutex` and `RwLock` roots, the 256 open-worker limit, the test hold) are ported to `kelp-rt`, the Rust runtime; no C is added for them.
+- A hosted program's first collection starts at the midpoint of the start guesses (1 and 4 MiB) plus 10 percent headroom, not at 8 MiB, and later collections follow the two latest live sizes plus the headroom. A program with a small live set collects more often than before.
 
 ## compiler
 
@@ -96,6 +98,7 @@ empty on release.
 - A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
 - The Rust runtime leaves the collector when a worker ends (also on a panic), waits in join, locks and condition waits as native, polls the collector in long text and map scans, frees a spawn whose thread cannot start and reports its errno, and the collector's personality routine lets a worker's forced unwind finish.
 - A freestanding build refuses the `f32` overloads of `std` and `math` as it refuses the `f64` ones, so no soft-float compare routine is linked (`ld.lld` failed with an undefined `__ltsf2` on riscv).
+- The golden index marks `pool_sum`, `pool_panics` and `drop_thread_closure` as refused, as their tests expect, and lists the nine Tidepool manifest refusal fixtures.
 - A `Mutex` or `RwLock` holding a `datac` of scalars is accepted in a hosted build: the classifier reads the fields of each struct, so `std.sync.ChanMeta` no longer counts as collected memory. A `Mutex` of a `List`, or a struct with a `List` field, is still refused.
 - The Polyp GTK backend reads a scrolled area's content box through the viewport GTK puts around it, so the todo example no longer prints GTK CRITICAL warnings; a keyed reorder emits the moves that reach the new order (old [a,b,c,d] to new [c,b,d,a] used to end [c,d,b,a]); a mount that disagrees with the view stops the program instead of writing into nothing; and `examples/polyp-todo/smoke.sh` fails on any CRITICAL line.
 
