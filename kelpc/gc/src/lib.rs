@@ -355,7 +355,14 @@ unsafe fn alloc_common(d: *const KelpGcType, count: usize, is_array: bool) -> *m
 /// the first clearing's two guesses in bytes (0 selects 1 MiB and 4 MiB), and
 /// headroom_pct is the percent added to the measured live size (manifest
 /// [tidepool]). The first trigger is the midpoint of the guesses plus headroom.
-/// Call before any allocation. A later call is ignored.
+/// trigger_rule picks how each later trigger follows the live sizes: 0 is
+/// two-size (the default), 1 is last-size, 2 is gogc-style (manifest
+/// trigger_rule). Call before any allocation. A later call is ignored.
+/// Arity guard: every Rust caller of `kelp_gc_init` is checked against this
+/// six-argument type, because a caller compiled against a shorter signature
+/// links and runs wrong.
+const _: unsafe extern "C" fn(usize, usize, usize, usize, usize, usize) = kelp_gc_init;
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_gc_init(
     heap_min: usize,
