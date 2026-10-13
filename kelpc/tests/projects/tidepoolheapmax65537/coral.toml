@@ -3,5 +3,5 @@ version = "0.1.0"
 entry = "src/main.kp"
 
 [target]
-mode = "managed"
+mode = "hosted"
 heap_max = 65537
