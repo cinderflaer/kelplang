@@ -688,4 +688,18 @@ mod tests {
         .expect_err("an undecided type must not be let in");
         assert!(err.message.contains("'Missing' cannot be a List element"), "{}", err.message);
     }
+
+    /// The collector keeps a fallback headroom for a program that reaches it
+    /// before `kelp_gc_init` (`kelpc/gc/src/state.rs`). It cannot import this
+    /// crate, so this reads that constant and holds it to the manifest default.
+    #[test]
+    fn the_collector_default_headroom_is_the_manifest_default() {
+        let state = include_str!("../gc/src/state.rs");
+        let value = state
+            .lines()
+            .find_map(|line| line.strip_prefix("pub const DEFAULT_HEADROOM_PCT: usize = "))
+            .and_then(|rest| rest.strip_suffix(';'))
+            .expect("state.rs declares DEFAULT_HEADROOM_PCT as a usize literal");
+        assert_eq!(value.parse::<u64>().expect("a whole number"), DEFAULT_HEADROOM_PCT);
+    }
 }

@@ -101,6 +101,7 @@ empty on release.
 - A hosted TLS server no longer crashes when a request string is released.
 - A `Map` whose value is an enum is refused when the checker reads the `Map` type, not later in codegen, and the refusal names the type and the `List` to use instead.
 - The `kelpc fmt` corpus test skips symbolic links when it walks the examples, so the `deps/v4` link that leads back into its own package no longer loops until the kernel's symlink limit panics the test.
+- A test holds the collector's fallback headroom to the manifest default of 10 percent, so the two copies cannot drift apart without a failing test.
 
 ## limits
 
