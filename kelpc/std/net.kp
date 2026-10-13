@@ -54,12 +54,18 @@ extern fun resolve_raw(host: &str) => String
 
 /// A connected socket. Not `Copy` (no `datac` is), so passing one to a
 /// function is a borrow and there is never a silent second close.
-datac Socket(val fd: i32)
+datac Socket(
+    /// The OS file descriptor. `close` releases it; dropping the value does not.
+    val fd: i32
+)
 
 /// A bound, listening socket. Distinct from `Socket` so that `accept` cannot be
 /// handed a connected one by mistake, there is no `Copy` in v1 to blur the two,
 /// only the type name, which is exactly what a type name is for.
-datac Listener(val fd: i32)
+datac Listener(
+    /// The OS file descriptor of the listening socket. `Listener.close` releases it.
+    val fd: i32
+)
 
 /// Connects to `host:port`.
 ///
@@ -80,7 +86,10 @@ fun connect(host: &str, port: u16) => Socket = Socket(fd = connect_raw(host, por
 /// because a name that does not resolve reports a `getaddrinfo` code and no
 /// `errno` at all: `io.IoErr`'s `errno` field would have to be 0 for half the
 /// failures.
-datac ConnectErr(val reason: String)
+datac ConnectErr(
+    /// The text `connect` would panic with: the message line and the detail line.
+    val reason: String
+)
 
 /// Connects to `host:port`, or returns why it could not: the fallible twin of
 /// `connect`, for the caller that has somewhere to go on a failure. A program
@@ -108,7 +117,11 @@ fun try_connect(host: &str, port: u16) => result.Result<Socket, ConnectErr> {
 /// Why a fallible send or receive failed: `reason` is the text the panicking
 /// form would have panicked with (the message line and the `errno` detail
 /// line, or `net.recv: timed out` for a read that hit the socket's timeout).
-datac NetErr(val reason: String)
+datac NetErr(
+    /// The text the panicking form would panic with, such as the `errno` detail line
+    /// or `net.recv: timed out`.
+    val reason: String
+)
 
 /// `send_all`, with a failed send (a reset, a closed peer) as an `Err` instead
 /// of a panic. The `usize` is the count written, always the whole buffer on

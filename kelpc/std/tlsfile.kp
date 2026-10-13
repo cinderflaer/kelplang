@@ -23,8 +23,9 @@ impl "std/str"
    permissions; `read_key` (below) refuses one that group or others can read or
    write, so a key left at `0644` is a typed error rather than a silent leak. */
 
-// A file read through the `fs` gate, or `Io` with the path and the system's
-// reason. `what` names the file's role for the sentence ("private key").
+/// Reads the PEM bytes in `path` through the `fs` gate. A file that cannot be
+/// read is `TlsError.Io` with the path and the system's reason. `what` names the
+/// file's role for the sentence ("private key").
 fun read_pem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
     return when fs.try_read(path) {
         Ok(b) -> result.Result.Ok(value = b)
@@ -52,19 +53,19 @@ fun read_pem(path: &str, what: &str) => result.Result<Bytes, tls.TlsError> {
 // (This module only reads; it cannot call into `std/tls`, whose functions are
 // `net`-gated and would need that grant here too.)
 
-// The private CA certificates in `path`, read through the `fs` gate: the
-// module's grant decides which paths are readable, exactly as for `fs.read`,
-// and a path outside it is a typed `TlsError.Io` (the file is never opened).
-// Hand the bytes to `TlsClientOptions.with_ca_pem`:
-//
-//     val ca = tlsfile.ca_pem(ca_path)?
-//     val opts = tls.client_options().with_ca_pem(ca)
-//
-// A program with no `fs` grant cannot import this module, so it cannot make
-// the TLS runtime read a path at all.
+/// The private CA certificates in `path`, read through the `fs` gate: the
+/// module's grant decides which paths are readable, exactly as for `fs.read`,
+/// and a path outside it is a typed `TlsError.Io` (the file is never opened).
+/// Hand the bytes to `TlsClientOptions.with_ca_pem`:
+///
+///     val ca = tlsfile.ca_pem(ca_path)?
+///     val opts = tls.client_options().with_ca_pem(ca)
+///
+/// A program with no `fs` grant cannot import this module, so it cannot make
+/// the TLS runtime read a path at all.
 fun ca_pem(path: &str) => result.Result<Bytes, tls.TlsError> = read_pem(path, "CA certificate")
 
-// The octal digits of the low nine permission bits, as `0644` prints them.
+/// The octal digits of the low nine permission bits, as `0644` prints them.
 fun mode_text(mode: u32) => String {
     val bits = mode & 511
     var out = String.with_capacity(4)
@@ -78,13 +79,13 @@ fun mode_text(mode: u32) => String {
     return out
 }
 
-// A private key file, read through the `fs` gate after its permissions are
-// checked: any group or other bit (`mode & 0077`) is `TlsError.Io` naming the
-// file and its mode, and the file is not read. Fix it with `chmod 600`. A
-// file that is missing or unreadable is the same `Io` as `read_pem`'s. Hand the
-// bytes to `tls.server_config_pem`:
-//
-//     val key = tlsfile.read_key(key_path)?
+/// A private key file, read through the `fs` gate after its permissions are
+/// checked: any group or other bit (`mode & 0077`) is `TlsError.Io` naming the
+/// file and its mode, and the file is not read. Fix it with `chmod 600`. A
+/// file that is missing or unreadable is the same `Io` as `read_pem`'s. Hand the
+/// bytes to `tls.server_config_pem`:
+///
+///     val key = tlsfile.read_key(key_path)?
 fun read_key(path: &str) => result.Result<Bytes, tls.TlsError> {
     if fs.exists(path) {
         val m = fs.metadata(path)

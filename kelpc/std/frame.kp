@@ -26,12 +26,18 @@
    own, so a frame it "claims" is only the address the compiler admitted.
    Freestanding is where the address names something. */
 
-datac Frame(val addr: usize)
+/// A physical frame the calling module owns: a 4 KiB-aligned page, held as its
+/// address. Build one only with `claim`.
+datac Frame(
+    /// The frame's start address, a multiple of 4096.
+    val addr: usize
+)
 
-// The receipt for a `frames` grant: a frame at a 4 KiB-aligned address the
-// calling module was granted. The alignment is checked again here, because a
-// computed address is admitted under the `["*"]` grant and the compiler cannot
-// fold it.
+/// Claims the frame at `addr` for the calling module. `addr` must be 4096-aligned
+/// and inside a range the module's `frames` grant names; the compiler checks
+/// both at the call site, and a computed address is checked again at run time.
+///
+/// Panics: if `addr` is not 4096-aligned.
 fun claim(addr: usize) => Frame {
     if addr % 4096 != 0 {
         panic("Frame.claim: address is not 4096-aligned")
@@ -39,12 +45,14 @@ fun claim(addr: usize) => Frame {
     return Frame(addr = addr)
 }
 
-// The frame's address.
+/// The frame's start address.
 fun Frame.addr() => usize = addr
 
-// The address `byte` bytes into the frame. The byte is bounds-checked against
-// the frame's own 4096 bytes, so this cannot leave the frame; the returned
-// address is a plain `usize`, and nothing here says what is mapped there.
+/// The address `byte` bytes into the frame. The byte is bounds-checked against
+/// the frame's own 4096 bytes, so this cannot leave the frame; the returned
+/// address is a plain `usize`, and nothing here says what is mapped there.
+///
+/// Panics: if `byte` is 4096 or more.
 fun Frame.offset(byte: usize) => usize {
     if byte >= 4096 {
         panic("Frame.offset: byte is outside the frame")

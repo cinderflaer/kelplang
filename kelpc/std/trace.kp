@@ -5,7 +5,12 @@ impl "std/str"
 impl "std/fmt"
 
 /// A started duration span. Finish it with `trace.end` at its end location.
-datac Span(val name: String, val start_ns: i64)
+datac Span(
+    /// The span's name, copied at `begin` so the `end` record can repeat it.
+    val name: String,
+    /// The monotonic clock reading, in nanoseconds, when the span began.
+    val start_ns: i64
+)
 
 /// Emits one trace event. Pass `source.file()` and `source.line()` so the
 /// record names this call site rather than the implementation in `std/trace`.
@@ -26,6 +31,9 @@ fun end(file: &str, line: usize, span: Span) {
     emit(kind = "end", file = file, line = line, name = span.name.as_str(), elapsed_ns = elapsed)
 }
 
+/// Writes one tab-separated trace line to stderr: the record kind, the monotonic
+/// time, the escaped `file:line` and the escaped name. A negative `elapsed_ns`
+/// leaves out the final duration field, which only `end` records carry.
 fun emit(kind: &str, file: &str, line: usize, name: &str, elapsed_ns: i64) {
     val at = fmt.uint(line.to_u64())
     val time_ns = fmt.int(time.now_mono_ns())
@@ -50,6 +58,8 @@ fun emit(kind: &str, file: &str, line: usize, name: &str, elapsed_ns: i64) {
     }
 }
 
+/// `text` with backslash, tab and newline written as `\\`, `\t` and `\n`, so one
+/// trace record always stays on one line with its tab-separated fields intact.
 fun escape(text: &str) => String {
     val slashes = str.replace(text, "\\", "\\\\")
     val tabs = str.replace(slashes.as_str(), "\t", "\\t")
