@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1095 ran=555 c_refused=507 excluded=33
+# counts candidates=1105 ran=552 c_refused=520 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -187,7 +187,7 @@ fixture_drop_order	ran	exit 0		f2516b2ffa4d7a7fc83c4c6715410dd9ca1660f4aa99b1f15
 fixture_drop_owned_field	ran	exit 0		17e7d41bc35537875879eed6c39755cd42e414c9e2ba54f08140a93473d9f09a
 fixture_drop_partial_move	c-refused		error: cannot move field 'leaf' out of 'h' by value	
 fixture_drop_reassign	ran	exit 0		81f58bd9b1ff434342497816728a9925ff6a29a79a633ebe05910bcc4c0aa329
-fixture_drop_thread_closure	ran	exit 0		5fe3a667490bb68e123bc6000f89680927d64096a7de920958ec6586a5e2fa32
+fixture_drop_thread_closure	c-refused		error: 'Guard' cannot be a value captured by a closure environment in a hosted build	
 fixture_drop_two_impls	c-refused		error: method 'Leaf.drop' is defined more than once	
 fixture_drop_wrong_signature	c-refused		error: 'Leaf.drop' must take its receiver with 'mut'	
 fixture_elision_not_from_param	c-refused		error: cannot return a borrow of 's'	
@@ -631,9 +631,9 @@ fixture_pd_var_read_only_shared	ran	exit 0		6a4cd3158a5b3434f54fb79be796548b861c
 fixture_pd_var_write	ran	exit 0		31f75ca815e515fae9c2c28d073c588d0b06bc0b9e925ad05f4802575b99e55b
 fixture_pd_write_reaches_callers	ran	exit 0		b6d2dcff1abd56b5acef59328337e2bd3602cc9168059edd70566d97a3962054
 fixture_pool_drop_joins	ran	exit 0		51aee3cf692d8421368768a90601c008cc38b02e124743f8fc9f87fbc35bab9f
-fixture_pool_panics	ran	exit 0		c6a456485a6e0e11260f7a00907500070f376fa7b22cf6152ef4d1d481d06395
+fixture_pool_panics	c-refused		error: 'std.pool.PoolShared' cannot be a thread's argument in a hosted build	
 fixture_pool_spawn_after_join	ran	exit 1	panic: Pool.spawn: the pool has been joined	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-fixture_pool_sum	ran	exit 0		c8dd0456c8fca3d7d7556b73ddbcd6efb60391447453eeb000e4bdbf5daa4499
+fixture_pool_sum	c-refused		error: 'std.pool.PoolShared' cannot be a thread's argument in a hosted build	
 fixture_pool_zero_workers	ran	exit 1	panic: pool.new: a pool needs at least one worker	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 fixture_process_spawn	ran	exit 0		93044ad5e1d3331ec1c0158e243b6c828ed732a4cf2b4cf4a5a2c9e0f797c536
 fixture_ptr_from_fn	ran	exit 0		6bbb4fb214212d1fd3d1a84b515b85180428fa070e3b98b9e1b75925b258c054
@@ -1076,6 +1076,16 @@ project_static_globals	ran	exit 0		bdfeab7b68e26b2f190fba38c8102a5e4a543cf60b736
 project_static_module	ran	exit 0		fcb9cc30b0f3e4715d032f3a0ce158e4d6bea8c618bda0f5d1f167300a087b8a
 project_static_private	c-refused		error: 'state.HIDDEN' is private	
 project_std_internal_entry	c-refused		error: module 'std/internal/main' is below the compiler-reserved std/internal namespace	
+project_tidepoolheapmax65537	c-refused		error: coral.toml value for '[target] heap_max' must be between 1 and 65536 MiB, found 65537	
+project_tidepoolheapmaxblock	c-refused		error: coral.toml's [tidepool] key 'heap_max' belongs in [target]; move it there	
+project_tidepoolheapmaxquoted	c-refused		error: coral.toml value for '[target] heap_max' must be a whole number of MiB between 1 and 65536, found '"64"'	
+project_tidepoolheapmaxzero	c-refused		error: coral.toml value for '[target] heap_max' must be between 1 and 65536 MiB, found 0	
+project_tidepoolkeytypo	c-refused		error: unknown key 'headrom_pct' in coral.toml's [tidepool] section; its keys are 'headroom_pct', 'start_low_mib', 'start_high_mib' and 'trigger_rule'	
+project_tidepoolmisspelled	c-refused		error: unknown section '[TIDEPOOL]' in coral.toml; did you mean '[tidepool]'?	
+project_tidepoolrulename	c-refused		error: coral.toml's [tidepool] key 'trigger_rule' names no rule 'mean'; its rules are 'two-size', 'last-size' and 'gogc-style'	
+project_tidepoolstaleheader	c-refused		error: unknown section '[gc]' in coral.toml; did you mean '[tidepool]'?	
+project_tidepoolstartlowzero	c-refused		error: coral.toml's [tidepool] key 'start_low_mib' must be at least 1, found '0'	
+project_tidepoolstringvalue	c-refused		error: coral.toml's [tidepool] key 'headroom_pct' must be a whole number, found '"20"'	
 project_traits_assoc_cross	ran	exit 0		4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865
 project_traits_builtin_orphan	c-refused		error: 'impl shape.Doubler for i32' is written in module 'bad', but 'i32' is a builtin type, which has no module	
 project_traits_cross	ran	exit 0		a458688c076ed9edbab246e92f93e47ef56f8f82280438415bd5f231fca60d96
