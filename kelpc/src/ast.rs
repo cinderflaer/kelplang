@@ -753,7 +753,7 @@ impl TypeExpr {
             format!("{}<{}>", self.name, args.join(", "))
         };
         if let Some(ret) = &self.fn_ret {
-            s.push_str(&format!("=> {}", ret.display()));
+            s.push_str(&format!(" => {}", ret.display()));
         }
         s
     }

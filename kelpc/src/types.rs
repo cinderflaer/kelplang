@@ -528,7 +528,7 @@ impl Ty {
                 // function type and a signature read the same way.
                 let mut s = format!("fun({})", join_types(params));
                 if **ret != Ty::Unit {
-                    s.push_str(&format!("=> {}", ret.display()));
+                    s.push_str(&format!(" => {}", ret.display()));
                 }
                 s
             }
@@ -538,14 +538,14 @@ impl Ty {
                 // and differ only in what the value owns.
                 let mut s = format!("closure({})", join_types(params));
                 if **ret != Ty::Unit {
-                    s.push_str(&format!("=> {}", ret.display()));
+                    s.push_str(&format!(" => {}", ret.display()));
                 }
                 s
             }
             Ty::ScopedFn { params, ret } => {
                 let mut s = format!("scoped fun({})", join_types(params));
                 if **ret != Ty::Unit {
-                    s.push_str(&format!("=> {}", ret.display()));
+                    s.push_str(&format!(" => {}", ret.display()));
                 }
                 s
             }
@@ -2063,7 +2063,7 @@ mod tests {
         assert_eq!(c_ident("Pair<i32, String>"), "Pair__l__i32_String__g__");
         assert_eq!(
             c_ident("Holder<fun(i32) => i32>"),
-            "Holder__l__fun__lp__i32__rp____return__c__i32__g__"
+            "Holder__l__fun__lp__i32__rp____x3d__g__i32__g__"
         );
     }
 

@@ -3508,7 +3508,7 @@ fn render_fn_decl(f: &ast::FunctionDecl) -> String {
     out.push_str(&parts.join(", "));
     out.push(')');
     if let Some(t) = &f.return_type {
-        out.push_str(&format!("=> {}", t.display()));
+        out.push_str(&format!(" => {}", t.display()));
     }
     out
 }
