@@ -3402,7 +3402,7 @@ entry:
   %items = alloca %kelp_Map__String__Item, align 8, !dbg !6
   %b = alloca %kelp_Box__i32, align 8, !dbg !6
   %add = alloca %kelp_Closure__i32__i32, align 8, !dbg !6
-  call void @kelp_gc_init(i64 8388608, i64 268435456, i64 1048576, i64 4194304, i64 20, i64 0), !dbg !6
+  call void @kelp_gc_init(i64 8388608, i64 268435456, i64 1048576, i64 4194304, i64 10, i64 0), !dbg !6
   call void @kelp_gc_thread_attach(), !dbg !6
   store i32 %0, ptr @kelp_argc, align 4, !dbg !6
   store ptr %1, ptr @kelp_argv, align 8, !dbg !6

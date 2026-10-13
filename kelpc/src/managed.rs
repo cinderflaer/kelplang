@@ -27,7 +27,7 @@ pub const DEFAULT_HEAP_MAX_MIB: u64 = 256;
 /// manifest's `[tidepool]` section names none (design section 5, D2).
 pub const DEFAULT_START_LOW_MIB: u64 = 1;
 pub const DEFAULT_START_HIGH_MIB: u64 = 4;
-pub const DEFAULT_HEADROOM_PCT: u64 = 20;
+pub const DEFAULT_HEADROOM_PCT: u64 = 10;
 
 /// The values `[target] heap_max` accepts, in MiB. The top bound stops a typo
 /// from asking the kernel for a heap no 7.6 GB host can give.

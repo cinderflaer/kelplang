@@ -24,7 +24,7 @@ pub const DEFAULT_HEAP_MIN: usize = 8 << 20;
 /// manifest names none (`[tidepool]`, design section 4 and D2).
 pub const DEFAULT_START_LOW: usize = 1 << 20;
 pub const DEFAULT_START_HIGH: usize = 4 << 20;
-pub const DEFAULT_HEADROOM_PCT: usize = 20;
+pub const DEFAULT_HEADROOM_PCT: usize = 10;
 /// Default time a mutator may take to reach a safepoint before the collector
 /// gives up and names it.
 pub const DEFAULT_STOP_TIMEOUT_MS: usize = 10_000;

@@ -713,12 +713,12 @@ mod tests {
 
     /// `[target] heap_max = 64` reaches `kelp_gc_init` as the maximum: 64 MiB in
     /// bytes, with the minimum still the 8 MiB default and the first-clearing
-    /// guesses and headroom at their defaults (1 MiB, 4 MiB, 20 percent).
+    /// guesses and headroom at their defaults (1 MiB, 4 MiB, 10 percent).
     #[test]
     fn managed_project_initialises_the_collector_to_its_heap_max() {
         let ir = lower_project(&project("heap_max_64")).expect("managed lowering of heap_max_64");
         assert!(
-            ir.contains("call void @kelp_gc_init(i64 8388608, i64 67108864, i64 1048576, i64 4194304, i64 20, i64 0)"),
+            ir.contains("call void @kelp_gc_init(i64 8388608, i64 67108864, i64 1048576, i64 4194304, i64 10, i64 0)"),
             "{ir}"
         );
         assert!(!ir.contains("i64 268435456,"), "the default cap must not be emitted: {ir}");

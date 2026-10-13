@@ -1259,7 +1259,7 @@ fn bench_binary_trees() {
     const MAX_DEPTH: u32 = 16;
     const MIN_DEPTH: u32 = 4;
     unsafe {
-        kelp_gc_init(8 << 20, 128 << 20);
+        kelp_gc_init(8 << 20, 128 << 20, 0, 0, 20, 0);
         kelp_gc_thread_attach();
         let start = std::time::Instant::now();
         let long = bt_make(MAX_DEPTH);
@@ -1333,7 +1333,7 @@ fn bench_large_live_set() {
     const LIVE: usize = 1_500_000;
     const CHURN: usize = 30_000_000;
     unsafe {
-        kelp_gc_init(8 << 20, 128 << 20);
+        kelp_gc_init(8 << 20, 128 << 20, 0, 0, 20, 0);
         kelp_gc_thread_attach();
         register_region(LIVE_HEAD.0.get() as *mut u8, &ROOT_PTR);
         let start = std::time::Instant::now();

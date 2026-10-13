@@ -30,7 +30,7 @@ static ELEM8: KelpGcType = KelpGcType { id: 2, size: 8, align: 8, flags: NOSCAN,
 static OBJ200: KelpGcType = KelpGcType { id: 3, size: 200, align: 8, flags: NOSCAN, n_ptrs: 0, ptr_off: core::ptr::null(), tag_off: 0, n_variants: 0, variants: core::ptr::null() };
 
 unsafe extern "C" {
-    fn kelp_gc_init(heap_min: usize, heap_max: usize);
+    fn kelp_gc_init(heap_min: usize, heap_max: usize, start_low: usize, start_high: usize, headroom_pct: usize, trigger_rule: usize);
     fn kelp_gc_thread_attach();
     fn kelp_gc_collect();
     fn kelp_gc_alloc(t: *const KelpGcType) -> *mut u8;
@@ -98,9 +98,9 @@ fn main() {
     let rounds = 3;
     unsafe {
         if nogc {
-            kelp_gc_init(400 << 20, 512 << 20);
+            kelp_gc_init(400 << 20, 512 << 20, 0, 0, 20, 0);
         } else {
-            kelp_gc_init(0, 0);
+            kelp_gc_init(0, 0, 0, 0, 20, 0);
         }
         kelp_gc_thread_attach();
         println!("mode {}", if nogc { "nogc (no cycle in the timed loop)" } else { "cycles (default trigger)" });

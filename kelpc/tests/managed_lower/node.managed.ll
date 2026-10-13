@@ -545,7 +545,7 @@ define i32 @main(i32 %0, ptr %1) !dbg !3 {
 entry:
   %leaf = alloca %tag_Node, align 8, !dbg !6
   %tree = alloca %tag_Node, align 8, !dbg !6
-  call void @kelp_gc_init(i64 8388608, i64 268435456, i64 1048576, i64 4194304, i64 20, i64 0), !dbg !6
+  call void @kelp_gc_init(i64 8388608, i64 268435456, i64 1048576, i64 4194304, i64 10, i64 0), !dbg !6
   call void @kelp_gc_thread_attach(), !dbg !6
   store i32 %0, ptr @kelp_argc, align 4, !dbg !6
   store ptr %1, ptr @kelp_argv, align 8, !dbg !6
