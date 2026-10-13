@@ -152,21 +152,21 @@ datac Conn(
 // `Some`, a plain socket otherwise. Both are rebuilt from the `Copy` fields
 // because a datac parameter is always a borrow and cannot be moved into a
 // struct field.
-fun conn_send_all(fd: i32, tls_handle: option.Option<tls.TlsHandle>, data: Bytes).return: usize {
+fun conn_send_all(fd: i32, tls_handle: option.Option<tls.TlsHandle>, data: Bytes) => usize {
     if let Some(h) = tls_handle {
         return tls.write_all(tls.TlsStream(fd = fd, handle = h), data)
     }
     return net.send_all(net.Socket(fd = fd), data)
 }
 
-fun conn_recv(fd: i32, tls_handle: option.Option<tls.TlsHandle>, max: usize).return: Bytes {
+fun conn_recv(fd: i32, tls_handle: option.Option<tls.TlsHandle>, max: usize) => Bytes {
     if let Some(h) = tls_handle {
         return tls.read(tls.TlsStream(fd = fd, handle = h), max)
     }
     return net.recv(net.Socket(fd = fd), max)
 }
 
-fun conn_recv_into(fd: i32, tls_handle: option.Option<tls.TlsHandle>, buf: mut Bytes, at: usize).return: usize {
+fun conn_recv_into(fd: i32, tls_handle: option.Option<tls.TlsHandle>, buf: mut Bytes, at: usize) => usize {
     if let Some(h) = tls_handle {
         return tls.read_into(tls.TlsStream(fd = fd, handle = h), buf, at)
     }
@@ -190,7 +190,7 @@ fun conn_close(fd: i32, tls_handle: option.Option<tls.TlsHandle>) {
 // The port is split at the first `:`, so an IPv6 literal is not expressible
 // here either, the same rule `net`'s capability patterns follow: a host
 // containing the port separator would be ambiguous.
-fun parse_url(s: &str).return: Url {
+fun parse_url(s: &str) => Url {
     val sep = option.expect(
         o = str.index_of(s, "://"),
         message = "ws.parse_url: URL must start with 'ws://' or 'wss://' (no scheme found)",
@@ -205,7 +205,7 @@ fun parse_url(s: &str).return: Url {
 
 // The default port for a scheme this module knows: 80 for `ws`, 443 for
 // `wss`. Panics: never; `parse_url` has already rejected anything else.
-fun default_port_for(scheme: &str).return: u16 {
+fun default_port_for(scheme: &str) => u16 {
     if str.eq(scheme, WSS_SCHEME) {
         return DEFAULT_WSS_PORT
     }
@@ -215,7 +215,7 @@ fun default_port_for(scheme: &str).return: u16 {
 // Splits `host[:port][/path]`, the part after `://`. The path is everything
 // from the first `/`, so a query string without a path (`host?a=b`) parses as
 // part of the authority and fails there rather than silently losing the query.
-fun split_authority(rest: &str, scheme: &str).return: Url {
+fun split_authority(rest: &str, scheme: &str) => Url {
     if str.is_empty(rest) {
         panic("ws.parse_url: URL has no host")
     }
@@ -229,7 +229,7 @@ fun split_authority(rest: &str, scheme: &str).return: Url {
     return make_url(whole, "/", scheme)
 }
 
-fun make_url(authority: String, path: &str, scheme: &str).return: Url {
+fun make_url(authority: String, path: &str, scheme: &str) => Url {
     if str.is_empty(authority.as_str()) {
         panic("ws.parse_url: URL has no host")
     }
@@ -255,7 +255,7 @@ fun make_url(authority: String, path: &str, scheme: &str).return: Url {
     )
 }
 
-fun parse_port(text: &str).return: u16 {
+fun parse_port(text: &str) => u16 {
     if str.is_empty(text) {
         panic("ws.parse_url: URL has an empty port")
     }
@@ -274,7 +274,7 @@ fun parse_port(text: &str).return: u16 {
 // The accept value the server must echo: the base64 of the SHA-1 of the key
 // text plus the GUID (RFC 6455 4.2.2). The key is used as the *text* the
 // client sent, not as the sixteen bytes it was made from.
-fun accept_for(key: &str).return: String {
+fun accept_for(key: &str) => String {
     val material = str.concat(key, WS_GUID)
     val digest = encoding.sha1(Bytes.from_str(material.as_str()))
     return encoding.base64_encode(digest)
@@ -284,7 +284,7 @@ fun accept_for(key: &str).return: String {
 // refusal in this module has. A `panic` takes one `&str`, so the three parts
 // are concatenated in two steps rather than passed nested (an owned `String`
 // argument does not borrow itself into a `&str` parameter).
-fun with_number(prefix: &str, n: u64, suffix: &str).return: String {
+fun with_number(prefix: &str, n: u64, suffix: &str) => String {
     val digits = fmt.uint(n)
     val middle = str.concat(prefix, digits.as_str())
     return str.concat(middle.as_str(), suffix)
@@ -293,7 +293,7 @@ fun with_number(prefix: &str, n: u64, suffix: &str).return: String {
 // The `GET` that opens a WebSocket (RFC 6455 4.1), through the blank line.
 // `Host` carries the port only when it is not the default for the scheme, as
 // `std/http`'s head builder does.
-fun build_head(scheme: &str, host: &str, port: u16, path: &str, key: &str).return: String {
+fun build_head(scheme: &str, host: &str, port: u16, path: &str, key: &str) => String {
     var out = String.with_capacity(256)
     out.push_str("GET ")
     out.push_str(path)
@@ -319,7 +319,7 @@ fun build_head(scheme: &str, host: &str, port: u16, path: &str, key: &str).retur
 // head, which is the first frames, and `Bytes.as_str` validates UTF-8 and
 // would panic on a binary frame before the head was even located. `std/http`
 // learned that from a 200 KB image (`find_head_end` in that module).
-fun find_head_end(b: Bytes).return: usize {
+fun find_head_end(b: Bytes) => usize {
     val n = b.len()
     var i: usize = 0
     while i + 4 <= n {
@@ -334,7 +334,7 @@ fun find_head_end(b: Bytes).return: usize {
 // The header block as text: the bytes before the terminator, copied and
 // validated in one step, since `String.from_bytes` adopts the buffer instead
 // of copying it.
-fun head_text(b: Bytes, end: usize).return: String {
+fun head_text(b: Bytes, end: usize) => String {
     val n = end - 4
     var raw = mem.alloc(n)
     var i: usize = 0
@@ -347,7 +347,7 @@ fun head_text(b: Bytes, end: usize).return: String {
 
 // ASCII case-insensitive comparison, the rule header names follow. The values
 // here are ASCII by construction and `str.to_lower` is ASCII-only.
-fun name_eq(a: &str, b: &str).return: bool {
+fun name_eq(a: &str, b: &str) => bool {
     if str.len(a) != str.len(b) {
         return false
     }
@@ -360,7 +360,7 @@ fun name_eq(a: &str, b: &str).return: bool {
 // trimmed. The head text has no trailing `CRLF` (the terminator was consumed
 // to find its end), so splitting on `CRLF` gives clean lines and the last
 // header without a `\r`. A line with no `:` is skipped, as HTTP allows.
-fun split_head_headers(head: &str).return: List<Header> {
+fun split_head_headers(head: &str) => List<Header> {
     val lines = str.split(head, "\r\n")
     var hs: List<Header> = List.empty()
     var i: usize = 1
@@ -383,7 +383,7 @@ fun split_head_headers(head: &str).return: List<Header> {
 // The first matching header's value, or an empty `String` when it is absent,
 // for the reason `std/http`'s `Response.header` gives: a borrow reached
 // through `List.get` cannot be handed back, so the value is copied.
-fun header_value(hs: List<Header>, name: &str).return: String {
+fun header_value(hs: List<Header>, name: &str) => String {
     var i: usize = 0
     while i < hs.len() {
         if name_eq(hs.get(i).name.as_str(), name) {
@@ -398,7 +398,7 @@ fun header_value(hs: List<Header>, name: &str).return: String {
 // the code matters: the reason phrase may be absent or anything at all.
 //
 // Panics: if the head has no status line, or its code is not a number.
-fun parse_status(head: &str).return: i32 {
+fun parse_status(head: &str) => i32 {
     val sp = str.index_of(head, " ")
     if let Some(at) = sp {
         val line = str.prefix(head, at)
@@ -415,7 +415,7 @@ fun parse_status(head: &str).return: i32 {
     panic("ws.connect: the response has no status line, so it is not an HTTP response")
 }
 
-fun status_code(text: &str).return: i32 {
+fun status_code(text: &str) => i32 {
     val p = result.expect(
         r = str.parse_u64(text),
         message = "ws.connect: the status code is not a number",
@@ -433,7 +433,7 @@ fun status_code(text: &str).return: i32 {
 //
 // Panics: if the peer closes first, or sends more than `MAX_HEAD` bytes
 // without a terminator.
-fun mut Conn.read_head().return: String {
+fun mut Conn.read_head() => String {
     var going = true
     while going {
         val end = find_head_end(buf)
@@ -451,7 +451,7 @@ fun mut Conn.read_head().return: String {
         }
         buf.append(chunk)
     }
-    // Unreachable, like the tail of `recv`: a `.return: String` function has to end
+    // Unreachable, like the tail of `recv`: a `=> String` function has to end
     // with a `return`, and this loop either returns or panics.
     return String.empty()
 }
@@ -490,7 +490,7 @@ enum WsErr {
 // HTTP response at all (`parse_status`), and on a peer that closes before the
 // head arrives (`read_head`). Those last two carry no status to report, and a
 // peer that answers neither is not something a reconnect loop can act on.
-fun try_connect(host: &str, port: u16, path: &str).return: result.Result<Conn, WsErr> = try_connect_scheme(
+fun try_connect(host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> = try_connect_scheme(
     DEFAULT_SCHEME,
     host,
     port,
@@ -499,14 +499,14 @@ fun try_connect(host: &str, port: u16, path: &str).return: result.Result<Conn, W
 
 // The same dial for a parsed URL, which is the spelling that can reach
 // `wss`: the scheme comes off `u` rather than being fixed to `ws`.
-fun try_connect_url(u: Url).return: result.Result<Conn, WsErr> = try_connect_scheme(
+fun try_connect_url(u: Url) => result.Result<Conn, WsErr> = try_connect_scheme(
     u.scheme.as_str(),
     u.host.as_str(),
     u.port,
     u.path.as_str(),
 )
 
-fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str).return: result.Result<Conn, WsErr> {
+fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => result.Result<Conn, WsErr> {
     // A fresh 16-byte key per connection (RFC 6455 4.1): it must not be a
     // fixed value, or a peer can precompute what a client will send.
     val key = rand.bytes(16)
@@ -540,7 +540,7 @@ fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str).return: 
 // `Conn` carries), or the opaque `tls.TlsHandle` a completed
 // `tls.try_handshake` returned. A refused handshake is `WsErr.Tls`, so a
 // reconnect loop can tell "the peer is not TLS" from "nothing is listening".
-fun connect_tls(scheme: &str, s: net.Socket, host: &str).return: result.Result<option.Option<tls.TlsHandle>, WsErr> {
+fun connect_tls(scheme: &str, s: net.Socket, host: &str) => result.Result<option.Option<tls.TlsHandle>, WsErr> {
     if !str.eq(scheme, WSS_SCHEME) {
         return result.Result.Ok(value = option.Option.None)
     }
@@ -568,7 +568,7 @@ fun handshake(
     path: &str,
     key_text: &str,
     expected: &str,
-).return: result.Result<Conn, WsErr> {
+) => result.Result<Conn, WsErr> {
     val head = build_head(scheme, host, port, path, key_text)
     conn_send_all(fd, tls_handle, Bytes.from_str(head.as_str()))
 
@@ -609,7 +609,7 @@ fun handshake(
 // The text a `WsErr` panics with. Every variant carries the whole message, so
 // this is the same answer for any of them; it exists so `connect` can be one
 // `panic` over the reason a `try_connect` handed it.
-fun refusal_text(e: move WsErr).return: String = when e {
+fun refusal_text(e: move WsErr) => String = when e {
     Dial(reason) -> reason
     Handshake(_, reason) -> reason
     Tls(reason) -> reason
@@ -618,7 +618,7 @@ fun refusal_text(e: move WsErr).return: String = when e {
 // The panicking end of a refused connect. Every message `connect` prints comes
 // out of here and nothing else, so the text a `try_connect` caller reads and
 // the text `connect` panics with cannot drift.
-fun fail_connect(e: move WsErr).return: Conn {
+fun fail_connect(e: move WsErr) => Conn {
     val reason = refusal_text(e)
     panic(reason.as_str())
 }
@@ -646,17 +646,17 @@ fun fail_connect(e: move WsErr).return: Conn {
 //
 // Panics: if the connect fails, the head is malformed or refused, or the peer
 // closes during the handshake.
-fun connect(host: &str, port: u16, path: &str).return: Conn = connect_scheme(DEFAULT_SCHEME, host, port, path)
+fun connect(host: &str, port: u16, path: &str) => Conn = connect_scheme(DEFAULT_SCHEME, host, port, path)
 
 // The panicking form for a parsed URL, the `wss`-capable twin of `connect`.
-fun connect_url(u: Url).return: Conn = connect_scheme(
+fun connect_url(u: Url) => Conn = connect_scheme(
     u.scheme.as_str(),
     u.host.as_str(),
     u.port,
     u.path.as_str(),
 )
 
-fun connect_scheme(scheme: &str, host: &str, port: u16, path: &str).return: Conn {
+fun connect_scheme(scheme: &str, host: &str, port: u16, path: &str) => Conn {
     val up = when try_connect_scheme(scheme, host, port, path) {
         Ok(c) -> c
         Err(e) -> fail_connect(e)
@@ -741,7 +741,7 @@ fun Conn.pong(data: &Bytes) {
 // connection that closed without one, and 1015 is a TLS handshake failure), so
 // a caller echoing back the code `recv` reported has to be stopped from
 // sending 1005 on.
-fun sendable_close_code(code: u16).return: bool {
+fun sendable_close_code(code: u16) => bool {
     if code < 1000 {
         return false
     }
@@ -793,7 +793,7 @@ fun Conn.close(code: u16, reason: &str) {
 // bytes of the *next* frame where the reader expects them.
 //
 // Panics: if the peer closes before `n` bytes have arrived.
-fun mut Conn.read_exact(n: usize).return: Bytes {
+fun mut Conn.read_exact(n: usize) => Bytes {
     var out = mem.alloc(n)
     var got: usize = 0
     while got < n && start < buf.len() {
@@ -820,7 +820,7 @@ fun mut Conn.read_exact(n: usize).return: Bytes {
 // Panics: if the frame is masked (RFC 6455 5.1: a server must not mask), if
 // the opcode is one of the reserved values, if a control frame is fragmented
 // or carries more than 125 bytes, or if the payload is longer than `MAX_FRAME`.
-fun mut Conn.read_frame().return: Frame {
+fun mut Conn.read_frame() => Frame {
     val head = self.read_exact(2)
     val fin = (head.get(0) & 128) != 0
     val opcode = head.get(0) & 15
@@ -872,7 +872,7 @@ fun mut Conn.read_frame().return: Frame {
 // `String.from_bytes` nor an enum payload can take over. A text payload that
 // is not UTF-8 panics inside `String.from_bytes`, which validates on the way
 // in.
-fun data_msg(opcode: u8, data: move Bytes).return: Msg {
+fun data_msg(opcode: u8, data: move Bytes) => Msg {
     if opcode == OP_TEXT {
         return Msg.Text(text = String.from_bytes(data))
     }
@@ -882,7 +882,7 @@ fun data_msg(opcode: u8, data: move Bytes).return: Msg {
 // A close frame's payload as a message. An empty payload is "no status code"
 // (`CLOSE_NO_STATUS`), a payload of exactly one byte is a protocol error, and
 // otherwise the first two bytes are the code and the rest is the reason.
-fun close_msg(data: Bytes).return: Msg {
+fun close_msg(data: Bytes) => Msg {
     if data.len() == 0 {
         return Msg.Close(code = CLOSE_NO_STATUS, reason = String.empty())
     }
@@ -913,7 +913,7 @@ fun close_msg(data: Bytes).return: Msg {
 // Panics: on a continuation frame with no message to continue, on a data frame
 // while a fragmented message is open, and on every frame-level protocol error
 // `read_frame` names.
-fun mut Conn.recv().return: Msg {
+fun mut Conn.recv() => Msg {
     var going = true
     while going {
         val f = self.read_frame()

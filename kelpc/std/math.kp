@@ -17,59 +17,59 @@ const E: f64 = 2.718281828459045
 /// The full turn in radians, `2 * PI`.
 const TAU: f64 = 6.283185307179586
 
-extern fun sqrt_raw(x: f64).return: f64
-extern fun pow_raw(base: f64, exp: f64).return: f64
-extern fun floor_raw(x: f64).return: f64
-extern fun ceil_raw(x: f64).return: f64
-extern fun round_raw(x: f64).return: f64
-extern fun trunc_raw(x: f64).return: f64
-extern fun exp_raw(x: f64).return: f64
-extern fun ln_raw(x: f64).return: f64
-extern fun log2_raw(x: f64).return: f64
-extern fun log10_raw(x: f64).return: f64
-extern fun sin_raw(x: f64).return: f64
-extern fun cos_raw(x: f64).return: f64
-extern fun tan_raw(x: f64).return: f64
-extern fun atan2_raw(y: f64, x: f64).return: f64
-extern fun is_nan_raw(x: f64).return: bool
-extern fun is_finite_raw(x: f64).return: bool
+extern fun sqrt_raw(x: f64) => f64
+extern fun pow_raw(base: f64, exp: f64) => f64
+extern fun floor_raw(x: f64) => f64
+extern fun ceil_raw(x: f64) => f64
+extern fun round_raw(x: f64) => f64
+extern fun trunc_raw(x: f64) => f64
+extern fun exp_raw(x: f64) => f64
+extern fun ln_raw(x: f64) => f64
+extern fun log2_raw(x: f64) => f64
+extern fun log10_raw(x: f64) => f64
+extern fun sin_raw(x: f64) => f64
+extern fun cos_raw(x: f64) => f64
+extern fun tan_raw(x: f64) => f64
+extern fun atan2_raw(y: f64, x: f64) => f64
+extern fun is_nan_raw(x: f64) => bool
+extern fun is_finite_raw(x: f64) => bool
 
 /// The square root of `x`.
-fun sqrt(x: f64).return: f64 = sqrt_raw(x)
+fun sqrt(x: f64) => f64 = sqrt_raw(x)
 /// `base` raised to `exp`.
-fun pow(base: f64, exp: f64).return: f64 = pow_raw(base, exp)
+fun pow(base: f64, exp: f64) => f64 = pow_raw(base, exp)
 /// The largest whole number not above `x`.
-fun floor(x: f64).return: f64 = floor_raw(x)
+fun floor(x: f64) => f64 = floor_raw(x)
 /// The smallest whole number not below `x`.
-fun ceil(x: f64).return: f64 = ceil_raw(x)
+fun ceil(x: f64) => f64 = ceil_raw(x)
 /// `x` rounded to the nearest whole number, halves away from zero.
-fun round(x: f64).return: f64 = round_raw(x)
+fun round(x: f64) => f64 = round_raw(x)
 /// `x` with its fractional part removed.
-fun trunc(x: f64).return: f64 = trunc_raw(x)
+fun trunc(x: f64) => f64 = trunc_raw(x)
 /// `E` raised to `x`.
-fun exp(x: f64).return: f64 = exp_raw(x)
+fun exp(x: f64) => f64 = exp_raw(x)
 /// The natural logarithm of `x`.
-fun ln(x: f64).return: f64 = ln_raw(x)
+fun ln(x: f64) => f64 = ln_raw(x)
 /// The base-2 logarithm of `x`.
-fun log2(x: f64).return: f64 = log2_raw(x)
+fun log2(x: f64) => f64 = log2_raw(x)
 /// The base-10 logarithm of `x`.
-fun log10(x: f64).return: f64 = log10_raw(x)
+fun log10(x: f64) => f64 = log10_raw(x)
 /// The sine of `x` radians.
-fun sin(x: f64).return: f64 = sin_raw(x)
+fun sin(x: f64) => f64 = sin_raw(x)
 /// The cosine of `x` radians.
-fun cos(x: f64).return: f64 = cos_raw(x)
+fun cos(x: f64) => f64 = cos_raw(x)
 /// The tangent of `x` radians.
-fun tan(x: f64).return: f64 = tan_raw(x)
+fun tan(x: f64) => f64 = tan_raw(x)
 /// The angle in radians of the point (`x`, `y`).
-fun atan2(y: f64, x: f64).return: f64 = atan2_raw(y, x)
+fun atan2(y: f64, x: f64) => f64 = atan2_raw(y, x)
 /// Whether `x` is not a number.
-fun is_nan(x: f64).return: bool = is_nan_raw(x)
+fun is_nan(x: f64) => bool = is_nan_raw(x)
 /// Whether `x` is neither infinite nor not a number.
-fun is_finite(x: f64).return: bool = is_finite_raw(x)
+fun is_finite(x: f64) => bool = is_finite_raw(x)
 
 /// `sign` is f64-only: an integer `sign` would return an integer, which is a
 /// different function, and nothing needs it yet.
-fun sign(x: f64).return: f64 = if x < 0.0 { -1.0 } else { if x > 0.0 { 1.0 } else { 0.0 } }
+fun sign(x: f64) => f64 = if x < 0.0 { -1.0 } else { if x > 0.0 { 1.0 } else { 0.0 } }
 
 // ---- overloaded -----------------------------------------------------------
 // Same name, one declaration per numeric type. `infer.rs` picks the overload
@@ -78,76 +78,76 @@ fun sign(x: f64).return: f64 = if x < 0.0 { -1.0 } else { if x > 0.0 { 1.0 } els
 // user code and implies no user-defined overloading.
 
 /// The absolute value of `x`.
-fun abs(x: i32).return: i32 = if x < 0 { -x } else { x }
+fun abs(x: i32) => i32 = if x < 0 { -x } else { x }
 /// The absolute value of `x`.
-fun abs(x: i64).return: i64 = if x < 0 { -x } else { x }
+fun abs(x: i64) => i64 = if x < 0 { -x } else { x }
 /// The absolute value of `x`.
-fun abs(x: f64).return: f64 = if x < 0.0 { -x } else { x }
+fun abs(x: f64) => f64 = if x < 0.0 { -x } else { x }
 
 /// The smaller of `a` and `b`.
-fun min(a: i32, b: i32).return: i32 = if a < b { a } else { b }
+fun min(a: i32, b: i32) => i32 = if a < b { a } else { b }
 /// The smaller of `a` and `b`.
-fun min(a: i64, b: i64).return: i64 = if a < b { a } else { b }
+fun min(a: i64, b: i64) => i64 = if a < b { a } else { b }
 /// The smaller of `a` and `b`.
-fun min(a: f64, b: f64).return: f64 = if a < b { a } else { b }
+fun min(a: f64, b: f64) => f64 = if a < b { a } else { b }
 
 /// The larger of `a` and `b`.
-fun max(a: i32, b: i32).return: i32 = if a > b { a } else { b }
+fun max(a: i32, b: i32) => i32 = if a > b { a } else { b }
 /// The larger of `a` and `b`.
-fun max(a: i64, b: i64).return: i64 = if a > b { a } else { b }
+fun max(a: i64, b: i64) => i64 = if a > b { a } else { b }
 /// The larger of `a` and `b`.
-fun max(a: f64, b: f64).return: f64 = if a > b { a } else { b }
+fun max(a: f64, b: f64) => f64 = if a > b { a } else { b }
 
 /// `x` limited to the range `lo` to `hi`.
-fun clamp(x: i32, lo: i32, hi: i32).return: i32 = if x < lo { lo } else { if x > hi { hi } else { x } }
+fun clamp(x: i32, lo: i32, hi: i32) => i32 = if x < lo { lo } else { if x > hi { hi } else { x } }
 /// `x` limited to the range `lo` to `hi`.
-fun clamp(x: i64, lo: i64, hi: i64).return: i64 = if x < lo { lo } else { if x > hi { hi } else { x } }
+fun clamp(x: i64, lo: i64, hi: i64) => i64 = if x < lo { lo } else { if x > hi { hi } else { x } }
 /// `x` limited to the range `lo` to `hi`.
-fun clamp(x: f64, lo: f64, hi: f64).return: f64 = if x < lo { lo } else { if x > hi { hi } else { x } }
+fun clamp(x: f64, lo: f64, hi: f64) => f64 = if x < lo { lo } else { if x > hi { hi } else { x } }
 
 // ---- f32 -------------------------------------------------------------------
 // The `f32` overloads compute in `f64` and narrow the result, so each is the
 // C function's value rounded once to `f32`.
 
 /// `sqrt` of an `f32`.
-fun sqrt(x: f32).return: f32 = sqrt_raw(x.to_f64()).to_f32()
+fun sqrt(x: f32) => f32 = sqrt_raw(x.to_f64()).to_f32()
 /// `floor` of an `f32`.
-fun floor(x: f32).return: f32 = floor_raw(x.to_f64()).to_f32()
+fun floor(x: f32) => f32 = floor_raw(x.to_f64()).to_f32()
 /// `ceil` of an `f32`.
-fun ceil(x: f32).return: f32 = ceil_raw(x.to_f64()).to_f32()
+fun ceil(x: f32) => f32 = ceil_raw(x.to_f64()).to_f32()
 /// `round` of an `f32`.
-fun round(x: f32).return: f32 = round_raw(x.to_f64()).to_f32()
+fun round(x: f32) => f32 = round_raw(x.to_f64()).to_f32()
 /// `trunc` of an `f32`.
-fun trunc(x: f32).return: f32 = trunc_raw(x.to_f64()).to_f32()
+fun trunc(x: f32) => f32 = trunc_raw(x.to_f64()).to_f32()
 /// `exp` of an `f32`.
-fun exp(x: f32).return: f32 = exp_raw(x.to_f64()).to_f32()
+fun exp(x: f32) => f32 = exp_raw(x.to_f64()).to_f32()
 /// `ln` of an `f32`.
-fun ln(x: f32).return: f32 = ln_raw(x.to_f64()).to_f32()
+fun ln(x: f32) => f32 = ln_raw(x.to_f64()).to_f32()
 /// `log2` of an `f32`.
-fun log2(x: f32).return: f32 = log2_raw(x.to_f64()).to_f32()
+fun log2(x: f32) => f32 = log2_raw(x.to_f64()).to_f32()
 /// `log10` of an `f32`.
-fun log10(x: f32).return: f32 = log10_raw(x.to_f64()).to_f32()
+fun log10(x: f32) => f32 = log10_raw(x.to_f64()).to_f32()
 /// `sin` of an `f32`.
-fun sin(x: f32).return: f32 = sin_raw(x.to_f64()).to_f32()
+fun sin(x: f32) => f32 = sin_raw(x.to_f64()).to_f32()
 /// `cos` of an `f32`.
-fun cos(x: f32).return: f32 = cos_raw(x.to_f64()).to_f32()
+fun cos(x: f32) => f32 = cos_raw(x.to_f64()).to_f32()
 /// `tan` of an `f32`.
-fun tan(x: f32).return: f32 = tan_raw(x.to_f64()).to_f32()
+fun tan(x: f32) => f32 = tan_raw(x.to_f64()).to_f32()
 /// `base` raised to `exp`, for `f32`.
-fun pow(base: f32, exp: f32).return: f32 = pow_raw(base.to_f64(), exp.to_f64()).to_f32()
+fun pow(base: f32, exp: f32) => f32 = pow_raw(base.to_f64(), exp.to_f64()).to_f32()
 /// The angle of `(x, y)`, for `f32`.
-fun atan2(y: f32, x: f32).return: f32 = atan2_raw(y.to_f64(), x.to_f64()).to_f32()
+fun atan2(y: f32, x: f32) => f32 = atan2_raw(y.to_f64(), x.to_f64()).to_f32()
 /// Whether an `f32` is not a number.
-fun is_nan(x: f32).return: bool = is_nan_raw(x.to_f64())
+fun is_nan(x: f32) => bool = is_nan_raw(x.to_f64())
 /// Whether an `f32` is neither infinite nor not a number.
-fun is_finite(x: f32).return: bool = is_finite_raw(x.to_f64())
+fun is_finite(x: f32) => bool = is_finite_raw(x.to_f64())
 /// The sign of an `f32`: -1.0, 0.0 or 1.0.
-fun sign(x: f32).return: f32 = if x < 0.0 { -1.0 } else { if x > 0.0 { 1.0 } else { 0.0 } }
+fun sign(x: f32) => f32 = if x < 0.0 { -1.0 } else { if x > 0.0 { 1.0 } else { 0.0 } }
 /// The absolute value of `x`.
-fun abs(x: f32).return: f32 = if x < 0.0 { -x } else { x }
+fun abs(x: f32) => f32 = if x < 0.0 { -x } else { x }
 /// The smaller of `a` and `b`.
-fun min(a: f32, b: f32).return: f32 = if a < b { a } else { b }
+fun min(a: f32, b: f32) => f32 = if a < b { a } else { b }
 /// The larger of `a` and `b`.
-fun max(a: f32, b: f32).return: f32 = if a > b { a } else { b }
+fun max(a: f32, b: f32) => f32 = if a > b { a } else { b }
 /// `x` limited to the range `lo` to `hi`.
-fun clamp(x: f32, lo: f32, hi: f32).return: f32 = if x < lo { lo } else { if x > hi { hi } else { x } }
+fun clamp(x: f32, lo: f32, hi: f32) => f32 = if x < lo { lo } else { if x > hi { hi } else { x } }

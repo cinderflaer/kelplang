@@ -92,19 +92,19 @@ datac ResolvConf(
 // ---- byte predicates --------------------------------------------------------
 
 // Space or tab, the two separators both formats use.
-fun is_blank(b: u8).R: bool = b == 32 || b == 9
+fun is_blank(b: u8) => bool = b == 32 || b == 9
 
 // `0`..`9`.
-fun is_digit(b: u8).R: bool = b >= 48 && b <= 57
+fun is_digit(b: u8) => bool = b >= 48 && b <= 57
 
 // `0`..`9`, `a`..`z`, `A`..`Z`.
-fun is_alnum(b: u8).R: bool = is_digit(b) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+fun is_alnum(b: u8) => bool = is_digit(b) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
 
 // `0`..`9`, `a`..`f`, `A`..`F`.
-fun is_hex(b: u8).R: bool = is_digit(b) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70)
+fun is_hex(b: u8) => bool = is_digit(b) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70)
 
 // A hex digit's value. The caller has checked `is_hex`.
-fun hex_val(b: u8).R: u8 {
+fun hex_val(b: u8) => u8 {
     if b >= 48 && b <= 57 {
         return b - 48
     }
@@ -115,7 +115,7 @@ fun hex_val(b: u8).R: u8 {
 }
 
 // The lowercase spelling of one nibble.
-fun hex_char(n: u8).R: u8 {
+fun hex_char(n: u8) => u8 {
     if n < 10 {
         return n + 48
     }
@@ -123,7 +123,7 @@ fun hex_char(n: u8).R: u8 {
 }
 
 // ASCII lowercase, the only case folding both formats need.
-fun lower(b: u8).R: u8 {
+fun lower(b: u8) => u8 {
     if b >= 65 && b <= 90 {
         return b + 32
     }
@@ -162,7 +162,7 @@ fun push_list(out: mut String, xs: &List<String>) {
 // trailing carriage return dropped so a CRLF file parses exactly like an LF
 // one. `semi` admits `;` as a comment introducer, which `/etc/resolv.conf`
 // does and `/etc/hosts` does not.
-fun line_end(data: &Bytes, start: usize, nl: usize, semi: bool).R: usize {
+fun line_end(data: &Bytes, start: usize, nl: usize, semi: bool) => usize {
     var e = nl
     var i = start
     var done = false
@@ -184,7 +184,7 @@ fun line_end(data: &Bytes, start: usize, nl: usize, semi: bool).R: usize {
 // The next blank-separated token at or after `at`, inside `[at, end)`. An empty
 // token cannot be produced: runs of blanks are skipped, and a token ends at the
 // next blank or at `end`.
-fun scan(data: &Bytes, at: usize, end: usize).R: Scan {
+fun scan(data: &Bytes, at: usize, end: usize) => Scan {
     var i = at
     while i < end && is_blank(data.get(i)) {
         i = i + 1
@@ -201,7 +201,7 @@ fun scan(data: &Bytes, at: usize, end: usize).R: Scan {
 
 // Whether the token is exactly `word`. Keywords are matched case-sensitively,
 // which is what glibc's `strncmp` does.
-fun token_is(data: &Bytes, start: usize, len: usize, word: &str).R: bool {
+fun token_is(data: &Bytes, start: usize, len: usize, word: &str) => bool {
     if len != str.len(word) {
         return false
     }
@@ -217,7 +217,7 @@ fun token_is(data: &Bytes, start: usize, len: usize, word: &str).R: bool {
 
 // Whether the token begins with `word`. The token may be exactly `word`: the
 // caller decides whether a missing remainder is a value error or not.
-fun token_has_prefix(data: &Bytes, start: usize, len: usize, word: &str).R: bool {
+fun token_has_prefix(data: &Bytes, start: usize, len: usize, word: &str) => bool {
     val n = str.len(word)
     if len < n {
         return false
@@ -236,7 +236,7 @@ fun token_has_prefix(data: &Bytes, start: usize, len: usize, word: &str).R: bool
 // no leading zero on a multi-digit value and no sign, so a value that a config
 // writer and a reader could disagree about (`010`) is a rejection rather than a
 // guess.
-fun token_number(data: &Bytes, start: usize, len: usize, prefix: usize).R: Number {
+fun token_number(data: &Bytes, start: usize, len: usize, prefix: usize) => Number {
     if len <= prefix {
         return Number(ok = false, value = 0)
     }
@@ -278,7 +278,7 @@ fun token_number(data: &Bytes, start: usize, len: usize, prefix: usize).R: Numbe
 // zero groups (the leftmost on a tie).
 
 // Whether the token holds an address, and its canonical spelling if it does.
-fun write_address(data: &Bytes, start: usize, len: usize, out: mut String).R: bool {
+fun write_address(data: &Bytes, start: usize, len: usize, out: mut String) => bool {
     if len == 0 {
         return false
     }
@@ -288,7 +288,7 @@ fun write_address(data: &Bytes, start: usize, len: usize, out: mut String).R: bo
     return write_ipv4(data, start, len, out)
 }
 
-fun has_colon(data: &Bytes, start: usize, len: usize).R: bool {
+fun has_colon(data: &Bytes, start: usize, len: usize) => bool {
     var i = start
     val end = start + len
     while i < end {
@@ -303,7 +303,7 @@ fun has_colon(data: &Bytes, start: usize, len: usize).R: bool {
 // A dotted quad. `parts != 4` covers a short form (`1.2.3`) and an over-long
 // one (`1.2.3.4.5`), and `i != end` covers a trailing byte that is neither
 // digit nor dot.
-fun write_ipv4(data: &Bytes, start: usize, len: usize, out: mut String).R: bool {
+fun write_ipv4(data: &Bytes, start: usize, len: usize, out: mut String) => bool {
     val end = start + len
     var i = start
     var parts: usize = 0
@@ -356,7 +356,7 @@ fun write_ipv4(data: &Bytes, start: usize, len: usize, out: mut String).R: bool 
 // there must be exactly eight groups. A zone suffix (`%eth0`) and an embedded
 // IPv4 tail (`::ffff:1.2.3.4`) are refused: neither is a bare address this
 // resolver would compare against a peer's.
-fun write_ipv6(data: &Bytes, start: usize, len: usize, out: mut String).R: bool {
+fun write_ipv6(data: &Bytes, start: usize, len: usize, out: mut String) => bool {
     val end = start + len
     var groups: List<u16> = List.empty()
     var gap_at: usize = 0
@@ -523,7 +523,7 @@ fun push_hex_group(out: mut String, v: u16) {
 //
 // The lowercased name is written into `out`, which may hold a partial rendering
 // when the answer is false (see `write_address`).
-fun write_hostname(data: &Bytes, start: usize, len: usize, out: mut String).R: bool {
+fun write_hostname(data: &Bytes, start: usize, len: usize, out: mut String) => bool {
     if len == 0 || len > 255 {
         return false
     }
@@ -574,7 +574,7 @@ fun write_hostname(data: &Bytes, start: usize, len: usize, out: mut String).R: b
 // The reason names the class of the first bad line, not which line it was: the
 // line number is a diagnostic concern and both implementations print the same
 // verdict for the same input.
-fun parse_hosts(data: Bytes).R: result.Result<HostsFile, HostsErr> {
+fun parse_hosts(data: Bytes) => result.Result<HostsFile, HostsErr> {
     var entries: List<HostEntry> = List.empty()
     val n = data.len()
     var pos: usize = 0
@@ -626,9 +626,9 @@ fun parse_hosts(data: Bytes).R: result.Result<HostsFile, HostsErr> {
 // the first three `nameserver` lines are kept and later ones discarded, and a
 // search list is truncated to six domains. Both are counted in the rendered
 // line rather than dropped silently.
-fun max_nameservers().R: usize = 3
+fun max_nameservers() => usize = 3
 
-fun max_search().R: usize = 6
+fun max_search() => usize = 6
 
 // `nameserver`, `domain`, `search` and `options`, in the order glibc's
 // `res_init` reads them. `domain` and `search` are the same field: the last
@@ -640,7 +640,7 @@ fun max_search().R: usize = 6
 // understand is a resolver whose behaviour nobody can predict from the file, so
 // this parser refuses instead. The same choice is what makes a mangled line
 // (`nameserverr 1.1.1.1`) a rejection.
-fun parse_resolv(data: Bytes).R: result.Result<ResolvConf, ResolvErr> {
+fun parse_resolv(data: Bytes) => result.Result<ResolvConf, ResolvErr> {
     var nameservers: List<String> = List.empty()
     var ns_dropped: usize = 0
     var search: List<String> = List.empty()
@@ -781,7 +781,7 @@ fun parse_resolv(data: Bytes).R: result.Result<ResolvConf, ResolvErr> {
 // Which known option the token is: 1 `rotate`, 2 `ndots:`, 3 `timeout:`,
 // 4 `attempts:`, 0 anything else. A known option whose value is malformed is a
 // rejection at the call site; an unknown one is skipped there.
-fun write_option(data: &Bytes, start: usize, len: usize).R: u8 {
+fun write_option(data: &Bytes, start: usize, len: usize) => u8 {
     if token_is(data, start, len, "rotate") {
         return 1
     }
@@ -801,14 +801,14 @@ fun write_option(data: &Bytes, start: usize, len: usize).R: u8 {
 
 // The wire name of a `/etc/hosts` reason: the token both implementations print,
 // and the whole of that format's rejection vocabulary.
-fun hosts_reason(e: &HostsErr).R: &str = when e {
+fun hosts_reason(e: &HostsErr) => &str = when e {
     BadAddress -> "hosts-bad-address"
     NoName -> "hosts-no-name"
     BadName -> "hosts-bad-name"
 }
 
 // The wire name of a `/etc/resolv.conf` reason.
-fun resolv_reason(e: &ResolvErr).R: &str = when e {
+fun resolv_reason(e: &ResolvErr) => &str = when e {
     UnknownKeyword -> "resolv-unknown-keyword"
     MissingArgument -> "resolv-missing-argument"
     BadAddress -> "resolv-bad-address"
@@ -824,7 +824,7 @@ fun resolv_reason(e: &ResolvErr).R: &str = when e {
 // is no entry count: the groups are the count, and the entries stream out as
 // they are parsed, which is what lets the C reference render a file of any size
 // without buffering it.
-fun render_hosts(f: &HostsFile).R: String {
+fun render_hosts(f: &HostsFile) => String {
     var out = String.with_capacity(64)
     out.push_str("ok hosts")
     var i: usize = 0
@@ -848,7 +848,7 @@ fun render_hosts(f: &HostsFile).R: String {
 
 // The canonical line for a resolv.conf file. Fixed fields in a fixed order, so
 // a diff says which field moved instead of which byte.
-fun render_resolv(c: &ResolvConf).R: String {
+fun render_resolv(c: &ResolvConf) => String {
     var out = String.with_capacity(128)
     out.push_str("ok ns=")
     push_list(out, c.nameservers)
@@ -878,7 +878,7 @@ fun render_resolv(c: &ResolvConf).R: String {
 // The one line for one `/etc/hosts` file: the rendered entries, or
 // `reject <reason>`. `pub`: the differential driver reaches it as
 // `resolver_conf.line_hosts` (A-13).
-pub fun line_hosts(data: Bytes).R: String {
+pub fun line_hosts(data: Bytes) => String {
     val parsed = parse_hosts(data)
     return when parsed {
         Ok(f) -> render_hosts(f)
@@ -889,7 +889,7 @@ pub fun line_hosts(data: Bytes).R: String {
 // The one line for one `/etc/resolv.conf` file: the rendered configuration, or
 // `reject <reason>`. `pub`: the differential driver reaches it as
 // `resolver_conf.line_resolv` (A-13).
-pub fun line_resolv(data: Bytes).R: String {
+pub fun line_resolv(data: Bytes) => String {
     val parsed = parse_resolv(data)
     return when parsed {
         Ok(c) -> render_resolv(c)

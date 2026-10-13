@@ -9,7 +9,7 @@
    module, exactly like `str.*` and `math.*`, `list.map(xs, f)`.
 
    Every callback takes a *borrow* of the element and is a **closure**
-   (`closure(&T).return: U`), so a call never moves an element out of the list, the
+   (`closure(&T) => U`), so a call never moves an element out of the list, the
    same functions work for `Copy` and owned element types, and a callback may
    capture a binding from the frame that passes it (A-4 phase E). A plain
    function value, a declared `fun`, or a literal that captured nothing, is
@@ -23,7 +23,7 @@ impl "std/option"
 
 /// The list of `f(x)` for every `x`. Works for any element type: the result is
 /// built from what `f` returns, and nothing is taken out of `xs`.
-fun map<T, U>(xs: &List<T>, f: closure(&T).return: U).return: List<U> {
+fun map<T, U>(xs: &List<T>, f: closure(&T) => U) => List<U> {
     var out: List<U> = List.empty()
     var i: usize = 0
     while i < xs.len() {
@@ -35,7 +35,7 @@ fun map<T, U>(xs: &List<T>, f: closure(&T).return: U).return: List<U> {
 
 /// The elements `f` accepts, in order. `T` must be `Copy`: an accepted element
 /// is read out of `xs` by value.
-fun filter<T>(xs: &List<T>, f: closure(&T).return: bool).return: List<T> {
+fun filter<T>(xs: &List<T>, f: closure(&T) => bool) => List<T> {
     var out: List<T> = List.empty()
     var i: usize = 0
     while i < xs.len() {
@@ -59,7 +59,7 @@ fun each<T>(xs: &List<T>, f: closure(&T)) {
 
 /// The index of the first element `f` accepts, or `None`. Works for any element
 /// type, the index is the value, and no element is read out.
-fun find_index<T>(xs: &List<T>, f: closure(&T).return: bool).return: option.Option<usize> {
+fun find_index<T>(xs: &List<T>, f: closure(&T) => bool) => option.Option<usize> {
     var i: usize = 0
     while i < xs.len() {
         if f(xs.get(i)) {
@@ -72,7 +72,7 @@ fun find_index<T>(xs: &List<T>, f: closure(&T).return: bool).return: option.Opti
 
 /// Whether `f` accepts any element, the predicate form of `find_index`, for a
 /// caller that does not care which one. Works for any element type.
-fun any<T>(xs: &List<T>, f: closure(&T).return: bool).return: bool {
+fun any<T>(xs: &List<T>, f: closure(&T) => bool) => bool {
     var i: usize = 0
     while i < xs.len() {
         if f(xs.get(i)) {
@@ -84,7 +84,7 @@ fun any<T>(xs: &List<T>, f: closure(&T).return: bool).return: bool {
 }
 
 /// Whether `f` accepts every element. Works for any element type.
-fun all<T>(xs: &List<T>, f: closure(&T).return: bool).return: bool {
+fun all<T>(xs: &List<T>, f: closure(&T) => bool) => bool {
     var i: usize = 0
     while i < xs.len() {
         if !f(xs.get(i)) {

@@ -38,7 +38,7 @@ impl "std/str"
 // which is the one place this cannot be line-for-line: the length tests below
 // are the same tests with the reads made safe, and the corpus covers the short
 // patterns (`""`, `*`, `**`, `/**`) those reads are about.
-fun glob_match(pat: &str, path: &str).return: bool {
+fun glob_match(pat: &str, path: &str) => bool {
     // One `view` per call: it derives the length once, and every read below is
     // then a real bounds check rather than a `strlen` (BUG-hT3wK). The
     // recursive calls still take `&str`, so each derives its own length once;
@@ -120,14 +120,14 @@ fun glob_match(pat: &str, path: &str).return: bool {
 }
 
 // `s[i..]` is exactly `/`, `*`, `*`. The caller guarantees `i + 3 <= len`.
-fun dir_wildcard_at(s: View, i: usize).return: bool {
+fun dir_wildcard_at(s: View, i: usize) => bool {
     return s.get(i) == 47 && s.get(i + 1) == 42 && s.get(i + 2) == 42
 }
 
 // Whether `pat` admits `text` in the `net` vocabulary: `*` is one label wide, so
 // it stops at `.` and `:`, and there is no `**`, there is nothing for it to
 // mean that `*` does not already say.
-fun host_glob(pat: &str, text: &str).return: bool {
+fun host_glob(pat: &str, text: &str) => bool {
     return host_glob_at(pat, 0, text, 0, str.len(text))
 }
 
@@ -139,7 +139,7 @@ fun host_glob(pat: &str, text: &str).return: bool {
 // was, and this version matches only as far as `tend` instead. Nothing is
 // copied, and the verdicts are the same, which is what the corpus checks, the
 // `host:port` cases included.
-fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usize).return: bool {
+fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usize) => bool {
     val pv = pat.view()
     val tv = text.view()
     val plen = pv.len()
@@ -182,7 +182,7 @@ fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usiz
 // The C version copies the host part into a `PATH_MAX` buffer first; `host_end`
 // is that buffer's bound, kept so that an over-long name cannot become *more*
 // admissible here than it was there.
-fun host_match(pat: &str, hostport: &str).return: bool {
+fun host_match(pat: &str, hostport: &str) => bool {
     if str.eq(pat, "*") {
         return true
     }
@@ -196,7 +196,7 @@ fun host_match(pat: &str, hostport: &str).return: bool {
 // is, cut the way `kelp_host_part`'s `char host[PATH_MAX]` cuts it. `PATH_MAX`
 // is 4096 on Linux, and the C version keeps the first `cap - 1` bytes of what it
 // copied.
-fun host_end(hostport: &str).return: usize {
+fun host_end(hostport: &str) => usize {
     val hv = hostport.view()
     val n = hv.len()
     var end = n
@@ -217,7 +217,7 @@ fun host_end(hostport: &str).return: usize {
 
 // Whether `pat` names a port at all, the C version's `strrchr(pat, ':') !=
 // NULL`, which asks only whether a colon exists, not where.
-fun has_colon(pat: &str).return: bool {
+fun has_colon(pat: &str) => bool {
     val pv = pat.view()
     val n = pv.len()
     var i: usize = 0
@@ -250,7 +250,7 @@ fun has_colon(pat: &str).return: bool {
 // A caller in C passes a borrowed `kelp_Bytes` over its own array and must not
 // drop it (dropping would `free` a stack address); `kelp_cap_check_path` and
 // `path.normalize`'s body both do exactly that, and say so where they do it.
-fun path_normalize(s: &str, out: mut Bytes).return: bool {
+fun path_normalize(s: &str, out: mut Bytes) => bool {
     val cap = out.len()
     val sv = s.view()
     val n = sv.len()

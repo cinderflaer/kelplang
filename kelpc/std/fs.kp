@@ -28,41 +28,41 @@ impl "std/option"
    a caller see a link as a link and read its target, and `walk`/`remove_all`
    stop at one rather than descending through it (MISSING-cK4hT). */
 
-extern fun read_raw(path: &str).return: Bytes
+extern fun read_raw(path: &str) => Bytes
 extern fun write_raw(path: &str, data: Bytes)
 extern fun write_text_raw(path: &str, text: String)
-extern fun exists_raw(path: &str).return: bool
-extern fun is_file_raw(path: &str).return: bool
-extern fun is_dir_raw(path: &str).return: bool
-extern fun size_raw(path: &str).return: u64
+extern fun exists_raw(path: &str) => bool
+extern fun is_file_raw(path: &str) => bool
+extern fun is_dir_raw(path: &str) => bool
+extern fun size_raw(path: &str) => u64
 extern fun remove_raw(path: &str)
 extern fun rename_raw(from: &str, to: &str)
 extern fun mkdir_raw(path: &str)
 extern fun mkdir_all_raw(path: &str)
 extern fun append_raw(path: &str, data: Bytes)
 extern fun sync_raw(path: &str)
-extern fun list_raw(path: &str).return: String
-extern fun open_raw(path: &str, mode: &str).return: i32
+extern fun list_raw(path: &str) => String
+extern fun open_raw(path: &str, mode: &str) => i32
 extern fun copy_raw(from: &str, to: &str)
 extern fun symlink_raw(target: &str, link: &str)
 extern fun touch_raw(path: &str)
-extern fun temp_path_raw(prefix: &str).return: String
-extern fun mtime_raw(path: &str).return: i64
-extern fun mode_raw(path: &str).return: u32
+extern fun temp_path_raw(prefix: &str) => String
+extern fun mtime_raw(path: &str) => i64
+extern fun mode_raw(path: &str) => u32
 extern fun set_mode_raw(path: &str, mode: u32)
 // `stat` once, into out-parameters: an `extern` returns one value and a
 // `datac`-returning body would have to name the generated C struct.
 extern fun metadata_raw(path: &str, size: mut u64, mtime: mut i64, mode: mut u32, is_dir: mut bool, is_file: mut bool)
-extern fun is_symlink_raw(path: &str).return: bool
-extern fun read_link_raw(path: &str).return: String
-extern fun cwd_raw().return: String
+extern fun is_symlink_raw(path: &str) => bool
+extern fun read_link_raw(path: &str) => String
+extern fun cwd_raw() => String
 
 // The fallible twins of `read_raw`/`open_raw`. Neither panics: the failure is
 // written through `err` (0 on success) and the return value is whatever shape
 // "no value" takes (`try_read_raw` returns an empty `Bytes`, `try_open_raw` a
 // negative descriptor), so the caller has one value to drop on either path.
-extern fun try_read_raw(path: &str, err: mut i32).return: Bytes
-extern fun try_open_raw(path: &str, mode: &str, err: mut i32).return: i32
+extern fun try_read_raw(path: &str, err: mut i32) => Bytes
+extern fun try_open_raw(path: &str, mode: &str, err: mut i32) => i32
 
 // The fallible twins of the mutators. Each writes the `errno` through `err` (0
 // on success) instead of panicking.
@@ -73,11 +73,11 @@ extern fun try_remove_raw(path: &str, err: mut i32)
 extern fun try_rename_raw(from: &str, to: &str, err: mut i32)
 extern fun try_symlink_raw(target: &str, link: &str, err: mut i32)
 extern fun try_mkdir_all_raw(path: &str, err: mut i32)
-extern fun try_list_raw(path: &str, err: mut i32).return: String
+extern fun try_list_raw(path: &str, err: mut i32) => String
 
 // Whether `data` is valid UTF-8. The same check `String.from_bytes` runs (and
 // panics on), exposed so a fallible reader can ask before it copies.
-extern fun utf8_valid_raw(data: &Bytes).return: bool
+extern fun utf8_valid_raw(data: &Bytes) => bool
 
 /// A point-in-time view of one path (MK5-S5). `mode` is the low 12 permission
 /// bits (`07777`), and `is_dir`/`is_file` are the two cases worth branching
@@ -86,14 +86,14 @@ datac Metadata(val size: u64, val mtime: i64, val mode: u32, val is_dir: bool, v
 
 /// The whole file, as owned bytes.
 /// Panics: if the file cannot be read.
-fun read(path: &str).return: Bytes = read_raw(path)
+fun read(path: &str) => Bytes = read_raw(path)
 
 /// The whole file, as owned bytes, or the reason it cannot be read: the
 /// fallible twin of `read` for a path the caller did not author, a scanner, an
 /// indexer or a backup tool that skips what it may not read instead of ending
 /// the run on the first such file. The error carries the POSIX `errno` and its
 /// text (`io.IoErr`).
-fun try_read(path: &str).return: result.Result<Bytes, io.IoErr> {
+fun try_read(path: &str) => result.Result<Bytes, io.IoErr> {
     var err: i32 = 0
     val data = try_read_raw(path, &mut err)
     if err == 0 {
@@ -104,12 +104,12 @@ fun try_read(path: &str).return: result.Result<Bytes, io.IoErr> {
 
 /// The whole file, as owned text.
 /// Panics: if the file cannot be read, or is not valid utf-8.
-fun read_text(path: &str).return: String = String.from_bytes(read_raw(path))
+fun read_text(path: &str) => String = String.from_bytes(read_raw(path))
 
 /// The whole file as text, or the reason it cannot be read. A file that is not
 /// valid UTF-8 is a failure too: its `errno` is 0, because no syscall failed,
 /// and `message` says so.
-fun try_read_text(path: &str).return: result.Result<String, io.IoErr> {
+fun try_read_text(path: &str) => result.Result<String, io.IoErr> {
     var err: i32 = 0
     val data = try_read_raw(path, &mut err)
     if err != 0 {
@@ -131,7 +131,7 @@ fun write(path: &str, data: Bytes) {
 /// The fallible twin of `write`: `None` on success, or the reason it failed (the
 /// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
 /// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_write(path: &str, data: Bytes).return: option.Option<io.IoErr> {
+must_use fun try_write(path: &str, data: Bytes) => option.Option<io.IoErr> {
     var err: i32 = 0
     try_write_raw(path, data, &mut err)
     if err == 0 {
@@ -148,7 +148,7 @@ fun write_text(path: &str, text: String) {
 /// The fallible twin of `write_text`: `None` on success, or the reason it failed (the
 /// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
 /// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_write_text(path: &str, text: String).return: option.Option<io.IoErr> {
+must_use fun try_write_text(path: &str, text: String) => option.Option<io.IoErr> {
     var err: i32 = 0
     try_write_text_raw(path, text, &mut err)
     if err == 0 {
@@ -164,30 +164,30 @@ must_use fun try_write_text(path: &str, text: String).return: option.Option<io.I
 /// for a different one. Turning a relative argument into a path the capability
 /// check will accept is `path.absolute(fs.cwd(), arg)`.
 /// Panics: if the kernel cannot report it.
-fun cwd().return: String = cwd_raw()
+fun cwd() => String = cwd_raw()
 
 /// Whether `path` exists.
-fun exists(path: &str).return: bool = exists_raw(path)
+fun exists(path: &str) => bool = exists_raw(path)
 /// Whether `path` is a regular file.
-fun is_file(path: &str).return: bool = is_file_raw(path)
+fun is_file(path: &str) => bool = is_file_raw(path)
 /// Whether `path` is a directory.
-fun is_dir(path: &str).return: bool = is_dir_raw(path)
+fun is_dir(path: &str) => bool = is_dir_raw(path)
 
 /// Whether `path` is itself a symlink. `is_file`/`is_dir` follow a link and
 /// answer for what it points at; this is `lstat`, so it answers for the link,
 /// and a broken link is `true` here and `false` for both of the others. The
 /// path is normalized and symlink-resolved for the capability check like every
 /// other `fs` path, so a link out of the grant is denied rather than reported.
-fun is_symlink(path: &str).return: bool = is_symlink_raw(path)
+fun is_symlink(path: &str) => bool = is_symlink_raw(path)
 
 /// The text `path` points at, exactly as it was stored: a relative target stays
 /// relative (it is relative to the link's own directory), and a broken link
 /// still has one.
 /// Panics: if `path` is not a symlink, or cannot be read.
-fun read_link(path: &str).return: String = read_link_raw(path)
+fun read_link(path: &str) => String = read_link_raw(path)
 
 /// Panics: if the file does not exist.
-fun size(path: &str).return: u64 = size_raw(path)
+fun size(path: &str) => u64 = size_raw(path)
 
 /// Panics: if the file cannot be removed.
 fun remove(path: &str) {
@@ -197,7 +197,7 @@ fun remove(path: &str) {
 /// The fallible twin of `remove`: `None` on success, or the reason it failed (the
 /// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
 /// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_remove(path: &str).return: option.Option<io.IoErr> {
+must_use fun try_remove(path: &str) => option.Option<io.IoErr> {
     var err: i32 = 0
     try_remove_raw(path, &mut err)
     if err == 0 {
@@ -217,7 +217,7 @@ fun rename(from: &str, to: &str) {
 /// The fallible twin of `rename`: `None` on success, or the reason it failed (the
 /// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
 /// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_rename(from: &str, to: &str).return: option.Option<io.IoErr> {
+must_use fun try_rename(from: &str, to: &str) => option.Option<io.IoErr> {
     var err: i32 = 0
     try_rename_raw(from, to, &mut err)
     if err == 0 {
@@ -245,7 +245,7 @@ fun append(path: &str, data: Bytes) {
 /// The fallible twin of `append`: `None` on success, or the reason it failed (the
 /// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
 /// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_append(path: &str, data: Bytes).return: option.Option<io.IoErr> {
+must_use fun try_append(path: &str, data: Bytes) => option.Option<io.IoErr> {
     var err: i32 = 0
     try_append_raw(path, data, &mut err)
     if err == 0 {
@@ -270,7 +270,7 @@ fun sync(path: &str) {
 /// back one newline-separated buffer (`str.split` then turns it into a
 /// `List<String>`).
 /// Panics: if the directory cannot be read.
-fun list(path: &str).return: List<String> {
+fun list(path: &str) => List<String> {
     val raw = list_raw(path)
     if str.len(raw.as_str()) == 0 {
         var empty: List<String> = List.empty()
@@ -281,7 +281,7 @@ fun list(path: &str).return: List<String> {
 
 /// The fallible twin of `list`: the entry names, or the reason the directory
 /// cannot be read (`errno` and its text, as `try_read` reports it).
-fun try_list(path: &str).return: result.Result<List<String>, io.IoErr> {
+fun try_list(path: &str) => result.Result<List<String>, io.IoErr> {
     var err: i32 = 0
     val raw = try_list_raw(path, &mut err)
     if err != 0 {
@@ -317,7 +317,7 @@ fun mkdir_all(path: &str) {
 /// The fallible twin of `mkdir_all`: `None` on success, or the reason it failed (the
 /// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
 /// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_mkdir_all(path: &str).return: option.Option<io.IoErr> {
+must_use fun try_mkdir_all(path: &str) => option.Option<io.IoErr> {
     var err: i32 = 0
     try_mkdir_all_raw(path, &mut err)
     if err == 0 {
@@ -361,7 +361,7 @@ fun remove_all(target: &str) {
 /// gone, or the first failure (`errno` and its text) with the rest left in
 /// place. A link out of the grant that the walk reaches is still a capability
 /// panic, not a value (open item 73).
-must_use fun try_remove_all(target: &str).return: option.Option<io.IoErr> {
+must_use fun try_remove_all(target: &str) => option.Option<io.IoErr> {
     if is_symlink(target) {
         return try_remove(target)
     }
@@ -394,7 +394,7 @@ must_use fun try_remove_all(target: &str).return: option.Option<io.IoErr> {
 /// live borrow of itself (`List.get` would hold one for the whole loop body).
 ///
 /// Panics: if any directory cannot be read.
-fun walk(dir: &str).return: List<String> {
+fun walk(dir: &str) => List<String> {
     var out: List<String> = List.empty()
     var pending: List<String> = List.empty()
     pending.push(String.from_str(dir))
@@ -448,7 +448,7 @@ fun symlink(target: &str, link: &str) {
 /// The fallible twin of `symlink`: `None` on success, or the reason it failed (the
 /// POSIX `errno` and its text, as `try_read` reports it). It is an `Option` rather
 /// than `Result<unit, E>`, so the absence of an error is `None`.
-must_use fun try_symlink(target: &str, link: &str).return: option.Option<io.IoErr> {
+must_use fun try_symlink(target: &str, link: &str) => option.Option<io.IoErr> {
     var err: i32 = 0
     try_symlink_raw(target, link, &mut err)
     if err == 0 {
@@ -479,14 +479,14 @@ fun set_mode(path: &str, mode: u32) {
 /// does not truncate.
 ///
 /// Panics: if the mode is unknown or the file cannot be opened.
-fun open(path: &str, mode: &str).return: io.File {
+fun open(path: &str, mode: &str) => io.File {
     return io.File(fd = open_raw(path, mode))
 }
 
 /// A `File` over `path`, or the reason it cannot be opened: the fallible twin of
 /// `open`, with the same modes and the same error type as `try_read`. An unknown
 /// mode is a failure with `errno` `EINVAL` (22) rather than a panic.
-fun try_open(path: &str, mode: &str).return: result.Result<io.File, io.IoErr> {
+fun try_open(path: &str, mode: &str) => result.Result<io.File, io.IoErr> {
     var err: i32 = 0
     val fd = try_open_raw(path, mode, &mut err)
     if err == 0 {
@@ -500,7 +500,7 @@ fun try_open(path: &str, mode: &str).return: result.Result<io.File, io.IoErr> {
 /// `io.read_lines` produces).
 ///
 /// Panics: if the file cannot be read or is not valid utf-8.
-fun read_lines(path: &str).return: List<String> {
+fun read_lines(path: &str) => List<String> {
     val text = read_text(path)
     val s = text.as_str()
     if str.len(s) == 0 {
@@ -520,13 +520,13 @@ fun read_lines(path: &str).return: List<String> {
 /// just named.
 ///
 /// Panics: if the file cannot be created.
-fun temp_path(prefix: &str).return: String = temp_path_raw(prefix)
+fun temp_path(prefix: &str) => String = temp_path_raw(prefix)
 
 /// The whole of `Metadata` from one `stat`, so a walk that measures every entry
 /// pays one syscall per entry rather than the five this used to charge.
 ///
 /// Panics: if the path cannot be stat-ed.
-fun metadata(path: &str).return: Metadata {
+fun metadata(path: &str) => Metadata {
     var size: u64 = 0
     var mtime: i64 = 0
     var mode: u32 = 0

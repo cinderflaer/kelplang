@@ -3,16 +3,16 @@ impl "std/str"
 
 /* `/` is the separator on every platform in the API; a `\` translation
    belongs at the syscall boundary, not here (stdlib plan, `path` section). */
-fun is_absolute(s: &str).return: bool = str.len(s) > 0 && str.byte(s, 0) == 47
+fun is_absolute(s: &str) => bool = str.len(s) > 0 && str.byte(s, 0) == 47
 
 // Purely lexical normalization: `//` collapses, `.` is dropped, `..` pops a
 // segment. It is *the same C function* the capability checker uses (M7),
 // which is the plan's requirement, the security-relevant normalization must
 // exist once, not twice.
 // Panics: if the path is not absolute, or escapes its own root via `..`.
-extern fun normalize_raw(s: &str).return: String
+extern fun normalize_raw(s: &str) => String
 
-fun normalize(s: &str).return: String = normalize_raw(s)
+fun normalize(s: &str) => String = normalize_raw(s)
 
 // `p` as an absolute, normalized path: `p` alone when it is already absolute,
 // otherwise `base` with `p` appended, in both cases run through `normalize` so
@@ -21,7 +21,7 @@ fun normalize(s: &str).return: String = normalize_raw(s)
 //
 // `base` must be absolute, and the pair must not climb above `/`.
 // Panics: if `base` is not absolute, or the join escapes the filesystem root.
-fun absolute(base: &str, p: &str).return: String {
+fun absolute(base: &str, p: &str) => String {
     if is_absolute(p) {
         return normalize(p)
     }
@@ -32,7 +32,7 @@ fun absolute(base: &str, p: &str).return: String {
 // The byte index just past the last `/`, or 0 when the path has none. A
 // path with no separator has no directory part at all, so `file_name`
 // reports the whole string, which is what every other path library does.
-fun last_sep(s: &str).return: usize {
+fun last_sep(s: &str) => usize {
     val sv = s.view()
     val n = sv.len()
     var i: usize = n
@@ -46,10 +46,10 @@ fun last_sep(s: &str).return: usize {
 }
 
 // The final component: a *view* of the tail, so no allocation.
-fun file_name(s: &str).return: &str = str.substring(s, last_sep(s))
+fun file_name(s: &str) => &str = str.substring(s, last_sep(s))
 
 // The text after the last `.` in the final component, or the empty string.
-fun extension(s: &str).return: &str {
+fun extension(s: &str) => &str {
     val start = last_sep(s)
     val sv = s.view()
     val n = sv.len()
@@ -68,7 +68,7 @@ fun extension(s: &str).return: &str {
 // extension), so its stem is the whole name. Owned rather than a view: this
 // is a *prefix* of the string, and a prefix cannot be a view (the same
 // reason `parent` below allocates).
-fun stem(s: &str).return: String {
+fun stem(s: &str) => String {
     val start = last_sep(s)
     val sv = s.view()
     val n = sv.len()
@@ -89,12 +89,12 @@ fun stem(s: &str).return: String {
 }
 
 // Whether the final component ends with `.ext`.
-fun has_extension(s: &str, ext: &str).return: bool = str.eq(extension(s), ext)
+fun has_extension(s: &str, ext: &str) => bool = str.eq(extension(s), ext)
 
 // `s` split into its non-empty components on `/`: a leading, trailing or
 // doubled separator contributes no empty piece, so `"/a//b/"` is `["a",
 // "b"]`. Absolute-ness is not recorded; the components are.
-fun split(s: &str).return: List<String> {
+fun split(s: &str) => List<String> {
     var out: List<String> = List.empty()
     val sv = s.view()
     val n = sv.len()
@@ -116,7 +116,7 @@ fun split(s: &str).return: List<String> {
 
 // Every part joined with `/`, left to right, so a later absolute part
 // replaces everything before it, `join`'s rule, applied repeatedly.
-fun join_all(parts: List<String>).return: String {
+fun join_all(parts: List<String>) => String {
     var out = String.empty()
     var first = true
     var i: usize = 0
@@ -140,7 +140,7 @@ fun join_all(parts: List<String>).return: String {
 // The directory part, as an owned copy: a prefix cannot be a view (see
 // `str.trim_end` on why truncation allocates). The empty string means "no
 // directory part", which is the honest answer for a bare file name.
-fun parent(s: &str).return: String {
+fun parent(s: &str) => String {
     val end = last_sep(s)
     if end == 0 {
         return String.empty()
@@ -157,7 +157,7 @@ fun parent(s: &str).return: String {
 // copying either side's bytes twice. An absolute `b` replaces `a`, which is
 // what every other path library does. The result is not normalized; use
 // `absolute` when the caller needs one that a capability check will accept.
-fun join(a: &str, b: &str).return: String {
+fun join(a: &str, b: &str) => String {
     if is_absolute(b) {
         return String.from_str(b)
     }

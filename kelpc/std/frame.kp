@@ -10,9 +10,9 @@
 
        datac Frame(val addr: usize)
 
-       fun claim(addr: usize).return: Frame
-       fun Frame.addr().return: usize
-       fun Frame.offset(byte: usize).return: usize
+       fun claim(addr: usize) => Frame
+       fun Frame.addr() => usize
+       fun Frame.offset(byte: usize) => usize
 
    `offset` is the only way this module hands an address back out, and it is
    bounds-checked against the frame's own size, so a caller cannot walk out of
@@ -32,7 +32,7 @@ datac Frame(val addr: usize)
 // calling module was granted. The alignment is checked again here, because a
 // computed address is admitted under the `["*"]` grant and the compiler cannot
 // fold it.
-fun claim(addr: usize).return: Frame {
+fun claim(addr: usize) => Frame {
     if addr % 4096 != 0 {
         panic("Frame.claim: address is not 4096-aligned")
     }
@@ -40,12 +40,12 @@ fun claim(addr: usize).return: Frame {
 }
 
 // The frame's address.
-fun Frame.addr().return: usize = addr
+fun Frame.addr() => usize = addr
 
 // The address `byte` bytes into the frame. The byte is bounds-checked against
 // the frame's own 4096 bytes, so this cannot leave the frame; the returned
 // address is a plain `usize`, and nothing here says what is mapped there.
-fun Frame.offset(byte: usize).return: usize {
+fun Frame.offset(byte: usize) => usize {
     if byte >= 4096 {
         panic("Frame.offset: byte is outside the frame")
     }

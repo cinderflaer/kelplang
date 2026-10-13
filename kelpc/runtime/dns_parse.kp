@@ -76,17 +76,17 @@ datac DnsMessage(
 )
 
 // Whether `n` more bytes can be read at `off`.
-fun fits(data: &Bytes, off: usize, n: usize).R: bool = off + n <= data.len()
+fun fits(data: &Bytes, off: usize, n: usize) => bool = off + n <= data.len()
 
 // A big-endian `u16` at `off`. The caller has checked `fits(data, off, 2)`.
-fun be_u16(data: &Bytes, off: usize).R: u16 {
+fun be_u16(data: &Bytes, off: usize) => u16 {
     val hi = data.get(off).to_u16()
     val lo = data.get(off + 1).to_u16()
     return hi * 256 + lo
 }
 
 // A big-endian `u32` at `off`. The caller has checked `fits(data, off, 4)`.
-fun be_u32(data: &Bytes, off: usize).R: u32 {
+fun be_u32(data: &Bytes, off: usize) => u32 {
     val b0 = data.get(off).to_u32()
     val b1 = data.get(off + 1).to_u32()
     val b2 = data.get(off + 2).to_u32()
@@ -95,7 +95,7 @@ fun be_u32(data: &Bytes, off: usize).R: u32 {
 }
 
 // One lowercase hex digit (`48` is `0`, `87` is `a` minus ten).
-fun hex_digit(n: u8).R: u8 {
+fun hex_digit(n: u8) => u8 {
     if n < 10 {
         return n + 48
     }
@@ -121,7 +121,7 @@ fun push_dec(out: mut String, n: u64) {
 // label length octet with either reserved top bit set (`64..191`) is a
 // rejection; and a name whose decompressed length would exceed 255 octets,
 // terminator included, is a rejection.
-fun read_name(data: &Bytes, start: usize).R: result.Result<DnsName, DnsErr> {
+fun read_name(data: &Bytes, start: usize) => result.Result<DnsName, DnsErr> {
     val dlen = data.len()
     var pos = start
     var next = start
@@ -196,7 +196,7 @@ fun read_name(data: &Bytes, start: usize).R: result.Result<DnsName, DnsErr> {
 // The address bytes at `off`, rendered: a dotted quad for A, eight groups of
 // four hex digits separated by `:` for AAAA. `rdlen` has already been checked
 // against the type, so 4 or 16 bytes are there.
-fun render_address(data: &Bytes, off: usize, rtype: u16).R: String {
+fun render_address(data: &Bytes, off: usize, rtype: u16) => String {
     var out = String.empty()
     if rtype == 1 {
         var k: usize = 0
@@ -239,7 +239,7 @@ fun read_records(
     count: usize,
     section: u8,
     out: mut List<DnsRecord>,
-).R: result.Result<usize, DnsErr> {
+) => result.Result<usize, DnsErr> {
     var off = start
     var i: usize = 0
     while i < count {
@@ -286,7 +286,7 @@ fun read_records(
 }
 
 // A whole DNS message, or the reason it is not one.
-fun parse(data: Bytes).R: result.Result<DnsMessage, DnsErr> {
+fun parse(data: Bytes) => result.Result<DnsMessage, DnsErr> {
     val dlen = data.len()
     if dlen < 12 {
         return result.Result.Err(error = DnsErr.ShortHeader)
@@ -344,7 +344,7 @@ fun parse(data: Bytes).R: result.Result<DnsMessage, DnsErr> {
 }
 
 // `an`/`ns`/`ar`, spelled for the corpus line.
-fun section_name(section: u8).R: &str {
+fun section_name(section: u8) => &str {
     if section == 0 {
         return "an"
     }
@@ -356,7 +356,7 @@ fun section_name(section: u8).R: &str {
 
 // The wire name of a reason: the token both implementations print, and the
 // whole of the rejection vocabulary.
-fun reason(e: &DnsErr).R: &str = when e {
+fun reason(e: &DnsErr) => &str = when e {
     ShortHeader -> "short-header"
     CountOutOfRange -> "count-oob"
     Truncated -> "truncated"
@@ -373,7 +373,7 @@ fun reason(e: &DnsErr).R: &str = when e {
 // The canonical line for a parsed message. Fixed header fields, then `q=` and
 // `rr=` with `,`-separated entries, so the line is one obvious thing to compare
 // and a diff says which field moved.
-fun render_message(m: &DnsMessage).R: String {
+fun render_message(m: &DnsMessage) => String {
     var out = String.with_capacity(64)
     out.push_str("ok id=")
     push_dec(out, m.id.to_u64())
@@ -426,7 +426,7 @@ fun render_message(m: &DnsMessage).R: String {
 
 // The one line for one message: the rendered message, or `reject <reason>`.
 // `pub`: the differential driver reaches it as `dns_parse.line` (A-13).
-pub fun line(data: Bytes).R: String {
+pub fun line(data: Bytes) => String {
     val parsed = parse(data)
     return when parsed {
         Ok(m) -> render_message(m)

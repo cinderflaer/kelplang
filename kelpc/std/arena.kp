@@ -11,12 +11,12 @@
 
        datac Arena(var base: Ptr<u8>, val cap: usize, var used: usize)
 
-       fun new(base: Ptr<u8>, cap: usize).return: Arena
-       fun mut Arena.alloc(size: usize, align: usize).return: Ptr<u8>
-       fun mut Arena.alloc_zeroed(size: usize, align: usize).return: Ptr<u8>
+       fun new(base: Ptr<u8>, cap: usize) => Arena
+       fun mut Arena.alloc(size: usize, align: usize) => Ptr<u8>
+       fun mut Arena.alloc_zeroed(size: usize, align: usize) => Ptr<u8>
        fun mut Arena.reset()
-       fun Arena.used().return: usize
-       fun Arena.remaining().return: usize
+       fun Arena.used() => usize
+       fun Arena.remaining() => usize
 
    `new` is a module-level function rather than an associated `Arena.new`: the
    language has no `Type.name(...)` call (a dotted receiver is always a value,
@@ -44,15 +44,15 @@ datac Arena(var base: Ptr<u8>, val cap: usize, var used: usize)
 
 // An arena over `cap` bytes starting at `base`, with nothing used yet. The
 // caller owns the region; the arena neither validates nor frees it.
-fun new(base: Ptr<u8>, cap: usize).return: Arena {
+fun new(base: Ptr<u8>, cap: usize) => Arena {
     return Arena(base = base, cap = cap, used = 0)
 }
 
 // Bytes handed out so far.
-fun Arena.used().return: usize = used
+fun Arena.used() => usize = used
 
 // Bytes still available at the current bump position, before alignment.
-fun Arena.remaining().return: usize = cap - used
+fun Arena.remaining() => usize = cap - used
 
 // Make the whole region available again. The bytes are not cleared: a `base`
 // the caller still reads through sees what the previous user wrote, so a caller
@@ -67,7 +67,7 @@ fun mut Arena.reset() {
 // at, so a `base` that is not itself `align`-aligned still hands back an
 // aligned pointer; the two remainders are folded with `%` so nothing is added
 // to a raw address.
-fun mut Arena.alloc(size: usize, align: usize).return: Ptr<u8> {
+fun mut Arena.alloc(size: usize, align: usize) => Ptr<u8> {
     if align == 0 || (align & (align - 1)) != 0 {
         panic("arena align must be a power of two")
     }
@@ -91,7 +91,7 @@ fun mut Arena.alloc(size: usize, align: usize).return: Ptr<u8> {
 // `alloc` for a caller that wants a clean block: the same bump, then the
 // returned bytes written to zero. The write is the module's one `unsafe`
 // operation, and the reason `std/arena` is on the compiler's `[unsafe]` list.
-fun mut Arena.alloc_zeroed(size: usize, align: usize).return: Ptr<u8> {
+fun mut Arena.alloc_zeroed(size: usize, align: usize) => Ptr<u8> {
     val p: Ptr<u8> = self.alloc(size = size, align = align)
     if p.is_null() {
         return p

@@ -79,19 +79,19 @@ const ERR_PEER_CLOSED: i32 = 6
 const ERR_TIMEOUT: i32 = 7
 const ERR_IO: i32 = 8
 
-extern fun handshake_try_raw(fd: i32, host: &str, ca_pem: Bytes, timeout_ms: u64, alpn: Bytes, cert_pem: Bytes, key_pem: Bytes, err_code: mut i32, reason: mut String).return: TlsHandle
-extern fun server_ctx_try_raw(cert: Bytes, key: Bytes, ca: Bytes, alpn: Bytes, pass: Bytes, min13: i32, err_code: mut i32, reason: mut String).return: TlsCtx
+extern fun handshake_try_raw(fd: i32, host: &str, ca_pem: Bytes, timeout_ms: u64, alpn: Bytes, cert_pem: Bytes, key_pem: Bytes, err_code: mut i32, reason: mut String) => TlsHandle
+extern fun server_ctx_try_raw(cert: Bytes, key: Bytes, ca: Bytes, alpn: Bytes, pass: Bytes, min13: i32, err_code: mut i32, reason: mut String) => TlsCtx
 extern fun reload_try_raw(ctx: TlsCtx, cert: Bytes, key: Bytes, ca: Bytes, alpn: Bytes, pass: Bytes, min13: i32, err_code: mut i32, reason: mut String)
-extern fun accept_try_raw(ctx: TlsCtx, fd: i32, timeout_ms: u64, err_code: mut i32, reason: mut String).return: TlsHandle
+extern fun accept_try_raw(ctx: TlsCtx, fd: i32, timeout_ms: u64, err_code: mut i32, reason: mut String) => TlsHandle
 extern fun ctx_free_raw(ctx: TlsCtx)
-extern fun alpn_raw(handle: TlsHandle, out: mut String).return: bool
-extern fun peer_subject_raw(handle: TlsHandle, out: mut String).return: bool
-extern fun pending_raw(handle: TlsHandle).return: usize
+extern fun alpn_raw(handle: TlsHandle, out: mut String) => bool
+extern fun peer_subject_raw(handle: TlsHandle, out: mut String) => bool
+extern fun pending_raw(handle: TlsHandle) => usize
 extern fun set_timeout_raw(handle: TlsHandle, ms: u64)
-extern fun write_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String).return: usize
-extern fun write_all_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String).return: usize
-extern fun read_try_raw(handle: TlsHandle, max: usize, err_code: mut i32, reason: mut String).return: Bytes
-extern fun read_into_try_raw(handle: TlsHandle, buf: mut Bytes, at: usize, err_code: mut i32, reason: mut String).return: usize
+extern fun write_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String) => usize
+extern fun write_all_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String) => usize
+extern fun read_try_raw(handle: TlsHandle, max: usize, err_code: mut i32, reason: mut String) => Bytes
+extern fun read_into_try_raw(handle: TlsHandle, buf: mut Bytes, at: usize, err_code: mut i32, reason: mut String) => usize
 extern fun shutdown_try_raw(handle: TlsHandle, err_code: mut i32, reason: mut String)
 
 // A TLS session bound to a connected file descriptor. `handle` is the
@@ -134,13 +134,13 @@ pub enum TlsError {
 pub datac TlsOptions(val ca_pem: Bytes, val timeout_ms: u64)
 
 // The options `handshake` uses: the system store, no extra CA, no timeout.
-fun default_options().return: TlsOptions = TlsOptions(
+fun default_options() => TlsOptions = TlsOptions(
     ca_pem = Bytes.empty(),
     timeout_ms = 0,
 )
 
 // The typed error for one `err_code`/`reason` pair an extern body wrote.
-fun error_from(code: i32, reason: move String).return: TlsError {
+fun error_from(code: i32, reason: move String) => TlsError {
     if code == ERR_UNTRUSTED {
         return TlsError.Untrusted
     }
@@ -169,7 +169,7 @@ fun error_from(code: i32, reason: move String).return: TlsError {
 // this, and a `try_` caller that only wants to log one gets exactly what
 // they would have printed. `HandshakeFailed` and `Io` return OpenSSL's or
 // the socket's own words, so the detail is not thrown away.
-fun error_text(e: move TlsError).return: String = when e {
+fun error_text(e: move TlsError) => String = when e {
     Untrusted -> String.from_str("tls: the certificate is not trusted by the system store")
     Expired -> String.from_str("tls: the certificate has expired or is not yet valid")
     HostMismatch -> String.from_str("tls: the certificate does not match the host name")
@@ -189,7 +189,7 @@ fun error_text(e: move TlsError).return: String = when e {
 // The socket is consumed by value (as `net.Socket` is always passed), and
 // its descriptor lives on inside the returned `TlsStream`; there is no
 // remaining `Socket` to close separately afterward, only the `TlsStream`.
-fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions).return: result.Result<TlsStream, TlsError> {
+fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val handle = handshake_try_raw(
@@ -211,7 +211,7 @@ fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions).return: resu
 
 // The fallible twin of `handshake` with the default options, for a caller
 // that has somewhere to go when the peer's certificate is not trusted.
-fun try_handshake(s: net.Socket, host: &str).return: result.Result<TlsStream, TlsError> = try_handshake_with(
+fun try_handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> = try_handshake_with(
     s,
     host,
     default_options(),
@@ -221,13 +221,13 @@ fun try_handshake(s: net.Socket, host: &str).return: result.Result<TlsStream, Tl
 // `SO_RCVTIMEO`/`SO_SNDTIMEO` before the handshake starts. A silent peer is
 // then `Err(Timeout)` instead of a hang, and the settings stay on the socket
 // for the reads and writes that follow.
-fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64).return: result.Result<TlsStream, TlsError> = try_handshake_with(
+fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = try_handshake_with(
     s,
     host,
     TlsOptions(ca_pem = Bytes.empty(), timeout_ms = ms),
 )
 
-fun fail_stream(e: move TlsError).return: TlsStream {
+fun fail_stream(e: move TlsError) => TlsStream {
     val text = error_text(e)
     panic(text.as_str())
 }
@@ -236,7 +236,7 @@ fun fail_stream(e: move TlsError).return: TlsStream {
 //
 // Panics: if the handshake fails, including a certificate the system trust
 // store does not vouch for or a name mismatch.
-fun handshake(s: net.Socket, host: &str).return: TlsStream {
+fun handshake(s: net.Socket, host: &str) => TlsStream {
     val r = try_handshake(s, host)
     return when r {
         Ok(t) -> t
@@ -247,7 +247,7 @@ fun handshake(s: net.Socket, host: &str).return: TlsStream {
 // The same as `handshake`, with a private CA and/or a timeout.
 //
 // Panics: as `handshake`.
-fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions).return: TlsStream {
+fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => TlsStream {
     val r = try_handshake_with(s, host, opts)
     return when r {
         Ok(t) -> t
@@ -259,7 +259,7 @@ fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions).return: TlsStrea
 //
 // Panics: as `handshake`, and `TlsError.Timeout` when the peer stays silent
 // past `ms`.
-fun handshake_timeout(s: net.Socket, host: &str, ms: u64).return: TlsStream {
+fun handshake_timeout(s: net.Socket, host: &str, ms: u64) => TlsStream {
     val r = try_handshake_timeout(s, host, ms)
     return when r {
         Ok(t) -> t
@@ -277,19 +277,19 @@ fun set_timeout(t: TlsStream, ms: u64) {
     set_timeout_raw(t.handle, ms)
 }
 
-fun fail_bytes(e: move TlsError).return: Bytes {
+fun fail_bytes(e: move TlsError) => Bytes {
     val text = error_text(e)
     panic(text.as_str())
 }
 
-fun fail_usize(e: move TlsError).return: usize {
+fun fail_usize(e: move TlsError) => usize {
     val text = error_text(e)
     panic(text.as_str())
 }
 
 // One `SSL_write`, or why it failed: like `net.send`, it may write fewer
 // bytes than given.
-fun try_write(t: TlsStream, data: Bytes).return: result.Result<usize, TlsError> {
+fun try_write(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = write_try_raw(t.handle, data, &mut code, &mut reason)
@@ -301,7 +301,7 @@ fun try_write(t: TlsStream, data: Bytes).return: result.Result<usize, TlsError> 
 
 // The whole buffer, looping over short writes, or why it stopped: the TLS
 // twin of `net.send_all`.
-fun try_write_all(t: TlsStream, data: Bytes).return: result.Result<usize, TlsError> {
+fun try_write_all(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = write_all_try_raw(t.handle, data, &mut code, &mut reason)
@@ -314,7 +314,7 @@ fun try_write_all(t: TlsStream, data: Bytes).return: result.Result<usize, TlsErr
 // One `SSL_read`: up to `max` bytes, whatever is available. A clean
 // `close_notify` is `Ok` with an empty `Bytes`; a stream that ends without
 // one is `Err(PeerClosedUncleanly)`.
-fun try_read(t: TlsStream, max: usize).return: result.Result<Bytes, TlsError> {
+fun try_read(t: TlsStream, max: usize) => result.Result<Bytes, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val data = read_try_raw(t.handle, max, &mut code, &mut reason)
@@ -327,7 +327,7 @@ fun try_read(t: TlsStream, max: usize).return: result.Result<Bytes, TlsError> {
 // Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
 // a clean close), or why the read failed: the TLS twin of
 // `net.recv_into`, for a message of known size.
-fun try_read_into(t: TlsStream, buf: mut Bytes, at: usize).return: result.Result<usize, TlsError> {
+fun try_read_into(t: TlsStream, buf: mut Bytes, at: usize) => result.Result<usize, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val n = read_into_try_raw(t.handle, buf, at, &mut code, &mut reason)
@@ -341,7 +341,7 @@ fun try_read_into(t: TlsStream, buf: mut Bytes, at: usize).return: result.Result
 // it) and frees the OpenSSL handle, or returns why `close_notify` did not go
 // out. The handle is freed either way. It does not close `t.fd`; see
 // `shutdown` for the closing sequence.
-fun try_shutdown(t: TlsStream).return: result.Result<bool, TlsError> {
+fun try_shutdown(t: TlsStream) => result.Result<bool, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     shutdown_try_raw(t.handle, &mut code, &mut reason)
@@ -354,7 +354,7 @@ fun try_shutdown(t: TlsStream).return: result.Result<bool, TlsError> {
 // One `SSL_write`.
 //
 // Panics: if the write fails or the peer has closed.
-fun write(t: TlsStream, data: Bytes).return: usize {
+fun write(t: TlsStream, data: Bytes) => usize {
     val r = try_write(t, data)
     return when r {
         Ok(n) -> n
@@ -366,7 +366,7 @@ fun write(t: TlsStream, data: Bytes).return: usize {
 // `net.send_all`.
 //
 // Panics: as `write`.
-fun write_all(t: TlsStream, data: Bytes).return: usize {
+fun write_all(t: TlsStream, data: Bytes) => usize {
     val r = try_write_all(t, data)
     return when r {
         Ok(n) -> n
@@ -379,7 +379,7 @@ fun write_all(t: TlsStream, data: Bytes).return: usize {
 //
 // Panics: if the read fails, including a stream that ended without a
 // `close_notify` (`TlsError.PeerClosedUncleanly`).
-fun read(t: TlsStream, max: usize).return: Bytes {
+fun read(t: TlsStream, max: usize) => Bytes {
     val r = try_read(t, max)
     return when r {
         Ok(b) -> b
@@ -392,7 +392,7 @@ fun read(t: TlsStream, max: usize).return: Bytes {
 // size.
 //
 // Panics: as `read`.
-fun read_into(t: TlsStream, buf: mut Bytes, at: usize).return: usize {
+fun read_into(t: TlsStream, buf: mut Bytes, at: usize) => usize {
     val r = try_read_into(t, buf, at)
     return when r {
         Ok(n) -> n
@@ -454,7 +454,7 @@ pub datac ServerConfig(val ctx: TlsCtx, val handshake_timeout_ms: u64)
 
 // The options of `server_config`: TLS 1.2 or newer, no ALPN, no client
 // certificates, a 10 s handshake.
-fun server_options().return: ServerOptions = ServerOptions(
+fun server_options() => ServerOptions = ServerOptions(
     floor = 12,
     alpn_list = Bytes.empty(),
     ca_pem = Bytes.empty(),
@@ -462,12 +462,12 @@ fun server_options().return: ServerOptions = ServerOptions(
     key_pass = Bytes.empty(),
 )
 
-fun TlsVersion.floor_code().return: i32 = when self {
+fun TlsVersion.floor_code() => i32 = when self {
     Tls12 -> 12
     Tls13 -> 13
 }
 
-fun ServerOptions.min_version(v: TlsVersion).return: ServerOptions = ServerOptions(
+fun ServerOptions.min_version(v: TlsVersion) => ServerOptions = ServerOptions(
     floor = v.floor_code(),
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
@@ -479,7 +479,7 @@ fun ServerOptions.min_version(v: TlsVersion).return: ServerOptions = ServerOptio
 // `"http/1.1"`). The first one the client also offers is chosen; no overlap
 // fails the handshake. A name that is empty or longer than 255 bytes is not a
 // protocol: it makes `server_config_with` return an error.
-fun ServerOptions.alpn(protocols: &List<String>).return: ServerOptions = ServerOptions(
+fun ServerOptions.alpn(protocols: &List<String>) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_wire(protocols),
     ca_pem = ca_pem.clone(),
@@ -490,7 +490,7 @@ fun ServerOptions.alpn(protocols: &List<String>).return: ServerOptions = ServerO
 // Verify client certificates against the CA(s) in this PEM text, and refuse a
 // connection that has none. Text with no certificate in it is rejected when
 // the configuration is built. `tlsfile.require_client_cert` reads a file.
-fun ServerOptions.require_client_cert_pem(ca_pem: Bytes).return: ServerOptions = ServerOptions(
+fun ServerOptions.require_client_cert_pem(ca_pem: Bytes) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
@@ -499,7 +499,7 @@ fun ServerOptions.require_client_cert_pem(ca_pem: Bytes).return: ServerOptions =
 )
 
 // The handshake deadline `accept` applies; 0 waits forever.
-fun ServerOptions.handshake_timeout_ms(ms: u64).return: ServerOptions = ServerOptions(
+fun ServerOptions.handshake_timeout_ms(ms: u64) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
@@ -513,7 +513,7 @@ fun ServerOptions.handshake_timeout_ms(ms: u64).return: ServerOptions = ServerOp
 // key is malformed or the phrase wrong. The phrase is never put in an error
 // text, and it lives only in these options: drop them once the configuration
 // is built.
-fun ServerOptions.key_password(phrase: &str).return: ServerOptions = ServerOptions(
+fun ServerOptions.key_password(phrase: &str) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
     ca_pem = ca_pem.clone(),
@@ -523,7 +523,7 @@ fun ServerOptions.key_password(phrase: &str).return: ServerOptions = ServerOptio
 
 // The wire form of an ALPN list: each name behind its length byte. A name that
 // cannot be sent leaves a zero length, which the C side refuses.
-fun alpn_wire(protocols: &List<String>).return: Bytes {
+fun alpn_wire(protocols: &List<String>) => Bytes {
     var out = Bytes.empty()
     var i: usize = 0
     while i < protocols.len() {
@@ -549,13 +549,13 @@ fun alpn_wire(protocols: &List<String>).return: Bytes {
 // does not belong to the certificate is `HandshakeFailed` with a fixed
 // sentence. Never a panic, and never the key in the text. `tlsfile.server_config`
 // is the same from two file paths.
-fun server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes).return: result.Result<ServerConfig, TlsError> {
+fun server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes) => result.Result<ServerConfig, TlsError> {
     return server_config_pem_with(cert_chain_pem, key_pem, server_options())
 }
 
 // `server_config_pem` with options: a TLS floor, ALPN, required client
 // certificates, the handshake deadline.
-fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions).return: result.Result<ServerConfig, TlsError> {
+fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => result.Result<ServerConfig, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val min13 = if opts.floor == 13 { 1 } else { 0 }
@@ -584,7 +584,7 @@ fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions).return
 // match, or the phrase is wrong, the old certificate stays in force and the
 // failure is the value (`None` is success). `ServerConfig.handshake_timeout_ms`
 // is not changed by a reload.
-must_use fun ServerConfig.reload_pem(cert: Bytes, key: Bytes, opts: &ServerOptions).return: option.Option<TlsError> {
+must_use fun ServerConfig.reload_pem(cert: Bytes, key: Bytes, opts: &ServerOptions) => option.Option<TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val min13 = if opts.floor == 13 { 1 } else { 0 }
@@ -617,7 +617,7 @@ fun ServerConfig.free() {
 // certificate from another CA is `Untrusted`, an expired one `Expired`, a
 // missing one, no common ALPN protocol or a version below the floor is
 // `HandshakeFailed`, a silent client is `Timeout`.
-fun accept(config: &ServerConfig, s: net.Socket).return: result.Result<TlsStream, TlsError> {
+fun accept(config: &ServerConfig, s: net.Socket) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val handle = accept_try_raw(config.ctx, s.fd, config.handshake_timeout_ms, &mut code, &mut reason)
@@ -629,7 +629,7 @@ fun accept(config: &ServerConfig, s: net.Socket).return: result.Result<TlsStream
 
 // The protocol ALPN settled on, on a server or a client stream; `None` when
 // nothing was negotiated.
-fun TlsStream.alpn().return: option.Option<String> {
+fun TlsStream.alpn() => option.Option<String> {
     var out = String.empty()
     if alpn_raw(handle, &mut out) {
         return option.Option.Some(value = out)
@@ -640,7 +640,7 @@ fun TlsStream.alpn().return: option.Option<String> {
 // The subject of the peer's certificate in RFC 2253 form (`CN=client`): the
 // authenticated client on a server stream that required a client certificate.
 // `None` when the peer presented none.
-fun TlsStream.peer_cert_subject().return: option.Option<String> {
+fun TlsStream.peer_cert_subject() => option.Option<String> {
     var out = String.empty()
     if peer_subject_raw(handle, &mut out) {
         return option.Option.Some(value = out)
@@ -651,7 +651,7 @@ fun TlsStream.peer_cert_subject().return: option.Option<String> {
 // Decrypted bytes OpenSSL is holding that a `read` would return at once, which
 // a caller that waits for socket readability first has to check (`std/http`'s
 // server does).
-fun TlsStream.pending().return: usize = pending_raw(handle)
+fun TlsStream.pending() => usize = pending_raw(handle)
 
 // The client's options with ALPN and a client certificate: `TlsOptions` keeps
 // its three fields (fixtures build it positionally), so these live here.
@@ -663,7 +663,7 @@ pub datac TlsClientOptions(
     val key_pem: Bytes,
 )
 
-fun client_options().return: TlsClientOptions = TlsClientOptions(
+fun client_options() => TlsClientOptions = TlsClientOptions(
     ca_pem = Bytes.empty(),
     timeout_ms = 0,
     alpn_list = Bytes.empty(),
@@ -671,7 +671,7 @@ fun client_options().return: TlsClientOptions = TlsClientOptions(
     key_pem = Bytes.empty(),
 )
 
-fun TlsOptions.to_client().return: TlsClientOptions = TlsClientOptions(
+fun TlsOptions.to_client() => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = Bytes.empty(),
@@ -681,7 +681,7 @@ fun TlsOptions.to_client().return: TlsClientOptions = TlsClientOptions(
 
 // The protocols to offer, in order of preference. The server picks; `alpn()`
 // on the stream says which.
-fun TlsOptions.alpn(protocols: &List<String>).return: TlsClientOptions {
+fun TlsOptions.alpn(protocols: &List<String>) => TlsClientOptions {
     val c = self.to_client()
     return c.alpn(protocols)
 }
@@ -689,12 +689,12 @@ fun TlsOptions.alpn(protocols: &List<String>).return: TlsClientOptions {
 // Present this certificate chain and key (PEM text) when a server asks for a
 // client certificate. A key that does not match is found when the handshake
 // starts. `tlsfile.client_cert` reads the two files.
-fun TlsOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).return: TlsClientOptions {
+fun TlsOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions {
     val c = self.to_client()
     return c.client_cert_pem(cert_pem, key_pem)
 }
 
-fun TlsClientOptions.alpn(protocols: &List<String>).return: TlsClientOptions = TlsClientOptions(
+fun TlsClientOptions.alpn(protocols: &List<String>) => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = alpn_wire(protocols),
@@ -702,7 +702,7 @@ fun TlsClientOptions.alpn(protocols: &List<String>).return: TlsClientOptions = T
     key_pem = key_pem.clone(),
 )
 
-fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).return: TlsClientOptions = TlsClientOptions(
+fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = alpn_list.clone(),
@@ -712,7 +712,7 @@ fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes).return: Tl
 
 // Adds private CA certificates (PEM text) to the roots, as `TlsOptions.ca_pem`
 // does. Read a file's bytes with `tlsfile.read_pem`, which is gated on `fs`.
-fun TlsClientOptions.with_ca_pem(pem: Bytes).return: TlsClientOptions = TlsClientOptions(
+fun TlsClientOptions.with_ca_pem(pem: Bytes) => TlsClientOptions = TlsClientOptions(
     ca_pem = pem.clone(),
     timeout_ms = timeout_ms,
     alpn_list = alpn_list.clone(),
@@ -720,7 +720,7 @@ fun TlsClientOptions.with_ca_pem(pem: Bytes).return: TlsClientOptions = TlsClien
     key_pem = key_pem.clone(),
 )
 
-fun TlsClientOptions.with_timeout_ms(ms: u64).return: TlsClientOptions = TlsClientOptions(
+fun TlsClientOptions.with_timeout_ms(ms: u64) => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = ms,
     alpn_list = alpn_list.clone(),
@@ -731,7 +731,7 @@ fun TlsClientOptions.with_timeout_ms(ms: u64).return: TlsClientOptions = TlsClie
 // The client handshake with every option, `try_handshake_with`'s superset:
 // the same verification, hostname check and TLS 1.2 floor, plus ALPN and a
 // client certificate when the options carry them.
-fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions).return: result.Result<TlsStream, TlsError> {
+fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
     val handle = handshake_try_raw(

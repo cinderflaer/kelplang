@@ -41,7 +41,7 @@ enum DecodeErr {
 // that order, so the value maps by range. The `str.byte` lookup it replaces
 // scanned the alphabet for its NUL on every character. A value past 63 still
 // goes through that lookup, so it panics exactly as before.
-fun b64_char(v: u8).return: u8 {
+fun b64_char(v: u8) => u8 {
     if v < 26 {
         return v + 65
     }
@@ -62,7 +62,7 @@ fun b64_char(v: u8).return: u8 {
 
 // The 6-bit value a base64 character encodes, or `None` for `=` and anything
 // outside the alphabet.
-fun b64_value(c: u8).return: option.Option<u8> {
+fun b64_value(c: u8) => option.Option<u8> {
     if c >= 65 && c <= 90 {
         return option.Option.Some(value = c - 65)
     }
@@ -82,7 +82,7 @@ fun b64_value(c: u8).return: option.Option<u8> {
 }
 
 // The base64 text for `data`, RFC 4648 standard alphabet, padded with `=`.
-fun base64_encode(data: &Bytes).return: String {
+fun base64_encode(data: &Bytes) => String {
     val n = data.len()
     var out = String.with_capacity((n + 2) / 3 * 4)
     var i: usize = 0
@@ -118,7 +118,7 @@ fun base64_encode(data: &Bytes).return: String {
 // multiple of 4, a character outside the alphabet, or `=` anywhere but the
 // last one or two positions. Whitespace is not skipped: trim first if the
 // source may contain line breaks.
-fun base64_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
+fun base64_decode(text: &str) => result.Result<Bytes, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     if n == 0 {
@@ -178,7 +178,7 @@ fun base64_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
 // The character for a 5-bit value. The alphabet is A-Z then 2-7, so the value
 // maps by range. A value past 31 still goes through the `str.byte` lookup, so it
 // panics exactly as before.
-fun b32_char(v: u8).return: u8 {
+fun b32_char(v: u8) => u8 {
     if v < 26 {
         return v + 65
     }
@@ -192,7 +192,7 @@ fun b32_char(v: u8).return: u8 {
 // outside the alphabet. Lowercase is refused rather than folded: RFC 4648's
 // reference encoder emits uppercase, and TOTP secrets are uppercased by the
 // tools that print them.
-fun b32_value(c: u8).return: option.Option<u8> {
+fun b32_value(c: u8) => option.Option<u8> {
     if c >= 65 && c <= 90 {
         return option.Option.Some(value = c - 65)
     }
@@ -204,7 +204,7 @@ fun b32_value(c: u8).return: option.Option<u8> {
 
 // The base32 text for `data`, RFC 4648 §6 alphabet (`A`-`Z` then `2`-`7`),
 // padded with `=` to a multiple of 8 characters.
-fun base32_encode(data: &Bytes).return: String {
+fun base32_encode(data: &Bytes) => String {
     val n = data.len()
     if n == 0 {
         return String.empty()
@@ -239,7 +239,7 @@ fun base32_encode(data: &Bytes).return: String {
 // leftover bits do not match one of the RFC 4648 cases (2, 4, 5 or 7
 // characters of data). The leftover bits must be zero, as the reference
 // decoder requires.
-fun base32_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
+fun base32_decode(text: &str) => result.Result<Bytes, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     if n == 0 {
@@ -288,12 +288,12 @@ fun base32_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
     return result.Result.Ok(value = out)
 }
 
-fun b58_char(v: u8).return: u8 = str.byte(B58_ALPHABET, v.to_usize())
+fun b58_char(v: u8) => u8 = str.byte(B58_ALPHABET, v.to_usize())
 
 // The value of a base58 character, or `None` for anything outside the
 // Bitcoin alphabet (which drops `0`, `O`, `I` and `l`, so a transcribed value
 // cannot be read two ways).
-fun b58_value(c: u8).return: option.Option<u8> {
+fun b58_value(c: u8) => option.Option<u8> {
     if c >= 49 && c <= 57 {
         return option.Option.Some(value = c - 49)
     }
@@ -319,7 +319,7 @@ fun b58_value(c: u8).return: option.Option<u8> {
 // division by 58 over the byte buffer rather than a bit split, because 58 is
 // not a power of two. Leading zero bytes become leading `1`s, as the usual
 // implementations do.
-fun base58_encode(data: &Bytes).return: String {
+fun base58_encode(data: &Bytes) => String {
     val n = data.len()
     if n == 0 {
         return String.empty()
@@ -361,7 +361,7 @@ fun base58_encode(data: &Bytes).return: String {
 
 // `Err(Invalid)` on a character outside the alphabet. An empty string decodes
 // to empty `Bytes`; `"1"` decodes to one zero byte.
-fun base58_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
+fun base58_decode(text: &str) => result.Result<Bytes, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     if n == 0 {
@@ -406,21 +406,21 @@ fun base58_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
     return result.Result.Ok(value = out)
 }
 
-fun hex_upper(nibble: u8).return: u8 {
+fun hex_upper(nibble: u8) => u8 {
     if nibble < 10 {
         return nibble + 48
     }
     return nibble - 10 + 65
 }
 
-fun hex_lower(nibble: u8).return: u8 {
+fun hex_lower(nibble: u8) => u8 {
     if nibble < 10 {
         return nibble + 48
     }
     return nibble - 10 + 97
 }
 
-fun hex_value(c: u8).return: option.Option<u8> {
+fun hex_value(c: u8) => option.Option<u8> {
     if str.is_digit(c) {
         return option.Option.Some(value = c - 48)
     }
@@ -435,7 +435,7 @@ fun hex_value(c: u8).return: option.Option<u8> {
 
 // Lowercase, two characters per byte. `std/fmt.hex` prints one `u64` without
 // leading zeros; this is the spelling for a buffer.
-fun hex_encode(data: &Bytes).return: String {
+fun hex_encode(data: &Bytes) => String {
     val n = data.len()
     var out = String.with_capacity(n * 2)
     var i: usize = 0
@@ -450,7 +450,7 @@ fun hex_encode(data: &Bytes).return: String {
 
 // Accepts either case. `Err(Invalid)` on an odd length or a non-hex character.
 // No `0x` prefix and no separators are accepted.
-fun hex_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
+fun hex_decode(text: &str) => result.Result<Bytes, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     if n % 2 != 0 {
@@ -475,7 +475,7 @@ fun hex_decode(text: &str).return: result.Result<Bytes, DecodeErr> {
 // outside `0x20`-`0x7e`. Lines are separated by `\n` with **no** trailing
 // newline, so `print(dump(b))` emits the lines and nothing more. An empty
 // buffer renders as the empty string.
-fun dump(data: &Bytes).return: String {
+fun dump(data: &Bytes) => String {
     val n = data.len()
     var out = String.empty()
     var off: usize = 0
@@ -521,7 +521,7 @@ fun dump(data: &Bytes).return: String {
 }
 
 // The RFC 3986 §2.3 unreserved set: letters, digits, `-`, `.`, `_`, `~`.
-fun is_unreserved(c: u8).return: bool {
+fun is_unreserved(c: u8) => bool {
     if c >= 65 && c <= 90 {
         return true
     }
@@ -537,7 +537,7 @@ fun is_unreserved(c: u8).return: bool {
 // `text` with every byte outside the unreserved set escaped as `%XX`,
 // uppercase hex. Operates on bytes, so UTF-8 multi-byte characters come out as
 // one `%XX` per byte, which is what a URL wants.
-fun percent_encode(text: &str).return: String {
+fun percent_encode(text: &str) => String {
     val tv = text.view()
     val n = tv.len()
     var out = String.with_capacity(n)
@@ -560,7 +560,7 @@ fun percent_encode(text: &str).return: String {
 // URL percent-decoding, not `application/x-www-form-urlencoded`, which is the
 // one place the two schemes differ). `Err(Invalid)` on a trailing `%` or a `%`
 // not followed by two hex digits.
-fun percent_decode(text: &str).return: result.Result<String, DecodeErr> {
+fun percent_decode(text: &str) => result.Result<String, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     var out = String.with_capacity(n)
@@ -592,7 +592,7 @@ fun percent_decode(text: &str).return: result.Result<String, DecodeErr> {
 // One left rotation by `n` bits. The call sites never pass 0, and the branch is
 // here because a shift by 32 is undefined in v1 (`plan/syntax.md` 5), which is
 // what `rotl32(x, 0)` would otherwise be.
-fun rotl32(x: u32, n: u32).return: u32 {
+fun rotl32(x: u32, n: u32) => u32 {
     if n == 0 {
         return x
     }
@@ -606,7 +606,7 @@ fun rotl32(x: u32, n: u32).return: u32 {
 // buffer, because a WebSocket handshake key is 24 bytes of text and the
 // digest's other users in this tree are test vectors. A `Hasher` that takes
 // chunks belongs here the day something digests a file.
-fun sha1(data: &Bytes).return: Bytes {
+fun sha1(data: &Bytes) => Bytes {
     var msg = Bytes.empty()
     msg.append(data)
     msg.push(128)
@@ -710,7 +710,7 @@ fun push_u32_be(out: mut Bytes, v: u32) {
 // The `application/x-www-form-urlencoded` encoder: same unreserved set as
 // `percent_encode`, and a space becomes `+` rather than `%20`. Everything else
 // is `%XX` in uppercase hex.
-fun form_encode(text: &str).return: String {
+fun form_encode(text: &str) => String {
     val tv = text.view()
     val n = tv.len()
     var out = String.with_capacity(n)
@@ -734,7 +734,7 @@ fun form_encode(text: &str).return: String {
 // The reverse of `form_encode`: `+` is a space, then `%XX` is unescaped. Use
 // `percent_decode` instead when `+` is data (a base64 body, a `+1` phone
 // number) rather than a space.
-fun form_decode(text: &str).return: result.Result<String, DecodeErr> {
+fun form_decode(text: &str) => result.Result<String, DecodeErr> {
     val tv = text.view()
     val n = tv.len()
     var out = String.with_capacity(n)

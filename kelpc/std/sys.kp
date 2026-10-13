@@ -3,8 +3,8 @@
 /// The target operating system, as a lowercase name: `"linux"`, `"macos"`,
 /// `"windows"`, `"freebsd"`, or `"unknown"`. It is fixed when the program is
 /// built, not read from the machine it runs on.
-extern fun os().return: str
+extern fun os() => str
 
 /// The target CPU architecture: `"x86_64"`, `"aarch64"`, `"arm"`, `"riscv64"`,
 /// `"x86"`, or `"unknown"`. Fixed when the program is built.
-extern fun arch().return: str
+extern fun arch() => str

@@ -8,12 +8,12 @@
    `atomically` in the language, which is the whole reason the type is a
    builtin). Its element set is `bool` and the integer types, and the surface is
 
-       fun Atomic<T>.new(value: T).return: Atomic<T>
-       fun Atomic<T>.load(order: Ordering).return: T
+       fun Atomic<T>.new(value: T) => Atomic<T>
+       fun Atomic<T>.load(order: Ordering) => T
        fun mut Atomic<T>.store(value: T, order: Ordering)
-       fun mut Atomic<T>.swap(value: T, order: Ordering).return: T
-       fun mut Atomic<T>.compare_exchange(current: T, new: T, order: Ordering).return: Result<T, T>
-       fun mut Atomic<T>.fetch_add(value: T, order: Ordering).return: T   // and sub/and/or/xor
+       fun mut Atomic<T>.swap(value: T, order: Ordering) => T
+       fun mut Atomic<T>.compare_exchange(current: T, new: T, order: Ordering) => Result<T, T>
+       fun mut Atomic<T>.fetch_add(value: T, order: Ordering) => T   // and sub/and/or/xor
 
    This module carries the one thing that is a plain Kelp type rather than a
    builtin: `Ordering`. It is an ordinary `enum`, so the language's
