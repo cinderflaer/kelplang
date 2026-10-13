@@ -27,7 +27,7 @@
 //!   module about code they cannot edit. The test at the bottom is what keeps
 //!   that true.
 //! - An entry here is **scheduled work with a deadline**, not an open defect.
-//!   `ISSUES.md` is where what is wrong lives; a spelling that still works is
+//!   the wiki's open issues page is where what is wrong lives; a spelling that still works is
 //!   not wrong, it is on its way out.
 //!
 //! Retiring an entry, in the order that keeps the tree consistent: delete the

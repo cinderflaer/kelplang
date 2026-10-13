@@ -12,7 +12,7 @@ projections and equality constraints, as recorded under step 5 below (built 2026
 built:** an equality constraint or a projection bound on a blanket impl, an impl for one
 instantiation, `dyn` of a generic impl or of a blanket impl, default methods in a generic impl or a
 blanket impl, operators through a generic impl (MISSING-Lh6Yp). The section 6 exclusions stay refused
-by name (their own entries in `ISSUES.md`).*
+by name (their own entries in the wiki's `meta/open-issues`).*
 
 ## 1. What is missing and what it blocks
 

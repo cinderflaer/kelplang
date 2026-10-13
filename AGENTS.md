@@ -33,7 +33,7 @@ for `Bytes`, `String`, `List`, `Map`, `Box`. No `unsafe` in safe code, no except
 | --- | --- |
 | `kelpc/` | The compiler, `kelpc`, in Rust: lexer, preprocessor, parser, `infer.rs`, `borrowck.rs`, the backends, `driver.rs`. `kelpc/std/` ships inside the binary. |
 | `kelpc/tests/` | The fixture suite and the other test targets. |
-| `plan/` | Unfinished plans and the project's working records: `ISSUES.md`, `CHANGELOG.pending.md`, and the plans still in progress. The language and design docs live in the kelp wiki. |
+| `plan/` | Unfinished plans and the project's working records: `CHANGELOG.pending.md` and the plans still in progress. The language and design docs, and the open issues, live in the kelp wiki. |
 
 Related projects live in their own repositories: the wiki, the `fpl` library
 collection, `coral` (build tool and package manager) and `lighthouse` (editor
@@ -47,7 +47,7 @@ tooling).
   record. `plan/syntax.md` and `plan/architecture.md` stay in `plan/` until
   their rules are checked against the wiki, and they are not the authority
   for anything the wiki already states.
-- `plan/ISSUES.md` records what is open. It is not a plan and does not outrank
+- The open issues list is the kelp wiki's `meta/open-issues` page. It is not a plan and does not outrank
   the wiki.
 - A README claim is not authority over the wiki or `plan/`.
 
@@ -158,7 +158,7 @@ release, so the published docs describe only released versions.
 
 ## Issues and findings
 
-- A bug or missing feature goes in `plan/ISSUES.md` in the session you find it: one
+- A bug or missing feature goes in the kelp wiki's `meta/open-issues` page in the session you find it: one
   entry with the repository it belongs to, the date and a source (a repro program,
   or the file and section that states it).
 - The heading id is `BUG-` or `MISSING-` plus five mixed-case alphanumerics, for
@@ -169,7 +169,7 @@ release, so the published docs describe only released versions.
   subsystem in one lane, `L` touches a hotspot file or needs a design call, `XL` is
   mark-sized or blocked on a decision. If a finding changes an entry's size, move it
   to the right tier; an `S` that needs a design call is re-tiered, not hacked.
-- `ISSUES.md` holds open items only. Resolving one deletes it and adds a line to
+- The open issues page holds open items only. Resolving one deletes it and adds a line to
   the pending changelog.
 - Do not publish defect details (a live bug with a repro) on a public page.
 

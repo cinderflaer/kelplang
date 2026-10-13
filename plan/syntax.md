@@ -3669,7 +3669,7 @@ that reading is deduplicated at the end of it.
 - **`kelpc fmt` never rewrites one spelling into another**, for the reason it never rewrites anything: it copies the token it was given. The edit is the author's.
 - **`kelpc lint` does not report deprecations.** A lint is a style pass over tokens; a deprecation is reported where the syntax is read, which is the load a build performs.
 - **The compiler's own sources carry none.** The shipped stdlib is migrated before an entry is written, because a deprecation there would warn every program that imports that module about a file its reader cannot edit. A unit test in `deprecated.rs` keeps that true.
-- **The register is not `ISSUES.md`.** An entry here is scheduled work with a deadline; an open defect is something that does not work today.
+- **The register is not the open issues list.** An entry here is scheduled work with a deadline; an open defect is something that does not work today.
 
 ### 23.1 The register, as it stands
 
