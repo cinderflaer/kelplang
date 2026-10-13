@@ -2,7 +2,7 @@
 
 *Design note. `plan/mk9-memory-model.md` is the spec for the memory model and threads; this is
 the mutex the last line of its B-5 entry left open ("`Mutex` itself is what remains").
-`plan/scoped-blocks.md` is the mechanism the surface is built on.*
+`language/functions.md` (kelp wiki) is the mechanism the surface is built on.*
 
 ## The surface
 
@@ -20,7 +20,7 @@ function value and a borrow are refused by name.
 **The value is reached only through a scoped block.** `m.lock { v -> ... }` passes `v: mut T` to a
 `scoped fun(mut T).return: R`, so the mutable borrow is the existing non-escaping one: it cannot be
 stored in a `datac`, returned, put in a container, or captured by an ordinary closure, because
-those are all ordinary type mismatches (`plan/scoped-blocks.md`). The block's tail is the call's
+those are all ordinary type mismatches (`language/functions.md` (kelp wiki)). The block's tail is the call's
 value. `into_inner` is the only other way out and it consumes the whole mutex.
 
 **The block's return type is inferred from the block.** `R` is not known before the block is

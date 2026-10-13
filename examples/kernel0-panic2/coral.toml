@@ -4,8 +4,8 @@ name = "kernel0-panic2"
 # whose panic handler takes the location-carrying three-argument form. `PHASE`
 # selects one check per boot (the panic path never returns, so one boot can
 # show one check), and `README`/run.sh boot every phase. The manifest's other
-# keys are stage 4's `[target]` section (`plan/freestanding.md`) and the mmio
-# grant the UART driver needs (kernel stage 16, `plan/device-caps.md`).
+# keys are stage 4's `[target]` section (`language/freestanding.md` (kelp wiki)) and the mmio
+# grant the UART driver needs (kernel stage 16, `language/capabilities.md` (kelp wiki)).
 [target]
 mode = "freestanding"
 triple = "riscv64-unknown-none-elf"

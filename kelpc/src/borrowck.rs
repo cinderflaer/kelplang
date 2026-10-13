@@ -111,7 +111,7 @@
 //! assignment and the new ones are pinned to the binding's last use. A borrow
 //! made through a cursor is therefore a borrow of the owner, which is why
 //! `var cur = &list; cur = cur.next.get()` is accepted while mutating `list`
-//! under a live cursor stays refused. `plan/provenance.md` is the rule and the
+//! under a live cursor stays refused. `kelp wiki page language/ownership.md` is the rule and the
 //! algorithm.
 //!
 //! Also out of scope: receiver-form methods (shipped since), and `&str`
@@ -273,7 +273,7 @@ pub struct FnDrops {
     /// declaration order. A `break` leaves the frame alive, so unlike a
     /// `return` it must not free the enclosing scope's locals.
     at_break: HashMap<Span, Vec<DropTarget>>,
-    /// The same, for the `continue` at `span` (`plan/iterators.md`).
+    /// The same, for the `continue` at `span` (`kelp wiki page language/iterators.md`).
     at_continue: HashMap<Span, Vec<DropTarget>>,
     /// The expressions that *move* an owned binding's value out of it and
     /// therefore have to clear the binding's slot after copying the value out
@@ -422,7 +422,7 @@ struct VarState {
     /// *is* a reference. The provenance a pattern binding would otherwise lose,
     /// and what makes a pointer local usable as a cursor (open item 33). Empty
     /// means no recorded provenance: the binding's own name is its root. See
-    /// `set_roots` and `plan/provenance.md`.
+    /// `set_roots` and `kelp wiki page language/ownership.md`.
     roots: Vec<String>,
 }
 
@@ -506,7 +506,7 @@ fn union_borrows(a: &[ScopeBorrow], b: &[ScopeBorrow]) -> Vec<ScopeBorrow> {
 struct Scope {
     vars: HashMap<String, VarState>,
     /// Roots borrowed by a `val`/`var` declared in this scope, each with the
-    /// statement its borrowing binding is last used at (see `plan/nll.md`).
+    /// statement its borrowing binding is last used at (see `kelp wiki page language/ownership.md`).
     scope_borrows: Vec<ScopeBorrow>,
     /// Owned (heap-owning) locals declared in this scope, in declaration
     /// order - the candidates for this block's end-of-scope drops.
@@ -626,13 +626,13 @@ struct Ctx {
     iterating: Vec<tir::IteratedPlace>,
     /// For each loop currently being checked, the `scopes.len()` at its entry:
     /// a `break`/`continue` frees every owned local declared in the scopes at
-    /// or above this mark, and nothing outside the loop (`plan/iterators.md`).
+    /// or above this mark, and nothing outside the loop (`kelp wiki page language/iterators.md`).
     loop_marks: Vec<usize>,
     /// Which owner root is currently borrowed, and how, for the whole frame.
     /// Frame-wide rather than on the root's `VarState` because a retarget
     /// inside an inner block may reach a root declared in an outer one, and
     /// because a branch merge recomputes it from the merged borrow entries.
-    /// See `plan/provenance.md`.
+    /// See `kelp wiki page language/ownership.md`.
     pins: HashMap<String, BorrowKind>,
 }
 
@@ -796,7 +796,7 @@ impl Ctx {
 
     /// Whether `name` is a binding whose value is a reference, so an
     /// assignment to it retargets provenance rather than replacing a value
-    /// (`plan/provenance.md`).
+    /// (`kelp wiki page language/ownership.md`).
     fn binds_reference(&self, name: &str) -> bool {
         self.lookup(name)
             .map(|state| is_reference_ty(&state.ty))
@@ -1538,7 +1538,7 @@ impl Ctx {
     /// borrows it held end here and the new value's roots replace them. That is
     /// what lets a pointer local be a cursor: `cur = cur.next.get()` no longer
     /// looks like assigning to a borrowed place, and re-pointing from owner A
-    /// to owner B makes A mutable again (`plan/provenance.md`).
+    /// to owner B makes A mutable again (`kelp wiki page language/ownership.md`).
     fn assign_reference(&mut self, name: &str, value: &tir::Expr, span: Span) -> Result<()> {
         // The binding itself, not its roots: `&cur` would pin `cur`.
         if self.pin_of(name) != BorrowKind::None {
@@ -1606,7 +1606,7 @@ impl Ctx {
     }
 
     /// Releases every scope-durable borrow in the current scope whose binding
-    /// is dead after statement `index` (`plan/nll.md`).
+    /// is dead after statement `index` (`kelp wiki page language/ownership.md`).
     fn release_expired(&mut self, index: usize) {
         let Some(scope) = self.scopes.last_mut() else { return };
         let mut released: Vec<String> = Vec::new();
@@ -1644,7 +1644,7 @@ impl Ctx {
     /// Releases the *temporary* borrows a statement took: entries from `at`
     /// with no holder. An entry a cursor assignment adopted has a holder and
     /// survives, so the borrow that assignment stored is not dropped at the end
-    /// of its own statement (`plan/provenance.md`).
+    /// of its own statement (`kelp wiki page language/ownership.md`).
     fn release_unheld_since(&mut self, at: usize) {
         let Some(scope) = self.scopes.last_mut() else {
             return;
@@ -1764,7 +1764,7 @@ impl Ctx {
         self.scopes = merged;
         // The two arms' borrow lists were unioned, so the pins have to be
         // rebuilt from them: a binding one arm points at A and the other at B
-        // now keeps both roots (`plan/provenance.md`).
+        // now keeps both roots (`kelp wiki page language/ownership.md`).
         self.recompute_pins();
         // A binding whose two paths disagree now has a *conditional* move, so
         // its move sites have to clear its slot even though it is still
@@ -2026,14 +2026,14 @@ fn block_tail_root(block: &tir::Block, ctx: &Ctx) -> Option<Vec<String>> {
 /// The owner roots a place expression borrows from: the binding at the bottom
 /// of the chain, resolved through that binding's own provenance. This is what
 /// makes a borrow made through a cursor a borrow of the *owner* rather than of
-/// the cursor (`plan/provenance.md`).
+/// the cursor (`kelp wiki page language/ownership.md`).
 fn place_roots(expr: &tir::Expr, ctx: &Ctx) -> Vec<String> {
     match tir_root_ident(expr) {
         Some(name) => {
             let roots = ctx.roots_of(name);
             // A field of a struct is a part of its owner, so a borrow of it is
             // rooted at that part and does not overlap a borrow of another
-            // field (`plan/exclusive-captures.md`). Anything the chain passes
+            // field (`kelp wiki page language/functions.md`). Anything the chain passes
             // through that is not a plain struct field (an enum payload, a
             // dereference, a trait object) stops the path where it is.
             match field_suffix(expr) {
@@ -2106,7 +2106,7 @@ fn field_suffix(expr: &tir::Expr) -> Option<String> {
 ///
 /// One owner plus a literal is a value with a single owner. Two different
 /// non-static roots are both kept: the joined value may have come from either
-/// owner, so both stay pinned (`plan/provenance.md`).
+/// owner, so both stay pinned (`kelp wiki page language/ownership.md`).
 fn merge_root_sets(left: &[String], right: &[String]) -> Vec<String> {
     union_roots(left, right)
 }
@@ -2405,7 +2405,7 @@ fn check_stmt(block: &tir::Block, index: usize, stmt: &tir::Stmt, ctx: &mut Ctx)
 ///
 /// A use inside a loop body or an `if` arm is a use of the statement that
 /// contains it, and that statement's index is what this returns. That is the
-/// loop rule and the branch rule together (`plan/nll.md`): a borrow used in a
+/// loop rule and the branch rule together (`kelp wiki page language/ownership.md`): a borrow used in a
 /// loop body stays live for the whole loop, including the statements before
 /// the use, because the next iteration reaches them.
 fn last_use_index(block: &tir::Block, from: usize, name: &str) -> usize {
@@ -2512,7 +2512,7 @@ fn expr_mentions(expr: &tir::Expr, name: &str) -> bool {
 /// on, reads it by value, takes a field of something that is not a plain
 /// struct). A block that only writes `s.count` captures that field of `s`, so a
 /// call that borrows another field (`s.items`) does not overlap it
-/// (MISSING-Sw9Hd, `plan/exclusive-captures.md`). Sound because the block's body
+/// (MISSING-Sw9Hd, `kelp wiki page language/functions.md`). Sound because the block's body
 /// is the only code that holds the capture, and it reaches nothing outside the
 /// paths this returns.
 fn capture_footprint(body: &tir::Block, index: usize) -> Option<Vec<String>> {
@@ -2739,7 +2739,7 @@ fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()>
 }
 
 /// Every live owned local declared inside the innermost loop, innermost scope
-/// first - what a `break`/`continue` there has to free (`plan/iterators.md`).
+/// first - what a `break`/`continue` there has to free (`kelp wiki page language/iterators.md`).
 /// The mark is `scopes.len()` when `check_while` started, so the slice from it
 /// holds the loop body's own scope and every scope nested inside it, and
 /// nothing declared outside the loop.
@@ -2890,7 +2890,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             Ok(())
         }
         // A scoped literal's environment is stack and owns nothing
-        // (`plan/scoped-blocks.md`): every capture is a `Copy` value or a
+        // (`kelp wiki page language/functions.md`): every capture is a `Copy` value or a
         // shared borrow, so nothing moves and nothing drops. The captured
         // borrows themselves are started by `take_call_arguments`, which is
         // the only place a scoped literal can be written.
@@ -3069,7 +3069,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             // A reference binding's assignment is a *retarget*, not a value
             // replacement: the borrow it held ends here and the new value's
             // roots replace it. That is what lets a pointer local be a cursor
-            // (`plan/provenance.md`).
+            // (`kelp wiki page language/ownership.md`).
             if let tir::ExprKind::Ident(name) = &target.kind {
                 if ctx.binds_reference(name) {
                     return ctx.assign_reference(name, value, target.span);
@@ -3468,7 +3468,7 @@ fn take_call_arguments(
                     taken.push(root);
                 }
             }
-            // A scoped literal captures by borrow (`plan/scoped-blocks.md`),
+            // A scoped literal captures by borrow (`kelp wiki page language/functions.md`),
             // and the borrow lives exactly as long as the call it was written
             // in, so its captured `Ref`s join the same `taken` list a direct
             // borrow argument does: a same-call aliasing `g(&mut s, { k ->
@@ -3491,7 +3491,7 @@ fn take_call_arguments(
                         // into the environment is a reborrow for the call: it
                         // is exclusive against every other use of its roots
                         // exactly as a captured `&mut place` is
-                        // (`plan/exclusive-captures.md`).
+                        // (`kelp wiki page language/functions.md`).
                         for root in capture_roots(place_roots(c, ctx), key, ci, ctx) {
                             if root == STATIC_ROOT {
                                 continue;

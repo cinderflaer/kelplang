@@ -1,5 +1,5 @@
 //! `kelpc doc`: the documentation generator for Kelp programs and the std
-//! library (`plan/doc-tool.md`).
+//! library (`kelp wiki page tooling/kelpc-doc.md`).
 //!
 //! The syntax is two comment forms the lexer already keeps as trivia, so the
 //! parser and the AST are untouched:

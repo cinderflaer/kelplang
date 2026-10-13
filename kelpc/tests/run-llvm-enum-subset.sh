@@ -2,7 +2,7 @@
 # The MK7 S2C gate: runs the tagged-union (`enum`), `when`, `if let` and `?`
 # fixtures against the `llvm` backend.
 #
-# S2 is "aggregates, containers and drops" (the MK7 record in plan/done.md), and
+# S2 is "aggregates, containers and drops" (the MK7 record in kelp wiki page meta/milestones.md), and
 # **S2C is its tagged-union slice**: the same `{ tag, union }` layout
 # the removed C backend's `write_enum` emits today, with the same tag width and the same
 # payload offsets (MK7 §3.1), the drop of the live variant only, and the four

@@ -1,4 +1,4 @@
-// `plan/scoped-blocks.md` part 1 on a *generic* callee. A block header takes
+// `kelp wiki page language/functions.md` part 1 on a *generic* callee. A block header takes
 // its parameter types from the function type of the parameter it is passed to,
 // and for a generic function that type is only fully known once the call's type
 // arguments are inferred from the expected return type. `column<M>` names no

@@ -3,7 +3,7 @@
 # a field, the read and the write through one, a `&T` parameter and a `&T`
 # return) against the `llvm` backend.
 #
-# S2 is "aggregates, containers and drops" (the MK7 record in plan/done.md), and
+# S2 is "aggregates, containers and drops" (the MK7 record in kelp wiki page meta/milestones.md), and
 # **S2F is its reference slice**: every borrow that is not a `datac`, a
 # container, a heap type or `str`. `Ty::Ref` is one pointer whatever the pointee
 # (MK7 §3.1): a `mut i32` parameter, an `&i32` local and a borrow a container

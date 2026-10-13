@@ -1,5 +1,5 @@
 // A kernel-style loop over `iter.range`. The `for` is the iterator desugar
-// (`plan/iterators.md`): a `while` over `Range.next`, whose body is an ordinary
+// (`kelp wiki page language/iterators.md`): a `while` over `Range.next`, whose body is an ordinary
 // call. Nothing here reaches libc, so the linked image has no undefined symbol.
 //
 // `acc` is perturbed each pass so the loop has no exit the optimizer can turn

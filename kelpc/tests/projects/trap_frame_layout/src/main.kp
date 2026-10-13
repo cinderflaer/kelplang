@@ -1,4 +1,4 @@
-// Kernel stage 11 (`plan/syscall-abi.md`): the trap frame's layout is a
+// Kernel stage 11 (`kelp wiki page language/kernel.md`): the trap frame's layout is a
 // contract between the naked trap entry's hardcoded offsets and the `datac` the
 // dispatcher reads. The compiler checks neither end against the other, so this
 // project prints the numbers and the test pins them: `size_of` 264, `x1` at 0,

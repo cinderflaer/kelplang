@@ -364,7 +364,7 @@ use crate::types::{
 ///
 /// `incremental` is the roadmap A-14 slice 1 mode: instead of one module named
 /// `kelp`, the program becomes one module per source module plus a `_support`
-/// module (`plan/incremental-compilation.md`), each compiled to its own object
+/// module (`kelp wiki page compiler/incremental.md`), each compiled to its own object
 /// under `<out>.units/` and linked together with the runtime and `extern fun`
 /// objects. With it off (the default) this function is exactly what it was
 /// before the mode existed.
@@ -405,7 +405,7 @@ pub fn compile(
     // types were built for and the layout codegen assumes cannot be two
     // different ones. It carries the level's codegen half; the pipeline below
     // carries the module half. The incremental mode builds one of these per
-    // worker instead (`plan/incremental-compilation.md` slice 3).
+    // worker instead (`kelp wiki page compiler/incremental.md` slice 3).
     if incremental {
         return compile_units(
             program,
@@ -586,7 +586,7 @@ impl<'a> crate::gc_descr::GcLayout for Gen<'a> {
 /// Lower one module and write its object: the per-module half of the backend.
 /// `compile` calls it once for the whole program; the incremental mode calls it
 /// once per compilation unit, with `unit` naming the part of `program` this
-/// module defines (see `plan/incremental-compilation.md`).
+/// module defines (see `kelp wiki page compiler/incremental.md`).
 ///
 /// `ir_path` receives the unoptimized lowering (the artifact `out.ll` is for the
 /// whole-program case) and `object_path` the object the level's pipeline and
@@ -730,7 +730,7 @@ fn lower_to_object(
     // constructed and frozen before the module is written (MK7 S4, §4.4).
     lowering.finalize_debug();
 
-    // Test-only hook (`plan/incremental-compilation.md` slice 3): the parallel
+    // Test-only hook (`kelp wiki page compiler/incremental.md` slice 3): the parallel
     // build's failure path is exercised with a real LLVM-level error, not a
     // front-end refusal. `KELPC_TEST_CORRUPT_UNIT=<unit>` appends an empty,
     // unterminated basic block to one of the unit's own functions, so LLVM's
@@ -863,7 +863,7 @@ struct UnitDone {
 /// Unset, empty, unparsable or `0` is the default `2`. The default is not the
 /// CPU count on purpose: this host has little memory, and every worker holds a
 /// live LLVM context and the module it is compiling
-/// (`plan/incremental-compilation.md`).
+/// (`kelp wiki page compiler/incremental.md`).
 fn jobs_from(var: Option<&str>) -> usize {
     const DEFAULT: usize = 2;
     match var.map(str::trim) {
@@ -923,7 +923,7 @@ mod jobs_tests {
 /// `<out>.units/`, and link every object plus the runtime and the program's
 /// `extern fun` object into the final binary.
 ///
-/// The unit rules are `plan/incremental-compilation.md`'s: one unit per source
+/// The unit rules are `kelp wiki page compiler/incremental.md`'s: one unit per source
 /// module id, holding that module's own items and the instances of its generic
 /// functions, plus one `_support` unit holding every compiler-generated helper.
 ///
@@ -2102,7 +2102,7 @@ struct Gen<'a> {
     cpus: u64,
     /// Whether the `cpu_index()` bounds check is emitted: true at `-O0`, the
     /// dev build. A release image trusts the register and carries no check
-    /// (`plan/kernel-ub-notes.md` stage 11).
+    /// (`kelp wiki page language/unsafe-ub-catalogue.md` stage 11).
     debug_checks: bool,
     /// The compilation unit this pass emits (roadmap A-14 slice 1), or `None`
     /// for the whole-program single module every build had before the mode
@@ -3974,7 +3974,7 @@ struct FnGen<'g, 'a> {
     naked: bool,
     /// The loops currently being emitted, innermost last: the block a
     /// `continue` branches to (the loop's condition) and the block a `break`
-    /// branches to (the loop's exit). `plan/iterators.md` adds the two loop
+    /// branches to (the loop's exit). `kelp wiki page language/iterators.md` adds the two loop
     /// control statements, and this is what gives them somewhere to go.
     loops: Vec<(BasicBlock<'a>, BasicBlock<'a>)>,
     /// How many `break` statements have been emitted so far in this function;
@@ -4789,7 +4789,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::ClosureLit { key, captures } => {
                 Ok(Some(self.emit_closure_lit(key, captures, &e.ty)?))
             }
-            // A scoped `fun` literal (`plan/scoped-blocks.md` part 2): the
+            // A scoped `fun` literal (`kelp wiki page language/functions.md` part 2): the
             // same fat pointer, but the environment is an `alloca` of this
             // function and the `drop` member is `null`.
             ExprKind::ScopedClosureLit { key, captures } => {
@@ -5113,7 +5113,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(agg)
     }
 
-    /// A scoped `fun` literal (`plan/scoped-blocks.md` part 2): the same fat
+    /// A scoped `fun` literal (`kelp wiki page language/functions.md` part 2): the same fat
     /// pointer `emit_closure_lit` builds, but the environment is an `alloca`
     /// of the enclosing function - it cannot outlive the call the literal was
     /// written in - and the `drop` member is `null`, because every field is a
@@ -5787,7 +5787,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // environment owns the capture, so the field is its address. A
             // *borrowed* capture is an exception: the field holds the pointer,
             // so the place is the pointee it names, exactly as a borrow-typed
-            // local's place is (`plan/scoped-blocks.md`).
+            // local's place is (`kelp wiki page language/functions.md`).
             ExprKind::Capture { index } => {
                 let slot = self.capture_place(*index)?;
                 if is_borrow_ty(&e.ty) {
@@ -8860,7 +8860,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 /// Whether a target triple is an x86 one, which is where the asm dialect is
 /// Intel rather than the target's default (kernel stage 5). Chosen per triple
 /// so one Kelp template reads destination-first on x86 and on riscv64 alike
-/// (`plan/inline-asm.md`).
+/// (`kelp wiki page language/unsafe.md`).
 fn is_x86_triple(triple: &str) -> bool {
     matches!(
         triple.split('-').next().unwrap_or(""),
@@ -9543,7 +9543,7 @@ impl<'a> Gen<'a> {
     /// and it never trusts a value it did not produce: in a debug build
     /// (`-O0`) the index is compared against the manifest's `[target] cpus`
     /// and panics through the project's own handler when it is out of range,
-    /// while a release build trusts it (`plan/kernel-ub-notes.md` stage 11).
+    /// while a release build trusts it (`kelp wiki page language/unsafe-ub-catalogue.md` stage 11).
     fn cpu_index(&self, func: LlvmFunction<'a>) -> Result<Value<'a>, String> {
         let triple = self
             .freestanding

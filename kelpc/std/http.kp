@@ -52,13 +52,13 @@ impl "std/thread"
 
    **The server (st2)** is at the end of this file: `listen`/`serve`, `Limits`,
    `ServerRequest`/`ServerResponse`. It shares the client's `Header` and
-   framing helpers and is held on `net` the same way. `plan/http-server.md`
+   framing helpers and is held on `net` the same way. `kelp wiki page stdlib/http.md`
    is its design note.
 
    **HTTPS serving and client certificates (st3)**: `serve_tls`/`serve_tls_n`/
    `serve_tls_on` serve over a `tls.ServerConfig`, and `try_get_tls`/`get_tls`/
    `Client.try_send_tls` take `tls.TlsClientOptions` (private CA, mTLS, ALPN);
-   `plan/tls-server.md`.
+   `kelp wiki page stdlib/tls.md`.
 
    Not here, deliberately: gzip, HTTP/2, cookies, proxies, `Expect:
    100-continue` on the client. (Idle reaping is `Pool.set_idle_timeout` and
@@ -1904,7 +1904,7 @@ fun multipart_request(url: &str, form: mut Multipart).return: Request {
 // client's `Header` and header helpers. It is held on `net` exactly as the
 // client is: `listen` is checked against the *port* of the importer's grant
 // (`net = ["*:8080"]`), `accept` and the connection calls are not checked at
-// all, and the module carries no policy of its own. `plan/http-server.md` is
+// all, and the module carries no policy of its own. `kelp wiki page stdlib/http.md` is
 // the design note: the limits, the status for each violation, what is not here.
 //
 // Nothing closes on drop (the rule `std/net` states): `ServerConn.close` and
@@ -1914,7 +1914,7 @@ fun multipart_request(url: &str, form: mut Multipart).return: Request {
 
 /// What one server will accept from one client. Every field is a ceiling and
 /// every violation is answered with its own status and a closed connection
-/// (`plan/http-server.md`). The timeouts are *deadlines*, not per-read waits: a
+/// (`kelp wiki page stdlib/http.md`). The timeouts are *deadlines*, not per-read waits: a
 /// client that trickles its request one byte at a time is cut off when the head
 /// deadline passes, which a per-`recv` timeout would never do.
 datac Limits(
@@ -2743,7 +2743,7 @@ fun mut ServerConn.read_chunked(limits: &Limits, deadline: i64).return: result.R
 }
 
 /// The next request on this connection, parsed and framed, or why not. See
-/// `plan/http-server.md` for the status of every failure.
+/// `kelp wiki page stdlib/http.md` for the status of every failure.
 fun mut ServerConn.read_request(limits: &Limits).return: result.Result<ServerRequest, HttpErr> {
     self.compact()
     close_after = false

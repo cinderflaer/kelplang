@@ -19,6 +19,6 @@ modules = ["main", "trap", "uart", "vm"]
 # addresses (the faulting instruction's `sepc`, a page-table frame) into
 # pointers, which the compiler cannot fold, so they need the
 # whole-address-space wildcard - the escape hatch a reviewer greps for
-# (`plan/device-caps.md`).
+# (`language/capabilities.md` (kelp wiki)).
 [caps]
 mmio = ["*"]

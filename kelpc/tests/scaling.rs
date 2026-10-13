@@ -8,7 +8,7 @@
 //! pass needs, so only a super-linear pass (the exponential one this file was
 //! written for was a method receiver checked twice per link) can trip it.
 //!
-//! Sizes stay under the parser's limits (`plan/fuzzing.md`: 800 chain links and
+//! Sizes stay under the parser's limits (`tooling/fuzzing.md` (kelp wiki): 800 chain links and
 //! 200 levels of nesting), which are part of what is accepted.
 
 use std::fs;

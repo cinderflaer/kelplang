@@ -1,10 +1,10 @@
 # User FFI (B-1 / MK9-S1-M1): what is built and what a GTK binding still needs
 
-*Gap analysis read from the code at `a58da81` (kelpc 26.09.5). Not a Mark; `roadmap.md` owns the schedule.*
+*Gap analysis read from the code at `a58da81` (kelpc 26.09.5). Not a Mark; `meta/roadmap.md` (kelp wiki) owns the schedule.*
 
 ## What already exists
 
-`roadmap.md` B-1 still opens with "`extern fun` exists but is compiler-only". That is out of date:
+`meta/roadmap.md` (kelp wiki) B-1 still opens with "`extern fun` exists but is compiler-only". That is out of date:
 the first slice of MK9-S1-M1 is in the tree.
 
 - A project's `coral.toml` may carry `[extern."<module id>"]` with `domain` (one of the
@@ -28,10 +28,10 @@ the first slice of MK9-S1-M1 is in the tree.
 | 3 | **No declaration of the native symbol.** ~~The trampoline calls it with no prototype and no `#include`; the fixtures only use libc symbols the runtime preamble already declares.~~ **Include half done:** a `header = "gtk/gtk.h"` key in `[extern.*]` is validated and emitted as `#include <...>` after the preamble, deduplicated and sorted (`resolve.rs`, `codegen_c.rs`, `codegen_llvm.rs`). The prototype-generation half stays open: A GTK call still relies on the header for its signature, which cannot express `const char*` versus `char*` or `gpointer`. | `resolve.rs`, `codegen_c.rs`, `codegen_llvm.rs` | GTK needs the header; a generated prototype needs the pointer types of gap 1. |
 | 4 | ~~**Callbacks.**~~ **Closed on both backends.** A user `extern fun` parameter written `move closure(P0, P1, ...).return: T` expands in place to three C arguments `(thunk, env, destroy)`, GLib's `(func, user_data, destroy_notify)`. `thunk` is a generated `T thunk(P0, ..., void* user_data)` that calls `c->fn(c->env, ...)`; `env` is a heap box holding the closure value; `destroy` runs the closure's `drop` on that environment and frees the box. The closure is moved into the native side, so `destroy` is the only thing that frees the environment, and a native side that never calls it leaks. The closure's parameters and return must be scalars, `bool`, `str`, an opaque handle or `unit`, with no `move`/`mut` parameter, and an extern takes at most one. The native call is made through a function pointer of the expansion's own type, so `GCallback`/`GClosureNotify` parameters need no cast in Kelp. On the LLVM backend the closure crosses as a pointer to the caller's stack slot (24 bytes, like any aggregate past two eightbytes) and the per-program C object's trampoline boxes it. | `infer.rs`, `codegen_c.rs::write_user_extern`, `codegen_llvm.rs::program_c_source` | `g_signal_connect_data`'s destroy-notify argument maps onto the closure's `drop`. |
 | 5 | **Link flags are only `-l<name>`.** ~~No `-L`, no `-I`~~ **Closed:** `include_dirs`/`library_dirs` in `[extern.*]` are validated, resolved against the `coral.toml` directory, deduplicated, sorted, and emitted as `-I`/`-L` on both backends (`resolve.rs`, `driver.rs`, fixture `ffi_include_dir`). A `pkg_config = "<package>"` key runs one `pkg-config --cflags --libs` over every package the sections name (sorted, deduplicated) and puts the flags on the compile and the link line of both backends (`resolve.rs`, `driver.rs`, fixture `ffi_pkg_config`; an unresolvable package fails the build). `driver.rs` also always links `-lssl -lcrypto`. | `resolve.rs`, `driver.rs` | GTK needs many include and library paths that `pkg-config gtk4` supplies. On NixOS they also have to be in `shell.nix`. `gtk4` is not present on this machine (`pkg-config --modversion gtk4` fails). |
-| 6 | ~~**Capability domain.** Only `fs`, `net`, `process`, `env`, `time`, `rand`; the design pass explicitly forbids new names in this pass.~~ **Closed.** `ui` is the seventh domain in `stdlib.rs::DOMAINS`, decided as option 2 of `plan/ffi-display-domain.md`. A `ui`-assigned module is gated like any other; no display call carries an argument that names the display, so the only accepted grant is `ui = ["*"]` and `resolve.rs::validate_cap_grant` refuses every other pattern list. Fixtures `ffi_ui_domain`, `ffi_ui_pattern`, `ffi_ui_denied`. | `stdlib.rs::DOMAINS`, `resolve.rs`, roadmap B-1 | A window is authority over a display server (X11/Wayland socket), which fits none of the other six. Using `net` would work mechanically but would mislabel what the module can do, and a per-display name needs runtime-derived authority (roadmap C-1), which is not built. |
+| 6 | ~~**Capability domain.** Only `fs`, `net`, `process`, `env`, `time`, `rand`; the design pass explicitly forbids new names in this pass.~~ **Closed.** `ui` is the seventh domain in `stdlib.rs::DOMAINS`, decided as option 2 of `libraries/polyp.md` (kelp wiki). A `ui`-assigned module is gated like any other; no display call carries an argument that names the display, so the only accepted grant is `ui = ["*"]` and `resolve.rs::validate_cap_grant` refuses every other pattern list. Fixtures `ffi_ui_domain`, `ffi_ui_pattern`, `ffi_ui_denied`. | `stdlib.rs::DOMAINS`, `resolve.rs`, roadmap B-1 | A window is authority over a display server (X11/Wayland socket), which fits none of the other six. Using `net` would work mechanically but would mislabel what the module can do, and a per-display name needs runtime-derived authority (roadmap C-1), which is not built. |
 | 7 | ~~**Variadics.**~~ **Closed.** A *user* `extern fun` may write `...` as its last parameter (`extern fun g_object_set(obj: Object, first: str, ...).return: unit`), and a call passes any number of extra arguments after the fixed ones, each of an integer, `bool`, `f32`, `f64`, `str` or opaque-handle type (anything else is a compile error naming the argument). `infer.rs` records the extra types per call and mints one deterministic fixed-arity C wrapper per distinct list (`kelp_va_<mangled fn>_<mangled types>(fixed..., extra...) { return symbol(fixed..., extra...); }`); `tir::ExprKind::VariadicCall` carries the wrapper name and the call site calls it, so the C compiler applies the default promotions (an `i32`/`u8` travels as `int`, an `f32` as `double`) and neither backend emits a variadic call. Fixtures `ffi_variadic` (run on both backends), `ffi_variadic_not_last`, `ffi_variadic_bad_arg`. | `lexer.rs`, `parser.rs`, `infer.rs`, `tir.rs`, `codegen_c.rs`, `codegen_llvm.rs` | `g_object_set` and `printf`-shaped bindings. |
 | 8 | **Test coverage is one scalar fixture.** `ffi_getpid` takes no arguments and returns `i32`; `ffi_handle` now passes a pointer-shaped opaque handle. | `tests/projects/` | No test passes a string or a callback, and I found no fixture that exercises a user extern on the LLVM backend specifically (C is covered). |
-| 9 | ~~**Layout (B-2).** No `repr(C)`.~~ **Closed (kernel stage 2).** `repr(c)` (the default, now guaranteed), `repr(packed)` and `repr(align(N))` on a `datac`, the compile-time queries `size_of`/`align_of`/`offset_of`, and explicit discriminants on a field-less enum now work on both backends. A `datac` in an `extern fun` signature still has to be reached by name a header can spell: a user type's C name is the module-mangled `struct_<...>`, so `ffi_layout` passes the address as `Ptr<Packed>` and the header takes it as `const void*`. `plan/layout-control.md` is the design. | roadmap B-2 | A struct crossing by value (`GdkRGBA`, `GtkAllocation`) now has a defined layout; the remaining work is the header spelling above, which is gap 3's generated prototype, still deliberately not planned. |
+| 9 | ~~**Layout (B-2).** No `repr(C)`.~~ **Closed (kernel stage 2).** `repr(c)` (the default, now guaranteed), `repr(packed)` and `repr(align(N))` on a `datac`, the compile-time queries `size_of`/`align_of`/`offset_of`, and explicit discriminants on a field-less enum now work on both backends. A `datac` in an `extern fun` signature still has to be reached by name a header can spell: a user type's C name is the module-mangled `struct_<...>`, so `ffi_layout` passes the address as `Ptr<Packed>` and the header takes it as `const void*`. `language/kernel.md` (kelp wiki) is the design. | roadmap B-2 | A struct crossing by value (`GdkRGBA`, `GtkAllocation`) now has a defined layout; the remaining work is the header spelling above, which is gap 3's generated prototype, still deliberately not planned. |
 
 ## Plain function-pointer signatures
 
@@ -46,10 +46,10 @@ side an owned value with an explicit lifetime.
 ## Two consequences for Polyp
 
 - **Callback ownership.** A closure owns its environment and captures by move or copy, never by
-  borrow (`plan/syntax.md` 7.4). `plan/polyp-ui.md` sells "borrow-checked callbacks", but a
+  borrow (`plan/syntax.md` 7.4). `meta/roadmap.md` (kelp wiki) sells "borrow-checked callbacks", but a
   callback cannot borrow `state`; it can only own a copy or a moved value. Several callbacks that
   all update one piece of state need a sharing mechanism I did not find in the language.
-  **Solved for the read-only builder shape** by `plan/scoped-blocks.md`: a `scoped fun(...)`
+  **Solved for the read-only builder shape** by `language/functions.md` (kelp wiki): a `scoped fun(...)`
   parameter takes a literal or trailing block written at the call site, whose captures are shared
   borrows released with the call, so a view callback can read a borrowed `state`. An *exclusive*
   capture (the `state.count += 1` shape) and a callback that outlives the call (the native
@@ -76,7 +76,7 @@ options live in `Box`es and are `take()`n; and a `pd var` counter written by a c
 with itself (two functions cannot hold one passdown exclusively), so the patch counters are
 `pd val AtomicI32` cells bumped through their shared-borrow operations, the shape `syntax.md` 12.5
 recommends. A programmatic widget write feeding back as the signal that produced it is handled with
-`g_signal_handler_block` around the write. `plan/polyp-v2.md` is the note.
+`g_signal_handler_block` around the write. `libraries/polyp.md` (kelp wiki) is the note.
 
 ## Suggested order
 
@@ -89,7 +89,7 @@ recommends. A programmatic widget write feeding back as the signal that produced
 4. ~~**C-ABI callback with `user_data`** (item 4)~~ **Done on both backends:** the `move closure(...)` expansion above.
 5. ~~**`pkg-config` in the manifest** (item 5)~~ **Done.**
 6. ~~**Domain decision** (item 6), taken with the owner of C-1/C-3, before anything ships.~~
-   **Done:** option 2, the `ui` domain, in `plan/ffi-display-domain.md`.
+   **Done:** option 2, the `ui` domain, in `libraries/polyp.md` (kelp wiki).
 
 Trailing blocks (`plan/trailing-closure.md`) are independent of all of them.
 
@@ -105,11 +105,11 @@ Closed on `main`: gap 1 (the opaque handle), gap 2 (symbol rename), gap 3 (the `
   legal only in an extern module. Fixtures `ffi_handle_upcast`, `ffi_handle_null`, `ffi_handle_bad_downcast`,
   `ffi_handle_null_outside`, on both backends.
   A compiler-shipped std module could not declare one when this gap closed (it has no manifest); that is now
-  lifted too (`plan/tls-handle.md`): `resolve.rs` admits an `extern type` in a module `stdlib.rs` ships, and
+  lifted too (`stdlib/tls.md` (kelp wiki)): `resolve.rs` admits an `extern type` in a module `stdlib.rs` ships, and
   `std/tls` uses it for `TlsHandle` in place of the `usize` it used to carry.
 - **Gap 3, prototype generation: not planned.** The `header` key makes the real declaration visible, so generating
   a prototype from the Kelp signature would only risk a second, conflicting declaration.
-- **Gap 6 (domain):** **closed.** Option 2 of `plan/ffi-display-domain.md` is implemented: `ui` is the
+- **Gap 6 (domain):** **closed.** Option 2 of `libraries/polyp.md` (kelp wiki) is implemented: `ui` is the
   seventh domain, the gate is the domain gate alone, and `ui = ["*"]` is the only accepted grant
   because a call in this domain carries no argument to match. No-grant and any other pattern list are
   compile errors. `examples/polyp-spike` is switched to it.
@@ -127,7 +127,7 @@ Closed on `main`: gap 1 (the opaque handle), gap 2 (symbol rename), gap 3 (the `
 ## What stage n (MK9-S2) changed for this list
 
 Nothing here is closed by it, and one gap is now reachable from a different angle. `Ptr<T>` (MK9-S2,
-`plan/unsafe-and-pointers.md`) is a raw pointer type a binding could use in place of the opaque handle
+`language/unsafe.md` (kelp wiki)) is a raw pointer type a binding could use in place of the opaque handle
 of gap 1, but it is not a substitute: a `Ptr<T>` is usable only in a module `coral.toml` lists under
 `[unsafe] modules`, has no type safety between two handle kinds, and `Ptr<Widget>` needs an
 `extern type Widget` to exist first. Gap 1 stays the right answer for a GObject pointer, and gap 4's
@@ -220,7 +220,7 @@ release of a bound native resource (`defer widget.destroy()`) is expressible the
 day gap 1's handle has such a method, and the same action is duplicated at every
 exit of its block. What it does not give a binding is a *drop*: a `defer` is
 written where the resource is taken, and a panic skips it, so the leak a native
-handle has when a frame panics is unchanged (`plan/defer.md`).
+handle has when a frame panics is unchanged (`language/statics-and-defer.md` (kelp wiki)).
 
 ## What user `Drop` (MK9-S6-M1) changed for this list
 
@@ -240,7 +240,7 @@ signature or wrapping code makes LLVM emit an aggregate `memcpy`/`memmove`/
 `memset`/`memcmp` call no longer leaves an undefined symbol for `ld.lld` to
 report: the compiler defines all five weakly and as loops in every freestanding
 object, and a kernel that wants its own implementation only has to put a strong
-definition in the image (`plan/freestanding.md`). The binding mechanism itself
+definition in the image (`language/freestanding.md` (kelp wiki)). The binding mechanism itself
 is unchanged: a freestanding `extern fun` still has no trampoline, and the
 symbol is still the linker's or the script's to resolve.
 
@@ -252,7 +252,7 @@ still needs that section, and `tests/projects/ffi_handle_no_section` pins the re
 for `pub extern type TlsHandle`, `TlsStream.handle` is now a `TlsHandle` rather than a `usize`, and
 `std/http`/`std/ws` carry `option.Option<tls.TlsHandle>` so `None`, not `0`, is "not TLS". Fixtures
 `tls_handle_not_an_integer.kp` and `tls_handle_not_forged.kp` show the two integer directions are refused.
-`plan/tls-handle.md` is the record.
+`stdlib/tls.md` (kelp wiki) is the record.
 
 ## What kernel stage 19 (the freestanding standard subset) changed for this list
 
@@ -322,7 +322,7 @@ still has no trampoline, `library`/`header`/`pkg_config` still have no effect in
 - **No FFI gap is closed and none is newly blocked.** The two freestanding framebuffer projects
   (`examples/polyp-fb-riscv64`, `examples/polyp-fb-x86_64`) declare no `extern fun` at all: a UART
   is a `Ptr<u8>` under an `mmio` grant on riscv64 and an `in`/`out` pair on x86-64, and
-  `plan/kernel-ub-notes.md`'s stage-4 note carries what that costs. The one new gap is a
+  `language/unsafe-ub-catalogue.md` (kelp wiki)'s stage-4 note carries what that costs. The one new gap is a
   *freestanding* one, not an FFI one, and it is recorded there: a keyable user type with a `String`
   field pulls in the hosted `kelp_map_key_eq`.
 - Three Kelp shapes the stage worked around, none of them FFI:

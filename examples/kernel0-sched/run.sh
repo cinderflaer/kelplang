@@ -2,7 +2,7 @@
 # Boot the preemptive scheduler and check the bytes that really came out of the
 # serial port: every task printed its letter, the letters changed from one task
 # to another at least three times, no line is torn (each is exactly `<letter>
-# <count>`), and the kernel's own stop line is whole (`plan/scheduler.md`).
+# <count>`), and the kernel's own stop line is whole (`language/kernel.md` (kelp wiki)).
 #
 # The tasks never yield, so overlapping letters can only come from the machine
 # timer interrupting them, and a torn line would mean two tasks reached the UART

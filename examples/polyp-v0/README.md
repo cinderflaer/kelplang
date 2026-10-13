@@ -83,7 +83,7 @@ That makes the two declarative claims hold literally:
 - **`update` is an exhaustive `when` over the `Msg` enum.** Adding a variant and
   forgetting to handle it is a compile error.
 
-The proposal (`plan/polyp-ui.md`) sold this as "borrow-checked callbacks", where
+The proposal (`kelp wiki page meta/roadmap.md`) sold this as "borrow-checked callbacks", where
 the checker would prove a captured borrow is still valid when the callback runs.
 A callback cannot capture a borrow at all, so that feature has no v0 shape; what
 v0 has instead is the stronger, simpler statement above, and no stale-closure bug
@@ -175,7 +175,7 @@ packaging limitation, not a design choice:
    ```
 
 3. **Grant the domain.** Every GTK call is in the `ui` domain
-   (`plan/ffi-display-domain.md`; the only accepted grant is the wildcard), so
+   (`kelp wiki page libraries/polyp.md`; the only accepted grant is the wildcard), so
    the consumer's import of the library delegates it:
 
    ```kelp

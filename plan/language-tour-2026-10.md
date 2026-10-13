@@ -815,12 +815,12 @@ Output (both backends):
 
 ## Iterators, `break` and `continue`
 
-`for x in expr` walks a `List`/array by index and anything else through `std/iter`'s `Iterator` (`type Item`, `fun mut Self.next().return: Option<Self::Item>`). `break` and `continue` target the innermost loop; `defer` runs once per iteration (`plan/iterators.md`).
+`for x in expr` walks a `List`/array by index and anything else through `std/iter`'s `Iterator` (`type Item`, `fun mut Self.next().return: Option<Self::Item>`). `break` and `continue` target the innermost loop; `defer` runs once per iteration (`language/iterators.md` (kelp wiki)).
 
 `for_iter_range.kp`
 
 ```kelp
-// `plan/iterators.md`: `for` over a `List`/array keeps the index walk, and
+// `language/iterators.md` (kelp wiki): `for` over a `List`/array keeps the index walk, and
 // everything else is the `Iterator` protocol. `Range` is the shipped iterator,
 // and the loop is its `next()` desugar.
 impl "std/iter"
@@ -964,7 +964,7 @@ leave
 
 ## Const generics
 
-`datac Buf<const N: usize>` and `fun sum<const N: usize>(a: &[i32; N])` take a compile-time value; `N` is inferred from an array argument and each value is its own monomorphized copy. A type with a const parameter cannot itself implement a trait, so a small non-generic cursor walks it (`plan/const-generics.md`, `plan/traits.md` 14).
+`datac Buf<const N: usize>` and `fun sum<const N: usize>(a: &[i32; N])` take a compile-time value; `N` is inferred from an array argument and each value is its own monomorphized copy. A type with a const parameter cannot itself implement a trait, so a small non-generic cursor walks it (`language/const-generics.md` (kelp wiki), `plan/traits.md` 14).
 
 `const_generics_basic.kp`
 
@@ -1110,12 +1110,12 @@ Output (both backends):
 
 ## Scoped trailing blocks and exclusive captures
 
-`f { x -> ... }` passes a block to a `scoped fun(...)` parameter. The block may read what it captures by shared borrow and, new in this round, write it: a `var` or `mut` parameter written inside the block is borrowed exclusively for the call, so the Elm-style drain loop and tallies need no message type. A scoped block still cannot be stored (`plan/scoped-blocks.md`, `plan/exclusive-captures.md`).
+`f { x -> ... }` passes a block to a `scoped fun(...)` parameter. The block may read what it captures by shared borrow and, new in this round, write it: a `var` or `mut` parameter written inside the block is borrowed exclusively for the call, so the Elm-style drain loop and tallies need no message type. A scoped block still cannot be stored (`language/functions.md` (kelp wiki), `language/functions.md` (kelp wiki)).
 
 `scoped_block_params.kp`
 
 ```kelp
-// `plan/scoped-blocks.md` part 1 and part 2: a trailing block declares its
+// `language/functions.md` (kelp wiki) part 1 and part 2: a trailing block declares its
 // parameters by name only, takes their types from the `scoped fun(...)` the
 // block is passed to, and returns its tail when that type's return is
 // non-unit. The callee calls it during the call and only during the call.
@@ -1176,7 +1176,7 @@ Output (both backends):
 
 ```kelp
 // A scoped block may write through a captured `var`: `s.count += n` makes the
-// capture exclusive for the call (`plan/exclusive-captures.md`). The callee calls
+// capture exclusive for the call (`language/functions.md` (kelp wiki)). The callee calls
 // the block twice; the owner is usable again as soon as the call returns.
 datac State(var count: i32, var label: String)
 

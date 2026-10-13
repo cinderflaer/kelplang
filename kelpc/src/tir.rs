@@ -313,7 +313,7 @@ pub enum Stmt {
         /// before returning is keyed by it.
         span: Span,
     },
-    /// `break` (`plan/iterators.md`): leave the innermost loop. The span keys
+    /// `break` (`kelp wiki page language/iterators.md`): leave the innermost loop. The span keys
     /// the drops of the locals declared inside that loop (`DropPlan::at_break`),
     /// the same way `Return::span` keys the frame's.
     Break { span: Span },
@@ -461,7 +461,7 @@ pub enum ExprKind {
         key: String,
         captures: Vec<Expr>,
     },
-    /// A scoped `fun` literal (`plan/scoped-blocks.md` part 2): the same fat
+    /// A scoped `fun` literal (`kelp wiki page language/functions.md` part 2): the same fat
     /// pointer as `ClosureLit`, but the environment is written to the
     /// *enclosing function's stack* and the value's `drop` member is `NULL`,
     /// because a scoped literal's captures are copies or shared borrows and

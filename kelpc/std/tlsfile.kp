@@ -4,7 +4,7 @@ impl "std/result"
 impl "std/str"
 
 /* std/tlsfile: the file-reading layer over `std/tls`'s PEM-bytes functions
-   (st3, `plan/tls-server.md`).
+   (st3, `kelp wiki page stdlib/tls.md`).
 
    Why a module of its own: reading a file is the `fs` capability, and a
    module that names `fs.try_read` needs the `fs` grant from every program that

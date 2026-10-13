@@ -1,7 +1,7 @@
 # The freestanding standard subset (kernel stage 19, release goal 3)
 
-*A design note, not a Mark. `plan/kernel-path.md` owns the stage list;
-`plan/freestanding.md` owns the mode. This file is the record of the decision
+*A design note, not a Mark. `language/kernel.md` (kelp wiki) owns the stage list;
+`language/freestanding.md` (kelp wiki) owns the mode. This file is the record of the decision
 this stage made: which parts of `std` work in a freestanding project, and how
 the compiler admits them.*
 
@@ -69,7 +69,7 @@ does not ship.
 | `std/thread` | refused: pthreads and the hosted runtime | Refused by name. |
 | `std/sync` | refused: `Mutex<T>`'s runtime half is a pthread mutex | Refused by name, separately from the `Mutex` type refusal. |
 | `std/regex` | works with an allocator (kernel stage 23) | The parser, the program and the Pike VM are pure Kelp over `List<u8>`/`List<i32>` and the project's allocations. Two compiler pieces were missing when it first shipped and are now in: a `datac`/`enum` whose fields include a `String` has a derived key equality that called the hosted `kelp_map_key_eq`, which the LLVM backend now emits as a libc-free byte loop, and `View.slice`/`View.to_string` (and the `View` type) are admitted. `tests/projects/freestanding_std_regex` links clean, and `examples/kernel0-eq`/`examples/kernel0-eq-x86_64` run a real match under QEMU on both ISAs. |
-| `std/tz` | refused: a hosted-only module, decided when it shipped (`plan/tz.md`) | Its whole surface is `tz.load`, which reads a TZif file through the `fs` gate and asks `std/env` for `$TZDIR`, and both of its result payloads carry `String` (`TzErr.Corrupt`'s message and every `Offset`'s abbreviation). The `String` fields are no longer a blocker by themselves (kernel stage 23 gave the derived `String` equality a freestanding body), but the file and the environment are: there is no zone without a file. Refused by name. |
+| `std/tz` | refused: a hosted-only module, decided when it shipped (`stdlib/tz.md` (kelp wiki)) | Its whole surface is `tz.load`, which reads a TZif file through the `fs` gate and asks `std/env` for `$TZDIR`, and both of its result payloads carry `String` (`TzErr.Corrupt`'s message and every `Offset`'s abbreviation). The `String` fields are no longer a blocker by themselves (kernel stage 23 gave the derived `String` equality a freestanding body), but the file and the environment are: there is no zone without a file. Refused by name. |
 | `std/rt` | present, not callable | The resolver injects it for a module that holds a capability domain; the `irq`/`frames` checks are front-end and emit no matcher call, and `prune` drops the module's bodies. |
 
 ## The allowed list a refusal names

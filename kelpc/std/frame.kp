@@ -1,5 +1,5 @@
 /* std/frame: a physical frame as a capability (kernel stage 18, MK10-S1's
-   second half, `plan/irq-frame-caps.md`).
+   second half, `kelp wiki page stdlib/irq.md`).
 
    A physical frame is a 4 KiB-aligned page a driver may own. Like a `Line`,
    the frame is a *value* and `claim` is the only constructor: the compiler
@@ -19,7 +19,7 @@
    the frame by asking for byte 4096. What it cannot do is stop the caller from
    walking on from the returned *number*: an offset applied later is the same
    arithmetic the `mmio` check already declines to revisit
-   (`plan/device-caps.md`), and DMA is not tracked at all.
+   (`kelp wiki page language/capabilities.md`), and DMA is not tracked at all.
 
    A hosted program may import this module and claim a frame as well: the check
    is a compile-time one, but a hosted program has no physical frames of its

@@ -1,7 +1,7 @@
 # Panic semantics with no OS (MK9-S6-M2, kernel stage 15)
 
-*A design note, not a Mark. `plan/kernel-path.md` owns the stage list; this is
-the record of what this stage decided and why. `plan/freestanding.md` owns the
+*A design note, not a Mark. `language/kernel.md` (kelp wiki) owns the stage list; this is
+the record of what this stage decided and why. `language/freestanding.md` (kelp wiki) owns the
 freestanding mode this is part of.*
 
 ## What a panic is on bare metal
@@ -45,7 +45,7 @@ compiler-emitted entry, `kelp_panic_entry(msg, file, line)`, which:
 
 `kelp_double_panic` is emitted as a **weak** definition whose body loops on the
 target's wait-for-interrupt instruction (`wfi` on riscv64, `wfe` on aarch64),
-exactly as the `mem*` fallbacks are weak (`plan/freestanding.md`). A project
+exactly as the `mem*` fallbacks are weak (`language/freestanding.md` (kelp wiki)). A project
 that supplies its own `kelp_double_panic` (a strong definition in an object
 linked beside the image, the same way `tests/projects/freestanding_memcpy_user`
 supplies its own `memcpy`) wins at link time and can print instead of wedging.
@@ -108,8 +108,8 @@ Two things the task lists as checks are **not** checks in this language, and
 the table records that rather than inventing one:
 
 - **integer overflow** wraps. There is no `nsw`/`nuw` on any arithmetic
-  instruction and no runtime overflow check (`plan/kernel-ub-notes.md`,
-  `plan/kernel0-status.md` gap 3).
+  instruction and no runtime overflow check (`language/unsafe-ub-catalogue.md` (kelp wiki),
+  `language/kernel.md` (kelp wiki) gap 3).
 - **division by zero** is not checked. `sdiv`/`udiv` by zero is UB in LLVM
   exactly as it is in C; the only guard is constant folding in the front end.
 

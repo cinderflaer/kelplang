@@ -54,7 +54,7 @@
 //!   and `List`, `Map` and `Box` when no `[target] alloc`/`dealloc` pair is
 //!   configured, since their storage is the runtime allocator's; and therefore
 //!   any `std/*` module not admitted by `std_admission` below, and every
-//!   function of an admitted module that is not on its row (`plan/freestanding-std.md`);
+//!   function of an admitted module that is not on its row (`kelp wiki page language/freestanding.md`);
 //! - passdowns (`pd`), whose initializers run through the generated
 //!   `kelp_init_pds` that only the hosted entry point calls.
 //!
@@ -62,7 +62,7 @@
 //! overflow that the checks do catch calls the project's own handler, whose
 //! body the compiler does not check at all (it may never return, but the
 //! compiler does not require that), and `Ptr<T>`'s `read`/`write` stay as
-//! unchecked as they are hosted. `plan/kernel-ub-notes.md` carries the stage's
+//! unchecked as they are hosted. `kelp wiki page language/unsafe-ub-catalogue.md` carries the stage's
 //! entry.
 
 use std::collections::HashMap;
@@ -75,7 +75,7 @@ use crate::tir::{Block, Expr, ExprKind, Program, Stmt};
 use crate::types::Ty;
 
 /// One shipped module's place in a freestanding program (kernel stage 19,
-/// `plan/freestanding-std.md`). The row for each module is a decision derived
+/// `kelp wiki page language/freestanding.md`). The row for each module is a decision derived
 /// by building that module into a riscv64 image, not from its prose: a module
 /// whose bodies all resolve is admitted, one that leaves an undefined symbol is
 /// either narrowed to the functions that do not or refused whole.
@@ -196,7 +196,7 @@ pub fn std_admission(module: &str) -> StdAdmission {
         "std/mem" | crate::stdlib::RT_MODULE => StdAdmission::Present,
         // `std/tz` reads TZif files and `$TZDIR`: a bare-metal image has no
         // filesystem and no environment for it to read, and its `Result`
-        // payloads carry `String` (plan/tz.md, Freestanding).
+        // payloads carry `String` (kelp wiki page stdlib/tz.md, Freestanding).
         "std/tz" => StdAdmission::Hosted,
         _ => StdAdmission::Hosted,
     }
@@ -1077,7 +1077,7 @@ impl Checker<'_> {
                 }
                 Ok(())
             }
-            // A scoped literal (`plan/scoped-blocks.md`) keeps its captures in a stack
+            // A scoped literal (`kelp wiki page language/functions.md`) keeps its captures in a stack
             // environment with a no-op drop, so unlike an owning closure it needs nothing from the
             // heap; its captures are checked like a closure's.
             ExprKind::ScopedClosureLit { captures, .. } => {
@@ -1159,7 +1159,7 @@ impl Checker<'_> {
     /// This is a check on the address a pointer is *born* at. An offset applied
     /// later (`p.byte_offset(n)`, `p.offset(n)`) is not revisited, and nothing
     /// here says the address is memory-mapped or that it is not RAM
-    /// (`plan/device-caps.md`).
+    /// (`kelp wiki page language/capabilities.md`).
     fn check_mmio(&self, args: &[Expr], module: &str, span: Span) -> Result<(), Diagnostic> {
         let patterns = self
             .caps
@@ -1212,7 +1212,7 @@ mod tests {
     /// catch-all, which would silently refuse a module nobody looked at, so the
     /// list of ids the table does *not* call `Hosted` is pinned here instead:
     /// adding a shipped module forces a line in this test and therefore a look
-    /// at `plan/freestanding-std.md`.
+    /// at `kelp wiki page language/freestanding.md`.
     #[test]
     fn the_verdict_table_admits_exactly_the_listed_modules() {
         let mut admitted: Vec<&str> = crate::stdlib::shipped()

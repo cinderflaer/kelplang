@@ -5,7 +5,7 @@ name = "freestanding_memcpy_user"
 # `user_memcpy.s`. The test assembles that file for the same triple with
 # `llvm-mc` and relinks the project's object beside it, so the link has to pick
 # the project's definition over the compiler's weak fallback
-# (`plan/freestanding.md`).
+# (`kelp wiki page language/freestanding.md`).
 [target]
 mode = "freestanding"
 triple = "riscv64-unknown-none-elf"

@@ -1,6 +1,6 @@
 // A borrow used only inside an `if` arm is dead after the `if` statement, so
 // the owner may be mutated then. The borrow is deliberately treated as live
-// for the whole `if` (see `plan/nll.md`), which is what keeps the arms'
+// for the whole `if` (see `kelp wiki page language/ownership.md`), which is what keeps the arms'
 // predecessors and the arm that uses it sound.
 impl "std/str"
 

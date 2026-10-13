@@ -1,7 +1,7 @@
 # IRQ lines and physical frames as capabilities (kernel stage 18, MK10-S1 / roadmap C-3)
 
 *Design and record for kernel-path row 11's second half. The MMIO half is
-`plan/device-caps.md`; this file owns the two device capabilities it left
+`language/capabilities.md` (kelp wiki); this file owns the two device capabilities it left
 open.*
 
 ## What this adds

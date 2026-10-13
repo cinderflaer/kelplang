@@ -1,8 +1,8 @@
 # Panic provenance: a trace, not just a line
 
-*Proposal, not commitment and not a Mark. `roadmap.md` owns the plan and the schedule; nothing here is
+*Proposal, not commitment and not a Mark. `meta/roadmap.md` (kelp wiki) owns the plan and the schedule; nothing here is
 scheduled, no work has started, and no lane is open. This file records the shape of an idea before it is
-worth designing, the way `plan/polyp-ui.md` does for one far-future proposal and
+worth designing, the way `meta/roadmap.md` (kelp wiki) does for one far-future proposal and
 `plan/asm-backend/default-switch.md` did for one proposed sequence.*
 
 ## What it is

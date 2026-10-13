@@ -5,7 +5,7 @@
 //! `KELP_INSTALL_SKIP_CHECKS`) keep the tests independent of the host's `cc`,
 //! LLVM and architecture. The reproducibility check itself is
 //! `build/verify-reproducible.sh`, which needs two full release builds and is
-//! run by hand; its last result is recorded in `plan/reproducible-builds.md`.
+//! run by hand; its last result is recorded in `kelp wiki page tooling/release-tooling.md`.
 
 use std::fs;
 use std::path::{Path, PathBuf};

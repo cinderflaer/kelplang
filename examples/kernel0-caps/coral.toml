@@ -4,7 +4,7 @@ name = "kernel0-caps"
 # capabilities. The entry module holds exactly one line and one frame, claims
 # them with the gated `irq.claim`/`frame.claim`, and hands the two receipts to
 # `drv`, which holds the same grants and so may read them
-# (`plan/irq-frame-caps.md`).
+# (`stdlib/irq.md` (kelp wiki)).
 [target]
 mode = "freestanding"
 triple = "riscv64-unknown-none-elf"

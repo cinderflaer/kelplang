@@ -1,5 +1,5 @@
 // Kernel stage 22: the x86-64 IDT, four CPU exception gates and the 8259/8254
-// timer interrupt (`plan/x86-idt.md`).
+// timer interrupt (`language/kernel.md` (kelp wiki)).
 //
 // The boot is two deliberate faults the dispatcher resumes from, five real
 // timer ticks, and one store the page fault gate cannot repair. The store comes

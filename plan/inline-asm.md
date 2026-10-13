@@ -1,6 +1,6 @@
 # Stage 5: inline assembly and naked functions (MK9-S7-M1/M3, roadmap B-9, B-16)
 
-*Design for kernel-path stage 5. `plan/kernel-path.md` is the context; this file says what is
+*Design for kernel-path stage 5. `language/kernel.md` (kelp wiki) is the context; this file says what is
 built and what is deliberately left out.*
 
 ## What this adds
@@ -11,7 +11,7 @@ trap vector is a naked function whose whole body is one `asm`.
 - **`asm("<template>", <operands...>, <options...>)`** is an expression, and therefore also a
   statement. It is legal only inside `unsafe { ... }` or an `unsafe fun`, so the module that
   writes one is listed in `coral.toml`'s `[unsafe] modules` exactly as any other `unsafe`
-  construct is (`plan/unsafe-and-pointers.md`).
+  construct is (`language/unsafe.md` (kelp wiki)).
 - **Operands**, in order of appearance:
   - `in("<constraint>") expr`: read `expr` into the asm, an input operand;
   - `out("<constraint>") place`: write the asm's result into `place`, an output operand;
@@ -119,7 +119,7 @@ follows the run of markers, and both stay usable as ordinary names everywhere el
 
 ## What the compiler does not check
 
-The section that matters for `plan/kernel-ub-notes.md`: the compiler checks that the operand
+The section that matters for `language/unsafe-ub-catalogue.md` (kelp wiki): the compiler checks that the operand
 kinds are `in`/`out`/`inout`, that an operand is a place of a machine-word type, that the
 places are writable, and that the construct is inside `unsafe`. It does not check the template
 against the constraints, the constraints against the target, the clobber list against reality,

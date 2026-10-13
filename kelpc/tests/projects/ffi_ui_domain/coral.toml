@@ -1,6 +1,6 @@
 name = "ffiuidomain"
 
-# Gap 6 (plan/ffi-display-domain.md): "ui" is the domain of authority over a
+# Gap 6 (kelp wiki page libraries/polyp.md): "ui" is the domain of authority over a
 # display server. A GTK call carries no argument that names the display, so the
 # pattern vocabulary is the whole-resource wildcard alone, which is what
 # `main.kp` grants. The symbol here is a harmless libc one so the fixture needs

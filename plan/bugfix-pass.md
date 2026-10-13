@@ -140,6 +140,6 @@ or example program hit the rule.
 
 ## 6. Docs touched
 
-- `plan/bugfix-pass.md` (this file).
+- `changelog.md` (kelp wiki) (this file).
 - `plan/user-ffi-gap-analysis.md`: no gap closed in this pass (nothing here
   touches the FFI surface).

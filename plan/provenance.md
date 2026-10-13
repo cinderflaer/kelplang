@@ -1,8 +1,8 @@
 # A reference binding remembers where it was borrowed from (borrow checker 2 of 2, open item 33)
 
-*Design note for the task that closes `roadmap.md` open item 33. `borrowck.rs` is the
+*Design note for the task that closes `meta/roadmap.md` (kelp wiki) open item 33. `borrowck.rs` is the
 code; this is the rule, the algorithm, and the shapes that stay refused. It builds on
-`plan/nll.md` (a bound borrow ends at its last use), which is slice 2 of A-11.*
+`language/ownership.md` (kelp wiki) (a bound borrow ends at its last use), which is slice 2 of A-11.*
 
 ## The problem
 
@@ -46,7 +46,7 @@ refused) and does not block reassigning the cursor (now accepted).
   matter of recomputing pins from the merged entries.
 - On a declaration the initializer's fresh entries are tagged with the new binding as
   holder and given a release point: the binding's own last use in its block (the NLL
-  rule `plan/nll.md` already computes). A root the initializer did not borrow (an alias
+  rule `language/ownership.md` (kelp wiki) already computes). A root the initializer did not borrow (an alias
   like `val q = p`) gets a fresh pin and entry here.
 - On a reassignment of a reference binding, the entries it holds are released, the new
   root set is computed from the value, and fresh entries are **adopted into the scope

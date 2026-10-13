@@ -11,7 +11,7 @@ impl "std/result"
    There are no backreferences and no lookaround (a pattern that writes one is
    refused at `compile`, with the construct named).
 
-   The syntax and the semantics are written out in `plan/regex.md`; this file
+   The syntax and the semantics are written out in `kelp wiki page stdlib/regex.md`; this file
    is the implementation. In short: literals, `.`, classes `[a-z]`/`[^...]`,
    the escapes `\d \D \w \W \s \S \b \B \n \r \t \xHH`, anchors `^ $`, groups
    `( )` and `(?: )`, alternation, the repeats `* + ? {n} {n,} {n,m}` with their

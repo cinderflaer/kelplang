@@ -2,7 +2,7 @@ name = "polyp-v4-riscv64"
 
 # Polyp v4: the same core, software raster, soft backend and todo program as the hosted
 # run, built with no libc for QEMU's riscv64 `virt` machine and drawing into a `static mut`
-# framebuffer. `[target]` is stage 4's freestanding section (`plan/freestanding.md`); `alloc` and
+# framebuffer. `[target]` is stage 4's freestanding section (`kelp wiki page language/freestanding.md`); `alloc` and
 # `dealloc` name the bump arena in `src/main.kp`, so `List`, `String` and `Box` allocate through
 # the project and the image links no libc.
 [target]
@@ -21,7 +21,7 @@ dealloc = "dealloc"
 modules = ["main", "uart", "fb_platform", "deps/polyp/backends/soft/soft/fb", "deps/polyp/backends/soft/soft/draw"]
 
 # The NS16550's register window on this machine, held by the entry module and delegated to the one
-# module that names the device (`plan/device-caps.md`), plus the fw_cfg window the ramfb
+# module that names the device (`kelp wiki page language/capabilities.md`), plus the fw_cfg window the ramfb
 # registration writes through. The framebuffer is a static, not MMIO, so it needs no grant.
 [caps]
 mmio = ["0x10000000+0x100"]

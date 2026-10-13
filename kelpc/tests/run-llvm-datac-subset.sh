@@ -1,7 +1,7 @@
 #!/bin/sh
 # The MK7 S2A gate: runs the `datac` fixtures against the `llvm` backend.
 #
-# S2 is "aggregates, containers and drops" (the MK7 record in plan/done.md), and
+# S2 is "aggregates, containers and drops" (the MK7 record in kelp wiki page meta/milestones.md), and
 # **S2A is its plain-record slice**: a `datac` whose fields are all scalars or
 # earlier all-scalar `datac`s, lowered to an identified struct with the same
 # field order and natural alignment the C typedef has. Its exit criterion is

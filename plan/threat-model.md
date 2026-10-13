@@ -142,7 +142,7 @@ sealed, ungranted, outside the range); `[extern]` header/library injection and
   everywhere.
 - **M5 pointer offsets after birth** (`m05`, ignored): the mmio check is on the
   address a pointer is born at. Design: provenance, roadmap D-1
-  (`plan/device-caps.md` "Born-at only").
+  (`language/capabilities.md` (kelp wiki) "Born-at only").
 - **Confused deputies and unions** are by design: a module that reads any path
   with a broad grant serves any caller; grants made to one module by several
   importers are unioned, each bounded by what its importer holds.

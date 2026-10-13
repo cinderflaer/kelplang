@@ -1,4 +1,4 @@
-# Traits with static dispatch (MK9 language round, `plan/roadmap.md` A-12 slice 3)
+# Traits with static dispatch (MK9 language round, `meta/roadmap.md` (kelp wiki) A-12 slice 3)
 
 *Design note. Slice 1 made a type a `Map` key by declaring `fun T.hash()`/`fun T.eq(other: &T)`,
 slice 2 added the `trait` keyword with method signatures, `impl` blocks and bounds. This slice adds
@@ -42,7 +42,7 @@ trait Named: Shape {
   `fun Self.m<T>()` are both refused by name. A signature names only `Self`, the types of the
   declaring module and what that module exports.
 - `Drop` is the one name a user cannot use: `trait Drop` is refused where it is written, with the
-  surviving spelling (`fun mut T.drop()`, `plan/drop.md`) in the message. User `Drop` is unchanged,
+  surviving spelling (`fun mut T.drop()`, `language/drop.md` (kelp wiki)) in the message. User `Drop` is unchanged,
   and so is every other compiler-known name pair (`hash`/`eq`).
 
 ## 2. What implements a trait
@@ -162,7 +162,7 @@ Each of these is refused where it is written, with the message naming the follow
 
 - **`dyn` and trait objects.** `dyn Name` in a type position is refused: a trait is a bound on a
   type parameter, not a type of its own, so there is no runtime tag and no dynamic dispatch.
-  Substituting an `enum` (`plan/roadmap.md` A-1) is the workaround.
+  Substituting an `enum` (`meta/roadmap.md` (kelp wiki) A-1) is the workaround.
 - **Associated types and consts, and any non-`fun` item inside a trait.** Refused by name.
 - **Trait-bounded `impl Trait` in argument position** (`fun f(x: impl Name)`). Refused by name:
   name the type parameter and bound it instead.
@@ -222,7 +222,7 @@ Each of these is refused where it is written, with the message naming the follow
 - `fmt.rs` needs no change to its emitter: it is token-level, and the new syntax is a `:`, `+`, a
   body and a signature it already re-emits. The one edit is extending the corpus pair
   (`tests/fmt_corpus/traits_syntax`) with a default method, a supertrait and a builtin impl.
-- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+- `language/unsafe-ub-catalogue.md` (kelp wiki) carries this feature's note: no new way to reach undefined behaviour.
 
 ## 8. Tests
 
@@ -534,7 +534,7 @@ Each refused where it is written, with the message naming the follow-up:
   to the concrete binding for that instantiation. `check_dyn_object_safety` refuses a trait that
   declares an associated type. Nothing downstream knows an associated type existed: the instance's
   signatures already name concrete types.
-- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+- `language/unsafe-ub-catalogue.md` (kelp wiki) carries this feature's note: no new way to reach undefined behaviour.
 
 ## 11. Generic traits, `From`, and error conversion for `?` (A-12 slice 6, roadmap A-3 and A-12)
 
@@ -742,7 +742,7 @@ Each refused where it is written, with the message naming the follow-up:
   failure arm.
 - `std/convert.kp` is added to `stdlib.rs`'s source table and to the freestanding allowed set (it
   is pure language, so a kernel may use it).
-- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+- `language/unsafe-ub-catalogue.md` (kelp wiki) carries this feature's note: no new way to reach undefined behaviour.
 
 ### 11.9 Tests
 
@@ -958,7 +958,7 @@ And the spelling itself:
   `{ [N x ptr], ptr, i64, i64 }` (the method array first, so the call site's slot index is
   unchanged, then the drop, the size and the align), and the C struct puts the same three entries
   after the same method slots, so the two backends' tables agree field for field.
-- `plan/kernel-ub-notes.md` carries this feature's note.
+- `language/unsafe-ub-catalogue.md` (kelp wiki) carries this feature's note.
 
 ### 12.10 Tests
 
@@ -1033,7 +1033,7 @@ pub trait Ord {
 - The trait module is an ordinary shipped module: a program writes `impl "std/ops"` and reaches the
   traits as `ops.Add`, `ops.Ord` and so on, or writes `impl Add`, `impl Ord` after importing. It is
   pure language with no body and no allocator, so it is admitted to the freestanding set
-  (`plan/freestanding-std.md`) and a kernel may use it.
+  (`language/freestanding.md` (kelp wiki)) and a kernel may use it.
 
 ### 13.2 Arithmetic operators
 
@@ -1161,7 +1161,7 @@ implements `Add`, and `Display` in a template behaves the same way.
   as H-5's `eq` lowering is, so `borrowck.rs` and both backends are unchanged.
 - `std/ops` and `std/fmt` need no parser, resolver or backend change: they are ordinary trait
   declarations in ordinary shipped modules.
-- `plan/kernel-ub-notes.md` carries this feature's note: no new way to reach undefined behaviour.
+- `language/unsafe-ub-catalogue.md` (kelp wiki) carries this feature's note: no new way to reach undefined behaviour.
 
 ### 13.8 Tests
 

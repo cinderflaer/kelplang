@@ -1,4 +1,4 @@
-/* std/pool: a thread pool (`plan/sync.md` section 4, `plan/st1-status.md`), in
+/* std/pool: a thread pool (`kelp wiki page stdlib/sync.md` section 4, `kelp wiki page stdlib/sync.md`), in
    Kelp over `Mutex`/`Condvar` and `thread.spawn`. It is its own module because a
    module cannot call its own builtins by name (`thread.spawn` is reached through
    `impl "std/thread"`):

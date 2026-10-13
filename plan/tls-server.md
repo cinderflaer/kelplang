@@ -1,6 +1,6 @@
 # Server-side TLS, client certificates and ALPN in `std/tls` (standard library lane, task st3)
 
-*Same OpenSSL as the client (`plan/tls-hardening.md`, `plan/tls-handle.md`): the system library, linked only by a
+*Same OpenSSL as the client (`stdlib/tls.md` (kelp wiki), `stdlib/tls.md` (kelp wiki)): the system library, linked only by a
 program that reaches `std/tls` (`uses_tls`), hosted only. The server bodies (`handshake_try_raw`, `server_ctx_try_raw`,
 `reload_try_raw`, `accept_try_raw`, `ctx_free_raw`, `alpn_raw`, `peer_subject_raw`, `pending_raw`) and the listener
 body `net.listen_on_raw` are Rust, in `kelp-rt/src/tls.rs`, and their rows are in the `PROTOTYPES` table of
@@ -85,7 +85,7 @@ Choices the spec left open:
 the client uses. The one extra rule is in `fill`: OpenSSL may hold decrypted bytes the socket no longer shows, so
 `fill` asks `SSL_pending` first and only then waits for readability. `ServerConn.close` ends the TLS session
 (`close_notify`) before the half-close and drain. A failed handshake in `serve_tls_on` closes that socket and the loop
-goes on; the limits, status table and per-connection rules are those of `plan/http-server.md`.
+goes on; the limits, status table and per-connection rules are those of `stdlib/http.md` (kelp wiki).
 
 ## Tests
 

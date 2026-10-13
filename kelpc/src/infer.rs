@@ -815,21 +815,21 @@ struct Ctx {
     /// literal finds the *enclosing* literal's captures (indices into the
     /// enclosing environment).
     captures: Vec<(String, Ty)>,
-    /// True while checking a *scoped* literal (`plan/scoped-blocks.md`),
+    /// True while checking a *scoped* literal (`kelp wiki page language/functions.md`),
     /// whose environment is stack and whose captures may be borrows: an
     /// owned non-`Copy` enclosing binding is captured as a shared borrow
     /// rather than moved, so `note_capture` records `&T` and the body reads
     /// the capture through it.
     borrowed_captures: bool,
     /// The enclosing owned `var` bindings a scoped literal may capture by
-    /// *exclusive* borrow (`plan/exclusive-captures.md`): names that are
+    /// *exclusive* borrow (`kelp wiki page language/functions.md`): names that are
     /// mutable, owned and not `Copy`.
     outer_mut: std::collections::HashSet<String>,
     /// This pass's upgrades: the captures `note_capture` types `&mut T`
     /// instead of `&T`. Grown by `check_fn_literal`'s retry loop.
     excl_captures: std::collections::HashSet<String>,
     /// The names an *enclosing* scoped literal already captures exclusively:
-    /// a block inside that block cannot hold them (v1, `plan/exclusive-captures.md`).
+    /// a block inside that block cannot hold them (v1, `kelp wiki page language/functions.md`).
     outer_excl: std::collections::HashSet<String>,
     /// The captures this pass wrote through (or passed as `mut`) while typed
     /// as a shared borrow: what the retry loop upgrades. One cell per pass.
@@ -850,7 +850,7 @@ struct Ctx {
     /// synthesized binding has a name of its own (`infer::WHEN_TEMP_PREFIX`).
     when_temps: usize,
     /// How many `for` loops this body has desugared, so each loop's
-    /// synthesized sequence and index names are unique (`plan/iterators.md`).
+    /// synthesized sequence and index names are unique (`kelp wiki page language/iterators.md`).
     /// A `fun` literal's body starts a fresh count, exactly as a function
     /// does.
     for_temps: usize,
@@ -1145,7 +1145,7 @@ impl Ctx {
         let ty = self.outer_bindings.get(name).cloned()?;
         // A scoped literal's environment is stack and owns nothing, so an
         // owned non-`Copy` capture is a *shared borrow* of the enclosing
-        // binding rather than a move of it (`plan/scoped-blocks.md`). The
+        // binding rather than a move of it (`kelp wiki page language/functions.md`). The
         // body then reads `&T`, which is what makes a field read and a method
         // call through the capture type-check, and what makes a write through
         // it a borrow error.
@@ -1577,7 +1577,7 @@ impl TypeScope<'_> {
                 span: ty.span,
             });
         }
-        // `scoped` is a *parameter* modifier (`plan/scoped-blocks.md` part 2)
+        // `scoped` is a *parameter* modifier (`kelp wiki page language/functions.md` part 2)
         // and is handled by `resolve_param_mode`, before this is reached. Any
         // other position - a return type, a `val` annotation, a `datac`
         // field, another function type's own parameter - would store the
@@ -2482,7 +2482,7 @@ impl TypeScope<'_> {
     }
 
     /// `scoped fun(T).return: U` - the non-escaping callback type
-    /// (`plan/scoped-blocks.md` part 2). The qualifier is only meaningful as
+    /// (`kelp wiki page language/functions.md` part 2). The qualifier is only meaningful as
     /// written: `mut` needs something to write through and `move` something
     /// to own, and a scoped value is neither, so both are refused by name
     /// rather than silently dropped. The parameters and return resolve as a
@@ -10782,7 +10782,7 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
             }
             _ => unreachable!("a Deref's operand is always Ref-typed, guaranteed by check_expr"),
         },
-        // A write through a captured binding (`plan/exclusive-captures.md`).
+        // A write through a captured binding (`kelp wiki page language/functions.md`).
         // A scoped block's capture of an owned `var` is typed `&T` until a
         // write (or a `mut` argument) shows it needs `&mut T`;
         // `check_fn_literal` retries the literal with the capture upgraded,
@@ -10853,7 +10853,7 @@ fn writable_outer(ctx: &Ctx) -> std::collections::HashSet<String> {
 
 /// Records that the place `e`, a capture of the scoped literal being checked,
 /// was used where an exclusive borrow is needed, if the capture is one the
-/// literal may upgrade (`plan/exclusive-captures.md`). `check_fn_literal`'s
+/// literal may upgrade (`kelp wiki page language/functions.md`). `check_fn_literal`'s
 /// retry loop reads the set.
 fn note_excl_need(e: &tir::Expr, ctx: &Ctx) {
     if let tir::ExprKind::Capture { index } = &e.kind {
@@ -11621,7 +11621,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             });
             Ok(vec![tir::Stmt::While { cond, body, iterating }])
         }
-        // A `for` keeps its two desugars (`plan/iterators.md`): a `List<T>` or
+        // A `for` keeps its two desugars (`kelp wiki page language/iterators.md`): a `List<T>` or
         // `[T; N]` walks by index exactly as before, and anything that
         // implements `std.iter.Iterator` becomes a `var` over `next()`. Only
         // this pass knows the iterable's type, so this is where the choice is
@@ -11775,7 +11775,7 @@ fn binding_borrow_temporary(init: &ast::Expr, next: usize) -> Option<(&ast::Expr
 }
 
 /// The canonical key of `std.iter.Iterator`, the one trait a `for` accepts
-/// (`plan/iterators.md`). A project spells it `impl "std/iter"` and reaches the
+/// (`kelp wiki page language/iterators.md`). A project spells it `impl "std/iter"` and reaches the
 /// trait as `iter.Iterator`; the canonical key is what the impl table is keyed
 /// by.
 const ITERATOR_TRAIT_KEY: &str = crate::stdlib::ITERATOR_TRAIT;
@@ -12018,7 +12018,7 @@ fn desugar_list_for(
 }
 
 /// The `next()` desugar a `for x in <Iterator>` becomes
-/// (`plan/iterators.md`): the loop holds the iterator, calls `next()` once per
+/// (`kelp wiki page language/iterators.md`): the loop holds the iterator, calls `next()` once per
 /// pass, binds the owned item in the `Some` arm, and leaves on `None`.
 ///
 /// A **place** iterator is borrowed exclusively for the loop's duration, so a
@@ -12242,7 +12242,7 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
 /// its own (no captures yet), and the checked body is stored where codegen
 /// will emit it.
 ///
-/// A *scoped* literal is checked by a retry loop (`plan/exclusive-captures.md`):
+/// A *scoped* literal is checked by a retry loop (`kelp wiki page language/functions.md`):
 /// every owned `var` capture starts as a shared borrow, a write through one
 /// (or passing it as a `mut` argument) records the name instead of being final,
 /// and the literal is checked again with exactly those captures typed `&mut T`.
@@ -12322,7 +12322,7 @@ fn check_fn_literal_pass(
 ) -> Result<tir::Expr> {
     // A literal written at a `scoped fun(...)` parameter is the non-escaping
     // kind: its captures may be borrows, its environment is stack, and the
-    // value's own type is `Ty::ScopedFn` (`plan/scoped-blocks.md` part 2).
+    // value's own type is `Ty::ScopedFn` (`kelp wiki page language/functions.md` part 2).
     let scoped = matches!(expected, Some(Ty::ScopedFn { .. }));
     // A `Mutex.lock` block (`std/sync`, B-5): the scoped parameter fixes the
     // block's own parameter types, but its return is the block's tail type, so
@@ -12529,7 +12529,7 @@ fn check_fn_literal_pass(
     for (i, (name, ty)) in capture_list.iter().enumerate() {
         // A scoped function value lives only for the call it was written in,
         // so an ordinary closure's environment - which can be returned - may
-        // not hold one (`plan/scoped-blocks.md` part 2).
+        // not hold one (`kelp wiki page language/functions.md` part 2).
         if !scoped && matches!(ty, Ty::ScopedFn { .. }) {
             return Err(TypeError {
                 message: format!(
@@ -12540,7 +12540,7 @@ fn check_fn_literal_pass(
         }
         // An exclusive capture is a borrow that lives for the call, so the
         // block's own result must not be derived from it
-        // (`plan/exclusive-captures.md`).
+        // (`kelp wiki page language/functions.md`).
         if scoped && matches!(ty, Ty::Ref { mutable: true, .. }) && crate::types::is_borrowed_field_ty(&ret) {
             return Err(TypeError {
                 message: format!(
@@ -12682,7 +12682,7 @@ fn check_fn_literal_pass(
     let kind = match captures.is_empty() {
         true => tir::ExprKind::FnRef(key),
         // A scoped literal's environment is stack and its drop is `NULL`
-        // (`plan/scoped-blocks.md`), which is a node of its own so neither
+        // (`kelp wiki page language/functions.md`), which is a node of its own so neither
         // backend ever mallocs it or frees it.
         false if scoped => tir::ExprKind::ScopedClosureLit { key, captures },
         false => tir::ExprKind::ClosureLit { key, captures },
@@ -12788,7 +12788,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
     // block literal (`{ x -> ... }`) takes its parameters' and its return's
     // types from the expected function type, and a scoped literal needs the
     // expectation to know that borrow captures are allowed
-    // (`plan/scoped-blocks.md`).
+    // (`kelp wiki page language/functions.md`).
     if let ast::Expr::FnLit {
         params,
         infer_params,
@@ -13118,7 +13118,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         .position(|(n, _)| n == name)
                         .expect("note_capture records the name");
                     // A `Copy` binding the literal writes is captured by
-                    // exclusive borrow (`plan/exclusive-captures.md`), and its
+                    // exclusive borrow (`kelp wiki page language/functions.md`), and its
                     // reads and writes go through the pointer, so the name is
                     // the place the pointer addresses.
                     if let Ty::Ref { mutable: true, inner } = &ty {
@@ -16178,7 +16178,7 @@ fn check_call_arg_in(
 ) -> Result<tir::Expr> {
     let memo = ctx.take_probe(arg_expr);
     // A `scoped fun(...)` parameter accepts only a `fun` literal or a trailing
-    // block written at this call site (`plan/scoped-blocks.md`), never a
+    // block written at this call site (`kelp wiki page language/functions.md`), never a
     // stored value. The one exception is forwarding a scoped value that is
     // already in hand - a `scoped fun(...)` parameter of this frame, or a
     // `val` bound to one - which is still inside the call.
@@ -17657,7 +17657,7 @@ fn aggregate_borrow_source(value: &tir::Expr) -> Option<&str> {
 /// address has to be 4 KiB-aligned whatever the grant. A non-constant argument
 /// is admitted only under the whole-resource `["*"]`, because the compiler
 /// cannot prove a runtime value lands in a range; the same rule the `mmio`
-/// address check applies (`plan/device-caps.md`, `plan/irq-frame-caps.md`).
+/// address check applies (`kelp wiki page language/capabilities.md`, `kelp wiki page stdlib/irq.md`).
 fn check_claim_argument(
     key: &str,
     args: &[tir::Expr],
@@ -21062,7 +21062,7 @@ fn check_mutex_method(
         // `m.wait_while(cv, pred) { v -> ... }` and its timed twin: the
         // condition variable's own `wait` cannot be spelled with a scoped
         // guard, so the wait lives on the mutex, which owns the lock the wait
-        // has to release atomically (B-5 rem, `plan/sync.md`).
+        // has to release atomically (B-5 rem, `kelp wiki page stdlib/sync.md`).
         "wait_while" => check_mutex_wait(receiver, elem, args, span, ctx, expected, false),
         "wait_while_timeout" => {
             check_mutex_wait(receiver, elem, args, span, ctx, expected, true)
@@ -21457,7 +21457,7 @@ fn check_condvar_associated(
 
 /// `cv.notify_one()` and `cv.notify_all()`: the two ways to wake a waiter.
 /// There is no bare `wait`; the wait is `Mutex.wait_while` (B-5 rem,
-/// `plan/sync.md`).
+/// `kelp wiki page stdlib/sync.md`).
 fn check_condvar_method(
     probe: tir::Expr,
     receiver: &ast::Expr,
@@ -21683,7 +21683,7 @@ fn check_module_item(
         ctx.check_exported(&qualified, alias, item, span)?;
     }
     // A capability value's constructor is sealed to its own module (kernel
-    // stage 18, `plan/irq-frame-caps.md`): the shipped library exports every
+    // stage 18, `kelp wiki page stdlib/irq.md`): the shipped library exports every
     // item and Kelp has no field-level `pub`, so `irq.Line(n = 3)` would forge
     // the receipt for a grant. Only `irq.claim` and `frame.claim` may build
     // one, and they are reached as functions, not as the type's own name.

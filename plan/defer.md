@@ -1,6 +1,6 @@
 # `defer` (kernel stage 6, MK9-S6-M1)
 
-*Design note. `plan/kernel-path.md` orders the stages; this one gives a kernel deterministic
+*Design note. `language/kernel.md` (kelp wiki) orders the stages; this one gives a kernel deterministic
 cleanup it can point at: a lock flag released on every ordinary way out of a block, written
 where the lock is taken. It is the `defer` half of B-8; user `Drop` is not in it.*
 
@@ -89,7 +89,7 @@ A deferred action is not checked for being idempotent, terminating, or free of a
 `defer f()` where `f` panics or loops is the program's problem, and the duplication means a
 `defer` with a side effect performs that effect once per dynamic exit path (which is once).
 Nothing about the panic path is checked: a `defer` that releases a lock is not run when a panic
-takes the process, so the lock stays held in the core that panicked. `plan/kernel-ub-notes.md`
+takes the process, so the lock stays held in the core that panicked. `language/unsafe-ub-catalogue.md` (kelp wiki)
 carries the stage's section.
 
 A block in *value* position (`val v = { defer d(); x }`, `if c { defer d(); x } else { y }`) is

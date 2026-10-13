@@ -214,10 +214,10 @@ and an `impl "uart" caps(mmio = [...])` on the line that imports the driver. A p
 one more device: the riscv64 example registers its static with QEMU's `ramfb` through fw_cfg, and
 QEMU scans out that same memory, so what the renderer drew is what a screen shows. That is
 `src/ramfb.kp`, its own `mmio` window and one more `[unsafe]` entry, and
-`plan/polyp-ramfb-status.md` records it; a platform with a real framebuffer device does the
+`kelp wiki page libraries/polyp-freestanding.md` records it; a platform with a real framebuffer device does the
 underlying job directly instead of through firmware.
 
-What a freestanding project **cannot** do is the same list `plan/freestanding.md` gives: no
+What a freestanding project **cannot** do is the same list `kelp wiki page language/freestanding.md` gives: no
 `print`, no libc, no `std/*` outside the admitted subset, no passdowns, no `String`/`Bytes`
 without an allocator. The whole Polyp program the examples run needed four source changes to fit
 (the progress fraction is an integer, the core's counters are `static`s, the entry-text snapshot

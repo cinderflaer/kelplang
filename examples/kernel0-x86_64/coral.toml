@@ -3,7 +3,7 @@ name = "kernel0_x86_64"
 # Kernel stage 20, "kernel 0 on x86-64": a bare-metal x86-64 image QEMU's x86
 # `-kernel` boots through the Xen PVH note, which writes a line to the COM1 UART
 # and halts. `mode`, `triple`, `entry` and `linker_script` are stage 4's
-# `[target]` section (`plan/freestanding.md`); `panic` routes the compiler's own
+# `[target]` section (`language/freestanding.md` (kelp wiki)); `panic` routes the compiler's own
 # overflow and bounds checks to `kp_panic` in the entry module instead of the
 # generated infinite loop, so a fault prints something before it wedges.
 [target]
@@ -13,7 +13,7 @@ entry = "kmain"
 linker_script = "kernel.ld"
 panic = "kp_panic"
 
-# The audit list (stage 1, `plan/unsafe-and-pointers.md`): only `uart` contains
+# The audit list (stage 1, `language/unsafe.md` (kelp wiki)): only `uart` contains
 # `unsafe`, and that is the one module that talks to the device port. There is no
 # `[caps]` `mmio` grant: a COM1 byte goes through `out`, not a `Ptr.from_addr`.
 [unsafe]

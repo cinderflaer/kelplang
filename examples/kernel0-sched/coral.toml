@@ -20,6 +20,6 @@ modules = ["sched", "timer", "trap", "uart"]
 # NS16550's register block and exactly the two CLINT words a hart's `mtimecmp`
 # and the shared `mtime` occupy, at hart 0's compare register. The entry module
 # holds all three and delegates each to the one module that builds a pointer
-# from the address (`plan/device-caps.md`).
+# from the address (`language/capabilities.md` (kelp wiki)).
 [caps]
 mmio = ["0x10000000+0x100", "0x2004000+0x8", "0x200BFF8+0x8"]

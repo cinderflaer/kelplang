@@ -477,7 +477,7 @@ fn default_cache_dir() -> PathBuf {
 /// `deny_outdated` is `--deny-outdated`: a load that uses outdated syntax
 /// reports those findings as errors and stops, before anything is generated.
 ///
-/// `opt` is the `-O` level (MK7 S6, the record in `plan/done.md`). It is
+/// `opt` is the `-O` level (MK7 S6, the record in `kelp wiki page meta/milestones.md`). It is
 /// passed to the LLVM backend and to the `cc` calls it makes.
 ///
 /// The LLVM backend is the only code generator, and it is called from the one
@@ -580,7 +580,7 @@ fn build(
     // Roadmap A-14 slice 1: the backend's per-unit split. `--incremental` and
     // the manifest's `[build] incremental = true` both turn it on. A freestanding project is refused by name for now: its image
     // is one ELF with one entry stub and one panic state, which is a slice of
-    // its own (`plan/incremental-compilation.md`).
+    // its own (`kelp wiki page compiler/incremental.md`).
     // Every hosted build has the shared pool (Tidepool): the collector is linked
     // in from its archive, which is looked up here, before any code is
     // generated, so a missing archive is named before a link fails. It is
@@ -1499,7 +1499,7 @@ fn stdlib_command(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `kelpc doc`: the documentation generator (`plan/doc-tool.md`). The pages
+/// `kelpc doc`: the documentation generator (`kelp wiki page tooling/kelpc-doc.md`). The pages
 /// are built by `doc.rs`; this reads the sources, writes the files, and runs
 /// the `--check` gate.
 fn doc_command(args: &[String]) -> ExitCode {

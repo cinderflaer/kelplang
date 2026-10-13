@@ -15,7 +15,7 @@
 // lets one fixed-size read fetch the whole directory. Every descriptor access is volatile: the
 // device writes the control word back into the descriptor, so the compiler must not fold the poll.
 //
-// `plan/polyp-ramfb-status.md` records how far this got.
+// `kelp wiki page libraries/polyp-freestanding.md` records how far this got.
 impl "std/str"
 
 const FW_CFG_BASE: usize = 0x10100000

@@ -3,7 +3,7 @@ impl "uart"
 impl "vm"
 
 // The trap frame, the naked entry that builds it, the dispatcher it calls and
-// the drop to U-mode (`plan/syscall-abi.md`).
+// the drop to U-mode (`language/kernel.md` (kelp wiki)).
 //
 // The register file's offsets: `xN` is at `(N - 1) * 8`, so the named argument
 // registers the ABI talks about are these six plus `a7`.

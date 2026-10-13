@@ -7,7 +7,7 @@
 # Run it inside the development shell (cargo, rustc, llvm-config, cc, git). The
 # same commit built with the same toolchain gives the same bytes no matter which
 # directory it is built in; `build/verify-reproducible.sh` checks exactly that.
-# See plan/reproducible-builds.md for what is pinned and why.
+# See kelp wiki page tooling/release-tooling.md for what is pinned and why.
 #
 # Environment (all optional):
 #   RELEASE_SOURCE_DATE_EPOCH  build timestamp; default: the last commit's time

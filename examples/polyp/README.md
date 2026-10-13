@@ -451,16 +451,16 @@ repository is archived. Its demo and playground sites were removed, so the
   `scoped fun`, so its captures are borrows released with the call.
 - **v2:** the live widget tree is patched, not rebuilt. Children carry keys.
   Added `scrolled`, `checkbox`, `progress`, `separator`, layout options and
-  `polyp.css`. Design note: `docs/plan/polyp-v2.md`.
+  `polyp.css`. Design note: `docs/kelp wiki page libraries/polyp.md`.
 - **v3:** the library splits into `core/` and one module per backend. The
   headless and soft backends run with no display. The soft raster, the
   bare-metal proof and the work-budget benchmark are v3. Design note:
   `docs/plan/polyp-v3.md`.
 - **v4:** a platform clock with timers, integer animations, UTF-8 soft text
   and editing, an on-demand accessibility tree, and memoised subtrees.
-  Design note: `docs/plan/polyp-v4.md`.
+  Design note: `docs/kelp wiki page libraries/polyp.md`.
 - **v5 (in progress):** the layout in this README, with WebKelp merged into
-  `web/`. Design note: [docs/plan/polyp-v5.md](docs/plan/polyp-v5.md).
+  `web/`. Design note: [docs/plan/polyp-v5.md in the Polyp repository](https://homelabone.xenoo.dev/gittea/Lilly/polyp/src/branch/main/docs/plan/polyp-v5.md).
 
 ## Limits and what v5 does not do
 
@@ -479,7 +479,7 @@ repository is archived. Its demo and playground sites were removed, so the
   both there. The GTK backend shows neither in its source (unverified).
 - **No exclusive captures.** A builder block may read borrowed state, but
   `state.count += 1` inside a block is still a language error
-  (`plan/scoped-blocks.md`). A mutation goes through a `Msg`.
+  (`kelp wiki page language/functions.md`). A mutation goes through a `Msg`.
 - **An id leans on creation order.** A program that posts a raw id, not a
   `Msg`, depends on the order widgets are created in. The smoke runs do
   this on purpose, because they have no user to click.

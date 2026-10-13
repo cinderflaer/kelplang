@@ -1,6 +1,6 @@
 //! The `mmio` capability domain (kernel stage 16, MK10-S1): a freestanding
 //! project may build a pointer from an address only where the module was
-//! granted it (`plan/device-caps.md`). The gate is a front-end one, so every
+//! granted it (`kelp wiki page language/capabilities.md`). The gate is a front-end one, so every
 //! case here runs `kelpc check` and needs neither `ld.lld` nor QEMU; a project
 //! that checks is never run, and the accepting cases assert exactly that.
 //!

@@ -64,10 +64,10 @@
    below, and `std/pool` are built from them.
 
    Every record here is a pthread object, so a freestanding manifest refuses
-   each by name (`plan/sync.md`). */
+   each by name (`kelp wiki page stdlib/sync.md`). */
 
-/* Channels, in pure Kelp over the builtins above (`plan/sync.md` section 3,
-   `plan/st1-status.md` for the shape that was chosen):
+/* Channels, in pure Kelp over the builtins above (`kelp wiki page stdlib/sync.md` section 3,
+   `kelp wiki page stdlib/sync.md` for the shape that was chosen):
 
        fun sync.bounded<T>(cap: usize).return: (Sender<T>, Receiver<T>)
        fun sync.unbounded<T>().return: (Sender<T>, Receiver<T>)

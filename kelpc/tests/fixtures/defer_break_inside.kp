@@ -1,6 +1,6 @@
 // A deferred action runs while its block is being left, so it cannot leave the
-// loop again: `break` inside it is refused, naming the `defer` (`plan/defer.md`,
-// `plan/iterators.md`).
+// loop again: `break` inside it is refused, naming the `defer` (`kelp wiki page language/statics-and-defer.md`,
+// `kelp wiki page language/iterators.md`).
 fun main() {
     while true {
         defer {

@@ -6,7 +6,7 @@ impl "std/str"
 // reads back set. Every access goes through `Ptr<u8>` and is volatile so the
 // compiler can neither merge, reorder nor elide it, and nothing else about the
 // device is checked: the base, the offsets and the bit are the driver's own
-// claim about the hardware (kernel stage 1, `plan/unsafe-and-pointers.md`).
+// claim about the hardware (kernel stage 1, `language/unsafe.md` (kelp wiki)).
 //
 // The kernel writes two kinds of text: its own `str` literals, and the bytes a
 // syscall copied into the kernel buffer, which are not a `str` and carry their
@@ -70,7 +70,7 @@ pub fun put_dec(value: usize) {
     }
 }
 
-// `wfi` has no Kelp spelling (kernel stage 5, `plan/inline-asm.md`), and the
+// `wfi` has no Kelp spelling (kernel stage 5, `language/unsafe.md` (kelp wiki)), and the
 // compiler's `_start` stub already loops on it if the entry returns; this is
 // the same halt written in the language, so the kernel names its own stop.
 pub fun halt() {

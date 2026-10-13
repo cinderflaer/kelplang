@@ -1,5 +1,5 @@
 // The machine-mode trap frame and the naked entry that saves into it
-// (`plan/scheduler.md`).
+// (`language/kernel.md` (kelp wiki)).
 //
 // This is kernel stage 11's frame (`examples/kernel0-user/src/trap.kp`) with
 // two differences. The frame is not built on a stack: `mscratch` holds the

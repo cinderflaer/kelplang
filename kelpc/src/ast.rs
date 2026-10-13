@@ -616,7 +616,7 @@ pub struct TypeExpr {
     /// `scoped fun(T).return: U` - a *contextual* modifier (`scoped` is not a
     /// keyword, and is only a modifier when the next token is `fun`). A
     /// scoped function value may only be written at a call site and may not
-    /// outlive the call (`plan/scoped-blocks.md`). Legal only on a top-level
+    /// outlive the call (`kelp wiki page language/functions.md`). Legal only on a top-level
     /// parameter of a declaration, which `infer.rs` enforces: nested in
     /// another function type it could be stored as that type, which is the
     /// one thing the modifier forbids.
@@ -833,7 +833,7 @@ pub enum Stmt {
         iterating: Option<Expr>,
         span: Span,
     },
-    /// `for x in <expr> { ... }` (`plan/iterators.md`). Kept as written rather
+    /// `for x in <expr> { ... }` (`kelp wiki page language/iterators.md`). Kept as written rather
     /// than desugared here, because which desugar applies depends on the
     /// iterable's type: a `List<T>`/`[T; N]` keeps the index walk, and an
     /// `Iterator` becomes the `next()` loop. `infer.rs` is the first pass that
@@ -846,7 +846,7 @@ pub enum Stmt {
         body: Block,
         span: Span,
     },
-    /// `break` (`plan/iterators.md`): leave the innermost loop. A statement of
+    /// `break` (`kelp wiki page language/iterators.md`): leave the innermost loop. A statement of
     /// its own so both backends branch out of the loop they are emitting.
     Break { span: Span },
     /// `continue`: skip to the next pass of the innermost loop.
@@ -857,7 +857,7 @@ pub enum Stmt {
     },
     /// `defer EXPR` (kernel stage 6): the action runs when the enclosing block
     /// is left, on every ordinary exit, in last-in-first-out order against the
-    /// block's other defers (`plan/defer.md`). The parser only records it;
+    /// block's other defers (`kelp wiki page language/statics-and-defer.md`). The parser only records it;
     /// `defer.rs` rewrites it into ordinary code before name resolution, so
     /// nothing after that pass sees this variant. The action's value is
     /// discarded, and the span is the `defer` statement's, which is what a
@@ -1111,7 +1111,7 @@ pub enum Expr {
         params: Vec<Param>,
         /// A block header (`{ x, y -> ... }`) writes the parameter *names*
         /// only: their types come from the expected function type of the
-        /// parameter the block is passed to (`plan/scoped-blocks.md` part 1).
+        /// parameter the block is passed to (`kelp wiki page language/functions.md` part 1).
         /// `false` for a `fun(...)` literal, whose parameters are always
         /// typed by hand. A literal with this set and no expected function
         /// type is refused rather than guessed at.
@@ -1147,7 +1147,7 @@ pub enum Expr {
     /// `asm("<template>", operands...)` (kernel stage 5): one target-assembler
     /// instruction, legal only inside `unsafe`. The template is the target's
     /// own text and the operands are the values that cross into and out of it;
-    /// `plan/inline-asm.md` is the design.
+    /// `kelp wiki page language/unsafe.md` is the design.
     Asm {
         template: String,
         operands: Vec<AsmOperand>,
@@ -1157,7 +1157,7 @@ pub enum Expr {
         nomem: bool,
         /// `nostack`: accepted and recorded; neither LLVM's inline-asm IR nor
         /// GCC's extended asm has a stack-clobber spelling, so it changes no
-        /// output (see `plan/inline-asm.md`).
+        /// output (see `kelp wiki page language/unsafe.md`).
         // Read only by the parser tests: nothing lowers it, by design (accepted for source
         // compatibility with the option list, documented as unchecked).
         #[allow(dead_code)]

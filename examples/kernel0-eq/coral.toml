@@ -20,6 +20,6 @@ modules = ["main", "uart"]
 
 # The NS16550's register window, held by the entry module and delegated to
 # `uart`, the one module that builds a pointer from the device's address
-# (`plan/device-caps.md`).
+# (`language/capabilities.md` (kelp wiki)).
 [caps]
 mmio = ["0x10000000+0x100"]

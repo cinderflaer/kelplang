@@ -10,7 +10,7 @@ emit_entry = "emit.kp"
 # sections itself. The module ids are the `impl` paths the library uses, which
 # is the directory Coral-style dependencies reach it by (`src/deps/polyp/`).
 #
-# `ui` is the display domain (plan/ffi-display-domain.md): a GTK call names no
+# `ui` is the display domain (kelp wiki page libraries/polyp.md): a GTK call names no
 # display argument, so the only grant the domain takes is the wildcard. The
 # library's `core.kp` and `headless_backend.kp` are pure Kelp and need no
 # section; `gtk_backend.kp` is the one module that calls the binding.

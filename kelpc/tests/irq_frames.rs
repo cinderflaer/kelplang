@@ -1,7 +1,7 @@
 //! The `irq` and `frames` capability domains (kernel stage 18, MK10-S1's
 //! second half): an interrupt line and a physical frame are values the gated
 //! `irq.claim` / `frame.claim` build, checked against the calling module's
-//! grant (`plan/irq-frame-caps.md`). Every refusal runs `kelpc check` (front
+//! grant (`kelp wiki page stdlib/irq.md`). Every refusal runs `kelpc check` (front
 //! end only, so no `ld.lld` and no QEMU); the accepting cases build and run as
 //! ordinary hosted programs, built by the LLVM backend.
 //!

@@ -4,7 +4,7 @@
 
 *Scope: MK9-S3-M1 (atomics, fences, ordering annotations, a `Send`/`Sync`-shaped discipline, published race semantics) and the parts of MK6-S1-M1 that depend on it (threads, the per-thread panic policy, join).*
 
-*Relation to the other documents. The retired `mk7-llvm-backend.md` is archived in `done.md`'s MK7 record; this is the plan of record for concurrency. `roadmap.md` owns when, `architecture.md` owns what the language is, and the Backlog items this implements are `B-4` (atomics, ordering, a published memory model), `B-5` (threads) and, in part, `B-8` (a panic that takes the process) and `B-11` (thread-local storage, deferred).*
+*Relation to the other documents. The retired `mk7-llvm-backend.md` is archived in `meta/milestones.md` (kelp wiki)'s MK7 record; this is the plan of record for concurrency. `meta/roadmap.md` (kelp wiki) owns when, `architecture.md` owns what the language is, and the Backlog items this implements are `B-4` (atomics, ordering, a published memory model), `B-5` (threads) and, in part, `B-8` (a panic that takes the process) and `B-11` (thread-local storage, deferred).*
 
 ## 0. Where this starts from
 
@@ -15,7 +15,7 @@ What ships today, and why threads were held back:
 - **There is no thread, no atomic, no `Mutex`, and no `unsafe`.** The borrow checker's central promise is that a `&mut T` is exclusive, and a second thread is exactly what would break that promise silently, which is why threads are gated behind this document rather than shipped beside it.
 - **A panic takes the process.** `kelp_panic` is `_Noreturn`, prints `panic: <msg>` and calls `exit(1)` (`kelpc/runtime/kelp_rt.c:14`). In a multithreaded program that would let one worker's failure kill every other worker.
 - **Open item 60 lists five prerequisites and two have shipped.** (a) function values and (b) `name: move T` landed with A-4 (MK8-S1-M2 phases A-F), so a thread entry point can be a declared `fun`, a `fun` literal, or a capturing closure carrying what it runs on. This document settles (c) the panic policy, (d) the per-thread frame and cleanup story, and (e) atomics plus the `Send`-shaped rule.
-- **The plan already records the dependency.** "MK6-S1-M1 depends on MK9-S3-M1 (atomics, ordering, a published memory model)", `roadmap.md` §Dependency notes: a thread milestone with no memory model and no atomics is not a milestone. That note offered two routes, move MK9-S3-M1 in front of MK6-S1-M1 or ship a documented minimal subset. This document takes the second route and says exactly what the subset is.
+- **The plan already records the dependency.** "MK6-S1-M1 depends on MK9-S3-M1 (atomics, ordering, a published memory model)", `meta/roadmap.md` (kelp wiki) §Dependency notes: a thread milestone with no memory model and no atomics is not a milestone. That note offered two routes, move MK9-S3-M1 in front of MK6-S1-M1 or ship a documented minimal subset. This document takes the second route and says exactly what the subset is.
 
 ## 1. Decision one: race prevention is compile-time
 
@@ -43,7 +43,7 @@ A race needs four things at once: one location, two threads, at least one write,
 - `thread.join(handle)` returns `Result<T, ThreadErr>`. `ThreadErr` carries the panic message; since the panic text already names the `.kp` line, the joiner can report where the worker died.
 - Other threads keep running. The main thread decides what to do about the failure, which is the point: MK6-S2-M1's worker pool must not lose fifteen downloads because one URL 404s a panic.
 - **The main thread keeps today's behaviour.** A panic in `main`, or in a thread nothing joins before the process ends, still ends the process with `exit(1)`. The rule is "a panic ends the thread it happened in", and the process ends when `main` ends.
-- **No unwinding in v1, and the consequence is recorded rather than hidden.** Kelp has no exceptions and no `catch`, and a user `Drop` (`plan/drop.md`, MK9-S6-M1) runs at the ordinary drop points only, never on the panic path. So a panicking thread's frame is abandoned and the owned values in it are **not** dropped: a panic path leaks the frame. That is a deliberate trade against the two alternatives, both worse here: unwinding needs a `Drop` story the language does not have, and aborting the process is what this decision removes. MK9-S6-M1's `defer` and user `Drop` closed the ordinary exit paths and deliberately left the panic path as it was, and this document is where the remaining leak is admitted.
+- **No unwinding in v1, and the consequence is recorded rather than hidden.** Kelp has no exceptions and no `catch`, and a user `Drop` (`language/drop.md` (kelp wiki), MK9-S6-M1) runs at the ordinary drop points only, never on the panic path. So a panicking thread's frame is abandoned and the owned values in it are **not** dropped: a panic path leaks the frame. That is a deliberate trade against the two alternatives, both worse here: unwinding needs a `Drop` story the language does not have, and aborting the process is what this decision removes. MK9-S6-M1's `defer` and user `Drop` closed the ordinary exit paths and deliberately left the panic path as it was, and this document is where the remaining leak is admitted.
 - **`_Noreturn` stays true.** The panic helpers terminate by calling `pthread_exit` (or the thread's equivalent) rather than returning, so the property the C backend relies on (`_Noreturn` is why a function whose tail is a `panic` needs no trailing `return`) is preserved.
 - **This does not settle freestanding.** MK9-S6-M2 asks what a panic does with no OS underneath; there are no threads there and no `exit(1)` to call, and that stays a separate decision.
 
@@ -163,7 +163,7 @@ Not in this sequence: MK9-S3-M3 (thread-local and per-CPU storage, `B-11`), whic
 - **`async`/`await`, green threads, an executor, thread pools as a language feature.** `async` needs a state-machine transform in codegen; a pool is a program, not a primitive, and §4 plus §2 are enough to write one.
 - **`Relaxed`, `Acquire`, `Release` in the surface.** Reserved by §3, not shipped.
 - **A runtime race detector as the enforcement mechanism.** Wanted as a testing instrument under MK11-S2-M1.
-- **Channels and a `Mutex` as *checker* requirements.** A channel is still a value type obeying the rule of §1 and a reasonable next step. **`Mutex<T>` itself shipped as B-5's remainder** in `std/sync` (`plan/mutex.md`): a compiler builtin in the shape `Atomic<T>` has, reached only through the scoped block `m.lock { v -> ... }`, released on every exit and poisoned by a panic inside the block. It obeys §1: a `&Mutex<T>` has no reachable `&mut` path, so the one crossing rule covers it, and the `Sync`-shaped walk answers `false` for `Ty::Mutex(_)` whatever `T` is.
+- **Channels and a `Mutex` as *checker* requirements.** A channel is still a value type obeying the rule of §1 and a reasonable next step. **`Mutex<T>` itself shipped as B-5's remainder** in `std/sync` (`stdlib/sync.md` (kelp wiki)): a compiler builtin in the shape `Atomic<T>` has, reached only through the scoped block `m.lock { v -> ... }`, released on every exit and poisoned by a panic inside the block. It obeys §1: a `&Mutex<T>` has no reachable `&mut` path, so the one crossing rule covers it, and the `Sync`-shaped walk answers `false` for `Ty::Mutex(_)` whatever `T` is.
 - **`unsafe`, `AtomicPtr`, raw memory.** MK9-S2-M1.
 - **Per-CPU and thread-local storage.** MK9-S3-M3.
 - **A user-facing `Send`/`Sync` trait.** A-12 first; the rule is structural until then (§5).
@@ -179,8 +179,8 @@ Four forks the owner chose on 2026-09-22 to leave open, each to be decided when 
 
 ## 10. References
 
-- `plan/roadmap.md`: MK9-S3 (memory model), MK6-S1-M1 and MK6-S2-M1 (threads, concurrent downloads), open item 60 (every prerequisite in one place), the `B-4` / `B-5` / `B-8` / `B-11` backlog entries, and §Dependency notes for the MK6-S1-M1 to MK9-S3-M1 edge.
+- `meta/roadmap.md` (kelp wiki): MK9-S3 (memory model), MK6-S1-M1 and MK6-S2-M1 (threads, concurrent downloads), open item 60 (every prerequisite in one place), the `B-4` / `B-5` / `B-8` / `B-11` backlog entries, and §Dependency notes for the MK6-S1-M1 to MK9-S3-M1 edge.
 - `plan/architecture.md`: what v1 ships and what it defers; the language's ownership model, which §1 extends rather than replaces.
-- `plan/done.md`: the MK5-S7-M1 entry (what is possible without threads, and why threads wait).
+- `meta/milestones.md` (kelp wiki): the MK5-S7-M1 entry (what is possible without threads, and why threads wait).
 - `plan/syntax.md`: the language and style authority. §3 (the type table), §4 (`enum`), §9 (ownership) and §20 (grammar) are what A1, C1 and the `Ordering` enum edit.
-- `plan/mk7-llvm-backend.md` has been folded into `plan/done.md`; the backend's atomic instruction emission is the emitter's concern, not a separate plan.
+- `plan/mk7-llvm-backend.md` has been folded into `meta/milestones.md` (kelp wiki); the backend's atomic instruction emission is the emitter's concern, not a separate plan.

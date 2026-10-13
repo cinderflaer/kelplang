@@ -1,4 +1,4 @@
-//! Front-end robustness fuzzing (plan/fuzzing.md).
+//! Front-end robustness fuzzing (kelp wiki page tooling/fuzzing.md).
 //!
 //! The differential fuzzer (`differential_fuzz.rs`) generates VALID programs and
 //! compares the two backends. This file is its complement: it mutates the
@@ -486,7 +486,7 @@ fn fuzz_frontend() {
 }
 
 /// The maintainer's run: 100,000 mutations on a seed range disjoint from the
-/// default suite's. Hours, not minutes; see plan/fuzzing.md.
+/// default suite's. Hours, not minutes; see kelp wiki page tooling/fuzzing.md.
 #[test]
 #[ignore = "100,000 mutations; run by the maintainer with --ignored"]
 fn fuzz_frontend_long() {

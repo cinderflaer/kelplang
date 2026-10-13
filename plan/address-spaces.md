@@ -1,6 +1,6 @@
 # Address spaces: Sv39 page tables on riscv64 (kernel stage 10, MK9-S4-M8)
 
-*Design for the mapping half of `plan/kernel-path.md`'s row 9 (MK9-S4-M4/M5). The syscall ABI
+*Design for the mapping half of `language/kernel.md` (kelp wiki)'s row 9 (MK9-S4-M4/M5). The syscall ABI
 and untrusted-pointer validation in that row are not part of this stage. No compiler change was
 needed: the stage is `examples/kernel0-vm` and `examples/kernel0-vm-fault`, written in what the
 language already has.*
@@ -59,7 +59,7 @@ reaches `__stack_top`. This is the stage-5 surface used as designed rather than 
 alternative was a new `extern`-symbol construct, and the two-symbol region a frame allocator needs
 is not worth one. What it costs is the promise the compiler cannot check: the two symbols are
 whatever the script says, and a script that omits them resolves both to 0, so the allocator reports
-exhausted instead of failing to link (`plan/kernel-ub-notes.md`, stage 11).
+exhausted instead of failing to link (`language/unsafe-ub-catalogue.md` (kelp wiki), stage 11).
 
 ## Deliberately not here
 

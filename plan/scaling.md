@@ -53,6 +53,6 @@ when the size does).
 ## Limits that bound the rest
 
 The parser refuses more than 800 links in a chain and more than 200 levels of
-nesting (`plan/fuzzing.md`), so a 400-link chain, 90 nested calls and 60 nested
+nesting (`tooling/fuzzing.md` (kelp wiki)), so a 400-link chain, 90 nested calls and 60 nested
 `if` blocks are about the largest shapes a program can reach; both limits were
 kept.

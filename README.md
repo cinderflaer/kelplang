@@ -119,7 +119,7 @@ spelling; `-Os` is the size level.
 `-O0` runs no module pipeline and is the cheap dev build.
 
 The hand-written `asm` backend was removed on 2026-09-21, and the LLVM backend's plan of record is
-retired with it: the whole MK7 record is in `plan/done.md`. The
+retired with it: the whole MK7 record is in `meta/milestones.md` (kelp wiki). The
 S7 flip landed in code on 2026-09-21, and the user-facing backend selector was
 removed with it: `llvm` is the only backend a person building a program can use,
 and both backends stay in the suite. The release that announces the flip is still
@@ -167,14 +167,14 @@ directory is not followed.
 | `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and the corpus goldens |
 | `examples/` | `hello.kp`, `fib.kp`, `download.kp` |
 | `bench/speed/` | four workloads written in four languages, with checksums |
-| `plan/` | the design, syntax, plan and milestone documents (see Documentation) |
+| `plan/` | unfinished plans, the open-issue list and the pending changelog (see Documentation) |
 
 ## Requirements
 
 - Rust, 2024 edition (rustc 1.85 or newer), and the LLVM 21 development output,
   to build the compiler: `llvm-sys` is a dependency of every build. `nix-shell
   shell.nix` provides it (`llvm-config`, `include/llvm-c`) and sets
-  `LLVM_SYS_211_PREFIX`; `plan/done.md`'s MK7 record is the decision and its
+  `LLVM_SYS_211_PREFIX`; the MK7 record in `meta/milestones.md` (kelp wiki) is the decision and its
   trade-offs.
 - A `kelpc` built this way links `libLLVM-21.so` dynamically and needs it at
   runtime.
@@ -209,7 +209,7 @@ the compiler; these two are the tooling around it.
 
 | repository | what it is |
 | --- | --- |
-| **[Coral](https://homelabone.xenoo.dev/gittea/Juniper/coral)** | the build tool and package manager (`plan/roadmap.md` open item 72). `kelpc` stays the compiler; Coral owns the project, the `coral.toml` manifest, tasks, build cache and dependencies, and calls `kelpc` as a subprocess, never the reverse. |
+| **[Coral](https://homelabone.xenoo.dev/gittea/Juniper/coral)** | the build tool and package manager (open item 72 in `meta/roadmap.md` in the kelp wiki). `kelpc` stays the compiler; Coral owns the project, the `coral.toml` manifest, tasks, build cache and dependencies, and calls `kelpc` as a subprocess, never the reverse. |
 | **[Lighthouse](https://homelabone.xenoo.dev/gittea/Juniper/lighthouse)** | IDE support: Kelp's LSP/editor tooling, completion, hover, go-to-definition, signature help, symbols, references, rename, folding, inlay hints, auto-import and quick fixes, plus diagnostics from `kelpc` itself. |
 
 ## Documentation
@@ -218,6 +218,6 @@ the compiler; these two are the tooling around it.
 | --- | --- |
 | `plan/syntax.md` | the syntax and style authority |
 | `plan/architecture.md` | the design: compiler layout, the capability model, the v1 surface, and the standard library's decisions |
-| `plan/roadmap.md` | the plan: the marks, the open items, and the backlog in its last part |
-| `plan/done.md` | the milestone record of what has shipped, including the whole MK7 LLVM backend record |
+| `meta/roadmap.md` (kelp wiki) | the plan: the marks, the open items, and the backlog in its last part |
+| `meta/milestones.md` (kelp wiki) | the milestone record of what has shipped, including the whole MK7 LLVM backend record |
 | `bench/speed/README.md` | what the benchmark measures and how |

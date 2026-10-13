@@ -1,4 +1,4 @@
-// Kernel stage 22 (`plan/x86-idt.md`): the layouts a naked gate and `lidt`
+// Kernel stage 22 (`kelp wiki page language/kernel.md`): the layouts a naked gate and `lidt`
 // hardcode. The declarations are copies of `examples/kernel0-x86_64-idt`'s
 // `idt.kp`, which is why the numbers can drift: the copy is this fixture's job.
 //

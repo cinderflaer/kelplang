@@ -21,6 +21,6 @@ modules = ["main", "uart"]
 
 # Kernel stage 16's mmio grant: the NS16550's register window, held by the
 # entry module and delegated to `uart`, the one module that builds a pointer
-# from the device's address (`plan/device-caps.md`).
+# from the device's address (`kelp wiki page language/capabilities.md`).
 [caps]
 mmio = ["0x10000000+0x100"]

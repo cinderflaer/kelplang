@@ -1,4 +1,4 @@
-// `plan/scoped-blocks.md` part 1 and part 2: a trailing block declares its
+// `kelp wiki page language/functions.md` part 1 and part 2: a trailing block declares its
 // parameters by name only, takes their types from the `scoped fun(...)` the
 // block is passed to, and returns its tail when that type's return is
 // non-unit. The callee calls it during the call and only during the call.

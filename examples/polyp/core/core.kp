@@ -224,7 +224,7 @@ pub fun unbox<T>(b: move Box<T>).return: T {
 
 // The builder a block writes children into. A trailing block is passed to `column`/`row` as a
 // `scoped fun(mut Children<M>)`, so the block mutates this value through the exclusive borrow a
-// `mut` parameter of a scoped function type already is (plan/scoped-blocks.md).
+// `mut` parameter of a scoped function type already is (kelp wiki page language/functions.md).
 //
 // The pending key and options are one-shot: every push consumes them and resets them. They live in
 // `Box`es because a method's `self` is a borrow, and reading an owned field by value out of a

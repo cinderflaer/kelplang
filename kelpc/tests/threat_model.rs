@@ -1,4 +1,4 @@
-//! The capability threat model's attack tests (`plan/threat-model.md`).
+//! The capability threat model's attack tests (`reference/capability-threat-model.md` (kelp wiki)).
 //!
 //! One test per numbered item of the model. Every test plays a program author
 //! who holds a *narrow* grant (or none) and tries to obtain authority the
@@ -1303,7 +1303,7 @@ fn h02_a_domain_mints_only_its_own_handles() {
 /// that holds `fs`, `net` or `process`, so a module granted only `data/**` can
 /// read a descriptor another module opened on `secret/`. Closing it needs
 /// opaque handle types (no integer constructor outside the library) and an
-/// explicit, gated `from_fd`; see `plan/threat-model.md`, Known gaps.
+/// explicit, gated `from_fd`; see `reference/capability-threat-model.md` (kelp wiki), Known gaps.
 #[test]
 #[ignore = "known gap: descriptors are small integers, forgeable between two modules that both hold a domain (plan/threat-model.md H3)"]
 fn h03_a_granted_module_can_read_a_descriptor_another_module_opened() {
@@ -1600,7 +1600,7 @@ fn m04_a_range_cannot_be_widened_by_delegation() {
 /// on the pointer afterwards reaches any address, so a granted window is not a
 /// fence. The design is provenance (roadmap D-1): a pointer born from a range
 /// carries it, and `offset`/`byte_offset`/`cast` keep it. The honest record is
-/// in `plan/device-caps.md` ("Born-at only"); this is its reproduction.
+/// in `language/capabilities.md` (kelp wiki) ("Born-at only"); this is its reproduction.
 #[test]
 #[ignore = "known gap: mmio ranges are checked at the pointer's birth, not after offset arithmetic (plan/device-caps.md, plan/threat-model.md M5)"]
 fn m05_offset_arithmetic_leaves_the_granted_window() {

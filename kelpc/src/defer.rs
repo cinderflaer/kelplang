@@ -1,4 +1,4 @@
-//! `defer` lowering (kernel stage 6, `plan/defer.md`).
+//! `defer` lowering (kernel stage 6, `kelp wiki page language/statics-and-defer.md`).
 //!
 //! `defer EXPR` is a statement whose action runs when the enclosing block is
 //! left. This pass rewrites it away before name resolution, the type checker,

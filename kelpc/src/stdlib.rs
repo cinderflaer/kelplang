@@ -89,7 +89,7 @@ pub fn is_thread_fn(key: &str) -> bool {
 pub const RESULT_MODULE: &str = "std/result";
 
 /// The module that declares `Iterator`, the trait a `for` accepts over
-/// anything that is not a `List`/array (`plan/iterators.md`). The compiler
+/// anything that is not a `List`/array (`kelp wiki page language/iterators.md`). The compiler
 /// knows the trait's canonical key, because that is what a `for` looks for and
 /// what the impl table is keyed by.
 pub const ITER_MODULE: &str = "std/iter";
@@ -283,7 +283,7 @@ pub fn may_use_unsafe(id: &str) -> bool {
 /// `ui` is the one domain whose patterns are not enforced: a display call
 /// (`gtk_window_new`) carries no argument that names the display server, so
 /// the only grant that means anything is the whole-resource `*`, and
-/// `resolve.rs` refuses every other list. `plan/ffi-display-domain.md` owns
+/// `resolve.rs` refuses every other list. `kelp wiki page libraries/polyp.md` owns
 /// that decision and the per-display vocabulary it waits on.
 ///
 /// `mmio`, `frames` and `irq` are the three domains whose patterns are
@@ -292,8 +292,8 @@ pub fn may_use_unsafe(id: &str) -> bool {
 /// `mmio` is also the one domain the entry module does not hold by default: a
 /// device's address is a fact about the machine, not a resource the root of
 /// trust can be assumed to own, so a grant has to be written down
-/// (`plan/device-caps.md`). `irq` and `frames` are device capabilities too but
-/// the entry holds them like any name domain; `plan/irq-frame-caps.md` owns
+/// (`kelp wiki page language/capabilities.md`). `irq` and `frames` are device capabilities too but
+/// the entry holds them like any name domain; `kelp wiki page stdlib/irq.md` owns
 /// the line and frame halves. `caps(*)` hands over every other domain's whole
 /// resource and deliberately leaves `mmio` out, because the whole-address-
 /// space grant is the escape hatch a reviewer greps for.
@@ -312,7 +312,7 @@ pub fn is_domain(name: &str) -> bool {
 pub const RANGE_ANY: &str = "*";
 
 /// The module that declares `Line` and the gated `claim` (kernel stage 18,
-/// MK10-S1's second half, `plan/irq-frame-caps.md`). Like every gated stdlib
+/// MK10-S1's second half, `kelp wiki page stdlib/irq.md`). Like every gated stdlib
 /// module, all of its items need the domain, so holding a `Line` is not enough
 /// to read it: the grant is what makes `number()` reachable.
 pub const IRQ_MODULE: &str = "std/irq";
@@ -594,7 +594,7 @@ pub fn domain_of(module: &str) -> Option<&'static str> {
 /// hand now needs a domain that mints that kind of handle; a module holding no
 /// grant has no way to name a descriptor it was not handed. Two modules that
 /// both hold a domain can still forge between each other's descriptors, which
-/// is the residual gap recorded in `plan/threat-model.md`.
+/// is the residual gap recorded in `kelp wiki page reference/capability-threat-model.md`.
 pub fn handle_ctor_domains(key: &str, fields: &[&str]) -> Option<&'static [&'static str]> {
     if !key.starts_with("std.") || !fields.iter().any(|f| *f == "fd" || *f == "pid") {
         return None;
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn a_ui_call_names_no_resource_to_match() {
         // No argument at a display call names the display server, which is
-        // why `ui` is granted as the wildcard only (plan/ffi-display-domain.md).
+        // why `ui` is granted as the wildcard only (kelp wiki page libraries/polyp.md).
         assert!(checked_args("ui", "gtk_window_new", &[false, false]).is_empty());
         assert!(checked_args("ui", "gtk_window_set_title", &[false, true]).is_empty());
     }

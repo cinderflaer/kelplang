@@ -8,9 +8,9 @@ This file is the language reference. It is written to be read start to finish by
 | --- | --- |
 | `plan/syntax.md` | this file: syntax, types, semantics, standard library |
 | `plan/architecture.md` | compiler layout, capability model, non-syntax decisions |
-| `plan/roadmap.md` | status, critical path, milestone scheme, open items |
-| `plan/roadmap.md` | the plan: marks, open items, and its Backlog part for what is named but unscheduled |
-| `plan/done.md` | record of what has shipped |
+| `meta/roadmap.md` (kelp wiki) | status, critical path, milestone scheme, open items |
+| `meta/roadmap.md` (kelp wiki) | the plan: marks, open items, and its Backlog part for what is named but unscheduled |
+| `meta/milestones.md` (kelp wiki) | record of what has shipped |
 
 ## 1. Getting started
 
@@ -759,7 +759,7 @@ for i in iter.range(0, 5) {
 ```
 
 - The iterable must be a `List<T>`, a `[T; N]` (12.4), or a type that implements
-  `std.iter.Iterator` (`plan/iterators.md`). A `Map` is none of them: it has
+  `std.iter.Iterator` (`language/iterators.md` (kelp wiki)). A `Map` is none of them: it has
   `.len()`, but its `.get` takes a key rather than an index, so `for k in map`
   is a type error (write `for k in map.keys()`). Anything else is refused with a
   message naming `Iterator`.
@@ -786,7 +786,7 @@ for i in iter.range(0, 5) {
   expression; a bare one outside every loop is refused.
 - A `defer` in the body runs on the way out of `break`/`continue` as it does on
   the way out of any block, and a deferred action may not itself contain
-  `break`/`continue` (`plan/defer.md`).
+  `break`/`continue` (`language/statics-and-defer.md` (kelp wiki)).
 - The body of a **`List`** `for` may **read** the place it walks (`xs.get(i)`,
   `xs.len()`, `&xs`) and may walk or change a **different** list, but it may not
   mutate the one it walks. A `mut` receiver method on it (`push`, `pop`,
@@ -892,7 +892,7 @@ That is the whole of the divergence rule: it applies to a function body's tail a
 
 ### 6.5 `errdefer`
 
-`errdefer EXPR` is a statement, written like `defer` (`plan/defer.md`), whose action runs only when the function leaves through its **error variant**. An error exit is either:
+`errdefer EXPR` is a statement, written like `defer` (`language/statics-and-defer.md` (kelp wiki)), whose action runs only when the function leaves through its **error variant**. An error exit is either:
 
 - a `return` whose value is the failure variant: `Err(..)` of a `Result`, or `None` of an `Option`; or
 - a `?` that propagates that failure.
@@ -909,9 +909,9 @@ fun open_pair(a: str, b: str).return: Result<Pair, IoErr> {
 - **Positional.** Like `defer`, an `errdefer` is active only once control has reached its statement. Here the `?` on `open(a)` fails before the `errdefer` exists, so `close` is not run.
 - **Order.** On an error exit the errdefers of every block being left run first, the innermost block first. Within a block the errdefers run newest first, and then that block's ordinary defers run newest first. A value whose drop was registered before the `errdefer` is then dropped by the drop plan (10.3) after the action has run, unless the action moved it.
 - **Ordinary exits.** A `return` of a success value (`Ok`, `Some`, or any other value), and falling off the end of the function, run the ordinary defers only. The errdefers do not run.
-- **Panic.** A `panic` runs neither errdefers nor defers. This is the rule `defer` already has (`plan/defer.md`): a panic never returns, so nothing is unwound.
+- **Panic.** A `panic` runs neither errdefers nor defers. This is the rule `defer` already has (`language/statics-and-defer.md` (kelp wiki)): a panic never returns, so nothing is unwound.
 - **Option.** For an `Option`, the failure variant is `None`, so a `None` return or a `?` on `None` is an error exit.
-- **`?` and `defer`.** The refusal of a `defer` in a block that has a `?` (`plan/defer.md`) still applies. An `errdefer` alone does not refuse a `?`.
+- **`?` and `defer`.** The refusal of a `defer` in a block that has a `?` (`language/statics-and-defer.md` (kelp wiki)) still applies. An `errdefer` alone does not refuse a `?`.
 
 Refusals, each by name:
 
@@ -1044,7 +1044,7 @@ A capture is **move-only**, and `Copy` is what decides what that means:
 
 - A `Copy` binding (a number, `bool`, a function value) is *copied* into the environment; the enclosing binding stays usable.
 - An owned binding (`String`, `Bytes`, `List`, `Box`, `Map`, a `datac`/`enum`, another closure) is *moved* into the environment; the enclosing binding is gone from that point on, exactly as after `val b = a`.
-- A borrow (`str`, `&T`) **cannot** be captured: the environment outlives the frame the borrow points into, and there is no lifetime syntax to say otherwise. Pass it as a parameter of the literal instead. The one exception is a **scoped** literal: a parameter written `scoped fun(T).return: U` takes only a `fun` literal or a trailing block written at the call site, whose environment is the enclosing *stack* with a no-op drop, so an owned capture is a shared borrow that lives exactly as long as the call (`plan/scoped-blocks.md`).
+- A borrow (`str`, `&T`) **cannot** be captured: the environment outlives the frame the borrow points into, and there is no lifetime syntax to say otherwise. Pass it as a parameter of the literal instead. The one exception is a **scoped** literal: a parameter written `scoped fun(T).return: U` takes only a `fun` literal or a trailing block written at the call site, whose environment is the enclosing *stack* with a no-op drop, so an owned capture is a shared borrow that lives exactly as long as the call (`language/functions.md` (kelp wiki)).
 
 Inside the body a capture is read *through a borrow of the environment*, so an owned capture can be used in place, a method called on it, a field read, passed to a parameter, but cannot be handed out by value. That is a move out of a place this frame does not own, which 9 refuses, and the message says so.
 
@@ -2282,7 +2282,7 @@ pub extern fun clock_ticks().return: u64
 ```
 
 - `pub` is accepted only on a top-level `fun`, `extern fun`, `datac`, `enum` or `const`. Written anywhere else it is a parse error, and the message names the item forms it applies to.
-- A `pd` never takes `pub`. A passdown is module-scoped by design (§9, `plan/roadmap.md` item 10), so `pub pd` is refused where it is written; a `fun` that reads the passdown is what another module uses, and that function can be `pub`.
+- A `pd` never takes `pub`. A passdown is module-scoped by design (§9, `meta/roadmap.md` (kelp wiki) item 10), so `pub pd` is refused where it is written; a `fun` that reads the passdown is what another module uses, and that function can be `pub`.
 - A method never takes `pub`. A method's reachability follows its declaring type, so `pub datac Circle` is what lets another module call `value.area()` on a `Circle` it holds, however that method was declared. `pub fun Circle.area()` is a parse error that says to mark the type instead.
 - Inside its own file an item is reachable by its bare name whether or not it is written `pub`. `pub` governs only another module's `alias.Item` spelling.
 - Naming an imported item that exists but is not exported gets an error of its own: `'lib.hidden' is private: 'hidden' is declared in module 'lib' without 'pub', so only that module can name it; add 'pub' to its declaration to export it`. That is distinct from `module 'lib' has no item 'hidden'`, which means the name does not exist at all, and a "did you mean" hint never offers a private item.
@@ -2437,7 +2437,7 @@ The compiler ships its standard-library modules inside the binary. Import them w
 | `std/net` | `net` | TCP sockets, listener, readiness, DNS |
 | `std/http` | none (holds `net`) | HTTP client, request and response types, connection pool |
 | `std/encoding` | none | base64, base32, base58, hex and percent encoding |
-| `std/regex` | none | linear-time regular expressions: `compile`, `find`, `captures`, `find_all`, `replace_all`, `split` (`plan/regex.md`) |
+| `std/regex` | none | linear-time regular expressions: `compile`, `find`, `captures`, `find_all`, `replace_all`, `split` (`stdlib/regex.md` (kelp wiki)) |
 | `std/list` | none | the callback-shaped operations on `List<T>` (`map`, `filter`, `each`, …) |
 | `std/ops` | none | the operator traits `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg` and `Ord` (9.5.4) |
 | `std/option` | none | `Option<T>` and its helpers |
@@ -2650,7 +2650,7 @@ Tracing is opt-in: `impl "std/trace" caps(time = [])`. Pass `source.file()`
 and `source.line()` at each call site; a library cannot recover the location of
 its caller. Events and span boundaries write tab-separated, escaped records to
 stderr with a monotonic timestamp; `end` includes the span duration in
-nanoseconds. `plan/tracing.md` fixes the format and the deliberately excluded
+nanoseconds. `stdlib/trace.md` (kelp wiki) fixes the format and the deliberately excluded
 features.
 
 ### 16.10 `std/env` (domain `env`)
@@ -2935,7 +2935,7 @@ fun main() {
 
 ### 16.20 `std/sync`
 
-The mutex surface (B-5, `plan/mutex.md`): `Mutex<T>` is a compiler builtin in the
+The mutex surface (B-5, `stdlib/sync.md` (kelp wiki)): `Mutex<T>` is a compiler builtin in the
 shape `Atomic<T>`/`Thread<T>` have, and this module is the id a program names in
 its `impl` list. The two calls and the constructor are documented here rather
 than declared, for the reason 16.18's `spawn`/`join` are: what the lock carries
@@ -2948,7 +2948,7 @@ fun Mutex<T>.into_inner().return: T
 ```
 
 The guarded value is reachable only through the scoped block: `v` is a `mut T`
-whose borrow cannot escape (plan/scoped-blocks.md), the block's tail is the call's value, and the
+whose borrow cannot escape (kelp wiki page language/functions.md), the block's tail is the call's value, and the
 mutex is released on every exit. A panic inside the block releases the lock and
 marks the mutex poisoned, so a later `lock` panics with `mutex poisoned`. A
 `&Mutex<T>` of a `pd` global is `Sync` and crosses to a worker in the one shape
@@ -2967,7 +2967,7 @@ the spin lock over an `Atomic<T>` a kernel would use instead.
 
 ### 16.21 `std/iter`
 
-The iterator protocol (`plan/iterators.md`): what a `for` walks when it is not a
+The iterator protocol (`language/iterators.md` (kelp wiki)): what a `for` walks when it is not a
 `List`/array, plus the range and the drain helpers that ship with it. The trait
 is the whole contract; the compiler knows only its canonical key.
 
@@ -3003,7 +3003,7 @@ for i in iter.range(0, 5) {
 `List.into_iter()`, `take`/`skip`/`enumerate`/`zip`/`chain`, and the
 closure-taking `map`/`filter` are **not** in this slice: each is a generic type
 implementing `Iterator` (`impl<I: Iterator> Iterator for Take<I>`), and generic
-trait impls are the follow-up slice. Section 5 of `plan/iterators.md` says
+trait impls are the follow-up slice. Section 5 of `language/iterators.md` (kelp wiki) says
 exactly which feature blocks each one.
 
 The module is pure Kelp and builds freestanding when `std/option` does;

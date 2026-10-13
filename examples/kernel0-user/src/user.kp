@@ -1,5 +1,5 @@
 // The two user programs, each a naked function whose whole body is the machine
-// code it runs, in a section of its own (`plan/syscall-abi.md`).
+// code it runs, in a section of its own (`language/kernel.md` (kelp wiki)).
 //
 // They run at 0x10000 in their own address space, so the kernel copies the
 // section's bytes into the program's code page at boot. The copy works because

@@ -1,7 +1,7 @@
 # Narrowing and forwarding capabilities (MISSING-t9Qmz, MISSING-Iq2Tz)
 
 *Design note, written in 26.10.3 ahead of the implementation. XL. Nothing here is built. It is
-the "design note one release before" that `plan/roadmap.md` asks of every XL item, and it records
+the "design note one release before" that `meta/roadmap.md` (kelp wiki) asks of every XL item, and it records
 which half is a compile-time rule and which half needs a runtime value.*
 
 ## 1. The two gaps

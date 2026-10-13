@@ -1,6 +1,6 @@
 # KelpScript: a garbage-collected sibling of Kelp
 
-Status: proposal, not scheduled. Recorded 2026-10-06 in `plan/roadmap.md` and moved here 2026-10-10.
+Status: proposal, not scheduled. Recorded 2026-10-06 in `meta/roadmap.md` (kelp wiki) and moved here 2026-10-10.
 
 **One far-future proposal about a garbage-collected sibling, recorded 2026-10-06 and not scoped: KelpScript.** The idea is the second language of a full stack: Kelp for the kernel and the substrate, KelpScript for the applications on top (a custom OS's userland, a server), with the same syntax and the same libraries but a garbage collector, so the pair connects better than Kelp plus an unrelated language such as Python. It does not contradict the headline "no garbage collector", which is a property of Kelp, and nothing is scheduled. The design direction, to be checked before anyone writes code:
 
@@ -11,7 +11,7 @@ Status: proposal, not scheduled. Recorded 2026-10-06 in `plan/roadmap.md` and mo
 - **The collector covers memory only.** Files, sockets, threads and capability handles keep deterministic `drop` and `defer`; finalizers that run whenever would leak handles and undercut the capability story.
 - **The runtime is the cost.** A collector on the project's own OS needs a page-mapping syscall and either stack maps or a conservative scan. Freestanding mode can already host a runtime written in Kelp, so a simple tracing collector (or reference counting with cycle handling) is the modest first target.
 - **The kernel-to-application boundary is a process boundary.** Syscalls and IPC cross it, not FFI, so the interop win is shared types and a generated syscall wrapper, not in-process calls between the two languages.
-- **Cheaper alternatives to try first.** `Rc`/`Arc`-style shared ownership, arenas (`plan/arena.md`) and better borrow inference may remove most of the ownership pain without a second language. If they do not, this proposal stands.
+- **Cheaper alternatives to try first.** `Rc`/`Arc`-style shared ownership, arenas (`stdlib/arena.md` (kelp wiki)) and better borrow inference may remove most of the ownership pain without a second language. If they do not, this proposal stands.
 - **First step if it is ever taken.** One shared module (a `datac`, a parser, a test) that compiles and passes under both modes. That proves what "same syntax" costs before a collector is written.
 
 It has no Mark, no open item and no document of its own yet; the case, the semantic-difference list and the prerequisites would go in a `plan/kelpscript.md` when someone takes it.

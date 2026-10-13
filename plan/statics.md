@@ -1,6 +1,6 @@
 # Global `static` data (kernel stage 7, MK9-S4-M6)
 
-*Design note. `plan/kernel-path.md` orders the stages; this one closes kernel 0's gap 4 ("the
+*Design note. `language/kernel.md` (kelp wiki) orders the stages; this one closes kernel 0's gap 4 ("the
 `.bss` is not cleared ... a kernel with statics has to zero it") by giving the language the
 storage a kernel needs for page tables, run queues and a console cursor.*
 
@@ -79,4 +79,4 @@ program's `unsafe` code sequences its access: two threads that touch the same `s
 an `Atomic` or a fence are a data race the compiler does not see, and a `static mut` written
 inside an `unsafe` block is no more checked than a `Ptr` write. The `.bss` of a freestanding image
 is zeroed by the loader only because QEMU's `-kernel` does so; `_start` still clears nothing.
-`plan/kernel-ub-notes.md` carries the stage's section.
+`language/unsafe-ub-catalogue.md` (kelp wiki) carries the stage's section.

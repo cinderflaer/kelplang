@@ -2,7 +2,7 @@ name = "polyp-fb-x86_64"
 
 # Polyp v3 stage 4: the same core, software raster, soft backend and todo program as
 # `examples/polyp-fb-riscv64`, built with no libc for QEMU's x86-64 `-kernel` boot (an ELF64 image
-# entered through the Xen PVH note and the compiler's long-mode stub, `plan/x86-64.md`). The
+# entered through the Xen PVH note and the compiler's long-mode stub, `kelp wiki page language/kernel.md`). The
 # framebuffer platform is the same source file the riscv64 project compiles, so the only difference
 # between the two images is the driver that writes the step lines.
 [target]

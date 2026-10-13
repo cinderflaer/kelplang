@@ -75,7 +75,7 @@ SECTIONS
 
     /* This hart's trap stack: `sscratch` holds its top while user code runs and
        `trap_entry` swaps `sp` with it. The top 40 bytes are the slot block
-       `trap.kp` names (`plan/syscall-abi.md`). */
+       `trap.kp` names (`kelp wiki page language/kernel.md`). */
     . = ALIGN(16);
     __trap_stack_bottom = .;
     . = . + 0x1000;

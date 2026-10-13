@@ -1,4 +1,4 @@
-// `plan/iterators.md`: `for` over a `List`/array keeps the index walk, and
+// `kelp wiki page language/iterators.md`: `for` over a `List`/array keeps the index walk, and
 // everything else is the `Iterator` protocol. `Range` is the shipped iterator,
 // and the loop is its `next()` desugar.
 impl "std/iter"

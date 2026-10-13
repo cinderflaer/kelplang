@@ -87,7 +87,7 @@ grant must name `TZDIR` itself, because the `env` check is a name check.
 `EPERM`, for example a `$TZDIR` directory the process may not read. A caller's
 grant that is too narrow for a path is a *runtime panic* at the `std/tz` call
 site rather than a returned `Denied`, because the capability check is compiled
-in where the read is written and panics (open item 73, `plan/roadmap.md`): a
+in where the read is written and panics (open item 73, `meta/roadmap.md` (kelp wiki)): a
 value-returning denial needs a non-panicking check mode in codegen, which is a
 compiler change outside this task. The escape refusal above is the part of
 `Denied` this module can decide on its own, and it is the part the tests pin.
@@ -153,7 +153,7 @@ itself prints one skip line and exits, so the `backend_coverage` sweep runs it
 either way.
 
 One compiler change came with the module and is recorded in
-`plan/kernel-ub-notes.md`: a function body that ends in `while true { ... }` has
+`language/unsafe-ub-catalogue.md` (kelp wiki): a function body that ends in `while true { ... }` has
 no exit edge, so the LLVM backend now closes it with an `unreachable` terminator
 instead of a fallthrough `ret` of a zero value, which an owned return type
 cannot build one of. The shape is the abbreviation reader's, and

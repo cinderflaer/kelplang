@@ -33,7 +33,7 @@ for `Bytes`, `String`, `List`, `Map`, `Box`. No `unsafe` in safe code, no except
 | --- | --- |
 | `kelpc/` | The compiler, `kelpc`, in Rust: lexer, preprocessor, parser, `infer.rs`, `borrowck.rs`, the backends, `driver.rs`. `kelpc/std/` ships inside the binary. |
 | `kelpc/tests/` | The fixture suite and the other test targets. |
-| `plan/` | Design docs and project records: `roadmap.md`, `syntax.md`, `ISSUES.md`, `CHANGELOG.pending.md`. |
+| `plan/` | Unfinished plans and the project's working records: `ISSUES.md`, `CHANGELOG.pending.md`, and the plans still in progress. The language and design docs live in the kelp wiki. |
 
 Related projects live in their own repositories: the wiki, the `fpl` library
 collection, `coral` (build tool and package manager) and `lighthouse` (editor
@@ -41,10 +41,15 @@ tooling).
 
 ## Authorities
 
-- `plan/roadmap.md` and `plan/syntax.md` are the language authorities.
+- The kelp wiki is the language and design authority: `language/*.md` for the
+  language, `compiler/*.md` for the compiler, `meta/roadmap.md` for the open
+  items, the marks and the backlog, and `meta/milestones.md` for the shipped
+  record. `plan/syntax.md` and `plan/architecture.md` stay in `plan/` until
+  their rules are checked against the wiki, and they are not the authority
+  for anything the wiki already states.
 - `plan/ISSUES.md` records what is open. It is not a plan and does not outrank
-  `plan/`.
-- A README claim is not authority over `plan/`.
+  the wiki.
+- A README claim is not authority over the wiki or `plan/`.
 
 ## Build and test
 

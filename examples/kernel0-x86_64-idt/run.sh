@@ -1,7 +1,7 @@
 #!/bin/sh
 # Boot the x86-64 IDT kernel under QEMU and check the bytes that really came out
 # of the serial port, in the order they must have come out
-# (`plan/x86-idt.md`):
+# (`language/kernel.md` (kelp wiki)):
 #
 #   exception 6 ...   the `ud2`, repaired: the handler advanced `rip`
 #   exception 0 ...   the divide by zero, repaired the same way

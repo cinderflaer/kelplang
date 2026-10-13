@@ -1,5 +1,5 @@
 //! Coverage, refusal ranking and the crash check for the `llvm` backend (the
-//! MK7 record in `plan/done.md`).
+//! MK7 record in `kelp wiki page meta/milestones.md`).
 //!
 //! `kelpc/tests/compile_and_run.rs` is backend-agnostic by construction: it
 //! compiles a fixture and compares the run to a literal an author wrote. The
@@ -247,11 +247,11 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// backend's own C text), and its two rejection fixtures stay outside the
 /// corpus (one is a parse error in `tests/fixtures/`, the other a typecheck
 /// error whose project can never build on either backend).
-/// Raised from 277 by scoped blocks (`plan/scoped-blocks.md`): the four run
+/// Raised from 277 by scoped blocks (`kelp wiki page language/functions.md`): the four run
 /// fixtures (`scoped_block_params`, `scoped_block_borrow`, `scoped_block_captures`,
 /// `scoped_borrow_in_loop`) build with both backends, and the six rejection
 /// fixtures are refused before codegen so the C backend skips them too.
-/// Raised from 276 by kernel stage 3 (MK9-S8 data formats, `plan/data-formats.md`):
+/// Raised from 276 by kernel stage 3 (MK9-S8 data formats, `kelp wiki page language/unsafe.md`):
 /// six fixtures land with the slice and both backends build all six:
 /// `endian_scalars` (every integer byte-order conversion), `bytes_endian` (a
 /// 10-byte header read in both orders and rebuilt with `write_*`),

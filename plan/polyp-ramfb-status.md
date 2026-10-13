@@ -59,5 +59,5 @@ run that got the byte order right: the display shows the kernel's pixels, not me
   is a checksum, not a pixel dump kept as a golden file.
 - The fw_cfg driver is written for QEMU's MMIO layout and does not try to be a general fw_cfg
   client: no IO-port path, no `fw_cfg` file writes other than `etc/ramfb`, no DMA skip support.
-- `plan/kernel-ub-notes.md`'s stage-4 note carries the undefined behaviour this adds (raw MMIO,
+- `language/unsafe-ub-catalogue.md` (kelp wiki)'s stage-4 note carries the undefined behaviour this adds (raw MMIO,
   a DMA descriptor in guest memory, and an address the device is trusted with).

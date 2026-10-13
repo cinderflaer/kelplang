@@ -211,7 +211,7 @@ a list" and "sum this".
 - `stdlib.rs` ships `std/iter` and names the trait key; `freestanding.rs`
   admits it (the range loop and the three helpers are pure, `collect_list` waits
   for an allocator).
-- `plan/kernel-ub-notes.md` carries this slice's note.
+- `language/unsafe-ub-catalogue.md` (kelp wiki) carries this slice's note.
 
 ## 8. Tests
 

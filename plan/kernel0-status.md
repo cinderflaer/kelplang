@@ -1,6 +1,6 @@
 # Kernel 0: what boots, and what is still missing
 
-*The integration stage of `plan/kernel-path.md`'s "kernel 0": the pieces stages 1 to 5 added,
+*The integration stage of `language/kernel.md` (kelp wiki)'s "kernel 0": the pieces stages 1 to 5 added,
 wired into an image QEMU's riscv64 `virt` machine actually starts. This file says what was
 built, what could not be, and in what order the gaps matter. Stage 7 closed gaps 1 and 3
 (a libc-free `str` surface and a panic handler that can print its message), kernel
@@ -80,7 +80,7 @@ and those changes are described with the gaps.
    lowered as the function's alignment on both backends, so a naked handler's
    first byte can be made `mtvec`-aligned. `examples/kernel0-trap` installs its
    vector with `Ptr.from_fn(trap_handler).addr()` and names no mangled symbol.
-   `plan/kernel-ub-notes.md` stage 8 is the design's UB catalogue. Stage 5
+   `language/unsafe-ub-catalogue.md` (kelp wiki) stage 8 is the design's UB catalogue. Stage 5
    deliberately left out `interrupt` and calling-convention attributes; those
    remain open, and they are what a trap handler would use instead of a naked
    body plus `align(N)`.
@@ -99,14 +99,14 @@ and those changes are described with the gaps.
    still not set up.** `_start` now zeroes `[__bss_start, __bss_end)` a word at
    a time after it loads `sp` and before it calls the entry, with both bounds
    declared weak so a script that omits them still links
-   (`plan/freestanding.md`). The compiler also defines the five `mem*` routines
+   (`language/freestanding.md` (kelp wiki)). The compiler also defines the five `mem*` routines
    LLVM's own aggregate copies call, weakly and as loops, so a kernel with
    `static` data or a big aggregate copy links with no libc. What remains of
    this gap is the interrupt half: `kernel0-trap` installs `mtvec` itself, and
    nothing enables `mstatus.MIE` or models the privilege transition. The plan's
    stage 10 (panic semantics with no OS) and stage 11 (MMIO capabilities) are
    where that becomes a checked story rather than a comment. Kernel stage 21
-   (`plan/scheduler.md`) closes the machine-mode *timer* half with
+   (`language/kernel.md` (kelp wiki)) closes the machine-mode *timer* half with
    `examples/kernel0-sched`, which enables `mie.MTIE` and `mstatus.MIE` and takes
    the interrupt in a naked `trap_entry`; the checked `interrupt` attribute the
    plan's stage 5 deferred is still open, and user-mode preemption is not part
@@ -118,7 +118,7 @@ and those changes are described with the gaps.
    `.eh_frame` as an orphan before an unnamed `.text`, so the driver functions' unwind tables
    put `_start` at 0x8000008c; QEMU then jumps to 0x80000000 and executes data. Both linker
    scripts here name `.eh_frame` explicitly. This is worth a sentence in
-   `plan/freestanding.md`, which says a script should place `.text.boot` first without
+   `language/freestanding.md` (kelp wiki), which says a script should place `.text.boot` first without
    saying why the orphan can preempt it.
 
 ## What the next stages need
@@ -134,7 +134,7 @@ and those changes are described with the gaps.
   `Map` and `String`/`Bytes` allocate through, `Ptr.try_alloc` (MK9-S5-M3) is the
   fallible request that answers null instead of panicking, and the shipped
   `std/arena` (MK9-S5-M3) is a libc-free bump arena over a caller-owned region,
-  usable with no allocator at all (`plan/arena.md`).
+  usable with no allocator at all (`stdlib/arena.md` (kelp wiki)).
 - Per-CPU storage (stage 8) and the MMU/syscall work (stage 9) before userspace.
 - Stack guards, probing and the panic semantics of stage 10, which is what turns gap 3 into a
   real diagnostic.

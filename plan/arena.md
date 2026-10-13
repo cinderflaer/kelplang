@@ -1,6 +1,6 @@
 # Stage 13: arenas and a fallible allocation surface (MK9-S5-M3)
 
-*Design for kernel-path row 7's last two halves. `plan/kernel-path.md` is the
+*Design for kernel-path row 7's last two halves. `language/kernel.md` (kelp wiki) is the
 context; this file says what is built, what shape it takes and what is
 deliberately left out.*
 
@@ -89,4 +89,4 @@ invocations, and only the freestanding project is LLVM-only.
 - Typed carving (`Arena.alloc<T>`), huge-page requests, DMA-safe allocation, and
   freeing a single allocation: an arena reclaims in bulk (`reset`) or not at all.
 - Any memory-safety proof about `unsafe` code (D-1/D-2/D-3 stay open); the new
-  ways to reach UB are in `plan/kernel-ub-notes.md`'s stage 13.
+  ways to reach UB are in `language/unsafe-ub-catalogue.md` (kelp wiki)'s stage 13.

@@ -1,17 +1,17 @@
 # `std/sync` beyond `Mutex`: `RwLock`, `Condvar`, channels and a thread pool
 
-*Design note. `plan/mutex.md` is the shape this follows: a compiler builtin type in
+*Design note. `stdlib/sync.md` (kelp wiki) is the shape this follows: a compiler builtin type in
 the `Atomic<T>`/`Thread<T>`/`Mutex<T>` family, one opaque pointer to a runtime record,
 scoped blocks for the borrows that cannot escape, and the same runtime on both
 backends. This note records the surface, the two backends' split, and what each part
-costs; `plan/kernel-ub-notes.md` carries the undefined behaviour this stage adds.*
+costs; `language/unsafe-ub-catalogue.md` (kelp wiki) carries the undefined behaviour this stage adds.*
 
 ## The shape all four share
 
 Every type here owns a **runtime record** with no Kelp-visible layout: the C backend
 calls `kelp_*.c` helpers directly and the LLVM backend declares the same helpers in
 `declare_runtime`, so no backend ever names a field. The guarded value is reached only
-through a **scoped block** (`plan/scoped-blocks.md`), whose borrow cannot be stored or
+through a **scoped block** (`language/functions.md` (kelp wiki)), whose borrow cannot be stored or
 returned. Every record is **hosted only**: the freestanding manifest refuses each by
 name, because the runtime half is a pthread object.
 
@@ -74,7 +74,7 @@ true and the block did not run, `Some(v)` is the block's value.
 
 ## 3. Channels (`std/sync`)
 
-**Implemented, in pure Kelp. `plan/st1-status.md` records how the built shape
+**Implemented, in pure Kelp. `stdlib/sync.md` (kelp wiki) records how the built shape
 differs from the first design (no new builtin type).**
 
 ```
@@ -117,7 +117,7 @@ condition variables. `new` starts the workers with `thread.spawn`; `spawn` queue
 job and wakes one; `join` sets the stop flag, wakes everyone, and waits until every
 worker has drained the queue and exited; `Drop` calls `join`. A panicking job is
 counted in `panicked()` and does not kill its worker: the worker runs each job on a
-thread of its own and joins it (see `plan/st1-status.md` for why that replaces the
+thread of its own and joins it (see `stdlib/sync.md` (kelp wiki) for why that replaces the
 thread-local `jmp_buf`). The module is `std/pool` rather than a part of `std/thread`
 because a module cannot call its own builtins (`thread.spawn`) by name.
 

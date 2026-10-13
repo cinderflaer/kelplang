@@ -1,5 +1,5 @@
 //! The compiler cache for incremental compilation (roadmap A-14,
-//! `plan/incremental-compilation.md`).
+//! `kelp wiki page compiler/incremental.md`).
 //!
 //! A unit's object file is a pure function of the LLVM IR text the unit's
 //! module lowers to and of the machine it is compiled for: the target triple,

@@ -1,7 +1,7 @@
 # Stack guards and probing (kernel stage 14, MK9-S7-M2, the stack half)
 
-*Design for the stack half of `plan/kernel-path.md`'s row 10. The panic-semantics
-half (MK9-S6-M2) is not this stage. `plan/address-spaces.md` and
+*Design for the stack half of `language/kernel.md` (kelp wiki)'s row 10. The panic-semantics
+half (MK9-S6-M2) is not this stage. `language/kernel.md` (kelp wiki) and
 `examples/kernel0-vm` are the context for the address space; this file says what
 the guard page needs from the compiler and what the example proves.*
 
@@ -74,7 +74,7 @@ no fault at all.
 - **Demand paging or a growable stack.** The guard is a fixed hole; a fault halts
   after it reports, and nothing maps a page to make room.
 - **W^X, section bounds, ASIDs, TLB shootdown.** Unchanged from
-  `plan/address-spaces.md`.
+  `language/kernel.md` (kelp wiki).
 - **Panic semantics with no OS** (the other half of row 10): no abort message, no
   register dump, no `panic` beyond the handler's two lines.
 - **A probe-free path for the C backend.** Freestanding is LLVM-only by design,

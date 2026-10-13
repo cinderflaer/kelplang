@@ -1,5 +1,5 @@
 // M6: the loop shape the drop-plan defect's minimal repro used (the MK7 record
-// in `plan/done.md`). The owned local is bound *inside* the body, moved
+// in `kelp wiki page meta/milestones.md`). The owned local is bound *inside* the body, moved
 // on one path through it and abandoned on the other, so the body's own
 // end-of-block drop has to run on the path that left the value behind, and the
 // move that cleared the slot has to leave the other path's free with nothing to

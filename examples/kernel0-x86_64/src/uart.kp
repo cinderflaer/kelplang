@@ -11,7 +11,7 @@
 //
 // Text arrives as a `str`, the same type a hosted program writes, and
 // `str.len`/`str.byte` are the compiler's own byte loops (kernel stage 7,
-// `plan/kernel0-status.md` gap 1), so no `strlen` and no `[u8; N]` copy sits
+// `language/kernel.md` (kelp wiki) gap 1), so no `strlen` and no `[u8; N]` copy sits
 // between the caller and the port.
 impl "std/str"
 
@@ -62,7 +62,7 @@ pub fun puts(s: str) {
     }
 }
 
-// `hlt` has no Kelp spelling (kernel stage 5, `plan/inline-asm.md`), and the
+// `hlt` has no Kelp spelling (kernel stage 5, `language/unsafe.md` (kelp wiki)), and the
 // compiler's `_start` stub already loops on it if the entry returns; this is
 // the same halt written in the language, so the kernel names its own stop.
 pub fun halt() {

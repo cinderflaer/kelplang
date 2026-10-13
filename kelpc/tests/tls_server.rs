@@ -1,6 +1,6 @@
 //! Server-side TLS, client certificates and ALPN in `std/tls` (task st3).
 //!
-//! `plan/tls-server.md` is the design note. Every case is one run of
+//! `stdlib/tls.md` (kelp wiki) is the design note. Every case is one run of
 //! `tests/hazards/tls_server_matrix.kp`: one program, a server on a second
 //! thread and a client on the main one, over `127.0.0.1` on an ephemeral port.
 //! The certificates are made here with the `openssl` CLI into this process's

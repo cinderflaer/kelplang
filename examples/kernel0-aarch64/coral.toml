@@ -3,7 +3,7 @@ name = "kernel0_aarch64"
 # Kernel stage 10, "kernel 0 on a second architecture": a bare-metal aarch64
 # image QEMU's `virt` machine boots, which writes a line to the PL011 UART and
 # halts. `mode`, `triple`, `entry` and `linker_script` are stage 4's `[target]`
-# section (`plan/freestanding.md`); `panic` routes the compiler's own overflow
+# section (`language/freestanding.md` (kelp wiki)); `panic` routes the compiler's own overflow
 # and bounds checks to `kp_panic` in the entry module instead of the generated
 # infinite loop, so a fault prints something before it wedges.
 [target]
@@ -13,7 +13,7 @@ entry = "kmain"
 linker_script = "kernel.ld"
 panic = "kp_panic"
 
-# The audit list (stage 1, `plan/unsafe-and-pointers.md`): only `uart` contains
+# The audit list (stage 1, `language/unsafe.md` (kelp wiki)): only `uart` contains
 # `unsafe`, and that is the one module that talks to the device register.
 [unsafe]
 modules = ["uart"]
@@ -21,6 +21,6 @@ modules = ["uart"]
 # Kernel stage 16's mmio grant: the PL011 register window on QEMU's aarch64
 # `virt` machine, held by the entry module and delegated to `uart`, the one
 # module that builds a pointer from the device's address
-# (`plan/device-caps.md`).
+# (`language/capabilities.md` (kelp wiki)).
 [caps]
 mmio = ["0x09000000+0x1000"]

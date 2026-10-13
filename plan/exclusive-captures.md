@@ -1,6 +1,6 @@
 # Exclusive captures for scoped blocks (language completeness 7 of 8)
 
-*Design note and shipped first version. `plan/scoped-blocks.md` made a trailing block capture the
+*Design note and shipped first version. `language/functions.md` (kelp wiki) made a trailing block capture the
 enclosing frame by shared borrow only; this note lets a block **write** what it captures. Verdict:
 **implement now, and it is implemented** (section 5). The fixtures named below are in
 `kelpc/tests/fixtures/excl_*.kp`, the tests are `a_scoped_block_can_write_what_it_captures`,
@@ -47,7 +47,7 @@ no new syntax and no annotation; the capture's mode is inferred per binding from
 | Second capture of the same owner in the same call (two blocks, or the block and another argument) | refused: the second borrow conflicts with the first (`already borrowed exclusively`) |
 | The callee's other arguments mention the owner (`two(s) { s.count += n }`, shared or `mut`) | refused (`already borrowed exclusively` / `already borrowed as shared` / the `mut`-parameter message) |
 | The call's receiver is the captured owner (`s.each { s.count += 1 }`), or a field of it (`s.bag.each { s.count += 1 }`) | refused: the receiver's reservation conflicts. Roots are whole variables, so a field of `s` and `s` conflict |
-| A live borrow of the owner still used after the call (`val first = s.items.get(0)` ... `print(first)`) | refused: borrows end at their last use (`plan/nll.md`) and this one has not ended |
+| A live borrow of the owner still used after the call (`val first = s.items.get(0)` ... `print(first)`) | refused: borrows end at their last use (`language/ownership.md` (kelp wiki)) and this one has not ended |
 | The same borrow dead before the call | accepted: the call is the only user of the owner, and the owner is free again afterwards (`excl_capture_field`) |
 | Nested block capturing the outer block's exclusive capture | allowed since 26.10.3: a `Capture` has an owner root (`#capN`, with field paths) inside the literal body, so the inner call's other arguments are checked against it (`excl_capture_nested*.kp`, `excl_refused_nested_same_call.kp`) |
 | `defer` in the block | the lowering splices it into the block body, so it runs when the block returns, once per call; it is an ordinary statement of the block (`excl_capture_defer_loop`) |
@@ -61,16 +61,16 @@ no new syntax and no annotation; the capture's mode is inferred per binding from
 
 Three facts carry the argument; none is new.
 
-1. **A scoped value cannot outlive its call** (`Ty::ScopedFn` is a type, `plan/scoped-blocks.md`).
+1. **A scoped value cannot outlive its call** (`Ty::ScopedFn` is a type, `language/functions.md` (kelp wiki)).
    Every escape is already an ordinary type mismatch, so an exclusive borrow inside the environment
    has exactly the lifetime of the call. Nothing durable can hold it.
 2. **A call's argument borrows start together and release together**
    (`borrowck.rs::take_call_arguments`). The scoped literal's captures were already registered there
    as `start_borrow` entries (shared); an exclusive capture is the same entry with `mutable = true`,
    so the existing conflict table (`start_borrow`: exclusive vs shared vs reserved receiver)
-   decides every cell of the interaction table. Borrow roots (`plan/provenance.md`) make a block
+   decides every cell of the interaction table. Borrow roots (`language/ownership.md` (kelp wiki)) make a block
    that captures a cursor or a re-pointed borrow conflict with its real owner, and last-use liveness
-   (`plan/nll.md`) makes a borrow that is dead before the call not conflict at all.
+   (`language/ownership.md` (kelp wiki)) makes a borrow that is dead before the call not conflict at all.
 3. **Inside the block the capture is a `mut` parameter.** The block body is its own function; a
    capture typed `&mut T` is read, written and passed on exactly as a `mut T` parameter is, with
    the same checks (`check_target_writable`, the `mut`-argument rule). The one thing a parameter
@@ -236,4 +236,4 @@ Not done, and why (each is a follow-up, none blocks the rule):
 
 1. **Nested blocks**: done in 26.10.3 (see the table in section 1).
 2. **Wiki and `fmt`**: `fmt.rs` still has no block-rewrapping rule (open item 75); the wiki pages
-   are written from `plan/language-tour-2026-10.md`.
+   are written from `tutorial.md` (kelp wiki).

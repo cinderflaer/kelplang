@@ -1,5 +1,5 @@
 // `break` and `continue` are ordinary loop control in a written `while`
-// (`plan/iterators.md`). `continue` re-tests the condition, so the increment
+// (`kelp wiki page language/iterators.md`). `continue` re-tests the condition, so the increment
 // has to be part of the loop's own logic, exactly as in C.
 fun main() {
     var i = 0

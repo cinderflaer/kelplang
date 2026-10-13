@@ -1,5 +1,5 @@
 //! MK7 S4: the DWARF debug locations of the `llvm` backend
-//! (the MK7 record in `plan/done.md`).
+//! (the MK7 record in `kelp wiki page meta/milestones.md`).
 //!
 //! The debug information maps a generated statement back to a `.kp` line. This
 //! file checks that claim for the `llvm` backend, through DWARF: a compile unit named in

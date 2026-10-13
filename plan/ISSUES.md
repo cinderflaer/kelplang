@@ -93,7 +93,7 @@ Open design points for the lane that takes it:
 
 repo: coral | found: 2026-09-20 | effort: L
 
-source: `kelp/plan/roadmap.md`, the Coral row.
+source: `kelp/kelp wiki page meta/roadmap.md`, the Coral row.
 
 **+++++ HALF FINISHED +++++**
 
@@ -116,7 +116,7 @@ one-version toolchain store.
 
 repo: kelp | found: 2026-09-20 | effort: L
 
-source: `kelp/plan/roadmap.md`, backlog item B-1, MK9-S1-M1.
+source: `kelp/kelp wiki page meta/roadmap.md`, backlog item B-1, MK9-S1-M1.
 
 **+++++ HALF FINISHED +++++**
 
@@ -167,7 +167,7 @@ repo: kelp | found: 2026-10-06 | effort: L
 
 source: wiki `language/limits.md` (unreleased), "Concurrency": a user `Drop`
 exists but "does not run on the panic path: there is still no unwinding"; a
-panicking worker's frame is abandoned. `plan/panic-semantics.md`.
+panicking worker's frame is abandoned. `language/freestanding.md` (kelp wiki).
 
 A panic leaks every live owner in the frames above it, including a held `Mutex`
 guard and an open file in a worker. Needs a decision (unwind, or run drops
@@ -180,7 +180,7 @@ repo: kelp | found: 2026-10-09 | effort: L
 source: `plan/generic-trait-impls.md` section 6 (excluded from the generic trait impls
 design); refused by name today: `kelpc/tests/fixtures/traits_assoc_const.kp`, "associated
 consts are not in this slice". Follow-up release: none scheduled (no release named in
-`plan/roadmap.md`).
+`meta/roadmap.md` (kelp wiki)).
 
 ### MISSING-Pt7Hn kelp: no trait-object upcast between trait objects
 
@@ -188,7 +188,7 @@ repo: kelp | found: 2026-10-09 | effort: L
 
 source: `plan/generic-trait-impls.md` section 6 (excluded); `plan/traits.md` 12 names it open
 for `Box<dyn Name>` and `&dyn Name`. Follow-up release: none scheduled (no release named in
-`plan/roadmap.md`).
+`meta/roadmap.md` (kelp wiki)).
 
 ### MISSING-Lh6Yp kelp: generic trait impls, the rest after step 5 of the design note
 
@@ -388,9 +388,9 @@ iterator type. Fixtures: `for_iter_list_sum`, `for_iter_list_strings`,
 Still open (option 3, pending): an iterator value that yields `&T` on its own, so that
 `xs.iter().map(...)` or `filter`, `take`, `skip` on a borrowing iterator can hold a
 borrow of the list. A borrow cannot outlive the iterator that carries it, and v1 has no
-lifetime syntax to tie the two together (`plan/iterators.md` section 5). Earlier
+lifetime syntax to tie the two together (`language/iterators.md` (kelp wiki) section 5). Earlier
 findings: `infer.rs` refuses a `datac` or `enum` field that is a borrow, and a tuple
 element or a stored value may not be a borrow. So this needs a design note first: how a
 value holds a borrow, and what `borrowck.rs` checks for it. Next step: write that note
-in `plan/iterators.md`. No code until it is decided. Until then the adapters take owned
+in `language/iterators.md` (kelp wiki). No code until it is decided. Until then the adapters take owned
 items only.

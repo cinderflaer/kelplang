@@ -1,8 +1,8 @@
 # Per-CPU storage (kernel stage 8, MK9-S3-M3 / roadmap B-11)
 
 *The design note for the `percpu` storage class and its two intrinsics.
-`plan/kernel-path.md` is the stage list; this is row 8. The
-undefined-behaviour half is `plan/kernel-ub-notes.md`'s stage 11 section.*
+`language/kernel.md` (kelp wiki) is the stage list; this is row 8. The
+undefined-behaviour half is `language/unsafe-ub-catalogue.md` (kelp wiki)'s stage 11 section.*
 
 ## What the stage adds
 
@@ -65,14 +65,14 @@ against `cpus` and calls the project's own panic handler with
 `cpu index out of range` when it is not below it, the same shape as every other
 bounds check. A release build trusts the register: a kernel that leaves `tp`
 wrong gets misbehaviour it cannot attribute, which is the UB this stage adds
-(`plan/kernel-ub-notes.md` stage 11). The check is deliberately per optimization
+(`language/unsafe-ub-catalogue.md` (kelp wiki) stage 11). The check is deliberately per optimization
 level rather than always-on because the register is the kernel's contract, not
 a value the language produced; the debug build is where a kernel author sees it.
 
 ## Both backends, and the exception
 
 The `percpu` class and both intrinsics exist only in freestanding mode, which is
-LLVM-only by design (the C backend's preamble is libc, `plan/kernel-path.md`).
+LLVM-only by design (the C backend's preamble is libc, `language/kernel.md` (kelp wiki)).
 Every front-end rule above (the `mut` requirement, the freestanding requirement,
 the constant-initializer rule, the `static mut` unsafe gate, the manifest range)
 runs in `infer.rs` and `resolve.rs`, before either backend is named, so the C

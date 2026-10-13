@@ -1,5 +1,5 @@
 // The x86-64 IDT, the four CPU exception gates and the timer gate
-// (kernel stage 22, `plan/x86-idt.md`).
+// (kernel stage 22, `language/kernel.md` (kelp wiki)).
 //
 // An exception taken in ring 0 pushes three words - `RIP`, `CS` and `RFLAGS` -
 // because no privilege change happens; vectors 8, 10..14 and 17 push an error
@@ -18,7 +18,7 @@ impl "pic"
 impl "uart"
 
 // The boot GDT's 64-bit code segment selector, read out of the x86-64 `_start`
-// stub's own three-entry GDT (`plan/x86-64.md`).
+// stub's own three-entry GDT (`language/kernel.md` (kelp wiki)).
 const KERNEL_CS: u16 = 0x08
 
 // Present, ring 0, 64-bit interrupt gate. An interrupt gate clears IF on entry,

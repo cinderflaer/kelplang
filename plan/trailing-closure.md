@@ -1,7 +1,7 @@
 # Trailing blocks (open item 75): design and prototype
 
-*Design note, the parser prototype, and the follow-up in `plan/scoped-blocks.md`. Not a Mark;
-`roadmap.md` still owns the schedule.*
+*Design note, the parser prototype, and the follow-up in `language/functions.md` (kelp wiki). Not a Mark;
+`meta/roadmap.md` (kelp wiki) still owns the schedule.*
 
 ## The proposal in one rule
 
@@ -43,13 +43,13 @@ last parameter takes the parenthesised form, as it does today.
 
 ## What the prototype does not do
 
-1. ~~**Parameters.**~~ **Addressed** (`plan/scoped-blocks.md` part 1): `{ x, y -> ... }` declares
+1. ~~**Parameters.**~~ **Addressed** (`language/functions.md` (kelp wiki) part 1): `{ x, y -> ... }` declares
    the parameters by name only, and their types come from the expected function type of the
    parameter the block is passed to. The header is read only when the first tokens are
    identifiers, comma separated, followed by `->`, which appears nowhere else at the start of a
    block. Parameter modes follow the expected type, because a Kelp parameter type already carries
    its mode. Fixture `scoped_block_params.kp`.
-2. ~~**Return values.**~~ **Addressed** (`plan/scoped-blocks.md` part 1): a block whose body ends
+2. ~~**Return values.**~~ **Addressed** (`language/functions.md` (kelp wiki) part 1): a block whose body ends
    in an expression returns it when the expected return type is non-unit; with a unit return the
    tail is discarded exactly as before. `sum(xs) { n -> n * 10 }` and `sum(xs) { n -> if n > 5 {
    n } else { 0 } }` are both in `scoped_block_params.kp`.
@@ -59,7 +59,7 @@ last parameter takes the parenthesised form, as it does today.
    argument lists and blocks re-enable the flag, not a parenthesised expression.
 5. **Formatting of long chains.** `fmt.rs` copies tokens and rewrites the whitespace between them;
    the tested cases are single-line. Nested multi-line trailing blocks were not stress-tested.
-6. ~~**Shared mutable state.**~~ **Addressed for call-scoped callbacks** (`plan/scoped-blocks.md`
+6. ~~**Shared mutable state.**~~ **Addressed for call-scoped callbacks** (`language/functions.md` (kelp wiki)
    part 2): a parameter written `scoped fun(T).return: U` accepts only a literal or trailing block
    written at the call site, and such a literal captures an enclosing binding **by shared
    borrow** into a stack environment. So `polyp.column { k -> k.text(s.title) }` reads a borrowed
@@ -70,6 +70,6 @@ last parameter takes the parenthesised form, as it does today.
 ## Recommendation
 
 Done. The parser change stayed (it is additive and small), and (1), (2) and (6) landed together in
-`plan/scoped-blocks.md`, because a builder API needs all three. What is still open there is an
+`language/functions.md` (kelp wiki), because a builder API needs all three. What is still open there is an
 *exclusive* capture (a block that mutates what it borrowed) and `scoped` anywhere but a top-level
 declaration parameter.

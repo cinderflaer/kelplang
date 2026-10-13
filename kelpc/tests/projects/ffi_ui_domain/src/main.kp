@@ -1,5 +1,5 @@
 // Gap 6: `ui` is granted as the wildcard only, because no argument at a
-// display call can be matched against a pattern (plan/ffi-display-domain.md).
+// display call can be matched against a pattern (kelp wiki page libraries/polyp.md).
 // A real PID is always > 0.
 impl "display" caps(ui = ["*"])
 

@@ -1,5 +1,5 @@
 // The task table, the three tasks and the round-robin scheduler
-// (`plan/scheduler.md`).
+// (`language/kernel.md` (kelp wiki)).
 //
 // There is no separate idle context: the boot takes one `ecall` with a frame of
 // its own, the first `schedule` call picks task 0, and from then on every trap

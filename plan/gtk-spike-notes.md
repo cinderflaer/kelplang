@@ -15,7 +15,7 @@ spike needed a `static inline` seam and the C backend; both limits were the comp
 
 ## Remaining blockers, most important first
 
-1. **The display domain (gap 6).** `process` is a stand-in; options in `plan/ffi-display-domain.md`.
+1. **The display domain (gap 6).** `process` is a stand-in; options in `libraries/polyp.md` (kelp wiki).
 2. **Callback arity.** The closure's parameter list is checked against scalars, `str` and handles only; GTK handlers
    with struct arguments cannot be expressed.
 3. **No variadics (gap 7).** Not hit here; `g_object_set` would.

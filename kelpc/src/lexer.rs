@@ -106,7 +106,7 @@ pub enum TokenKind {
     For,
     When,
     /// `defer EXPR` - a statement whose action runs when the enclosing block
-    /// is left (kernel stage 6, `plan/defer.md`). `defer.rs` rewrites it away
+    /// is left (kernel stage 6, `kelp wiki page language/statics-and-defer.md`). `defer.rs` rewrites it away
     /// before name resolution, so no later pass knows this form exists.
     Defer,
     /// `errdefer EXPR`: a `defer` that runs only on an error exit

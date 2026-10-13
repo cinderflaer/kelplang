@@ -1,7 +1,7 @@
 # `std/iter` status: what shipped, what is missing
 
 The shipped half is the protocol itself, and every fixture and test named in
-`plan/iterators.md` 8 passes on both backends:
+`language/iterators.md` (kelp wiki) 8 passes on both backends:
 
 - `std/iter` declares `pub trait Iterator { type Item  fun mut
   Self.next().return: option.Option<Self::Item> }`, ships `Range` with `range`/

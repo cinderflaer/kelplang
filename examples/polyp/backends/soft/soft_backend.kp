@@ -1432,7 +1432,7 @@ fun mut Px.add(n: usize) {
 // A colour faded toward the theme background by an opacity in permille: `1000` is the colour itself,
 // `0` is the background. It is the whole of the opacity model: a widget's own colours are blended
 // with the background, not with whatever is painted under it, which is exact for the usual case of
-// a widget on the plain background and an honest approximation elsewhere (`plan/polyp-v4.md`).
+// a widget on the plain background and an honest approximation elsewhere (`kelp wiki page libraries/polyp.md`).
 fun fade(c: u32, op: i32, bg: u32).return: u32 {
     if op >= 1000 {
         return c

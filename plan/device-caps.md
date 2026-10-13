@@ -1,7 +1,7 @@
 # Device capabilities: MMIO ranges (kernel stage 16, MK10-S1 / roadmap C-3)
 
 *Design and record for kernel-path row 11's MMIO half. The IRQ-line and
-physical-frame halves are now done too, in `plan/irq-frame-caps.md`, which
+physical-frame halves are now done too, in `stdlib/irq.md` (kelp wiki), which
 reuses this file's range parser and validator; what this file owns is the
 `mmio` domain and the address check.*
 
@@ -61,7 +61,7 @@ drivers name a compile-time constant, so they get exactly their device's
 window (`0x10000000+0x100` for the riscv64 NS16550, `0x09000000+0x1000` for the
 aarch64 PL011). Modules that turn a computed address into a pointer (a
 page-table frame, a trap-frame slot, a user page, an `asm` result) get `["*"]`,
-which is recorded per example in `plan/kernel-ub-notes.md`.
+which is recorded per example in `language/unsafe-ub-catalogue.md` (kelp wiki).
 
 ## Honest limits
 
@@ -80,7 +80,7 @@ which is recorded per example in `plan/kernel-ub-notes.md`.
   (kernel stage 4), so the C oracle never sees this check; hosted builds of both
   backends are unaffected.
 - **Not the whole of row 11's device story.** An interrupt line and a physical
-  frame are now capabilities too (`plan/irq-frame-caps.md`), and they share this
+  frame are now capabilities too (`stdlib/irq.md` (kelp wiki)), and they share this
   stage's range vocabulary: `frames` is the same byte window and `irq` is a
   decimal line or line range. What neither this file nor that one can do is
   follow an offset applied later or track DMA, so a granted range is still a
@@ -93,7 +93,7 @@ validator and coverage test: `irq = ["10", "32-47"]` and
 `frames = ["0x80100000+0x400000"]` are a new domain and two gated constructors,
 not a new mechanism. They are implemented, in `stdlib.rs`'s `DOMAINS`, the
 shipped `std/irq` and `std/frame`, and `infer.rs::check_claim_argument`, and
-`plan/irq-frame-caps.md` is their design and record. The two differences from
+`stdlib/irq.md` (kelp wiki) is their design and record. The two differences from
 `mmio` are that the check runs in a hosted program as well as a freestanding
 one, and that the value rather than the pointer's birth is what the grant
 admits.
@@ -102,7 +102,7 @@ admits.
 
 - The range parser and its edge cases are unit tests in `stdlib.rs`
   (`parse_byte_range`, `ranges_overlap`, `range_covers`; the three functions are
-  shared with the `frames` domain `plan/irq-frame-caps.md` adds).
+  shared with the `frames` domain `stdlib/irq.md` (kelp wiki) adds).
 - `kelpc/tests/mmio.rs` writes a freestanding project per case and runs
   `kelpc check` (front end only, so no `ld.lld` and no QEMU): an address inside,
   `base + len - 1`, `base + len`, an address outside, `["*"]` with a computed
@@ -111,5 +111,5 @@ admits.
   a range, and a second driver refused for reaching another device's address
   while the same two drivers each inside their own grant check cleanly.
 - Every `examples/kernel0*` project still boots under QEMU in `dev-kernel.nix`
-  after its grant was added; `plan/kernel-ub-notes.md` stage 16 carries the
+  after its grant was added; `language/unsafe-ub-catalogue.md` (kelp wiki) stage 16 carries the
   undefined behaviour this stage adds.

@@ -4,7 +4,7 @@ The record of what actually happened, milestone by milestone. It overrides any p
 
 Entries are append-only history, so an older entry can describe a state a later one changed; each such entry names the one that superseded it.
 
-Milestone identifiers follow the MK/S/M scheme in `roadmap.md`; the mapping from the older `M0`,`M9`/`C1`/`S1`,`S8`/`T1` identifiers is in that file's "Milestone naming" section.
+Milestone identifiers follow the MK/S/M scheme in `meta/roadmap.md` (kelp wiki); the mapping from the older `M0`,`M9`/`C1`/`S1`,`S8`/`T1` identifiers is in that file's "Milestone naming" section.
 
 ## Milestone record
 
@@ -675,7 +675,7 @@ MK5-S6-M1 is the `Option`/`Result` decision point. **It stayed open when this la
 
 ### MK8-S1-M1 part 1 `enum` tagged unions and pattern `when` (DONE)
 
-Part 1 of MK8-S1-M1, which the roadmap had parked as backlog item A-1 (now `roadmap.md`'s A-1): the language work `Option`/`Result` was blocked on. The decision came first, because `syntax.md` is the authority on syntax and had none: **`enum` with payload-carrying variants**, chosen over a `sum` keyword and over teaching `datac` a second layout. Three questions were settled together, and each answer removed work. The two `when` forms never collide, because the boolean form has **no scrutinee** (`when { cond -> value }`) while the pattern form has one (`when s { Variant(bind) -> value }`), so no lookahead, no new keyword, and the boolean form keeps its parser desugar. A payload **binds as a copy when it is `Copy` and as a shared borrow otherwise**, so a pattern never partially moves the scrutinee, which v1 has no machinery for. And an enum is a `Ty::Struct` at the type level, so nominality, `Copy`-ness, drop and the borrow checker needed no new type dimension, only a declaration table, a pattern checker and a C layout.
+Part 1 of MK8-S1-M1, which the roadmap had parked as backlog item A-1 (now `meta/roadmap.md` (kelp wiki)'s A-1): the language work `Option`/`Result` was blocked on. The decision came first, because `syntax.md` is the authority on syntax and had none: **`enum` with payload-carrying variants**, chosen over a `sum` keyword and over teaching `datac` a second layout. Three questions were settled together, and each answer removed work. The two `when` forms never collide, because the boolean form has **no scrutinee** (`when { cond -> value }`) while the pattern form has one (`when s { Variant(bind) -> value }`), so no lookahead, no new keyword, and the boolean form keeps its parser desugar. A payload **binds as a copy when it is `Copy` and as a shared borrow otherwise**, so a pattern never partially moves the scrutinee, which v1 has no machinery for. And an enum is a `Ty::Struct` at the type level, so nominality, `Copy`-ness, drop and the borrow checker needed no new type dimension, only a declaration table, a pattern checker and a C layout.
 
 - **One merged declaration order (the structural piece).** A `datac` field and an `enum` payload may each name a type declared *before* them by value, so the two declaration lists had to become one sequence: the parser numbers every `datac` and `enum` with a shared counter, `resolve.rs` renumbers them into module-load then local order, `types::owned_types` walks that order for one-pass drop analysis, and codegen emits typedefs in it. `types::owned_structs` became `owned_types(structs, enums)`; `Ty::Struct`'s tag/typedef/drop-function naming needed no change, which is the payoff of the shared representation.
 - **Layout.** `typedef struct tag_Shape { int32_t kelp_tag; union { struct { double kelp_r; } kelp_v_Circle; ... } kelp_v; } struct_Shape;`, the tag is the variant index, each payload lives in a struct of its own inside the union, and a payload-less variant still gets a member with one `char` field (an empty struct and an empty union are both invalid C, and `enum Flag { On Off }` would produce both). Construction is a C compound literal, `(struct_Shape){ .kelp_tag = 0, .kelp_v = { .kelp_v_Circle = { .kelp_r = 2 } } }`, and a payload-less variant needs no initializer beyond the tag, since C zero-initializes what the designators do not mention.
@@ -922,7 +922,7 @@ atomics plus a `Send`-shaped rule) are what MK6-S1-M1 still needs.
 
 ### MK5-S2-M2 `spawn_in`/`run_in`, the fallible `try_run`, and `fs.symlink` (DONE)
 
-The three stdlib-sized gaps `roadmap.md` recorded under "What the port hit",
+The three stdlib-sized gaps `meta/roadmap.md` (kelp wiki) recorded under "What the port hit",
 found by writing the parts of Coral that shell out, and each one extern plus one
 wrapper by the plan's own estimate, plus the two things implementing them
 turned out to need. The process half is MK5-S2-M2 (the `io` + `process` stage);
@@ -1222,7 +1222,7 @@ end-to-end tests**, all green.
 keys), A-7 (arenas, shared immutable data), A-10 (loosened element rules),
 A-11 (checker expressiveness, now the blocker for a `View` field as well as
 for the `Copy`-only stdlib helpers), A-12 (traits) and A-13 (privacy). The
-part of A-8/A-9 that shipped is recorded against them in `roadmap.md`'s open
+part of A-8/A-9 that shipped is recorded against them in `meta/roadmap.md` (kelp wiki)'s open
 items 21, 22, 29, 30, 44 and 53.
 
 ## The third pass of a real program: the `jsonlibary` bug report (DONE)
@@ -1302,7 +1302,7 @@ suffix, no hex") and the lexer agrees with it, so the worked example was the
 thing that was wrong. It is now written in decimal, `(224 | (cp >> 12))` and
 so on, with the hex spellings named in the sentence, which is what
 `jsonlibary` had already done by hand. A hex literal remains open work in
-`roadmap.md` A-9's "still open" list, which is the right place for it: the
+`meta/roadmap.md` (kelp wiki) A-9's "still open" list, which is the right place for it: the
 snippet was wrong, not the lexer.
 
 **Tests**: `try_drops_frame.kp` (an owned local at two `?` sites in one `if`,
@@ -1567,7 +1567,7 @@ warning became a note about why a *library* still takes a `mut` parameter:
 module scope, not borrows), `wiki/libraries/testkit.md`,
 `wiki/examples/tests_and_bench.md`, `fpl/testkit/lib.kp` and
 `fpl/docs/testkit.md`; `plan/syntax.md` §14.2 states the rule the compiler now
-implements; `plan/roadmap.md` item 17 is closed; and the asm coverage ratchet
+implements; `meta/roadmap.md` (kelp wiki) item 17 is closed; and the asm coverage ratchet
 gained `pd_write_reaches_callers` and `pd_var_mut_argument` (152 fixtures built
 by the C backend, 100 by the asm backend, 52 refused), the direction the ratchet
 tolerates, with the two new refusals recorded rather than hidden.
@@ -1629,7 +1629,7 @@ unit, 273 end-to-end, 57 formatter, 2 capability-matcher, 1 path-normalizer, 1 m
 
 ## C's own diagnostics name the `.kp` line: roadmap item 20 (DONE)
 
-`plan/architecture.md` has recommended "generate readable, `#line`-annotated C" since MK1, `plan/done.md`'s
+`plan/architecture.md` has recommended "generate readable, `#line`-annotated C" since MK1, `meta/milestones.md` (kelp wiki)'s
 MK1-S2-M1 entry and both wiki codegen rows already claimed it shipped, and `codegen_c.rs` emitted no `#line`
 directive at all. Item 20 framed the choice as implement it or drop the claim; this implements it, which is
 also what the capability denial's baked-in `file:line:col` string was standing in for.
@@ -2226,7 +2226,7 @@ This is the part LLVM does not do for us, and it is where the new backend can be
 - **What LLVM does not give us, and what D-1/D-2 still mean.** LLVM supplies a
   defined semantics for the IR *we* emit. It does not supply a formal operational
   semantics for Kelp, an aliasing model for `&mut`, or a UB catalogue. Those remain
-  the duty for `unsafe`, atomics and threads (`roadmap.md` D-1 to D-3, MK11). What
+  the duty for `unsafe`, atomics and threads (`meta/roadmap.md` (kelp wiki) D-1 to D-3, MK11). What
   is gone is their role as a *flip prerequisite* for a hand-written backend that
   had to pin by hand the semantics it emitted.
 
@@ -2243,7 +2243,7 @@ exists for a different reason. The code half of the flip landed on 2026-09-21
 - **The refusal ranking empty.** Nothing is refused by name once the flip is
   announced. A refusal is a user-visible build failure with no workaround, which is
   acceptable while the backend is opt-in and not acceptable as a default.
-- **Differential fuzzing and a conformance corpus** (`roadmap.md` D-4). Still the
+- **Differential fuzzing and a conformance corpus** (`meta/roadmap.md` (kelp wiki) D-4). Still the
   highest-value item, and still true of this backend: the corpus has been blind
   three times inside one recorded session (a float `List` element only a hand-written
   probe could see, an enum slice's wrong-width load, and a "byte-identical" claim a
@@ -2509,9 +2509,9 @@ is required to believe the flip, and saying so is part of the flip's notes.
 - **Rewriting `kelpc` in Kelp is out of scope, permanently.** There is no `stage1`,
   no `stage2` and no fixpoint milestone, none will be added, and this backend change
   does not reopen the question. The compiler is and stays a Rust program. The
-  roadmap's MK8 bootstrap stages are cancelled (see `roadmap.md`, MK8).
+  roadmap's MK8 bootstrap stages are cancelled (see `meta/roadmap.md` (kelp wiki), MK8).
 - **A hand-written optimizer** for a hand-written backend: retired with the track.
-- **`no_std`/freestanding as a backend deliverable** (`roadmap.md` B-6, MK9-S4):
+- **`no_std`/freestanding as a backend deliverable** (`meta/roadmap.md` (kelp wiki) B-6, MK9-S4):
   still wanted for kernels and firmware, and now an LLVM triple plus a runtime
   question rather than tier 3 of a backend.
 - **The encoder and the ELF writer**: not written.
@@ -2520,7 +2520,7 @@ is required to believe the flip, and saying so is part of the flip's notes.
 
 - The optimizer gap, per workload: `asm-backend/call-overhead.md` §1 (this machine,
   2026-09-20, medians of 8 interleaved rounds).
-- The compile-time share of `cc`: `roadmap.md`'s MK7 section, measured 2026-09-18.
+- The compile-time share of `cc`: `meta/roadmap.md` (kelp wiki)'s MK7 section, measured 2026-09-18.
 - The retired track's stage order, gates and refusal ranking:
   `asm-backend/plan.md` §0 and §5.
 - The flip criteria this file rewrites: `asm-backend/default-switch.md` §1, with
@@ -2537,7 +2537,7 @@ is required to believe the flip, and saying so is part of the flip's notes.
 
 ## Language completeness 7 and 8: exclusive captures, the interaction matrix, the tour (DONE)
 
-- **Exclusive captures** (`plan/exclusive-captures.md`). A scoped trailing block may write what it
+- **Exclusive captures** (`language/functions.md` (kelp wiki)). A scoped trailing block may write what it
   captures: `s.count += n`, `xs.push(n)`, a `Copy` `var` counter, a `mut` parameter. The capture is
   an exclusive borrow of the owner for the call the block is written in, inferred from the body
   (a bounded retry in `check_fn_literal`), registered in `borrowck.rs::take_call_arguments` beside
@@ -2551,5 +2551,5 @@ is required to believe the flip, and saying so is part of the flip's notes.
   `Map` key identity).
 - **Tooling**: `fmt`, `lint` and `check --json` tested over every new construct
   (`tests/new_constructs_tooling.rs`).
-- **The tour** (`plan/language-tour-2026-10.md`): every example built and run on both backends,
+- **The tour** (`tutorial.md` (kelp wiki)): every example built and run on both backends,
   with the real output, as the source for the wiki pages.

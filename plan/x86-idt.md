@@ -1,7 +1,7 @@
 # Kernel stage 22: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer
 
-*A design note, not a Mark. `plan/kernel-path.md` owns the stage list;
-`plan/x86-64.md` owns the boot flow this builds on; `plan/inline-asm.md` owns the
+*A design note, not a Mark. `language/kernel.md` (kelp wiki) owns the stage list;
+`language/kernel.md` (kelp wiki) owns the boot flow this builds on; `language/unsafe.md` (kelp wiki) owns the
 `asm`/`naked` surface the gates are written with. This file says what the stage
 built and what it deliberately does not.*
 

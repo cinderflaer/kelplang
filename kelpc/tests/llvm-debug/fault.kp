@@ -1,4 +1,4 @@
-// The fixture of MK7 S4 (the MK7 record in `plan/done.md`): a program whose
+// The fixture of MK7 S4 (the MK7 record in `kelp wiki page meta/milestones.md`): a program whose
 // job is to fault, so a fault address exists for `gdb` to resolve to a `.kp`
 // line.
 //

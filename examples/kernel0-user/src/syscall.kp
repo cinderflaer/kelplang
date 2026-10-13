@@ -3,7 +3,7 @@ impl "vm"
 
 // The syscall layer: numbers, the two calls, and the copy that never reads a
 // user address. `trap_dispatch` reads the number and the arguments out of the
-// trap frame and calls `handle` (`plan/syscall-abi.md`).
+// trap frame and calls `handle` (`language/kernel.md` (kelp wiki)).
 //
 // Every byte a syscall takes from a program goes through the kernel buffer, and
 // only after `vm.user_page_pa` has answered for the page the byte is on. That

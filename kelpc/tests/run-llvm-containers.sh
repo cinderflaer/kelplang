@@ -2,7 +2,7 @@
 # The MK7 S2D gate: runs the container fixtures (`List<T>`, `Map<K, V>`,
 # `Box<T>` and `[T; N]`) against the `llvm` backend.
 #
-# S2 is "aggregates, containers and drops" (the MK7 record in plan/done.md), and
+# S2 is "aggregates, containers and drops" (the MK7 record in kelp wiki page meta/milestones.md), and
 # **S2D is its container slice**: the monomorphized function sets the removed C backend wrote
 # generates per element or value type, generated into the module as IR instead
 # (the plan's §3.2 exception), with the same bodies, the same function names and

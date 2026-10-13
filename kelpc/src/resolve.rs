@@ -1074,7 +1074,7 @@ pub fn load(
             // than a resource the root of trust owns, so a freestanding
             // project has to write `[caps] mmio = [...]` down before any
             // module may build a pointer from an address
-            // (`plan/device-caps.md`).
+            // (`kelp wiki page language/capabilities.md`).
             if *domain == "mmio" {
                 continue;
             }
@@ -1107,7 +1107,7 @@ pub fn load(
         for domain in crate::stdlib::DOMAINS {
             // `caps(*)` is the whole resource of every domain *except* mmio:
             // the whole address space is the escape hatch a reviewer greps
-            // for, so it is never handed over implicitly (`plan/device-caps.md`).
+            // for, so it is never handed over implicitly (`kelp wiki page language/capabilities.md`).
             if *domain == "mmio" {
                 continue;
             }
@@ -1731,7 +1731,7 @@ impl Loader<'_> {
         // `defer` is lowered away here, before resolution, the type checker,
         // the borrow checker and both backends, so every deferred action is
         // ordinary code by the time any of them sees the tree
-        // (`plan/defer.md`).
+        // (`kelp wiki page language/statics-and-defer.md`).
         crate::defer::lower(&mut program, id)?;
 
         self.state.insert(id.to_string(), 1);
@@ -3477,7 +3477,7 @@ fn reaches_a_domain(
 /// line's: every pattern through `validate_cap_pattern`, plus the one domain
 /// whose pattern list is not a vocabulary at all.
 ///
-/// `ui` is that domain (gap 6, `plan/ffi-display-domain.md`): a display call
+/// `ui` is that domain (gap 6, `kelp wiki page libraries/polyp.md`): a display call
 /// carries no argument that names the display server, so no pattern narrower
 /// than `*` could be matched at a call site, and accepting one would read as
 /// an enforced grant while denying nothing. Only `["*"]` is taken, and any
@@ -3513,7 +3513,7 @@ fn validate_cap_grant(
 /// against without parsing again, and so a malformed or overlapping grant is a
 /// compile error at the `impl` line or the manifest line that wrote it rather
 /// than a surprise at the one call that reaches outside it
-/// (`plan/device-caps.md`, `plan/irq-frame-caps.md`).
+/// (`kelp wiki page language/capabilities.md`, `kelp wiki page stdlib/irq.md`).
 fn validate_range_grant(
     domain: &str,
     patterns: &[String],

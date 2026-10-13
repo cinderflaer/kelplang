@@ -1,6 +1,6 @@
 # st1 status: what is finished and what is not
 
-`plan/sync.md` is the decided design. This note says exactly how far it is
+`stdlib/sync.md` (kelp wiki) is the decided design. This note says exactly how far it is
 implemented and where the built shape differs from it.
 
 ## Finished, on both backends, with tests
@@ -88,6 +88,6 @@ Every program above passes on the default LLVM backend and under
 
 ## Not weakened
 
-No check was relaxed and no test was deleted. `plan/kernel-ub-notes.md` carries the
+No check was relaxed and no test was deleted. `language/unsafe-ub-catalogue.md` (kelp wiki) carries the
 stage's undefined-behaviour note, and `plan/user-ffi-gap-analysis.md` records that no
 FFI gap is closed by it.

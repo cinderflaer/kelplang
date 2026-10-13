@@ -34,9 +34,9 @@ impl "std/result"
    name with a leading `/`, a `..` segment or a NUL byte is refused before a
    path is built, and a read the OS refuses is `Err(Denied)`. A grant too
    narrow for a path is the compiler's own call-site panic rather than a
-   returned error, which `plan/tz.md` records (open item 73).
+   returned error, which `kelp wiki page stdlib/tz.md` records (open item 73).
 
-   The syntax, the decisions and the limits are written out in `plan/tz.md`;
+   The syntax, the decisions and the limits are written out in `kelp wiki page stdlib/tz.md`;
    this file is the implementation. */
 
 // Instants outside the years 1 to 9999 are refused rather than wrapped: the
@@ -57,7 +57,7 @@ const MAX_TYPES: usize = 256
 const MAX_CHARS: usize = 65536
 
 // The English 3-letter tables `%a` and `%b` print from. There is no locale in
-// this module (plan/tz.md, Limits).
+// this module (kelp wiki page stdlib/tz.md, Limits).
 const WDAY_NAMES: str = "SunMonTueWedThuFriSat"
 const MONTH_NAMES: str = "JanFebMarAprMayJunJulAugSepOctNovDec"
 
@@ -500,7 +500,7 @@ fun parse_rule(p: mut TzParser).return: RuleDay {
 // A footer's TZ string, or a TZ string that says "none" when the text is not
 // one this parser understands. A name with daylight time and no rules is
 // treated the same way rather than guessing a rule set the string does not
-// carry (plan/tz.md, Limits).
+// carry (kelp wiki page stdlib/tz.md, Limits).
 fun parse_tz_string(text: &str).return: TzString {
     val none = no_tz()
     var p = TzParser(chars = Bytes.from_str(text), at = 0, bad = false)

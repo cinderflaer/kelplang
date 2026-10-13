@@ -1,6 +1,6 @@
 # Freestanding mode (MK9-S4-M1/M2, kernel stage 4)
 
-*A design note, not a Mark. `plan/kernel-path.md` owns the stage list; this is
+*A design note, not a Mark. `language/kernel.md` (kelp wiki) owns the stage list; this is
 the record of what the stage decided and why.*
 
 ## What it is
@@ -45,7 +45,7 @@ a borrowed literal in read-only data; user `datac` and `enum` values; arrays
 `[T; N]`; borrows `&T`/`&mut T`; `if`, `when`, loops, functions, and closures
 that capture nothing (a capturing literal owns a heap environment that only the
 runtime could free); `Atomic<T>` and its methods, plus the admitted standard
-modules (kernel stage 19, `plan/freestanding-std.md`): the pure `std/atomic`,
+modules (kernel stage 19, `language/freestanding.md` (kelp wiki)): the pure `std/atomic`,
 `std/arena`, `std/irq` and `std/frame`, `std/option`'s and `std/result`'s value
 helpers, `std/math`'s integer `abs`/`min`/`max`/`clamp`, and the five `std/str`
 operations the
@@ -63,7 +63,7 @@ next section), with only the operations that have a libc-free lowering -
 `get`/`set`/`push`/`clone`/`reserve`/`clear`, `str.concat` and the integer
 builders, and drop - callable; every other `String`/`Bytes` method and every
 other `std/str` function is refused by name with "needs the hosted runtime"
-(`plan/freestanding-string.md`). The same pair admits `std/list`, whose every
+(`language/freestanding.md` (kelp wiki)). The same pair admits `std/list`, whose every
 function takes a closure, and the `std/option`/`std/result` callback
 combinators, whose environments are heap boxes; without it each of those is
 refused by name with the two manifest keys.
@@ -100,7 +100,7 @@ surface: `print` is refused as a call, `String`/`Bytes` as a type wherever they
 appear without an allocator (a local, a parameter, a field, a return),
 `Thread` always, and a `std/*` module as both. `View` is a borrowed two-word
 value with no storage, so it is admitted with the allocator-using
-`View.to_string` held back (kernel stage 23, `plan/freestanding-std.md`). A shape
+`View.to_string` held back (kernel stage 23, `language/freestanding.md` (kelp wiki)). A shape
 not on the allowed
 list is refused rather than lowered, so a program that compiles freestanding
 cannot reference a symbol the link would miss.
@@ -166,7 +166,7 @@ except the clear loop itself, so a kernel's first instruction already has a
 stack and already has zeroed statics; no register is read before it is written
 and no stack frame exists yet.
 
-The x86-64 stub (kernel stage 20, `plan/x86-64.md`) is the one that cannot start
+The x86-64 stub (kernel stage 20, `language/kernel.md` (kelp wiki)) is the one that cannot start
 in the entry's own mode: QEMU's x86 `-kernel` loads an ELF64 image through the
 Xen PVH note and enters a 32-bit physical address in protected mode with paging
 off. The stub therefore emits a `.note.Xen` `XEN_ELFNOTE_PHYS32_ENTRY` (type 18)
@@ -208,7 +208,7 @@ the other sections too, because lld places an unnamed orphan (`.eh_frame` is
 the one a program with unwinding tables emits) before `.text`, and QEMU's
 `-bios none` starts the image at 0x80000000 rather than the ELF entry, so
 `_start` has to hold that address (`examples/kernel0/kernel.ld`,
-`plan/kernel0-status.md`).
+`language/kernel.md` (kelp wiki)).
 
 ## The compiler's `mem*` fallbacks
 
@@ -281,7 +281,7 @@ the pair. A wrong signature is a compile error naming the expected one.
 
 With a pair configured, `Box<T>`, `List<T>` and `Map<V>` are allowed whenever
 their element/key/value types are allowed, and `String` and `Bytes` themselves
-are allowed with the operation subset above (`plan/freestanding-string.md`).
+are allowed with the operation subset above (`language/freestanding.md` (kelp wiki)).
 Every allocation and free those types make in the LLVM output calls the
 project's functions instead of libc's `malloc`, `realloc` and `free`, and the
 two memory primitives a freestanding image has no libc for (`memcpy`,
@@ -298,7 +298,7 @@ this stage does not reroute them. A failed allocation (the project's `alloc`
 returns null) calls the project's panic handler with `"out of memory"`, so it is
 a panic and never a null dereference.
 
-`plan/kernel-ub-notes.md` carries the stage's undefined behaviour: everything
+`language/unsafe-ub-catalogue.md` (kelp wiki) carries the stage's undefined behaviour: everything
 the allocator does with the memory it returns is a promise the compiler does not
 check (alignment, size, aliasing, double free).
 
@@ -306,7 +306,7 @@ check (alignment, size, aliasing, double free).
 
 Every compiler-inserted check calls one compiler-emitted entry,
 `kelp_panic_entry(msg, file, line)`, never the project's handler directly.
-`plan/panic-semantics.md` is the design; this is what it means for the mode.
+`language/freestanding.md` (kelp wiki) is the design; this is what it means for the mode.
 
 - The handler may be `fun(msg: str)` or `fun(msg: str, file: str, line: u32)`.
   The `file` is the source file name (`main.kp`) and the `line` is the 1-based
@@ -408,7 +408,7 @@ and `__bss_end`.
 - ~~`String` and `Bytes` stay refused even with an allocator configured~~
   Closed by kernel stage 12: with an allocator, the operations with a libc-free
   lowering are legal and the rest are refused by name
-  (`plan/freestanding-string.md`).
+  (`language/freestanding.md` (kelp wiki)).
 - A large aggregate copy can make LLVM emit a `memcpy` or `memset` call, which
   it assumes libc provides. ~~Nothing here maps those to an in-language loop, so
   `ld.lld` reports the undefined symbol and the project has to supply it.~~

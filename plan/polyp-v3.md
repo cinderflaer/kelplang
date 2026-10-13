@@ -1,7 +1,7 @@
 # Polyp v3: a backend-neutral core
 
-*Design note for `examples/polyp/` v3. Not a Mark; `roadmap.md` owns the schedule, and
-`plan/polyp-v2.md` is the v2 record this one starts from. Stage 1 of 5 is done: the core is split
+*Design note for `examples/polyp/` v3. Not a Mark; `meta/roadmap.md` (kelp wiki) owns the schedule, and
+`libraries/polyp.md` (kelp wiki) is the v2 record this one starts from. Stage 1 of 5 is done: the core is split
 out and the GTK code became one backend behind an interface. Later stages append their own
 sections at the end.*
 
@@ -61,7 +61,7 @@ Move(path, to_index)          a matched keyed node whose position changed
   unkeyed child and `Keyed(i, key)` for a keyed one. The identity of a node is its key when it
   has one and its position otherwise, so a keyed node's path is stable across a reorder while an
   unkeyed one's is stable for as long as positional matching keeps it (a matched unkeyed new
-  child is always at the index its old partner was, `plan/polyp-v2.md`'s rule). `Update`, `Remove`
+  child is always at the index its old partner was, `libraries/polyp.md` (kelp wiki)'s rule). `Update`, `Remove`
   and `Move` name nodes that already exist, so their paths are the ones already live.
 - `kind` is one of the `KIND_*` integers `gtk.kp` used, unchanged: the backend maps them to
   whatever its platform calls the widget, and the core never asks what they mean.
@@ -198,7 +198,7 @@ any of the API: **integer only** (no `f32`/`f64` anywhere, so no soft-float libc
 riscv64 target), **no libc and no OS call** (the only external facts are a pixel pointer and a
 stride the platform hands over), **no heap allocation in any drawing function** (scratch is
 the caller's, a fixed `static` or a stack array), and **only the modules that touch raw pixels
-carry `unsafe`**. `plan/freestanding.md` is what stage 4 may use; nothing in the four core
+carry `unsafe`**. `language/freestanding.md` (kelp wiki) is what stage 4 may use; nothing in the four core
 modules names a `std` module except `std/str`'s `len`/`byte`, which the freestanding backend
 lowers itself.
 
@@ -622,7 +622,7 @@ float-to-integer conversion. A pixel fill width is an integer, so `soft/frac.kp`
 integer shifts into a permille in `0..=1000`. It is ~20 lines, allocates nothing, and never
 performs a float operation, which is what keeps a freestanding riscv64 image from needing a
 soft-float libcall for the progress bar. The read is a type-punning load, legal only in the
-module a manifest lists; `plan/kernel-ub-notes.md` records it. *Stage 4 removed this module:
+module a manifest lists; `language/unsafe-ub-catalogue.md` (kelp wiki) records it. *Stage 4 removed this module:
 `Props.fraction` is an integer permille and `Node.Progress`/`Children.progress` carry it, so the
 core performs no `f64` comparison and nothing has to decode a float. See stage 4's "What this
 stage found".*
@@ -690,8 +690,8 @@ targets, draw the same pixels as the hosted run. "Same pixels" is the FNV-1a che
 
 `examples/polyp-fb-riscv64` boots on QEMU's riscv64 `virt` machine (`-bios none`, UART at
 `0x10000000`) and `examples/polyp-fb-x86_64` on `-M q35` through the PVH stub, with COM1
-(`0x3F8`) for output and a `hlt` halt. Each is the `kernel0` shape (`plan/freestanding.md`,
-`plan/x86-64.md`) plus four things:
+(`0x3F8`) for output and a `hlt` halt. Each is the `kernel0` shape (`language/freestanding.md` (kelp wiki),
+`language/kernel.md` (kelp wiki)) plus four things:
 
 - a `static mut FB: [u32; FB_W * FB_H]` at 320x200 (256 KiB of `.bss`, zeroed by the `_start`
   stub like every other static) that the project's platform hands to the backend as an `fb.Fb`
@@ -787,7 +787,7 @@ lists what a bare-metal project has to write down, with `main.kp` as the worked 
   the compiler skip the derived pair for them, and `soft_backend.find_text` writes into a caller's
   `String` instead of returning an `Option<String>`, so no keyable `Option<String>` is
   instantiated. The pairs are hand-written with `str.len`/`str.byte` (the freestanding lowering),
-  so `Map` still works on both backends. Recorded as a gap in `plan/kernel-ub-notes.md`'s stage-4
+  so `Map` still works on both backends. Recorded as a gap in `language/unsafe-ub-catalogue.md` (kelp wiki)'s stage-4
   note; the freestanding compiler half (emit a body for `kelp_map_key_eq`, or emit the derived
   pair only for types a `Map` really keys) is not this stage's to make.
 - **The float in the core.** `Props.fraction` was an `f64`, which cost two soft-float calls in
@@ -821,7 +821,7 @@ display has no alpha, so the stage's `checksum` can never match a screen. `soft/
 `checksum_rgb` (the same FNV-1a over blue, green, red and a constant `0xFF`), the shared scenario
 emits it once as `display 0x<16 hex digits>` after the last step, and both kernels and the hosted
 run print that line, so the display comparison is a checksum comparison and not a golden image.
-`plan/polyp-ramfb-status.md` is the record, including what is deliberately not there.
+`libraries/polyp-freestanding.md` (kelp wiki) is the record, including what is deliberately not there.
 
 ## Stage 5: the latency model, work budgets and a benchmark
 

@@ -1,6 +1,6 @@
 # User `Drop` (kernel stage 6, MK9-S6-M1, the second half of B-8)
 
-*Design note. `plan/kernel-path.md` orders the stages; `plan/defer.md` is the other half of
+*Design note. `language/kernel.md` (kelp wiki) orders the stages; `language/statics-and-defer.md` (kelp wiki) is the other half of
 row 6. This one gives a user type a destructor the compiler runs at every drop point the
 `DropPlan` already has, so a kernel can couple a lock flag to the value that holds it.*
 
@@ -58,7 +58,7 @@ same shape: one fixed name, one fixed signature, checked at the declaration.
 - `defer` and `Drop` are independent: a `defer` is spliced before the block's ordinary drops, so
   on an ordinary exit a deferred action runs before the value's destructor. On a `panic` neither
   runs: there is still **no unwinding** (`plan/mk9-memory-model.md` 2), the frame is abandoned,
-  and the leak is the same one that document already admits. `plan/kernel-ub-notes.md` carries
+  and the leak is the same one that document already admits. `language/unsafe-ub-catalogue.md` (kelp wiki) carries
   the stage's section.
 
 ## How it is implemented

@@ -2,7 +2,7 @@
 # The MK7 S2B gate: runs the runtime, `String`/`Bytes` and owned-field drop
 # fixtures against the `llvm` backend.
 #
-# S2 is "aggregates, containers and drops" (the MK7 record in plan/done.md). S2A
+# S2 is "aggregates, containers and drops" (the MK7 record in kelp wiki page meta/milestones.md). S2A
 # was its plain-record slice; **S2B is its runtime and heap slice**: the C
 # runtime (`kelp-rt/`, the Rust archive `build.rs` builds) linked into every LLVM
 # binary, the `str`/`String`/`Bytes`/`View` representations, a `datac` with an

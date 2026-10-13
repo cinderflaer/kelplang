@@ -1,9 +1,9 @@
 # A timer interrupt and a preemptive round-robin scheduler (kernel stage 21)
 
-*Design note for `plan/kernel-path.md`'s next stage after userspace and capabilities. It is the
-process-model half of row 9 that `plan/syscall-abi.md` deliberately left out: a machine timer, a
+*Design note for `language/kernel.md` (kelp wiki)'s next stage after userspace and capabilities. It is the
+process-model half of row 9 that `language/kernel.md` (kelp wiki) deliberately left out: a machine timer, a
 round-robin scheduler and preemption, still in M-mode with no paging. The undefined-behaviour
-catalogue is `plan/kernel-ub-notes.md`'s stage 21 section.*
+catalogue is `language/unsafe-ub-catalogue.md` (kelp wiki)'s stage 21 section.*
 
 ## What this adds
 
@@ -72,7 +72,7 @@ lock an interrupted task is holding, and two tasks cannot interleave inside one 
   compare register is hardcoded for hart 0, and the lock's interrupt masking is a
   single-hart argument that does not survive a second hart.
 - Preemption of user mode. Stage 21 runs its tasks in machine mode; the U-mode process of
-  `plan/syscall-abi.md` is still one program at a time with no timer.
+  `language/kernel.md` (kelp wiki) is still one program at a time with no timer.
 - Anything about the timer's accuracy, drift or a wall-clock notion: `mtimecmp` is re-armed
   from a fresh `now`, so a delayed tick is skipped rather than made up, and the run is counted
   in ticks, never in time.

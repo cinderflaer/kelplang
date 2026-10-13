@@ -1,6 +1,6 @@
 /* The kernel image for QEMU's x86-64 `-kernel` boot, which loads an ELF64
    image through the Xen PVH note and jumps to the 32-bit entry the note names
-   (`plan/x86-64.md`). The image is placed at 1 MiB, the classic low-memory
+   (`kelp wiki page language/kernel.md`). The image is placed at 1 MiB, the classic low-memory
    kernel base, and `.text.boot` comes first so the compiler's `_start` stub is
    the ELF entry the boot loader reaches. `_start` loads `sp` from
    `__stack_top`, so the stack 16 KiB at the end of the image is the one the

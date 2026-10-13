@@ -19,6 +19,6 @@ modules = ["main", "trap", "uart", "vm"]
 # constant, so it gets exactly that window. `trap` and `vm` turn computed
 # addresses (a trap-frame slot, a page-table frame) into pointers, which the
 # compiler cannot fold, so they need the whole-address-space wildcard - the
-# escape hatch a reviewer greps for (`plan/device-caps.md`).
+# escape hatch a reviewer greps for (`language/capabilities.md` (kelp wiki)).
 [caps]
 mmio = ["*"]

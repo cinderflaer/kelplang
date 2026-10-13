@@ -12,7 +12,7 @@ impl "vm" caps(mmio = ["*"])
 // identity-mapped as non-user pages plus the program's `U|R|X` code page at
 // 0x10000 and `U|R|W` stack page at 0x20000), runs two of them one after the
 // other, and lets each end either through `exit` or through a trap the kernel
-// kills it for (`plan/syscall-abi.md`).
+// kills it for (`language/kernel.md` (kelp wiki)).
 const IMAGE_START: usize = 0x80000000
 const IMAGE_SPAN: usize = 4 * 1024 * 1024
 

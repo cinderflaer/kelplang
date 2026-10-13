@@ -1,6 +1,6 @@
 # Polyp: a native UI framework for Kelp
 
-*Proposal, not commitment and not a Mark. `roadmap.md` owns the plan and the schedule; nothing here is
+*Proposal, not commitment and not a Mark. `meta/roadmap.md` (kelp wiki) owns the plan and the schedule; nothing here is
 scheduled, a prototype is all that exists, and no lane is open. This file exists because the idea is concrete enough
 to write down and far enough away to be worth keeping out of the live plan. What follows is what Polyp
 is, what a program would look like in it, what it would owe a reader that Tkinter and Compose do not, and
@@ -38,7 +38,7 @@ stands, the same view hands the callback over as an ordinary argument, `f = fun(
 and the sugar is what the example above is asking for.
 
 **The prerequisite is now in.** Open item 75 landed as two pieces: `plan/trailing-closure.md` (a
-same-line `{ ... }` is the call's last argument) and `plan/scoped-blocks.md` (a block header
+same-line `{ ... }` is the call's last argument) and `language/functions.md` (kelp wiki) (a block header
 `{ k -> ... }`, a value-returning block, and a `scoped fun(...)` parameter that accepts only a literal
 or trailing block written at the call site and may capture the enclosing frame **by shared borrow**).
 So `polyp.column { k -> k.text(s.title) }` reads a borrowed `s` with a borrow that is checked and
@@ -57,7 +57,7 @@ one is a consequence of a language property Kelp already has, not a feature Poly
    asks whether the borrow is still valid at the point the callback runs, so a callback whose lifetime
    does not check is a compile error. That turns a whole class of UI defects, the stale closure and the
    use of an outdated captured value, into compiler-caught ones. **True for scoped blocks** as of
-   `plan/scoped-blocks.md`: a `scoped fun(...)` literal's captures are borrows whose lifetime is the
+   `language/functions.md` (kelp wiki): a `scoped fun(...)` literal's captures are borrows whose lifetime is the
    call, so a view that reads `s.title` reads the live value, and a capture that would escape is a
    compile error (`scoped_param_stored`, `scoped_param_returned`, `scoped_param_to_plain`).
 2. **No garbage collector.** Kelp is ownership and drop, with no GC, so there is no collector to pause
@@ -77,7 +77,7 @@ one is a consequence of a language property Kelp already has, not a feature Poly
 - Whether it wraps GTK directly or through an abstraction layer of its own. That is a design decision
   for whoever starts it, and it interacts with the widget-wrapping choice above.
 - The trailing-closure syntax design itself, which is open item 75 and a language question first.
-  **Landed** as `plan/trailing-closure.md` plus `plan/scoped-blocks.md`; the `state.count += 1`
+  **Landed** as `plan/trailing-closure.md` plus `language/functions.md` (kelp wiki); the `state.count += 1`
   (exclusive-capture) shape is the part still open.
 
 ## Status
@@ -87,7 +87,7 @@ and three programs (`polyp-counter`, the keyed `polyp-todo`, and the scrolled li
 and run on both backends under Xvfb, on the user FFI of B-1 and the scoped trailing blocks of open
 item 75. v1 built the tree fresh on every state change with one entry-retention rule; v2 keeps the
 live widget tree and patches it, with keys, in-place updates, keyed moves and new widgets and layout
-options. `plan/polyp-v2.md` is the design note and `examples/polyp/README.md` the reference. It
+options. `libraries/polyp.md` (kelp wiki) is the design note and `examples/polyp/README.md` the reference. It
 blocks nothing and nothing blocks it except a real UI program being wanted rather than a plan to run;
 what is left is depth (lazy lists, animation, theming, more than Linux) rather than substrate. It has
 no stages.

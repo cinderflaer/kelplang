@@ -1,5 +1,5 @@
 // The `irq` and `frames` capability values as plain hosted values (kernel
-// stage 18, `plan/irq-frame-caps.md`). With no `[caps]` section the entry
+// stage 18, `kelp wiki page stdlib/irq.md`). With no `[caps]` section the entry
 // module holds the whole resource of every domain but `mmio`, so a constant
 // claim is admitted, and the value it carries is the number the compiler
 // checked. A hosted program has no hardware: the check is the same one a

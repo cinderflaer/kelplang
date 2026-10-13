@@ -21,7 +21,7 @@
 //!
 //! Targets that are not defined by the language are not frozen, because a
 //! golden would then pin one arbitrary answer as if it were the specification
-//! (`plan/bugfix-pass.md:107-120`, section 7 question 2 of the plan). The
+//! (`kelp wiki page changelog.md:107-120`, section 7 question 2 of the plan). The
 //! exclusion list is [`EXCLUDED`].
 //!
 //! Tests:

@@ -1,7 +1,7 @@
 # Layout control (kernel stage 2, MK9-S1-M2 / roadmap B-2)
 
 *The design note for `repr(...)`, the compile-time layout queries, and explicit
-enum discriminants. `plan/kernel-path.md` is the stage list; this is stage 2.*
+enum discriminants. `language/kernel.md` (kelp wiki) is the stage list; this is stage 2.*
 
 ## What a `repr(...)` clause means
 
@@ -101,4 +101,4 @@ repr(u8) enum Mode { Off = 0, On = 1, Fast = 10 }
 
 ## What this adds to the UB catalogue
 
-See stage 2 of `plan/kernel-ub-notes.md`.
+See stage 2 of `language/unsafe-ub-catalogue.md` (kelp wiki).

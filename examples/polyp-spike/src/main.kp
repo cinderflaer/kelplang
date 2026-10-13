@@ -5,7 +5,7 @@
 //
 // `ui` is the display domain (gap 6); a GTK call names no display argument, so
 // the grant is the wildcard and nothing narrower is accepted
-// (plan/ffi-display-domain.md).
+// (kelp wiki page libraries/polyp.md).
 impl "gtk" caps(ui = ["*"])
 impl "std/str"
 

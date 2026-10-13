@@ -5,7 +5,7 @@ impl "std/option"
 // only machine-level operations the module needs are a `Ptr<u64>` volatile
 // load or store and the two CSRs `satp` and `sfence.vma`. The compiler's whole
 // part is `unsafe` and inline asm, so this is ordinary Kelp arithmetic on
-// addresses it was handed (kernel stage 10, `plan/address-spaces.md`).
+// addresses it was handed (kernel stage 10, `language/kernel.md` (kelp wiki)).
 const PAGE_SIZE: usize = 4096
 const ENTRIES: usize = 512
 
@@ -120,7 +120,7 @@ pub fun pte_encode(pa: usize, flags: u64).return: u64 {
 }
 
 // `satp` for Sv39: mode 8 in bits 63:60, ASID 0 in bits 59:44, the root
-// table's PPN in bits 43:0 (`plan/address-spaces.md`).
+// table's PPN in bits 43:0 (`language/kernel.md` (kelp wiki)).
 pub fun satp_encode(root: usize).return: usize {
     (SATP_MODE_SV39 << 60) | (root >> 12)
 }

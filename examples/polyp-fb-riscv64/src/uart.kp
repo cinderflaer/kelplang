@@ -2,7 +2,7 @@
 // send; LSR (offset 5) bit 5 is set while the transmit holding register is empty, so a byte is
 // written only after that bit reads back set. Every access goes through `Ptr<u8>` and is volatile,
 // and nothing else about the device is checked: the base, the offsets and the bit are the driver's
-// own claim about the hardware (kernel stage 1, `plan/unsafe-and-pointers.md`).
+// own claim about the hardware (kernel stage 1, `kelp wiki page language/unsafe.md`).
 //
 // This is the driver `examples/kernel0` carries, with the one addition Polyp needs: `puts` takes a
 // `str`, and `str.len`/`str.byte` are the compiler's own byte loops (kernel stage 7), so a step
@@ -31,7 +31,7 @@ pub fun puts(s: str) {
     }
 }
 
-// `wfi` has no Kelp spelling (kernel stage 5, `plan/inline-asm.md`), and the compiler's `_start`
+// `wfi` has no Kelp spelling (kernel stage 5, `kelp wiki page language/unsafe.md`), and the compiler's `_start`
 // stub already loops on it if the entry returns; this is the same halt written in the language.
 pub fun halt() {
     while true {

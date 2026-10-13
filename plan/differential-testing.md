@@ -1,6 +1,6 @@
 # Differential testing as a language feature
 
-*Proposal, not commitment and not a Mark. `roadmap.md` owns the plan and the schedule; nothing here is
+*Proposal, not commitment and not a Mark. `meta/roadmap.md` (kelp wiki) owns the plan and the schedule; nothing here is
 scheduled, no work has started, and no lane is open. What follows is the idea and the design questions it
 would have to answer, not an answer to them.*
 

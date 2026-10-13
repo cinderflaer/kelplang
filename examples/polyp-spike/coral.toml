@@ -3,7 +3,7 @@ name = "polyp_spike"
 # A ui-domain module: a window is authority over a display server, which gap 6
 # of plan/user-ffi-gap-analysis.md gave its own domain. The pattern vocabulary
 # is the wildcard alone, because a GTK call carries no argument that names the
-# display (plan/ffi-display-domain.md), which is what main.kp grants.
+# display (kelp wiki page libraries/polyp.md), which is what main.kp grants.
 #
 # The GTK module. All three of `library`, `header` and `pkg_config` are
 # load-bearing: the header makes the real prototypes visible to the generated

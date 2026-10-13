@@ -5,7 +5,7 @@
 // and compared by the diff) and `memo` (every row is `k.memo(..)`, so 1 row is rebuilt and the rest are
 // hits). It prints, per variant: rows, frames, memoised view calls, hits, pixels written, the median
 // microseconds per frame, and the last run's mean microseconds in `view` and in diff+apply; the times are one
-// development host's at one moment and noisy (`plan/polyp-v4.md` quotes a run).
+// development host's at one moment and noisy (`kelp wiki page libraries/polyp.md` quotes a run).
 //
 // `POLYP_BENCH_QUICK` shortens a run to a handful of frames so a test can bound it.
 impl "deps/polyp/core/core"

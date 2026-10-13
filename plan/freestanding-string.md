@@ -1,6 +1,6 @@
 # `String` and `Bytes` in freestanding mode (kernel stage 12, MK9-S5-M2)
 
-*A design note, not a Mark. `plan/freestanding.md` owns the mode; this is the
+*A design note, not a Mark. `language/freestanding.md` (kelp wiki) owns the mode; this is the
 record of what this stage added and why.*
 
 ## What changes
@@ -16,7 +16,7 @@ exactly as `emit_freestanding_str_bodies` writes the five `str` operations and
   an allowed type is (a local, a field, a parameter, a return, a container
   element). Without one they stay refused, with a message that names the two
   manifest keys.
-- `View` is admitted as of kernel stage 23 (`plan/freestanding-std.md`): it
+- `View` is admitted as of kernel stage 23 (`language/freestanding.md` (kelp wiki)): it
   is a borrowed `{ptr, len}` pair with no storage, and `len`/`is_empty`/`get`/
   `slice`/`eq` are byte loops the backend emits, with `View.to_string` in the
   allocator-only set. `Thread` stays refused, by name, with or without an
@@ -73,7 +73,7 @@ container bodies do.
 
 ## Undefined behaviour
 
-`plan/kernel-ub-notes.md` stage 12 carries it: the allocator's alignment and
+`language/unsafe-ub-catalogue.md` (kelp wiki) stage 12 carries it: the allocator's alignment and
 size promises are unchecked, a `realloc` that returns a moved block is fine but
 one that returns an aliasing block is not, and `dealloc` is handed `cap + 1`
 bytes with alignment 1 so a bump allocator that ignores the arguments still

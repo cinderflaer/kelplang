@@ -3,7 +3,7 @@ name = "kernel0"
 # Kernel stage 6, "kernel 0": a bare-metal riscv64 image QEMU's `virt` machine
 # boots, which writes a line to the NS16550 UART and halts. `mode`, `triple`,
 # `entry` and `linker_script` are stage 4's `[target]` section
-# (`plan/freestanding.md`); `panic` routes the compiler's own overflow and
+# (`language/freestanding.md` (kelp wiki)); `panic` routes the compiler's own overflow and
 # bounds checks to `kp_panic` in the entry module instead of the generated
 # infinite loop, so a fault prints something before it wedges.
 [target]
@@ -13,7 +13,7 @@ entry = "kmain"
 linker_script = "kernel.ld"
 panic = "kp_panic"
 
-# The audit list (stage 1, `plan/unsafe-and-pointers.md`): only `uart` contains
+# The audit list (stage 1, `language/unsafe.md` (kelp wiki)): only `uart` contains
 # `unsafe`, and that is the one module that talks to the device register.
 [unsafe]
 modules = ["uart"]
@@ -22,6 +22,6 @@ modules = ["uart"]
 # module was granted, and the address is the NS16550's register window on
 # QEMU's riscv64 `virt` machine. The entry module holds it and delegates
 # exactly it to `uart`, the one module that names the device
-# (`plan/device-caps.md`).
+# (`language/capabilities.md` (kelp wiki)).
 [caps]
 mmio = ["0x10000000+0x100"]

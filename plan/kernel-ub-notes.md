@@ -2,7 +2,7 @@
 
 One section per kernel-path stage: what new way to trigger undefined or
 implementation-defined behaviour the stage adds, and what the compiler does and
-does not check. `plan/kernel-path.md` is the stage list; `plan/unsafe-and-pointers.md`
+does not check. `language/kernel.md` (kelp wiki) is the stage list; `language/unsafe.md` (kelp wiki)
 is stage 1's design.
 
 ## Stage 1: MK9-S2 `unsafe` and pointers
@@ -256,10 +256,10 @@ the trap cause, the handler's save list or the hardware.
 template, the trap entry assumptions, the register save completeness, the CSR
 or privilege state at `mret`, and every MMIO fact. These are the reasons the
 next stages add `interrupt` attributes, stack guards and the panic semantics
-of stage 10, and MMIO capabilities in stage 11 (`plan/kernel0-status.md` lists
+of stage 10, and MMIO capabilities in stage 11 (`language/kernel.md` (kelp wiki) lists
 them in order).
 
-## Stage 7: the freestanding `str` surface (`plan/kernel0-status.md` gap 1)
+## Stage 7: the freestanding `str` surface (`language/kernel.md` (kelp wiki) gap 1)
 
 **New ways to reach UB.** A freestanding program can now hold and walk a `str`,
 which is a NUL-terminated literal in read-only data. The type still carries no
@@ -344,7 +344,7 @@ one holds, or anything about the linker script's placement of `.data`/`.bss`. Th
 not extend the (still unpublished) memory model to a `static` and a `Ptr` over
 the same bytes.
 
-## Stage 8: the address of a function (`plan/kernel0-status.md` gap 2)
+## Stage 8: the address of a function (`language/kernel.md` (kelp wiki) gap 2)
 
 **New ways to reach UB.** This stage turns a function into a machine address, so
 the program can carry code as data and jump to it without the compiler seeing a
@@ -484,7 +484,7 @@ the checks are compile-time, and a bad allocator is only observable at the boot
 the project writes.
 
 
-## Stage 9 (runtime): the freestanding runtime essentials (`plan/kernel0-status.md` gap 4)
+## Stage 9 (runtime): the freestanding runtime essentials (`language/kernel.md` (kelp wiki) gap 4)
 
 **New ways to reach UB.** This stage puts two pieces of compiler-written
 bare-metal behaviour under a program that still cannot check either:
@@ -672,7 +672,7 @@ idempotent, whether two destructors over one object are ordered safely, or
 anything on the panic path. The value is still live (borrowed exclusively) while
 the body runs, so the body cannot move out of it, but it can assign a field or
 read through a raw `Ptr` the value holds, with all of stage 1's consequences.
-## Stage 11: Sv39 address spaces (MK9-S4-M8, `plan/address-spaces.md`)
+## Stage 11: Sv39 address spaces (MK9-S4-M8, `language/kernel.md` (kelp wiki))
 
 **New ways to reach UB.** This stage adds no construct. Every line of
 `examples/kernel0-vm` is stage 1's `Ptr<u64>`, stage 7's `static mut`, stage 5's
@@ -741,7 +741,7 @@ translation. This stage is the point where the kernel builds the machine's own
 view of memory with the language's unchecked tools, and the catalogue for those
 tools is stages 1, 5, 7 and 8.
 
-## Stage 12: user mode and the syscall ABI (MK9-S4-M9, `plan/syscall-abi.md`)
+## Stage 12: user mode and the syscall ABI (MK9-S4-M9, `language/kernel.md` (kelp wiki))
 
 **New ways to reach UB.** No new construct: `examples/kernel0-user` is stage 1's
 `Ptr`, stage 7's `static mut`, stage 5's `asm` and stage 11's page tables. What
@@ -993,7 +993,7 @@ platform delivers the fault to the handler at all. D-1/D-2/D-3 stay open; the
 guard page and the fault stack join the catalogue of promises a kernel makes
 with `Ptr`, `static mut`, `asm` and a linker script.
 
-## The typed `std/tls` handle (release goal 1 follow-up, `plan/tls-handle.md`)
+## The typed `std/tls` handle (release goal 1 follow-up, `stdlib/tls.md` (kelp wiki))
 
 Not a kernel stage, recorded here because it changes what an opaque handle can hide.
 
@@ -1016,7 +1016,7 @@ stand in for a handle.
 whether the module that produced it is the one that consumes it, or whether the C body's cast is the right
 type. Those are the promises `std/tls`'s header documents and the AddressSanitizer gate exercises.
 
-## Stage 16: MMIO as a capability (MK10-S1, roadmap C-3, `plan/device-caps.md`)
+## Stage 16: MMIO as a capability (MK10-S1, roadmap C-3, `language/capabilities.md` (kelp wiki))
 
 **New way to reach undefined behaviour.** None from the check itself: it only
 adds a compile-time rule about which addresses `Ptr.from_addr` may name, and a
@@ -1191,7 +1191,7 @@ are still abandoned (`plan/mk9-memory-model.md` section 2). The runtime's cleanu
 on the `pthread_exit` path a worker takes; a panic on the main thread still ends the process with
 `exit(1)`, so a mutex it held is never unlocked and never observed.
 
-## Stage 15: panic semantics with no OS (MK9-S6-M2, row 10's other half, `plan/panic-semantics.md`)
+## Stage 15: panic semantics with no OS (MK9-S6-M2, row 10's other half, `language/freestanding.md` (kelp wiki))
 
 **New way to reach undefined behaviour.** A check that fires now calls a compiler-emitted entry
 (`kelp_panic_entry`) instead of the project's handler directly, and the entry reads two module
@@ -1221,11 +1221,11 @@ The `.bss` flag and the two location globals are cleared by the `_start` clear l
 that returns still comes back to a check that has no continuation. Nothing ties a location to the
 address the check actually read, and the generated accessor bodies that read the globals
 (`Array.get`'s `__bounds`, the container sets) are shared by every call site, so their line is
-whichever statement last ran, not a property of the body. `plan/panic-semantics.md` has the check
+whichever statement last ran, not a property of the body. `language/freestanding.md` (kelp wiki) has the check
 by check table and names the two constructs the task lists that are *not* checks here: integer
 overflow wraps and division by zero is unchecked UB, on this backend and the C oracle alike.
 
-## Stage 18: IRQ lines and physical frames as capabilities (MK10-S1, roadmap C-3, `plan/irq-frame-caps.md`)
+## Stage 18: IRQ lines and physical frames as capabilities (MK10-S1, roadmap C-3, `stdlib/irq.md` (kelp wiki))
 
 **New way to reach undefined behaviour.** None from the check itself, exactly as stage 16: a
 `Line` and a `Frame` are values, and a check that admits a call says nothing about the machine. What
@@ -1256,10 +1256,10 @@ whether the frame is RAM, device memory, already owned by another module, or sti
 device writes to it; anything about a byte past `Frame.offset`'s returned number; and, in the other
 direction, whether a module with a correct-looking grant actually needed it. There is still no
 runtime ownership, no liveness, no provenance (roadmap D-1) and no DMA tracking. `examples/kernel0-caps`
-carries the one grant the boot uses (line 10 and `0x80100000+0x100000`), and `plan/irq-frame-caps.md`
+carries the one grant the boot uses (line 10 and `0x80100000+0x100000`), and `stdlib/irq.md` (kelp wiki)
 is the design note.
 
-## Stage 19: the freestanding standard subset (release goal 3, `plan/freestanding-std.md`)
+## Stage 19: the freestanding standard subset (release goal 3, `language/freestanding.md` (kelp wiki))
 
 **New way to reach undefined behaviour.** None from the admission itself, and that is the point of
 this stage: it only moves a refusal from the module to the item, and every item it admits is one
@@ -1289,7 +1289,7 @@ the arena's region, a claimed line and a claimed frame are all the caller's clai
 machine, as stages 12, 13, 16 and 18 said. The refusal is a compile-time decision about reachable
 symbols, not a proof about any of them.
 
-## Stage 20: the x86-64 target (`plan/x86-64.md`)
+## Stage 20: the x86-64 target (`language/kernel.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** The x86-64 `_start` stub is module-level
 assembly the compiler emits and never reasons about, so everything it does between the
@@ -1328,11 +1328,11 @@ runs when a project replaces the stub; the real existence of a port or a device;
 template against the constraints; and anything about the machine past the first 1 GiB the
 stub maps.
 
-## Stage 21: the machine timer interrupt and a preemptive scheduler (`plan/scheduler.md`)
+## Stage 21: the machine timer interrupt and a preemptive scheduler (`language/kernel.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** The stage moves the machine between contexts the
-compiler never models, so most of its promises are unchecked in the same way `plan/inline-asm.md`
-and `plan/syscall-abi.md` said their handlers were. The ones worth naming:
+compiler never models, so most of its promises are unchecked in the same way `language/unsafe.md` (kelp wiki)
+and `language/kernel.md` (kelp wiki) said their handlers were. The ones worth naming:
 
 - **The trap entry's offsets and the `datac` layout are two independent facts.** The asm saves
   `x1..x31` at 0..240, `sepc` at 248 and `mstatus` at 256, and reads the scheduler address from
@@ -1354,7 +1354,7 @@ and `plan/syscall-abi.md` said their handlers were. The ones worth naming:
   a state machine that resumes a frame it already overwrote, is a wild jump the language
   cannot see. The entry trusts the returned pointer completely.
 - **A task's stack is a `[u8; 4096]` inside the table with no guard page.** The language's
-  stack guard (`plan/stack-guard.md`) probes the frames the compiler emits, but the value
+  stack guard (`language/kernel.md` (kelp wiki)) probes the frames the compiler emits, but the value
   loaded into `sp` before a task's first instruction is arithmetic on the table's address, and
   nothing checks that the stack the scheduler hands out exists, is large enough, or does not
   overlap the frame above it.
@@ -1384,7 +1384,7 @@ counter; that a task's `unsafe` block sequences its own `static mut` accesses; a
 of the machine a trap is the first thing to observe. Priorities, blocking, SMP and user-mode
 preemption are not built, so nothing here is a plan's promise either.
 
-## Stage 22: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer (`plan/x86-idt.md`)
+## Stage 22: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer (`language/kernel.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** The stage moves the machine through a gate the
 compiler never models, and every fact the gate shares with the language is a number neither
@@ -1490,7 +1490,7 @@ call a `mut Self` method through a shared `&dyn` (the call is refused at the
 type level, but the representation carries no mutability); and anything about
 the concrete type behind a `&dyn`, since the value carries no type tag.
 
-## A-14 slice 1: separate compilation (`plan/incremental-compilation.md`)
+## A-14 slice 1: separate compilation (`compiler/incremental.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** None. The mode changes how the
 backend's output is partitioned and linked, not what any instruction means: a
@@ -1521,7 +1521,7 @@ agreement between two objects is the same C ABI guarantee the whole-program
 build already relies on. Cross-unit inlining does not happen in this mode, which
 is a performance property rather than a safety one.
 
-## A-14 slice 2: the unit object cache (`plan/incremental-compilation.md`)
+## A-14 slice 2: the unit object cache (`compiler/incremental.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** None directly. A cache hit reuses an
 object the compiler already produced, so it cannot introduce behaviour the
@@ -1555,7 +1555,7 @@ contents against a recompile; equality of IR is taken as equality of object. The
 cache is not shared between machines or compiler versions by construction, not by
 a check: a copied directory simply misses.
 
-## A-14 slice 3: parallel unit compilation (`plan/incremental-compilation.md`)
+## A-14 slice 3: parallel unit compilation (`compiler/incremental.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** None in the language: this slice
 changes *when* and *on which thread* a unit is compiled, not what is compiled.
@@ -1585,7 +1585,7 @@ under a memory sanitizer. The failure path is exercised by a test-only hook that
 corrupts one unit's IR (`KELPC_TEST_CORRUPT_UNIT`), not by a real LLVM crash,
 because a real LLVM abort cannot be caught or attributed.
 
-## A-11 slice 3: a reference binding's root set (`plan/provenance.md`)
+## A-11 slice 3: a reference binding's root set (`language/ownership.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** None in the language: this slice
 changes only what the borrow checker accepts, not what a program compiles to.
@@ -1769,7 +1769,7 @@ through a volatile read until the device clears it, so the compiler cannot fold 
 that is checked, and a wrong selector, length or address is a transfer the device refuses or a
 surface QEMU never scans out. The test compares a `screendump` of the screen with the kernel's own
 `display` line, so a display that shows anything other than the framebuffer fails rather than being
-ignored (`plan/polyp-ramfb-status.md`).
+ignored (`libraries/polyp-freestanding.md` (kelp wiki)).
 
 ## Library note: Polyp v3's latency model, work budgets and deadline (2026-10-04, not a kernel stage)
 
@@ -1799,7 +1799,7 @@ does not check that a platform's clock is monotonic or that its `now_us` agrees 
 that a budget is smaller than a tick, or that the benchmark's wall-clock columns mean anything
 about a display. The budget tests are the evidence that the accounting is what the text says, and
 they are counts, not timings, so they are the same on both compiler backends.
-## st5: `std/tz`, the TZif reader (`plan/tz.md`)
+## st5: `std/tz`, the TZif reader (`stdlib/tz.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** None from the language or the module:
 `std/tz` is Kelp that reads a file through the `fs` gate, and every byte it takes
@@ -1889,7 +1889,7 @@ generic function which is never instantiated would satisfy anything: an
 uninstantiated body is never checked, exactly as it is not for a bound on a type
 parameter.
 
-## Language-completeness 2: the iterator protocol (`plan/iterators.md`)
+## Language-completeness 2: the iterator protocol (`language/iterators.md` (kelp wiki))
 
 **New ways to reach undefined behaviour.** None by itself. The `for` desugar
 builds ordinary statements (`while`, `when`, `let`, `break`) and calls an

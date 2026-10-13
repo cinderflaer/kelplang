@@ -1,5 +1,5 @@
 // The NS16550 UART QEMU's riscv64 `virt` machine puts at 0x10000000, and the
-// console lock the three tasks share (`plan/scheduler.md`).
+// console lock the three tasks share (`language/kernel.md` (kelp wiki)).
 //
 // THR (offset 0) is the byte to send; LSR (offset 5) bit 5 is set while the
 // transmit holding register is empty, so a byte is written only after that bit

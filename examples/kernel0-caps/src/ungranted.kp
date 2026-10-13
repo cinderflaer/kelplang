@@ -1,6 +1,6 @@
 // A compile-error fixture, not part of the booting image: no `impl` line in
 // `main.kp` names this module, so `run.sh` never compiles it. It is the
-// ungranted-line half of `plan/irq-frame-caps.md`'s refusal set: the entry
+// ungranted-line half of `stdlib/irq.md` (kelp wiki)'s refusal set: the entry
 // grants it line 10 and it reaches for 11, which `kelpc/tests/irq_frames.rs`
 // copies into a scratch project and asserts.
 impl "std/irq"

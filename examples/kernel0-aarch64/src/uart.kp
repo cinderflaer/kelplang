@@ -4,11 +4,11 @@
 // clear. Every access goes through `Ptr<u8>`/`Ptr<u32>` and is volatile so the
 // compiler can neither merge, reorder nor elide it, and nothing else about the
 // device is checked: the base, the offsets and the bit are the driver's own
-// claim about the hardware (kernel stage 1, `plan/unsafe-and-pointers.md`).
+// claim about the hardware (kernel stage 1, `language/unsafe.md` (kelp wiki)).
 //
 // Text arrives as a `str`, the same type a hosted program writes, and
 // `str.len`/`str.byte` are the compiler's own byte loops (kernel stage 7,
-// `plan/kernel0-status.md` gap 1), so no `strlen` and no `[u8; N]` copy sits
+// `language/kernel.md` (kelp wiki) gap 1), so no `strlen` and no `[u8; N]` copy sits
 // between the caller and the device.
 impl "std/str"
 
@@ -35,7 +35,7 @@ pub fun puts(s: str) {
     }
 }
 
-// `wfe` has no Kelp spelling (kernel stage 5, `plan/inline-asm.md`), and the
+// `wfe` has no Kelp spelling (kernel stage 5, `language/unsafe.md` (kelp wiki)), and the
 // compiler's `_start` stub already loops on it if the entry returns; this is
 // the same halt written in the language, so the kernel names its own stop.
 pub fun halt() {

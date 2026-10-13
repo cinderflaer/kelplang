@@ -1,6 +1,6 @@
 # The path to a kernel written in Kelp
 
-*A plan, not a Mark. It orders the existing MK9/MK10 items (`roadmap.md` block B) by what a first kernel
+*A plan, not a Mark. It orders the existing MK9/MK10 items (`meta/roadmap.md` (kelp wiki) block B) by what a first kernel
 needs, names the milestone that proves each step, and records the one decision it changes.*
 
 ## The decision this changes
@@ -22,7 +22,7 @@ and compares the serial output.
 at its entry point in a clean machine mode, and the UART is plain memory-mapped I/O, so kernel 0 exercises
 raw pointers and `volatile` honestly. The x86-64 equivalent needed a 32-bit PVH stub that enters long mode
 before any Kelp runs: real work, but it is bootstrapping, not language. It followed once the stages were in
-(kernel stage 20, `plan/x86-64.md`).
+(kernel stage 20, `language/kernel.md` (kelp wiki)).
 
 ## Order, and why
 
@@ -36,7 +36,7 @@ before any Kelp runs: real work, but it is bootstrapping, not language. It follo
 | 6 | **MK9-S6-M1 `defer`, `Drop`** (B-8) | deterministic cleanup a kernel can point at | Releasing locks and frames on every exit path |
 | 7 | **MK9-S5 allocators** (B-7) | a global allocator hook, arenas, alignment, fallible allocation | The first frame allocator and a kernel heap |
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
-| 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation (done: `plan/syscall-abi.md`) | Userspace |
+| 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `language/kernel.md` (kelp wiki)); a syscall ABI and untrusted-pointer validation (done: `language/kernel.md` (kelp wiki)) | Userspace |
 | 10 | **MK9-S7-M2, MK9-S6-M2** (B-14, B-15) | stack guards and probing; panic semantics with no OS | A kernel that fails loudly instead of silently |
 | 11 | **MK10-S1** (C-3) | MMIO regions, IRQ lines and frames as *capabilities* (done) | The safety story: a driver can only touch what it was granted |
 
@@ -46,7 +46,7 @@ Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one 
 `unsafe fun`, the raw pointer type `Ptr<T>`,
 `offset`/`byte_offset`/`cast`/`addr`/`is_null`, `read`/`write` and their volatile twins,
 `Ptr.alloc`/`free`, and the `coral.toml` `[unsafe] modules` audit list all work on both backends
-(`plan/unsafe-and-pointers.md`).
+(`language/unsafe.md` (kelp wiki)).
 
 Stage 2 (MK9-S1-M2 layout control) adds `repr(c)` (the default, now guaranteed), `repr(packed)`
 and `repr(align(N))`, the compile-time queries `size_of<T>()`/`align_of<T>()`/`offset_of<T>("field")`,
@@ -54,14 +54,14 @@ and explicit discriminants on a field-less enum with `repr(u8|u16|u32|u64|i8|i16
 and `to_int`/`from_int`. Both backends write the same layout (`__attribute__((packed))`/`aligned(N)`
 and a packed struct body or an alignment anchor), and the C helper in `tests/projects/ffi_layout`
 checks the packed byte layout against a real C compiler
-(`plan/layout-control.md`).
+(`language/kernel.md` (kelp wiki)).
 
 Stage 3 adds the integer byte-order conversions (`x.swap_bytes()`, `x.to_be()`, `x.to_le()`,
 `u32.from_be(x)`, `u32.from_le(x)` for every integer wider than a byte), the bounds-checked
 `Bytes.read_*_le/be`/`write_*_le/be` accessors with no alignment requirement, and
 `Ptr.read_unaligned`/`write_unaligned`. `to_le` is the identity because the target is
 little-endian, asked of the target's own data layout on LLVM and of `__BYTE_ORDER__` on C, so a
-big-endian target swaps instead (`plan/data-formats.md`).
+big-endian target swaps instead (`language/unsafe.md` (kelp wiki)).
 
 Stage 4 (MK9-S4-M1/M2 freestanding, LLVM-only by design) adds a `coral.toml` `[target]`
 section (`mode`, `triple`, `entry`, `linker_script`, optional `panic`), the LLVM target machine
@@ -74,7 +74,7 @@ runtime object. The allowed set (no `print`, no `panic`/`assert` builtins, no he
 `kelpc check` and `kelpc build` alike, and the overflow and bounds checks call the project's
 `panic` handler or a default infinite loop. The acceptance artifact is
 `tests/projects/freestanding_min`, checked with the llvm tools under `dev-kernel.nix`
-(`plan/freestanding.md`, `plan/kernel-ub-notes.md`).
+(`language/freestanding.md` (kelp wiki), `language/unsafe-ub-catalogue.md` (kelp wiki)).
 
 Stage 5 (MK9-S7-M1/M3 ISA surface, roadmap B-9/B-16) adds the statement and expression
 `asm("<template>", in("...") e, out("...") place, inout("...") place, clobber("..."), volatile,
@@ -88,8 +88,8 @@ assemble the same text. Both backends carry the feature: LLVM through `LLVMGetIn
 LLVM's `naked`/`noinline` enum attributes, the C oracle through GCC's extended asm and
 `__attribute__((naked, noinline))`, and the run fixtures pass on both. `interrupt` and
 calling-convention attributes are out of scope for this stage: a naked function whose body is
-one `asm` covers a trap vector without them. `plan/inline-asm.md` is the design and
-`plan/kernel-ub-notes.md` carries the stage's undefined behaviour.
+one `asm` covers a trap vector without them. `language/unsafe.md` (kelp wiki) is the design and
+`language/unsafe-ub-catalogue.md` (kelp wiki) carries the stage's undefined behaviour.
 
 **Kernel 0 boots.** The pieces above are now wired into `examples/kernel0`: a `[target]`
 freestanding riscv64 project whose `kmain` polls the NS16550 UART's LSR bit 5 and writes
@@ -100,7 +100,7 @@ under `timeout 20 qemu-system-riscv64 -machine virt -bios none -nographic -no-re
 -serial mon:stdio -kernel <elf>`; `examples/kernel0/run.sh` and `examples/kernel0-trap/run.sh`
 read QEMU's own stdout and assert the expected lines, and
 `cargo test --test compile_and_run kernel0` runs both where the tools are present. No
-compiler change was needed. What the examples could not do is in `plan/kernel0-status.md`, in
+compiler change was needed. What the examples could not do is in `language/kernel.md` (kelp wiki), in
 order: a libc-free `str` surface, an address-of-function form (plus the `interrupt` attribute
 stage 5 deferred), and a usable panic message.
 
@@ -120,11 +120,11 @@ by name, because it carries an environment its code address cannot describe. A
 top-level `fun` may carry `align(N)` (a power of two up to 4096), lowered as the
 function's alignment on both backends. `examples/kernel0-trap` installs its
 trap vector with `Ptr.from_fn(trap_handler).addr()` and names no mangled symbol,
-and `plan/kernel-ub-notes.md` stage 8 is the UB catalogue for the new surface.
+and `language/unsafe-ub-catalogue.md` (kelp wiki) stage 8 is the UB catalogue for the new surface.
 The `interrupt`/calling-convention attributes stage 5 deferred are the remaining
 half of that hole.
 
-**Stage 6's `defer` half is done** (MK9-S6-M1, `plan/defer.md`): `defer EXPR` is a
+**Stage 6's `defer` half is done** (MK9-S6-M1, `language/statics-and-defer.md` (kelp wiki)): `defer EXPR` is a
 statement whose action runs when its block is left, on every ordinary exit, last-in-first-out
 against the block's other defers, by a lowering that duplicates the action at each exit before
 type checking so both backends run ordinary code. A `defer` and a `?` in one block is refused
@@ -132,7 +132,7 @@ by name, a `return` inside a deferred action is refused, and a local moved befor
 the ordinary use-of-a-moved-value error. Both a hosted fixture set and a freestanding riscv64
 project that releases a lock flag with a `defer` are in the suite.
 
-**Stage 6's `Drop` half is done too** (MK9-S6-M1, `plan/drop.md`): `fun mut T.drop()` on a
+**Stage 6's `Drop` half is done too** (MK9-S6-M1, `language/drop.md` (kelp wiki)): `fun mut T.drop()` on a
 user `datac`/`enum` is that type's destructor, the same "the method name is the declaration"
 shape A-12 slice 1 gave a declared `Map` key pair, so no trait keyword and no new syntax. The
 generated `kelp_drop_<T>` calls the user body first and drops the fields after, on both
@@ -145,7 +145,7 @@ the RAII atomic lock guard, and a freestanding riscv64 project releases a lock f
 destructor with no undefined symbol. Both `defer` and `Drop` still have no panic-path cleanup:
 there is no unwinding (`plan/mk9-memory-model.md` §2), so a panic leaks the frame.
 
-**Row 7's hook half is done** (MK9-S5-M1, `plan/freestanding.md`): a freestanding
+**Row 7's hook half is done** (MK9-S5-M1, `language/freestanding.md` (kelp wiki)): a freestanding
 manifest may name `alloc`, `dealloc` and an optional `realloc` in `[target]`, and
 `Box<T>`, `List<T>` and `Map<V>` of allowed element types then allocate and free
 through them instead of libc, on the LLVM backend that freestanding mode is.
@@ -160,7 +160,7 @@ when every allocation reached a matching free. Arenas as a language feature and
 a fallible allocation surface are not in this stage.
 
 **Row 7's `String`/`Bytes` half is done too** (MK9-S5-M2,
-`plan/freestanding-string.md`): with an allocator configured, `String` and
+`language/freestanding.md` (kelp wiki)): with an allocator configured, `String` and
 `Bytes` become legal and the operations a kernel needs - the constructors, the
 length and byte accessors, `push`/`push_str`, `clone`, `reserve`, `clear`,
 `str.concat` and the integer-to-text builders, and drop - are emitted as
@@ -175,7 +175,7 @@ Without an allocator `String`/`Bytes` stay refused, and `Thread` stays
 refused either way; `View` is admitted in stage 23.
 
 **Row 7's arena and fallible-allocation halves are done too** (MK9-S5-M3,
-`plan/arena.md`): `Ptr.try_alloc<T>(count)` is `Ptr.alloc`'s non-panicking twin,
+`stdlib/arena.md` (kelp wiki)): `Ptr.try_alloc<T>(count)` is `Ptr.alloc`'s non-panicking twin,
 `unsafe` and aligned for `T`, libc's `malloc` on both hosted backends and the
 manifest's own `[target] alloc` in a freestanding image, with a byte count that
 would wrap `usize` answered by the null pointer rather than a short block. The
@@ -194,7 +194,7 @@ allocator - both with `llvm-nm -u` clean. Layouting a `Ptr<T>` `datac` field was
 the one compiler-side change the arena needed; it is the same one-pointer reply
 the opaque handle already had.
 
-**Row 8's per-CPU half is done** (MK9-S3-M3, `plan/percpu.md`): a freestanding
+**Row 8's per-CPU half is done** (MK9-S3-M3, `language/percpu.md` (kelp wiki)): a freestanding
 project may write `percpu static mut NAME: T = INIT`, and a manifest's
 `[target] cpus = N` (1 to 64, default 1) makes it `N` copies laid out as one
 64-byte-aligned array in `.percpu`, indexed by the new `cpu_index()` intrinsic
@@ -209,7 +209,7 @@ reads the other copy by setting `tp = 1` by hand, and asserts the four lines
 from QEMU's stdout. A per-CPU allocator or run queue is still a kernel design,
 not this stage.
 
-**Row 11's MMIO half is done** (MK10-S1, roadmap C-3, `plan/device-caps.md`):
+**Row 11's MMIO half is done** (MK10-S1, roadmap C-3, `language/capabilities.md` (kelp wiki)):
 the capability model now reaches devices. A new `mmio` domain takes a list of
 half-open address ranges (`caps(mmio = ["0x10000000+0x100"])`) or the whole
 address space as `["*"]`, and a freestanding `Ptr.from_addr` is a compile error
@@ -227,7 +227,7 @@ The check is on the address a pointer is *born* at, so an offset applied later
 is not revisited; IRQ lines and physical frames are the rest of the row.
 
 **Row 11's IRQ-line and frame halves are done too** (MK10-S1, roadmap C-3,
-`plan/irq-frame-caps.md`): the two remaining device capabilities are domains
+`stdlib/irq.md` (kelp wiki)): the two remaining device capabilities are domains
 now, `irq` with decimal line numbers and inclusive ranges
 (`caps(irq = ["10", "32-47"])`) and `frames` with the same `BASE+LEN` byte
 windows `mmio` uses, parsed and validated by the same code. A line or a frame
@@ -261,7 +261,7 @@ the two boots. What is not there: interrupts and an IDT, the APIC, SMP and ACPI;
 `cpu_index()` has no x86-64 lowering, so a `percpu` static is refused by name.
 
 **Release goal 3's freestanding standard subset is done** (kernel stage 19,
-`plan/freestanding-std.md`). `freestanding.rs` decides each shipped `std/*`
+`language/freestanding.md` (kelp wiki)). `freestanding.rs` decides each shipped `std/*`
 module with one table row (`Pure`, `Allocator`, `Subset`, `Present`,
 `Hosted`) instead of two hand-kept lists, the call-site check and `prune` are
 driven by the same row, and a whole-module refusal names the modules a
@@ -277,7 +277,7 @@ inside the admitted module, and `std/mem` stays refused because its
 fixtures build with zero undefined symbols, and `freestanding_std_kernel`
 boots under QEMU printing `option`/`result`/`arena` results over the UART.
 
-**Kernel stage 23 closed the two gaps `plan/regex.md` recorded.** A `datac`
+**Kernel stage 23 closed the two gaps `stdlib/regex.md` (kelp wiki) recorded.** A `datac`
 whose fields include a `String` now compares and hashes in a freestanding image:
 the derived key equality the compiler emits for every keyable type called the
 hosted `kelp_map_key_eq`, and the LLVM backend now writes that helper into the
@@ -289,7 +289,7 @@ hosted-only list to the allocator row of the table: `examples/kernel0-eq` and
 `examples/kernel0-eq-x86_64` compare a `String`-field and a `Bytes`-field
 `datac`, look the first up in a `Map`, slice a view, and match `[a-z]+(\d+)`
 under QEMU on riscv64 and x86-64.
-`plan/freestanding-std.md` and `plan/regex.md` carry the detail.
+`language/freestanding.md` (kelp wiki) and `stdlib/regex.md` (kelp wiki) carry the detail.
 
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
 arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall
@@ -310,7 +310,7 @@ flag) whose `kmain` prints `hello from kelp (aarch64)` and halts; it boots under
 `llvm-readelf`/`llvm-nm`/`llvm-objdump` check of the ELF and the boot) cover it. The riscv64
 `examples/kernel0*` all still boot after the change.
 
-**Row 9's mapping half is done** (MK9-S4-M8, `plan/address-spaces.md`): `examples/kernel0-vm`
+**Row 9's mapping half is done** (MK9-S4-M8, `language/kernel.md` (kelp wiki)): `examples/kernel0-vm`
 builds Sv39 tables in Kelp (the PTE bits, the VPN split, the PTE and `satp` encoders, a zeroing
 frame allocator over the linker script's `__frames_start`..`__frames_end`, `map_page`,
 `map_range`, `unmap_page` and `translate`), identity-maps the image and the UART, maps a page at
@@ -322,7 +322,7 @@ compiler change was needed: the only thing the language could not spell is a lin
 and that is stage 5's `asm` with `la`. What this stage deliberately leaves out is TLB
 shootdown, ASIDs, huge-page *creation*, Sv48 and a per-section (W^X) identity map.
 
-**Row 9's other half is done too** (MK9-S4-M9, `plan/syscall-abi.md`):
+**Row 9's other half is done too** (MK9-S4-M9, `language/kernel.md` (kelp wiki)):
 `examples/kernel0-user` adds the `TrapFrame` and the naked `trap_entry` that builds it on a
 per-hart trap stack (swapping `sp` with `sscratch`), the drop to U-mode through `sepc`,
 `sstatus.SPP` and `sret`, one Sv39 address space per program with its code page at `0x10000` and
@@ -336,7 +336,7 @@ needed, and what the stage leaves out is the process model: no scheduler, one pr
 no preemption or timer interrupt, no `fork`, no TLB shootdown, no ASIDs, no huge-page *creation*,
 no Sv48 and no per-section (W^X) identity map.
 
-**Row 10's stack half is done** (MK9-S7-M2, `plan/stack-guard.md`): every function a freestanding
+**Row 10's stack half is done** (MK9-S7-M2, `language/kernel.md` (kelp wiki)): every function a freestanding
 LLVM build emits carries `probe-stack="inline-asm"`, so a frame larger than a page touches each
 page in order and a guard page catches the overflow instead of the frame stepping over it;
 hosted builds carry no attribute. `examples/kernel0-stack` is the acceptance: an Sv39 riscv64
@@ -348,7 +348,7 @@ lowering fix: `[v; N]` now fills the local's own slot in place (`{array}__fill_i
 returning the array by value, because LLVM's instcombine exhausted memory folding the by-value
 store of a frame-sized array at `-O2`.
 
-**Row 10's panic half is done too** (MK9-S6-M2, `plan/panic-semantics.md`): a freestanding panic
+**Row 10's panic half is done too** (MK9-S6-M2, `language/freestanding.md` (kelp wiki)): a freestanding panic
 handler may be declared `fun(msg: str)` as before or
 `fun(msg: str, file: str, line: u32)`, and the compiler refuses any other shape by name. Every
 check calls one compiler-emitted entry that exchanges a `.bss` flag (so a check inside the handler
@@ -357,11 +357,11 @@ a `wfi`/`wfe` loop and a project may override with a strong definition. The file
 same per-statement `SourceMap` values the hosted line tables carry; generated accessor bodies read
 them from two `.bss` globals the current statement stored. `examples/kernel0-panic2` boots one
 phase per check (array bounds, narrowing, `str.byte`, the `panic` builtin, `option.unwrap`, and a
-double panic) and asserts each exact line; `plan/panic-semantics.md` has the check table and
+double panic) and asserts each exact line; `language/freestanding.md` (kelp wiki) has the check table and
 records that overflow wraps and division by zero stays an unchecked UB, so neither has a message.
 
 **Kernel stage 21 is done: a timer interrupt and a preemptive round-robin scheduler**
-(`plan/scheduler.md`). `examples/kernel0-sched` is a bare-metal riscv64 image, still in machine
+(`language/kernel.md` (kelp wiki)). `examples/kernel0-sched` is a bare-metal riscv64 image, still in machine
 mode with no paging, that programs the CLINT's machine timer (`mtimecmp` at `0x02004000 + 8 *
 hart`, `mtime` at `0x0200BFF8`, granted as exactly those two windows), enables `mie.MTIE` and
 `mstatus.MIE`, and handles the interrupt in a naked `trap_entry` that saves all 31 general
@@ -377,10 +377,10 @@ element may now be a `datac` or another array (recursively), which `tests/projec
 pins on both backends, and `tests/projects/sched_task_layout` pins the layout the naked entry
 hardcodes. In this stage: the timer interrupt and preemptive round-robin in M-mode. Not in it:
 priorities, blocking, task exit, SMP, and preemption of user mode, which is why the U-mode process
-of `plan/syscall-abi.md` is still one program at a time.
+of `language/kernel.md` (kelp wiki) is still one program at a time.
 
 **Kernel stage 22 is done: the x86-64 IDT, the CPU exceptions and the PIC+PIT timer**
-(`plan/x86-idt.md`). `examples/kernel0-x86_64-idt` is a freestanding x86-64 image whose
+(`language/kernel.md` (kelp wiki)). `examples/kernel0-x86_64-idt` is a freestanding x86-64 image whose
 `static mut IDT: [IdtEntry; 256]` gets five gates from `Ptr.from_fn(gate).addr()` - `#DE` 0,
 `#UD` 6, `#GP` 13, `#PF` 14 and the timer's 32 - each a `repr(c)` 16-byte descriptor with
 the offset split in three, selector `0x08` (the boot GDT's code segment), IST 0 and type
@@ -417,8 +417,8 @@ case the kernel path wanted and `examples/polyp/PLATFORM.md` is the contract it 
   a filesystem and drivers are still not here. The language work above is what they would sit on.
 - x86-64 interrupts beyond the IDT and the PIC+PIT timer, the APIC, SMP and ACPI: the
   architecture boots, runs Kelp and takes its own exceptions and timer ticks (kernel stages
-  20 and 22, `plan/x86-64.md` and `plan/x86-idt.md`), and what a kernel still needs there is
-  a local APIC, an I/O APIC, ACPI enumeration and x86 user mode. `plan/kernel0-status.md`'s
+  20 and 22, `language/kernel.md` (kelp wiki) and `language/kernel.md` (kelp wiki)), and what a kernel still needs there is
+  a local APIC, an I/O APIC, ACPI enumeration and x86 user mode. `language/kernel.md` (kelp wiki)'s
   trap gap and stage 5's deferred `interrupt` attribute are the same hole on riscv64.
 - Memory-safety proofs about `unsafe` code. D-1/D-2/D-3 stay open; the UB catalogue has to grow a section per
   stage, and each stage's design note says what it adds to it.

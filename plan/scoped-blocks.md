@@ -1,7 +1,7 @@
 # Scoped trailing blocks: parameters, value blocks, and non-escaping callbacks
 
 *Design note for the task that turns `plan/trailing-closure.md`'s prototype into something
-Polyp can use: `polyp.column { k -> k.text(s.title) }`. Not a Mark; `roadmap.md` owns the schedule.*
+Polyp can use: `polyp.column { k -> k.text(s.title) }`. Not a Mark; `meta/roadmap.md` (kelp wiki) owns the schedule.*
 
 ## What the two parts are
 
@@ -66,7 +66,7 @@ drop }`, `fn` taking the environment first, exactly as `Ty::Closure` is (`codege
   exactly the node `infer.rs` writes for an implicit call-site borrow. Because every field is a
   `Copy` pointer or a `Copy` value, the environment owns nothing and the no-op drop is correct, not
   a shortcut.
-- **Exclusive captures are refused.** *(Superseded: `plan/exclusive-captures.md` lets a block write what it captures; the text below is the first version's rule.)* A literal that writes through a captured binding needs an
+- **Exclusive captures are refused.** *(Superseded: `language/functions.md` (kelp wiki) lets a block write what it captures; the text below is the first version's rule.)* A literal that writes through a captured binding needs an
   exclusive borrow; the message says so and names the shared alternative. This is the sound half of
   the task's "shared, or exclusive if it only reads through the `mut` places it is given"; the
   builder case that motivated the task reads only.

@@ -1,5 +1,5 @@
 //! Fuzzing and the conformance corpus for the `llvm` backend (MK7 S5, the MK7
-//! record in `plan/done.md`).
+//! record in `kelp wiki page meta/milestones.md`).
 //!
 //! The corpus in `tests/fixtures/` is a curated set a person wrote, and the
 //! plan records that it has been blind three times inside one session: a float

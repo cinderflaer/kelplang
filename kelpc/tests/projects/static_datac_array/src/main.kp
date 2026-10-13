@@ -5,7 +5,7 @@
 // Before this stage an array static could only hold integers, `bool` or `char`,
 // so a task table with a saved frame and a stack per task had no spelling. The
 // element now obeys the same closed rule a `datac`-typed static's fields obey,
-// and the initializer is still a constant (`plan/scheduler.md`).
+// and the initializer is still a constant (`kelp wiki page language/kernel.md`).
 static TABLE: [Slot; 3] = [Slot(id = 0, weight = [1, 2, 3, 4]), Slot(id = 1, weight = [5, 6, 7, 8]), Slot(id = 2, weight = [9, 10, 11, 12])]
 
 // A nested array is the same shape one level down.

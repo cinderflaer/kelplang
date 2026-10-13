@@ -1,4 +1,4 @@
-//! `kelpc doc` (`plan/doc-tool.md`): the pages for a small module that holds
+//! `kelpc doc` (`kelp wiki page tooling/kelpc-doc.md`): the pages for a small module that holds
 //! every kind of documented item, compared with checked-in expected files; the
 //! `--private`, `--check` and `--std` modes; determinism; the lint warning for a
 //! doc comment attached to nothing; and the formatter and the front end leaving

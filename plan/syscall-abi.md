@@ -1,7 +1,7 @@
 # Trap frames, user mode and the syscall ABI (kernel stage 11, MK9-S4-M9)
 
-*Design for the second half of `plan/kernel-path.md`'s row 9. The mapping half is
-`plan/address-spaces.md`; this stage adds the trap frame, the drop to U-mode, the
+*Design for the second half of `language/kernel.md` (kelp wiki)'s row 9. The mapping half is
+`language/kernel.md` (kelp wiki); this stage adds the trap frame, the drop to U-mode, the
 `ecall` ABI and the untrusted-pointer validation the row asked for. No compiler
 change was needed: `examples/kernel0-user` is written in what the language
 already has, and the one construct it leans on (a linker-script symbol) is the
@@ -19,7 +19,7 @@ five things:
   that never touches a user address directly.
 - `src/user.kp`: two hand-written user programs, each a naked function in its
   own `.user1` / `.user2` section, copied into its program's code page at boot.
-- `src/vm.kp`: `plan/address-spaces.md`'s walker plus `user_page_pa`, the walk
+- `src/vm.kp`: `language/kernel.md` (kelp wiki)'s walker plus `user_page_pa`, the walk
   that demands the U and R bits and is the only way user memory is read.
 - `kernel.ld`: the identity-mapped span, this hart's trap stack, the enlarged
   frame region and the two user-program sections.

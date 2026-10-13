@@ -584,7 +584,7 @@ impl Context {
     /// flag (Kelp always sets it: it has no pure asm), and `intel` selects the
     /// Intel dialect instead of the target's default, which is how one Kelp
     /// template reads as destination-first on x86 and on riscv64 alike
-    /// (`plan/inline-asm.md`).
+    /// (`kelp wiki page language/unsafe.md`).
     ///
     /// The template is passed with an explicit length, so a NUL byte inside it
     /// is not a C-string terminator; the same text reaches GCC as a C literal

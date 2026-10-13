@@ -132,7 +132,7 @@ reports the count.
 ## Freestanding
 
 `std/regex` is freestanding-capable with the allocator pair (kernel stage 23;
-rows in `plan/freestanding-std.md`). It was built into a riscv64 image with the
+rows in `language/freestanding.md` (kelp wiki)). It was built into a riscv64 image with the
 allocator pair to see whether the allocator subset was enough. The parser, the
 program and the VM link clean: they are `List` and integer code. Two things did
 not, and both were compiler work this stage did:

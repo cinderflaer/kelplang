@@ -1,6 +1,6 @@
 # Stage 1: `unsafe` and raw pointers (MK9-S2 / roadmap B-3)
 
-*Design for kernel-path stage 1. `plan/kernel-path.md` is the context; this file says what is built
+*Design for kernel-path stage 1. `language/kernel.md` (kelp wiki) is the context; this file says what is built
 and what is deliberately left out.*
 
 ## What this adds
@@ -42,7 +42,7 @@ operation is reachable at all.
 `Ptr.from_ref(&x)` / `Ptr.from_mut(x)` take the address of a `val`/`var` place, but the resulting
 pointer does **not** extend the borrow. The borrow checker sees the borrow the call takes and no
 more; using the pointer after the place is gone, or writing through it at all, is the caller's
-responsibility, which is the point of `unsafe`. This is recorded in `plan/kernel-ub-notes.md`.
+responsibility, which is the point of `unsafe`. This is recorded in `language/unsafe-ub-catalogue.md` (kelp wiki).
 
 ## What is deliberately not here
 

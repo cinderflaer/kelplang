@@ -12,7 +12,7 @@ entry = "kmain"
 linker_script = "kernel.ld"
 panic = "kp_panic"
 
-# The audit list (stage 1, `plan/unsafe-and-pointers.md`): `port` is the only
+# The audit list (stage 1, `language/unsafe.md` (kelp wiki)): `port` is the only
 # module that issues `in`/`out`, `uart` is the COM1 driver built on it, `pic` is
 # the interrupt controller and timer, `trap` is the IDT and the naked gates, and
 # `main` raises the two repaired faults and the unmapped store itself.
@@ -22,6 +22,6 @@ modules = ["idt", "main", "pic", "port", "uart"]
 # Kernel stage 16's mmio grant: the one page the boot's last act writes through,
 # 8 GiB, outside the 1 GiB the `_start` stub identity-maps. The entry module
 # holds it and delegates it to nothing, because `main` is where the pointer is
-# born; the address is in `plan/x86-idt.md`.
+# born; the address is in `language/kernel.md` (kelp wiki).
 [caps]
 mmio = ["0x200000000+0x1000"]

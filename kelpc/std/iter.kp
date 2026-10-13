@@ -1,5 +1,5 @@
 /* std/iter, the iterator protocol and the iterators that ship with it
-   (`plan/iterators.md`).
+   (`kelp wiki page language/iterators.md`).
 
    `for x in <expr>` over a `List<T>` or `[T; N]` is still the index walk
    (`syntax.md` 6.2). Everything else is walked through this trait: `next`

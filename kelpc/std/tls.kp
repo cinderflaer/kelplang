@@ -8,7 +8,7 @@ impl "std/str"
    link the system OpenSSL rather than vendor one). Client side only in v1:
    this module wraps an outbound connection after it is already open: it
    never dials one itself. Serving TLS (`server_config`, `accept`), client
-   certificates and ALPN are the second half of the file; `plan/tls-server.md`
+   certificates and ALPN are the second half of the file; `kelp wiki page stdlib/tls.md`
    is their design note.
 
    Gated on `net`, the existing domain, not a new one. `https` is still
@@ -425,7 +425,7 @@ fun shutdown(t: TlsStream) {
 
 // ===== ALPN, client certificates and serving (st3) =====
 //
-// `plan/tls-server.md` is the design note. This module takes certificates and
+// `kelp wiki page stdlib/tls.md` is the design note. This module takes certificates and
 // keys as PEM *bytes*: it must not import `std/fs`, because a module that names
 // `fs.try_read` needs the `fs` grant from every program that imports it, and
 // every `https` client does. `std/tlsfile` is the thin layer that reads the

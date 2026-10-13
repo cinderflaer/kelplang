@@ -1,6 +1,6 @@
 # A bound borrow ends at its last use (B-1 of the borrow checker, A-11 slice 2)
 
-*Design note for the task that closes `roadmap.md` open item 30. `borrowck.rs` is the code;
+*Design note for the task that closes `meta/roadmap.md` (kelp wiki) open item 30. `borrowck.rs` is the code;
 this is the rule, the algorithm, and the shapes it deliberately keeps refusing.*
 
 ## The rule

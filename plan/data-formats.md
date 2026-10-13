@@ -1,9 +1,9 @@
 # Data formats (kernel stage 3, MK9-S8 / roadmap B-10)
 
 *The design note for endianness conversion, the byte-order readers and writers
-on `Bytes`, and unaligned pointer access. `plan/kernel-path.md` is the stage
+on `Bytes`, and unaligned pointer access. `language/kernel.md` (kelp wiki) is the stage
 list; this is stage 3. The undefined-behaviour half is
-`plan/kernel-ub-notes.md`'s stage 3 section.*
+`language/unsafe-ub-catalogue.md` (kelp wiki)'s stage 3 section.*
 
 ## What the stage adds
 

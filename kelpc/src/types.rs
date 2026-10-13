@@ -151,7 +151,7 @@ pub enum Ty {
     /// this type is made, so a program cannot build a closure without
     /// something to capture.
     Closure { params: Vec<Ty>, ret: Box<Ty> },
-    /// A **scoped** function value (`plan/scoped-blocks.md`): a parameter
+    /// A **scoped** function value (`kelp wiki page language/functions.md`): a parameter
     /// written `scoped fun(T).return: U`, which accepts only a `fun` literal or a
     /// trailing block written at the call site and may not outlive the call.
     ///

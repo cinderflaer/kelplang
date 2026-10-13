@@ -53,7 +53,7 @@ not one run. Two environments are worth distinguishing, and the report names the
 one it used:
 
 - Outside `nix-shell`, `cc` is this machine's clang 21.1.8, the compiler the
-  section above and `plan/done.md`'s MK7 record were measured with. Pass
+  section above and `meta/milestones.md` (kelp wiki)'s MK7 record were measured with. Pass
   a prebuilt binary with `KELPC=target/release/kelpc ./optlevels.sh` if LLVM's
   build half (`llvm-config`) is not on the PATH.
 - Inside `nix-shell`, `cc` is gcc 15.3.0 (the shell's stdenv shadows the system

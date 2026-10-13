@@ -2,7 +2,7 @@ name = "kernel0_user"
 
 # Kernel stage 11: the same bare-metal riscv64 image as kernel0-vm, plus a trap
 # frame, a drop to U-mode, an `ecall` syscall ABI and the untrusted-pointer
-# check that guards it (`plan/syscall-abi.md`). `main` writes the CSRs, the
+# check that guards it (`language/kernel.md` (kelp wiki)). `main` writes the CSRs, the
 # `KERNEL_ROOT` static and the page tables; `trap` owns `stvec`, the naked
 # entry and the frame; `syscall` copies from a user pointer through a kernel
 # buffer; `user` holds the two hand-written programs; `uart` is the device
@@ -22,6 +22,6 @@ modules = ["main", "syscall", "trap", "uart", "user", "vm"]
 # turn computed addresses (a user page, a trap-frame slot, a page-table frame)
 # into pointers, which the compiler cannot fold, so they need the
 # whole-address-space wildcard - the escape hatch a reviewer greps for
-# (`plan/device-caps.md`). `user` only reads its own hand-written program.
+# (`language/capabilities.md` (kelp wiki)). `user` only reads its own hand-written program.
 [caps]
 mmio = ["*"]

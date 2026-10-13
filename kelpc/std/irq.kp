@@ -1,12 +1,12 @@
 /* std/irq: an interrupt line as a capability (kernel stage 18, MK10-S1's
-   second half, `plan/irq-frame-caps.md`).
+   second half, `kelp wiki page stdlib/irq.md`).
 
    An interrupt line is a resource a driver must be granted, and the grant is a
    *value*: `claim` is the only way a `Line` enters a program, and the compiler
    checks the argument against the calling module's `irq` grant at the call. A
    constant line has to fall inside a granted range, and a computed one is
    refused unless the grant is the whole-line `["*"]`, exactly as the `mmio`
-   address check treats a `Ptr.from_addr` (`plan/device-caps.md`).
+   address check treats a `Ptr.from_addr` (`kelp wiki page language/capabilities.md`).
 
        datac Line(val n: u32)
 
@@ -28,7 +28,7 @@
 
    Undefined behaviour this does not remove: a line number is a number, and
    nothing ties it to a real interrupt controller, to a mask bit or to a
-   handler that is actually installed. `plan/kernel-ub-notes.md` stage 18 says
+   handler that is actually installed. `kelp wiki page language/unsafe-ub-catalogue.md` stage 18 says
    so. */
 
 datac Line(val n: u32)

@@ -83,7 +83,7 @@ datac RunResult(val code: i32, val signal: i32, val out: Bytes, val err: Bytes)
 // has no value-returning form. It is also the one failure that is a manifest
 // error rather than a runtime condition, the grant named the wrong program,
 // which is why the panicking shape is the honest one for it. Making it a value
-// needs a non-panicking check mode in codegen (recorded in the Backlog part of `plan/roadmap.md`,
+// needs a non-panicking check mode in codegen (recorded in the Backlog part of `kelp wiki page meta/roadmap.md`,
 // "What the port hit").
 enum ProcErr {
     NotFound

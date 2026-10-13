@@ -241,7 +241,7 @@ impl Parser {
     ///
     /// A `{ x, y -> ... }` header declares the block's parameters by *name*
     /// only; their types come from the expected function type of the parameter
-    /// the block is passed to (`plan/scoped-blocks.md` part 1), so the literal
+    /// the block is passed to (`kelp wiki page language/functions.md` part 1), so the literal
     /// is marked `infer_params`. The header is read only when the first tokens
     /// are identifiers, comma separated, followed by `->`, which appears
     /// nowhere else at the start of a block.
@@ -678,7 +678,7 @@ impl Parser {
     /// else is refused where it is written, naming what it applies to, rather
     /// than read as a no-op or as something else. A `pd` gets its own message
     /// because it is not a missing feature: a passdown is module-scoped by
-    /// design (`plan/roadmap.md` item 10), so `pub` on one can never be true.
+    /// design (`kelp wiki page meta/roadmap.md` item 10), so `pub` on one can never be true.
     fn check_pub_target(&self, pub_span: Span) -> PResult<()> {
         match self.peek_kind() {
             TokenKind::Fun
@@ -3048,7 +3048,7 @@ impl Parser {
             TokenKind::Return => self.parse_return_stmt(),
             // `break` and `continue` are read as ordinary names everywhere
             // else, so a bare one here (the statement ends after it) is the
-            // loop control statement (`plan/iterators.md`); `break + 1` and
+            // loop control statement (`kelp wiki page language/iterators.md`); `break + 1` and
             // `break()` stay expressions.
             TokenKind::Ident(name)
                 if (name == "break" || name == "continue")
@@ -3513,7 +3513,7 @@ impl Parser {
                 },
             );
         }
-        // The type of the iterable decides the desugar (`plan/iterators.md`),
+        // The type of the iterable decides the desugar (`kelp wiki page language/iterators.md`),
         // and only `infer.rs` knows it, so the statement is kept as written.
         Ok(Stmt::For {
             binding,
@@ -3911,7 +3911,7 @@ impl Parser {
     /// `in("<constraint>") expr`, `out("<constraint>") place` (or `_` for the
     /// anonymous output that is the expression's value), `inout(...) place`,
     /// or `clobber("<register>")`, and the option words are `volatile`,
-    /// `nomem` and `nostack`. `plan/inline-asm.md` is the design.
+    /// `nomem` and `nostack`. `kelp wiki page language/unsafe.md` is the design.
     fn parse_asm_expr(&mut self) -> PResult<Expr> {
         let start = self.advance().span;
         self.expect(TokenKind::LParen, "'(' after 'asm'")?;
@@ -6018,7 +6018,7 @@ mod tests {
 
     #[test]
     fn a_for_loop_is_kept_as_written_until_its_iterable_has_a_type() {
-        // A-5/`plan/iterators.md`: which desugar applies depends on the
+        // A-5/`kelp wiki page language/iterators.md`: which desugar applies depends on the
         // iterable's type, which only `infer.rs` knows, so the parser keeps the
         // statement and `infer.rs` lowers it.
         let p = parse(
@@ -6881,7 +6881,7 @@ mod tests {
     }
 
     /// `break` and `continue` are not keywords (`plan/syntax.md` 2.3), so a
-    /// bare one is the loop control statement (`plan/iterators.md`) and a name
+    /// bare one is the loop control statement (`kelp wiki page language/iterators.md`) and a name
     /// used in an expression is still a name.
     #[test]
     fn break_and_continue_stay_ordinary_names_outside_statement_position() {

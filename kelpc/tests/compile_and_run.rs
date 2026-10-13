@@ -225,7 +225,7 @@ fn moving_a_borrowed_value_is_rejected() {
 }
 
 /// A bound borrow ends at its last use, not at the end of its block (roadmap
-/// open item 30, `plan/nll.md`). The three accepted programs mutate, move or
+/// open item 30, `kelp wiki page language/ownership.md`). The three accepted programs mutate, move or
 /// reassign the owner after the borrowing binding is dead; the six refused
 /// ones keep it live with a later use.
 #[test]
@@ -273,7 +273,7 @@ fn a_live_borrow_still_refuses_its_owners_mutation() {
 }
 
 /// A reference binding remembers the owner its value came from, so a pointer
-/// local can be a cursor (roadmap open item 33, `plan/provenance.md`). The
+/// local can be a cursor (roadmap open item 33, `kelp wiki page language/ownership.md`). The
 /// three accepted programs walk an owned `Box` list iteratively, index a list
 /// and re-point a cursor to a different owner; the refused ones keep a mutation
 /// of a live owner, a second exclusive cursor, a returned frame-local cursor, a
@@ -2560,7 +2560,7 @@ fn a_manifest_assigned_ffi_ui_module_is_reached_with_the_wildcard_grant() {
 fn an_ffi_ui_grant_that_names_a_pattern_is_rejected() {
     // A display call carries no argument to match, so `ui = ["wayland-0"]`
     // would read as enforced and deny nothing; only the wildcard is accepted
-    // (plan/ffi-display-domain.md).
+    // (kelp wiki page libraries/polyp.md).
     assert_project_rejected(
         "ffi_ui_pattern",
         &project("ffi_ui_pattern"),
@@ -4195,7 +4195,7 @@ fn a_must_use_result_cannot_be_dropped() {
 fn a_for_loop_only_walks_a_list_or_an_iterator() {
     // A `List`/array keeps the index walk; anything else has to implement
     // `std.iter.Iterator`, and the refusal names the trait so the fix is one
-    // `impl` away (`plan/iterators.md`). The span is the `for` line.
+    // `impl` away (`kelp wiki page language/iterators.md`). The span is the `for` line.
     assert_rejected_with("tests/fixtures/for_not_a_list.kp", "implements 'Iterator'");
     assert_rejected_with("tests/fixtures/for_iter_no_impl.kp", "implements 'Iterator'");
 }
@@ -4251,7 +4251,7 @@ fn a_for_loop_still_allows_reads_another_list_and_a_while() {
 
 #[test]
 fn a_for_loop_over_an_iterator_walks_it_by_next() {
-    // `plan/iterators.md`: a type implementing `std.iter.Iterator` walks through
+    // `kelp wiki page language/iterators.md`: a type implementing `std.iter.Iterator` walks through
     // `next()`, and `Range` is the shipped one. A step and a descending step are
     // the same loop with a different `step`.
     assert_compiles_and_runs(
@@ -9872,7 +9872,7 @@ fn an_unknown_command_prints_the_usage_and_fails() {
 
 // ---------------------------------------------------------------------------
 // The backend seam. The user-facing selector is gone (the MK7 record in
-// `plan/done.md`), so what is asserted end-to-end here is the shape that replaced it: every
+// `kelp wiki page meta/milestones.md`), so what is asserted end-to-end here is the shape that replaced it: every
 // build gets `llvm`, and the retired flag and the retired environment variables
 // are refused by name. These are end-to-end rather than only `backend.rs` unit
 // tests because what matters is that the refusal reaches the compiler.
@@ -10856,7 +10856,7 @@ fn a_program_is_ended_by_sigpipe_when_its_reader_closes_the_pipe() {
     assert_eq!(status.signal(), Some(13), "expected death by SIGPIPE, got {status:?}");
 }
 
-// `plan/scoped-blocks.md`: a trailing block declares its parameters by name
+// `kelp wiki page language/functions.md`: a trailing block declares its parameters by name
 // only and returns its tail where the expected type is non-unit, and a
 // `scoped fun(...)` parameter accepts such a block (or a `fun` literal)
 // written at the call site, capturing the enclosing frame by borrow.
@@ -10915,7 +10915,7 @@ fn a_scoped_value_cannot_be_returned() {
 
 #[test]
 fn a_scoped_block_can_write_what_it_captures() {
-    // `plan/exclusive-captures.md`: a write through a captured `var` makes the
+    // `kelp wiki page language/functions.md`: a write through a captured `var` makes the
     // capture exclusive for the call.
     assert_compiles_and_runs("tests/fixtures/excl_capture_field.kp", "13\n113\n");
     assert_compiles_and_runs("tests/fixtures/excl_capture_copy_var.kp", "1006\n3\n");
@@ -11700,7 +11700,7 @@ fn freestanding_min_builds_a_riscv_elf_with_no_undefined_symbols() {
     );
 }
 
-/// `plan/iterators.md`'s freestanding half: a kernel-style loop over
+/// `kelp wiki page language/iterators.md`'s freestanding half: a kernel-style loop over
 /// `iter.range` lowers to an ordinary `while` over `Range.next`, so the image
 /// links with no undefined symbol. This is the same acceptance test as
 /// `freestanding_min`, run on the project that walks a range, and it needs the
@@ -11795,7 +11795,7 @@ fn a_freestanding_project_can_use_the_operator_traits() {
 // Kernel stage 5 (MK9-S7-M1/M3, roadmap B-9/B-16): inline `asm` and `naked
 // fun`. The templates in these fixtures are x86-64 assembly in Intel syntax,
 // which is the dialect the compiler selects for an x86 target on both backends
-// (`plan/inline-asm.md`), so the fixtures run on the default LLVM backend.
+// (`kelp wiki page language/unsafe.md`), so the fixtures run on the default LLVM backend.
 // ---------------------------------------------------------------------------
 
 /// `inout` is read then written, and `in` is read: `add {0}, {1}` accumulates
@@ -12215,8 +12215,8 @@ fn freestanding_str_builds_the_five_operations_with_no_undefined_symbols() {
 // Kernel stage 19 (release goal 3): the freestanding standard subset. Each
 // admitted module has a project here that imports it and calls a
 // representative function; every one is built for riscv64 and checked for zero
-// undefined symbols, which is what "admitted" means. `plan/freestanding-std.md`
-// is the table and how it was derived; `plan/freestanding.md` owns the mode.
+// undefined symbols, which is what "admitted" means. `kelp wiki page language/freestanding.md`
+// is the table and how it was derived; `kelp wiki page language/freestanding.md` owns the mode.
 // ---------------------------------------------------------------------------
 
 /// The admitted set: one project per module the table admits, plus the boot.
@@ -13276,7 +13276,7 @@ fn a_string_for_a_str_parameter_of_a_generic_function_is_refused_by_name() {
 }
 
 /// `break`/`continue` are ordinary loop control in a written `while`
-/// (`plan/iterators.md`).
+/// (`kelp wiki page language/iterators.md`).
 #[test]
 fn break_and_continue_control_a_while_loop() {
     assert_compiles_and_runs("tests/fixtures/break_and_continue.kp", "1\n2\n4\n5\n");
@@ -15605,7 +15605,7 @@ fn incremental_is_refused_for_a_freestanding_project() {
 // ---------------------------------------------------------------------------
 //
 // The cache stores a unit's object under the hash of its IR text and the
-// machine settings it was compiled for (`plan/incremental-compilation.md`).
+// machine settings it was compiled for (`kelp wiki page compiler/incremental.md`).
 // These tests drive the real compiler and read its stderr: `KELPC_CACHE_STATS=1`
 // prints one hit/miss/store line per build, and `--timings` prints one
 // `hit`/`miss` line per unit. Every test here is llvm-only.
@@ -16156,7 +16156,7 @@ fn the_unit_failure_hook_is_inert_on_a_hosted_build() {
 }
 
 // ---------------------------------------------------------------------------
-// st2: the HTTP server (`plan/http-server.md`).
+// st2: the HTTP server (`kelp wiki page stdlib/http.md`).
 //
 // The Rust test is the *client*. The server is a compiled Kelp program from
 // `tests/hazards/` (it waits for clients, so it is not a fixture: the sweeps run

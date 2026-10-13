@@ -1,4 +1,4 @@
-// Kernel stage 21 (`plan/scheduler.md`): the layout the naked trap entry and the
+// Kernel stage 21 (`kelp wiki page language/kernel.md`): the layout the naked trap entry and the
 // scheduler's pointer arithmetic hardcode. The copy of the declarations in
 // `examples/kernel0-sched` is this fixture's job, exactly as the trap-frame
 // fixture copies kernel stage 11's frame.

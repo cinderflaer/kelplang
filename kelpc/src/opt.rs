@@ -1,5 +1,5 @@
 //! The optimization level `kelpc build -O<n>` selects (MK7 S6,
-//! the record in `plan/done.md`).
+//! the record in `kelp wiki page meta/milestones.md`).
 //!
 //! One level is one level for both backends, which is what makes the
 //! differential sweep a comparison *at a level* rather than two runs that
