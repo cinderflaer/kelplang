@@ -30,6 +30,7 @@ empty on release.
 
 ## changed
 
+- The return type is written `=>`: `fun f(a: i32) => i32`. The retired `.return:` marker still compiles and means the same, and `->` is an alias of `=>`. The `.R:` marker is removed, so `.R:` is now a parse error that names `=>`. Every example, the standard library, the runtime sources, the wiki and the messages the compiler prints now write `=>`.
 - `=>` is accepted as the same arrow as `->` in `when` arms and in a trailing block's parameter header (`{ x => ... }`). Both spellings are one token, so no existing program changes; the arrow's error messages now name both.
 - The `managed` target mode is removed: a `[target] mode = "managed"` line is refused with the replacement named. Every hosted build links the tracing collector, so `Box`, `List`, `Map`, `String` and `Bytes` values are freed by the collector, not by drops. Resources (files, sockets, processes, threads, locks, channel ends, pools) still drop at scope end. Delete the mode line; `heap_max` is read in every hosted build.
 - `kelpc` builds the collector archive itself from `kelpc/gc`, so a hosted build needs no `KELP_GC_LIB`. The variable, when set, names a different archive to link.

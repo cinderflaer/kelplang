@@ -77,18 +77,18 @@ AtomicBool
 AtomicU8  / AtomicU16 / AtomicU32 / AtomicU64 / AtomicUsize
 AtomicI32 / AtomicI64 / AtomicIsize
 
-fun Atomic<T>.new(value: T).return: Atomic<T>
-fun Atomic<T>.load(order: Ordering).return: T
+fun Atomic<T>.new(value: T) => Atomic<T>
+fun Atomic<T>.load(order: Ordering) => T
 fun Atomic<T>.store(value: T, order: Ordering)
-fun Atomic<T>.swap(value: T, order: Ordering).return: T
-fun Atomic<T>.compare_exchange(current: T, new: T, order: Ordering).return: Result<T, T>
+fun Atomic<T>.swap(value: T, order: Ordering) => T
+fun Atomic<T>.compare_exchange(current: T, new: T, order: Ordering) => Result<T, T>
 
 // the integer instantiations only; AtomicBool has no arithmetic
-fun Atomic<T>.fetch_add(value: T, order: Ordering).return: T
-fun Atomic<T>.fetch_sub(value: T, order: Ordering).return: T
-fun Atomic<T>.fetch_and(value: T, order: Ordering).return: T
-fun Atomic<T>.fetch_or(value: T, order: Ordering).return: T
-fun Atomic<T>.fetch_xor(value: T, order: Ordering).return: T
+fun Atomic<T>.fetch_add(value: T, order: Ordering) => T
+fun Atomic<T>.fetch_sub(value: T, order: Ordering) => T
+fun Atomic<T>.fetch_and(value: T, order: Ordering) => T
+fun Atomic<T>.fetch_or(value: T, order: Ordering) => T
+fun Atomic<T>.fetch_xor(value: T, order: Ordering) => T
 
 fun thread.fence(order: Ordering)
 ```
@@ -112,8 +112,8 @@ Notes on the shape, each with its reason:
 Stage B1 adds the checker surface below and stage C1 lowers it. Both calls are compiler builtins in the shipped `std/thread` module, beside the fence, and neither is in the builtin signature table: `T` comes from the value that crosses the boundary, so the checker builds the signature at the call site. **C1 landed 2026-09-24** (see §6): both calls are lowered, `Thread<T>` is one pointer to a worker record the runtime owns, and a handle nobody joins is dropped by detaching the worker.
 
 ```kelp
-fun thread.spawn(entry: <a declared `fun`, a `fun` literal, or a capturing closure, taking one move parameter>, arg: move A).return: Thread<T>
-fun thread.join(handle: move Thread<T>).return: Result<T, ThreadErr>
+fun thread.spawn(entry: <a declared `fun`, a `fun` literal, or a capturing closure, taking one move parameter>, arg: move A) => Thread<T>
+fun thread.join(handle: move Thread<T>) => Result<T, ThreadErr>
 ```
 
 - **`T` is the entry point's return type and `A` its parameter's**, so the handle carries what the worker hands its joiner, and the argument is moved into the worker as the entry point's one parameter. The checker reads both off `entry` and builds the signature at the call site.

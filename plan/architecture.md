@@ -24,7 +24,7 @@ Decisions locked in via discussion:
 - **Memory model**: full ownership + borrowing (moves, borrows, borrow checker) attempted from the start, not deferred to "moves only."
 - **Backend**: `kelpc` lowers its typed IR to **LLVM IR** (the MK7 record in `meta/milestones.md` (kelp wiki)) and lets LLVM do register allocation, the encoder, the ELF writer, the debug-info format and multiple targets. C was the first backend, chosen for implementation simplicity while still getting native `-O2` codegen, and it is kept as the differential oracle the LLVM backend is measured against: it is never deleted, but it is not a user surface, so no flag and no environment variable selects it. Only the emission layer was new, so the replacement was weeks of work rather than a project. A hand-written backend track was tried and is retired, its plan and measurements recorded in `meta/milestones.md` (kelp wiki)'s MK7 section.
 - **Type system**: fully static with local type inference (Kotlin/Rust-style annotate signatures, infer locals).
-- **Syntax**: brace-delimited, Kotlin-shaped surface (`fun`, `val`/`var`, `datac`, `.return: T`, no semicolons, receivers instead of `self`/`impl` blocks) over a Rust-shaped memory model. Full spec in the "Syntax & style" section below.
+- **Syntax**: brace-delimited, Kotlin-shaped surface (`fun`, `val`/`var`, `datac`, `=> T`, no semicolons, receivers instead of `self`/`impl` blocks) over a Rust-shaped memory model. Full spec in the "Syntax & style" section below.
 - **Implementation language**: Rust (good fit for tree-walking, pattern matching over ASTs, and enums for typed IR).
 
 Because a full borrow checker is the hardest single component here, the plan is phased so that each milestone produces a compiler that actually builds and runs `.kp` programs, with borrowing arriving once the simpler layers (lexer → parser → types → C codegen) are solid and tested. This avoids the failure mode of building a borrow checker against a language/compiler that doesn't exist yet.
@@ -168,7 +168,7 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 - `extern fun` declarations whose bodies the compiler supplies **done** (MK3-S1-M2). Only compiler-shipped stdlib modules can have one; user code gets a compile error naming the reason. User-declarable externs are B-1, and they need a design pass with the owner before implementation, because a user `extern fun` is a capability question first: it would let a module reach a raw primitive with no domain and no allowlist, which is exactly what the gating model above exists to prevent
 - `&str` string literal / borrowed-view type (points at static data or a substring of another `&str`)
 - `val` (immutable) / `var` (mutable)
-- `fun name(param: T, ...).return: T { ... }`, explicit param/return types, expression bodies, local type inference for `val`/`var`
+- `fun name(param: T, ...) => T { ... }`, explicit param/return types, expression bodies, local type inference for `val`/`var`
 - Receivers: `fun T.m()`, `fun mut T.m()` (sugar over an implicit first parameter)
 - `datac` with named fields, each `val` or `var`
 - Control flow: `if`/`else` (as statement and expression), `while`, `when` (boolean/`else` form), `return`
@@ -217,7 +217,7 @@ These are not preferences, they are walls. Everything below is shaped by them.
 | Owned `String`/`Bytes` grow in place (MK5-S1-M1) | Text and binary data can be built incrementally with `push`/`push_str`/`append`/`reserve`; a `&str`/`&Bytes` view of a buffer cannot outlive a growth of it, because growth takes `&mut` (so the borrow checker refuses it). `mem.alloc(n)` is still fixed-size. |
 | `&str` is a borrowed view only | String functions return substrings of their input, or an owned `String`/`Bytes`. |
 | `Option`/`Result` in the stdlib (MK5-S6-M1, combinators in MK8-S1-M2 phase D) | `if let` and `?` branch on and propagate them, `std/option`/`std/result` ship the two enums and their helpers, every native that used to return an `ok` flag returns one of them, and the combinators (`map`, `and_then`, `or_else`, `each`, `map_err`) take a closure, so a callback may capture. The helpers that hand a payload out by value for an owned payload ship with A-11's partial moves: `option.unwrap`/`expect`/`unwrap_or` and `result.map`/`map_err` take their receiver with `move`, and the ones whose receiver stays a borrow (`option.or_else`, `list.filter`) are `Copy`-only on the side they rebuild. What is still missing is error *conversion* (traits, A-12). |
-| Function values, `fun` literals, and closures (MK8-S1-M2 phases B/C/E/F) | A callback is expressible: a declared `fun` is a value of type `fun(T).return: U`, a `fun` literal is written where an expression is expected, a literal that names an enclosing binding is a **closure** (`closure(T).return: U`, which owns the heap environment its captures were moved into and drops it where it dies), a plain function value is widened into a closure where one is expected, and `std/list`/`std/option`/`std/result` take closures, so a callback can carry a binding, and a `for_each_entry(path) { }`-shaped escape hatch is expressible. What a `sort_by`-shaped comparator over an owned element type still needs is A-11's partial moves, not a closure. |
+| Function values, `fun` literals, and closures (MK8-S1-M2 phases B/C/E/F) | A callback is expressible: a declared `fun` is a value of type `fun(T) => U`, a `fun` literal is written where an expression is expected, a literal that names an enclosing binding is a **closure** (`closure(T) => U`, which owns the heap environment its captures were moved into and drops it where it dies), a plain function value is widened into a closure where one is expected, and `std/list`/`std/option`/`std/result` take closures, so a callback can carry a binding, and a `for_each_entry(path) { }`-shaped escape hatch is expressible. What a `sort_by`-shaped comparator over an owned element type still needs is A-11's partial moves, not a closure. |
 | No exceptions | Fatal failures panic; recoverable ones use the error `datac` convention. |
 | Capability gating is the headline feature | Gated namespaces must be unreachable without a grant. `fs` cannot be a thin shim over ambient syscalls. |
 | `const` exists (MK2-S2-M1, general evaluation in A-19) | `math.PI`/`E`/`TAU` are folded literals. An initializer may use earlier constants, the operators, `if` and an integer conversion, and since A-19 it may also call a plain `fun` whose own body stays inside that set: the fold evaluates the call itself (`infer.rs`'s const evaluator), with a step and a call-depth budget. A builtin, an `extern fun` and a method are still out of reach. |
@@ -255,26 +255,26 @@ Compiler-provided, not user-definable via `datac` (a `datac` cannot hold a point
 datac Bytes      // opaque: owned heap byte buffer, freed at end of scope (drop)
 datac String     // opaque: owned heap utf-8 text, same move/drop rules
 
-fun Bytes.len().return: usize                   // shipped (MK3-S1-M1)
-fun Bytes.get(i: usize).return: u8              // shipped; panics on out-of-bounds
+fun Bytes.len() => usize                   // shipped (MK3-S1-M1)
+fun Bytes.get(i: usize) => u8              // shipped; panics on out-of-bounds
 fun Bytes.set(i: usize, b: u8)             // shipped
-fun Bytes.slice(from: usize, to: usize).return: &Bytes   // needs &-return elision (MK2-S2-M1)
-fun Bytes.as_str().return: &str                 // needs &-return elision (MK2-S2-M1)
-fun Bytes.clone().return: Bytes                 // shipped
-fun Bytes.from_str(s: &str).return: Bytes       // shipped
-fun Bytes.empty().return: Bytes                 // shipped
+fun Bytes.slice(from: usize, to: usize) => &Bytes   // needs &-return elision (MK2-S2-M1)
+fun Bytes.as_str() => &str                 // needs &-return elision (MK2-S2-M1)
+fun Bytes.clone() => Bytes                 // shipped
+fun Bytes.from_str(s: &str) => Bytes       // shipped
+fun Bytes.empty() => Bytes                 // shipped
 
-fun String.len().return: usize                  // shipped (MK3-S1-M2); bytes, not chars
-fun String.char_count().return: usize           // shipped
-fun String.is_empty().return: bool              // shipped
-fun String.as_str().return: &str                // needs &-return elision (MK2-S2-M1)
-fun String.as_bytes().return: &Bytes            // needs &-return elision (MK2-S2-M1)
-fun String.clone().return: String               // shipped
-fun String.from_str(s: &str).return: String     // shipped
-fun String.from_bytes(b: Bytes).return: String  // shipped; panics on invalid utf-8
-fun String.into_bytes().return: Bytes           // shipped; move, no copy
-fun String.slice(from: usize, to: usize).return: &str   // needs &-return elision (MK2-S2-M1)
-fun String.empty().return: String               // shipped
+fun String.len() => usize                  // shipped (MK3-S1-M2); bytes, not chars
+fun String.char_count() => usize           // shipped
+fun String.is_empty() => bool              // shipped
+fun String.as_str() => &str                // needs &-return elision (MK2-S2-M1)
+fun String.as_bytes() => &Bytes            // needs &-return elision (MK2-S2-M1)
+fun String.clone() => String               // shipped
+fun String.from_str(s: &str) => String     // shipped
+fun String.from_bytes(b: Bytes) => String  // shipped; panics on invalid utf-8
+fun String.into_bytes() => Bytes           // shipped; move, no copy
+fun String.slice(from: usize, to: usize) => &str   // needs &-return elision (MK2-S2-M1)
+fun String.empty() => String               // shipped
 ```
 
 `mem.alloc(n)` (shipped in MK3-S1-M2) is the allocation primitive the fixed-size-buffer functions are built on: an owned, zero-filled `Bytes` of `n` bytes, so `str.to_upper` allocates once and fills it through `Bytes.set` rather than growing anything.
@@ -297,11 +297,11 @@ datac Node(val value: i32, val next: Box<Node>)   // the reason it exists
 val empty: Box<i32> = Box.empty()     // a cell holding nothing (NULL)
 val one = Box.of(1)                   // allocates, moves the value in
 
-fun Box.is_empty().return: bool
-fun Box.get().return: T                    // a copy, when T is Copy
-fun Box.get().return: &T                   // a borrow, when T owns memory
+fun Box.is_empty() => bool
+fun Box.get() => T                    // a copy, when T is Copy
+fun Box.get() => &T                   // a borrow, when T owns memory
 fun Box.set(v: T)                     // frees the old value, reuses the cell
-fun Box.take().return: T                   // moves the value out; panics when empty
+fun Box.take() => T                   // moves the value out; panics when empty
 ```
 
 - Elements may be any sized type, *including* another container and any `datac`; a borrow or a `str` view is refused. A `List<Box<T>>` and a `List<List<T>>` are accepted since A-10 slice 1: an element lives in the list's own buffer, so the element type only has to be a complete, droppable C type, and `container_depth` emits the nested container before the one that contains it. A `Map` value set is narrower (a scalar, `String`, `Bytes`, a `datac`), and a container element inside a fixed-size array stays refused.
@@ -315,22 +315,22 @@ fun Box.take().return: T                   // moves the value out; panics when e
 val names: List<String> = List.empty()     // element type from the written type
 var nums = List.of(1)                      // element type from the argument
 
-fun List.len().return: usize
-fun List.is_empty().return: bool
+fun List.len() => usize
+fun List.is_empty() => bool
 fun List.push(v: T)                        // moves an owned element in
-fun List.get(i: usize).return: T                // a copy, when T is Copy (a scalar)
-fun List.get(i: usize).return: &T               // a borrow, when T owns memory
+fun List.get(i: usize) => T                // a copy, when T is Copy (a scalar)
+fun List.get(i: usize) => &T               // a borrow, when T owns memory
 fun List.set(i: usize, v: T)               // frees the element it replaces
-fun List.pop().return: T                        // moves one out; panics when empty
+fun List.pop() => T                        // moves one out; panics when empty
 fun List.clear()
 // MK5-S1: the ordering surface. Each is defined only for an element type that
 // has the capability it needs (`datac` elements are refused with a reason).
 fun List.sort()                            // value order; String/Bytes byte order
 fun List.reverse()
-fun List.contains(v: T).return: bool            // &T for an owned element type
-fun List.slice(from: usize, to: usize).return: List<T>   // an owned copy
+fun List.contains(v: T) => bool            // &T for an owned element type
+fun List.slice(from: usize, to: usize) => List<T>   // an owned copy
 fun List.insert(i: usize, v: T)
-fun List.remove(i: usize).return: T             // moves one out; panics out of range
+fun List.remove(i: usize) => T             // moves one out; panics out of range
 // `List.index_of` is deliberately absent: its `-1` sentinel is the convention
 // decision 2 rejects. It arrives with `Option` (MK5-S6-M1) open item 42.
 ```
@@ -375,7 +375,7 @@ No `Option`, no `Result`, no exceptions. Available conventions:
 
 1. **Panic** `fs.read` on a missing file panics with the call-site span and the granted allowlist printed. Simple, correct, unusable for expected failures.
 2. **Sentinel** `str.index_of` returns `i64` with `-1` for absent. Cheap, breaks down for non-numeric returns.
-3. **Out-param + bool** `fun path.try_join(a: &str, b: &str, out: mut Bytes).return: bool`. Composable, ugly, C-flavored.
+3. **Out-param + bool** `fun path.try_join(a: &str, b: &str, out: mut Bytes) => bool`. Composable, ugly, C-flavored.
 4. **Error `datac`**, *superseded by MK5-S6-M1*: `datac Match(val ok: bool, val at: usize)` then `if m.ok { }`. It was the failure model until `Option`/`Result` shipped; every such native now returns one of those (see the stdlib sections).
 
 Locked (decision 2): panic for programmer errors and unrecoverable IO; convention 4 for the recoverable cases people actually branch on (`str.index_of`, `str.parse_i64` on bad input). Conventions 2 and 3 are rejected: no `-1` sentinels, no out-param `try_` family. Document `Panics:` in the doc comment of every panicking function.
@@ -392,32 +392,32 @@ const E: f64 = 2.718281828459045
 const TAU: f64 = 6.283185307179586
 
 // overloaded across i32/i64/u32/u64/f32/f64 (decision 4)
-fun math.abs(x: f64).return: f64
-fun math.min(a: f64, b: f64).return: f64
-fun math.max(a: f64, b: f64).return: f64
-fun math.clamp(x: f64, lo: f64, hi: f64).return: f64
-fun math.sign(x: f64).return: f64
+fun math.abs(x: f64) => f64
+fun math.min(a: f64, b: f64) => f64
+fun math.max(a: f64, b: f64) => f64
+fun math.clamp(x: f64, lo: f64, hi: f64) => f64
+fun math.sign(x: f64) => f64
 
-fun math.sqrt(x: f64).return: f64
-fun math.pow(base: f64, exp: f64).return: f64
-fun math.floor(x: f64).return: f64
-fun math.ceil(x: f64).return: f64
-fun math.round(x: f64).return: f64
-fun math.trunc(x: f64).return: f64
-fun math.exp(x: f64).return: f64
-fun math.ln(x: f64).return: f64
-fun math.log2(x: f64).return: f64
-fun math.log10(x: f64).return: f64
-fun math.sin(x: f64).return: f64
-fun math.cos(x: f64).return: f64
-fun math.tan(x: f64).return: f64
-fun math.atan2(y: f64, x: f64).return: f64
+fun math.sqrt(x: f64) => f64
+fun math.pow(base: f64, exp: f64) => f64
+fun math.floor(x: f64) => f64
+fun math.ceil(x: f64) => f64
+fun math.round(x: f64) => f64
+fun math.trunc(x: f64) => f64
+fun math.exp(x: f64) => f64
+fun math.ln(x: f64) => f64
+fun math.log2(x: f64) => f64
+fun math.log10(x: f64) => f64
+fun math.sin(x: f64) => f64
+fun math.cos(x: f64) => f64
+fun math.tan(x: f64) => f64
+fun math.atan2(y: f64, x: f64) => f64
 
-fun math.is_nan(x: f64).return: bool
-fun math.is_finite(x: f64).return: bool
+fun math.is_nan(x: f64) => bool
+fun math.is_finite(x: f64) => bool
 
-fun math.checked_add(a: i64, b: i64).return: i64   // panics on overflow
-fun math.saturating_add(a: i64, b: i64).return: i64
+fun math.checked_add(a: i64, b: i64) => i64   // panics on overflow
+fun math.saturating_add(a: i64, b: i64) => i64
 ```
 
 Everything else stays `f64` until `f32` overloads are decided (open item 7). Integer `abs`/`min`/`max`/`clamp`/`sign` come from the overloading rule in decision 4, not from suffixed names like `math.iabs`/`math.imin`.
@@ -436,51 +436,51 @@ C signed overflow is UB, so it must be defined:
 **Shipped in MK3-S1-M2** (`kelpc/std/str.kp`): `str.len`, `str.byte` (the bounds-checked one the section below does not name, but which `to_upper`/`join` are built on), `str.is_empty`, `str.to_upper`, `str.to_lower`, `str.repeat`; MK2-S2-M1 added the `&str`-returning half and `path`; MK3-S2-M1 added `split`/`join`/`copy_range`/`copy_into`, which are the `List<String>` entry and exit. Still unwritten and needing no new rule: `replace`, `from_i64`, `from_f64`, `concat` (see open item 25 concatenation still has no spelling, which is why a path is built with `path.join` or `str.join`).
 
 ```kelp
-fun str.len(s: &str).return: usize              // bytes, not chars
-fun str.is_empty(s: &str).return: bool
-fun str.char_count(s: &str).return: usize
-fun str.trim(s: &str).return: String   // shipped: truncation cannot be a view
-fun str.trim_start(s: &str).return: &str
-fun str.trim_end(s: &str).return: &str
-fun str.starts_with(s: &str, prefix: &str).return: bool
-fun str.ends_with(s: &str, suffix: &str).return: bool
-fun str.contains(s: &str, needle: &str).return: bool
-fun str.index_of(s: &str, needle: &str).return: Option<usize>   // `None` when absent
-fun str.eq_ignore_case(a: &str, b: &str).return: bool
-fun str.char_at(s: &str, i: usize).return: u32    // MK5-S1 shipped `u32`, not `char` (item 53)
-fun str.byte_index(s: &str, i: usize).return: usize
-fun str.repeat(s: &str, n: usize).return: String
-fun str.split(s: &str, sep: &str).return: List<String>   // shipped (MK3-S2-M1)
-fun str.join(parts: List<String>, sep: &str).return: String   // shipped (MK3-S2-M1)
-fun str.copy_range(s: &str, from: usize, to: usize).return: String   // shipped (MK3-S2-M1); the piece-copier split is built on
-fun str.replace(s: &str, from: &str, to: &str).return: String
-fun str.to_upper(s: &str).return: String
-fun str.to_lower(s: &str).return: String
-fun str.from_i64(n: i64).return: String
-fun str.from_f64(x: f64).return: String
-fun str.parse_i64(s: &str).return: i64                  // panics on garbage
-fun str.parse_f64(s: &str).return: f64
+fun str.len(s: &str) => usize              // bytes, not chars
+fun str.is_empty(s: &str) => bool
+fun str.char_count(s: &str) => usize
+fun str.trim(s: &str) => String   // shipped: truncation cannot be a view
+fun str.trim_start(s: &str) => &str
+fun str.trim_end(s: &str) => &str
+fun str.starts_with(s: &str, prefix: &str) => bool
+fun str.ends_with(s: &str, suffix: &str) => bool
+fun str.contains(s: &str, needle: &str) => bool
+fun str.index_of(s: &str, needle: &str) => Option<usize>   // `None` when absent
+fun str.eq_ignore_case(a: &str, b: &str) => bool
+fun str.char_at(s: &str, i: usize) => u32    // MK5-S1 shipped `u32`, not `char` (item 53)
+fun str.byte_index(s: &str, i: usize) => usize
+fun str.repeat(s: &str, n: usize) => String
+fun str.split(s: &str, sep: &str) => List<String>   // shipped (MK3-S2-M1)
+fun str.join(parts: List<String>, sep: &str) => String   // shipped (MK3-S2-M1)
+fun str.copy_range(s: &str, from: usize, to: usize) => String   // shipped (MK3-S2-M1); the piece-copier split is built on
+fun str.replace(s: &str, from: &str, to: &str) => String
+fun str.to_upper(s: &str) => String
+fun str.to_lower(s: &str) => String
+fun str.from_i64(n: i64) => String
+fun str.from_f64(x: f64) => String
+fun str.parse_i64(s: &str) => i64                  // panics on garbage
+fun str.parse_f64(s: &str) => f64
 ```
 
 Text-returning functions return `String`, not `Bytes` that is the fix forced by `String` being v1. Byte-level functions (`fs.read`, `net.recv`, `rand.bytes`) still return `Bytes`.
 
 Receiver form is available and preferred in user code: `name.trim()`, `s.contains("x")` extension functions on `&str`.
 
-**Borrow rule this forces:** a function returning `&str` without an explicit lifetime must borrow from its first reference parameter (Rust's elision rule). `fun str.trim(s: &str).return: &str` returns a slice of `s`. Without this rule the type checker cannot accept the `&str`-returning half of `str`/`path` at all, so it is a hard prerequisite, not a nicety and MK3-S1-M2 shipped only the half that does not need it. Iteration over chars waits for collections.
+**Borrow rule this forces:** a function returning `&str` without an explicit lifetime must borrow from its first reference parameter (Rust's elision rule). `fun str.trim(s: &str) => &str` returns a slice of `s`. Without this rule the type checker cannot accept the `&str`-returning half of `str`/`path` at all, so it is a hard prerequisite, not a nicety and MK3-S1-M2 shipped only the half that does not need it. Iteration over chars waits for collections.
 
 #### path (pure; allocation-returning parts need `Bytes`/`String`)
 
 **Shipped in MK3-S1-M2** (`kelpc/std/path.kp`): `path.is_absolute` and `path.join`. The predicate/slicing family below (`file_name`, `parent`, `extension`, `stem`) returns `&str` and waits on return elision with the rest of `str`. `path.normalize` is deferred *on purpose* it is the same lexical normalization the MK4-S1-M1 capability matcher needs for its `..` rejection, so it should be written once, against the grant matcher, rather than written here and then re-derived there. `path.join` does not normalize (`a/` + `b` collapses the duplicate separator, which is what users mean, but `..` is left alone).
 
 ```kelp
-fun path.is_absolute(s: &str).return: bool
-fun path.file_name(s: &str).return: &str
-fun path.parent(s: &str).return: &str
-fun path.extension(s: &str).return: &str
-fun path.stem(s: &str).return: &str
-fun path.has_extension(s: &str, ext: &str).return: bool
-fun path.join(a: &str, b: &str).return: String      // needs owned allocation
-fun path.normalize(s: &str).return: String          // needs owned allocation
+fun path.is_absolute(s: &str) => bool
+fun path.file_name(s: &str) => &str
+fun path.parent(s: &str) => &str
+fun path.extension(s: &str) => &str
+fun path.stem(s: &str) => &str
+fun path.has_extension(s: &str, ext: &str) => bool
+fun path.join(a: &str, b: &str) => String      // needs owned allocation
+fun path.normalize(s: &str) => String          // needs owned allocation
 ```
 
 Path separator is `/` on every platform; codegen translates to `\` for Windows at the syscall boundary, not in the API. `path.normalize` is purely lexical (`a//b` → `a/b`, drop `.`, reject `..` escaping) and is the *same* function the capability checker uses, so the security-relevant normalization has exactly one implementation.
@@ -490,14 +490,14 @@ Path separator is `/` on every platform; codegen translates to `\` for Windows a
 **Shipped**, with the grant/gate/check machinery described under MK4-S1-M1 and the test suite that goes with it: `read`, `read_text`, `write`, `write_text`, `exists`, `is_file`, `is_dir`, `size`, `remove`, `rename`, `mkdir`, plus two that were not in the sketch: `append(path, data)` (the streaming primitive it needs one buffer's worth of data at a time, not a growable one, which is why streaming a file needed no collections work) and `sync(path)` (an fsync, so a timing of a write is a timing of storage rather than of the page cache). `mkdir_all` is the one function from the sketch below that is *not* here (it needs to walk prefixes of its path).
 
 ```kelp
-fun fs.read(path: &str).return: Bytes
-fun fs.read_text(path: &str).return: String
+fun fs.read(path: &str) => Bytes
+fun fs.read_text(path: &str) => String
 fun fs.write(path: &str, data: Bytes)
 fun fs.write_text(path: &str, text: String)
-fun fs.exists(path: &str).return: bool
-fun fs.is_file(path: &str).return: bool
-fun fs.is_dir(path: &str).return: bool
-fun fs.size(path: &str).return: u64
+fun fs.exists(path: &str) => bool
+fun fs.is_file(path: &str) => bool
+fun fs.is_dir(path: &str) => bool
+fun fs.size(path: &str) => u64
 fun fs.remove(path: &str)
 fun fs.rename(from: &str, to: &str)            // both paths checked
 fun fs.mkdir(path: &str)
@@ -529,13 +529,13 @@ fun io.print(s: &str)
 fun io.print_bare(s: &str)               // `print`/`print!` already do these two
 fun io.eprint(s: &str)
 fun io.eprint_bare(s: &str)
-fun io.stdin().return: File                   // one stream type over an fd; see MK5-S2-M1
-fun io.stdout().return: File
-fun io.stderr().return: File
-fun read_line().return: Option<String>   // `None` at end of file
-fun io.read_line().return: Line                 // needs String, and a buffer: MK5-S2-M1
-fun io.read_all().return: Bytes
-fun io.read_lines().return: List<String>
+fun io.stdin() => File                   // one stream type over an fd; see MK5-S2-M1
+fun io.stdout() => File
+fun io.stderr() => File
+fun read_line() => Option<String>   // `None` at end of file
+fun io.read_line() => Line                 // needs String, and a buffer: MK5-S2-M1
+fun io.read_all() => Bytes
+fun io.read_lines() => List<String>
 datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize)
 ```
 
@@ -544,13 +544,13 @@ datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize
 #### fmt (ungated, pure)
 
 ```kelp
-fun fmt.int(n: i64).return: String
-fun fmt.uint(n: u64).return: String
-fun fmt.float(x: f64, decimals: i32).return: String    // one extern: snprintf("%.*f")
-fun fmt.hex(n: u64).return: String                     // lowercase, no prefix
-fun fmt.pad_left(s: &str, width: usize, fill: u8).return: String    // fill: u8, not char (item 53)
-fun fmt.pad_right(s: &str, width: usize, fill: u8).return: String
-fun fmt.bytes(b: Bytes).return: String                 // "1f 8b 08" the first debugging printer
+fun fmt.int(n: i64) => String
+fun fmt.uint(n: u64) => String
+fun fmt.float(x: f64, decimals: i32) => String    // one extern: snprintf("%.*f")
+fun fmt.hex(n: u64) => String                     // lowercase, no prefix
+fun fmt.pad_left(s: &str, width: usize, fill: u8) => String    // fill: u8, not char (item 53)
+fun fmt.pad_right(s: &str, width: usize, fill: u8) => String
+fun fmt.bytes(b: Bytes) => String                 // "1f 8b 08" the first debugging printer
 ```
 
 `fmt` is MK5-S1 and has no gate: it is arithmetic and byte shuffling. Variadic formatting is explicitly not in scope it needs generics or macros, neither of which exists (open item 43 for concatenation, and the non-goals below). **Shipped in MK5-S1-M3** (`kelpc/std/fmt.kp`), on top of `std/str`; the only C in it is `snprintf("%llx")` for `hex` and the byte-dump loop for `bytes`.
@@ -558,18 +558,18 @@ fun fmt.bytes(b: Bytes).return: String                 // "1f 8b 08" the first d
 #### Map (a compiler builtin, `Map<K, V>`)
 
 ```kelp
-fun Map.new().return: Map<K, V>
-fun Map.len().return: usize
-fun Map.is_empty().return: bool
-fun Map.has(key: K).return: bool
-fun Map.get(key: K).return: V             // a copy when V is Copy...
-fun Map.get(key: K).return: &V            // ...a borrow when V owns memory; panics when absent
-fun Map.get_or(key: K, fallback: V).return: V
+fun Map.new() => Map<K, V>
+fun Map.len() => usize
+fun Map.is_empty() => bool
+fun Map.has(key: K) => bool
+fun Map.get(key: K) => V             // a copy when V is Copy...
+fun Map.get(key: K) => &V            // ...a borrow when V owns memory; panics when absent
+fun Map.get_or(key: K, fallback: V) => V
 fun mut Map.insert(key: K, v: V)
-fun mut Map.remove(key: K).return: V
+fun mut Map.remove(key: K) => V
 fun mut Map.clear()
-fun Map.keys().return: List<K>            // insertion order, not hash order
-fun Map.values().return: List<V>
+fun Map.keys() => List<K>            // insertion order, not hash order
+fun Map.values() => List<V>
 ```
 
 **Shipped in MK5-S5**, with `String` keys only and a monomorphized value type: FNV-1a over the key's bytes, entries in insertion order in a dense array with a separate open-addressed index, because `keys()` must return insertion order; `get_or` and `values` are offered only for a clonable value type, since a `datac` value cannot be copied back out. `Map<Map<i32>>` stays impossible (the value set is narrower than the `List` element set, which A-10 slice 1 widened to take a `List` or a `Box`), and `Map.of` does not exist because a map starts empty. There is no `Set`: `Map<bool>` covers it, and a third monomorphized generic is not worth it (open item 41). **The key type became generic in A-2** (`Map<K, V>`, with `Map<V>` kept as the `String`-key shorthand): the key's hash and its equality are generated per instantiation, so a scalar key is a mix of its bits, a `String` key is FNV-1a plus a length-aware `memcmp`, and the entry holds one or the other. **The derived key set widened in A-6**: a `datac`/`enum` whose every field or variant payload is keyable is a key too, through a generated `kelp_hash_<T>` and `kelp_eq_<T>` folded over the fields (the tag first for an `enum`), built on the same declaration-graph fixpoint that already gave those types their derived order and deep copy. The combine step of that hash lives in one shared runtime helper (`kelp_map_combine`), so the C backend and the LLVM backend cannot produce a different hash for the same key. What stays refused is a float, a `List`/`Map`/`Box`, a view or a borrow, and a `datac`/`enum` with a field outside the set; `Set<T>` is deliberately not part of this and stays open.
@@ -586,14 +586,14 @@ impl "std/mem"
 const pool_size: usize = __KELP_HTTP_POOL__      // from coral.toml's http_pool, spliced in by the compiler
 
 datac Url(val scheme: String, val host: String, val port: u16, val path: String)
-fun http.parse_url(s: &str).return: Url               // Panics: no scheme/host, or unsupported scheme
+fun http.parse_url(s: &str) => Url               // Panics: no scheme/host, or unsupported scheme
 
 datac Header(val name: String, val value: String)
 datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val reusable: bool)
-fun Response.header(name: &str).return: &str          // "" when absent (no Option)
-fun Response.has_header(name: &str).return: bool
-fun Response.is_ok().return: bool                     // 200..299
-fun Response.text().return: String                    // Panics: invalid utf-8
+fun Response.header(name: &str) => &str          // "" when absent (no Option)
+fun Response.has_header(name: &str) => bool
+fun Response.is_ok() => bool                     // 200..299
+fun Response.text() => String                    // Panics: invalid utf-8
 
 datac Request(val method: String, val url: String, val headers: List<Header>, val body: Bytes)
 datac Client(val timeout_ms: u64, val max_redirects: i32, val follow_redirects: bool)
@@ -603,19 +603,19 @@ datac Lease(val handle: i32, val socket: Socket, val reused: bool)
 // Kept-alive connections to one host:port, keyed on the host as written.
 datac Pool(val host: String, val port: u16, val size: usize, var slots: List<Socket>, var free: List<i32>)
 
-fun http.pool(host: &str, port: u16).return: Pool      // size from coral.toml, not from an argument
-fun Pool.size().return: usize                         // the configured ceiling
-fun Pool.len().return: usize                          // sockets currently open
+fun http.pool(host: &str, port: u16) => Pool      // size from coral.toml, not from an argument
+fun Pool.size() => usize                         // the configured ceiling
+fun Pool.len() => usize                          // sockets currently open
 fun mut Pool.warm()                              // opens up to `size` now (optional)
-fun mut Pool.checkout().return: Lease                 // lazy: opens one when none is free
+fun mut Pool.checkout() => Lease                 // lazy: opens one when none is free
 fun mut Pool.release(lease: Lease, reusable: bool)
 fun mut Pool.close_all()
-fun Client.send(req: Request).return: Response        // one fresh connection, follows redirects
-fun mut Pool.send(req: Request).return: Response      // checkout + exchange + release
-fun http.exchange(client: Client, lease: Lease, req: Request).return: Response   // the concurrency-ready shape
-fun http.get(url: &str).return: Response              // the one-liner, default client, no pool
-fun http.post_text(url: &str, body: &str, content_type: &str).return: Response
-fun http.default_client().return: Client
+fun Client.send(req: Request) => Response        // one fresh connection, follows redirects
+fun mut Pool.send(req: Request) => Response      // checkout + exchange + release
+fun http.exchange(client: Client, lease: Lease, req: Request) => Response   // the concurrency-ready shape
+fun http.get(url: &str) => Response              // the one-liner, default client, no pool
+fun http.post_text(url: &str, body: &str, content_type: &str) => Response
+fun http.default_client() => Client
 ```
 
 Four body-length cases, all framed without ambiguity: `Content-Length` (a `mem.alloc`-sized buffer plus `recv_into`), `Transfer-Encoding: chunked` (hex size line, that many bytes, CRLF, repeat until a zero size, skip trailers **shipped in MK5-S4**, not deferred, because keep-alive leaves no other way to find a chunked body's end), a bodyless response (`204`/`304`, and any `Content-Length: 0`), and neither header (**read to EOF, and the connection is *not* reusable** the one case that costs a connection). A socket returns to the pool only when the body was completely framed, the server did not send `Connection: close`, and no parse error occurred; a pooled socket that fails on first use is retried exactly once on a fresh connection, because a peer may close an idle connection at any moment. Redirects re-run the connect path (and therefore the capability check), so a redirect to an ungranted host is denied: the capability model working, not a limitation. No gzip, no HTTP/2, no cookies, no proxy, no idle reaping. `https` is MK5-S4b-M1 and is a dependency decision (open item 37).
@@ -625,34 +625,34 @@ Four body-length cases, all framed without ambiguity: `Content-Length` (a `mem.a
 ```kelp
 // `program` is separate from `args` because that is what makes the grant
 // matchable: one absolute path, and argv stays a list.
-fun process.run(program: &str, args: List<String>).return: RunResult
+fun process.run(program: &str, args: List<String>) => RunResult
 // MK5-S2-M2: the same, with the *child's* working directory. An empty `dir`
 // means the parent's, which is what `run`/`spawn` now delegate with.
-fun process.run_in(dir: &str, program: &str, args: List<String>).return: RunResult
+fun process.run_in(dir: &str, program: &str, args: List<String>) => RunResult
 datac RunResult(val code: i32, val out: Bytes, val err: Bytes)
-fun process.spawn(program: &str, args: List<String>).return: Child
-fun process.spawn_in(dir: &str, program: &str, args: List<String>).return: Child
+fun process.spawn(program: &str, args: List<String>) => Child
+fun process.spawn_in(dir: &str, program: &str, args: List<String>) => Child
 // MK5-S2-M2: the fallible shape, so a missing program is a value rather than a
 // panic. Every reason is decided by a `stat`/`access` pre-check *before* the
 // fork. A program outside the grant is not one of them, since that refusal is
 // the compiler's and it panics (open item 73).
-fun process.try_run(program: &str, args: List<String>).return: result.Result<RunResult, ProcErr>
-fun process.try_run_in(dir: &str, program: &str, args: List<String>).return: result.Result<RunResult, ProcErr>
+fun process.try_run(program: &str, args: List<String>) => result.Result<RunResult, ProcErr>
+fun process.try_run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr>
 enum ProcErr {
     NotFound        // nothing at that path
     NotExecutable   // there, but not a regular executable file
     DirNotFound     // `dir` is not a directory
 }
-fun process.executable(program: &str).return: bool  // the pre-check `try_run` uses
+fun process.executable(program: &str) => bool  // the pre-check `try_run` uses
 // SHIPPED with the wait state added, so `wait` and `is_running` agree:
 datac Child(val pid: i32, val stdin: File, val stdout: File, val stderr: File, var exited: bool, var code: i32)
-fun mut Child.wait().return: i32                  // exit code, or 128+signal
+fun mut Child.wait() => i32                  // exit code, or 128+signal
 fun Child.kill(signal: i32)
-fun mut Child.is_running().return: bool
-fun process.args().return: List<String>           // your own invocation (open item 39)
-fun process.arg_count().return: usize
+fun mut Child.is_running() => bool
+fun process.args() => List<String>           // your own invocation (open item 39)
+fun process.arg_count() => usize
 fun process.exit(code: i32)
-fun process.getpid().return: i64
+fun process.getpid() => i64
 ```
 
 There is **no `run_shell`**: the string-handed-to-a-shell form the earlier sketch pencilled in is gone, because a shell string cannot be checked against a pattern and is injection-prone by construction. `run`/`spawn` take the program and its argv separately. **A per-call working directory shipped in MK5-S2-M2** as `spawn_in`/`run_in`: `chdir` happens in the *child*, between `fork` and `exec`, so the parent's directory is unchanged and no grant pattern's meaning moves, which is what made the form expressible at all, given that a process-wide `chdir` is still out. The working directory is **not** a resource and is not checked against the grant; a `dir` the child cannot enter is exit code **126** (127 stays "cannot exec"). The fallible shape shipped with it, and the compiler's own refusal to call a program outside the grant is deliberately still a panic, it is a manifest error, and making it a value needs a non-panicking check mode in codegen (open item 73). `process.args()` reads argv the runtime stashed at the top of `main` (open item 50); `env.args`/`env.arg` are dropped from the sketch, argv is your own invocation, not the environment's authority. It still lives behind the `process` gate like the rest of the module, but a grant with an **empty** pattern list is enough to reach it, so reading your own argv never carries the authority to execute anything (open item 39).
@@ -661,27 +661,27 @@ There is **no `run_shell`**: the string-handed-to-a-shell form the earlier sketc
 
 ```kelp
 datac Socket(val fd: i32)
-fun net.connect(host: &str, port: u16).return: Socket   // Panics: resolution, connect, or the grant
-fun net.listen(port: u16).return: Listener
+fun net.connect(host: &str, port: u16) => Socket   // Panics: resolution, connect, or the grant
+fun net.listen(port: u16) => Listener
 datac Listener(val fd: i32)
-fun net.accept(l: Listener).return: Socket
+fun net.accept(l: Listener) => Socket
 fun net.close(s: Socket)
 fun Listener.close()                               // shipped in MK5-S3; `net.close` takes a Socket
-fun net.try_accept(l: Listener).return: Result<Socket, NetErr>   // st2; `Listener.set_timeout(ms)` makes it time out
-fun net.mono_ms().return: i64                           // st2: monotonic ms, for deadlines (in `net`, so `std/http` needs no `time` grant)
-fun net.try_shutdown_write(s: Socket).return: bool      // st2: false for a reset socket instead of a panic
+fun net.try_accept(l: Listener) => Result<Socket, NetErr>   // st2; `Listener.set_timeout(ms)` makes it time out
+fun net.mono_ms() => i64                           // st2: monotonic ms, for deadlines (in `net`, so `std/http` needs no `time` grant)
+fun net.try_shutdown_write(s: Socket) => bool      // st2: false for a reset socket instead of a panic
 fun net.shutdown_write(s: Socket)
-fun net.send(s: Socket, data: Bytes).return: usize      // may be short; send_all is the common case
-fun net.send_all(s: Socket, data: Bytes).return: usize  // the short-write loop, in the extern
+fun net.send(s: Socket, data: Bytes) => usize      // may be short; send_all is the common case
+fun net.send_all(s: Socket, data: Bytes) => usize  // the short-write loop, in the extern
 fun net.send_text(s: Socket, text: &str)
-fun net.recv(s: Socket, max: usize).return: Bytes       // one read, empty at EOF
-fun net.recv_into(s: Socket, buf: mut Bytes, at: usize).return: usize
-fun Socket.wait_readable(timeout_ms: u64).return: bool  // one thread can serve many sockets
-fun Socket.wait_writable(timeout_ms: u64).return: bool
+fun net.recv(s: Socket, max: usize) => Bytes       // one read, empty at EOF
+fun net.recv_into(s: Socket, buf: mut Bytes, at: usize) => usize
+fun Socket.wait_readable(timeout_ms: u64) => bool  // one thread can serve many sockets
+fun Socket.wait_writable(timeout_ms: u64) => bool
 fun mut Socket.set_timeout(ms: u64)                // SO_RCVTIMEO/SO_SNDTIMEO
-fun Listener.port().return: u16                         // bind 0, learn the port (testability)
-fun Socket.peer_addr().return: String
-fun net.resolve(host: &str).return: List<String>        // deduplicated, resolver order
+fun Listener.port() => u16                         // bind 0, learn the port (testability)
+fun Socket.peer_addr() => String
+fun net.resolve(host: &str) => List<String>        // deduplicated, resolver order
 ```
 
 All shipped in MK5-S3. The pattern vocabulary is `host`, `host:port`, `*.host`, `*:port`, `*` **not** the absolute-path form the plan used to print, which the compiler rejects outright (open item 32, resolved). The check matches the host **exactly as the code wrote it**, with no DNS before matching, so a grant for `example.com` does not cover `net.connect("93.184.216.34", 80)`. Two calls are checked differently, and both deviations are deliberate: `listen` matches the **port alone**, because a listener binds every interface and there is no `net.listen(host, port)` in v1 (the consequence is open item 55), and `resolve` matches the **host alone**, ignoring any port in the pattern. `recv` returning fresh `Bytes` cannot express "read exactly N bytes" without growth, which is why `recv_into` is right next to it. TLS variants are deferred with `https` (open item 37).
@@ -689,12 +689,12 @@ All shipped in MK5-S3. The pattern vocabulary is `host`, `host:port`, `*.host`, 
 #### time / rand (gated: time, rand)
 
 ```kelp
-fun time.now_unix().return: i64
-fun time.now_mono_ns().return: i64
+fun time.now_unix() => i64
+fun time.now_mono_ns() => i64
 fun time.sleep_ms(ms: u64)          // lives in gated std/time today, so sleeping needs a grant (item 45)
-fun rand.u64().return: u64
-fun rand.below(n: u64).return: u64
-fun rand.bytes(n: usize).return: Bytes
+fun rand.u64() => u64
+fun rand.below(n: u64) => u64
+fun rand.bytes(n: usize) => Bytes
 ```
 
 Both are real and both are gated; sleeping is ungated "in spirit" per the plan's classification (sleeping is not authority over anything shared) but it lives in `std/time`, so a *library* module needs the grant to reach it recorded as open item 45 rather than silently fixed, since moving it means a new module boundary.
@@ -702,8 +702,8 @@ Both are real and both are gated; sleeping is ungated "in spirit" per the plan's
 #### env (gated: env, variable-name allowlist)
 
 ```kelp
-fun env.has(name: &str).return: bool
-fun env.get(name: &str).return: String      // "" when unset (no Option)
+fun env.has(name: &str) => bool
+fun env.get(name: &str) => String      // "" when unset (no Option)
 fun env.set(name: &str, value: &str)
 fun env.unset(name: &str)
 ```
@@ -746,9 +746,9 @@ Stdlib as `.kp` sources shipped with the compiler (`std/fs.kp`, `std/math.kp`, .
 
 ```kelp
 // std/fs.kp
-extern fun fs_read_raw(path: &str).return: Bytes     // compiler-provided body
+extern fun fs_read_raw(path: &str) => Bytes     // compiler-provided body
 
-fun fs.read(path: &str).return: Bytes {
+fun fs.read(path: &str) => Bytes {
     return fs_read_raw(path)      // compiler inserts the allowlist check at this call site
 }
 ```
@@ -796,7 +796,7 @@ Details:
 | `panic(msg)` / `assert(cond)` | MK5-S1; any program with a deliberate failure | compiler builtin: the C exists (`kelp_panic`), only the names were missing | MK5-S1-M1 (done) `kelp_assert` + two bare-name `BUILTINS` entries |
 | `List#sort`/`reverse`/`slice`/`insert`/`remove` | MK5-S1, MK5-S5; deterministic output | compiler builtin, one comparator per element kind (monomorphization makes this nearly free) | small-medium MK5-S1 |
 | `main(argc, argv)` + saved argv globals | MK5-S2-M1 (`process.args`) | compiler codegen: change the emitted signature, stash the two values, one extern to read them | **done in MK5-S2-M1** `process.arg_count`/`arg_at`, `process.args` in Kelp |
-| Closure type `closure(T).return: U`, captures, and the widening from a function value | MK8-S1-M2 phase E/F (A-4) | language: parser/types/infer/borrowck/codegen, a `{ fn, env, drop }` fat pointer monomorphized per signature, one environment struct and drop per capturing literal, a generated thunk (or a shim, which allocates nothing) for the widening, and a capture read that is a place | large A-4's last piece; the environment's layout stays out of the type system, which is what keeps two closures of one signature the same C type |
+| Closure type `closure(T) => U`, captures, and the widening from a function value | MK8-S1-M2 phase E/F (A-4) | language: parser/types/infer/borrowck/codegen, a `{ fn, env, drop }` fat pointer monomorphized per signature, one environment struct and drop per capturing literal, a generated thunk (or a shim, which allocates nothing) for the widening, and a capture read that is a place | large A-4's last piece; the environment's layout stays out of the type system, which is what keeps two closures of one signature the same C type |
 | `Map<K, V>` | MK5-S5 (as `Map<V>`, `String` keys); a scalar key type in A-2; a derived `datac`/`enum` key in A-6 | compiler builtin generic the second one, ≈ MK3-S2-M1's cost (`Ty::Map`, `map_sig`, `write_map`, drop) | medium MK5-S5, extended in A-2 and A-6 |
 | `net` capability vocabulary (`host[:port]`, matcher, checked args) | MK5-S3, MK5-S4 | compiler: `stdlib.rs` (`CapCheck`), `resolve.rs::validate_net_pattern`, an emitted `kelp_cap_check_hostport`/`kelp_cap_check_host`/`kelp_cap_check_port` | **done in MK5-S3** `validate_net_pattern` + `kelp_host_glob`, and the `Vec<CapCheck>` redesign the sketch did not foresee (open item 32) |
 | `poll` readiness | MK5-S3, MK5-S5 (single-threaded servers) | extern only | **done in MK5-S3** `Socket.wait_readable`/`wait_writable` reach `io`'s existing `poll` through a `File` over the socket's descriptor, so no new extern |

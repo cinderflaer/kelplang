@@ -23,7 +23,7 @@ impl. So none of these can be written:
 ```kelp
 impl<T: Display> Display for Pair<T> { ... }            // impl for a generic type
 impl<T: Display> Describe for T { ... }                  // blanket impl
-fun f<I>(it: I).return: i64 where I: Iterator<Item = i64>   // where clause, equality constraint
+fun f<I>(it: I) => i64 where I: Iterator<Item = i64>   // where clause, equality constraint
 impl<I: Iterator> Iterator for Take<I> { ... }           // what iterator adapters need
 ```
 
