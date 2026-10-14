@@ -52,13 +52,15 @@ fun main() {
     }
 
     // A body that reads a second list.
+    var extra: List<i32> = List.empty()
+    extra.push(3)
     var m = 0
     while m < nums.len() {
-        print(nums.get(m) + (names.len() as i32))
+        print(nums.get(m) + extra.get(0))
         m += 1
     }
     for n in nums {
-        print(n + (names.len() as i32))
+        print(n + extra.get(0))
     }
 
     // A counter read after the loop: this one stays a `while`.

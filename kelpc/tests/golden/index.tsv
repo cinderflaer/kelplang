@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1115 ran=556 c_refused=526 excluded=33
+# counts candidates=1117 ran=558 c_refused=526 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -316,6 +316,7 @@ fixture_for_iter_nested	ran	exit 0		5834b82edf45a6b51cd1ffd05e188297a048da69f5f5
 fixture_for_iter_no_impl	c-refused		error: 'for' walks a 'List<T>' or a type that implements 'Iterator', and 'i32' is neither	
 fixture_for_iter_range	ran	exit 0		0adf8243db2e1089cdb9a883b6d5157e3bd0f1b8627df49e49fa792172a997e0
 fixture_for_iterated_place_is_read_only	ran	exit 0		e92d410560b3c0434f0c0a6743037e3f8998dc99467c33b6ab5e699db88bdbb4
+fixture_for_list_index_walk_equiv	ran	exit 0		e4422a76cf3279af8375407196647268909aaa3a49ac0f89bbe84eeaa285e0a2
 fixture_for_loop	ran	exit 0		7c24cbffd22e8309fe729253468fadfb0ff4d37c1e6453b68e8a776c6934cdf0
 fixture_for_missing_in	c-refused		error: expected 'in' between the 'for' binding and what it iterates, found 'xs'	
 fixture_for_mutates_another_field	ran	exit 0		b3afef0e7bc7a4e8a30048b5388d63af1c62c2932c7bd15c9db71695e6b9ebc3
@@ -597,6 +598,7 @@ fixture_panic_msg	ran	exit 1	panic: deliberate failure	9160d4be34c8695bd172a76c7
 fixture_panic_not_a_message	c-refused		error: cannot pass a value of type 'i32' to 'panic'	
 fixture_panic_owned_message	ran	exit 1	panic: 7	9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb
 fixture_panic_tail	ran	exit 1	panic: always_fails: non-positive	f0b5c2c2211c8d67ed15e75e656c7862d086e9245420892a7de62cd9ec582a06
+fixture_param_borrow_spellings	ran	exit 0		cf5c73ab02b8704d26cbd0de4bc4f683235ddaef7c15cebfc5953970efe1c9f5
 fixture_partial_move_borrow_base	c-refused		error: cannot use 'bag' as a whole value	
 fixture_partial_move_conditional	ran	exit 0		16f3afa1c05350e327e79c057d4c6946e9e29d1734603350a0d7f6fd927c6538
 fixture_partial_move_double	c-refused		error: use of moved value 'bag.xs'	
