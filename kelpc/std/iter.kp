@@ -31,15 +31,29 @@ impl "std/option"
    `next` takes `mut Self` because a stateful iterator advances through
    itself, and hands back an **owned** item, which is what makes
    `for x in it { }` bind `x` by value. */
+/// The protocol `for` accepts over anything that is not a `List` or array.
+///
+/// A type implements `Iterator` by giving `next`, which yields one owned item
+/// per call and `None` when the walk is over.
 pub trait Iterator {
     // What one `next()` yields.
     type Item
+    /// Advances the iterator and returns the next item, or `None` when it is done.
     fun mut Self.next() => option.Option<Self::Item>
 }
 
 /* A half-open integer range, `[lo, hi)` stepping by `step`. The fields are
    `var` because `next` advances `lo`; `hi` and `step` stay put. */
-pub datac Range(var lo: i64, val hi: i64, val step: i64)
+/// A half-open integer range, `[lo, hi)` stepping by `step`. The `lo` field is
+/// `var` because `next` advances it; `hi` and `step` stay put.
+pub datac Range(
+    /// The next item to yield. `next` advances it by `step`.
+    var lo: i64,
+    /// The end bound. It is not yielded.
+    val hi: i64,
+    /// The distance between items. A negative step walks down from `lo` to `hi`.
+    val step: i64,
+)
 
 impl Iterator for Range {
     type Item = i64
@@ -61,14 +75,21 @@ impl Iterator for Range {
     }
 }
 
-// `lo` to `hi`, one step at a time, half-open: `iter.range(0, 3)` yields 0, 1,
-// 2, and an empty range yields nothing.
+/// The integers from `a` up to `b`, one step at a time, half-open.
+///
+/// `iter.range(0, 3)` yields 0, 1, 2, and an empty range yields nothing.
+///
+/// `lo` to `hi`, one step at a time, half-open: `iter.range(0, 3)` yields 0, 1,
+/// 2, and an empty range yields nothing.
 pub fun range(a: i64, b: i64) => Range = Range(lo = a, hi = b, step = 1)
 
-// The same with an explicit step; a negative one walks down from `a` to `b`.
+/// The integers from `a` to `b` with an explicit step. A negative step walks down from `a` to `b`.
+///
+/// The same with an explicit step; a negative one walks down from `a` to `b`.
 pub fun range_step(a: i64, b: i64, step: i64) => Range = Range(lo = a, hi = b, step = step)
 
 /* How many items an iterator still holds, measured by draining it. */
+/// The number of items the iterator yields, counted by draining it.
 pub fun count<I: Iterator>(it: move I) => usize {
     var total: usize = 0
     // A parameter is an immutable binding, and `for` borrows the iterator it
@@ -85,6 +106,10 @@ pub fun count<I: Iterator>(it: move I) => usize {
    accumulator. `I::Item` is any type; an instantiation whose item is not an
    `i64` is a type error at the addition, which is the honest edge of an
    associated type with no equality constraint. */
+/// The sum of an iterator's items.
+///
+/// The items must be `i64`. An iterator whose item type is anything else is a type
+/// error at the addition.
 pub fun sum_i64<I: Iterator>(it: move I) => i64 {
     var total: i64 = 0
     var cursor = it
@@ -95,6 +120,7 @@ pub fun sum_i64<I: Iterator>(it: move I) => i64 {
 }
 
 /* Drain an iterator into a fresh list, in order. */
+/// Drains an iterator into a fresh list, in order.
 pub fun collect_list<I: Iterator>(it: move I) => List<I::Item> {
     var out: List<I::Item> = List.empty()
     var cursor = it
@@ -109,8 +135,15 @@ pub fun collect_list<I: Iterator>(it: move I) => List<I::Item> {
 /* An owned walk over a list, front to back. The list is held reversed so that
    `next` is a `pop`, which moves the element out: no element needs to be
    `Copy`, and nothing is shifted. */
-pub datac ListIter<T>(var rest: List<T>)
+/// An owned walk over a list, front to back. The list is held reversed so that
+/// `next` is a `pop`, which moves the element out. No element needs to be `Copy`,
+/// and nothing is shifted.
+pub datac ListIter<T>(
+    /// The elements not yet yielded, last first.
+    var rest: List<T>,
+)
 
+/// Yields the next element of the list, moved out of it, or `None` when the list is empty.
 fun mut ListIter<T>.next() => option.Option<T> {
     if self.rest.is_empty() {
         return option.Option.None
@@ -119,6 +152,7 @@ fun mut ListIter<T>.next() => option.Option<T> {
 }
 
 /* The list's elements in order, moving the list into the iterator. */
+/// The elements of a list in order, moving the list into the iterator.
 pub fun into_iter<T>(xs: move List<T>) => ListIter<T> {
     var rest = xs
     rest.reverse()
@@ -127,6 +161,9 @@ pub fun into_iter<T>(xs: move List<T>) => ListIter<T> {
 
 /* The elements of a borrowed list, cloned, for an element that can be copied.
    (An element that cannot be cloned walks with `into_iter`.) */
+/// The elements of a borrowed list, cloned, for an element that can be copied.
+///
+/// An element that cannot be cloned walks with `into_iter`.
 pub fun cloned<T>(xs: &List<T>) => ListIter<T> {
     return into_iter(xs.clone())
 }
@@ -138,8 +175,16 @@ pub fun cloned<T>(xs: &List<T>) => ListIter<T> {
 // parameter is the wrapped iterator's item, written out because a type's
 // declaration cannot spell `I::Item`; the constructor functions fill it in.
 
-pub datac MapIter<I, T, U>(var inner: I, val f: closure(&T) => U)
+/// The iterator that `map` returns. `T` is the wrapped iterator's item, written
+/// out because a type's declaration cannot spell `I::Item`.
+pub datac MapIter<I, T, U>(
+    /// The wrapped iterator.
+    var inner: I,
+    /// The function applied to each item.
+    val f: closure(&T) => U,
+)
 
+/// Yields the next item of the wrapped iterator, passed through `f`.
 fun mut MapIter<I, T, U>.next() => option.Option<U> {
     val item = self.inner.next()
     return when item {
@@ -149,12 +194,20 @@ fun mut MapIter<I, T, U>.next() => option.Option<U> {
 }
 
 /* Each item through `f`. */
+/// The items of `it`, each passed through `f`.
 pub fun map<I: Iterator, U>(it: move I, f: move closure(&I::Item) => U) => MapIter<I, I::Item, U> {
     return MapIter(inner = it, f = f)
 }
 
-pub datac FilterIter<I, T>(var inner: I, val pred: closure(&T) => bool)
+/// The iterator that `filter` returns. `T` is the wrapped iterator's item.
+pub datac FilterIter<I, T>(
+    /// The wrapped iterator.
+    var inner: I,
+    /// The test an item must pass to be yielded.
+    val pred: closure(&T) => bool,
+)
 
+/// Yields the next item of the wrapped iterator for which `pred` holds.
 fun mut FilterIter<I, T>.next() => option.Option<T> {
     while true {
         val item = self.inner.next()
@@ -172,12 +225,20 @@ fun mut FilterIter<I, T>.next() => option.Option<T> {
 }
 
 /* The items for which `pred` holds. */
+/// The items of `it` for which `pred` holds.
 pub fun filter<I: Iterator>(it: move I, pred: move closure(&I::Item) => bool) => FilterIter<I, I::Item> {
     return FilterIter(inner = it, pred = pred)
 }
 
-pub datac TakeIter<I, T>(var inner: I, var left: usize)
+/// The iterator that `take` returns. `T` is the wrapped iterator's item.
+pub datac TakeIter<I, T>(
+    /// The wrapped iterator.
+    var inner: I,
+    /// How many more items may be yielded.
+    var left: usize,
+)
 
+/// Yields the next item of the wrapped iterator, until `left` items have been yielded.
 fun mut TakeIter<I, T>.next() => option.Option<T> {
     if self.left == 0 {
         return option.Option.None
@@ -187,12 +248,20 @@ fun mut TakeIter<I, T>.next() => option.Option<T> {
 }
 
 /* At most the first `n` items. */
+/// At most the first `n` items of `it`.
 pub fun take<I: Iterator>(it: move I, n: usize) => TakeIter<I, I::Item> {
     return TakeIter(inner = it, left = n)
 }
 
-pub datac SkipIter<I, T>(var inner: I, var left: usize)
+/// The iterator that `skip` returns. `T` is the wrapped iterator's item.
+pub datac SkipIter<I, T>(
+    /// The wrapped iterator.
+    var inner: I,
+    /// How many more items are still to be skipped.
+    var left: usize,
+)
 
+/// Skips the items still to be skipped, then yields the next item of the wrapped iterator.
 fun mut SkipIter<I, T>.next() => option.Option<T> {
     while self.left > 0 {
         self.left -= 1
@@ -208,12 +277,20 @@ fun mut SkipIter<I, T>.next() => option.Option<T> {
 }
 
 /* The items after the first `n`. */
+/// The items of `it` after the first `n`.
 pub fun skip<I: Iterator>(it: move I, n: usize) => SkipIter<I, I::Item> {
     return SkipIter(inner = it, left = n)
 }
 
-pub datac EnumerateIter<I, T>(var inner: I, var index: usize)
+/// The iterator that `enumerate` returns. `T` is the wrapped iterator's item.
+pub datac EnumerateIter<I, T>(
+    /// The wrapped iterator.
+    var inner: I,
+    /// The position of the next item, counting from 0.
+    var index: usize,
+)
 
+/// Yields the next item of the wrapped iterator paired with its position.
 fun mut EnumerateIter<I, T>.next() => option.Option<(usize, T)> {
     val item = self.inner.next()
     return when item {
@@ -227,12 +304,21 @@ fun mut EnumerateIter<I, T>.next() => option.Option<(usize, T)> {
 }
 
 /* Each item with its position, counting from 0. */
+/// Each item of `it` paired with its position, counting from 0.
 pub fun enumerate<I: Iterator>(it: move I) => EnumerateIter<I, I::Item> {
     return EnumerateIter(inner = it, index = 0)
 }
 
-pub datac ZipIter<A, B, T, U>(var left: A, var right: B)
+/// The iterator that `zip` returns. `T` and `U` are the two items, written out for
+/// the same reason as in `MapIter`.
+pub datac ZipIter<A, B, T, U>(
+    /// The first iterator.
+    var left: A,
+    /// The second iterator.
+    var right: B,
+)
 
+/// Yields the next pair of items, or `None` when either iterator is done.
 fun mut ZipIter<A, B, T, U>.next() => option.Option<(T, U)> {
     val a = self.left.next()
     val b = self.right.next()
@@ -243,12 +329,22 @@ fun mut ZipIter<A, B, T, U>.next() => option.Option<(T, U)> {
 }
 
 /* Pairs of items, stopping when either iterator does. */
+/// Pairs of items from `a` and `b`, stopping when either iterator does.
 pub fun zip<A: Iterator, B: Iterator>(a: move A, b: move B) => ZipIter<A, B, A::Item, B::Item> {
     return ZipIter(left = a, right = b)
 }
 
-pub datac ChainIter<A, B, T>(var first: A, var second: B, var first_done: bool)
+/// The iterator that `chain` returns. `T` is the item type of both halves.
+pub datac ChainIter<A, B, T>(
+    /// The first iterator, drained before the second.
+    var first: A,
+    /// The iterator that follows the first.
+    var second: B,
+    /// True once the first iterator has run out.
+    var first_done: bool,
+)
 
+/// Yields the items of the first iterator, then the items of the second.
 fun mut ChainIter<A, B, T>.next() => option.Option<T> {
     if !self.first_done {
         val item = self.first.next()
@@ -265,6 +361,7 @@ fun mut ChainIter<A, B, T>.next() => option.Option<T> {
 }
 
 /* All of `a`, then all of `b`; the two must yield the same item type. */
+/// All of `a`, then all of `b`. The two must yield the same item type.
 pub fun chain<A: Iterator, B: Iterator>(a: move A, b: move B) => ChainIter<A, B, A::Item> {
     return ChainIter(first = a, second = b, first_done = false)
 }
@@ -272,6 +369,7 @@ pub fun chain<A: Iterator, B: Iterator>(a: move A, b: move B) => ChainIter<A, B,
 // ---- consumers --------------------------------------------------------------------
 
 /* Whether `pred` holds for some item; stops at the first that does. */
+/// Whether `pred` holds for some item. Stops at the first item for which it does.
 pub fun any<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => bool {
     var cursor = it
     for x in cursor {
@@ -283,6 +381,7 @@ pub fun any<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => bool {
 }
 
 /* Whether `pred` holds for every item; stops at the first that does not. */
+/// Whether `pred` holds for every item. Stops at the first item for which it does not.
 pub fun all<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => bool {
     var cursor = it
     for x in cursor {
@@ -294,6 +393,7 @@ pub fun all<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => bool {
 }
 
 /* The first item for which `pred` holds. */
+/// The first item for which `pred` holds, or `None` when none does.
 pub fun find<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => option.Option<I::Item> {
     var cursor = it
     for x in cursor {
@@ -305,6 +405,7 @@ pub fun find<I: Iterator>(it: move I, pred: closure(&I::Item) => bool) => option
 }
 
 /* The last item, or `None` for an empty iterator. */
+/// The last item, or `None` for an empty iterator.
 pub fun last<I: Iterator>(it: move I) => option.Option<I::Item> {
     var cursor = it
     var out: option.Option<I::Item> = option.Option.None
@@ -316,6 +417,9 @@ pub fun last<I: Iterator>(it: move I) => option.Option<I::Item> {
 
 /* `init` folded with `f` over the items, in order: `f(acc, &item)` is the next
    accumulator. */
+/// Folds the items with `f`, starting from `init`, in order.
+///
+/// `f(acc, &item)` returns the next accumulator.
 pub fun fold<I: Iterator, A>(it: move I, init: move A, f: closure(&A, &I::Item) => A) => A {
     var cursor = it
     var acc = init
