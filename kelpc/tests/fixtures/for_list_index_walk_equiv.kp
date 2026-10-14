@@ -17,7 +17,7 @@ fun main() {
     names.push(String.from_str(s = "cy"))
 
     // The `while` form.
-    var i = 0
+    var i: usize = 0
     while i < nums.len() {
         val n = nums.get(i)
         i += 1
@@ -42,7 +42,7 @@ fun main() {
     }
 
     // An owned element, in both forms.
-    var k = 0
+    var k: usize = 0
     while k < names.len() {
         print(names.get(k).as_str())
         k += 1
@@ -54,7 +54,7 @@ fun main() {
     // A body that reads a second list.
     var extra: List<i32> = List.empty()
     extra.push(3)
-    var m = 0
+    var m: usize = 0
     while m < nums.len() {
         print(nums.get(m) + extra.get(0))
         m += 1
@@ -64,7 +64,7 @@ fun main() {
     }
 
     // A counter read after the loop: this one stays a `while`.
-    var j = 0
+    var j: usize = 0
     while j < nums.len() {
         j += 1
     }
