@@ -46,7 +46,12 @@ extern fun errno_text_raw(errno: i32) => String
 /// fallible call hands back instead of panicking, so a caller can branch on the
 /// cause (`errno`) or show it (`message`). `errno` is 0 when the failure is not a
 /// syscall at all, and `message` is then the whole story.
-datac IoErr(val errno: i32, val message: String)
+datac IoErr(
+    /// The POSIX `errno`, or 0 when no syscall failed.
+    val errno: i32,
+    /// The text of the failure, as a human reads it.
+    val message: String
+)
 
 /// The text of a POSIX `errno`: `errno_text(13)` is `"Permission denied"`. Any
 /// number is accepted; an unknown one gives the libc fallback text, never a
@@ -65,7 +70,10 @@ fun errno_text(errno: i32) => String = errno_text_raw(errno)
 /// `print` and templates go through stdio's buffer. The write primitives flush
 /// the matching stdio stream first (see `kelp_io_flush_stdio`), so the two APIs
 /// are observed in the order they were called even when stdout is a pipe.
-datac File(val fd: i32)
+datac File(
+    /// The file descriptor the value wraps. It is not closed by dropping the `File`.
+    val fd: i32
+)
 
 /// Asks the kernel whether the descriptor is still open, `fcntl(F_GETFD)`, so
 /// it is true for a `File` nobody has closed and false after `close`, without
@@ -177,7 +185,16 @@ fun stderr() => File = File(fd = 2)
 /// `buf` is the chunk and must not be empty: `read_into` reports 0 for a full
 /// buffer, which the reader reads as end of file. Construct it with
 /// `io.buf_reader` rather than by hand.
-datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize)
+datac BufReader(
+    /// The descriptor the buffer reads from.
+    val file: File,
+    /// The chunk of bytes read ahead, which must not be empty.
+    var buf: Bytes,
+    /// The index of the next buffered byte to hand out.
+    var start: usize,
+    /// The index one past the last valid buffered byte.
+    var end: usize
+)
 
 /// Wraps a `File`. The chunk is 8 KiB, one page pair, and large enough that
 /// a line reader is not syscall-bound. The `File` is rebuilt around the same
