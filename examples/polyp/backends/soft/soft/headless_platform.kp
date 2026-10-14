@@ -109,7 +109,7 @@ fun HeadlessPlatform.frame_count() => i32 = frames
 fun HeadlessPlatform.presented_count() => usize = presented_len
 
 fun HeadlessPlatform.presented_at(i: usize) => fb.Rect {
-    val r = presented.get(i = i)
+    val r = presented.get(i)
     return fb.Rect(x = r.x, y = r.y, w = r.w, h = r.h)
 }
 
@@ -144,7 +144,7 @@ impl platform.Platform for HeadlessPlatform {
     fun mut Self.present(fb: fb.Fb, dirty: &damage.Damage) {
         var i: usize = 0
         while i < dirty.count() && i < MAX_PRESENTED {
-            presented.set(i = i, v = dirty.at(i))
+            presented.set(i, dirty.at(i))
             i += 1
         }
         presented_len = dirty.count()

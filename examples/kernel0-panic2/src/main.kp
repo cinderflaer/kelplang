@@ -34,7 +34,7 @@ section(".text.boot") fun kmain() {
 fun array_bounds() {
     val slots: [u8; 2] = [1, 2]
     var i: usize = 2
-    uart.putc(slots.get(i = i)) // panic-line: array
+    uart.putc(slots.get(i)) // panic-line: array
 }
 
 // `x.to_u8()` on a value that does not fit is the compiler's own range check,
@@ -72,7 +72,7 @@ fun kp_panic(msg: str, file: str, line: u32) {
         // the project defines in `double_panic.s`.
         val slots: [u8; 1] = [0]
         var i: usize = 3
-        uart.putc(slots.get(i = i))
+        uart.putc(slots.get(i))
         return
     }
     uart.puts("panic: ")

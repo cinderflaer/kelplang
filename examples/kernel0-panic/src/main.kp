@@ -11,7 +11,7 @@ section(".text.boot") fun kmain() {
     // The index is a local rather than a literal so the read is a running
     // check, not a constant the front end could refuse at compile time.
     var i: usize = 2
-    uart.putc(slots.get(i = i).to_u8())
+    uart.putc(slots.get(i).to_u8())
     uart.halt()
 }
 

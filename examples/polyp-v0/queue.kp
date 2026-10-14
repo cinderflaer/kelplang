@@ -19,7 +19,7 @@ static mut COUNT: usize = 0
 pub fun polyp_post(id: i32) {
     unsafe {
         if COUNT < CAPACITY {
-            IDS.set(i = (HEAD + COUNT) % CAPACITY, v = id)
+            IDS.set((HEAD + COUNT) % CAPACITY, id)
             COUNT = COUNT + 1
         }
     }
@@ -32,7 +32,7 @@ pub fun polyp_poll() => i32 {
     var out: i32 = -1
     unsafe {
         if COUNT > 0 {
-            out = IDS.get(i = HEAD)
+            out = IDS.get(HEAD)
             HEAD = (HEAD + 1) % CAPACITY
             COUNT = COUNT - 1
         }

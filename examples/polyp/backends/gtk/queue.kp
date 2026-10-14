@@ -43,7 +43,7 @@ static mut FOCUS_COUNT: usize = 0
 pub fun polyp_post(id: i32) {
     unsafe {
         if COUNT < CAPACITY {
-            IDS.set(i = (HEAD + COUNT) % CAPACITY, v = id)
+            IDS.set((HEAD + COUNT) % CAPACITY, id)
             COUNT = COUNT + 1
         }
     }
@@ -56,7 +56,7 @@ pub fun polyp_poll() => i32 {
     var out: i32 = -1
     unsafe {
         if COUNT > 0 {
-            out = IDS.get(i = HEAD)
+            out = IDS.get(HEAD)
             HEAD = (HEAD + 1) % CAPACITY
             COUNT = COUNT - 1
         }
@@ -81,11 +81,11 @@ pub fun polyp_post_edit(index: i32, text: str) {
             }
             var i: usize = 0
             while i < n {
-                EDIT_TEXT.set(i = slot * EDIT_TEXT_MAX + i, v = str.byte(text, i))
+                EDIT_TEXT.set(slot * EDIT_TEXT_MAX + i, str.byte(text, i))
                 i = i + 1
             }
-            EDIT_LEN.set(i = slot, v = n)
-            EDIT_ENTRY.set(i = slot, v = index)
+            EDIT_LEN.set(slot, n)
+            EDIT_ENTRY.set(slot, index)
             EDIT_COUNT = EDIT_COUNT + 1
         }
     }
@@ -101,7 +101,7 @@ pub fun polyp_poll_edit() => i32 {
         } else {
             EDIT_LAST = EDIT_HEAD
             EDIT_LAST_OK = true
-            out = EDIT_ENTRY.get(i = EDIT_LAST)
+            out = EDIT_ENTRY.get(EDIT_LAST)
             EDIT_HEAD = (EDIT_HEAD + 1) % EDIT_CAPACITY
             EDIT_COUNT = EDIT_COUNT - 1
         }
@@ -116,8 +116,8 @@ pub fun polyp_poll_edit_text() => String {
     unsafe {
         if EDIT_LAST_OK {
             var i: usize = 0
-            while i < EDIT_LEN.get(i = EDIT_LAST) {
-                bytes.push(EDIT_TEXT.get(i = EDIT_LAST * EDIT_TEXT_MAX + i))
+            while i < EDIT_LEN.get(EDIT_LAST) {
+                bytes.push(EDIT_TEXT.get(EDIT_LAST * EDIT_TEXT_MAX + i))
                 i = i + 1
             }
         }
@@ -128,7 +128,7 @@ pub fun polyp_poll_edit_text() => String {
 pub fun polyp_post_focus(index: i32) {
     unsafe {
         if FOCUS_COUNT < FOCUS_CAPACITY {
-            FOCUS_INDEX.set(i = (FOCUS_HEAD + FOCUS_COUNT) % FOCUS_CAPACITY, v = index)
+            FOCUS_INDEX.set((FOCUS_HEAD + FOCUS_COUNT) % FOCUS_CAPACITY, index)
             FOCUS_COUNT = FOCUS_COUNT + 1
         }
     }
@@ -139,7 +139,7 @@ pub fun polyp_poll_focus() => i32 {
     var out: i32 = -1
     unsafe {
         if FOCUS_COUNT > 0 {
-            out = FOCUS_INDEX.get(i = FOCUS_HEAD)
+            out = FOCUS_INDEX.get(FOCUS_HEAD)
             FOCUS_HEAD = (FOCUS_HEAD + 1) % FOCUS_CAPACITY
             FOCUS_COUNT = FOCUS_COUNT - 1
         }

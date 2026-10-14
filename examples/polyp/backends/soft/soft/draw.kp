@@ -33,7 +33,7 @@ pub datac ClipStack(var rects: [fb.Rect; 8], var depth: usize)
 
 pub fun clip(rect: fb.Rect) => ClipStack {
     var s = ClipStack(rects = [fb.Rect(x = 0, y = 0, w = 0, h = 0); 8], depth = 1)
-    s.rects.set(i = 0, v = rect.dup())
+    s.rects.set(0, rect.dup())
     return s
 }
 
@@ -42,8 +42,8 @@ fun mut ClipStack.push(rect: fb.Rect) {
     if depth >= MAX_CLIP {
         panic("clip stack depth 8 exceeded")
     }
-    val merged: fb.Rect = fb.intersect(rects.get(i = depth - 1), rect)
-    rects.set(i = depth, v = merged)
+    val merged: fb.Rect = fb.intersect(rects.get(depth - 1), rect)
+    rects.set(depth, merged)
     depth += 1
 }
 
@@ -58,7 +58,7 @@ fun ClipStack.top() => fb.Rect {
     if depth == 0 {
         return fb.empty_rect()
     }
-    return rects.get(i = depth - 1).dup()
+    return rects.get(depth - 1).dup()
 }
 
 fun ClipStack.depth() => usize = depth

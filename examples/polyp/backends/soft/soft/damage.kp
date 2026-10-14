@@ -23,7 +23,7 @@
 //
 // The bodies below copy an element out with `dup()` and keep every list read in a statement of
 // its own rather than in an `if`/`while` condition. A borrow taken in a condition is live for
-// the whole statement in this compiler, so `if fb.touches(rects.get(i = i), r) { rects.set(...) }`
+// the whole statement in this compiler, so `if fb.touches(rects.get(i), r) { rects.set(...) }`
 // is refused; the copy is what keeps each mutation sound without weakening the check.
 //
 // Nothing here dereferences a pixel, so the module needs no `[unsafe]` entry, and it imports
@@ -39,7 +39,7 @@ pub fun new() => Damage = Damage(rects = [fb.Rect(x = 0, y = 0, w = 0, h = 0); M
 fun Damage.count() => usize = len
 
 // A copy, so a caller cannot hold a borrow of the list across a later `add`.
-fun Damage.at(i: usize) => fb.Rect = rects.get(i = i).dup()
+fun Damage.at(i: usize) => fb.Rect = rects.get(i).dup()
 
 fun mut Damage.clear() {
     len = 0
@@ -51,10 +51,10 @@ fun Damage.bounds() => fb.Rect {
     if n == 0 {
         return fb.empty_rect()
     }
-    var out: fb.Rect = rects.get(i = 0).dup()
+    var out: fb.Rect = rects.get(0).dup()
     var i: usize = 1
     while i < n {
-        val next: fb.Rect = rects.get(i = i).dup()
+        val next: fb.Rect = rects.get(i).dup()
         out = fb.union(out, next)
         i += 1
     }
@@ -73,7 +73,7 @@ fun mut Damage.add(rect: fb.Rect) {
             self.coalesce()
             return
         }
-        rects.set(i = n, v = rect.dup())
+        rects.set(n, rect.dup())
         len = n + 1
         return
     }
@@ -83,7 +83,7 @@ fun mut Damage.add(rect: fb.Rect) {
     }
     self.merge_least_waste()
     val m: usize = len
-    rects.set(i = m, v = rect.dup())
+    rects.set(m, rect.dup())
     len = m + 1
     self.coalesce()
 }
@@ -93,11 +93,11 @@ fun mut Damage.merge_into_touching(r: fb.Rect) => bool {
     val n: usize = len
     var i: usize = 0
     while i < n {
-        val probe: fb.Rect = rects.get(i = i).dup()
+        val probe: fb.Rect = rects.get(i).dup()
         val hit: bool = fb.touches(probe, r)
         if hit {
             val merged: fb.Rect = fb.union(probe, r)
-            rects.set(i = i, v = merged)
+            rects.set(i, merged)
             return true
         }
         i += 1
@@ -117,8 +117,8 @@ fun mut Damage.merge_least_waste() {
     while i < n {
         var j: usize = i + 1
         while j < n {
-            val a: fb.Rect = rects.get(i = i).dup()
-            val b: fb.Rect = rects.get(i = j).dup()
+            val a: fb.Rect = rects.get(i).dup()
+            val b: fb.Rect = rects.get(j).dup()
             val u: fb.Rect = fb.union(a, b)
             val waste: i64 = u.area() - a.area() - b.area()
             if first {
@@ -135,14 +135,14 @@ fun mut Damage.merge_least_waste() {
     }
     val bi: usize = best_i
     val bj: usize = best_j
-    val cur: fb.Rect = rects.get(i = bi).dup()
-    val other: fb.Rect = rects.get(i = bj).dup()
+    val cur: fb.Rect = rects.get(bi).dup()
+    val other: fb.Rect = rects.get(bj).dup()
     val merged: fb.Rect = fb.union(cur, other)
-    rects.set(i = bi, v = merged)
+    rects.set(bi, merged)
     var k: usize = bj
     while k + 1 < n {
-        val nxt: fb.Rect = rects.get(i = k + 1).dup()
-        rects.set(i = k, v = nxt)
+        val nxt: fb.Rect = rects.get(k + 1).dup()
+        rects.set(k, nxt)
         k += 1
     }
     len = n - 1
@@ -159,16 +159,16 @@ fun mut Damage.coalesce() {
         while i < n && !changed {
             var j: usize = i + 1
             while j < n && !changed {
-                val a: fb.Rect = rects.get(i = i).dup()
-                val b: fb.Rect = rects.get(i = j).dup()
+                val a: fb.Rect = rects.get(i).dup()
+                val b: fb.Rect = rects.get(j).dup()
                 val hit: bool = fb.touches(a, b)
                 if hit {
                     val merged: fb.Rect = fb.union(a, b)
-                    rects.set(i = i, v = merged)
+                    rects.set(i, merged)
                     var k: usize = j
                     while k + 1 < n {
-                        val nxt: fb.Rect = rects.get(i = k + 1).dup()
-                        rects.set(i = k, v = nxt)
+                        val nxt: fb.Rect = rects.get(k + 1).dup()
+                        rects.set(k, nxt)
                         k += 1
                     }
                     len = n - 1

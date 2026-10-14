@@ -67,7 +67,7 @@ fun mut FbPlatform.push_at(at: u64, ev: move event.Event) {
     if script_len >= MAX_SCRIPT {
         return
     }
-    script.set(i = script_len, v = Timed(at = at, ev = ev))
+    script.set(script_len, Timed(at = at, ev = ev))
     script_len += 1
 }
 
@@ -128,7 +128,7 @@ impl platform.Platform for FbPlatform {
         if cursor >= script_len {
             return option.Option.None
         }
-        val t = script.get(i = cursor)
+        val t = script.get(cursor)
         if t.at > time_ms {
             return option.Option.None
         }

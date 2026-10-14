@@ -37,13 +37,13 @@ pub fun put_dec(value: usize) {
     var n: usize = value
     var i: usize = 0
     while n > 0 {
-        digits.set(i = i, v = 48 + (n % 10).to_u8())
+        digits.set(i, 48 + (n % 10).to_u8())
         n = n / 10
         i = i + 1
     }
     while i > 0 {
         i = i - 1
-        putc(digits.get(i = i))
+        putc(digits.get(i))
     }
 }
 

@@ -108,7 +108,7 @@ fun load_directory() => u32 {
     )
 }
 
-fun dir_byte(at: usize) => u8 = unsafe { DIR.get(i = at) }
+fun dir_byte(at: usize) => u8 = unsafe { DIR.get(at) }
 
 
 // The directory's own fields are big-endian, and the buffer holds a packed record rather than an
