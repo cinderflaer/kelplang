@@ -223,7 +223,8 @@ fn an_unknown_flag_is_refused() {
 }
 
 #[test]
-fn an_else_if_link_is_reported_and_the_exit_stays_zero() {
+fn an_else_if_link_is_silent() {
+    // `else if` is the preferred spelling (decision 110): no warning.
     let dir = scratch("else-if");
     let file = write(
         &dir,
@@ -232,17 +233,11 @@ fn an_else_if_link_is_reported_and_the_exit_stays_zero() {
     );
 
     let out = lint(&file);
-    assert!(out.status.success(), "a warning exits zero");
-    let text = stderr(&out);
-    // The file is not `main`, so `else if` is the only thing here worth a
-    // warning, whatever the case rule defaults to.
+    assert!(out.status.success());
     assert!(
-        text.contains("warning: 'else if' compiles, but 'elif' is the preferred spelling"),
-        "the preferred spelling is not named:\n{text}"
-    );
-    assert!(
-        text.contains(&format!("{}:4:7", file.display())),
-        "the warning does not locate the `else` it replaces:\n{text}"
+        stderr(&out).is_empty(),
+        "the preferred spelling should print nothing, got:\n{}",
+        stderr(&out)
     );
 }
 

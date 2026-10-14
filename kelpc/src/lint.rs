@@ -14,9 +14,7 @@
 //!
 //! - the **comment run** (roadmap item G-5): two or more consecutive `//`
 //!   lines with no blank line between them.
-//! - the **`else if` link** (`syntax.md` 6.1, roadmap item G-3): `elif` is the
-//!   preferred spelling, and the longer one is what this warns about.
-//! - the **naming case** (roadmap item 23, `syntax.md` 19): the project's case,
+//! //! - the **naming case** (roadmap item 23, `syntax.md` 19): the project's case,
 //!   `camelCase` (the default) or `snake_case`, read from `coral.toml`'s
 //!   `naming_case`.
 //! - the **redundant comparison** (`== true`, and `.len() == 0` where
@@ -52,13 +50,6 @@
 //!   documentation, and a doc comment has its own home (`///` on a declaration,
 //!   `//!` at the top of a module), so a run of doc lines is not the shape this
 //!   rule is about. `////` is excluded with them: it starts with `///`.
-//!
-//! ## The `else if` link
-//!
-//! `syntax.md` 6.1 decides that `elif` and `else if` are the same link, that
-//! `elif` is the preferred spelling, and that the longer one gets a cosmetic
-//! warning. Cosmetic means cosmetic: `else if` stays legal, compiles, and is
-//! never rewritten by `kelpc fmt`, which is token-faithful.
 //!
 //! ## The naming case
 //!
@@ -159,7 +150,6 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
             message: run.message(),
         })
         .collect();
-    all.extend(else_if_links_in(&tokens));
     all.extend(redundant_comparisons_in(&tokens));
     all.extend(crate::doc::orphan_findings(src, &tokens));
     if let Some(naming) = naming {
@@ -170,20 +160,6 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
     // findings are sorted by where they are before anyone prints them.
     all.sort_by_key(|f| f.span.start);
     Ok(all)
-}
-
-/// The `else if` rule over an already-lexed file.
-fn else_if_links_in(tokens: &[Token]) -> Vec<Finding> {
-    let mut out = Vec::new();
-    for pair in tokens.windows(2) {
-        if matches!(pair[0].kind, TokenKind::Else) && matches!(pair[1].kind, TokenKind::If) {
-            out.push(Finding {
-                span: pair[0].span,
-                message: "'else if' compiles, but 'elif' is the preferred spelling".to_string(),
-            });
-        }
-    }
-    out
 }
 
 /// The comparisons a plain condition or `.is_empty()` says better. Warnings
@@ -856,23 +832,16 @@ mod tests {
     }
 
     #[test]
-    fn an_else_if_link_is_reported_at_the_else() {
+    fn an_else_if_link_is_not_reported() {
+        // `else if` is the preferred spelling (decision 110), so no rule warns.
         let src = "fun f(n: i32) {\n    if n > 1 { } else if n > 0 { }\n}\n";
-        let found = findings(src, None).expect("lexes");
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start, at(src, "else if"));
-        assert_eq!(
-            found[0].message,
-            "'else if' compiles, but 'elif' is the preferred spelling"
-        );
+        assert!(findings(src, None).expect("lexes").is_empty());
     }
 
     #[test]
-    fn an_else_if_let_link_is_reported_too() {
+    fn an_else_if_let_link_is_not_reported() {
         let src = "fun f(m: Answer) {\n    if let Yes(n) = m { } else if let No = m { }\n}\n";
-        let found = findings(src, None).expect("lexes");
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start, at(src, "else if let"));
+        assert!(findings(src, None).expect("lexes").is_empty());
     }
 
     #[test]

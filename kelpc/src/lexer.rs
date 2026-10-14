@@ -94,9 +94,9 @@ pub enum TokenKind {
     Else,
     /// `elif cond { ... }` - the `else if` link spelled as one keyword. It
     /// means exactly what `else if` means (`plan/syntax.md` 6.1 records both
-    /// spellings, with `elif` the preferred one), so the parser hands it to
-    /// the same function the `else if` link goes to; the only other reader is
-    /// `kelpc lint`, which warns when the longer spelling is written.
+    /// spellings, with `else if` the preferred one), so the parser hands it to
+    /// the same function the `else if` link goes to. `kelpc lint` reads neither
+    /// spelling.
     Elif,
     While,
     /// `for x in xs { ... }` - the indexed walk over a `List` (A-5,

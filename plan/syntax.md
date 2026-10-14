@@ -685,23 +685,23 @@ if temp > 30 {
 
 Braces are always required. Parentheses around the condition are neither needed nor the house style. An `if` used as a value must have an `else`; an `if` without an `else` must produce `Unit`, and the compiler says so: `if without an else branch must evaluate to 'unit'`.
 
-#### `elif` and `else if`
+#### `else if` and `elif`
 
 The link between one condition and the next has two spellings, and they mean exactly the same thing:
 
 ```kelp
 if n > 2 {
     print("big")
-} elif n > 1 {
+} else if n > 1 {
     print("medium")
-} elif n > 0 {
+} else if n > 0 {
     print("small")
 } else {
     print("none")
 }
 ```
 
-- **`elif` is the preferred spelling**, and `else if` is what `kelpc lint` warns about (a cosmetic warning: findings on stderr, exit 0, and nothing written). `else if` stays legal, compiles identically, and is never rewritten by `kelpc fmt`, which is token-faithful; switching spelling is the author's edit.
+- **`else if` is the preferred spelling** (decision 110, OD-6). `elif` stays legal, compiles identically, and is never rewritten by `kelpc fmt`, which is token-faithful. `kelpc lint` warns about neither spelling.
 - A chain may mix them. `if a { .. } else if b { .. } elif c { .. } else { .. }` is one chain of four links, and the parser reads each link the same way.
 - `elif` takes the same grammar as `if`: a condition and a block, or a pattern and a block (`elif let`). `if let A(n) = x { .. } elif let B(m) = x { .. } else { .. }` is the pattern form of the chain above, and its links read the same scrutinee once each (see `if let` below).
 - `elif` is one token, so `else elif` is not a chain: after an `else` the grammar expects a block or an `if`.
@@ -3160,7 +3160,7 @@ panic: String.from_bytes: input is not valid utf-8
 - User code case is configurable rather than fixed: `kelpc lint` reports a declared name that is not the project's case, and either case keeps compiling (see below). The examples and this plan use `snake_case` for functions and lowercase for bindings, matching the standard library.
 - Named arguments are used wherever a call would otherwise be ambiguous, which in practice means every `datac` construction with two or more fields, as in `Circle(r = 2.0)`.
 - Comments are `//`, written as full sentences when they explain a decision and never to restate the next line. `/* ... */` is for the two things a line comment cannot do: a note that spans lines, and commenting out a region of code; a block comment nests, so a region that already contains one still works. Two or more consecutive `//` lines with no blank line and no code between them is the pattern this rule is about written the other way, so `kelpc lint` warns about it. The warning never guesses intent (the author may have meant every line), so it is a warning and not an error. A documentation comment (`//!`, `///`, 2.1) is not part of a run either: a run of doc lines is already one block, and a `//!` line does not count toward a plain `//` run.
-- A chain link is written `elif` (6.1). `else if` is the same link, stays legal and compiles identically; `kelpc lint` warns about it, and `kelpc fmt` never rewrites it.
+- A chain link is written `else if` (6.1). `elif` is the same link, stays legal and compiles identically; `kelpc lint` warns about neither, and `kelpc fmt` never rewrites either.
 - The case of the project's own names is **configurable**, and it is the one style rule that has a setting: `coral.toml`'s `naming_case`, `0` for `camelCase` (the default) or `1` for `snake_case`. It is `kelpc lint`-only, so either case keeps compiling, and a file with no manifest to read gets the default. The rule reads the names a file **declares**: a `fun` name, a parameter, a `val`/`var`/`pd` binding, a `datac` field, an enum payload field, a loop binding, and a pattern binding (`if let Circle(r) = s`, `when s { Circle(r) -> .. }`). A name the project did not write is not its business, and that is the whole of the standard library's exception: the stdlib keeps its locked `snake_case`, so a `camelCase` project is never warned about its call into `str.is_empty` and a `snake_case` project is never warned about the stdlib's `fs.read_text` either, because a call is a use and this rule is about declarations. Type names stay `PascalCase` whatever the setting says, and a `const` name stays `UPPER_SNAKE`.
 
 `kelpc fmt` enforces the indentation, spacing, trailing-whitespace, newline and
