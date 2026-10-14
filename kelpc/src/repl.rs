@@ -12,13 +12,14 @@
 //! not (decision D2). A line that fails leaves the session unchanged, which in
 //! this stage means nothing is kept.
 //!
-//! Memory: the REPL does not start the compiler's watchdog thread. That thread
-//! ends the whole process when memory runs low, and a REPL that does that would
-//! lose its session and its temporary files. Instead, each line checks
-//! `MemAvailable` against the same floor (`KELPC_MIN_AVAILABLE_MB`) before it is
-//! built, and a line that is refused for low memory is an ordinary line error.
-//! Builds run without the watchdog's protection: a resumable guard is a later
-//! change.
+//! Memory: the REPL runs the compiler's watchdog in resumable mode
+//! (`guard::start_resumable`). The plain watchdog ends the whole process when
+//! memory runs low, which would lose the session and the temporary files. The
+//! resumable one is armed around each line's build: when memory is low it kills
+//! the build's child tools (cc, ld.lld), the build fails, and the line is an
+//! ordinary line error. Each line also checks `MemAvailable` against the same
+//! floor (`KELPC_MIN_AVAILABLE_MB`) before it is built. The compiler's own work
+//! in the process (LLVM) is not stopped by the watchdog.
 //!
 //! Temporary files: a REPL killed by a signal (Ctrl-C has no handler yet, D6)
 //! leaves its directory behind. Each start removes the directories of REPL
@@ -37,6 +38,16 @@ use crate::{build, front_end, guard, infer, resolve};
 
 /// The name every REPL diagnostic is shown under.
 const NAME: &str = "<repl>";
+
+/// The unknown-name help of the front end, which tells the user to declare the
+/// name first. The REPL has no declarations until stage 3, so it is replaced by
+/// `NAME_HELP` when a diagnostic is shown here.
+const NAME_HELP_FROM: &str =
+    "declare it with val or var before this line, or check the spelling.";
+
+/// The unknown-name help shown in the REPL.
+const NAME_HELP: &str =
+    "check the spelling; this REPL has no declarations yet (stage 3 adds let).";
 
 const PROMPT: &str = ">>> ";
 
@@ -93,6 +104,7 @@ pub fn repl_command(args: &[String]) -> ExitCode {
         }
     };
     sweep_stale(&std::env::temp_dir());
+    guard::start_resumable();
     let mut failed = false;
     let mut count = 0usize;
     let mut buf = String::new();
@@ -215,6 +227,8 @@ fn evaluate(line: &str, n: usize, dir: &Path) -> bool {
 
     let mut freestanding = false;
     let mut emit = resolve::Emit::Binary;
+    guard::take_tripped();
+    guard::arm();
     let built = build(
         &path,
         &program,
@@ -225,7 +239,14 @@ fn evaluate(line: &str, n: usize, dir: &Path) -> bool {
         &mut emit,
         false,
     );
+    guard::disarm();
+    let tripped = guard::take_tripped();
     if !built {
+        if tripped {
+            eprintln!(
+                "error: low memory: the memory guard stopped the build; the line was not run (KELPC_MIN_AVAILABLE_MB sets the floor)"
+            );
+        }
         remove(&check_path, &program);
         return false;
     }
@@ -321,11 +342,16 @@ fn displayed(ty: &Ty, line: &str) -> Result<Option<String>, String> {
 /// from the candidate program to the typed line, and it is named `<repl>`. A
 /// finding that points outside the typed line has no location to show.
 fn show(d: &Diagnostic, line: &str, severity: Severity) {
-    let mut shown = match input_span(d.span, line) {
-        Some(span) => Diagnostic::new(d.message.clone(), span, NAME),
-        None => Diagnostic::new(d.message.clone(), Span::new(0, 0), ""),
-    };
-    shown.help = d.help.clone();
+    // The primary span is always placed: a span past the typed line (a parse
+    // error at the closing brace of the candidate) points at the end of the line.
+    let mut shown = Diagnostic::new(d.message.clone(), clamp_span(d.span, line), NAME);
+    shown.help = d.help.as_ref().map(|h| {
+        if h == NAME_HELP_FROM {
+            NAME_HELP.to_string()
+        } else {
+            h.clone()
+        }
+    });
     for note in &d.notes {
         if let Some(span) = input_span(note.span, line) {
             shown = shown.with_note(note.message.clone(), span, NAME);
@@ -336,8 +362,19 @@ fn show(d: &Diagnostic, line: &str, severity: Severity) {
     sources.report_as(&shown, severity);
 }
 
+/// A span in the candidate program, moved to the typed line and clamped to it.
+/// A position before the line is the line's start; one after it is its end.
+fn clamp_span(span: Span, line: &str) -> Span {
+    let lo = HEAD.len();
+    let hi = lo + line.len();
+    let start = span.start.clamp(lo, hi);
+    let end = span.end.clamp(start, hi);
+    Span::new(start - lo, end - lo)
+}
+
 /// A span in the candidate program, moved to the typed line, or `None` when it
-/// lies outside the typed line.
+/// lies outside the typed line. Used for notes, which may point at the
+/// generated `main` and have no place in the typed line.
 fn input_span(span: Span, line: &str) -> Option<Span> {
     let lo = HEAD.len();
     let hi = lo + line.len();
