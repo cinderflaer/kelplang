@@ -92,6 +92,7 @@ empty on release.
 - The `net`, `thread`, `tlsfile`, `trace` and `frame` modules now have doc comments on their public items, so `kelpc doc --std --check` reports nothing for them.
 - The `ops`, `sync` and `process` modules now have doc comments on their public items, so `kelpc doc --std --check` reports nothing for them.
 - The `mem`, `atomic`, `rand`, `convert` and `irq` modules now have doc comments on their public items, so `kelpc doc --std --check` reports nothing for them.
+- The `http`, `iter`, `ws` and `tls` modules now have doc comments on their public items, so `kelpc doc --std --check` reports nothing for them.
 
 ## fixes
 
