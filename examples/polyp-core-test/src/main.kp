@@ -19,9 +19,8 @@ datac Counts(var create: i32, var update: i32, var remove: i32, var moved: i32)
 
 fun count(patches: List<core.Patch>) => Counts {
     var c = Counts(create = 0, update = 0, remove = 0, moved = 0)
-    var i: usize = 0
-    while i < patches.len() {
-        when patches.get(i) {
+    for item in patches {
+        when item {
             Create(_, _, _) -> {
                 c.create += 1
             }
@@ -35,7 +34,6 @@ fun count(patches: List<core.Patch>) => Counts {
                 c.moved += 1
             }
         }
-        i += 1
     }
     return c
 }
@@ -123,11 +121,9 @@ fun keys(a: str, b: str, c: str, d: str, e: str, n: i32) => List<String> {
 }
 
 fun keyed_rows(names: List<String>) => core.Node<i32> = core.column { k ->
-    var i: usize = 0
-    while i < names.len() {
-        val name = names.get(i)
+    for item in names {
+        val name = item
         k.keyed(name.as_str()) { r -> r.text(name.as_str()) }
-        i += 1
     }
 }
 

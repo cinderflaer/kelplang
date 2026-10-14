@@ -89,12 +89,10 @@ fun find_index(s: Model, id: i32) => i32 {
 
 fun done_count(s: Model) => i32 {
     var n: i32 = 0
-    var i: usize = 0
-    while i < s.items.len() {
-        if s.items.get(i).done {
+    for item in s.items {
+        if item.done {
             n += 1
         }
-        i += 1
     }
     return n
 }
@@ -231,10 +229,8 @@ pub fun script() => List<Step> {
 pub fun events() => List<core.Event> {
     var out: List<core.Event> = List.empty()
     var steps = script()
-    var i: usize = 0
-    while i < steps.len() {
-        out.push(core.clone_event(steps.get(i).event.get()))
-        i += 1
+    for item in steps {
+        out.push(core.clone_event(item.event.get()))
     }
     return out
 }
@@ -261,16 +257,12 @@ fun say_bool(out: fun (str), b: bool) {
 // examples/polyp-todo/smoke.sh, the core test and the framebuffer equivalence test read.
 pub fun report(final: Model, entry: str, out: fun (str)) {
     say_int(out, final.items.len().to_i64())
-    var i: usize = 0
-    while i < final.items.len() {
-        out(final.items.get(i).title.as_str())
-        say_bool(out, final.items.get(i).done)
-        i += 1
+    for item in final.items {
+        out(item.title.as_str())
+        say_bool(out, item.done)
     }
-    var m: usize = 0
-    while m < final.marks.len() {
-        say_int(out, final.marks.get(m).to_i64())
-        m += 1
+    for item in final.marks {
+        say_int(out, item.to_i64())
     }
     val st = core.stats()
     say_int(out, st.created.to_i64())

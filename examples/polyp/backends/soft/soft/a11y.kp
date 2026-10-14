@@ -121,10 +121,8 @@ fun dump_node(n: &Node, depth: i32, out: mut String) {
     out.push_str("] id=")
     push_int(out, n.id)
     out.push_str("\n")
-    var i: usize = 0
-    while i < n.kids.len() {
-        dump_node(n.kids.get(i), depth + 1, out)
-        i += 1
+    for item in n.kids {
+        dump_node(item, depth + 1, out)
     }
 }
 
@@ -141,10 +139,8 @@ pub fun dump(tree: &Node) => String {
 // caller gets a bool and reads through `find_into`.
 pub fun count(tree: &Node) => i32 {
     var c: i32 = 1
-    var i: usize = 0
-    while i < tree.kids.len() {
-        c += count(tree.kids.get(i))
-        i += 1
+    for item in tree.kids {
+        c += count(item)
     }
     return c
 }
@@ -152,11 +148,9 @@ pub fun count(tree: &Node) => i32 {
 // The id of the first node (depth first) with this role and name, or -1.
 pub fun find_id(tree: &Node, role: i32, name: str) => i32 {
     if tree.role == role && str.eq(tree.name.as_str(), name) { return tree.id }
-    var i: usize = 0
-    while i < tree.kids.len() {
-        val r = find_id(tree.kids.get(i), role, name)
+    for item in tree.kids {
+        val r = find_id(item, role, name)
         if r >= 0 { return r }
-        i += 1
     }
     return -1
 }

@@ -176,15 +176,11 @@ fun mut Deps.push_str(s: str) {
 
 pub fun copy_deps(d: &Deps) => Deps {
     var out = deps()
-    var i: usize = 0
-    while i < d.ints.len() {
-        out.ints.push(d.ints.get(i))
-        i += 1
+    for item in d.ints {
+        out.ints.push(item)
     }
-    var j: usize = 0
-    while j < d.strs.len() {
-        out.strs.push(String.from_str(d.strs.get(j).as_str()))
-        j += 1
+    for item in d.strs {
+        out.strs.push(String.from_str(item.as_str()))
     }
     return out
 }
@@ -727,10 +723,8 @@ fun empty_path() => Path = Path(segs = List.empty())
 
 pub fun copy_path(p: &Path) => Path {
     var segs: List<Seg> = List.empty()
-    var i: usize = 0
-    while i < p.segs.len() {
-        segs.push(clone_seg(p.segs.get(i)))
-        i += 1
+    for item in p.segs {
+        segs.push(clone_seg(item))
     }
     return Path(segs = segs)
 }
@@ -753,10 +747,8 @@ pub fun seg_index(s: &Seg) => i32 = when s {
 
 pub fun with_seg(parent: &Path, s: move Seg) => Path {
     var segs: List<Seg> = List.empty()
-    var i: usize = 0
-    while i < parent.segs.len() {
-        segs.push(clone_seg(parent.segs.get(i)))
-        i += 1
+    for item in parent.segs {
+        segs.push(clone_seg(item))
     }
     segs.push(s)
     return Path(segs = segs)
@@ -836,10 +828,8 @@ fun apply_opts(p: mut Props, o: &Opts) {
     p.anim_ox = anim.copy(&o.anim_ox)
     p.anim_oy = anim.copy(&o.anim_oy)
     p.disabled = o.disabled
-    var i: usize = 0
-    while i < o.classes.len() {
-        p.classes.push(String.from_str(o.classes.get(i).as_str()))
-        i += 1
+    for item in o.classes {
+        p.classes.push(String.from_str(item.as_str()))
     }
 }
 
@@ -1234,16 +1224,14 @@ fun diff_children<M>(parent: &Path, old: List<Child<M>>, new: List<Child<M>>, ou
     // relative order, so nothing has to be reordered.
     var monotonic = true
     var last: i32 = -1
-    var q: usize = 0
-    while q < matches.len() {
-        val mm = matches.get(q)
+    for item in matches {
+        val mm = item
         if mm >= 0 {
             if mm < last {
                 monotonic = false
             }
             last = mm
         }
-        q += 1
     }
     if !monotonic {
         diff_moves(parent, new, matches, old.len(), used, out)
@@ -1343,9 +1331,8 @@ pub fun create_all_memo<M>(node: &Node<M>, store: mut MemoStore<M>) => List<Patc
 // The walk every backend's `apply` delegates to. It is the only place a path becomes a widget
 // call, so the four phases and the id rule cannot drift between backends.
 pub fun apply_patches<B: Backend>(backend: mut B, patches: List<Patch>) {
-    var i: usize = 0
-    while i < patches.len() {
-        when patches.get(i) {
+    for item in patches {
+        when item {
             Create(path, kind, props) -> {
                 // The root's path is empty, so it has no place inside a parent: `at` is 0 there and
                 // a backend that owns the top level (a window, a canvas) puts it there.
@@ -1365,7 +1352,6 @@ pub fun apply_patches<B: Backend>(backend: mut B, patches: List<Patch>) {
                 backend.place_widget(path = path, to_index = to_index)
             }
         }
-        i += 1
     }
 }
 
@@ -1585,16 +1571,14 @@ pub fun timers_fired(t: &Timers) => i32 = t.fired
 // armed. An OS that has gone to sleep wakes at this time (or on input) to run the next turn.
 pub fun next_wake_us(t: &Timers) => i64 {
     var best: i64 = -1
-    var i: usize = 0
-    while i < t.slots.len() {
-        val sl = t.slots.get(i)
+    for item in t.slots {
+        val sl = item
         if !sl.done {
             val due = sl.due_us.to_i64()
             if best < 0 || due < best {
                 best = due
             }
         }
-        i += 1
     }
     return best
 }

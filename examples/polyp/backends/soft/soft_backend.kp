@@ -220,11 +220,9 @@ fun base_style(n: &SNode, th: &Theme) => Style {
 
 fun style_for(n: &SNode, inherited_fg: u32, th: &Theme) => Style {
     var s = base_style(n, th)
-    var i: usize = 0
-    while i < n.props.classes.len() {
-        val o = class_style(n.props.classes.get(i).as_str())
+    for item in n.props.classes {
+        val o = class_style(item.as_str())
         s.merge(o)
-        i += 1
     }
     if !s.has_fg {
         s.has_fg = true
@@ -443,10 +441,8 @@ fun copy_props(p: &core.Props) => core.Props {
     out.anim_ox = anim.copy(&p.anim_ox)
     out.anim_oy = anim.copy(&p.anim_oy)
     out.disabled = p.disabled
-    var i: usize = 0
-    while i < p.classes.len() {
-        out.classes.push(String.from_str(p.classes.get(i).as_str()))
-        i += 1
+    for item in p.classes {
+        out.classes.push(String.from_str(item.as_str()))
     }
     return out
 }
@@ -472,20 +468,16 @@ fun kid_index(kids: List<SNode>, seg: &core.Seg) => i32 {
 
 fun contains_slot(node: &SNode, slot: i32) => bool {
     if slot >= 0 && node.slot == slot { return true }
-    var i: usize = 0
-    while i < node.kids.len() {
-        if contains_slot(node.kids.get(i), slot) { return true }
-        i += 1
+    for item in node.kids {
+        if contains_slot(item, slot) { return true }
     }
     return false
 }
 
 fun count_nodes(node: &SNode) => i32 {
     var n: i32 = 1
-    var i: usize = 0
-    while i < node.kids.len() {
-        n += count_nodes(node.kids.get(i))
-        i += 1
+    for item in node.kids {
+        n += count_nodes(item)
     }
     return n
 }
@@ -1111,9 +1103,8 @@ fun mut SNode.compute_measure(th: &Theme) {
     val spacing = props.spacing
     var main: i32 = 0
     var cross: i32 = 0
-    var i: usize = 0
-    while i < kids.len() {
-        val c = kids.get(i)
+    for item in kids {
+        val c = item
         val m = margin_of(c.props)
         val cw = c.measured_w + 2 * m
         val ch = c.measured_h + 2 * m
@@ -1128,7 +1119,6 @@ fun mut SNode.compute_measure(th: &Theme) {
                 cross = ch
             }
         }
-        i += 1
     }
     if kids.len() > 1 {
         main += spacing * (kids.len().to_i32() - 1)
@@ -1157,10 +1147,8 @@ fun mut SNode.compute_measure(th: &Theme) {
 
 fun subtree_dirty(n: &SNode) => bool {
     if n.dirty { return true }
-    var i: usize = 0
-    while i < n.kids.len() {
-        if subtree_dirty(n.kids.get(i)) { return true }
-        i += 1
+    for item in n.kids {
+        if subtree_dirty(item) { return true }
     }
     return false
 }
@@ -1366,10 +1354,8 @@ fun fade(c: u32, op: i32, bg: u32) => u32 {
 fun k_is_filled(k: i32) => bool = k == core.KIND_BUTTON || k == core.KIND_ENTRY
 
 fun paint_nodes(kids: List<SNode>, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u32, dx: i32, dy: i32, op: i32, px: mut Px) {
-    var i: usize = 0
-    while i < kids.len() {
-        paint_one(kids.get(i), clip, th, f, focus, fg, dx, dy, op, px)
-        i += 1
+    for item in kids {
+        paint_one(item, clip, th, f, focus, fg, dx, dy, op, px)
     }
 }
 
@@ -1777,10 +1763,8 @@ datac AnimFlags(var any: bool, var relayout: bool)
 
 fun any_running(n: &SNode) => bool {
     if any_chan_running(n) { return true }
-    var i: usize = 0
-    while i < n.kids.len() {
-        if any_running(n.kids.get(i)) { return true }
-        i += 1
+    for item in n.kids {
+        if any_running(item) { return true }
     }
     return false
 }
@@ -2479,16 +2463,14 @@ impl core.Backend for SoftBackend {
 
     fun mut Self.drop_widget(path: &core.Path) {
         if path.segs.is_empty() {
-            var i: usize = 0
-            while i < root.len() {
-                removed += count_nodes(root.get(i))
-                val rr = rect_of(root.get(i))
+            for item in root {
+                removed += count_nodes(item)
+                val rr = rect_of(item)
                 self.damage.add(rr)
-                val had = contains_slot(root.get(i), focus_id)
+                val had = contains_slot(item, focus_id)
                 if had {
                     focus_id = -1
                 }
-                i += 1
             }
             root.clear()
             dirty = true

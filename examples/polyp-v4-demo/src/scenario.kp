@@ -86,10 +86,9 @@ pub fun drive<P: platform.Platform>(
     var steps = app.script()
     var now_ms: u64 = 0
     var n: i32 = 1
-    var i: usize = 0
-    while i < steps.len() {
-        val ms = steps.get(i).ms
-        val post = steps.get(i).post
+    for item in steps {
+        val ms = item.ms
+        val post = item.post
         advance(platform, ms)
         now_ms += ms
         if post >= 0 {
@@ -103,7 +102,6 @@ pub fun drive<P: platform.Platform>(
         val line = step_line(n, now_ms, fb.checksum(platform.framebuffer()), backend.last_painted(), backend.wants_frames(), state.ticks, store.hits, store.misses)
         emit(line.as_str())
         n += 1
-        i += 1
     }
     emit_a11y(backend, emit)
     return state

@@ -69,10 +69,8 @@ pub fun copy_props(p: &core.Props) => core.Props {
     out.margin = p.margin
     out.expand = p.expand
     out.align = p.align
-    var i: usize = 0
-    while i < p.classes.len() {
-        out.classes.push(String.from_str(p.classes.get(i).as_str()))
-        i += 1
+    for item in p.classes {
+        out.classes.push(String.from_str(item.as_str()))
     }
     return out
 }
@@ -97,20 +95,16 @@ fun kid_index(kids: List<HNode>, seg: &core.Seg) => i32 {
 
 fun contains_slot(node: &HNode, slot: i32) => bool {
     if node.slot == slot { return true }
-    var i: usize = 0
-    while i < node.kids.len() {
-        if contains_slot(node.kids.get(i), slot) { return true }
-        i += 1
+    for item in node.kids {
+        if contains_slot(item, slot) { return true }
     }
     return false
 }
 
 fun count_nodes(node: &HNode) => i32 {
     var n: i32 = 1
-    var i: usize = 0
-    while i < node.kids.len() {
-        n += count_nodes(node.kids.get(i))
-        i += 1
+    for item in node.kids {
+        n += count_nodes(item)
     }
     return n
 }
@@ -342,11 +336,9 @@ pub fun dump(be: &Headless) => String {
     var lines: List<String> = List.empty()
     render(be.root, 0, lines)
     var out: String = ""
-    var i: usize = 0
-    while i < lines.len() {
-        out = append(out, lines.get(i).as_str())
+    for item in lines {
+        out = append(out, item.as_str())
         out = append(out, "\n")
-        i += 1
     }
     return out
 }
@@ -397,13 +389,11 @@ impl core.Backend for Headless {
 
     fun mut Self.drop_widget(path: &core.Path) {
         if path.segs.is_empty() {
-            var i: usize = 0
-            while i < root.len() {
-                removed += count_nodes(root.get(i))
-                if contains_slot(root.get(i), focus_id) {
+            for item in root {
+                removed += count_nodes(item)
+                if contains_slot(item, focus_id) {
                     focus_id = -1
                 }
-                i += 1
             }
             root.clear()
             return
@@ -518,11 +508,9 @@ fun html_element(tag: str, attrs: str, body: str) => String {
 
 fun html_of(n: &HNode) => String {
     var body: String = ""
-    var i: usize = 0
-    while i < n.kids.len() {
-        val child = html_of(n.kids.get(i))
+    for item in n.kids {
+        val child = html_of(item)
         body = append(body, child.as_str())
-        i += 1
     }
     if n.kind == core.KIND_TEXT {
         val escaped = html_escape(n.props.text.as_str())
@@ -564,11 +552,9 @@ fun html_of(n: &HNode) => String {
 // The first frame as a complete HTML document. The style is inline so the file is self-contained.
 pub fun html(be: &Headless) => String {
     var body: String = ""
-    var i: usize = 0
-    while i < be.root.len() {
-        val top = html_of(be.root.get(i))
+    for item in be.root {
+        val top = html_of(item)
         body = append(body, top.as_str())
-        i += 1
     }
     var doc: String = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
     doc = append(doc, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Polyp</title>\n")

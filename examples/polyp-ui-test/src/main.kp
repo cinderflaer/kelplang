@@ -132,9 +132,8 @@ fun run_hit() {
     b.apply(core.create_all(&t))
     b.layout()
     var ids = b.interactive_ids()
-    var i: usize = 0
-    while i < ids.len() {
-        val id = ids.get(i)
+    for item in ids {
+        val id = item
         when b.rect_of_slot(id) {
             Some(r) -> {
                 val cx = r.x + r.w / 2
@@ -143,7 +142,6 @@ fun run_hit() {
             }
             None -> print(-1)
         }
-        i += 1
     }
     // A point in the text, which is not interactive, names nothing.
     print(b.hit(3, 3))
@@ -158,10 +156,8 @@ fun run_order() {
     b.apply(core.create_all(&tree))
     b.layout()
     var ids = b.interactive_ids()
-    var i: usize = 0
-    while i < ids.len() {
-        print(ids.get(i))
-        i += 1
+    for item in ids {
+        print(item)
     }
     // Tab from nothing focuses the first, then each in turn, then wraps.
     var k: i32 = 0

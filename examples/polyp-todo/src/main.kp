@@ -28,11 +28,9 @@ fun install_css() {
 // With POLYP_SMOKE=1 the program drives itself on the schedule `app.script` lists.
 fun arm_smoke() {
     var steps = app.script()
-    var i: usize = 0
-    while i < steps.len() {
-        val step = steps.get(i)
+    for item in steps {
+        val step = item
         polyp.schedule(delay_ms = step.delay_ms, event = core.clone_event(step.event.get()))
-        i += 1
     }
 }
 

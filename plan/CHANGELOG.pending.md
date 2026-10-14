@@ -70,6 +70,7 @@ empty on release.
 - `else if` is the preferred spelling of a chain link, and `elif` stays legal and means the same. `kelpc lint` no longer warns about either spelling.
 - The examples write `list.get(i)` and `list.set(i, v)` without argument names, and a guard whose body is one `return` that fits in 100 columns on one line: `if n < 2 { return n }`. Style only; no program changes.
 - A `&` on a `List` or `str` parameter is redundant: `xs: &List<T>` and `s: &str` take the same arguments as `xs: List<T>` and `s: str`. `kelpc lint` warns about it; the examples no longer write it.
+- The examples walk a list with `for item in xs { ... }` where they used `var i = 0` and `while i < xs.len()` with `xs.get(i)`. Style only; no program changes.
 
 ## compiler
 

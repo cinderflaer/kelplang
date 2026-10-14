@@ -75,11 +75,9 @@ pub fun view(m: Model) => core.Node<Msg> {
             k.anim(anim.lerp(0, 1000, 500, anim.Easing.EaseInOut))
         }
         k.progress(0)
-        var i: usize = 0
-        while i < m.rows.len() {
-            val key = str.from_i64(m.rows.get(i).id.to_i64())
-            k.memo(key.as_str(), row_deps(m.rows.get(i)), row_view)
-            i += 1
+        for item in m.rows {
+            val key = str.from_i64(item.id.to_i64())
+            k.memo(key.as_str(), row_deps(item), row_view)
         }
         if m.toast {
             k.opacity_anim(anim.lerp(1000, 200, 300, anim.Easing.Linear))

@@ -16,10 +16,8 @@ pd var entry_texts: List<String> = List.empty()
 pub fun capture<B: core.Backend>(backend: &B) {
     entry_texts.clear()
     val ids = backend.entry_ids()
-    var i: usize = 0
-    while i < ids.len() {
-        entry_texts.push(backend.entry_text(ids.get(i)))
-        i += 1
+    for item in ids {
+        entry_texts.push(backend.entry_text(item))
     }
 }
 

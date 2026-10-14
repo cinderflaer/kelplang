@@ -212,10 +212,8 @@ fun kid_index(kids: List<Mount>, seg: &core.Seg) => i32 {
 
 fun count_nodes(node: &Mount) => i32 {
     var n: i32 = 1
-    var i: usize = 0
-    while i < node.kids.len() {
-        n += count_nodes(node.kids.get(i))
-        i += 1
+    for item in node.kids {
+        n += count_nodes(item)
     }
     return n
 }
@@ -242,10 +240,8 @@ fun move_after(box: gtk.Widget, moved: i32, at: i32) => gtk.Widget {
 
 fun copy_strings(xs: List<String>) => List<String> {
     var out: List<String> = List.empty()
-    var i: usize = 0
-    while i < xs.len() {
-        out.push(String.from_str(xs.get(i).as_str()))
-        i += 1
+    for item in xs {
+        out.push(String.from_str(item.as_str()))
     }
     return out
 }
@@ -299,15 +295,11 @@ fun apply_opts(w: gtk.Widget, props: &core.Props) {
 // The classes currently on the widget off, the wanted ones on. GTK dedups an add, so a class in
 // both lists is only a remove-then-add.
 fun apply_classes(w: gtk.Widget, old: List<String>, new: List<String>) {
-    var i: usize = 0
-    while i < old.len() {
-        gtk.gtk_widget_remove_css_class(w, old.get(i).as_str())
-        i += 1
+    for item in old {
+        gtk.gtk_widget_remove_css_class(w, item.as_str())
     }
-    var j: usize = 0
-    while j < new.len() {
-        gtk.gtk_widget_add_css_class(w, new.get(j).as_str())
-        j += 1
+    for item in new {
+        gtk.gtk_widget_add_css_class(w, item.as_str())
     }
 }
 
@@ -635,10 +627,8 @@ impl core.Backend for GtkBackend {
 
     fun mut Self.drop_widget(path: &core.Path) {
         if path.segs.is_empty() {
-            var i: usize = 0
-            while i < root.len() {
-                removed += count_nodes(root.get(i))
-                i += 1
+            for item in root {
+                removed += count_nodes(item)
             }
             root.clear()
             gtk.gtk_window_set_child(win, gtk.null_widget())

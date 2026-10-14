@@ -342,10 +342,8 @@ fun run_append() {
     }
     b.reset_counts()
     var items2: List<app.Todo> = List.empty()
-    var i: usize = 0
-    while i < m1.items.len() {
-        items2.push(app.Todo(id = m1.items.get(i).id, title = String.from_str(m1.items.get(i).title.as_str()), done = m1.items.get(i).done))
-        i += 1
+    for item in m1.items {
+        items2.push(app.Todo(id = item.id, title = String.from_str(item.title.as_str()), done = item.done))
     }
     items2.push(app.Todo(id = ROWS, title = "last", done = false))
     val m2 = app.Model(draft = "", items = items2, next_id = ROWS + 1, marks = List.empty())

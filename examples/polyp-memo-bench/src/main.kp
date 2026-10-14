@@ -100,11 +100,9 @@ fun view_memo(m: Model) => core.Node<Msg> {
         k.expand()
         k.scrolled { sc ->
             sc.spacing(4)
-            var i: usize = 0
-            while i < m.items.len() {
-                val key = str.from_i64(m.items.get(i).id.to_i64())
-                sc.memo(key.as_str(), row_deps(m.items.get(i)), row_view)
-                i += 1
+            for item in m.items {
+                val key = str.from_i64(item.id.to_i64())
+                sc.memo(key.as_str(), row_deps(item), row_view)
             }
         }
     }
