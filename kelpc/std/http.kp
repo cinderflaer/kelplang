@@ -80,13 +80,39 @@ const DEFAULT_MAX_REDIRECTS: i32 = 5
 const pool_size: usize = __KELP_HTTP_POOL__
 
 /// A parsed URL.
-datac Url(val scheme: String, val host: String, val port: u16, val path: String)
+/// A parsed URL.
+datac Url(
+    /// The scheme, `http` or `https`.
+    val scheme: String,
+    /// The host name or address, as written.
+    val host: String,
+    /// The port. It is the scheme's default when the URL names none.
+    val port: u16,
+    /// The path and query, starting with `/`.
+    val path: String,
+)
 
 /// One HTTP header.
-datac Header(val name: String, val value: String)
+/// One HTTP header.
+datac Header(
+    /// The header name.
+    val name: String,
+    /// The header value.
+    val value: String,
+)
 
 /// A received HTTP response.
-datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val reusable: bool)
+/// A received HTTP response.
+datac Response(
+    /// The status code, such as 200.
+    val status: i32,
+    /// The response headers, in the order received.
+    val headers: List<Header>,
+    /// The response body, as received.
+    val body: Bytes,
+    /// True when the connection may be kept open for another exchange.
+    val reusable: bool,
+)
 
 /// The `X-RateLimit-*` bucket headers, bundled (MISSING-p5Xtr). Discord is the
 /// worked example the issue names, and its five headers, `Limit`,
@@ -119,11 +145,30 @@ datac RateLimit(
 )
 
 /// An HTTP request to send.
-datac Request(val method: String, val url: String, val headers: List<Header>, val body: Bytes)
+/// An HTTP request to send.
+datac Request(
+    /// The request method, such as `GET`.
+    val method: String,
+    /// The request URL, absolute.
+    val url: String,
+    /// The request headers.
+    val headers: List<Header>,
+    /// The request body, or empty for none.
+    val body: Bytes,
+)
 
 /// `timeout_ms = 0` is "no timeout" (that is what `SO_RCVTIMEO` of zero means),
 /// which is deliberate: a program that wants to wait forever can say so.
-datac Client(val timeout_ms: u64, val max_redirects: i32, val follow_redirects: bool)
+/// The client's settings. `timeout_ms = 0` is "no timeout" (that is what `SO_RCVTIMEO` of zero means),
+/// which is deliberate: a program that wants to wait forever can say so.
+datac Client(
+    /// The timeout for each read, in milliseconds. 0 means no timeout.
+    val timeout_ms: u64,
+    /// How many redirects to follow before giving up.
+    val max_redirects: i32,
+    /// Whether to follow redirects at all.
+    val follow_redirects: bool,
+)
 
 /// Why a fallible request failed, as a value a caller can branch on
 /// (MISSING-p7Kdm). The variants split on the one question a retry needs
@@ -210,7 +255,17 @@ datac Pool(
 /// lease by value, so the value is gone afterwards: releasing twice, or using a
 /// lease after release, does not compile. That check is the reason to have the
 /// pool in Kelp rather than in C, it is the borrow checker's, and it is free.
-datac Lease(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, val reused: bool)
+/// Permission to use one pooled connection for one exchange. `fd` and `tls_handle` are the pair the pool hands
+/// out, and `reused` says whether the connection was already open. Releasing a lease takes it by value, so it cannot
+/// be released twice or used after release.
+datac Lease(
+    /// The connection's file descriptor.
+    val fd: i32,
+    /// The TLS session, or `None` for a plain connection.
+    val tls_handle: option.Option<tls.TlsHandle>,
+    /// True when the connection was already open before this exchange.
+    val reused: bool,
+)
 
 /// One open connection, plain or TLS. `tls_handle` is the OpenSSL `SSL*` from
 /// `tls.handshake`, carried as the opaque `tls.TlsHandle`; a plain connection
@@ -222,7 +277,17 @@ datac Lease(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, val reuse
 /// (`Cursor`) do not need to know which kind of connection they were handed,
 /// because `conn_send_all`/`conn_recv`/`conn_recv_into`/`conn_close` below are
 /// the one place that dispatches on it.
-datac Conn(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>)
+/// One open connection, plain or TLS.
+///
+/// Everywhere this module holds a connection it holds a `Conn`, so the dial, the pool, redirect-following and the framing
+/// reader do not need to know which kind they have. `conn_send_all`, `conn_recv`, `conn_recv_into` and `conn_close`
+/// are the one place that dispatches on it.
+datac Conn(
+    /// The socket's file descriptor.
+    val fd: i32,
+    /// The TLS session, or `None` for a plain connection.
+    val tls_handle: option.Option<tls.TlsHandle>,
+)
 
 /// Whether the connection is encrypted.
 fun Conn.is_tls() => bool = when tls_handle {
@@ -377,7 +442,18 @@ fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool) =>
 /// than a sentinel), so reading the two off the borrow and rebuilding a `Conn`
 /// locally in each method below (`Conn(fd = fd, tls_handle = tls_handle)`)
 /// costs nothing and needs no move.
-datac Cursor(val fd: i32, val tls_handle: option.Option<tls.TlsHandle>, var buf: Bytes, var start: usize)
+/// The reader for the bytes of a response, over one connection. It holds the connection's
+/// descriptor and TLS session, not a `Conn`, because a parameter is always a borrow.
+datac Cursor(
+    /// The socket's file descriptor.
+    val fd: i32,
+    /// The TLS session, or `None` for a plain connection.
+    val tls_handle: option.Option<tls.TlsHandle>,
+    /// Bytes received and not yet consumed.
+    var buf: Bytes,
+    /// How far into `buf` the reader has read.
+    var start: usize,
+)
 
 /// The connection a cursor reads.
 fun Cursor.conn() => Conn = Conn(fd = fd, tls_handle = tls_handle)
@@ -1794,7 +1870,15 @@ fun post_text(url: &str, body: &str, content_type: &str) => Response {
 // long one (RFC 2046: 1 to 70 characters from a small set).
 
 /// A multipart/form-data body being built.
-datac Multipart(val boundary: String, var out: Bytes, var parts: usize)
+/// A multipart/form-data body being built.
+datac Multipart(
+    /// The boundary that separates the parts. The caller chooses it.
+    val boundary: String,
+    /// The body built so far.
+    var out: Bytes,
+    /// How many parts have been added.
+    var parts: usize,
+)
 
 /// A boundary byte RFC 2046 allows: letters, digits and `'()+_,-./:=?`.
 fun boundary_ok(c: u8) => bool {
@@ -1988,7 +2072,16 @@ datac ServerRequest(
 
 /// What a handler returns. `Content-Length` and `Connection` are the server's:
 /// a header of either name set here is dropped when the response is written.
-datac ServerResponse(val status: i32, val headers: List<Header>, val body: Bytes)
+/// What a handler returns. `Content-Length` and `Connection` are the server's:
+/// a header of either name set here is dropped when the response is written.
+datac ServerResponse(
+    /// The status code, such as 200.
+    val status: i32,
+    /// The response headers.
+    val headers: List<Header>,
+    /// The response body.
+    val body: Bytes,
+)
 
 /// Whether the list has a header called `name`.
 fun headers_have(hs: List<Header>, name: &str) => bool {
@@ -2228,7 +2321,11 @@ fun mut ServerResponse.add_header(name: &str, value: &str) {
 // ----- the listener and the connection -----
 
 /// A bound, listening socket. Nothing closes on drop: `close` is the end.
-datac Server(val fd: i32)
+/// A bound, listening socket. Nothing closes on drop: `close` is the end.
+datac Server(
+    /// The listening socket's file descriptor.
+    val fd: i32,
+)
 
 /// Binds `port` on every interface (0 asks for a free one, `Server.port` says
 /// which). Gated exactly as `net.listen`: the importer's grant must cover the
@@ -3268,7 +3365,19 @@ fun serve_tls_n(port: u16, config: &tls.ServerConfig, handler: fun(&ServerReques
 /// borrowed crosses the thread boundary. It is not a `Worker` resource: a thread
 /// may take a resource as its argument only if the collector can see it, and
 /// this carries nothing but the descriptor number, a function and plain limits.
-datac WorkerStart(val fd: i32, val handler: fun(&ServerRequest) => ServerResponse, val limits: Limits)
+/// What a worker thread is handed: the shared listener's descriptor, its own copy of the limits and the handler.
+///
+/// The handler is a plain function value, so nothing borrowed crosses the thread boundary. It is not a `Worker` resource: a thread
+/// may take a resource as its argument only if the collector can see it, and this carries nothing but the descriptor number,
+/// a function and plain limits.
+datac WorkerStart(
+    /// The shared listener's file descriptor.
+    val fd: i32,
+    /// The function that handles each request.
+    val handler: fun(&ServerRequest) => ServerResponse,
+    /// The limits this worker applies to each connection.
+    val limits: Limits,
+)
 
 /// The loop one server worker thread runs.
 fun worker_main(w: move WorkerStart) => u64 {
