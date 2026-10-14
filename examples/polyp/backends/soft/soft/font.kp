@@ -146,7 +146,7 @@ fun draw_glyph(
 
 // The width of one line, saturating rather than wrapping: code points * 6 * scale in `i64`, then
 // narrowed with `fb.clamp_i32`. A code point is one cell wide, a malformed run is one cell.
-pub fun text_width(s: &str, scale: i32) => i32 {
+pub fun text_width(s: str, scale: i32) => i32 {
     val n: i64 = utf8.count(s).to_i64()
     val w: i64 = n * (ADVANCE * scale).to_i64()
     return fb.clamp_i32(w)
@@ -163,7 +163,7 @@ pub fun draw_text(
     c: &draw.ClipStack,
     x: i32,
     y: i32,
-    s: &str,
+    s: str,
     scale: i32,
     color: u32,
 ) => usize {

@@ -14,9 +14,11 @@
 //!
 //! - the **comment run** (roadmap item G-5): two or more consecutive `//`
 //!   lines with no blank line between them.
-//! //! - the **naming case** (roadmap item 23, `syntax.md` 19): the project's case,
+//! - the **naming case** (roadmap item 23, `syntax.md` 19): the project's case,
 //!   `camelCase` (the default) or `snake_case`, read from `coral.toml`'s
 //!   `naming_case`.
+//! - the **redundant borrow** on a `List` or `str` parameter (`&List<T>` and
+//!   `&str` take the same arguments as `List<T>` and `str`): a warning.
 //! - the **redundant comparison** (`== true`, and `.len() == 0` where
 //!   `.is_empty()` says it): a warning, never a failure.
 //!
@@ -151,6 +153,7 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
         })
         .collect();
     all.extend(redundant_comparisons_in(&tokens));
+    all.extend(redundant_borrow_params_in(&tokens));
     all.extend(crate::doc::orphan_findings(src, &tokens));
     if let Some(naming) = naming {
         all.extend(naming_findings_in(&tokens, naming));
@@ -160,6 +163,45 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
     // findings are sorted by where they are before anyone prints them.
     all.sort_by_key(|f| f.span.start);
     Ok(all)
+}
+
+/// A `&` on a `List` or `str` parameter of a `fun` header. Such a parameter
+/// already borrows its argument, and `List<T>` and `str` take the same
+/// arguments as `&List<T>` and `&str` (`kelpc/tests/fixtures/param_borrow_spellings.kp`).
+/// Warning only.
+fn redundant_borrow_params_in(tokens: &[Token]) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (i, token) in tokens.iter().enumerate() {
+        if !matches!(token.kind, TokenKind::Fun) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut k = i + 1;
+        while k < tokens.len() {
+            match &tokens[k].kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => depth = depth.saturating_sub(1),
+                TokenKind::LBrace | TokenKind::Newline | TokenKind::Eof => break,
+                TokenKind::Eq if depth == 0 => break,
+                _ => {}
+            }
+            if depth >= 1
+                && matches!(tokens[k].kind, TokenKind::Ident(_))
+                && matches!(tokens.get(k + 1).map(|t| &t.kind), Some(TokenKind::Colon))
+                && matches!(tokens.get(k + 2).map(|t| &t.kind), Some(TokenKind::Amp))
+                && matches!(tokens.get(k + 3).map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "List" || name == "str")
+            {
+                let amp = &tokens[k + 2];
+                let ty = &tokens[k + 3];
+                out.push(Finding {
+                    span: Span::new(amp.span.start, ty.span.end),
+                    message: "redundant '&' on a parameter: a 'List' or 'str' parameter already borrows its argument, so write it without '&'".to_string(),
+                });
+            }
+            k += 1;
+        }
+    }
+    out
 }
 
 /// The comparisons a plain condition or `.is_empty()` says better. Warnings
@@ -861,6 +903,21 @@ mod tests {
     #[test]
     fn the_two_spellings_are_not_confused_inside_a_string() {
         let src = "fun f() {\n    print(\"if a { } else if b { }\")\n}\n";
+        assert!(findings(src, None).expect("lexes").is_empty());
+    }
+
+    #[test]
+    fn a_borrow_on_a_list_or_str_parameter_is_reported_at_the_amp() {
+        let src = "fun f(xs: &List<i32>, s: &str, o: &Point, d: &dyn Shape, n: i32) {\n}\n";
+        let found = findings(src, None).expect("lexes");
+        let starts: Vec<usize> = found.iter().map(|f| f.span.start).collect();
+        assert_eq!(starts, vec![at(src, "&List"), at(src, "&str")]);
+        assert!(found[0].message.starts_with("redundant '&' on a parameter"));
+    }
+
+    #[test]
+    fn a_borrow_outside_a_fun_header_is_not_reported() {
+        let src = "fun f() {\n    val s: &str = \"a\"\n}\n";
         assert!(findings(src, None).expect("lexes").is_empty());
     }
 

@@ -17,7 +17,7 @@ impl "std/str"
 
 datac Counts(var create: i32, var update: i32, var remove: i32, var moved: i32)
 
-fun count(patches: &List<core.Patch>) => Counts {
+fun count(patches: List<core.Patch>) => Counts {
     var c = Counts(create = 0, update = 0, remove = 0, moved = 0)
     var i: usize = 0
     while i < patches.len() {
@@ -122,7 +122,7 @@ fun keys(a: str, b: str, c: str, d: str, e: str, n: i32) => List<String> {
     return out
 }
 
-fun keyed_rows(names: &List<String>) => core.Node<i32> = core.column { k ->
+fun keyed_rows(names: List<String>) => core.Node<i32> = core.column { k ->
     var i: usize = 0
     while i < names.len() {
         val name = names.get(i)
@@ -151,7 +151,7 @@ fun check_same(be: &headless_backend.Headless, tree: &core.Node<i32>, label: str
 
 // One step of a run: the view changes from `old_names` to `new_names`, the patches are applied to
 // the backend, and the tree after them must be the tree the new view builds.
-fun step(be: mut headless_backend.Headless, old_names: &List<String>, new_names: &List<String>, label: str) {
+fun step(be: mut headless_backend.Headless, old_names: List<String>, new_names: List<String>, label: str) {
     val old_tree = keyed_rows(old_names)
     val new_tree = keyed_rows(new_names)
     val patches = core.diff(&old_tree, &new_tree)

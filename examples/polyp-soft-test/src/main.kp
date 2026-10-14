@@ -366,7 +366,7 @@ fun ref_text(
     cl: fb.Rect,
     x: i32,
     y: i32,
-    s: &str,
+    s: str,
     scale: i32,
     color: u32,
 ) => usize {
@@ -1099,7 +1099,7 @@ fun add_to(t: mut Tally, other: Tally) {
     t.fails += other.fails
 }
 
-fun report(label: &str, t: Tally) {
+fun report(label: str, t: Tally) {
     print(label)
     print(t.checks)
     print(t.fails)

@@ -103,7 +103,7 @@ fun Blob.eq(other: &Blob) => bool {
     return true
 }
 
-fun put_str(text: &str) {
+fun put_str(text: str) {
     uart.puts(str.ptr(text), str.len(text))
 }
 
@@ -111,13 +111,13 @@ fun newline() {
     uart.putc(10)
 }
 
-fun line(label: &str, text: &str) {
+fun line(label: str, text: str) {
     put_str(label)
     put_str(text)
     newline()
 }
 
-fun copy(text: &str) => String {
+fun copy(text: str) => String {
     return str.concat(text, "")
 }
 

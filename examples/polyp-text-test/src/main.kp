@@ -100,7 +100,7 @@ fun run_glyphs() {
     }
 }
 
-fun checksum_of_text(p: mut headless_platform.HeadlessPlatform, text: &str) => u64 {
+fun checksum_of_text(p: mut headless_platform.HeadlessPlatform, text: str) => u64 {
     p.clear(0xFF000000)
     val f = p.framebuffer()
     val c = draw.clip(f.bounds())

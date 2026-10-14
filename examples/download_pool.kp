@@ -41,7 +41,7 @@ const WORKER_COUNT: usize = 4
 datac Job(val host: String, val port: u16, val paths: List<String>)
 datac Outcome(val ok: usize, val failed: usize, val bytes: u64)
 
-fun build_url(host: &str, port: u16, path: &str) => String {
+fun build_url(host: str, port: u16, path: str) => String {
     var url = String.empty()
     url.push_str("http://")
     url.push_str(host)
@@ -103,7 +103,7 @@ fun job_for(worker: usize) => Job {
 // Every `worker`th path, starting at `worker`: a round-robin split decided
 // entirely from the index, so it costs no coordination between the workers
 // that will each get one slice.
-fun slice_for(paths: &List<String>, worker: usize) => List<String> {
+fun slice_for(paths: List<String>, worker: usize) => List<String> {
     var out: List<String> = List.empty()
     var i: usize = worker
     while i < paths.len() {
@@ -113,7 +113,7 @@ fun slice_for(paths: &List<String>, worker: usize) => List<String> {
     return out
 }
 
-fun report(label: &str, o: &Outcome) {
+fun report(label: str, o: &Outcome) {
     var msg = String.empty()
     msg.push_str(label)
     msg.push_str(": ")

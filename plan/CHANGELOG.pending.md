@@ -69,6 +69,7 @@ empty on release.
 - `.return:` is refused by name: the parser says to write the return type with `=>`, as in `fun f(a: i32) => i32`. The migration to `=>` is complete, so no shipped module, example or fixture uses the old spelling.
 - `else if` is the preferred spelling of a chain link, and `elif` stays legal and means the same. `kelpc lint` no longer warns about either spelling.
 - The examples write `list.get(i)` and `list.set(i, v)` without argument names, and a guard whose body is one `return` that fits in 100 columns on one line: `if n < 2 { return n }`. Style only; no program changes.
+- A `&` on a `List` or `str` parameter is redundant: `xs: &List<T>` and `s: &str` take the same arguments as `xs: List<T>` and `s: str`. `kelpc lint` warns about it; the examples no longer write it.
 
 ## compiler
 

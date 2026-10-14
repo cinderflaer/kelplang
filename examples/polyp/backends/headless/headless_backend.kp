@@ -86,7 +86,7 @@ fun key_of_path(path: &core.Path) => core.Key {
 }
 
 // The index of the child `seg` names in this sibling list, or -1.
-fun kid_index(kids: &List<HNode>, seg: &core.Seg) => i32 {
+fun kid_index(kids: List<HNode>, seg: &core.Seg) => i32 {
     var i: usize = 0
     while i < kids.len() {
         if core.child_at(seg, kids.get(i).key.get(), i) { return i.to_i32() }
@@ -198,7 +198,7 @@ fun move_into(kids: mut List<HNode>, path: &core.Path, depth: usize, to_index: i
     kids.insert(idx.to_usize(), child)
 }
 
-fun collect_entries(kids: &List<HNode>, out: mut List<i32>) {
+fun collect_entries(kids: List<HNode>, out: mut List<i32>) {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -211,7 +211,7 @@ fun collect_entries(kids: &List<HNode>, out: mut List<i32>) {
 }
 
 // `base` is the path of the node whose children are in this list.
-fun find_path(kids: &List<HNode>, base: &core.Path, id: i32) => option.Option<core.Path> {
+fun find_path(kids: List<HNode>, base: &core.Path, id: i32) => option.Option<core.Path> {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -228,7 +228,7 @@ fun find_path(kids: &List<HNode>, base: &core.Path, id: i32) => option.Option<co
     return option.Option.None
 }
 
-fun find_text(kids: &List<HNode>, id: i32) => option.Option<String> {
+fun find_text(kids: List<HNode>, id: i32) => option.Option<String> {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -246,7 +246,7 @@ fun find_text(kids: &List<HNode>, id: i32) => option.Option<String> {
     return option.Option.None
 }
 
-fun set_text(kids: mut List<HNode>, id: i32, text: &str) {
+fun set_text(kids: mut List<HNode>, id: i32, text: str) {
     var i: usize = 0
     while i < kids.len() {
         var n = kids.remove(i)
@@ -293,7 +293,7 @@ fun indent(level: i32) => String {
     return out
 }
 
-fun render(kids: &List<HNode>, level: i32, out: mut List<String>) {
+fun render(kids: List<HNode>, level: i32, out: mut List<String>) {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -352,7 +352,7 @@ pub fun dump(be: &Headless) => String {
 }
 
 impl core.Backend for Headless {
-    fun mut Self.apply(patches: &List<core.Patch>) {
+    fun mut Self.apply(patches: List<core.Patch>) {
         core.apply_patches(backend = self, patches = patches)
     }
 
@@ -452,7 +452,7 @@ impl core.Backend for Headless {
         focus_id = id
     }
 
-    fun mut Self.set_entry_text(id: i32, text: &str) {
+    fun mut Self.set_entry_text(id: i32, text: str) {
         if !root.is_empty() {
             var top = root.remove(0)
             if top.slot == id {
@@ -496,7 +496,7 @@ impl core.Backend for Headless {
 // (`polyp-column` and `polyp-row`), text is a `p`, a button is a `button`, a spacer is an empty `div`
 // of its height, and every other kind is a `div` with a `data-kind` attribute. Nothing interactive is
 // wired: the page is the first frame, not a running program.
-fun html_escape(s: &str) => String {
+fun html_escape(s: str) => String {
     val a = str.replace(s, "&", "&amp;")
     val b = str.replace(a.as_str(), "<", "&lt;")
     val c = str.replace(b.as_str(), ">", "&gt;")
@@ -504,7 +504,7 @@ fun html_escape(s: &str) => String {
     return str.replace(d.as_str(), "'", "&#39;")
 }
 
-fun html_element(tag: str, attrs: str, body: &str) => String {
+fun html_element(tag: str, attrs: str, body: str) => String {
     var out: String = "<"
     out = append(out, tag)
     out = append(out, attrs)

@@ -150,7 +150,7 @@ fun mut Style.merge(o: &Style) {
 // stage asked for, spelled as comparisons because Kelp has no `static String`. A program adds a
 // class by adding a branch here. The three shipped names are the ones `examples/polyp-todo` uses;
 // `todo-done` is the muted colour its GTK stylesheet gives a completed row.
-fun class_style(name: &str) => Style {
+fun class_style(name: str) => Style {
     var s = style_none()
     if str.eq(name, "todo-app") {
         s.has_pad = true
@@ -461,7 +461,7 @@ fun key_of_path(path: &core.Path) => core.Key {
     }
 }
 
-fun kid_index(kids: &List<SNode>, seg: &core.Seg) => i32 {
+fun kid_index(kids: List<SNode>, seg: &core.Seg) => i32 {
     var i: usize = 0
     while i < kids.len() {
         if core.child_at(seg, kids.get(i).key.get(), i) { return i.to_i32() }
@@ -492,7 +492,7 @@ fun count_nodes(node: &SNode) => i32 {
 
 // Find a node's rectangle by slot, or empty when there is none. Slots are unique, so the first
 // match is the node.
-fun find_rect_in(kids: &List<SNode>, id: i32) => fb.Rect {
+fun find_rect_in(kids: List<SNode>, id: i32) => fb.Rect {
     if id < 0 { return fb.empty_rect() }
     var i: usize = 0
     while i < kids.len() {
@@ -506,7 +506,7 @@ fun find_rect_in(kids: &List<SNode>, id: i32) => fb.Rect {
 }
 
 // Whether the widget with interactive id `id` is disabled.
-fun slot_disabled(kids: &List<SNode>, id: i32) => bool {
+fun slot_disabled(kids: List<SNode>, id: i32) => bool {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -517,7 +517,7 @@ fun slot_disabled(kids: &List<SNode>, id: i32) => bool {
     return false
 }
 
-fun find_caret_in(kids: &List<SNode>, id: i32) => i32 {
+fun find_caret_in(kids: List<SNode>, id: i32) => i32 {
     if id < 0 { return -1 }
     var i: usize = 0
     while i < kids.len() {
@@ -530,7 +530,7 @@ fun find_caret_in(kids: &List<SNode>, id: i32) => i32 {
     return -1
 }
 
-fun kind_of_in(kids: &List<SNode>, id: i32) => i32 {
+fun kind_of_in(kids: List<SNode>, id: i32) => i32 {
     if id < 0 { return -1 }
     var i: usize = 0
     while i < kids.len() {
@@ -544,7 +544,7 @@ fun kind_of_in(kids: &List<SNode>, id: i32) => i32 {
 }
 
 // Add every interactive widget's slot, in tree order, which is Tab order.
-fun collect_interactive(kids: &List<SNode>, out: mut List<i32>) {
+fun collect_interactive(kids: List<SNode>, out: mut List<i32>) {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -556,7 +556,7 @@ fun collect_interactive(kids: &List<SNode>, out: mut List<i32>) {
     }
 }
 
-fun collect_entries(kids: &List<SNode>, out: mut List<i32>) {
+fun collect_entries(kids: List<SNode>, out: mut List<i32>) {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -572,7 +572,7 @@ fun collect_entries(kids: &List<SNode>, out: mut List<i32>) {
 // rather than an `Option<String>`: a keyable `Option<String>` makes the compiler emit a derived
 // equality that compares the string through `kelp_map_key_eq`, a hosted runtime symbol a bare-metal
 // image has no body for (`plan/polyp-v3.md`, stage 4).
-fun find_text(kids: &List<SNode>, id: i32, out: mut String) => bool {
+fun find_text(kids: List<SNode>, id: i32, out: mut String) => bool {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -587,7 +587,7 @@ fun find_text(kids: &List<SNode>, id: i32, out: mut String) => bool {
     return false
 }
 
-fun find_path(kids: &List<SNode>, base: &core.Path, id: i32) => option.Option<core.Path> {
+fun find_path(kids: List<SNode>, base: &core.Path, id: i32) => option.Option<core.Path> {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -612,7 +612,7 @@ fun merge_damage(dst: mut damage.Damage, src: &damage.Damage) {
     }
 }
 
-fun damage_slot_in(kids: &List<SNode>, id: i32, d: mut damage.Damage) {
+fun damage_slot_in(kids: List<SNode>, id: i32, d: mut damage.Damage) {
     if id < 0 { return }
     var i: usize = 0
     while i < kids.len() {
@@ -662,7 +662,7 @@ fun sync_new_node(n: mut SNode, clock: u64) => bool {
     return any_chan_running(n)
 }
 
-fun same_classes(a: &List<String>, b: &List<String>) => bool {
+fun same_classes(a: List<String>, b: List<String>) => bool {
     if a.len() != b.len() { return false }
     var i: usize = 0
     while i < a.len() {
@@ -829,7 +829,7 @@ fun move_into(kids: mut List<SNode>, path: &core.Path, depth: usize, to_index: i
     kids.insert(idx.to_usize(), child)
 }
 
-fun set_text(kids: mut List<SNode>, id: i32, text: &str, d: mut damage.Damage) {
+fun set_text(kids: mut List<SNode>, id: i32, text: str, d: mut damage.Damage) {
     var i: usize = 0
     while i < kids.len() {
         var n = kids.remove(i)
@@ -921,7 +921,7 @@ fun scalar_of(cp: i32) => i32 = if utf8.is_scalar(cp) {
     utf8.REPLACEMENT
 }
 
-fun insert_char(s: &str, at: usize, cp: i32) => String {
+fun insert_char(s: str, at: usize, cp: i32) => String {
     var out: String = ""
     val n = str.len(s)
     var i: usize = 0
@@ -947,7 +947,7 @@ fun insert_char(s: &str, at: usize, cp: i32) => String {
     return out
 }
 
-fun remove_range(s: &str, from: usize, to: usize) => String {
+fun remove_range(s: str, from: usize, to: usize) => String {
     var out: String = ""
     val n = str.len(s)
     var i: usize = 0
@@ -1365,7 +1365,7 @@ fun fade(c: u32, op: i32, bg: u32) => u32 {
 
 fun k_is_filled(k: i32) => bool = k == core.KIND_BUTTON || k == core.KIND_ENTRY
 
-fun paint_nodes(kids: &List<SNode>, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u32, dx: i32, dy: i32, op: i32, px: mut Px) {
+fun paint_nodes(kids: List<SNode>, clip: fb.Rect, th: &Theme, f: fb.Fb, focus: i32, fg: u32, dx: i32, dy: i32, op: i32, px: mut Px) {
     var i: usize = 0
     while i < kids.len() {
         paint_one(kids.get(i), clip, th, f, focus, fg, dx, dy, op, px)
@@ -1523,7 +1523,7 @@ fun hit_one(n: &SNode, clip: fb.Rect, x: i32, y: i32, th: &Theme) => i32 {
     return -1
 }
 
-fun hit_nodes(kids: &List<SNode>, clip: fb.Rect, x: i32, y: i32, th: &Theme) => i32 {
+fun hit_nodes(kids: List<SNode>, clip: fb.Rect, x: i32, y: i32, th: &Theme) => i32 {
     var i: usize = kids.len()
     while i > 0 {
         i -= 1
@@ -1883,7 +1883,7 @@ fun SoftBackend.shown_progress(index: i32) => i32 {
     return progress_in(root, index, seen)
 }
 
-fun progress_in(kids: &List<SNode>, index: i32, seen: mut i32) => i32 {
+fun progress_in(kids: List<SNode>, index: i32, seen: mut i32) => i32 {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -2175,7 +2175,7 @@ fun a11y_role(n: &SNode, in_list: bool) => i32 {
 
 fun exposed(k: i32) => bool = k != core.KIND_SPACER && k != core.KIND_SEPARATOR
 
-fun a11y_build(kids: &List<SNode>, i: usize, in_list: bool, focus: i32) => a11y.Node {
+fun a11y_build(kids: List<SNode>, i: usize, in_list: bool, focus: i32) => a11y.Node {
     val n = kids.get(i)
     val role = a11y_role(n, in_list)
     var name: String = ""
@@ -2261,7 +2261,7 @@ fun SoftBackend.a11y_tree() => a11y.Node {
 
 pub datac UidInfo(var found: bool, var slot: i32, var kind: i32, var disabled: bool)
 
-fun find_uid(kids: &List<SNode>, uid: i32, out: mut UidInfo) {
+fun find_uid(kids: List<SNode>, uid: i32, out: mut UidInfo) {
     var i: usize = 0
     while i < kids.len() && !out.found {
         val n = kids.get(i)
@@ -2309,7 +2309,7 @@ fun mut SoftBackend.a11y_act(node_id: i32, action: i32) => bool {
 
 // `ACT_SET_VALUE` on an entry: replace its text, as `set_entry_text` does (the entry's change
 // message is posted). False for any other node or a disabled entry.
-fun mut SoftBackend.a11y_set_value(node_id: i32, text: &str) => bool {
+fun mut SoftBackend.a11y_set_value(node_id: i32, text: str) => bool {
     val info = self.uid_info(node_id)
     if !info.found || info.disabled || info.slot < 0 || info.kind != core.KIND_ENTRY {
         return false
@@ -2390,7 +2390,7 @@ fun mut SoftBackend.set_theme(t: move Theme) {
 // widget writes are the retained-tree operations above.
 
 impl core.Backend for SoftBackend {
-    fun mut Self.apply(patches: &List<core.Patch>) {
+    fun mut Self.apply(patches: List<core.Patch>) {
         core.apply_patches(backend = self, patches = patches)
     }
 
@@ -2559,7 +2559,7 @@ impl core.Backend for SoftBackend {
         merge_damage(self.damage, d)
     }
 
-    fun mut Self.set_entry_text(id: i32, text: &str) {
+    fun mut Self.set_entry_text(id: i32, text: str) {
         var d = damage.new()
         if !root.is_empty() {
             var top = root.remove(0)

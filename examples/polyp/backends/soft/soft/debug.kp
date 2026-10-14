@@ -32,7 +32,7 @@ fun push_uint(out: mut Bytes, n: i64) {
     }
 }
 
-pub fun dump_ppm(f: fb.Fb, path: &str) {
+pub fun dump_ppm(f: fb.Fb, path: str) {
     var out: Bytes = Bytes.empty()
     out.push(80)
     out.push(54)

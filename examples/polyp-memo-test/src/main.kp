@@ -73,7 +73,7 @@ fun make(n: i32) => Model {
     return Model(items = items, clicks = 0)
 }
 
-fun fill_row(r: mut core.Children<Msg>, id: i32, done: bool, title: &str) {
+fun fill_row(r: mut core.Children<Msg>, id: i32, done: bool, title: str) {
     r.spacing(6)
     r.checkbox("", done, Msg.Toggle(id = id))
     r.expand()

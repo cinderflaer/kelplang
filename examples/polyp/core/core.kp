@@ -324,7 +324,7 @@ fun duplicate_message(k: &Key) => String = when k {
 
 // Panics, naming the key, when two children of one container carry it. Run before any widget is
 // touched, so a refused tree builds nothing.
-fun check_duplicate_keys<M>(children: &List<Child<M>>) {
+fun check_duplicate_keys<M>(children: List<Child<M>>) {
     var i: usize = 0
     while i < children.len() {
         if !key_is_none(children.get(i).key.get()) {
@@ -703,7 +703,7 @@ fun Event.eq(other: &Event) => bool = when self {
 // What a backend is. `apply` is one line in each backend: the walk that turns a path into a widget
 // call is `apply_patches` below, so it lives in one place and cannot drift between backends.
 pub trait Backend {
-    fun mut Self.apply(patches: &List<Patch>)
+    fun mut Self.apply(patches: List<Patch>)
     // `make` and `patch` are the two widget writes; `at` is the place in the parent. A backend
     // gives an interactive widget an id by counting interactive `make` calls from zero, the same
     // rule the loop uses to turn a posted id back into a path.
@@ -716,7 +716,7 @@ pub trait Backend {
     fun Self.path_of(id: i32) => option.Option<Path>
     fun Self.focus() => option.Option<i32>
     fun mut Self.set_focus(id: i32)
-    fun mut Self.set_entry_text(id: i32, text: &str)
+    fun mut Self.set_entry_text(id: i32, text: str)
     fun Self.entry_text(id: i32) => String
     fun Self.entry_ids() => List<i32>
     fun Self.entries_built() => i32
@@ -917,7 +917,7 @@ fun node_props_eq<M>(a: &Node<M>, b: &Node<M>) => bool = when a {
 }
 
 // The first unused old index with this key, or -1.
-fun find_key<M>(old: &List<Child<M>>, used: &List<bool>, key: &Key) => i32 {
+fun find_key<M>(old: List<Child<M>>, used: List<bool>, key: &Key) => i32 {
     var j: usize = 0
     while j < old.len() {
         if !used.get(j) && key_eq(old.get(j).key.get(), key) { return j.to_i32() }
@@ -1152,7 +1152,7 @@ fun diff_matched<M>(path: &Path, old: &Child<M>, new: &Child<M>, out: mut List<P
 // One container's children, in the four phases plan/polyp-v3.md fixes: updates and their subtrees,
 // then removals from the highest old index down, then creations, then moves. The order is what
 // makes every path valid at the moment its patch is applied.
-fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
+fun diff_children<M>(parent: &Path, old: List<Child<M>>, new: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
     var unmatched_key = false
     var used: List<bool> = List.empty()
     var u: usize = 0
@@ -1256,7 +1256,7 @@ fun diff_children<M>(parent: &Path, old: &List<Child<M>>, new: &List<Child<M>>, 
 // where its path says). Then for each target `t` in turn, if the child at `t` is not `new[t]`, that
 // child moves to `t`. Positions before `t` are final by then, so each move is one step, whatever
 // the old order was.
-fun diff_moves<M>(parent: &Path, new: &List<Child<M>>, matches: &List<i32>, old_len: usize, used: &List<bool>, out: mut List<Patch>) {
+fun diff_moves<M>(parent: &Path, new: List<Child<M>>, matches: List<i32>, old_len: usize, used: List<bool>, out: mut List<Patch>) {
     var old_to_new: List<i32> = List.empty()
     var u: usize = 0
     while u < old_len {
@@ -1313,7 +1313,7 @@ fun create_subtree<M>(path: &Path, node: &Node<M>, out: mut List<Patch>, store: 
     }
 }
 
-fun create_children<M>(parent: &Path, children: &List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
+fun create_children<M>(parent: &Path, children: List<Child<M>>, out: mut List<Patch>, store: mut MemoStore<M>) {
     check_duplicate_keys(children)
     var i: usize = 0
     while i < children.len() {
@@ -1342,7 +1342,7 @@ pub fun create_all_memo<M>(node: &Node<M>, store: mut MemoStore<M>) => List<Patc
 
 // The walk every backend's `apply` delegates to. It is the only place a path becomes a widget
 // call, so the four phases and the id rule cannot drift between backends.
-pub fun apply_patches<B: Backend>(backend: mut B, patches: &List<Patch>) {
+pub fun apply_patches<B: Backend>(backend: mut B, patches: List<Patch>) {
     var i: usize = 0
     while i < patches.len() {
         when patches.get(i) {

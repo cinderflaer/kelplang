@@ -150,7 +150,7 @@ pub fun count(tree: &Node) => i32 {
 }
 
 // The id of the first node (depth first) with this role and name, or -1.
-pub fun find_id(tree: &Node, role: i32, name: &str) => i32 {
+pub fun find_id(tree: &Node, role: i32, name: str) => i32 {
     if tree.role == role && str.eq(tree.name.as_str(), name) { return tree.id }
     var i: usize = 0
     while i < tree.kids.len() {

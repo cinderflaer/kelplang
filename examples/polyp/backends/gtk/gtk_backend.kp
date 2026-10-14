@@ -89,7 +89,7 @@ pub fun close(be: mut GtkBackend) {
 
 // Pango markup for a label. Text is escaped first, so a `&` or `<` in the app's string is shown,
 // not parsed; the optional tags wrap the escaped text.
-fun label_markup(text: &str, size: i32, bold: bool) => String {
+fun label_markup(text: str, size: i32, bold: bool) => String {
     val amp = str.replace(text, "&", "&amp;")
     val lt = str.replace(amp.as_str(), "<", "&lt;")
     var out = str.replace(lt.as_str(), ">", "&gt;")
@@ -201,7 +201,7 @@ fun box_of(w: gtk.Widget, rec: &Mount) => gtk.Widget {
     return w
 }
 
-fun kid_index(kids: &List<Mount>, seg: &core.Seg) => i32 {
+fun kid_index(kids: List<Mount>, seg: &core.Seg) => i32 {
     var i: usize = 0
     while i < kids.len() {
         if core.child_at(seg, kids.get(i).key.get(), i) { return i.to_i32() }
@@ -240,7 +240,7 @@ fun move_after(box: gtk.Widget, moved: i32, at: i32) => gtk.Widget {
     return gtk.nth_child(box, g.to_usize())
 }
 
-fun copy_strings(xs: &List<String>) => List<String> {
+fun copy_strings(xs: List<String>) => List<String> {
     var out: List<String> = List.empty()
     var i: usize = 0
     while i < xs.len() {
@@ -298,7 +298,7 @@ fun apply_opts(w: gtk.Widget, props: &core.Props) {
 
 // The classes currently on the widget off, the wanted ones on. GTK dedups an add, so a class in
 // both lists is only a remove-then-add.
-fun apply_classes(w: gtk.Widget, old: &List<String>, new: &List<String>) {
+fun apply_classes(w: gtk.Widget, old: List<String>, new: List<String>) {
     var i: usize = 0
     while i < old.len() {
         gtk.gtk_widget_remove_css_class(w, old.get(i).as_str())
@@ -509,7 +509,7 @@ fun move_into(kids: mut List<Mount>, path: &core.Path, depth: usize, to_index: i
     kids.insert(idx.to_usize(), child)
 }
 
-fun collect_entries(kids: &List<Mount>, out: mut List<i32>) {
+fun collect_entries(kids: List<Mount>, out: mut List<i32>) {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -521,7 +521,7 @@ fun collect_entries(kids: &List<Mount>, out: mut List<i32>) {
     }
 }
 
-fun find_path(kids: &List<Mount>, base: &core.Path, id: i32) => option.Option<core.Path> {
+fun find_path(kids: List<Mount>, base: &core.Path, id: i32) => option.Option<core.Path> {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -540,7 +540,7 @@ fun find_path(kids: &List<Mount>, base: &core.Path, id: i32) => option.Option<co
 
 // The widget of the node whose interactive id is `id`, searched from the children of `box`, or the
 // null widget when no live node has that id.
-fun slot_widget_in(kids: &List<Mount>, box: gtk.Widget, id: i32) => gtk.Widget {
+fun slot_widget_in(kids: List<Mount>, box: gtk.Widget, id: i32) => gtk.Widget {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -556,7 +556,7 @@ fun slot_widget_in(kids: &List<Mount>, box: gtk.Widget, id: i32) => gtk.Widget {
 // The interactive id of the node whose widget is an ancestor of `focused` (or is `focused`), searched
 // from the children of `box`. A focused entry's text widget is inside the entry, so the test is
 // ancestry, not identity.
-fun focus_in(kids: &List<Mount>, box: gtk.Widget, focused: gtk.Widget) => option.Option<i32> {
+fun focus_in(kids: List<Mount>, box: gtk.Widget, focused: gtk.Widget) => option.Option<i32> {
     var i: usize = 0
     while i < kids.len() {
         val n = kids.get(i)
@@ -584,7 +584,7 @@ fun widget_of(be: &GtkBackend, id: i32) => gtk.Widget {
 }
 
 impl core.Backend for GtkBackend {
-    fun mut Self.apply(patches: &List<core.Patch>) {
+    fun mut Self.apply(patches: List<core.Patch>) {
         // The focus a patch must not fight is the one the window had before the patch list.
         focus_before = gtk.gtk_window_get_focus(win)
         core.apply_patches(backend = self, patches = patches)
@@ -707,7 +707,7 @@ impl core.Backend for GtkBackend {
         gtk.gtk_window_set_focus(win, widget_of(self, id))
     }
 
-    fun mut Self.set_entry_text(id: i32, text: &str) {
+    fun mut Self.set_entry_text(id: i32, text: str) {
         // Writing the entry fires its real `changed` signal, which is the message the loop reads.
         gtk.gtk_editable_set_text(widget_of(self, id), text)
     }
