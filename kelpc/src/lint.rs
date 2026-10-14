@@ -1022,7 +1022,7 @@ mod tests {
         // The stdlib's locked `snake_case` is the reason this matters: a
         // project that asks for `camelCase` calls `str.is_empty` and is not
         // warned about a name it did not write and cannot change.
-        let src = "fun f(s: &str) => bool {\n    val empty = str.is_empty(s)\n    return empty\n}\n";
+        let src = "fun f(s: str) => bool {\n    val empty = str.is_empty(s)\n    return empty\n}\n";
         assert!(case_findings(src, NamingCase::Camel).is_empty());
     }
 
