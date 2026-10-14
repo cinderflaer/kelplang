@@ -50,9 +50,7 @@ fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
 // by hand (no `memcpy`), the old block released.
 fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize) => Ptr<u8> {
     val fresh: Ptr<u8> = alloc(new, align)
-    if fresh.is_null() {
-        return Ptr.null()
-    }
+    if fresh.is_null() { return Ptr.null() }
     if p.is_null() == false {
         var i: usize = 0
         while i < old {

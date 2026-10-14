@@ -25,9 +25,7 @@ fun is_cont(b: u8) => bool = b >= 0x80 && b <= 0xBF
 pub fun decode(s: &str, i: usize) => i64 {
     val n = str.len(s)
     val b0 = str.byte(s, i).to_i64()
-    if b0 < 0x80 {
-        return (1 << 32) | b0
-    }
+    if b0 < 0x80 { return (1 << 32) | b0 }
     var need: usize = 0
     var min: i64 = 0
     var cp: i64 = 0
@@ -52,9 +50,7 @@ pub fun decode(s: &str, i: usize) => i64 {
         k += 1
     }
     val len = (1 + k).to_i64()
-    if k < need {
-        return (len << 32) | REPLACEMENT.to_i64()
-    }
+    if k < need { return (len << 32) | REPLACEMENT.to_i64() }
     if cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
         return (len << 32) | REPLACEMENT.to_i64()
     }
@@ -91,9 +87,7 @@ pub fun count_before(s: &str, upto: usize) => i32 {
 
 // The byte offset just after the unit that starts at `i` (or `i` itself at the end of the string).
 pub fun next_boundary(s: &str, i: usize) => usize {
-    if i >= str.len(s) {
-        return str.len(s)
-    }
+    if i >= str.len(s) { return str.len(s) }
     return i + unit_len(decode(s, i))
 }
 
@@ -116,9 +110,7 @@ pub fun snap_boundary(s: &str, i: usize) => usize {
     var at: usize = 0
     while at < n {
         val nx = at + unit_len(decode(s, at))
-        if nx > i {
-            return at
-        }
+        if nx > i { return at }
         at = nx
     }
     return n

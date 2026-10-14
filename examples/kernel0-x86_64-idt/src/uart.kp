@@ -60,9 +60,7 @@ pub fun put_hex(value: u64) {
         } else {
             putc(87 + nib)
         }
-        if shift == 0 {
-            return
-        }
+        if shift == 0 { return }
         shift = shift - 4
     }
 }

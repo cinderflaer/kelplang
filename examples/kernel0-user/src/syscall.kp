@@ -68,9 +68,7 @@ pub fun exit(code: usize) {
 // the ABI names six argument registers, so the three calls no call uses are
 // passed and ignored rather than read at the call site.
 pub fun handle(root: usize, num: usize, a0: usize, a1: usize, a2: usize, _a3: usize, _a4: usize, _a5: usize) => u64 {
-    if num == SYS_WRITE {
-        return write(root, a0, a1, a2)
-    }
+    if num == SYS_WRITE { return write(root, a0, a1, a2) }
     return ENOSYS
 }
 
@@ -85,22 +83,14 @@ fun efault() => u64 {
 // `write(fd, ptr, len)`: only stdout, at most one page, and only inside pages
 // the walk says a user may read.
 fun write(root: usize, fd: usize, ptr: usize, len: usize) => u64 {
-    if fd != STDOUT {
-        return EBADF
-    }
-    if len > MAX_COPY {
-        return efault()
-    }
+    if fd != STDOUT { return EBADF }
+    if len > MAX_COPY { return efault() }
     // The subtraction is the point: `ptr + len` is never computed before the
     // range is known to fit, so the compiler's own overflow check cannot fire
     // and turn a bad pointer into a panic.
-    if ptr > USER_LIMIT - len {
-        return efault()
-    }
+    if ptr > USER_LIMIT - len { return efault() }
     val buf: usize = buffer()
-    if buf == 0 {
-        return EFAULT
-    }
+    if buf == 0 { return EFAULT }
     var done: usize = 0
     while done < len {
         val uva: usize = ptr + done
@@ -115,9 +105,7 @@ fun write(root: usize, fd: usize, ptr: usize, len: usize) => u64 {
                 mapped = false
             }
         }
-        if mapped == false {
-            return efault()
-        }
+        if mapped == false { return efault() }
         // Up to the end of this page, and no further than the caller asked.
         var chunk: usize = 4096 - vm.page_offset(uva)
         if len - done < chunk {

@@ -148,15 +148,11 @@ fun walk(root: usize, va: usize) => usize {
         val entry: u64 = read_pte(table, vpn(va, level))
         if entry & PTE_V == 0 {
             val fresh: usize = alloc_frame()
-            if fresh == 0 {
-                return 0
-            }
+            if fresh == 0 { return 0 }
             write_pte(table, vpn(va, level), pte_encode(fresh, PTE_V))
             table = fresh
         } else {
-            if entry & PTE_LEAF != 0 {
-                return 0
-            }
+            if entry & PTE_LEAF != 0 { return 0 }
             table = pte_ppn(entry)
         }
         level = level - 1
@@ -168,9 +164,7 @@ fun walk(root: usize, va: usize) => usize {
 // here. False means no frame was available or a superpage was in the way.
 pub fun map_page(root: usize, va: usize, pa: usize, flags: u64) => bool {
     val table: usize = walk(root, va)
-    if table == 0 {
-        return false
-    }
+    if table == 0 { return false }
     write_pte(table, vpn0(va), pte_encode(pa, flags | PTE_V | PTE_A | PTE_D))
     return true
 }
@@ -178,9 +172,7 @@ pub fun map_page(root: usize, va: usize, pa: usize, flags: u64) => bool {
 pub fun map_range(root: usize, va: usize, pa: usize, len: usize, flags: u64) => bool {
     var offset: usize = 0
     while offset < len {
-        if map_page(root, va + offset, pa + offset, flags) == false {
-            return false
-        }
+        if map_page(root, va + offset, pa + offset, flags) == false { return false }
         offset = offset + PAGE_SIZE
     }
     return true
@@ -193,15 +185,11 @@ pub fun unmap_page(root: usize, va: usize) => bool {
     var level: usize = TOP_LEVEL
     while level > 0 {
         val entry: u64 = read_pte(table, vpn(va, level))
-        if entry & PTE_V == 0 || entry & PTE_LEAF != 0 {
-            return false
-        }
+        if entry & PTE_V == 0 || entry & PTE_LEAF != 0 { return false }
         table = pte_ppn(entry)
         level = level - 1
     }
-    if read_pte(table, vpn0(va)) & PTE_V == 0 {
-        return false
-    }
+    if read_pte(table, vpn0(va)) & PTE_V == 0 { return false }
     write_pte(table, vpn0(va), 0)
     return true
 }
@@ -214,16 +202,12 @@ pub fun translate(root: usize, va: usize) => option.Option<usize> {
     var level: usize = TOP_LEVEL
     while true {
         val entry: u64 = read_pte(table, vpn(va, level))
-        if entry & PTE_V == 0 {
-            return option.Option.None
-        }
+        if entry & PTE_V == 0 { return option.Option.None }
         if entry & PTE_LEAF != 0 {
             val mask: usize = (1 << (12 + 9 * level)) - 1
             return option.Option.Some(value = pte_ppn(entry) | (va & mask))
         }
-        if level == 0 {
-            return option.Option.None
-        }
+        if level == 0 { return option.Option.None }
         table = pte_ppn(entry)
         level = level - 1
     }

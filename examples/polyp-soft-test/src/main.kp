@@ -49,9 +49,7 @@ fun mut Rng.next() => u32 {
 // `[lo, hi)`; `hi <= lo` answers `lo`, so a caller cannot ask for an empty range.
 fun mut Rng.range(lo: i32, hi: i32) => i32 {
     val span: i32 = hi - lo
-    if span <= 0 {
-        return lo
-    }
+    if span <= 0 { return lo }
     return lo + (self.next() % span.to_u32()).to_i32()
 }
 
@@ -84,9 +82,7 @@ fun random_bg(a: mut Img, b: mut Img, rng: mut Rng) {
 fun same(a: &Img, b: &Img) => bool {
     var i: usize = 0
     while i < AREA {
-        if a.p.get(i) != b.p.get(i) {
-            return false
-        }
+        if a.p.get(i) != b.p.get(i) { return false }
         i += 1
     }
     return true
@@ -95,9 +91,7 @@ fun same(a: &Img, b: &Img) => bool {
 // ---- independent geometry -------------------------------------------------
 
 fun ref_isec(a: fb.Rect, b: fb.Rect) => fb.Rect {
-    if a.is_empty() || b.is_empty() {
-        return fb.empty_rect()
-    }
+    if a.is_empty() || b.is_empty() { return fb.empty_rect() }
     var x0: i64 = a.x.to_i64()
     if b.x.to_i64() > x0 {
         x0 = b.x.to_i64()
@@ -114,9 +108,7 @@ fun ref_isec(a: fb.Rect, b: fb.Rect) => fb.Rect {
     if b.bottom() < y1 {
         y1 = b.bottom()
     }
-    if x1 <= x0 || y1 <= y0 {
-        return fb.empty_rect()
-    }
+    if x1 <= x0 || y1 <= y0 { return fb.empty_rect() }
     return fb.Rect(x = x0.to_i32(), y = y0.to_i32(), w = (x1 - x0).to_i32(), h = (y1 - y0).to_i32())
 }
 
@@ -136,9 +128,7 @@ fun ref_fill(
     color: u32,
 ) => usize {
     val r: fb.Rect = ref_clip(cl, x, y, w, h)
-    if r.is_empty() {
-        return 0
-    }
+    if r.is_empty() { return 0 }
     var count: usize = 0
     var j: i32 = 0
     while j < r.h {
@@ -171,9 +161,7 @@ fun ref_clamp_radius(radius: i32, w: i32, h: i32) => i32 {
 
 // The exact integer predicate, written per pixel and with no span arithmetic.
 fun in_round(i: i32, j: i32, w: i32, h: i32, r: i32) => bool {
-    if i < 0 || j < 0 || i >= w || j >= h {
-        return false
-    }
+    if i < 0 || j < 0 || i >= w || j >= h { return false }
     var a: i32 = j
     if h - 1 - j < a {
         a = h - 1 - j
@@ -182,9 +170,7 @@ fun in_round(i: i32, j: i32, w: i32, h: i32, r: i32) => bool {
     if w - 1 - i < b {
         b = w - 1 - i
     }
-    if a >= r || b >= r {
-        return true
-    }
+    if a >= r || b >= r { return true }
     val da: i64 = (2 * (r - 1 - a) + 1).to_i64()
     val db: i64 = (2 * (r - 1 - b) + 1).to_i64()
     return da * da + db * db <= 4 * r.to_i64() * r.to_i64()
@@ -200,9 +186,7 @@ fun ref_round(
     radius: i32,
     color: u32,
 ) => usize {
-    if w <= 0 || h <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 { return 0 }
     val r: i32 = ref_clamp_radius(radius, w, h)
     var count: usize = 0
     var j: i32 = 0
@@ -231,9 +215,7 @@ fun ref_stroke_round(
     thickness: i32,
     color: u32,
 ) => usize {
-    if w <= 0 || h <= 0 || thickness <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 || thickness <= 0 { return 0 }
     val r: i32 = ref_clamp_radius(radius, w, h)
     val t: i32 = thickness
     val iw: i32 = w - 2 * t
@@ -282,9 +264,7 @@ fun ref_blend(dst: u32, src: u32) => u32 {
 }
 
 fun ref_blend_pixel(img: mut Img, cl: fb.Rect, x: i32, y: i32, color: u32) => usize {
-    if !fb.contains_point(cl, x, y) {
-        return 0
-    }
+    if !fb.contains_point(cl, x, y) { return 0 }
     val dst: u32 = img.p.get(idx(x, y))
     img.p.set(idx(x, y), ref_blend(dst, color))
     return 1
@@ -300,9 +280,7 @@ fun ref_blit(
     mask: [u8; AREA],
     color: u32,
 ) => usize {
-    if w <= 0 || h <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 { return 0 }
     val color_a: u32 = (color >> 24) & 0xFF
     var count: usize = 0
     var j: i32 = 0
@@ -530,9 +508,7 @@ fun ref_stroke_rect(
     thickness: i32,
     color: u32,
 ) => usize {
-    if w <= 0 || h <= 0 || thickness <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 || thickness <= 0 { return 0 }
     var top_h: i32 = thickness
     if top_h > h {
         top_h = h
@@ -1175,18 +1151,10 @@ fun run_dump() {
 
 fun mode() => i32 {
     val m = env.get("POLYP_SOFT_TEST")
-    if str.eq(m.as_str(), "scale") {
-        return 1
-    }
-    if str.eq(m.as_str(), "clip_depth") {
-        return 2
-    }
-    if str.eq(m.as_str(), "clip_empty") {
-        return 3
-    }
-    if str.eq(m.as_str(), "dump") {
-        return 4
-    }
+    if str.eq(m.as_str(), "scale") { return 1 }
+    if str.eq(m.as_str(), "clip_depth") { return 2 }
+    if str.eq(m.as_str(), "clip_empty") { return 3 }
+    if str.eq(m.as_str(), "dump") { return 4 }
     return 0
 }
 

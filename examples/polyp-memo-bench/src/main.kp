@@ -31,9 +31,7 @@ enum Msg {
 fun find(m: &Model, id: i32) => i32 {
     var i: usize = 0
     while i < m.items.len() {
-        if m.items.get(i).id == id {
-            return i.to_i32()
-        }
+        if m.items.get(i).id == id { return i.to_i32() }
         i += 1
     }
     return -1
@@ -137,9 +135,7 @@ fun no_subs(m: Model) => List<core.Sub<Msg>> {
 
 fun frames() => i32 {
     val v = env.get("POLYP_BENCH_QUICK")
-    if !str.is_empty(v.as_str()) {
-        return 3
-    }
+    if !str.is_empty(v.as_str()) { return 3 }
     return 40
 }
 

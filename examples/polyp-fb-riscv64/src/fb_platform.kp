@@ -64,9 +64,7 @@ pub fun new() => FbPlatform {
 
 // Queue one platform event for a later clock, the way a real input driver would deliver it.
 fun mut FbPlatform.push_at(at: u64, ev: move event.Event) {
-    if script_len >= MAX_SCRIPT {
-        return
-    }
+    if script_len >= MAX_SCRIPT { return }
     script.set(script_len, Timed(at = at, ev = ev))
     script_len += 1
 }
@@ -125,13 +123,9 @@ impl platform.Platform for FbPlatform {
             tick_due = false
             return option.Option.Some(value = event.Event.Tick(now_us = time_ms * 1000))
         }
-        if cursor >= script_len {
-            return option.Option.None
-        }
+        if cursor >= script_len { return option.Option.None }
         val t = script.get(cursor)
-        if t.at > time_ms {
-            return option.Option.None
-        }
+        if t.at > time_ms { return option.Option.None }
         cursor += 1
         return option.Option.Some(value = event.clone(t.ev))
     }

@@ -210,27 +210,13 @@ fun fault(cause: usize) {
 // What the boot checks against the frame layout, so that a `datac` that grows
 // cannot move the fields the asm hardcodes.
 pub fun layout_ok() => bool {
-    if trap.layout_ok() == false {
-        return false
-    }
-    if size_of<Task>() != 4384 {
-        return false
-    }
-    if offset_of<Task>("frame") != 0 {
-        return false
-    }
-    if offset_of<Task>("dispatch") != trap.DISPATCH_OFF {
-        return false
-    }
-    if offset_of<Task>("state") != 272 {
-        return false
-    }
-    if offset_of<Task>("id") != 280 {
-        return false
-    }
-    if offset_of<Task>("stack") != 288 {
-        return false
-    }
+    if trap.layout_ok() == false { return false }
+    if size_of<Task>() != 4384 { return false }
+    if offset_of<Task>("frame") != 0 { return false }
+    if offset_of<Task>("dispatch") != trap.DISPATCH_OFF { return false }
+    if offset_of<Task>("state") != 272 { return false }
+    if offset_of<Task>("id") != 280 { return false }
+    if offset_of<Task>("stack") != 288 { return false }
     return true
 }
 

@@ -48,9 +48,7 @@ fun mut Damage.clear() {
 // The one rectangle covering every entry, empty when the list is.
 fun Damage.bounds() => fb.Rect {
     val n: usize = len
-    if n == 0 {
-        return fb.empty_rect()
-    }
+    if n == 0 { return fb.empty_rect() }
     var out: fb.Rect = rects.get(0).dup()
     var i: usize = 1
     while i < n {
@@ -63,9 +61,7 @@ fun Damage.bounds() => fb.Rect {
 
 // Steps 1 to 4 above.
 fun mut Damage.add(rect: fb.Rect) {
-    if rect.is_empty() {
-        return
-    }
+    if rect.is_empty() { return }
     val n: usize = len
     val has_room: bool = n < MAX_DAMAGE
     if has_room {

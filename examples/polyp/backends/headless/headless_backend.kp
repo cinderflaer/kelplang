@@ -78,9 +78,7 @@ pub fun copy_props(p: &core.Props) => core.Props {
 }
 
 fun key_of_path(path: &core.Path) => core.Key {
-    if path.segs.is_empty() {
-        return core.Key.None
-    }
+    if path.segs.is_empty() { return core.Key.None }
     return when path.segs.get(path.segs.len() - 1) {
         Index(_) -> core.Key.None
         Keyed(_, key) -> core.clone_key(key.get())
@@ -91,23 +89,17 @@ fun key_of_path(path: &core.Path) => core.Key {
 fun kid_index(kids: &List<HNode>, seg: &core.Seg) => i32 {
     var i: usize = 0
     while i < kids.len() {
-        if core.child_at(seg, kids.get(i).key.get(), i) {
-            return i.to_i32()
-        }
+        if core.child_at(seg, kids.get(i).key.get(), i) { return i.to_i32() }
         i += 1
     }
     return -1
 }
 
 fun contains_slot(node: &HNode, slot: i32) => bool {
-    if node.slot == slot {
-        return true
-    }
+    if node.slot == slot { return true }
     var i: usize = 0
     while i < node.kids.len() {
-        if contains_slot(node.kids.get(i), slot) {
-            return true
-        }
+        if contains_slot(node.kids.get(i), slot) { return true }
         i += 1
     }
     return false
@@ -174,9 +166,7 @@ datac Gone(var count: i32, var had_focus: bool)
 
 fun drop_into(kids: mut List<HNode>, path: &core.Path, depth: usize, focus: i32, gone: mut Gone) {
     val idx = kid_index(kids, path.segs.get(depth))
-    if idx < 0 {
-        return
-    }
+    if idx < 0 { return }
     var child = kids.remove(idx.to_usize())
     if depth + 1 == path.segs.len() {
         gone.count += count_nodes(child)
@@ -191,9 +181,7 @@ fun drop_into(kids: mut List<HNode>, path: &core.Path, depth: usize, focus: i32,
 
 fun move_into(kids: mut List<HNode>, path: &core.Path, depth: usize, to_index: i32) {
     val idx = kid_index(kids, path.segs.get(depth))
-    if idx < 0 {
-        return
-    }
+    if idx < 0 { return }
     var child = kids.remove(idx.to_usize())
     if depth + 1 == path.segs.len() {
         var at = to_index
@@ -228,9 +216,7 @@ fun find_path(kids: &List<HNode>, base: &core.Path, id: i32) => option.Option<co
     while i < kids.len() {
         val n = kids.get(i)
         val here = core.with_seg(base, core.seg_for(n.key.get(), i.to_i32()))
-        if n.slot == id {
-            return option.Option.Some(value = here)
-        }
+        if n.slot == id { return option.Option.Some(value = here) }
         when find_path(n.kids, here, id) {
             Some(found) -> {
                 return option.Option.Some(value = found)
@@ -280,36 +266,16 @@ fun set_text(kids: mut List<HNode>, id: i32, text: &str) {
 // A scripted event is handed out by copying it: the script belongs to the backend, so an event
 // cannot be moved out of it.
 fun kind_name(kind: i32) => str {
-    if kind == core.KIND_COLUMN {
-        return "column"
-    }
-    if kind == core.KIND_ROW {
-        return "row"
-    }
-    if kind == core.KIND_TEXT {
-        return "text"
-    }
-    if kind == core.KIND_SPACER {
-        return "spacer"
-    }
-    if kind == core.KIND_ENTRY {
-        return "entry"
-    }
-    if kind == core.KIND_BUTTON {
-        return "button"
-    }
-    if kind == core.KIND_CHECKBOX {
-        return "checkbox"
-    }
-    if kind == core.KIND_PROGRESS {
-        return "progress"
-    }
-    if kind == core.KIND_SEPARATOR {
-        return "separator"
-    }
-    if kind == core.KIND_SCROLLED {
-        return "scrolled"
-    }
+    if kind == core.KIND_COLUMN { return "column" }
+    if kind == core.KIND_ROW { return "row" }
+    if kind == core.KIND_TEXT { return "text" }
+    if kind == core.KIND_SPACER { return "spacer" }
+    if kind == core.KIND_ENTRY { return "entry" }
+    if kind == core.KIND_BUTTON { return "button" }
+    if kind == core.KIND_CHECKBOX { return "checkbox" }
+    if kind == core.KIND_PROGRESS { return "progress" }
+    if kind == core.KIND_SEPARATOR { return "separator" }
+    if kind == core.KIND_SCROLLED { return "scrolled" }
     return "?"
 }
 
@@ -454,9 +420,7 @@ impl core.Backend for Headless {
     }
 
     fun mut Self.place_widget(path: &core.Path, to_index: i32) {
-        if path.segs.is_empty() {
-            return
-        }
+        if path.segs.is_empty() { return }
         var top = root.remove(0)
         move_into(top.kids, path, 0, to_index)
         root.insert(0, top)
@@ -465,32 +429,22 @@ impl core.Backend for Headless {
     fun mut Self.pump() {}
 
     fun mut Self.poll() => core.Event {
-        if !pending.is_empty() {
-            return pending.remove(0)
-        }
-        if cursor >= script.len().to_i32() {
-            return core.Event.Quit
-        }
+        if !pending.is_empty() { return pending.remove(0) }
+        if cursor >= script.len().to_i32() { return core.Event.Quit }
         val ev = script.get(cursor.to_usize())
         cursor += 1
         return core.clone_event(ev)
     }
 
     fun Self.path_of(id: i32) => option.Option<core.Path> {
-        if root.is_empty() {
-            return option.Option.None
-        }
-        if root.get(0).slot == id {
-            return option.Option.Some(value = empty_path())
-        }
+        if root.is_empty() { return option.Option.None }
+        if root.get(0).slot == id { return option.Option.Some(value = empty_path()) }
         val base = empty_path()
         return find_path(root.get(0).kids, base, id)
     }
 
     fun Self.focus() => option.Option<i32> {
-        if focus_id < 0 {
-            return option.Option.None
-        }
+        if focus_id < 0 { return option.Option.None }
         return option.Option.Some(value = focus_id)
     }
 
@@ -519,9 +473,7 @@ impl core.Backend for Headless {
         if !root.is_empty() && root.get(0).slot == id {
             return String.from_str(root.get(0).props.text.as_str())
         }
-        if root.is_empty() {
-            return ""
-        }
+        if root.is_empty() { return "" }
         return when find_text(root.get(0).kids, id) {
             Some(t) -> t
             None -> ""

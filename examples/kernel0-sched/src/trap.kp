@@ -105,30 +105,14 @@ pub fun install() {
 // template hardcodes, the size the register file has, and where the dispatch
 // word starts. A `datac` that grows would move every number after it.
 pub fun layout_ok() => bool {
-    if size_of<TrapFrame>() != FRAME_BYTES {
-        return false
-    }
-    if offset_of<TrapFrame>("x1") != 0 {
-        return false
-    }
-    if offset_of<TrapFrame>("x2") != OFF_SP {
-        return false
-    }
-    if offset_of<TrapFrame>("x10") != OFF_X10 {
-        return false
-    }
-    if offset_of<TrapFrame>("x31") != 240 {
-        return false
-    }
-    if offset_of<TrapFrame>("sepc") != OFF_MEPC {
-        return false
-    }
-    if offset_of<TrapFrame>("mstatus") != OFF_MSTATUS {
-        return false
-    }
-    if offset_of<TrapFrame>("mstatus") + 8 != DISPATCH_OFF {
-        return false
-    }
+    if size_of<TrapFrame>() != FRAME_BYTES { return false }
+    if offset_of<TrapFrame>("x1") != 0 { return false }
+    if offset_of<TrapFrame>("x2") != OFF_SP { return false }
+    if offset_of<TrapFrame>("x10") != OFF_X10 { return false }
+    if offset_of<TrapFrame>("x31") != 240 { return false }
+    if offset_of<TrapFrame>("sepc") != OFF_MEPC { return false }
+    if offset_of<TrapFrame>("mstatus") != OFF_MSTATUS { return false }
+    if offset_of<TrapFrame>("mstatus") + 8 != DISPATCH_OFF { return false }
     return true
 }
 

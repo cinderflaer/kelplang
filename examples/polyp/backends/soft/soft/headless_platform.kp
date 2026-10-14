@@ -132,9 +132,7 @@ fun mut HeadlessPlatform.clear(color: u32) {
 
 // A one-pixel probe for a damage test: the colour at a point, or 0 outside the surface.
 fun HeadlessPlatform.pixel(x: i32, y: i32) => u32 {
-    if x < 0 || y < 0 || x >= f.width || y >= f.height {
-        return 0
-    }
+    if x < 0 || y < 0 || x >= f.width || y >= f.height { return 0 }
     return unsafe { f.get(x, y) }
 }
 
@@ -166,13 +164,9 @@ impl platform.Platform for HeadlessPlatform {
             tick_due = false
             return option.Option.Some(value = event.Event.Tick(now_us = time_us))
         }
-        if cursor >= script.len().to_i32() {
-            return option.Option.None
-        }
+        if cursor >= script.len().to_i32() { return option.Option.None }
         val t = script.get(cursor.to_usize())
-        if t.at > time_ms {
-            return option.Option.None
-        }
+        if t.at > time_ms { return option.Option.None }
         cursor += 1
         return option.Option.Some(value = event.clone(t.ev.get()))
     }

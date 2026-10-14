@@ -77,9 +77,7 @@ pub fun report() => usize {
     if current_phase() == 0 {
         val insn_ptr: Ptr<u16> = Ptr.from_addr(pc)
         val insn: u16 = unsafe { insn_ptr.read_volatile() }
-        if (insn.to_usize() & 3) == 3 {
-            return 4
-        }
+        if (insn.to_usize() & 3) == 3 { return 4 }
         return 2
     }
     return 0

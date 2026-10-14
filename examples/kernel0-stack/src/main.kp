@@ -77,9 +77,7 @@ fun enter_supervisor(entry: usize) {
 // saved `ra` into the guard page.
 fun recurse_small(depth: u64, limit: u64) => u64 {
     var pad: u64 = depth
-    if depth >= limit {
-        return pad
-    }
+    if depth >= limit { return pad }
     val next: u64 = recurse_small(depth + 1, limit)
     sink(next)
     return next + pad
@@ -92,9 +90,7 @@ fun recurse_small(depth: u64, limit: u64) => u64 {
 fun recurse_big(depth: u64, limit: u64) => u64 {
     var buf: [u8; 16384] = [(depth % 256).to_u8(); 16384]
     var pad: u64 = buf.get((depth % 16384).to_usize()).to_u64()
-    if depth >= limit {
-        return pad
-    }
+    if depth >= limit { return pad }
     val next: u64 = recurse_big(depth + 1, limit)
     sink(next)
     return next + pad

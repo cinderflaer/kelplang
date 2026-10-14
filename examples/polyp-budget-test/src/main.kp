@@ -89,9 +89,7 @@ fun presented_area(d: &damage.Damage) => i64 {
 }
 
 fun smallest_y(b: &soft_backend.SoftBackend) => i32 {
-    if b.damage_count() == 0 {
-        return -1
-    }
+    if b.damage_count() == 0 { return -1 }
     var y: i32 = b.damage_rect(0).y
     var i: usize = 1
     while i < b.damage_count() {

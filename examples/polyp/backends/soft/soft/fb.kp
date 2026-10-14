@@ -34,12 +34,8 @@ pub datac Fb(val pixels: Ptr<u32>, val width: i32, val height: i32, val stride_p
 // The one narrowing step in the module: a value that does not fit saturates instead of
 // panicking, because every caller is computing a clipped bound.
 pub fun clamp_i32(v: i64) => i32 {
-    if v > I32_MAX_I64 {
-        return 2147483647
-    }
-    if v < I32_MIN_I64 {
-        return (0 - 2147483647) - 1
-    }
+    if v > I32_MAX_I64 { return 2147483647 }
+    if v < I32_MIN_I64 { return (0 - 2147483647) - 1 }
     return v.to_i32()
 }
 
@@ -56,18 +52,14 @@ fun Rect.bottom() => i64 = y.to_i64() + h.to_i64()
 fun Rect.is_empty() => bool = w <= 0 || h <= 0
 
 fun Rect.area() => i64 {
-    if w <= 0 || h <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 { return 0 }
     return w.to_i64() * h.to_i64()
 }
 
 // The clipped intersection, empty if either side is. `x0`/`y0` are maxima of two `i32`s and
 // `w`/`h` never exceed an input width, so the narrowing below cannot lose a real bound.
 pub fun intersect(a: Rect, b: Rect) => Rect {
-    if a.is_empty() || b.is_empty() {
-        return empty_rect()
-    }
+    if a.is_empty() || b.is_empty() { return empty_rect() }
     var x0: i64 = a.x.to_i64()
     if b.x.to_i64() > x0 {
         x0 = b.x.to_i64()
@@ -84,9 +76,7 @@ pub fun intersect(a: Rect, b: Rect) => Rect {
     if b.bottom() < y1 {
         y1 = b.bottom()
     }
-    if x1 - x0 <= 0 || y1 - y0 <= 0 {
-        return empty_rect()
-    }
+    if x1 - x0 <= 0 || y1 - y0 <= 0 { return empty_rect() }
     return Rect(
         x = clamp_i32(x0),
         y = clamp_i32(y0),
@@ -98,12 +88,8 @@ pub fun intersect(a: Rect, b: Rect) => Rect {
 // The smallest rectangle covering both. An empty operand is the identity, so a caller building
 // a bound is never dragged to the origin by a not-yet-set entry.
 pub fun union(a: Rect, b: Rect) => Rect {
-    if a.is_empty() {
-        return b.dup()
-    }
-    if b.is_empty() {
-        return a.dup()
-    }
+    if a.is_empty() { return b.dup() }
+    if b.is_empty() { return a.dup() }
     var x0: i64 = a.x.to_i64()
     if b.x.to_i64() < x0 {
         x0 = b.x.to_i64()
@@ -131,9 +117,7 @@ pub fun union(a: Rect, b: Rect) => Rect {
 // Overlap or share an edge. A zero-width gap still merges, which is the predicate the damage
 // list coalesces on: two dirty strips that touch are one dirty rectangle.
 pub fun touches(a: Rect, b: Rect) => bool {
-    if a.is_empty() || b.is_empty() {
-        return false
-    }
+    if a.is_empty() || b.is_empty() { return false }
     val x_ok: bool = a.x.to_i64() <= b.right() && b.x.to_i64() <= a.right()
     val y_ok: bool = a.y.to_i64() <= b.bottom() && b.y.to_i64() <= a.bottom()
     return x_ok && y_ok
@@ -141,12 +125,8 @@ pub fun touches(a: Rect, b: Rect) => bool {
 
 // `b` wholly inside `a` (the empty rectangle is inside everything).
 pub fun contains(a: Rect, b: Rect) => bool {
-    if b.is_empty() {
-        return true
-    }
-    if a.is_empty() {
-        return false
-    }
+    if b.is_empty() { return true }
+    if a.is_empty() { return false }
     val x_ok: bool = a.x.to_i64() <= b.x.to_i64() && b.right() <= a.right()
     val y_ok: bool = a.y.to_i64() <= b.y.to_i64() && b.bottom() <= a.bottom()
     return x_ok && y_ok
@@ -154,9 +134,7 @@ pub fun contains(a: Rect, b: Rect) => bool {
 
 // Half-open: `right`/`bottom` are exclusive, which is what a pixel-span loop wants.
 pub fun contains_point(a: Rect, x: i32, y: i32) => bool {
-    if a.is_empty() {
-        return false
-    }
+    if a.is_empty() { return false }
     val x_ok: bool = x.to_i64() >= a.x.to_i64() && x.to_i64() < a.right()
     val y_ok: bool = y.to_i64() >= a.y.to_i64() && y.to_i64() < a.bottom()
     return x_ok && y_ok

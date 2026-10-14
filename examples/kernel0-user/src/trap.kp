@@ -130,30 +130,16 @@ fun frame_set(frame: Ptr<TrapFrame>, offset: usize, value: u64) {
 // hardcodes, the size the push reserves, the slot block's size, and the two
 // registers the dispatcher reads and writes.
 pub fun frame_layout_ok() => bool {
-    if size_of<TrapFrame>() != FRAME_BYTES {
-        return false
-    }
-    if offset_of<TrapFrame>("x1") != 0 {
-        return false
-    }
-    if offset_of<TrapFrame>("x2") != 8 {
-        return false
-    }
-    if offset_of<TrapFrame>("x17") != OFF_A7 {
-        return false
-    }
-    if offset_of<TrapFrame>("sepc") != OFF_SEPC {
-        return false
-    }
-    if offset_of<TrapFrame>("sstatus") != OFF_SSTATUS {
-        return false
-    }
+    if size_of<TrapFrame>() != FRAME_BYTES { return false }
+    if offset_of<TrapFrame>("x1") != 0 { return false }
+    if offset_of<TrapFrame>("x2") != 8 { return false }
+    if offset_of<TrapFrame>("x17") != OFF_A7 { return false }
+    if offset_of<TrapFrame>("sepc") != OFF_SEPC { return false }
+    if offset_of<TrapFrame>("sstatus") != OFF_SSTATUS { return false }
     // The frame, one word of padding that keeps the frame base 16-byte aligned,
     // and the four slots: if the `datac` grows, the asm's 304 and its four
     // offsets are no longer the ones this module believes.
-    if TRAP_RESERVE != FRAME_BYTES + 8 + 4 * 8 {
-        return false
-    }
+    if TRAP_RESERVE != FRAME_BYTES + 8 + 4 * 8 { return false }
     return true
 }
 

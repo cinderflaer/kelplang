@@ -55,9 +55,7 @@ fun mut ClipStack.pop() {
 }
 
 fun ClipStack.top() => fb.Rect {
-    if depth == 0 {
-        return fb.empty_rect()
-    }
+    if depth == 0 { return fb.empty_rect() }
     return rects.get(depth - 1).dup()
 }
 
@@ -82,9 +80,7 @@ fun put_span(f: fb.Fb, x0: i32, x1: i32, y: i32, color: u32) => usize {
 // One row of `[a, b)` clipped to `cl` vertically and horizontally. `a`/`b`/`py` are widened so a
 // rectangle that starts near `i32::MAX` cannot wrap before the clip is applied.
 fun paint_row(f: fb.Fb, cl: fb.Rect, py: i64, a: i64, b: i64, color: u32) => usize {
-    if py < cl.y.to_i64() || py >= cl.bottom() {
-        return 0
-    }
+    if py < cl.y.to_i64() || py >= cl.bottom() { return 0 }
     var lo: i64 = cl.x.to_i64()
     if a > lo {
         lo = a
@@ -93,17 +89,13 @@ fun paint_row(f: fb.Fb, cl: fb.Rect, py: i64, a: i64, b: i64, color: u32) => usi
     if b < hi {
         hi = b
     }
-    if lo >= hi {
-        return 0
-    }
+    if lo >= hi { return 0 }
     return put_span(f, lo.to_i32(), hi.to_i32(), py.to_i32(), color)
 }
 
 pub fun fill_rect(f: fb.Fb, c: &ClipStack, x: i32, y: i32, w: i32, h: i32, color: u32) => usize {
     val r: fb.Rect = fb.intersect(effective(f, c), fb.Rect(x = x, y = y, w = w, h = h))
-    if r.is_empty() {
-        return 0
-    }
+    if r.is_empty() { return 0 }
     var count: usize = 0
     var j: i32 = 0
     while j < r.h {
@@ -134,9 +126,7 @@ pub fun stroke_rect(
     thickness: i32,
     color: u32,
 ) => usize {
-    if w <= 0 || h <= 0 || thickness <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 || thickness <= 0 { return 0 }
     var top_h: i32 = thickness
     if top_h > h {
         top_h = h
@@ -173,9 +163,7 @@ pub fun stroke_rect(
 // closed-form predicate. The answer is the number of columns at each side of the row that fall
 // outside the corner.
 fun corner_inset(row: i32, r: i32, h: i32) => i32 {
-    if r <= 0 {
-        return 0
-    }
+    if r <= 0 { return 0 }
     var in_corner: bool = false
     var a: i32 = 0
     if row < r {
@@ -185,14 +173,10 @@ fun corner_inset(row: i32, r: i32, h: i32) => i32 {
         a = r - 1 - (h - 1 - row)
         in_corner = true
     }
-    if !in_corner {
-        return 0
-    }
+    if !in_corner { return 0 }
     val dy: i64 = (2 * a + 1).to_i64()
     val lim: i64 = 4 * r.to_i64() * r.to_i64() - dy * dy
-    if lim < 0 {
-        return r
-    }
+    if lim < 0 { return r }
     var i: i32 = 0
     var found: bool = false
     while i < r && !found {
@@ -234,14 +218,10 @@ pub fun fill_round_rect(
     radius: i32,
     color: u32,
 ) => usize {
-    if w <= 0 || h <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 { return 0 }
     val r: i32 = clamp_radius(radius, w, h)
     val cl: fb.Rect = effective(f, c)
-    if cl.is_empty() {
-        return 0
-    }
+    if cl.is_empty() { return 0 }
     var count: usize = 0
     var j: i32 = 0
     while j < h {
@@ -267,9 +247,7 @@ pub fun stroke_round_rect(
     thickness: i32,
     color: u32,
 ) => usize {
-    if w <= 0 || h <= 0 || thickness <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 || thickness <= 0 { return 0 }
     val r: i32 = clamp_radius(radius, w, h)
     val t: i32 = thickness
     val iw: i64 = w.to_i64() - 2 * t.to_i64()
@@ -279,9 +257,7 @@ pub fun stroke_round_rect(
         ir = 0
     }
     val cl: fb.Rect = effective(f, c)
-    if cl.is_empty() {
-        return 0
-    }
+    if cl.is_empty() { return 0 }
     var count: usize = 0
     var j: i32 = 0
     while j < h {
@@ -328,9 +304,7 @@ fun channel(s: u32, d: u32, a: u64) => u32 {
 }
 
 pub fun blend_pixel(f: fb.Fb, c: &ClipStack, x: i32, y: i32, color: u32) => usize {
-    if !fb.contains_point(effective(f, c), x, y) {
-        return 0
-    }
+    if !fb.contains_point(effective(f, c), x, y) { return 0 }
     val dst: u32 = unsafe { f.get(x, y) }
     unsafe { f.put(x, y, blend_over(dst, color)) }
     return 1
@@ -349,14 +323,10 @@ pub fun blit_mask8(
     mask: Ptr<u8>,
     color: u32,
 ) => usize {
-    if w <= 0 || h <= 0 {
-        return 0
-    }
+    if w <= 0 || h <= 0 { return 0 }
     val cl: fb.Rect = effective(f, c)
     val box: fb.Rect = fb.intersect(cl, fb.Rect(x = x, y = y, w = w, h = h))
-    if box.is_empty() {
-        return 0
-    }
+    if box.is_empty() { return 0 }
     val color_a: u32 = (color >> 24) & 0xFF
     var count: usize = 0
     var j: i32 = 0
@@ -394,9 +364,7 @@ pub fun line(
     color: u32,
 ) => usize {
     val cl: fb.Rect = effective(f, c)
-    if cl.is_empty() {
-        return 0
-    }
+    if cl.is_empty() { return 0 }
     var dx: i64 = x1.to_i64() - x0.to_i64()
     var sx: i32 = 1
     if dx < 0 {

@@ -72,18 +72,10 @@ fun report(name: str, frames: i32, pixels: i64, rects: i32, allocs: i32, samples
 }
 
 fun scenario_name(id: i32) => str {
-    if id == 0 {
-        return "scroll-200"
-    }
-    if id == 1 {
-        return "type-100"
-    }
-    if id == 2 {
-        return "toggle-50"
-    }
-    if id == 3 {
-        return "resize"
-    }
+    if id == 0 { return "scroll-200" }
+    if id == 1 { return "type-100" }
+    if id == 2 { return "toggle-50" }
+    if id == 3 { return "resize" }
     return "repaint"
 }
 
@@ -98,18 +90,10 @@ fun quick() => bool {
 // Frames per run for each scenario: the count the name claims, and a round number for the two that
 // have none. `type-100` is 100 characters and `toggle-50` toggles 50 checkboxes.
 fun scenario_frames(id: i32) => i32 {
-    if quick() {
-        return 1
-    }
-    if id == 1 {
-        return 100
-    }
-    if id == 2 {
-        return 50
-    }
-    if id == 0 {
-        return 40
-    }
+    if quick() { return 1 }
+    if id == 1 { return 100 }
+    if id == 2 { return 50 }
+    if id == 0 { return 40 }
     return 30
 }
 

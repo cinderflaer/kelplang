@@ -68,9 +68,7 @@ const ROW_BIT: [u8; 8] = [1, 2, 4, 8, 16, 32, 64, 128]
 // The glyph index of a byte, or -1 when it has none (the ASCII table only; `glyph_column_cp` is the
 // general lookup).
 pub fun glyph_index(b: u8) => i32 {
-    if b < 32 || b > 126 {
-        return -1
-    }
+    if b < 32 || b > 126 { return -1 }
     return (b - 32).to_i32()
 }
 
@@ -80,36 +78,16 @@ pub fun glyph_column(b: u8, ci: i32) => u8 = glyph_column_cp(b.to_i32(), ci)
 // Column `ci` of the glyph for code point `cp`: the ASCII table, then the generated blocks, and the
 // replacement box for every code point with no drawing. The low bit is the top row.
 pub fun glyph_column_cp(cp: i32, ci: i32) => u8 {
-    if cp >= 32 && cp <= 126 {
-        return FONT.get(((cp - 32) * 5 + ci).to_usize())
-    }
-    if cp >= 0xA0 && cp <= 0xFF {
-        return FONT_LATIN1.get(((cp - 0xA0) * 5 + ci).to_usize())
-    }
-    if cp >= 0x100 && cp <= 0x17F {
-        return FONT_LATINA.get(((cp - 0x100) * 5 + ci).to_usize())
-    }
-    if cp >= 0x391 && cp <= 0x3C9 {
-        return FONT_GREEK.get(((cp - 0x391) * 5 + ci).to_usize())
-    }
-    if cp >= 0x400 && cp <= 0x45F {
-        return FONT_CYRILLIC.get(((cp - 0x400) * 5 + ci).to_usize())
-    }
-    if cp >= 0x2010 && cp <= 0x2027 {
-        return FONT_PUNCT.get(((cp - 0x2010) * 5 + ci).to_usize())
-    }
-    if cp == 0x20AC {
-        return FONT_EURO.get(ci.to_usize())
-    }
-    if cp >= 0x2190 && cp <= 0x2195 {
-        return FONT_ARROWS.get(((cp - 0x2190) * 5 + ci).to_usize())
-    }
-    if cp >= 0x2500 && cp <= 0x2551 {
-        return FONT_BOX.get(((cp - 0x2500) * 5 + ci).to_usize())
-    }
-    if cp >= 0x25A0 && cp <= 0x25CF {
-        return FONT_SHAPES.get(((cp - 0x25A0) * 5 + ci).to_usize())
-    }
+    if cp >= 32 && cp <= 126 { return FONT.get(((cp - 32) * 5 + ci).to_usize()) }
+    if cp >= 0xA0 && cp <= 0xFF { return FONT_LATIN1.get(((cp - 0xA0) * 5 + ci).to_usize()) }
+    if cp >= 0x100 && cp <= 0x17F { return FONT_LATINA.get(((cp - 0x100) * 5 + ci).to_usize()) }
+    if cp >= 0x391 && cp <= 0x3C9 { return FONT_GREEK.get(((cp - 0x391) * 5 + ci).to_usize()) }
+    if cp >= 0x400 && cp <= 0x45F { return FONT_CYRILLIC.get(((cp - 0x400) * 5 + ci).to_usize()) }
+    if cp >= 0x2010 && cp <= 0x2027 { return FONT_PUNCT.get(((cp - 0x2010) * 5 + ci).to_usize()) }
+    if cp == 0x20AC { return FONT_EURO.get(ci.to_usize()) }
+    if cp >= 0x2190 && cp <= 0x2195 { return FONT_ARROWS.get(((cp - 0x2190) * 5 + ci).to_usize()) }
+    if cp >= 0x2500 && cp <= 0x2551 { return FONT_BOX.get(((cp - 0x2500) * 5 + ci).to_usize()) }
+    if cp >= 0x25A0 && cp <= 0x25CF { return FONT_SHAPES.get(((cp - 0x25A0) * 5 + ci).to_usize()) }
     return REPLACEMENT.get(ci.to_usize())
 }
 

@@ -181,24 +181,18 @@ pub fun viewport_child(widget: Viewport) => Widget = gtk_viewport_get_child(widg
 // viewport GTK put around it.
 pub fun scrolled_child(widget: Widget) => Widget {
     val inner = gtk_scrolled_window_get_child(as_scrolled(widget))
-    if !is_null_widget(inner) && is_viewport(inner) {
-        return viewport_child(as_viewport(inner))
-    }
+    if !is_null_widget(inner) && is_viewport(inner) { return viewport_child(as_viewport(inner)) }
     return inner
 }
 
 // The `index`-th child of a container in GTK's own order, or the null widget when there is no such
 // child (or no container). A walk of the sibling chain, so it costs a step per child before it.
 pub fun nth_child(parent: Widget, index: usize) => Widget {
-    if parent.is_null() {
-        return Widget.null()
-    }
+    if parent.is_null() { return Widget.null() }
     var w: Widget = gtk_widget_get_first_child(parent)
     var i: usize = 0
     while i < index {
-        if w.is_null() {
-            return w
-        }
+        if w.is_null() { return w }
         w = gtk_widget_get_next_sibling(w)
         i += 1
     }

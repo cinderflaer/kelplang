@@ -86,12 +86,8 @@ fun run(control: u32, length: u32, address: u64) => u32 {
     var spins: i32 = 0
     while spins < MAX_SPINS {
         val now: u32 = unsafe { dma_u32(0).read_volatile() }
-        if now == 0 {
-            return 0
-        }
-        if (now & CTL_ERROR_NATIVE) != 0 {
-            return FW_CFG_CTL_ERROR
-        }
+        if now == 0 { return 0 }
+        if (now & CTL_ERROR_NATIVE) != 0 { return FW_CFG_CTL_ERROR }
         spins += 1
     }
     return FW_CFG_CTL_ERROR
@@ -125,14 +121,10 @@ fun dir_u32(at: usize) => u32 {
 // match needs every byte of `want` and a NUL after them.
 fun dir_names(at: usize, want: str) => bool {
     val n = str.len(want)
-    if n > 55 {
-        return false
-    }
+    if n > 55 { return false }
     var i: usize = 0
     while i < n {
-        if dir_byte(at + 8 + i) != str.byte(want, i) {
-            return false
-        }
+        if dir_byte(at + 8 + i) != str.byte(want, i) { return false }
         i += 1
     }
     return dir_byte(at + 8 + n) == 0
@@ -147,9 +139,7 @@ fun find_file(want: str) => u16 {
     var i: u32 = 0
     while i < count {
         val at: usize = (4 + i * 64).to_usize()
-        if dir_names(at, want) {
-            return dir_u16(at + 4)
-        }
+        if dir_names(at, want) { return dir_u16(at + 4) }
         i += 1
     }
     return 0
@@ -160,13 +150,9 @@ fun find_file(want: str) => u16 {
 // not there, and 3 when the device refused the write; `main.kp` prints the one digit.
 pub fun setup(pixels: usize, width: i32, height: i32, stride_px: i32) => u32 {
     val failed: u32 = load_directory()
-    if (failed & FW_CFG_CTL_ERROR) != 0 {
-        return 1
-    }
+    if (failed & FW_CFG_CTL_ERROR) != 0 { return 1 }
     val sel: u16 = find_file("etc/ramfb")
-    if sel == 0 {
-        return 2
-    }
+    if sel == 0 { return 2 }
     // The fields are big-endian: `ramfb.c` reads every one of them with `be32_to_cpu`/`be64_to_cpu`.
     unsafe {
         CFG.addr = pixels.to_u64().to_be()
@@ -180,8 +166,6 @@ pub fun setup(pixels: usize, width: i32, height: i32, stride_px: i32) => u32 {
     val cfg_bytes: Ptr<u8> = cfg_ptr.cast<u8>()
     val control: u32 = FW_CFG_CTL_SELECT | FW_CFG_CTL_WRITE | (sel.to_u32() * 65536)
     val write_failed: u32 = run(control = control, length = RAMFB_BYTES, address = cfg_bytes.addr().to_u64())
-    if (write_failed & FW_CFG_CTL_ERROR) != 0 {
-        return 3
-    }
+    if (write_failed & FW_CFG_CTL_ERROR) != 0 { return 3 }
     return 0
 }

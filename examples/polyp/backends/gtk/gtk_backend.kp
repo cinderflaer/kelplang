@@ -112,15 +112,9 @@ fun bool_i32(b: bool) => i32 = if b { 1 } else { 0 }
 fun no_classes() => List<String> = List.empty()
 
 fun gtk_align(align: i32) => i32 {
-    if align == core.ALIGN_START {
-        return GTK_ALIGN_START
-    }
-    if align == core.ALIGN_CENTER {
-        return GTK_ALIGN_CENTER
-    }
-    if align == core.ALIGN_END {
-        return GTK_ALIGN_END
-    }
+    if align == core.ALIGN_START { return GTK_ALIGN_START }
+    if align == core.ALIGN_CENTER { return GTK_ALIGN_CENTER }
+    if align == core.ALIGN_END { return GTK_ALIGN_END }
     return GTK_ALIGN_FILL
 }
 
@@ -193,9 +187,7 @@ pub fun css(text: str) {
 }
 
 fun key_of_path(path: &core.Path) => core.Key {
-    if path.segs.is_empty() {
-        return core.Key.None
-    }
+    if path.segs.is_empty() { return core.Key.None }
     return when path.segs.get(path.segs.len() - 1) {
         Index(_) -> core.Key.None
         Keyed(_, key) -> core.clone_key(key.get())
@@ -205,18 +197,14 @@ fun key_of_path(path: &core.Path) => core.Key {
 // The box a node's children live in, given the node's own widget: a scrolled area's child box, or
 // the widget itself.
 fun box_of(w: gtk.Widget, rec: &Mount) => gtk.Widget {
-    if rec.kind == core.KIND_SCROLLED {
-        return gtk.scrolled_child(w)
-    }
+    if rec.kind == core.KIND_SCROLLED { return gtk.scrolled_child(w) }
     return w
 }
 
 fun kid_index(kids: &List<Mount>, seg: &core.Seg) => i32 {
     var i: usize = 0
     while i < kids.len() {
-        if core.child_at(seg, kids.get(i).key.get(), i) {
-            return i.to_i32()
-        }
+        if core.child_at(seg, kids.get(i).key.get(), i) { return i.to_i32() }
         i += 1
     }
     return -1
@@ -236,9 +224,7 @@ fun count_nodes(node: &Mount) => i32 {
 // in GTK's order, or the null widget, which GTK reads as "at the front". Appending (`index` equal to
 // the child count) goes after the last child.
 fun after_index(box: gtk.Widget, index: i32) => gtk.Widget {
-    if index <= 0 {
-        return gtk.null_widget()
-    }
+    if index <= 0 { return gtk.null_widget() }
     return gtk.nth_child(box, (index - 1).to_usize())
 }
 
@@ -246,9 +232,7 @@ fun after_index(box: gtk.Widget, index: i32) => gtk.Widget {
 // taken out of. `moved` is the child's position before it was taken out, so the list's index `at - 1`
 // is GTK's index `at - 1` when it comes before `moved`, and `at` when it comes after.
 fun move_after(box: gtk.Widget, moved: i32, at: i32) => gtk.Widget {
-    if at <= 0 {
-        return gtk.null_widget()
-    }
+    if at <= 0 { return gtk.null_widget() }
     var g = at - 1
     if g >= moved {
         g += 1
@@ -542,9 +526,7 @@ fun find_path(kids: &List<Mount>, base: &core.Path, id: i32) => option.Option<co
     while i < kids.len() {
         val n = kids.get(i)
         val here = core.with_seg(base, core.seg_for(n.key.get(), i.to_i32()))
-        if n.slot == id {
-            return option.Option.Some(value = here)
-        }
+        if n.slot == id { return option.Option.Some(value = here) }
         when find_path(n.kids, here, id) {
             Some(found) -> {
                 return option.Option.Some(value = found)
@@ -563,13 +545,9 @@ fun slot_widget_in(kids: &List<Mount>, box: gtk.Widget, id: i32) => gtk.Widget {
     while i < kids.len() {
         val n = kids.get(i)
         val w = gtk.nth_child(box, i)
-        if n.slot == id {
-            return w
-        }
+        if n.slot == id { return w }
         val found = slot_widget_in(n.kids, box_of(w, n), id)
-        if !gtk.is_null_widget(found) {
-            return found
-        }
+        if !gtk.is_null_widget(found) { return found }
         i += 1
     }
     return gtk.null_widget()
@@ -598,14 +576,10 @@ fun focus_in(kids: &List<Mount>, box: gtk.Widget, focused: gtk.Widget) => option
 }
 
 fun widget_of(be: &GtkBackend, id: i32) => gtk.Widget {
-    if id < 0 || be.root.is_empty() {
-        return gtk.null_widget()
-    }
+    if id < 0 || be.root.is_empty() { return gtk.null_widget() }
     val top = be.root.get(0)
     val top_w = gtk.gtk_window_get_child(be.win)
-    if top.slot == id {
-        return top_w
-    }
+    if top.slot == id { return top_w }
     return slot_widget_in(top.kids, box_of(top_w, top), id)
 }
 
@@ -683,9 +657,7 @@ impl core.Backend for GtkBackend {
     }
 
     fun mut Self.place_widget(path: &core.Path, to_index: i32) {
-        if path.segs.is_empty() {
-            return
-        }
+        if path.segs.is_empty() { return }
         var top = root.remove(0)
         val top_box = box_of(gtk.gtk_window_get_child(win), top)
         move_into(top.kids, path, 0, to_index, top_box)
@@ -700,27 +672,17 @@ impl core.Backend for GtkBackend {
 
     fun mut Self.poll() => core.Event {
         val edit = queue.polyp_poll_edit()
-        if edit >= 0 {
-            return core.Event.Edit(index = edit, text = queue.polyp_poll_edit_text())
-        }
+        if edit >= 0 { return core.Event.Edit(index = edit, text = queue.polyp_poll_edit_text()) }
         val focus = queue.polyp_poll_focus()
-        if focus >= 0 {
-            return core.Event.Focus(index = focus)
-        }
+        if focus >= 0 { return core.Event.Focus(index = focus) }
         val id = queue.polyp_poll()
-        if id == QUIT_ID {
-            return core.Event.Quit
-        }
-        if id >= 0 {
-            return core.Event.Post(id = id)
-        }
+        if id == QUIT_ID { return core.Event.Quit }
+        if id >= 0 { return core.Event.Post(id = id) }
         return core.Event.Idle
     }
 
     fun Self.path_of(id: i32) => option.Option<core.Path> {
-        if root.is_empty() {
-            return option.Option.None
-        }
+        if root.is_empty() { return option.Option.None }
         if root.get(0).slot == id {
             val none = core.Path(segs = List.empty())
             return option.Option.Some(value = none)
@@ -731,12 +693,8 @@ impl core.Backend for GtkBackend {
 
     fun Self.focus() => option.Option<i32> {
         val focused = gtk.gtk_window_get_focus(win)
-        if gtk.is_null_widget(focused) {
-            return option.Option.None
-        }
-        if root.is_empty() {
-            return option.Option.None
-        }
+        if gtk.is_null_widget(focused) { return option.Option.None }
+        if root.is_empty() { return option.Option.None }
         val top = root.get(0)
         val top_w = gtk.gtk_window_get_child(win)
         if top.slot >= 0 && gtk.gtk_widget_is_ancestor(focused, top_w) != 0 {
@@ -756,9 +714,7 @@ impl core.Backend for GtkBackend {
 
     fun Self.entry_text(id: i32) => String {
         val w = widget_of(self, id)
-        if gtk.is_null_widget(w) {
-            return ""
-        }
+        if gtk.is_null_widget(w) { return "" }
         return String.from_str(gtk.gtk_editable_get_text(w))
     }
 

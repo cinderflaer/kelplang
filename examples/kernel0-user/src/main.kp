@@ -58,21 +58,13 @@ fun enter_supervisor(entry: usize) {
 // ones with `PTE_U` set.
 fun build_space(code: usize, stack: usize) => usize {
     val root: usize = vm.alloc_frame()
-    if root == 0 {
-        return 0
-    }
+    if root == 0 { return 0 }
     if vm.map_range(root, IMAGE_START, IMAGE_START, IMAGE_SPAN, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
         return 0
     }
-    if vm.map_page(root, UART_BASE, UART_BASE, vm.PTE_R | vm.PTE_W) == false {
-        return 0
-    }
-    if vm.map_page(root, USER_CODE_VA, code, vm.PTE_R | vm.PTE_X | vm.PTE_U) == false {
-        return 0
-    }
-    if vm.map_page(root, USER_STACK_VA, stack, vm.PTE_R | vm.PTE_W | vm.PTE_U) == false {
-        return 0
-    }
+    if vm.map_page(root, UART_BASE, UART_BASE, vm.PTE_R | vm.PTE_W) == false { return 0 }
+    if vm.map_page(root, USER_CODE_VA, code, vm.PTE_R | vm.PTE_X | vm.PTE_U) == false { return 0 }
+    if vm.map_page(root, USER_STACK_VA, stack, vm.PTE_R | vm.PTE_W | vm.PTE_U) == false { return 0 }
     return root
 }
 
@@ -80,17 +72,11 @@ fun build_space(code: usize, stack: usize) => usize {
 // The section holds the code and its string data together and every reference
 // inside is pc-relative, so the copy is the whole relocation.
 fun load_program(start: usize, end: usize) => usize {
-    if end < start {
-        return 0
-    }
+    if end < start { return 0 }
     val size: usize = end - start
-    if size > 4096 {
-        return 0
-    }
+    if size > 4096 { return 0 }
     val frame: usize = vm.alloc_frame()
-    if frame == 0 {
-        return 0
-    }
+    if frame == 0 { return 0 }
     var i: usize = 0
     while i < size {
         unsafe {

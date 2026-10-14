@@ -67,17 +67,13 @@ pub fun eased(ease: i32, t: i64) => i64 {
     if x > 1000 {
         x = 1000
     }
-    if ease == EASE_IN {
-        return x * x / 1000
-    }
+    if ease == EASE_IN { return x * x / 1000 }
     if ease == EASE_OUT {
         val r = 1000 - x
         return 1000 - r * r / 1000
     }
     if ease == EASE_IN_OUT {
-        if x < 500 {
-            return 2 * x * x / 1000
-        }
+        if x < 500 { return 2 * x * x / 1000 }
         val r = 1000 - x
         return 1000 - 2 * r * r / 1000
     }
@@ -86,9 +82,7 @@ pub fun eased(ease: i32, t: i64) => i64 {
 
 // How long the animation runs, in microseconds, which is the unit the platform's clock reads in.
 pub fun duration_us(a: &Anim) => u64 {
-    if a.ms <= 0 {
-        return 0
-    }
+    if a.ms <= 0 { return 0 }
     return a.ms.to_u64() * 1000
 }
 
@@ -97,9 +91,7 @@ pub fun finished(a: &Anim, elapsed_us: u64) => bool = elapsed_us >= duration_us(
 
 // The value `elapsed_us` microseconds after the start. At or past the duration it is `to`, exactly.
 pub fun value_at(a: &Anim, elapsed_us: u64) => i32 {
-    if finished(a, elapsed_us) {
-        return a.to
-    }
+    if finished(a, elapsed_us) { return a.to }
     val total = duration_us(a)
     val t = (elapsed_us * 1000 / total).to_i64()
     val e = eased(a.ease, t)

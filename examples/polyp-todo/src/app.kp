@@ -81,9 +81,7 @@ fun changed(text: String) => Msg = Msg.Changed(text = String.from_str(text.as_st
 fun find_index(s: Model, id: i32) => i32 {
     var i: usize = 0
     while i < s.items.len() {
-        if s.items.get(i).id == id {
-            return i.to_i32()
-        }
+        if s.items.get(i).id == id { return i.to_i32() }
         i += 1
     }
     return -1
@@ -106,9 +104,7 @@ fun done_count(s: Model) => i32 {
 // stage 4). `frac.of` and `frac.from_permille` used to convert; the core is integer now.
 fun permille(s: Model) => i32 {
     val total = s.items.len()
-    if total == 0 {
-        return 0
-    }
+    if total == 0 { return 0 }
     return done_count(s) * 1000 / total.to_i32()
 }
 

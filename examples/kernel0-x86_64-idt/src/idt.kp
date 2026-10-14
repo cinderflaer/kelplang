@@ -185,54 +185,22 @@ fun set_gs_base(addr: usize) {
 // and the fields the gates and the dispatcher address by number are where the
 // templates pushed them.
 pub fun layout_ok() => bool {
-    if size_of<IdtEntry>() != ENTRY_BYTES {
-        return false
-    }
-    if offset_of<IdtEntry>("offset_low") != 0 {
-        return false
-    }
-    if offset_of<IdtEntry>("selector") != 2 {
-        return false
-    }
-    if offset_of<IdtEntry>("ist") != 4 {
-        return false
-    }
-    if offset_of<IdtEntry>("type_attr") != 5 {
-        return false
-    }
-    if offset_of<IdtEntry>("offset_mid") != 6 {
-        return false
-    }
-    if offset_of<IdtEntry>("offset_high") != 8 {
-        return false
-    }
-    if offset_of<IdtEntry>("reserved") != 12 {
-        return false
-    }
-    if size_of<TrapFrame>() != 160 {
-        return false
-    }
-    if offset_of<TrapFrame>("vector") != OFF_VECTOR {
-        return false
-    }
-    if offset_of<TrapFrame>("r15") != 8 {
-        return false
-    }
-    if offset_of<TrapFrame>("rax") != 120 {
-        return false
-    }
-    if offset_of<TrapFrame>("error") != OFF_ERROR {
-        return false
-    }
-    if offset_of<TrapFrame>("rip") != OFF_RIP {
-        return false
-    }
-    if offset_of<TrapFrame>("cs") != 144 {
-        return false
-    }
-    if offset_of<TrapFrame>("rflags") != 152 {
-        return false
-    }
+    if size_of<IdtEntry>() != ENTRY_BYTES { return false }
+    if offset_of<IdtEntry>("offset_low") != 0 { return false }
+    if offset_of<IdtEntry>("selector") != 2 { return false }
+    if offset_of<IdtEntry>("ist") != 4 { return false }
+    if offset_of<IdtEntry>("type_attr") != 5 { return false }
+    if offset_of<IdtEntry>("offset_mid") != 6 { return false }
+    if offset_of<IdtEntry>("offset_high") != 8 { return false }
+    if offset_of<IdtEntry>("reserved") != 12 { return false }
+    if size_of<TrapFrame>() != 160 { return false }
+    if offset_of<TrapFrame>("vector") != OFF_VECTOR { return false }
+    if offset_of<TrapFrame>("r15") != 8 { return false }
+    if offset_of<TrapFrame>("rax") != 120 { return false }
+    if offset_of<TrapFrame>("error") != OFF_ERROR { return false }
+    if offset_of<TrapFrame>("rip") != OFF_RIP { return false }
+    if offset_of<TrapFrame>("cs") != 144 { return false }
+    if offset_of<TrapFrame>("rflags") != 152 { return false }
     return true
 }
 

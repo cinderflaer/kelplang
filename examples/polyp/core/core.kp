@@ -190,21 +190,15 @@ pub fun copy_deps(d: &Deps) => Deps {
 }
 
 fun Deps.eq(other: &Deps) => bool {
-    if ints.len() != other.ints.len() || strs.len() != other.strs.len() {
-        return false
-    }
+    if ints.len() != other.ints.len() || strs.len() != other.strs.len() { return false }
     var i: usize = 0
     while i < ints.len() {
-        if ints.get(i) != other.ints.get(i) {
-            return false
-        }
+        if ints.get(i) != other.ints.get(i) { return false }
         i += 1
     }
     var j: usize = 0
     while j < strs.len() {
-        if !str.eq(strs.get(j).as_str(), other.strs.get(j).as_str()) {
-            return false
-        }
+        if !str.eq(strs.get(j).as_str(), other.strs.get(j).as_str()) { return false }
         j += 1
     }
     return true
@@ -856,26 +850,18 @@ pub fun child_props<M>(c: &Child<M>) => Props {
 }
 
 fun opts_eq(a: &Opts, b: &Opts) => bool {
-    if a.margin != b.margin || a.expand != b.expand || a.align != b.align {
-        return false
-    }
+    if a.margin != b.margin || a.expand != b.expand || a.align != b.align { return false }
     if a.disabled != b.disabled || a.opacity != b.opacity || a.offset_x != b.offset_x || a.offset_y != b.offset_y {
         return false
     }
     if !anim.same(&a.anim_main, &b.anim_main) || !anim.same(&a.anim_opacity, &b.anim_opacity) {
         return false
     }
-    if !anim.same(&a.anim_ox, &b.anim_ox) || !anim.same(&a.anim_oy, &b.anim_oy) {
-        return false
-    }
-    if a.classes.len() != b.classes.len() {
-        return false
-    }
+    if !anim.same(&a.anim_ox, &b.anim_ox) || !anim.same(&a.anim_oy, &b.anim_oy) { return false }
+    if a.classes.len() != b.classes.len() { return false }
     var i: usize = 0
     while i < a.classes.len() {
-        if !str.eq(a.classes.get(i).as_str(), b.classes.get(i).as_str()) {
-            return false
-        }
+        if !str.eq(a.classes.get(i).as_str(), b.classes.get(i).as_str()) { return false }
         i += 1
     }
     return true
@@ -934,9 +920,7 @@ fun node_props_eq<M>(a: &Node<M>, b: &Node<M>) => bool = when a {
 fun find_key<M>(old: &List<Child<M>>, used: &List<bool>, key: &Key) => i32 {
     var j: usize = 0
     while j < old.len() {
-        if !used.get(j) && key_eq(old.get(j).key.get(), key) {
-            return j.to_i32()
-        }
+        if !used.get(j) && key_eq(old.get(j).key.get(), key) { return j.to_i32() }
         j += 1
     }
     return -1
@@ -995,14 +979,10 @@ pub fun new_memo_store<M>() => MemoStore<M> = MemoStore<M>(entries = List.empty(
 // Two paths name the same memo when they have the same length and each segment agrees: keyed
 // segments by key (ignoring the index), unkeyed ones by index.
 fun ident_eq(a: &Path, b: &Path) => bool {
-    if a.segs.len() != b.segs.len() {
-        return false
-    }
+    if a.segs.len() != b.segs.len() { return false }
     var i: usize = 0
     while i < a.segs.len() {
-        if !seg_ident_eq(a.segs.get(i), b.segs.get(i)) {
-            return false
-        }
+        if !seg_ident_eq(a.segs.get(i), b.segs.get(i)) { return false }
         i += 1
     }
     return true
@@ -1021,14 +1001,10 @@ fun seg_ident_eq(a: &Seg, b: &Seg) => bool = when a {
 
 // Whether `prefix` is `p` or one of its ancestors.
 fun ident_prefix(prefix: &Path, p: &Path) => bool {
-    if prefix.segs.len() > p.segs.len() {
-        return false
-    }
+    if prefix.segs.len() > p.segs.len() { return false }
     var i: usize = 0
     while i < prefix.segs.len() {
-        if !seg_ident_eq(prefix.segs.get(i), p.segs.get(i)) {
-            return false
-        }
+        if !seg_ident_eq(prefix.segs.get(i), p.segs.get(i)) { return false }
         i += 1
     }
     return true
@@ -1427,9 +1403,7 @@ fun take_memo<B: Backend, M>(deps: &Deps, build: fun (&Deps) => List<Child<M>>, 
         Index(i) -> i == 0
         else -> false
     }
-    if !ok {
-        return option.Option.None
-    }
+    if !ok { return option.Option.None }
     val body = run_build(deps, build)
     return take_at(body, path, depth + 1, backend, id)
 }
@@ -1563,12 +1537,8 @@ fun frame_drain<B: Backend, S, M>(backend: mut B, tree: move Node<M>, state: mut
             }
         }
     }
-    if quitting {
-        return Tick.Quit(tree = current)
-    }
-    if changed {
-        return Tick.Changed(tree = current)
-    }
+    if quitting { return Tick.Quit(tree = current) }
+    if changed { return Tick.Changed(tree = current) }
     return Tick.Idle(tree = current)
 }
 
@@ -1648,9 +1618,7 @@ fun mut Timers.step(i: usize, kind: i32, ms: i32, now: u64) => bool {
         slots.set(i, TimerSlot(kind = kind, ms = period_ms, due_us = now + period, done = false))
         return false
     }
-    if done_already || now < due {
-        return false
-    }
+    if done_already || now < due { return false }
     if kind == SUB_EVERY {
         // Catch up by skipping: the next due time is the first boundary strictly after `now`.
         val late = now - due
@@ -1737,12 +1705,8 @@ pub fun frame_step_full<B: Backend, S, M>(
         }
     }
     publish_memo(store)
-    if quitting {
-        return Tick.Quit(tree = current)
-    }
-    if changed {
-        return Tick.Changed(tree = current)
-    }
+    if quitting { return Tick.Quit(tree = current) }
+    if changed { return Tick.Changed(tree = current) }
     return Tick.Idle(tree = current)
 }
 
@@ -1814,13 +1778,9 @@ fun snapshot<B: Backend>(backend: &B, before: option.Option<i32>) {
 // The id of the index-th entry widget, in tree order, for the programmatic edit and focus
 // channels. The `-1` the GTK queue answers with means "none pending", which is the `None` here.
 fun entry_at<B: Backend>(backend: &B, index: i32) => option.Option<i32> {
-    if index < 0 {
-        return option.Option.None
-    }
+    if index < 0 { return option.Option.None }
     val ids = backend.entry_ids()
-    if index.to_usize() >= ids.len() {
-        return option.Option.None
-    }
+    if index.to_usize() >= ids.len() { return option.Option.None }
     return option.Option.Some(value = ids.get(index.to_usize()))
 }
 

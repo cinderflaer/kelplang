@@ -33,9 +33,7 @@ enum Msg {
 fun find(m: &Model, id: i32) => i32 {
     var i: usize = 0
     while i < m.items.len() {
-        if m.items.get(i).id == id {
-            return i.to_i32()
-        }
+        if m.items.get(i).id == id { return i.to_i32() }
         i += 1
     }
     return -1

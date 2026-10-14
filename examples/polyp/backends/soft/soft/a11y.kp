@@ -47,27 +47,13 @@ pub datac Node(
 )
 
 pub fun role_name(role: i32) => str {
-    if role == ROLE_BUTTON {
-        return "button"
-    }
-    if role == ROLE_CHECKBOX {
-        return "checkbox"
-    }
-    if role == ROLE_ENTRY {
-        return "entry"
-    }
-    if role == ROLE_LABEL {
-        return "label"
-    }
-    if role == ROLE_PROGRESS {
-        return "progress"
-    }
-    if role == ROLE_LIST {
-        return "list"
-    }
-    if role == ROLE_LIST_ITEM {
-        return "list_item"
-    }
+    if role == ROLE_BUTTON { return "button" }
+    if role == ROLE_CHECKBOX { return "checkbox" }
+    if role == ROLE_ENTRY { return "entry" }
+    if role == ROLE_LABEL { return "label" }
+    if role == ROLE_PROGRESS { return "progress" }
+    if role == ROLE_LIST { return "list" }
+    if role == ROLE_LIST_ITEM { return "list_item" }
     return "region"
 }
 
@@ -165,15 +151,11 @@ pub fun count(tree: &Node) => i32 {
 
 // The id of the first node (depth first) with this role and name, or -1.
 pub fun find_id(tree: &Node, role: i32, name: &str) => i32 {
-    if tree.role == role && str.eq(tree.name.as_str(), name) {
-        return tree.id
-    }
+    if tree.role == role && str.eq(tree.name.as_str(), name) { return tree.id }
     var i: usize = 0
     while i < tree.kids.len() {
         val r = find_id(tree.kids.get(i), role, name)
-        if r >= 0 {
-            return r
-        }
+        if r >= 0 { return r }
         i += 1
     }
     return -1
