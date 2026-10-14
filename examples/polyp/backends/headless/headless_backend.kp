@@ -78,7 +78,7 @@ pub fun copy_props(p: &core.Props) => core.Props {
 }
 
 fun key_of_path(path: &core.Path) => core.Key {
-    if path.segs.len() == 0 {
+    if path.segs.is_empty() {
         return core.Key.None
     }
     return when path.segs.get(path.segs.len() - 1) {
@@ -400,7 +400,7 @@ impl core.Backend for Headless {
             entry_builds += 1
         }
         val node = HNode(kind = kind, slot = slot, props = copy_props(props), key = Box.of(key_of_path(path)), kids = List.empty())
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             root.clear()
             root.push(node)
         } else {
@@ -414,8 +414,8 @@ impl core.Backend for Headless {
     fun mut Self.patch_widget(path: &core.Path, props: &core.Props) {
         var n: i32 = 0
         val focused = focus_id
-        if path.segs.len() == 0 {
-            if root.len() > 0 {
+        if path.segs.is_empty() {
+            if !root.is_empty() {
                 var top = root.remove(0)
                 set_props_on(top, props, focused)
                 root.insert(0, top)
@@ -430,7 +430,7 @@ impl core.Backend for Headless {
     }
 
     fun mut Self.drop_widget(path: &core.Path) {
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             var i: usize = 0
             while i < root.len() {
                 removed += count_nodes(root.get(i))
@@ -454,7 +454,7 @@ impl core.Backend for Headless {
     }
 
     fun mut Self.place_widget(path: &core.Path, to_index: i32) {
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             return
         }
         var top = root.remove(0)
@@ -477,7 +477,7 @@ impl core.Backend for Headless {
     }
 
     fun Self.path_of(id: i32) => option.Option<core.Path> {
-        if root.len() == 0 {
+        if root.is_empty() {
             return option.Option.None
         }
         if root.get(0).slot == id {
@@ -499,7 +499,7 @@ impl core.Backend for Headless {
     }
 
     fun mut Self.set_entry_text(id: i32, text: &str) {
-        if root.len() > 0 {
+        if !root.is_empty() {
             var top = root.remove(0)
             if top.slot == id {
                 var p = copy_props(top.props)
@@ -516,10 +516,10 @@ impl core.Backend for Headless {
     }
 
     fun Self.entry_text(id: i32) => String {
-        if root.len() > 0 && root.get(0).slot == id {
+        if !root.is_empty() && root.get(0).slot == id {
             return String.from_str(root.get(0).props.text.as_str())
         }
-        if root.len() == 0 {
+        if root.is_empty() {
             return ""
         }
         return when find_text(root.get(0).kids, id) {

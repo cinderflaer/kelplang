@@ -193,7 +193,7 @@ pub fun css(text: str) {
 }
 
 fun key_of_path(path: &core.Path) => core.Key {
-    if path.segs.len() == 0 {
+    if path.segs.is_empty() {
         return core.Key.None
     }
     return when path.segs.get(path.segs.len() - 1) {
@@ -598,7 +598,7 @@ fun focus_in(kids: &List<Mount>, box: gtk.Widget, focused: gtk.Widget) => option
 }
 
 fun widget_of(be: &GtkBackend, id: i32) => gtk.Widget {
-    if id < 0 || be.root.len() == 0 {
+    if id < 0 || be.root.is_empty() {
         return gtk.null_widget()
     }
     val top = be.root.get(0)
@@ -627,7 +627,7 @@ impl core.Backend for GtkBackend {
         )
         rec.key.set(key_of_path(path))
         val w = make_widget(self, kind, props, rec)
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             gtk.gtk_window_set_child(win, w)
             root.clear()
             root.push(rec)
@@ -643,8 +643,8 @@ impl core.Backend for GtkBackend {
     fun mut Self.patch_widget(path: &core.Path, props: &core.Props) {
         var n: i32 = 0
         val focused = focus_before
-        if path.segs.len() == 0 {
-            if root.len() > 0 {
+        if path.segs.is_empty() {
+            if !root.is_empty() {
                 var top = root.remove(0)
                 apply_props_to(top, gtk.gtk_window_get_child(win), props, focused)
                 root.insert(0, top)
@@ -660,7 +660,7 @@ impl core.Backend for GtkBackend {
     }
 
     fun mut Self.drop_widget(path: &core.Path) {
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             var i: usize = 0
             while i < root.len() {
                 removed += count_nodes(root.get(i))
@@ -683,7 +683,7 @@ impl core.Backend for GtkBackend {
     }
 
     fun mut Self.place_widget(path: &core.Path, to_index: i32) {
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             return
         }
         var top = root.remove(0)
@@ -718,7 +718,7 @@ impl core.Backend for GtkBackend {
     }
 
     fun Self.path_of(id: i32) => option.Option<core.Path> {
-        if root.len() == 0 {
+        if root.is_empty() {
             return option.Option.None
         }
         if root.get(0).slot == id {
@@ -734,7 +734,7 @@ impl core.Backend for GtkBackend {
         if gtk.is_null_widget(focused) {
             return option.Option.None
         }
-        if root.len() == 0 {
+        if root.is_empty() {
             return option.Option.None
         }
         val top = root.get(0)

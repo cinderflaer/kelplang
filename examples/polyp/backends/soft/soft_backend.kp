@@ -454,7 +454,7 @@ fun copy_props(p: &core.Props) => core.Props {
 fun empty_path() => core.Path = core.Path(segs = List.empty())
 
 fun key_of_path(path: &core.Path) => core.Key {
-    if path.segs.len() == 0 {
+    if path.segs.is_empty() {
         return core.Key.None
     }
     return when path.segs.get(path.segs.len() - 1) {
@@ -2599,7 +2599,7 @@ impl core.Backend for SoftBackend {
         if sync_new_node(node, clock_us) {
             anim_active = true
         }
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             root.clear()
             root.push(node)
         } else {
@@ -2618,8 +2618,8 @@ impl core.Backend for SoftBackend {
         var hit = Hit(found = false, rect = fb.empty_rect(), rect2 = fb.empty_rect(), anim = false)
         val focused = focus_id
         val clock = clock_us
-        if path.segs.len() == 0 {
-            if root.len() > 0 {
+        if path.segs.is_empty() {
+            if !root.is_empty() {
                 var top = root.remove(0)
                 hit.found = true
                 hit.rect = rect_of(top)
@@ -2648,7 +2648,7 @@ impl core.Backend for SoftBackend {
     }
 
     fun mut Self.drop_widget(path: &core.Path) {
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             var i: usize = 0
             while i < root.len() {
                 removed += count_nodes(root.get(i))
@@ -2682,7 +2682,7 @@ impl core.Backend for SoftBackend {
     }
 
     fun mut Self.place_widget(path: &core.Path, to_index: i32) {
-        if path.segs.len() == 0 {
+        if path.segs.is_empty() {
             return
         }
         var moved = Moved(found = false, rect = fb.empty_rect())

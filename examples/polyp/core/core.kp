@@ -1374,7 +1374,7 @@ pub fun apply_patches<B: Backend>(backend: mut B, patches: &List<Patch>) {
                 // The root's path is empty, so it has no place inside a parent: `at` is 0 there and
                 // a backend that owns the top level (a window, a canvas) puts it there.
                 var at: i32 = 0
-                if path.segs.len() > 0 {
+                if !path.segs.is_empty() {
                     at = seg_index(path.segs.get(path.segs.len() - 1))
                 }
                 backend.make(path = path, at = at, kind = kind, props = props)

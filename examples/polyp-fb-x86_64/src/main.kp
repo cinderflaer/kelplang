@@ -73,7 +73,7 @@ section(".text.boot") fun kmain() {
     core.publish(backend)
     var entry: String = ""
     val ids = backend.entry_ids()
-    if ids.len() > 0 {
+    if !ids.is_empty() {
         entry = backend.entry_text(ids.get(0))
     }
     app.report(final, entry.as_str(), emit_line)

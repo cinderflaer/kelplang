@@ -30,7 +30,7 @@ pub fun lock_acquire() {
         val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
         asm("csrw mstatus, {0}", in("r") mstatus & (~MIE_BIT))
     }
-    while LOCK.load(order = atomic.Ordering.SeqCst) == true {}
+    while LOCK.load(order = atomic.Ordering.SeqCst) {}
     LOCK.store(value = true, order = atomic.Ordering.SeqCst)
 }
 
