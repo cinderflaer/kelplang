@@ -1,0 +1,28 @@
+// M24 gate: a parameter written `List<T>`, `&List<T>`, `str` or `&str` takes the
+// same argument and gives the same result, so a `&` on a parameter whose type is
+// already a borrow can be dropped. If the two spellings print different lines,
+// the rewrite moves to phase 3.
+impl "std/str"
+
+fun count_plain(xs: List<i32>) => usize = xs.len()
+
+fun count_ref(xs: &List<i32>) => usize = xs.len()
+
+fun width_plain(s: str) => usize = str.len(s)
+
+fun width_ref(s: &str) => usize = str.len(s)
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(7)
+    xs.push(8)
+    print(count_plain(xs))
+    print(count_ref(&xs))
+    print(xs.len())
+
+    val word = String.from_str(s = "kelp")
+    print(width_plain(word.as_str()))
+    print(width_ref(word.as_str()))
+    print(width_plain("four"))
+    print(width_ref("four"))
+}

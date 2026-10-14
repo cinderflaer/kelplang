@@ -3262,6 +3262,26 @@ fn a_str_becomes_a_string_where_one_is_expected() {
     );
 }
 
+/// M19 gate: the counted `while` over a list index and the `for` that replaces it
+/// print the same lines, so the rewrite of one into the other keeps the output.
+#[test]
+fn a_for_over_a_list_prints_what_the_index_walk_prints() {
+    assert_compiles_and_runs(
+        "tests/fixtures/for_list_index_walk_equiv.kp",
+        "3\n4\n3\n4\nann\nbo\ncy\nann\nbo\ncy\n6\n4\n7\n4\n8\n6\n4\n7\n4\n8\n5\n",
+    );
+}
+
+/// M24 gate: a `List<T>` and a `&List<T>` parameter, and a `str` and a `&str`
+/// parameter, give the same results, so a `&` on a borrowed parameter can go.
+#[test]
+fn a_borrow_parameter_spelled_with_or_without_ampersand_gives_the_same_result() {
+    assert_compiles_and_runs(
+        "tests/fixtures/param_borrow_spellings.kp",
+        "2\n2\n2\n4\n4\n4\n4\n",
+    );
+}
+
 /// `str.less` is the ordering `str` never had, and `str.is_digit` is the digit
 /// predicate that four libraries in the catalogue wrote by hand.
 ///

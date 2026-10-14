@@ -1,0 +1,70 @@
+// M19 gate: a counted `while` over a list index and the `for` that replaces it
+// print the same lines. The cases: a `Copy` element with `break` and `continue`,
+// an owned `String` element, a body that reads a second list, and a counter read
+// after the loop (that loop stays a `while`: its counter is not a loop-local).
+// In the `while` form the increment comes before `continue`, so both forms skip
+// the same elements.
+fun main() {
+    var nums: List<i32> = List.empty()
+    nums.push(3)
+    nums.push(1)
+    nums.push(4)
+    nums.push(1)
+    nums.push(5)
+    var names: List<String> = List.empty()
+    names.push(String.from_str(s = "ann"))
+    names.push(String.from_str(s = "bo"))
+    names.push(String.from_str(s = "cy"))
+
+    // The `while` form.
+    var i = 0
+    while i < nums.len() {
+        val n = nums.get(i)
+        i += 1
+        if n == 1 {
+            continue
+        }
+        if n == 5 {
+            break
+        }
+        print(n)
+    }
+
+    // The `for` form of the same walk.
+    for n in nums {
+        if n == 1 {
+            continue
+        }
+        if n == 5 {
+            break
+        }
+        print(n)
+    }
+
+    // An owned element, in both forms.
+    var k = 0
+    while k < names.len() {
+        print(names.get(k).as_str())
+        k += 1
+    }
+    for name in names {
+        print(name.as_str())
+    }
+
+    // A body that reads a second list.
+    var m = 0
+    while m < nums.len() {
+        print(nums.get(m) + (names.len() as i32))
+        m += 1
+    }
+    for n in nums {
+        print(n + (names.len() as i32))
+    }
+
+    // A counter read after the loop: this one stays a `while`.
+    var j = 0
+    while j < nums.len() {
+        j += 1
+    }
+    print(j)
+}
