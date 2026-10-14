@@ -1,8 +1,9 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/ops_ord_no_eq.kp
 backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: cannot compare 'P' values with '==': '==' and '!=' come from a declared 'eq' method, and 'Ord' does not supply one; write 'fun P.eq(other: &P).return: bool'
+error: cannot compare 'P' values with '==': '==' and '!=' come from a declared 'eq' method, and 'Ord' does not supply one; write 'fun P.eq(other: &P) => bool'
   --> <root>/kelpc/tests/fixtures/ops_ord_no_eq.kp:23:11
 run-status: not run

@@ -1,8 +1,9 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/ops_display_missing.kp
 backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: cannot interpolate a value of type 'P' into a string template: it does not implement 'Display' (write 'impl fmt.Display for P { fun Self.to_text().return: String }', importing 'std/fmt')
+error: cannot interpolate a value of type 'P' into a string template: it does not implement 'Display' (write 'impl fmt.Display for P { fun Self.to_text() => String }', importing 'std/fmt')
   --> <root>/kelpc/tests/fixtures/ops_display_missing.kp:7:18
 run-status: not run

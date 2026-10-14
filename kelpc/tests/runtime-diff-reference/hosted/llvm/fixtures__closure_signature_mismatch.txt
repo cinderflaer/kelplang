@@ -1,8 +1,9 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/closure_signature_mismatch.kp
 backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: cannot assign value of type 'fun(f64).return: f64' to 'f' declared as 'closure(i32).return: i32'
+error: cannot assign value of type 'fun(f64) => f64' to 'f' declared as 'closure(i32) => i32'
   --> <root>/kelpc/tests/fixtures/closure_signature_mismatch.kp:7:5
 run-status: not run

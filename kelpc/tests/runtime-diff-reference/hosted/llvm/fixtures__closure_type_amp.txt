@@ -1,8 +1,9 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/closure_type_amp.kp
 backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: '&' cannot be written on the closure type 'closure().return: i32' — a closure is an owned value, and a parameter of that type already borrows it; write the type without '&', or 'move closure().return: i32' to take ownership
+error: '&' cannot be written on the closure type 'closure() => i32' — a closure is an owned value, and a parameter of that type already borrows it; write the type without '&', or 'move closure() => i32' to take ownership
   --> <root>/kelpc/tests/fixtures/closure_type_amp.kp:5:12
 run-status: not run

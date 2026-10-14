@@ -1,8 +1,9 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/traits_missing_method.kp
 backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: trait 'Shape' declares 'fun Self.name().return: str', and 'impl Shape for Circle' does not implement it: add 'fun Self.name().return: str { ... }' to the block
+error: trait 'Shape' declares 'fun Self.name() => str', and 'impl Shape for Circle' does not implement it: add 'fun Self.name() => str { ... }' to the block
   --> <root>/kelpc/tests/fixtures/traits_missing_method.kp:9:1
 run-status: not run

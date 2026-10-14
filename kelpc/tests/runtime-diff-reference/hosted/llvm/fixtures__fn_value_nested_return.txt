@@ -1,8 +1,9 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/fn_value_nested_return.kp
 backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: a function type cannot return another function type ('fun().return: fun(i32).return: i32') — C cannot write that declarator, and nothing needs it; return a 'datac' holding the function value instead
+error: a function type cannot return another function type ('fun() => fun(i32) => i32') — C cannot write that declarator, and nothing needs it; return a 'datac' holding the function value instead
   --> <root>/kelpc/tests/fixtures/fn_value_nested_return.kp:3:35
 run-status: not run

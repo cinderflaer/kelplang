@@ -1,8 +1,9 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/map_float_key.kp
 backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: 'f64' cannot be a Map key: the key has to be 'String', an integer, 'bool' or 'char', or a 'datac'/'enum' whose every field is one of those, because the compiler derives the key's hash and its equality from the fields; a 'datac' or 'enum' outside that set becomes a key by declaring 'fun T.hash().return: u64' and 'fun T.eq(other: &T).return: bool'
+error: 'f64' cannot be a Map key: the key has to be 'String', an integer, 'bool' or 'char', or a 'datac'/'enum' whose every field is one of those, because the compiler derives the key's hash and its equality from the fields; a 'datac' or 'enum' outside that set becomes a key by declaring 'fun T.hash() => u64' and 'fun T.eq(other: &T) => bool'
   --> <root>/kelpc/tests/fixtures/map_float_key.kp:4:16
 run-status: not run

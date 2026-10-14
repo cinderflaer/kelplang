@@ -1,3 +1,4 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/closure_where_fn_expected.kp
 backend: llvm
 build-status: 1

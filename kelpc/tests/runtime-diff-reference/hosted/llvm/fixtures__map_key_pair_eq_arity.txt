@@ -1,8 +1,9 @@
+historical record: captured from the retired C oracle, kept for history; no test reads this file; Kelp code in it is shown with the '=>' spelling.
 unit: kelpc/tests/fixtures/map_key_pair_eq_arity.kp
 backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: 'Key.eq' takes exactly one parameter, a shared borrow of 'Key', so write 'fun Key.eq(other: &Key).return: bool'
+error: 'Key.eq' takes exactly one parameter, a shared borrow of 'Key', so write 'fun Key.eq(other: &Key) => bool'
   --> <root>/kelpc/tests/fixtures/map_key_pair_eq_arity.kp:7:1
 run-status: not run
