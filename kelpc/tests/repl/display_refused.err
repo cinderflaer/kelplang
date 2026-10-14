@@ -1,0 +1,1 @@
+error: no display for type '[i32; 2]' yet; stage 1 shows Int, Float, Bool and String

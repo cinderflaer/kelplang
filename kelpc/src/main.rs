@@ -27,6 +27,7 @@ mod llvm_ffi;
 mod opt;
 mod parser;
 mod preprocess;
+mod repl;
 mod resolve;
 mod sha256;
 mod stdlib;
@@ -92,6 +93,7 @@ fn usage() {
          {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated] [--incremental] [--timings]\n       \
          {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated] [--text]\n       \
          {BIN_NAME} caps <file.{EXT}|project dir>\n       \
+         {BIN_NAME} repl [--script <file>]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
          {BIN_NAME} fmt --check <path>...\n       \
@@ -1759,6 +1761,7 @@ fn real_main() -> ExitCode {
         Some("check") => return check_command(&args[2..]),
         Some("caps") => return caps_command(&args[2..]),
         Some("cache") => return cache_command(&args[2..]),
+        Some("repl") => return repl::repl_command(&args[2..]),
         Some(c @ ("build" | "run")) => {
             guard::start();
             c

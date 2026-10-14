@@ -1,0 +1,3 @@
+error: undefined variable 'nope'
+  --> <repl>:1:1
+  help: declare it with val or var before this line, or check the spelling.
