@@ -6,9 +6,10 @@ impl "std/mem"
 extern fun u64_raw() => u64
 extern fun fill_raw(buf: mut Bytes)
 
+/// A random `u64` from the host's entropy source.
 fun u64() => u64 = u64_raw()
 
-// A value in `0..n`. Returns 0 for `n == 0` rather than dividing by zero.
+/// A value in `0..n`. Returns 0 for `n == 0` rather than dividing by zero.
 fun below(n: u64) => u64 {
     if n == 0 {
         return 0
@@ -16,7 +17,7 @@ fun below(n: u64) => u64 {
     return u64_raw() % n
 }
 
-// `n` fresh random bytes.
+/// `n` fresh random bytes.
 fun bytes(n: usize) => Bytes {
     var out = mem.alloc(n)
     fill_raw(out)

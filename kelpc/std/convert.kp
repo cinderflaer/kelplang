@@ -14,10 +14,16 @@
    method-like call wants the name, not because the operator needs it; it is
    not derived for anything. */
 
+/// Builds a `Self` from a `T`. `?` calls this when an operand's failure payload
+/// type differs from the enclosing function's.
 pub trait From<T> {
+    /// Builds a `Self` from `value`.
     fun from(value: T) => Self
 }
 
+/// Converts a `Self` into a `T`. Nothing derives this: a type that wants `into`
+/// writes its own impl.
 pub trait Into<T> {
+    /// Converts this value into a `T`.
     fun Self.into() => T
 }

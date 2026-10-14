@@ -39,6 +39,9 @@
    exist yet (`atomic.Ordering.Acquire`) is therefore the ordinary
    unknown-variant error, not a special refusal. */
 
+/// The memory ordering an atomic operation uses. Every operation takes one.
 enum Ordering {
+    /// Sequentially consistent: all threads see the atomic operations in one
+    /// total order. The only variant in v1.
     SeqCst
 }

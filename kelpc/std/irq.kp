@@ -31,10 +31,15 @@
    handler that is actually installed. `kelp wiki page language/unsafe-ub-catalogue.md` stage 18 says
    so. */
 
-datac Line(val n: u32)
+/// An interrupt line the calling module was granted. `claim` is the only way to
+/// make one, so a `Line` in hand means the grant was checked.
+datac Line(
+    /// The line number, as the compiler admitted it.
+    val n: u32
+)
 
-// The receipt for an `irq` grant: a line the calling module was granted.
+/// The receipt for an `irq` grant: a line the calling module was granted.
 fun claim(n: u32) => Line = Line(n = n)
 
-// The line's number.
+/// The line's number.
 fun Line.number() => u32 = n
