@@ -9,36 +9,40 @@ impl "std/str"
    or macros, and neither exists in v1 (see plan.md's non-goals). Callers
    concatenate with `str.concat` or push into a `String`. */
 
-/* The trait a value implements to appear in `"${x}"` and as the argument of
-   `print`/`print!` (language-completeness 5, `plan/traits.md` 13). The front
-   end lowers those two to `x.to_text()` before either sees the value, so the
-   call returns an owned `String` the ordinary print path already formats. */
+/// A value that has a text form. The front end lowers `"${x}"` and the
+/// argument of `print`/`print!` to `x.to_text()` (language-completeness 5,
+/// `plan/traits.md` 13), so the call returns an owned `String` the ordinary
+/// print path already formats.
 pub trait Display {
+    /// The text form of the value, as an owned `String`.
     fun Self.to_text() => String
 }
 
+/// The decimal text of a signed integer, with a leading `-` when negative.
 fun int(n: i64) => String = str.from_i64(n)
 
+/// The decimal text of an unsigned integer.
 fun uint(n: u64) => String = str.from_u64(n)
 
+/// `x` in decimal with exactly `decimals` digits after the point.
 fun float(x: f64, decimals: i32) => String = str.from_f64(x, decimals)
 
 extern fun hex_raw(n: u64) => String
 
-// Lowercase, no `0x` prefix.
+/// The hexadecimal text of `n`. Lowercase, no `0x` prefix.
 fun hex(n: u64) => String = hex_raw(n)
 
 extern fun bytes_raw(b: &Bytes) => String
 
-// A byte dump for debugging binary data: "1f 8b 08". Lowercase, one space
-// between bytes, no trailing space. This is the honest first step towards
-// *seeing* your data: `print` still cannot show a `datac` or a `List`
-// (open item 35).
+/// A byte dump for debugging binary data: "1f 8b 08". Lowercase, one space
+/// between bytes, no trailing space. This is the honest first step towards
+/// *seeing* your data: `print` still cannot show a `datac` or a `List`
+/// (open item 35).
 fun bytes(b: Bytes) => String = bytes_raw(b)
 
-// `s` right-aligned in a field of `width`, padded with `fill`. The fill is a
-// `u8`, not a `char`, so a character literal at the call site takes that type.
-// A string at least `width` long is copied unchanged.
+/// `s` right-aligned in a field of `width`, padded with `fill`. The fill is a
+/// `u8`, not a `char`, so a character literal at the call site takes that type.
+/// A string at least `width` long is copied unchanged.
 fun pad_left(s: &str, width: usize, fill: u8) => String {
     val n = str.len(s)
     if n >= width {
@@ -54,7 +58,8 @@ fun pad_left(s: &str, width: usize, fill: u8) => String {
     return out
 }
 
-// `s` left-aligned in a field of `width`, padded with `fill`.
+/// `s` left-aligned in a field of `width`, padded with `fill`. A string at
+/// least `width` long is copied unchanged.
 fun pad_right(s: &str, width: usize, fill: u8) => String {
     val n = str.len(s)
     if n >= width {
@@ -70,21 +75,23 @@ fun pad_right(s: &str, width: usize, fill: u8) => String {
     return out
 }
 
-// `n` with a comma every three digits from the right: `1234567` prints as
-// `1,234,567`. Both signednesses exist because a user module cannot overload a
-// name, which is why `fmt` already spells `int` and `uint` apart.
+/// `n` with a comma every three digits from the right: `1234567` prints as
+/// `1,234,567`. Both signednesses exist because a user module cannot overload a
+/// name, which is why `fmt` already spells `int` and `uint` apart.
 fun commas_u64(n: u64) => String {
     val digits = str.from_u64(n)
     return group_digits(text = digits.as_str())
 }
 
+/// `n` with a comma every three digits from the right, the signed form of
+/// `commas_u64`. A leading `-` stays in front of the first group.
 fun commas_i64(n: i64) => String {
     val digits = str.from_i64(n)
     return group_digits(text = digits.as_str())
 }
 
-// The digit run of `text` with a comma every three digits, a leading `-`
-// copied before the grouping starts.
+/// The digit run of `text` with a comma every three digits, a leading `-`
+/// copied before the grouping starts.
 fun group_digits(text: &str) => String {
     val tv = text.view()
     val len = tv.len()
@@ -111,9 +118,9 @@ fun group_digits(text: &str) => String {
     return out
 }
 
-// `bytes` in binary units with two decimals: `"585.94 KiB"`, `"0 B"`. Binary
-// and not decimal, because `1024` is what the byte-count suffix on a command
-// line (`4k`) means and the two have to agree.
+/// `bytes` in binary units with two decimals: `"585.94 KiB"`, `"0 B"`. Binary
+/// and not decimal, because `1024` is what the byte-count suffix on a command
+/// line (`4k`) means and the two have to agree.
 fun human_size(bytes: u64) => String {
     if bytes < 1024 {
         val text = str.from_u64(bytes)
@@ -131,6 +138,8 @@ fun human_size(bytes: u64) => String {
     return human_scale(bytes = bytes, div = 1099511627776, unit = " TiB")
 }
 
+/// `bytes` divided by `div`, written with two decimals and followed by `unit`.
+/// The helper behind `human_size`, which picks the divisor and the unit.
 fun human_scale(bytes: u64, div: u64, unit: &str) => String {
     val text = float(x = bytes.to_f64() / div.to_f64(), decimals = 2)
     return str.concat(text.as_str(), unit)
