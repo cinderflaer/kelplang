@@ -348,7 +348,7 @@ impl Parser {
         } else {
             Err(ParseError {
                 help: None,
-                message: format!("expected {what}, found {:?}", self.peek_kind()),
+                message: format!("expected {what}, found {}", self.peek_kind().describe()),
                 span: self.peek().span,
             })
         }
@@ -363,7 +363,7 @@ impl Parser {
             }
             other => Err(ParseError {
                 help: None,
-                message: format!("expected identifier, found {other:?}"),
+                message: format!("expected identifier, found {}", other.describe()),
                 span: self.peek().span,
             }),
         }
@@ -484,8 +484,8 @@ impl Parser {
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "'repr(...)' applies to a 'datac' or an 'enum', found {:?}",
-                        self.peek_kind()
+                        "'repr(...)' applies to a 'datac' or an 'enum', found {}",
+                        self.peek_kind().describe()
                     ),
                     span: self.peek().span,
                 });
@@ -503,8 +503,8 @@ impl Parser {
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "'section(\"...\")' applies to a top-level 'const', 'static' or 'fun', found {:?}",
-                        self.peek_kind()
+                        "'section(\"...\")' applies to a top-level 'const', 'static' or 'fun', found {}",
+                        self.peek_kind().describe()
                     ),
                     span: self.peek().span,
                 });
@@ -513,8 +513,8 @@ impl Parser {
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "'align(N)' applies to a top-level 'fun', found {:?}",
-                        self.peek_kind()
+                        "'align(N)' applies to a top-level 'fun', found {}",
+                        self.peek_kind().describe()
                     ),
                     span: self.peek().span,
                 });
@@ -774,8 +774,8 @@ impl Parser {
             _ => Err(ParseError {
                 help: None,
                 message: format!(
-                    "'pub' applies to a top-level 'fun', 'extern fun', 'extern type', 'datac', 'enum', 'const' or 'static', found {:?}",
-                    self.peek_kind()
+                    "'pub' applies to a top-level 'fun', 'extern fun', 'extern type', 'datac', 'enum', 'const' or 'static', found {}",
+                    self.peek_kind().describe()
                 ),
                 span: pub_span.to(self.peek().span),
             }),
@@ -884,7 +884,7 @@ impl Parser {
             other => {
                 return Err(ParseError {
                     help: None,
-                    message: format!("expected a quoted module path after 'impl', found {other:?}"),
+                    message: format!("expected a quoted module path after 'impl', found {}", other.describe()),
                     span: self.peek().span,
                 })
             }
@@ -962,7 +962,7 @@ impl Parser {
                             return Err(ParseError {
                                 help: None,
                                 message: format!(
-                                    "expected a quoted path or host pattern, found {other:?}"
+                                    "expected a quoted path or host pattern, found {}", other.describe()
                                 ),
                                 span: self.peek().span,
                             })
@@ -1111,7 +1111,7 @@ impl Parser {
                     TokenKind::Const => "associated consts are not in this slice: a trait declares methods and associated types only"
                         .to_string(),
                     other => format!(
-                        "a trait body declares methods and associated types, so 'fun' or 'type' is expected here, found {other:?}"
+                        "a trait body declares methods and associated types, so 'fun' or 'type' is expected here, found {}", other.describe()
                     ),
                 };
                 return Err(ParseError {
@@ -1458,7 +1458,7 @@ impl Parser {
                         return Err(ParseError {
                             help: None,
                             message: format!(
-                                "expected an integer literal alignment in 'repr(align(N))', found {other:?}"
+                                "expected an integer literal alignment in 'repr(align(N))', found {}", other.describe()
                             ),
                             span: self.peek().span,
                         })
@@ -1534,7 +1534,7 @@ impl Parser {
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "expected a quoted section name in 'section(\"...\")', found {other:?}"
+                        "expected a quoted section name in 'section(\"...\")', found {}", other.describe()
                     ),
                     span: self.peek().span,
                 })
@@ -1600,7 +1600,7 @@ impl Parser {
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "expected an integer literal alignment in 'align(N)', found {other:?}"
+                        "expected an integer literal alignment in 'align(N)', found {}", other.describe()
                     ),
                     span: self.peek().span,
                 })
@@ -2017,7 +2017,7 @@ impl Parser {
                         return Err(ParseError {
                             help: None,
                             message: format!(
-                                "expected an integer literal discriminant after '=', found {other:?}"
+                                "expected an integer literal discriminant after '=', found {}", other.describe()
                             ),
                             span: self.peek().span,
                         })
@@ -2037,8 +2037,8 @@ impl Parser {
                     return Err(ParseError {
                         help: None,
                         message: format!(
-                            "expected a newline or '}}' after an enum variant, found {:?}",
-                            self.peek_kind()
+                            "expected a newline or '}}' after an enum variant, found {}",
+                            self.peek_kind().describe()
                         ),
                         span: self.peek().span,
                     });
@@ -2355,7 +2355,7 @@ impl Parser {
         } else {
             return Err(ParseError {
                 help: None,
-                message: format!("expected '=' or '{{', found {:?}", self.peek_kind()),
+                message: format!("expected '=' or '{{', found {}", self.peek_kind().describe()),
                 span: self.peek().span,
             });
         };
@@ -3067,8 +3067,8 @@ impl Parser {
                         return Err(ParseError {
                             help: Some("Kelp has no ';' between statements. Put the next statement on its own line.".to_string()),
                             message: format!(
-                                "expected a newline or '}}' after a statement, found {:?}",
-                                self.peek_kind()
+                                "expected a newline or '}}' after a statement, found {}",
+                                self.peek_kind().describe()
                             ),
                             span: self.peek().span,
                         });
@@ -3106,8 +3106,8 @@ impl Parser {
                     return Err(ParseError {
                         help: Some("Kelp has no ';' between statements. Put the next statement on its own line.".to_string()),
                         message: format!(
-                            "expected a newline or '}}' after a statement, found {:?}",
-                            self.peek_kind()
+                            "expected a newline or '}}' after a statement, found {}",
+                            self.peek_kind().describe()
                         ),
                         span: self.peek().span,
                     });
@@ -4033,7 +4033,7 @@ impl Parser {
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "expected a quoted instruction template in 'asm(\"...\", ...)', found {other:?}"
+                        "expected a quoted instruction template in 'asm(\"...\", ...)', found {}", other.describe()
                     ),
                     span: self.peek().span,
                 })
@@ -4055,7 +4055,7 @@ impl Parser {
                     return Err(ParseError {
                         help: None,
                         message: format!(
-                            "expected an asm operand ('in', 'out', 'inout', 'clobber') or an option word ('volatile', 'nomem', 'nostack'), found {other:?}"
+                            "expected an asm operand ('in', 'out', 'inout', 'clobber') or an option word ('volatile', 'nomem', 'nostack'), found {}", other.describe()
                         ),
                         span: self.peek().span,
                     })
@@ -4155,7 +4155,7 @@ impl Parser {
                 return Err(ParseError {
                     help: None,
                     message: format!(
-                        "expected a quoted constraint in '{kind}(\"...\")', found {other:?}"
+                        "expected a quoted constraint in '{kind}(\"...\")', found {}", other.describe()
                     ),
                     span: self.peek().span,
                 })
@@ -4400,7 +4400,7 @@ impl Parser {
                     return Err(ParseError {
                         help: None,
                         message: format!(
-                            "malformed string template: expected literal text or '${{expr}}', found {other:?}"
+                            "malformed string template: expected literal text or '${{expr}}', found {}", other.describe()
                         ),
                         span: self.peek().span,
                     })

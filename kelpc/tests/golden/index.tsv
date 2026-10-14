@@ -292,7 +292,7 @@ fixture_fn_value	ran	exit 0		167ada4a94d32af9a94054d2e22098232245074c76b6e746bd9
 fixture_fn_value_amp	c-refused		error: '&' cannot be written on the function type 'fun(i32).return	
 fixture_fn_value_arity	c-refused		error: a call through 'f' takes 1 argument(s), found 2	
 fixture_fn_value_borrow	c-refused		error: 'mut' cannot be written on the function type 'fun(i32).return	
-fixture_fn_value_call_result	c-refused		error: expected ')', found LParen	
+fixture_fn_value_call_result	c-refused		error: expected ')', found '('	
 fixture_fn_value_element	c-refused		error: 'fun(i32).return	
 fixture_fn_value_generic	c-refused		error: 'first' is a generic function — a function value needs one concrete signature, so wrap the call in a small non-generic function and pass that	
 fixture_fn_value_main	c-refused		error: cannot reference 'main'	

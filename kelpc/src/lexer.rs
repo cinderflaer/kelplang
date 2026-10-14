@@ -216,6 +216,101 @@ pub enum TokenKind {
     Eof,
 }
 
+impl TokenKind {
+    /// The token as a reader would write it in the source, for a parse error
+    /// (`found ';'`, `found 'fun'`, `found end of file`). A literal or a name
+    /// shows its text, so a message never prints a Rust debug name.
+    pub fn describe(&self) -> String {
+        let text = match self {
+            TokenKind::IntLit(n) => return n.to_string(),
+            TokenKind::FloatLit(f) => return f.to_string(),
+            TokenKind::StringLit(s) => return format!("{s:?}"),
+            TokenKind::CharLit(c) => {
+                return match char::from_u32(*c) {
+                    Some(ch) => format!("'{ch}'"),
+                    None => format!("character {c:#x}"),
+                };
+            }
+            TokenKind::ByteLit(b) => return format!("b'{}'", *b as char),
+            TokenKind::Label(name) => return format!("'{name}"),
+            TokenKind::Ident(name) => return format!("'{name}'"),
+            TokenKind::Comment(_) => "a comment",
+            TokenKind::TemplateStart | TokenKind::TemplateEnd => "a string template",
+            TokenKind::StrChunk(_) => "text in a string template",
+            TokenKind::TemplateExprStart => "'${'",
+            TokenKind::TemplateExprEnd => "'}'",
+            TokenKind::Fun => "'fun'",
+            TokenKind::Closure => "'closure'",
+            TokenKind::Val => "'val'",
+            TokenKind::Var => "'var'",
+            TokenKind::Mut => "'mut'",
+            TokenKind::Move => "'move'",
+            TokenKind::If => "'if'",
+            TokenKind::Else => "'else'",
+            TokenKind::Elif => "'elif'",
+            TokenKind::While => "'while'",
+            TokenKind::For => "'for'",
+            TokenKind::When => "'when'",
+            TokenKind::Defer => "'defer'",
+            TokenKind::Errdefer => "'errdefer'",
+            TokenKind::Return => "'return'",
+            TokenKind::True => "'true'",
+            TokenKind::False => "'false'",
+            TokenKind::Datac => "'datac'",
+            TokenKind::Enum => "'enum'",
+            TokenKind::Pd => "'pd'",
+            TokenKind::Impl => "'impl'",
+            TokenKind::Trait => "'trait'",
+            TokenKind::As => "'as'",
+            TokenKind::Const => "'const'",
+            TokenKind::Static => "'static'",
+            TokenKind::Extern => "'extern'",
+            TokenKind::Pub => "'pub'",
+            TokenKind::LParen => "'('",
+            TokenKind::RParen => "')'",
+            TokenKind::LBrace => "'{'",
+            TokenKind::RBrace => "'}'",
+            TokenKind::LBracket => "'['",
+            TokenKind::RBracket => "']'",
+            TokenKind::Comma => "','",
+            TokenKind::Semi => "';'",
+            TokenKind::Colon => "':'",
+            TokenKind::ColonColon => "'::'",
+            TokenKind::Dot => "'.'",
+            TokenKind::DotDotDot => "'...'",
+            TokenKind::Arrow => "'=>'",
+            TokenKind::Newline => "end of line",
+            TokenKind::Eq => "'='",
+            TokenKind::EqEq => "'=='",
+            TokenKind::NotEq => "'!='",
+            TokenKind::Lt => "'<'",
+            TokenKind::LtEq => "'<='",
+            TokenKind::Gt => "'>'",
+            TokenKind::GtEq => "'>='",
+            TokenKind::Plus => "'+'",
+            TokenKind::Minus => "'-'",
+            TokenKind::Star => "'*'",
+            TokenKind::Slash => "'/'",
+            TokenKind::Percent => "'%'",
+            TokenKind::PlusEq => "'+='",
+            TokenKind::MinusEq => "'-='",
+            TokenKind::StarEq => "'*='",
+            TokenKind::SlashEq => "'/='",
+            TokenKind::PercentEq => "'%='",
+            TokenKind::AndAnd => "'&&'",
+            TokenKind::OrOr => "'||'",
+            TokenKind::Bang => "'!'",
+            TokenKind::Amp => "'&'",
+            TokenKind::Pipe => "'|'",
+            TokenKind::Caret => "'^'",
+            TokenKind::Tilde => "'~'",
+            TokenKind::Question => "'?'",
+            TokenKind::Eof => "end of file",
+        };
+        text.to_string()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
@@ -845,7 +940,7 @@ impl<'a> Lexer<'a> {
                             // A trailing identifier character is a suffix or a
                             // separator, and a literal in this language has
                             // neither: its width comes from its context (2.4).
-                            // Saying so beats the parser's "found Ident("u8")".
+                            // Saying so beats the parser's "found 'u8'".
                             if let Some(c) = self.peek() {
                                 if c == b'_' {
                                     return Err(LexError {
@@ -2109,5 +2204,18 @@ mod tests {
     #[test]
     fn rejects_an_unterminated_interpolation() {
         assert!(Lexer::new("\"${x\"").tokenize().is_err());
+    }
+
+    #[test]
+    fn describes_a_token_as_its_source_text() {
+        assert_eq!(TokenKind::Semi.describe(), "';'");
+        assert_eq!(TokenKind::LBracket.describe(), "'['");
+        assert_eq!(TokenKind::Arrow.describe(), "'=>'");
+        assert_eq!(TokenKind::Fun.describe(), "'fun'");
+        assert_eq!(TokenKind::Newline.describe(), "end of line");
+        assert_eq!(TokenKind::Eof.describe(), "end of file");
+        assert_eq!(TokenKind::StringLit("a".to_string()).describe(), "\"a\"");
+        assert_eq!(TokenKind::Ident("count".to_string()).describe(), "'count'");
+        assert_eq!(TokenKind::IntLit(7).describe(), "7");
     }
 }

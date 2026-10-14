@@ -3045,7 +3045,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 
 | Message | Cause and fix |
 | --- | --- |
-| `expected 'fun', found Ident("fn")` | the keyword is `fun` |
+| `expected 'fun', found 'fn'` | the keyword is `fun` |
 | `expression-bodied function requires a '=> T' return type` | add `=> T`, or use a block body with `return` |
 | `if without an else branch must evaluate to 'unit'` | an `if`, `if let` or `when` used as a value needs an `else` arm |
 | `pattern 'Circle(a, b)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s)` | `if let` and a `when` arm bind one name per payload field, in order |

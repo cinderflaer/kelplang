@@ -3,6 +3,6 @@ backend: llvm
 build-status: 1
 --- build stdout
 --- build stderr
-error: expected ')', found LParen
+error: expected ')', found '('
   --> <root>/kelpc/tests/fixtures/fn_value_call_result.kp:9:17
 run-status: not run
