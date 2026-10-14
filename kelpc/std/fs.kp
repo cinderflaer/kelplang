@@ -82,7 +82,18 @@ extern fun utf8_valid_raw(data: &Bytes) => bool
 /// A point-in-time view of one path (MK5-S5). `mode` is the low 12 permission
 /// bits (`07777`), and `is_dir`/`is_file` are the two cases worth branching
 /// on.
-datac Metadata(val size: u64, val mtime: i64, val mode: u32, val is_dir: bool, val is_file: bool)
+datac Metadata(
+    /// The size in bytes.
+    val size: u64,
+    /// The last modification time, in seconds since the Unix epoch.
+    val mtime: i64,
+    /// The low 12 permission bits, as `set_mode` takes them.
+    val mode: u32,
+    /// Whether the path is a directory.
+    val is_dir: bool,
+    /// Whether the path is a regular file.
+    val is_file: bool
+)
 
 /// The whole file, as owned bytes.
 /// Panics: if the file cannot be read.
