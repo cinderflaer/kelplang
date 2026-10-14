@@ -115,11 +115,6 @@ enum ProcErr {
 /// Reading argv is itself behind the `process` gate: a grant with no patterns
 /// (`caps(process = [])`) is enough to name `process.args`, since there is
 /// no resource argument to match.
-// This process's own argv, including `argv[0]`.
-//
-// Reading argv is itself behind the `process` gate: a grant with no patterns
-// (`caps(process = [])`) is enough to name `process.args`, since there is
-// no resource argument to match.
 fun args() => List<String> {
     var out: List<String> = List.empty()
     val n = arg_count_raw()
@@ -157,29 +152,6 @@ fun arg_count() => usize = arg_count_raw()
 ///
 /// Panics: if `program` is not absolute, is outside the granted capability, or
 /// a pipe or the fork fails.
-// Starts `program` with `args` (not including the program itself), with the
-// child's working directory set to `dir`, and three fresh pipes. An empty
-// `dir` keeps the parent's working directory, and that is what `spawn` passes.
-//
-// `chdir` runs in the *child*, between `fork` and `exec`, so the parent's own
-// directory is unchanged and no grant pattern's meaning moves, which is what
-// makes a per-call directory expressible at all, given that v1 still has no
-// process-wide `chdir`. `dir` is not a resource and is not checked against the
-// grant: a child's working directory changes the meaning of its own relative
-// paths only, and every grant pattern is absolute. A `dir` the child cannot
-// enter ends the child with code **126** and a message on its stderr, before
-// `exec`; 126 is reserved for that case, the way 127 is reserved for a failed
-// `exec`.
-//
-// `program` is resolved by `execvp`, but the grant check has already refused
-// anything that is not absolute, so the `PATH` search never runs: the caller
-// passes the absolute path it resolved itself.
-//
-// A failed `exec` is not a panic here, the child reports it on its own stderr
-// and exits 127, which is what `run` returns as the code.
-//
-// Panics: if `program` is not absolute, is outside the granted capability, or
-// a pipe or the fork fails.
 fun spawn_in(dir: &str, program: &str, args: List<String>) => Child {
     var pid: i32 = 0
     var in_fd: i32 = 0
@@ -206,20 +178,17 @@ fun spawn_in(dir: &str, program: &str, args: List<String>) => Child {
 }
 
 /// As `spawn_in` with the parent's working directory.
-// As `spawn_in` with the parent's working directory.
 fun spawn(program: &str, args: List<String>) => Child = spawn_in("", program, args)
 
 /// Runs `program` to completion with its stdin closed and both output streams
 /// captured, from the working directory `dir` (empty means the parent's).
 ///
 /// Panics: as `spawn_in`. Two failures are *not* panics: a missing binary,
-// whose child `execvp` fails and exits 127, and a `dir` the child cannot enter,
-// which exits 126, both are returned as the code, with the reason on `err`.
-//
+/// whose child `execvp` fails and exits 127, and a `dir` the child cannot enter,
+/// which exits 126, both are returned as the code, with the reason on `err`.
+///
 /// `try_run_in` is the same call with `NotFound`, `NotExecutable` and
 /// `DirNotFound` as values instead.
-// `try_run_in` is the same call with `NotFound`, `NotExecutable` and
-// `DirNotFound` as values instead.
 fun run_in(dir: &str, program: &str, args: List<String>) => RunResult {
     var child = spawn_in(dir, program, args)
     child.stdin.close()
@@ -260,7 +229,6 @@ fun run_in(dir: &str, program: &str, args: List<String>) => RunResult {
 }
 
 /// As `run_in` with the parent's working directory.
-// As `run_in` with the parent's working directory.
 fun run(program: &str, args: List<String>) => RunResult = run_in("", program, args)
 
 /// As `run_in`, but the child inherits this process's stdin, stdout and stderr
@@ -271,14 +239,6 @@ fun run(program: &str, args: List<String>) => RunResult = run_in("", program, ar
 /// The parent's buffered output is flushed before the fork.
 ///
 /// Panics: as `run_in`.
-// As `run_in`, but the child inherits this process's stdin, stdout and stderr
-// instead of getting pipes: its output appears as it is written, its two
-// streams interleave in the order it wrote them, and a child that asks
-// `isatty` sees what the parent sees. Nothing is captured, so the returned
-// `out` and `err` are empty; `code` and `signal` are the child's, as for `run`.
-// The parent's buffered output is flushed before the fork.
-//
-// Panics: as `run_in`.
 fun run_inherit_in(dir: &str, program: &str, args: List<String>) => RunResult {
     var pid: i32 = 0
     spawn_inherit_raw(dir, program, args, pid = pid)
@@ -288,7 +248,6 @@ fun run_inherit_in(dir: &str, program: &str, args: List<String>) => RunResult {
 }
 
 /// As `run_inherit_in` with the parent's working directory.
-// As `run_inherit_in` with the parent's working directory.
 fun run_inherit(program: &str, args: List<String>) => RunResult = run_inherit_in("", program, args)
 
 /// Whether `program` is a regular file that could be executed: it exists, it is
@@ -298,13 +257,6 @@ fun run_inherit(program: &str, args: List<String>) => RunResult = run_inherit_in
 ///
 /// Because it takes a path, naming a program here is checked against the grant
 /// like every other resource argument.
-// Whether `program` is a regular file that could be executed: it exists, it is
-// not a directory or a dangling link, and it carries an execute bit for this
-// process. This is the pre-check `try_run` makes, and it is not the capability
-// check, that one is the compiler's, at the call site.
-//
-// Because it takes a path, naming a program here is checked against the grant
-// like every other resource argument.
 fun executable(program: &str) => bool = executable_raw(program)
 
 /// As `run_in`, with the reason a program could not be started as a value
@@ -315,14 +267,6 @@ fun executable(program: &str) => bool = executable_raw(program)
 ///
 /// Panics: a `program` outside the granted capability (or a relative one, which
 /// the check refuses), and a pipe or fork failure.
-// As `run_in`, with the reason a program could not be started as a value
-// instead of a panic. The three pre-checks run before the fork, so an `Err`
-// always means the child never started; a program that starts and exits
-// nonzero is still an `Ok` carrying its code. An empty `dir` skips the
-// directory check, the same way it skips `chdir`.
-//
-// Panics: a `program` outside the granted capability (or a relative one, which
-// the check refuses), and a pipe or fork failure.
 fun try_run_in(dir: &str, program: &str, args: List<String>) => result.Result<RunResult, ProcErr> {
     if !str.is_empty(dir) && !is_dir_raw(dir) {
         return result.Result.Err(error = ProcErr.DirNotFound)
@@ -337,7 +281,6 @@ fun try_run_in(dir: &str, program: &str, args: List<String>) => result.Result<Ru
 }
 
 /// As `try_run_in` with the parent's working directory.
-// As `try_run_in` with the parent's working directory.
 fun try_run(program: &str, args: List<String>) => result.Result<RunResult, ProcErr> = try_run_in("", program, args)
 
 /// Blocks until the child exits and returns its code: the exit status, or
@@ -345,11 +288,6 @@ fun try_run(program: &str, args: List<String>) => result.Result<RunResult, ProcE
 /// A second call returns the first result rather than waiting again.
 ///
 /// Panics: if `waitpid` fails.
-// Blocks until the child exits and returns its code: the exit status, or
-// `128 + signal` when it was killed (`signal` then holds the signal number). A second call returns the first result
-// rather than waiting again.
-//
-// Panics: if `waitpid` fails.
 fun mut Child.wait() => i32 {
     if exited {
         return code
@@ -366,11 +304,6 @@ fun mut Child.wait() => i32 {
 /// code without blocking.
 ///
 /// Panics: if `waitpid` fails.
-// Whether the child still runs. This is a non-blocking `waitpid`, so it also
-// *observes* an exit, after it returns false, `wait` returns the recorded
-// code without blocking.
-//
-// Panics: if `waitpid` fails.
 fun mut Child.is_running() => bool {
     if exited {
         return false
