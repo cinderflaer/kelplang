@@ -15,6 +15,7 @@ mod extern_object;
 mod escape;
 mod externs;
 mod fmt;
+mod foreign;
 mod freestanding;
 mod gc_descr;
 mod guard;

@@ -230,3 +230,148 @@ fn json_carries_the_help_key_only_where_a_site_has_one() {
     let json = stdout_of(&check(&file, &["--json"]));
     assert!(!json.contains("\"help\""), "{json}");
 }
+
+// A word another language spells differently gets the Kelp word in the help
+// line. The first line is the message the site always printed; only the help
+// text is new. The help strings below are the table in `src/foreign.rs`.
+
+const FN_HELP: &str = "fn is not Kelp: write fun name(params) => type { ... }, or fun name(params) { ... } when nothing is returned";
+const DEF_HELP: &str = "def is not Kelp: write fun name(params) => type { ... }, or fun name(params) { ... } when nothing is returned";
+const STRUCT_HELP: &str = "struct is not Kelp: a record is datac Name(val x: i32, val y: i32)";
+const LET_HELP: &str = "let is not Kelp: write val x = 5, or var x = 5 if the value changes";
+const MATCH_HELP: &str = "there is no match: use when x { ... } with one arm for each case";
+const NULL_HELP: &str = "Kelp has no null: an absent value is option.Option.None, after impl \"std/option\"";
+const NONE_HELP: &str = "None is not a Kelp value: an absent value is option.Option.None, after impl \"std/option\"";
+const TRUE_HELP: &str = "True is not Kelp: write true";
+const PRINTLN_HELP: &str = "did you mean print? print adds the line end, so print(\"x\") needs no newline argument";
+const AS_HELP: &str = "there is no as: convert with a method, such as x.to_i64()";
+const INT_HELP: &str = "int is not a Kelp type: write i64, or i32 for a 32-bit integer";
+const STRING_HELP: &str = "string is not a Kelp type: write String, the text type";
+const ELSEIF_HELP: &str = "elseif is not Kelp: write else if";
+
+#[test]
+fn let_as_a_statement_gets_the_kelp_word() {
+    let dir = scratch("foreign-let");
+    let file = write(&dir, "main.kp", "fun main() {\n    let x = 5\n    print(x)\n}\n");
+    assert_site(
+        &check(&file, &[]),
+        "let-else: 'x' is a plain name, which always matches",
+        LET_HELP,
+    );
+}
+
+#[test]
+fn fn_at_the_top_level_gets_the_kelp_word() {
+    let dir = scratch("foreign-fn");
+    let file = write(&dir, "main.kp", "fn main() {\n    print(1)\n}\n");
+    assert_site(&check(&file, &[]), "expected 'fun', found ", FN_HELP);
+}
+
+#[test]
+fn def_at_the_top_level_gets_the_kelp_word() {
+    let dir = scratch("foreign-def");
+    let file = write(&dir, "main.kp", "def main() {\n    print(1)\n}\n");
+    assert_site(&check(&file, &[]), "expected 'fun', found ", DEF_HELP);
+}
+
+#[test]
+fn struct_at_the_top_level_gets_the_kelp_word() {
+    let dir = scratch("foreign-struct");
+    let file = write(
+        &dir,
+        "main.kp",
+        "struct P {\n    x: i32\n}\n\nfun main() {\n    print(1)\n}\n",
+    );
+    assert_site(&check(&file, &[]), "expected 'fun', found ", STRUCT_HELP);
+}
+
+#[test]
+fn match_as_a_statement_gets_the_kelp_word() {
+    let dir = scratch("foreign-match");
+    let file = write(
+        &dir,
+        "main.kp",
+        "fun main() {\n    val x = 1\n    match x {\n    }\n}\n",
+    );
+    assert_site(
+        &check(&file, &[]),
+        "expected a newline or '}' after a statement, found ",
+        MATCH_HELP,
+    );
+}
+
+#[test]
+fn null_as_a_name_gets_the_kelp_word() {
+    let dir = scratch("foreign-null");
+    let file = write(&dir, "main.kp", "fun main() {\n    val x = null\n    print(x)\n}\n");
+    assert_site(&check(&file, &[]), "undefined variable 'null'", NULL_HELP);
+}
+
+#[test]
+fn none_as_a_name_gets_the_kelp_word() {
+    let dir = scratch("foreign-none");
+    let file = write(&dir, "main.kp", "fun main() {\n    val x = None\n    print(x)\n}\n");
+    assert_site(&check(&file, &[]), "undefined variable 'None'", NONE_HELP);
+}
+
+#[test]
+fn true_with_a_capital_gets_the_kelp_word() {
+    let dir = scratch("foreign-true");
+    let file = write(&dir, "main.kp", "fun main() {\n    val x = True\n    print(x)\n}\n");
+    assert_site(&check(&file, &[]), "undefined variable 'True'", TRUE_HELP);
+}
+
+#[test]
+fn println_gets_print_as_the_did_you_mean() {
+    let dir = scratch("foreign-println");
+    let file = write(&dir, "main.kp", "fun main() {\n    println(\"x\")\n}\n");
+    assert_site(
+        &check(&file, &[]),
+        "call to undefined function 'println'",
+        PRINTLN_HELP,
+    );
+}
+
+#[test]
+fn as_in_a_call_gets_the_kelp_word() {
+    let dir = scratch("foreign-as");
+    let file = write(
+        &dir,
+        "main.kp",
+        "fun main() {\n    val x = 1\n    print(x as i64)\n}\n",
+    );
+    assert_site(&check(&file, &[]), "expected ')', found ", AS_HELP);
+}
+
+#[test]
+fn int_as_a_type_gets_the_kelp_type() {
+    let dir = scratch("foreign-int");
+    let file = write(&dir, "main.kp", "fun main() {\n    val n: int = 5\n    print(n)\n}\n");
+    assert_site(&check(&file, &[]), "unknown type 'int'", INT_HELP);
+}
+
+#[test]
+fn string_as_a_type_gets_the_kelp_type() {
+    let dir = scratch("foreign-string");
+    let file = write(
+        &dir,
+        "main.kp",
+        "fun main() {\n    val s: string = \"a\"\n    print(s)\n}\n",
+    );
+    assert_site(&check(&file, &[]), "unknown type 'string'", STRING_HELP);
+}
+
+#[test]
+fn elseif_gets_the_else_if_spelling() {
+    let dir = scratch("foreign-elseif");
+    let file = write(
+        &dir,
+        "main.kp",
+        "fun main() {\n    val x = 1\n    if x > 1 {\n        print(1)\n    } elseif x > 0 {\n        print(2)\n    }\n}\n",
+    );
+    assert_site(
+        &check(&file, &[]),
+        "expected a newline or '}' after a statement, found ",
+        ELSEIF_HELP,
+    );
+}

@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::foreign;
 use crate::lexer::{Span, Token, TokenKind};
 
 pub struct Parser {
@@ -322,6 +323,13 @@ impl Parser {
         &self.tokens[self.pos].kind
     }
 
+    /// The foreign-word hint for the token at `idx`, when that token is a word
+    /// another language spells differently (`fn`, `null`, `as`). Only error
+    /// sites read it, so it never changes what compiles.
+    fn foreign_hint_at(&self, idx: usize) -> Option<String> {
+        self.tokens.get(idx).and_then(|tok| foreign_hint_for(&tok.kind))
+    }
+
     /// The kind of the token one past the current one (`Eof` past the end).
     fn peek2_kind(&self) -> TokenKind {
         self.tokens
@@ -347,7 +355,7 @@ impl Parser {
             Ok(self.advance())
         } else {
             Err(ParseError {
-                help: None,
+                help: self.foreign_hint_at(self.pos),
                 message: format!("expected {what}, found {}", self.peek_kind().describe()),
                 span: self.peek().span,
             })
@@ -362,7 +370,7 @@ impl Parser {
                 Ok((name, span))
             }
             other => Err(ParseError {
-                help: None,
+                help: self.foreign_hint_at(self.pos),
                 message: format!("expected identifier, found {}", other.describe()),
                 span: self.peek().span,
             }),
@@ -2354,7 +2362,7 @@ impl Parser {
             FunctionBody::Block(self.parse_block()?)
         } else {
             return Err(ParseError {
-                help: None,
+                help: self.foreign_hint_at(self.pos),
                 message: format!("expected '=' or '{{', found {}", self.peek_kind().describe()),
                 span: self.peek().span,
             });
@@ -3048,6 +3056,15 @@ impl Parser {
         })
     }
 
+    /// The help line for "expected a newline or '}' after a statement": the
+    /// foreign word at the stray token or the one just before it (`let x = 5`
+    /// stops at `x`, after `let`), else the statement rule.
+    fn statement_end_hint(&self) -> Option<String> {
+        self.foreign_hint_at(self.pos)
+            .or_else(|| self.pos.checked_sub(1).and_then(|prev| self.foreign_hint_at(prev)))
+            .or_else(|| Some("Kelp has no ';' between statements. Put the next statement on its own line.".to_string()))
+    }
+
     /// The statements of a block up to, not including, its closing `}`.
     ///
     /// A `let PATTERN = EXPR else { BLOCK }` takes every statement after it
@@ -3065,7 +3082,7 @@ impl Parser {
                 if !self.check(&TokenKind::RBrace) {
                     if !self.check(&TokenKind::Newline) {
                         return Err(ParseError {
-                            help: Some("Kelp has no ';' between statements. Put the next statement on its own line.".to_string()),
+                            help: self.statement_end_hint(),
                             message: format!(
                                 "expected a newline or '}}' after a statement, found {}",
                                 self.peek_kind().describe()
@@ -3104,7 +3121,7 @@ impl Parser {
             if !self.check(&TokenKind::RBrace) {
                 if !self.check(&TokenKind::Newline) {
                     return Err(ParseError {
-                        help: Some("Kelp has no ';' between statements. Put the next statement on its own line.".to_string()),
+                        help: self.statement_end_hint(),
                         message: format!(
                             "expected a newline or '}}' after a statement, found {}",
                             self.peek_kind().describe()
@@ -4317,7 +4334,7 @@ impl Parser {
             TokenKind::If => self.parse_if(),
             TokenKind::When => self.parse_when(),
             other => Err(ParseError {
-                help: None,
+                help: foreign_hint_for(&other),
                 message: format!("unexpected token {other:?}"),
                 span: tok.span,
             }),
@@ -4521,7 +4538,7 @@ impl Parser {
         let (name, nspan) = self.expect_ident()?;
         if !self.check(&TokenKind::LParen) && self.check(&TokenKind::Eq) {
             return Err(ParseError {
-                help: None,
+                help: foreign::hint("let"),
                 message: format!(
                     "let-else: '{name}' is a plain name, which always matches, so the else block could never run. Fix: write 'val {name} = ...' with no else, or match an enum variant such as 'Some({name})' here"
                 ),
@@ -7058,5 +7075,15 @@ mod tests {
         assert_eq!(p.functions.len(), 1);
         let p = parse("fun main() {\n    val continue = 3\n    print(continue + 1)\n}");
         assert_eq!(p.functions.len(), 1);
+    }
+}
+
+/// The foreign-word hint for a token kind: an identifier that is another
+/// language's keyword or type name, or the `as` keyword.
+fn foreign_hint_for(kind: &TokenKind) -> Option<String> {
+    match kind {
+        TokenKind::Ident(name) => foreign::hint(name),
+        TokenKind::As => foreign::hint("as"),
+        _ => None,
     }
 }

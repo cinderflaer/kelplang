@@ -2069,7 +2069,7 @@ impl TypeScope<'_> {
             }
         } else {
             Err(TypeError {
-                help: None,
+                help: crate::foreign::hint(&ty.name),
                 message: match qualified_hint(
                     &ty.name,
                     self.structs.keys(),
@@ -13393,7 +13393,10 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 }
             }
             Err(TypeError {
-                help: (ctx.foreign_pds.get(name).is_none() && ctx.init_state.is_none()).then(|| "declare it with val or var before this line, or check the spelling.".to_string()),
+                help: crate::foreign::hint(name).or_else(|| {
+                    (ctx.foreign_pds.get(name).is_none() && ctx.init_state.is_none())
+                        .then(|| "declare it with val or var before this line, or check the spelling.".to_string())
+                }),
                 message: match ctx.foreign_pds.get(name) {
                     Some(module) => format!(
                         "'{name}' is a passdown of module '{module}' - a passdown is only visible inside the module that declares it"
@@ -17866,7 +17869,9 @@ fn check_call(
                     }
                     None => {
                         return Err(TypeError {
-                            help: Some(format!("declare fun {callee} before this call, or import the module that declares it.")),
+                            help: crate::foreign::hint(callee).or_else(|| {
+                                Some(format!("declare fun {callee} before this call, or import the module that declares it."))
+                            }),
                             message: match qualified_hint(
                                 callee,
                                 ctx.structs
