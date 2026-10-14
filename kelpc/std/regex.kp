@@ -27,109 +27,213 @@ impl "std/result"
    allocates nothing per input byte. That scratch is state a match writes, so
    every matching method takes the `Regex` exclusively (`var re = ...`). */
 
+/// The longest pattern, in bytes, that `compile` accepts.
 const MAX_PATTERN: usize = 4096
+/// How deeply groups may nest. A deeper pattern is refused.
 const MAX_DEPTH: i32 = 100
+/// The largest count that a counted repeat `{n,m}` may name.
 const MAX_REPEAT: i32 = 1000
-// The compiled program may not exceed this many instructions (counted repeats
-// are expanded), and the scratch (instructions x capture slots) may not exceed
-// MAX_SCRATCH slots, which bounds a compiled regex to about 16 MiB.
+/// The most instructions that a compiled program may hold.
+/// The compiled program may not exceed this many instructions (counted repeats
+/// are expanded), and the scratch (instructions x capture slots) may not exceed
+/// MAX_SCRATCH slots, which bounds a compiled regex to about 16 MiB.
 const MAX_PROG: usize = 50000
+/// The most scratch slots (instructions times capture slots) that a compiled
+/// regex may hold.
 const MAX_SCRATCH: usize = 2000000
 
+/// Opcode: match the byte in `ax`.
 const OP_CHAR: i32 = 0
+/// Opcode: match the byte in `ax` ignoring ASCII case. `ax` holds the lowercase
+/// byte.
 const OP_CHARF: i32 = 1
+/// Opcode: match any byte except a newline.
 const OP_ANY: i32 = 2
+/// Opcode: match any byte.
 const OP_ANYALL: i32 = 3
+/// Opcode: match a byte in the class whose bitmap starts at `ax` times 32.
 const OP_CLASS: i32 = 4
+/// Opcode: fork into two threads. `ax` is the first, higher priority, thread.
 const OP_SPLIT: i32 = 5
+/// Opcode: continue at the instruction `ax`.
 const OP_JMP: i32 = 6
+/// Opcode: record the current position in capture slot `ax`.
 const OP_SAVE: i32 = 7
+/// Opcode: continue only where the zero-width assertion `ax` holds.
 const OP_ASSERT: i32 = 8
+/// Opcode: the pattern has matched.
 const OP_MATCH: i32 = 9
 
+/// Node kind: a concatenation. `na` heads the chain of its children.
 const N_CAT: i32 = 0
+/// Node kind: an alternation. `na` heads the chain of its branches.
 const N_ALT: i32 = 1
+/// Node kind: a repeat of `na` with minimum `nb` and maximum `nc`, where -1
+/// means no maximum. `nd` is 1 when greedy and 0 when lazy.
 const N_REP: i32 = 2
+/// Node kind: capture group number `nb` around `na`.
 const N_GROUP: i32 = 3
+/// Node kind: the literal byte `na`, folded to lowercase when `nb` is 1.
 const N_BYTE: i32 = 4
+/// Node kind: `.` without the `s` flag, which matches any byte but a newline.
 const N_ANY: i32 = 5
+/// Node kind: `.` with the `s` flag, which matches any byte.
 const N_ANYALL: i32 = 6
+/// Node kind: a character class, whose number is `na` in the class table.
 const N_CLASS: i32 = 7
+/// Node kind: the zero-width assertion `na`.
 const N_ASSERT: i32 = 8
 
+/// Assertion: the start of the text.
 const A_BOL: i32 = 0
+/// Assertion: the end of the text.
 const A_EOL: i32 = 1
+/// Assertion: the start of the text or just after a newline, for the `m` flag.
 const A_BOL_M: i32 = 2
+/// Assertion: the end of the text or just before a newline, for the `m` flag.
 const A_EOL_M: i32 = 3
+/// Assertion: a word boundary, as in `\b`.
 const A_WORD: i32 = 4
+/// Assertion: not a word boundary, as in `\B`.
 const A_NWORD: i32 = 5
 
+/// Flag bit: case-insensitive matching.
 const F_I: i32 = 1
+/// Flag bit: `.` also matches a newline.
 const F_S: i32 = 2
+/// Flag bit: `^` and `$` also match at newlines.
 const F_M: i32 = 4
 
-// Why a pattern was refused: what is wrong with it, and the byte offset in the
-// pattern where the parser noticed.
-datac RegexErr(val message: String, val offset: usize)
+/// The error that `compile` returns for a pattern it refuses.
+/// Why a pattern was refused: what is wrong with it, and the byte offset in the
+/// pattern where the parser noticed.
+datac RegexErr(
+    /// What is wrong with the pattern, in words.
+    val message: String,
+    /// The byte offset in the pattern where the problem was noticed.
+    val offset: usize,
+)
 
-// One match: the byte range `[start, end)` of the input and a copy of its text.
-datac Match(val start: usize, val end: usize, val text: String)
+/// One match: the byte range `[start, end)` of the input and a copy of its
+/// text.
+/// One match: the byte range `[start, end)` of the input and a copy of its text.
+datac Match(
+    /// The byte offset where the match begins.
+    val start: usize,
+    /// The byte offset just past the match.
+    val end: usize,
+    /// The matched bytes, as a string.
+    val text: String,
+)
 
-// The groups of one match. Group 0 is the whole match.
-datac Captures(val text: String, val slots: List<i32>)
+/// The groups of one match. Group 0 is the whole match.
+/// The groups of one match. Group 0 is the whole match.
+datac Captures(
+    /// The text that was searched.
+    val text: String,
+    /// The start and end byte offsets of each group, two entries per group,
+    /// with -1 for a group that did not take part.
+    val slots: List<i32>,
+)
 
-// The parser, the AST arena and the program under construction. The AST is
-// held in parallel lists (a node is an index), and the children of a
-// concatenation or an alternation are a chain linked through `nnext`, so that
-// neither the parser nor the emitter recurses on anything but nesting depth.
+/// The parser, the AST arena and the program under construction.
+/// The parser, the AST arena and the program under construction. The AST is
+/// held in parallel lists (a node is an index), and the children of a
+/// concatenation or an alternation are a chain linked through `nnext`, so that
+/// neither the parser nor the emitter recurses on anything but nesting depth.
 datac Parser(
+    /// The bytes of the pattern being parsed.
     val pat: List<u8>,
+    /// The next byte to read.
     var pos: usize,
+    /// Whether a problem has been noted. Parsing then stops.
     var failed: bool,
+    /// The message for the problem, once `failed` is set.
     var emsg: String,
+    /// The byte offset of the problem.
     var eoff: usize,
+    /// The current group nesting depth.
     var depth: i32,
+    /// The next capture group number. Group 0 is the whole match, so this
+    /// starts at 1.
     var ncap: i32,
+    /// The flags in force: `F_I`, `F_S` and `F_M` bits.
     var flags: i32,
+    /// The node kind of each AST node.
     var nk: List<i32>,
+    /// The first operand of each AST node: a child, a class number or a value,
+    /// by kind.
     var na: List<i32>,
+    /// The second operand of each AST node.
     var nb: List<i32>,
+    /// The third operand of each AST node.
     var nc: List<i32>,
+    /// The fourth operand of each AST node.
     var nd: List<i32>,
+    /// The next sibling in a concatenation or alternation chain, or -1 at the
+    /// end.
     var nnext: List<i32>,
+    /// The bitmaps of the character classes, 32 bytes (256 bits) each.
     var classes: List<u8>,
+    /// The opcode of each compiled instruction.
     var op: List<i32>,
+    /// The first operand of each compiled instruction.
     var ax: List<i32>,
+    /// The second operand of each compiled instruction.
     var ay: List<i32>
 )
 
-// A compiled pattern with its reusable scratch.
+/// A compiled pattern with its reusable scratch.
+/// A compiled pattern with its reusable scratch.
 datac Regex(
+    /// The opcode of each instruction.
     val op: List<i32>,
+    /// The first operand of each instruction.
     val ax: List<i32>,
+    /// The second operand of each instruction.
     val ay: List<i32>,
+    /// The bitmaps of the character classes, 32 bytes each.
     val classes: List<u8>,
+    /// The number of capture groups, including group 0.
     val ngroups: usize,
+    /// Scratch: the program counters of the two thread lists.
     var tl_pc: List<i32>,
+    /// Scratch: the capture slots of each thread in the thread lists.
     var tl_cap: List<i32>,
+    /// Scratch: how many threads each thread list holds.
     var cnt: List<usize>,
+    /// Scratch: the generation in which each instruction was last added to a
+    /// list.
     var mark: List<i64>,
+    /// Scratch: the current generation. Bumping it clears `mark` without a
+    /// sweep.
     var gen: i64,
+    /// Scratch: the explicit stack of `add_thread`, holding instructions and
+    /// capture restores.
     var stk_a: List<i32>,
+    /// Scratch: the saved slot values on the stack of `add_thread`.
     var stk_b: List<i32>,
+    /// Scratch: the capture slots of the thread being advanced.
     var wcap: List<i32>,
+    /// The capture slots of the last match, with -1 where a slot is unset.
     var res: List<i32>,
+    /// The VM steps taken so far. See `steps`.
     var nsteps: i64
 )
 
+/// Whether `b` is an ASCII letter, digit or underscore, the bytes that `\w`
+/// matches.
 fun is_word_byte(b: u8) => bool {
     return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
+/// Whether `b` is ASCII white space: a space, or a byte from tab to carriage
+/// return.
 fun is_space_byte(b: u8) => bool {
     return b == 32 || (b >= 9 && b <= 13)
 }
 
+/// The value of the hexadecimal digit `c`, or -1 when `c` is not one.
 fun hex_value(c: u8) => i32 {
     if c >= '0' && c <= '9' {
         return (c - '0').to_i32()
@@ -143,11 +247,14 @@ fun hex_value(c: u8) => i32 {
     return -1
 }
 
+/// Whether `c` begins a repeat operator: `*`, `+`, `?` or `{`.
 fun is_quant_byte(c: u8) => bool = c == '*' || c == '+' || c == '?' || c == '{'
 
 // ---------------------------------------------------------------------------
 // Parser
 
+/// Notes the first problem, with its message and byte offset. Later calls
+/// change nothing.
 fun mut Parser.fail(msg: &str, off: usize) {
     if !failed {
         failed = true
@@ -156,6 +263,7 @@ fun mut Parser.fail(msg: &str, off: usize) {
     }
 }
 
+/// Adds an AST node with the given kind and operands, and returns its index.
 fun mut Parser.node(kind: i32, a: i32, b: i32, c: i32, d: i32) => i32 {
     nk.push(kind)
     na.push(a)
@@ -166,6 +274,7 @@ fun mut Parser.node(kind: i32, a: i32, b: i32, c: i32, d: i32) => i32 {
     return (nk.len() - 1).to_i32()
 }
 
+/// Adds an empty character class and returns its number.
 fun mut Parser.new_class() => i32 {
     val idx = classes.len() / 32
     var i: usize = 0
@@ -176,19 +285,23 @@ fun mut Parser.new_class() => i32 {
     return idx.to_i32()
 }
 
+/// Sets bit `b` in the class whose bitmap starts at byte `base`.
 fun mut Parser.set_bit(base: usize, b: usize) {
     val at = base + (b >> 3)
     val m: u8 = 1 << (b & 7).to_u8()
     classes.set(at, classes.get(at) | m)
 }
 
+/// Whether bit `b` is set in the class whose bitmap starts at byte `base`.
 fun Parser.has_bit(base: usize, b: usize) => bool {
     val m: u8 = 1 << (b & 7).to_u8()
     return classes.get(base + (b >> 3)) & m != 0
 }
 
-// Adds the bytes of `\d`, `\w` or `\s` (`kind` is the letter), or of the
-// complement for `\D \W \S`, to the class at `base`.
+/// Adds the bytes of one predefined class (`d`, `w` or `s`, or the complement
+/// when `negate` is set) to a class.
+/// Adds the bytes of `\d`, `\w` or `\s` (`kind` is the letter), or of the
+/// complement for `\D \W \S`, to the class at `base`.
 fun mut Parser.add_pred(base: usize, kind: u8, negate: bool) {
     var b: usize = 0
     while b < 256 {
@@ -208,8 +321,10 @@ fun mut Parser.add_pred(base: usize, kind: u8, negate: bool) {
     }
 }
 
-// An ASCII case fold of a finished class: every letter whose other case is in
-// the class gets added.
+/// Adds the other case of every ASCII letter in the class at `base`, so
+/// matching ignores case.
+/// An ASCII case fold of a finished class: every letter whose other case is in
+/// the class gets added.
 fun mut Parser.fold_class(base: usize) {
     var c: usize = 97
     while c <= 122 {
@@ -221,6 +336,8 @@ fun mut Parser.fold_class(base: usize) {
     }
 }
 
+/// Complements the class at `base`, so a byte it held is dropped and any other
+/// is added.
 fun mut Parser.invert_class(base: usize) {
     var i: usize = 0
     while i < 32 {
@@ -229,10 +346,12 @@ fun mut Parser.invert_class(base: usize) {
     }
 }
 
-// The byte an escape that is a single byte stands for, after the backslash at
-// `at`; -1 when it is not one (the caller decides what that means). Leaves
-// `pos` just past what it consumed. `in_class` allows only what a class may
-// hold.
+/// The byte that the escape at `at` stands for. -2 means the escape is not a
+/// single byte, and -1 means a failure.
+/// The byte an escape that is a single byte stands for, after the backslash at
+/// `at`; -1 when it is not one (the caller decides what that means). Leaves
+/// `pos` just past what it consumed. `in_class` allows only what a class may
+/// hold.
 fun mut Parser.escape_byte(at: usize) => i32 {
     val n = pat.len()
     if at + 1 >= n {
@@ -272,6 +391,8 @@ fun mut Parser.escape_byte(at: usize) => i32 {
     return -2
 }
 
+/// Notes the failure for the unknown escape at `at`, and names it in the
+/// message.
 fun mut Parser.bad_escape(at: usize) {
     val c = pat.get(at + 1)
     var msg = String.from_str("invalid escape '\\")
@@ -284,8 +405,10 @@ fun mut Parser.bad_escape(at: usize) {
     self.fail(msg.as_str(), at)
 }
 
-// One item of a character class: a byte (0..255), or -1 when it was a `\d`-style
-// set that has been added to the class directly (or on failure).
+/// Reads one item of a class at `pos` and returns its byte. Returns -1 when the
+/// item was a predefined set that was added directly.
+/// One item of a character class: a byte (0..255), or -1 when it was a `\d`-style
+/// set that has been added to the class directly (or on failure).
 fun mut Parser.class_atom(base: usize) => i32 {
     val at = pos
     val c = pat.get(at)
@@ -314,6 +437,8 @@ fun mut Parser.class_atom(base: usize) => i32 {
     return b
 }
 
+/// Parses a bracketed class that starts at `pos`, and returns its node or -1 on
+/// failure.
 fun mut Parser.parse_class() => i32 {
     val n = pat.len()
     val open = pos
@@ -369,6 +494,8 @@ fun mut Parser.parse_class() => i32 {
     return self.node(N_CLASS, ci, 0, 0, 0)
 }
 
+/// Parses an escape that is outside a class, and returns its node or -1 on
+/// failure.
 fun mut Parser.parse_escape() => i32 {
     val at = pos
     val n = pat.len()
@@ -406,7 +533,8 @@ fun mut Parser.parse_escape() => i32 {
     return self.byte_node(b.to_u8())
 }
 
-// A literal byte, folded when the case-insensitive flag is on.
+/// Makes the node for the literal byte `b`.
+/// A literal byte, folded when the case-insensitive flag is on.
 fun mut Parser.byte_node(b: u8) => i32 {
     var f: i32 = 0
     var v = b
@@ -421,8 +549,10 @@ fun mut Parser.byte_node(b: u8) => i32 {
     return self.node(N_BYTE, v.to_i32(), f, 0, 0)
 }
 
-// `(` ... `)`. Returns a node, or -2 for a flag group `(?i)` that makes no
-// node, or -1 on failure.
+/// Parses a group that starts at `(`. Returns its node, -2 for a flag group, or
+/// -1 on failure.
+/// `(` ... `)`. Returns a node, or -2 for a flag group `(?i)` that makes no
+/// node, or -1 on failure.
 fun mut Parser.parse_group() => i32 {
     val n = pat.len()
     val open = pos
@@ -523,6 +653,7 @@ fun mut Parser.parse_group() => i32 {
     return self.node(N_GROUP, inner, cap, 0, 0)
 }
 
+/// Reads a decimal number at `pos`, capped at 100000, and returns it.
 fun mut Parser.parse_number() => i32 {
     var v: i32 = 0
     val n = pat.len()
@@ -535,7 +666,9 @@ fun mut Parser.parse_number() => i32 {
     return v
 }
 
-// The repeat operators after an atom.
+/// Applies a repeat operator after `atom`, if one follows, and returns the
+/// repeat node.
+/// The repeat operators after an atom.
 fun mut Parser.parse_quant(atom: i32) => i32 {
     val n = pat.len()
     if pos >= n {
@@ -597,7 +730,9 @@ fun mut Parser.parse_quant(atom: i32) => i32 {
     return self.node(N_REP, atom, mn, mx, greedy)
 }
 
-// One atom, or -2 for a flag group, or -1 on failure.
+/// Parses one atom at `pos`: a group, class, escape, anchor, `.` or literal
+/// byte.
+/// One atom, or -2 for a flag group, or -1 on failure.
 fun mut Parser.parse_atom() => i32 {
     val n = pat.len()
     val c = pat.get(pos)
@@ -652,6 +787,7 @@ fun mut Parser.parse_atom() => i32 {
     return self.byte_node(c)
 }
 
+/// Parses a concatenation up to a `|`, a `)` or the end, and returns its node.
 fun mut Parser.parse_cat() => i32 {
     val n = pat.len()
     val head = self.node(N_CAT, -1, 0, 0, 0)
@@ -679,6 +815,7 @@ fun mut Parser.parse_cat() => i32 {
     return head
 }
 
+/// Parses alternatives separated by `|`, and returns the node for them.
 fun mut Parser.parse_alt() => i32 {
     val n = pat.len()
     val first = self.parse_cat()
@@ -704,6 +841,8 @@ fun mut Parser.parse_alt() => i32 {
 // ---------------------------------------------------------------------------
 // Code generation
 
+/// Appends an instruction and returns its index. Fails when the program is too
+/// large.
 fun mut Parser.emit(o: i32, x: i32, y: i32) => usize {
     if op.len() >= MAX_PROG {
         self.fail("pattern is too large (the compiled program is limited to 50000 instructions)", 0)
@@ -715,11 +854,14 @@ fun mut Parser.emit(o: i32, x: i32, y: i32) => usize {
     return op.len() - 1
 }
 
-// `emit` for a caller that does not need the instruction's index.
+/// Appends an instruction and ignores its index.
+/// `emit` for a caller that does not need the instruction's index.
 fun mut Parser.put(o: i32, x: i32, y: i32) {
     val at = self.emit(o, x, y)
 }
 
+/// Points the split at `s` to its body and its exit. The body is the first
+/// choice when `greedy` is set.
 fun mut Parser.set_split(s: usize, body: usize, out: usize, greedy: bool) {
     if greedy {
         ax.set(s, body.to_i32())
@@ -730,6 +872,8 @@ fun mut Parser.set_split(s: usize, body: usize, out: usize, greedy: bool) {
     }
 }
 
+/// Emits the code for the repeat node `n`: its required copies, then the
+/// optional or unbounded tail.
 fun mut Parser.emit_rep(n: usize) {
     val c = na.get(n)
     val mn = nb.get(n)
@@ -774,6 +918,7 @@ fun mut Parser.emit_rep(n: usize) {
     }
 }
 
+/// Emits the code for the AST node `n`.
 fun mut Parser.emit_node(n: i32) {
     if failed {
         return
@@ -832,14 +977,16 @@ fun mut Parser.emit_node(n: i32) {
     }
 }
 
+/// Returns the error result for a pattern refused with `msg` at byte `off`.
 fun refuse(msg: &str, off: usize) => result.Result<Regex, RegexErr> {
     return result.Result.Err(error = RegexErr(message = String.from_str(msg), offset = off))
 }
 
-// Compiles `pattern`. The error carries the message and the byte offset of the
-// problem. A pattern longer than 4096 bytes, nested deeper than 100 groups, with
-// a counted repeat above 1000, with a backreference or lookaround, or too large
-// once its repeats are expanded, is refused.
+/// Parses and compiles a pattern into a `Regex`.
+/// Compiles `pattern`. The error carries the message and the byte offset of the
+/// problem. A pattern longer than 4096 bytes, nested deeper than 100 groups, with
+/// a counted repeat above 1000, with a backreference or lookaround, or too large
+/// once its repeats are expanded, is refused.
 fun compile(pattern: &str) => result.Result<Regex, RegexErr> {
     val pv = pattern.view()
     val n = pv.len()
@@ -950,6 +1097,7 @@ fun compile(pattern: &str) => result.Result<Regex, RegexErr> {
 // ---------------------------------------------------------------------------
 // The Pike VM
 
+/// Whether the zero-width assertion `kind` holds at byte `pos` of `text`.
 fun Regex.assert_ok(kind: i32, text: View, pos: usize) => bool {
     val n = text.len()
     if kind == A_BOL {
@@ -978,11 +1126,13 @@ fun Regex.assert_ok(kind: i32, text: View, pos: usize) => bool {
     return before == after
 }
 
-// Adds the thread at `pc0` and everything reachable from it without consuming
-// a byte to the list `side`, in priority order. The thread's captures are in
-// `wcap` and are the same when the call returns. Iterative: the stack holds
-// explore entries (pc >= 0) and capture restores (a < 0: slot -a-1 gets the
-// value in `stk_b`), and each instruction is expanded once per list.
+/// Adds a thread at `pc0` to a list, following every zero-width instruction on
+/// the way.
+/// Adds the thread at `pc0` and everything reachable from it without consuming
+/// a byte to the list `side`, in priority order. The thread's captures are in
+/// `wcap` and are the same when the call returns. Iterative: the stack holds
+/// explore entries (pc >= 0) and capture restores (a < 0: slot -a-1 gets the
+/// value in `stk_b`), and each instruction is expanded once per list.
 fun mut Regex.add_thread(side: usize, pc0: i32, pos: usize, text: View, nsl: usize) {
     val np = op.len()
     stk_a.set(0, pc0)
@@ -1038,9 +1188,11 @@ fun mut Regex.add_thread(side: usize, pc0: i32, pos: usize, text: View, nsl: usi
     }
 }
 
-// Runs the program over `text` from byte `start`, unanchored at the start. True
-// when there is a match, whose first `nsl` capture slots are then in `res`.
-// `early` stops at the first match found (enough for a yes/no answer).
+/// Runs the program over `text` from byte `start`, and reports whether it
+/// matched.
+/// Runs the program over `text` from byte `start`, unanchored at the start. True
+/// when there is a match, whose first `nsl` capture slots are then in `res`.
+/// `early` stops at the first match found (enough for a yes/no answer).
 fun mut Regex.run(text: View, start: usize, nsl: usize, early: bool) => bool {
     val n = text.len()
     val np = op.len()
@@ -1129,25 +1281,30 @@ fun mut Regex.run(text: View, start: usize, nsl: usize, early: bool) => bool {
 // ---------------------------------------------------------------------------
 // The API
 
-// The number of VM steps taken since `compile` or the last `reset_steps`: one
-// per instruction expanded and one per thread advanced. It is the measure of
-// work the linearity tests assert on.
+/// The VM steps taken since `compile` or the last `reset_steps`.
+/// The number of VM steps taken since `compile` or the last `reset_steps`: one
+/// per instruction expanded and one per thread advanced. It is the measure of
+/// work the linearity tests assert on.
 fun Regex.steps() => i64 = nsteps
 
+/// Sets the VM step count back to zero.
 fun mut Regex.reset_steps() {
     nsteps = 0
 }
 
-// The number of capture groups, not counting group 0 (the whole match).
+/// The number of capture groups, not counting group 0.
+/// The number of capture groups, not counting group 0 (the whole match).
 fun Regex.group_count() => usize = ngroups - 1
 
-// Whether the pattern matches anywhere in `text`.
+/// Whether the pattern matches anywhere in `text`.
+/// Whether the pattern matches anywhere in `text`.
 fun mut Regex.is_match(text: &str) => bool {
     return self.run(text.view(), 0, 2, true)
 }
 
-// The leftmost match at or after byte `start`, if any. `^` and `\b` still look
-// at the whole text, so a search that resumes mid-text sees its true context.
+/// The leftmost match at or after byte `start`, if any.
+/// The leftmost match at or after byte `start`, if any. `^` and `\b` still look
+/// at the whole text, so a search that resumes mid-text sees its true context.
 fun mut Regex.find_at(text: &str, start: usize) => option.Option<Match> {
     val tv = text.view()
     if start > tv.len() {
@@ -1161,11 +1318,13 @@ fun mut Regex.find_at(text: &str, start: usize) => option.Option<Match> {
     return option.Option.Some(value = Match(start = s, end = e, text = tv.slice(s, e).to_string()))
 }
 
+/// The leftmost match in `text`, if any.
 fun mut Regex.find(text: &str) => option.Option<Match> {
     return self.find_at(text, 0)
 }
 
-// The leftmost match with every group's span, if any.
+/// The leftmost match in `text`, with the span of every group.
+/// The leftmost match with every group's span, if any.
 fun mut Regex.captures(text: &str) => option.Option<Captures> {
     val tv = text.view()
     val nsl = ngroups * 2
@@ -1181,8 +1340,9 @@ fun mut Regex.captures(text: &str) => option.Option<Captures> {
     return option.Option.Some(value = Captures(text = tv.to_string(), slots = slots))
 }
 
-// Every non-overlapping match, left to right. After an empty match the search
-// resumes one byte further on, so the result is finite.
+/// Every non-overlapping match in `text`, from left to right.
+/// Every non-overlapping match, left to right. After an empty match the search
+/// resumes one byte further on, so the result is finite.
 fun mut Regex.find_all(text: &str) => List<Match> {
     val tv = text.view()
     val n = tv.len()
@@ -1205,9 +1365,11 @@ fun mut Regex.find_all(text: &str) => List<Match> {
     return out
 }
 
-// Appends the replacement template `rep` for the match in `res`: `$0`..`$9` is
-// that group's text (nothing when it did not take part or does not exist),
-// `$$` is a dollar sign, and any other `$` is literal.
+/// Appends the replacement template `rep` to `out`, with groups taken from the
+/// match in `res`.
+/// Appends the replacement template `rep` for the match in `res`: `$0`..`$9` is
+/// that group's text (nothing when it did not take part or does not exist),
+/// `$$` is a dollar sign, and any other `$` is literal.
 fun Regex.expand(out: mut String, tv: View, rep: View, nsl: usize) {
     val m = rep.len()
     var i: usize = 0
@@ -1243,6 +1405,7 @@ fun Regex.expand(out: mut String, tv: View, rep: View, nsl: usize) {
     }
 }
 
+/// Replaces the first match in `text`, or every match when `all` is set.
 fun mut Regex.replace_impl(text: &str, replacement: &str, all: bool) => String {
     val tv = text.view()
     val rv = replacement.view()
@@ -1289,16 +1452,19 @@ fun mut Regex.replace_impl(text: &str, replacement: &str, all: bool) => String {
     return out
 }
 
-// `text` with the first match replaced by `replacement` (see `expand` for `$1`).
+/// Replaces the first match in `text`.
+/// `text` with the first match replaced by `replacement` (see `expand` for `$1`).
 fun mut Regex.replace(text: &str, replacement: &str) => String {
     return self.replace_impl(text, replacement, false)
 }
 
+/// Replaces every match in `text`.
 fun mut Regex.replace_all(text: &str, replacement: &str) => String {
     return self.replace_impl(text, replacement, true)
 }
 
-// The pieces of `text` between matches, so one more than the number of matches.
+/// Splits `text` at each match. The pieces are the text between the matches.
+/// The pieces of `text` between matches, so one more than the number of matches.
 fun mut Regex.split(text: &str) => List<String> {
     val tv = text.view()
     val n = tv.len()
@@ -1324,10 +1490,13 @@ fun mut Regex.split(text: &str) => List<String> {
     return out
 }
 
+/// The number of groups, including group 0.
 fun Captures.len() => usize = slots.len() / 2
 
-// The text of group `i`, or `None` when the group did not take part in the
-// match or does not exist.
+/// The text of group `i`, or `None` when the group did not take part or does
+/// not exist.
+/// The text of group `i`, or `None` when the group did not take part in the
+/// match or does not exist.
 fun Captures.get(i: usize) => option.Option<String> {
     if i * 2 + 1 >= slots.len() {
         return option.Option.None
@@ -1340,7 +1509,9 @@ fun Captures.get(i: usize) => option.Option<String> {
     return option.Option.Some(value = text.view().slice(s.to_usize(), e.to_usize()).to_string())
 }
 
-// The span and text of group `i`, as a `Match`.
+/// The span and the text of group `i`, as a `Match`, or `None` when it did not
+/// take part.
+/// The span and text of group `i`, as a `Match`.
 fun Captures.span(i: usize) => option.Option<Match> {
     if i * 2 + 1 >= slots.len() {
         return option.Option.None
@@ -1355,8 +1526,9 @@ fun Captures.span(i: usize) => option.Option<Match> {
     return option.Option.Some(value = Match(start = su, end = eu, text = text.view().slice(su, eu).to_string()))
 }
 
-// Whether `pattern` matches anywhere in `text`. Panics when the pattern does not
-// compile: a literal pattern in the source is a bug, not an input.
+/// Compiles `pattern` and reports whether it matches anywhere in `text`.
+/// Whether `pattern` matches anywhere in `text`. Panics when the pattern does not
+/// compile: a literal pattern in the source is a bug, not an input.
 fun is_match(pattern: &str, text: &str) => bool {
     val r = compile(pattern)
     if let Ok(re0) = r {
