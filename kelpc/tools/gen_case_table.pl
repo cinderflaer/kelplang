@@ -52,7 +52,11 @@ push @data, "// Generated: do not edit by hand; rerun the generator instead.";
 push @data, "// Each table is one string of 16 lowercase hex digits per entry: the code";
 push @data, "// point (8 digits), then its simple mapping (8 digits), sorted by code point.";
 push @data, "";
+push @data, "/// The simple uppercase mapping of every code point that changes when uppercased.";
+push @data, "/// Each entry is 16 hex digits: the code point, then its uppercase mapping.";
 push @data, sprintf("const CASE_UPPER_DATA: str = \"%s\"", join('', map { sprintf('%08x%08x', $_->[0], $_->[1]) } @up));
+push @data, "/// The simple lowercase mapping of every code point that changes when lowercased.";
+push @data, "/// Each entry is 16 hex digits: the code point, then its lowercase mapping.";
 push @data, sprintf("const CASE_LOWER_DATA: str = \"%s\"", join('', map { sprintf('%08x%08x', $_->[0], $_->[1]) } @lo));
 push @data, "$DEND";
 

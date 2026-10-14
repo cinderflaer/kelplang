@@ -97,6 +97,7 @@ empty on release.
 - The `http`, `iter`, `ws` and `tls` modules now have doc comments on their public items, so `kelpc doc --std --check` reports nothing for them.
 - The `regex` and `tz` modules now have doc comments on every item, private helpers included, so `kelpc doc --std --check` reports nothing for them.
 - The `fs`, `io`, `arena`, `path` and `fmt` modules now have doc comments on every item, private helpers included, so `kelpc doc --std --check` reports nothing for them.
+- The `process` and `str` modules now have doc comments on every item, private helpers included, so `kelpc doc --std --check` reports nothing for them.
 - The `encoding` and `pool` modules now have doc comments on every item, private helpers included, so `kelpc doc --std --check` reports nothing for them.
 
 ## fixes
