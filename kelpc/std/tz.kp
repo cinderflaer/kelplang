@@ -39,124 +39,231 @@ impl "std/result"
    The syntax, the decisions and the limits are written out in `kelp wiki page stdlib/tz.md`;
    this file is the implementation. */
 
-// Instants outside the years 1 to 9999 are refused rather than wrapped: the
-// civil-date arithmetic and the `i32` year a `LocalTime` carries both need a
-// bound, and no time zone has a transition outside this range.
+/// The earliest instant the module accepts: 0001-01-01 00:00:00 UTC.
+/// Instants outside the years 1 to 9999 are refused rather than wrapped: the
+/// civil-date arithmetic and the `i32` year a `LocalTime` carries both need a
+/// bound, and no time zone has a transition outside this range.
 const MIN_INSTANT: i64 = -62135596800
+/// The latest instant the module accepts: 9999-12-31 23:59:59 UTC.
 const MAX_INSTANT: i64 = 253402300799
 
+/// The number of seconds in a day.
 const SECS_DAY: i64 = 86400
+/// The number of seconds in an hour.
 const SECS_HOUR: i64 = 3600
+/// The number of seconds in a minute.
 const SECS_MINUTE: i64 = 60
 
-// Caps on what a single file may ask the parser to allocate: a corrupt or
-// hostile header can name four billion transitions, and the block-length check
-// below is what refuses one that does not actually fit in the file.
+/// The most transitions that a file may hold.
+/// Caps on what a single file may ask the parser to allocate: a corrupt or
+/// hostile header can name four billion transitions, and the block-length check
+/// below is what refuses one that does not actually fit in the file.
 const MAX_TRANSITIONS: usize = 200000
+/// The most time types that a file may hold.
 const MAX_TYPES: usize = 256
+/// The largest abbreviation block, in bytes, that a file may hold.
 const MAX_CHARS: usize = 65536
 
-// The English 3-letter tables `%a` and `%b` print from. There is no locale in
-// this module (kelp wiki page stdlib/tz.md, Limits).
+/// The three-letter English weekday names, Sunday first, with no gaps between
+/// them.
+/// The English 3-letter tables `%a` and `%b` print from. There is no locale in
+/// this module (kelp wiki page stdlib/tz.md, Limits).
 const WDAY_NAMES: str = "SunMonTueWedThuFriSat"
+/// The three-letter English month names, January first, with no gaps between
+/// them.
 const MONTH_NAMES: str = "JanFebMarAprMayJunJulAugSepOctNovDec"
 
-// One offset in force: the seconds east of UTC, the abbreviation the database
-// carries, and whether it is a daylight offset.
-datac Offset(val seconds: i32, val abbrev: String, val is_dst: bool)
+/// One UTC offset in force.
+/// One offset in force: the seconds east of UTC, the abbreviation the database
+/// carries, and whether it is a daylight offset.
+datac Offset(
+    /// Seconds east of UTC.
+    val seconds: i32,
+    /// The abbreviation the database carries, such as `EST` or `+0530`.
+    val abbrev: String,
+    /// Whether this is a daylight offset.
+    val is_dst: bool,
+)
 
-// A civil date, the shape the Hinnant day-number conversions hand back.
-datac Civil(val year: i32, val month: i32, val day: i32)
-
-// A wall clock reading. `weekday` is 0 for Sunday through 6 for Saturday and
-// `yday` is 1 through 366, the numbering `localtime` itself uses.
-datac LocalTime(
+/// A civil date, the shape the Hinnant day-number conversions hand back.
+/// A civil date, the shape the Hinnant day-number conversions hand back.
+datac Civil(
+    /// The year.
     val year: i32,
+    /// The month, from 1 to 12.
     val month: i32,
+    /// The day of the month.
     val day: i32,
+)
+
+/// A wall clock reading.
+/// A wall clock reading. `weekday` is 0 for Sunday through 6 for Saturday and
+/// `yday` is 1 through 366, the numbering `localtime` itself uses.
+datac LocalTime(
+    /// The year.
+    val year: i32,
+    /// The month, from 1 to 12.
+    val month: i32,
+    /// The day of the month.
+    val day: i32,
+    /// The hour, from 0 to 23.
     val hour: i32,
+    /// The minute, from 0 to 59.
     val minute: i32,
+    /// The second, from 0 to 59.
     val second: i32,
+    /// The day of the week: 0 for Sunday through 6 for Saturday.
     val weekday: i32,
+    /// The day of the year, from 1 to 366.
     val yday: i32,
+    /// The offset in force at this instant.
     val offset: Offset
 )
 
-// What a wall clock reading names. A local time the clock passes twice (set
-// back) is `Ambiguous` with both instants, earlier first; one it never passes
-// (set forward) is `Gap`.
+/// What a wall clock reading names in a zone.
+/// What a wall clock reading names. A local time the clock passes twice (set
+/// back) is `Ambiguous` with both instants, earlier first; one it never passes
+/// (set forward) is `Gap`.
 enum Resolved {
+    /// The reading names exactly one instant, `unix`.
     One(val unix: i64)
+    /// The reading names two instants, the earlier first, because the clock
+    /// passes it twice.
     Ambiguous(val first: i64, val second: i64)
+    /// The reading names no instant, because the clock never passes it.
     Gap
 }
 
-// Why a zone could not be loaded. `NotFound` is a name with no file, or a
-// database directory that is not there; `Denied` is a name this API refuses to
-// turn into a path and a read the OS refused; `Corrupt` is a file that is not
-// a well-formed TZif file, with what is wrong with it.
+/// Why a zone could not be loaded.
+/// Why a zone could not be loaded. `NotFound` is a name with no file, or a
+/// database directory that is not there; `Denied` is a name this API refuses to
+/// turn into a path and a read the OS refused; `Corrupt` is a file that is not
+/// a well-formed TZif file, with what is wrong with it.
 enum TzErr {
+    /// There is no such zone, or no database directory to look in.
     NotFound
+    /// The name or the directory is refused, or the OS refused the read.
     Denied
+    /// The file is not a well-formed TZif file.
     Corrupt(val message: String)
 }
 
-// One transition rule of a POSIX TZ string: `M3.2.0` (`kind` 0, `month`,
-// `week`, `day`), `J60` (`kind` 1, `n`) or `60` (`kind` 2, `n`), plus the time
-// of day it fires at and whether that time is UTC (a `-` prefix) rather than
-// local.
-datac RuleDay(val kind: i32, val n: i32, val month: i32, val week: i32, val day: i32, val at: i32, val at_utc: bool)
+/// One transition rule of a POSIX TZ string.
+/// One transition rule of a POSIX TZ string: `M3.2.0` (`kind` 0, `month`,
+/// `week`, `day`), `J60` (`kind` 1, `n`) or `60` (`kind` 2, `n`), plus the time
+/// of day it fires at and whether that time is UTC (a `-` prefix) rather than
+/// local.
+datac RuleDay(
+    /// The form of the rule: 0 for `M`, 1 for `J` and 2 for a bare number.
+    val kind: i32,
+    /// The day number for `J` and bare rules, or 0 for `M` rules.
+    val n: i32,
+    /// The month for `M` rules, or 0 otherwise.
+    val month: i32,
+    /// The week of the month for `M` rules, where 5 means the last week.
+    val week: i32,
+    /// The weekday for `M` rules, where 0 is Sunday.
+    val day: i32,
+    /// The time of day in seconds, local unless `at_utc` is set.
+    val at: i32,
+    /// Whether `at` is UTC rather than local time.
+    val at_utc: bool,
+)
 
-// A parsed POSIX TZ string. `have` is false when there is none (a version 1
-// file, an empty footer, or a footer this parser does not understand), and
-// `have_dst` is false for a fixed-offset string like `IST-5:30`.
+/// A parsed POSIX TZ string.
+/// A parsed POSIX TZ string. `have` is false when there is none (a version 1
+/// file, an empty footer, or a footer this parser does not understand), and
+/// `have_dst` is false for a fixed-offset string like `IST-5:30`.
 datac TzString(
+    /// Whether there is a TZ string at all.
     val have: bool,
+    /// Whether the string names a daylight zone with rules.
     val have_dst: bool,
+    /// The standard offset, in seconds east of UTC.
     val std_off: i32,
+    /// The standard abbreviation.
     val std_name: String,
+    /// The daylight offset, in seconds east of UTC.
     val dst_off: i32,
+    /// The daylight abbreviation.
     val dst_name: String,
+    /// The rule that starts daylight time.
     val start: RuleDay,
+    /// The rule that ends daylight time.
     val end: RuleDay
 )
 
-// A zone: the transition instants and the time type each one switches to, the
-// time type table, the type a time before the first transition uses, the
-// distinct offsets a wall-clock conversion has to try, and the footer rule.
+/// A time zone, loaded from a file or built in code.
+/// A zone: the transition instants and the time type each one switches to, the
+/// time type table, the type a time before the first transition uses, the
+/// distinct offsets a wall-clock conversion has to try, and the footer rule.
 datac Zone(
+    /// The transition instants, in seconds since the Unix epoch, in order.
     val times: List<i64>,
+    /// The time type that each transition switches to, as an index into `offs`.
     val at_type: List<u8>,
+    /// The UTC offset of each time type, in seconds east of UTC.
     val offs: List<i32>,
+    /// Whether each time type is a daylight one.
     val dsts: List<bool>,
+    /// The abbreviation of each time type.
     val names: List<String>,
+    /// The time type that a time before the first transition uses.
     val default_type: i32,
+    /// The distinct offsets that a wall-clock conversion has to try.
     val uniques: List<i32>,
+    /// The footer rule, which applies after the last transition.
     val tz: TzString
 )
 
-// The six counts of one header. A `mut` out-parameter because a function
-// returns one value and six are wanted; the parser is the only caller.
+/// The six counts that a TZif header holds.
+/// The six counts of one header. A `mut` out-parameter because a function
+/// returns one value and six are wanted; the parser is the only caller.
 datac Counts(
+    /// The number of UT or local indicators.
     var isutcnt: usize,
+    /// The number of standard or wall indicators.
     var isstdcnt: usize,
+    /// The number of leap second records.
     var leapcnt: usize,
+    /// The number of transitions.
     var timecnt: usize,
+    /// The number of local time types.
     var typecnt: usize,
+    /// The number of bytes of abbreviation characters.
     var charcnt: usize
 )
 
-// The TZif byte cursor. Every read is a bounds-checked `Bytes` accessor after
-// an explicit length test, so a truncated file is `Corrupt` rather than a
-// panic, and the first failure keeps its own message.
-datac Reader(val data: Bytes, var at: usize, var bad: bool, var why: String)
+/// The TZif byte cursor, which reads big-endian values.
+/// The TZif byte cursor. Every read is a bounds-checked `Bytes` accessor after
+/// an explicit length test, so a truncated file is `Corrupt` rather than a
+/// panic, and the first failure keeps its own message.
+datac Reader(
+    /// The file bytes.
+    val data: Bytes,
+    /// The offset of the next byte to read.
+    var at: usize,
+    /// Whether a read has failed.
+    var bad: bool,
+    /// The reason for the first failure.
+    var why: String,
+)
 
-// The POSIX TZ string cursor, over a copy of the footer text.
-datac TzParser(val chars: Bytes, var at: usize, var bad: bool)
+/// The POSIX TZ string cursor, over a copy of the footer text.
+/// The POSIX TZ string cursor, over a copy of the footer text.
+datac TzParser(
+    /// The bytes of the string.
+    val chars: Bytes,
+    /// The offset of the next byte to read.
+    var at: usize,
+    /// Whether parsing has failed.
+    var bad: bool,
+)
 
-// `/` and `%` truncate toward zero, and the civil-date algorithms need the
-// floor (they are written against Python's `//`). These two are the floor
-// versions, and everything below goes through them so the two agree.
+/// Divides `a` by `b`, rounding toward negative infinity.
+/// `/` and `%` truncate toward zero, and the civil-date algorithms need the
+/// floor (they are written against Python's `//`). These two are the floor
+/// versions, and everything below goes through them so the two agree.
 fun floor_div(a: i64, b: i64) => i64 {
     var q = a / b
     if a % b != 0 && (a < 0) != (b < 0) {
@@ -165,6 +272,7 @@ fun floor_div(a: i64, b: i64) => i64 {
     return q
 }
 
+/// The remainder of `a` divided by `b`, with the sign of `b`.
 fun floor_mod(a: i64, b: i64) => i64 {
     val m = a % b
     if m != 0 && (m < 0) != (b < 0) {
@@ -173,8 +281,9 @@ fun floor_mod(a: i64, b: i64) => i64 {
     return m
 }
 
-// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's
-// `days_from_civil`). Exact for every year the instant guard admits.
+/// Converts the civil date `y-m-d` to a day number, counting from 1970-01-01.
+/// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's
+/// `days_from_civil`). Exact for every year the instant guard admits.
 fun days_from_civil(y: i32, m: i32, d: i32) => i64 {
     val yy = if m <= 2 { y.to_i64() - 1 } else { y.to_i64() }
     val era = floor_div(yy, 400)
@@ -185,7 +294,8 @@ fun days_from_civil(y: i32, m: i32, d: i32) => i64 {
     return era * 146097 + doe - 719468
 }
 
-// The inverse of `days_from_civil`.
+/// Converts a day number, counting from 1970-01-01, to a civil date.
+/// The inverse of `days_from_civil`.
 fun civil_from_days(z: i64) => Civil {
     val zz = z + 719468
     val era = floor_div(zz, 146097)
@@ -200,11 +310,13 @@ fun civil_from_days(z: i64) => Civil {
     return Civil(year = year.to_i32(), month = m.to_i32(), day = d.to_i32())
 }
 
+/// Whether `y` is a leap year in the Gregorian calendar.
 fun is_leap_year(y: i32) => bool {
     val yy = y.to_i64()
     return (floor_mod(yy, 4) == 0 && floor_mod(yy, 100) != 0) || floor_mod(yy, 400) == 0
 }
 
+/// The number of days in month `m` of year `y`.
 fun days_in_month(y: i32, m: i32) => i32 {
     if m == 2 {
         if is_leap_year(y) {
@@ -221,10 +333,11 @@ fun days_in_month(y: i32, m: i32) => i32 {
 // A footer's POSIX TZ string: the day and the instant each of its two rules
 // fires at, and the DST window between them.
 
-// Whether `t` falls in the DST window of `year`. A window that crosses New
-// Year (the southern-hemisphere shape, where the end rule's day of the year is
-// before the start rule's) runs to `end(year + 1)`, so one call is one
-// interval and the caller can test three candidate years against it.
+/// Whether `t` falls in the daylight window of the rules in `year`.
+/// Whether `t` falls in the DST window of `year`. A window that crosses New
+/// Year (the southern-hemisphere shape, where the end rule's day of the year is
+/// before the start rule's) runs to `end(year + 1)`, so one call is one
+/// interval and the caller can test three candidate years against it.
 fun rule_window_has(start: &RuleDay, end: &RuleDay, std_off: i32, dst_off: i32, year: i32, t: i64) => bool {
     val s = rule_instant(start, std_off, year)
     val e = rule_instant(end, dst_off, year)
@@ -235,11 +348,13 @@ fun rule_window_has(start: &RuleDay, end: &RuleDay, std_off: i32, dst_off: i32, 
     return t >= s && t < next
 }
 
-// The UTC instant a rule fires at in `year`. The rule's day and its time of
-// day are a wall clock reading, converted with the offset in force *before*
-// the change (standard time for the start rule, daylight time for the end
-// rule), which is what POSIX says the `/time` field is measured in. A rule
-// whose time is prefixed with `-` is already UTC.
+/// The UTC instant that the rule `r` fires at in `year`, given the offset `off`
+/// in force before the change.
+/// The UTC instant a rule fires at in `year`. The rule's day and its time of
+/// day are a wall clock reading, converted with the offset in force *before*
+/// the change (standard time for the start rule, daylight time for the end
+/// rule), which is what POSIX says the `/time` field is measured in. A rule
+/// whose time is prefixed with `-` is already UTC.
 fun rule_instant(r: &RuleDay, off: i32, year: i32) => i64 {
     var at = r.at.to_i64()
     if !r.at_utc {
@@ -248,10 +363,11 @@ fun rule_instant(r: &RuleDay, off: i32, year: i32) => i64 {
     return rule_day(r, year) * SECS_DAY + at
 }
 
-// The day number the rule names in `year`. `M<m>.<w>.<d>` is the `w`th `d` of
-// month `m`, where week 5 means the last one; `J<n>` is day `n` counting from
-// January 1 with February 29 never counted, so a leap year pushes the days
-// after it along by one; a bare `n` counts from zero *with* February 29.
+/// The day number that the rule `r` names in `year`.
+/// The day number the rule names in `year`. `M<m>.<w>.<d>` is the `w`th `d` of
+/// month `m`, where week 5 means the last one; `J<n>` is day `n` counting from
+/// January 1 with February 29 never counted, so a leap year pushes the days
+/// after it along by one; a bare `n` counts from zero *with* February 29.
 fun rule_day(r: &RuleDay, year: i32) => i64 {
     if r.kind == 0 {
         val first = days_from_civil(year, r.month, 1)
@@ -275,13 +391,16 @@ fun rule_day(r: &RuleDay, year: i32) => i64 {
     return jan1 + r.n.to_i64()
 }
 
-// The rule a TZ string that has none carries anyway: `no_tz` and a fixed offset
-// both name two, because every `TzString` has the fields.
+/// A placeholder rule, for a TZ string that has none.
+/// The rule a TZ string that has none carries anyway: `no_tz` and a fixed offset
+/// both name two, because every `TzString` has the fields.
 fun default_rule() => RuleDay {
     return RuleDay(kind = 0, n = 0, month = 1, week = 1, day = 0, at = 7200, at_utc = false)
 }
 
-// The zone of a TZ string with no DST: one offset, all year, forever.
+/// The TZ string of a zone with the name `name` and the one offset `off`, with
+/// no daylight time.
+/// The zone of a TZ string with no DST: one offset, all year, forever.
 fun fixed_tz(name: &str, off: i32) => TzString {
     return TzString(
         have = true,
@@ -295,6 +414,7 @@ fun fixed_tz(name: &str, off: i32) => TzString {
     )
 }
 
+/// The TZ string of a zone with no footer rule.
 fun no_tz() => TzString {
     return TzString(
         have = false,
@@ -308,8 +428,9 @@ fun no_tz() => TzString {
     )
 }
 
-// The offset a TZ string names at `t`, which is the whole of what a zone does
-// with an instant once its transition table is behind us.
+/// The offset that this TZ string gives at the instant `t`.
+/// The offset a TZ string names at `t`, which is the whole of what a zone does
+/// with an instant once its transition table is behind us.
 fun TzString.offset_at(t: i64) => Offset {
     if !have_dst {
         return Offset(seconds = std_off, abbrev = std_name.clone(), is_dst = false)
@@ -335,12 +456,14 @@ fun TzString.offset_at(t: i64) => Offset {
     return Offset(seconds = std_off, abbrev = std_name.clone(), is_dst = false)
 }
 
+/// Marks the parse as failed.
 fun mut TzParser.fail() {
     self.bad = true
 }
 
-// The byte at the cursor, or -1 at the end, so a caller can compare against
-// the punctuation it expects.
+/// Returns the byte under the cursor without moving it, or -1 at the end.
+/// The byte at the cursor, or -1 at the end, so a caller can compare against
+/// the punctuation it expects.
 fun TzParser.peek() => i32 {
     if at >= chars.len() {
         return -1
@@ -348,8 +471,9 @@ fun TzParser.peek() => i32 {
     return chars.get(at).to_i32()
 }
 
-// An abbreviation: `<+1030>` (any bytes up to `>`) or a run of letters. The
-// empty string is a failure, and so is running off the end.
+/// Reads an abbreviation at the cursor, and returns it.
+/// An abbreviation: `<+1030>` (any bytes up to `>`) or a run of letters. The
+/// empty string is a failure, and so is running off the end.
 fun mut TzParser.ident() => String {
     var out = String.empty()
     if self.peek() == 60 {
@@ -382,9 +506,10 @@ fun mut TzParser.ident() => String {
     }
 }
 
-// A decimal run, refused when there is none and when it grows past anything a
-// TZ string can name (167 hours in the widest extension, a day of the year, a
-// time of day).
+/// Reads a decimal number at the cursor, and returns it.
+/// A decimal run, refused when there is none and when it grows past anything a
+/// TZ string can name (167 hours in the widest extension, a day of the year, a
+/// time of day).
 fun mut TzParser.number() => i64 {
     var n: i64 = 0
     var digits: i32 = 0
@@ -406,8 +531,10 @@ fun mut TzParser.number() => i64 {
     }
 }
 
-// `[+-]hh[:mm[:ss]]`, as written: the POSIX offset form, where the sign counts
-// hours *west*, which the caller flips into seconds east.
+/// Reads a signed `hh[:mm[:ss]]` time at the cursor, and returns it in seconds
+/// as written.
+/// `[+-]hh[:mm[:ss]]`, as written: the POSIX offset form, where the sign counts
+/// hours *west*, which the caller flips into seconds east.
 fun mut TzParser.hms() => i32 {
     var sign: i32 = 1
     if self.peek() == 45 {
@@ -441,8 +568,9 @@ fun mut TzParser.hms() => i32 {
     return total.to_i32()
 }
 
-// One rule: `M<m>.<w>.<d>`, `J<n>` or `<n>`, and an optional `/<time>`. A
-// `-` before the time says it is UTC rather than local.
+/// Reads one transition rule, with its optional time, at the cursor of `p`.
+/// One rule: `M<m>.<w>.<d>`, `J<n>` or `<n>`, and an optional `/<time>`. A
+/// `-` before the time says it is UTC rather than local.
 fun parse_rule(p: mut TzParser) => RuleDay {
     var kind: i32 = 0
     var n: i32 = 0
@@ -497,10 +625,12 @@ fun parse_rule(p: mut TzParser) => RuleDay {
     return RuleDay(kind = kind, n = n, month = month, week = week, day = day, at = at, at_utc = at_utc)
 }
 
-// A footer's TZ string, or a TZ string that says "none" when the text is not
-// one this parser understands. A name with daylight time and no rules is
-// treated the same way rather than guessing a rule set the string does not
-// carry (kelp wiki page stdlib/tz.md, Limits).
+/// Parses a POSIX TZ string. It returns the rules that it names, or no rules
+/// when the text is not one this parser understands.
+/// A footer's TZ string, or a TZ string that says "none" when the text is not
+/// one this parser understands. A name with daylight time and no rules is
+/// treated the same way rather than guessing a rule set the string does not
+/// carry (kelp wiki page stdlib/tz.md, Limits).
 fun parse_tz_string(text: &str) => TzString {
     val none = no_tz()
     var p = TzParser(chars = Bytes.from_str(text), at = 0, bad = false)
@@ -556,6 +686,7 @@ fun parse_tz_string(text: &str) => TzString {
 
 // The TZif cursor and the file parser.
 
+/// Records the first failure, with its reason `why`.
 fun mut Reader.fail(why: &str) {
     if !self.bad {
         self.bad = true
@@ -563,8 +694,10 @@ fun mut Reader.fail(why: &str) {
     }
 }
 
-// Whether `n` more bytes are there. Every read below starts with this, which is
-// what turns a truncated file into a message instead of a panic.
+/// Whether `n` more bytes are left to read. It fails with `what` when they are
+/// not.
+/// Whether `n` more bytes are there. Every read below starts with this, which is
+/// what turns a truncated file into a message instead of a panic.
 fun mut Reader.need(n: usize, what: &str) => bool {
     if self.bad {
         return false
@@ -576,6 +709,8 @@ fun mut Reader.need(n: usize, what: &str) => bool {
     return true
 }
 
+/// Reads an unsigned 32-bit big-endian value, failing with `what` at the end of
+/// the file.
 fun mut Reader.u32(what: &str) => u32 {
     if !self.need(n = 4, what = what) {
         return 0
@@ -585,6 +720,7 @@ fun mut Reader.u32(what: &str) => u32 {
     return v
 }
 
+/// Reads a signed 32-bit big-endian value.
 fun mut Reader.i32(what: &str) => i32 {
     if !self.need(n = 4, what = what) {
         return 0
@@ -594,6 +730,7 @@ fun mut Reader.i32(what: &str) => i32 {
     return v
 }
 
+/// Reads a signed 64-bit big-endian value.
 fun mut Reader.i64(what: &str) => i64 {
     if !self.need(n = 8, what = what) {
         return 0
@@ -603,6 +740,7 @@ fun mut Reader.i64(what: &str) => i64 {
     return v
 }
 
+/// Reads one byte.
 fun mut Reader.u8(what: &str) => u8 {
     if !self.need(n = 1, what = what) {
         return 0
@@ -612,8 +750,9 @@ fun mut Reader.u8(what: &str) => u8 {
     return v
 }
 
-// The six header counts, read at the cursor: `isutcnt`, `isstdcnt`, `leapcnt`,
-// `timecnt`, `typecnt`, `charcnt`, in the order the header writes them.
+/// Reads the six header counts into `out`.
+/// The six header counts, read at the cursor: `isutcnt`, `isstdcnt`, `leapcnt`,
+/// `timecnt`, `typecnt`, `charcnt`, in the order the header writes them.
 fun mut Reader.counts(what: &str, out: mut Counts) {
     out.isutcnt = self.u32(what = what).to_usize()
     out.isstdcnt = self.u32(what = what).to_usize()
@@ -623,12 +762,15 @@ fun mut Reader.counts(what: &str, out: mut Counts) {
     out.charcnt = self.u32(what = what).to_usize()
 }
 
+/// Whether the four bytes at `at` are the TZif magic.
 fun magic_at(data: &Bytes, at: usize) => bool {
     return data.get(at) == 84 && data.get(at + 1) == 90 && data.get(at + 2) == 105 && data.get(at + 3) == 102
 }
 
-// The byte offset of the NUL that ends an abbreviation, or `to` when there is
-// none.
+/// The index of the first NUL byte from `from` up to `to`, or `to` when there
+/// is none.
+/// The byte offset of the NUL that ends an abbreviation, or `to` when there is
+/// none.
 fun nul_at(data: &Bytes, from: usize, to: usize) => usize {
     var i = from
     while i < to {
@@ -640,6 +782,7 @@ fun nul_at(data: &Bytes, from: usize, to: usize) => usize {
     return to
 }
 
+/// The bytes from `from` up to `to`, as a string.
 fun bytes_to_string(data: &Bytes, from: usize, to: usize) => String {
     var out = String.with_capacity(to - from)
     var i = from
@@ -650,6 +793,7 @@ fun bytes_to_string(data: &Bytes, from: usize, to: usize) => String {
     return out
 }
 
+/// Appends `v` to `xs` unless it is already there.
 fun add_unique(xs: mut List<i32>, v: i32) {
     var found = false
     var i: usize = 0
@@ -664,22 +808,27 @@ fun add_unique(xs: mut List<i32>, v: i32) {
     }
 }
 
+/// The error result for a file that is not well formed, with the reason
+/// `message`.
 fun corrupt(message: &str) => result.Result<Zone, TzErr> {
     return result.Result.Err(error = TzErr.Corrupt(message = message))
 }
 
+/// The error result for a name or a read that is refused.
 fun denied() => result.Result<Zone, TzErr> {
     return result.Result.Err(error = TzErr.Denied)
 }
 
+/// The error result for a zone that does not exist.
 fun not_found() => result.Result<Zone, TzErr> {
     return result.Result.Err(error = TzErr.NotFound)
 }
 
-// One TZif file, parsed. Versions 1 to 4 are accepted; the 64-bit block of a
-// version 2+ file is the one read, and the footer POSIX TZ string is parsed
-// afterwards (absent or unparsable leaves time after the last transition with
-// the last transition's type, which is what a version 1 file has anyway).
+/// Parses the bytes of one TZif file into a `Zone`.
+/// One TZif file, parsed. Versions 1 to 4 are accepted; the 64-bit block of a
+/// version 2+ file is the one read, and the footer POSIX TZ string is parsed
+/// afterwards (absent or unparsable leaves time after the last transition with
+/// the last transition's type, which is what a version 1 file has anyway).
 fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
     if data.len() < 44 {
         return corrupt("the file is shorter than a TZif header")
@@ -859,9 +1008,10 @@ fun parse(data: move Bytes) => result.Result<Zone, TzErr> {
 // Loading: turning a zone name into a path, reading it, and choosing the
 // directory it sits in.
 
-// Whether a zone name may be turned into a path. A leading `/` would leave the
-// database root, a `..` segment would climb out of it, and a NUL would cut the
-// name the C string layer sees short of the one the caller wrote.
+/// Whether `name` is safe to join onto a database directory.
+/// Whether a zone name may be turned into a path. A leading `/` would leave the
+/// database root, a `..` segment would climb out of it, and a NUL would cut the
+/// name the C string layer sees short of the one the caller wrote.
 fun name_ok(name: &str) => bool {
     if str.len(name) == 0 {
         return false
@@ -879,8 +1029,9 @@ fun name_ok(name: &str) => bool {
     return !str.contains(name, "..")
 }
 
-// The same test for a directory the caller names or `$TZDIR` supplies: an
-// absolute path with no `..` and no NUL.
+/// Whether `dir` is an absolute directory path that is safe to use.
+/// The same test for a directory the caller names or `$TZDIR` supplies: an
+/// absolute path with no `..` and no NUL.
 fun dir_ok(dir: &str) => bool {
     if str.len(dir) == 0 {
         return false
@@ -898,14 +1049,17 @@ fun dir_ok(dir: &str) => bool {
     return !str.contains(dir, "..")
 }
 
+/// Joins a directory and a zone name into one path, with one slash between
+/// them.
 fun join_path(dir: &str, name: &str) => String {
     val sep = if str.byte(dir, str.len(dir) - 1) == 47 { "" } else { "/" }
     val head = str.concat(dir, sep)
     return str.concat(head.as_str(), name)
 }
 
-// The zone named `name` under `dir`, which is the caller's own choice of
-// directory rather than `$TZDIR` or the system default.
+/// Loads the zone `name` from the database in `dir`.
+/// The zone named `name` under `dir`, which is the caller's own choice of
+/// directory rather than `$TZDIR` or the system default.
 fun load_in(dir: &str, name: &str) => result.Result<Zone, TzErr> {
     if !name_ok(name) {
         return denied()
@@ -917,10 +1071,11 @@ fun load_in(dir: &str, name: &str) => result.Result<Zone, TzErr> {
     return read_zone(path.as_str())
 }
 
-// The zone named `name`: `$TZDIR` when it is set and usable, `/usr/share/
-// zoneinfo` otherwise. Both candidates are tried when the first names nothing,
-// which is what makes a machine with only one of them work without the caller
-// choosing.
+/// Loads the zone `name` from the system database, trying `$TZDIR` first.
+/// The zone named `name`: `$TZDIR` when it is set and usable, `/usr/share/
+/// zoneinfo` otherwise. Both candidates are tried when the first names nothing,
+/// which is what makes a machine with only one of them work without the caller
+/// choosing.
 fun load(name: &str) => result.Result<Zone, TzErr> {
     if str.len(name) == 0 {
         return not_found()
@@ -938,8 +1093,9 @@ fun load(name: &str) => result.Result<Zone, TzErr> {
     return load_from(dirs, name, 0)
 }
 
-// `load`'s loop, as recursion: one candidate directory per frame, so a read
-// that fails can try the next one without an out-parameter or a sentinel.
+/// Tries the directories from index `i` onward for the zone `name`.
+/// `load`'s loop, as recursion: one candidate directory per frame, so a read
+/// that fails can try the next one without an out-parameter or a sentinel.
 fun load_from(dirs: &List<String>, name: &str, i: usize) => result.Result<Zone, TzErr> {
     if i >= dirs.len() {
         return not_found()
@@ -952,9 +1108,10 @@ fun load_from(dirs: &List<String>, name: &str, i: usize) => result.Result<Zone, 
     }
 }
 
-// Whether the next candidate directory is worth trying. A refusal ends the
-// search: the second directory is not a different grant question, and a file
-// that is corrupt is corrupt wherever it was found.
+/// Decides whether a failed read should try the next directory.
+/// Whether the next candidate directory is worth trying. A refusal ends the
+/// search: the second directory is not a different grant question, and a file
+/// that is corrupt is corrupt wherever it was found.
 fun next_or_stop(e: TzErr, dirs: &List<String>, name: &str, i: usize) => result.Result<Zone, TzErr> {
     return when e {
         NotFound -> load_from(dirs = dirs, name = name, i = i + 1)
@@ -963,7 +1120,8 @@ fun next_or_stop(e: TzErr, dirs: &List<String>, name: &str, i: usize) => result.
     }
 }
 
-// One path: the bytes parsed, or the reason the caller should look elsewhere.
+/// Reads and parses the zone file at `path`.
+/// One path: the bytes parsed, or the reason the caller should look elsewhere.
 fun read_zone(path: &str) => result.Result<Zone, TzErr> {
     val data = fs.try_read(path)
     return when data {
@@ -972,9 +1130,10 @@ fun read_zone(path: &str) => result.Result<Zone, TzErr> {
     }
 }
 
-// A read failure as a `TzErr`: a permission failure is `Denied`, a missing
-// file (or a directory where a file was wanted) is `NotFound`, and anything
-// else is refused rather than guessed at.
+/// Turns a read error number into the matching error.
+/// A read failure as a `TzErr`: a permission failure is `Denied`, a missing
+/// file (or a directory where a file was wanted) is `NotFound`, and anything
+/// else is refused rather than guessed at.
 fun errno_tz(errno: i32) => result.Result<Zone, TzErr> {
     if errno == 2 || errno == 20 || errno == 21 {
         return not_found()
@@ -985,7 +1144,8 @@ fun errno_tz(errno: i32) => result.Result<Zone, TzErr> {
 // The API: the two zones that need no file, `tz.parse`, `tz.load` and the
 // `Zone` methods.
 
-// The fixed zero offset under the name `UTC`.
+/// The zone for UTC, which needs no file.
+/// The fixed zero offset under the name `UTC`.
 fun utc() => Zone {
     var offs: List<i32> = List.empty()
     offs.push(0)
@@ -1009,9 +1169,10 @@ fun utc() => Zone {
     )
 }
 
-// `offset_seconds` east of UTC, all year, forever. A fixed offset has no name
-// in the database, so `%Z` prints `UTC` for zero and the offset itself
-// (`+05:30`) otherwise.
+/// The zone with one fixed offset, `offset_seconds` east of UTC, and no file.
+/// `offset_seconds` east of UTC, all year, forever. A fixed offset has no name
+/// in the database, so `%Z` prints `UTC` for zero and the offset itself
+/// (`+05:30`) otherwise.
 fun fixed(offset_seconds: i32) => Zone {
     var offs: List<i32> = List.empty()
     offs.push(offset_seconds)
@@ -1035,6 +1196,8 @@ fun fixed(offset_seconds: i32) => Zone {
     )
 }
 
+/// The name that `fixed` gives an offset: `UTC` for zero, otherwise a signed
+/// `hh:mm`.
 fun fixed_name(offset_seconds: i32) => String {
     if offset_seconds == 0 {
         return String.from_str("UTC")
@@ -1053,16 +1216,18 @@ fun fixed_name(offset_seconds: i32) => String {
     return out
 }
 
-// The type table entry `i` as an `Offset`.
+/// The offset of the time type `i`.
+/// The type table entry `i` as an `Offset`.
 fun Zone.offset_of(i: i32) => Offset {
     val k = i.to_usize()
     return Offset(seconds = offs.get(k), abbrev = names.get(k).clone(), is_dst = dsts.get(k))
 }
 
-// The offset in force at `unix_seconds`.
-//
-// Panics: when the instant is outside the years 1 to 9999 this module works
-// in.
+/// Returns the offset in force at `unix_seconds`.
+/// The offset in force at `unix_seconds`.
+///
+/// Panics: when the instant is outside the years 1 to 9999 this module works
+/// in.
 fun Zone.offset_at(unix_seconds: i64) => Offset {
     if unix_seconds < MIN_INSTANT || unix_seconds > MAX_INSTANT {
         panic("tz.offset_at: the instant is outside the years 1 to 9999 this module supports")
@@ -1095,10 +1260,11 @@ fun Zone.offset_at(unix_seconds: i64) => Offset {
     return self.offset_of(at_type.get(lo - 1).to_i32())
 }
 
-// The wall clock `unix_seconds` names in this zone.
-//
-// Panics: when the instant is outside the years 1 to 9999 this module works
-// in.
+/// Returns the wall clock reading at `unix_seconds`.
+/// The wall clock `unix_seconds` names in this zone.
+///
+/// Panics: when the instant is outside the years 1 to 9999 this module works
+/// in.
 fun Zone.local_parts(unix_seconds: i64) => LocalTime {
     val off = self.offset_at(unix_seconds)
     val wall = unix_seconds + off.seconds.to_i64()
@@ -1118,15 +1284,17 @@ fun Zone.local_parts(unix_seconds: i64) => LocalTime {
     )
 }
 
-// The instant or instants the wall clock `y-m-d h:mi:s` names. Every distinct
-// offset in the zone is tried and a candidate is kept only when the instant it
-// produces really does carry that offset, which is why `Gap` needs no case of
-// its own: across a spring-forward neither offset reproduces itself, and
-// across a fall-back both do.
-//
-// Panics: when the date is not a real calendar date, when the time is not a
-// real time of day, or when the instant is outside the years 1 to 9999 this
-// module works in.
+/// Returns the instant or instants that the wall clock `y-m-d h:mi:s` names in
+/// this zone.
+/// The instant or instants the wall clock `y-m-d h:mi:s` names. Every distinct
+/// offset in the zone is tried and a candidate is kept only when the instant it
+/// produces really does carry that offset, which is why `Gap` needs no case of
+/// its own: across a spring-forward neither offset reproduces itself, and
+/// across a fall-back both do.
+///
+/// Panics: when the date is not a real calendar date, when the time is not a
+/// real time of day, or when the instant is outside the years 1 to 9999 this
+/// module works in.
 fun Zone.to_unix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved {
     if m < 1 || m > 12 {
         panic("tz.to_unix: the month is not in 1..12")
@@ -1168,12 +1336,14 @@ fun Zone.to_unix(y: i32, m: i32, d: i32, h: i32, mi: i32, s: i32) => Resolved {
     return Resolved.Ambiguous(first = first, second = second)
 }
 
-// The instant `unix_seconds` printed through `fmt`: `%Y` `%m` `%d` `%H` `%M`
-// `%S` `%z` `%Z` `%a` `%b` `%j` and `%%`. A `%` that introduces anything else
-// is copied through as it stands.
-//
-// Panics: when the instant is outside the years 1 to 9999 this module works
-// in.
+/// Formats `unix_seconds` in this zone, with the `strftime`-style pattern
+/// `fmt`.
+/// The instant `unix_seconds` printed through `fmt`: `%Y` `%m` `%d` `%H` `%M`
+/// `%S` `%z` `%Z` `%a` `%b` `%j` and `%%`. A `%` that introduces anything else
+/// is copied through as it stands.
+///
+/// Panics: when the instant is outside the years 1 to 9999 this module works
+/// in.
 fun Zone.format(unix_seconds: i64, fmt: &str) => String {
     val lt = self.local_parts(unix_seconds)
     val fv = fmt.view()
@@ -1192,7 +1362,8 @@ fun Zone.format(unix_seconds: i64, fmt: &str) => String {
     return out
 }
 
-// One `%` conversion's text.
+/// Writes the text of one `%` conversion, for the letter `spec`.
+/// One `%` conversion's text.
 fun format_spec(out: mut String, spec: u8, lt: LocalTime) {
     if spec == 89 {
         if lt.year < 0 {
@@ -1237,7 +1408,8 @@ fun format_spec(out: mut String, spec: u8, lt: LocalTime) {
     }
 }
 
-// `value` in `width` decimal digits at least, zero-filled on the left.
+/// Appends `value` in decimal, padded on the left with zeros to `width` digits.
+/// `value` in `width` decimal digits at least, zero-filled on the left.
 fun push_pad(out: mut String, value: i64, width: usize) {
     val digits = str.from_i64(value)
     var pad: usize = 0
@@ -1252,7 +1424,8 @@ fun push_pad(out: mut String, value: i64, width: usize) {
     out.push_str(digits.as_str())
 }
 
-// Three bytes of `table` at `index`, the shape `%a` and `%b` print.
+/// Appends the three bytes of `table` at entry `index`.
+/// Three bytes of `table` at `index`, the shape `%a` and `%b` print.
 fun push_three(out: mut String, table: &str, index: i32) {
     val base = index * 3
     var k: i32 = 0
