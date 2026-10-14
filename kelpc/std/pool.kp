@@ -34,14 +34,41 @@ impl "std/sync"
 impl "std/thread"
 
 
-datac PoolMeta(var queued: usize, var running: usize, var stop: bool, var panicked: i32, var alive: i32)
+/// The counters a pool and its workers share, guarded by the pool's `meta` mutex.
+datac PoolMeta(
+    /// Jobs waiting in the queue.
+    var queued: usize,
+    /// Jobs a worker is running now.
+    var running: usize,
+    /// Set by `join`: no more jobs are accepted.
+    var stop: bool,
+    /// Jobs that have panicked so far.
+    var panicked: i32,
+    /// Workers that have not exited yet.
+    var alive: i32
+)
 
-// A queued job. A closure cannot be a list element, a one-field `datac` can.
-datac Job(val run: closure())
+/// A queued job, the closure a worker runs. The closure sits in a one-field `datac`
+/// because a closure cannot be a list element.
+datac Job(
+    /// The closure to run.
+    val run: closure()
+)
 
-datac PoolShared(val meta: Mutex<PoolMeta>, val jobs: Mutex<List<Job>>, val work: Condvar, val done: Condvar)
+/// The state a pool shares with its workers: the counters, the job queue and the
+/// two condition variables.
+datac PoolShared(
+    /// The counters, guarded by this mutex.
+    val meta: Mutex<PoolMeta>,
+    /// The FIFO queue of jobs no worker has taken yet.
+    val jobs: Mutex<List<Job>>,
+    /// Signalled when a job is queued or the pool stops.
+    val work: Condvar,
+    /// Signalled when a job ends or a worker exits.
+    val done: Condvar
+)
 
-// A handle to the same pool state, for one more worker.
+/// A handle to the same pool state, for one more worker.
 fun PoolShared.dup() => PoolShared {
     return PoolShared(meta = self.meta.share(), jobs = self.jobs.share(), work = self.work.share(), done = self.done.share())
 }
@@ -53,11 +80,14 @@ datac Pool(
     val shared: PoolShared
 )
 
+/// Runs one job. A worker starts it on a thread of its own, so a panic stays in that thread.
 fun run_job(job: move Job) {
     val f = job.run
     f()
 }
 
+/// The worker loop: takes jobs from the queue until `join` stops the pool, and counts
+/// each job that panics.
 fun pool_worker(sh: move PoolShared) {
     var running = true
     while running {
@@ -100,7 +130,6 @@ fun pool_worker(sh: move PoolShared) {
 /// Starts a pool of `workers` threads. The workers run until `join`.
 ///
 /// Panics: if `workers` is less than 1.
-// Start a pool of `workers` threads (at least one).
 fun new(workers: i32) => Pool {
     if workers < 1 {
         panic("pool.new: a pool needs at least one worker")
@@ -148,7 +177,6 @@ fun Pool.join() {
 }
 
 /// How many jobs have panicked so far. A panicking job does not stop its worker.
-// How many jobs have panicked so far.
 fun Pool.panicked() => i32 {
     return self.shared.meta.lock { s -> s.panicked }
 }
