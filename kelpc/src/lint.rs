@@ -1093,7 +1093,7 @@ mod tests {
 
     #[test]
     fn the_findings_of_one_file_come_out_in_source_order() {
-        let src = "fun read_text() => i32 {\n    // one\n    // two\n    if read_text() > 1 {\n        return 1\n    } else if read_text() > 0 {\n        return 2\n    }\n    return 3\n}\n";
+        let src = "fun read_text() => i32 {\n    // one\n    // two\n    if read_text() > 1 {\n        return 1\n    } else if read_text() == true {\n        return 2\n    }\n    return 3\n}\n";
         let found = findings(
             src,
             Some(&Naming {
