@@ -58,7 +58,7 @@ fun main() {
     if str.is_empty(declared.as_str()) {
         print("no Content-Length: the body ends at end of file")
     } else {
-        print(str.concat("Content-Length: ", declared.as_str()))
+        print("Content-Length: ${declared.as_str()}")
     }
 
     // `resp.body` is an owned `Bytes`, and `fs.write` takes it by borrow, so
