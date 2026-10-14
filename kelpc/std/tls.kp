@@ -67,16 +67,25 @@ impl "std/str"
    only caller that wants "no handle" is `std/http`/`std/ws`, and they carry
    an `Option<TlsHandle>` whose `None` is that value. */
 
-// The `TlsError` codes the C classifiers (`cdecl::C_HEADERS`) write
-// through `err_code`. They are the wire between the extern bodies and
-// `error_from`, so the two have to agree; the names are the mapping.
+/// The `TlsError` code for an untrusted certificate.
+///
+/// The `TlsError` codes the C classifiers (`cdecl::C_HEADERS`) write
+/// through `err_code`. They are the wire between the extern bodies and
+/// `error_from`, so the two have to agree; the names are the mapping.
 const ERR_UNTRUSTED: i32 = 1
+/// The `TlsError` code for an expired or not yet valid certificate.
 const ERR_EXPIRED: i32 = 2
+/// The `TlsError` code for a certificate that does not match the host name.
 const ERR_HOST_MISMATCH: i32 = 3
+/// The `TlsError` code for a peer that does not speak TLS 1.2 or newer.
 const ERR_PROTOCOL_TOO_OLD: i32 = 4
+/// The `TlsError` code for a handshake that failed for another reason, with OpenSSL's text.
 const ERR_HANDSHAKE: i32 = 5
+/// The `TlsError` code for a stream that ended without a `close_notify`.
 const ERR_PEER_CLOSED: i32 = 6
+/// The `TlsError` code for an operation that timed out.
 const ERR_TIMEOUT: i32 = 7
+/// The `TlsError` code for any other I/O failure, with the socket's text.
 const ERR_IO: i32 = 8
 
 extern fun handshake_try_raw(fd: i32, host: &str, ca_pem: Bytes, timeout_ms: u64, alpn: Bytes, cert_pem: Bytes, key_pem: Bytes, err_code: mut i32, reason: mut String) => TlsHandle
@@ -94,52 +103,94 @@ extern fun read_try_raw(handle: TlsHandle, max: usize, err_code: mut i32, reason
 extern fun read_into_try_raw(handle: TlsHandle, buf: mut Bytes, at: usize, err_code: mut i32, reason: mut String) => usize
 extern fun shutdown_try_raw(handle: TlsHandle, err_code: mut i32, reason: mut String)
 
-// A TLS session bound to a connected file descriptor. `handle` is the
-// OpenSSL `SSL*`, carried as an opaque `extern type` handle. Not `Copy`, so
-// passing one around is a borrow and there is never a silent second free of
-// the `SSL*`.
+/// An OpenSSL `SSL*` for one TLS session, carried as an opaque value.
+///
+/// It is not `Copy`, so passing one around is a borrow, and the `SSL*` is never freed twice.
+///
+/// A TLS session bound to a connected file descriptor. `handle` is the
+/// OpenSSL `SSL*`, carried as an opaque `extern type` handle. Not `Copy`, so
+/// passing one around is a borrow and there is never a silent second free of
+/// the `SSL*`.
 pub extern type TlsHandle
 
-// A server's `SSL_CTX*`: certificate chain, key, protocol floor, ALPN list and
-// (for mTLS) the client CAs. Opaque for the same reason `TlsHandle` is.
+/// An OpenSSL `SSL_CTX*` for a server: the certificate chain, the key, the protocol floor, the ALPN list and
+/// the client CAs. It is opaque for the same reason `TlsHandle` is.
+///
+/// A server's `SSL_CTX*`: certificate chain, key, protocol floor, ALPN list and
+/// (for mTLS) the client CAs. Opaque for the same reason `TlsHandle` is.
 pub extern type TlsCtx
 
-datac TlsStream(val fd: i32, val handle: TlsHandle)
+/// A TLS session bound to a connected file descriptor.
+datac TlsStream(
+    /// The socket's file descriptor.
+    val fd: i32,
+    /// The OpenSSL session for that socket.
+    val handle: TlsHandle,
+)
 
-// Why a TLS operation failed, as a value a caller can branch on.
-//
-// `HandshakeFailed` and `Io` carry OpenSSL's or the socket's own sentence;
-// the rest are the cases worth naming because a caller acts on them
-// differently (retry after `Timeout`, ask the user to install a CA after
-// `Untrusted`, and so on). `PeerClosedUncleanly` is the truncation case: the
-// stream ended without a `close_notify`.
+/// Why a TLS operation failed, as a value a caller can branch on.
+///
+/// `HandshakeFailed` and `Io` carry OpenSSL's or the socket's own sentence. The other variants are the cases a
+/// caller acts on differently: it may retry after `Timeout`, or ask the user to install a CA after `Untrusted`.
+/// `PeerClosedUncleanly` is the truncation case, where the stream ended without a `close_notify`.
+///
+/// Why a TLS operation failed, as a value a caller can branch on.
+///
+/// `HandshakeFailed` and `Io` carry OpenSSL's or the socket's own sentence;
+/// the rest are the cases worth naming because a caller acts on them
+/// differently (retry after `Timeout`, ask the user to install a CA after
+/// `Untrusted`, and so on). `PeerClosedUncleanly` is the truncation case: the
+/// stream ended without a `close_notify`.
 pub enum TlsError {
+    /// The certificate is not trusted by the system store or by the configured CA.
     Untrusted
+    /// The certificate has expired, or is not yet valid.
     Expired
+    /// The certificate does not match the host name that was dialed.
     HostMismatch
+    /// The peer does not speak TLS 1.2 or newer.
     ProtocolTooOld
+    /// The handshake failed. `reason` is OpenSSL's sentence for it.
     HandshakeFailed(val reason: String)
+    /// The stream ended without a `close_notify`, so the data may be truncated.
     PeerClosedUncleanly
+    /// The operation timed out.
     Timeout
+    /// Another I/O failure. `reason` is the socket's or OpenSSL's sentence for it.
     Io(val reason: String)
 }
 
-// How to trust and how long to wait for one handshake. An empty `ca_pem`
-// means "only the system store"; non-empty PEM text of one or more CA
-// certificates *adds* them to the roots and cannot weaken verification. The
-// runtime never opens a path for this: the PEM comes in as bytes, so a file
-// is read by the caller through `std/tlsfile` and the `fs` grant
-// (`tlsfile.read_pem`). A `timeout_ms` of 0 is "no timeout", which is
-// `SO_RCVTIMEO`'s own meaning.
-pub datac TlsOptions(val ca_pem: Bytes, val timeout_ms: u64)
+/// How to trust, and how long to wait for, one handshake.
+///
+/// An empty `ca_pem` means only the system store. Non-empty PEM text of one or more CA certificates adds them to the
+/// roots, and cannot weaken verification. The runtime never opens a path for this: a file is read by the caller
+/// through `std/tlsfile` and the `fs` grant. A `timeout_ms` of 0 means no timeout, as `SO_RCVTIMEO` does.
+///
+/// How to trust and how long to wait for one handshake. An empty `ca_pem`
+/// means "only the system store"; non-empty PEM text of one or more CA
+/// certificates *adds* them to the roots and cannot weaken verification. The
+/// runtime never opens a path for this: the PEM comes in as bytes, so a file
+/// is read by the caller through `std/tlsfile` and the `fs` grant
+/// (`tlsfile.read_pem`). A `timeout_ms` of 0 is "no timeout", which is
+/// `SO_RCVTIMEO`'s own meaning.
+pub datac TlsOptions(
+    /// PEM text of extra CA certificates to trust, or empty for the system store only.
+    val ca_pem: Bytes,
+    /// The handshake and read deadline in milliseconds, or 0 for none.
+    val timeout_ms: u64,
+)
 
-// The options `handshake` uses: the system store, no extra CA, no timeout.
+/// The options `handshake` uses: the system store, no extra CA and no timeout.
+///
+/// The options `handshake` uses: the system store, no extra CA, no timeout.
 fun default_options() => TlsOptions = TlsOptions(
     ca_pem = Bytes.empty(),
     timeout_ms = 0,
 )
 
-// The typed error for one `err_code`/`reason` pair an extern body wrote.
+/// The typed error for one error code and reason that an extern body wrote.
+///
+/// The typed error for one `err_code`/`reason` pair an extern body wrote.
 fun error_from(code: i32, reason: move String) => TlsError {
     if code == ERR_UNTRUSTED {
         return TlsError.Untrusted
@@ -165,10 +216,14 @@ fun error_from(code: i32, reason: move String) => TlsError {
     return TlsError.Io(reason = reason)
 }
 
-// The text a `TlsError` is reported with: the panicking wrappers panic with
-// this, and a `try_` caller that only wants to log one gets exactly what
-// they would have printed. `HandshakeFailed` and `Io` return OpenSSL's or
-// the socket's own words, so the detail is not thrown away.
+/// The text a `TlsError` is reported with.
+///
+/// The panicking forms panic with this text, and a `try_` caller that only wants to log an error gets the same words.
+///
+/// The text a `TlsError` is reported with: the panicking wrappers panic with
+/// this, and a `try_` caller that only wants to log one gets exactly what
+/// they would have printed. `HandshakeFailed` and `Io` return OpenSSL's or
+/// the socket's own words, so the detail is not thrown away.
 fun error_text(e: move TlsError) => String = when e {
     Untrusted -> String.from_str("tls: the certificate is not trusted by the system store")
     Expired -> String.from_str("tls: the certificate has expired or is not yet valid")
@@ -180,15 +235,20 @@ fun error_text(e: move TlsError) => String = when e {
     Io(reason) -> reason
 }
 
-// Performs the TLS client handshake over an already-connected socket, with
-// `opts`' private CA and timeout, or returns why it could not. `host` is
-// used for SNI and for the certificate's hostname check; it should be
-// exactly the host the caller dialed, the same string `net.connect` and the
-// capability check both saw, not an address `getaddrinfo` produced.
-//
-// The socket is consumed by value (as `net.Socket` is always passed), and
-// its descriptor lives on inside the returned `TlsStream`; there is no
-// remaining `Socket` to close separately afterward, only the `TlsStream`.
+/// Performs the TLS client handshake over a connected socket, with the options given, or returns why it could not.
+///
+/// `host` is used for SNI and for the certificate's host name check. It should be the host the caller dialed, not an
+/// address that `getaddrinfo` produced.
+///
+/// Performs the TLS client handshake over an already-connected socket, with
+/// `opts`' private CA and timeout, or returns why it could not. `host` is
+/// used for SNI and for the certificate's hostname check; it should be
+/// exactly the host the caller dialed, the same string `net.connect` and the
+/// capability check both saw, not an address `getaddrinfo` produced.
+///
+/// The socket is consumed by value (as `net.Socket` is always passed), and
+/// its descriptor lives on inside the returned `TlsStream`; there is no
+/// remaining `Socket` to close separately afterward, only the `TlsStream`.
 fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -209,33 +269,44 @@ fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => result.Re
     return result.Result.Ok(value = TlsStream(fd = s.fd, handle = handle))
 }
 
-// The fallible twin of `handshake` with the default options, for a caller
-// that has somewhere to go when the peer's certificate is not trusted.
+/// The fallible handshake with the default options, for a caller that can act on an untrusted certificate.
+///
+/// The fallible twin of `handshake` with the default options, for a caller
+/// that has somewhere to go when the peer's certificate is not trusted.
 fun try_handshake(s: net.Socket, host: &str) => result.Result<TlsStream, TlsError> = try_handshake_with(
     s,
     host,
     default_options(),
 )
 
-// The fallible handshake with a deadline in milliseconds, applied as
-// `SO_RCVTIMEO`/`SO_SNDTIMEO` before the handshake starts. A silent peer is
-// then `Err(Timeout)` instead of a hang, and the settings stay on the socket
-// for the reads and writes that follow.
+/// The fallible handshake with a deadline in milliseconds. A silent peer gives `Err(Timeout)` instead of a hang.
+///
+/// The deadline stays on the socket for the reads and writes that follow.
+///
+/// The fallible handshake with a deadline in milliseconds, applied as
+/// `SO_RCVTIMEO`/`SO_SNDTIMEO` before the handshake starts. A silent peer is
+/// then `Err(Timeout)` instead of a hang, and the settings stay on the socket
+/// for the reads and writes that follow.
 fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64) => result.Result<TlsStream, TlsError> = try_handshake_with(
     s,
     host,
     TlsOptions(ca_pem = Bytes.empty(), timeout_ms = ms),
 )
 
+/// Panics with the text of a refused handshake. Its return type is `TlsStream` so that `handshake` can call it as a value.
 fun fail_stream(e: move TlsError) => TlsStream {
     val text = error_text(e)
     panic(text.as_str())
 }
 
-// Performs the TLS client handshake, or panics with the error's text.
-//
-// Panics: if the handshake fails, including a certificate the system trust
-// store does not vouch for or a name mismatch.
+/// Performs the TLS client handshake with the default options, or panics with the error's text.
+///
+/// Panics if the handshake fails, including a certificate that the system store does not trust, or a name mismatch.
+///
+/// Performs the TLS client handshake, or panics with the error's text.
+///
+/// Panics: if the handshake fails, including a certificate the system trust
+/// store does not vouch for or a name mismatch.
 fun handshake(s: net.Socket, host: &str) => TlsStream {
     val r = try_handshake(s, host)
     return when r {
@@ -244,9 +315,13 @@ fun handshake(s: net.Socket, host: &str) => TlsStream {
     }
 }
 
-// The same as `handshake`, with a private CA and/or a timeout.
-//
-// Panics: as `handshake`.
+/// The same as `handshake`, with the given options.
+///
+/// Panics as `handshake` does.
+///
+/// The same as `handshake`, with a private CA and/or a timeout.
+///
+/// Panics: as `handshake`.
 fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => TlsStream {
     val r = try_handshake_with(s, host, opts)
     return when r {
@@ -255,10 +330,14 @@ fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions) => TlsStream {
     }
 }
 
-// The same as `handshake`, with a deadline in milliseconds.
-//
-// Panics: as `handshake`, and `TlsError.Timeout` when the peer stays silent
-// past `ms`.
+/// The same as `handshake`, with a deadline in milliseconds.
+///
+/// Panics as `handshake` does, and with `TlsError.Timeout` when the peer stays silent past `ms`.
+///
+/// The same as `handshake`, with a deadline in milliseconds.
+///
+/// Panics: as `handshake`, and `TlsError.Timeout` when the peer stays silent
+/// past `ms`.
 fun handshake_timeout(s: net.Socket, host: &str, ms: u64) => TlsStream {
     val r = try_handshake_timeout(s, host, ms)
     return when r {
@@ -267,28 +346,36 @@ fun handshake_timeout(s: net.Socket, host: &str, ms: u64) => TlsStream {
     }
 }
 
-// Sets the receive and send timeouts on the stream's socket, so a blocking
-// read on a silent peer gives up instead of hanging forever. `ms` of 0 means
-// "no timeout". The handshake's own timeout is set before it starts; this is
-// the call for the reads and writes that follow.
-//
-// Panics: if the socket options cannot be set.
+/// Sets the receive and send timeouts on the stream's socket. `ms` of 0 means no timeout.
+///
+/// Panics if the socket options cannot be set.
+///
+/// Sets the receive and send timeouts on the stream's socket, so a blocking
+/// read on a silent peer gives up instead of hanging forever. `ms` of 0 means
+/// "no timeout". The handshake's own timeout is set before it starts; this is
+/// the call for the reads and writes that follow.
+///
+/// Panics: if the socket options cannot be set.
 fun set_timeout(t: TlsStream, ms: u64) {
     set_timeout_raw(t.handle, ms)
 }
 
+/// Panics with the text of a failed TLS read or write that returns bytes.
 fun fail_bytes(e: move TlsError) => Bytes {
     val text = error_text(e)
     panic(text.as_str())
 }
 
+/// Panics with the text of a failed TLS operation that returns a count.
 fun fail_usize(e: move TlsError) => usize {
     val text = error_text(e)
     panic(text.as_str())
 }
 
-// One `SSL_write`, or why it failed: like `net.send`, it may write fewer
-// bytes than given.
+/// Writes some of `data` and returns how many bytes were written, or why the write failed. Like `net.send`, it may write fewer bytes than given.
+///
+/// One `SSL_write`, or why it failed: like `net.send`, it may write fewer
+/// bytes than given.
 fun try_write(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -299,8 +386,10 @@ fun try_write(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
     return result.Result.Ok(value = n)
 }
 
-// The whole buffer, looping over short writes, or why it stopped: the TLS
-// twin of `net.send_all`.
+/// Writes the whole buffer, looping over short writes, or returns why it stopped.
+///
+/// The whole buffer, looping over short writes, or why it stopped: the TLS
+/// twin of `net.send_all`.
 fun try_write_all(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -311,9 +400,12 @@ fun try_write_all(t: TlsStream, data: Bytes) => result.Result<usize, TlsError> {
     return result.Result.Ok(value = n)
 }
 
-// One `SSL_read`: up to `max` bytes, whatever is available. A clean
-// `close_notify` is `Ok` with an empty `Bytes`; a stream that ends without
-// one is `Err(PeerClosedUncleanly)`.
+/// Reads up to `max` bytes, whatever is available. A clean `close_notify` is `Ok` with an empty `Bytes`. A stream that
+/// ends without one is `Err(PeerClosedUncleanly)`.
+///
+/// One `SSL_read`: up to `max` bytes, whatever is available. A clean
+/// `close_notify` is `Ok` with an empty `Bytes`; a stream that ends without
+/// one is `Err(PeerClosedUncleanly)`.
 fun try_read(t: TlsStream, max: usize) => result.Result<Bytes, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -324,9 +416,13 @@ fun try_read(t: TlsStream, max: usize) => result.Result<Bytes, TlsError> {
     return result.Result.Ok(value = data)
 }
 
-// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
-// a clean close), or why the read failed: the TLS twin of
-// `net.recv_into`, for a message of known size.
+/// Fills `buf` from byte `at` onward and returns how many bytes arrived, 0 on a clean close, or why the read failed.
+///
+/// It is the TLS form of `net.recv_into`, for a message of known size.
+///
+/// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
+/// a clean close), or why the read failed: the TLS twin of
+/// `net.recv_into`, for a message of known size.
 fun try_read_into(t: TlsStream, buf: mut Bytes, at: usize) => result.Result<usize, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -337,10 +433,14 @@ fun try_read_into(t: TlsStream, buf: mut Bytes, at: usize) => result.Result<usiz
     return result.Result.Ok(value = n)
 }
 
-// Ends the TLS session (sending `close_notify` when the connection allows
-// it) and frees the OpenSSL handle, or returns why `close_notify` did not go
-// out. The handle is freed either way. It does not close `t.fd`; see
-// `shutdown` for the closing sequence.
+/// Ends the TLS session, sending `close_notify` when the connection allows it, and frees the OpenSSL handle.
+///
+/// The handle is freed either way. The socket is not closed; see `shutdown`.
+///
+/// Ends the TLS session (sending `close_notify` when the connection allows
+/// it) and frees the OpenSSL handle, or returns why `close_notify` did not go
+/// out. The handle is freed either way. It does not close `t.fd`; see
+/// `shutdown` for the closing sequence.
 fun try_shutdown(t: TlsStream) => result.Result<bool, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -351,9 +451,13 @@ fun try_shutdown(t: TlsStream) => result.Result<bool, TlsError> {
     return result.Result.Ok(value = true)
 }
 
-// One `SSL_write`.
-//
-// Panics: if the write fails or the peer has closed.
+/// Writes some of `data` over TLS and returns how many bytes were written.
+///
+/// Panics if the write fails or the peer has closed.
+///
+/// One `SSL_write`.
+///
+/// Panics: if the write fails or the peer has closed.
 fun write(t: TlsStream, data: Bytes) => usize {
     val r = try_write(t, data)
     return when r {
@@ -362,10 +466,14 @@ fun write(t: TlsStream, data: Bytes) => usize {
     }
 }
 
-// The whole buffer, looping over short writes: the TLS twin of
-// `net.send_all`.
-//
-// Panics: as `write`.
+/// Writes the whole buffer over TLS, looping over short writes.
+///
+/// Panics as `write` does.
+///
+/// The whole buffer, looping over short writes: the TLS twin of
+/// `net.send_all`.
+///
+/// Panics: as `write`.
 fun write_all(t: TlsStream, data: Bytes) => usize {
     val r = try_write_all(t, data)
     return when r {
@@ -374,11 +482,15 @@ fun write_all(t: TlsStream, data: Bytes) => usize {
     }
 }
 
-// One `SSL_read`: up to `max` bytes, whatever is available. Empty means the
-// peer sent a clean `close_notify`.
-//
-// Panics: if the read fails, including a stream that ended without a
-// `close_notify` (`TlsError.PeerClosedUncleanly`).
+/// Reads up to `max` bytes over TLS. An empty result means the peer sent a clean `close_notify`.
+///
+/// Panics if the read fails, including a stream that ended without a `close_notify`.
+///
+/// One `SSL_read`: up to `max` bytes, whatever is available. Empty means the
+/// peer sent a clean `close_notify`.
+///
+/// Panics: if the read fails, including a stream that ended without a
+/// `close_notify` (`TlsError.PeerClosedUncleanly`).
 fun read(t: TlsStream, max: usize) => Bytes {
     val r = try_read(t, max)
     return when r {
@@ -387,11 +499,15 @@ fun read(t: TlsStream, max: usize) => Bytes {
     }
 }
 
-// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
-// a clean close): the TLS twin of `net.recv_into`, for a message of known
-// size.
-//
-// Panics: as `read`.
+/// Fills `buf` from byte `at` onward over TLS and returns how many bytes arrived, 0 on a clean close.
+///
+/// Panics as `read` does.
+///
+/// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
+/// a clean close): the TLS twin of `net.recv_into`, for a message of known
+/// size.
+///
+/// Panics: as `read`.
 fun read_into(t: TlsStream, buf: mut Bytes, at: usize) => usize {
     val r = try_read_into(t, buf, at)
     return when r {
@@ -400,18 +516,23 @@ fun read_into(t: TlsStream, buf: mut Bytes, at: usize) => usize {
     }
 }
 
-// Ends the TLS session and frees the OpenSSL handle. It does not close
-// `t.fd`: this module cannot call `net.close` (see the header comment), so
-// the caller closes the socket itself right after, exactly as it does for a
-// plain `net.Socket`:
-//
-//     tls.shutdown(t)
-//     net.close(net.Socket(fd = t.fd))
-//
-// Panics: if `close_notify` could not be sent at all. A peer that has
-// already gone away is the common case, and a caller that wants to treat it
-// as routine uses `try_shutdown` and ignores the `Err`, which is what
-// `std/http` does at the end of a connection.
+/// Ends the TLS session and frees the OpenSSL handle. The socket is not closed.
+///
+/// The caller closes the socket itself, after this, as it does for a plain socket. Panics if `close_notify` could not be sent at all.
+/// A peer that has already gone is routine, and `try_shutdown` lets a caller ignore that case.
+///
+/// Ends the TLS session and frees the OpenSSL handle. It does not close
+/// `t.fd`: this module cannot call `net.close` (see the header comment), so
+/// the caller closes the socket itself right after, exactly as it does for a
+/// plain `net.Socket`:
+///
+///     tls.shutdown(t)
+///     net.close(net.Socket(fd = t.fd))
+///
+/// Panics: if `close_notify` could not be sent at all. A peer that has
+/// already gone away is the common case, and a caller that wants to treat it
+/// as routine uses `try_shutdown` and ignores the `Err`, which is what
+/// `std/http` does at the end of a connection.
 fun shutdown(t: TlsStream) {
     val r = try_shutdown(t)
     when r {
@@ -434,26 +555,56 @@ fun shutdown(t: TlsStream) {
 // error text. The library does not check the key file's permissions: keep it
 // `0600`, owned by the serving user.
 
-// The lowest protocol version a server accepts. TLS 1.2 is the default and the
-// floor of the client too; there is no way to go lower.
+/// The lowest protocol version a server accepts. TLS 1.2 is the default and the floor of the client too.
+///
+/// The lowest protocol version a server accepts. TLS 1.2 is the default and the
+/// floor of the client too; there is no way to go lower.
 pub enum TlsVersion {
+    /// TLS 1.2 or newer.
     Tls12
+    /// TLS 1.3 only.
     Tls13
 }
 
-// What a server needs besides its certificate. A value, built with the methods
-// below and handed to `server_config_with`, so a `ServerConfig` itself has
-// nothing left to change once it exists.
-pub datac ServerOptions(val floor: i32, val alpn_list: Bytes, val ca_pem: Bytes, val timeout_ms: u64, val key_pass: Bytes)
+/// What a server needs besides its certificate.
+///
+/// Build a value with the methods below and hand it to `server_config_pem_with`.
+///
+/// What a server needs besides its certificate. A value, built with the methods
+/// below and handed to `server_config_with`, so a `ServerConfig` itself has
+/// nothing left to change once it exists.
+pub datac ServerOptions(
+    /// The lowest TLS version, as 12 or 13.
+    val floor: i32,
+    /// The offered protocols in wire form, or empty for none.
+    val alpn_list: Bytes,
+    /// PEM text of client CA certificates, or empty when client certificates are not required.
+    val ca_pem: Bytes,
+    /// The handshake deadline in milliseconds, or 0 to wait forever.
+    val timeout_ms: u64,
+    /// The pass phrase of an encrypted private key, or empty for none.
+    val key_pass: Bytes,
+)
 
-// A built server configuration. Immutable; one `SSL_CTX*` that OpenSSL lets
-// every thread make sessions from, so a config is shared by reference or by
-// copying its handle into a worker. `free` ends it; like every handle here,
-// nothing is freed on drop.
-pub datac ServerConfig(val ctx: TlsCtx, val handshake_timeout_ms: u64)
+/// A built server configuration. It is immutable, and one OpenSSL `SSL_CTX*` serves every thread.
+///
+/// A config is shared by reference, or by copying its handle into a worker. `free` ends it. Nothing is freed on drop.
+///
+/// A built server configuration. Immutable; one `SSL_CTX*` that OpenSSL lets
+/// every thread make sessions from, so a config is shared by reference or by
+/// copying its handle into a worker. `free` ends it; like every handle here,
+/// nothing is freed on drop.
+pub datac ServerConfig(
+    /// The OpenSSL context that new handshakes use.
+    val ctx: TlsCtx,
+    /// The deadline that `accept` applies to each handshake, in milliseconds.
+    val handshake_timeout_ms: u64,
+)
 
-// The options of `server_config`: TLS 1.2 or newer, no ALPN, no client
-// certificates, a 10 s handshake.
+/// The options `server_config_pem` uses: TLS 1.2 or newer, no ALPN, no client certificates and a 10 second handshake.
+///
+/// The options of `server_config`: TLS 1.2 or newer, no ALPN, no client
+/// certificates, a 10 s handshake.
 fun server_options() => ServerOptions = ServerOptions(
     floor = 12,
     alpn_list = Bytes.empty(),
@@ -462,11 +613,13 @@ fun server_options() => ServerOptions = ServerOptions(
     key_pass = Bytes.empty(),
 )
 
+/// The TLS version number, as 12 or 13, that a version selects.
 fun TlsVersion.floor_code() => i32 = when self {
     Tls12 -> 12
     Tls13 -> 13
 }
 
+/// The options with the lowest accepted TLS version set to `v`.
 fun ServerOptions.min_version(v: TlsVersion) => ServerOptions = ServerOptions(
     floor = v.floor_code(),
     alpn_list = alpn_list.clone(),
@@ -475,10 +628,14 @@ fun ServerOptions.min_version(v: TlsVersion) => ServerOptions = ServerOptions(
     key_pass = key_pass.clone(),
 )
 
-// The protocols this server speaks, in order of preference (`"h2"`,
-// `"http/1.1"`). The first one the client also offers is chosen; no overlap
-// fails the handshake. A name that is empty or longer than 255 bytes is not a
-// protocol: it makes `server_config_with` return an error.
+/// The options with the protocols this server speaks, in order of preference, such as `"h2"` and `"http/1.1"`.
+///
+/// The first one the client also offers is chosen. An empty name, or one longer than 255 bytes, makes `server_config_pem_with` return an error.
+///
+/// The protocols this server speaks, in order of preference (`"h2"`,
+/// `"http/1.1"`). The first one the client also offers is chosen; no overlap
+/// fails the handshake. A name that is empty or longer than 255 bytes is not a
+/// protocol: it makes `server_config_with` return an error.
 fun ServerOptions.alpn(protocols: &List<String>) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_wire(protocols),
@@ -487,9 +644,13 @@ fun ServerOptions.alpn(protocols: &List<String>) => ServerOptions = ServerOption
     key_pass = key_pass.clone(),
 )
 
-// Verify client certificates against the CA(s) in this PEM text, and refuse a
-// connection that has none. Text with no certificate in it is rejected when
-// the configuration is built. `tlsfile.require_client_cert` reads a file.
+/// The options that verify client certificates against the CA certificates in this PEM text, and refuse a connection without one.
+///
+/// Text with no certificate in it is rejected when the configuration is built.
+///
+/// Verify client certificates against the CA(s) in this PEM text, and refuse a
+/// connection that has none. Text with no certificate in it is rejected when
+/// the configuration is built. `tlsfile.require_client_cert` reads a file.
 fun ServerOptions.require_client_cert_pem(ca_pem: Bytes) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
@@ -498,7 +659,9 @@ fun ServerOptions.require_client_cert_pem(ca_pem: Bytes) => ServerOptions = Serv
     key_pass = key_pass.clone(),
 )
 
-// The handshake deadline `accept` applies; 0 waits forever.
+/// The options with the handshake deadline set to `ms` milliseconds. 0 waits forever.
+///
+/// The handshake deadline `accept` applies; 0 waits forever.
 fun ServerOptions.handshake_timeout_ms(ms: u64) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
@@ -507,12 +670,16 @@ fun ServerOptions.handshake_timeout_ms(ms: u64) => ServerOptions = ServerOptions
     key_pass = key_pass.clone(),
 )
 
-// The pass phrase of an encrypted private key (PEM `ENCRYPTED PRIVATE KEY` or
-// the older `Proc-Type: 4,ENCRYPTED` form). Without one an encrypted key is
-// refused with a fixed sentence; with a wrong one the same sentence says the
-// key is malformed or the phrase wrong. The phrase is never put in an error
-// text, and it lives only in these options: drop them once the configuration
-// is built.
+/// The options with the pass phrase of an encrypted private key set to `phrase`.
+///
+/// The phrase is never put in an error text. It lives only in these options, so drop them once the configuration is built.
+///
+/// The pass phrase of an encrypted private key (PEM `ENCRYPTED PRIVATE KEY` or
+/// the older `Proc-Type: 4,ENCRYPTED` form). Without one an encrypted key is
+/// refused with a fixed sentence; with a wrong one the same sentence says the
+/// key is malformed or the phrase wrong. The phrase is never put in an error
+/// text, and it lives only in these options: drop them once the configuration
+/// is built.
 fun ServerOptions.key_password(phrase: &str) => ServerOptions = ServerOptions(
     floor = floor,
     alpn_list = alpn_list.clone(),
@@ -521,8 +688,10 @@ fun ServerOptions.key_password(phrase: &str) => ServerOptions = ServerOptions(
     key_pass = Bytes.from_str(phrase),
 )
 
-// The wire form of an ALPN list: each name behind its length byte. A name that
-// cannot be sent leaves a zero length, which the C side refuses.
+/// The wire form of an ALPN list: each name behind its length byte. A name that cannot be sent leaves a zero length, which the C side refuses.
+///
+/// The wire form of an ALPN list: each name behind its length byte. A name that
+/// cannot be sent leaves a zero length, which the C side refuses.
 fun alpn_wire(protocols: &List<String>) => Bytes {
     var out = Bytes.empty()
     var i: usize = 0
@@ -544,17 +713,24 @@ fun alpn_wire(protocols: &List<String>) => Bytes {
     return out
 }
 
-// A server configuration from a certificate chain (leaf first) and its private
-// key, both PEM text, with the default options. A malformed PEM or a key that
-// does not belong to the certificate is `HandshakeFailed` with a fixed
-// sentence. Never a panic, and never the key in the text. `tlsfile.server_config`
-// is the same from two file paths.
+/// A server configuration from a certificate chain, leaf first, and its private key, both PEM text, with the default options.
+///
+/// A malformed PEM, or a key that does not belong to the certificate, is `HandshakeFailed` with a fixed sentence. It never panics,
+/// and the key never appears in the text.
+///
+/// A server configuration from a certificate chain (leaf first) and its private
+/// key, both PEM text, with the default options. A malformed PEM or a key that
+/// does not belong to the certificate is `HandshakeFailed` with a fixed
+/// sentence. Never a panic, and never the key in the text. `tlsfile.server_config`
+/// is the same from two file paths.
 fun server_config_pem(cert_chain_pem: Bytes, key_pem: Bytes) => result.Result<ServerConfig, TlsError> {
     return server_config_pem_with(cert_chain_pem, key_pem, server_options())
 }
 
-// `server_config_pem` with options: a TLS floor, ALPN, required client
-// certificates, the handshake deadline.
+/// A server configuration from a certificate chain and key, with the given options: a TLS floor, ALPN, required client certificates and the handshake deadline.
+///
+/// `server_config_pem` with options: a TLS floor, ALPN, required client
+/// certificates, the handshake deadline.
 fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => result.Result<ServerConfig, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -575,15 +751,21 @@ fun server_config_pem_with(cert: Bytes, key: Bytes, opts: &ServerOptions) => res
     return result.Result.Ok(value = ServerConfig(ctx = ctx, handshake_timeout_ms = opts.timeout_ms))
 }
 
-// Replaces the certificate and key this configuration hands to *new*
-// handshakes, from PEM text, with the options given (the floor, ALPN, client CA
-// and pass phrase are taken from `opts`, so a reload may change them too). A
-// renewal is `reload_pem` on the live configuration: nothing is re-accepted and
-// no thread has to be stopped. Connections already established keep the
-// certificate they started with. If the new material is malformed, does not
-// match, or the phrase is wrong, the old certificate stays in force and the
-// failure is the value (`None` is success). `ServerConfig.handshake_timeout_ms`
-// is not changed by a reload.
+/// Replaces the certificate and key that new handshakes use, from PEM text, with the options given.
+///
+/// A renewal is a reload on the live configuration: nothing is re-accepted and no thread has to stop. Connections already
+/// established keep the certificate they started with. If the new material is malformed, does not match or the phrase is wrong,
+/// the old certificate stays in force and the failure is returned. `None` means success. The handshake deadline is not changed.
+///
+/// Replaces the certificate and key this configuration hands to *new*
+/// handshakes, from PEM text, with the options given (the floor, ALPN, client CA
+/// and pass phrase are taken from `opts`, so a reload may change them too). A
+/// renewal is `reload_pem` on the live configuration: nothing is re-accepted and
+/// no thread has to be stopped. Connections already established keep the
+/// certificate they started with. If the new material is malformed, does not
+/// match, or the phrase is wrong, the old certificate stays in force and the
+/// failure is the value (`None` is success). `ServerConfig.handshake_timeout_ms`
+/// is not changed by a reload.
 must_use fun ServerConfig.reload_pem(cert: Bytes, key: Bytes, opts: &ServerOptions) => option.Option<TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -605,18 +787,25 @@ must_use fun ServerConfig.reload_pem(cert: Bytes, key: Bytes, opts: &ServerOptio
     return option.Option.None
 }
 
-// Ends the configuration. Sessions already made from it keep working until
-// they end; OpenSSL counts the references.
+/// Ends the configuration. Sessions made from it keep working until they end, because OpenSSL counts the references.
+///
+/// Ends the configuration. Sessions already made from it keep working until
+/// they end; OpenSSL counts the references.
 fun ServerConfig.free() {
     ctx_free_raw(ctx)
 }
 
-// The server handshake over a socket `net.accept` returned, within the
-// configuration's deadline. The descriptor lives on in the returned
-// `TlsStream`, as for `try_handshake`. Failures are values: a client
-// certificate from another CA is `Untrusted`, an expired one `Expired`, a
-// missing one, no common ALPN protocol or a version below the floor is
-// `HandshakeFailed`, a silent client is `Timeout`.
+/// The server handshake over a socket that `net.accept` returned, within the configuration's deadline.
+///
+/// Failures are values. An untrusted client certificate is `Untrusted`, an expired one is `Expired`, and a missing certificate, no common
+/// ALPN protocol or a version below the floor is `HandshakeFailed`. A silent client is `Timeout`.
+///
+/// The server handshake over a socket `net.accept` returned, within the
+/// configuration's deadline. The descriptor lives on in the returned
+/// `TlsStream`, as for `try_handshake`. Failures are values: a client
+/// certificate from another CA is `Untrusted`, an expired one `Expired`, a
+/// missing one, no common ALPN protocol or a version below the floor is
+/// `HandshakeFailed`, a silent client is `Timeout`.
 fun accept(config: &ServerConfig, s: net.Socket) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
@@ -627,8 +816,10 @@ fun accept(config: &ServerConfig, s: net.Socket) => result.Result<TlsStream, Tls
     return result.Result.Ok(value = TlsStream(fd = s.fd, handle = handle))
 }
 
-// The protocol ALPN settled on, on a server or a client stream; `None` when
-// nothing was negotiated.
+/// The protocol that ALPN settled on, on a server or a client stream, or `None` when nothing was negotiated.
+///
+/// The protocol ALPN settled on, on a server or a client stream; `None` when
+/// nothing was negotiated.
 fun TlsStream.alpn() => option.Option<String> {
     var out = String.empty()
     if alpn_raw(handle, &mut out) {
@@ -637,9 +828,11 @@ fun TlsStream.alpn() => option.Option<String> {
     return option.Option.None
 }
 
-// The subject of the peer's certificate in RFC 2253 form (`CN=client`): the
-// authenticated client on a server stream that required a client certificate.
-// `None` when the peer presented none.
+/// The subject of the peer's certificate in RFC 2253 form, such as `CN=client`, or `None` when the peer presented none.
+///
+/// The subject of the peer's certificate in RFC 2253 form (`CN=client`): the
+/// authenticated client on a server stream that required a client certificate.
+/// `None` when the peer presented none.
 fun TlsStream.peer_cert_subject() => option.Option<String> {
     var out = String.empty()
     if peer_subject_raw(handle, &mut out) {
@@ -648,21 +841,35 @@ fun TlsStream.peer_cert_subject() => option.Option<String> {
     return option.Option.None
 }
 
-// Decrypted bytes OpenSSL is holding that a `read` would return at once, which
-// a caller that waits for socket readability first has to check (`std/http`'s
-// server does).
+/// The number of decrypted bytes that a `read` would return at once.
+///
+/// A caller that waits for the socket to be readable first has to check this too.
+///
+/// Decrypted bytes OpenSSL is holding that a `read` would return at once, which
+/// a caller that waits for socket readability first has to check (`std/http`'s
+/// server does).
 fun TlsStream.pending() => usize = pending_raw(handle)
 
-// The client's options with ALPN and a client certificate: `TlsOptions` keeps
-// its three fields (fixtures build it positionally), so these live here.
+/// The client's options with ALPN and a client certificate.
+///
+/// `TlsOptions` keeps its two fields, because fixtures build it by position, so these options live here.
+///
+/// The client's options with ALPN and a client certificate: `TlsOptions` keeps
+/// its two fields (fixtures build it positionally), so these live here.
 pub datac TlsClientOptions(
+    /// PEM text of extra CA certificates to trust, or empty for the system store only.
     val ca_pem: Bytes,
+    /// The handshake and read deadline in milliseconds, or 0 for none.
     val timeout_ms: u64,
+    /// The offered protocols in wire form, or empty for none.
     val alpn_list: Bytes,
+    /// PEM text of the client certificate chain, or empty for none.
     val cert_pem: Bytes,
+    /// PEM text of the client's private key, or empty for none.
     val key_pem: Bytes,
 )
 
+/// The client options with no extra CA, no timeout, no ALPN and no client certificate.
 fun client_options() => TlsClientOptions = TlsClientOptions(
     ca_pem = Bytes.empty(),
     timeout_ms = 0,
@@ -671,6 +878,7 @@ fun client_options() => TlsClientOptions = TlsClientOptions(
     key_pem = Bytes.empty(),
 )
 
+/// The client options with the same CA and timeout as these options.
 fun TlsOptions.to_client() => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
@@ -679,21 +887,26 @@ fun TlsOptions.to_client() => TlsClientOptions = TlsClientOptions(
     key_pem = Bytes.empty(),
 )
 
-// The protocols to offer, in order of preference. The server picks; `alpn()`
-// on the stream says which.
+/// The client options with these options and the protocols to offer, in order of preference. The server picks one, and `alpn` on the stream says which.
+///
+/// The protocols to offer, in order of preference. The server picks; `alpn()`
+/// on the stream says which.
 fun TlsOptions.alpn(protocols: &List<String>) => TlsClientOptions {
     val c = self.to_client()
     return c.alpn(protocols)
 }
 
-// Present this certificate chain and key (PEM text) when a server asks for a
-// client certificate. A key that does not match is found when the handshake
-// starts. `tlsfile.client_cert` reads the two files.
+/// The client options with these options and a client certificate chain and key, both PEM text.
+///
+/// Present this certificate chain and key (PEM text) when a server asks for a
+/// client certificate. A key that does not match is found when the handshake
+/// starts. `tlsfile.client_cert` reads the two files.
 fun TlsOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions {
     val c = self.to_client()
     return c.client_cert_pem(cert_pem, key_pem)
 }
 
+/// The client options with the protocols to offer, in order of preference.
 fun TlsClientOptions.alpn(protocols: &List<String>) => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
@@ -702,6 +915,9 @@ fun TlsClientOptions.alpn(protocols: &List<String>) => TlsClientOptions = TlsCli
     key_pem = key_pem.clone(),
 )
 
+/// The client options with a client certificate chain and key, both PEM text, to present when a server asks for one.
+///
+/// A key that does not match is found when the handshake starts. Read the two files with `tlsfile.client_cert`.
 fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = timeout_ms,
@@ -710,8 +926,12 @@ fun TlsClientOptions.client_cert_pem(cert_pem: Bytes, key_pem: Bytes) => TlsClie
     key_pem = key_pem.clone(),
 )
 
-// Adds private CA certificates (PEM text) to the roots, as `TlsOptions.ca_pem`
-// does. Read a file's bytes with `tlsfile.read_pem`, which is gated on `fs`.
+/// The client options with the CA certificates in this PEM text added to the roots.
+///
+/// Read a file's bytes with `tlsfile.read_pem`, which is gated on `fs`.
+///
+/// Adds private CA certificates (PEM text) to the roots, as `TlsOptions.ca_pem`
+/// does. Read a file's bytes with `tlsfile.read_pem`, which is gated on `fs`.
 fun TlsClientOptions.with_ca_pem(pem: Bytes) => TlsClientOptions = TlsClientOptions(
     ca_pem = pem.clone(),
     timeout_ms = timeout_ms,
@@ -720,6 +940,7 @@ fun TlsClientOptions.with_ca_pem(pem: Bytes) => TlsClientOptions = TlsClientOpti
     key_pem = key_pem.clone(),
 )
 
+/// The client options with the handshake and read deadline set to `ms` milliseconds.
 fun TlsClientOptions.with_timeout_ms(ms: u64) => TlsClientOptions = TlsClientOptions(
     ca_pem = ca_pem.clone(),
     timeout_ms = ms,
@@ -728,9 +949,13 @@ fun TlsClientOptions.with_timeout_ms(ms: u64) => TlsClientOptions = TlsClientOpt
     key_pem = key_pem.clone(),
 )
 
-// The client handshake with every option, `try_handshake_with`'s superset:
-// the same verification, hostname check and TLS 1.2 floor, plus ALPN and a
-// client certificate when the options carry them.
+/// The client handshake with every option.
+///
+/// It verifies the same way, checks the host name in the same way and keeps the TLS 1.2 floor, and adds ALPN and a client certificate when the options carry them.
+///
+/// The client handshake with every option, `try_handshake_with`'s superset:
+/// the same verification, hostname check and TLS 1.2 floor, plus ALPN and a
+/// client certificate when the options carry them.
 fun try_handshake_opts(s: net.Socket, host: &str, opts: &TlsClientOptions) => result.Result<TlsStream, TlsError> {
     var code: i32 = 0
     var reason = String.empty()
