@@ -136,7 +136,7 @@ fun main() {
         title = "counter",
         width = 320,
         height = 200,
-        init = Counter(count = 0, draft = String.from_str("")),
+        init = Counter(count = 0, draft = ""),
         view = view,
         update = update,
     )
