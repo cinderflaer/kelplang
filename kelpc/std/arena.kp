@@ -40,33 +40,42 @@
    `[unsafe]` list (`stdlib::UNSAFE_MODULES`); a program that imports it does not
    have to list it in `coral.toml`. */
 
-datac Arena(var base: Ptr<u8>, val cap: usize, var used: usize)
+/// A bump allocator over one caller-owned byte region. `used` only grows until
+/// `reset`, and every allocation comes out of `cap` bytes starting at `base`.
+datac Arena(
+    /// The first byte of the region. The arena neither validates nor frees it.
+    var base: Ptr<u8>,
+    /// The size of the region in bytes.
+    val cap: usize,
+    /// Bytes handed out so far, counted from `base`.
+    var used: usize
+)
 
-// An arena over `cap` bytes starting at `base`, with nothing used yet. The
-// caller owns the region; the arena neither validates nor frees it.
+/// An arena over `cap` bytes starting at `base`, with nothing used yet. The
+/// caller owns the region; the arena neither validates nor frees it.
 fun new(base: Ptr<u8>, cap: usize) => Arena {
     return Arena(base = base, cap = cap, used = 0)
 }
 
-// Bytes handed out so far.
+/// Bytes handed out so far.
 fun Arena.used() => usize = used
 
-// Bytes still available at the current bump position, before alignment.
+/// Bytes still available at the current bump position, before alignment.
 fun Arena.remaining() => usize = cap - used
 
-// Make the whole region available again. The bytes are not cleared: a `base`
-// the caller still reads through sees what the previous user wrote, so a caller
-// that cares zeroes with `alloc_zeroed` or writes over it.
+/// Make the whole region available again. The bytes are not cleared: a `base`
+/// the caller still reads through sees what the previous user wrote, so a caller
+/// that cares zeroes with `alloc_zeroed` or writes over it.
 fun mut Arena.reset() {
     used = 0
 }
 
-// The next `size` bytes, whose address is aligned up to `align`, or the null
-// `Ptr<u8>` when the request would run past `cap` or the aligned end would wrap
-// `usize`. The padding is measured from the *address* the bump position sits
-// at, so a `base` that is not itself `align`-aligned still hands back an
-// aligned pointer; the two remainders are folded with `%` so nothing is added
-// to a raw address.
+/// The next `size` bytes, whose address is aligned up to `align`, or the null
+/// `Ptr<u8>` when the request would run past `cap` or the aligned end would wrap
+/// `usize`. The padding is measured from the *address* the bump position sits
+/// at, so a `base` that is not itself `align`-aligned still hands back an
+/// aligned pointer; the two remainders are folded with `%` so nothing is added
+/// to a raw address.
 fun mut Arena.alloc(size: usize, align: usize) => Ptr<u8> {
     if align == 0 || (align & (align - 1)) != 0 {
         panic("arena align must be a power of two")
@@ -88,9 +97,9 @@ fun mut Arena.alloc(size: usize, align: usize) => Ptr<u8> {
     return base.byte_offset(start.to_isize())
 }
 
-// `alloc` for a caller that wants a clean block: the same bump, then the
-// returned bytes written to zero. The write is the module's one `unsafe`
-// operation, and the reason `std/arena` is on the compiler's `[unsafe]` list.
+/// `alloc` for a caller that wants a clean block: the same bump, then the
+/// returned bytes written to zero. The write is the module's one `unsafe`
+/// operation, and the reason `std/arena` is on the compiler's `[unsafe]` list.
 fun mut Arena.alloc_zeroed(size: usize, align: usize) => Ptr<u8> {
     val p: Ptr<u8> = self.alloc(size = size, align = align)
     if p.is_null() {
