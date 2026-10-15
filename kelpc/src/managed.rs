@@ -384,9 +384,6 @@ fn crosses(ty: &Ty, walk: &mut Walk<'_>) -> bool {
         Ty::Mutex(elem) | Ty::RwLock(elem) => classify(elem, walk) == ResourceKind::Memory,
         Ty::Condvar => true,
         Ty::Thread(elem) => crosses(elem, walk),
-        // A closure value owns a heap environment that the start record does not
-        // root, so it never crosses as an argument (decision 131).
-        Ty::Closure { .. } => false,
         Ty::Struct(name) => struct_crosses(name, walk),
         _ => classify(ty, walk) == ResourceKind::Memory,
     }
@@ -433,7 +430,10 @@ fn fields_cross(fields: &[Ty], name: &str, walk: &mut Walk<'_>) -> bool {
 /// reason. Heap slots other than the two thread slots keep `resolve`.
 pub fn crossing_kind(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>) -> ResourceKind {
     let mut walk = Walk { decls, path: Vec::new() };
-    if crosses(ty, &mut walk) {
+    // A closure value itself never crosses as an argument or result: its environment
+    // is a heap object the start record does not root (decision 131). A closure held
+    // inside a crossing declaration, such as the pool's `Job`, is unchanged.
+    if !matches!(ty, Ty::Closure { .. }) && crosses(ty, &mut walk) {
         return ResourceKind::Memory;
     }
     match resolve(ty, decls) {
@@ -891,6 +891,30 @@ mod tests {
     /// crossing rule that a thread argument takes: a channel end, a Mutex of memory,
     /// a Condvar and the pool's shared state cross; a destructor, a file, a pool
     /// handle and a thread handle of a destructor do not.
+    /// The pool hands a `Job` (a datac whose field is a closure) to its worker, so a
+    /// closure inside a crossing declaration still crosses, while a bare closure value
+    /// is refused (decision 131).
+    #[test]
+    fn a_closure_field_inside_a_declaration_still_crosses_but_a_bare_closure_does_not() {
+        let decls = |name: &str| -> Option<DeclFacts> {
+            match name {
+                "Job" => Some(DeclFacts {
+                    has_user_drop: false,
+                    fields: vec![Ty::Closure { params: vec![], ret: Box::new(Ty::Unit) }],
+                }),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            crossing_kind(&Ty::Struct("Job".into()), &decls),
+            ResourceKind::Memory
+        );
+        assert_eq!(
+            crossing_kind(&Ty::Closure { params: vec![], ret: Box::new(Ty::Unit) }, &decls),
+            ResourceKind::Resource
+        );
+    }
+
     #[test]
     fn a_spawn_entry_capture_takes_the_crossing_rule() {
         let decls = |name: &str| -> Option<DeclFacts> {
