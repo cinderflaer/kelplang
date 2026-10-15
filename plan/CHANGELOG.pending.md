@@ -27,7 +27,7 @@ empty on release.
 - `derive(eq, hash)` on a `datac` or `enum` writes its `eq` and `hash` methods field by field, so it is a `Map` key with no hand-written pair, and a field that has no `eq` or `hash` is refused by name (12.2).
 - `kelpc doc --format json` writes the documentation as JSON: declarations, spans, imports, trait impls and builtin members.
 - `kelpc stdlib --json --dir <dir>` writes the shipped std sources to `<dir>` and prints the module list with a SHA-256 per file as JSON.
-- `[tidepool]` in `coral.toml` sets the hosted collector's first-clearing guesses (`start_low_mib`, `start_high_mib`), the headroom percent (`headroom_pct`) and the trigger rule (`trigger_rule = "two-size"`, `"last-size"` or `"gogc-style"`, default `"two-size"`). A project that sets `[tidepool]` needs the release that reads it, which the release notes name as the minimum.
+- `[tidepool]` in `coral.toml` sets the hosted collector's first-clearing guesses (`start_low_mib`, `start_high_mib`), the headroom percent (`headroom_pct`) and the trigger rule (`trigger_rule = "two-size"`, `"last-size"` or `"gogc-style"`, default `"two-size"`). A project that sets `[tidepool]` needs a kelpc that reads that section.
 - `[build] obfuscate = "names"` ("off" by default) keeps a hosted build's IR and objects in a temporary directory and links the binary with `ld.lld -s`, which drops its symbol table and debug sections. Names mode is not security: a backtrace shows no function names and the binary has no line information. A freestanding project that sets it is refused by name.
 - `kelpc repl` reads one expression or single-line statement per line from stdin or `--script FILE`, checks and runs each line as its own program, and prints Int, Float, Bool and String values. Lines do not share state yet; a failed line makes the exit status nonzero.
 
@@ -58,16 +58,16 @@ empty on release.
 - The `Box` free lists read their per-thread state with the initial-exec TLS model, so each allocation skips a `__tls_get_addr` call.
 - In the hosted collector bench (`kelpc/gc`, binary-trees, medians of 5 runs), total stop-the-world time falls from 217 ms to 131 ms (-39%); a 1.5 M-node live set falls from 880 ms to 633 ms (-28%), and the longest pause from 42 ms to 30 ms. Wall time is 11-12% lower on both.
 
-- A hosted build accepts `thread.spawn`
-- A hosted build refuses the 257th
+- A hosted build accepts `thread.spawn` with a closure that captures values. A thread's argument and result may hold collected memory, such as a `List`, and a resource (a lock, a channel end, a pool) is refused as a thread argument by name.
+- A hosted build refuses a `thread.spawn` once 256 threads are open: it panics with `thread.spawn: 256 threads are already running; join or drop a thread before spawning another`, because the collector attaches at most 256 threads.
 - A shared-pool array above 4294967295 elements is named in its own message, and so is a count times size that overflows.
 - A `KELP_GC_` variable whose value is not a whole number prints one notice and is ignored. `KELP_GC_STOP_TIMEOUT_MS=0` is refused the same way.
-- The collector's root table
-- The collector clears
+- The collector's root table has no fixed limit: it starts with 1024 slots and doubles as it fills, so a count of roots is never refused.
+- The first collection's trigger is capped at the size of the heap region, so a start guess larger than the heap cannot move the first clearing past the end of the region.
 - A hosted program's collector starts with 10 percent headroom. Its first collection starts at the midpoint of the start guesses (1 and 4 MiB) plus the headroom, not at 8 MiB, and later collections follow the two latest live sizes (the default `two-size` trigger) plus the headroom. A program with a small live set collects more often than before. `[tidepool]` in `coral.toml` changes the guesses, the headroom and the trigger rule.
 - The language reference says `kelpc` emits LLVM IR, not C, and no longer says the binary is written next to a `.c` file.
 
-- A misspelled or misplaced Tidepool section is refused by name: `[target.tidepool]`, `[[tidepool]]`, `[tidpool]` and `[tidepool.x]` each stop the build, and a `[tidepool]` key in a freestanding build is refused, where before the section was skipped without a word. An out-of-range `headroom_pct` (above 1000), a duplicate key and a `start_high_mib` above `heap_max` are refused by name.
+- A misspelled or misplaced Tidepool section is refused by name: `[target.tidepool]`, `[[tidepool]]`, `[tidpool]`, `[tidepool.x]` and the old name `[gc]` each stop the build, and a `[tidepool]` key in a freestanding build is refused, where before the section was skipped without a word. An out-of-range `headroom_pct` (above 1000), a duplicate key and a `start_high_mib` above `heap_max` are refused by name.
 - `.return:` is refused by name: the parser says to write the return type with `=>`, as in `fun f(a: i32) => i32`. The migration to `=>` is complete, so no shipped module, example or fixture uses the old spelling.
 - `else if` is the preferred spelling of a chain link, and `elif` stays legal and means the same. `kelpc lint` no longer warns about either spelling.
 - The examples write `list.get(i)` and `list.set(i, v)` without argument names, and a guard whose body is one `return` that fits in 100 columns on one line: `if n < 2 { return n }`. Style only; no program changes.
@@ -93,7 +93,7 @@ empty on release.
 - A function whose body ends in an `if` with no `else` now says to end the block with `return <value>`.
 - `kelpc lint` warns on `== true` and on `.len() == 0`, which read better as the condition alone and `.is_empty()`. The warning does not fail the build.
 - A string literal is accepted where a `String` is expected; the examples write it that way, without `String.from_str`.
-- The missing-doc lint for the standard library (`kelpc lint` on `kelpc/std`) is deferred until the std docs exist; it is not in this release.
+- `kelpc doc --std --check` reports nothing for the shipped standard library: every public item has a doc comment.
 
 ## stdlib
 
@@ -110,7 +110,7 @@ empty on release.
 ## fixes
 
 - The `std/fs` tests write their scratch files under a directory unique to each test in each run, and remove it afterwards, so two kelpc suites running at once no longer delete each other's files.
-- A hosted build describes an `Atomic`
+- A hosted build refuses an `Atomic` as a `List`, `Map`, `Box` or array element, because the container's own routines read and write an element as a plain location. A `datac` field of atomic type is accepted.
 - A hosted program whose worker panics no longer stalls the next collection until the stop timeout. The worker leaves the collector in its cleanup handler.
 - A thread blocked in `join`, a `Mutex` or an `RwLock` wait no longer stalls a collection on another thread, and a long runtime string scan polls the collector every 64 KiB.
 - The Rust runtime leaves the collector when a worker ends (also on a panic), waits in join, locks and condition waits as native, polls the collector in long text and map scans, frees a spawn whose thread cannot start and reports its errno, and the collector's personality routine lets a worker's forced unwind finish.
