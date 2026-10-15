@@ -4061,6 +4061,13 @@ struct FnGen<'g, 'a> {
     /// passdown initializer is emitted through, which has a span of its own
     /// instead.
     decl_span: Option<Span>,
+    /// This function's generated cleanup frame (decision 125): a three-word
+    /// record the runtime links on the thread's list. `None` unless the program
+    /// spawns a worker, and for `naked` and `pd` initializer walks.
+    frame: Option<Value<'a>>,
+    /// The owned binding slots registered with the frame, in declaration order,
+    /// with their types. The handler drops each one that still holds a value.
+    registered: Vec<(Value<'a>, Ty)>,
     /// The most recently entry-hoisted `alloca`, so the next one chains in
     /// right after it (`alloca`'s own doc comment) instead of always at the
     /// block's absolute start. `None` before the first one.
@@ -4116,6 +4123,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
             debug_scope: g.debug_scopes.get(&f.name).copied(),
             decl_span: Some(f.span),
             alloca_after: None,
+            frame: None,
+            registered: Vec::new(),
             naked: f.naked,
             loops: Vec::new(),
             breaks_emitted: 0,
@@ -4159,6 +4168,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
             debug_scope: g.pd_init_scope,
             decl_span: Some(pd.init.span),
             alloca_after: None,
+            frame: None,
+            registered: Vec::new(),
             naked: false,
             loops: Vec::new(),
             breaks_emitted: 0,
@@ -4234,6 +4245,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if self.pd_init.is_some() {
             self.emit_pd_init()?;
             return Ok(());
+        }
+
+        // A spawning program gives every function a cleanup frame (decision
+        // 125): three pointer words, the record `kelp_cleanup_enter` fills.
+        if self.g.spawn_frames && !self.naked {
+            let frame_ty = self.g.ctx.array_type(self.g.pty(), 3);
+            self.frame = Some(self.entry_alloca_raw(frame_ty, "cleanup.frame"));
         }
 
         // `main` runs the passdown initializers before its first statement,
@@ -4457,6 +4475,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                         .expect("a scope is always open")
                         .insert(name.clone(), slot);
                     self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
+                    self.register_owned(ty, slot)?;
                     let symbol =
                         format!("{}__fill_into", crate::types::array_c_type(elem, *len));
                     let (func, fty) = self.g.cfn(&symbol)?;
@@ -4492,6 +4511,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                                 .expect("a scope is always open")
                                 .insert(name.clone(), slot);
                             self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
+                            self.register_owned(ty, slot)?;
                             let bytes = self.g.layout.abi_size_of(arr_ty);
                             let (memcpy, mty) = self.g.mem_fn("memcpy")?;
                             let size = self.g.v_i64(bytes);
@@ -4505,6 +4525,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                             .expect("a scope is always open")
                             .insert(name.clone(), slot);
                         self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
+                        self.register_owned(ty, slot)?;
                         self.g.builder.build_store(agg, slot);
                         return Ok(());
                     }
@@ -4528,6 +4549,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .expect("a scope is always open")
                     .insert(name.clone(), slot);
                 self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
+                self.register_owned(ty, slot)?;
                 match value {
                     Some(v) => {
                         self.g.builder.build_store(v, slot);
@@ -6185,6 +6207,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// benchmark.
     fn alloca(&mut self, ty: &Ty, name: &str) -> Result<Value<'a>, String> {
         let lty = self.lty(ty)?;
+        Ok(self.entry_alloca_raw(lty, name))
+    }
+
+    /// An `alloca` of an LLVM type, hoisted into the entry block after the
+    /// previous one (`alloca`'s own rule).
+    fn entry_alloca_raw(&mut self, lty: Type<'a>, name: &str) -> Value<'a> {
         match self.alloca_after {
             Some(prev) => self.g.builder.position_after(prev, self.entry),
             None => self.g.builder.position_at_start(self.entry),
@@ -6192,7 +6220,24 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let slot = self.g.builder.build_alloca(lty, name);
         self.alloca_after = Some(slot);
         self.g.builder.position_at_end(self.cur);
-        Ok(slot)
+        slot
+    }
+
+    /// Registers an owned binding's slot with the cleanup frame (decision 125).
+    /// The slot is cleared in the entry block straight after its alloca, so a
+    /// slot whose declaration has not run yet holds nothing for the handler to
+    /// drop. Does nothing when the function has no frame.
+    fn register_owned(&mut self, ty: &Ty, slot: Value<'a>) -> Result<(), String> {
+        if self.frame.is_none() || !self.g.owns_memory(ty) {
+            return Ok(());
+        }
+        let lty = self.lty(ty)?;
+        let null = self.g.ctx.const_null(lty);
+        self.g.builder.position_after(slot, self.entry);
+        self.g.builder.build_store(null, slot);
+        self.g.builder.position_at_end(self.cur);
+        self.registered.push((slot, ty.clone()));
+        Ok(())
     }
 
     fn emit_assign(&mut self, target: &Expr, value: &Expr, span: Span) -> Result<(), String> {
