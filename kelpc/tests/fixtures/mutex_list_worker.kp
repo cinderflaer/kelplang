@@ -9,7 +9,8 @@ impl "std/fmt"
 /// The text "item-<i>" as one owned String.
 fun item_name(i: i64) => String {
     var s = String.from_str("item-")
-    s.push_str(fmt.int(i).as_str())
+    val digits = fmt.int(i)
+    s.push_str(digits.as_str())
     return s
 }
 

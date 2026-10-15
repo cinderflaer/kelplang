@@ -10,9 +10,11 @@ impl "std/fmt"
 /// The text "p<id>-<i>" as one owned String.
 fun label(id: i64, i: i64) => String {
     var s = String.from_str("p")
-    s.push_str(fmt.int(id).as_str())
+    val a = fmt.int(id)
+    s.push_str(a.as_str())
     s.push_str("-")
-    s.push_str(fmt.int(i).as_str())
+    val b = fmt.int(i)
+    s.push_str(b.as_str())
     return s
 }
 
