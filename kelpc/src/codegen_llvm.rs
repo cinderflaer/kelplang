@@ -2112,6 +2112,9 @@ struct Gen<'a> {
     /// Every container instantiation the program mentions, so the module emits
     /// exactly the sets it uses (mirrors the instantiation table).
     instantiations: Instantiations,
+    /// Whether this program spawns a worker, so every function it emits gets a
+    /// cleanup frame (decision 125). `false` emits no frame code at all.
+    spawn_frames: bool,
     /// The user types whose value can be deep-copied, the same fixpoint
     /// the earlier emitter computes for `List.clone`/`List.slice`.
     clonable: HashSet<String>,
@@ -2276,7 +2279,18 @@ impl<'a> Gen<'a> {
         // since a pointer is a pointer here.
         let coerce_env_ty = ctx.struct_type("kelp_ClosureCoerceEnv");
         ctx.struct_set_body(coerce_env_ty, &[ptr]);
-        let runtime = declare_runtime(ctx, module, bytes_ty, string_ty, view_ty, managed.is_some());
+        // A program that spawns a worker gets the generated frames (MK9 move
+        // tracking, decision 125). A program without one emits none of them.
+        let spawn_frames = !collect_instantiations(program).spawns.is_empty();
+        let runtime = declare_runtime(
+            ctx,
+            module,
+            bytes_ty,
+            string_ty,
+            view_ty,
+            managed.is_some(),
+            spawn_frames,
+        );
         let panic = *runtime
             .get("kelp_panic")
             .expect("kelp_panic is declared with the runtime");
@@ -2324,6 +2338,7 @@ impl<'a> Gen<'a> {
                 HashMap::new()
             },
             instantiations: collect_instantiations(program),
+            spawn_frames,
             clonable: crate::types::clonable_types(&type_decls, &program.drop_types),
             sortable: crate::types::sortable_types(&type_decls),
             keyable: crate::types::keyable_types(&type_decls, &program.declared_keys, &program.drop_types),
@@ -15796,6 +15811,7 @@ fn declare_runtime<'a>(
     string: Type<'a>,
     view: Type<'a>,
     managed: bool,
+    spawn_frames: bool,
 ) -> HashMap<String, RtFn<'a>> {
     let ptr = ctx.opaque_ptr();
     let i1 = ctx.i1();
@@ -15850,6 +15866,12 @@ fn declare_runtime<'a>(
     if managed {
         // The managed entry roots the spawn's values (section 3). Hosted IR does not name it.
         decl(&mut out, "kelp_thread_start_rooted", void, &[ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr], false, false);
+    }
+    if spawn_frames {
+        // The generated frames of a spawning program (decision 125): enter at a
+        // function's start, leave before each return.
+        decl(&mut out, "kelp_cleanup_enter", void, &[ptr, ptr, ptr], false, false);
+        decl(&mut out, "kelp_cleanup_leave", void, &[ptr], false, false);
     }
     decl(&mut out, "kelp_thread_wait", ctx.i32(), &[ptr], true, false);
     decl(&mut out, "kelp_thread_arg", ptr, &[ptr], true, false);
@@ -16671,7 +16693,7 @@ mod layout_tests {
         ctx.struct_set_body(string, &[ptr, ctx.i64(), ctx.i64()]);
         let view = ctx.struct_type("kelp_View");
         ctx.struct_set_body(view, &[ptr, ctx.i64()]);
-        declare_runtime(&ctx, &module, bytes, string, view, false);
+        declare_runtime(&ctx, &module, bytes, string, view, false, false);
         declare_cap_fns(&ctx, &module);
 
         // `declare_extern`'s half of the rule, with the two narrow shapes a

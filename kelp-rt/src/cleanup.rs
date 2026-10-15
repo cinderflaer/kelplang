@@ -105,6 +105,36 @@ pub unsafe fn cleanup_pop(frame: *mut CleanupFrame, execute: bool) {
     }
 }
 
+/// Links a generated function's frame onto this thread's list, with its
+/// handler `run` and the handler's argument `arg`. The frame must stay valid
+/// until the matching [`kelp_cleanup_leave`].
+///
+/// # Safety
+/// `frame` must point to writable storage for a [`CleanupFrame`] that outlives
+/// the function's return. Enter and leave must balance on every return path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_cleanup_enter(
+    frame: *mut CleanupFrame,
+    run: unsafe extern "C" fn(*mut c_void),
+    arg: *mut c_void,
+) {
+    unsafe {
+        (*frame).run = run;
+        (*frame).arg = arg;
+        cleanup_push(frame);
+    }
+}
+
+/// Unlinks a generated function's frame without running its handler: the
+/// function returned normally and its own drops have already run.
+///
+/// # Safety
+/// `frame` must be the frame most recently entered on this thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_cleanup_leave(frame: *mut CleanupFrame) {
+    unsafe { cleanup_pop(frame, false) }
+}
+
 /// Runs every handler on this thread's list, newest first, and clears the list.
 /// This is the order glibc uses when a thread calls `pthread_exit`.
 ///
