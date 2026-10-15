@@ -4387,6 +4387,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     self.value_of_then_drops(tail, &drops)?
                 };
                 if !self.terminated {
+                    self.leave_frame()?;
                     self.g.builder.build_ret(value);
                     self.terminated = true;
                 }
@@ -4583,6 +4584,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                                 self.value_of_then_drops(e, &drops)?
                             };
                             if !self.terminated {
+                                self.leave_frame()?;
                                 self.g.builder.build_ret(v);
                             }
                         }
@@ -5788,6 +5790,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let drops = self.drops_at_try(span);
         self.emit_drops(&drops)?;
         let ret = self.g.builder.build_load(dst_ty, dst_slot, "try.ret");
+        self.leave_frame()?;
         self.g.builder.build_ret(ret);
         self.terminated = true;
 
@@ -9057,11 +9060,22 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
     }
 
+    /// Unlinks this function's cleanup frame before a `ret` (decision 125). The
+    /// frame's own drops have run by then; a `ret` with no frame emits nothing.
+    fn leave_frame(&mut self) -> Result<(), String> {
+        if let Some(frame) = self.frame {
+            let leave = self.g.rt("kelp_cleanup_leave")?;
+            self.g.call(leave.func, leave.ty, &[frame], "");
+        }
+        Ok(())
+    }
+
     /// The terminator for a function that reached the end of its body without a
     /// `return`: `main` returns 0 (mirroring the earlier emitter's rewrite of a bare
     /// `return;` in `main`), a unit function returns nothing, and a value-returning
     /// function (which `infer.rs` does not let fall through) returns zero.
     fn emit_fallthrough_return(&mut self) -> Result<(), String> {
+        self.leave_frame()?;
         if self.fn_name == "main" {
             self.g
                 .builder
