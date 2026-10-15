@@ -10651,6 +10651,13 @@ fn a_worker_that_panics_closes_the_sender_it_was_given() {
     assert_compiles_and_runs("tests/fixtures/thread_arg_sender_panic.kp", "1\nclosed\nworker gives up\n");
 }
 
+/// A Sender that is a temporary in a call argument is still owned when a later
+/// argument panics, so the worker's frame drops it and the receiver sees `Closed`.
+#[test]
+fn a_temporary_sender_in_an_argument_closes_when_a_later_argument_panics() {
+    assert_compiles_and_runs("tests/fixtures/thread_arg_temp_panic.kp", "closed\nboom\n");
+}
+
 /// Decision 127: a `fun` literal written directly as the `thread.spawn` entry may
 /// capture a Sender. The worker's environment owns it, and it closes when the
 /// worker returns, so main's receive loop ends.

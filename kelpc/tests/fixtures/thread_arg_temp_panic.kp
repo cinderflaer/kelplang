@@ -1,0 +1,43 @@
+// A worker passes its Sender through a call argument, consume(make_tx(tx), boom()).
+// The Sender is a temporary in the argument list, and boom panics while the list
+// is still being evaluated. The Sender's drop must run on the way out, so main
+// sees `Closed` and never waits for a value that will not come.
+impl "std/thread"
+impl "std/result"
+impl "std/sync"
+
+fun make_tx(tx: move sync.Sender<i64>) => sync.Sender<i64> {
+    return tx
+}
+
+fun boom() => i64 {
+    panic("boom")
+}
+
+fun consume(tx: move sync.Sender<i64>, n: i64) {
+    val back = tx.send(n)
+}
+
+fun worker(tx: move sync.Sender<i64>) {
+    consume(make_tx(tx), boom())
+}
+
+fun describe(r: move result.Result<i64, sync.RecvTimeout>) {
+    when r {
+        Ok(v) -> print(v)
+        Err(e) -> when e {
+            Timeout -> print("timeout")
+            Closed -> print("closed")
+        }
+    }
+}
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(2)
+    val h = thread.spawn(worker, tx)
+    describe(rx.recv_timeout(2000))
+    when thread.join(h) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+}
