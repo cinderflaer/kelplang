@@ -831,6 +831,14 @@ struct Ctx {
     /// rather than moved, so `note_capture` records `&T` and the body reads
     /// the capture through it.
     borrowed_captures: bool,
+    /// True while checking a `fun` literal written directly as the `thread.spawn`
+    /// entry (decision 127): its own captures are checked by the crossing rule,
+    /// because the worker's cleanup drops the environment on every exit. Only the
+    /// literal's own captures see it; a literal nested inside gets its own value.
+    spawn_entry: bool,
+    /// Set by `check_thread_spawn` just before it checks a `fun` literal entry,
+    /// and taken by the next literal pass, which hands it to `spawn_entry`.
+    spawn_entry_next: bool,
     /// The enclosing owned `var` bindings a scoped literal may capture by
     /// *exclusive* borrow (`kelp wiki page language/functions.md`): names that are
     /// mutable, owned and not `Copy`.
@@ -1175,7 +1183,12 @@ impl Ctx {
         // captured into it is a heap slot. A scoped literal's environment is
         // the stack, so it is not one.
         if !self.borrowed_captures {
-            note_heap_use(&self.env, managed::HeapSlot::ClosureCapture, &ty, span);
+            let slot = if self.spawn_entry {
+                managed::HeapSlot::SpawnEntryCapture
+            } else {
+                managed::HeapSlot::ClosureCapture
+            };
+            note_heap_use(&self.env, slot, &ty, span);
         }
         if !self.captures.iter().any(|(n, _)| n == name) {
             self.captures.push((name.to_string(), ty.clone()));
@@ -10419,6 +10432,8 @@ fn base_ctx(
         pd_probe: None,
         in_fn_literal: false,
         borrowed_captures: false,
+        spawn_entry: false,
+        spawn_entry_next: false,
         outer_mut: Default::default(),
         excl_captures: Default::default(),
         outer_excl: Default::default(),
@@ -12675,7 +12690,10 @@ fn check_fn_literal_pass(
     for (name, ty) in &ctx.captures {
         outer_bindings.insert(name.clone(), ty.clone());
     }
+    let spawn_entry = std::mem::replace(&mut ctx.spawn_entry_next, false);
     let mut inner = (*ctx).clone();
+    inner.spawn_entry = spawn_entry;
+    inner.spawn_entry_next = false;
     inner.scopes = vec![HashMap::new()];
     inner.outer_bindings = outer_bindings;
     inner.captures = Vec::new();
@@ -17016,7 +17034,13 @@ fn check_thread_spawn(
     let entry_arg = &args[slots[0]];
     let value_arg = &args[slots[1]];
 
-    let entry = check_expr(&entry_arg.value, ctx, None)?;
+    // A `fun` literal written directly as the entry may capture resources
+    // (decision 127). Anything else that is the entry keeps the closure rule.
+    let literal_entry = matches!(entry_arg.value, ast::Expr::FnLit { .. });
+    ctx.spawn_entry_next = literal_entry;
+    let entry = check_expr(&entry_arg.value, ctx, None);
+    ctx.spawn_entry_next = false;
+    let entry = entry?;
     let (params, ret) = match &entry.ty {
         Ty::Fn { params, ret } | Ty::Closure { params, ret } => (params.clone(), (**ret).clone()),
         other => {

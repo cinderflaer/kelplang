@@ -111,6 +111,11 @@ pub enum HeapSlot {
     ArrayElement,
     DatacField,
     ClosureCapture,
+    /// A value a `fun` literal written directly as the `thread.spawn` entry
+    /// captures (decision 127). Its environment is dropped by the worker's
+    /// cleanup on every exit, so it is decided by the crossing rule, not by
+    /// the closure rule.
+    SpawnEntryCapture,
     /// The argument a `thread.spawn` moves into its worker. It sits in a
     /// malloc'd start record the collector does not scan (Tidepool, step 0).
     ThreadArgument,
@@ -131,7 +136,9 @@ impl HeapSlot {
             HeapSlot::MapValue => "a Map value",
             HeapSlot::ArrayElement => "an array element",
             HeapSlot::DatacField => "a field of a heap-resident datac",
-            HeapSlot::ClosureCapture => "a value captured by a closure environment",
+            HeapSlot::ClosureCapture | HeapSlot::SpawnEntryCapture => {
+                "a value captured by a closure environment"
+            }
             HeapSlot::ThreadArgument => "a thread's argument",
             HeapSlot::ThreadResult => "a thread's result",
             HeapSlot::LockValue => "the value of a Mutex or RwLock",
@@ -345,7 +352,9 @@ pub fn check_heap_uses(
     ordered.sort_by_key(|u| u.span.start);
     for u in ordered {
         let kind = match u.slot {
-            HeapSlot::ThreadArgument | HeapSlot::ThreadResult => crossing_kind(&u.ty, decls),
+            HeapSlot::ThreadArgument | HeapSlot::ThreadResult | HeapSlot::SpawnEntryCapture => {
+                crossing_kind(&u.ty, decls)
+            }
             _ => resolve(&u.ty, decls),
         };
         check_heap_slot(u.slot, &u.ty.display(), kind, u.span)?;
