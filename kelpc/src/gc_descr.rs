@@ -200,7 +200,14 @@ pub fn pointer_offsets(
         | Ty::Str
         | Ty::Fn { .. }
         | Ty::Ptr(_)
-        | Ty::Handle(_) => {}
+        | Ty::Handle(_)
+        // A `Mutex`, `RwLock`, `Condvar` or `Thread` is a handle to a malloc'd runtime
+        // record. The record roots its own value (`kelp_mutex_new_rooted`), so the
+        // handle has no slot in the object that holds it (channels plan item 5).
+        | Ty::Mutex(_)
+        | Ty::RwLock(_)
+        | Ty::Condvar
+        | Ty::Thread(_) => {}
         other => {
             return Err(format!(
                 "a hosted build does not describe a value of type `{}` in a GC object yet",
@@ -821,6 +828,22 @@ mod container_layout {
 
     fn string_map() -> Ty {
         Ty::Map(Box::new(Ty::String), Box::new(Ty::I32))
+    }
+
+    /// A `datac` field that is a runtime record (a Mutex of a List, a Condvar, a Thread)
+    /// holds no slot in the object: the record roots its own contents.
+    #[test]
+    fn a_runtime_record_field_has_no_slot_in_the_object() {
+        for ty in [
+            Ty::Mutex(Box::new(Ty::List(Box::new(Ty::String)))),
+            Ty::Condvar,
+            Ty::Thread(Box::new(Ty::I32)),
+            Ty::RwLock(Box::new(Ty::I64)),
+        ] {
+            let mut out = Vec::new();
+            pointer_offsets(&Fixed, &ty, 0, &mut out).unwrap();
+            assert!(out.is_empty(), "{ty:?} should have no pointer slot");
+        }
     }
 
     #[test]
