@@ -283,6 +283,7 @@ fn child_entry() {
             "array_overflows" => tidepool_step1_fixb::child_array_overflows(),
             "foreign_thread" => tidepool_step1_fixb::child_foreign_thread(),
             "first_clear" => child_first_clear(),
+            "first_clear_block" => child_first_clear_block(),
             "panic_location" => crate::sys::report_and_abort("heap.rs", 42),
             other => panic!("unknown child mode {other}"),
         }
@@ -309,6 +310,47 @@ unsafe fn child_first_clear() {
                 std::process::exit(0);
             }
             std::process::exit(5);
+        }
+        prev = before;
+    }
+    std::process::exit(6);
+}
+
+/// Tidepool step 2, T40a at the pool-block level (design section 9): with
+/// `start_low = 1` MiB and `start_high = 4` MiB at headroom 20, the trigger is
+/// 3 MiB. A `NODE` takes 24 bytes (8 header, 16 payload), and a 32 KiB pool
+/// block holds 1365 of them with an 8-byte tail. The 131072nd allocation takes
+/// bytes_since to exactly 3 MiB, and the 131041st object is the first one in
+/// pool block 97. The clearing is checked at the start of `alloc_common`, so it
+/// comes in the call after that one, and that call must start with 97 pool
+/// blocks in use. The blocks in use are read before each call.
+/// Exit 0 when the trigger, the bytes and the block count all hold. Otherwise
+/// 7 (trigger value or block count), 5 (bytes), 6 (no clearing).
+unsafe fn child_first_clear_block() {
+    const TRIGGER: usize = 3 << 20;
+    const OBJ: usize = 24;
+    const PER_BLOCK: usize = BLOCK / OBJ; // 1365
+    const OBJ_AT_TRIGGER: usize = TRIGGER / OBJ; // 131072
+    const BLOCKS_AT_TRIGGER: usize = OBJ_AT_TRIGGER.div_ceil(PER_BLOCK); // 97
+    kelp_gc_init(0, 0, 1 << 20, 4 << 20, 20, 0);
+    if st().trigger != TRIGGER {
+        std::process::exit(7);
+    }
+    kelp_gc_thread_attach();
+    let mut prev = 0usize;
+    for _ in 0..10_000_000u32 {
+        let before = st().bytes_since;
+        let cycles = st().cycles;
+        let blocks = st().used_blocks;
+        black_box(kelp_gc_alloc(&NODE));
+        if st().cycles > cycles {
+            if !(before >= TRIGGER && prev < TRIGGER) {
+                std::process::exit(5);
+            }
+            if blocks != BLOCKS_AT_TRIGGER {
+                std::process::exit(7);
+            }
+            std::process::exit(0);
         }
         prev = before;
     }
@@ -1727,4 +1769,13 @@ mod trigger_t40 {
 fn t40e_first_clearing_happens_at_the_manifest_trigger() {
     let (code, err) = run_child("first_clear", &[]);
     assert_eq!(code, Some(0), "first clearing was not at the trigger: exit {code:?}\n{err}");
+}
+
+/// Tidepool step 2, T40a at the pool-block level: the 3 MiB trigger of
+/// `1 MiB .. 4 MiB` at headroom 20 clears in pool block 97, the block that
+/// holds the allocation that takes bytes_since to the trigger.
+#[test]
+fn t40f_first_clearing_lands_in_the_pool_block_of_the_trigger() {
+    let (code, err) = run_child("first_clear_block", &[]);
+    assert_eq!(code, Some(0), "first clearing was not in the trigger's pool block: exit {code:?}\n{err}");
 }
