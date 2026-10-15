@@ -10536,10 +10536,10 @@ fn a_shared_mutex_handle_and_a_swap() {
 
 /// Channels (`std/sync`): four producers feed one consumer through a bounded
 /// channel, and the receiver's `for` ends by itself when the last sender drops.
+/// A Sender or Receiver may cross into a worker (decision 125).
 #[test]
 fn a_bounded_channel_carries_four_producers_to_one_consumer() {
-    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_bounded_mpsc", "cannot be a thread's argument");
+    assert_compiles_and_runs("tests/fixtures/chan_bounded_mpsc.kp", "1000\n124500\n");
 }
 
 /// Closing in both directions: every sender gone drains then fails, a clone
@@ -10556,8 +10556,7 @@ fn a_channel_closes_when_its_senders_or_its_receiver_drop() {
 /// that leaves while the sender is parked hands the value back.
 #[test]
 fn a_rendezvous_send_completes_only_when_a_receive_takes_it() {
-    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_rendezvous", "'Job' cannot be a thread's argument");
+    assert_compiles_and_runs("tests/fixtures/chan_rendezvous.kp", "blocked\n7\ndone\nhanded back\n");
 }
 
 /// `select2` answers with the one ready case, and a closed empty channel is ready too.
@@ -10569,8 +10568,7 @@ fn a_select_takes_whichever_channel_is_ready() {
 /// `select3` with nothing ready waits for the one channel that sends.
 #[test]
 fn a_select_with_no_ready_case_blocks_until_one_is() {
-    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_select_blocks", "cannot be a thread's argument");
+    assert_compiles_and_runs("tests/fixtures/chan_select_blocks.kp", "2\n42\n");
 }
 
 /// A select over channels of two element types is refused.
@@ -10585,8 +10583,7 @@ fn a_select_over_two_element_types_is_refused() {
 /// `recv_timeout` times out, takes a late value, and reports a closed channel.
 #[test]
 fn a_channel_recv_timeout_times_out_and_then_receives() {
-    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("chan_recv_timeout", "cannot be a thread's argument");
+    assert_compiles_and_runs("tests/fixtures/chan_recv_timeout.kp", "timeout\n99\nclosed\n");
 }
 
 /// A zero-capacity bounded channel is a named panic.
@@ -10615,15 +10612,13 @@ fn a_freestanding_channel_is_refused() {
 /// The thread pool (`std/pool`): 1000 jobs on four workers with a sum check.
 #[test]
 fn a_pool_runs_a_thousand_jobs() {
-    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("pool_sum", "'std.pool.PoolShared' cannot be a thread's argument");
+    assert_compiles_and_runs("tests/fixtures/pool_sum.kp", "499500\n0\n");
 }
 
 /// A panicking job is counted and its worker survives to run the rest.
 #[test]
 fn a_pool_counts_a_panicking_job_and_keeps_its_worker() {
-    // Decision 21: a hosted build refuses this program, so the test asserts the refusal.
-    assert_fixture_refused("pool_panics", "'std.pool.PoolShared' cannot be a thread's argument");
+    assert_compiles_and_runs("tests/fixtures/pool_panics.kp", "27\n4\n5\n");
 }
 
 /// Dropping a pool joins it, an idle or twice-joined pool shuts down, and jobs
@@ -10634,12 +10629,38 @@ fn a_pool_shuts_down_without_deadlock() {
     assert_fixture_refused("pool_drop_joins", "cannot be a value captured by a closure environment");
 }
 
-/// Decision 21: queueing on a joined pool and an empty pool are both refused in a hosted
-/// build, because the pool's job is a thread argument the collector does not scan yet.
+/// Queueing on a joined pool and a pool with no workers are both named panics.
 #[test]
-fn a_pool_refuses_work_after_join_and_zero_workers() {
-    assert_fixture_refused("pool_spawn_after_join", "'std.pool.PoolShared' cannot be a thread's argument");
-    assert_fixture_refused("pool_zero_workers", "'std.pool.PoolShared' cannot be a thread's argument");
+fn a_pool_panics_on_work_after_join_and_on_zero_workers() {
+    assert_fixture_panics("pool_spawn_after_join", "Pool.spawn: the pool has been joined");
+    assert_fixture_panics("pool_zero_workers", "pool.new: a pool needs at least one worker");
+}
+
+/// A worker that owns a Sender and panics still closes its channel: its drop runs
+/// on the way out, so the receiver gets the queued value and then `Closed`.
+#[test]
+fn a_worker_that_panics_closes_the_sender_it_was_given() {
+    assert_compiles_and_runs("tests/fixtures/thread_arg_sender_panic.kp", "1\nclosed\nworker gives up\n");
+}
+
+/// Three producers send 300 Strings through a bounded channel of two; the count and
+/// the byte total (3 * 490) come out exact.
+#[test]
+fn a_channel_of_strings_carries_three_producers() {
+    assert_compiles_and_runs("tests/fixtures/chan_string_producers.kp", "300\n1470\n");
+}
+
+/// A worker holds the other handle to a `Mutex<List<String>>` and fills the list; main
+/// reads the same list after join.
+#[test]
+fn a_mutex_list_is_shared_with_a_worker() {
+    assert_compiles_and_runs("tests/fixtures/mutex_list_worker.kp", "1000\nitem-999\n");
+}
+
+/// A pool of three workers pushes 300 strings onto a `pd` mutex-guarded list.
+#[test]
+fn a_pool_fills_a_shared_list_of_strings() {
+    assert_compiles_and_runs("tests/fixtures/pool_gate_strings.kp", "300\n1\n");
 }
 
 /// A freestanding build refuses the pool module by name.

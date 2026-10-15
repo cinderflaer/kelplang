@@ -1,0 +1,38 @@
+// main keeps one handle to a Mutex<List<String>> and moves the other into a
+// worker, which pushes "item-0" to "item-999". After join, main locks the list
+// and prints its length and its last element: 1000, then item-999.
+impl "std/thread"
+impl "std/result"
+impl "std/sync"
+impl "std/fmt"
+
+/// The text "item-<i>" as one owned String.
+fun item_name(i: i64) => String {
+    var s = String.from_str("item-")
+    s.push_str(fmt.int(i).as_str())
+    return s
+}
+
+fun fill(items: move Mutex<List<String>>) {
+    var i: i64 = 0
+    while i < 1000 {
+        items.lock { v ->
+            v.push(item_name(i))
+        }
+        i += 1
+    }
+}
+
+fun main() {
+    val items: Mutex<List<String>> = Mutex.new(List.empty())
+    val other = items.share()
+    val h = thread.spawn(fill, other)
+    when thread.join(h) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+    items.lock { v ->
+        print(v.len())
+        print(v.get(v.len() - 1))
+    }
+}

@@ -1,0 +1,43 @@
+// A pool of three workers runs 300 jobs, each pushing "job-<k>" onto a shared
+// Mutex<List<String>>. After join the list holds 300 strings, and exactly one
+// of them is "job-7".
+impl "std/pool"
+impl "std/fmt"
+
+pd val gate: Mutex<List<String>> = Mutex.new(List.empty())
+
+/// The text "job-<n>" as one owned String.
+fun job_name(n: i64) => String {
+    var s = String.from_str("job-")
+    s.push_str(fmt.int(n).as_str())
+    return s
+}
+
+fun push_job(n: i64) {
+    gate.lock { v ->
+        v.push(job_name(n))
+    }
+}
+
+fun main() {
+    var p = pool.new(3)
+    var k: i64 = 0
+    while k < 300 {
+        val n = k
+        p.spawn(fun() {
+            push_job(n)
+        })
+        k += 1
+    }
+    p.join()
+    gate.lock { v ->
+        print(v.len())
+        var sevens = 0
+        for name in v.iter() {
+            if name == "job-7" {
+                sevens += 1
+            }
+        }
+        print(sevens)
+    }
+}
