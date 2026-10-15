@@ -653,7 +653,7 @@ impl Lowerer {
                 }
                 Ok(())
             }
-            Expr::Unsafe { block, .. } => self.block(block, outer, not_yet, false),
+            Expr::Unsafe { block, .. } | Expr::ManualBlock { body: block, .. } => self.block(block, outer, not_yet, false),
             Expr::Asm { operands, .. } => {
                 for operand in operands {
                     if let Some(e) = operand.operand.as_mut() {
@@ -857,7 +857,7 @@ fn free_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>)
                 None => {}
             }
         }
-        Expr::Block(b) | Expr::Unsafe { block: b, .. } => free_in_block(b, bound, out),
+        Expr::Block(b) | Expr::Unsafe { block: b, .. } | Expr::ManualBlock { body: b, .. } => free_in_block(b, bound, out),
         Expr::FnLit { params, body, .. } => {
             let mut scope = bound.clone();
             for p in params {
@@ -962,7 +962,7 @@ fn first_try_in_expr(expr: &Expr) -> Option<Span> {
                 Some(ElseBranch::If(e)) => first_try_in_expr(e),
                 None => None,
             }),
-        Expr::Block(b) | Expr::Unsafe { block: b, .. } => first_try_in_block(b),
+        Expr::Block(b) | Expr::Unsafe { block: b, .. } | Expr::ManualBlock { body: b, .. } => first_try_in_block(b),
         Expr::FnLit { .. } => None,
         Expr::Template { parts, .. } => parts.iter().find_map(|p| match p {
             TemplatePart::Text(_) => None,
@@ -988,7 +988,7 @@ fn first_try_in_expr(expr: &Expr) -> Option<Span> {
 /// exit an action could write today.
 fn first_return_in_expr(expr: &Expr) -> Option<Span> {
     match expr {
-        Expr::Block(b) | Expr::Unsafe { block: b, .. } => first_return_in_block(b),
+        Expr::Block(b) | Expr::Unsafe { block: b, .. } | Expr::ManualBlock { body: b, .. } => first_return_in_block(b),
         Expr::Unary { expr, .. }
         | Expr::Ref { expr, .. }
         | Expr::Deref { expr, .. }
@@ -1062,7 +1062,7 @@ fn first_return_in_block(block: &Block) -> Option<Span> {
 /// `fun` literal (whose loop control is its own).
 fn first_loop_exit_in_expr(expr: &Expr) -> Option<Span> {
     match expr {
-        Expr::Block(b) | Expr::Unsafe { block: b, .. } => first_loop_exit_in_block(b),
+        Expr::Block(b) | Expr::Unsafe { block: b, .. } | Expr::ManualBlock { body: b, .. } => first_loop_exit_in_block(b),
         Expr::If {
             cond,
             then_block,

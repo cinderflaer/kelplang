@@ -1141,6 +1141,16 @@ pub enum Expr {
         block: Block,
         span: Span,
     },
+    /// `block name: T { ... }` (manual memory blocks, slice 1, decision 139):
+    /// a named region whose `name.box()` calls reserve block memory of type
+    /// `T`. The `?` after the closing brace is an ordinary postfix `Try` around
+    /// this expression. Parsed only; `infer.rs` refuses it until blocks are built.
+    ManualBlock {
+        name: String,
+        ty: TypeExpr,
+        body: Block,
+        span: Span,
+    },
     /// `asm("<template>", operands...)` (kernel stage 5): one target-assembler
     /// instruction, legal only inside `unsafe`. The template is the target's
     /// own text and the operands are the values that cross into and out of it;
@@ -1285,6 +1295,7 @@ impl Expr {
             | Expr::Asm { span: s, .. } => *s,
             Expr::Block(b) => b.span,
             Expr::Unsafe { span, .. } => *span,
+            Expr::ManualBlock { span, .. } => *span,
         }
     }
 

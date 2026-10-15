@@ -338,6 +338,14 @@ impl Parser {
             .unwrap_or(TokenKind::Eof)
     }
 
+    /// The kind of the token two past the current one (`Eof` past the end).
+    fn peek3_kind(&self) -> TokenKind {
+        self.tokens
+            .get(self.pos + 2)
+            .map(|t| t.kind.clone())
+            .unwrap_or(TokenKind::Eof)
+    }
+
     fn advance(&mut self) -> Token {
         let tok = self.tokens[self.pos].clone();
         if self.pos + 1 < self.tokens.len() {
@@ -4266,6 +4274,26 @@ impl Parser {
                     let block = self.parse_block()?;
                     let span = tok.span.to(block.span);
                     return Ok(Expr::Unsafe { block, span });
+                }
+                // `block name: T { ... }` (manual memory blocks, slice 1): the
+                // contextual word is a block introducer only when an identifier
+                // and then `:` follow it, so `block` stays an ordinary name
+                // (`val block: i32`, `block = 5`, `block[0]`, `block.reset()`).
+                if name == "block"
+                    && matches!(self.peek2_kind(), TokenKind::Ident(_))
+                    && matches!(self.peek3_kind(), TokenKind::Colon)
+                {
+                    self.advance();
+                    let name_tok = self.advance();
+                    let block_name = match name_tok.kind {
+                        TokenKind::Ident(n) => n,
+                        _ => unreachable!("peek2_kind said an identifier follows"),
+                    };
+                    self.expect(TokenKind::Colon, "':' after the block name")?;
+                    let ty = self.parse_type()?;
+                    let body = self.parse_block()?;
+                    let span = tok.span.to(body.span);
+                    return Ok(Expr::ManualBlock { name: block_name, ty, body, span });
                 }
                 self.advance();
                 let type_args = self.try_explicit_type_args()?.unwrap_or_default();

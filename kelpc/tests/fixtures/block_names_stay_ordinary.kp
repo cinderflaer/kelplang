@@ -1,0 +1,16 @@
+// T35 (manual memory blocks, decision 139): `block` stays an ordinary name
+// everywhere except at the start of an expression where an identifier and
+// then `:` follow it. Each line prints one value.
+
+fun scale(block: i32) -> i32 {
+    block * 2
+}
+
+fun main() {
+    var block: i32 = 1
+    block = 5
+    print(block)
+    print(scale(4))
+    val other: i32 = 3
+    print(other)
+}

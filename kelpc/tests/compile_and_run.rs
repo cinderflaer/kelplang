@@ -4585,6 +4585,19 @@ fn a_box_holds_a_value_or_nothing() {
     );
 }
 
+// Manual memory blocks, slice 1 (decision 139). Step 2 parses `block name: T { ... }`
+// and refuses it until the block runtime lands.
+
+#[test]
+fn block_stays_an_ordinary_name_outside_a_block_introducer() {
+    assert_compiles_and_runs("tests/fixtures/block_names_stay_ordinary.kp", "5\n8\n3\n");
+}
+
+#[test]
+fn a_block_region_is_refused_by_name_until_blocks_are_built() {
+    assert_rejected_with("tests/fixtures/block_region_not_built.kp", "blocks are not built yet");
+}
+
 #[test]
 fn a_datac_can_be_recursive_through_a_box() {
     // The linked list: `next` is an owned pointer, `Box.empty()` terminates

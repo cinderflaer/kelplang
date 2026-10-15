@@ -15,6 +15,7 @@ writing Kelp. Group under the headings below; delete the headings that stay
 empty on release.
 
 ## added
+- The parser reads `block name: T { ... }` as a manual memory block at the start of an expression, and the checker refuses it with "blocks are not built yet" until the block runtime lands; `block` stays an ordinary name everywhere else.
 
 - A word from another language used as a keyword or type name gets its Kelp word in the `help:` line: `fn`, `def`, `function`, `struct`, `class`, `let`, `match`, `null`, `nil`, `None`, `True`, `False`, `println`, `as`, `int`, `string` and `elseif`. The first line of the message is unchanged.
 - A string template outside `print` is a `String` value: `val part = "${out}.part"` binds it, and a `String` parameter takes it. A template in `print` or `print!` prints as before.

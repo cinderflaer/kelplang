@@ -7967,6 +7967,7 @@ impl<'a> ConstEvaluator<'a> {
             ast::Expr::Deref { .. } => Err(self.unsupported(expr.span(), "a dereference")),
             ast::Expr::Ref { .. } => Err(self.unsupported(expr.span(), "a borrow")),
             ast::Expr::Unsafe { .. } => Err(self.unsupported(expr.span(), "an 'unsafe' block")),
+            ast::Expr::ManualBlock { .. } => Err(self.unsupported(expr.span(), "a block")),
             ast::Expr::Asm { .. } => Err(self.unsupported(expr.span(), "an 'asm' expression")),
         }
     }
@@ -10670,6 +10671,7 @@ impl PdScan {
             // block: a passdown named inside one is still a passdown the
             // enclosing function has to receive.
             ast::Expr::Unsafe { block, .. } => self.scan_block(block),
+            ast::Expr::ManualBlock { body, .. } => self.scan_block(body),
             // The operand expressions of an `asm(...)` are scanned for the same
             // reason: a place or a value inside one may name a passdown.
             ast::Expr::Asm { operands, .. } => {
@@ -13724,6 +13726,13 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         // unsafe nesting raised by one so the operations that need it are
         // legal inside. Nothing about the lowered block differs, so the two
         // backends need no new shape for it: the call is the unsafe operation.
+        // `block name: T { ... }` (manual memory blocks, slice 1): parsed, not
+        // built yet. Refused by name until the block runtime lands (step 4).
+        ast::Expr::ManualBlock { name, span, .. } => Err(TypeError {
+            help: None,
+            message: format!("blocks are not built yet: the block '{name}' cannot be compiled in this build"),
+            span: *span,
+        }),
         ast::Expr::Unsafe { block, span } => {
             ctx.unsafe_depth += 1;
             let checked = check_block(block, ctx, expected);

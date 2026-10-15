@@ -1,0 +1,9 @@
+// Manual memory blocks (decision 139, slice 1): the statement form parses,
+// and the checker refuses it by name until the block runtime is built.
+
+fun main() {
+    val total: i32 = block request: i32 {
+        7
+    }
+    print(total)
+}
