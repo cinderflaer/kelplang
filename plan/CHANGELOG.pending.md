@@ -121,9 +121,11 @@ empty on release.
 - A `Map` whose value is an enum is refused when the checker reads the `Map` type, not later in codegen, and the refusal names the type and the `List` to use instead.
 - The `kelpc fmt` corpus test skips symbolic links when it walks the examples, so the `deps/v4` link that leads back into its own package no longer loops until the kernel's symlink limit panics the test.
 - A test holds the collector's fallback headroom to the manifest default of 10 percent, so the two copies cannot drift apart without a failing test.
+- A hosted thread may take a `Sender`, `Receiver`, `Mutex`, `Condvar`, `Thread` or a `datac` of them as its argument or its result, and a worker that panics still closes the channels its `Sender`s belonged to.
 
 ## limits
 
+- A thread argument that is a file, a socket, a `Pool` or a closure is still refused in a hosted build, and so is a `Mutex` of a resource.
 - A hosted build refuses an enum stored inside a `datac`: the collector does not describe that layout yet, so such a program is a compile error.
 - A `Map` whose value is an enum is refused by the checker at the `Map` type, with a sentence that names the type and says to keep the values in a `List`; the hosted build's codegen does not describe an enum inside a map's entry yet, and a `datac` holding the enum is refused the same way.
 - A-11 (full borrow checking) is not finished.
