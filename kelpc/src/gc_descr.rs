@@ -901,6 +901,20 @@ mod container_layout {
         pointer_offsets(&Fixed, &closure, 0, &mut out).unwrap();
         assert_eq!(out, vec![CLOSURE_ENV_OFFSET]);
     }
+
+    /// The root table covers a value held by a Mutex, RwLock, or a thread's
+    /// argument, result or environment exactly when its walk names a pointer
+    /// slot. A scalar or an atomic cell registers no root. A value the walk does
+    /// not describe is an error, so the refusal stays for it.
+    #[test]
+    fn a_runtime_record_roots_a_value_with_a_pointer_slot_only() {
+        assert!(record_needs_root(&Fixed, &Ty::List(Box::new(Ty::I64))).unwrap());
+        assert!(!record_needs_root(&Fixed, &Ty::I64).unwrap());
+        assert!(!record_needs_root(&Fixed, &Ty::Atomic(Box::new(Ty::I64))).unwrap());
+        assert!(!record_needs_root(&Fixed, &Ty::Mutex(Box::new(Ty::I64))).unwrap());
+        let scoped = Ty::ScopedFn { params: vec![], ret: Box::new(Ty::Unit) };
+        assert!(record_needs_root(&Fixed, &scoped).is_err());
+    }
 }
 
 #[cfg(test)]
