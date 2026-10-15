@@ -7589,7 +7589,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             } else {
                 self.g.record_descr(elem)?
             };
-            let start = self.g.rt("kelp_thread_start_rooted")?;
+            let start = self.g.rt("kelp_thread_start_rooted_dropping")?;
             self.g.call(
                 start.func,
                 start.ty,
@@ -7597,7 +7597,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 "",
             );
         } else {
-            let start = self.g.rt("kelp_thread_start")?;
+            let start = self.g.rt("kelp_thread_start_dropping")?;
             self.g.call(
                 start.func,
                 start.ty,
@@ -15987,19 +15987,24 @@ fn declare_runtime<'a>(
         &mut out,
         "kelp_thread_start",
         void,
-        &[ptr, ptr, ptr, ptr, ptr, ptr],
+        &[ptr, ptr, ptr, ptr, ptr],
         false,
         false,
     );
     if managed {
         // The managed entry roots the spawn's values (section 3). Hosted IR does not name it.
-        decl(&mut out, "kelp_thread_start_rooted", void, &[ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr], false, false);
+        decl(&mut out, "kelp_thread_start_rooted", void, &[ptr, ptr, ptr, ptr, ptr, ptr, ptr], false, false);
     }
     if spawn_frames {
         // The generated frames of a spawning program (decision 125): enter at a
         // function's start, leave before each return.
         decl(&mut out, "kelp_cleanup_enter", void, &[ptr, ptr, ptr], false, false);
         decl(&mut out, "kelp_cleanup_leave", void, &[ptr], false, false);
+        // The spawn entry points that also pass the argument's drop (decision 125).
+        decl(&mut out, "kelp_thread_start_dropping", void, &[ptr, ptr, ptr, ptr, ptr, ptr], false, false);
+        if managed {
+            decl(&mut out, "kelp_thread_start_rooted_dropping", void, &[ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr], false, false);
+        }
     }
     decl(&mut out, "kelp_thread_wait", ctx.i32(), &[ptr], true, false);
     decl(&mut out, "kelp_thread_arg", ptr, &[ptr], true, false);

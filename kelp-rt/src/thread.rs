@@ -233,6 +233,22 @@ pub unsafe extern "C" fn kelp_thread_start(
     code: *mut c_void,
     env: *mut c_void,
     env_drop: Option<Drop1>,
+) {
+    unsafe { start_common(h, body, code, env, env_drop, ptr::null(), ptr::null(), None) }
+}
+
+/// As [`kelp_thread_start`], and the argument's own drop for a spawn that never
+/// starts (decision 125). Emitted only by a program that spawns.
+///
+/// # Safety
+/// As [`kelp_thread_start`]; `arg_drop` must drop a value of the argument's type.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_thread_start_dropping(
+    h: *mut WorkerHandle,
+    body: Option<Body>,
+    code: *mut c_void,
+    env: *mut c_void,
+    env_drop: Option<Drop1>,
     arg_drop: Option<Drop1>,
 ) {
     unsafe { start_common(h, body, code, env, env_drop, ptr::null(), ptr::null(), arg_drop) }
@@ -247,6 +263,24 @@ pub unsafe extern "C" fn kelp_thread_start(
 /// As [`kelp_thread_start`]; the descriptors must describe the slots.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelp_thread_start_rooted(
+    h: *mut WorkerHandle,
+    body: Option<Body>,
+    code: *mut c_void,
+    env: *mut c_void,
+    env_drop: Option<Drop1>,
+    arg_descr: *const c_void,
+    result_descr: *const c_void,
+) {
+    unsafe { start_common(h, body, code, env, env_drop, arg_descr, result_descr, None) }
+}
+
+/// As [`kelp_thread_start_rooted`], and the argument's own drop for a spawn that
+/// never starts (decision 125). Emitted only by a program that spawns.
+///
+/// # Safety
+/// As [`kelp_thread_start_rooted`]; `arg_drop` must drop a value of the argument's type.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelp_thread_start_rooted_dropping(
     h: *mut WorkerHandle,
     body: Option<Body>,
     code: *mut c_void,
