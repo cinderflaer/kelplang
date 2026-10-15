@@ -877,4 +877,76 @@ mod tests {
             );
         }
     }
+
+    /// A value a direct `thread.spawn` literal captures (decision 127) takes the
+    /// crossing rule that a thread argument takes: a channel end, a Mutex of memory,
+    /// a Condvar and the pool's shared state cross; a destructor, a file, a pool
+    /// handle and a thread handle of a destructor do not.
+    #[test]
+    fn a_spawn_entry_capture_takes_the_crossing_rule() {
+        let decls = |name: &str| -> Option<DeclFacts> {
+            match name {
+                "std.sync.Sender<i64>" => Some(DeclFacts {
+                    has_user_drop: false,
+                    fields: vec![Ty::Struct("std.sync.SendEnd".into())],
+                }),
+                "std.sync.SendEnd" => Some(DeclFacts {
+                    has_user_drop: true,
+                    fields: vec![Ty::I64],
+                }),
+                "std.pool.PoolShared" => Some(DeclFacts {
+                    has_user_drop: false,
+                    fields: vec![
+                        Ty::Mutex(Box::new(Ty::I64)),
+                        Ty::Mutex(Box::new(list(Ty::Struct("Job".into())))),
+                        Ty::Condvar,
+                        Ty::Condvar,
+                    ],
+                }),
+                "Job" => Some(DeclFacts {
+                    has_user_drop: false,
+                    fields: vec![Ty::Closure { params: vec![], ret: Box::new(Ty::Unit) }],
+                }),
+                "Guard" => Some(DeclFacts {
+                    has_user_drop: true,
+                    fields: vec![Ty::I32],
+                }),
+                _ => None,
+            }
+        };
+        let captured = |ty: Ty| HeapUse {
+            slot: HeapSlot::SpawnEntryCapture,
+            ty,
+            span: span(),
+        };
+        let crosses_ty = [
+            Ty::Struct("std.sync.Sender<i64>".into()),
+            Ty::Mutex(Box::new(list(Ty::String))),
+            Ty::Condvar,
+            Ty::Struct("std.pool.PoolShared".into()),
+        ];
+        for ty in crosses_ty {
+            let label = ty.display();
+            assert!(
+                check_heap_uses(&[captured(ty)], &decls).is_ok(),
+                "{label} should be capturable by a spawn entry"
+            );
+        }
+        let refused_ty = [
+            Ty::Struct("Guard".into()),
+            Ty::Struct("std.pool.Pool".into()),
+            Ty::Struct("std.io.File".into()),
+            Ty::Thread(Box::new(Ty::Struct("Guard".into()))),
+        ];
+        for ty in refused_ty {
+            let label = ty.display();
+            let err = check_heap_uses(&[captured(ty)], &decls)
+                .expect_err("a resource must stay refused as a spawn entry capture");
+            assert!(
+                err.message.contains("a value captured by a closure environment"),
+                "{label}: {}",
+                err.message
+            );
+        }
+    }
 }

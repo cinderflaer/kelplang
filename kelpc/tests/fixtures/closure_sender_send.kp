@@ -1,0 +1,31 @@
+// A `fun` literal written directly as the `thread.spawn` entry captures a Sender.
+// The worker sends 1 to 5 and returns; its environment, which holds the Sender,
+// is dropped when the worker finishes, so main's receive loop ends by itself.
+// Main prints the count and the sum: 5, then 15.
+impl "std/thread"
+impl "std/result"
+impl "std/sync"
+
+fun main() {
+    var (tx, rx) = sync.bounded<i64>(4)
+    val h = thread.spawn(fun(u: move i64) => i64 {
+        var i: i64 = 1
+        while i <= 5 {
+            val back = tx.send(i)
+            i += 1
+        }
+        return u
+    }, 0)
+    var count: i64 = 0
+    var sum: i64 = 0
+    for v in rx {
+        count += 1
+        sum += v
+    }
+    print(count)
+    print(sum)
+    when thread.join(h) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+}

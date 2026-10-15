@@ -1,0 +1,31 @@
+// A `fun` literal written directly as the `thread.spawn` entry captures a Sender,
+// sends 1 and then panics. The environment's drop still runs on the way out, so
+// main sees the queued 1, then `Closed`, and never waits for a value that will
+// not come. The join reports the panic message.
+impl "std/thread"
+impl "std/result"
+impl "std/sync"
+
+fun describe(r: move result.Result<i64, sync.RecvTimeout>) {
+    when r {
+        Ok(v) -> print(v)
+        Err(e) -> when e {
+            Timeout -> print("timeout")
+            Closed -> print("closed")
+        }
+    }
+}
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(2)
+    val h = thread.spawn(fun(u: move i64) => i64 {
+        val back = tx.send(1)
+        panic("worker gives up")
+    }, 0)
+    describe(rx.recv_timeout(20000))
+    describe(rx.recv_timeout(20000))
+    when thread.join(h) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+}

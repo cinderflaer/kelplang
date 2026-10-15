@@ -1,0 +1,38 @@
+// A `fun` literal written directly as the `thread.spawn` entry captures a Mutex and
+// a Sender. The worker sends 1, then panics while it holds the Mutex, which poisons
+// it. The environment's drop must still run, so the Sender's drop closes the channel
+// (the poisoned Mutex is not locked on the way). Main sees 1, then `Closed`, then
+// the join message.
+impl "std/thread"
+impl "std/result"
+impl "std/sync"
+
+fun describe(r: move result.Result<i64, sync.RecvTimeout>) {
+    when r {
+        Ok(v) -> print(v)
+        Err(e) -> when e {
+            Timeout -> print("timeout")
+            Closed -> print("closed")
+        }
+    }
+}
+
+fun main() {
+    val (tx, rx) = sync.bounded<i64>(2)
+    val held: Mutex<List<String>> = Mutex.new(List.empty())
+    val other = held.share()
+    val h = thread.spawn(fun(u: move i64) => i64 {
+        val back = tx.send(1)
+        other.lock { v ->
+            v.push(String.from_str("held"))
+            panic("worker gives up")
+        }
+        return u
+    }, 0)
+    describe(rx.recv_timeout(20000))
+    describe(rx.recv_timeout(20000))
+    when thread.join(h) {
+        Ok(_) -> {}
+        Err(e) -> print(e.message)
+    }
+}

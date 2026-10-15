@@ -10651,6 +10651,36 @@ fn a_worker_that_panics_closes_the_sender_it_was_given() {
     assert_compiles_and_runs("tests/fixtures/thread_arg_sender_panic.kp", "1\nclosed\nworker gives up\n");
 }
 
+/// Decision 127: a `fun` literal written directly as the `thread.spawn` entry may
+/// capture a Sender. The worker's environment owns it, and it closes when the
+/// worker returns, so main's receive loop ends.
+#[test]
+fn a_closure_entry_may_capture_a_sender() {
+    assert_compiles_and_runs("tests/fixtures/closure_sender_send.kp", "5\n15\n");
+}
+
+/// Decision 127: a closure entry may capture a Mutex handle; the worker fills the
+/// list and main reads the same list after join.
+#[test]
+fn a_closure_entry_may_capture_a_mutex() {
+    assert_compiles_and_runs("tests/fixtures/closure_mutex_list.kp", "1000\nitem-999\n");
+}
+
+/// Decision 127 and the drop-on-panic guarantee: a worker whose closure environment
+/// holds a Sender and then panics still closes the channel, through the env drop.
+#[test]
+fn a_closure_entry_that_panics_still_closes_its_sender() {
+    assert_compiles_and_runs("tests/fixtures/closure_sender_panic.kp", "1\nclosed\nworker gives up\n");
+}
+
+/// The planner's risk note: the worker panics while holding a captured Mutex, which
+/// poisons it. The environment drop must still run, and the captured Sender's drop
+/// must close the channel without locking the poisoned Mutex.
+#[test]
+fn a_closure_entry_that_poisons_a_captured_mutex_still_closes_its_sender() {
+    assert_compiles_and_runs("tests/fixtures/closure_mutex_poison.kp", "1\nclosed\nworker gives up\n");
+}
+
 /// Three producers send 300 Strings through a bounded channel of two; the count and
 /// the byte total (3 * 490) come out exact.
 #[test]
