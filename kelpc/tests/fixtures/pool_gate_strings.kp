@@ -36,7 +36,7 @@ fun main() {
         var sevens = 0
         val target = String.from_str("job-7")
         for name in v.iter() {
-            if name.as_str() == target.as_str() {
+            if str.eq(name.as_str(), target.as_str()) {
                 sevens += 1
             }
         }
