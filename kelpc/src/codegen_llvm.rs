@@ -4319,6 +4319,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .expect("the function scope is open")
                     .insert(name.clone(), slot);
                 self.bindings.insert(BindingId::Param(i), slot);
+                // A parameter the function owns is dropped by its frame on a
+                // panic, as a local is (decision 125; borrowck's `define_owned`).
+                self.register_owned(ty, slot)?;
             }
         }
 
