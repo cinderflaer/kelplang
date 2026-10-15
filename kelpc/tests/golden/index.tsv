@@ -1,5 +1,5 @@
 # kelpc golden set (stage 2, WP-1). Frozen from the C backend at v26.10.5 (387dc450) by the freeze test that was removed with the C backend on 2026-10-10.
-# counts candidates=1121 ran=564 c_refused=524 excluded=33
+# counts candidates=1126 ran=568 c_refused=525 excluded=33
 tag	status	exit	stderr_first_line	stdout_sha256
 fixture_aggregate_text_borrow	ran	exit 0		360e179ff44cfddab4ee7748a89f8beb88bf59982bed71c0abf242571c733433
 fixture_alias_cycle	c-refused		error: alias cycle	
@@ -1122,3 +1122,8 @@ example_download	ran	exit 2		b155c2058fbd713f7f82006f26d5a9211bab264a8315ba592a2
 example_download_pool	ran	exit 2		93b81b8bb60dfdf8e9020a09c2c2c4a5fd7da16cb404c944866531d56da34519
 example_fib	ran	exit 0		4c82a221b575ce7fe118b2e8cdf0764bf4ef570a3017e80b6d3438af9095f376
 example_hello	ran	exit 0		853ff93762a06ddbf722c4ebe9ddd66d8f63ddaea97f521c3ecc20da7c976020
+fixture_closure_mutex_list	ran	exit 0		9367dd14ee7e57e0b4e916fb72d85d2fa922906a3eb832f389ba24400effd448
+fixture_closure_mutex_poison	ran	exit 0		47b3a169382618425bf0fdc65c8c998f1c82ba6e92cf3108d03a55ad18394fff
+fixture_closure_sender_panic	ran	exit 0		47b3a169382618425bf0fdc65c8c998f1c82ba6e92cf3108d03a55ad18394fff
+fixture_closure_sender_send	ran	exit 0		1f69cdc3bca5b8687df61e771ebe41c94c82f13930823331672d177f79939b2c
+fixture_thread_arg_closure_value	c-refused		error: 'closure() => i64' cannot be a thread's argument in a hosted build: 'closure() => i64' is a resource, and a resource never enters the collected heap, because its drop has to run at scope end. Keep it in a local, a parameter or a field of a stack value, and let it drop there	
