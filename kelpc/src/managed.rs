@@ -344,10 +344,90 @@ pub fn check_heap_uses(
     let mut ordered: Vec<&HeapUse> = uses.iter().collect();
     ordered.sort_by_key(|u| u.span.start);
     for u in ordered {
-        let kind = resolve(&u.ty, decls);
+        let kind = match u.slot {
+            HeapSlot::ThreadArgument | HeapSlot::ThreadResult => crossing_kind(&u.ty, decls),
+            _ => resolve(&u.ty, decls),
+        };
         check_heap_slot(u.slot, &u.ty.display(), kind, u.span)?;
     }
     Ok(())
+}
+
+/// The channel records a thread may take as an argument or return (decision 125).
+/// Their drop closes the channel, which is what a worker's panic must still run, so
+/// the rule reads their fields and ignores their destructor.
+pub const CROSSING_CHANNEL_RECORDS: &[&str] = &[
+    "std.sync.Sender",
+    "std.sync.Receiver",
+    "std.sync.SendEnd",
+    "std.sync.RecvEnd",
+];
+
+/// Whether a value of `ty` may cross into a worker as its argument or its result
+/// (channels plan item 7). A `Mutex`, `RwLock` or `Condvar` crosses, and so does a
+/// thread handle whose value crosses. A `Mutex` crosses only with a memory element,
+/// because its element sits in a runtime record the collector does not scan. A user
+/// declaration crosses when it has no destructor and every field crosses. Files,
+/// sockets, a `Pool` (which has a destructor), destructors and every container with a
+/// resource element stay refused.
+fn crosses(ty: &Ty, walk: &mut Walk<'_>) -> bool {
+    match ty {
+        Ty::Mutex(elem) | Ty::RwLock(elem) => classify(elem, walk) == ResourceKind::Memory,
+        Ty::Condvar => true,
+        Ty::Thread(elem) => crosses(elem, walk),
+        Ty::Struct(name) => struct_crosses(name, walk),
+        _ => classify(ty, walk) == ResourceKind::Memory,
+    }
+}
+
+fn struct_crosses(name: &str, walk: &mut Walk<'_>) -> bool {
+    let base = name.split('<').next().unwrap_or(name);
+    if CROSSING_CHANNEL_RECORDS.contains(&base) {
+        // A generic instance is named `std.sync.Sender<i64>`, and its fields carry the
+        // element type, so the fields decide it.
+        let Some(facts) = (walk.decls)(name) else {
+            return false;
+        };
+        return fields_cross(&facts.fields, name, walk);
+    }
+    if STDLIB_RESOURCE_STRUCTS.contains(&name) {
+        return false;
+    }
+    if STDLIB_MEMORY_STRUCTS.contains(&name) {
+        return true;
+    }
+    let Some(facts) = (walk.decls)(name) else {
+        return false;
+    };
+    if facts.has_user_drop {
+        return false;
+    }
+    fields_cross(&facts.fields, name, walk)
+}
+
+fn fields_cross(fields: &[Ty], name: &str, walk: &mut Walk<'_>) -> bool {
+    // A type already on the path is the recursion, which adds nothing new.
+    if walk.path.iter().any(|p| p == name) {
+        return true;
+    }
+    walk.path.push(name.to_string());
+    let ok = fields.iter().all(|field| crosses(field, walk));
+    walk.path.pop();
+    ok
+}
+
+/// The verdict for a value a thread takes as its argument or returns through `join`:
+/// `Memory` when it crosses, otherwise the heap verdict, so the refusal names the
+/// reason. Heap slots other than the two thread slots keep `resolve`.
+pub fn crossing_kind(ty: &Ty, decls: &dyn Fn(&str) -> Option<DeclFacts>) -> ResourceKind {
+    let mut walk = Walk { decls, path: Vec::new() };
+    if crosses(ty, &mut walk) {
+        return ResourceKind::Memory;
+    }
+    match resolve(ty, decls) {
+        ResourceKind::Memory => ResourceKind::Resource,
+        kind => kind,
+    }
 }
 
 #[cfg(test)]
@@ -725,5 +805,72 @@ mod tests {
         assert_eq!(mib("DEFAULT_START_LOW"), DEFAULT_START_LOW_MIB);
         assert_eq!(mib("DEFAULT_START_HIGH"), DEFAULT_START_HIGH_MIB);
         assert_eq!(mib("DEFAULT_HEAP_MIN") << 20, crate::gc_descr::DEFAULT_HEAP_MIN);
+    }
+
+    /// The crossing table (channels plan item 2): what a worker may take as its
+    /// argument or return. Channel records cross with their element; a destructor,
+    /// a file, a pool and a container of resources do not.
+    #[test]
+    fn the_crossing_table_lifts_channel_records_and_keeps_the_rest_refused() {
+        let decls = |name: &str| -> Option<DeclFacts> {
+            match name {
+                "std.sync.Sender<i64>" | "std.sync.Sender<bool>" => Some(DeclFacts {
+                    has_user_drop: false,
+                    fields: vec![Ty::Struct("std.sync.SendEnd".into())],
+                }),
+                "std.sync.Receiver<i64>" => Some(DeclFacts {
+                    has_user_drop: false,
+                    fields: vec![Ty::Struct("std.sync.RecvEnd".into())],
+                }),
+                "std.sync.SendEnd" | "std.sync.RecvEnd" => Some(DeclFacts {
+                    has_user_drop: true,
+                    fields: vec![Ty::I64],
+                }),
+                "Job" => Some(DeclFacts {
+                    has_user_drop: false,
+                    fields: vec![
+                        Ty::Struct("std.sync.Sender<i64>".into()),
+                        Ty::Struct("std.sync.Sender<bool>".into()),
+                    ],
+                }),
+                "Guard" => Some(DeclFacts {
+                    has_user_drop: true,
+                    fields: vec![Ty::I32],
+                }),
+                _ => None,
+            }
+        };
+        let sender = || Ty::Struct("std.sync.Sender<i64>".into());
+        let crosses_ty = [
+            ("Sender<i64>", sender()),
+            ("Receiver<i64>", Ty::Struct("std.sync.Receiver<i64>".into())),
+            ("Job", Ty::Struct("Job".into())),
+            ("Mutex<List<String>>", Ty::Mutex(Box::new(list(Ty::String)))),
+            ("Condvar", Ty::Condvar),
+            ("Thread<i32>", Ty::Thread(Box::new(Ty::I32))),
+            ("i64", Ty::I64),
+        ];
+        for (label, ty) in crosses_ty {
+            assert_eq!(
+                crossing_kind(&ty, &decls),
+                ResourceKind::Memory,
+                "{label} should cross"
+            );
+        }
+        let refused = [
+            ("Mutex<Sender<i64>>", Ty::Mutex(Box::new(sender()))),
+            ("Guard", Ty::Struct("Guard".into())),
+            ("std.io.File", Ty::Struct("std.io.File".into())),
+            ("std.pool.Pool", Ty::Struct("std.pool.Pool".into())),
+            ("List<Sender<i64>>", list(sender())),
+            ("Missing", Ty::Struct("Missing".into())),
+        ];
+        for (label, ty) in refused {
+            assert_ne!(
+                crossing_kind(&ty, &decls),
+                ResourceKind::Memory,
+                "{label} should stay refused"
+            );
+        }
     }
 }
